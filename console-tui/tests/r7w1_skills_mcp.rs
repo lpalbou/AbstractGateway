@@ -361,3 +361,15 @@ fn live_mcp_test_enable_disable_archive() {
         .clone();
     assert_eq!(calc["enabled_for_agents"], false, "{calc}");
 }
+
+#[test]
+#[ignore = "drives a live scratch gateway (R7W1_URL/R7W1_TOKEN)"]
+fn live_capture_80x24() {
+    let Some((mut h, _url, _token)) = live_page((80, 24)) else {
+        return;
+    };
+    h.shoot("live-skills");
+    h.key(b"\t");
+    h.until_text("calc");
+    h.shoot("live-mcp");
+}

@@ -6498,22 +6498,25 @@ lives inside Review & Test.
   output mode (text, image, voice, music, sound effects, video), file
   attachments and speak-this-reply.
 - **2 Accounts** is the web console's Accounts page: one table of users and
-  entities with name, kind (Admin, User or Entity, coloured, with a legend),
-  email address, mailbox, runtime and **Active** (`[x]` on, `[ ]` off,
-  `[-] reason` when it can't be switched). Under the table, the selected row's
-  keys and the reason of every action that can't apply to it, then the
-  administrator's **Mailboxes for users** switch (Advanced: **Agent email tools
-  for users**, **Sign-in by email**). Keys on the selected row: Space switches
-  Active (deactivate a user, suspend an entity; it asks first), `@` email
+  entities with name and kind (Admin, User or Entity), email address, mailbox,
+  runtime and **Active** (`[x]` on, `[ ]` off, `[-]` when it can't be switched
+  here, "Archived"). Long cells wrap onto more lines; `Enter` on a row shows its
+  actions with their keys and the reason of every action that can't apply.
+  **Show archived** (`h`, admin) lists archived accounts with Logs and
+  Unarchive. Keys on the selected row: Space switches Active (deactivating a
+  user or suspending an entity asks first, inline under the table), `@` email
   (your own row: your email settings, below; another user: their email address
-  with Save and a read-only mailbox line; an entity: why it has no mailbox),
-  `l` activity ("Activity — <id>", `f` / `F` change the filter: All, Sign-ins,
-  Runs, Automations, Email; times in your local time), `w` workspace policy,
-  `t` rotate, `m` manage (entities), `d` delete. Also `a` create user, `e` edit
-  user, `n` create entity, `c` talk with an entity, `i` inspect, `s` spark
+  and a read-only mailbox line; an entity: the entity's own mailbox form), `o`
+  OpenAI API (admin, user rows: one switch), `l` logs ("Activity — <id>", `f` /
+  `F` change the filter: All, Sign-ins, Runs, Automations, Email; `o` opens a
+  run in Observer), `w` workspace policy, `t` rotate token, `m` manage
+  (entities), `d` archive (asks inline) or unarchive. Also `a` create user, `e`
+  edit user, `n` create entity, `c` talk with an entity, `i` inspect, `s` spark
   templates, `v` kept data of deleted users and `x` reset an old per-user
-  mailbox override. Someone who is not an administrator sees their own row and
-  the entities they created.
+  mailbox override. **Email for everyone** (admin) is the page's second tab
+  (`Tab`): **Mailboxes for users** and, under Advanced, **Agent email tools
+  for users** and **Sign-in by email**. Someone who is not an administrator
+  sees their own row and the entities they created.
 - **Your email settings** (`@` on your own row): your **Email address**, your
   **Mailbox** (tabs **IMAP**, the default, **Google** and **Microsoft**; the
   IMAP pane shows the incoming and outgoing servers, filled in as soon as the
@@ -6526,16 +6529,30 @@ lives inside Review & Test.
   sentence, for example "Not sent: hourly limit reached (100 of 100 this hour)
   — resets at 14:05."), the **Agent email tools** switch and Advanced
   (recipient rules, send limits, folder) — see [email.md](docs/email.md).
-- **3 Workflows** lists one row per bundle: name, what it does, version (+N
-  older), source and the apps that use it, with the selected bundle's versions
-  and entrypoints below, and **Broken workflows** when the gateway refused a
-  bundle file. **Default workflow per app** sits under it (`Tab` moves between
-  the two): the plain name of each app's interface, what runs ("Clients
-  choose", "Built in: …", a workflow, or "Broken"), and the selected row's
-  help; `Enter` picks a default and saves it at once, `o` shows **Other
-  workflow types**. Also `t` drafts on/off, `e` export, `d` archive a version,
-  `D` archive every version (nothing is deleted), `i` import a `.flow` bundle, `L` reload from disk.
-  The per-app defaults are also on Runtimes (*Runtime knobs*).
+- **3 Workflows** is the web console's Workflows page, with three tabs
+  (`Tab`). **Workflows** groups the bundles under **Shared with everyone** and
+  **Mine**: name and id, what it does, version (+N older), source, the apps that
+  use it and, for an admin, **Available to users**. `/` searches, `t` Drafts,
+  `o` Older versions and `h` Show archived switch what is listed; `Enter` shows
+  a row's versions, entrypoints and actions. Space switches **Available to
+  users** (admin, shared workflows), `x` exports the latest version as a
+  `.flow` file on this machine, `f` opens it in AbstractFlow, `d` archives (it
+  asks first; workflows are never deleted) or unarchives, `i` imports `.flow`
+  files from this machine. **Default workflow per app** lists each app and
+  what it runs; `Enter` picks a workflow and saves it at once, `o` shows
+  **Other workflow types**, `s` switches **Streamed replies**. **Broken
+  workflows** appears when the gateway could not load some versions, with the
+  reason; `d` archives them.
+- **4 Skills & MCP** is the web console's page of the same name, with two tabs
+  (`Tab`). **Skills**: the shelf (name, what it does, version, trust, source);
+  `/` searches, `h` Show archived, `v` opens a skill (an imported one can be
+  edited and saved, a curated one duplicated to edit), `x` exports it as a
+  `.zip` on this machine, `i` imports a `.zip` or a skill folder from this
+  machine, `d` archives an imported skill or unarchives. **MCP servers**: each
+  server's transport, status and tools; Space switches **Enabled for agents**
+  (turning it on asks first; it needs a successful test), `a` adds and `e`
+  edits a server (a command or a URL with headers, **Test connection**,
+  **Save**), `t` tests it, `d` archives or unarchives. Writes are admin-only.
 - **5 Apps** is the web console's Apps tab: open browser apps signed in,
   install or update them, start and stop them, the desktop Assistant and
   Node.js. Over SSH, or on a machine without a display, **Open** never starts
@@ -9474,6 +9491,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
+- Terminal console (`abstractgateway-console`, unreleased): a **Skills & MCP** page, and the **Accounts** and **Workflows** pages brought to the web console's content and actions (Show archived, inline confirmations, OpenAI API switch, an entity's own mailbox form, workflow groups and availability, default workflow per app). See `console-tui/CHANGELOG.md`.
 
 - `GET /api/gateway/voice/defaults` (round 6): the gateway's default voice routes for every app — `tts` = the `output.voice` route (`provider`, `model`, `voice`), `stt` = the `input.voice` route (`provider`, `model`), each with `configured` and, when unset, a `note`. A request that names no engine runs exactly this route. The voice catalog (`GET /voice/voices`) now says the same: `active_tts_provider` / `active_stt_provider` are the configured routes (absent when none is set, never the speech engine's own fallback) and it carries `gateway_defaults`. Before, the catalog forwarded AbstractVoice's opinion — "openai" whenever `OPENAI_API_KEY` was in the environment — so AbstractCode showed "Gateway default · openai" on a gateway routed to supertonic and faster-whisper.
 - `POST /runs/{run_id}/audio/transcribe` answers with the route that ran (`provider`, `model`) and the server time (`duration_ms`).

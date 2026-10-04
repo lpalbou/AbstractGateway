@@ -263,7 +263,7 @@ fn live_page(size: (i32, i32)) -> Option<(r7w1::Harness, String, String)> {
     let (url, token) = live_env()?;
     let mut h = live(size, Mount::Page(page_view), &url, &token);
     workflows::refresh_for_tests(&h.store, &h.tx);
-    h.until_text("Basic agent");
+    until_row(&mut h, "basic-agent", None);
     Some((h, url, token))
 }
 
@@ -411,4 +411,16 @@ fn live_availability_archive_export_import_default() {
     h.key(b"\x1b[A");
     h.key(b"\r");
     h.turns(10);
+}
+
+#[test]
+#[ignore = "drives a live scratch gateway (R7W1_URL/R7W1_TOKEN)"]
+fn live_capture_80x24() {
+    let Some((mut h, _url, _token)) = live_page((80, 24)) else {
+        return;
+    };
+    h.shoot("live-workflows");
+    h.key(b"\t");
+    h.until_text("AbstractCode —");
+    h.shoot("live-workflows-defaults");
 }

@@ -330,6 +330,9 @@ pub fn wrap_widths(rules: &[ColRule], cells: &[Vec<String>], width: i32) -> Vec<
         if natural[i] <= SHORT_CELL {
             floor[i] = natural[i];
         }
+        // One very long word (a bundle id) may not take more than a
+        // quarter of the row: it hard-breaks instead of starving the prose.
+        floor[i] = floor[i].min((usable / 4).max(r.min).max(SHORT_CELL));
     }
     if natural.iter().sum::<i32>() <= usable {
         return natural;

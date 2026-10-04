@@ -48,10 +48,13 @@ leave (not recorded, it opens again next start) or skip (recorded).
    (`GET /admin/accounts`): kind, email address, mailbox, runtime and the
    **Active** switch (Space: deactivate a user, suspend an entity; your own
    row says why it can't). Per row: `@` email (your row: My email; another
-   user: their address only and their mailbox status; an entity: why it has
-   none), `l` activity (sign-ins, changes, runs, automations, email; `f`
-   filters), `w` workspace policy, `t` rotate, `m` manage (entities), `d`
-   delete; an action that can't apply says why. Also gateway user CRUD (create shows the token
+   user: their address only and their mailbox status; an entity: its own
+   mailbox form), `l` activity (sign-ins, changes, runs, automations, email; `f`
+   filters; `o` opens a run in Observer), `w` workspace policy, `o` OpenAI
+   API (user rows), `t` rotate, `m` manage (entities), `d` archive /
+   unarchive (asks inline), `h` show archived; Enter shows a row's actions
+   and why any can't apply. Rows wrap instead of cutting text.
+   Also gateway user CRUD (create shows the token
    exactly once, with clipboard copy; the email address at the top level,
    runtime and tenant under Advanced; user/admin/readonly roles; the
    **Active** switch on the table, Space), the **Mailboxes for users**
@@ -75,19 +78,16 @@ leave (not recorded, it opens again next start) or skip (recorded).
    from selected — saving is admin-only), and **talk** with an entity
    (`c`: open a hosted visit, send turns, close with the reflection
    pass; one visit at a time).
-- **3 Workflows** (WORK) — plain names, what each workflow does, the
-   version, where it comes from (shipped with the gateway, imported,
-   published from AbstractFlow) and the apps that use it; a second section,
-   **Default workflow per app** (Tab to it, Enter picks, saved at once).
-   Every workflow registered on the gateway, with
-   published/draft version counts, per-version entrypoints and
-   interfaces, and a `Not loaded` block naming versions the gateway is
-   not serving and why. `e` exports a version to a local `.flow` file (the destination is shown
-   and editable first; default `~/Downloads/abstractgateway-console/`),
-   `d`/`D` delete a version / the whole workflow, `t` toggles draft
-   visibility, `i` imports a `.flow` bundle from this machine, `L`
-   reloads the registry from disk; import and the other writes follow
-   the registry ownership rule (admin on the shared registry).
+- **3 Workflows** (WORK) — the web console's Workflows page in three tabs
+   (`Tab`): **Workflows** (the "Shared with everyone" and "Mine" groups,
+   search `/`, `t` drafts, `o` older versions, `h` show archived, Space
+   **Available to users**, `x` export `.flow`, `f` open in AbstractFlow,
+   `d` archive / unarchive, `i` import `.flow`), **Default workflow per app**
+   (Enter picks, saved at once; `s` Streamed replies) and **Broken
+   workflows** (`d` archives). Same routes as the web page.
+- **Skills & MCP** (WORK) — the skills shelf (search, show archived, view /
+   save / duplicate, import a `.zip` or folder, export `.zip`, archive) and
+   the MCP servers (add / edit, test, **Enabled for agents**, archive).
 - **4 Runtimes** (WORK) — the data-plane inventory (default / per-user /
    per-entity) with owners, sizes, liveness, the runtime-knobs
    surface (per-knob value + provenance; API-writable, no UI edits

@@ -418,3 +418,14 @@ fn live_create_user_shows_the_token_once() {
     h.shoot("live-accounts-created-token");
     assert_eq!(row(&url, &token, &id, false)["id"], id.as_str());
 }
+
+#[test]
+#[ignore = "drives a live scratch gateway (R7W1_URL/R7W1_TOKEN)"]
+fn live_capture_80x24() {
+    let Some((mut h, _url, _token)) = live_admin((80, 24)) else {
+        return;
+    };
+    h.shoot("live-accounts");
+    h.key(b"\r");
+    h.shoot("live-accounts-expanded");
+}
