@@ -33,7 +33,12 @@ def _serve_once(tmp_path: Path, data: Path) -> dict:
         "HOME": str(home),
         "TMPDIR": str(home / "tmp"),
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-        "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
+        # Absolute: the subprocess runs in tmp_path, where a relative `src` would silently import an
+        # installed gateway instead of the one under test.
+        "PYTHONPATH": os.pathsep.join(
+            [str(Path(__import__("abstractgateway").__file__).resolve().parent.parent)]
+            + [str(Path(x).resolve()) for x in os.environ.get("PYTHONPATH", "").split(os.pathsep) if x]
+        ),
         "LANG": "en_US.UTF-8",
         "HF_HOME": str(home / "hf"),
         "HF_HUB_OFFLINE": "1",
