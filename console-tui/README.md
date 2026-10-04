@@ -58,14 +58,14 @@ pages are usable at 80×24.
    API (user rows), `t` rotate, `m` manage (entities), `d` archive /
    unarchive (asks inline), `h` show archived; Enter shows a row's actions
    and why any can't apply. Rows wrap instead of cutting text.
-   Also gateway user CRUD (create shows the token
+   Also create and edit users (create shows the token
    exactly once, with clipboard copy; the email address at the top level,
    runtime and tenant under Advanced; user/admin/readonly roles; the
    **Active** switch on the table, Space), the **Mailboxes for users**
    switch, **My email** (`@`: email address, mailbox, two notification
    switches, agent email tools), token rotation, your own workspace
    policy (`w`, as the web console's "My workspace"), runtime reservations
-   (transfer/purge retained planes of deleted users, `v`), and the
+   (`v`: transfer a retained runtime to a user; data is never deleted), and the
    entity roster with a per-entity **manage menu** (`m`): state
    wake/sleep(+dream)/pause, mind substrate, voice triple, work order,
    own-time grant + loop start/stop/freeze, tool policy (per-phase
@@ -92,11 +92,14 @@ pages are usable at 80×24.
 - **4 Skills & MCP** (WORK) — the skills shelf (search, show archived, view /
    save / duplicate, import a `.zip` or folder, export `.zip`, archive) and
    the MCP servers (add / edit, test, **Enabled for agents**, archive).
-- **5 Runtimes** (WORK) — the data-plane inventory (default / per-user /
-   per-entity) with owners, sizes, liveness, the runtime-knobs
+- **5 Runtimes** (WORK) — the web console's run table (Run, Workflow,
+   Status, Node, Session, Updated) as wrapping rows, `Enter` opens a run's
+   details in place, `t` **Root runs only**; the data-plane inventory
+   (default / per-user / per-entity) with owners, sizes, liveness;
+   Artifacts, Cache and Logs as wrapping tables; the runtime-knobs
    surface (per-knob value + provenance; API-writable, no UI edits
    yet) with the Continuum backlog settings editor and the curated
-   skills-shelf reseed (admin), recent root runs with **cancel** (`c`) and **steer** (`s`)
+   skills-shelf reseed (admin), **cancel** (`c`, asks inline) and **steer** (`s`)
    via durable gateway commands, and the data-homes browser (`h`)
    with dry-run-gated purge.
 - **6 Apps** (WORK) — the web console's Apps tab: browser apps (Flow, Code,
@@ -222,7 +225,7 @@ nothing.
 
 Start a dev gateway (loopback host + a ≥15-char token — serve fail-fasts
 on weak tokens when binding non-loopback; port 8080 is often the
-operator's own gateway — probe `lsof -nP -iTCP:8080 -sTCP:LISTEN` and
+your own gateway — probe `lsof -nP -iTCP:8080 -sTCP:LISTEN` and
 pick a free port; never kill the existing listener):
 
 ```sh
@@ -251,11 +254,8 @@ runtimes actions are proven live by the pty smoke rather than pinned
 headless. The pty smoke proves the definition of
 done end to end: boot → probe → keyboard-driven route override → journal
 shows the GET verification → gateway state asserted over HTTP → cleared
-and restored. Coverage honesty: the profile-CRUD leg is proven by
-keyboard-driven headless tests plus the live API E2E (writes + verify +
-cleanup) — the pty smoke drives the route leg live but not the profile
-form, so that one composition is proven in two halves rather than one
-live keyboard pass.
+and restored. The profile forms are covered by keyboard-driven headless
+tests plus the live API E2E (writes + verify + cleanup).
 
 ## Layout
 
@@ -265,7 +265,7 @@ live keyboard pass.
   `Loadable<T>` keeps the four honest states distinct.
 - `src/worker.rs` — the one background thread owning HTTP; commands in
   via mpsc, results back as posted closures (`WakeHandle`). It publishes
-  the verified client for the Models/Engines screens.
+  the verified client for the screens that use the shared transport.
 - `src/transport_http.rs` — `HttpTransport`, the `abstractcore-console`
   `ConsoleTransport` over `GatewayClient` (route and error mapping).
 - `src/api_json.rs`, `src/store_json.rs`, `src/worker_json.rs` — the plain

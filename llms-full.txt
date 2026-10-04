@@ -463,7 +463,7 @@ users remain on `1 user = 1 runtime` routing.
 Browser apps should exchange a Gateway user token for an opaque Gateway browser
 session through `/api/gateway/session/login`; the raw bearer token should not be
 kept in browser storage, and the login response body does not expose the session
-id or CSRF token. One deliberate exception (round 5, operator decision): the web
+id or CSRF token. One exception: the web
 console keeps the token a person typed at sign-in in session storage (local
 storage with *Remember this browser*) so the OpenAI API page can show that
 person their own API key without any server route returning a stored token; it
@@ -960,7 +960,7 @@ and how to download it.
 
 ### Models and engines
 
-The **Models** and **Engines** tabs of the web console, the terminal console
+The **Models** and **Providers** pages (local engines) of the web console, the terminal console
 and the `abstractgateway models …` / `abstractgateway engines …` commands show
 the same things AbstractCore shows (`abstractcore models …`, `abstractcore
 engines …`): the host's hardware, the local inference engines, a model catalog
@@ -1733,9 +1733,12 @@ Core catalog proxy settings:
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray]`
+- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N]`
   (`--no-tray`: no menu bar / tray icon for this run, for a test or scratch
-  gateway next to your usual one)
+  gateway next to your usual one; `--watchdog-seconds N`, default 30, `0` = off:
+  a gateway whose event loop stays blocked for N seconds writes the blocked
+  stacks to its log and exits with code 75 so its service manager restarts it,
+  see [deployment.md](docs/deployment.md))
   (host/port default to the [network exposure](#network-exposure-localhost--local-network--internet)
   setting; with none stored, `--host` defaults to `127.0.0.1` when no auth is
   configured, else `0.0.0.0`, and `--port` to `8080`. Explicit flags override the setting.)
@@ -5935,6 +5938,7 @@ The sidebar groups the tabs in four sections, in this order:
 |---|---|---|
 | Accounts | **Accounts** | every user and entity in one table: the **Active** switch, email, activity (Logs), workspace policy, token rotation, entity management, and the administrator's **Email for everyone** switches ([below](#accounts)) |
 | Work | **Workflows** | the workflow bundles on this gateway, shared by the gateway or your own (name, what each does, version, source, the apps that use it, availability to users), import, export, open in AbstractFlow, archive, the default workflow for each app and the **Streamed replies** setting ([below](#workflows)) |
+| Work | **Skills & MCP** | administrators: **Skills** — the skills shelf setting and every skill (curated and imported, **Show archived**) with View, Export and Archive, import a `.zip` or folder, Duplicate to edit a curated one; **MCP servers** — whether agents are offered tools, an **Enabled for agents** switch per server, add, edit, test and archive ([configuration.md](docs/configuration.md#skills-shelf)) |
 | Work | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches |
 | Work | **Apps** | the browser apps, Code's terminal app and the desktop Assistant (below), plus *Advanced: apps settings* and *Advanced: backlog settings (Continuum)* |
 | Models | **Providers** | **Local providers**: one card per local engine on the gateway host (Ollama, LM Studio, MLX, llama.cpp, Hugging Face, vLLM) with its status, install, start, stop, **Browse models** and its server connection; **Remote providers**: OpenAI, Anthropic, OpenRouter, Portkey and custom OpenAI-compatible connections with write-only keys (shown as fingerprints); then the **Available Providers** table ([below](#models-and-local-providers)) |
@@ -6022,7 +6026,7 @@ from a spark template (its name is permanent, [entities.md](docs/entities.md)).
 | **Mailbox** | "Connected as x@y", "Receive only — no outgoing server" (with the reason under it), "Not connected" or "Paused" (users and entities alike: an entity has its own mailbox) |
 | **Runtime** | the account's runtime id (plain text that wraps), or "No runtime" |
 | **Active** | the switch described below; "Archived" on an archived row |
-| **Actions** | users: **Email**, **Logs**, **Workspace** and a "⋯" menu (**Rotate token**, **Archive**); entities: **Email**, **Logs**, **Manage** and a "⋯" menu (**Archive**); archived rows: **Logs** and a "⋯" menu (**Unarchive**) |
+| **Actions** | users: **OpenAI API** (administrators), **Email**, **Logs**, **Workspace** and a "⋯" menu (**Rotate token**, **Archive**); entities: **Email**, **Logs**, **Manage** and a "⋯" menu (**Archive**); archived rows: **Logs** and a "⋯" menu (**Unarchive**) |
 
 Rows are tinted by kind (a legend under the table reads "Tint: admin · user ·
 entity"). Only the actions that apply to a row are shown: your own row has no
@@ -6054,6 +6058,11 @@ it is off by default and your browser remembers it.
   entity's own mailbox (an entity is an AI user: its agents read and send from
   it, and notifications about its runs go to its address); the administrator
   and the entity's creator can open it.
+- **OpenAI API** (administrators, user rows) opens a dialog with the
+  account's **OpenAI API** switch: on, the account's gateway token works as an
+  API key at `/v1`; off, its requests answer `403 openai_api_off` (its console
+  sign-in is unchanged). Entities have no key and never use the OpenAI API
+  ([openai-api.md](docs/openai-api.md#access)).
 - **Logs** opens "Activity — <id>": the account's sign-ins, token rotations,
   runs started, automation commands, account changes and email events from the
   gateway's audit log, newest first, in your local time. The chips **All**,
@@ -6077,7 +6086,8 @@ it is off by default and your browser remembers it.
   in any more. Their runtime, runs and history are kept; you can unarchive
   later." / for an entity: "It stops acting and never wakes. Its memory, runs
   and history are kept"). Nothing is deleted. **Unarchive** brings the account
-  back inactive: turn **Active** on to let it sign in (or act).
+  back inactive: turn **Active** on to let it sign in (or act). Accounts are
+  never deleted (`DELETE /api/gateway/admin/users/{id}` answers `410`).
 
 Under the table, **Email for everyone** (administrators) holds the switch
 **Mailboxes for users**, with **Agent email tools for users** and **Sign-in by
@@ -6300,8 +6310,8 @@ The setup guide's **Default model** step shows the same catalog cards with
 filters over. An engine card's **Browse models** opens the tab filtered to that
 engine's builds.
 
-**Local providers** (the Providers tab, id `providers`; the Engines tab of
-0.10.0 and older merged into it, and a `#engines` link opens Providers):
+**Local providers** (the Providers tab, id `providers`; a `#engines` link
+opens Providers):
 
 - One card per engine with a status pill (Ready, Running, Installing, Needs
   your approval, Needs Apple tools, Not installed, Not for this computer),
@@ -6517,7 +6527,7 @@ groups and their keys. The local engines live on Providers, as on the web.
   run in Observer), `w` workspace policy, `t` rotate token, `m` manage
   (entities), `d` archive (asks inline) or unarchive. Also `a` create user, `e`
   edit user, `n` create entity, `c` talk with an entity, `i` inspect, `s` spark
-  templates, `v` kept data of deleted users and `x` reset an old per-user
+  templates, `v` retained runtimes (transfer one to a user; data is never deleted) and `x` reset an old per-user
   mailbox override. **Email for everyone** (admin) is the page's second tab
   (`Tab`): **Mailboxes for users** and, under Advanced, **Agent email tools
   for users** and **Sign-in by email**. Someone who is not an administrator
@@ -6558,6 +6568,11 @@ groups and their keys. The local engines live on Providers, as on the web.
   (turning it on asks first; it needs a successful test), `a` adds and `e`
   edits a server (a command or a URL with headers, **Test connection**,
   **Save**), `t` tests it, `d` archives or unarchives. Writes are admin-only.
+- **5 Runtimes** shows the web console's run table (Run, Workflow, Status,
+  Node, Session, Updated) as wrapping rows: `Enter` opens a run's details in
+  place, `t` switches **Root runs only**, `c` cancels a run (it asks first,
+  inline) and `s` steers it. The data planes, Artifacts, Cache and Logs are
+  wrapping tables with the web page's column names.
 - **6 Apps** is the web console's Apps tab: open browser apps signed in,
   install or update them, start and stop them, the desktop Assistant and
   Node.js. Over SSH, or on a machine without a display, **Open** never starts
@@ -7941,7 +7956,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.10.0
+docker pull ghcr.io/lpalbou/abstractgateway:0.13.0
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -7949,7 +7964,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.10.0-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.13.0-gpu
 ```
 
 The image names `ghcr.io/lpalbou/abstractgateway-server:*` and
@@ -8249,7 +8264,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.10.0-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.13.0-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 
@@ -8310,9 +8325,10 @@ pick a local engine, a default model and the browser apps. A new link:
 
 ### Local models and engines
 
-The console's **Models** and **Engines** tabs (and the matching commands)
-install a local engine and download a model that fits this machine, without a
-terminal. They are AbstractCore's model browser and engine installer, shown
+The console's **Providers** page (its **Local providers** cards) and its
+**Models** page (and the matching commands) install a local engine, download a
+model that fits this machine and delete a download you no longer need, without
+a terminal. They are AbstractCore's model browser and engine installer, shown
 inside the gateway:
 
 ```bash
@@ -8419,7 +8435,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.10.0
+docker pull ghcr.io/lpalbou/abstractgateway:0.13.0
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -8427,7 +8443,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.10.0-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.13.0-gpu
 ```
 
 The `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR names are
@@ -8953,7 +8969,7 @@ customization.
 
 On first start, the container creates `default/admin` and writes the token to
 `runtime/auth/bootstrap-admin-token`. NVIDIA hosts can try
-`ghcr.io/lpalbou/abstractgateway:0.10.0-gpu` with the compose overlay in
+`ghcr.io/lpalbou/abstractgateway:0.13.0-gpu` with the compose overlay in
 `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
@@ -9014,6 +9030,22 @@ abstractgateway migrate --from=file --to=sqlite \
   --db-path runtime/gateway/gateway.sqlite3
 ```
 
+## 7) (Optional) Use the gateway from an OpenAI SDK
+
+An admin turns on the OpenAI-compatible API on the console's **OpenAI API**
+page (sidebar **Models**). Then any OpenAI SDK reaches this gateway's models
+with your gateway token as the API key:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="YOUR_GATEWAY_TOKEN")
+print(client.models.list())
+```
+
+See [openai-api.md](docs/openai-api.md) for the supported surface, access
+settings and the request log.
+
 ## Related docs
 
 - Docs index: [README.md](docs/README.md)
@@ -9025,6 +9057,7 @@ abstractgateway migrate --from=file --to=sqlite \
 - Configuration (env vars + optional deps): [configuration.md](docs/configuration.md)
 - Deployment: [deployment.md](docs/deployment.md)
 - API overview: [api.md](docs/api.md)
+- OpenAI API: [openai-api.md](docs/openai-api.md)
 - Automations: [automations.md](docs/automations.md)
 - Security: [security.md](docs/security.md)
 - Operator tooling (optional): [maintenance.md](docs/maintenance.md)
@@ -9080,7 +9113,7 @@ deny rules the gateway relies on; the message names what is missing. Upgrade
 it in the gateway's Python, then start again:
 
 ```bash
-pip install -U "abstractruntime>=0.8.2"
+pip install -U "abstractruntime>=0.9.0"
 ```
 
 ### The one-time sign-in link does not work
@@ -9511,51 +9544,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-04
+
+Requires AbstractRuntime 0.9.0, AbstractCore 2.25.0 and AbstractVoice 0.14.0 (installed automatically). The terminal console `abstractgateway-console` 0.15.0 matches this release; see [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md).
+
 ### Added
 
-- Terminal console (`abstractgateway-console`, unreleased): a **Skills & MCP** page, and the **Accounts** and **Workflows** pages brought to the web console's content and actions (Show archived, inline confirmations, OpenAI API switch, an entity's own mailbox form, workflow groups and availability, default workflow per app). See `console-tui/CHANGELOG.md`.
-- Terminal console (`abstractgateway-console`, round 7): the pages follow the web console's sidebar (Providers with the local engines, OpenAI API, Models, Multimodal; Resources, Sandbox, Network; Setup and About) with the web pages' data, actions and words, through the same routes — see [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md) and [docs/console.md](docs/console.md#terminal-console-abstractgateway-console).
-
-- `GET /api/gateway/voice/defaults` (round 6): the gateway's default voice routes for every app — `tts` = the `output.voice` route (`provider`, `model`, `voice`), `stt` = the `input.voice` route (`provider`, `model`), each with `configured` and, when unset, a `note`. A request that names no engine runs exactly this route. The voice catalog (`GET /voice/voices`) now says the same: `active_tts_provider` / `active_stt_provider` are the configured routes (absent when none is set, never the speech engine's own fallback) and it carries `gateway_defaults`. Before, the catalog forwarded AbstractVoice's opinion — "openai" whenever `OPENAI_API_KEY` was in the environment — so AbstractCode showed "Gateway default · openai" on a gateway routed to supertonic and faster-whisper.
+- **OpenAI API at `/v1`** with the standard OpenAI layout (`/v1/models`, `/v1/chat/completions`, `/v1/embeddings`, ...) and its own console page, **Models → OpenAI API**: Running/Stopped status with the **Endpoint** switch, **Restart** (ends open requests) and **Check setup**; **Connect your app** (base URL, your gateway token as the API key, **New key**); **Access** (Authentication Protected or Open, *Requests without a key run as*, Who can connect: this machine, your network, your tailnet or anywhere), applied immediately; supported surface and curl/Python/JavaScript examples with the real base URL; recent requests. Status for every account at `GET /api/gateway/openai-api`; admin `POST /api/gateway/admin/core-endpoint {enabled, access, reach, open_account}`, `/restart` and `/check`. See [docs/openai-api.md](docs/openai-api.md).
+- **Per-account OpenAI API access.** Each user account has an **OpenAI API** switch (Accounts → the row's **OpenAI API** button; admin `PUT /api/gateway/admin/accounts/{id}/openai-api {enabled}`; account rows carry `openai_api`). It is on by default for an active account and written explicitly (on for active, off for inactive accounts) the first time the endpoint starts. Off, the account's key answers `403 openai_api_off`; a deactivated or archived account's key answers `403 account_inactive`. Entities have no key.
+- **Open mode** runs requests without a key as the account the admin picks (`open_account`): by default the built-in **Guest**, which may use the models (chat, responses, embeddings, text-to-speech, image generation) with no tools, files, attachments or media inputs and no `/api/gateway` access (`403 guest_not_allowed`), or a user account, whose models, providers and log it uses. Never an admin.
+- **OpenAI API page per role**: an admin sees Status, Connect, Access, Docs and every request; any other account sees whether the API runs, the base URL, their own key, the docs and their own requests. The key card shows the signed-in person's gateway token masked, with an eye and **Copy**, filled in by the browser from the token it kept at sign-in (no route returns a stored token; the gateway sends only a SHA-256 fingerprint to check the copy). The examples embed it, masked on screen and copied in clear.
+- **Request log with recorded requests and responses.** Each row opens to the request and the response as they crossed `/v1` (credential-named fields and the caller's key read `[redacted]`, inline media becomes its type and size, 256 KB per side), with **Open in Observer** when the request belongs to a run. `GET /api/gateway/openai-api/logs` (rows carry `request_id` and `recorded`) and `GET /api/gateway/openai-api/logs/{request_id}`; a non-admin reads only their own requests. Stored in the audit log.
+- **Structured outputs** at `/v1/chat/completions`: `response_format` `json_object` and `json_schema` (and the SDK's `chat.completions.parse`) for every provider, through AbstractCore's structured-output support (constrained decoding where the provider has it, the schema in the prompt otherwise); the answer is validated against the schema with feedback retries. `500 structured_output_invalid` when it never matches, `400 invalid_response_format` for an unusable schema.
+- **OpenAI conformance at `/v1`**, checked with the official `openai` Python SDK: the standard error envelope `{"error": {message, type, param, code}}` (validation errors answer 400), `GET /v1/models/{id}`, structured `tool_calls` for every model, chat stream chunks with the role on the first delta and `finish_reason` on the last, `stream_options.include_usage`, `max_completion_tokens`, base64 embeddings (the SDK default), `404 model_not_found` for an unknown provider or a model id that is not `provider/model`, and `400 unsupported_parameter` for `response_format` with tools, `n > 1`, `logprobs` and `logit_bias`. Request fields that would re-route a provider or carry a credential (`base_url`, `api_key`, `provider`, `provider_kwargs`, `headers`, and the like) are refused with `400 unsupported_parameter` in JSON bodies, form bodies and query strings. `x-request-id` on every response; browser SDKs that send a key may call from any origin.
+- **Delete a downloaded model** from the Models page: a trash-bin **Delete** on every downloaded build, an inline confirmation with the size from the gateway ("Deletes 351 MB from this computer. Files only — nothing in your runs is touched."), a busy state, then "Not downloaded" and what was freed. Admin route `POST /api/gateway/models/delete-download` (`model_download_delete_v1`, `dry_run` measures) removes the files with the engine's own mechanism (Ollama delete, Hugging Face / MLX cache folder, one GGUF quant's files) and refuses a model that is loaded or locked ("Unload it first"), still downloading, or managed by LM Studio. Audited as `model.download_deleted` / `model.download_delete_refused`.
+- **Archive a conversation**: `POST /api/gateway/sessions/{session_id}/archive` and `/unarchive` (the session's owner or an admin; runs, ledgers and artifacts are kept; audited as `session.archived` / `session.unarchived`). `GET /api/gateway/runs?root_only=true` leaves archived sessions out, `archived_only=true` lists only them, and every listing carries `archived_sessions`. An archived session stays readable by its id.
+- `automation.unarchive` brings an archived automation back paused with its history. `GET /api/gateway/automations` leaves archived automations out unless `archived_only=true` (or `status` names `archived`) and carries `archived_automations`.
+- **Voice defaults**: `GET /api/gateway/voice/defaults` returns the default voice routes for every app — `tts` = the `output.voice` route (`provider`, `model`, `voice`), `stt` = the `input.voice` route (`provider`, `model`), each with `configured` and, when unset, a `note`. A request that names no engine runs exactly this route. The voice catalog (`GET /voice/voices`) reports the same: `active_tts_provider` / `active_stt_provider` are the configured routes (absent when none is set) and it carries `gateway_defaults`.
 - `POST /runs/{run_id}/audio/transcribe` answers with the route that ran (`provider`, `model`) and the server time (`duration_ms`).
-
-- Event-loop watchdog (`serve --watchdog-seconds N`, default 30, `0` = off): when the event loop has not run for N seconds, the gateway writes the stack of the blocked event-loop thread and a faulthandler dump of every thread to its log and exits with code 75, so the LaunchAgent (`KeepAlive`/`SuccessfulExit: false`), the systemd unit (`Restart=on-failure`) or the local supervisor restarts it. A second, GIL-independent faulthandler timer exits (code 1) 15 s later when native code holds the interpreter lock. `GET /api/health` reports `watchdog: {enabled, limit_s, last_tick_age_s}`. Before, a blocked loop (2026-10-04, a TTS stream: 10+ minutes at 95% CPU) left a live process answering nothing that no service manager restarts.
-
-### Fixed
-
-- `POST /runs/{run_id}/voice/tts/stream` prepares the stream (run load, durable child run, engine call) off the event loop: the gateway keeps answering `/api/health` and every other request while speech is set up and synthesised (tests on a live server: the first audio segment reaches the client before the second is synthesised; health answers while the engine setup blocks).
-- Console islands and themes re-synced with ui-kit 0.7.1.
-
-- OpenAI API access model (round 5). Each account has an **OpenAI API** switch (Accounts → the row's **OpenAI API** button, an Email-style dialog; admin `PUT /api/gateway/admin/accounts/{id}/openai-api {enabled}`; the row carries `openai_api`): on by default for an active account, written explicitly (on for active, off for inactive accounts) the first time the endpoint starts; off, that account's key answers `403 openai_api_off` in the OpenAI error envelope. Open mode runs requests without a key as an account the admin picks (`open_account`), by default the built-in **Guest** (it may use the models — chat, responses, embeddings, text-to-speech, image generation — with no tools, files, attachments or media inputs and no `/api/gateway` access; `403 guest_not_allowed`), never an admin; a chosen account's requests use its models and providers and show in its log.
-- OpenAI API page per role: an admin sees Status, Connect, Access (with *Requests without a key run as*), Docs and every request; any other account sees whether the API runs, the base URL, their own key, the docs and their own requests. The key card shows the signed-in person's gateway token masked with an eye and Copy, filled in the browser from what it kept at sign-in (never a server reveal; the gateway sends only a SHA-256 fingerprint to check the copy); the examples embed it, masked on screen and copied in clear; **New key** replaces the token, shown once.
-- Request log rows open to the request and the response as recorded (credentials removed when written: credential-named fields and the caller's key read `[redacted]`, inline media becomes its type and size, 256 KB per side), with **Open in Observer** when the request belongs to a run. New `GET /api/gateway/openai-api/logs/{request_id}` (own requests only for a non-admin); rows carry `request_id` and `recorded`. Source: the audit log, no new store.
-- Structured outputs at `/v1/chat/completions`: `response_format` `json_object` and `json_schema` (and the SDK's `chat.completions.parse`), run by AbstractCore's structured-output support for every provider (constrained decoding where the provider has it, the schema in the prompt otherwise), the answer validated against the schema with feedback retries; `500 structured_output_invalid` when it never matches, `400 invalid_response_format` for an unusable schema. Needs AbstractCore branch `round4/2026-10-03` (R5).
-
-- OpenAI API at `/v1` (standard layout: `/v1/models`, `/v1/chat/completions`, `/v1/embeddings`, ...) with its own console page, **Models → OpenAI API**: Running/Stopped status with the Endpoint switch, Restart (ends open requests) and Check setup; Connect your app (base URL, your gateway token as the API key, New key); Authentication (Protected or Open) and Who can connect (this machine, your network, your tailnet, anywhere), applied immediately with plain warnings; supported surface and curl/Python/JavaScript examples with the real base URL; recent requests from the audit log (client, model, tokens, latency, status, Open in Observer when a run is named). Status for every account at `GET /api/gateway/openai-api`, logs at `GET /api/gateway/openai-api/logs`; admin `POST /api/gateway/admin/core-endpoint {reach}`, `/restart` and `/check`. See [docs/openai-api.md](docs/openai-api.md).
-- OpenAI conformance at the `/v1` boundary, checked with the official `openai` Python SDK: the standard error envelope `{"error": {message, type, param, code}}` (validation errors answer 400), `GET /v1/models/{id}`, structured `tool_calls` for every model, chat stream chunks with the role on the first delta and `finish_reason` on the last, `stream_options.include_usage`, `max_completion_tokens`, base64 embeddings (the SDK default), `404 model_not_found` for an id that is not `provider/model` (and, with AbstractCore branch `round4/2026-10-03`, for an unknown provider), and `400 unsupported_parameter` for `response_format` with tools, `n > 1`, `logprobs` and `logit_bias`. Request fields that would re-route a provider or carry a credential (`base_url`, `api_key`, `provider`, `provider_kwargs`, `headers`, and the like) are refused with `400 unsupported_parameter` in JSON bodies, form bodies and query strings: the model is chosen by `model` alone, through the gateway's providers. `x-request-id` on every response; browser SDKs that send a key may call from any origin.
-- Archive a conversation: `POST /api/gateway/sessions/{session_id}/archive` and `/unarchive` (the session's owner or an admin; runs, ledgers and artifacts are kept; audited as `session.archived` / `session.unarchived`). `GET /api/gateway/runs?root_only=true` leaves archived sessions out, `archived_only=true` lists only them, and every listing carries `archived_sessions`. An archived session stays readable by its id.
-- `automation.unarchive` brings an archived automation back paused with its history (needs AbstractRuntime branch `round4/2026-10-03`). `GET /api/gateway/automations` leaves archived automations out unless `archived_only=true` (or `status` names `archived`) and carries `archived_automations`.
-- Network: the Tailscale name (`tailscale status --json`, when the CLI is installed and Tailscale runs) is listed with the addresses, and every detected address (LAN, Bonjour, Tailscale) is an accepted browser origin without a manual entry or a restart. **Reached through another address?** explains it; manual allowed origins and proxy trust sit under **Advanced**.
-
-- Models page: **Delete** (a trash-bin icon, tooltip "Delete") on every downloaded build. The confirmation states the size from the gateway ("Deletes 351 MB from this computer. Files only — nothing in your runs is touched."), the row shows a busy state, then "Not downloaded" and what was freed. New admin route `POST /api/gateway/models/delete-download` (`model_download_delete_v1`, `dry_run` measures): removes the files with the engine's own mechanism (Ollama delete, Hugging Face / MLX cache folder, one GGUF quant's files), refuses a model that is loaded or locked ("Unload it first"), still downloading, or managed by LM Studio, and writes `model.download_deleted` / `model.download_delete_refused` audit events. Needs AbstractCore with per-quant GGUF delete and the repo-scoped cache delete (branch `round4/2026-10-03`). The terminal console keeps its own delete for now.
+- **Event-loop watchdog** (`serve --watchdog-seconds N`, default 30, `0` = off): when the event loop has not run for N seconds, the gateway writes the stack of the blocked event-loop thread and every thread's stack to its log and exits with code 75, so the LaunchAgent (`KeepAlive`/`SuccessfulExit: false`), the systemd unit (`Restart=on-failure`) or the local supervisor restarts it. A GIL-independent faulthandler timer exits (code 1) 15 s later when native code holds the interpreter lock. `GET /api/health` reports `watchdog: {enabled, limit_s, last_tick_age_s}`.
+- **Network**: the Tailscale name (when the Tailscale CLI is installed and Tailscale runs) is listed with the addresses, and every detected address (LAN, Bonjour, Tailscale) is an accepted browser origin without a manual entry or a restart. **Reached through another address?** explains reverse proxies and Tailscale in plain words; manual allowed origins and proxy trust sit under **Advanced**.
+- **Terminal console**: pages in the web console's sidebar order with the web pages' data, actions and words — Accounts, Workflows, a **Skills & MCP** page, Providers with the local engines, OpenAI API, Models, Multimodal, Resources, Sandbox, Network, Setup and About. See [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md) and [docs/console.md](docs/console.md#terminal-console-abstractgateway-console).
 
 ### Changed
 
-- Models page is one page with compact cards: the separate **On this computer** list is gone; the downloaded models no catalog build accounts for are rows under **Not in the catalog** in the same list (Status All / Downloaded, with the same Delete and the chip counts including them). Each card's header is one line (name, organisation, parameters, licence, capability tags, badges) and each build is one 44 px line (engine · id · quant · size · status chips · Use as default · Delete); the recommended build keeps a small accent dot. Cards are about half as tall; on narrow windows the facts move under the id.
-- Console **About** is the shared compact card (ui-kit 0.7.0 islands, API "2"): name and version, the AbstractFramework version on this host, the gateway version, six links and the licence line, in about half the height. The list of every installed package is gone from About (it stays on `GET /api/gateway/about`). The vendored islands bundle and kit theme CSS are re-synced from ui-kit 0.7.0.
-- The OpenAI API request log now records each request and response (redacted, see above); before, prompts and replies were never kept. The admin-only `POST /api/gateway/admin/core-endpoint/token/reveal` is removed: no route returns a stored token.
-- The OpenAI-compatible endpoint moved from `/core/v1` to `/v1`; `/core/v1` answers 308 to `/v1` and is deprecated. API keys are gateway tokens; the 0.12.0 endpoint token is still accepted (deprecated). Its settings left the Network page (a pointer remains).
-- `X-Forwarded-For` from a proxy on the gateway machine is now always used for the client address; the switch, renamed **Trust proxies on other machines**, extends it to proxies elsewhere.
+- **The OpenAI-compatible endpoint moved from `/core/v1` to `/v1`.** `/core/v1` answers `308` to `/v1` (method and body kept) and is deprecated. API keys are gateway tokens; the 0.12.0 endpoint token is still accepted (deprecated). Its settings moved from the Network page to the OpenAI API page (Network keeps a pointer). Migration: point your apps at `/v1` and use each caller's gateway token as the key. A 0.12.0 settings file without *Who can connect* reads as **Devices on my network**.
+- **Models page is one list with compact cards.** Downloaded models no catalog build accounts for are rows under **Not in the catalog** in the same list (Status All / Downloaded, the same Delete, included in the chip counts); the separate **On this computer** list is removed. Each card's header is one line (name, organisation, parameters, licence, capability tags, badges) and each build is one line (engine · id · quant · size · status chips · Use as default · Delete); the recommended build keeps a small accent dot. On narrow windows the facts move under the id.
+- **Console About** is the shared compact card (ui-kit 0.8.0 islands, API "2"): name and version, the AbstractFramework version on this host, the gateway version, six links and the licence line. The per-package list stays on `GET /api/gateway/about`.
+- Console islands and kit theme CSS re-synced with ui-kit 0.8.0.
+- `X-Forwarded-For` from a proxy on the gateway machine is always used for the client address; the switch, renamed **Trust proxies on other machines**, extends it to proxies elsewhere.
+- `GET /api/gateway/runs?include_metrics=true` returns each run's totals across its sub-runs (subworkflows, agent sub-runs) on every store, the default file store included: `steps`, `llm_calls`, `tool_calls` and `tokens_total` are read from the ledger. Terminal runs are cached by run id and update time.
+- Dependency floors: `AbstractRuntime>=0.9.0` (base, `apple`, `gpu`), `abstractcore>=2.25.0` (base, `embeddings`), `abstractvoice>=0.14.0`.
+
+### Removed
+
+- The admin-only `POST /api/gateway/admin/core-endpoint/token/reveal`: no route returns a stored token.
 
 ### Fixed
 
-- `GET /api/gateway/about` (and every About that reads it) reports the AbstractFramework release the installer recorded (`bootstrap.env` `FRAMEWORK_VERSION`) before the `abstractframework` package metadata: installer installs have no such package in the gateway's environment, so About said "not installed" or showed a stale leftover version.
-
+- `POST /runs/{run_id}/voice/tts/stream` prepares the stream (run load, durable child run, engine call) off the event loop: the gateway keeps answering `/api/health` and every other request while speech is set up and synthesised.
+- `GET /api/gateway/about` (and every About that reads it) reports the AbstractFramework release the installer recorded (`bootstrap.env` `FRAMEWORK_VERSION`) before the `abstractframework` package metadata, so installer installs show the right AbstractFramework version.
 - Models page: the filters-in-use label no longer overlaps the "N of M models" count on a narrow screen.
-
-### Changed
-
-- `GET /api/gateway/runs?include_metrics=true` returns each run's totals across its sub-runs (subworkflows, agent sub-runs) as documented, and on the default file store too: `steps`, `llm_calls`, `tool_calls` and `tokens_total` are read from the ledger. Terminal runs are cached by run id and update time.
 
 ## [0.12.0] - 2026-10-03
 
@@ -12094,6 +12123,7 @@ flowchart LR
     Asst["Desktop Assistant"]
     Tray["Desktop tray helper (separate process)"]
     CLI["abstractgateway CLI"]
+    OAI["OpenAI-compatible apps and SDKs"]
   end
 
   subgraph GW["AbstractGateway process (abstractgateway serve)"]
@@ -12115,6 +12145,8 @@ flowchart LR
     AppsMgr["Apps manager: Node.js, npm installs, app processes"]
     Jobs["Engine installs and model download jobs"]
     HostCtl["Host control: pause, restart, update"]
+    V1["OpenAI API /v1: gateway-token keys, Who can connect, request log"]
+    Watchdog["Event-loop watchdog: exits 75 when the loop is blocked"]
   end
 
   subgraph Lower["Framework packages"]
@@ -12124,6 +12156,7 @@ flowchart LR
 
   Data[("Data dir: runs, ledgers, commands, artifacts, auth, settings")]
   WS[("Run workspace folders")]
+  SvcMgr["Service manager: LaunchAgent, systemd unit, local supervisor (restarts serve)"]
 
   Browser -->|HTTP| Sec
   Browser -->|app pages| AppSrv
@@ -12132,6 +12165,10 @@ flowchart LR
   Asst -->|HTTP, gateway session| Sec
   CLI -->|HTTP or data dir| Sec
   Tray -->|loopback HTTP, ephemeral token| Sec
+  OAI -->|"HTTP /v1, gateway token as API key"| Sec
+  Sec --> V1
+  V1 -->|serving facade| Core
+  V1 -->|request log| Data
   Sec --> Routes
   Sec --> Console
   Routes -.->|installs, open folder, workspace host| Same
@@ -12158,6 +12195,7 @@ flowchart LR
   AppsMgr -->|launches with a hand-over file| Asst
   Handover --> AppSrv
   Handover --> Asst
+  Watchdog -.->|"exit code 75"| SvcMgr
 ```
 
 Browser apps reach the gateway through their own app server on this computer,
@@ -12235,6 +12273,24 @@ browser on this computer from one elsewhere on the network
   bind (`localhost`, `lan`, `internet`) at `serve` time, checks that the auth
   posture allows it, discovers the addresses, and serves the reverse-proxy
   settings the security middleware reads per request.
+- **OpenAI API** (`src/abstractgateway/core_endpoint.py`,
+  `routes/core_endpoint.py`): serves the OpenAI-compatible API at `/v1` on the
+  gateway listener. The security middleware resolves the caller's gateway
+  token to an account; this layer applies the account's **OpenAI API** switch,
+  Open mode (Guest or the chosen account), *Who can connect* and the request
+  log in the audit log, then hands the request to AbstractCore's serving
+  routes through AbstractRuntime's serving facade. See
+  [openai-api.md](docs/openai-api.md).
+- **Event-loop watchdog** (`src/abstractgateway/loop_watchdog.py`): under
+  `serve`, a tick on the event loop and a checker thread; when the loop has
+  not run for `--watchdog-seconds` (default 30) the gateway writes the blocked
+  stacks to its log and exits with code 75, so the LaunchAgent, systemd unit
+  or local supervisor restarts it. `GET /api/health` reports its state. See
+  [deployment.md](docs/deployment.md).
+- **Session and model-file housekeeping** (`src/abstractgateway/session_archive.py`,
+  `model_download_delete.py`): archive and unarchive a conversation (history
+  kept), and delete a downloaded model's files with the engine's own
+  mechanism, refused while the model is loaded, locked or downloading.
 - **Engines and model downloads** (`src/abstractgateway/engines_install.py`,
   `src/abstractgateway/model_downloads.py`, `routes/engines.py`): engine
   installs are gateway jobs; model downloads, deletes and the catalog come from
@@ -13020,6 +13076,48 @@ The runner uses a lock file (`gateway_runner.lock`) to prevent double-ticking on
 
 Evidence: CLI flag `--no-runner` in `src/abstractgateway/cli.py`, lock lifecycle (`_run`/`_acquire_singleton_lock`/`runner_status`) in `src/abstractgateway/runner.py`.
 
+### What happens when the gateway hangs?
+
+`abstractgateway serve` runs an event-loop watchdog. When the event loop has
+not run for `--watchdog-seconds` (default 30), the gateway writes the blocked
+stacks to its log and exits with code 75; the LaunchAgent, the systemd unit or
+the local supervisor then restarts it. `GET /api/health` reports the
+watchdog's state. See [deployment.md](docs/deployment.md) and
+[troubleshooting.md](docs/troubleshooting.md#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75).
+
+## OpenAI API
+
+### Can I use this gateway from an OpenAI SDK or app?
+
+Yes. An admin turns on the API on the console's **OpenAI API** page. Point the
+SDK at `http://<gateway>/v1` and use your gateway token as the API key; the
+model name is `provider/model` as listed by `GET /v1/models`. Chat completions
+(with tools, streaming and structured outputs through `response_format`
+`json_object` or `json_schema`) and embeddings are supported. See
+[openai-api.md](docs/openai-api.md).
+
+### Who can call the OpenAI API?
+
+Every account with its **OpenAI API** switch on (Accounts, on by default for an
+active account), from the addresses *Who can connect* allows (this machine,
+your network, your tailnet or anywhere). In Open mode, requests without a key
+run as the built-in **Guest** (models only) or an account the admin chooses,
+never an admin. An admin sees every request in the log; anyone else sees their
+own. See [openai-api.md](docs/openai-api.md#access).
+
+### My app uses `/core/v1`. Does it still work?
+
+Yes: `/core/v1/...` answers `308` to `/v1/...` with the method and body kept,
+and is deprecated. Point the app at `/v1`.
+
+## Accounts
+
+### Can I delete an account?
+
+No. Accounts are archived, never deleted: **Archive** signs the account out
+and stops it, and keeps its runtime, runs and history; **Unarchive** brings it
+back inactive. See [console.md](docs/console.md#accounts).
+
 ## Related docs
 
 - Docs index: [README.md](docs/README.md)
@@ -13029,6 +13127,8 @@ Evidence: CLI flag `--no-runner` in `src/abstractgateway/cli.py`, lock lifecycle
 - Automations: [automations.md](docs/automations.md)
 - Security: [security.md](docs/security.md)
 - Configuration: [configuration.md](docs/configuration.md)
+- OpenAI API: [openai-api.md](docs/openai-api.md)
+- Consoles: [console.md](docs/console.md)
 - Architecture: [architecture.md](docs/architecture.md)
 - Operator tooling (optional): [maintenance.md](docs/maintenance.md)
 

@@ -1,15 +1,15 @@
 # Changelog — abstractgateway-console
 
-## Unreleased
+## 0.15.0 (2026-10-04)
 
-Needs AbstractGateway 0.13.0 (the OpenAI API routes, `POST /models/delete-download`, the network
-`tailscale` and `reverse_proxy` fields).
+Needs AbstractGateway 0.13.0 or later (the OpenAI API routes, `POST /models/delete-download`, the network
+`tailscale` and `reverse_proxy` fields, the Skills & MCP and account OpenAI API routes).
 
 ### Changed
 - **Pages in the web console's sidebar order**, each with a fixed key: `1 Connection`, ACCOUNTS `2 Accounts`, WORK
   `3 Workflows` `4 Skills & MCP` `5 Runtimes` `6 Apps`, MODELS `7 Providers` `8 OpenAI API` `9 Models`
   `0 Multimodal`, SYSTEM `H Resources` `T Sandbox` `N Network`, then `S Setup` and `I About`. "Review & Test" is
-  now **Sandbox**; the Engines tab is gone (its engines are on Providers). The setup guide has seven steps: its
+  renamed **Sandbox**; the Engines page is merged into Providers. The setup guide has seven steps: its
   engines step is Providers.
 - **Providers** is the web page: Local providers (one row per engine: state, version, models; install with an
   inline confirm showing the plan, start/stop, browse its models, cancel), Remote providers (the presets) and
@@ -22,13 +22,17 @@ Needs AbstractGateway 0.13.0 (the OpenAI API routes, `POST /models/delete-downlo
   "Works now" / "Not in this mode", "Reached through another address?", and Advanced: allowed origins and
   "Trust proxies on other machines". Internet mode asks with the gateway's own acknowledgement.
 - **Resources**, **Sandbox** and **Multimodal** use the web pages' words and wrapping tables.
+- **Runtimes** uses the web page's run table (Run, Workflow, Status, Node, Session, Updated) as wrapping rows;
+  Enter opens a run's details in place, `t` switches **Root runs only**, and Cancel asks inline in the web's
+  words. Artifacts, Cache and Logs are wrapping tables with the web's column names.
+- **Apps** uses the web page's intro, card blurbs and technical rows (Address, On this machine, npm, Terminal),
+  with Node.js and the Advanced apps and backlog settings (`a` / `b` to edit) under the list.
 - **Setup** adds "Recommended for this computer": each recommended route with its status, engine and model and any
   warning; `a` Use recommended defaults (then "Replace mine too" inline), `D` Download all.
 - **About** is the shared About card (name and version, AbstractFramework and AbstractGateway versions, links,
-  licence line) as a page (`I`) and an overlay (`F1` / `?`); it no longer lists every package. `--about` prints
-  the same card.
+  licence line) as a page (`I`) and an overlay (`F1` / `?`); the per-package list stays on `GET /api/gateway/about`.
+  `--about` prints the same card.
 - The key-hint bar wraps onto a second line instead of cutting the page's keys.
-
 - **Workflows page rebuilt to match the web console.** Rows are grouped **Shared with everyone** and **Mine**;
   search (`/`), **Drafts** (`t`), **Older versions** (`o`) and **Show archived** (`h`); Enter shows a row's
   versions, entrypoints and actions. Space switches **Available to users** (admin, shared workflows), `x` exports
@@ -36,8 +40,8 @@ Needs AbstractGateway 0.13.0 (the OpenAI API routes, `POST /models/delete-downlo
   inline, in the web's words) or unarchives, `i` imports `.flow` files. The **Default workflow per app** and
   **Broken workflows** sections are tabs (`Tab`); the defaults show the web console's options ("Gateway default:
   …", "… (not installed)", "(this gateway)" / "(catalog)"), save at once, and carry the **Streamed replies**
-  switch. A user who is not an admin reads the defaults with "Only an admin can change these." The reload key
-  (`L`) is gone: `r` re-reads, like the web page's refresh.
+  switch. A user who is not an admin reads the defaults with "Only an admin can change these." `r` re-reads,
+  like the web page's refresh (the reload key `L` is removed).
 - **Accounts page.** One table whose rows wrap instead of cutting text: name with its kind, email address,
   mailbox ("Receive only — no outgoing server", "Not available" as on the web), runtime and **Active**
   (`[x]`, `[ ]`, `[-]`, "Archived"). **Show archived** (`h`) lists archived accounts; Enter shows a row's actions
@@ -48,6 +52,7 @@ Needs AbstractGateway 0.13.0 (the OpenAI API routes, `POST /models/delete-downlo
 - Dialogs on the Accounts page (email, logs, create user, create entity, workspace) open across the whole
   terminal; `Esc` closes them. Tables on the Accounts, Workflows and Skills & MCP pages wrap long cells onto more
   lines instead of cutting them.
+- **Connection: "Trust proxies on other machines".** The proxy-trust switch carries the gateway's wording: a proxy on the gateway machine is always believed; the switch extends that to proxies elsewhere.
 
 ### Added
 - **Skills & MCP page** (WORK), the web console's page of the same name, over the same routes. **Skills** tab:
@@ -62,15 +67,15 @@ Needs AbstractGateway 0.13.0 (the OpenAI API routes, `POST /models/delete-downlo
 - **Accounts: OpenAI API** (`o` on a user row, admin): the account's OpenAI API switch, applied at once.
 - **Accounts: an entity's Email** (`@`) opens the full email form on the entity's own mailbox
   (`/api/gateway/accounts/{id}/email…`), with the web console's entity wording.
-
-- **OpenAI API** page: status, base URL, your API key (masked, show, copy, new key), examples, recent requests with
+- **OpenAI API page**: status, base URL, your API key (masked, show, copy, new key), examples, recent requests with
   their recorded request and response; for an admin the endpoint switch, restart, check setup, authentication, who
   can connect and the Open-mode account.
 - Shared widgets: full-width overlay, wrapping table (rows wrap, `Enter` opens details, a tall opened row scrolls
   with PgDn/PgUp), inline confirm, wrapping key-hint bar.
 
-### Changed (accounts and connection)
-- **Connection: "Trust proxies on other machines".** The proxy-trust switch carries the gateway's wording: a proxy on the gateway machine is always believed; the switch extends that to proxies elsewhere.
+## 0.14.0 (2026-10-01)
+
+### Changed
 - **Accounts: archive instead of delete.** `d` archives the selected account after a confirmation ("Archive
   <id>? They can't sign in any more. ..." / "Archive <name>? It stops acting and never wakes. ...") and
   unarchives an archived one (it comes back inactive). A non-admin archives an entity they created. Archived

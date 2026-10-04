@@ -48,9 +48,10 @@ pick a local engine, a default model and the browser apps. A new link:
 
 ### Local models and engines
 
-The console's **Models** and **Engines** tabs (and the matching commands)
-install a local engine and download a model that fits this machine, without a
-terminal. They are AbstractCore's model browser and engine installer, shown
+The console's **Providers** page (its **Local providers** cards) and its
+**Models** page (and the matching commands) install a local engine, download a
+model that fits this machine and delete a download you no longer need, without
+a terminal. They are AbstractCore's model browser and engine installer, shown
 inside the gateway:
 
 ```bash
@@ -157,7 +158,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.10.0
+docker pull ghcr.io/lpalbou/abstractgateway:0.13.0
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -165,7 +166,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.10.0-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.13.0-gpu
 ```
 
 The `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR names are

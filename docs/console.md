@@ -35,6 +35,7 @@ The sidebar groups the tabs in four sections, in this order:
 |---|---|---|
 | Accounts | **Accounts** | every user and entity in one table: the **Active** switch, email, activity (Logs), workspace policy, token rotation, entity management, and the administrator's **Email for everyone** switches ([below](#accounts)) |
 | Work | **Workflows** | the workflow bundles on this gateway, shared by the gateway or your own (name, what each does, version, source, the apps that use it, availability to users), import, export, open in AbstractFlow, archive, the default workflow for each app and the **Streamed replies** setting ([below](#workflows)) |
+| Work | **Skills & MCP** | administrators: **Skills** — the skills shelf setting and every skill (curated and imported, **Show archived**) with View, Export and Archive, import a `.zip` or folder, Duplicate to edit a curated one; **MCP servers** — whether agents are offered tools, an **Enabled for agents** switch per server, add, edit, test and archive ([configuration.md](./configuration.md#skills-shelf)) |
 | Work | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches |
 | Work | **Apps** | the browser apps, Code's terminal app and the desktop Assistant (below), plus *Advanced: apps settings* and *Advanced: backlog settings (Continuum)* |
 | Models | **Providers** | **Local providers**: one card per local engine on the gateway host (Ollama, LM Studio, MLX, llama.cpp, Hugging Face, vLLM) with its status, install, start, stop, **Browse models** and its server connection; **Remote providers**: OpenAI, Anthropic, OpenRouter, Portkey and custom OpenAI-compatible connections with write-only keys (shown as fingerprints); then the **Available Providers** table ([below](#models-and-local-providers)) |
@@ -122,7 +123,7 @@ from a spark template (its name is permanent, [entities.md](./entities.md)).
 | **Mailbox** | "Connected as x@y", "Receive only — no outgoing server" (with the reason under it), "Not connected" or "Paused" (users and entities alike: an entity has its own mailbox) |
 | **Runtime** | the account's runtime id (plain text that wraps), or "No runtime" |
 | **Active** | the switch described below; "Archived" on an archived row |
-| **Actions** | users: **Email**, **Logs**, **Workspace** and a "⋯" menu (**Rotate token**, **Archive**); entities: **Email**, **Logs**, **Manage** and a "⋯" menu (**Archive**); archived rows: **Logs** and a "⋯" menu (**Unarchive**) |
+| **Actions** | users: **OpenAI API** (administrators), **Email**, **Logs**, **Workspace** and a "⋯" menu (**Rotate token**, **Archive**); entities: **Email**, **Logs**, **Manage** and a "⋯" menu (**Archive**); archived rows: **Logs** and a "⋯" menu (**Unarchive**) |
 
 Rows are tinted by kind (a legend under the table reads "Tint: admin · user ·
 entity"). Only the actions that apply to a row are shown: your own row has no
@@ -154,6 +155,11 @@ it is off by default and your browser remembers it.
   entity's own mailbox (an entity is an AI user: its agents read and send from
   it, and notifications about its runs go to its address); the administrator
   and the entity's creator can open it.
+- **OpenAI API** (administrators, user rows) opens a dialog with the
+  account's **OpenAI API** switch: on, the account's gateway token works as an
+  API key at `/v1`; off, its requests answer `403 openai_api_off` (its console
+  sign-in is unchanged). Entities have no key and never use the OpenAI API
+  ([openai-api.md](./openai-api.md#access)).
 - **Logs** opens "Activity — <id>": the account's sign-ins, token rotations,
   runs started, automation commands, account changes and email events from the
   gateway's audit log, newest first, in your local time. The chips **All**,
@@ -177,7 +183,8 @@ it is off by default and your browser remembers it.
   in any more. Their runtime, runs and history are kept; you can unarchive
   later." / for an entity: "It stops acting and never wakes. Its memory, runs
   and history are kept"). Nothing is deleted. **Unarchive** brings the account
-  back inactive: turn **Active** on to let it sign in (or act).
+  back inactive: turn **Active** on to let it sign in (or act). Accounts are
+  never deleted (`DELETE /api/gateway/admin/users/{id}` answers `410`).
 
 Under the table, **Email for everyone** (administrators) holds the switch
 **Mailboxes for users**, with **Agent email tools for users** and **Sign-in by
@@ -400,8 +407,8 @@ The setup guide's **Default model** step shows the same catalog cards with
 filters over. An engine card's **Browse models** opens the tab filtered to that
 engine's builds.
 
-**Local providers** (the Providers tab, id `providers`; the Engines tab of
-0.10.0 and older merged into it, and a `#engines` link opens Providers):
+**Local providers** (the Providers tab, id `providers`; a `#engines` link
+opens Providers):
 
 - One card per engine with a status pill (Ready, Running, Installing, Needs
   your approval, Needs Apple tools, Not installed, Not for this computer),
@@ -617,7 +624,7 @@ groups and their keys. The local engines live on Providers, as on the web.
   run in Observer), `w` workspace policy, `t` rotate token, `m` manage
   (entities), `d` archive (asks inline) or unarchive. Also `a` create user, `e`
   edit user, `n` create entity, `c` talk with an entity, `i` inspect, `s` spark
-  templates, `v` kept data of deleted users and `x` reset an old per-user
+  templates, `v` retained runtimes (transfer one to a user; data is never deleted) and `x` reset an old per-user
   mailbox override. **Email for everyone** (admin) is the page's second tab
   (`Tab`): **Mailboxes for users** and, under Advanced, **Agent email tools
   for users** and **Sign-in by email**. Someone who is not an administrator
@@ -658,6 +665,11 @@ groups and their keys. The local engines live on Providers, as on the web.
   (turning it on asks first; it needs a successful test), `a` adds and `e`
   edits a server (a command or a URL with headers, **Test connection**,
   **Save**), `t` tests it, `d` archives or unarchives. Writes are admin-only.
+- **5 Runtimes** shows the web console's run table (Run, Workflow, Status,
+  Node, Session, Updated) as wrapping rows: `Enter` opens a run's details in
+  place, `t` switches **Root runs only**, `c` cancels a run (it asks first,
+  inline) and `s` steers it. The data planes, Artifacts, Cache and Logs are
+  wrapping tables with the web page's column names.
 - **6 Apps** is the web console's Apps tab: open browser apps signed in,
   install or update them, start and stop them, the desktop Assistant and
   Node.js. Over SSH, or on a machine without a display, **Open** never starts

@@ -46,6 +46,7 @@ flowchart LR
     Asst["Desktop Assistant"]
     Tray["Desktop tray helper (separate process)"]
     CLI["abstractgateway CLI"]
+    OAI["OpenAI-compatible apps and SDKs"]
   end
 
   subgraph GW["AbstractGateway process (abstractgateway serve)"]
@@ -67,6 +68,8 @@ flowchart LR
     AppsMgr["Apps manager: Node.js, npm installs, app processes"]
     Jobs["Engine installs and model download jobs"]
     HostCtl["Host control: pause, restart, update"]
+    V1["OpenAI API /v1: gateway-token keys, Who can connect, request log"]
+    Watchdog["Event-loop watchdog: exits 75 when the loop is blocked"]
   end
 
   subgraph Lower["Framework packages"]
@@ -76,6 +79,7 @@ flowchart LR
 
   Data[("Data dir: runs, ledgers, commands, artifacts, auth, settings")]
   WS[("Run workspace folders")]
+  SvcMgr["Service manager: LaunchAgent, systemd unit, local supervisor (restarts serve)"]
 
   Browser -->|HTTP| Sec
   Browser -->|app pages| AppSrv
@@ -84,6 +88,10 @@ flowchart LR
   Asst -->|HTTP, gateway session| Sec
   CLI -->|HTTP or data dir| Sec
   Tray -->|loopback HTTP, ephemeral token| Sec
+  OAI -->|"HTTP /v1, gateway token as API key"| Sec
+  Sec --> V1
+  V1 -->|serving facade| Core
+  V1 -->|request log| Data
   Sec --> Routes
   Sec --> Console
   Routes -.->|installs, open folder, workspace host| Same
@@ -110,6 +118,7 @@ flowchart LR
   AppsMgr -->|launches with a hand-over file| Asst
   Handover --> AppSrv
   Handover --> Asst
+  Watchdog -.->|"exit code 75"| SvcMgr
 ```
 
 Browser apps reach the gateway through their own app server on this computer,
@@ -187,6 +196,24 @@ browser on this computer from one elsewhere on the network
   bind (`localhost`, `lan`, `internet`) at `serve` time, checks that the auth
   posture allows it, discovers the addresses, and serves the reverse-proxy
   settings the security middleware reads per request.
+- **OpenAI API** (`src/abstractgateway/core_endpoint.py`,
+  `routes/core_endpoint.py`): serves the OpenAI-compatible API at `/v1` on the
+  gateway listener. The security middleware resolves the caller's gateway
+  token to an account; this layer applies the account's **OpenAI API** switch,
+  Open mode (Guest or the chosen account), *Who can connect* and the request
+  log in the audit log, then hands the request to AbstractCore's serving
+  routes through AbstractRuntime's serving facade. See
+  [openai-api.md](./openai-api.md).
+- **Event-loop watchdog** (`src/abstractgateway/loop_watchdog.py`): under
+  `serve`, a tick on the event loop and a checker thread; when the loop has
+  not run for `--watchdog-seconds` (default 30) the gateway writes the blocked
+  stacks to its log and exits with code 75, so the LaunchAgent, systemd unit
+  or local supervisor restarts it. `GET /api/health` reports its state. See
+  [deployment.md](./deployment.md).
+- **Session and model-file housekeeping** (`src/abstractgateway/session_archive.py`,
+  `model_download_delete.py`): archive and unarchive a conversation (history
+  kept), and delete a downloaded model's files with the engine's own
+  mechanism, refused while the model is loaded, locked or downloading.
 - **Engines and model downloads** (`src/abstractgateway/engines_install.py`,
   `src/abstractgateway/model_downloads.py`, `routes/engines.py`): engine
   installs are gateway jobs; model downloads, deletes and the catalog come from

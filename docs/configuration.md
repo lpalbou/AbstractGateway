@@ -190,7 +190,7 @@ users remain on `1 user = 1 runtime` routing.
 Browser apps should exchange a Gateway user token for an opaque Gateway browser
 session through `/api/gateway/session/login`; the raw bearer token should not be
 kept in browser storage, and the login response body does not expose the session
-id or CSRF token. One deliberate exception (round 5, operator decision): the web
+id or CSRF token. One exception: the web
 console keeps the token a person typed at sign-in in session storage (local
 storage with *Remember this browser*) so the OpenAI API page can show that
 person their own API key without any server route returning a stored token; it
@@ -687,7 +687,7 @@ and how to download it.
 
 ### Models and engines
 
-The **Models** and **Engines** tabs of the web console, the terminal console
+The **Models** and **Providers** pages (local engines) of the web console, the terminal console
 and the `abstractgateway models …` / `abstractgateway engines …` commands show
 the same things AbstractCore shows (`abstractcore models …`, `abstractcore
 engines …`): the host's hardware, the local inference engines, a model catalog
@@ -1460,9 +1460,12 @@ Core catalog proxy settings:
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray]`
+- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N]`
   (`--no-tray`: no menu bar / tray icon for this run, for a test or scratch
-  gateway next to your usual one)
+  gateway next to your usual one; `--watchdog-seconds N`, default 30, `0` = off:
+  a gateway whose event loop stays blocked for N seconds writes the blocked
+  stacks to its log and exits with code 75 so its service manager restarts it,
+  see [deployment.md](./deployment.md))
   (host/port default to the [network exposure](#network-exposure-localhost--local-network--internet)
   setting; with none stored, `--host` defaults to `127.0.0.1` when no auth is
   configured, else `0.0.0.0`, and `--port` to `8080`. Explicit flags override the setting.)

@@ -95,7 +95,8 @@ _role_lock = threading.Lock()
 # 0.8.3: registered MCP servers run through integrations.abstractcore.mcp_facade.
 # 0.8.4: configurable automation history and completed result delivery.
 # 0.8.5: Core server composition through the Runtime facade.
-ABSTRACTRUNTIME_FLOOR = "0.8.5"
+# 0.9.0: automation.unarchive (an archived automation comes back paused with its history).
+ABSTRACTRUNTIME_FLOOR = "0.9.0"
 
 
 class LiveDeltaError(RuntimeError):

@@ -409,6 +409,48 @@ The runner uses a lock file (`gateway_runner.lock`) to prevent double-ticking on
 
 Evidence: CLI flag `--no-runner` in `src/abstractgateway/cli.py`, lock lifecycle (`_run`/`_acquire_singleton_lock`/`runner_status`) in `src/abstractgateway/runner.py`.
 
+### What happens when the gateway hangs?
+
+`abstractgateway serve` runs an event-loop watchdog. When the event loop has
+not run for `--watchdog-seconds` (default 30), the gateway writes the blocked
+stacks to its log and exits with code 75; the LaunchAgent, the systemd unit or
+the local supervisor then restarts it. `GET /api/health` reports the
+watchdog's state. See [deployment.md](./deployment.md) and
+[troubleshooting.md](./troubleshooting.md#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75).
+
+## OpenAI API
+
+### Can I use this gateway from an OpenAI SDK or app?
+
+Yes. An admin turns on the API on the console's **OpenAI API** page. Point the
+SDK at `http://<gateway>/v1` and use your gateway token as the API key; the
+model name is `provider/model` as listed by `GET /v1/models`. Chat completions
+(with tools, streaming and structured outputs through `response_format`
+`json_object` or `json_schema`) and embeddings are supported. See
+[openai-api.md](./openai-api.md).
+
+### Who can call the OpenAI API?
+
+Every account with its **OpenAI API** switch on (Accounts, on by default for an
+active account), from the addresses *Who can connect* allows (this machine,
+your network, your tailnet or anywhere). In Open mode, requests without a key
+run as the built-in **Guest** (models only) or an account the admin chooses,
+never an admin. An admin sees every request in the log; anyone else sees their
+own. See [openai-api.md](./openai-api.md#access).
+
+### My app uses `/core/v1`. Does it still work?
+
+Yes: `/core/v1/...` answers `308` to `/v1/...` with the method and body kept,
+and is deprecated. Point the app at `/v1`.
+
+## Accounts
+
+### Can I delete an account?
+
+No. Accounts are archived, never deleted: **Archive** signs the account out
+and stops it, and keeps its runtime, runs and history; **Unarchive** brings it
+back inactive. See [console.md](./console.md#accounts).
+
 ## Related docs
 
 - Docs index: [README.md](./README.md)
@@ -418,5 +460,7 @@ Evidence: CLI flag `--no-runner` in `src/abstractgateway/cli.py`, lock lifecycle
 - Automations: [automations.md](./automations.md)
 - Security: [security.md](./security.md)
 - Configuration: [configuration.md](./configuration.md)
+- OpenAI API: [openai-api.md](./openai-api.md)
+- Consoles: [console.md](./console.md)
 - Architecture: [architecture.md](./architecture.md)
 - Operator tooling (optional): [maintenance.md](./maintenance.md)

@@ -214,7 +214,7 @@ customization.
 
 On first start, the container creates `default/admin` and writes the token to
 `runtime/auth/bootstrap-admin-token`. NVIDIA hosts can try
-`ghcr.io/lpalbou/abstractgateway:0.10.0-gpu` with the compose overlay in
+`ghcr.io/lpalbou/abstractgateway:0.13.0-gpu` with the compose overlay in
 `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
@@ -275,6 +275,22 @@ abstractgateway migrate --from=file --to=sqlite \
   --db-path runtime/gateway/gateway.sqlite3
 ```
 
+## 7) (Optional) Use the gateway from an OpenAI SDK
+
+An admin turns on the OpenAI-compatible API on the console's **OpenAI API**
+page (sidebar **Models**). Then any OpenAI SDK reaches this gateway's models
+with your gateway token as the API key:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="YOUR_GATEWAY_TOKEN")
+print(client.models.list())
+```
+
+See [openai-api.md](./openai-api.md) for the supported surface, access
+settings and the request log.
+
 ## Related docs
 
 - Docs index: [README.md](./README.md)
@@ -286,6 +302,7 @@ abstractgateway migrate --from=file --to=sqlite \
 - Configuration (env vars + optional deps): [configuration.md](./configuration.md)
 - Deployment: [deployment.md](./deployment.md)
 - API overview: [api.md](./api.md)
+- OpenAI API: [openai-api.md](./openai-api.md)
 - Automations: [automations.md](./automations.md)
 - Security: [security.md](./security.md)
 - Operator tooling (optional): [maintenance.md](./maintenance.md)
