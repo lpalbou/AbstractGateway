@@ -1806,18 +1806,36 @@ def _entity_registry_for_service(svc: Any) -> Any:
 
 
 @router.get("/docs/corpus")
-def gateway_docs_corpus(request: Request) -> Dict[str, Any]:
-    """Serve the gateway's OWN documentation corpus (llms.txt) for docs-grounded
-    Q&A (the console assistant drawer / docs-qa bundle, uic c1648 slice b).
+def gateway_docs_corpus(
+    request: Request,
+    app: Optional[str] = Query(
+        default=None,
+        description=(
+            "Whose documentation: omitted or 'gateway' = the gateway's own llms.txt (the console); "
+            "an app id (code, flow, observer, continuum, entity) = that app's llms.txt, read from the "
+            "running app's own build."
+        ),
+    ),
+) -> Dict[str, Any]:
+    """Serve a documentation corpus (llms.txt) for docs-grounded Q&A: the ONE
+    source every Docs assistant reads (the kit's DocsAssistantDrawer in the
+    console and the five apps, round 8 R8.3) before it starts the docs-qa
+    workflow with that text as `docs`.
 
-    The docs-qa contract forbids corpus guessing — this route is how the
-    CONSOLE (whose app is the gateway itself) supplies its corpus. Resolution:
-    operator override env ABSTRACTGATEWAY_DOCS_CORPUS first (set = authoritative,
-    missing file is an honest 404, never a silent fallback), then the repo-root
-    llms.txt beside the package (dev checkouts). Wheels without a corpus 404
-    honestly; the drawer degrades to docs-absent answers.
+    The docs-qa contract forbids corpus guessing. `app` omitted/"gateway":
+    the gateway's OWN corpus — operator override env
+    ABSTRACTGATEWAY_DOCS_CORPUS first (set = authoritative, missing file is an
+    honest 404, never a silent fallback), then the repo-root llms.txt beside
+    the package (dev checkouts), then the wheel copy. An app id: the llms.txt
+    the RUNNING app serves from its own build (`GET /llms.txt` on the app's
+    loopback port — the same app the gateway relays at /apps/<id>/), so the
+    corpus always matches the app version in use. Not running, or an app
+    that does not serve one: an honest 404 naming why.
     """
     _principal_from_request(request)
+    app_id = str(app or "").strip().lower()
+    if app_id and app_id not in ("gateway", "abstractgateway"):
+        return _app_docs_corpus(app_id)
     for label, path in _docs_corpus_candidates():
         try:
             if path.is_file():
@@ -1832,6 +1850,59 @@ def gateway_docs_corpus(request: Request) -> Dict[str, Any]:
             "unset or not an llms.txt; checked: " + ", ".join(label for label, _ in _docs_corpus_candidates()) + ")"
         ),
     )
+
+
+APP_DOCS_FETCH_TIMEOUT_S = 5.0
+APP_DOCS_MAX_BYTES = 4 * 1024 * 1024
+_APP_DOCS_CONTENT_TYPES = ("text/plain", "text/markdown")
+
+
+def _fetch_app_llms_txt(port: int) -> Tuple[int, str, str]:
+    """(status, content type, text) of `GET http://127.0.0.1:<port>/llms.txt`.
+    A loopback read of the app's own static file (no cookies, no forwarded
+    headers: the app sees a local caller). Module-level so tests can stub it."""
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(f"http://127.0.0.1:{int(port)}/llms.txt", headers={"Accept": "text/plain"})
+    try:
+        with urllib.request.urlopen(req, timeout=APP_DOCS_FETCH_TIMEOUT_S) as resp:  # noqa: S310 - loopback only
+            body = resp.read(APP_DOCS_MAX_BYTES + 1)
+            return int(resp.status), str(resp.headers.get("Content-Type") or ""), body.decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        return int(e.code), str(e.headers.get("Content-Type") or "") if e.headers else "", ""
+
+
+def _app_docs_corpus(app_id: str) -> Dict[str, Any]:
+    from ..apps_manager import APP_BY_ID, get_apps_manager
+
+    spec = APP_BY_ID.get(app_id)
+    if spec is None:
+        known = ", ".join(sorted(APP_BY_ID))
+        raise HTTPException(status_code=404, detail=f"Unknown app {app_id!r}: the gateway serves documentation for gateway, {known}.")
+    name = spec.html_title or f"Abstract{spec.name}"
+    port = get_apps_manager().serving_port(spec)
+    if not port:
+        raise HTTPException(
+            status_code=404,
+            detail=f"{name} is not running on this gateway, so its documentation (llms.txt) cannot be read. Start it from the console's Apps page.",
+        )
+    try:
+        status, content_type, text = _fetch_app_llms_txt(int(port))
+    except OSError as e:
+        raise HTTPException(status_code=502, detail=f"{name} did not answer on port {port} for its documentation (llms.txt): {e}") from e
+    media = content_type.split(";", 1)[0].strip().lower()
+    if status != 200 or media not in _APP_DOCS_CONTENT_TYPES or not text.strip():
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"{name} on port {port} does not serve its documentation (llms.txt) "
+                f"(HTTP {status}, {media or 'no content type'}); update the app."
+            ),
+        )
+    if len(text.encode("utf-8")) > APP_DOCS_MAX_BYTES:
+        raise HTTPException(status_code=502, detail=f"{name}'s llms.txt is larger than {APP_DOCS_MAX_BYTES // (1024 * 1024)} MiB; refusing it.")
+    return {"app": name, "source": f"app:{spec.id}:llms.txt", "chars": len(text), "text": text}
 
 
 def _docs_corpus_candidates() -> List[Tuple[str, Path]]:

@@ -3602,7 +3602,7 @@ CONSOLE_UI_JS = r"""
     function topBarIslandProps() {
       const p = state.principal;
       return {
-        assistant: p ? { open: !!assistantState.open, onToggle: () => toggleAssistant(), label: "Docs assistant" } : null,
+        docs: p ? { open: !!assistantState.open, onToggle: () => toggleAssistant(), label: "Docs assistant" } : null,
         appearance: { onOpen: openAppearance, label: "Appearance" },
         about: islands.about,
         extras: [
@@ -3663,6 +3663,8 @@ CONSOLE_UI_JS = r"""
     function renderIslands() {
       if (islands.topbar) islands.topbar.update(topBarIslandProps());
       if (islands.appearance) islands.appearance.update(appearanceIslandProps());
+      // The Docs assistant island follows the session (connected) and its open state.
+      if (typeof renderDocsAssistant === "function") renderDocsAssistant();
     }
     function islandsSetConnection(ok, text) {
       islands.phase = ok ? "connected" : "disconnected";
@@ -3683,6 +3685,7 @@ CONSOLE_UI_JS = r"""
       const legacy = $("topbar-static");
       islands.topbar = lib.mountTopBar(host, topBarIslandProps());
       islands.appearance = lib.mountAppearance($("af-appearance-root"), appearanceIslandProps());
+      renderDocsAssistant();
       host.classList.remove("hidden");
       legacy.classList.add("hidden");
       applyAppearanceSettings();

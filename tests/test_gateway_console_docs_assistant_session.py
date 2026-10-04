@@ -1,125 +1,121 @@
-"""The web console's docs assistant (ADR-0026, operator ruling 2026-09-28).
+"""The web console's Docs assistant (round 8, R8.3).
 
-No client-side history copy and no turn cap: each question starts docs-qa 0.1.1
-in the conversation's gateway session with `use_session_history`, the gateway
-replays the earlier turns through the runtime's history window, and the drawer
-shows the run's `session_history` receipt when earlier messages were not
-replayed. New conversation = a new session.
+The console mounts the kit's DocsAssistantDrawer (panel-chat, through the
+islands bundle's `mountDocsAssistant`) — the same component every app mounts.
+The conversation, the docs-qa transport, history (one gateway session per
+conversation, ADR-0026) and streaming live in the kit (panel-chat
+scripts/check_docs_assistant.mjs). The console owns only:
+- the source ({app: "gateway"}: the gateway's own llms.txt),
+- a GatewayFetch on its own origin (session cookie, CSRF on writes),
+- the open state (top-bar `docs` button) and `connected` (signed in).
 
-The real drawer functions are cut out of the served console and driven in a
-node VM with a fake `$` and `api`.
+The shipped functions are cut out of the served console and driven in node
+with a fake islands lib and a fake fetch.
 """
 
 from __future__ import annotations
 
-import json
-import subprocess
-import tempfile
+import re
 
 import pytest
-from node_requirement import require_node
 
 pytestmark = pytest.mark.basic
 
 
-def _html() -> str:
+def _source() -> str:
     from abstractgateway.console import gateway_console_html
 
-    return gateway_console_html()
+    return "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
 
 
-def _functions(html: str) -> str:
-    start = html.index("const ASSISTANT_BUNDLE = ")
-    end = html.index("const TAB_TITLES = {")
-    return html[start:end]
+def _harness(scenario: str) -> list:
+    from node_requirement import require_node
+    from test_gateway_console_offline import _node, _slice_function
 
-
-def test_markup_and_wiring() -> None:
-    html = _html()
-    assert 'id="assistant-replay"' in html
-    assert ">New conversation</button>" in html
-    assert '$("assistant-clear").onclick = assistantClear;' in html
-    assert "slice(-12)" not in _functions(html)
-
-
-HARNESS = r"""
-const vm = require("vm");
-const scenario = JSON.parse(process.argv[2]);
-const fns = require("fs").readFileSync(process.argv[3], "utf8");
-const els = {};
-function make(id) {
-  const kids = [];
-  els[id] = { id, textContent: "", value: "", hidden: false, disabled: false, scrollTop: 0, scrollHeight: 0, kids,
-    classList: { add() {}, remove() {}, toggle() {} },
-    append(k) { kids.push(k); }, focus() {} };
-  Object.defineProperty(els[id], "textContent", { get() { return this._t || ""; }, set(v) { this._t = v; if (v === "") kids.length = 0; } });
-}
-["assistant-messages", "assistant-note", "assistant-replay", "assistant-input", "assistant-send"].forEach(make);
-els["assistant-replay"].hidden = true;
-const $ = (id) => els[id] || null;
-const document = { createElement() { return { className: "", textContent: "", classList: { add() {}, remove() {} } }; } };
-const calls = [];
-let runs = 0;
-async function api(path, opts = {}) {
-  calls.push([opts.method || "GET", path, opts.body ? JSON.parse(opts.body) : null]);
-  if (path === "/api/gateway/docs/corpus") return { app: "AbstractGateway", text: "# docs" };
-  if (path === "/api/gateway/runs/start") { runs += 1; return { run_id: "r" + runs }; }
-  const i = Number(path.split("/r").pop()) - 1;
-  return { status: "completed", output: { response: "answer-" + (i + 1) }, session_history: scenario.receipts[i] };
-}
-const ctx = vm.createContext({ $, api, document, console, setTimeout: (f) => f(), crypto: { randomUUID: () => "u" + Math.random().toString(16).slice(2) } });
-vm.runInContext(fns + "\n;this.submit = assistantSubmit; this.clear = assistantClear; this.state = assistantState;", ctx);
-(async () => {
-  const out = { sessions: [], replay: [] };
-  for (const q of scenario.questions) {
-    if (q === "__clear__") { ctx.clear(); out.replay.push({ text: $("assistant-replay").textContent, hidden: $("assistant-replay").hidden }); continue; }
-    $("assistant-input").value = q;
-    await ctx.submit();
-    out.sessions.push(ctx.state.sessionId);
-    out.replay.push({ text: $("assistant-replay").textContent, hidden: $("assistant-replay").hidden });
-  }
-  out.starts = calls.filter((c) => c[1] === "/api/gateway/runs/start").map((c) => c[2]);
-  console.log(JSON.stringify(out));
-})().catch((e) => { console.error(e); process.exit(1); });
+    require_node()
+    src = _source()
+    consts = []
+    for name in ("assistantState", "DOCS_ASSISTANT_SOURCE"):
+        m = re.search(r"const " + name + r" = [^\n]*\n", src)
+        assert m, f"{name} missing from the console JavaScript"
+        consts.append(m.group(0))
+    fns = "\n".join(_slice_function(src, n) for n in ("docsAssistantFetch", "docsAssistantProps", "renderDocsAssistant", "toggleAssistant"))
+    script = f"""
+const mounted = []; const updates = []; const fetches = []; const errors = [];
+const console = {{ error: (m) => errors.push(String(m)) }};
+const lib = {{ mountDocsAssistant(el, props) {{ mounted.push({{ el, props }}); return {{ update(p) {{ updates.push(p); }} }}; }} }};
+const islands = {{ lib }};
+const state = {{ principal: {{ id: "admin" }} }};
+let islandRenders = 0;
+function renderIslands() {{ islandRenders += 1; renderDocsAssistant(); }}
+function $(id) {{ return {{ id }}; }}
+function csrf() {{ return "tok%20en"; }}
+function fetch(url, init) {{ fetches.push({{ url, method: init.method || "GET", csrf: init.headers.get("X-AbstractGateway-CSRF"), credentials: init.credentials, accept: init.headers.get("Accept") }}); return Promise.resolve({{ ok: true }}); }}
+{''.join(consts)}
+{fns}
+{scenario}
 """
+    return _node(script)
 
 
-def _drive(scenario: dict) -> dict:
-    node = require_node()
-    with tempfile.TemporaryDirectory() as d:
-        fns, harness = f"{d}/fns.js", f"{d}/harness.js"
-        open(fns, "w").write(_functions(_html()))
-        open(harness, "w").write(HARNESS)
-        proc = subprocess.run([node, harness, json.dumps(scenario), fns], capture_output=True, text=True, timeout=60, check=False)
-    assert proc.returncode == 0, proc.stderr
-    return json.loads(proc.stdout.strip().splitlines()[-1])
+def test_the_top_bar_button_mounts_the_kit_drawer_once_then_updates_it() -> None:
+    out = _harness(
+        """
+toggleAssistant();
+const first = mounted[0];
+toggleAssistant();
+const closed = updates[updates.length - 1];
+first.props.onClose();
+console.log; process.stdout.write(JSON.stringify([{
+  mounts: mounted.length, el: first.el.id, open: first.props.open, source: first.props.source,
+  connected: first.props.connected, suggestions: first.props.suggestions.length, placeholder: first.props.placeholder,
+  closedOpen: closed.open, afterOnClose: updates[updates.length - 1].open, errors,
+}]) + "\\n");
+"""
+    )[0]
+    assert out["mounts"] == 1, "the island mounts once and is updated afterwards (keep-alive)"
+    assert out["el"] == "af-docs-assistant-root"
+    assert out["open"] is True and out["closedOpen"] is False and out["afterOnClose"] is False
+    assert out["source"] == {"app": "gateway", "name": "AbstractGateway"}
+    assert out["connected"] is True
+    assert out["suggestions"] >= 1 and out["placeholder"] == "Ask about the gateway…"
+    assert out["errors"] == []
 
 
-def test_questions_send_only_the_question_in_one_session_with_the_session_replay() -> None:
-    out = _drive({"questions": ["first?", "second?"], "receipts": [None, {"replayed_messages": 2, "dropped_messages": 0}]})
-    first, second = out["starts"]
-    for body, q in ((first, "first?"), (second, "second?")):
-        assert body["bundle_id"] == "docs-qa" and body["bundle_version"] == "0.1.1" and body["flow_id"] == "docsqa001"
-        assert body["input_data"] == {"prompt": q, "docs": "# docs", "app": "AbstractGateway", "use_session_history": True}
-    # One conversation = one gateway session (the server replays the first turn).
-    assert first["session_id"] == second["session_id"]
-    assert first["session_id"].startswith("gateway-docs-assistant:")
-    assert out["replay"] == [{"text": "", "hidden": True}, {"text": "", "hidden": True}]
+def test_the_gateway_fetch_is_same_origin_with_csrf_on_writes_only() -> None:
+    out = _harness(
+        """
+toggleAssistant();
+const f = mounted[0].props.fetchGateway;
+f("api/gateway/runs/start", { method: "POST", body: "{}" });
+f("api/gateway/docs/corpus?app=gateway", { headers: { Accept: "application/json" } });
+f("api/gateway/runs/r1/ledger/stream?after=0", { headers: { Accept: "text/event-stream" } });
+process.stdout.write(JSON.stringify([fetches]) + "\\n");
+"""
+    )[0]
+    assert out[0] == {"url": "/api/gateway/runs/start", "method": "POST", "csrf": "tok en", "credentials": "same-origin", "accept": None}
+    assert out[1]["url"] == "/api/gateway/docs/corpus?app=gateway" and out[1]["csrf"] is None and out[1]["accept"] == "application/json"
+    assert out[2]["url"] == "/api/gateway/runs/r1/ledger/stream?after=0" and out[2]["accept"] == "text/event-stream"
 
 
-def test_the_receipt_is_shown_when_earlier_messages_were_not_replayed() -> None:
-    receipt = {"replayed_messages": 12, "dropped_messages": 49, "dropped_tokens": 61234, "max_tokens": 50000}
-    out = _drive({"questions": ["q?"], "receipts": [receipt]})
-    assert out["replay"][0]["hidden"] is False
-    assert out["replay"][0]["text"] == (
-        "Earlier messages not replayed: 49 (~61,234 tokens). The model read the newest 12 messages "
-        "(history window: the most recent 50,000 tokens of whole messages)."
-    )
+def test_signed_out_disables_the_composer_and_a_bundle_without_the_island_says_so() -> None:
+    out = _harness(
+        """
+state.principal = null;
+toggleAssistant();
+const signedOut = mounted[0].props.connected;
+delete lib.mountDocsAssistant; assistantState.handle = null;
+toggleAssistant(); toggleAssistant();
+process.stdout.write(JSON.stringify([{ signedOut, errors }]) + "\\n");
+"""
+    )[0]
+    assert out["signedOut"] is False
+    assert len(out["errors"]) == 1 and "mountDocsAssistant" in out["errors"][0]
 
 
-def test_new_conversation_starts_a_new_session_and_hides_the_receipt() -> None:
-    receipt = {"replayed_messages": 12, "dropped_messages": 3, "max_tokens": 50000}
-    out = _drive({"questions": ["a?", "__clear__", "b?"], "receipts": [receipt, None]})
-    a, b = out["starts"]
-    assert a["session_id"] != b["session_id"]
-    assert out["replay"][1] == {"text": "", "hidden": True}
+def test_the_top_bar_carries_the_docs_slot_not_the_generic_assistant() -> None:
+    from test_gateway_console_offline import _slice_function
+
+    props = _slice_function(_source(), "topBarIslandProps")
+    assert 'docs: p ? { open: !!assistantState.open, onToggle: () => toggleAssistant(), label: "Docs assistant" } : null' in props
+    assert "assistant:" not in props

@@ -558,17 +558,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     .af-drawer__close:hover { color: var(--text); background: var(--panel-2); }
     .af-drawer__body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: auto; overscroll-behavior: contain; }
     @media (pointer: coarse) { .af-drawer__close { width: var(--tap-min, 44px); height: var(--tap-min, 44px); } }
-    /* Console assistant drawer internals (console-owned, not kit API) */
-    .assistant-messages { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 10px; padding: 14px; }
-    .assistant-msg { border: 1px solid var(--line); border-radius: var(--radius-md); padding: 9px 11px; font-size: var(--font-sm); line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
-    .assistant-msg.user { background: var(--info-subtle); align-self: flex-end; max-width: 88%; }
-    .assistant-msg.assistant { background: var(--panel-2); align-self: flex-start; max-width: 94%; }
-    .assistant-msg.error { background: color-mix(in srgb, var(--danger) 14%, var(--panel-2)); border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
-    .assistant-msg.pending { color: var(--subtle); font-style: italic; }
-    .assistant-note { color: var(--subtle); font-size: var(--font-xs); padding: 0 14px 6px; }
-    .assistant-composer { display: flex; gap: 8px; padding: 10px 14px 14px; border-top: 1px solid var(--line); }
-    .assistant-composer textarea { flex: 1; resize: vertical; min-height: 44px; max-height: 160px; }
-    .assistant-composer { padding-bottom: max(14px, var(--safe-bottom, 0px)); }
 		    .workspace-shell { display: grid; gap: 16px; }
 		    /* Sidebar nav rows (the continuum .shell_nav_item recipe) — the
 		       tab-button class + ids survive so the wiring and tests hold. */
@@ -1424,25 +1413,25 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	       assistant). The Sandbox renders the kit's real ChatMessageCard with
 	       the kit's panel_chat.css (af-kit-css), so these hand-mapped rules
 	       stay out of it (:where keeps their specificity unchanged). */
-	    .pc-chat-item:where(:not(.af-sandbox-chat *)) {
+	    .pc-chat-item:where(:not(.af-sandbox-chat *, .pc-docs-assistant *)) {
 	      position: relative;
 	      border: 1px solid var(--line);
 	      border-radius: 12px;
 	      padding: 10px 12px;
 	      background: var(--panel-2);
 	    }
-	    .pc-chat-item--user:where(:not(.af-sandbox-chat *)) {
+	    .pc-chat-item--user:where(:not(.af-sandbox-chat *, .pc-docs-assistant *)) {
 	      background: var(--info-subtle);
 	      border-color: color-mix(in srgb, var(--info) 36%, transparent);
 	      border-bottom-right-radius: var(--radius-sm);
 	    }
-	    .pc-chat-item--assistant:where(:not(.af-sandbox-chat *)) {
+	    .pc-chat-item--assistant:where(:not(.af-sandbox-chat *, .pc-docs-assistant *)) {
 	      background: color-mix(in srgb, var(--accent) 8%, var(--panel));
 	      border-color: color-mix(in srgb, var(--accent) 26%, transparent);
 	      border-bottom-left-radius: var(--radius-sm);
 	    }
-	    .pc-chat-item--status:where(:not(.af-sandbox-chat *)) { background: var(--panel-2); }
-	    .pc-chat-item--error:where(:not(.af-sandbox-chat *)) {
+	    .pc-chat-item--status:where(:not(.af-sandbox-chat *, .pc-docs-assistant *)) { background: var(--panel-2); }
+	    .pc-chat-item--error:where(:not(.af-sandbox-chat *, .pc-docs-assistant *)) {
 	      background: color-mix(in srgb, var(--danger) 12%, var(--panel));
 	      border-color: color-mix(in srgb, var(--danger) 32%, transparent);
 	    }
@@ -2086,13 +2075,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    </div>
 	    <!-- Unified top-right cluster: .af-topbar / .af-drawer are abstractuic's
 	         documented CSS public API for non-React consumers (ui-kit README).
-	         Enforced order: assistant, appearance, [extras], connection pill. -->
+	         Enforced order: docs assistant, appearance, [extras], connection pill. -->
 	    <!-- The kit's AfTopBarActions island mounts here (console_islands.py);
 	         the static cluster below is the same public markup and stays as
 	         the no-bundle fallback (and the node-VM tests' surface). -->
 	    <div id="af-topbar-root" class="af-topbar-island hidden"></div>
 	    <div id="topbar-static" class="status af-topbar" role="group" aria-label="Console actions">
-	      <button id="open-assistant" class="af-topbar__btn session-only" title="Docs assistant" aria-label="Open docs assistant" aria-pressed="false">✦</button>
 	      <button id="open-appearance" class="af-topbar__btn" title="Appearance" aria-label="Appearance">◐</button>
 	      <span id="status-dot" class="dot"></span>
 	      <span id="status-text">Signed out</span>
@@ -3666,26 +3654,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       <div class="modal-actions"><button id="templates-close" class="secondary">Close</button></div>
     </div>
   </div>
-  <!-- Docs assistant drawer (.af-drawer public markup). Keep-alive: closed =
-       display:none, never destroyed — an in-flight answer survives close/open. -->
-  <div id="assistant-drawer" class="af-drawer" style="width: 420px; display: none;" role="complementary" aria-label="Docs assistant">
-    <div class="af-drawer__header">
-      <div class="af-drawer__title">Docs assistant</div>
-      <div class="af-drawer__header-actions">
-        <button id="assistant-clear" class="secondary" type="button" title="Start a new conversation (nothing earlier is replayed)">New conversation</button>
-        <button id="assistant-close" class="af-drawer__close" type="button" aria-label="Close assistant">×</button>
-      </div>
-    </div>
-    <div class="af-drawer__body">
-      <div id="assistant-messages" class="assistant-messages"></div>
-      <div id="assistant-replay" class="assistant-note" hidden></div>
-      <div id="assistant-note" class="assistant-note">Answers are grounded on the gateway's own documentation (llms.txt) via the docs-qa workflow.</div>
-      <form id="assistant-form" class="assistant-composer">
-        <textarea id="assistant-input" rows="2" placeholder="Ask about the gateway…" aria-label="Question for the docs assistant"></textarea>
-        <button id="assistant-send" type="submit" title="Ask the docs assistant (Enter)">Ask</button>
-      </form>
-    </div>
-  </div>
+  <!-- Docs assistant (round 8, R8.3): panel-chat's DocsAssistantDrawer, the
+       SAME component every app mounts, rendered by the islands bundle
+       (mountDocsAssistant) into this host. Keep-alive: closed = hidden,
+       never unmounted — an in-flight answer survives close/open. -->
+  <div id="af-docs-assistant-root"></div>
   <!-- abstractuic ui-kit console islands (the bundle's first line names the
        kit version): the kit's React
        AfTopBarActions + AfAppearanceDialog, bundled by ui-kit
@@ -4079,17 +4052,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    function closeAppearance() {
 	      $("appearance-backdrop").classList.add("hidden");
 	    }
-	    // ---- Docs assistant drawer (docs-qa bundle transport) ----
-	    // ask() = start a catalog run of docs-qa with the gateway's OWN corpus
-	    // (GET /docs/corpus) and poll the run to completion. Never routes through
-	    // entity chat (a visit is billable and forms memories — kit contract).
-	    // History (ADR-0026, operator ruling 2026-09-28): no client-side copy and
-	    // no turn cap. Each conversation is ONE gateway session; every question
-	    // starts with use_session_history, so the gateway replays the earlier
-	    // turns through the runtime's history window (newest whole turns up to
-	    // 50,000 tokens) and records the receipt (run.session_history), shown
-	    // when earlier messages were not replayed. New conversation = new session.
-	    const ASSISTANT_BUNDLE = { registry_scope: "tenant_catalog", bundle_id: "docs-qa", bundle_version: "0.1.1", flow_id: "docsqa001" };
+	    // ---- Docs assistant (round 8, R8.3) ----
+	    // The kit's DocsAssistantDrawer (panel-chat, via the islands bundle):
+	    // the same chat every app mounts, grounded on the gateway's own
+	    // llms.txt (GET /api/gateway/docs/corpus) through the shipped docs-qa
+	    // workflow, one gateway session per conversation (ADR-0026). The
+	    // console supplies only its fetch (session cookie + CSRF) and the
+	    // open state; the conversation lives in the island.
 	    // The kit's randomId() (ui-kit 0.3.3, random_id.ts), ported: browsers
 	    // withhold crypto.randomUUID over plain http (a console opened from
 	    // another machine), so a v4 UUID is built from getRandomValues then
@@ -4138,121 +4107,46 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      } catch { /* fall back below */ }
 	      return execCommandCopy(value);
 	    }
-	    function assistantNewSessionId() {
-	      return "gateway-docs-assistant:" + randomId();
+	    const assistantState = { open: false, handle: null, missingWarned: false };
+	    const DOCS_ASSISTANT_SOURCE = { app: "gateway", name: "AbstractGateway" };
+	    // GatewayFetch for the kit: relative `api/gateway/...` paths on this
+	    // origin with the session cookie; the CSRF header on writes (the same
+	    // rule as api()). Streams (SSE) and multipart bodies pass through.
+	    function docsAssistantFetch(path, init = {}) {
+	      const headers = new Headers(init.headers || {});
+	      const token = csrf();
+	      if (token && ["POST", "PUT", "PATCH", "DELETE"].includes(String(init.method || "GET").toUpperCase())) {
+	        headers.set("X-AbstractGateway-CSRF", decodeURIComponent(token));
+	      }
+	      return fetch("/" + String(path || "").replace(/^[/]+/, ""), { ...init, headers, credentials: "same-origin" });
 	    }
-	    const assistantState = { open: false, busy: false, corpus: null, corpusWarned: false, sessionId: assistantNewSessionId() };
-	    function assistantReplayNote(history) {
-	      const n = (v) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.trunc(v) : 0);
-	      const dropped = n(history && history.dropped_messages);
-	      if (!dropped) return "";
-	      const replayed = n(history.replayed_messages);
-	      const tokens = n(history.dropped_tokens);
-	      const budget = n(history.max_tokens);
-	      return `Earlier messages not replayed: ${dropped.toLocaleString("en-US")}${tokens ? ` (~${tokens.toLocaleString("en-US")} tokens)` : ""}. ` +
-	        `The model read the newest ${replayed.toLocaleString("en-US")} message${replayed === 1 ? "" : "s"}` +
-	        (budget ? ` (history window: the most recent ${budget.toLocaleString("en-US")} tokens of whole messages).` : ".");
+	    function docsAssistantProps() {
+	      return {
+	        open: !!assistantState.open,
+	        onClose: () => toggleAssistant(false),
+	        source: DOCS_ASSISTANT_SOURCE,
+	        fetchGateway: docsAssistantFetch,
+	        connected: !!state.principal,
+	        placeholder: "Ask about the gateway…",
+	        suggestions: ["How do I give a user a mailbox?", "How do apps reach my models through the OpenAI API?", "Where do workflows come from?"],
+	      };
 	    }
-	    function assistantShowReplay(history) {
-	      const text = assistantReplayNote(history);
-	      $("assistant-replay").textContent = text;
-	      $("assistant-replay").hidden = !text;
-	    }
-	    function assistantAppend(role, text, extraClass) {
-	      const div = document.createElement("div");
-	      div.className = `assistant-msg ${role}${extraClass ? ` ${extraClass}` : ""}`;
-	      div.textContent = text;
-	      $("assistant-messages").append(div);
-	      $("assistant-messages").scrollTop = $("assistant-messages").scrollHeight;
-	      return div;
+	    function renderDocsAssistant() {
+	      const lib = typeof islands === "object" && islands ? islands.lib : null;
+	      if (!lib) return;
+	      if (typeof lib.mountDocsAssistant !== "function") {
+	        // A bundle without mountDocsAssistant is a vendoring defect: logged, never papered over.
+	        if (!assistantState.missingWarned) console.error("AbstractGateway console: the islands bundle has no mountDocsAssistant (ui-kit 0.8.0 round 8 required); the docs assistant is unavailable.");
+	        assistantState.missingWarned = true;
+	        return;
+	      }
+	      if (!assistantState.handle) assistantState.handle = lib.mountDocsAssistant($("af-docs-assistant-root"), docsAssistantProps());
+	      else assistantState.handle.update(docsAssistantProps());
 	    }
 	    function toggleAssistant(force) {
 	      const next = typeof force === "boolean" ? force : !assistantState.open;
 	      assistantState.open = next;
-	      $("assistant-drawer").style.display = next ? "flex" : "none";
-	      $("open-assistant").classList.toggle("is-active", next);
-	      $("open-assistant").setAttribute("aria-pressed", next ? "true" : "false");
-	      renderIslands();
-	      if (next) $("assistant-input").focus();
-	    }
-	    async function assistantEnsureCorpus() {
-	      if (assistantState.corpus !== null) return assistantState.corpus;
-	      try {
-	        const data = await api("/api/gateway/docs/corpus");
-	        assistantState.corpus = { app: data.app || "AbstractGateway", text: data.text || "" };
-	      } catch (err) {
-	        // Honest degradation: the bundle itself answers "no docs were
-	        // supplied" — but the operator should see WHY, once.
-	        assistantState.corpus = { app: "AbstractGateway", text: "" };
-	        if (!assistantState.corpusWarned) {
-	          assistantState.corpusWarned = true;
-	          $("assistant-note").textContent = `#FALLBACK no documentation corpus available (${err.message}) — answers are ungrounded.`;
-	        }
-	      }
-	      return assistantState.corpus;
-	    }
-	    async function assistantAsk(question) {
-	      const corpus = await assistantEnsureCorpus();
-	      const started = await api("/api/gateway/runs/start", {
-	        method: "POST",
-	        body: JSON.stringify({
-	          ...ASSISTANT_BUNDLE,
-	          actor_id: "gateway",
-	          session_id: assistantState.sessionId,
-	          input_data: {
-	            prompt: question,
-	            docs: corpus.text,
-	            app: corpus.app,
-	            use_session_history: true,
-	          },
-	        }),
-	      });
-	      const runId = started.run_id;
-	      // Poll to terminal state; a docs answer is one LLM call (bounded), but
-	      // slow local models happen — cap at ~3 minutes then report honestly.
-	      for (let i = 0; i < 90; i += 1) {
-	        await new Promise((resolve) => setTimeout(resolve, 2000));
-	        const run = await api(`/api/gateway/runs/${encodeURIComponent(runId)}`);
-	        const status = String(run.status || "");
-	        if (status === "completed") {
-	          const out = run.output || {};
-	          const text = typeof out.response === "string" && out.response.trim() ? out.response : JSON.stringify(out);
-	          return { text, history: run.session_history || null };
-	        }
-	        if (status === "failed" || status === "cancelled") {
-	          throw new Error(`docs-qa run ${status}: ${JSON.stringify(run.error || run.output || {}).slice(0, 300)}`);
-	        }
-	      }
-	      throw new Error(`docs-qa run ${runId} still running after 3 minutes — check the Runtimes tab`);
-	    }
-	    async function assistantSubmit(event) {
-	      if (event) event.preventDefault();
-	      if (assistantState.busy) return;
-	      const question = $("assistant-input").value.trim();
-	      if (!question) return;
-	      assistantState.busy = true;
-	      $("assistant-send").disabled = true;
-	      $("assistant-input").value = "";
-	      assistantAppend("user", question);
-	      const pending = assistantAppend("assistant", "Thinking…", "pending");
-	      try {
-	        const answer = await assistantAsk(question);
-	        pending.classList.remove("pending");
-	        pending.textContent = answer.text;
-	        assistantShowReplay(answer.history);
-	      } catch (err) {
-	        pending.classList.remove("pending");
-	        pending.classList.add("error");
-	        pending.textContent = `Failed: ${err.message}`;
-	      } finally {
-	        assistantState.busy = false;
-	        $("assistant-send").disabled = false;
-	      }
-	    }
-	    function assistantClear() {
-	      assistantState.sessionId = assistantNewSessionId();
-	      $("assistant-messages").textContent = "";
-	      assistantShowReplay(null);
+	      renderIslands();  // re-renders the top bar AND the docs assistant island
 	    }
 	    const TAB_TITLES = {
 	      users: ["Accounts", "People who use this gateway and the entities that act on it"],
@@ -15593,13 +15487,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("confirm-backdrop").onclick = (event) => { if (event.target === $("confirm-backdrop")) finishConfirm(false); };
 	    $("open-appearance").onclick = openAppearance;
 	    $("appearance-close").onclick = closeAppearance;
-	    $("open-assistant").onclick = () => toggleAssistant();
-	    $("assistant-close").onclick = () => toggleAssistant(false);
-	    $("assistant-clear").onclick = assistantClear;
-	    $("assistant-form").onsubmit = assistantSubmit;
-	    $("assistant-input").onkeydown = (event) => {
-	      if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); assistantSubmit(); }
-	    };
 	    $("appearance-backdrop").onclick = (event) => { if (event.target === $("appearance-backdrop")) closeAppearance(); };
 	    $("appearance-theme").onchange = updateAppearanceFromForm;
 	    $("appearance-font-size").onchange = updateAppearanceFromForm;

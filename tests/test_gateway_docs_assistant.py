@@ -92,33 +92,113 @@ def test_corpus_is_packaged_in_the_wheel_config() -> None:
     assert '"llms.txt" = "abstractgateway/assets/llms.txt"' in text
 
 
-def test_console_renders_topbar_and_assistant_drawer_markup() -> None:
-    """The console adopts abstractuic's CSS public API (.af-topbar/.af-drawer)
-    with the contract-enforced order: assistant -> appearance -> extras ->
-    connection pill rightmost (unified-top-bar behavior statement 1)."""
+def test_console_mounts_the_kit_docs_assistant_island() -> None:
+    """Round 8 (R8.3): the console's Docs assistant IS the kit's
+    DocsAssistantDrawer (panel-chat) mounted from the islands bundle — the
+    hand-built drawer (its own textarea, "New conversation" text button and
+    docs-qa poller) is gone. The static top-bar fallback keeps appearance ->
+    connection pill; the docs button lives in the island cluster."""
     from abstractgateway.console import gateway_console_html
+    from abstractgateway.console_islands import ISLANDS_CSS, ISLANDS_JS
 
     html = gateway_console_html()
-    # Top bar cluster + enforced order.
     assert 'class="status af-topbar"' in html
-    assistant_pos = html.index('id="open-assistant"')
-    appearance_pos = html.index('id="open-appearance"')
-    pill_pos = html.index('id="sign-out"')
-    assert assistant_pos < appearance_pos < pill_pos
+    assert html.index('id="open-appearance"') < html.index('id="sign-out"')
     assert "af-topbar__pill" in html and "af-topbar__pill-label" in html
-    # Drawer public markup + console assistant internals.
-    for needle in (
-        'id="assistant-drawer"',
-        "af-drawer__header",
-        "af-drawer__body",
-        'id="assistant-messages"',
-        'id="assistant-input"',
-        'id="assistant-form"',
-    ):
-        assert needle in html, needle
-    # The drawer transport rides the published docs-qa catalog bundle.
-    assert '"docs-qa"' in html and '"docsqa001"' in html
-    assert "/api/gateway/docs/corpus" in html
+    assert 'id="af-docs-assistant-root"' in html
+    assert "lib.mountDocsAssistant(" in html
+    assert 'const DOCS_ASSISTANT_SOURCE = { app: "gateway", name: "AbstractGateway" };' in html
+    for gone in ('id="assistant-drawer"', 'id="assistant-input"', 'id="assistant-form"', 'id="open-assistant"', ">New conversation</button>", "ASSISTANT_BUNDLE"):
+        assert gone not in html, gone
+    # The vendored bundle carries the kit component and its CSS.
+    assert "mountDocsAssistant" in ISLANDS_JS and "pc-docs-assistant" in ISLANDS_JS and '"docs-qa"' in ISLANDS_JS
+    assert ".pc-docs-assistant__footer" in ISLANDS_CSS
+    # The console's hand-mapped .pc-chat-item rules never restyle the kit drawer.
+    assert ".pc-chat-item:where(:not(.af-sandbox-chat *, .pc-docs-assistant *))" in html
+
+
+# --- Each app's corpus: GET /docs/corpus?app=<id> (round 8, R8.3) -------------
+
+
+def _serve_llms_txt(text: str, content_type: str = "text/plain; charset=utf-8"):
+    """A real loopback app server answering GET /llms.txt."""
+    import http.server
+    import threading
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            body = text.encode("utf-8")
+            if self.path != "/llms.txt":
+                body = b"<!doctype html><title>shell</title>"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+            else:
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_a):
+            pass
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+def _pin_port(monkeypatch: pytest.MonkeyPatch, port):
+    from abstractgateway import apps_manager
+
+    monkeypatch.setattr(apps_manager.AppsManager, "serving_port", lambda self, spec: port if spec.id == "code" else None)
+
+
+def test_app_corpus_is_the_running_apps_own_llms_txt(monkeypatch: pytest.MonkeyPatch) -> None:
+    srv = _serve_llms_txt("# AbstractCode\n\n> Browser coding assistant.\n")
+    try:
+        _pin_port(monkeypatch, srv.server_address[1])
+        with _client() as client:
+            r = client.get("/api/gateway/docs/corpus", params={"app": "code"})
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["app"] == "AbstractCode"
+            assert body["source"] == "app:code:llms.txt"
+            assert body["text"].startswith("# AbstractCode")
+            assert body["chars"] == len(body["text"])
+    finally:
+        srv.shutdown()
+
+
+def test_app_corpus_refuses_an_html_shell(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An app without llms.txt answers its SPA shell for unknown paths: never a corpus."""
+    srv = _serve_llms_txt("<!doctype html>", content_type="text/html")
+    try:
+        _pin_port(monkeypatch, srv.server_address[1])
+        with _client() as client:
+            r = client.get("/api/gateway/docs/corpus", params={"app": "code"})
+            assert r.status_code == 404, r.text
+            assert "AbstractCode on port" in r.json()["detail"] and "does not serve its documentation (llms.txt)" in r.json()["detail"]
+    finally:
+        srv.shutdown()
+
+
+def test_app_corpus_when_the_app_is_not_running_or_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+    _pin_port(monkeypatch, None)
+    with _client() as client:
+        r = client.get("/api/gateway/docs/corpus", params={"app": "code"})
+        assert r.status_code == 404
+        assert r.json()["detail"].startswith("AbstractCode is not running on this gateway")
+        r = client.get("/api/gateway/docs/corpus", params={"app": "nope"})
+        assert r.status_code == 404 and "Unknown app 'nope'" in r.json()["detail"]
+
+
+def test_app_gateway_is_the_gateways_own_corpus(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    corpus = tmp_path / "llms.txt"
+    corpus.write_text("# gateway docs\n", encoding="utf-8")
+    monkeypatch.setenv("ABSTRACTGATEWAY_DOCS_CORPUS", str(corpus))
+    with _client() as client:
+        r = client.get("/api/gateway/docs/corpus", params={"app": "gateway"})
+        assert r.status_code == 200 and r.json()["app"] == "AbstractGateway" and r.json()["text"] == "# gateway docs\n"
 
 
 def test_vendored_pc_chat_class_set_is_pinned() -> None:
