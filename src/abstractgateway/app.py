@@ -25,7 +25,13 @@ async def _lifespan(_app: FastAPI):
     # >60s boot meant a false recycle. Health answers status="starting"
     # while boot runs; API routes gate on boot completion off the loop.
     from .service import begin_gateway_boot, reset_gateway_boot_state, stop_gateway_runner
+    from . import loop_watchdog
 
+    # Event-loop watchdog (2026-10-04): a loop blocked past
+    # `serve --watchdog-seconds` dumps stacks and exits non-zero so the
+    # service manager restarts the gateway (loop_watchdog.py). Off unless
+    # `serve` configured it.
+    loop_watchdog.start_configured()
     begin_gateway_boot()
     # Browser apps marked enabled start with the gateway, as its children
     # (never launchd/systemd), on a background thread; they stop with it.
@@ -46,6 +52,7 @@ async def _lifespan(_app: FastAPI):
     try:
         yield
     finally:
+        loop_watchdog.stop_active()
         try:
             from .apps_manager import stop_apps_on_shutdown
 
@@ -502,6 +509,13 @@ async def health_check():
     from .service import gateway_runner_health_snapshot
 
     body = {"status": "healthy", "service": "abstractgateway"}
+    # Event-loop watchdog (2026-10-04): {enabled, limit_s, last_tick_age_s}.
+    try:
+        from .loop_watchdog import health_snapshot as _watchdog_snapshot
+
+        body["watchdog"] = _watchdog_snapshot()
+    except Exception:
+        pass
     # Boot honesty (supervisor seam, c4063): while the background boot runs,
     # answer status="starting" — a supervisor must never count a loading
     # gateway as unresponsive (false recycle) NOR as fully healthy. A failed

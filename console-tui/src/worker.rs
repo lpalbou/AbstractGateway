@@ -32,6 +32,14 @@ pub mod entities;
 pub mod json;
 #[path = "worker_operator.rs"]
 pub mod operator;
+/// The Skills & MCP page (skills list/detail/import/export/archive, the
+/// MCP servers registry).
+#[path = "worker_skills.rs"]
+pub mod skills;
+/// The Workflows page (list, availability, archive, import/export, the
+/// default workflow per app, streamed replies).
+#[path = "worker_workflows.rs"]
+pub mod workflows;
 use crate::store::{
     entities_from_payload, models_from_payload, runtimes_from_payload, users_from_payload,
     AvailabilityData, ConnPhase, DiscoverOutcome, DownloadOffer, DownloadStatus, Identity,
@@ -205,6 +213,13 @@ pub enum Cmd {
         entity: bool,
         active: bool,
     },
+    /// `PUT /admin/accounts/{id}/openai-api` `{enabled}` (admin): the
+    /// account's key at /v1 (round 5).
+    SetAccountOpenAi {
+        id: String,
+        tenant_id: String,
+        enabled: bool,
+    },
     /// Archive (or, `unarchive`, bring back inactive) an account: accounts
     /// are archived, never deleted (round 3). `admin` picks the route.
     ArchiveAccount {
@@ -318,6 +333,10 @@ pub enum Cmd {
     Operator(operator::OpCmd),
     /// The plain JSON lane — see `worker::json::JsonCmd`.
     Json(json::JsonCmd),
+    /// The Skills & MCP page — see `worker::skills::SkCmd`.
+    Skills(skills::SkCmd),
+    /// The Workflows page — see `worker::workflows::WfCmd`.
+    Workflows(workflows::WfCmd),
     /// `POST /network {allowed_origins?, trust_proxy?}` (reverse proxy,
     /// mission Z) then re-read. Only the named fields change; the gateway
     /// validates and its words are shown verbatim.
@@ -1677,11 +1696,12 @@ fn handle(
             active,
         } => {
             // The status line names the NEW state (state-toggles rule).
+            // The web console's sentences (console.py setAccountActive).
             let action = match (entity, active) {
-                (false, true) => format!("{id} is active — can sign in"),
-                (false, false) => format!("{id} is inactive — signed out, cannot sign in"),
-                (true, true) => format!("{id} is active — acting again"),
-                (true, false) => format!("{id} is suspended — stopped acting"),
+                (false, true) => format!("{id} is active again."),
+                (false, false) => format!("{id} is deactivated."),
+                (true, true) => format!("{id} is active again."),
+                (true, false) => format!("{id} is suspended."),
             };
             let (write, verify) = with_busy(store, wake, &format!("switching {id}"), || {
                 let write = require_client(client)
@@ -1720,6 +1740,36 @@ fn handle(
             }
         }
 
+        Cmd::SetAccountOpenAi {
+            id,
+            tenant_id,
+            enabled,
+        } => {
+            let action = if enabled {
+                format!("Saved: {id} can use the OpenAI API.")
+            } else {
+                format!("Saved: {id}'s key is refused at /v1.")
+            };
+            let write = with_busy(store, wake, &format!("saving OpenAI API for {id}"), || {
+                require_client(client)
+                    .and_then(|c| c.set_account_openai(&id, &tenant_id, enabled))
+                    .map_err(api_message)
+            });
+            let verified =
+                write
+                    .as_ref()
+                    .ok()
+                    .map(|v| match v.get("openai_api").and_then(Value::as_bool) {
+                        Some(on) if on == enabled => Ok(format!(
+                            "the gateway answers OpenAI API {}",
+                            if on { "on" } else { "off" }
+                        )),
+                        _ => Err(format!("the gateway's row for {id} is unchanged")),
+                    });
+            finish_write(store, wake, action, write, verified, None, on_done);
+            refresh_accounts(store, wake, client);
+        }
+
         Cmd::ArchiveAccount {
             id,
             tenant_id,
@@ -1727,11 +1777,6 @@ fn handle(
             admin,
         } => {
             // The status line names the NEW state (state-toggles rule).
-            let action = if unarchive {
-                format!("{id} is back, inactive — switch Active on to let it in")
-            } else {
-                format!("{id} is archived — runs and history are kept")
-            };
             let write = with_busy(store, wake, &format!("archiving {id}"), || {
                 require_client(client)
                     .and_then(|c| {
@@ -1758,6 +1803,20 @@ fn handle(
                         )),
                         _ => Err(format!("the gateway's row for {id} is unchanged")),
                     });
+            // The web console's sentences (console.py archiveAccount): the
+            // row the gateway answers says whether it is an entity.
+            let entity = write
+                .as_ref()
+                .ok()
+                .and_then(|v| v.get("kind").and_then(Value::as_str))
+                == Some("entity");
+            let action = match (unarchive, entity) {
+                (true, true) => format!("{id} is back, inactive: turn Active on to let it act."),
+                (true, false) => {
+                    format!("{id} is back, inactive: turn Active on to let it sign in.")
+                }
+                (false, _) => format!("{id} is archived. Turn on Show archived to see it."),
+            };
             finish_write(store, wake, action, write, verified, None, on_done);
             if admin {
                 refresh_accounts(store, wake, client);
@@ -2143,6 +2202,8 @@ fn handle(
 
         Cmd::Operator(op) => operator::handle(client, store, wake, tx, op, on_done),
         Cmd::Json(j) => json::handle(client, store, wake, j),
+        Cmd::Skills(c) => skills::handle(client, store, wake, c, on_done),
+        Cmd::Workflows(c) => workflows::handle(client, store, wake, c, on_done),
 
         Cmd::LoadAbout => load(
             store,

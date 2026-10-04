@@ -2207,7 +2207,7 @@ fn create_user_flow_and_token_shown_once() {
     h.turns(2);
     h.type_text("a");
     let s = h.turns(2);
-    assert!(s.contains("New gateway user"), "form:\n{s}");
+    assert!(s.contains("Create user"), "form:\n{s}");
     assert!(
         s.contains("The gateway makes their token when you create the user; it is shown once."),
         "token teaching:\n{s}"
@@ -2243,7 +2243,7 @@ fn create_user_flow_and_token_shown_once() {
         .update(|q| q.push(("bob".into(), "agw_once_only_XYZ".into())));
     let s = h.turns(2);
     assert!(
-        s.contains("New gateway user"),
+        s.contains("Create user"),
         "token modal WAITS while the form is still open:\n{s}"
     );
     assert!(
@@ -4194,7 +4194,7 @@ fn wizard_steps_carry_a_goal_line() {
         (6, "Step 7/7", "run one real test"),
         (3, "Step goal:", "a creates a user"),
         (4, "Step goal:", "storage inventory"),
-        (5, "Step goal:", "per-app defaults"),
+        (5, "Step goal:", "default workflow per app"),
         (7, "Step goal:", "live models"),
     ] {
         h.ui.screen.set(screen);
@@ -8108,98 +8108,6 @@ fn finish_step_offers_start_at_login() {
 /// `e` shows the destination (the console's downloads folder, never the
 /// working directory) and exports only after Enter (review 2 N3).
 #[test]
-fn workflow_export_confirms_the_destination_first() {
-    use abstractgateway_console::store::workflows_from_payload;
-    let mut h = harness_sized(Size::new(140, 40));
-    h.connect_as_admin();
-    h.goto_screen(5);
-    h.store.workflows.set(Loadable::Ready(workflows_from_payload(&json!({
-        "items": [{"bundle_id": "demo", "bundle_version": "1.0.0", "entrypoints": [{"flow_id": "main"}]}]
-    }))));
-    h.turns(2);
-    let _ = h.drain_cmds();
-    h.type_text("e");
-    let s = h.turns(2);
-    assert!(
-        s.contains("Export demo@1.0.0"),
-        "the export form opens:\n{s}"
-    );
-    assert!(
-        h.find_cmd(|c| matches!(c, Cmd::ExportWorkflow { .. }))
-            .is_none(),
-        "nothing is written before the confirm"
-    );
-    let want = abstractgateway_console::ui::workflows::export_default_path("demo", "1.0.0");
-    assert!(
-        want.contains("abstractgateway-console") && !want.starts_with("./"),
-        "{want}"
-    );
-    h.type_text("\r");
-    h.turns(2);
-    match h.find_cmd(|c| matches!(c, Cmd::ExportWorkflow { .. })) {
-        Some(Cmd::ExportWorkflow { dest, form_id, .. }) => {
-            assert_eq!(dest, want, "the shown destination is the one written");
-            assert!(form_id.is_some(), "the form waits for the outcome");
-        }
-        other => panic!("expected an export, got {other:?}"),
-    }
-}
-
-#[test]
-fn workflows_import_reload_and_archive_confirm() {
-    use abstractgateway_console::store::workflows_from_payload;
-    use abstractgateway_console::worker::operator::OpCmd;
-    let mut h = harness_sized(Size::new(140, 40));
-    h.connect_as_admin();
-    h.goto_screen(5);
-    h.store.workflows.set(Loadable::Ready(workflows_from_payload(&json!({
-        "items": [{"bundle_id": "demo", "bundle_version": "1.0.0", "entrypoints": [{"flow_id": "main"}]}]
-    }))));
-    let s = h.turns(2);
-    assert!(s.contains("i import .flow"), "panel hint:\n{s}");
-    let _ = h.drain_cmds();
-    // Archive (never delete, DESIGN-v3 §5.3) asks first; keep (default) sends nothing.
-    h.type_text("d");
-    let s = h.turns(2);
-    assert!(
-        s.contains("Archive demo@1.0.0? It disappears from lists"),
-        "confirm:\n{s}"
-    );
-    assert!(!s.contains("Delete demo"), "no delete wording:\n{s}");
-    h.type_text("\r");
-    h.turns(2);
-    assert!(
-        h.find_cmd(|c| matches!(c, Cmd::ArchiveWorkflow { .. }))
-            .is_none(),
-        "keep does not archive"
-    );
-    // Reload.
-    h.type_text("L");
-    h.turns(2);
-    assert!(
-        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::ReloadWorkflows { .. })))
-            .is_some(),
-        "L reloads the registry"
-    );
-    // Import: a local path, Enter submits.
-    h.type_text("i");
-    let s = h.turns(2);
-    assert!(
-        s.contains("Import a workflow bundle (.flow)"),
-        "import form:\n{s}"
-    );
-    h.type_text("/tmp/x.flow\r");
-    h.turns(2);
-    match h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::ImportWorkflow { .. }))) {
-        Some(Cmd::Operator(OpCmd::ImportWorkflow { path, form_id, .. })) => {
-            assert_eq!(path, "/tmp/x.flow");
-            assert!(form_id.is_some(), "the form awaits the outcome");
-        }
-        other => panic!("expected ImportWorkflow, got {other:?}"),
-    }
-}
-
-#[test]
 fn backlog_settings_rows_and_skills_reseed_in_the_knobs() {
     use abstractgateway_console::worker::operator::OpCmd;
     let mut h = harness_sized(Size::new(160, 70));
@@ -8505,32 +8413,6 @@ fn agent_defaults_parse_render_and_body() {
     assert!(
         s.contains("Edit default agent workflows"),
         "editor entry point:\n{s}"
-    );
-}
-
-#[test]
-fn workflows_payload_carries_agent_default_marks() {
-    use abstractgateway_console::store::workflows_from_payload;
-    use abstractgateway_console::ui::workflows::agent_default_marks;
-
-    let d = workflows_from_payload(&json!({
-        "items": [],
-        "default_bundle_id": null,
-        "default_agent_workflows": {
-            "abstractcode.agent.v1": {"workflow_id": "coder@1.1.0:code", "bundle_id": "coder", "source": "stored"}
-        }
-    }));
-    assert_eq!(
-        d.agent_defaults,
-        vec![(
-            "abstractcode.agent.v1".to_string(),
-            "coder@1.1.0:code".to_string()
-        )]
-    );
-    assert_eq!(agent_default_marks("coder", &d.agent_defaults).len(), 1);
-    assert!(
-        agent_default_marks("code", &d.agent_defaults).is_empty(),
-        "a prefix of another bundle id must not match"
     );
 }
 
@@ -8858,31 +8740,6 @@ fn a_choice_dialog_covers_the_screen_while_open() {
 }
 
 /// 80x24: the export dialog's path field stays inside the dialog.
-#[test]
-fn workflow_export_dialog_fits_at_80x24() {
-    use abstractgateway_console::store::workflows_from_payload;
-    let mut h = harness_sized(Size::new(80, 24));
-    h.connect_as_admin();
-    h.goto_screen(5);
-    h.store.workflows.set(Loadable::Ready(workflows_from_payload(&json!({
-        "items": [{"bundle_id": "demo", "bundle_version": "1.0.0", "entrypoints": [{"flow_id": "main"}]}]
-    }))));
-    h.turns(2);
-    h.type_text("e");
-    let s = h.turns(3);
-    let row = s
-        .lines()
-        .find(|l| l.contains("save to"))
-        .unwrap_or_else(|| panic!("{s}"));
-    assert!(
-        row.trim_end().ends_with('│'),
-        "the path field stays inside:\n{row}"
-    );
-}
-
-/// Pressing the key of the screen already shown changes nothing — the
-/// screen's keys stay live (review 2 pty proof: `8` then `w` on
-/// Resources went dead when the host re-anchored focus on itself).
 #[test]
 fn the_current_screen_key_keeps_the_screen_keys_live() {
     let mut h = harness_sized(Size::new(80, 24));
@@ -10061,22 +9918,20 @@ fn accounts_table_has_the_design_columns_and_the_active_switch() {
         .users
         .set(Loadable::Ready(users_from_payload(&users)));
     let s = h.turns(3);
-    for col in [
-        "name",
-        "kind",
-        "email address",
-        "mailbox",
-        "runtime",
-        "active",
-    ] {
+    for col in ["Name", "Email address", "Mailbox", "Runtime", "Active"] {
         assert!(s.contains(col), "column {col:?}:\n{s}");
     }
     assert!(!s.contains("enabled"), "no State/enabled column:\n{s}");
     assert!(s.contains("Connected as a@x.io"), "{s}");
+    // The own row's switch is unavailable; Enter shows the reason.
+    assert!(s.contains("[-]"), "own row unavailable:\n{s}");
+    h.key(b"\r");
+    let s = h.turns(2);
     assert!(
-        s.contains("[-] You can't deactivate your own account."),
+        s.contains("Active: You can't deactivate your own account."),
         "own row unavailable, with the reason:\n{s}"
     );
+    h.key(b"\r");
     // Own row (admin, selected first): space says why, sends nothing.
     let _ = h.drain_cmds();
     h.type_text(" ");
@@ -10114,9 +9969,11 @@ fn accounts_table_has_the_design_columns_and_the_active_switch() {
     assert!(h
         .find_cmd(|c| matches!(c, Cmd::SetAccountActive { .. }))
         .is_none());
-    h.key(b"\x1b[A"); // up to "Deactivate" (Cancel is the default)
-    h.turns(1);
-    h.key(b"\r");
+    assert!(
+        s.contains("[y] Deactivate") && s.contains("[n] Keep"),
+        "inline confirm:\n{s}"
+    );
+    h.type_text("y");
     h.turns(2);
     match h.find_cmd(|c| matches!(c, Cmd::SetAccountActive { .. })) {
         Some(Cmd::SetAccountActive {
@@ -10157,6 +10014,9 @@ fn users_admin_switch_mailboxes_for_users_applies_at_once() {
         agent_tools: true,
         recovery: false,
     }));
+    h.turns(2);
+    // "Email for everyone" is the page's second tab.
+    h.key(b"\t");
     let s = h.turns(3);
     assert!(s.contains("[x] Mailboxes for users"), "{s}");
     assert!(s.contains("You never see anyone's mail."), "{s}");

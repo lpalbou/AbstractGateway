@@ -135,6 +135,7 @@ pub fn open_overlay(
         pairs.push(("esc".into(), "close".into()));
     }
     let vp = abstracttui::app::use_viewport(cx).get_untracked();
+    let notice = ctx.store.notice;
     super::open_form_guarded(ctx, cx, vp, move |mcx, close, guard| {
         let t = use_theme(mcx).get().tokens;
         let vw = abstracttui::app::use_viewport(mcx).get_untracked().w;
@@ -151,6 +152,18 @@ pub fn open_overlay(
                     .child(build(mcx, close, guard))
                     .build(),
             )
+            // The notice lane: a write's outcome sentence stays visible
+            // while the overlay covers the page's footer.
+            .child(dyn_view(
+                LayoutStyle::column().gap(0).shrink(0.0),
+                move || {
+                    let t = use_theme(mcx).get().tokens;
+                    match notice.get() {
+                        Some(n) if !n.is_empty() => sentence(&t, &n, vw - 6, t.text_muted),
+                        _ => Element::new().style(LayoutStyle::default().h(0)).build(),
+                    }
+                },
+            ))
             .child(key_hint_bar(&t, &refs, vw - 6))
             .build()
     });
@@ -167,6 +180,9 @@ pub struct Row {
     pub cells: Vec<String>,
     pub detail: Vec<String>,
     pub dim: bool,
+    /// A group caption ("Shared with everyone"): one full-width line, never
+    /// selected (the selection steps over it).
+    pub group: bool,
 }
 
 impl Row {
@@ -184,12 +200,37 @@ impl Row {
         self.dim = dim;
         self
     }
+    /// A group caption row (the web's full-width group header row).
+    pub fn group(title: impl Into<String>) -> Row {
+        Row {
+            cells: vec![title.into()],
+            group: true,
+            ..Row::default()
+        }
+    }
+}
+
+/// The nearest selectable (non-group) row from `i`, stepping `down` first
+/// and then the other way; `None` when every row is a caption.
+pub fn selectable(rows: &[Row], i: usize, down: bool) -> Option<usize> {
+    if rows.is_empty() {
+        return None;
+    }
+    let i = i.min(rows.len() - 1);
+    let fwd = (i..rows.len()).find(|&j| !rows[j].group);
+    let back = (0..=i).rev().find(|&j| !rows[j].group);
+    if down {
+        fwd.or(back)
+    } else {
+        back.or(fwd)
+    }
 }
 
 /// What one painted line of a [`WrapTable`] is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LineKind {
     Header,
+    Group,
     Cell,
     Detail,
 }
@@ -203,6 +244,9 @@ pub struct WrapLine {
 }
 
 const COL_GAP: i32 = 2;
+/// Columns whose widest cell is at most this many cells never wrap
+/// (a version with "+N older", a state, two short words).
+const SHORT_CELL: i32 = 16;
 
 /// Lay a table out at `width` cells: column widths are solved by the
 /// shared width policy ([`widths::solve`]); a cell wider than its column
@@ -216,11 +260,14 @@ pub fn wrap_layout(
     expanded: Option<usize>,
 ) -> Vec<WrapLine> {
     let width = width.max(8);
-    let cells: Vec<Vec<String>> = rows.iter().map(|r| r.cells.clone()).collect();
+    let cells: Vec<Vec<String>> = rows
+        .iter()
+        .filter(|r| !r.group)
+        .map(|r| r.cells.clone())
+        .collect();
     // solve() reserves a scrollbar cell and one-cell gaps; ours are two
     // cells wide, so hand it the width minus the extra gap cells.
-    let extra = (COL_GAP - 1) * (rules.len() as i32 - 1).max(0);
-    let mut ws = widths::solve(rules, &cells, width - extra);
+    let mut ws = wrap_widths(rules, &cells, width);
     for w in ws.iter_mut() {
         *w = (*w).max(1);
     }
@@ -247,6 +294,19 @@ pub fn wrap_layout(
         });
     }
     for (i, r) in rows.iter().enumerate() {
+        if r.group {
+            for l in wrap_text(
+                r.cells.first().map(String::as_str).unwrap_or(""),
+                width as usize,
+            ) {
+                out.push(WrapLine {
+                    text: l,
+                    row: Some(i),
+                    kind: LineKind::Group,
+                });
+            }
+            continue;
+        }
         let wrapped: Vec<Vec<String>> = ws
             .iter()
             .enumerate()
@@ -272,6 +332,76 @@ pub fn wrap_layout(
                     });
                 }
             }
+        }
+    }
+    out
+}
+
+/// Column widths for wrapping rows: every column first gets its LONGEST
+/// WORD (so a name or a one-word state is never broken mid-word), then the
+/// cells left over go to the columns that still have text to show, in
+/// proportion to what they lack — prose columns absorb the wrapping.
+/// When even the longest words do not fit, the shared width policy
+/// ([`widths::solve`]) decides and words hard-break.
+pub fn wrap_widths(rules: &[ColRule], cells: &[Vec<String>], width: i32) -> Vec<i32> {
+    let n = rules.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let usable = (width - COL_GAP * (n as i32 - 1)).max(n as i32);
+    let mut natural: Vec<i32> = rules
+        .iter()
+        .map(|r| abstracttui::text::width(r.title))
+        .collect();
+    let mut floor: Vec<i32> = natural.clone();
+    for row in cells {
+        for (i, cell) in row.iter().enumerate().take(n) {
+            natural[i] = natural[i].max(abstracttui::text::width(cell));
+            for word in cell.split_whitespace() {
+                floor[i] = floor[i].max(abstracttui::text::width(word));
+            }
+        }
+    }
+    for (i, r) in rules.iter().enumerate() {
+        floor[i] = floor[i].max(r.min.min(natural[i])).min(natural[i]);
+        // A short cell (a state, a version, two words) stays on one line.
+        if natural[i] <= SHORT_CELL {
+            floor[i] = natural[i];
+        }
+        // One very long word (a bundle id) may not take more than a
+        // quarter of the row: it hard-breaks instead of starving the prose.
+        floor[i] = floor[i].min((usable / 4).max(r.min).max(SHORT_CELL));
+    }
+    if natural.iter().sum::<i32>() <= usable {
+        return natural;
+    }
+    let base: i32 = floor.iter().sum();
+    if base > usable {
+        let extra = (COL_GAP - 1) * (n as i32 - 1);
+        return widths::solve(rules, cells, width - extra);
+    }
+    let mut out = floor.clone();
+    let mut left = usable - base;
+    let want: Vec<i32> = (0..n).map(|i| natural[i] - floor[i]).collect();
+    let total: i32 = want.iter().sum();
+    if total > 0 {
+        let mut given = 0;
+        for i in 0..n {
+            let share = (i64::from(left) * i64::from(want[i]) / i64::from(total)) as i32;
+            out[i] += share.min(want[i]);
+            given += share.min(want[i]);
+        }
+        left -= given;
+        // Rounding crumbs to the column that still lacks the most.
+        while left > 0 {
+            let Some(i) = (0..n)
+                .filter(|&i| out[i] < natural[i])
+                .max_by_key(|&i| natural[i] - out[i])
+            else {
+                break;
+            };
+            out[i] += 1;
+            left -= 1;
         }
     }
     out
@@ -395,16 +525,28 @@ impl WrapTable {
         let top_ev = top.clone();
         let rows_ev = rows.clone();
         let dscroll_mv = dscroll.clone();
+        let last_click: Rc<Cell<Option<(usize, std::time::Instant)>>> = Rc::new(Cell::new(None));
+        let on_activate_click = on_activate.clone();
+        let rows_mv = rows.clone();
         let move_to = move |i: usize| {
             if n == 0 {
                 return;
             }
-            let i = i.min(n - 1);
+            let down = i >= sel.get_untracked();
+            let Some(i) = selectable(&rows_mv, i.min(n - 1), down) else {
+                return;
+            };
             if sel.get_untracked() != i {
                 dscroll_mv.set(0);
                 sel.set(i);
             }
         };
+        // A selection resting on a caption moves to the first row below it.
+        if let Some(i) = selectable(&rows, sel.get_untracked(), true) {
+            if i != sel.get_untracked() {
+                sel.set(i);
+            }
+        }
         let el = Element::new()
             .style(layout)
             .focusable()
@@ -475,10 +617,28 @@ impl WrapTable {
                     MouseKind::Down(MouseButton::Left) => {
                         let rect = ectx.current_rect();
                         let y = m.pos.y - rect.y;
-                        let p = painted_ev.borrow();
-                        if y >= 0 {
-                            if let Some(Some(r)) = p.0.get(y as usize) {
-                                move_to(*r);
+                        let hit = {
+                            let p = painted_ev.borrow();
+                            if y >= 0 {
+                                p.0.get(y as usize).copied().flatten()
+                            } else {
+                                None
+                            }
+                        };
+                        if let Some(r) = hit {
+                            // A second press on the same row within the
+                            // double-click window activates it.
+                            let now = std::time::Instant::now();
+                            let double = last_click.get().is_some_and(|(row, at)| {
+                                row == r && now.duration_since(at).as_millis() < 500
+                            });
+                            last_click.set(Some((r, now)));
+                            move_to(r);
+                            if double && sel.get_untracked() == r {
+                                last_click.set(None);
+                                if let Some(f) = on_activate_click.borrow_mut().as_mut() {
+                                    f(r);
+                                }
                             }
                         }
                         ectx.stop_propagation();
@@ -603,6 +763,11 @@ impl WrapTable {
                                 }
                             } else if l.kind == LineKind::Detail {
                                 Style::new().fg(tokens.text_muted).bg(tokens.surface)
+                            } else if l.kind == LineKind::Group {
+                                Style::new()
+                                    .fg(tokens.accent)
+                                    .bg(tokens.surface)
+                                    .attrs(Attrs::BOLD)
                             } else if dim {
                                 Style::new().fg(tokens.text_faint).bg(tokens.surface)
                             } else {
@@ -737,9 +902,16 @@ impl InlineConfirm {
     /// The line itself, shown in place (zero height when nothing is asked).
     pub fn view(self, t: &TokenSet, width: i32) -> View {
         let tokens = *t;
-        dyn_view(LayoutStyle::column().gap(0).shrink(0.0), move || {
+        // `width` under 20 (e.g. 0, or a viewport read before the first
+        // layout) means: the terminal's width minus the page's border.
+        dyn_view_scoped(LayoutStyle::column().gap(0).shrink(0.0), move |gcx| {
             let Some(p) = self.pending.get() else {
                 return Element::new().style(LayoutStyle::default().h(0)).build();
+            };
+            let width = if width < 20 {
+                abstracttui::app::use_viewport(gcx).get().w - 4
+            } else {
+                width
             };
             let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
             let words = wrap_text(&p.sentence, (width - 2).max(10) as usize);
@@ -852,6 +1024,24 @@ mod tests {
         assert!(!closed.contains("detail of"));
         let open = wrap_text_table(&rules(), &rows, 40, Some(1));
         assert!(open.contains("detail of b") && !open.contains("detail of a"));
+    }
+
+    #[test]
+    fn group_captions_are_lines_and_never_selected() {
+        let rows = vec![
+            Row::group("Shared with everyone"),
+            Row::new(vec!["a".into(), "x".into()]),
+            Row::group("Mine"),
+            Row::new(vec!["b".into(), "y".into()]),
+        ];
+        let text = wrap_text_table(&rules(), &rows, 40, None);
+        assert!(
+            text.contains("Shared with everyone") && text.contains("Mine"),
+            "{text}"
+        );
+        assert_eq!(selectable(&rows, 0, true), Some(1));
+        assert_eq!(selectable(&rows, 2, true), Some(3));
+        assert_eq!(selectable(&rows, 2, false), Some(1));
     }
 
     #[test]

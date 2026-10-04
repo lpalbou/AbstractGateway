@@ -118,6 +118,9 @@ pub enum OpCmd {
         clear: bool,
         form_id: Option<u64>,
     },
+    /// Point the email routes at an entity's mailbox (`Some(id)`: the
+    /// `/accounts/{id}/email…` mirror) or back at the caller's own.
+    EmailSubject(Option<String>),
     /// GET /me/email + GET /me/notifications (framework backlog 0992).
     LoadMyEmail,
     /// One "My email" write, verified by a GET (the worker's write law).
@@ -1024,6 +1027,12 @@ pub(super) fn handle(
             finish_write(store, wake, action, write, verified, form_id, on_done);
             if let (true, Ok(v)) = (wrote, verify) {
                 publish_ready(wake, op.my_policy, MyPolicy::from_value(&v));
+            }
+        }
+
+        OpCmd::EmailSubject(subject) => {
+            if let Some(c) = client {
+                c.set_email_subject(subject);
             }
         }
 

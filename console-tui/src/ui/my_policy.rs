@@ -28,17 +28,21 @@ pub fn open(cx: Scope, ctx: &Ctx) {
     ctx.store.op.my_policy.set(Loadable::Loading);
     ctx.send(Cmd::Operator(OpCmd::LoadMyPolicy));
     let ctx2 = ctx.clone();
-    open_form(ctx, cx, Size::new(96, 30), move |mcx, close| {
-        let theme = use_theme(mcx);
-        let t0 = theme.get().tokens;
-        let store = ctx2.store;
-        let form_error = mcx.signal(Option::<String>::None);
-        let in_flight = mcx.signal(false);
-        let form_id = crate::worker::next_form_id();
-        super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
-        let ctx_body = ctx2.clone();
-        let close_cancel = close.clone();
-        Element::new()
+    open_form(
+        ctx,
+        cx,
+        abstracttui::app::use_viewport(cx).get_untracked(),
+        move |mcx, close| {
+            let theme = use_theme(mcx);
+            let t0 = theme.get().tokens;
+            let store = ctx2.store;
+            let form_error = mcx.signal(Option::<String>::None);
+            let in_flight = mcx.signal(false);
+            let form_id = crate::worker::next_form_id();
+            super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
+            let ctx_body = ctx2.clone();
+            let close_cancel = close.clone();
+            Element::new()
             .focusable()
             .autofocus()
             .style(LayoutStyle::column().gap(0))
@@ -64,7 +68,8 @@ pub fn open(cx: Scope, ctx: &Ctx) {
                     .build(),
             )
             .build()
-    });
+        },
+    );
 }
 
 fn form_body(

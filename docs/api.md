@@ -1,7 +1,7 @@
 # AbstractGateway — API overview
 
 The HTTP API is implemented with FastAPI under the `/api` prefix:
-- Health: `GET /api/health`
+- Health: `GET /api/health` (unauthenticated; `status`, `runner`, `watchdog: {enabled, limit_s, last_tick_age_s}` — see [troubleshooting.md](./troubleshooting.md#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75))
 - Gateway surface: `/api/gateway/*` (durable runs + operator tooling)
 
 The API is documented at runtime:

@@ -9,10 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Terminal console (`abstractgateway-console`, unreleased): a **Skills & MCP** page, and the **Accounts** and **Workflows** pages brought to the web console's content and actions (Show archived, inline confirmations, OpenAI API switch, an entity's own mailbox form, workflow groups and availability, default workflow per app). See `console-tui/CHANGELOG.md`.
 - Terminal console (`abstractgateway-console`, round 7): the pages follow the web console's sidebar (Providers with the local engines, OpenAI API, Models, Multimodal; Resources, Sandbox, Network; Setup and About) with the web pages' data, actions and words, through the same routes — see [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md) and [docs/console.md](docs/console.md#terminal-console-abstractgateway-console).
 
 - `GET /api/gateway/voice/defaults` (round 6): the gateway's default voice routes for every app — `tts` = the `output.voice` route (`provider`, `model`, `voice`), `stt` = the `input.voice` route (`provider`, `model`), each with `configured` and, when unset, a `note`. A request that names no engine runs exactly this route. The voice catalog (`GET /voice/voices`) now says the same: `active_tts_provider` / `active_stt_provider` are the configured routes (absent when none is set, never the speech engine's own fallback) and it carries `gateway_defaults`. Before, the catalog forwarded AbstractVoice's opinion — "openai" whenever `OPENAI_API_KEY` was in the environment — so AbstractCode showed "Gateway default · openai" on a gateway routed to supertonic and faster-whisper.
 - `POST /runs/{run_id}/audio/transcribe` answers with the route that ran (`provider`, `model`) and the server time (`duration_ms`).
+
+- Event-loop watchdog (`serve --watchdog-seconds N`, default 30, `0` = off): when the event loop has not run for N seconds, the gateway writes the stack of the blocked event-loop thread and a faulthandler dump of every thread to its log and exits with code 75, so the LaunchAgent (`KeepAlive`/`SuccessfulExit: false`), the systemd unit (`Restart=on-failure`) or the local supervisor restarts it. A second, GIL-independent faulthandler timer exits (code 1) 15 s later when native code holds the interpreter lock. `GET /api/health` reports `watchdog: {enabled, limit_s, last_tick_age_s}`. Before, a blocked loop (2026-10-04, a TTS stream: 10+ minutes at 95% CPU) left a live process answering nothing that no service manager restarts.
 
 ### Fixed
 

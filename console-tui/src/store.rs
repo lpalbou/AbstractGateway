@@ -34,6 +34,14 @@ pub mod email;
 #[path = "store_accounts.rs"]
 pub mod accounts;
 
+/// The Skills & MCP page (web console parity, R7.2).
+#[path = "store_skills.rs"]
+pub mod skills;
+
+/// The Workflows page (web console parity, R7.2).
+#[path = "store_workflows.rs"]
+pub mod workflows_page;
+
 /// Remote data honesty: never render a guess.
 #[derive(Clone, Debug, Default)]
 pub enum Loadable<T> {
@@ -2972,6 +2980,8 @@ pub struct Store {
     pub users: Signal<Loadable<UsersData>>,
     /// `GET /admin/accounts`: users and entities in one list (DESIGN-v2 §2).
     pub accounts: Signal<Loadable<Vec<accounts::AccountRow>>>,
+    /// The Accounts page's view state (Show archived, tab, expanded row).
+    pub acc: accounts::AccountsPage,
     /// The activity list open in the Logs view: (account id or "me", the
     /// filter's `kind=` value, the read).
     pub activity: Signal<Option<(String, String, Loadable<accounts::ActivityData>)>>,
@@ -2992,6 +3002,10 @@ pub struct Store {
     pub op: operator::OperatorStore,
     /// The plain JSON lane (round 7 parity pages): keyed reads + writes.
     pub json: json::JsonStore,
+    /// The Skills & MCP page.
+    pub skills: skills::SkillsStore,
+    /// The Workflows page.
+    pub wf: workflows_page::WorkflowsStore,
     /// Per-provider model lists (route editor + provider browser).
     pub models: Signal<HashMap<String, Loadable<Vec<String>>>>,
     /// Result of the LAST discover-models call — a single slot, which
@@ -3799,6 +3813,7 @@ impl Store {
             unload_locked: cx.signal(None),
             users: cx.signal(Loadable::default()),
             accounts: cx.signal(Loadable::default()),
+            acc: accounts::AccountsPage::create(cx),
             activity: cx.signal(None),
             entities: cx.signal(Loadable::default()),
             runtimes: cx.signal(Loadable::default()),
@@ -3809,6 +3824,8 @@ impl Store {
             network: cx.signal(Loadable::default()),
             op: operator::OperatorStore::create(cx),
             json: json::JsonStore::create(cx),
+            skills: skills::SkillsStore::create(cx),
+            wf: workflows_page::WorkflowsStore::create(cx),
             models: cx.signal(HashMap::new()),
             discover: cx.signal(Loadable::default()),
             sandbox: cx.signal(Loadable::default()),
@@ -3884,6 +3901,7 @@ impl Store {
             unload_locked,
             users,
             accounts,
+            acc: _,
             activity,
             entities,
             runtimes,
@@ -3894,6 +3912,8 @@ impl Store {
             network,
             op,
             json,
+            skills,
+            wf,
             models,
             discover,
             sandbox,
@@ -3952,6 +3972,8 @@ impl Store {
         network.set(Loadable::NotAsked);
         op.reset();
         json.reset();
+        skills.reset();
+        wf.reset();
         models.update(|m| m.clear());
         discover.set(Loadable::NotAsked);
         sandbox.set(Loadable::NotAsked);

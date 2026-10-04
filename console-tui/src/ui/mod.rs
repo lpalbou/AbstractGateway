@@ -34,6 +34,8 @@ pub mod review;
 pub mod routes;
 pub mod runtimes;
 pub mod sandbox;
+/// Skills & MCP (WORK): the skills shelf and the MCP servers registry.
+pub mod skills_mcp;
 pub mod switch;
 pub mod users;
 pub mod util;
@@ -57,7 +59,7 @@ use crate::worker::Cmd;
 use abstractcore_console::screens::Remote;
 use util::{line, span, span_bold};
 
-pub const SCREENS: [&str; 15] = [
+pub const SCREENS: [&str; 16] = [
     "Connection",
     // Local engines + remote connections + the available providers
     // (round 7: the Engines screen merged in, the web's Providers page).
@@ -92,6 +94,8 @@ pub const SCREENS: [&str; 15] = [
     "OpenAI API",
     // The About card (ui/about.rs, round 7: a page at the bottom too).
     "About",
+    // Skills agents can load and the MCP tool servers (ui/skills_mcp.rs).
+    "Skills & MCP",
 ];
 
 /// Screens with semantic weight get NAMES (round-4 P3-2): the bare
@@ -122,6 +126,8 @@ pub const SCREEN_NETWORK: usize = 12;
 pub const SCREEN_OPENAI: usize = 13;
 /// The About page (round 7).
 pub const SCREEN_ABOUT: usize = 14;
+/// The Skills & MCP page (round 7, R7-W1).
+pub const SCREEN_SKILLS: usize = 15;
 /// The screen list in the order it is SHOWN — the web console's sidebar
 /// (console.py `shell_nav`): Connection (the terminal's sign-in) above the
 /// groups, then ACCOUNTS (Accounts), WORK (Workflows, Skills & MCP,
@@ -129,10 +135,11 @@ pub const SCREEN_ABOUT: usize = 14;
 /// SYSTEM (Resources, Sandbox, Network), then Setup and About at the
 /// bottom. The `SCREEN_*` indexes stay stable ids (the wizard, tests and
 /// the refresh table key on them); this is only the display/jump order.
-pub const NAV_ORDER: [usize; 14] = [
+pub const NAV_ORDER: [usize; 15] = [
     SCREEN_CONNECTION,
     SCREEN_USERS,
     SCREEN_WORKFLOWS,
+    SCREEN_SKILLS,
     SCREEN_RUNTIMES,
     SCREEN_APPS,
     SCREEN_PROVIDERS,
@@ -154,7 +161,15 @@ pub const SCREEN_RUNTIMES: usize = 4;
 /// below them (no group).
 pub const NAV_GROUPS: [(&str, &[usize]); 4] = [
     ("ACCOUNTS", &[SCREEN_USERS]),
-    ("WORK", &[SCREEN_WORKFLOWS, SCREEN_RUNTIMES, SCREEN_APPS]),
+    (
+        "WORK",
+        &[
+            SCREEN_WORKFLOWS,
+            SCREEN_SKILLS,
+            SCREEN_RUNTIMES,
+            SCREEN_APPS,
+        ],
+    ),
     (
         "MODELS",
         &[
@@ -208,13 +223,13 @@ pub const WIZARD_STEPS: [usize; 7] = [
 /// others): 1-9 then 0 down the list, then shifted LETTERS once the
 /// digits are spent, chosen so no screen's own uppercase verb (C D F L Q
 /// R U) collides: `H` Resources (host), `T` Sandbox (try), `N` Network,
-/// `S` Setup, `I` About (info). `4` is Skills & MCP (R7-W1's page) once
-/// it is mounted.
+/// `S` Setup, `I` About (info).
 pub fn screen_key(i: usize) -> Option<char> {
     match i {
         SCREEN_CONNECTION => Some('1'),
         SCREEN_USERS => Some('2'),
         SCREEN_WORKFLOWS => Some('3'),
+        SCREEN_SKILLS => Some('4'),
         SCREEN_RUNTIMES => Some('5'),
         SCREEN_APPS => Some('6'),
         SCREEN_PROVIDERS => Some('7'),
@@ -241,7 +256,7 @@ pub fn screen_title(i: usize) -> String {
 /// Stable PageHost page ids, parallel to `SCREENS`. `ui.screen: usize`
 /// stays the source of truth (the wizard gate reads indexes); a two-way
 /// equality-guarded bridge keeps PageHost's string `active` in lockstep.
-pub const SCREEN_IDS: [&str; 15] = [
+pub const SCREEN_IDS: [&str; 16] = [
     "connection",
     "providers",
     "routes",
@@ -259,6 +274,7 @@ pub const SCREEN_IDS: [&str; 15] = [
     "network",
     "openai",
     "about",
+    "skills",
 ];
 
 /// Durable per-screen UI state (Copy: all signals).
@@ -701,21 +717,8 @@ impl Ctx {
                 s.runtime_config.set(Loadable::NotAsked);
                 self.send(Cmd::LoadRuntimes);
             }
-            5 => {
-                // The registered workflow registry. Drafts follow the
-                // screen's own toggle, so `r` refreshes what is on screen
-                // rather than silently changing what it shows.
-                s.workflows.set(Loadable::Loading);
-                self.send(Cmd::LoadWorkflows {
-                    include_drafts: self.ui.workflow_drafts.get_untracked(),
-                });
-                // The "Default workflow per app" section reads the
-                // runtime config's agent-default rows (admin).
-                if s.conn.with_untracked(ConnPhase::is_admin) {
-                    s.runtime_config.set(Loadable::Loading);
-                    self.send(Cmd::LoadRuntimeConfig);
-                }
-            }
+            // The Workflows page reads its list and its defaults itself.
+            5 => workflows::refresh(self),
             6 => {
                 // The inline sandbox feeds its provider picker from
                 // discovery — `r` here means "re-discover providers".
@@ -748,6 +751,7 @@ impl Ctx {
             SCREEN_WELCOME => welcome::refresh(self),
             SCREEN_OPENAI => openai_api::refresh(self),
             SCREEN_ABOUT => about::refresh(self),
+            SCREEN_SKILLS => skills_mcp::refresh(self),
             _ => {}
         }
     }
@@ -1467,6 +1471,7 @@ fn screen_view(gcx: Scope, c: &Ctx, i: usize, t: &TokenSet) -> View {
         SCREEN_NETWORK => network::view(gcx, c, t),
         SCREEN_OPENAI => openai_api::view(gcx, c, t),
         SCREEN_ABOUT => about::page(gcx, c, t),
+        SCREEN_SKILLS => skills_mcp::screen(c, gcx),
         _ => unreachable!("screen {i} has no page"),
     }
 }
@@ -1528,7 +1533,7 @@ fn wizard_goal(screen: usize) -> &'static str {
         }
         4 => "nothing to configure — storage inventory; glance and continue.",
         SCREEN_WORKFLOWS => {
-            "optional — Tab to the per-app defaults, Enter picks one; e exports, d/D delete."
+            "optional — → to the default workflow per app, Enter picks one; x exports, d archives."
         }
         SCREEN_REVIEW => "optionally run one real test (Tab to the prompt, Enter), then Finish.",
         SCREEN_WELCOME => {
@@ -1956,6 +1961,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
     let screens_access = ctx.screens.store.access;
     let engine_notices = abstracttui::app::use_startup_notices(_cx);
     let vp_footer = abstracttui::app::use_viewport(_cx);
+    let ctx_hints = ctx.clone();
     Element::new()
         // Chrome rows: pinned like the header (finding-0240 class) —
         // the hint line disappearing under content pressure would take
@@ -2075,26 +2081,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                         pairs.push(("p", "recommended plan"));
                         pairs.push(("r", "refresh"));
                     }
-                    3 => {
-                        // DESIGN-v2 §2: the row's actions, then the header's
-                        // Create user / Create entity.
-                        pairs.push(("space", "Active"));
-                        pairs.push(("@", "email"));
-                        pairs.push(("l", "logs"));
-                        pairs.push(("w", "workspace"));
-                        pairs.push(("t", "rotate"));
-                        pairs.push(("m", "manage entity"));
-                        pairs.push(("d", "archive"));
-                        pairs.push(("e", "edit user"));
-                        pairs.push(("a", "create user"));
-                        pairs.push(("n", "create entity"));
-                        pairs.push(("c", "talk"));
-                        pairs.push(("i", "inspect"));
-                        pairs.push(("s", "spark templates"));
-                        pairs.push(("v", "kept data of deleted users"));
-                        pairs.push(("x", "reset mailbox override"));
-                        pairs.push(("r", "refresh"));
-                    }
+                    SCREEN_USERS => pairs.extend(users::hints(&ctx_hints)),
                     // The whole Runtimes screen is admin-only: no verbs.
                     4 if non_admin => {}
                     4 => {
@@ -2117,18 +2104,8 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                     // Review's sandbox hints rendered on the Workflows
                     // screen and Review showed none. Pinned by
                     // footer_hints_stay_in_lockstep_with_screens.
-                    SCREEN_WORKFLOWS => {
-                        pairs.push(("Tab", "workflows ⇄ defaults"));
-                        pairs.push(("Enter", "pick a default"));
-                        pairs.push(("o", "other workflow types"));
-                        pairs.push(("t", "show/hide drafts"));
-                        pairs.push(("e", "export .flow"));
-                        pairs.push(("d", "delete version"));
-                        pairs.push(("D", "delete every version"));
-                        pairs.push(("i", "import .flow"));
-                        pairs.push(("L", "reload from disk"));
-                        pairs.push(("r", "refresh"));
-                    }
+                    SCREEN_WORKFLOWS => pairs.extend(workflows::hints(&ctx_hints)),
+                    SCREEN_SKILLS => pairs.extend(skills_mcp::hints(&ctx_hints)),
                     SCREEN_REVIEW => {
                         pairs.push(("Tab→prompt, Enter", "run the test (REAL generation)"));
                         pairs.push(("r", "refresh providers"));
@@ -2178,6 +2155,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                     SCREEN_ROUTES => routes::ADMIN_KEYS,
                     SCREEN_USERS => users::ADMIN_KEYS,
                     SCREEN_WORKFLOWS => workflows::ADMIN_KEYS,
+                    SCREEN_SKILLS => skills_mcp::ADMIN_KEYS,
                     SCREEN_MODELS => models::ADMIN_KEYS,
                     SCREEN_WELCOME => &["a", "D"],
                     SCREEN_CATALOG => catalog::ADMIN_KEYS,

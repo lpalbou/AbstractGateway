@@ -356,98 +356,103 @@ pub fn inspector_view(
 
 fn open_state_modal(cx: Scope, ctx: &Ctx, entity: EntityRow) {
     let ctx2 = ctx.clone();
-    open_form(ctx, cx, Size::new(72, 15), move |mcx, close| {
-        let theme = use_theme(mcx);
-        let t0 = theme.get().tokens;
-        let name = entity.name.clone();
-        // 0 awake · 1 asleep · 2 asleep+dream · 3 paused
-        let pick = mcx.signal(match entity.state.as_str() {
-            "asleep" => 1usize,
-            "paused" => 3usize,
-            _ => 0usize,
-        });
-        let reason = mcx.signal(String::new());
-        let ctx_apply = ctx2.clone();
-        let close_apply = close.clone();
-        let close_cancel = close.clone();
-        let name_apply = name.clone();
-        Element::new()
-            .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold(
-                format!("Entity state — {name} (now: {})", entity.state),
-                t0.accent,
-            )]))
-            .child(line(vec![span(
-                "state is the operator's INTENT; the loop/visit actuality settles behind it",
-                t0.text_faint,
-            )]))
-            .child(field(
-                &t0,
-                "target",
-                RadioGroup::new(vec![
-                    "awake".to_string(),
-                    "asleep".to_string(),
-                    "asleep + dream pass".to_string(),
-                    "paused (kill switch — never auto-clears)".to_string(),
-                ])
-                .selection(pick)
-                .element(mcx, &t0)
-                .autofocus()
-                .build(),
-            ))
-            .child(field(
-                &t0,
-                "reason",
-                TextInput::new()
-                    .value(reason)
-                    .placeholder("optional — recorded with your principal")
-                    .placeholder_while_focused(true)
-                    .layout(LayoutStyle::default().w(52).h(1))
+    open_form(
+        ctx,
+        cx,
+        abstracttui::app::use_viewport(cx).get_untracked(),
+        move |mcx, close| {
+            let theme = use_theme(mcx);
+            let t0 = theme.get().tokens;
+            let name = entity.name.clone();
+            // 0 awake · 1 asleep · 2 asleep+dream · 3 paused
+            let pick = mcx.signal(match entity.state.as_str() {
+                "asleep" => 1usize,
+                "paused" => 3usize,
+                _ => 0usize,
+            });
+            let reason = mcx.signal(String::new());
+            let ctx_apply = ctx2.clone();
+            let close_apply = close.clone();
+            let close_cancel = close.clone();
+            let name_apply = name.clone();
+            Element::new()
+                .style(LayoutStyle::column().gap(0))
+                .child(line(vec![span_bold(
+                    format!("Entity state — {name} (now: {})", entity.state),
+                    t0.accent,
+                )]))
+                .child(line(vec![span(
+                    "state is the operator's INTENT; the loop/visit actuality settles behind it",
+                    t0.text_faint,
+                )]))
+                .child(field(
+                    &t0,
+                    "target",
+                    RadioGroup::new(vec![
+                        "awake".to_string(),
+                        "asleep".to_string(),
+                        "asleep + dream pass".to_string(),
+                        "paused (kill switch — never auto-clears)".to_string(),
+                    ])
+                    .selection(pick)
                     .element(mcx, &t0)
+                    .autofocus()
                     .build(),
-            ))
-            .child(line(vec![span(String::new(), t0.text)]))
-            .child(
-                Element::new()
-                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                    .child(
-                        Button::new("Apply")
-                            .on_click(move || {
-                                let p = pick.get_untracked();
-                                let state = match p {
-                                    1 | 2 => "asleep",
-                                    3 => "paused",
-                                    _ => "awake",
-                                };
-                                let mut body = json!({ "state": state });
-                                if p == 2 {
-                                    body["dream"] = Value::Bool(true);
-                                }
-                                let r = reason.get_untracked().trim().to_string();
-                                if !r.is_empty() {
-                                    body["reason"] = Value::String(r);
-                                }
-                                ctx_apply.send(Cmd::EntityState {
-                                    name: name_apply.clone(),
-                                    body: body.into(),
-                                });
-                                // Outcome lands as toast + journal entry
-                                // (write → cognition verify).
-                                close_apply();
-                            })
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .child(
-                        Button::new("Cancel (Esc)")
-                            .on_click(move || close_cancel())
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .build(),
-            )
-            .build()
-    });
+                ))
+                .child(field(
+                    &t0,
+                    "reason",
+                    TextInput::new()
+                        .value(reason)
+                        .placeholder("optional — recorded with your principal")
+                        .placeholder_while_focused(true)
+                        .layout(LayoutStyle::default().w(52).h(1))
+                        .element(mcx, &t0)
+                        .build(),
+                ))
+                .child(line(vec![span(String::new(), t0.text)]))
+                .child(
+                    Element::new()
+                        .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                        .child(
+                            Button::new("Apply")
+                                .on_click(move || {
+                                    let p = pick.get_untracked();
+                                    let state = match p {
+                                        1 | 2 => "asleep",
+                                        3 => "paused",
+                                        _ => "awake",
+                                    };
+                                    let mut body = json!({ "state": state });
+                                    if p == 2 {
+                                        body["dream"] = Value::Bool(true);
+                                    }
+                                    let r = reason.get_untracked().trim().to_string();
+                                    if !r.is_empty() {
+                                        body["reason"] = Value::String(r);
+                                    }
+                                    ctx_apply.send(Cmd::EntityState {
+                                        name: name_apply.clone(),
+                                        body: body.into(),
+                                    });
+                                    // Outcome lands as toast + journal entry
+                                    // (write → cognition verify).
+                                    close_apply();
+                                })
+                                .element(mcx, &t0)
+                                .build(),
+                        )
+                        .child(
+                            Button::new("Cancel (Esc)")
+                                .on_click(move || close_cancel())
+                                .element(mcx, &t0)
+                                .build(),
+                        )
+                        .build(),
+                )
+                .build()
+        },
+    );
 }
 
 // ---------------------------------------------------------------------

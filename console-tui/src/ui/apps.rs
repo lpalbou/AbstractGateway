@@ -1348,7 +1348,9 @@ fn copy_menu(cx: Scope, ctx: &Ctx) {
 // Modals
 // ---------------------------------------------------------------------
 
-fn open_link_modal(cx: Scope, ctx: &Ctx, link: AppOpenLink) {
+/// The one-time sign-in link modal (also opened by Workflows' "Open in
+/// AbstractFlow").
+pub(crate) fn open_link_modal(cx: Scope, ctx: &Ctx, link: AppOpenLink) {
     let ctx2 = ctx.clone();
     open_form(ctx, cx, Size::new(96, 16), move |mcx, close| {
         let theme = use_theme(mcx);

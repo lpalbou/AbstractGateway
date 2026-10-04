@@ -207,6 +207,15 @@ with data in the per-user data folder. See [first-run.md](./first-run.md). Conta
 servers use the explicit configuration shown on this page: the image sets
 `--host 0.0.0.0` with user accounts on.
 
+**A hung gateway restarts itself.** `serve` runs an event-loop watchdog: when
+the loop has not run for `--watchdog-seconds` (default 30), the gateway dumps
+every thread's stack to its log and exits with code 75. The LaunchAgent
+(`KeepAlive` with `SuccessfulExit: false`) and the systemd unit
+(`Restart=on-failure`) restart any non-zero exit; in a container, use a
+restart policy (`restart: unless-stopped`) for the same effect. `GET
+/api/health` reports `watchdog: {enabled, limit_s, last_tick_age_s}`. See
+[troubleshooting.md](./troubleshooting.md#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75).
+
 ## Behind a reverse proxy (one block, apps included)
 
 The console, the API and every browser app share the gateway's one address:

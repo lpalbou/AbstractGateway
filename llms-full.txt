@@ -3960,7 +3960,7 @@ from zero on the next download; files that were complete are kept.
 # AbstractGateway — API overview
 
 The HTTP API is implemented with FastAPI under the `/api` prefix:
-- Health: `GET /api/health`
+- Health: `GET /api/health` (unauthenticated; `status`, `runner`, `watchdog: {enabled, limit_s, last_tick_age_s}` — see [troubleshooting.md](docs/troubleshooting.md#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75))
 - Gateway surface: `/api/gateway/*` (durable runs + operator tooling)
 
 The API is documented at runtime:
@@ -6498,22 +6498,25 @@ lives inside Review & Test.
   output mode (text, image, voice, music, sound effects, video), file
   attachments and speak-this-reply.
 - **2 Accounts** is the web console's Accounts page: one table of users and
-  entities with name, kind (Admin, User or Entity, coloured, with a legend),
-  email address, mailbox, runtime and **Active** (`[x]` on, `[ ]` off,
-  `[-] reason` when it can't be switched). Under the table, the selected row's
-  keys and the reason of every action that can't apply to it, then the
-  administrator's **Mailboxes for users** switch (Advanced: **Agent email tools
-  for users**, **Sign-in by email**). Keys on the selected row: Space switches
-  Active (deactivate a user, suspend an entity; it asks first), `@` email
+  entities with name and kind (Admin, User or Entity), email address, mailbox,
+  runtime and **Active** (`[x]` on, `[ ]` off, `[-]` when it can't be switched
+  here, "Archived"). Long cells wrap onto more lines; `Enter` on a row shows its
+  actions with their keys and the reason of every action that can't apply.
+  **Show archived** (`h`, admin) lists archived accounts with Logs and
+  Unarchive. Keys on the selected row: Space switches Active (deactivating a
+  user or suspending an entity asks first, inline under the table), `@` email
   (your own row: your email settings, below; another user: their email address
-  with Save and a read-only mailbox line; an entity: why it has no mailbox),
-  `l` activity ("Activity — <id>", `f` / `F` change the filter: All, Sign-ins,
-  Runs, Automations, Email; times in your local time), `w` workspace policy,
-  `t` rotate, `m` manage (entities), `d` delete. Also `a` create user, `e` edit
-  user, `n` create entity, `c` talk with an entity, `i` inspect, `s` spark
+  and a read-only mailbox line; an entity: the entity's own mailbox form), `o`
+  OpenAI API (admin, user rows: one switch), `l` logs ("Activity — <id>", `f` /
+  `F` change the filter: All, Sign-ins, Runs, Automations, Email; `o` opens a
+  run in Observer), `w` workspace policy, `t` rotate token, `m` manage
+  (entities), `d` archive (asks inline) or unarchive. Also `a` create user, `e`
+  edit user, `n` create entity, `c` talk with an entity, `i` inspect, `s` spark
   templates, `v` kept data of deleted users and `x` reset an old per-user
-  mailbox override. Someone who is not an administrator sees their own row and
-  the entities they created.
+  mailbox override. **Email for everyone** (admin) is the page's second tab
+  (`Tab`): **Mailboxes for users** and, under Advanced, **Agent email tools
+  for users** and **Sign-in by email**. Someone who is not an administrator
+  sees their own row and the entities they created.
 - **Your email settings** (`@` on your own row): your **Email address**, your
   **Mailbox** (tabs **IMAP**, the default, **Google** and **Microsoft**; the
   IMAP pane shows the incoming and outgoing servers, filled in as soon as the
@@ -6526,16 +6529,30 @@ lives inside Review & Test.
   sentence, for example "Not sent: hourly limit reached (100 of 100 this hour)
   — resets at 14:05."), the **Agent email tools** switch and Advanced
   (recipient rules, send limits, folder) — see [email.md](docs/email.md).
-- **3 Workflows** lists one row per bundle: name, what it does, version (+N
-  older), source and the apps that use it, with the selected bundle's versions
-  and entrypoints below, and **Broken workflows** when the gateway refused a
-  bundle file. **Default workflow per app** sits under it (`Tab` moves between
-  the two): the plain name of each app's interface, what runs ("Clients
-  choose", "Built in: …", a workflow, or "Broken"), and the selected row's
-  help; `Enter` picks a default and saves it at once, `o` shows **Other
-  workflow types**. Also `t` drafts on/off, `e` export, `d` archive a version,
-  `D` archive every version (nothing is deleted), `i` import a `.flow` bundle, `L` reload from disk.
-  The per-app defaults are also on Runtimes (*Runtime knobs*).
+- **3 Workflows** is the web console's Workflows page, with three tabs
+  (`Tab`). **Workflows** groups the bundles under **Shared with everyone** and
+  **Mine**: name and id, what it does, version (+N older), source, the apps that
+  use it and, for an admin, **Available to users**. `/` searches, `t` Drafts,
+  `o` Older versions and `h` Show archived switch what is listed; `Enter` shows
+  a row's versions, entrypoints and actions. Space switches **Available to
+  users** (admin, shared workflows), `x` exports the latest version as a
+  `.flow` file on this machine, `f` opens it in AbstractFlow, `d` archives (it
+  asks first; workflows are never deleted) or unarchives, `i` imports `.flow`
+  files from this machine. **Default workflow per app** lists each app and
+  what it runs; `Enter` picks a workflow and saves it at once, `o` shows
+  **Other workflow types**, `s` switches **Streamed replies**. **Broken
+  workflows** appears when the gateway could not load some versions, with the
+  reason; `d` archives them.
+- **4 Skills & MCP** is the web console's page of the same name, with two tabs
+  (`Tab`). **Skills**: the shelf (name, what it does, version, trust, source);
+  `/` searches, `h` Show archived, `v` opens a skill (an imported one can be
+  edited and saved, a curated one duplicated to edit), `x` exports it as a
+  `.zip` on this machine, `i` imports a `.zip` or a skill folder from this
+  machine, `d` archives an imported skill or unarchives. **MCP servers**: each
+  server's transport, status and tools; Space switches **Enabled for agents**
+  (turning it on asks first; it needs a successful test), `a` adds and `e`
+  edits a server (a command or a URL with headers, **Test connection**,
+  **Save**), `t` tests it, `d` archives or unarchives. Writes are admin-only.
 - **5 Apps** is the web console's Apps tab: open browser apps signed in,
   install or update them, start and stop them, the desktop Assistant and
   Node.js. Over SSH, or on a machine without a display, **Open** never starts
@@ -8099,6 +8116,15 @@ with data in the per-user data folder. See [first-run.md](docs/first-run.md). Co
 servers use the explicit configuration shown on this page: the image sets
 `--host 0.0.0.0` with user accounts on.
 
+**A hung gateway restarts itself.** `serve` runs an event-loop watchdog: when
+the loop has not run for `--watchdog-seconds` (default 30), the gateway dumps
+every thread's stack to its log and exits with code 75. The LaunchAgent
+(`KeepAlive` with `SuccessfulExit: false`) and the systemd unit
+(`Restart=on-failure`) restart any non-zero exit; in a container, use a
+restart policy (`restart: unless-stopped`) for the same effect. `GET
+/api/health` reports `watchdog: {enabled, limit_s, last_tick_age_s}`. See
+[troubleshooting.md](docs/troubleshooting.md#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75).
+
 ## Behind a reverse proxy (one block, apps included)
 
 The console, the API and every browser app share the gateway's one address:
@@ -9076,6 +9102,30 @@ from the console's **Accounts** tab (**Rotate** on the account's row).
 automations. Install AbstractRuntime 0.7.0 or later in the gateway's Python, then start again. See
 [automations.md](docs/automations.md#before-you-start).
 
+### The log shows `[FATAL] gateway watchdog` and the gateway restarted (exit code 75)
+
+The event loop was blocked for longer than `serve --watchdog-seconds`
+(default 30): the gateway could answer nothing, `/api/health` included. The
+watchdog wrote the stack of the blocked event-loop thread and of every other
+thread to the gateway log, then exited with code 75 so the service manager
+started a fresh gateway. The stack under "the event-loop thread is blocked
+here" names the code that blocked; report it as a bug with that excerpt.
+
+- Logs: macOS `~/Library/Logs/AbstractGateway/gateway.err.log`; Linux
+  `journalctl --user -u abstractgateway`; the installer's background mode and
+  `scripts/start-local.sh` write `gateway.log` in their log folder.
+- Who restarts it: the macOS LaunchAgent (`KeepAlive` with
+  `SuccessfulExit: false`: any non-zero exit), the systemd user unit
+  (`Restart=on-failure`), the installer's background loop and the
+  `start-local.sh` supervisor. A gateway started by hand in a terminal, or
+  the Windows Run entry, is not restarted.
+- A gateway whose stall comes from native code that keeps the Python lock is
+  stopped by the second, faulthandler-based timer 15 s later (exit code 1,
+  same restart).
+- `GET /api/health` reports `watchdog: {enabled, limit_s, last_tick_age_s}`.
+- `--watchdog-seconds 0` turns the watchdog off (a debugging session paused
+  on a breakpoint); it is never active with `--reload`.
+
 ## Network access
 
 ### A change of network mode "needs a restart"
@@ -9442,8 +9492,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Terminal console (`abstractgateway-console`, unreleased): a **Skills & MCP** page, and the **Accounts** and **Workflows** pages brought to the web console's content and actions (Show archived, inline confirmations, OpenAI API switch, an entity's own mailbox form, workflow groups and availability, default workflow per app). See `console-tui/CHANGELOG.md`.
+
 - `GET /api/gateway/voice/defaults` (round 6): the gateway's default voice routes for every app — `tts` = the `output.voice` route (`provider`, `model`, `voice`), `stt` = the `input.voice` route (`provider`, `model`), each with `configured` and, when unset, a `note`. A request that names no engine runs exactly this route. The voice catalog (`GET /voice/voices`) now says the same: `active_tts_provider` / `active_stt_provider` are the configured routes (absent when none is set, never the speech engine's own fallback) and it carries `gateway_defaults`. Before, the catalog forwarded AbstractVoice's opinion — "openai" whenever `OPENAI_API_KEY` was in the environment — so AbstractCode showed "Gateway default · openai" on a gateway routed to supertonic and faster-whisper.
 - `POST /runs/{run_id}/audio/transcribe` answers with the route that ran (`provider`, `model`) and the server time (`duration_ms`).
+
+- Event-loop watchdog (`serve --watchdog-seconds N`, default 30, `0` = off): when the event loop has not run for N seconds, the gateway writes the stack of the blocked event-loop thread and a faulthandler dump of every thread to its log and exits with code 75, so the LaunchAgent (`KeepAlive`/`SuccessfulExit: false`), the systemd unit (`Restart=on-failure`) or the local supervisor restarts it. A second, GIL-independent faulthandler timer exits (code 1) 15 s later when native code holds the interpreter lock. `GET /api/health` reports `watchdog: {enabled, limit_s, last_tick_age_s}`. Before, a blocked loop (2026-10-04, a TTS stream: 10+ minutes at 95% CPU) left a live process answering nothing that no service manager restarts.
 
 ### Fixed
 

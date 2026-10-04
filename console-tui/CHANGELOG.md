@@ -29,7 +29,40 @@ Needs AbstractGateway 0.13.0 (the OpenAI API routes, `POST /models/delete-downlo
   the same card.
 - The key-hint bar wraps onto a second line instead of cutting the page's keys.
 
+- **Workflows page rebuilt to match the web console.** Rows are grouped **Shared with everyone** and **Mine**;
+  search (`/`), **Drafts** (`t`), **Older versions** (`o`) and **Show archived** (`h`); Enter shows a row's
+  versions, entrypoints and actions. Space switches **Available to users** (admin, shared workflows), `x` exports
+  the latest version as `<id>@<version>.flow`, `f` opens it in AbstractFlow (a one-time link), `d` archives (asks
+  inline, in the web's words) or unarchives, `i` imports `.flow` files. The **Default workflow per app** and
+  **Broken workflows** sections are tabs (`Tab`); the defaults show the web console's options ("Gateway default:
+  …", "… (not installed)", "(this gateway)" / "(catalog)"), save at once, and carry the **Streamed replies**
+  switch. A user who is not an admin reads the defaults with "Only an admin can change these." The reload key
+  (`L`) is gone: `r` re-reads, like the web page's refresh.
+- **Accounts page.** One table whose rows wrap instead of cutting text: name with its kind, email address,
+  mailbox ("Receive only — no outgoing server", "Not available" as on the web), runtime and **Active**
+  (`[x]`, `[ ]`, `[-]`, "Archived"). **Show archived** (`h`) lists archived accounts; Enter shows a row's actions
+  and the reason of each action that can't apply. Archive and Deactivate/Suspend ask inline under the table, in the
+  web console's sentences, and the outcome reads like the web ("alice is deactivated.", "bob is archived. Turn on
+  Show archived to see it."). **Email for everyone** is the page's second tab. The Logs overlay lists events in
+  wrapping rows (Enter shows the run) and `o` opens a run in Observer.
+- Dialogs on the Accounts page (email, logs, create user, create entity, workspace) open across the whole
+  terminal; `Esc` closes them. Tables on the Accounts, Workflows and Skills & MCP pages wrap long cells onto more
+  lines instead of cutting them.
+
 ### Added
+- **Skills & MCP page** (WORK), the web console's page of the same name, over the same routes. **Skills** tab:
+  the shelf (name, what it does, version, trust, source), search (`/`), **Show archived** (`h`), `v` opens the
+  skill (fields, SKILL.md, files; **Save** for an imported skill, **Duplicate to edit** for a curated one,
+  **Unarchive** for an archived one), `x` exports `<name>.zip` to this machine, `i` imports a `.zip` or a skill
+  folder from this machine, `d` archives an imported skill (asks inline) or unarchives. **MCP servers** tab: the
+  agents note, name, transport and target, status ("OK · 2 tools · 3 min ago", "Not tested", "Failed: …") and
+  tools; Space switches **Enabled for agents** (turning it on asks inline, a blocked switch says why), `a` adds and
+  `e` edits a server (Command or URL, headers stored encrypted, **Test connection**, **Save**), `t` tests, `d`
+  archives or unarchives. `Tab` switches the two tabs.
+- **Accounts: OpenAI API** (`o` on a user row, admin): the account's OpenAI API switch, applied at once.
+- **Accounts: an entity's Email** (`@`) opens the full email form on the entity's own mailbox
+  (`/api/gateway/accounts/{id}/email…`), with the web console's entity wording.
+
 - **OpenAI API** page: status, base URL, your API key (masked, show, copy, new key), examples, recent requests with
   their recorded request and response; for an admin the endpoint switch, restart, check setup, authentication, who
   can connect and the Open-mode account.

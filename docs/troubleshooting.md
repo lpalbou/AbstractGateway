@@ -88,6 +88,30 @@ from the console's **Accounts** tab (**Rotate** on the account's row).
 automations. Install AbstractRuntime 0.7.0 or later in the gateway's Python, then start again. See
 [automations.md](./automations.md#before-you-start).
 
+### The log shows `[FATAL] gateway watchdog` and the gateway restarted (exit code 75)
+
+The event loop was blocked for longer than `serve --watchdog-seconds`
+(default 30): the gateway could answer nothing, `/api/health` included. The
+watchdog wrote the stack of the blocked event-loop thread and of every other
+thread to the gateway log, then exited with code 75 so the service manager
+started a fresh gateway. The stack under "the event-loop thread is blocked
+here" names the code that blocked; report it as a bug with that excerpt.
+
+- Logs: macOS `~/Library/Logs/AbstractGateway/gateway.err.log`; Linux
+  `journalctl --user -u abstractgateway`; the installer's background mode and
+  `scripts/start-local.sh` write `gateway.log` in their log folder.
+- Who restarts it: the macOS LaunchAgent (`KeepAlive` with
+  `SuccessfulExit: false`: any non-zero exit), the systemd user unit
+  (`Restart=on-failure`), the installer's background loop and the
+  `start-local.sh` supervisor. A gateway started by hand in a terminal, or
+  the Windows Run entry, is not restarted.
+- A gateway whose stall comes from native code that keeps the Python lock is
+  stopped by the second, faulthandler-based timer 15 s later (exit code 1,
+  same restart).
+- `GET /api/health` reports `watchdog: {enabled, limit_s, last_tick_age_s}`.
+- `--watchdog-seconds 0` turns the watchdog off (a debugging session paused
+  on a breakpoint); it is never active with `--reload`.
+
 ## Network access
 
 ### A change of network mode "needs a restart"
