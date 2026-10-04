@@ -121,7 +121,8 @@ pub fn rows(which: Which, d: &RuntimeConfigData) -> Vec<SRow> {
                 let source = match b.source.as_str() {
                     "flag" => "Launch flag",
                     "stored" => "Saved setting",
-                    "env" => "From the environment",
+                    // No environment source for the backlog settings: flag,
+                    // saved, or the default.
                     _ if b.is_folder() => "The gateway's own folder",
                     _ => "Default",
                 }
