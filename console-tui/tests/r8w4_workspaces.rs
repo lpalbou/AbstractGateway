@@ -408,7 +408,16 @@ fn live_gateway_mode_and_folder_rows() {
         eprintln!("R8W4_URL/R8W4_TOKEN not set — skipped");
         return;
     };
-    let folder = std::env::var("R8W4_FOLDER").expect("R8W4_FOLDER (an existing folder)");
+    // A folder made fresh for this run under R8W4_FOLDER (an existing base
+    // folder): a run that stopped half-way never leaves this run a
+    // duplicate ("Already in this list").
+    let base = std::env::var("R8W4_FOLDER").expect("R8W4_FOLDER (an existing base folder)");
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let folder = format!("{}/r8w4-run-{stamp}", base.trim_end_matches('/'));
+    std::fs::create_dir_all(&folder).expect("create the run's folder");
     h.key(b"\r");
     h.until_text("Workspace policy — Gateway policy");
     h.key(b" ");
@@ -496,6 +505,7 @@ fn live_gateway_mode_and_folder_rows() {
             .unwrap_or(0),
         n_allowed
     );
+    let _ = std::fs::remove_dir(&folder);
 }
 
 /// Live: an account gets its own policy, then follows the gateway again.
