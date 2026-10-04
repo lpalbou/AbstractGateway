@@ -41,14 +41,14 @@ pub mod firstrun;
 /// reseed, WAN lookup, own workspace policy.
 #[path = "api_operator.rs"]
 mod operator;
-/// The Skills & MCP page: skills list/detail/import/export/archive and
-/// the MCP servers registry (add/edit/test/agents/archive).
-#[path = "api_skills.rs"]
-pub mod skills;
 /// `POST /sandbox/generate` (the Review sandbox and the Routes Test),
 /// media generation, attachments, the docs assistant.
 #[path = "api_sandbox_docs.rs"]
 pub mod sandbox_docs;
+/// The Skills & MCP page: skills list/detail/import/export/archive and
+/// the MCP servers registry (add/edit/test/agents/archive).
+#[path = "api_skills.rs"]
+pub mod skills;
 
 /// What kind of failure this is — drives which honest state the UI shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
