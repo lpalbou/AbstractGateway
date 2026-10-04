@@ -1082,6 +1082,7 @@ Current direct Gateway endpoints:
 - `POST /api/gateway/runs/{run_id}/videos/generate`
 - `POST /api/gateway/runs/{run_id}/videos/from_image`
 - `POST /api/gateway/runs/{run_id}/music/generate`
+- `GET /api/gateway/voice/defaults`
 - `GET /api/gateway/voice/voices`
 - `GET /api/gateway/audio/speech/models`
 - `GET /api/gateway/audio/transcriptions/models`
@@ -1090,10 +1091,20 @@ Current direct Gateway endpoints:
 - `GET /api/gateway/vision/provider_models`
 - `GET /api/gateway/vision/adapters`
 
+`/voice/defaults` is the one answer to "which engines speak and listen by default":
+
+```json
+{"tts": {"route": "output.voice", "configured": true, "provider": "supertonic", "model": "supertonic-3", "voice": "M3"},
+ "stt": {"route": "input.voice", "configured": true, "provider": "faster-whisper", "model": "large-v3"},
+ "source": "capability_defaults"}
+```
+
+A route the administrator has not set reads `{"configured": false, "provider": null, "model": null, "note": "No gateway default is set for …"}`. A synthesis or transcription request that names no provider and no model runs exactly these routes, so apps show "Gateway default · supertonic / supertonic-3" from here — never from the voice catalog's engine-side fields. The catalog repeats the answer (`gateway_defaults`; `active_tts_provider` / `active_stt_provider` = the configured routes, absent when unset). `/audio/transcribe` returns the route that ran (`provider`, `model`) and `duration_ms`; a `language` hint skips the engine's language detection (faster-whisper large-v3 on an Apple-Silicon CPU: ~25 s → ~9 s for a 4 s clip).
+
 `/voice/tts` returns a durable audio artifact after synthesis. `/voice/tts/stream`
 returns JSON Lines stream events for progressive playback when discovery advertises
 `capabilities.contracts.assistant.voice.tts.streaming=true`; successful streams still
-finish with a Runtime-owned child-run audio artifact.
+finish with a Runtime-owned child-run audio artifact. The stream is real streaming: the engine splits the text at sentence boundaries (first segment one short clause), each segment is sent as soon as it is synthesised while the next one is synthesised, and the setup runs off the event loop. The terminal `done` event's `metrics` carry `ttfb_s`, `rtf`, `device` and, on the CPU, `device_reason`.
 
 The catalog endpoints proxy AbstractCore Server routes when
 `ABSTRACTCORE_SERVER_BASE_URL`

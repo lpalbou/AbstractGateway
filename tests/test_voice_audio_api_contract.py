@@ -649,6 +649,11 @@ def test_bare_transcribe_resolves_gateway_stt_default(tmp_path: Path, monkeypatc
     stt_output = calls["stt"][0]["output"]
     assert stt_output.get("provider") == "faster-whisper", "bare STT must resolve the gateway default provider, not openai"
     assert stt_output.get("model") == "whisper-large-v3"
+    # Round 6: the response names the route that ran (clients show it beside "Transcribing…").
+    body = tr.json()
+    assert body.get("provider") == "faster-whisper"
+    assert body.get("model") == "whisper-large-v3"
+    assert isinstance(body.get("duration_ms"), int) and body["duration_ms"] >= 0
 
 
 @pytest.mark.basic

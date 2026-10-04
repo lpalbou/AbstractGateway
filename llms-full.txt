@@ -5041,6 +5041,7 @@ Current direct Gateway endpoints:
 - `POST /api/gateway/runs/{run_id}/videos/generate`
 - `POST /api/gateway/runs/{run_id}/videos/from_image`
 - `POST /api/gateway/runs/{run_id}/music/generate`
+- `GET /api/gateway/voice/defaults`
 - `GET /api/gateway/voice/voices`
 - `GET /api/gateway/audio/speech/models`
 - `GET /api/gateway/audio/transcriptions/models`
@@ -5049,10 +5050,20 @@ Current direct Gateway endpoints:
 - `GET /api/gateway/vision/provider_models`
 - `GET /api/gateway/vision/adapters`
 
+`/voice/defaults` is the one answer to "which engines speak and listen by default":
+
+```json
+{"tts": {"route": "output.voice", "configured": true, "provider": "supertonic", "model": "supertonic-3", "voice": "M3"},
+ "stt": {"route": "input.voice", "configured": true, "provider": "faster-whisper", "model": "large-v3"},
+ "source": "capability_defaults"}
+```
+
+A route the administrator has not set reads `{"configured": false, "provider": null, "model": null, "note": "No gateway default is set for …"}`. A synthesis or transcription request that names no provider and no model runs exactly these routes, so apps show "Gateway default · supertonic / supertonic-3" from here — never from the voice catalog's engine-side fields. The catalog repeats the answer (`gateway_defaults`; `active_tts_provider` / `active_stt_provider` = the configured routes, absent when unset). `/audio/transcribe` returns the route that ran (`provider`, `model`) and `duration_ms`; a `language` hint skips the engine's language detection (faster-whisper large-v3 on an Apple-Silicon CPU: ~25 s → ~9 s for a 4 s clip).
+
 `/voice/tts` returns a durable audio artifact after synthesis. `/voice/tts/stream`
 returns JSON Lines stream events for progressive playback when discovery advertises
 `capabilities.contracts.assistant.voice.tts.streaming=true`; successful streams still
-finish with a Runtime-owned child-run audio artifact.
+finish with a Runtime-owned child-run audio artifact. The stream is real streaming: the engine splits the text at sentence boundaries (first segment one short clause), each segment is sent as soon as it is synthesised while the next one is synthesised, and the setup runs off the event loop. The terminal `done` event's `metrics` carry `ttfb_s`, `rtf`, `device` and, on the CPU, `device_reason`.
 
 The catalog endpoints proxy AbstractCore Server routes when
 `ABSTRACTCORE_SERVER_BASE_URL`
@@ -9430,6 +9441,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
+- `GET /api/gateway/voice/defaults` (round 6): the gateway's default voice routes for every app — `tts` = the `output.voice` route (`provider`, `model`, `voice`), `stt` = the `input.voice` route (`provider`, `model`), each with `configured` and, when unset, a `note`. A request that names no engine runs exactly this route. The voice catalog (`GET /voice/voices`) now says the same: `active_tts_provider` / `active_stt_provider` are the configured routes (absent when none is set, never the speech engine's own fallback) and it carries `gateway_defaults`. Before, the catalog forwarded AbstractVoice's opinion — "openai" whenever `OPENAI_API_KEY` was in the environment — so AbstractCode showed "Gateway default · openai" on a gateway routed to supertonic and faster-whisper.
+- `POST /runs/{run_id}/audio/transcribe` answers with the route that ran (`provider`, `model`) and the server time (`duration_ms`).
+
+### Fixed
+
+- `POST /runs/{run_id}/voice/tts/stream` prepares the stream (run load, durable child run, engine call) off the event loop: the gateway keeps answering `/api/health` and every other request while speech is set up and synthesised (tests on a live server: the first audio segment reaches the client before the second is synthesised; health answers while the engine setup blocks).
+- Console islands and themes re-synced with ui-kit 0.7.1.
 
 - OpenAI API access model (round 5). Each account has an **OpenAI API** switch (Accounts → the row's **OpenAI API** button, an Email-style dialog; admin `PUT /api/gateway/admin/accounts/{id}/openai-api {enabled}`; the row carries `openai_api`): on by default for an active account, written explicitly (on for active, off for inactive accounts) the first time the endpoint starts; off, that account's key answers `403 openai_api_off` in the OpenAI error envelope. Open mode runs requests without a key as an account the admin picks (`open_account`), by default the built-in **Guest** (it may use the models — chat, responses, embeddings, text-to-speech, image generation — with no tools, files, attachments or media inputs and no `/api/gateway` access; `403 guest_not_allowed`), never an admin; a chosen account's requests use its models and providers and show in its log.
 - OpenAI API page per role: an admin sees Status, Connect, Access (with *Requests without a key run as*), Docs and every request; any other account sees whether the API runs, the base URL, their own key, the docs and their own requests. The key card shows the signed-in person's gateway token masked with an eye and Copy, filled in the browser from what it kept at sign-in (never a server reveal; the gateway sends only a SHA-256 fingerprint to check the copy); the examples embed it, masked on screen and copied in clear; **New key** replaces the token, shown once.

@@ -12425,12 +12425,15 @@ async def voice_tts_stream(run_id: str, req: VoiceTTSRequest) -> StreamingRespon
     if not rid:
         raise HTTPException(status_code=400, detail="run_id is required")
 
+    # Off the event loop (round 6): run-store reads, the durable child-run
+    # setup and the engine call below can block on disk or on the voice
+    # engine's lock; the loop must keep answering /api/health meanwhile.
     try:
-        run = rs.load(rid)
+        run = await asyncio.to_thread(rs.load, rid)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
     if run is None:
-        run = _load_or_create_session_memory_owner_run(run_store=rs, run_id=rid)
+        run = await asyncio.to_thread(_load_or_create_session_memory_owner_run, run_store=rs, run_id=rid)
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run '{rid}' not found")
 
@@ -12509,7 +12512,8 @@ async def voice_tts_stream(run_id: str, req: VoiceTTSRequest) -> StreamingRespon
     }
 
     try:
-        events = stream_voice(
+        events = await asyncio.to_thread(
+            stream_voice,
             str(getattr(run, "run_id", rid)),
             text=text,
             output=output_spec,
@@ -12625,6 +12629,9 @@ class AudioTranscribeResponse(BaseModel):
     child_run_id: Optional[str] = None
     text: str
     transcript_artifact: Dict[str, Any]
+    provider: Optional[str] = Field(default=None, description="The STT engine that ran (the request's, else the gateway default route).")
+    model: Optional[str] = Field(default=None, description="The STT model that ran, when known.")
+    duration_ms: Optional[int] = Field(default=None, description="Server-side transcription time in milliseconds.")
 
 
 class ImageGenerateRequest(BaseModel):
@@ -12924,6 +12931,7 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
         }
     }
 
+    _stt_started = time.monotonic()
     try:
         child = await asyncio.to_thread(
             run_facade.transcribe_audio,
@@ -13038,6 +13046,9 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
         child_run_id=str(child.run_id),
         text=text,
         transcript_artifact=transcript_ref,
+        provider=stt_provider_name,
+        model=stt_model_name,
+        duration_ms=int((time.monotonic() - _stt_started) * 1000),
     )
 
 
@@ -16520,6 +16531,8 @@ def _compact_voice_catalog_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         # (AbstractVoice's `unavailable_*`): the consoles show the reason.
         "unavailable_providers",
         "unavailable_reason",
+        # The gateway's own default routes (`_effective_voice_routes`).
+        "gateway_defaults",
     )
     return {key: payload[key] for key in keep_keys if key in payload}
 
@@ -17009,6 +17022,59 @@ def _with_cloud_voice_reason(payload: Dict[str, Any], provider: Optional[str]) -
         return payload
     out = dict(payload)
     out["unavailable_reason"] = f"{detail['display_name']}: needs an API key (add it under Providers)"
+    return out
+
+
+def _effective_voice_routes() -> Dict[str, Any]:
+    """THE answer to "which engines speak and listen by default" (round 6).
+
+    One source: the gateway's capability-default routes `output.voice` (TTS)
+    and `input.voice` (STT) — the same rows a bare synthesis/transcription
+    request is filled from (`_configured_voice_output_defaults`), so what an
+    app SHOWS is what the gateway EXECUTES. The speech engine's own opinion
+    (AbstractVoice's `active_tts_provider`, whose unconfigured fallback is a
+    hardcoded "openai") is never consulted here: that opinion is what made
+    Code render "Gateway default · openai" on a gateway routed to supertonic
+    and faster-whisper."""
+    out: Dict[str, Any] = {}
+    for kind, route in (("tts", "output.voice"), ("stt", "input.voice")):
+        row = _configured_voice_output_defaults(kind)
+        provider = str(row.get("provider") or "").strip() or None
+        entry: Dict[str, Any] = {
+            "route": route,
+            "configured": bool(provider),
+            "provider": provider,
+            "model": (str(row.get("model") or "").strip() or None) if provider else None,
+        }
+        if kind == "tts":
+            entry["voice"] = (str(row.get("voice") or "").strip() or None) if provider else None
+        if not provider:
+            entry["note"] = (
+                "No gateway default is set for "
+                + ("text to speech" if kind == "tts" else "speech to text")
+                + ". An administrator sets it in the console under Defaults."
+            )
+        out[kind] = entry
+    out["source"] = "capability_defaults"
+    return out
+
+
+def _with_effective_voice_routes(payload: Dict[str, Any], routes: Dict[str, Any]) -> Dict[str, Any]:
+    """The catalog's `active_tts_provider` / `active_stt_provider` say the
+    gateway's configured route, never the engine's fallback; the catalog also
+    carries the full `gateway_defaults` so one fetch answers both questions."""
+    out = dict(payload)
+    tts = routes.get("tts") or {}
+    stt = routes.get("stt") or {}
+    if tts.get("configured"):
+        out["active_tts_provider"] = tts.get("provider")
+    else:
+        out.pop("active_tts_provider", None)
+    if stt.get("configured"):
+        out["active_stt_provider"] = stt.get("provider")
+    else:
+        out.pop("active_stt_provider", None)
+    out["gateway_defaults"] = routes
     return out
 
 
@@ -17768,6 +17834,7 @@ def _voice_contract_descriptor(caps: Dict[str, Any], *, kind: str) -> Dict[str, 
             "endpoint": _api_gateway_path("/runs/{run_id}/voice/tts"),
             "stream_endpoint": _api_gateway_path("/runs/{run_id}/voice/tts/stream"),
             "catalog_endpoint": _api_gateway_path("/voice/voices"),
+            "defaults_endpoint": _api_gateway_path("/voice/defaults"),
             "models_endpoint": _api_gateway_path("/audio/speech/models"),
             "active_model": active_model
             or _env_first(
@@ -18497,6 +18564,7 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
             "provider_models": _api_gateway_path("/discovery/providers/{provider_name}/models"),
             "model_capabilities": _api_gateway_path("/discovery/models/capabilities"),
             "voice_voices": _api_gateway_path("/voice/voices"),
+            "voice_defaults": _api_gateway_path("/voice/defaults"),
             "audio_speech_models": _api_gateway_path("/audio/speech/models"),
             "audio_transcription_models": _api_gateway_path("/audio/transcriptions/models"),
             "audio_music_providers": _api_gateway_path("/audio/music/providers"),
@@ -18814,6 +18882,19 @@ async def discovery_capabilities() -> Dict[str, Any]:
     return {"capabilities": caps}
 
 
+@router.get("/voice/defaults")
+async def voice_defaults() -> Dict[str, Any]:
+    """The gateway's effective default voice routes, for every app.
+
+    `tts` = the `output.voice` route (provider, model, voice), `stt` = the
+    `input.voice` route (provider, model); `configured: false` + `note` when
+    the administrator set none. A request that names no provider/model runs
+    exactly this route (synthesis and transcription fill from the same rows),
+    so a client shows "Gateway default · <provider> / <model>" from here and
+    never from a voice catalog's engine-side fields."""
+    return await asyncio.to_thread(_effective_voice_routes)
+
+
 @router.get("/voice/voices")
 async def voice_voices_catalog(
     request: Request,
@@ -18855,6 +18936,7 @@ async def voice_voices_catalog(
             out = _with_voice_cloud_providers(out, list_keys=("providers", "tts_providers"), provider=provider)
         else:
             out = _with_cloud_voice_reason(out, provider)
+        out = _with_effective_voice_routes(out, await asyncio.to_thread(_effective_voice_routes))
         items = (
             _voice_provider_catalog_items(out, provider_keys=("providers", "tts_providers"))
             if providers_only
@@ -18890,6 +18972,7 @@ async def voice_voices_catalog(
         out = _with_voice_cloud_providers(out, list_keys=("providers", "tts_providers"), provider=provider)
     else:
         out = _with_cloud_voice_reason(out, provider)
+    out = _with_effective_voice_routes(out, await asyncio.to_thread(_effective_voice_routes))
     items = (
         _voice_provider_catalog_items(out, provider_keys=("providers", "tts_providers"))
         if providers_only
