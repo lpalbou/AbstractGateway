@@ -33,8 +33,7 @@ The sidebar groups the tabs in four sections, in this order:
 
 | Group | Tab | What it covers |
 |---|---|---|
-| Accounts | **Accounts** | every user and entity in one table: the **Active** switch, email, a link to each account's runtimes, activity (Logs), token rotation, entity management, and the administrator's **Email for everyone** switches ([below](#accounts)) |
-| Accounts | **Workspaces** | which folders agents may read and write: the gateway policy and each account's own policy ([below](#workspaces)) |
+| Accounts | **Accounts** | every user and entity in one table: the **Active** switch, email, a link to each account's runtimes, activity (Logs), workspace folders, token rotation, entity management, the administrator's **Shared workspace & allowed folders** and **Email for everyone** switches ([below](#accounts)) |
 | Work | **Workflows** | the workflow bundles on this gateway, shared by the gateway or your own (name, what each does, version, source, the apps that use it, availability to users), import, export, open in AbstractFlow, archive, the default workflow for each app and the **Streamed replies** setting ([below](#workflows)) |
 | Work | **Skills & MCP** | administrators: **Skills** — the skills shelf setting and every skill (curated and imported, **Show archived**) with View, Export and Archive, import a `.zip` or folder, Duplicate to edit a curated one; **MCP servers** — whether agents are offered tools, an **Enabled for agents** switch per server, add, edit, test and archive ([configuration.md](./configuration.md#skills-shelf)) |
 | Work | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches; `#runtimes?account=<id>` lists one account's runtimes ([below](#runtimes-of-one-account)) |
@@ -116,6 +115,8 @@ on it, in one table (`GET /api/gateway/admin/accounts`, see
 [api.md](./api.md#accounts-and-activity)). Above it, **Create user** issues a
 user and their token (shown once) and **Create entity** summons a new entity
 from a spark template (its name is permanent, [entities.md](./entities.md)).
+Administrators also have **Shared workspace & allowed folders** first in that
+row: the folders every agent may use ([below](#workspace-folders)).
 
 | Column | Shows |
 |---|---|
@@ -123,13 +124,18 @@ from a spark template (its name is permanent, [entities.md](./entities.md)).
 | **Email** | the account's address and its mailbox state in one line: `alice@example.org · connected`, `· not connected`, `· receive only` (with the reason under it) or `· paused`; "No address" when the account has neither a registered address nor a connected mailbox (users and entities alike: an entity has its own mailbox) |
 | **Runtime** | the account's runtime id as a link to the Runtimes page filtered to that account (administrators; plain text for everyone else), or "No runtime" |
 | **Active** | the switch described below; "Archived" on an archived row |
-| **Actions** | icon buttons, each with a tooltip: users **Email**, **OpenAI API**, **Logs**, **Workspace**, **Rotate token**, **Archive**; entities **Email**, **Logs**, **Manage**, **Archive**; archived rows **Logs**, **Unarchive** |
+| **Actions** | icon buttons, each with a tooltip sentence: users **Email**, **OpenAI API**, **Logs**, **Workspace**, **Rotate token**, **Archive**; entities **Email**, **Logs**, **Workspace**, **Manage**, **Archive**; archived rows **Logs**, **Unarchive** |
 
 Rows are tinted by kind (a legend under the table reads "Tint: admin · user ·
 entity"). Only the actions that apply to a row are shown: your own row has no
-**Archive**, an entity has no token to rotate and no **Workspace** (its folders
-are set in **Manage**). The action buttons are 44 px targets; hover or focus
-one to read its name. The table never scrolls sideways: long names and
+**Archive** and an entity has no token to rotate. The action buttons are
+44 px targets. Hover one, or reach it with the keyboard, and a tooltip says
+what it does for whom: "Email address and mailbox of alice", "OpenAI API
+access for alice", "Activity log of alice", "Workspace folders alice's agents
+may use", "Manage castor (mind, voice, prompt…)", "Rotate alice's sign-in
+token", "Archive alice (kept, hidden)". The same tooltip explains every icon
+button in the console (Workflows, Models, Apps, the top bar…): it appears
+after a short pause, stays inside the window and Escape hides it. The table never scrolls sideways: long names and
 addresses wrap, and below about 900 px of window width each account becomes
 one flat block: name, kind chip and Active, then the email line, then the
 runtime, then the actions, which wrap.
@@ -172,8 +178,8 @@ it is off by default and your browser remembers it.
   "Test notification"). The footer says what the audit log does not
   record (page views and reads, mail received, what agents send with their
   email tools).
-- **Workspace** (users) opens the [Workspaces](#workspaces) page on that
-  account's row (`#workspaces?account=<id>`).
+- **Workspace** opens "Workspace folders — <id>", the folders that account's
+  agents may use ([below](#workspace-folders)).
 - **Rotate token** asks in a row under the account ("Rotate the token of
   alice? The current token stops working now; the new one is shown once."),
   then issues the new token and shows it once. Entities have no token to rotate.
@@ -190,59 +196,58 @@ it is off by default and your browser remembers it.
 
 Under the table, **Email for everyone** (administrators) holds the switch
 three switches, directly in the card: **Mailboxes for users**, **Agent email
-tools for users** and **Sign-in by email** ([email.md](./email.md#administrators)). Workspace
-policies live on their own page, [Workspaces](#workspaces).
+tools for users** and **Sign-in by email** ([email.md](./email.md#administrators)).
 
 Someone who is not an administrator sees the page as **Your account** ("Your
 account and the entities you created."): the same table with their own row and
 one row per entity they created (`GET /api/gateway/me/accounts`). There is no
-Create user and no Email for everyone; their own row has no **Rotate token**
+Create user, no Shared workspace & allowed folders and no Email for everyone;
+their own row's **Workspace** opens their own folders; it has no **Rotate token**
 (only an admin rotates tokens), they can archive an entity they created but not
 unarchive it, and an entity's Active switch says "Only an admin can suspend an
 entity." Archived accounts are not listed for them. See [security.md](./security.md#who-sees-which-account).
 
 
-### Workspaces
+### Workspace folders
 
-**Workspaces** (right after Accounts in the sidebar) decides which folders
-agents may read and write. A line at the top sums up what applies, for
-example "Agents may use only 2 allowed folders and the folder they start in;
-1 folder refused. 1 account has its own policy."
+Agents read and write in folders the administrator allows; each account
+turns on what it needs within that allowance
+([security.md](./security.md) explains how the gateway enforces it).
+
+**Shared workspace & allowed folders** (administrators, top of Accounts)
+opens the gateway's folder policy. A line at the top sums it up, for example
+"Agents may use the shared workspace + 2 allowed folders (each account turns
+them on); accounts may not add folders of their own. Never: 3 folders."
+
+| Control | What it does |
+|---|---|
+| **Shared workspace** | the one folder every conversation, automation and entity works in (each gets its own folder inside it); always on for every account and required |
+| **Allowed folders** | extra folders accounts may turn on for their agents (**Add folder**, the remove icon on each row); off for each account until turned on |
+| **Allow any folder** | off by default; on, accounts may also add folders of their own |
+| **Never allowed** | folders no agent may use, even inside an allowed folder |
+| **Always refused** | the gateway's own data folder and credential folders (read-only) |
+| **Launch-folder trust** | agents may also use the folder an app was started from |
+
+**Workspace** on an account's row opens that account's folders (users,
+entities and your own row): the **Shared workspace** (always on), one switch
+per allowed folder (off until turned on), and **My folders** while the
+administrator allows any folder (otherwise a sentence says when they appear).
+The line at the top, "Agents may use: …", is the gateway's own summary of
+what applies. **Follow the gateway policy** turns every allowed folder off and
+removes the account's own folders, after asking. This is the same chooser, with
+the same words, as the Workspace settings of AbstractCode and the Assistant.
+An entity's folders are changed by an administrator; someone who is not an
+administrator opens their own folders from their own row.
 
 Every change applies at once; there is no Save button. A folder row applies
 when you leave the field (or press Enter): the gateway first checks the path
 (`POST /api/gateway/workspace/path-check`) and says in a sentence why it
 cannot be used ("Use a full path that starts with / …", "No folder at this
 path on the gateway's computer.", "This is a file, not a folder."); such a
-row is not saved. A saved row shows "Saved" for a moment. Escape restores the
-row's saved value.
-
-**Gateway policy** (administrators) applies to every account that has no
-policy of its own:
-
-| Control | What it does |
-|---|---|
-| **Access** | **Allow my list**: agents use only the allowed folders; **Allow everything except**: agents use any folder except the refused ones |
-| **Launch-folder trust** | agents may also use the folder they were started from |
-| **Allowed folders** | rows of folders every account may use (**Add folder**, the remove icon on each row) |
-| **Refused folders** | rows of folders no agent may ever use, in either mode |
-| **Default folder** | where a run starts when the app names no folder; empty = the gateway's own folder |
-| **Any folder (old clients)** | lets older clients name any folder; the rules above stop applying |
-
-**Per-account policies** lists every user with a one-line summary and an
-**Own policy** switch. Turning it on gives the account its own policy, starting
-from the gateway's access mode and trust; the same controls then appear under
-the account (its allowed folders add to the gateway's, its refused folders add
-to the gateway's). Turning it off asks first ("Drop bob's own policy? Their
-agents follow the gateway policy again."). Entities' folders are set in
-**Manage**. The link `#workspaces?account=<id>` opens the page on that
-account's row.
-
-Someone who is not an administrator sees **Your policy** only: the same
-**Own policy** switch and controls for their own account
-(`/api/gateway/workspace/policy/self`), and the summary of what applies to
-them. The gateway's refused folders always apply. See
-[configuration.md](./configuration.md) for the underlying settings.
+row is not saved, and a refused change ends with "Not saved.". A saved row
+shows "Saved" for a moment. The API is `GET`/`PUT /api/gateway/workspace/policy`
+and `GET`/`PUT /api/gateway/workspace/policy/{account}`
+([api.md](./api.md)).
 
 ### Runtimes of one account
 
@@ -250,9 +255,10 @@ The Runtime link on an Accounts row opens **Runtimes** at
 `#runtimes?account=<id>` (`GET /api/gateway/admin/runtimes?account=<id>`): a
 chip "Account: alice" names the filter, only that account's runtimes are
 listed, and a single runtime opens at once. The link survives a reload; the
-× on the chip shows every runtime again. The **Workspace** column links each
-runtime to its policy on the Workspaces page ("Gateway policy" or "Own
-policy").
+× on the chip shows every runtime again. The **Workspace** column opens the
+folders that apply: **Shared workspace** (the gateway policy) for the default
+runtime, **Folders** (the owner's Workspace folders) for a user's or an
+entity's runtime.
 
 ### Workflows
 
@@ -429,7 +435,8 @@ The filter bar above the cards:
   (`downloaded`, `not_downloaded`), `fits=1` and `hf` (Hugging Face mode and
   its query).
 
-**Delete** (a trash-bin icon, tooltip "Delete") sits on every downloaded build's
+**Delete** (a trash-bin icon; its tooltip names the build: "Delete <build> from
+this computer (files only)") sits on every downloaded build's
 row. A click first asks the gateway what the delete would free, then shows one
 sentence under the row with that size, for example "Deletes 351 MB from this
 computer. Files only — nothing in your runs is touched.", with **Keep** and
