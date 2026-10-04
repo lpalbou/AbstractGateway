@@ -159,3 +159,26 @@ def test_the_operators_scenario(live: TestClient, disk: dict) -> None:
     _rid, res = _run(live, "ls_child", ws)
     if darwin:
         assert "child-file.txt" in json.dumps(res), res  # positive control: the reopened child is listed
+
+
+def test_the_in_process_door_too(live: TestClient, disk: dict) -> None:
+    """host.start_run (bridges, schedules, automations, entities): a one-off run workspace refusing a
+    folder reaches the sandbox exactly like the HTTP door."""
+    from abstractgateway.service import get_gateway_service
+
+    ws = {"posture": "any_except_denied", "default_mode": "rw", "folders": [{"path": str(disk["refused"]), "mode": "deny"}]}
+    host = get_gateway_service().host
+    run_id = host.start_run(flow_id="ls_refused", bundle_id=live.bundle_ref, input_data={"workspace": ws}, session_id=None)
+    done = lambda: (lambda x: x if x is not None and x.status.value in ("completed", "failed", "waiting") else None)(_store().load(run_id))  # noqa: E731
+    run = wait_until(done, timeout_s=30)
+    if run.status.value == "waiting":
+        live.post("/api/gateway/commands", headers=HEADERS, json={"command_id": f"ok-{run_id}", "run_id": run_id, "type": "resume",
+                                                                "payload": {"wait_key": run.waiting.wait_key, "payload": {"approved": True}}})
+        run = wait_until(lambda: (lambda x: x if x.status.value in ("completed", "failed") else None)(_store().load(run_id)), timeout_s=30)
+    out = run.output or {}
+    results = out.get("results") if "results" in out else (out.get("result") or {}).get("results")
+    text = json.dumps(results, default=str)
+    assert "secret-desktop.txt" not in text, text
+    if sys.platform == "darwin":
+        assert "Operation not permitted" in text and "macos-sandbox-exec" in text, text
+    assert str(disk["refused"]) in _ledger_text(run_id)
