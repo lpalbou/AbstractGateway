@@ -8,7 +8,10 @@ On the real automation door (POST /automations, run now, the runner ticking the 
 - a revision echoing an old snapshot (derived keys) is ignored, never a narrowing;
 - a pre-rule definition (no payload, gateway-derived keys at the account level) is recognised as
   following;
-- an explicit workspace payload is kept and applied as before (no change).
+- an explicit workspace payload is kept, and RE-CLAMPED at each run to the policy as it is then
+  (adversary F1): a workspace the admin refuses after creation is refused at the next occurrence,
+  a cap lowered rw -> ro makes it read-only there, each recorded with the gateway's sentence;
+  save-time derived keys are never trusted.
 """
 
 from __future__ import annotations
@@ -165,6 +168,55 @@ def test_an_explicit_choice_is_kept_as_before(live: TestClient, tmp_path: Path) 
     run_vars = _run_now(live, aid, 1)
     assert run_vars["workspace_allowed_paths"] == [d["downloads"]]
     assert run_vars["_gateway_workspace"]["level"] == "run"
+
+
+def _gateway_policy(c: TestClient, folders: list) -> None:
+    r = c.put("/api/gateway/workspace/policy", headers=HEADERS, json={"posture": "any_except_denied", "default_mode": "rw", "folders": folders})
+    assert r.status_code == 200, r.text
+
+
+def test_an_explicit_choice_loses_a_workspace_the_admin_refuses_after_creation(live: TestClient, tmp_path: Path) -> None:
+    d = _dirs(tmp_path)
+    chosen = {"posture": "allowed_only", "default_mode": "rw", "folders": [{"path": d["downloads"], "mode": "rw"}, {"path": d["pictures"], "mode": "rw"}]}
+    aid = _create(live, "explicit-refused", {"prompt": "x", "workspace": chosen})
+    first = _run_now(live, aid, 1)
+    assert sorted(first["workspace_allowed_paths"]) == sorted([d["downloads"], d["pictures"]])
+    # The admin refuses downloads at the gateway level.
+    _gateway_policy(live, [{"path": d["downloads"], "mode": "deny"}])
+    second = _run_now(live, aid, 2)
+    assert second["workspace_allowed_paths"] == [d["pictures"]]
+    clamped = second["_gateway_workspace"].get("clamped") or []
+    rows = [row for row in clamped if row.get("path") == d["downloads"]]
+    assert rows and rows[0]["got"] in ("deny", None) and rows[0]["sentence"], clamped
+    # The stored choice is the user's (shown and editable); what applied is recorded on the run.
+    assert _definition(live, aid)["definition"]["target"]["input_data"]["workspace"] == chosen
+    # The OS sandbox and the file tools read these keys: downloads is out of reach.
+    from abstractruntime.integrations.abstractcore.workspace_scoped_tools import WorkspaceScope, rewrite_tool_arguments
+
+    scope = WorkspaceScope.from_input_data(second)
+    with pytest.raises(ValueError):
+        rewrite_tool_arguments(tool_name="read_file", args={"file_path": str(Path(d["downloads"]) / "a.txt")}, scope=scope)
+
+
+def test_an_explicit_choice_becomes_read_only_when_the_admin_lowers_the_cap(live: TestClient, tmp_path: Path) -> None:
+    d = _dirs(tmp_path)
+    chosen = {"posture": "allowed_only", "default_mode": "rw", "folders": [{"path": d["downloads"], "mode": "rw"}]}
+    aid = _create(live, "explicit-lowered", {"prompt": "x", "workspace": chosen})
+    first = _run_now(live, aid, 1)
+    assert d["downloads"] not in (first.get("workspace_read_only_paths") or [])
+    # The admin caps downloads read-only.
+    _gateway_policy(live, [{"path": d["downloads"], "mode": "ro"}])
+    second = _run_now(live, aid, 2)
+    assert d["downloads"] in (second.get("workspace_read_only_paths") or [])
+    clamped = second["_gateway_workspace"].get("clamped") or []
+    rows = [row for row in clamped if row.get("path") == d["downloads"]]
+    assert rows and rows[0]["asked"] == "rw" and rows[0]["got"] == "ro" and rows[0]["sentence"], clamped
+    from abstractruntime.integrations.abstractcore.workspace_scoped_tools import WorkspaceScope, rewrite_tool_arguments
+
+    scope = WorkspaceScope.from_input_data(second)
+    rewrite_tool_arguments(tool_name="read_file", args={"file_path": str(Path(d["downloads"]) / "a.txt")}, scope=scope)
+    with pytest.raises(ValueError):
+        rewrite_tool_arguments(tool_name="write_file", args={"file_path": str(Path(d["downloads"]) / "a.txt"), "content": "x"}, scope=scope)
 
 
 def test_follows_default_recognises_pre_rule_definitions_and_the_host_wires_the_hook(live: TestClient, tmp_path: Path) -> None:

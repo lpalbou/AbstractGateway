@@ -5016,7 +5016,7 @@ gateway when it is admitted (its run start), so a wider default applies from
 the next run, with no revision. Nothing of the default is stored in the
 definition (only a fail-closed fallback: the built-in denies and
 `workspace_access_mode: "workspace_only"`); derived keys a client echoes back
-with `configured: false` (an old snapshot) are ignored, never a narrowing.
+with `configured: false` (an old snapshot) are ignored, never a narrowing. Every automation's workspaces, an explicit choice included, are guarded again at each occurrence against the policy as it is then: a workspace the admin refused or capped since is dropped or lowered for that run and recorded with its sentence (`_gateway_workspace.clamped`); the keys derived when the definition was saved are never used.
 
 ## Artifacts and filesystem handoff
 
@@ -7528,9 +7528,10 @@ whose run id is the automation id. The controller is a workflow that ships
 with AbstractRuntime; the gateway's runner ticks it like any other run. Each
 time the trigger fires, the controller starts one **occurrence**: an ordinary
 child run of your target workflow, with the inputs frozen at creation
-(except the workspaces of an automation that uses its owner's default: those
-are resolved when each occurrence is admitted, so a change to the default
-applies from the next run). An
+(except its workspaces: they are checked again when each occurrence is
+admitted, against the gateway policy and your default as they are then; a
+wider default applies from the next run, and a workspace the admin refused or
+capped since is dropped or lowered for that run, with the reason recorded). An
 occurrence reads as a chat turn (the prompt it received and its answer). In
 **independent** mode every occurrence starts fresh; in **growing** mode each
 occurrence sees the previous ones as conversation history. Automations are
@@ -10232,7 +10233,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Automations follow your default workspaces at each run.** An automation saved with **Use my default** now stores `target.input_data.workspace = {"configured": false}`. Before, the gateway froze a snapshot of the default (`workspace_allowed_paths` …) into the definition, so a wider default never reached it, and a client echoing that snapshot narrowed it. Each occurrence now resolves session > account > gateway when it is admitted, through AbstractRuntime's `Runtime.set_occurrence_input_resolver`, wired for each plane's owner by the bundle host. The definition keeps only a fail-closed fallback: the built-in denies and `workspace_only`. Derived keys echoed with `configured: false` are ignored. A definition saved before this change (no payload, gateway-derived keys at the account level) is recognised and followed the same way. Requires abstractruntime with `set_occurrence_input_resolver`; the host refuses to build without it.
+- **Automations follow your default workspaces at each run.** An automation saved with **Use my default** now stores `target.input_data.workspace = {"configured": false}`. Before, the gateway froze a snapshot of the default (`workspace_allowed_paths` …) into the definition, so a wider default never reached it, and a client echoing that snapshot narrowed it. Each occurrence now resolves session > account > gateway when it is admitted, through AbstractRuntime's `Runtime.set_occurrence_input_resolver`, wired for each plane's owner by the bundle host. The definition keeps only a fail-closed fallback: the built-in denies and `workspace_only`. Derived keys echoed with `configured: false` are ignored. A definition saved before this change (no payload, gateway-derived keys at the account level) is recognised and followed the same way. **Security fix (since round 11):** every automation, including one with an explicit choice, is now re-checked against the current policy when each occurrence is admitted. Before, an explicit choice kept the keys derived when it was saved, so a workspace the admin refused or capped read-only afterwards stayed reachable, sandbox included, until someone edited the automation. Save-time derived keys are never trusted. The stored choice is re-clamped to the current eligible set and caps, and each dropped or lowered row is recorded with the gateway's sentence under `_gateway_workspace.clamped`. Requires abstractruntime with `set_occurrence_input_resolver`; the host refuses to build without it.
 
 - Console islands and console themes re-vendored from ui-kit 0.8.5 (round 13). In the kit, the schedule dialog gained a Workspaces slot and lost its Advanced disclosure, and tool rows gained a `.af-tool-row__state` badge style. The islands bundle only picks up its version string and the new component CSS; the themes only their provenance hash. The round-11 islands test now accepts kit 0.8.3 or later.
 

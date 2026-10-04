@@ -735,7 +735,7 @@ gateway when it is admitted (its run start), so a wider default applies from
 the next run, with no revision. Nothing of the default is stored in the
 definition (only a fail-closed fallback: the built-in denies and
 `workspace_access_mode: "workspace_only"`); derived keys a client echoes back
-with `configured: false` (an old snapshot) are ignored, never a narrowing.
+with `configured: false` (an old snapshot) are ignored, never a narrowing. Every automation's workspaces, an explicit choice included, are guarded again at each occurrence against the policy as it is then: a workspace the admin refused or capped since is dropped or lowered for that run and recorded with its sentence (`_gateway_workspace.clamped`); the keys derived when the definition was saved are never used.
 
 ## Artifacts and filesystem handoff
 

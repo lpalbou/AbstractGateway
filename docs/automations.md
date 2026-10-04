@@ -20,9 +20,10 @@ whose run id is the automation id. The controller is a workflow that ships
 with AbstractRuntime; the gateway's runner ticks it like any other run. Each
 time the trigger fires, the controller starts one **occurrence**: an ordinary
 child run of your target workflow, with the inputs frozen at creation
-(except the workspaces of an automation that uses its owner's default: those
-are resolved when each occurrence is admitted, so a change to the default
-applies from the next run). An
+(except its workspaces: they are checked again when each occurrence is
+admitted, against the gateway policy and your default as they are then; a
+wider default applies from the next run, and a workspace the admin refused or
+capped since is dropped or lowered for that run, with the reason recorded). An
 occurrence reads as a chat turn (the prompt it received and its answer). In
 **independent** mode every occurrence starts fresh; in **growing** mode each
 occurrence sees the previous ones as conversation history. Automations are
