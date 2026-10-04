@@ -611,3 +611,14 @@ def test_the_legacy_workspace_env_becomes_one_listed_workspace_once(f: dict, tmp
     assert "shared_workspace" not in _read_store(data)["workspace_policy"]
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", f["notes"])
     assert ensure_migrated(data) is False and gateway_policy(data)["folders"] == [{"path": f["pictures"], "mode": "rw"}]
+
+
+def test_a_round9_store_without_account_entries_migrates(f: dict, tmp_path: Path) -> None:
+    """The operator's :8080 store exactly: a shared workspace, allowed_only, no account entries."""
+    from abstractgateway.workspace_policy import gateway_policy
+
+    data = _data(tmp_path)
+    _write_old_store(data, {"workspace_policy": {"shared_workspace": f["pictures"], "posture": "allowed_only", "default_mode": "rw", "folders": []}})
+    g = gateway_policy(data)
+    assert g["posture"] == "any_except_denied" and g["folders"] == [{"path": f["pictures"], "mode": "rw"}]
+    assert "account_workspace_policies" not in _read_store(data)

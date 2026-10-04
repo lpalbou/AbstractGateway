@@ -52,6 +52,9 @@ def test_a_home_without_an_account_gets_one_and_the_old_reason_is_gone(world) ->
     home.mkdir(parents=True)
     (home / "manifest.json").write_text(json.dumps({"slug": "castor", "name": "castor", "entity_id": "entity:castor@home-1", "home_id": "home-1"}))
     assert GatewayUserRegistry().get_user("castor") is None
+    # Even before the boot mints its account, the row never says "no gateway account".
+    row = next(a for a in c.get("/api/gateway/admin/accounts", headers=world["admin"]).json()["accounts"] if a["id"] == "castor")
+    assert row["actions"]["workspace"] == {"available": True, "reason": None}
     assert ensure_entity_accounts() == ["entity 'castor' now has a gateway account"]
     rec = GatewayUserRegistry().get_user("castor")
     assert rec is not None and rec.principal_kind == "entity" and list(rec.roles) == ["entity"] and rec.runtime_id == "castor"
@@ -59,3 +62,18 @@ def test_a_home_without_an_account_gets_one_and_the_old_reason_is_gone(world) ->
     row = next(a for a in c.get("/api/gateway/admin/accounts", headers=world["admin"]).json()["accounts"] if a["id"] == "castor")
     assert row["actions"]["workspace"] == {"available": True, "reason": None}
     assert c.get("/api/gateway/workspace/policy/default:castor", headers=world["admin"]).status_code == 200
+
+
+def test_a_person_named_like_an_entity_home_is_never_adopted(world) -> None:  # noqa: F811
+    from abstractgateway.entity_accounts import ensure_entity_accounts
+    from abstractgateway.users import GatewayUserRegistry
+
+    reg = world["registry"]
+    GatewayUserRegistry().create_user(user_id="pollux", roles=["user"])
+    home = reg.entities_dir / "pollux"
+    home.mkdir(parents=True)
+    (home / "manifest.json").write_text(json.dumps({"slug": "pollux", "name": "pollux"}))
+    notes = ensure_entity_accounts()
+    assert notes == ["entity 'pollux' has no account of its own: the account named 'pollux' is not an entity account and is left as it is"]
+    rec = GatewayUserRegistry().get_user("pollux")
+    assert rec.principal_kind == "human" and list(rec.roles) == ["user"]
