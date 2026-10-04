@@ -178,6 +178,8 @@ pub struct WrapLine {
 }
 
 const COL_GAP: i32 = 2;
+/// Columns whose widest cell is at most this many cells never wrap.
+const SHORT_CELL: i32 = 12;
 
 /// Lay a table out at `width` cells: column widths are solved by the
 /// shared width policy ([`widths::solve`]); a cell wider than its column
@@ -194,8 +196,7 @@ pub fn wrap_layout(
     let cells: Vec<Vec<String>> = rows.iter().map(|r| r.cells.clone()).collect();
     // solve() reserves a scrollbar cell and one-cell gaps; ours are two
     // cells wide, so hand it the width minus the extra gap cells.
-    let extra = (COL_GAP - 1) * (rules.len() as i32 - 1).max(0);
-    let mut ws = widths::solve(rules, &cells, width - extra + 1);
+    let mut ws = wrap_widths(rules, &cells, width);
     for w in ws.iter_mut() {
         *w = (*w).max(1);
     }
@@ -234,6 +235,73 @@ pub fn wrap_layout(
                     });
                 }
             }
+        }
+    }
+    out
+}
+
+/// Column widths for wrapping rows: every column first gets its LONGEST
+/// WORD (so a name or a one-word state is never broken mid-word), then the
+/// cells left over go to the columns that still have text to show, in
+/// proportion to what they lack — prose columns absorb the wrapping.
+/// When even the longest words do not fit, the shared width policy
+/// ([`widths::solve`]) decides and words hard-break.
+pub fn wrap_widths(rules: &[ColRule], cells: &[Vec<String>], width: i32) -> Vec<i32> {
+    let n = rules.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let usable = (width - COL_GAP * (n as i32 - 1)).max(n as i32);
+    let mut natural: Vec<i32> = rules
+        .iter()
+        .map(|r| abstracttui::text::width(r.title))
+        .collect();
+    let mut floor: Vec<i32> = natural.clone();
+    for row in cells {
+        for (i, cell) in row.iter().enumerate().take(n) {
+            natural[i] = natural[i].max(abstracttui::text::width(cell));
+            for word in cell.split_whitespace() {
+                floor[i] = floor[i].max(abstracttui::text::width(word));
+            }
+        }
+    }
+    for (i, r) in rules.iter().enumerate() {
+        floor[i] = floor[i].max(r.min.min(natural[i])).min(natural[i]);
+        // A short cell (a state, a version, two words) stays on one line.
+        if natural[i] <= SHORT_CELL {
+            floor[i] = natural[i];
+        }
+    }
+    if natural.iter().sum::<i32>() <= usable {
+        return natural;
+    }
+    let base: i32 = floor.iter().sum();
+    if base > usable {
+        let extra = (COL_GAP - 1) * (n as i32 - 1);
+        return widths::solve(rules, cells, width - extra + 1);
+    }
+    let mut out = floor.clone();
+    let mut left = usable - base;
+    let want: Vec<i32> = (0..n).map(|i| natural[i] - floor[i]).collect();
+    let total: i32 = want.iter().sum();
+    if total > 0 {
+        let mut given = 0;
+        for i in 0..n {
+            let share = (i64::from(left) * i64::from(want[i]) / i64::from(total)) as i32;
+            out[i] += share.min(want[i]);
+            given += share.min(want[i]);
+        }
+        left -= given;
+        // Rounding crumbs to the column that still lacks the most.
+        while left > 0 {
+            let Some(i) = (0..n)
+                .filter(|&i| out[i] < natural[i])
+                .max_by_key(|&i| natural[i] - out[i])
+            else {
+                break;
+            };
+            out[i] += 1;
+            left -= 1;
         }
     }
     out
@@ -664,9 +732,16 @@ impl InlineConfirm {
     /// The line itself, shown in place (zero height when nothing is asked).
     pub fn view(self, t: &TokenSet, width: i32) -> View {
         let tokens = *t;
-        dyn_view(LayoutStyle::column().gap(0).shrink(0.0), move || {
+        // `width` under 20 (e.g. 0, or a viewport read before the first
+        // layout) means: the terminal's width minus the page's border.
+        dyn_view_scoped(LayoutStyle::column().gap(0).shrink(0.0), move |gcx| {
             let Some(p) = self.pending.get() else {
                 return Element::new().style(LayoutStyle::default().h(0)).build();
+            };
+            let width = if width < 20 {
+                abstracttui::app::use_viewport(gcx).get().w - 4
+            } else {
+                width
             };
             let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
             let words = wrap_text(&p.sentence, (width - 2).max(10) as usize);

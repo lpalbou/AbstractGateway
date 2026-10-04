@@ -30,6 +30,8 @@ pub mod review;
 pub mod routes;
 pub mod runtimes;
 pub mod sandbox;
+/// Skills & MCP (WORK): the skills shelf and the MCP servers registry.
+pub mod skills_mcp;
 pub mod switch;
 pub mod users;
 pub mod util;

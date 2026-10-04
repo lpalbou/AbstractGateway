@@ -21,11 +21,22 @@ use crate::store::{Loadable, Store};
 /// Skills & MCP commands (one `Cmd::Skills` variant carries them).
 #[derive(Clone, Debug)]
 pub enum SkCmd {
-    LoadSkills { include_archived: bool },
+    LoadSkills {
+        include_archived: bool,
+    },
     LoadMcp,
-    OpenSkill { name: String },
-    SaveSkill { name: String, body: Body, include_archived: bool },
-    DuplicateSkill { name: String, include_archived: bool },
+    OpenSkill {
+        name: String,
+    },
+    SaveSkill {
+        name: String,
+        body: Body,
+        include_archived: bool,
+    },
+    DuplicateSkill {
+        name: String,
+        include_archived: bool,
+    },
     SetSkillArchived {
         name: String,
         archive: bool,
@@ -33,13 +44,32 @@ pub enum SkCmd {
         /// Reopen the skill overlay afterwards (its Unarchive button).
         reopen: bool,
     },
-    ExportSkill { name: String, dir: PathBuf },
-    ImportSkill { path: String, include_archived: bool },
-    SaveMcp { editing: Option<String>, body: Body },
-    TestMcpForm { body: Body },
-    TestMcp { name: String },
-    SetMcpArchived { name: String, archive: bool },
-    SetMcpAgents { name: String, enabled: bool },
+    ExportSkill {
+        name: String,
+        dir: PathBuf,
+    },
+    ImportSkill {
+        path: String,
+        include_archived: bool,
+    },
+    SaveMcp {
+        editing: Option<String>,
+        body: Body,
+    },
+    TestMcpForm {
+        body: Body,
+    },
+    TestMcp {
+        name: String,
+    },
+    SetMcpArchived {
+        name: String,
+        archive: bool,
+    },
+    SetMcpAgents {
+        name: String,
+        enabled: bool,
+    },
 }
 
 /// The gateway's sentence for a refusal: `detail.message` (the web's
@@ -64,9 +94,9 @@ fn post_msg(
 
 fn reload_skills(client: &GatewayClient, store: &Store, wake: &WakeHandle, include_archived: bool) {
     let sig = store.skills.skills;
-    let res = client
-        .skills(include_archived)
-        .and_then(|v| skills_from_payload(&v).map_err(|m| ApiError::new(crate::api::ApiErrorKind::Protocol, m)));
+    let res = client.skills(include_archived).and_then(|v| {
+        skills_from_payload(&v).map_err(|m| ApiError::new(crate::api::ApiErrorKind::Protocol, m))
+    });
     wake.post(move || {
         sig.set(match res {
             Ok(d) => Loadable::Ready(d),
@@ -77,9 +107,9 @@ fn reload_skills(client: &GatewayClient, store: &Store, wake: &WakeHandle, inclu
 
 fn reload_mcp(client: &GatewayClient, store: &Store, wake: &WakeHandle) {
     let sig = store.skills.mcp;
-    let res = client
-        .mcp_servers()
-        .and_then(|v| mcp_from_payload(&v).map_err(|m| ApiError::new(crate::api::ApiErrorKind::Protocol, m)));
+    let res = client.mcp_servers().and_then(|v| {
+        mcp_from_payload(&v).map_err(|m| ApiError::new(crate::api::ApiErrorKind::Protocol, m))
+    });
     wake.post(move || {
         sig.set(match res {
             Ok(d) => Loadable::Ready(d),
@@ -140,17 +170,13 @@ pub(super) fn handle(
 ) {
     let sk = store.skills;
     match cmd {
-        SkCmd::LoadSkills { include_archived } => load(
-            store,
-            wake,
-            "reading the skills",
-            sk.skills,
-            || {
+        SkCmd::LoadSkills { include_archived } => {
+            load(store, wake, "reading the skills", sk.skills, || {
                 let v = require_client(client)?.skills(include_archived)?;
                 skills_from_payload(&v)
                     .map_err(|m| ApiError::new(crate::api::ApiErrorKind::Protocol, m))
-            },
-        ),
+            })
+        }
         SkCmd::LoadMcp => load(store, wake, "reading the MCP servers", sk.mcp, || {
             let v = require_client(client)?.mcp_servers()?;
             mcp_from_payload(&v).map_err(|m| ApiError::new(crate::api::ApiErrorKind::Protocol, m))
@@ -163,31 +189,64 @@ pub(super) fn handle(
                     .map_err(|m| ApiError::new(crate::api::ApiErrorKind::Protocol, m))
             })
         }
-        SkCmd::SaveSkill { name, body, include_archived } => {
-            let Ok(c) = require_client(client) else { return };
+        SkCmd::SaveSkill {
+            name,
+            body,
+            include_archived,
+        } => {
+            let Ok(c) = require_client(client) else {
+                return;
+            };
             post_msg(wake, sk.detail_msg, "Saving...".into(), Tone::Plain);
-            let res = with_busy(store, wake, "saving the skill", || c.skill_update(&name, &body.0));
+            let res = with_busy(store, wake, "saving the skill", || {
+                c.skill_update(&name, &body.0)
+            });
             let verified = match &res {
                 Ok(v) => {
                     if let Ok(d) = skill_detail_from_payload(v) {
                         wake.post(move || sk.detail.set(Loadable::Ready(d)));
                     }
-                    post_msg(wake, sk.detail_msg, "Saved. New runs read this version.".into(), Tone::Ok);
+                    post_msg(
+                        wake,
+                        sk.detail_msg,
+                        "Saved. New runs read this version.".into(),
+                        Tone::Ok,
+                    );
                     reload_skills(&c, store, wake, include_archived);
                     Some(Ok(format!("skill {name} saved")))
                 }
                 Err(e) => {
-                    post_msg(wake, sk.detail_msg, format!("Not saved: {}", refusal_text(e)), Tone::Error);
+                    post_msg(
+                        wake,
+                        sk.detail_msg,
+                        format!("Not saved: {}", refusal_text(e)),
+                        Tone::Error,
+                    );
                     None
                 }
             };
-            finish_write(store, wake, format!("PUT /admin/skills/{name}"), res, verified, None, on_done);
+            finish_write(
+                store,
+                wake,
+                format!("PUT /admin/skills/{name}"),
+                res,
+                verified,
+                None,
+                on_done,
+            );
         }
-        SkCmd::DuplicateSkill { name, include_archived } => {
-            let Ok(c) = require_client(client) else { return };
+        SkCmd::DuplicateSkill {
+            name,
+            include_archived,
+        } => {
+            let Ok(c) = require_client(client) else {
+                return;
+            };
             post_msg(wake, sk.detail_msg, "Duplicating...".into(), Tone::Plain);
             let copy = format!("{name}-copy");
-            let res = with_busy(store, wake, "duplicating the skill", || c.skill_duplicate(&name, &copy));
+            let res = with_busy(store, wake, "duplicating the skill", || {
+                c.skill_duplicate(&name, &copy)
+            });
             let verified = match &res {
                 Ok(v) => {
                     let copy_name = v
@@ -208,11 +267,24 @@ pub(super) fn handle(
                     Some(Ok(format!("skill {copy_name} created")))
                 }
                 Err(e) => {
-                    post_msg(wake, sk.detail_msg, format!("Not duplicated: {}", refusal_text(e)), Tone::Error);
+                    post_msg(
+                        wake,
+                        sk.detail_msg,
+                        format!("Not duplicated: {}", refusal_text(e)),
+                        Tone::Error,
+                    );
                     None
                 }
             };
-            finish_write(store, wake, format!("POST /admin/skills/{name}/duplicate"), res, verified, None, on_done);
+            finish_write(
+                store,
+                wake,
+                format!("POST /admin/skills/{name}/duplicate"),
+                res,
+                verified,
+                None,
+                on_done,
+            );
         }
         SkCmd::SetSkillArchived {
             name,
@@ -220,9 +292,13 @@ pub(super) fn handle(
             include_archived,
             reopen,
         } => {
-            let Ok(c) = require_client(client) else { return };
+            let Ok(c) = require_client(client) else {
+                return;
+            };
             let verb = if archive { "archive" } else { "unarchive" };
-            let res = with_busy(store, wake, "archiving the skill", || c.skill_set_archived(&name, archive));
+            let res = with_busy(store, wake, "archiving the skill", || {
+                c.skill_set_archived(&name, archive)
+            });
             let verified = match &res {
                 Ok(_) => {
                     let text = if archive {
@@ -242,25 +318,49 @@ pub(super) fn handle(
                     Some(Ok(format!("skill {name} {verb}d")))
                 }
                 Err(e) => {
-                    let lead = if archive { "Not archived" } else { "Not unarchived" };
-                    post_msg(wake, sk.skills_msg, format!("{lead}: {}", refusal_text(e)), Tone::Error);
+                    let lead = if archive {
+                        "Not archived"
+                    } else {
+                        "Not unarchived"
+                    };
+                    post_msg(
+                        wake,
+                        sk.skills_msg,
+                        format!("{lead}: {}", refusal_text(e)),
+                        Tone::Error,
+                    );
                     None
                 }
             };
-            finish_write(store, wake, format!("POST /admin/skills/{name}/{verb}"), res, verified, None, on_done);
+            finish_write(
+                store,
+                wake,
+                format!("POST /admin/skills/{name}/{verb}"),
+                res,
+                verified,
+                None,
+                on_done,
+            );
         }
         SkCmd::ExportSkill { name, dir } => {
-            let Ok(c) = require_client(client) else { return };
+            let Ok(c) = require_client(client) else {
+                return;
+            };
             let res = with_busy(store, wake, "exporting the skill", || c.skill_export(&name));
             match res {
                 Ok(bytes) => {
                     let path = dir.join(format!("{name}.zip"));
-                    let written = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&path, &bytes));
+                    let written =
+                        std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&path, &bytes));
                     match written {
                         Ok(()) => post_msg(
                             wake,
                             sk.skills_msg,
-                            format!("Exported {name} to {} ({} bytes).", path.display(), bytes.len()),
+                            format!(
+                                "Exported {name} to {} ({} bytes).",
+                                path.display(),
+                                bytes.len()
+                            ),
                             Tone::Ok,
                         ),
                         Err(e) => post_msg(
@@ -271,14 +371,21 @@ pub(super) fn handle(
                         ),
                     }
                 }
-                Err(e) => post_msg(wake, sk.skills_msg, format!("Not exported: {}", refusal_text(&e)), Tone::Error),
+                Err(e) => post_msg(
+                    wake,
+                    sk.skills_msg,
+                    format!("Not exported: {}", refusal_text(&e)),
+                    Tone::Error,
+                ),
             }
         }
         SkCmd::ImportSkill {
             path,
             include_archived,
         } => {
-            let Ok(c) = require_client(client) else { return };
+            let Ok(c) = require_client(client) else {
+                return;
+            };
             let p = expand_home(&path);
             let label = p
                 .file_name()
@@ -293,23 +400,38 @@ pub(super) fn handle(
                 );
                 return;
             }
-            post_msg(wake, sk.skills_msg, format!("Importing {label}..."), Tone::Plain);
+            post_msg(
+                wake,
+                sk.skills_msg,
+                format!("Importing {label}..."),
+                Tone::Plain,
+            );
             let res = with_busy(store, wake, "importing the skill", || {
                 if p.is_dir() {
                     let files = folder_files(&p).map_err(|e| {
-                        ApiError::new(crate::api::ApiErrorKind::Protocol, format!("{}: {e}", p.display()))
+                        ApiError::new(
+                            crate::api::ApiErrorKind::Protocol,
+                            format!("{}: {e}", p.display()),
+                        )
                     })?;
                     c.skill_import_folder(&files)
                 } else {
                     let bytes = std::fs::read(&p).map_err(|e| {
-                        ApiError::new(crate::api::ApiErrorKind::Protocol, format!("{}: {e}", p.display()))
+                        ApiError::new(
+                            crate::api::ApiErrorKind::Protocol,
+                            format!("{}: {e}", p.display()),
+                        )
                     })?;
                     c.skill_import_zip(&label, &bytes)
                 }
             });
             let verified = match &res {
                 Ok(v) => {
-                    let name = v.get("name").and_then(Value::as_str).unwrap_or(&label).to_string();
+                    let name = v
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or(&label)
+                        .to_string();
                     post_msg(
                         wake,
                         sk.skills_msg,
@@ -320,21 +442,42 @@ pub(super) fn handle(
                     Some(Ok(format!("skill {name} imported")))
                 }
                 Err(e) => {
-                    post_msg(wake, sk.skills_msg, format!("Not imported: {}", refusal_text(e)), Tone::Error);
+                    post_msg(
+                        wake,
+                        sk.skills_msg,
+                        format!("Not imported: {}", refusal_text(e)),
+                        Tone::Error,
+                    );
                     None
                 }
             };
-            finish_write(store, wake, "POST /admin/skills/import".into(), res, verified, None, on_done);
+            finish_write(
+                store,
+                wake,
+                "POST /admin/skills/import".into(),
+                res,
+                verified,
+                None,
+                on_done,
+            );
         }
         SkCmd::SaveMcp { editing, body } => {
-            let Ok(c) = require_client(client) else { return };
+            let Ok(c) = require_client(client) else {
+                return;
+            };
             wake.post(move || sk.form_note.set(Some("Saving...".into())));
-            let res = with_busy(store, wake, "saving the MCP server", || c.mcp_save(editing.as_deref(), &body.0));
+            let res = with_busy(store, wake, "saving the MCP server", || {
+                c.mcp_save(editing.as_deref(), &body.0)
+            });
             let verified = match &res {
                 Ok(v) => {
                     let name = mcp_row_from(v).name;
                     let name = if name.is_empty() {
-                        body.0.get("name").and_then(Value::as_str).unwrap_or("").to_string()
+                        body.0
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string()
                     } else {
                         name
                     };
@@ -345,7 +488,9 @@ pub(super) fn handle(
                     post_msg(
                         wake,
                         sk.mcp_msg,
-                        format!("Saved {name}. Test it to record whether the gateway can reach it."),
+                        format!(
+                            "Saved {name}. Test it to record whether the gateway can reach it."
+                        ),
                         Tone::Ok,
                     );
                     reload_mcp(&c, store, wake);
@@ -364,9 +509,13 @@ pub(super) fn handle(
             finish_write(store, wake, action, res, verified, None, on_done);
         }
         SkCmd::TestMcpForm { body } => {
-            let Ok(c) = require_client(client) else { return };
+            let Ok(c) = require_client(client) else {
+                return;
+            };
             wake.post(move || sk.form_test.set(Some(None)));
-            let res = with_busy(store, wake, "testing the MCP server", || c.mcp_test_unsaved(&body.0));
+            let res = with_busy(store, wake, "testing the MCP server", || {
+                c.mcp_test_unsaved(&body.0)
+            });
             let out = match res {
                 Ok(v) => {
                     let t = test_result_from(&v);
@@ -381,9 +530,18 @@ pub(super) fn handle(
             wake.post(move || sk.form_test.set(Some(Some(out))));
         }
         SkCmd::TestMcp { name } => {
-            let Ok(c) = require_client(client) else { return };
-            post_msg(wake, sk.mcp_msg, format!("Testing {name} (up to 10 seconds)..."), Tone::Plain);
-            let res = with_busy(store, wake, "testing the MCP server", || c.mcp_test_saved(&name));
+            let Ok(c) = require_client(client) else {
+                return;
+            };
+            post_msg(
+                wake,
+                sk.mcp_msg,
+                format!("Testing {name} (up to 10 seconds)..."),
+                Tone::Plain,
+            );
+            let res = with_busy(store, wake, "testing the MCP server", || {
+                c.mcp_test_saved(&name)
+            });
             match &res {
                 Ok(v) => {
                     let t = test_result_from(v);
@@ -394,16 +552,36 @@ pub(super) fn handle(
                         if t.ok { Tone::Ok } else { Tone::Error },
                     );
                 }
-                Err(e) => post_msg(wake, sk.mcp_msg, format!("{name}: {}", refusal_text(e)), Tone::Error),
+                Err(e) => post_msg(
+                    wake,
+                    sk.mcp_msg,
+                    format!("{name}: {}", refusal_text(e)),
+                    Tone::Error,
+                ),
             }
             reload_mcp(&c, store, wake);
-            let verified = res.as_ref().ok().map(|_| Ok(format!("MCP server {name} tested")));
-            finish_write(store, wake, format!("POST /admin/mcp/servers/{name}/test"), res, verified, None, on_done);
+            let verified = res
+                .as_ref()
+                .ok()
+                .map(|_| Ok(format!("MCP server {name} tested")));
+            finish_write(
+                store,
+                wake,
+                format!("POST /admin/mcp/servers/{name}/test"),
+                res,
+                verified,
+                None,
+                on_done,
+            );
         }
         SkCmd::SetMcpArchived { name, archive } => {
-            let Ok(c) = require_client(client) else { return };
+            let Ok(c) = require_client(client) else {
+                return;
+            };
             let verb = if archive { "archive" } else { "unarchive" };
-            let res = with_busy(store, wake, "archiving the MCP server", || c.mcp_set_archived(&name, archive));
+            let res = with_busy(store, wake, "archiving the MCP server", || {
+                c.mcp_set_archived(&name, archive)
+            });
             let verified = match &res {
                 Ok(_) => {
                     let text = if archive {
@@ -416,15 +594,32 @@ pub(super) fn handle(
                     Some(Ok(format!("MCP server {name} {verb}d")))
                 }
                 Err(e) => {
-                    post_msg(wake, sk.mcp_msg, format!("{name}: {}", refusal_text(e)), Tone::Error);
+                    post_msg(
+                        wake,
+                        sk.mcp_msg,
+                        format!("{name}: {}", refusal_text(e)),
+                        Tone::Error,
+                    );
                     None
                 }
             };
-            finish_write(store, wake, format!("POST /admin/mcp/servers/{name}/{verb}"), res, verified, None, on_done);
+            finish_write(
+                store,
+                wake,
+                format!("POST /admin/mcp/servers/{name}/{verb}"),
+                res,
+                verified,
+                None,
+                on_done,
+            );
         }
         SkCmd::SetMcpAgents { name, enabled } => {
-            let Ok(c) = require_client(client) else { return };
-            let res = with_busy(store, wake, "saving Enabled for agents", || c.mcp_set_agents(&name, enabled));
+            let Ok(c) = require_client(client) else {
+                return;
+            };
+            let res = with_busy(store, wake, "saving Enabled for agents", || {
+                c.mcp_set_agents(&name, enabled)
+            });
             let verified = match &res {
                 Ok(v) => {
                     let status = v
@@ -443,11 +638,24 @@ pub(super) fn handle(
                     Some(Ok(format!("MCP server {name}: {status}")))
                 }
                 Err(e) => {
-                    post_msg(wake, sk.mcp_msg, format!("{name}: {}", refusal_text(e)), Tone::Error);
+                    post_msg(
+                        wake,
+                        sk.mcp_msg,
+                        format!("{name}: {}", refusal_text(e)),
+                        Tone::Error,
+                    );
                     None
                 }
             };
-            finish_write(store, wake, format!("POST /admin/mcp/servers/{name}/agents"), res, verified, None, on_done);
+            finish_write(
+                store,
+                wake,
+                format!("POST /admin/mcp/servers/{name}/agents"),
+                res,
+                verified,
+                None,
+                on_done,
+            );
         }
     }
 }

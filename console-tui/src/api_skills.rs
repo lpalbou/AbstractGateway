@@ -34,7 +34,13 @@ fn boundary() -> String {
 
 fn safe_name(s: &str) -> String {
     s.chars()
-        .map(|c| if matches!(c, '"' | '\r' | '\n') { '_' } else { c })
+        .map(|c| {
+            if matches!(c, '"' | '\r' | '\n') {
+                '_'
+            } else {
+                c
+            }
+        })
         .collect()
 }
 

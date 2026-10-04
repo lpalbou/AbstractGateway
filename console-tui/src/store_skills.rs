@@ -157,7 +157,12 @@ pub fn skills_from_payload(v: &Value) -> Result<SkillsData, String> {
 pub fn filter_skills<'a>(rows: &'a [SkillRow], query: &str) -> Vec<&'a SkillRow> {
     let q = query.trim().to_lowercase();
     rows.iter()
-        .filter(|r| q.is_empty() || format!("{} {}", r.name, r.description).to_lowercase().contains(&q))
+        .filter(|r| {
+            q.is_empty()
+                || format!("{} {}", r.name, r.description)
+                    .to_lowercase()
+                    .contains(&q)
+        })
         .collect()
 }
 
@@ -215,7 +220,12 @@ pub fn skill_detail_from_payload(v: &Value) -> Result<SkillDetail, String> {
         .and_then(Value::as_array)
         .map(|a| {
             a.iter()
-                .map(|f| (s(f, "path"), f.get("size").and_then(Value::as_u64).unwrap_or(0)))
+                .map(|f| {
+                    (
+                        s(f, "path"),
+                        f.get("size").and_then(Value::as_u64).unwrap_or(0),
+                    )
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -254,7 +264,11 @@ fn test_from(v: &Value) -> McpTest {
         tools: v
             .get("tools")
             .and_then(Value::as_array)
-            .map(|a| a.iter().map(|t| (s(t, "name"), s(t, "description"))).collect())
+            .map(|a| {
+                a.iter()
+                    .map(|t| (s(t, "name"), s(t, "description")))
+                    .collect()
+            })
             .unwrap_or_default(),
     }
 }
@@ -311,12 +325,11 @@ impl McpRow {
             None => "Not tested".into(),
             Some(t) if t.ok => {
                 let n = t.tools.len();
-                let ago = t
-                    .at
-                    .as_deref()
-                    .and_then(crate::localtime::parse_iso_epoch)
-                    .map(|e| ago_text(now - e))
-                    .unwrap_or_else(|| "just now".into());
+                let ago =
+                    t.at.as_deref()
+                        .and_then(crate::localtime::parse_iso_epoch)
+                        .map(|e| ago_text(now - e))
+                        .unwrap_or_else(|| "just now".into());
                 format!("OK · {n} {} · {ago}", plural(n, "tool", "tools"))
             }
             Some(t) => {
@@ -354,7 +367,9 @@ impl McpRow {
             return Some("Archived: unarchive it first.");
         }
         if !self.last_test.as_ref().is_some_and(|t| t.ok) {
-            return Some("Test the connection first: agents get the tools a successful test lists.");
+            return Some(
+                "Test the connection first: agents get the tools a successful test lists.",
+            );
         }
         None
     }
@@ -476,7 +491,10 @@ impl McpForm {
             "transport".into(),
             Value::String(if self.stdio { "stdio" } else { "http" }.into()),
         );
-        o.insert("description".into(), Value::String(self.description.trim().into()));
+        o.insert(
+            "description".into(),
+            Value::String(self.description.trim().into()),
+        );
         o.insert("name".into(), Value::String(self.name.trim().into()));
         if self.stdio {
             o.insert("command".into(), Value::String(self.command.trim().into()));
@@ -632,7 +650,9 @@ mod tests {
 
     #[test]
     fn mcp_status_tools_and_block_reasons() {
-        let mut r = mcp_row_from(&json!({"name":"calc","transport":"stdio","command":"python3","args":["-u","s.py"]}));
+        let mut r = mcp_row_from(
+            &json!({"name":"calc","transport":"stdio","command":"python3","args":["-u","s.py"]}),
+        );
         assert_eq!(r.status_text(0), "Not tested");
         assert_eq!(r.tools_text(), "—");
         assert_eq!(r.target(), "python3 -u s.py");
@@ -655,7 +675,10 @@ mod tests {
             "Offer its 2 tools to your agents? Each call asks for approval unless a run allows all tools."
         );
         r.archived = true;
-        assert_eq!(r.agents_block_reason(), Some("Archived: unarchive it first."));
+        assert_eq!(
+            r.agents_block_reason(),
+            Some("Archived: unarchive it first.")
+        );
         r.enabled_for_agents = true;
         assert_eq!(r.agents_block_reason(), None);
     }
