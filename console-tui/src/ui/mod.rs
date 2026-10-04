@@ -649,12 +649,8 @@ impl Ctx {
                     self.send(Cmd::LoadNetwork);
                 }
             }
-            1 => {
-                s.profiles.set(Loadable::Loading);
-                s.providers.set(Loadable::Loading);
-                self.send(Cmd::LoadProfiles);
-                self.send(Cmd::LoadProviders);
-            }
+            // Providers: profiles + discovery + the local engines.
+            SCREEN_PROVIDERS => providers::refresh(self),
             2 => {
                 s.routes.set(Loadable::Loading);
                 s.availability.set(Loadable::Loading);
@@ -1157,7 +1153,9 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
                 // A Models/Engines job runs ON THE GATEWAY and survives
                 // us, but the console is its only live progress view —
                 // quitting mid-download is a decision, not a keystroke.
-                if ctx_q.screens.store.job_running() {
+                if ctx_q.screens.store.job_running()
+                    || providers::engines::engine_job_running(&ctx_q.store)
+                {
                     ctx_q.store.notice.set(Some(
                         "a models/engines job is running on the gateway — c on Models/Engines \
                          cancels it (Ctrl+C quits anyway; the gateway keeps running it)"
@@ -2060,14 +2058,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                 }
                 globals.push(("Tab", "focus"));
                 match screen {
-                    1 => {
-                        pairs.push(("a", "add connection"));
-                        pairs.push(("e", "edit/override"));
-                        pairs.push(("d", "delete"));
-                        pairs.push(("m", "models"));
-                        pairs.push(("t", "test"));
-                        pairs.push(("r", "refresh"));
-                    }
+                    SCREEN_PROVIDERS => pairs.extend(providers::hints(&store)),
                     2 => {
                         pairs.push(("Enter/e", "edit route"));
                         pairs.push(("x", "clear route"));
