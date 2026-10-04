@@ -757,13 +757,16 @@ def _effective_dict(
 ) -> Tuple[Dict[str, Any], _Resolver]:
     res = _Resolver(caps, layer)
     folders = _folders(caps, res, layer, level)
+    # default_mode is always "ro"|"rw" (the R11 API line): under "Allow everything…" the effective
+    # default (the layer's, lowered by the gateway's); under "Deny everything…" the stored value,
+    # which applies to nothing (the summary never shows it there).
     if layer is None:
-        posture, default = g["posture"], (g["default_mode"] if g["posture"] == "any_except_denied" else None)
+        posture, default = g["posture"], g["default_mode"]
     else:
         posture = layer["posture"]
-        default = None
-        if posture == "any_except_denied":
-            default = _min(layer["default_mode"], g["default_mode"]) if g["posture"] == "any_except_denied" else layer["default_mode"]
+        default = layer["default_mode"]
+        if posture == "any_except_denied" and g["posture"] == "any_except_denied":
+            default = _min(layer["default_mode"], g["default_mode"])
     return (
         {
             "account": account,
@@ -785,7 +788,7 @@ def _scope_from(eff: Dict[str, Any], g: Dict[str, Any], res: _Resolver, layer: O
     everything = g["posture"] == "any_except_denied" and (layer is None or layer["posture"] == "any_except_denied")
     return EffectiveScope(
         posture="any_except_denied" if everything else "allowed_only",
-        default_mode=eff["default_mode"] if everything else None,
+        default_mode=eff["default_mode"] if everything else None,  # enforcement: None = no default applies
         reach=reach,
         read_only=[_real(Path(f["path"])) for f in folders if f["mode"] == "ro"],
         writable=[_real(Path(f["path"])) for f in folders if f["mode"] == "rw"],
@@ -865,11 +868,12 @@ def account_policy(data_dir: Path, *, tenant_id: str, user_id: str) -> Dict[str,
     return _layer_view(layer, gateway_policy(data_dir), account=key)
 
 
-def _layer_view(layer: Optional[Dict[str, Any]], g: Dict[str, Any], **ids: Any) -> Dict[str, Any]:
-    """The stored layer as a client shows it; not configured = the gateway's posture and default
-    with no rows (the display base: "follow the gateway policy")."""
+def _layer_view(layer: Optional[Dict[str, Any]], base: Dict[str, Any], **ids: Any) -> Dict[str, Any]:
+    """The stored layer as a client shows it; not configured = the level above's posture and default
+    with no rows (the display base: the gateway policy for an account, the account default for a
+    session)."""
     if layer is None:
-        return {**ids, "configured": False, "posture": g["posture"], "default_mode": g["default_mode"], "folders": []}
+        return {**ids, "configured": False, "posture": base["posture"], "default_mode": base["default_mode"], "folders": []}
     return {**ids, "configured": True, "posture": layer["posture"], "default_mode": layer["default_mode"], "folders": [dict(r) for r in layer["folders"]]}
 
 

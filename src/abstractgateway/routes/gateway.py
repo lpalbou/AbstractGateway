@@ -29544,13 +29544,14 @@ def _session_target(request: Request, session_id: str, account: Optional[str], *
 
 def _session_answer(principal: Any, tenant: str, user: str, plane: Path, sid: str) -> Dict[str, Any]:
     from ..session_workspaces import session_layer
-    from ..workspace_policy import _layer_view, account_layer_effective, effective_policy, gateway_policy
+    from ..workspace_policy import _layer_view, account_layer_effective, account_policy, effective_policy, gateway_policy
 
     data_dir = gateway_data_dir_from_env()
     g = gateway_policy(data_dir)
     return {
         "ok": True,
-        "policy": _layer_view(session_layer(plane, sid), g, session_id=sid, account=f"{tenant}:{user}"),
+        # "Use my default" shows the ACCOUNT default's posture and default mode as its base.
+        "policy": _layer_view(session_layer(plane, sid), account_policy(data_dir, tenant_id=tenant, user_id=user), session_id=sid, account=f"{tenant}:{user}"),
         "gateway": _redact_builtin_for(principal, g),
         "account_default": account_layer_effective(data_dir, tenant_id=tenant, user_id=user),
         "effective": effective_policy(data_dir, tenant_id=tenant, user_id=user, session_id=sid, plane_dir=plane),

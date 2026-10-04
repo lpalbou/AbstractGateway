@@ -250,7 +250,7 @@ def test_under_deny_everything_the_eligible_set_is_the_listed_rows(f: dict) -> N
         alice = _user("alice")
         eff = c.get("/api/gateway/workspace/effective/me", headers=alice).json()
         assert eff["summary"] == f"Deny everything, allow listed workspaces · {f['project']} (rw) · {f['archive']} (ro)"
-        assert eff["default_mode"] is None
+        assert eff["default_mode"] == "rw"  # always ro|rw; it applies to nothing under "Deny everything…"
         # A sub-folder of a listed row is eligible; anything else is not.
         assert c.put("/api/gateway/workspace/policy/me", json={"posture": "allowed_only", "folders": [{"path": f["project_private"], "mode": "rw"}]}, headers=alice).status_code == 200
         detail = _refusal(c.put("/api/gateway/workspace/policy/me", json={"folders": [{"path": f["notes"], "mode": "ro"}]}, headers=alice))

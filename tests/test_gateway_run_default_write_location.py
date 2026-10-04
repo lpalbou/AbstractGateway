@@ -1,10 +1,11 @@
-"""Where a gateway run writes when it names no folder, and what the agent is told (R10 close).
+"""Where a gateway run writes when it names no folder, and what the agent is told (R10 close,
+updated for round 11: there is no shared workspace).
 
 The docs say it (docs/security.md, docs/console.md, docs/configuration.md,
 docs/api.md): a run that names no `workspace_root` works in its conversation's
 private session folder, so a relative path such as `out.txt` lands THERE, not
-in the shared workspace; the shared workspace and the allowed workspaces are
-listed to the agent with their paths and modes.
+in any listed workspace; the run's allowed workspaces are listed to the agent
+with their paths and modes, and nothing is called a "Shared workspace".
 
 Both kinds of door are covered:
 - the HTTP door, `POST /api/gateway/runs/start` (it makes the session folder
@@ -66,10 +67,17 @@ def _data_dir(tmp_path: Path) -> Path:
     return tmp_path / "runtime"
 
 
-def _shared_workspace(tmp_path: Path) -> Path:
-    from abstractgateway.workspace_policy import effective_folder_paths
-
-    return Path(effective_folder_paths(_data_dir(tmp_path), tenant_id="default", user_id="admin").shared).resolve()
+def _listed_workspace(client, headers, tmp_path: Path) -> Path:
+    """One read & write workspace listed by the gateway (the former shared workspace is just a row)."""
+    project = (tmp_path / "listed-project")
+    project.mkdir(exist_ok=True)
+    res = client.put(
+        "/api/gateway/workspace/policy",
+        json={"posture": "allowed_only", "folders": [{"path": str(project.resolve()), "mode": "rw"}]},
+        headers=headers,
+    )
+    assert res.status_code == 200, res.text
+    return project.resolve()
 
 
 # ------------------------------------------------------------------ the doors
@@ -112,14 +120,14 @@ DOORS = [
 
 
 @pytest.mark.parametrize("door", DOORS)
-def test_a_relative_write_lands_in_the_private_session_folder_not_the_shared_workspace(
+def test_a_relative_write_lands_in_the_private_session_folder_not_a_listed_workspace(
     door, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     client, headers = _client(tmp_path, monkeypatch)
     with client:
+        shared = _listed_workspace(client, headers, tmp_path)
         run_vars = door(client, headers, tmp_path, "chat-z62")
         session_folder = Path(run_vars["workspace_root"]).resolve()
-        shared = _shared_workspace(tmp_path)
 
         written = _write_like_a_tool_call(run_vars, "out.txt", "z62\n").resolve()
 
@@ -130,7 +138,7 @@ def test_a_relative_write_lands_in_the_private_session_folder_not_the_shared_wor
         assert session_folder != shared
         assert not (shared / "out.txt").exists()
 
-        # The shared workspace is reachable by the path the agent is given.
+        # The listed workspace is reachable by the path the agent is given.
         in_shared = _write_like_a_tool_call(run_vars, str(shared / "shared.txt"), "s\n").resolve()
         assert in_shared == shared / "shared.txt" and in_shared.is_file()
 
@@ -141,9 +149,9 @@ def test_without_a_session_the_relative_write_lands_in_the_runs_own_folder(
 ) -> None:
     client, headers = _client(tmp_path, monkeypatch)
     with client:
+        shared = _listed_workspace(client, headers, tmp_path)
         run_vars = door(client, headers, tmp_path, None)
         own = Path(run_vars["workspace_root"]).resolve()
-        shared = _shared_workspace(tmp_path)
 
         written = _write_like_a_tool_call(run_vars, "out.txt", "run\n").resolve()
 
@@ -174,15 +182,19 @@ def _policy(client, headers, tmp_path: Path, *, posture: str, default_mode: str 
         body["folders"] = [f for f in body["folders"] if f["mode"] != "rw" or f["path"] == str(paths["notes"])]
     res = client.put("/api/gateway/workspace/policy", json=body, headers=headers)
     assert res.status_code == 200, res.text
-    res = client.put(
-        "/api/gateway/workspace/policy/me", json={"folders": [{"path": str(paths["notes"]), "mode": "ro"}]}, headers=headers
+    # The account's own subset: the same rows, with notes lowered to read-only.
+    account = (
+        {"folders": [{"path": str(paths["project"]), "mode": "rw"}, {"path": str(paths["archive"]), "mode": "ro"}, {"path": str(paths["notes"]), "mode": "ro"}]}
+        if posture == "allowed_only"
+        else {"folders": [{"path": str(paths["notes"]), "mode": "ro"}]}
     )
+    res = client.put("/api/gateway/workspace/policy/me", json=account, headers=headers)
     assert res.status_code == 200, res.text
     return paths
 
 
 @pytest.mark.parametrize("door", DOORS)
-def test_the_agent_is_told_the_shared_and_allowed_workspaces_with_their_modes(
+def test_the_agent_is_told_the_allowed_workspaces_with_their_modes(
     door, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     client, headers = _client(tmp_path, monkeypatch)
@@ -192,11 +204,10 @@ def test_the_agent_is_told_the_shared_and_allowed_workspaces_with_their_modes(
         assert eff.status_code == 200, eff.text
         run_vars = door(client, headers, tmp_path, "chat-ctx")
         text = _context(run_vars)
-        shared = _shared_workspace(tmp_path)
         lines = text.splitlines()
 
         assert f'Default working directory: "{Path(run_vars["workspace_root"]).resolve()}"' in lines
-        assert f'Shared workspace: "{shared}" (read & write)' in lines
+        assert "Shared workspace" not in text
         assert "Allowed workspaces:" in lines
         assert f'  "{paths["project"]}" (read & write)' in lines
         assert f'  "{paths["archive"]}" (read-only)' in lines
@@ -207,8 +218,10 @@ def test_the_agent_is_told_the_shared_and_allowed_workspaces_with_their_modes(
         assert not any(str(paths["secrets"]) in ln and ln.startswith("  ") and "(read" in ln for ln in lines)
         assert "Everything else" not in text
         # The listed modes are the ones the gateway's own summary states.
-        summary = eff.json()["summary"] if "summary" in eff.json() else eff.json().get("effective", {}).get("summary", "")
-        assert f"{paths['archive']} (ro)" in summary and f"{paths['notes']} (ro)" in summary
+        summary = eff.json()["summary"]
+        assert summary == (
+            f"Deny everything, allow listed workspaces · {paths['project']} (rw) · {paths['archive']} (ro) · {paths['notes']} (ro)"
+        )
 
 
 @pytest.mark.parametrize("door", DOORS)
@@ -220,17 +233,17 @@ def test_under_allow_everything_the_context_names_everything_else(
         paths = _policy(client, headers, tmp_path, posture="any_except_denied", default_mode="ro")
         run_vars = door(client, headers, tmp_path, "chat-any")
         lines = _context(run_vars).splitlines()
-        shared = _shared_workspace(tmp_path)
 
-        assert f'Shared workspace: "{shared}" (read & write)' in lines
+        assert not any("Shared workspace" in ln for ln in lines)
+        assert f'  "{paths["notes"]}" (read-only)' in lines
         assert "Everything else: (read-only)" in lines
         assert not any(str(paths["secrets"]) in ln and "(read" in ln for ln in lines)
 
 
-def test_a_client_cannot_name_another_shared_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_client_cannot_bring_back_a_shared_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     client, headers = _client(tmp_path, monkeypatch)
     with client:
         run_id = _start(client, headers, session_id="chat-forge", input_data={"workspace_shared_path": "/etc"})
         run_vars = _run_vars(run_id)
-        assert Path(run_vars["workspace_shared_path"]).resolve() == _shared_workspace(tmp_path)
-        assert 'Shared workspace: "/etc"' not in _context(run_vars)
+        assert "workspace_shared_path" not in run_vars
+        assert "Shared workspace" not in _context(run_vars) and '"/etc"' not in _context(run_vars)
