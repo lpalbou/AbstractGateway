@@ -37,6 +37,9 @@ pub mod entities;
 /// plan and Download all.
 #[path = "api_firstrun.rs"]
 pub mod firstrun;
+/// The plain JSON lane (round 7 parity pages): any web-console route.
+#[path = "api_json.rs"]
+mod json;
 /// Operator controls: host controls, workflow import/reload, skills
 /// reseed, WAN lookup, own workspace policy.
 #[path = "api_operator.rs"]

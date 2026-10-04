@@ -25,6 +25,8 @@ pub mod my_email;
 /// The caller's own workspace policy (Users screen, `w`).
 pub mod my_policy;
 pub mod network;
+/// The OpenAI API page (round 7).
+pub mod openai_api;
 pub mod providers;
 pub mod review;
 pub mod routes;
@@ -51,10 +53,12 @@ use abstracttui::widgets::PageHost;
 use crate::store::{ConnPhase, Loadable, Store};
 use crate::worker::Cmd;
 use abstractcore_console::screens::Remote;
-use util::{hints, line, span, span_bold};
+use util::{line, span, span_bold};
 
-pub const SCREENS: [&str; 13] = [
+pub const SCREENS: [&str; 15] = [
     "Connection",
+    // Local engines + remote connections + the available providers
+    // (round 7: the Engines screen merged in, the web's Providers page).
     "Providers",
     // The Routes screen, renamed (DESIGN-v2 §1): which model serves
     // which modality.
@@ -63,7 +67,9 @@ pub const SCREENS: [&str; 13] = [
     "Accounts",
     "Runtimes",
     "Workflows",
-    "Review & Test",
+    // The web console's Sandbox page (round 7 rename of "Review & Test":
+    // the sandbox workspace, the change journal, the guide's Finish).
+    "Sandbox",
     // APPEND ONLY: tests and muscle memory key on the digit order.
     // User-visible label only — SCREEN_IDS keeps the stable "models" id.
     "Resources",
@@ -71,14 +77,19 @@ pub const SCREENS: [&str; 13] = [
     // served here over the gateway's HTTP mirrors (transport_http.rs):
     // the model catalog / downloads / deletes, and the local engines.
     abstractcore_console::screens::CATALOG_TITLE,
+    // Kept as an id only (round 7): the local engines live on Providers;
+    // this screen is in no navigation list.
     abstractcore_console::screens::ENGINES_TITLE,
-    // The web console's Apps tab (ui/apps.rs); key `A`.
+    // The web console's Apps tab (ui/apps.rs).
     "Apps",
-    // The first-run guide's welcome step (no jump key; Ctrl+G opens the
-    // guide on it, Ctrl+N/P reach it in browse).
+    // The first-run guide's welcome step.
     "Setup",
-    // Who can reach the gateway (ui/network.rs); key `N`.
+    // Who can reach the gateway (ui/network.rs).
     "Network",
+    // The OpenAI-compatible API at /v1 (ui/openai_api.rs, round 7).
+    "OpenAI API",
+    // The About card (ui/about.rs, round 7: a page at the bottom too).
+    "About",
 ];
 
 /// Screens with semantic weight get NAMES (round-4 P3-2): the bare
@@ -89,45 +100,56 @@ pub const SCREEN_PROVIDERS: usize = 1;
 pub const SCREEN_ROUTES: usize = 2;
 pub const SCREEN_USERS: usize = 3;
 pub const SCREEN_WORKFLOWS: usize = 5;
+/// The Sandbox page (stable id "review": it also carries the guide's
+/// Finish and the change journal).
 pub const SCREEN_REVIEW: usize = 6;
 pub const SCREEN_MODELS: usize = 7;
-/// AbstractCore's shared "Models" screen (page id `catalog`), key `9`.
+/// AbstractCore's shared "Models" screen (page id `catalog`).
 pub const SCREEN_CATALOG: usize = 8;
-/// AbstractCore's shared "Engines" screen (page id `engines`), key `0`.
+/// AbstractCore's shared "Engines" screen (page id `engines`): in no
+/// navigation list since round 7 (the local engines are on Providers).
 pub const SCREEN_ENGINES: usize = 9;
-/// The Apps screen (browser apps, Assistant, Node.js), key `A`. The
-/// first-run wizard references it BY THIS NAME; the number may move.
+/// The Apps screen (browser apps, Assistant, Node.js). The first-run
+/// wizard references it BY THIS NAME; the number may move.
 pub const SCREEN_APPS: usize = 10;
-/// The setup guide's welcome step (page id `setup`), no jump key.
+/// The setup guide's welcome step (page id `setup`).
 pub const SCREEN_WELCOME: usize = 11;
-/// The Network screen (who can reach the gateway), key `N`.
+/// The Network screen (who can reach the gateway).
 pub const SCREEN_NETWORK: usize = 12;
-/// The screen list in the order it is SHOWN (DESIGN-v2 §1): Connection
-/// (the terminal's sign-in) above the groups, then ACCOUNTS, WORK, MODELS,
-/// SYSTEM, and Setup at the bottom — the web console's sidebar order.
-/// The `SCREEN_*` indexes stay stable ids (the wizard, tests and the
-/// refresh table key on them); this is only the display/jump order.
-pub const NAV_ORDER: [usize; 13] = [
+/// The OpenAI API page (round 7).
+pub const SCREEN_OPENAI: usize = 13;
+/// The About page (round 7).
+pub const SCREEN_ABOUT: usize = 14;
+/// The screen list in the order it is SHOWN — the web console's sidebar
+/// (console.py `shell_nav`): Connection (the terminal's sign-in) above the
+/// groups, then ACCOUNTS (Accounts), WORK (Workflows, Skills & MCP,
+/// Runtimes, Apps), MODELS (Providers, OpenAI API, Models, Multimodal),
+/// SYSTEM (Resources, Sandbox, Network), then Setup and About at the
+/// bottom. The `SCREEN_*` indexes stay stable ids (the wizard, tests and
+/// the refresh table key on them); this is only the display/jump order.
+pub const NAV_ORDER: [usize; 14] = [
     SCREEN_CONNECTION,
     SCREEN_USERS,
     SCREEN_WORKFLOWS,
     SCREEN_RUNTIMES,
     SCREEN_APPS,
     SCREEN_PROVIDERS,
+    SCREEN_OPENAI,
     SCREEN_CATALOG,
-    SCREEN_ENGINES,
     SCREEN_ROUTES,
     SCREEN_MODELS,
-    SCREEN_NETWORK,
     SCREEN_REVIEW,
+    SCREEN_NETWORK,
     SCREEN_WELCOME,
+    SCREEN_ABOUT,
 ];
 
-/// The Runtimes screen (execution planes), key `4`.
+/// The Runtimes screen (execution planes).
 pub const SCREEN_RUNTIMES: usize = 4;
 
-/// The sidebar groups (DESIGN-v2 §1), each with its screens in order.
-/// Connection sits above them and Setup below them (no group).
+/// The sidebar groups (the web console's `shell_nav` captions), each with
+/// its screens in order. Connection sits above them; Setup and About
+/// below them (no group).
 pub const NAV_GROUPS: [(&str, &[usize]); 4] = [
     ("ACCOUNTS", &[SCREEN_USERS]),
     ("WORK", &[SCREEN_WORKFLOWS, SCREEN_RUNTIMES, SCREEN_APPS]),
@@ -135,15 +157,15 @@ pub const NAV_GROUPS: [(&str, &[usize]); 4] = [
         "MODELS",
         &[
             SCREEN_PROVIDERS,
+            SCREEN_OPENAI,
             SCREEN_CATALOG,
-            SCREEN_ENGINES,
             SCREEN_ROUTES,
         ],
     ),
-    ("SYSTEM", &[SCREEN_MODELS, SCREEN_NETWORK, SCREEN_REVIEW]),
+    ("SYSTEM", &[SCREEN_MODELS, SCREEN_REVIEW, SCREEN_NETWORK]),
 ];
 
-/// The group caption of screen `i` (None: Connection and Setup).
+/// The group caption of screen `i` (None: Connection, Setup, About).
 pub fn nav_group(i: usize) -> Option<&'static str> {
     NAV_GROUPS
         .iter()
@@ -157,23 +179,21 @@ pub fn nav_pos(i: usize) -> usize {
 }
 
 /// The keys listed in the footer for the screen jumps.
-pub const SCREEN_KEYS_HINT: &str = "1-9,0,N,R,S";
+pub const SCREEN_KEYS_HINT: &str = "1-9,0,H,T,N,S,I";
 
 /// The first-run wizard, in the web guide's order (`console.py`
 /// `FIRST_RUN_STEPS` = welcome → engines → model → apps → done), mapped
 /// onto this console's screens. Connection comes first because the
-/// terminal must sign in; Providers sits beside Engines because the web
-/// engines step sends cloud users to the Providers tab; the model step
-/// is Routes (the recommended plan, Apply, Download all) then the Models
-/// catalog ("or pick any model that fits"); Review carries Finish.
+/// terminal must sign in; the engines step is Providers (its local
+/// engines, round 7 — the web engines step sends cloud users to the same
+/// page's remote providers); the model step is Routes (the recommended
+/// plan, Apply, Download all) then the Models catalog ("or pick any model
+/// that fits"); the Sandbox page carries Finish.
 /// The web guide gates NO step (every step is optional, Next is always
 /// enabled); the only gate here is the sign-in one on Connection.
-/// The web guide's "apps" step is the Apps screen, between the model
-/// step (Models catalog) and Review.
-pub const WIZARD_STEPS: [usize; 8] = [
+pub const WIZARD_STEPS: [usize; 7] = [
     SCREEN_CONNECTION,
     SCREEN_WELCOME,
-    SCREEN_ENGINES,
     SCREEN_PROVIDERS,
     SCREEN_ROUTES,
     SCREEN_CATALOG,
@@ -181,20 +201,30 @@ pub const WIZARD_STEPS: [usize; 8] = [
     SCREEN_REVIEW,
 ];
 
-/// The key that jumps to screen `i` in browse mode, following the shown
-/// order (DESIGN-v2 §1): 1-9 then 0 down the list, then LETTERS once the
-/// digits are spent — shifted, so no screen's own lowercase verb ever
-/// collides: `N` Network, `R` Review & Test, `S` Setup.
+/// The key that jumps to screen `i` in browse mode: FIXED per screen
+/// (never positional — a screen arriving later must not renumber the
+/// others): 1-9 then 0 down the list, then shifted LETTERS once the
+/// digits are spent, chosen so no screen's own uppercase verb (C D F L Q
+/// R U) collides: `H` Resources (host), `T` Sandbox (try), `N` Network,
+/// `S` Setup, `I` About (info). `4` is Skills & MCP (R7-W1's page) once
+/// it is mounted.
 pub fn screen_key(i: usize) -> Option<char> {
     match i {
+        SCREEN_CONNECTION => Some('1'),
+        SCREEN_USERS => Some('2'),
+        SCREEN_WORKFLOWS => Some('3'),
+        SCREEN_RUNTIMES => Some('5'),
+        SCREEN_APPS => Some('6'),
+        SCREEN_PROVIDERS => Some('7'),
+        SCREEN_OPENAI => Some('8'),
+        SCREEN_CATALOG => Some('9'),
+        SCREEN_ROUTES => Some('0'),
+        SCREEN_MODELS => Some('H'),
+        SCREEN_REVIEW => Some('T'),
         SCREEN_NETWORK => Some('N'),
-        SCREEN_REVIEW => Some('R'),
         SCREEN_WELCOME => Some('S'),
-        _ => match nav_pos(i) {
-            9 => Some('0'),
-            p @ 0..=8 => char::from_digit(p as u32 + 1, 10),
-            _ => None,
-        },
+        SCREEN_ABOUT => Some('I'),
+        _ => None,
     }
 }
 
@@ -209,7 +239,7 @@ pub fn screen_title(i: usize) -> String {
 /// Stable PageHost page ids, parallel to `SCREENS`. `ui.screen: usize`
 /// stays the source of truth (the wizard gate reads indexes); a two-way
 /// equality-guarded bridge keeps PageHost's string `active` in lockstep.
-pub const SCREEN_IDS: [&str; 13] = [
+pub const SCREEN_IDS: [&str; 15] = [
     "connection",
     "providers",
     "routes",
@@ -225,6 +255,8 @@ pub const SCREEN_IDS: [&str; 13] = [
     "apps",
     "setup",
     "network",
+    "openai",
+    "about",
 ];
 
 /// Durable per-screen UI state (Copy: all signals).
@@ -716,6 +748,8 @@ impl Ctx {
                 self.send(Cmd::LoadApps { latest: true });
             }
             SCREEN_WELCOME => welcome::refresh(self),
+            SCREEN_OPENAI => openai_api::refresh(self),
+            SCREEN_ABOUT => about::refresh(self),
             _ => {}
         }
     }
@@ -1256,10 +1290,9 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         let ctx_i = ctx.clone();
         root_el = root_el.shortcut(KeyChord::plain(Key::Char(key)), move |_| {
             if ctx_i.ui.wizard.get_untracked() {
-                ctx_i.store.notice.set(Some(
-                    "screen jumps (1-9, 0, N, R, S) work in browse mode — in the guide Ctrl+N walks, Ctrl+G jumps to a step or leaves"
-                        .into(),
-                ));
+                ctx_i.store.notice.set(Some(format!(
+                    "screen jumps ({SCREEN_KEYS_HINT}) work in browse mode — in the guide Ctrl+N walks, Ctrl+G jumps to a step or leaves"
+                )));
             } else if ctx_i.ui.screen.get_untracked() != i {
                 ctx_i.ui.screen.set(i);
             }
@@ -1425,6 +1458,8 @@ fn screen_view(gcx: Scope, c: &Ctx, i: usize, t: &TokenSet) -> View {
         SCREEN_APPS => apps::view(gcx, c, t),
         SCREEN_WELCOME => welcome::view(gcx, c, t),
         SCREEN_NETWORK => network::view(gcx, c, t),
+        SCREEN_OPENAI => openai_api::view(gcx, c, t),
+        SCREEN_ABOUT => about::page(gcx, c, t),
         _ => unreachable!("screen {i} has no page"),
     }
 }
@@ -1441,7 +1476,9 @@ pub fn group_line(t: &TokenSet, screen: usize) -> View {
         }
         let keys: Vec<char> = members.iter().filter_map(|m| screen_key(*m)).collect();
         let digits = keys.iter().all(|k| k.is_ascii_digit() && *k != '0');
-        let keys = if digits && keys.len() > 2 {
+        // A range only for CONSECUTIVE digits ("3 5 6" stays a list).
+        let consecutive = keys.windows(2).all(|w| (w[1] as u32) == (w[0] as u32) + 1);
+        let keys = if digits && consecutive && keys.len() > 2 {
             format!("{}-{}", keys[0], keys[keys.len() - 1])
         } else {
             keys.iter()
@@ -1456,12 +1493,16 @@ pub fn group_line(t: &TokenSet, screen: usize) -> View {
         }
         spans.push(span(format!(" {keys}"), t.text_faint));
     }
-    spans.push(span(" · ".to_string(), t.text_faint));
-    let setup = format!("S {}", SCREENS[SCREEN_WELCOME]);
-    if screen == SCREEN_WELCOME {
-        spans.push(span_bold(setup, t.accent));
-    } else {
-        spans.push(span(setup, t.text_muted));
+    // Setup and About sit below the groups (the web sidebar's foot and
+    // its top-bar About).
+    for screen_i in [SCREEN_WELCOME, SCREEN_ABOUT] {
+        spans.push(span(" · ".to_string(), t.text_faint));
+        let label = screen_title(screen_i);
+        if screen == screen_i {
+            spans.push(span_bold(label, t.accent));
+        } else {
+            spans.push(span(label, t.text_muted));
+        }
     }
     line(spans)
 }
@@ -1473,7 +1514,7 @@ pub fn group_line(t: &TokenSet, screen: usize) -> View {
 /// tightest screen; the goal row is what pushed it over at 80x24).
 fn wizard_goal(screen: usize) -> &'static str {
     match screen {
-        1 => "optional — cloud providers only need a key: a adds one; e edits; t tests.",
+        SCREEN_PROVIDERS => "optional — install a local engine, or add a cloud provider's key.",
         2 => "your default model — a applies the recommended set; D downloads all of it.",
         SCREEN_USERS => {
             "a creates a user (their token is shown once); skip if the admin token is enough."
@@ -1483,17 +1524,18 @@ fn wizard_goal(screen: usize) -> &'static str {
             "optional — Tab to the per-app defaults, Enter picks one; e exports, d/D delete."
         }
         SCREEN_REVIEW => "optionally run one real test (Tab to the prompt, Enter), then Finish.",
-        SCREEN_WELCOME => "this computer at a glance — every step is optional; Ctrl+G jumps to a step or leaves.",
+        SCREEN_WELCOME => {
+            "this computer at a glance — every step is optional; Ctrl+G jumps to a step or leaves."
+        }
         SCREEN_MODELS => {
-            "nothing to configure — live models, memory & caches; Finish lives on Review."
+            "nothing to configure — live models, memory & caches; Finish lives on Sandbox."
         }
         SCREEN_CATALOG => {
             "optional — w downloads a model that fits this gateway host; f shows only those."
         }
-        SCREEN_ENGINES => {
-            "optional — i installs a local engine (Ollama, MLX…) on the gateway host, after a confirm."
+        SCREEN_APPS => {
+            "optional — i installs a browser app; o opens it signed in (a one-time link)."
         }
-        SCREEN_APPS => "optional — i installs a browser app; o opens it signed in (a one-time link).",
         _ => "",
     }
 }
@@ -1911,6 +1953,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
     let screens_caps = ctx.screens.caps;
     let screens_access = ctx.screens.store.access;
     let engine_notices = abstracttui::app::use_startup_notices(_cx);
+    let vp_footer = abstracttui::app::use_viewport(_cx);
     Element::new()
         // Chrome rows: pinned like the header (finding-0240 class) —
         // the hint line disappearing under content pressure would take
@@ -1985,182 +2028,192 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
             }
             line(parts)
         }))
-        .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
-            let t = theme.get().tokens;
-            let wizard = ui.wizard.get();
-            let screen = ui.screen.get();
-            // A principal known NOT to be an admin does not see the admin
-            // verbs (the web hides the same controls); pressing one still
-            // answers with the reason.
-            let non_admin = store.conn.with(ConnPhase::is_known_non_admin);
-            let mut pairs: Vec<(&str, &str)> = Vec::new();
-            // THE SCREEN'S OWN KEYS LEAD (review 2, 80x24): the row
-            // truncates right-edge-first, and with the universal pairs
-            // first an 80-column footer showed no screen verb at all.
-            // Quit follows them (and the guide's Ctrl+N stays first in
-            // the wizard); the rest of the universal keys come after.
-            let mut globals: Vec<(&str, &str)> = Vec::new();
-            if wizard {
-                globals.push(("Ctrl+N/]", "next step"));
-                globals.push(("Ctrl+C", "quit"));
-                globals.push(("Ctrl+P/Esc", "back"));
-            } else {
-                globals.push(("q/Ctrl+C", "quit"));
-                globals.push((SCREEN_KEYS_HINT, "screens"));
-                globals.push(("←/→ Ctrl+P/N", "prev/next"));
-            }
-            globals.push(("Tab", "focus"));
-            match screen {
-                1 => {
-                    pairs.push(("a", "add connection"));
-                    pairs.push(("e", "edit/override"));
-                    pairs.push(("d", "delete"));
-                    pairs.push(("m", "models"));
-                    pairs.push(("t", "test"));
-                    pairs.push(("r", "refresh"));
+        .child(dyn_view(
+            LayoutStyle::column().gap(0).shrink(0.0),
+            move || {
+                let t = theme.get().tokens;
+                let width = vp_footer.get().w;
+                let wizard = ui.wizard.get();
+                let screen = ui.screen.get();
+                // A principal known NOT to be an admin does not see the admin
+                // verbs (the web hides the same controls); pressing one still
+                // answers with the reason.
+                let non_admin = store.conn.with(ConnPhase::is_known_non_admin);
+                let mut pairs: Vec<(&str, &str)> = Vec::new();
+                // THE SCREEN'S OWN KEYS LEAD (review 2, 80x24): the row
+                // truncates right-edge-first, and with the universal pairs
+                // first an 80-column footer showed no screen verb at all.
+                // Quit follows them (and the guide's Ctrl+N stays first in
+                // the wizard); the rest of the universal keys come after.
+                let mut globals: Vec<(&str, &str)> = Vec::new();
+                if wizard {
+                    globals.push(("Ctrl+N/]", "next step"));
+                    globals.push(("Ctrl+C", "quit"));
+                    globals.push(("Ctrl+P/Esc", "back"));
+                } else {
+                    globals.push(("q/Ctrl+C", "quit"));
+                    globals.push((SCREEN_KEYS_HINT, "screens"));
+                    globals.push(("←/→ Ctrl+P/N", "prev/next"));
                 }
-                2 => {
-                    pairs.push(("Enter/e", "edit route"));
-                    pairs.push(("x", "clear route"));
-                    // `d` is "delete" on Connections/Users and
-                    // "download" nowhere: weights are `w`, the whole
-                    // recommended set `D`, each behind a confirm. (The
-                    // plan line on the screen teaches p / D / a too, for
-                    // rows too narrow to reach them here.)
-                    pairs.push(("w", "download weights"));
-                    pairs.push(("a", "apply recommended"));
-                    pairs.push(("D", "download all"));
-                    pairs.push(("C", "cancel download all"));
-                    pairs.push(("p", "recommended plan"));
-                    pairs.push(("r", "refresh"));
+                globals.push(("Tab", "focus"));
+                match screen {
+                    1 => {
+                        pairs.push(("a", "add connection"));
+                        pairs.push(("e", "edit/override"));
+                        pairs.push(("d", "delete"));
+                        pairs.push(("m", "models"));
+                        pairs.push(("t", "test"));
+                        pairs.push(("r", "refresh"));
+                    }
+                    2 => {
+                        pairs.push(("Enter/e", "edit route"));
+                        pairs.push(("x", "clear route"));
+                        // `d` is "delete" on Connections/Users and
+                        // "download" nowhere: weights are `w`, the whole
+                        // recommended set `D`, each behind a confirm. (The
+                        // plan line on the screen teaches p / D / a too, for
+                        // rows too narrow to reach them here.)
+                        pairs.push(("w", "download weights"));
+                        pairs.push(("a", "apply recommended"));
+                        pairs.push(("D", "download all"));
+                        pairs.push(("C", "cancel download all"));
+                        pairs.push(("p", "recommended plan"));
+                        pairs.push(("r", "refresh"));
+                    }
+                    3 => {
+                        // DESIGN-v2 §2: the row's actions, then the header's
+                        // Create user / Create entity.
+                        pairs.push(("space", "Active"));
+                        pairs.push(("@", "email"));
+                        pairs.push(("l", "logs"));
+                        pairs.push(("w", "workspace"));
+                        pairs.push(("t", "rotate"));
+                        pairs.push(("m", "manage entity"));
+                        pairs.push(("d", "archive"));
+                        pairs.push(("e", "edit user"));
+                        pairs.push(("a", "create user"));
+                        pairs.push(("n", "create entity"));
+                        pairs.push(("c", "talk"));
+                        pairs.push(("i", "inspect"));
+                        pairs.push(("s", "spark templates"));
+                        pairs.push(("v", "kept data of deleted users"));
+                        pairs.push(("x", "reset mailbox override"));
+                        pairs.push(("r", "refresh"));
+                    }
+                    // The whole Runtimes screen is admin-only: no verbs.
+                    4 if non_admin => {}
+                    4 => {
+                        pairs.push(("Enter", "inspect runtime"));
+                        pairs.push(("f", "filter"));
+                        pairs.push(("/", "search"));
+                        pairs.push(("n/p", "page"));
+                        pairs.push(("o", "open row"));
+                        pairs.push(("i", "run detail"));
+                        pairs.push(("w", "policy"));
+                        pairs.push(("←/→", "inspector tab (when focused)"));
+                        pairs.push(("c", "cancel run"));
+                        pairs.push(("s", "steer run"));
+                        pairs.push(("r", "refresh"));
+                    }
+                    // Named arms from here down (the numbered arms above
+                    // predate the constants): the Workflows/Review pair had
+                    // drifted one screen left when Workflows was inserted —
+                    // Review's sandbox hints rendered on the Workflows
+                    // screen and Review showed none. Pinned by
+                    // footer_hints_stay_in_lockstep_with_screens.
+                    SCREEN_WORKFLOWS => {
+                        pairs.push(("Tab", "workflows ⇄ defaults"));
+                        pairs.push(("Enter", "pick a default"));
+                        pairs.push(("o", "other workflow types"));
+                        pairs.push(("t", "show/hide drafts"));
+                        pairs.push(("e", "export .flow"));
+                        pairs.push(("d", "delete version"));
+                        pairs.push(("D", "delete every version"));
+                        pairs.push(("i", "import .flow"));
+                        pairs.push(("L", "reload from disk"));
+                        pairs.push(("r", "refresh"));
+                    }
+                    SCREEN_REVIEW => {
+                        pairs.push(("Tab→prompt, Enter", "run the test (REAL generation)"));
+                        pairs.push(("r", "refresh providers"));
+                    }
+                    SCREEN_MODELS => {
+                        pairs.push(("u", "unload"));
+                        pairs.push(("k", "lock/unlock"));
+                        pairs.push(("w", "load (warm up)"));
+                        pairs.push(("e", "context estimate"));
+                        pairs.push(("c", "clear session caches"));
+                        // At 80x24 the memory itemization does not fit beside the
+                        // Loaded table, and the table wins the rows — so the verb
+                        // that pages the itemization has to be as visible as the
+                        // rest of them.
+                        pairs.push(("m", "more memory detail"));
+                        pairs.push(("r", "refresh"));
+                    }
+                    // The shared screens publish their own verbs.
+                    SCREEN_CATALOG => {
+                        pairs.extend(abstractcore_console::screens::catalog::hints(
+                            screens_caps,
+                            &screens_access.get(),
+                        ));
+                        pairs.push(("r", "refresh"));
+                    }
+                    SCREEN_ENGINES => {
+                        pairs.extend(abstractcore_console::screens::engines::hints(
+                            screens_caps,
+                            &screens_access.get(),
+                        ));
+                    }
+                    SCREEN_APPS => pairs.extend_from_slice(apps::HINTS),
+                    SCREEN_WELCOME => {
+                        pairs.push(("r", "refresh"));
+                    }
+                    SCREEN_NETWORK => {
+                        pairs.push(("↑↓ Enter", "save mode"));
+                        pairs.push(("c", "copy address"));
+                        pairs.push(("r", "refresh"));
+                    }
+                    SCREEN_OPENAI => pairs.extend(openai_api::hints(non_admin)),
+                    SCREEN_ABOUT => {
+                        pairs.push(("r", "refresh"));
+                    }
+                    _ => {}
                 }
-                3 => {
-                    // DESIGN-v2 §2: the row's actions, then the header's
-                    // Create user / Create entity.
-                    pairs.push(("space", "Active"));
-                    pairs.push(("@", "email"));
-                    pairs.push(("l", "logs"));
-                    pairs.push(("w", "workspace"));
-                    pairs.push(("t", "rotate"));
-                    pairs.push(("m", "manage entity"));
-                    pairs.push(("d", "archive"));
-                    pairs.push(("e", "edit user"));
-                    pairs.push(("a", "create user"));
-                    pairs.push(("n", "create entity"));
-                    pairs.push(("c", "talk"));
-                    pairs.push(("i", "inspect"));
-                    pairs.push(("s", "spark templates"));
-                    pairs.push(("v", "kept data of deleted users"));
-                    pairs.push(("x", "reset mailbox override"));
-                    pairs.push(("r", "refresh"));
+                let admin_keys: &[&str] = match screen {
+                    SCREEN_ROUTES => routes::ADMIN_KEYS,
+                    SCREEN_USERS => users::ADMIN_KEYS,
+                    SCREEN_WORKFLOWS => workflows::ADMIN_KEYS,
+                    SCREEN_MODELS => models::ADMIN_KEYS,
+                    _ => &[],
+                };
+                let (screen_pairs, gated) = util::admin_hint_pairs(pairs, admin_keys, non_admin);
+                let mut pairs: Vec<(&str, &str)> = Vec::new();
+                if wizard {
+                    pairs.push(globals.remove(0)); // Ctrl+N: the guide's walk
                 }
-                // The whole Runtimes screen is admin-only: no verbs.
-                4 if non_admin => {}
-                4 => {
-                    pairs.push(("Enter", "inspect runtime"));
-                    pairs.push(("f", "filter"));
-                    pairs.push(("/", "search"));
-                    pairs.push(("n/p", "page"));
-                    pairs.push(("o", "open row"));
-                    pairs.push(("i", "run detail"));
-                    pairs.push(("w", "policy"));
-                    pairs.push(("←/→", "inspector tab (when focused)"));
-                    pairs.push(("c", "cancel run"));
-                    pairs.push(("s", "steer run"));
-                    pairs.push(("r", "refresh"));
+                pairs.extend(screen_pairs);
+                if let Some(keys) = gated.as_deref() {
+                    pairs.push((keys, "admin only"));
                 }
-                // Named arms from here down (the numbered arms above
-                // predate the constants): the Workflows/Review pair had
-                // drifted one screen left when Workflows was inserted —
-                // Review's sandbox hints rendered on the Workflows
-                // screen and Review showed none. Pinned by
-                // footer_hints_stay_in_lockstep_with_screens.
-                SCREEN_WORKFLOWS => {
-                    pairs.push(("Tab", "workflows ⇄ defaults"));
-                    pairs.push(("Enter", "pick a default"));
-                    pairs.push(("o", "other workflow types"));
-                    pairs.push(("t", "show/hide drafts"));
-                    pairs.push(("e", "export .flow"));
-                    pairs.push(("d", "delete version"));
-                    pairs.push(("D", "delete every version"));
-                    pairs.push(("i", "import .flow"));
-                    pairs.push(("L", "reload from disk"));
-                    pairs.push(("r", "refresh"));
+                pairs.extend(globals);
+                // The setup guide's chord LAST: every screen has it, so it
+                // yields to the screen's own verbs when the row truncates
+                // (the Setup step and the goal line teach it too). The guide
+                // is an admin surface (its writes are admin routes; the web
+                // hides "Setup guide" for a non-admin).
+                if wizard {
+                    pairs.push(("Ctrl+G", "steps/leave guide"));
+                } else if !non_admin {
+                    pairs.push(("Ctrl+G", "setup guide"));
                 }
-                SCREEN_REVIEW => {
-                    pairs.push(("Tab→prompt, Enter", "run the test (REAL generation)"));
-                    pairs.push(("r", "refresh providers"));
-                }
-                SCREEN_MODELS => {
-                    pairs.push(("u", "unload"));
-                    pairs.push(("k", "lock/unlock"));
-                    pairs.push(("w", "load (warm up)"));
-                    pairs.push(("e", "context estimate"));
-                    pairs.push(("c", "clear session caches"));
-                    // At 80x24 the memory itemization does not fit beside the
-                    // Loaded table, and the table wins the rows — so the verb
-                    // that pages the itemization has to be as visible as the
-                    // rest of them.
-                    pairs.push(("m", "more memory detail"));
-                    pairs.push(("r", "refresh"));
-                }
-                // The shared screens publish their own verbs.
-                SCREEN_CATALOG => {
-                    pairs.extend(abstractcore_console::screens::catalog::hints(
-                        screens_caps,
-                        &screens_access.get(),
-                    ));
-                    pairs.push(("r", "refresh"));
-                }
-                SCREEN_ENGINES => {
-                    pairs.extend(abstractcore_console::screens::engines::hints(
-                        screens_caps,
-                        &screens_access.get(),
-                    ));
-                }
-                SCREEN_APPS => pairs.extend_from_slice(apps::HINTS),
-                SCREEN_WELCOME => {
-                    pairs.push(("r", "refresh"));
-                }
-                SCREEN_NETWORK => {
-                    pairs.push(("↑↓ Enter", "save mode"));
-                    pairs.push(("c", "copy address"));
-                    pairs.push(("r", "refresh"));
-                }
-                _ => {}
-            }
-            let admin_keys: &[&str] = match screen {
-                SCREEN_ROUTES => routes::ADMIN_KEYS,
-                SCREEN_USERS => users::ADMIN_KEYS,
-                SCREEN_WORKFLOWS => workflows::ADMIN_KEYS,
-                SCREEN_MODELS => models::ADMIN_KEYS,
-                _ => &[],
-            };
-            let (screen_pairs, gated) = util::admin_hint_pairs(pairs, admin_keys, non_admin);
-            let mut pairs: Vec<(&str, &str)> = Vec::new();
-            if wizard {
-                pairs.push(globals.remove(0)); // Ctrl+N: the guide's walk
-            }
-            pairs.extend(screen_pairs);
-            if let Some(keys) = gated.as_deref() {
-                pairs.push((keys, "admin only"));
-            }
-            pairs.extend(globals);
-            // The setup guide's chord LAST: every screen has it, so it
-            // yields to the screen's own verbs when the row truncates
-            // (the Setup step and the goal line teach it too). The guide
-            // is an admin surface (its writes are admin routes; the web
-            // hides "Setup guide" for a non-admin).
-            if wizard {
-                pairs.push(("Ctrl+G", "steps/leave guide"));
-            } else if !non_admin {
-                pairs.push(("Ctrl+G", "setup guide"));
-            }
-            // LAST: the row truncates right-edge-first, so the host panel
-            // key shows wherever the screen's own verbs leave room.
-            pairs.push((host::OPEN_KEY_LABEL, "gateway host"));
-            hints(&t, &pairs)
-        }))
+                // LAST: the row truncates right-edge-first, so the host panel
+                // key shows wherever the screen's own verbs leave room.
+                pairs.push((host::OPEN_KEY_LABEL, "gateway host"));
+                // The key-hint bar (R7.2): wraps whole pairs onto a second
+                // line instead of cutting the row's tail.
+                kit::footer_hint_bar(&t, &pairs, width, 2)
+            },
+        ))
         .build()
 }
 
@@ -2214,10 +2267,12 @@ pub fn normalize_url(raw: &str) -> String {
 mod nav_tests {
     use super::*;
 
-    /// DESIGN-v2 §1: the keys follow the shown order — 1 Connection,
-    /// 2 Accounts, 3 Workflows, 4 Runtimes, 5 Apps, 6 Providers, 7 Models,
-    /// 8 Engines, 9 Multimodal, 0 Resources, N Network, R Review & Test,
-    /// S Setup — and every screen appears exactly once.
+    /// R7.2: the web console's sidebar (console.py `shell_nav`) — Connection
+    /// above the groups, ACCOUNTS (Accounts), WORK (Workflows, Runtimes,
+    /// Apps; Skills & MCP joins as `4`), MODELS (Providers, OpenAI API,
+    /// Models, Multimodal), SYSTEM (Resources, Sandbox, Network), then
+    /// Setup and About. Engines is merged into Providers (no tab). Every
+    /// listed screen appears once; keys are fixed per screen.
     #[test]
     fn screen_list_order_keys_and_groups() {
         let shown: Vec<String> = NAV_ORDER.iter().map(|i| screen_title(*i)).collect();
@@ -2227,34 +2282,45 @@ mod nav_tests {
                 "1 Connection",
                 "2 Accounts",
                 "3 Workflows",
-                "4 Runtimes",
-                "5 Apps",
-                "6 Providers",
-                "7 Models",
-                "8 Engines",
-                "9 Multimodal",
-                "0 Resources",
+                "5 Runtimes",
+                "6 Apps",
+                "7 Providers",
+                "8 OpenAI API",
+                "9 Models",
+                "0 Multimodal",
+                "H Resources",
+                "T Sandbox",
                 "N Network",
-                "R Review & Test",
                 "S Setup",
+                "I About",
             ]
         );
         let mut all = NAV_ORDER.to_vec();
         all.sort_unstable();
-        assert_eq!(all, (0..SCREENS.len()).collect::<Vec<_>>());
+        let mut expected: Vec<usize> = (0..SCREENS.len())
+            .filter(|i| *i != SCREEN_ENGINES)
+            .collect();
+        expected.sort_unstable();
+        assert_eq!(
+            all, expected,
+            "every screen but Engines (merged into Providers)"
+        );
+        assert_eq!(screen_key(SCREEN_ENGINES), None);
         assert_eq!(nav_group(SCREEN_USERS), Some("ACCOUNTS"));
         assert_eq!(nav_group(SCREEN_APPS), Some("WORK"));
+        assert_eq!(nav_group(SCREEN_OPENAI), Some("MODELS"));
         assert_eq!(nav_group(SCREEN_ROUTES), Some("MODELS"));
         assert_eq!(nav_group(SCREEN_REVIEW), Some("SYSTEM"));
+        assert_eq!(nav_group(SCREEN_NETWORK), Some("SYSTEM"));
         assert_eq!(nav_group(SCREEN_CONNECTION), None);
         assert_eq!(nav_group(SCREEN_WELCOME), None);
-        // The wizard order is unchanged by the new list.
+        assert_eq!(nav_group(SCREEN_ABOUT), None);
+        // The guide: welcome → engines (Providers) → model → apps → done.
         assert_eq!(
             WIZARD_STEPS,
             [
                 SCREEN_CONNECTION,
                 SCREEN_WELCOME,
-                SCREEN_ENGINES,
                 SCREEN_PROVIDERS,
                 SCREEN_ROUTES,
                 SCREEN_CATALOG,
@@ -2262,5 +2328,16 @@ mod nav_tests {
                 SCREEN_REVIEW,
             ]
         );
+    }
+
+    #[test]
+    fn group_line_lists_noncontiguous_keys_as_a_list() {
+        abstracttui::app::set_theme_by_id("abstract-dark");
+        let keys: Vec<char> = NAV_GROUPS[1]
+            .1
+            .iter()
+            .filter_map(|m| screen_key(*m))
+            .collect();
+        assert_eq!(keys, ['3', '5', '6']);
     }
 }

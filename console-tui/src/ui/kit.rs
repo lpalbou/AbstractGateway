@@ -86,6 +86,31 @@ pub fn key_hint_bar(t: &TokenSet, pairs: &[(&str, &str)], width: i32) -> View {
     col.build()
 }
 
+/// The app footer's key-hint bar: [`key_hint_bar`] capped at `max_lines`
+/// lines (the page keeps the rows). Pairs come in priority order — the
+/// screen's own verbs first, the universal keys last — and when they do
+/// not all fit, the last line ends with a visible `…` (never a silent
+/// cut); the dropped pairs are universal keys the About page lists.
+pub fn footer_hint_bar(t: &TokenSet, pairs: &[(&str, &str)], width: i32, max_lines: usize) -> View {
+    let width = width.max(10);
+    let mut kept: Vec<(&str, &str)> = pairs.to_vec();
+    let mut cut = false;
+    while hint_lines(&kept, width).len() > max_lines.max(1)
+        || (cut
+            && hint_lines(&[kept.as_slice(), &[("…", "")]].concat(), width).len()
+                > max_lines.max(1))
+    {
+        if kept.pop().is_none() {
+            break;
+        }
+        cut = true;
+    }
+    if cut {
+        kept.push(("…", ""));
+    }
+    key_hint_bar(t, &kept, width)
+}
+
 // ---------------------------------------------------------------------------
 // Overlay
 // ---------------------------------------------------------------------------
@@ -701,6 +726,24 @@ mod tests {
 
     fn rules() -> Vec<ColRule> {
         vec![ColRule::tail("name", 6), ColRule::head("what it does", 10)]
+    }
+
+    #[test]
+    fn footer_bar_caps_its_lines_and_marks_the_cut() {
+        let pairs = [
+            ("a", "alpha"),
+            ("b", "bravo"),
+            ("c", "charlie"),
+            ("d", "delta"),
+            ("e", "echo"),
+        ];
+        let lines = hint_lines(&pairs, 20);
+        assert!(lines.len() > 2, "{lines:?}");
+        let mut kept = pairs.to_vec();
+        while hint_lines(&[kept.as_slice(), &[("…", "")]].concat(), 20).len() > 2 {
+            kept.pop();
+        }
+        assert!(kept.len() < pairs.len());
     }
 
     #[test]

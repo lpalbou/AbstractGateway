@@ -194,15 +194,16 @@ fn read_token_file(path: &str) -> Result<String, String> {
     Ok(token.to_string())
 }
 
-/// The `--about` text: this console's identity (vendored descriptor) and
-/// the gateway rows for `gateway` (the `GET /about` read, or its error —
-/// one visible "unavailable (<reason>)" row, never omitted).
+/// The `--about` text: the shared About card (ui-kit `AfAbout`) — this
+/// console's name and version, the AbstractFramework and AbstractGateway
+/// versions from the `GET /about` read (or why one is missing), the links,
+/// the licence line. No package list (operator, round 5).
 pub fn about_text(gateway: Result<serde_json::Value, String>) -> String {
-    let rows = match &gateway {
-        Ok(v) => identity::gateway_version_rows(Some(v), None),
-        Err(e) => identity::gateway_version_rows(None, Some(e)),
+    let facts = match &gateway {
+        Ok(v) => identity::about_version_facts(Some(v), None),
+        Err(e) => identity::about_version_facts(None, Some(e)),
     };
-    identity::about_lines(&identity::about_rows(&identity::this_app(), &rows)).join("\n")
+    identity::about_lines(&identity::about_card_rows(&identity::this_app(), &facts)).join("\n")
 }
 
 /// CLI entry — returns the process exit code.

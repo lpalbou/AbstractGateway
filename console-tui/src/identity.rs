@@ -179,6 +179,84 @@ pub fn about_rows(id: &AppIdentity, gateway: &[(String, String)]) -> Vec<(String
     rows
 }
 
+/// The two version facts of the shared About card — the Rust twin of
+/// ui-kit `aboutVersionsFromGateway` + `aboutVersionFacts` (about.tsx):
+/// `[("AbstractFramework", v | note | "not reported"), ("AbstractGateway",
+/// v | note | "not connected")]`. Only the framework and gateway versions
+/// are taken: the payload's per-package list is deliberately unused
+/// (operator, round 5: no package list in About).
+/// `payload` = the body of `GET /api/gateway/about`, `error` = why it
+/// failed; both None = not connected.
+pub fn about_version_facts(payload: Option<&Value>, error: Option<&str>) -> Vec<(String, String)> {
+    let text = |k: &str| {
+        payload
+            .and_then(Value::as_object)
+            .and_then(|o| o.get(k))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or("")
+            .to_string()
+    };
+    let (framework, gateway) = match (payload, error) {
+        (_, Some(e)) => {
+            let e = e.trim();
+            (
+                "not reported".to_string(),
+                format!(
+                    "unavailable ({})",
+                    if e.is_empty() { "unknown error" } else { e }
+                ),
+            )
+        }
+        (Some(_), None) => {
+            let gw = text("abstractgateway");
+            let fw = text("abstractframework");
+            let framework = if !fw.is_empty() {
+                fw
+            } else if !gw.is_empty() {
+                "not installed on the gateway host".to_string()
+            } else {
+                "not reported".to_string()
+            };
+            let gateway = if gw.is_empty() {
+                "unavailable (the gateway did not report its version)".to_string()
+            } else {
+                gw
+            };
+            (framework, gateway)
+        }
+        (None, None) => ("not reported".to_string(), "not connected".to_string()),
+    };
+    vec![
+        ("AbstractFramework".to_string(), framework),
+        ("AbstractGateway".to_string(), gateway),
+    ]
+}
+
+/// The shared About card as `(label, value)` rows, in the kit's order
+/// (ui-kit `AfAbout`): the app's name and version (empty label), the two
+/// version facts, the six links (`aboutLinks`: Website, Source, Docs,
+/// Issues, Feedback, Contact — a terminal shows each URL beside its
+/// label), then ONE author/licence line (empty label). Never a package
+/// list.
+pub fn about_card_rows(id: &AppIdentity, facts: &[(String, String)]) -> Vec<(String, String)> {
+    let mut rows: Vec<(String, String)> = vec![(
+        String::new(),
+        format!("{} {} {}", id.name, CONSOLE_SUFFIX, id.version),
+    )];
+    rows.extend(facts.iter().cloned());
+    rows.extend([
+        ("Website".to_string(), id.website.clone()),
+        ("Source".to_string(), id.repo.clone()),
+        ("Docs".to_string(), id.docs.clone()),
+        ("Issues".to_string(), id.issues.clone()),
+        ("Feedback".to_string(), id.feedback.clone()),
+        ("Contact".to_string(), id.contact_email.clone()),
+        (String::new(), id.copyright.clone()),
+    ]);
+    rows
+}
+
 /// One printable line per row (`label: value`, or the bare value).
 pub fn about_lines(rows: &[(String, String)]) -> Vec<String> {
     rows.iter()
@@ -195,6 +273,59 @@ pub fn about_lines(rows: &[(String, String)]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn about_card_has_no_package_list_and_the_kit_facts() {
+        let payload = serde_json::json!({"abstractframework": "0.10.0", "abstractgateway": "0.13.0",
+            "packages": {"abstractcore": "2.25.0"}});
+        let rows = about_card_rows(&this_app(), &about_version_facts(Some(&payload), None));
+        let text = about_lines(&rows).join("\n");
+        assert!(text.contains("AbstractFramework: 0.10.0"), "{text}");
+        assert!(text.contains("AbstractGateway: 0.13.0"), "{text}");
+        assert!(!text.contains("abstractcore"), "no package list:\n{text}");
+        let labels: Vec<&str> = rows.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(
+            labels,
+            [
+                "",
+                "AbstractFramework",
+                "AbstractGateway",
+                "Website",
+                "Source",
+                "Docs",
+                "Issues",
+                "Feedback",
+                "Contact",
+                ""
+            ]
+        );
+        assert!(rows.last().unwrap().1.contains("MIT"), "licence line last");
+    }
+
+    #[test]
+    fn about_facts_say_why_a_version_is_missing() {
+        assert_eq!(
+            about_version_facts(None, None),
+            vec![
+                ("AbstractFramework".into(), "not reported".into()),
+                ("AbstractGateway".into(), "not connected".into())
+            ]
+        );
+        assert_eq!(
+            about_version_facts(None, Some("HTTP 503"))[1].1,
+            "unavailable (HTTP 503)"
+        );
+        let gw_only = serde_json::json!({"abstractgateway": "0.13.0"});
+        assert_eq!(
+            about_version_facts(Some(&gw_only), None)[0].1,
+            "not installed on the gateway host"
+        );
+        let empty = serde_json::json!({});
+        assert_eq!(
+            about_version_facts(Some(&empty), None)[1].1,
+            "unavailable (the gateway did not report its version)"
+        );
+    }
 
     #[test]
     fn the_vendored_descriptor_names_the_gateway() {

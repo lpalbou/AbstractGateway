@@ -27,6 +27,9 @@ mod apps;
 pub mod entities;
 /// Operator controls (host card, paused-banner poll, restart/quit watcher,
 /// workflow import/reload, skills reseed, WAN lookup, own workspace policy).
+/// The plain JSON lane (round 7 parity pages).
+#[path = "worker_json.rs"]
+pub mod json;
 #[path = "worker_operator.rs"]
 pub mod operator;
 use crate::store::{
@@ -313,6 +316,8 @@ pub enum Cmd {
     },
     /// Operator controls — see `worker::operator::OpCmd`.
     Operator(operator::OpCmd),
+    /// The plain JSON lane — see `worker::json::JsonCmd`.
+    Json(json::JsonCmd),
     /// `POST /network {allowed_origins?, trust_proxy?}` (reverse proxy,
     /// mission Z) then re-read. Only the named fields change; the gateway
     /// validates and its words are shown verbatim.
@@ -2134,6 +2139,7 @@ fn handle(
         }
 
         Cmd::Operator(op) => operator::handle(client, store, wake, tx, op, on_done),
+        Cmd::Json(j) => json::handle(client, store, wake, j),
 
         Cmd::LoadAbout => load(
             store,

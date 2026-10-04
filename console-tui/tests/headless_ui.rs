@@ -9330,37 +9330,38 @@ fn about_modal_lists_the_identity_and_the_gateway_versions() {
         "packages": {"abstractcore": "2.15.3", "abstractgateway": "0.4.4", "abstractruntime": "0.4.35"}
     })));
     let s = h.turns(2);
+    // The shared About card (ui-kit AfAbout, R5.4): name + version, the
+    // framework and gateway versions, the six links, ONE licence line —
+    // never a package list.
     for needle in [
         &format!("AbstractGateway console {}", env!("CARGO_PKG_VERSION")),
-        "Part of AbstractFramework — https://abstractframework.ai",
-        "Author: Laurent-Philippe Albou, PhD (2023-2026)",
+        "AbstractFramework 0.3.4",
+        "AbstractGateway   0.4.4",
+        "Website           https://abstractframework.ai/gateway",
+        "Source            https://github.com/lpalbou/AbstractGateway",
+        "Docs              https://www.lpalbou.info/AbstractGateway/",
+        "Issues            https://github.com/lpalbou/AbstractGateway/issues",
+        "Feedback          https://github.com/lpalbou/AbstractGateway/issues/new?labels=feedback",
+        "Contact           contact@abstractframework.ai",
         "© 2023-2026 Laurent-Philippe Albou, PhD. Released under the MIT License.",
-        "Website: https://abstractframework.ai/gateway",
-        "Source: https://github.com/lpalbou/AbstractGateway",
-        "Documentation: https://www.lpalbou.info/AbstractGateway/",
-        "Report an issue: https://github.com/lpalbou/AbstractGateway/issues",
-        "Give feedback: https://github.com/lpalbou/AbstractGateway/issues/new?labels=feedback",
-        "Contact: contact@abstractframework.ai",
-        "Gateway: AbstractGateway 0.4.4",
-        "Gateway framework: AbstractFramework 0.3.4",
-        "Gateway package abstractcore: 2.15.3",
-        "Gateway package abstractruntime: 0.4.35",
     ] {
         assert!(s.contains(needle), "missing {needle:?}:\n{s}");
     }
-    assert!(
-        !s.contains("Gateway package abstractgateway"),
-        "the gateway itself is not a package row"
-    );
+    for absent in ["abstractcore", "abstractruntime", "Gateway package"] {
+        assert!(!s.contains(absent), "no package list ({absent}):\n{s}");
+    }
     h.press_escape();
     let s = h.turns(2);
-    assert!(!s.contains("Report an issue:"), "Esc closes About:\n{s}");
+    assert!(
+        !s.contains("Contact           contact@"),
+        "Esc closes About:\n{s}"
+    );
 }
 
 #[test]
 fn about_modal_says_why_the_gateway_rows_are_missing() {
     use abstractgateway_console::api::{ApiError, ApiErrorKind};
-    use abstractgateway_console::ui::about::gateway_rows;
+    use abstractgateway_console::ui::about::version_facts;
 
     // Not connected: no read is sent, the row says why.
     let mut h = harness_sized(Size::new(120, 50));
@@ -9372,22 +9373,22 @@ fn about_modal_says_why_the_gateway_rows_are_missing() {
         "no read while not connected"
     );
     assert!(
-        s.contains("Gateway: unavailable (not connected to a gateway"),
+        s.contains("AbstractGateway   not connected"),
         "not-connected row:\n{s}"
     );
     assert!(
         s.contains("AbstractGateway console"),
         "identity still shown:\n{s}"
     );
-    // A failed read is one visible row.
+    // A failed read is said in the AbstractGateway fact.
     let failed: Loadable<Value> =
         Loadable::Failed(ApiError::new(ApiErrorKind::Unreachable, "HTTP 404"));
-    let rows = gateway_rows(true, &failed);
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].0, "Gateway");
+    let facts = version_facts(true, &failed);
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[1].0, "AbstractGateway");
     assert!(
-        rows[0].1.starts_with("unavailable (") && rows[0].1.contains("HTTP 404"),
-        "{rows:?}"
+        facts[1].1.starts_with("unavailable (") && facts[1].1.contains("HTTP 404"),
+        "{facts:?}"
     );
 }
 
@@ -9405,7 +9406,7 @@ fn about_is_on_the_connection_screen_and_question_mark() {
     h.key(b"?");
     let s = h.turns(2);
     assert!(
-        s.contains("Contact: contact@abstractframework.ai"),
+        s.contains("Contact           contact@abstractframework.ai"),
         "? opens About:\n{s}"
     );
 }
@@ -9421,14 +9422,16 @@ fn about_flag_text_carries_every_line() {
         "{ok}"
     );
     assert!(
-        ok.contains("Gateway: AbstractGateway 0.4.4")
-            && ok.contains("Gateway framework: not installed on the gateway host")
+        ok.contains("AbstractGateway: 0.4.4")
+            && ok.contains("AbstractFramework: not installed on the gateway host"),
+        "{ok}"
     );
     let down = abstractgateway_console::about_text(Err("network failure: refused".into()));
     assert!(
-        down.ends_with("Gateway: unavailable (network failure: refused)"),
+        down.contains("AbstractGateway: unavailable (network failure: refused)"),
         "{down}"
     );
+    assert!(down.ends_with("Released under the MIT License."), "{down}");
     assert!(down.contains("Contact: contact@abstractframework.ai"));
 }
 

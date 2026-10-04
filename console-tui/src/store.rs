@@ -18,6 +18,9 @@ use crate::api::ApiError;
 pub mod apps;
 /// Operator controls (host card, paused banner, own workspace policy,
 /// backlog settings): state + pure parsing, in its own file.
+/// The plain JSON lane's keyed slots (round 7 parity pages).
+#[path = "store_json.rs"]
+pub mod json;
 #[path = "store_operator.rs"]
 pub mod operator;
 
@@ -2981,6 +2984,8 @@ pub struct Store {
     /// Operator controls: host runner/tray/update, paused-banner poll,
     /// the caller's own workspace policy (see `store::operator`).
     pub op: operator::OperatorStore,
+    /// The plain JSON lane (round 7 parity pages): keyed reads + writes.
+    pub json: json::JsonStore,
     /// Per-provider model lists (route editor + provider browser).
     pub models: Signal<HashMap<String, Loadable<Vec<String>>>>,
     /// Result of the LAST discover-models call — a single slot, which
@@ -3775,6 +3780,7 @@ impl Store {
             about: cx.signal(Loadable::default()),
             network: cx.signal(Loadable::default()),
             op: operator::OperatorStore::create(cx),
+            json: json::JsonStore::create(cx),
             models: cx.signal(HashMap::new()),
             discover: cx.signal(Loadable::default()),
             sandbox: cx.signal(Loadable::default()),
@@ -3859,6 +3865,7 @@ impl Store {
             about,
             network,
             op,
+            json,
             models,
             discover,
             sandbox,
@@ -3916,6 +3923,7 @@ impl Store {
         about.set(Loadable::NotAsked);
         network.set(Loadable::NotAsked);
         op.reset();
+        json.reset();
         models.update(|m| m.clear());
         discover.set(Loadable::NotAsked);
         sandbox.set(Loadable::NotAsked);
