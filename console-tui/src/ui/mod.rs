@@ -16,6 +16,9 @@ pub mod entity_create;
 pub mod entity_manage;
 /// Gateway host panel (F3) + the paused / restart banner.
 pub mod host;
+/// Round-7 shared widgets: full-width overlay, wrapping table, inline
+/// confirm, key-hint bar (DESIGN.md R7.2 conventions).
+pub mod kit;
 pub mod models;
 /// The caller's own mailbox and notifications (Users screen, `@`).
 pub mod my_email;
