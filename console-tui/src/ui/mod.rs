@@ -2160,9 +2160,12 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                         pairs.push(("r", "refresh"));
                     }
                     SCREEN_NETWORK => {
-                        pairs.push(("↑↓ Enter", "save mode"));
+                        pairs.push(("↑↓ Enter", "who can reach it"));
                         pairs.push(("c", "copy address"));
-                        pairs.push(("r", "refresh"));
+                        pairs.push(("w", "what to know"));
+                        pairs.push(("a", "advanced"));
+                        pairs.push(("x", "remove origin"));
+                        pairs.push(("r", "check again"));
                     }
                     SCREEN_OPENAI => pairs.extend(openai_api::hints(non_admin)),
                     SCREEN_ABOUT => {
