@@ -94,7 +94,7 @@ try {
   check((await page.textContent("#page-title")) === "Providers", "page title Providers", await page.textContent("#page-title"));
   check(await page.$("#tab-button-engines") === null && await page.$("#tab-engines") === null, "no Engines nav item or panel");
   const nav = await page.$$eval("#nav-group-models", (els) => Array.from(els[0].parentElement.querySelectorAll(".shell_nav_label")).map((e) => e.textContent.trim()));
-  check(JSON.stringify(nav) === JSON.stringify(["Providers", "Models", "Multimodal"]), "sidebar MODELS = Providers · Models · Multimodal", nav);
+  check(JSON.stringify(nav) === JSON.stringify(["Providers", "OpenAI API", "Models", "Multimodal"]), "sidebar MODELS = Providers · OpenAI API · Models · Multimodal", nav);
   await waitCards(page);
   // The connections arrive with the provider list (loaded after sign-in, independently of the engines).
   const conns = await page.waitForFunction(() => { const c = document.querySelector('[data-provider-connection="lmstudio"]'); return !!c && c.textContent.includes("studio Mac"); }, null, { timeout: 15000 }).then(() => true, () => false);
