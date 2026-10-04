@@ -1,11 +1,16 @@
-"""Round 9 (DESIGN.md R9.2) console in a real browser: no Workspaces page (`#workspaces` folds into
-Accounts) and the kit tooltip (150 ms delay, keyboard focus, Escape, the R9.2 sentences, inside the
-viewport at 390 px). The Workspaces modals are round 11's: test_gateway_console_browser_r11w2.py.
+"""Round 11 (DESIGN.md R11.1 FINAL / R11.2) console Workspaces modals in a real browser, on the
+gateway's own routes: "Eligible workspaces" (the kit WorkspaceChooser at level "gateway": posture,
+caps, built-in refusals, one PUT per change, a refused path shows the gateway's sentence + "Not
+saved.") and the per-account modal from the workspace icon on EVERY Accounts row (level "account":
+"Gateway: <gateway_summary>" verbatim, "Follow the gateway policy" ON = {configured:false}, a mode
+above the cap disabled with the kit tooltip "The gateway allows this workspace read-only" and
+reachable by keyboard, a path outside the eligible set refused inline), the entity's and the
+admin's own modals, and a non-admin's own (`me`). The checks live in tests/browser/r11w2.mjs.
 
-Opt-in like test_gateway_console_browser_state_toggles.py (ABSTRACTGATEWAY_BROWSER_TESTS=1,
-playwright-core from ABSTRACTGATEWAY_PLAYWRIGHT_NODE_MODULES or the monorepo's
-abstractcode/web/node_modules); the gateway runs from this checkout with a scratch HOME and data dir,
-no provider keys, on a free loopback port.
+Opt-in like test_gateway_console_browser_r9w2.py (ABSTRACTGATEWAY_BROWSER_TESTS=1, playwright-core
+from ABSTRACTGATEWAY_PLAYWRIGHT_NODE_MODULES or the monorepo's abstractcode/web/node_modules); the
+gateway runs from this checkout with a scratch HOME and data dir, no provider keys, no tray, on a
+free loopback port.
 """
 
 from __future__ import annotations
@@ -31,36 +36,30 @@ from test_gateway_console_browser_state_toggles import (
 pytestmark = pytest.mark.e2e
 
 HERE = Path(__file__).resolve().parent
-SCRIPT = HERE / "browser" / "r9w2.mjs"
-ALICE = "alice-r9w2-browser-token-01"
+SCRIPT = HERE / "browser" / "r11w2.mjs"
+ALICE = "alice-r11w2-browser-token-01"
 
 
-def seed(base: str, admin: str, folders: Path) -> None:
-    """Accounts alice (user) and bob; the gateway: Only allowed folders, <folders>/projects Read & write."""
+def seed(base: str, admin: str) -> None:
     assert _call(base, "POST", "/host/first-run", admin, {"outcome": "skipped"})[0] == 200
     for body in (
         {"user_id": "alice", "roles": ["user"], "token": ALICE, "email": "alice@fastmail.com"},
-        {"user_id": "bob", "roles": ["user"], "token": "bob-r9w2-browser-token-001"},
+        {"user_id": "bob", "roles": ["user"], "token": "bob-r11w2-browser-token-001"},
     ):
         code, out = _call(base, "POST", "/admin/users", admin, body)
         assert code == 200, out
-    code, out = _call(base, "PUT", "/workspace/policy", admin, {
-        "posture": "allowed_only", "default_mode": "rw", "folders": [{"path": str(folders / "projects"), "mode": "rw"}],
-    })
-    assert code == 200, out
 
 
 @pytest.fixture()
-def r9_gateway(tmp_path: Path):
+def r11_gateway(tmp_path: Path):
     if os.getenv("ABSTRACTGATEWAY_BROWSER_TESTS", "").strip() not in {"1", "true", "yes"}:
         pytest.skip("browser test: set ABSTRACTGATEWAY_BROWSER_TESTS=1 (needs playwright-core + Chromium)")
     port = _free_port()
-    home, data, folders = tmp_path / "home", tmp_path / "data", (tmp_path / "folders").resolve()
+    home, data, dirs = tmp_path / "home", tmp_path / "data", (tmp_path / "dirs").resolve()
     (home / "tmp").mkdir(parents=True)
     data.mkdir()
-    for name in ("projects", "notes", "secrets", "alice-lab", "shared"):
-        (folders / name).mkdir(parents=True)
-    (folders / "a-file.txt").write_text("not a folder\n")
+    for name in ("projects", "notes", "secrets", "lab", "pictures"):
+        (dirs / name).mkdir(parents=True)
     env = {
         "HOME": str(home), "TMPDIR": str(home / "tmp"), "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "PYTHONPATH": os.pathsep.join([str(HERE.parent / "src")] + [p for p in os.environ.get("PYTHONPATH", "").split(os.pathsep) if p]),
@@ -76,18 +75,19 @@ def r9_gateway(tmp_path: Path):
     proc = _start(port, env, log)
     try:
         admin = re.findall(r"Gateway admin token: (\S+)$", log.read_text(), flags=re.M)[-1]
-        seed(base, admin, folders)
-        yield base, admin, folders
+        seed(base, admin)
+        yield base, admin, dirs
     finally:
         _stop(proc)
 
 
-def test_console_r9_workspace_modals_and_tooltips(r9_gateway) -> None:
+def test_console_r11_workspaces_modals(r11_gateway) -> None:
     node = require_node()
     modules = _playwright_modules()
-    base, admin, folders = r9_gateway
-    proc = subprocess.run([node, str(SCRIPT), base, admin, str(modules), str(folders), ALICE], capture_output=True, text=True, timeout=600, check=False)
+    base, admin, dirs = r11_gateway
+    proc = subprocess.run([node, str(SCRIPT), base, admin, str(modules), str(dirs), ALICE, "real"], capture_output=True, text=True, timeout=600, check=False)
     assert proc.returncode == 0, (proc.stdout[-3000:], proc.stderr[-4000:])
     out = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert out["mode"] == "real"
     assert out["failures"] == [], out["failures"]
-    assert out["checks"] >= 15
+    assert out["checks"] >= 44

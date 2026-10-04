@@ -1,5 +1,5 @@
 """The Accounts table's icon actions and card list, the Runtimes account filter (round 8), and
-the workspace folders modals (round 9, DESIGN.md R9.2).
+the Workspaces modals (round 11, DESIGN.md R11.1 FINAL / R11.2).
 
 Accounts (console.py renderAccounts): columns Name · Email (ONE column, "address · state") ·
 Runtime (a link to the Runtimes page filtered to that account) · Active · Actions. The actions are
@@ -11,18 +11,19 @@ itself is narrower than its column minimums) the rows become flat cards and the 
 Runtimes: `#runtimes?account=<id>[&tenant_id=<t>]` = GET /admin/runtimes?account=<id>; the filter
 shows as a removable chip ("Account: alice ×"); the link survives a reload.
 
-Workspace folders (round 9; there is NO Workspaces page any more):
-- "Shared workspace & allowed folders" (admins, top of Accounts) opens the GATEWAY policy modal:
-  GET /workspace/policy, one PUT /workspace/policy per change. Exactly two dimensions (DESIGN R9
-  FINAL): the posture (Only allowed folders | Any folder except denied, with ONE default mode for
-  everything else under the latter) and ONE folder list whose rows carry Read-only / Read & write /
-  Denied; plus the shared workspace (always Read & write). Folder rows apply on BLUR (Enter blurs):
-  POST /workspace/path-check first — an invalid path says why and is NOT saved — then the PUT,
-  then an inline "Saved". No Save button anywhere.
-- The folder icon on every Accounts row (human, entity, admin) opens THAT account's modal: the kit
-  WorkspaceChooser (islands mountWorkspaceChooser — the same rows and words as AbstractCode and the
-  Assistant), state from GET /workspace/policy/{account}, each change one PUT to the same path.
-  The signed-in user's own row uses `me`.
+Workspaces (round 11; no Workspaces page): both modals mount the
+kit WorkspaceChooser (islands mountWorkspaceChooser — the same component, rows and words as
+AbstractCode, Flow, Observer and the Assistant), state from the islands' workspaceAsState:
+- "Eligible workspaces" (admins, top of Accounts; also the Runtimes "Workspace" cell of the
+  default plane) = level "gateway": GET /workspace/policy, one PUT /workspace/policy per change —
+  the posture, Everything else, and rows whose mode is the CAP every account stays under;
+  built-in refusals shown fixed.
+- The workspace icon on every Accounts row the gateway marks `actions.workspace` available
+  (humans, entities incl. legacy ones, the admin's own; entities for admins and their creator) =
+  level "account": GET/PUT /workspace/policy/{account}, "Follow the gateway policy", the account's
+  own posture and rows (a mode above the cap disabled, with the kit tooltip). The signed-in user's
+  own row uses `me`.
+Every change is ONE PUT; a refusal shows the gateway's sentence + "Not saved."; no Save button.
 
 Spliced into the console script scope with the UI layer (console.py _console_owned_sources): `api`,
 `esc`, `$`, `state`, `svgIcon`, `ICONS`, `afSwitchCreate`, `afSwitchBind`, `afSwitchSet`,
@@ -104,7 +105,7 @@ a.accounts-runtime-link:focus-visible { outline: 2px solid var(--info, var(--acc
 """ + _ACCOUNTS_CARD_RULES + r"""
 }
 
-/* ---- Accounts head (round 9): the gateway's folder policy button sits first, at the top. */
+/* ---- Accounts head: the "Eligible workspaces" button (admins) sits first, at the top. */
 .accounts-head__actions .accounts-gw-workspace { margin-right: auto; }
 
 /* ---- Runtimes account filter chip (round 8). */
@@ -116,52 +117,14 @@ a.accounts-runtime-link:focus-visible { outline: 2px solid var(--info, var(--acc
 """
 
 WORKSPACES_CSS = r"""
-/* ---- Workspace folders modals (round 9, console_workspaces.py): the gateway policy and one
-   account's folders (the kit WorkspaceChooser). */
+/* ---- Workspaces modals (round 11, console_workspaces.py): "Eligible workspaces" and one
+   account's workspaces, both the kit WorkspaceChooser. */
 .wsm-body { display: grid; gap: 16px; min-width: 0; }
-/* Informational: the info tone (never the accent red). */
-.wsm-summary { margin: 0; padding: 10px 14px; border-left: 3px solid var(--info, var(--accent)); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--info, var(--accent)) 8%, transparent); font-size: var(--font-size-base); line-height: 1.45; overflow-wrap: anywhere; }
-.wsm-loading, .wsm-note { margin: 0; color: var(--text-secondary); font-size: var(--font-size-md); }
-.wsm-error { margin: 0; color: var(--error, #c0392b); }
-/* The modal's title already says "Workspaces — <id>": the chooser's own heading stays for
-   screen readers (it labels the section) but is not shown twice. */
+.wsm-chooser { min-width: 0; }
+/* The modal's title already names it ("Eligible workspaces" / "Workspaces — <id>"): the
+   chooser's own heading stays for screen readers (it labels the section) but is not shown twice;
+   its one-line help stays visible. */
 .wsm-chooser > .af-workspace > .af-settings-group__head { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
-.wsm-reset { display: grid; gap: 6px; padding-top: 12px; border-top: 1px solid var(--line-soft, var(--ui-border-1)); justify-items: start; }
-.wsm-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 12px; border-radius: var(--radius-md); background: var(--ui-surface-2, var(--bg-secondary)); }
-.ws-field { display: grid; gap: 6px; min-width: 0; padding-top: 12px; border-top: 1px solid var(--line-soft, var(--ui-border-1)); }
-.ws-field:first-of-type { border-top: 0; padding-top: 0; }
-.ws-field__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
-.ws-field__label { font-size: var(--font-size-md); font-weight: 600; color: var(--text-primary, var(--text)); }
-.ws-field__help { margin: 0; font-size: var(--af-helper-size, var(--font-size-md)); color: var(--text-secondary); }
-.ws-saved { font-size: var(--font-size-sm); font-weight: 600; color: var(--success, #2f9e44); }
-.ws-saved:empty { display: none; }
-.ws-saved.is-error { color: var(--error, #c0392b); }
-.ws-folders { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
-.ws-folder { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 6px; align-items: center; }
-.ws-folder--single { grid-template-columns: minmax(0, 1fr); }
-.ws-folder--fixed { grid-template-columns: minmax(0, 1fr) auto; }
-/* Rows with a permission: path · remove on the first line, Read-only / Read & write under the path. */
-.ws-folder--mode { grid-template-columns: minmax(0, 1fr) auto; }
-.ws-folder--mode > .ws-mode { grid-column: 1 / -1; justify-self: start; }
-.ws-mode { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--ui-border-2, var(--line)); border-radius: var(--radius-md); background: var(--ui-surface-1, transparent); }
-.ws-mode__opt { min-height: 32px; padding: 4px 12px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-secondary); font: inherit; font-size: var(--font-size-md); font-weight: 500; box-shadow: none; cursor: pointer; }
-.ws-mode__opt:hover { background: var(--ui-surface-2, var(--bg-secondary)); filter: none; }
-.ws-mode__opt.is-on { background: var(--accent-subtle, var(--ui-surface-2)); color: var(--text-primary, var(--text)); box-shadow: inset 0 0 0 2px var(--accent); font-weight: 600; }
-.ws-mode__opt:focus-visible { outline: 2px solid var(--info, var(--accent)); outline-offset: 2px; }
-.ws-mode__fixed { font-size: var(--font-size-md); font-weight: 600; color: var(--text-secondary); white-space: nowrap; }
-@media (pointer: coarse) { .ws-mode__opt { min-height: 44px; } }
-.ws-folder input { width: 100%; min-width: 0; min-height: 40px; font-family: var(--font-mono); font-size: var(--font-size-md); }
-.ws-folder input[aria-invalid="true"] { border-color: var(--error, #c0392b); }
-.ws-folder__state { grid-column: 1 / -1; margin: 0; font-size: var(--font-size-sm); min-height: 0; }
-.ws-folder__state:empty { display: none; }
-.ws-folder__state.is-ok { color: var(--success, #2f9e44); font-weight: 600; }
-.ws-folder__state.is-error { color: var(--error, #c0392b); }
-.ws-add { justify-self: start; min-height: 40px; }
-.ws-seg .ui-seg__opt { padding: 10px 12px; justify-items: start; justify-content: stretch; text-align: left; }
-@media (max-width: 767.98px) {
-  .ws-folder input { min-height: 44px; font-size: var(--font-size-base); }
-  .ws-add { min-height: 44px; }
-}
 """
 
 WORKSPACES_JS = r"""
@@ -270,505 +233,106 @@ WORKSPACES_JS = r"""
       slot.append(chip);
     }
 
-    // ---- Workspace folders modals (round 9).
-    const wsStore = { gwRelease: null, accRelease: null, accIsland: null, chain: Promise.resolve() };
+    // ---- Workspaces modals (round 11, DESIGN R11.1 FINAL): ONE kit WorkspaceChooser (islands
+    // mountWorkspaceChooser — the same component, rows and words as AbstractCode, Flow, Observer
+    // and the Assistant) at two levels: "Eligible workspaces" (level "gateway", admins: GET/PUT
+    // /workspace/policy) and one account's default (level "account": GET/PUT
+    // /workspace/policy/{account|me}). The state is the islands' workspaceAsState(answer, level)
+    // (it refuses an older answer loudly); every change is ONE PUT of the chooser's payload; a
+    // refusal shows the gateway's sentence + "Not saved." under the control. No Save button.
+    const wsStore = { gwRelease: null, gwIsland: null, accRelease: null, accIsland: null };
     function wsEl(tag, cls, text) {
       const el = document.createElement(tag);
       if (cls) el.className = cls;
       if (text !== undefined) el.textContent = text;
       return el;
     }
-    function wsPlural(n, one, many) { return `${n} ${n === 1 ? one : many}`; }
-    function wsSaved(el, text, error) {
-      el.textContent = text || "";
-      el.className = `ws-saved${error ? " is-error" : ""}`;
-      el.setAttribute("role", error ? "alert" : "status");
-      if (el.__t) clearTimeout(el.__t);
-      if (text && !error && typeof setTimeout === "function") el.__t = setTimeout(() => { el.textContent = ""; }, 2500);
-    }
-    // Writes run one after another (a fast blur-then-click never races two PUTs).
-    function wsQueue(fn) {
-      const next = wsStore.chain.then(fn, fn);
-      wsStore.chain = next.catch(() => {});
-      return next;
-    }
-    function wsField(label, help) {
-      const box = wsEl("div", "ws-field");
-      const head = wsEl("div", "ws-field__head");
-      const l = wsEl("span", "ws-field__label", label);
-      const saved = wsEl("span", "ws-saved");
-      saved.setAttribute("aria-live", "polite");
-      head.append(l, saved);
-      box.append(head);
-      if (help) box.append(wsEl("p", "ws-field__help", help));
-      return { box, saved };
-    }
-    async function wsCheckPath(path) {
-      const out = await api("/api/gateway/workspace/path-check", { method: "POST", body: JSON.stringify({ path }) });
-      if (!out || typeof out.valid !== "boolean" || typeof out.sentence !== "string") throw new Error("POST /workspace/path-check answered without valid/sentence (round-8 seam).");
-      return out;
-    }
-    function wsRowState(st) {
-      return (text, tone) => {
-        st.textContent = text || "";
-        st.className = `ws-folder__state${tone ? ` is-${tone}` : ""}`;
-        st.setAttribute("role", tone === "error" ? "alert" : "status");
-        if (st.__t) clearTimeout(st.__t);
-        if (tone === "ok" && typeof setTimeout === "function") st.__t = setTimeout(() => { st.textContent = ""; st.className = "ws-folder__state"; }, 2500);
-      };
-    }
-    // Folder rows: an input per folder + a remove icon; "Add folder" adds an empty row. A row
-    // applies on BLUR (Enter blurs): path check -> PUT the whole list -> inline "Saved".
-    // opts.modes ([[mode, label], …]): rows are {path, mode} with a segmented control per row
-    // (Read-only / Read & write; under "Any folder except denied" also Denied); a new row starts at
-    // opts.newMode; a mode change is one PUT of the whole list.
-    function wsFoldersField(id, label, help, rows, save, opts = {}) {
-      const f = wsField(label, help);
-      const list = wsEl("ul", "ws-folders");
-      list.id = id;
-      const modes = Array.isArray(opts.modes) ? opts.modes : null;
-      const newMode = opts.newMode || "rw";
-      const T = modes ? wsText() : null;
-      const saved = () => Array.from(list.querySelectorAll("input")).map((i) => i.dataset.saved || "").filter(Boolean);
-      const modeOf = (path) => { const i = Array.from(list.querySelectorAll("input")).find((x) => x.dataset.saved === path); return (i && i.dataset.mode) || newMode; };
-      const commit = (next) => wsQueue(() => save(modes ? next.map((path) => ({ path, mode: modeOf(path) })) : next));
-      const addRow = (row, focus) => {
-        const value = modes ? (row && row.path) || "" : row;
-        const li = wsEl("li", "ws-folder");
-        const input = document.createElement("input");
-        input.type = "text";
-        input.spellcheck = false;
-        input.autocomplete = "off";
-        input.value = value || "";
-        input.dataset.saved = value || "";
-        if (modes) input.dataset.mode = (row && row.mode) || newMode;
-        input.placeholder = "Add a workspace path";
-        input.setAttribute("aria-label", `${label}: workspace path`);
-        const st = wsEl("p", "ws-folder__state");
-        st.setAttribute("aria-live", "polite");
-        const say = wsRowState(st);
-        const tipFor = (v) => `Remove ${v || "this workspace"} from ${label}`;
-        const rm = accountIconButton("remove", tipFor(value), tipFor(value), true);
-        rm.setAttribute("data-ws-remove", "");
-        input.onkeydown = (ev) => {
-          if (ev.key === "Enter") { ev.preventDefault(); input.blur(); }
-          if (ev.key === "Escape") { ev.stopPropagation(); input.value = input.dataset.saved || ""; input.removeAttribute("aria-invalid"); say(""); input.blur(); }
-        };
-        input.onblur = async () => {
-          const value = input.value.trim();
-          const before = input.dataset.saved || "";
-          if (value === before) { if (!value && !before) li.remove(); return; }
-          if (!value) {
-            // Emptied = removed.
-            const next = saved().filter((p, i, all) => !(p === before && all.indexOf(p) === i));
-            say("Saving…");
-            try { await commit(next); li.remove(); wsSaved(f.saved, "Removed"); }
-            catch (e) { input.value = before; say(`${emailErrorText(e)} Not saved.`, "error"); }
-            return;
-          }
-          say("Checking…");
-          let check;
-          try { check = await wsCheckPath(value); } catch (e) { say(`Not checked: ${emailErrorText(e)}`, "error"); return; }
-          if (input.value.trim() !== value) return;  // typed again meanwhile: the next blur decides
-          if (!check.valid) { input.setAttribute("aria-invalid", "true"); say(`${check.sentence} Not saved.`, "error"); return; }
-          input.removeAttribute("aria-invalid");
-          const others = Array.from(list.querySelectorAll("input")).filter((x) => x !== input).map((x) => x.dataset.saved || "").filter(Boolean);
-          if (others.includes(check.normalized)) { input.setAttribute("aria-invalid", "true"); say("Already in this list. Not saved.", "error"); return; }
-          const next = [];
-          for (const x of list.querySelectorAll("input")) {
-            if (x === input) next.push(check.normalized);
-            else if (x.dataset.saved) next.push(x.dataset.saved);
-          }
-          say("Saving…");
-          const was = input.dataset.saved;
-          input.dataset.saved = check.normalized;  // modeOf() reads the row by its saved path
-          try {
-            await commit(next);
-            input.value = check.normalized;
-            rm.setAttribute("aria-label", tipFor(check.normalized));
-            rm.setAttribute("data-af-tip", tipFor(check.normalized));
-            say("Saved", "ok");
-          } catch (e) {
-            input.dataset.saved = was;
-            input.setAttribute("aria-invalid", "true");
-            say(`${emailErrorText(e)} Not saved.`, "error");
-          }
-        };
-        rm.onclick = async () => {
-          const was = input.dataset.saved || "";
-          if (!was) { li.remove(); return; }
-          const next = saved().filter((p) => p !== was);
-          rm.setAttribute("aria-busy", "true");
-          try { await commit(next); li.remove(); wsSaved(f.saved, "Removed"); }
-          catch (e) { rm.removeAttribute("aria-busy"); say(`${emailErrorText(e)} Not removed.`, "error"); }
-        };
-        li.append(input, rm);
-        if (modes) {
-          // Read-only / Read & write: a two-option segmented control (radio group), one PUT per change.
-          const seg = wsEl("div", "ws-mode");
-          seg.setAttribute("role", "radiogroup");
-          seg.setAttribute("aria-label", `${T.accessLabel}: ${value || "new workspace"}`);
-          const opts2 = modes;
-          const btns = [];
-          const paint = () => { for (const b of btns) { const on = b.dataset.mode === (input.dataset.mode || newMode); b.classList.toggle("is-on", on); b.setAttribute("aria-checked", on ? "true" : "false"); b.tabIndex = on ? 0 : -1; } };
-          for (const [m, text] of opts2) {
-            const b = wsEl("button", "ws-mode__opt", text);
-            b.type = "button";
-            b.setAttribute("role", "radio");
-            b.dataset.mode = m;
-            b.setAttribute("data-ws-mode", m);
-            b.onclick = async () => {
-              if ((input.dataset.mode || newMode) === m || seg.getAttribute("aria-busy") === "true") return;
-              const before = input.dataset.mode || newMode;
-              input.dataset.mode = m;
-              paint();
-              if (!input.dataset.saved) return;  // a new row: the mode goes with its first save
-              seg.setAttribute("aria-busy", "true");
-              say("Saving…");
-              try { await commit(saved()); say("Saved", "ok"); }
-              catch (e) { input.dataset.mode = before; paint(); say(`${emailErrorText(e)} Not saved.`, "error"); }
-              finally { seg.removeAttribute("aria-busy"); }
-            };
-            b.onkeydown = (ev) => {
-              if (!["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp"].includes(ev.key)) return;
-              ev.preventDefault();
-              const other = btns[(btns.indexOf(b) + 1) % btns.length];
-              other.focus();
-              other.click();
-            };
-            btns.push(b);
-            seg.append(b);
-          }
-          paint();
-          li.classList.add("ws-folder--mode");
-          li.append(seg);
-        }
-        li.append(st);
-        list.append(li);
-        if (focus) { try { input.focus(); } catch {} }
-        return li;
-      };
-      for (const r of rows) addRow(r, false);
-      const add = wsEl("button", "secondary ws-add", "Add a workspace");
-      add.type = "button";
-      add.setAttribute("data-ws-add", id);
-      add.onclick = () => {
-        const empty = Array.from(list.querySelectorAll("input")).find((i) => !i.value.trim());
-        if (empty) { try { empty.focus(); } catch {} return; }
-        addRow(modes ? { path: "", mode: newMode } : "", true);
-      };
-      f.box.append(list, add);
-      return f.box;
-    }
-    // The shared workspace: one required folder; same blur rule; empty is refused (kept as was).
-    function wsSharedField(id, value, save) {
-      const f = wsField(wsText().sharedLabel, `${wsText().sharedHelp} Required.`);
-      const row = wsEl("div", "ws-folder ws-folder--single");
-      const input = document.createElement("input");
-      input.type = "text";
-      input.id = id;
-      input.spellcheck = false;
-      input.autocomplete = "off";
-      input.value = value || "";
-      input.dataset.saved = value || "";
-      input.placeholder = "Add a workspace path";
-      input.setAttribute("aria-label", "Shared workspace");
-      const st = wsEl("p", "ws-folder__state");
-      st.setAttribute("aria-live", "polite");
-      const say = wsRowState(st);
-      input.onkeydown = (ev) => {
-        if (ev.key === "Enter") { ev.preventDefault(); input.blur(); }
-        if (ev.key === "Escape") { ev.stopPropagation(); input.value = input.dataset.saved || ""; input.removeAttribute("aria-invalid"); say(""); input.blur(); }
-      };
-      input.onblur = async () => {
-        const v = input.value.trim();
-        const before = input.dataset.saved || "";
-        if (v === before) return;
-        if (!v) { input.value = before; say("The shared workspace is required. Not saved.", "error"); return; }
-        say("Checking…");
-        let check;
-        try { check = await wsCheckPath(v); } catch (e) { say(`Not checked: ${emailErrorText(e)}`, "error"); return; }
-        if (input.value.trim() !== v) return;
-        if (!check.valid) { input.setAttribute("aria-invalid", "true"); say(`${check.sentence} Not saved.`, "error"); return; }
-        input.removeAttribute("aria-invalid");
-        say("Saving…");
-        try {
-          await wsQueue(() => save(check.normalized));
-          input.value = check.normalized;
-          input.dataset.saved = check.normalized;
-          say("Saved", "ok");
-        } catch (e) { input.setAttribute("aria-invalid", "true"); say(`${emailErrorText(e)} Not saved.`, "error"); }
-      };
-      const rw = wsEl("span", "ws-mode__fixed", wsText().accessReadWrite);
-      rw.setAttribute("data-ws-shared-mode", "rw");
-      row.classList.add("ws-folder--fixed");
-      row.append(input, rw, st);
-      f.box.append(row);
-      return f.box;
-    }
-
-    // -- The GATEWAY policy modal ("Shared workspace & allowed folders", admins). Two postures
-    // (R9 amendments): "Only allowed folders" (the shared workspace + allowed folders) or "Any
-    // folder except denied" (the Never allowed list); the matching list shows under the switch.
-    // Words: the kit chooser's ONE wording table (islands workspaceChooserText), so the console, Code
-    // and the Assistant say the same thing.
-    function wsText() {
+    function wsLib() {
       const lib = islandsLib();
       const T = lib && lib.workspaceChooserText;
-      if (!T || !T.postureAllowedOnly || !T.postureAnyExceptDenied || !T.accessRead || !T.accessReadWrite || !T.accessDenied || !T.everythingElse || !T.accessLabel || !T.allowedTitle || !T.deniedTitle || !T.sharedLabel) throw new Error("AbstractGateway console: the islands bundle has no workspaceChooserText (ui-kit 0.8.1+ required).");
-      return T;
-    }
-    function wsPostures() {
-      const T = wsText();
-      return [
-        { id: "allowed_only", title: T.postureAllowedOnly, text: T.postureAllowedOnlyHelp },
-        { id: "any_except_denied", title: T.postureAnyExceptDenied, text: T.postureAnyExceptDeniedHelp },
-      ];
-    }
-    const WS_POSTURE_IDS = ["allowed_only", "any_except_denied"];
-    // The R9 WORKSPACE API (FINAL): {shared_workspace, posture, default_mode, folders: [{path, mode}]},
-    // one `folders` list for both postures (mode ro | rw | deny).
-    const WS_MODES = ["ro", "rw", "deny"];
-    function wsGatewayPolicy(out) {
-      const p = out && out.policy;
-      if (!p || typeof p.shared_workspace !== "string" || !WS_POSTURE_IDS.includes(p.posture) || !["ro", "rw"].includes(p.default_mode)
-        || !Array.isArray(p.folders) || !p.folders.every((r) => r && typeof r.path === "string" && WS_MODES.includes(r.mode))) {
-        throw new Error("GET/PUT /workspace/policy answered without the gateway policy fields (R9 WORKSPACE API seam: shared_workspace, posture, default_mode, folders [{path, mode}]).");
+      if (!lib || typeof lib.mountWorkspaceChooser !== "function" || typeof lib.workspaceAsState !== "function" || !T || !T.gatewayTitle) {
+        throw new Error("AbstractGateway console: the islands bundle has no round-11 WorkspaceChooser (mountWorkspaceChooser + workspaceAsState; ui-kit 0.8.2+ required).");
       }
-      return p;
+      return lib;
     }
-    // The effective line, byte-exact (DESIGN R9 FINAL, ADVERSARY V15): posture label first (with the
-    // default mode under "Any folder except denied"), then the shared workspace, then each folder with
-    // its mode. The same format as effective.summary; presentation of the server's values only.
-    const WS_MODE_WORD = { rw: "rw", ro: "ro", deny: "refused" };
-    function wsGatewaySummary(p) {
-      const T = wsText();
-      const head = p.posture === "allowed_only" ? T.postureAllowedOnly : `${T.postureAnyExceptDenied} (${WS_MODE_WORD[p.default_mode]})`;
-      return [head, `${T.sharedLabel} (rw)`, ...p.folders.map((r) => `${r.path} (${WS_MODE_WORD[r.mode]})`)].join(" · ");
-    }
-    // The posture: a segmented switch (radio group), applies on click (one PUT).
-    function wsPostureField(current, apply) {
-      const f = wsField("Workspaces agents may use", "");
-      const seg = wsEl("div", "ui-seg ws-seg");
-      seg.setAttribute("role", "radiogroup");
-      seg.setAttribute("aria-label", "Workspaces agents may use");
-      const buttons = [];
-      for (const o of wsPostures()) {
-        const on = o.id === current;
-        const b = wsEl("button", `ui-seg__opt${on ? " is-on" : ""}`);
-        b.type = "button";
-        b.setAttribute("role", "radio");
-        b.setAttribute("aria-checked", on ? "true" : "false");
-        b.setAttribute("data-ws-posture", o.id);
-        b.tabIndex = on ? 0 : -1;
-        b.innerHTML = `<span class="ui-seg__title">${esc(o.title)}</span><span class="ui-seg__text">${esc(o.text)}</span>`;
-        b.onclick = async () => {
-          if (b.getAttribute("aria-checked") === "true" || seg.getAttribute("aria-busy") === "true") return;
-          seg.setAttribute("aria-busy", "true");
-          wsSaved(f.saved, "Saving…");
-          try { await wsQueue(() => apply(o.id)); }
-          catch (e) { seg.removeAttribute("aria-busy"); wsSaved(f.saved, `${emailErrorText(e)} Not saved.`, true); }
-        };
-        b.onkeydown = (ev) => {
-          if (!["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp"].includes(ev.key)) return;
-          ev.preventDefault();
-          buttons[(buttons.indexOf(b) + 1) % buttons.length].focus();
-        };
-        buttons.push(b);
-        seg.append(b);
+    function wsText() { return wsLib().workspaceChooserText; }
+    // Mount the chooser for one level into a modal body; loads the level's route and PUTs each change.
+    async function wsOpenLevel(o) {
+      const lib = wsLib();
+      const body = $(o.bodyId);
+      body.textContent = "";
+      const host = wsEl("div", "wsm-chooser");
+      host.setAttribute("data-ws-level", o.level);
+      body.append(host);
+      const props = {
+        level: o.level,
+        state: null,
+        loadError: null,
+        idPrefix: o.idPrefix,
+        save: async (payload) => {
+          let out;
+          try { out = await api(o.path, { method: "PUT", body: JSON.stringify(payload) }); }
+          catch (e) { throw new Error(emailErrorText(e)); }
+          const next = lib.workspaceAsState(out, o.level);
+          props.state = next;
+          const island = wsStore[o.island];
+          if (island) island.update(Object.assign({}, props));
+          return next;
+        },
+      };
+      wsStore[o.island] = lib.mountWorkspaceChooser(host, Object.assign({}, props));
+      const backdrop = $(o.backdropId);
+      backdrop.hidden = false;
+      wsStore[o.release] = bindAccountModal(backdrop, o.close);
+      try {
+        props.state = lib.workspaceAsState(await api(o.path), o.level);
+      } catch (e) {
+        props.loadError = `${o.what} could not be loaded: ${emailErrorText(e)}`;
       }
-      f.box.append(seg);
-      return f.box;
+      const island = wsStore[o.island];
+      if (island) island.update(Object.assign({}, props));
     }
-    function closeGatewayWorkspace() {
-      const backdrop = $("gateway-workspace-backdrop");
+    function wsClose(backdropId, bodyId, islandKey, releaseKey) {
+      const backdrop = $(backdropId);
       if (backdrop.hidden) return;
-      $("gateway-workspace-body").textContent = "";
+      if (wsStore[islandKey]) { wsStore[islandKey].unmount(); wsStore[islandKey] = null; }
+      $(bodyId).textContent = "";
       backdrop.hidden = true;
-      const release = wsStore.gwRelease;
-      wsStore.gwRelease = null;
+      const release = wsStore[releaseKey];
+      wsStore[releaseKey] = null;
       if (release) release();
     }
-    function wsRenderGateway(body, p, focusPosture) {
-      body.textContent = "";
-      const T = wsText();
-      const summary = wsEl("p", "wsm-summary", wsGatewaySummary(p));
-      summary.setAttribute("data-ws-summary", "");
-      summary.setAttribute("role", "status");
-      let cur = p;
-      const put = async (change) => {
-        const out = wsGatewayPolicy(await api("/api/gateway/workspace/policy", { method: "PUT", body: JSON.stringify(change) }));
-        cur = out;
-        summary.textContent = wsGatewaySummary(cur);
-        return out;
-      };
-      const posture = wsPostureField(p.posture, async (next) => {
-        const out = await put({ posture: next });
-        wsRenderGateway(body, out, next);
-      });
-      body.append(summary, posture, wsSharedField("wsg-shared", p.shared_workspace, (path) => put({ shared_workspace: path })));
-      // ONE list for both postures; each row Read & write / Read-only / Refused.
-      const modes = [["rw", T.accessReadWrite], ["ro", T.accessRead], ["deny", T.accessDenied]];  // the kit chooser's order
-      if (p.posture === "allowed_only") {
-        body.append(wsFoldersField("wsg-folders", T.allowedTitle, "The workspaces agents may use besides the shared workspace. Refused keeps a workspace out of an allowed one.", p.folders, (list) => put({ folders: list }), { modes, newMode: "rw" }));
-      } else {
-        body.append(wsDefaultModeField(p.default_mode, (m) => put({ default_mode: m })));
-        body.append(wsFoldersField("wsg-folders", T.deniedTitle, "Refused workspaces, or workspaces with their own permission.", p.folders, (list) => put({ folders: list }), { modes, newMode: "deny" }));
-      }
-      for (const sec of body.querySelectorAll(".ws-field")) sec.setAttribute("data-ws-section", "");
-      if (focusPosture) { const b = body.querySelector(`[data-ws-posture="${focusPosture}"]`); try { if (b) b.focus(); } catch {} }
-    }
-    // Posture (b): ONE permission for everything not listed (Read-only / Read & write).
-    function wsDefaultModeField(current, apply) {
-      const T = wsText();
-      const f = wsField(T.everythingElse, "");
-      const seg = wsEl("div", "ws-mode");
-      seg.id = "wsg-default";
-      seg.setAttribute("role", "radiogroup");
-      seg.setAttribute("aria-label", T.everythingElse);
-      const btns = [];
-      let value = current;
-      const paint = () => { for (const b of btns) { const on = b.dataset.mode === value; b.classList.toggle("is-on", on); b.setAttribute("aria-checked", on ? "true" : "false"); b.tabIndex = on ? 0 : -1; } };
-      for (const [m, text] of [["rw", T.accessReadWrite], ["ro", T.accessRead]]) {
-        const b = wsEl("button", "ws-mode__opt", text);
-        b.type = "button";
-        b.setAttribute("role", "radio");
-        b.dataset.mode = m;
-        b.setAttribute("data-ws-default", m);
-        b.onclick = async () => {
-          if (value === m || seg.getAttribute("aria-busy") === "true") return;
-          const before = value;
-          value = m;
-          paint();
-          seg.setAttribute("aria-busy", "true");
-          wsSaved(f.saved, "Saving…");
-          try { await wsQueue(() => apply(m)); wsSaved(f.saved, "Saved"); }
-          catch (e) { value = before; paint(); wsSaved(f.saved, `${emailErrorText(e)} Not saved.`, true); }
-          finally { seg.removeAttribute("aria-busy"); }
-        };
-        b.onkeydown = (ev) => {
-          if (!["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp"].includes(ev.key)) return;
-          ev.preventDefault();
-          const other = btns[(btns.indexOf(b) + 1) % btns.length];
-          other.focus();
-          other.click();
-        };
-        btns.push(b);
-        seg.append(b);
-      }
-      paint();
-      f.box.append(seg);
-      return f.box;
-    }
+
+    // -- "Eligible workspaces" (admins): the gateway level — the posture, Everything else, and the
+    // rows whose mode is the CAP for every account; built-in refusals shown fixed.
+    function closeGatewayWorkspace() { wsClose("gateway-workspace-backdrop", "gateway-workspace-body", "gwIsland", "gwRelease"); }
     async function openGatewayWorkspace() {
       closeGatewayWorkspace();
-      const body = $("gateway-workspace-body");
-      body.textContent = "";
-      body.append(wsEl("p", "wsm-loading", "Loading…"));
-      const backdrop = $("gateway-workspace-backdrop");
-      backdrop.hidden = false;
-      wsStore.gwRelease = bindAccountModal(backdrop, closeGatewayWorkspace);
-      let p;
-      try {
-        p = wsGatewayPolicy(await api("/api/gateway/workspace/policy"));
-      } catch (e) {
-        body.textContent = "";
-        body.append(wsEl("p", "wsm-error", `The workspace policy could not be loaded: ${emailErrorText(e)}`));
-        return;
-      }
-      wsRenderGateway(body, p, null);
+      $("gateway-workspace-title").textContent = wsText().gatewayTitle;
+      await wsOpenLevel({
+        level: "gateway", path: "/api/gateway/workspace/policy", idPrefix: "wsg", what: "The eligible workspaces",
+        bodyId: "gateway-workspace-body", backdropId: "gateway-workspace-backdrop", island: "gwIsland", release: "gwRelease", close: closeGatewayWorkspace,
+      });
     }
 
-    // -- ONE account's folders: the kit WorkspaceChooser (islands), GET/PUT /workspace/policy/{account}.
+    // -- ONE account's default (humans and entities; the signed-in user's own row = `me`): the
+    // account level — "Follow the gateway policy", the account's own posture and rows <= the caps.
     function wsAccountKey(a) {
       if (a.own) return "me";
       return `${a.tenant_id || "default"}:${a.id}`;
     }
-    function wsAccountState(out) {
-      if (!out || !out.policy || !Array.isArray(out.policy.folders) || !out.effective || typeof out.effective.summary !== "string") {
-        throw new Error("GET/PUT /workspace/policy/{account} answered without policy/effective (R9 WORKSPACE API seam).");
-      }
-      return out;
-    }
-    function closeAccountWorkspace() {
-      const backdrop = $("account-workspace-backdrop");
-      if (backdrop.hidden) return;
-      if (wsStore.accIsland) { wsStore.accIsland.unmount(); wsStore.accIsland = null; }
-      $("account-workspace-body").textContent = "";
-      backdrop.hidden = true;
-      const release = wsStore.accRelease;
-      wsStore.accRelease = null;
-      if (release) release();
-    }
+    function closeAccountWorkspace() { wsClose("account-workspace-backdrop", "account-workspace-body", "accIsland", "accRelease"); }
     async function openAccountWorkspace(a) {
       closeAccountWorkspace();
-      const lib = islandsLib();
-      if (!lib || typeof lib.mountWorkspaceChooser !== "function") throw new Error("AbstractGateway console: the islands bundle has no mountWorkspaceChooser (ui-kit 0.8.1+ required).");
-      const key = wsAccountKey(a);
-      const path = `/api/gateway/workspace/policy/${encodeURIComponent(key)}`;
       const kind = a.kind === "entity" ? "entity" : (a.role === "admin" ? "admin" : "user");
-      $("account-workspace-title").textContent = `Workspaces — ${a.id}`;
+      $("account-workspace-title").textContent = `${wsText().title} — ${a.id}`;
       const body = $("account-workspace-body");
-      body.textContent = "";
       body.setAttribute("data-ws-account", a.id);
       body.setAttribute("data-ws-kind", kind);
-      const host = wsEl("div", "wsm-chooser");
-      body.append(host);
-      const props = { state: null, loadError: null, idPrefix: `wsa-${String(a.id).replace(/[^A-Za-z0-9_-]/g, "-")}`, onPut: async (change) => {
-        let out;
-        try { out = wsAccountState(await api(path, { method: "PUT", body: JSON.stringify(change) })); }
-        catch (e) { throw new Error(emailErrorText(e)); }
-        props.state = out;
-        if (wsStore.accIsland) wsStore.accIsland.update(Object.assign({}, props));
-        return out;
-      } };
-      wsStore.accIsland = lib.mountWorkspaceChooser(host, Object.assign({}, props));
-      // "Follow the gateway policy": every allowed folder off and no folders of its own (the
-      // shared workspace stays). Asks inline first; one PUT.
-      const reset = wsEl("div", "wsm-reset");
-      const resetBtn = wsEl("button", "secondary", "Follow the gateway policy");
-      resetBtn.type = "button";
-      resetBtn.setAttribute("data-ws-reset", "");
-      const resetNote = wsEl("p", "wsm-note", "Removes this account's own limits: its agents get exactly what the gateway allows.");
-      const resetState = wsEl("p", "ws-folder__state");
-      resetState.setAttribute("aria-live", "polite");
-      const sayReset = wsRowState(resetState);
-      resetBtn.onclick = () => {
-        if (reset.querySelector(".wsm-confirm")) return;
-        const box = wsEl("div", "wsm-confirm");
-        box.setAttribute("role", "group");
-        box.append(wsEl("span", "", `Follow the gateway policy for ${a.id}? Their own read-only and denied workspaces are removed.`));
-        const yes = wsEl("button", "danger", "Follow");
-        yes.type = "button";
-        const no = wsEl("button", "secondary", "Cancel");
-        no.type = "button";
-        no.onclick = () => { box.remove(); try { resetBtn.focus(); } catch {} };
-        yes.onclick = async () => {
-          yes.disabled = true;
-          const change = { default_mode: null, folders: [] };
-          try {
-            await props.onPut(change);
-            box.remove();
-            sayReset("Saved", "ok");
-          } catch (e) {
-            yes.disabled = false;
-            sayReset(`${emailErrorText(e)} Not saved.`, "error");
-          }
-        };
-        box.append(yes, no);
-        reset.append(box);
-        try { no.focus(); } catch {}
-      };
-      reset.append(resetBtn, resetNote, resetState);
-      body.append(reset);
-      const backdrop = $("account-workspace-backdrop");
-      backdrop.hidden = false;
-      wsStore.accRelease = bindAccountModal(backdrop, closeAccountWorkspace);
-      try {
-        props.state = wsAccountState(await api(path));
-      } catch (e) {
-        props.loadError = `${a.id}'s workspaces could not be loaded: ${emailErrorText(e)}`;
-      }
-      if (wsStore.accIsland) wsStore.accIsland.update(Object.assign({}, props));
+      await wsOpenLevel({
+        level: "account", path: `/api/gateway/workspace/policy/${encodeURIComponent(wsAccountKey(a))}`,
+        idPrefix: `wsa-${String(a.id).replace(/[^A-Za-z0-9_-]/g, "-")}`, what: `${a.id}'s workspaces`,
+        bodyId: "account-workspace-body", backdropId: "account-workspace-backdrop", island: "accIsland", release: "accRelease", close: closeAccountWorkspace,
+      });
     }
 """

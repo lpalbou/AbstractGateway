@@ -23,8 +23,6 @@ async function apiAs(token, method, p, body) {
   const r = await fetch(`${BASE}/api/gateway${p}`, { method, headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: r.status, body: await r.json().catch(() => ({})) };
 }
-const gw = async () => (await apiAs(ADMIN, "GET", "/workspace/policy")).body.policy;
-const acct = async (key) => (await apiAs(ADMIN, "GET", `/workspace/policy/${key}`)).body;
 
 async function open(browser, { width = 1440, height = 900, user = "admin", token = ADMIN, hash = "" } = {}) {
   const ctx = await browser.newContext({ viewport: { width, height } });
@@ -43,13 +41,6 @@ async function open(browser, { width = 1440, height = 900, user = "admin", token
   await page.waitForTimeout(300);
   return { ctx, page, errors };
 }
-// Blur-apply a value into a folder input (Enter blurs), then wait for its row state.
-async function typeAndBlur(page, input, value) {
-  await input.click();
-  await input.fill(value);
-  await input.press("Enter");
-}
-
 const browser = await chromium.launch();
 try {
   // ------------------------------------------------------------------ W1: no Workspaces page
@@ -60,144 +51,7 @@ try {
     check(errors.length === 0, "no console error on the old deep link", errors);
     await ctx.close();
   }
-  // ------------------------------------------------------------------ W2: the gateway policy modal
-  {
-    const { ctx, page } = await open(browser);
-    const btn = page.locator("#accounts-gw-workspace");
-    check(await btn.isVisible() && (await btn.textContent()) === "Shared workspace & allowed workspaces", "admin sees the gateway button");
-    const first = await page.evaluate(() => document.querySelector(".accounts-head__actions > :not([hidden]):not(.hidden)").id);
-    check(first === "accounts-gw-workspace", "the button is the first control at the top of Accounts", first);
-    await btn.click();
-    await page.waitForSelector("#gateway-workspace-backdrop:not([hidden]) [data-ws-summary]");
-    let p = await gw();
-    const line = async () => page.textContent("[data-ws-summary]");
-    check((await line()) === `Deny everything, allow listed workspaces · Shared workspace (rw) · ${F("projects")} (rw)`, "the effective line, byte-exact", await line());
-    check((await page.inputValue("#wsg-shared")) === p.shared_workspace && (await page.textContent("[data-ws-shared-mode]")) === "Read & write", "the shared workspace: the stored folder, Read & write");
-    check((await page.locator("#gateway-workspace-body button:text-is('Save')").count()) === 0, "no Save button");
-    // Two dimensions only: the posture segmented switch and the per-row permission; no switch at all.
-    check((await page.locator("#gateway-workspace-body [role=switch]").count()) === 0, "no switch in the gateway modal (no launch-folder trust, no allow-any)");
-    const postures = await page.evaluate(() => Array.from(document.querySelectorAll("[role=radiogroup] [data-ws-posture]")).map((b) => [b.querySelector(".ui-seg__title").textContent, b.getAttribute("aria-checked")]));
-    check(JSON.stringify(postures) === JSON.stringify([["Deny everything, allow listed workspaces", "true"], ["Allow everything, refuse listed workspaces", "false"]]), "two postures, Only allowed folders on", postures);
-    check((await page.locator("#wsg-default").count()) === 0, "no default mode under Only allowed folders");
-    // Shared workspace: invalid, empty, then valid.
-    const shared = page.locator("#wsg-shared");
-    await typeAndBlur(page, shared, F("a-file.txt"));
-    await page.waitForFunction(() => /Not saved\.$/.test(document.querySelector("#wsg-shared").closest(".ws-folder").querySelector(".ws-folder__state").textContent));
-    check((await gw()).shared_workspace === p.shared_workspace, "an invalid shared workspace is not saved");
-    await typeAndBlur(page, shared, "");
-    check((await page.textContent("#wsg-shared ~ .ws-folder__state")) === "The shared workspace is required. Not saved." && (await shared.inputValue()) === p.shared_workspace, "the shared workspace cannot be emptied");
-    await typeAndBlur(page, shared, F("shared"));
-    await page.waitForFunction(() => document.querySelector("#wsg-shared ~ .ws-folder__state").textContent === "Saved");
-    check((await gw()).shared_workspace === F("shared"), "a valid shared workspace applies on blur", (await gw()).shared_workspace);
-    // A row: added Read & write, then lowered to Read-only (granular).
-    await page.click("[data-ws-add='wsg-folders']");
-    check((await gw()).folders.length === 1, "adding an empty row writes nothing");
-    await typeAndBlur(page, page.locator("#wsg-folders li:last-child input"), F("notes"));
-    await page.waitForFunction(() => document.querySelector("#wsg-folders li:last-child .ws-folder__state").textContent === "Saved");
-    p = await gw();
-    check(JSON.stringify(p.folders) === JSON.stringify([{ path: F("projects"), mode: "rw" }, { path: F("notes"), mode: "rw" }]), "a folder applies on blur, Read & write by default", p.folders);
-    await page.click("#wsg-folders li:last-child [data-ws-mode='ro']");
-    await page.waitForFunction(() => document.querySelector("#wsg-folders li:last-child .ws-folder__state").textContent === "Saved");
-    p = await gw();
-    check(JSON.stringify(p.folders) === JSON.stringify([{ path: F("projects"), mode: "rw" }, { path: F("notes"), mode: "ro" }]), "one folder Read & write, one Read-only (granular)", p.folders);
-    check((await line()) === `Deny everything, allow listed workspaces · Shared workspace (rw) · ${F("projects")} (rw) · ${F("notes")} (ro)`, "the line follows the modes", await line());
-    await page.click("[data-ws-add='wsg-folders']");
-    await typeAndBlur(page, page.locator("#wsg-folders li:last-child input"), F("nope-missing"));
-    await page.waitForFunction(() => /Not saved\.$/.test(document.querySelector("#wsg-folders li:last-child .ws-folder__state").textContent));
-    check((await gw()).folders.length === 2, "a missing folder is refused with its sentence and not saved");
-    await page.click("#wsg-folders li:last-child [data-ws-remove]");
-    // Posture (b): Any folder except denied, ONE default mode, rows are exceptions (a new row starts Denied).
-    await page.click("[data-ws-posture='any_except_denied']");
-    await page.waitForSelector("#wsg-default");
-    check((await gw()).posture === "any_except_denied", "the posture applies at once");
-    check((await line()).startsWith("Allow everything, refuse listed workspaces (rw) · Shared workspace (rw)"), "the line under Any folder except denied", await line());
-    await page.click("#wsg-default [data-ws-default='ro']");
-    await page.waitForTimeout(500);
-    check((await gw()).default_mode === "ro" && (await line()).startsWith("Allow everything, refuse listed workspaces (ro) · "), "the default mode for everything else applies at once", (await gw()).default_mode);
-    await page.click("[data-ws-add='wsg-folders']");
-    await typeAndBlur(page, page.locator("#wsg-folders li:last-child input"), F("secrets"));
-    await page.waitForFunction(() => document.querySelector("#wsg-folders li:last-child .ws-folder__state").textContent === "Saved");
-    check((await gw()).folders.some((r) => r.path === F("secrets") && r.mode === "deny") && (await line()).includes(`${F("secrets")} (refused)`), "an exception row starts Denied", (await gw()).folders);
-    // Reopen: the stored values.
-    await page.keyboard.press("Escape");
-    await page.waitForSelector("#gateway-workspace-backdrop[hidden]", { state: "attached" });
-    await btn.click();
-    await page.waitForSelector("#gateway-workspace-backdrop:not([hidden]) [data-ws-summary]");
-    const shown = await page.evaluate(() => ({ shared: document.querySelector("#wsg-shared").value, rows: Array.from(document.querySelectorAll("#wsg-folders li")).map((li) => [li.querySelector("input").value, li.querySelector("[data-ws-mode][aria-checked='true']").dataset.wsMode]), posture: document.querySelector("[data-ws-posture][aria-checked='true']").dataset.wsPosture, def: document.querySelector("#wsg-default [aria-checked='true']").dataset.wsDefault }));
-    check(shown.shared === F("shared") && shown.posture === "any_except_denied" && shown.def === "ro" && JSON.stringify(shown.rows) === JSON.stringify([[F("projects"), "rw"], [F("notes"), "ro"], [F("secrets"), "deny"]]), "a reopen shows the stored values", shown);
-    await page.click("#gateway-workspace-close");
-    // Back to the seeded posture for the account checks.
-    await apiAs(ADMIN, "PUT", "/workspace/policy", { posture: "allowed_only", default_mode: "rw", folders: [{ path: F("projects"), mode: "rw" }, { path: F("notes"), mode: "ro" }] });
-    await ctx.close();
-  }
-  // ------------------------------------------------------------------ W3: per-account modals (the kit chooser, narrowing only)
-  {
-    const { ctx, page } = await open(browser);
-    const rowsWithFolder = await page.evaluate(() => Array.from(document.querySelectorAll("#users-table tr.accounts-row")).filter((tr) => tr.querySelector("button[data-action='workspace']")).map((tr) => tr.dataset.user).sort());
-    check(JSON.stringify(rowsWithFolder) === JSON.stringify(["admin", "alice", "bob", "castor"]), "the folder icon on every live row (users, entity, admin)", rowsWithFolder);
-    const openFor = async (who) => {
-      await page.click(`tr[data-user='${who}'] button[data-action='workspace']`);
-      await page.waitForSelector("#account-workspace-body [data-workspace='effective'], #account-workspace-body [data-workspace='load-error']");
-    };
-    const closeIt = async () => { await page.click("#account-workspace-close"); await page.waitForSelector("#account-workspace-backdrop[hidden]", { state: "attached" }); };
-    const eff = async (key) => (await apiAs(ADMIN, "GET", `/workspace/effective/${key}`)).body;
-    await openFor("alice");
-    check((await page.textContent("#account-workspace-title")) === "Workspaces — alice", "the modal names the account");
-    let e = await eff("default:alice");
-    check((await page.textContent("[data-workspace='effective']")) === e.summary, "the effective line, verbatim from the gateway", [await page.textContent("[data-workspace='effective']"), e.summary]);
-    check(e.summary === `Deny everything, allow listed workspaces · Shared workspace (rw) · ${F("projects")} (rw) · ${F("notes")} (ro)`, "the gateway's line, byte-exact", e.summary);
-    check((await page.locator("[data-workspace='shared-always']").count()) === 1, "the shared workspace is shown, always on");
-    check((await page.locator("#account-workspace-body [role=switch]").count()) === 0, "no switch in the account modal");
-    const rows = await page.evaluate(() => Array.from(document.querySelectorAll("[data-workspace='folder']")).map((r) => [r.dataset.path, r.dataset.mode]));
-    check(JSON.stringify(rows) === JSON.stringify([[F("projects"), "rw"], [F("notes"), "ro"]]), "the gateway's workspaces with their modes", rows);
-    const ceiling = await page.evaluate((p) => { const b = document.querySelector(`[data-workspace='folder'][data-path='${p}'] [data-action='workspace-mode-rw']`); return b ? { dis: b.getAttribute("aria-disabled"), tip: b.dataset.afTip } : null; }, F("notes"));
-    check(ceiling && ceiling.dis === "true" && ceiling.tip === "The gateway admin allows read only.", "an account cannot raise a Read-only workspace (tooltip says why)", ceiling);
-    await page.click(`[data-workspace='folder'][data-path='${F("projects")}'] [data-action='workspace-mode-ro']`);
-    await page.waitForSelector(`[data-workspace='folder'][data-path='${F("projects")}'] [data-workspace='saved']`);
-    check(JSON.stringify((await acct("default:alice")).policy.folders) === JSON.stringify([{ path: F("projects"), mode: "ro" }]), "lowering a workspace is one PUT for that account", (await acct("default:alice")).policy.folders);
-    e = await eff("default:alice");
-    check((await page.textContent("[data-workspace='effective']")) === e.summary && e.summary.includes(`${F("projects")} (ro)`), "the line follows", e.summary);
-    check((await page.locator("[data-workspace='admin-only-adds']").count()) === 1, "under Deny everything an account adds nothing (the sentence says so)");
-    // Follow the gateway policy: inline confirm, then no account rule left.
-    await page.click("[data-ws-reset]");
-    check((await page.textContent(".wsm-confirm")).includes("Follow the gateway policy for alice?"), "Follow the gateway policy asks inline");
-    await page.click(".wsm-confirm button.danger");
-    await page.waitForSelector(".wsm-reset .ws-folder__state.is-ok");
-    const after = (await acct("default:alice")).policy;
-    check(after.folders.length === 0 && after.default_mode === null, "Follow the gateway policy resets the account", after);
-    await closeIt();
-    for (const who of ["castor", "admin"]) {
-      await openFor(who);
-      const err = await page.locator("#account-workspace-body [data-workspace='load-error']").count();
-      check(err === 0, `${who}'s modal loads`, err ? await page.textContent("[data-workspace='load-error']") : "");
-      await closeIt();
-    }
-    // Allow everything, refuse listed workspaces: the account may lower Everything else and add rows.
-    await apiAs(ADMIN, "PUT", "/workspace/policy", { posture: "any_except_denied", default_mode: "rw" });
-    await openFor("bob");
-    check((await page.locator("[data-workspace='everything-else']").count()) === 1 && (await page.locator("[data-workspace='add']").count()) === 1, "Allow everything: Everything else and the add row");
-    await page.fill("[data-workspace='add'] input", F("alice-lab"));
-    await page.click("[data-workspace='add'] [data-action='workspace-mode-deny']");
-    await page.click("[data-workspace='add'] [data-action='workspace-add-row']");
-    await page.waitForSelector(`[data-workspace='account-row'][data-path='${F("alice-lab")}']`);
-    check((await acct("default:bob")).policy.folders.some((r) => r.path === F("alice-lab") && r.mode === "deny"), "an account refuses a workspace for itself");
-    await closeIt();
-    await apiAs(ADMIN, "PUT", "/workspace/policy", { posture: "allowed_only" });
-    await ctx.close();
-  }
-  // ------------------------------------------------------------------ non-admin: own modal, no gateway button
-  {
-    const { ctx, page } = await open(browser, { user: "alice", token: ALICE });
-    check(!(await page.locator("#accounts-gw-workspace").isVisible()), "a user does not see the gateway button");
-    await page.click("tr[data-user='alice'] button[data-action='workspace']");
-    await page.waitForSelector("#account-workspace-body [data-workspace='effective'], #account-workspace-body [data-workspace='load-error']");
-    check((await page.locator("[data-workspace='load-error']").count()) === 0, "a user opens their own workspaces (me)");
-    await page.click(`[data-workspace='folder'][data-path='${F("projects")}'] [data-action='workspace-mode-ro']`);
-    await page.waitForSelector(`[data-workspace='folder'][data-path='${F("projects")}'] [data-workspace='saved']`);
-    check((await acct("default:alice")).policy.folders.some((r) => r.path === F("projects") && r.mode === "ro"), "a user lowers a workspace for themselves");
-    await page.click("#account-workspace-close");
-    await ctx.close();
-  }
+  // W2/W3/non-admin (the Workspaces modals) moved to r11w2.mjs (round 11: no shared workspace).
   // ------------------------------------------------------------------ W4: the kit tooltip
   {
     const { ctx, page } = await open(browser);

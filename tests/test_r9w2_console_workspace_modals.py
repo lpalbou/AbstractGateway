@@ -3,10 +3,8 @@ test_gateway_console_browser_r9w2.py, opt-in):
 
 - NO "Workspaces" sidebar entry or page; nothing of the old policy model (access mode, any folder
   for old clients, per-user override map, /workspace/policy/self) is left in the console.
-- Accounts: an admin-only "Shared workspace & allowed folders" button at the top opens the GATEWAY
-  policy modal (GET/PUT /workspace/policy); the folder icon on every account row (users, entities,
-  admins) opens THAT account's modal, the kit WorkspaceChooser (islands mountWorkspaceChooser,
-  GET/PUT /workspace/policy/{account}).
+- Accounts: the workspace icon on every account row (users, entities, admins). The modals
+  themselves are round 11's (test_r11w2_console_workspace_modals.py).
 - Tooltips: every console icon button carries an explicit sentence in `data-af-tip` (the kit
   tooltip, bound once through the islands' bindTooltips) and no native `title`; the Accounts
   sentences are the ones R9.2 names.
@@ -42,42 +40,6 @@ def test_no_workspaces_page_and_no_old_model(html: str) -> None:
     assert 'const TAB_FOLDS = { entities: "users", engines: "providers", workspaces: "users" };' in html
 
 
-def test_accounts_gateway_policy_button_and_modals(html: str) -> None:
-    head = html[html.index('<div class="accounts-head__actions">') : html.index('id="open-create-user"')]
-    # The FIRST control at the top of Accounts, admin-only (hidden until the principal is an admin).
-    assert re.search(r'<button id="accounts-gw-workspace" class="[^"]*\bhidden\b[^"]*" type="button">Shared workspace &amp; allowed workspaces</button>', head)
-    assert '$("accounts-gw-workspace").classList.toggle("hidden", !p.admin);' in html
-    assert '$("accounts-gw-workspace").onclick = () => openGatewayWorkspace();' in html
-    for mid in ("gateway-workspace", "account-workspace"):
-        assert f'id="{mid}-backdrop" class="af-modal-backdrop" hidden' in html
-        assert f'$("{mid}-close").onclick = close' in html
-    assert '<h2 id="gateway-workspace-title" class="af-modal__title">Shared workspace &amp; allowed workspaces</h2>' in html
-    js = _script(html)
-    gw = js[js.index("function wsText()") : js.index("function wsAccountKey(")]
-    # One PUT per change, the gateway policy fields of the R9 WORKSPACE API, path-checked rows.
-    assert 'api("/api/gateway/workspace/policy")' in gw and 'api("/api/gateway/workspace/policy", { method: "PUT"' in gw
-    from abstractgateway.console_workspaces import WORKSPACES_JS
-
-    modals = WORKSPACES_JS[WORKSPACES_JS.index("// ---- Workspace folders modals (round 9).") :]
-    for field in ("shared_workspace", "posture", "default_mode", "folders"):
-        assert field in gw, field
-    # Exactly two dimensions (DESIGN R9 FINAL): no other control in either modal.
-    for gone in ("launch_folder_trust", "Launch-folder trust", "allowed_folders", "never_allowed", "allow_any_folder", "Allow any folder", "other_sessions", "Other sessions", "afSwitchCreate", "wsSwitchField"):
-        assert gone not in modals, gone
-    # The two postures (R9 amendments) as a segmented switch, the matching list under it.
-    # The words come from the kit chooser's table (islands workspaceChooserText), never retyped here.
-    for key in ("T.postureAllowedOnly", "T.postureAnyExceptDenied", "T.accessRead", "T.accessReadWrite", "T.accessDenied", "T.everythingElse", "T.sharedLabel", "T.allowedTitle", "T.deniedTitle"):
-        assert key in gw, key
-    assert 'role", "radiogroup"' in gw and "lib.workspaceChooserText" in js
-    assert 'if (p.posture === "allowed_only") {' in gw and "put({ posture: next })" in gw and "put({ default_mode: m })" in gw and "put({ folders: list })" in gw
-    # The effective line format (ADVERSARY V15): posture label · Shared workspace (rw) · path (mode).
-    assert 'join(" · ")' in gw and 'deny: "refused"' in js
-    assert "/api/gateway/workspace/path-check" in js and "input.onblur = async" in js
-    acc = js[js.index("async function openAccountWorkspace(a)") :]
-    assert "lib.mountWorkspaceChooser(host," in acc and "/api/gateway/workspace/policy/${encodeURIComponent(key)}" in acc
-    assert 'if (a.own) return "me";' in js
-
-
 def test_folder_icon_on_every_account_with_the_r92_sentences(html: str) -> None:
     js = _script(html)
     tips = js[js.index("const ACCOUNT_TIPS = {") : js.index("};", js.index("const ACCOUNT_TIPS = {"))]
@@ -97,19 +59,6 @@ def test_folder_icon_on_every_account_with_the_r92_sentences(html: str) -> None:
     ws = render.index('add("workspace", "folder"')
     assert ws < render.index('if (a.kind === "entity") {\n            add("manage"')
     assert "openAccountWorkspace(a)" in render
-
-
-def test_workspaces_vocabulary_never_folders(html: str) -> None:
-    # DESIGN "Vocabulary": user-facing text says workspaces, never folders (API field names may stay).
-    from abstractgateway.console_workspaces import WORKSPACES_JS
-
-    modals = WORKSPACES_JS[WORKSPACES_JS.index("// ---- Workspace folders modals (round 9).") :]
-    strings = re.findall(r'"([^"\\]*)"|`([^`]*)`', re.sub(r"^\s*//.*$", "", modals, flags=re.M))
-    texts = [a or b for a, b in strings]
-    offenders = [t for t in texts if re.search(r"(?<![-\w])folders?(?![-\w])", t, flags=re.I) and " " in t and not t.startswith(("GET", "PUT", "/api", "AbstractGateway console:"))]
-    assert offenders == [], offenders
-    tips = WORKSPACES_JS[WORKSPACES_JS.index("const ACCOUNT_TIPS") : WORKSPACES_JS.index("};", WORKSPACES_JS.index("const ACCOUNT_TIPS"))]
-    assert "folder" not in tips.lower()
 
 
 def test_icon_buttons_use_the_kit_tooltip_never_a_native_title(html: str) -> None:
