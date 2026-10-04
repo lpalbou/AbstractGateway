@@ -32,7 +32,8 @@ Spliced into the console script scope with the UI layer (console.py _console_own
 from __future__ import annotations
 
 # The card-list rules, used twice: below ~900 px of viewport, and whenever the table's own
-# width is under its column minimums (3 text columns x 110 px + Active 84 + Actions 308 = 722).
+# width is under its column minimums (3 text columns x 110 px + Active 84 + Actions 308 = 722,
+# e.g. a large font scale).
 _ACCOUNTS_CARD_RULES = r"""
   .accounts-table, .accounts-table tbody, .accounts-table tr { display: block; width: 100%; }
   .accounts-table thead, .accounts-table colgroup { display: none; }
@@ -80,7 +81,7 @@ ACCOUNTS_CSS = r"""
 code.accounts-cell-text { padding: 0; border: 0; background: transparent; box-shadow: none; color: inherit; font-size: var(--font-size-md); }
 a.accounts-runtime-link { font-family: var(--font-mono); font-size: var(--font-size-md); color: var(--info, var(--accent)); text-decoration: none; }
 a.accounts-runtime-link:hover { text-decoration: underline; }
-a.accounts-runtime-link:focus-visible { outline: 2px solid var(--info, var(--accent)); outline-offset: 2px; border-radius: 2px; }
+a.accounts-runtime-link:focus-visible { outline: 2px solid var(--info, var(--accent)); outline-offset: 2px; border-radius: var(--radius-sm); }
 .accounts-email__reason { margin-top: 2px; font-size: var(--af-helper-size, var(--font-size-md)); }
 .accounts-name__line { display: flex; align-items: center; gap: 4px 8px; min-width: 0; flex-wrap: wrap; }
 .accounts-name__line > strong { flex: 0 1 auto; min-width: 0; max-width: 100%; font-weight: 600; }
@@ -92,8 +93,13 @@ a.accounts-runtime-link:focus-visible { outline: 2px solid var(--info, var(--acc
 .accounts-active__archived { font-size: var(--font-size-md); }
 .accounts-table td.accounts-actions { overflow: visible; }
 .accounts-actions__buttons { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; }
-@media (max-width: 899.98px) {
+/* Cards below ~900 px of viewport: in the drawer range (no docked sidebar, < 1024 px, a named
+   breakpoint) the table is the viewport minus ~66 px of gutters, so a table under 834 px = a
+   viewport under ~900 px. At 1024 px and up the docked sidebar leaves >= 750 px: the table fits. */
+@media (max-width: 1023.98px) {
+  @container accounts (max-width: 833.98px) {
 """ + _ACCOUNTS_CARD_RULES + r"""
+  }
 }
 @container accounts (max-width: 721.98px) {
 """ + _ACCOUNTS_CARD_RULES + r"""

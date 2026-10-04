@@ -67,7 +67,8 @@ def test_console_calls_only_the_callers_own_routes() -> None:
     # The only per-user admin call left is Reset (clears an old override).
     assert "/api/gateway/admin/users/${encodeURIComponent(u.user_id)}/email" in html
     assert 'JSON.stringify({ inherit: ["email", "email_agent_tools"] })' in html
-    assert "<th>Mailbox</th>" in html
+    # Round 8: the mailbox state lives in the ONE Email column ("address · state").
+    assert "<th>Email</th>" in html and "<th>Mailbox</th>" not in html
 
 
 def test_sign_in_page_offers_recovery_only_when_available() -> None:
