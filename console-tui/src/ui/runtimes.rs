@@ -341,6 +341,22 @@ fn admin_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         });
     }
 
+    // R8.2: an account's filter that leaves exactly one runtime opens it
+    // at once (the web's).
+    {
+        let ctx_one = ctx.clone();
+        cx.effect(move || {
+            if store.runtime_filter.with(Option::is_none) || ui.rt_detail.with(Option::is_some) {
+                return;
+            }
+            let one = store
+                .runtimes
+                .with(|d| d.ready().map(|rows| rows.len() == 1).unwrap_or(false));
+            if one {
+                choose(&ctx_one, 0);
+            }
+        });
+    }
     let ctx_cancel = ctx.clone();
     let ctx_steer = ctx.clone();
     let ctx_table = ctx.clone();
@@ -3941,13 +3957,13 @@ fn table(
                     };
                     match &policy_keys {
                         Some(keys) if keys.contains(&format!("{tenant}:{}", r.owners[0])) => {
-                            "Own policy (w)".to_string()
+                            "Own policy".to_string()
                         }
-                        Some(_) => "Gateway policy (w)".to_string(),
+                        Some(_) => "Gateway policy".to_string(),
                         None => "w: Workspaces".to_string(),
                     }
                 } else if r.kind == "entity" {
-                    "via entity".to_string()
+                    "Set in Manage".to_string()
                 } else {
                     "—".to_string()
                 },

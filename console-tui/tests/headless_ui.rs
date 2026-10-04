@@ -2261,7 +2261,8 @@ fn create_user_flow_and_token_shown_once() {
 }
 
 #[test]
-fn rotate_token_requires_explicit_danger_choice() {
+fn rotate_token_asks_inline_first() {
+    // R8.2: the web's inline confirm under the table — nothing before y.
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(3);
@@ -2271,8 +2272,12 @@ fn rotate_token_requires_explicit_danger_choice() {
     h.turns(2);
     h.type_text("t");
     let s = h.turns(2);
-    assert!(s.contains("Rotate the token for 'admin'"), "confirm:\n{s}");
-    h.type_text("\r"); // initial = keep
+    assert!(
+        s.contains("Rotate the token of admin? The current token stops working now;"),
+        "confirm:\n{s}"
+    );
+    assert!(s.contains("[y] Rotate"), "{s}");
+    h.type_text("n");
     h.turns(2);
     assert!(
         h.find_cmd(|c| matches!(c, Cmd::PatchUser { .. })).is_none(),
@@ -2280,9 +2285,7 @@ fn rotate_token_requires_explicit_danger_choice() {
     );
     h.type_text("t");
     h.turns(2);
-    h.key(b"\x1b[A");
-    h.turn();
-    h.type_text("\r");
+    h.type_text("y");
     h.turns(2);
     match h.find_cmd(|c| matches!(c, Cmd::PatchUser { .. })) {
         Some(Cmd::PatchUser { user_id, body, .. }) => {
@@ -3545,18 +3548,16 @@ fn second_token_waits_for_first_modal_dismissal() {
 fn token_waits_for_open_prompt() {
     let mut h = harness();
     h.connect_as_admin();
-    h.goto_screen(3);
+    // A ChoicePrompt (NOT in the modal slot): the Resources unload confirm
+    // (Accounts' rotate asks inline since round 8).
+    h.goto_screen(7);
     h.store
-        .users
-        .set(Loadable::Ready(users_from_payload(&users_fixture())));
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
     h.turns(2);
-    // Open the rotate confirm (a ChoicePrompt, NOT in the modal slot).
-    h.type_text("t");
+    h.type_text("u");
     let s = h.turns(2);
-    assert!(
-        s.contains("Rotate the token for 'admin'"),
-        "prompt open:\n{s}"
-    );
+    assert!(s.contains("Unload mlx/qwen3-32b"), "prompt open:\n{s}");
     // A token arrives while the prompt is up.
     h.ui.token_queue
         .update(|q| q.push(("alice".into(), "agw_token_HELD".into())));

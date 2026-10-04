@@ -382,7 +382,7 @@ fn handle_key(cx: Scope, ctx: &Ctx, confirm: InlineConfirm, key: Key) -> bool {
             }
         }
         Key::Char('e') => edit_selected_user(cx, ctx),
-        Key::Char('t') => rotate_selected(cx, ctx),
+        Key::Char('t') => rotate_selected(cx, ctx, confirm),
         Key::Char('d') => archive_selected(ctx, confirm),
         _ => return false,
     }
@@ -518,11 +518,6 @@ fn account_row(r: &AccountRow, narrow: bool, _own: Option<&(String, String)>) ->
     let runtime = r.runtime_id.clone().unwrap_or_else(|| "No runtime".into());
     let cells = vec![name_cell(r), email_cell(r), runtime, active_cell(r)];
     let mut detail = vec![crate::store::accounts::kind_help(r.kind_label()).to_string()];
-    if r.mailbox.state == "receive_only" {
-        if let Some(why) = &r.mailbox.reason {
-            detail.push(why.clone());
-        }
-    }
     if r.archived {
         detail.push("Archived: can't sign in or act; runs and history are kept.".into());
     }
@@ -565,15 +560,23 @@ pub fn email_cell(r: &AccountRow) -> String {
         "receive_only" => "receive only",
         "not_connected" => "not connected",
         "paused" => "paused",
-        "unavailable" => "not available",
+        "unavailable" => "mailbox not available",
         _ => "",
     };
     let address = r.email_address.as_ref().or(r.mailbox.address.as_ref());
-    match (address, state) {
-        (None, _) => "No address".into(),
+    let mut cell = match (address, state) {
+        (None, _) => "No address".to_string(),
         (Some(a), "") => a.clone(),
         (Some(a), s) => format!("{a} · {s}"),
+    };
+    // Receive only: the reason on the next line (the web's).
+    if r.mailbox.state == "receive_only" {
+        if let Some(why) = &r.mailbox.reason {
+            cell.push('\n');
+            cell.push_str(why);
+        }
     }
+    cell
 }
 
 /// The detail line naming the mailbox in full when the cell abbreviates
@@ -622,7 +625,7 @@ pub fn row_actions(r: &AccountRow) -> Vec<String> {
         add(r.refusal("manage").is_none(), "m Manage");
     } else {
         add(r.refusal("workspace").is_none(), "w Workspace");
-        add(r.refusal("rotate").is_none(), "t Rotate");
+        add(r.refusal("rotate").is_none(), "t Rotate token");
     }
     add(r.refusal("archive").is_none(), "d Archive");
     add(r.runtime_id.is_some(), "g Runtime");
@@ -877,7 +880,7 @@ pub fn other_mailbox_line(r: &AccountRow) -> String {
 
 /// `t`: rotate the selected account's token (a user: the registry's
 /// rotate; an entity: only where the gateway offers it).
-fn rotate_selected(cx: Scope, ctx: &Ctx) {
+fn rotate_selected(_cx: Scope, ctx: &Ctx, confirm: InlineConfirm) {
     if !super::util::admin_gate(&ctx.store, "rotating a token") {
         return;
     }
@@ -893,7 +896,7 @@ fn rotate_selected(cx: Scope, ctx: &Ctx) {
         return;
     }
     if let Some(u) = selected_user(ctx) {
-        confirm_rotate(cx, ctx, u);
+        confirm_rotate(ctx, confirm, u);
     } else {
         ctx.store.notice.set(Some(format!(
             "the users registry has not loaded {} yet — r refreshes",
@@ -1732,21 +1735,20 @@ fn own_key(store: &crate::store::Store) -> Option<(String, String)> {
     })
 }
 
-fn confirm_rotate(cx: Scope, ctx: &Ctx, u: UserRow) {
+/// The web's inline confirm (round 8): the sentence under the table,
+/// `[y] Rotate` `[n] Keep`.
+fn confirm_rotate(ctx: &Ctx, confirm: InlineConfirm, u: UserRow) {
     let ctx = ctx.clone();
-    super::confirm_danger(
-        cx,
-        ctx.ui,
+    confirm.ask(
         format!(
-            "Rotate the token for '{}'? The current token stops working immediately; the new one is shown once.",
+            "Rotate the token of {}? The current token stops working now; the new one is shown once.",
             u.user_id
         ),
-        "Rotate the token",
-        "Keep the current token",
+        "Rotate",
         move || {
             ctx.send(Cmd::PatchUser {
-                user_id: u.user_id,
-                tenant_id: u.tenant_id,
+                user_id: u.user_id.clone(),
+                tenant_id: u.tenant_id.clone(),
                 body: json!({ "rotate_token": true }).into(),
                 form_id: None,
             })

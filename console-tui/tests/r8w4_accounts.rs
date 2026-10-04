@@ -116,7 +116,7 @@ fn the_highlighted_rows_actions_sit_in_one_line_in_the_web_order() {
         select(&mut h, "alice");
         let s = h.shoot("accounts-actions-alice");
         assert!(
-            flat(&s).contains("alice: @ Email · o OpenAI API (on) · l Logs · w Workspace · t Rotate · d Archive · g Runtime"),
+            flat(&s).contains("alice: @ Email · o OpenAI API (on) · l Logs · w Workspace · t Rotate token · d Archive · g Runtime"),
             "{s}"
         );
         // Never split inside an action.

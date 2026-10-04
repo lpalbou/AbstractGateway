@@ -128,8 +128,10 @@ fn enter_shows_the_row_actions_and_reasons() {
     );
     select(&mut h, "bob");
     let s = h.key(b"\r");
+    // R8.2: the receive-only reason sits in the Email cell, under the
+    // address (wrapped).
     assert!(
-        s.contains("No outgoing server: this mailbox is receive only"),
+        s.contains("receive only") && s.contains("No outgoing"),
         "{s}"
     );
 }
