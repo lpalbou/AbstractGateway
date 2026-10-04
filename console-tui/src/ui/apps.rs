@@ -688,6 +688,33 @@ fn detail_view(
                 0,
             );
         }
+        // R10.5 / R10.6: another Assistant runs; an update left one alone.
+        for note in [&desk.other_running, &desk.restart_note]
+            .into_iter()
+            .flatten()
+            .filter(|_| row.installed)
+        {
+            col = wrapped(col, t, None, note, t.text_muted, false, width, 0);
+        }
+    }
+    // R10.6: a newer version of an app started outside the gateway is shown
+    // with where to update it (the web card's note; no action here).
+    if row.is_external() && row.update_available {
+        if let Some(l) = &row.latest_version {
+            col = wrapped(
+                col,
+                t,
+                None,
+                &format!(
+                    "Latest {l} · {}",
+                    row.update_tip.clone().unwrap_or_default()
+                ),
+                t.text_muted,
+                false,
+                width,
+                0,
+            );
+        }
     }
     if let Some(j) = tjob.filter(|j| j.is_active()) {
         col = wrapped(
@@ -775,6 +802,14 @@ fn detail_view(
         facts.push(format!("Version {v}"));
     } else if let Some(l) = row.latest_version.as_ref().filter(|_| row.update_available) {
         facts.push(format!("Latest {l}"));
+    }
+    if row.is_desktop() {
+        if let Some(l) = row.latest_version.as_ref().filter(|_| row.update_available) {
+            facts.push(format!("Latest {l}"));
+        }
+        if let Some(e) = row.desktop.as_ref().and_then(|d| d.latest_error.clone()) {
+            facts.push(e);
+        }
     }
     if row.is_desktop() && row.running {
         if let Some(pid) = row.pid {
@@ -1053,12 +1088,16 @@ fn run_key(cx: Scope, ctx: &Ctx, verb: Option<AppVerb>) {
                     if row.install_parts.iter().any(|p| p == "tui") { " for the browser and the terminal" } else { "" },
                     if row.needs_node_install { " (Node.js is installed for you first: about 56 MB, no password needed)" } else { "" }
                 ),
-                AppVerb::Update => format!(
-                    "Install the newest {} ({})?{}",
-                    row.name,
-                    row.latest_version.clone().unwrap_or_else(|| "latest".into()),
-                    if row.running { " It is running: it restarts on the new version." } else { "" }
-                ),
+                // The gateway's tooltip (the web button's), word for word.
+                AppVerb::Update => match &row.update_tip {
+                    Some(tip) => format!("{tip}."),
+                    None => format!(
+                        "Install the newest {} ({})?{}",
+                        row.name,
+                        row.latest_version.clone().unwrap_or_else(|| "latest".into()),
+                        if row.running { " It is running: it restarts on the new version." } else { "" }
+                    ),
+                },
                 _ => format!(
                     "{} {}'s terminal app? A ready-made download from its release, checked against its published checksums, into the gateway's own folder.",
                     if row.tui.as_ref().map(|x| x.installed).unwrap_or(false) { "Update" } else { "Install" },

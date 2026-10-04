@@ -2685,8 +2685,9 @@ class AppsManager:
     def apply_pending_upgrades(self) -> List[Dict[str, Any]]:
         """Gateway boot: the installer's `<data dir>/apps-upgrade.pending`
         (one "ID VERSION" per line, written when it upgraded with no gateway
-        running) brings every INSTALLED app named there to that version
-        before the apps start; apps not installed stay uninstalled. The file
+        running) brings every INSTALLED app named there UP to that version
+        before the apps start (one already newer, updated in place, is kept);
+        apps not installed stay uninstalled. The file
         is removed once read; a failed update is logged as an error and
         returned as a failed outcome row, never silent."""
         path = self.data_dir / APPS_UPGRADE_MARKER
@@ -2705,7 +2706,9 @@ class AppsManager:
                 continue
             app_id, version = parts
             installed = self.installed_version(app_id)
-            if not installed or installed == version:
+            # R10.6: an app updated in place from the Apps page (newer than
+            # the installer's pin) is never brought DOWN to the pin.
+            if not installed or not version_newer(version, installed):
                 continue
             try:
                 job, _ = self.start_install(app_id, version=version, update=True, run_inline=True, same_machine=True)

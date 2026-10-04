@@ -1614,7 +1614,7 @@ CONSOLE_UI_JS = r"""
       const glyph = `<span class="ui-btn__glyph" aria-hidden="true">&gt;_</span>`;
       const btn = (action, text, cls, title, withGlyph) => {
         const mine = pend && pend.action === action;
-        return `<button type="button" class="ui-btn ${cls}" data-app-action="${esc(action)}" data-app="${esc(app.id)}" data-app-tui="${esc(app.id)}"${title ? ` title="${esc(title)}"` : ""}${busy ? " disabled" : ""}${mine ? ' aria-busy="true"' : ""}>${withGlyph ? glyph : ""}${esc(mine ? pend.label : text)}</button>`;
+        return `<button type="button" class="ui-btn ${cls}" data-app-action="${esc(action)}" data-app="${esc(app.id)}" data-app-tui="${esc(app.id)}"${title ? ` data-af-tip="${esc(title)}"` : ""}${busy ? " disabled" : ""}${mine ? ' aria-busy="true"' : ""}>${withGlyph ? glyph : ""}${esc(mine ? pend.label : text)}</button>`;
       };
       if (appJobActive(job)) {
         out.body += uiProgressMarkup(appJobAsProgress(job), job.title || `Installing ${name} for the terminal`);
@@ -1826,12 +1826,18 @@ CONSOLE_UI_JS = r"""
       // another install) is running. Its own sentence, from the gateway's one
       // probe; Open stays enabled and starts the installed one.
       if (desk && app.installed && desk.other_running && desk.other_running.sentence) body += `<p class="ui-card__note" data-app-desktop-other="${esc(app.id)}">${esc(desk.other_running.sentence)}</p>`;
+      // R10.6: a newer version of an app started outside the gateway is SHOWN
+      // with where to update it (the row has no update action); an update that
+      // left a running Assistant alone says how to run the new version.
+      if (app.source === "external" && app.update_available && app.latest_version) body += `<p class="ui-card__note" data-app-update-external="${esc(app.id)}">Latest ${esc(app.latest_version)} · ${esc(app.update_tip || "")}</p>`;
+      if (desk && app.installed && desk.restart_note) body += `<p class="ui-card__note" data-app-desktop-restart="${esc(app.id)}">${esc(desk.restart_note)}</p>`;
       const tui = appTuiParts(app, techOn);
       body += tui.body;
       const pend = busy ? appStore.pending.get(app.id) : null;
       const b = (action, text, cls, title, appPath) => {
         const mine = pend && pend.action === action;
-        return `<button type="button" class="ui-btn ${cls}" data-app-action="${esc(action)}" data-app="${esc(app.id)}"${appPath ? ` data-app-path="${esc(appPath)}"` : ""}${title ? ` title="${esc(title)}"` : ""}${busy ? " disabled" : ""}${mine ? ' aria-busy="true"' : ""}>${esc(mine ? pend.label : text)}</button>`;
+        // The tooltip is the kit's (data-af-tip, bound once by islands bindTooltips), never a native title.
+        return `<button type="button" class="ui-btn ${cls}" data-app-action="${esc(action)}" data-app="${esc(app.id)}"${appPath ? ` data-app-path="${esc(appPath)}"` : ""}${title ? ` data-af-tip="${esc(title)}"` : ""}${busy ? " disabled" : ""}${mine ? ' aria-busy="true"' : ""}>${esc(mine ? pend.label : text)}</button>`;
       };
       const first = appFirstRun(app);
       const off = (text, title) => `<button type="button" class="ui-btn is-primary" disabled title="${esc(title)}">${esc(text)}</button>`;
@@ -1869,13 +1875,21 @@ CONSOLE_UI_JS = r"""
       const gear = admin && APP_SETTINGS_DOORS[app.id]
         ? `<button type="button" class="ui-btn is-ghost ui-icon-btn" data-app-action="settings" data-app="${esc(app.id)}" aria-label="${esc(`${name} settings`)}" data-af-tip="${esc(`${name} settings`)}"><span class="button-icon" aria-hidden="true">${ICONS.gear}</span></button>`
         : "";
-      const row = primary + tui.button + gear;
+      // R10.6: an available update is ONE click on the card, beside Open (as
+      // Install is for a missing app); label and tooltip are the gateway's
+      // (update_label / update_tip), the same words as the terminal console.
+      const update = app.update_available && actions.includes("update") && admin && !appJobActive(job)
+        ? b("update", app.update_label || "Update", "is-ghost", app.update_tip || "")
+        : "";
+      const row = primary + update + tui.button + gear;
       // Technical details ON: the secondary line (text buttons + facts), the
       // terminal commands, the address, the npx line, the logs.
       let tech = "";
       if (techOn && desk) {
         const items = [];
         if (app.version) items.push(`<span>Version ${esc(app.version)}</span>`);
+        if (app.update_available && app.latest_version) items.push(`<span>Latest ${esc(app.latest_version)}</span>`);
+        if (desk.latest_error) items.push(`<span data-app-latest-error="${esc(app.id)}">${esc(desk.latest_error)}</span>`);
         if (app.running && app.pid) items.push(`<span>Running (process ${esc(app.pid)})</span>`);
         tech = (items.length ? `<div class="ui-card__techline" data-app-tech="${esc(app.id)}">${appTechSep(items)}</div>` : "")
           + (desk.location ? `<div class="ui-card__techrow"><span class="ui-card__techlabel">Location</span><code class="ui-ellip" title="${esc(desk.location)}">${esc(desk.location)}</code></div>` : "")
@@ -1891,7 +1905,6 @@ CONSOLE_UI_JS = r"""
         if (app.installed && !app.running && actions.includes("launch") && admin && !appJobActive(job)) items.push(b("launch", "Start", "is-text", `Start ${name} without opening it`));
         const logOpen = !!(appStore.logs.get(app.id) || {}).open;
         if (actions.includes("logs") && admin) items.push(`<button type="button" class="ui-btn is-text" data-app-action="logs" data-app="${esc(app.id)}" aria-expanded="${logOpen ? "true" : "false"}">${logOpen ? "Hide log" : "Show log"}</button>`);
-        if (app.update_available && actions.includes("update") && admin && !appJobActive(job)) items.push(b("update", app.latest_version ? `Update to ${app.latest_version}` : "Update", "is-text", `Install the newest ${name} (${app.latest_version || "latest"}); a running app restarts on it`));
         if (app.version) items.push(`<span>Version ${esc(app.version)}</span>`);
         else if (app.update_available && app.latest_version) items.push(`<span>Latest ${esc(app.latest_version)}</span>`);
         items.push(...tui.tech);

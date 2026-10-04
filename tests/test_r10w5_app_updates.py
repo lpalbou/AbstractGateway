@@ -425,3 +425,22 @@ def test_route_update_runs_the_desktop_update_signed_in(client, world, monkeypat
     ov = client.get("/api/gateway/apps").json()
     a = _row(ov, "assistant")
     assert a["version"] == "0.14.0" and a["update_available"] is False
+
+
+# ---------------------------------------------------------------------------
+# 5. The installer's pending upgrade never downgrades an in-place update
+# ---------------------------------------------------------------------------
+
+
+def test_installer_marker_never_downgrades_an_app_updated_in_place(world) -> None:
+    m = world.m
+    calls: List[tuple] = []
+    installed = {"code": "0.10.4", "flow": "0.6.0"}  # code updated from the Apps page past the pin
+    m.installed_version = lambda app_id: installed.get(app_id)  # type: ignore[method-assign]
+    m.start_install = lambda app_id, **kw: (calls.append((app_id, kw.get("version"))) or (types.SimpleNamespace(state="succeeded", message="ok", error=None), True))  # type: ignore[method-assign]
+    marker = m.data_dir / am.APPS_UPGRADE_MARKER
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("code 0.10.3\nflow 0.7.0\n", encoding="utf-8")
+    out = m.apply_pending_upgrades()
+    assert calls == [("flow", "0.7.0")], "code 0.10.4 stays: never down to the installer's 0.10.3"
+    assert [o["app_id"] for o in out] == ["flow"]

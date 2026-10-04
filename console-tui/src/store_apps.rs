@@ -273,6 +273,13 @@ pub struct DesktopInfo {
     /// not_installed | other_computer | admin | None
     pub launch_blocked: Option<String>,
     pub launch_blocked_reason: Option<String>,
+    /// R10.5: another Assistant (the other artifact) runs — its sentence.
+    pub other_running: Option<String>,
+    /// R10.6: an update left a running copy alone — "Quit it and open it
+    /// again to run x.y.z" while that copy runs.
+    pub restart_note: Option<String>,
+    /// R10.6: PyPI could not be asked — why the latest version is unknown.
+    pub latest_error: Option<String>,
 }
 
 /// The web card's one-line blurb (console_ui.py `APP_COPY`); an app the
@@ -338,6 +345,12 @@ pub struct AppRow {
     pub version: Option<String>,
     pub latest_version: Option<String>,
     pub update_available: bool,
+    /// The gateway's words for an available update (R10.6): the web
+    /// console's button label and tooltip — the verb label and its
+    /// confirmation here. On a row started outside the gateway the tip says
+    /// where to update it (and there is no update action).
+    pub update_label: Option<String>,
+    pub update_tip: Option<String>,
     pub running: bool,
     /// not_installed | stopped | starting | running | stopping | crashed | crash_loop
     pub status: String,
@@ -385,6 +398,9 @@ impl AppRow {
                 launch_available: b(d, "launch_available"),
                 launch_blocked: s(d, "launch_blocked"),
                 launch_blocked_reason: s(d, "launch_blocked_reason"),
+                other_running: d.get("other_running").and_then(|o| s(o, "sentence")),
+                restart_note: s(d, "restart_note"),
+                latest_error: s(d, "latest_error"),
             });
         let external = v.get("external").filter(|e| e.is_object());
         Some(AppRow {
@@ -396,6 +412,8 @@ impl AppRow {
             version: s(v, "version"),
             latest_version: s(v, "latest_version"),
             update_available: b(v, "update_available"),
+            update_label: s(v, "update_label"),
+            update_tip: s(v, "update_tip"),
             running: b(v, "running"),
             status: s(v, "status").unwrap_or_else(|| "unknown".into()),
             source: s(v, "source"),
@@ -833,10 +851,52 @@ pub fn primary_verb(row: &AppRow, job: Option<&AppJob>, admin: bool) -> Option<V
     Some(v)
 }
 
+/// The Update verb of an installed row (R10.6), labelled with the
+/// gateway's `update_label`. A row started outside the gateway never
+/// updates from here: when a newer version is published `u` says the
+/// gateway's sentence (where to update it; the card says "Latest x.y.z"),
+/// and there is no verb when there is none.
+pub fn update_verb(row: &AppRow, active: bool, admin: bool) -> Option<VerbState> {
+    if row.is_external() {
+        row.latest_version
+            .as_ref()
+            .filter(|_| row.update_available)?;
+        return Some(VerbState::off(
+            AppVerb::Update,
+            "Update",
+            row.update_tip.clone().unwrap_or_default(),
+        ));
+    }
+    let label = match (&row.update_label, &row.latest_version) {
+        (Some(l), _) if row.update_available => l.clone(),
+        (None, Some(v)) if row.update_available => format!("Update to {v}"),
+        _ => "Update".to_string(),
+    };
+    Some(if !row.update_available {
+        VerbState::off(
+            AppVerb::Update,
+            label,
+            "No newer version is published (or it was not checked: r checks again)",
+        )
+    } else if active {
+        VerbState::off(AppVerb::Update, label, "An install is running")
+    } else if !row.has("update") {
+        VerbState::off(
+            AppVerb::Update,
+            label,
+            "Updating is not available right now (installs are off for this caller)",
+        )
+    } else if !admin {
+        VerbState::off(AppVerb::Update, label, "Only an admin can update apps")
+    } else {
+        VerbState::on(AppVerb::Update, label)
+    })
+}
+
 /// Everything else the web offers under "Technical details", with the
 /// reason each one is unavailable. Verbs the web never shows for this
 /// kind of row are left out (a browser-only app has no terminal verbs;
-/// a desktop app has no stop/log/update).
+/// a desktop app has no stop/start/log — its Update is `u`, R10.6).
 pub fn secondary_verbs(
     row: &AppRow,
     job: Option<&AppJob>,
@@ -854,6 +914,7 @@ pub fn secondary_verbs(
                 "Started outside the gateway on port {port}: stop, start, update and its log belong to whatever started it"
             );
             out.push(VerbState::off(AppVerb::Stop, "Stop", why));
+            out.extend(update_verb(row, active, admin));
         } else {
             out.push(if !row.running {
                 VerbState::off(
@@ -908,30 +969,12 @@ pub fn secondary_verbs(
             } else {
                 VerbState::on(AppVerb::Log, "Show log")
             });
-            let upd_label = match &row.latest_version {
-                Some(v) if row.update_available => format!("Update to {v}"),
-                _ => "Update".to_string(),
-            };
-            out.push(if !row.update_available {
-                VerbState::off(
-                    AppVerb::Update,
-                    upd_label,
-                    "No newer version is published (or it was not checked: r checks again)",
-                )
-            } else if active {
-                VerbState::off(AppVerb::Update, upd_label, "An install is running")
-            } else if !row.has("update") {
-                VerbState::off(
-                    AppVerb::Update,
-                    upd_label,
-                    "Updating is not available right now (installs are off for this caller)",
-                )
-            } else if !admin {
-                VerbState::off(AppVerb::Update, upd_label, not_admin("update apps"))
-            } else {
-                VerbState::on(AppVerb::Update, upd_label)
-            });
+            out.extend(update_verb(row, active, admin));
         }
+    }
+    // R10.6: the Assistant updates like a browser app (`u`).
+    if row.is_desktop() && row.installed {
+        out.extend(update_verb(row, active, admin));
     }
     if let Some(t) = &row.tui {
         let t_active = tui_job.map(AppJob::is_active).unwrap_or(false);
@@ -1481,7 +1524,11 @@ mod tests {
         let p = primary_verb(&desk, None, true).unwrap();
         assert_eq!(p.verb, AppVerb::DesktopOpen);
         assert!(p.available.unwrap_err().contains("open it there"));
-        assert!(secondary_verbs(&desk, None, None, true).is_empty());
+        // R10.6: the desktop app's one secondary verb is Update (off: up to date).
+        let sec = secondary_verbs(&desk, None, None, true);
+        assert_eq!(sec.len(), 1, "{sec:?}");
+        assert_eq!(sec[0].verb, AppVerb::Update);
+        assert!(sec[0].available.is_err());
     }
 
     #[test]
