@@ -956,8 +956,8 @@ def begin_gateway_boot() -> None:
 
                 if ensure_migrated(_ws_data_dir()):
                     print(
-                        "[INFO] workspace folders: the old workspace settings were migrated to the workspace "
-                        "policy (shared workspace, allowed folders, never allowed); see Accounts.",
+                        "[INFO] workspaces: the old workspace settings were migrated to the workspace policy "
+                        "(shared workspace, posture, workspace rows); see Accounts → Shared workspace & allowed workspaces.",
                         file=sys.stderr,
                         flush=True,
                     )
