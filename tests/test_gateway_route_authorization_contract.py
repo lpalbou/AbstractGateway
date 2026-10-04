@@ -245,6 +245,9 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     # workflows, the owner for their own; shipped bundles refuse (409).
     ("POST", "/api/gateway/bundles/{bundle_id}/archive"),
     ("POST", "/api/gateway/bundles/{bundle_id}/unarchive"),
+    # description edit (round 8) gates IN-HANDLER the same way: the owner, an
+    # admin for gateway workflows; shipped refuse (test_gateway_workflow_description_edit.py).
+    ("PATCH", "/api/gateway/bundles/{bundle_id}"),
     ("POST", "/api/gateway/visualflows"),
     ("POST", "/api/gateway/visualflows/code/simulate"),
     ("PUT", "/api/gateway/visualflows/{flow_id}"),
