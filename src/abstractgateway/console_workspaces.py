@@ -540,7 +540,7 @@ WORKSPACES_JS = r"""
     // The effective line, byte-exact (DESIGN R9 FINAL, ADVERSARY V15): posture label first (with the
     // default mode under "Any folder except denied"), then the shared workspace, then each folder with
     // its mode. The same format as effective.summary; presentation of the server's values only.
-    const WS_MODE_WORD = { rw: "rw", ro: "ro", deny: "denied" };
+    const WS_MODE_WORD = { rw: "rw", ro: "ro", deny: "refused" };
     function wsGatewaySummary(p) {
       const T = wsText();
       const head = p.posture === "allowed_only" ? T.postureAllowedOnly : `${T.postureAnyExceptDenied} (${WS_MODE_WORD[p.default_mode]})`;
