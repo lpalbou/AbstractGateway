@@ -60,8 +60,10 @@ class RunRow:
     workflow_id: str
     status: str  # running | waiting | completed | failed | cancelled | ...
     steps: Optional[int]  # ledger entries — the run's turns
-    duration_s: Optional[float]
-    started_at: Optional[float]  # epoch seconds, for the 24 h window
+    duration_s: Optional[float]  # finished: start → end; active: elapsed when sampled
+    started_at: Optional[float]  # epoch seconds
+    # `/apps/observer/#run/<id>` (GET /host/runs `observer_path`): "Open in Observer".
+    observer_path: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -281,14 +283,19 @@ def _epoch(value: Any) -> Optional[float]:
     return parsed.timestamp()
 
 
-def run_rows_from_listing(payload: Any, *, now: Optional[float] = None, window_s: float = RUNS_WINDOW_S) -> List[RunRow]:
-    """`GET /host/runs` items → the Workflows submenu's rows, newest first.
+ACTIVE_STATUSES = ("running", "waiting")
 
-    The gateway already filtered to the window and decoded a readable `label`
-    (a catalog-published workflow runs under a base64 internal id, which is
-    the right key for the store and an unreadable string for a menu). The
-    window is applied again here because it costs nothing and a cached payload
-    ages while the menu stays open.
+
+def run_rows_from_listing(payload: Any, *, now: Optional[float] = None, window_s: float = RUNS_WINDOW_S) -> List[RunRow]:
+    """`GET /host/runs` items → the Workflows submenu's rows: ACTIVE runs
+    first (running, then waiting), then the finished ones, newest first.
+
+    The gateway's `activity` decides what is active: a run whose sub-run is
+    working is "running" even though its own record says it waits for that
+    sub-run. An active run is never windowed (a run started two days ago and
+    still going is the most important line in the menu); its duration is the
+    time elapsed so far. A finished run is windowed on its LAST update, again
+    here because a cached payload ages while the menu stays open.
 
     A run whose timestamp cannot be read is KEPT (see `_epoch`): it may be the
     one running right now.
@@ -298,7 +305,8 @@ def run_rows_from_listing(payload: Any, *, now: Optional[float] = None, window_s
     items = payload.get("items")
     if not isinstance(items, list):
         return []
-    cutoff = (time.time() if now is None else float(now)) - float(window_s)
+    clock = time.time() if now is None else float(now)
+    cutoff = clock - float(window_s)
     rows: List[RunRow] = []
     for item in items:
         if not isinstance(item, dict):
@@ -306,21 +314,34 @@ def run_rows_from_listing(payload: Any, *, now: Optional[float] = None, window_s
         run_id = str(item.get("run_id") or "").strip()
         if not run_id:
             continue
+        status = str(item.get("status") or "unknown").strip().lower()
+        activity = str(item.get("activity") or "").strip().lower()
+        if activity in ACTIVE_STATUSES:
+            status = activity
         started = _epoch(item.get("created_at"))
-        if started is not None and started < cutoff:
-            continue
         ended = _epoch(item.get("updated_at"))
-        duration = (ended - started) if (started is not None and ended is not None and ended >= started) else None
+        if status in ACTIVE_STATUSES:
+            duration = (clock - started) if (started is not None and clock >= started) else None
+        else:
+            touched = ended if ended is not None else started
+            if touched is not None and touched < cutoff:
+                continue
+            duration = (ended - started) if (started is not None and ended is not None and ended >= started) else None
+        observer = item.get("observer_path")
         rows.append(
             RunRow(
                 run_id=run_id,
                 workflow_id=str(item.get("label") or item.get("workflow_id") or "").strip() or run_id,
-                status=str(item.get("status") or "unknown").strip().lower(),
+                status=status,
                 steps=_int(item.get("ledger_len")),
                 duration_s=duration,
                 started_at=started,
+                observer_path=str(observer) if isinstance(observer, str) and observer.strip() else None,
             )
         )
+    order = {"running": 0, "waiting": 1}
+    # Stable: the gateway's newest-first order is kept inside each group.
+    rows.sort(key=lambda r: order.get(r.status, 2))
     return rows
 
 

@@ -28,6 +28,7 @@ pure model makes checkable that a pystray generator could not:
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field, replace
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -154,28 +155,35 @@ def workflow_menu_name(workflow_id: str) -> str:
 
 
 def run_row_label(row: RunRow) -> str:
-    """`✅ coding-agent:coder · 12 steps · 2m 13s`."""
+    """`✅ coding-agent:coder · 12 steps · 2m 13s` (an active run: `… so far`)."""
     badge = RUN_BADGES.get(row.status, RUN_BADGE_UNKNOWN)
     bits = [f"{badge} {workflow_menu_name(row.workflow_id)}"]
     if row.steps is not None:
         bits.append(f"{row.steps} step" + ("" if row.steps == 1 else "s"))
     duration = fmt_duration(row.duration_s)
     if duration:
-        bits.append(duration if row.status != "running" else f"{duration} so far")
+        bits.append(duration if row.status not in {"running", "waiting"} else f"{duration} so far")
     return " · ".join(bits)
 
 
 def run_tally(rows: Sequence[RunRow]) -> str:
+    """What is happening NOW, then the last day. Active runs are not "of the
+    last 24 hours" (one may have started two days ago): they lead, unwindowed."""
     if not rows:
         return "No runs in the last 24 hours"
     counts: Dict[str, int] = {}
     for row in rows:
         counts[row.status] = counts.get(row.status, 0) + 1
-    order = ("running", "waiting", "completed", "failed", "cancelled")
-    words = {"running": "running", "waiting": "waiting", "completed": "done", "failed": "failed", "cancelled": "cancelled"}
-    parts = [f"{counts[st]} {words[st]}" for st in order if counts.get(st)]
-    parts += [f"{n} {st}" for st, n in sorted(counts.items()) if st not in order]
-    return f"Last 24 hours — {' · '.join(parts)}"
+    now_words = [f"{counts[st]} {st}" for st in ("running", "waiting") if counts.get(st)]
+    order = ("completed", "failed", "cancelled")
+    words = {"completed": "done", "failed": "failed", "cancelled": "cancelled"}
+    past = [f"{counts[st]} {words[st]}" for st in order if counts.get(st)]
+    past += [f"{n} {st}" for st, n in sorted(counts.items()) if st not in order and st not in {"running", "waiting"}]
+    if now_words and past:
+        return f"Now: {' · '.join(now_words)} — last 24 hours: {' · '.join(past)}"
+    if now_words:
+        return f"Now: {' · '.join(now_words)}"
+    return f"Last 24 hours — {' · '.join(past)}"
 
 
 def state_lines(snap: Snapshot, *, update_phase: str = "idle", update_latest: Optional[str] = None) -> Tuple[str, str]:
@@ -747,17 +755,43 @@ def autostart_nodes(view: Optional[AutostartView]) -> Tuple[Node, ...]:
     return (Node(AUTOSTART_LABEL, ("toggle_autostart",), checked=False),)
 
 
-def workflow_items(snap: Snapshot) -> Tuple[Node, ...]:
+def observer_open_available(apps: Sequence[Any]) -> bool:
+    """Observer opens from the tray when the gateway serves it or can start
+    it (the same states the Apps submenu offers "Open Observer" for)."""
+    for a in apps:
+        if getattr(a, "id", None) == "observer":
+            return getattr(a, "status", "") in {"running", "stopped"} and getattr(a, "source", "") in {"gateway", "external"}
+    return False
+
+
+def run_detail_line(row: RunRow) -> str:
+    """The first line of a run's submenu: when it started (local time)."""
+    if row.started_at is None:
+        return "Start time unknown"
+    stamp = time.localtime(row.started_at)
+    today = time.localtime()
+    when = time.strftime("%H:%M", stamp) if stamp[:3] == today[:3] else time.strftime("%b %d, %H:%M", stamp)
+    word = {"running": "Running", "waiting": "Waiting"}.get(row.status, "Started")
+    return f"{word} · started {when}" if row.status in {"running", "waiting"} else f"Started {when}"
+
+
+def workflow_items(snap: Snapshot, *, observer: bool = False) -> Tuple[Node, ...]:
     rows = snap.runs
     if snap.runs_error and not rows:
         return (info("Run list unavailable"), info(middle_ellipsis(str(snap.runs_error), 44)))
     out: List[Node] = [info(run_tally(rows))]
     if rows:
         out.append(SEP)
-        # A menu is a glance: the newest rows, then ONE line naming the rest
-        # (the console's Runs tab is the list; nothing is hidden without saying so).
+        # A menu is a glance: the active rows first, then the newest finished
+        # ones, then ONE line naming the rest (the console's Runs tab is the
+        # list; nothing is hidden without saying so). Each run opens a small
+        # submenu: when it started, and "Open in Observer".
         for row in rows[:MENU_RUN_ROWS]:
-            out.append(info(run_row_label(row)))
+            children = (
+                info(run_detail_line(row)),
+                Node("Open in Observer", ("open_run_observer", row.run_id), enabled=bool(observer and snap.reachable and row.observer_path)),
+            )
+            out.append(Node(run_row_label(row), children=children))
         if len(rows) > MENU_RUN_ROWS:
             out.append(info(f"…and {len(rows) - MENU_RUN_ROWS} more"))
     out.append(SEP)
@@ -801,7 +835,7 @@ def build_menu(inputs: MenuInputs) -> Tuple[Node, ...]:
     out.append(apps_section(inputs, reachable=reachable))
     out.append(copy_address_section(inputs.network, inputs.base_url))
     out.append(SEP)
-    out.append(Node("Workflows", children=workflow_items(snap), enabled=reachable))
+    out.append(Node("Workflows", children=workflow_items(snap, observer=observer_open_available(inputs.apps)), enabled=reachable))
     if snap.paused or st == "pausing":
         out.append(Node("Resume Workflows", ("resume",), enabled=reachable))
     else:

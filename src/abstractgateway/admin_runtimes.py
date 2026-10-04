@@ -317,22 +317,207 @@ def is_internal_workflow_id(workflow_id: Any) -> bool:
         return str(workflow_id or "").strip().startswith("__")
 
 
-def _runs_from_store(store: Any, *, limit: int, since_epoch: Optional[float], plane: str, root_only: bool) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
-    for run in list(store.list_runs(limit=limit) or []):
-        summary = _run_summary(run)
-        if root_only and str(summary.get("parent_run_id") or "").strip():
+_ACTIVE_SCAN_LIMIT = 200  # active runs are never cut by the menu's `limit`
+_ROOT_WALK_MAX_DEPTH = 32
+_FINISHED_SCAN_MAX = 2000  # index rows; the page widens up to this
+
+
+def _is_turn_root(row: Dict[str, Any]) -> bool:
+    """The runtime's own definition of a run a person started: parent-less and
+    not an automation controller, OR an automation occurrence (which has the
+    controller as its parent). `abstractruntime.core.run_attribution`."""
+    try:
+        from abstractruntime.core.run_attribution import is_turn_root
+
+        return bool(is_turn_root(parent_run_id=row.get("parent_run_id"), role=row.get("role")))
+    except Exception:  # an older runtime without the attribution module
+        if row.get("role") == "occurrence":
+            return True
+        if row.get("role") == "controller":
+            return False
+        return not str(row.get("parent_run_id") or "").strip()
+
+
+def _row_from_state(run: Any) -> Dict[str, Any]:
+    """A RunState as an index-shaped row (the `list_runs` fallback and the
+    parent walk): the summary plus the attribution `role`."""
+    row = _run_summary(run)
+    role = None
+    try:
+        from abstractruntime.core.run_attribution import automation_index_fields
+
+        role = automation_index_fields(getattr(run, "vars", None), run_id=row.get("run_id")).get("role")
+    except Exception:
+        role = None
+    row["role"] = role
+    waiting = getattr(run, "waiting", None)
+    reason = getattr(waiting, "reason", None) if waiting is not None else None
+    row["wait_reason"] = getattr(reason, "value", None) or (str(reason) if reason else None)
+    return row
+
+
+def _index_rows(store: Any, *, status: Optional[str], root_only: bool, limit: int) -> List[Dict[str, Any]]:
+    """Index rows, newest update first, filtered INSIDE the store.
+
+    Filtering before the limit is the point: the old listing asked for the 25
+    most recently updated runs of ANY kind and only then dropped children and
+    machinery, so a few busy runs (whose sub-runs and automation occurrences
+    are the rows that keep being updated) filled the page and the menu said
+    "No runs in the last 24 hours" over a working machine."""
+    fn = getattr(store, "list_run_index", None)
+    if callable(fn):
+        return [dict(r) for r in (fn(status=status, root_only=root_only, limit=limit) or []) if isinstance(r, dict)]
+    # Stores without an index (in-memory, very old): scan a wider page and
+    # filter here, so the limit still counts what we keep.
+    out: List[Dict[str, Any]] = []
+    kwargs: Dict[str, Any] = {"limit": max(limit * 8, limit)}
+    if status is not None:
+        try:
+            from abstractruntime.core.models import RunStatus
+
+            kwargs["status"] = RunStatus(status)
+        except Exception:
+            kwargs["status"] = status
+    try:
+        runs = list(store.list_runs(**kwargs) or [])
+    except TypeError:
+        kwargs.pop("status", None)
+        runs = list(store.list_runs(**kwargs) or [])
+    for run in runs:
+        row = _row_from_state(run)
+        if status is not None and row.get("status") != status:
             continue
-        if is_internal_workflow_id(summary.get("workflow_id")):
+        if root_only and not _is_turn_root(row):
             continue
-        started = _epoch_or_none(summary.get("created_at"))
-        if since_epoch is not None and started is not None and started < since_epoch:
+        out.append(row)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _load_row(store: Any, run_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        run = store.load(run_id)
+    except Exception:
+        return None
+    return _row_from_state(run) if run is not None else None
+
+
+def _turn_root_of(store: Any, row: Dict[str, Any], known: Dict[str, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Walk parent links up to the turn root (bounded; cycles and gaps → None)."""
+    cur: Optional[Dict[str, Any]] = row
+    seen: set = set()
+    for _ in range(_ROOT_WALK_MAX_DEPTH):
+        if cur is None:
+            return None
+        rid = str(cur.get("run_id") or "")
+        if rid in seen:
+            return None
+        seen.add(rid)
+        if _is_turn_root(cur):
+            return cur
+        parent = str(cur.get("parent_run_id") or "").strip()
+        if not parent:
+            return None
+        nxt = known.get(parent)
+        if nxt is None:
+            nxt = _load_row(store, parent)
+            if nxt is not None:
+                known[parent] = nxt
+        cur = nxt
+    return None
+
+
+def _runs_from_store(store: Any, *, limit: int, since_epoch: Optional[float], plane: str) -> List[Dict[str, Any]]:
+    """One plane's rows for the host listing: ACTIVE turn roots (whatever their
+    age), then turn roots that finished inside the window.
+
+    - A turn root is running when it, or any run below it, is running (a
+      parent waiting on its sub-workflow is working, not idle).
+    - A turn root waiting for a person or an event is shown while it was
+      touched inside the window (an ask from August is history, not "now").
+    - Finished roots are windowed on their LAST update: a run that started
+      yesterday and finished an hour ago belongs to the last 24 hours.
+    """
+    known: Dict[str, Dict[str, Any]] = {}
+    roots: Dict[str, Dict[str, Any]] = {}
+
+    def _keep(row: Dict[str, Any], activity: str) -> None:
+        rid = str(row.get("run_id") or "")
+        if not rid or is_internal_workflow_id(row.get("workflow_id")):
+            return
+        prev = roots.get(rid)
+        rank = {"running": 0, "waiting": 1, "done": 2}
+        if prev is not None and rank[prev["activity"]] <= rank[activity]:
+            return
+        roots[rid] = {**row, "activity": activity}
+
+    for row in _index_rows(store, status="running", root_only=False, limit=_ACTIVE_SCAN_LIMIT):
+        known[str(row.get("run_id") or "")] = row
+    for row in list(known.values()):
+        root = _turn_root_of(store, row, known)
+        if root is not None:
+            _keep(root, "running")
+
+    for row in _index_rows(store, status="waiting", root_only=True, limit=_ACTIVE_SCAN_LIMIT):
+        touched = _epoch_or_none(row.get("updated_at")) or _epoch_or_none(row.get("created_at"))
+        if since_epoch is not None and touched is not None and touched < since_epoch:
             continue
+        _keep(row, "waiting")
+
+    # Finished roots: `limit + 1` of them (the +1 makes has_more honest). The
+    # newest-updated roots are often the active ones and machinery, so the
+    # page widens until it holds enough finished rows, reaches the window's
+    # edge, or the store has no more.
+    want = max(1, limit) + 1
+    page = want + len(roots) + 8
+    while True:
+        batch = _index_rows(store, status=None, root_only=True, limit=page)
+        finished = 0
+        past_window = False
+        for row in batch:
+            if str(row.get("status") or "") in {"running", "waiting"}:
+                continue  # decided above (running via its tree; waiting windowed)
+            touched = _epoch_or_none(row.get("updated_at")) or _epoch_or_none(row.get("created_at"))
+            if since_epoch is not None and touched is not None and touched < since_epoch:
+                past_window = True
+                continue
+            if is_internal_workflow_id(row.get("workflow_id")):
+                continue
+            finished += 1
+            if finished <= want:
+                _keep(row, "done")
+        if finished >= want or past_window or len(batch) < page or page >= _FINISHED_SCAN_MAX:
+            break
+        page = min(page * 4, _FINISHED_SCAN_MAX)
+
+    out: List[Dict[str, Any]] = []
+    for row in roots.values():
+        summary = {k: row.get(k) for k in ("run_id", "workflow_id", "status", "session_id", "parent_run_id", "created_at", "updated_at", "actor_id")}
+        summary["role"] = row.get("role")
+        summary["activity"] = row["activity"]
         summary["plane"] = plane
-        summary["label"] = workflow_display_label(summary.get("workflow_id"))
-        summary["started_epoch"] = started
-        rows.append(summary)
-    return rows
+        summary["label"] = workflow_display_label(row.get("workflow_id"))
+        summary["started_epoch"] = _epoch_or_none(row.get("created_at"))
+        summary["updated_epoch"] = _epoch_or_none(row.get("updated_at"))
+        out.append(summary)
+    return out
+
+
+def _observer_path(run_id: Any) -> Optional[str]:
+    """`/apps/observer/#run/<id>`: the same link the console's activity rows carry."""
+    from .account_activity import observer_path_for
+
+    return observer_path_for(str(run_id or "") or None)
+
+
+def _host_row_order(row: Dict[str, Any]) -> Tuple[int, float]:
+    """Running first, then waiting, then finished; inside each group the most
+    recent first (started for active rows, last update for finished ones). A
+    row with no readable time sorts last in its group, never dropped."""
+    group = {"running": 0, "waiting": 1}.get(str(row.get("activity") or ""), 2)
+    when = row.get("started_epoch") if group < 2 else (row.get("updated_epoch") or row.get("started_epoch"))
+    return (group, -(when if isinstance(when, (int, float)) else float("-inf")))
 
 
 def _ledger_len(ledger_store: Any, run_id: str) -> Optional[int]:
@@ -375,10 +560,11 @@ def recent_runs_host_wide(
     data_dir: Path,
     limit: int = 25,
     since_epoch: Optional[float] = None,
-    root_only: bool = True,
     default_run_store: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    """The most recent runs on this MACHINE, across data planes.
+    """The runs on this MACHINE, across data planes: every ACTIVE turn root
+    first (running, then waiting — whatever their age), then the turn roots
+    that finished inside the window, newest first.
 
     WHY THIS EXISTS: `GET /runs` answers for the CALLING PRINCIPAL's plane,
     which is the right answer for a user and the wrong one for a host view.
@@ -393,6 +579,14 @@ def recent_runs_host_wide(
     that must never ride a background poll. They are named in `skipped` so the
     payload says what it did not look at rather than implying it saw
     everything.
+
+    WHAT IS A ROW (2026-10-04, the tray said "No runs in the last 24 hours"
+    with three runs active): a TURN ROOT in the runtime's own sense
+    (`is_turn_root`): parent-less non-controller runs AND automation
+    occurrences, which have their controller as parent and were all dropped
+    by the old parent-less test. Filtering happens inside the store before
+    any limit, active runs are never windowed or cut by `limit`, and a root
+    whose sub-run is running counts as running.
     """
     limit = max(1, min(int(limit or 25), 200))
     planes: List[Tuple[str, Any]] = []
@@ -437,14 +631,19 @@ def recent_runs_host_wide(
     rows: List[Dict[str, Any]] = []
     for plane, store in planes:
         try:
-            rows.extend(_runs_from_store(store, limit=limit, since_epoch=since_epoch, plane=plane, root_only=root_only))
+            rows.extend(_runs_from_store(store, limit=limit, since_epoch=since_epoch, plane=plane))
         except Exception as e:  # noqa: BLE001
             warnings.append(f"#FALLBACK runs unreadable on plane {plane}: {e}")
 
-    # Newest first ACROSS planes; a run with no readable timestamp sorts last
-    # rather than being dropped (it may be the one that is running now).
-    rows.sort(key=lambda r: (r.get("started_epoch") is None, -(r.get("started_epoch") or 0.0)))
-    rows = rows[:limit]
+    # Running, waiting, finished ACROSS planes. Active rows are all kept (the
+    # menu leads with them); finished ones fill the rest of `limit`.
+    rows.sort(key=_host_row_order)
+    active = [r for r in rows if r.get("activity") in {"running", "waiting"}]
+    finished = [r for r in rows if r.get("activity") not in {"running", "waiting"}]
+    more = len(finished) > max(0, limit - len(active))
+    rows = active[:_ACTIVE_SCAN_LIMIT] + finished[: max(0, limit - len(active))]
+    for row in rows:
+        row["observer_path"] = _observer_path(row.get("run_id"))
     # Step counts LAST, on the survivors only: counting the ledger of every
     # run we then threw away is the expensive mistake this ordering avoids.
     for row in rows:
@@ -453,7 +652,8 @@ def recent_runs_host_wide(
         "ok": True,
         "items": rows,
         "count": len(rows),
-        "has_more": len(rows) >= limit,
+        "active_count": len(active),
+        "has_more": more,
         "planes": [p for p, _ in planes],
     }
     if skipped:

@@ -50,8 +50,9 @@ def test_only_the_last_day_survives_but_an_unreadable_stamp_is_kept() -> None:
     )
 
     # A run we cannot date is SHOWN: the window is a kindness to the reader,
-    # never a reason to lose a run that may be running right now.
-    assert [r.run_id for r in rows] == ["fresh", "undated"]
+    # never a reason to lose a run that may be running right now. Active runs
+    # lead the list (R10.2).
+    assert [r.run_id for r in rows] == ["undated", "fresh"]
 
 
 def test_timestamps_are_read_in_every_shape_a_run_store_writes() -> None:
@@ -90,13 +91,16 @@ def test_timestamps_are_read_in_every_shape_a_run_store_writes() -> None:
     )
     assert broken[0].started_at is None
 
-    # A run still going has no end: a duration is never invented for it.
+    # A run still going has no end: its duration is the time elapsed SO FAR
+    # (sample time minus start), never its stale last update minus its start.
     running = run_rows_from_listing(
-        {"items": [{"run_id": "r", "workflow_id": "w", "status": "running", "created_at": "2026-09-06T12:00:00Z"}]},
+        {"items": [{"run_id": "r", "workflow_id": "w", "status": "running", "created_at": now - 600, "updated_at": now - 590}]},
         now=now,
         window_s=float("inf"),
     )
-    assert running[0].duration_s is None
+    assert running[0].duration_s == pytest.approx(600.0)
+    undated = run_rows_from_listing({"items": [{"run_id": "u", "workflow_id": "w", "status": "running"}]}, now=now)
+    assert undated[0].duration_s is None
 
 
 def test_a_listing_that_is_not_one_yields_nothing() -> None:
@@ -153,8 +157,11 @@ def test_the_tally_leads_with_what_is_happening_now() -> None:
         RunRow("3", "w", "failed", 1, 1.0, 1.0),
         RunRow("4", "w", "completed", 1, 1.0, 1.0),
     ]
-    # Running first: it is the only line that is about right now.
-    assert run_tally(rows) == "Last 24 hours — 1 running · 2 done · 1 failed"
+    # Running first: it is the only line that is about right now — and it is
+    # not "of the last 24 hours" (an active run may be two days old).
+    assert run_tally(rows) == "Now: 1 running — last 24 hours: 2 done · 1 failed"
+    assert run_tally(rows[1:2]) == "Now: 1 running"
+    assert run_tally([rows[0], rows[2]]) == "Last 24 hours — 1 done · 1 failed"
 
 
 # ------------------------------------------------- host-wide, not per-tenant
@@ -246,7 +253,7 @@ def test_planes_that_cannot_be_read_cheaply_are_named_not_implied(tmp_path) -> N
     (tmp_path / "entities" / "mira").mkdir(parents=True)
 
     class _Store:
-        def list_runs(self, limit=50):
+        def list_runs(self, limit=50, status=None):
             return []
 
     out = recent_runs_host_wide(data_dir=tmp_path, limit=5, default_run_store=_Store())
@@ -345,7 +352,7 @@ def test_the_menu_has_one_console_door_a_workflows_section_and_unannotated_help(
 
     # The Workflows section, with the runs and the control under it.
     assert "Workflows" in captured
-    assert "Last 24 hours — 1 running · 1 done" in text
+    assert "Now: 1 running — last 24 hours: 1 done" in text
     assert "🟢 coding-agent:coder · 4 steps" in text
     assert "✅ deep-research:main · 31 steps · 12m 04s" in text
     assert "Open Runs in Console" in captured

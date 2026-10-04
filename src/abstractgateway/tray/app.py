@@ -609,6 +609,7 @@ class TrayApp:
             "open_console_tab": self.open_console_tab,
             "show_activity": self.show_activity,
             "open_runs": self.open_runs,
+            "open_run_observer": self.open_run_observer,
             "pause": self.pause,
             "resume": self.resume,
             "confirm_pending": self._run_pending,
@@ -1170,6 +1171,37 @@ class TrayApp:
     def open_runs(self) -> None:
         """The console's Runtimes tab, where runs actually live."""
         self.open_console_tab("runtimes")
+
+    def open_run_observer(self, run_id: str) -> None:
+        """One run in Observer, signed in: the gateway's app door with the
+        run's `observer_path` (GET /host/runs) as the path inside the app.
+        A stopped Observer the gateway manages is started first."""
+        row = next((r for r in self.sampler.snapshot().runs if r.run_id == run_id), None)
+        path = row.observer_path if row is not None else None
+        if not path:
+            self._info("Couldn't open the run in Observer", "This gateway did not give the run's Observer link.", style="warning")
+            return
+        prefix = "/apps/observer"
+        if not path.startswith(prefix + "/"):
+            raise ValueError(f"observer_path {path!r} is not an Observer page (GET /host/runs seam)")
+        inside = path[len(prefix):]
+
+        def _do() -> None:
+            r = self.client.app_open("observer", path=inside)
+            if not r.ok and isinstance(r.data, dict) and r.data.get("reason") == "not_running":
+                self._notify("Starting Observer", "It opens in your browser when it is ready.")
+                started = self.client.app_launch("observer")
+                self.poke_extras()
+                if not started.ok:
+                    self._info("Couldn't start Observer", started.detail, style="warning")
+                    return
+                r = self.client.app_open("observer", path=inside)
+            if r.ok and isinstance(r.data, dict) and r.data.get("open_url"):
+                self._open_signed_in(str(r.data["open_url"]))
+            else:
+                self._info("Couldn't open the run in Observer", r.detail, style="warning")
+
+        self._bg(_do, "tray-open-run-observer")
 
     def copy_console_link(self) -> None:
         # The PLAIN URL on purpose: a claim link is a credential and does not

@@ -28969,9 +28969,16 @@ _HOST_RUNS_TTL_S = 5.0
 async def host_runs(
     request: Request,
     limit: int = Query(25, ge=1, le=200, description="Maximum runs (most recent first, across planes)."),
-    window_hours: float = Query(24.0, gt=0, description="Only runs started within this many hours."),
+    window_hours: float = Query(24.0, gt=0, description="Finished runs updated within this many hours (active runs are always listed)."),
 ) -> Dict[str, Any]:
-    """Recent runs on this MACHINE, across data planes. Admin only.
+    """Runs on this MACHINE, across data planes. Admin only.
+
+    Items: every ACTIVE turn root first (`activity` running, then waiting),
+    then turn roots that finished inside the window, newest first; each with
+    `observer_path` (`/apps/observer/#run/<id>`). A turn root is the
+    runtime's `is_turn_root` (automation occurrences included); a root whose
+    sub-run is running is `activity: running`. `active_count` counts the
+    active rows, which `limit` never cuts.
 
     `GET /runs` answers for the CALLING PRINCIPAL's plane — right for a user,
     wrong for a host view. The desktop tray asked it and told an operator "no

@@ -170,9 +170,13 @@ class GatewayClient:
     def app_launch(self, app_id: str) -> Result:
         return self._request("POST", f"/apps/{app_id}/launch", body={}, timeout=45.0)
 
-    def app_open(self, app_id: str) -> Result:
-        """A one-time signed-in handover link (`open_url`, relative to the gateway)."""
-        return self._request("POST", f"/apps/{app_id}/open", body={"remember": True}, timeout=15.0)
+    def app_open(self, app_id: str, *, path: Optional[str] = None) -> Result:
+        """A one-time signed-in handover link (`open_url`, relative to the
+        gateway); `path` = where inside the app it lands (e.g. `/#run/<id>`)."""
+        body: Dict[str, Any] = {"remember": True}
+        if path:
+            body["path"] = path
+        return self._request("POST", f"/apps/{app_id}/open", body=body, timeout=15.0)
 
     def app_launch_tui(self, app_id: str) -> Result:
         """Mission Y: a new terminal window on this machine, the app's
