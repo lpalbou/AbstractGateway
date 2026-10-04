@@ -302,6 +302,11 @@ pub struct PlanRow {
     /// `needs_gpu_limit`: the exact sysctl that makes it fit (`gpu_limit`,
     /// on the row or under `fit`), when the payload carries it.
     pub gpu_limit: Option<GpuLimit>,
+    /// The ENGINE and model that run the route (AbstractCore's plan
+    /// `route_provider` / `route_model`, DESIGN-v2 §5) — the card names
+    /// these; the download (provider/artifact) is a technical detail.
+    pub route_provider: Option<String>,
+    pub route_model: Option<String>,
 }
 
 /// AbstractCore's `fit.gpu_limit` (utils/model_fit.py `_gpu_limit_for`).
@@ -391,6 +396,19 @@ pub fn route_title(route: &str) -> &'static str {
     }
 }
 
+/// The web guide's `FIRST_RUN_ROUTE_COPY` blurbs ("what").
+pub fn route_what(route: &str) -> &'static str {
+    match route {
+        "input.text" | "output.text" => "Answers, agents and workflows",
+        "output.voice" => "Reads answers aloud",
+        "input.voice" => "Turns speech into text",
+        "output.image" => "Creates pictures from a description",
+        "input.image" => "Understands pictures",
+        "output.video" => "Creates short videos from a description or a picture",
+        _ => "",
+    }
+}
+
 /// `recommended.recommended[]` of an availability payload, in order.
 pub fn plan_rows(availability: &Value) -> Vec<PlanRow> {
     availability
@@ -417,6 +435,8 @@ pub fn plan_rows(availability: &Value) -> Vec<PlanRow> {
                         .get("gpu_limit")
                         .or_else(|| r.get("fit").and_then(|f| f.get("gpu_limit")))
                         .and_then(GpuLimit::from_value),
+                    route_provider: s(r, "route_provider"),
+                    route_model: s(r, "route_model"),
                 })
                 .collect()
         })

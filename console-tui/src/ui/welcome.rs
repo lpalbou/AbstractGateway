@@ -20,7 +20,9 @@ use abstracttui::prelude::*;
 use super::util::{line, span, span_bold, wrap_text};
 use super::widths::BLOCK_CHROME;
 use super::{Ctx, WIZARD_STEPS};
-use crate::api::firstrun::{first_run_auto_wizard, WelcomeSummary};
+use crate::api::firstrun::{
+    can_download_all, first_run_auto_wizard, route_title, route_what, PlanRow, WelcomeSummary,
+};
 use crate::store::{ConnPhase, Loadable};
 use crate::worker::Cmd;
 
@@ -284,12 +286,158 @@ pub fn goto_step(ctx: &Ctx, step: usize) {
     ctx.ui.screen.set(step);
 }
 
-/// `r` on the Setup step: the summary and the first-run state again.
+/// `r` on the Setup step: the summary, the first-run state, and the
+/// recommended set (the routes + the weights' availability) again.
 pub fn refresh(ctx: &Ctx) {
     ctx.store.welcome.set(Loadable::Loading);
     ctx.store.first_run.set(Loadable::Loading);
     ctx.send(Cmd::LoadWelcome);
     ctx.send(Cmd::LoadFirstRun);
+    ctx.store.routes.set(Loadable::Loading);
+    ctx.store.availability.set(Loadable::Loading);
+    ctx.send(Cmd::LoadRoutes);
+    ctx.send(Cmd::LoadAvailability);
+}
+
+/// The recommended set's sentence under its keys — the web guide's model
+/// step, word for word.
+pub const RECOMMENDED_NOTE: &str = "Sets the recommended models for text, voice, transcription, images and video, where this computer can run them. Choices you already made are kept.";
+
+/// "Text model now: <provider> · <model>" or "No text model is set yet."
+/// (the web guide's section subtitle): `output.text`, else `input.text`.
+pub fn text_model_now(routes: Option<&crate::store::RoutesData>) -> String {
+    let rows = routes.map(|r| r.rows.as_slice()).unwrap_or(&[]);
+    let pick = rows
+        .iter()
+        .find(|r| r.key == "output.text")
+        .or_else(|| rows.iter().find(|r| r.key == "input.text"));
+    match pick.and_then(|r| Some((r.provider.clone()?, r.model.clone()?))) {
+        Some((p, m)) if !p.is_empty() && !m.is_empty() => format!("Text model now: {p} · {m}"),
+        _ => "No text model is set yet.".to_string(),
+    }
+}
+
+/// One recommended route as the web card says it, in lines:
+/// `<title> · <status>`, `<engine> · <model>`, the blurb, then the card's
+/// alerts (GPU limit, AbstractCore's warning, the missing engine).
+pub fn plan_card_lines(r: &PlanRow) -> Vec<(bool, String, &'static str)> {
+    let engine = r
+        .route_provider
+        .clone()
+        .unwrap_or_else(|| r.provider.clone());
+    let model = r.route_model.clone().unwrap_or_else(|| r.artifact.clone());
+    let mut out = vec![
+        (
+            false,
+            format!("{} · {}", route_title(&r.route), r.status_label()),
+            match r.status.as_str() {
+                "installed" => "ok",
+                "absent" => "warn",
+                _ => "muted",
+            },
+        ),
+        (true, format!("{engine} · {model}"), "text"),
+    ];
+    let what = route_what(&r.route);
+    if !what.is_empty() {
+        out.push((true, what.to_string(), "muted"));
+    }
+    if let Some(g) = r.gpu_limit_text() {
+        let mut c = g.chars();
+        let g = match c.next() {
+            Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+            None => g,
+        };
+        out.push((true, g, "info"));
+    }
+    if let Some(w) = &r.warning {
+        out.push((true, w.clone(), "warn"));
+    }
+    if let Some(m) = &r.engine_missing {
+        // The web's engineMissingMarkup sentence.
+        let mut text = format!("Engine missing: {}", m.reason);
+        if let Some(cmd) = &m.install {
+            text.push_str(&format!(" — install: {cmd}"));
+        }
+        if m.engine_row.is_some() {
+            text.push_str(" (Providers tab, Local providers: Install)");
+        }
+        out.push((true, text, "warn"));
+    }
+    out
+}
+
+/// The Setup page's "Recommended for this computer" block (the web
+/// guide's model step): every recommended route, the current text model,
+/// and the two actions.
+fn recommended_rows(
+    t: &TokenSet,
+    store: &crate::store::Store,
+    width: usize,
+    admin: bool,
+) -> Vec<View> {
+    let mut rows: Vec<View> = Vec::new();
+    let routes = store.routes.get();
+    rows.push(line(vec![span_bold(
+        "Recommended for this computer",
+        t.text,
+    )]));
+    for l in wrap_text(&text_model_now(routes.ready()), width) {
+        rows.push(line(vec![span(l, t.text_muted)]));
+    }
+    match store.availability.get() {
+        Loadable::Ready(a) if a.plan.is_empty() => rows.push(line(vec![span(
+            "This gateway reported no recommended downloads.",
+            t.text_muted,
+        )])),
+        Loadable::Ready(a) => {
+            for r in &a.plan {
+                for (indent, text, tone) in plan_card_lines(r) {
+                    let ink = match tone {
+                        "ok" => t.ok,
+                        "warn" => t.warn,
+                        "info" => t.info,
+                        "muted" => t.text_muted,
+                        _ => t.text,
+                    };
+                    let pad = if indent { "  " } else { "" };
+                    for l in wrap_text(&text, width.saturating_sub(pad.len()).max(10)) {
+                        rows.push(if indent {
+                            line(vec![span(format!("{pad}{l}"), ink)])
+                        } else {
+                            line(vec![span_bold(l, ink)])
+                        });
+                    }
+                }
+            }
+            let group = store.download_group.get();
+            if let Some(g) = group.as_ref() {
+                rows.push(line(vec![span(g.message.clone(), t.info)]));
+            }
+            let mut keys = vec![("a", "Use recommended defaults")];
+            if can_download_all(&a.plan, group.as_ref()) {
+                keys.push(("D", "Download all"));
+            }
+            if !admin {
+                keys.clear();
+            }
+            if !keys.is_empty() {
+                rows.push(super::kit::key_hint_bar(t, &keys, width as i32));
+            }
+            for l in wrap_text(RECOMMENDED_NOTE, width) {
+                rows.push(line(vec![span(l, t.text_muted)]));
+            }
+        }
+        Loadable::Loading | Loadable::NotAsked => rows.push(line(vec![span(
+            "Checking the recommended starter models...",
+            t.info,
+        )])),
+        Loadable::Failed(e) => rows.push(line(vec![span(
+            format!("The recommended models could not be read: {e}"),
+            t.warn,
+        )])),
+    }
+    rows
 }
 
 /// The welcome block's padding, each side (the wrap width subtracts it).
@@ -300,8 +448,102 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let ui = ctx.ui;
     let tt = *t;
     let viewport = abstracttui::app::use_viewport(cx);
-    Element::new()
+    // The recommended set reads the routes and the weights' availability
+    // (the Multimodal page's reads) once per connection.
+    {
+        let ctx_l = ctx.clone();
+        cx.effect(move || {
+            if !store.conn.with(ConnPhase::is_connected) {
+                return;
+            }
+            if store
+                .routes
+                .with_untracked(|r| matches!(r, Loadable::NotAsked))
+            {
+                store.routes.set(Loadable::Loading);
+                ctx_l.send(Cmd::LoadRoutes);
+            }
+            if store
+                .availability
+                .with_untracked(|r| matches!(r, Loadable::NotAsked))
+            {
+                store.availability.set(Loadable::Loading);
+                ctx_l.send(Cmd::LoadAvailability);
+            }
+        });
+    }
+    let confirm = super::kit::InlineConfirm::new(cx);
+    // The web's second pass after "Use recommended defaults": offer the
+    // forced apply under its own label, inline.
+    {
+        let ctx_f = ctx.clone();
+        cx.effect(move || {
+            let Some(label) = store.apply_followup.get() else {
+                return;
+            };
+            if ui.screen.get_untracked() != super::SCREEN_WELCOME {
+                return;
+            }
+            store.apply_followup.set(None);
+            let title = if label == "Replace mine too" {
+                "The recommended routes were applied; routes you configured were kept."
+            } else {
+                "The recommended routes were applied; a configured route this computer cannot run was left in place."
+            };
+            let ctx_go = ctx_f.clone();
+            confirm.ask(title, label, move || {
+                ctx_go.send(Cmd::ApplyRecommendedRoutes { force: true })
+            });
+        });
+    }
+    let ctx_a = ctx.clone();
+    let ctx_d = ctx.clone();
+    let page = Element::new()
         .style(LayoutStyle::column().gap(0).grow(1.0))
+        .focusable()
+        .autofocus()
+        // `a` Use recommended defaults: the web button applies at once
+        // (never over a route you configured); the second pass is offered
+        // inline after.
+        .shortcut(KeyChord::plain(Key::Char('a')), move |_| {
+            if !super::util::admin_gate(&ctx_a.store, "applying the recommended defaults") {
+                return;
+            }
+            ctx_a.send(Cmd::ApplyRecommendedRoutes { force: false });
+        })
+        // `D` Download all: one parent job for the whole recommended set.
+        .shortcut(KeyChord::plain(Key::Char('D')), move |_| {
+            if !super::util::admin_gate(&ctx_d.store, "downloading the recommended models") {
+                return;
+            }
+            let plan = ctx_d
+                .store
+                .availability
+                .with_untracked(|a| a.ready().map(|a| a.plan.clone()))
+                .unwrap_or_default();
+            let group = ctx_d.store.download_group.get_untracked();
+            if !can_download_all(&plan, group.as_ref()) {
+                ctx_d.store.notice.set(Some(
+                    "nothing to download — no recommended model is reported absent on this host"
+                        .into(),
+                ));
+                return;
+            }
+            let list = plan
+                .iter()
+                .filter(|r| r.status == "absent")
+                .map(|r| format!("{} {}", r.provider, r.artifact))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let ctx_go = ctx_d.clone();
+            confirm.ask(
+                format!("Download the recommended models on the gateway host: {list}?"),
+                "Download all",
+                move || ctx_go.send(Cmd::DownloadRecommended),
+            );
+        });
+    let page = confirm.keys(page);
+    page
         .child(
             Block::new()
                 .border(BorderKind::Rounded)
@@ -353,13 +595,22 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                             Loadable::Failed(e) => (format!("unreadable: {e}"), t.error),
                             Loadable::NotAsked => ("not read yet".to_string(), t.text_muted),
                         };
-                        rows.push(line(vec![
-                            span_bold("First run: ", t.text_muted),
-                            span(fr.0, fr.1),
-                        ]));
+                        for (i, l) in wrap_text(&format!("First run: {}", fr.0), width)
+                            .into_iter()
+                            .enumerate()
+                        {
+                            if i == 0 && l.len() >= 11 {
+                                rows.push(line(vec![
+                                    span_bold("First run: ", t.text_muted),
+                                    span(l[11..].to_string(), fr.1),
+                                ]));
+                            } else {
+                                rows.push(line(vec![span(l, fr.1)]));
+                            }
+                        }
                         rows.push(line(vec![span(String::new(), t.text)]));
                         match store.welcome.get() {
-                            Loadable::Ready(w) => rows.extend(summary_rows(&t, &w)),
+                            Loadable::Ready(w) => rows.extend(summary_rows(&t, &w, width)),
                             Loadable::Loading => {
                                 rows.push(line(vec![span("Looking at this computer…", t.info)]))
                             }
@@ -375,6 +626,13 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                 t.text_muted,
                             )])),
                         }
+                        rows.push(line(vec![span(String::new(), t.text)]));
+                        let admin = store.conn.with(|c| match c {
+                            ConnPhase::Connected(id) => id.admin,
+                            _ => false,
+                        });
+                        rows.extend(recommended_rows(&t, &store, width, admin));
+                        rows.push(confirm.view(&t, width as i32));
                         rows.push(line(vec![span(String::new(), t.text)]));
                         rows.push(line(vec![span_bold(
                             "What this guide sets up — each step is optional:",
@@ -392,9 +650,11 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         let keys = if ui.wizard.get() {
                             "Ctrl+N next step · Ctrl+G go to a step, leave or skip setup · r refresh"
                         } else {
-                            "Ctrl+G opens the setup guide · r refresh"
+                            "Ctrl+G opens the setup guide (engines, default models, apps, network; keeps your current choices unless you replace them) · r refresh"
                         };
-                        rows.push(line(vec![span(keys, t.text_faint)]));
+                        for l in wrap_text(keys, width) {
+                            rows.push(line(vec![span(l, t.text_faint)]));
+                        }
                         Scroll::new(
                             Element::new()
                                 .style(LayoutStyle::column())
@@ -412,20 +672,36 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         .build()
 }
 
-fn summary_rows(t: &TokenSet, w: &WelcomeSummary) -> Vec<View> {
-    w.rows()
-        .into_iter()
-        .map(|(label, value, note)| {
-            let mut spans = vec![
-                span(format!("{label:<16}"), t.text_muted),
-                span_bold(value, t.text),
-            ];
-            if !note.is_empty() {
-                spans.push(span(format!("  {note}"), t.text_faint));
+fn summary_rows(t: &TokenSet, w: &WelcomeSummary, width: usize) -> Vec<View> {
+    // label (16) · value (bold) · note — the note WRAPS under the value
+    // column instead of being cut at the edge.
+    let mut out = Vec::new();
+    for (label, value, note) in w.rows() {
+        let text = if note.is_empty() {
+            value.clone()
+        } else {
+            format!("{value}  {note}")
+        };
+        let body_w = width.saturating_sub(16).max(10);
+        for (i, l) in wrap_text(&text, body_w).into_iter().enumerate() {
+            let head = if i == 0 {
+                format!("{label:<16}")
+            } else {
+                " ".repeat(16)
+            };
+            if i == 0 && l.starts_with(&value) {
+                let rest = l[value.len()..].to_string();
+                out.push(line(vec![
+                    span(head, t.text_muted),
+                    span_bold(value.clone(), t.text),
+                    span(rest, t.text_faint),
+                ]));
+            } else {
+                out.push(line(vec![span(head, t.text_muted), span(l, t.text_faint)]));
             }
-            line(spans)
-        })
-        .collect()
+        }
+    }
+    out
 }
 
 /// The finish row on the last step (Review), wizard mode: the web

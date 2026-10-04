@@ -2172,6 +2172,8 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                     }
                     SCREEN_APPS => pairs.extend_from_slice(apps::HINTS),
                     SCREEN_WELCOME => {
+                        pairs.push(("a", "Use recommended defaults"));
+                        pairs.push(("D", "Download all"));
                         pairs.push(("r", "refresh"));
                     }
                     SCREEN_NETWORK => {
@@ -2190,6 +2192,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                     SCREEN_USERS => users::ADMIN_KEYS,
                     SCREEN_WORKFLOWS => workflows::ADMIN_KEYS,
                     SCREEN_MODELS => models::ADMIN_KEYS,
+                    SCREEN_WELCOME => &["a", "D"],
                     _ => &[],
                 };
                 let (screen_pairs, gated) = util::admin_hint_pairs(pairs, admin_keys, non_admin);

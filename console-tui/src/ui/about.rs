@@ -163,7 +163,8 @@ pub fn open(ctx: &Ctx, cx: Scope) {
     load(ctx);
     let store = ctx.store;
     let vp = abstracttui::app::use_viewport(cx).get_untracked();
-    let size = Size::new(vp.w.clamp(1, 96), 16.min(vp.h - 2).max(1));
+    // The card (12 rows, one wrapped link), the Close row, the dress.
+    let size = Size::new(vp.w.clamp(1, 96), 19.min(vp.h - 2).max(1));
     open_form(ctx, cx, size, move |mcx, close| {
         let theme = use_theme(mcx);
         // The overlay's chrome (margin, border, padding) takes 6 cells.
@@ -173,7 +174,6 @@ pub fn open(ctx: &Ctx, cx: Scope) {
             .focusable()
             .autofocus()
             .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold("About", t0.accent)]))
             .child(card_view(store, theme, move || size.w - 6))
             .child(
                 Element::new()
