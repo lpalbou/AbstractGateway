@@ -8,7 +8,6 @@
 //! provider resets the model picker — never a fabricated pair.
 
 use abstracttui::prelude::*;
-use abstracttui::widgets::Table;
 use serde_json::{json, Value};
 
 use super::util::{field, line, or_dash, span, span_bold};
@@ -464,6 +463,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     match row {
                         Some(r) => {
                             let mut spans = vec![span_bold(format!(" {} ", r.key), t.accent)];
+
                             // The core console's words (abstractcore-console
                             // ui/routes.rs), so both grids say the same.
                             if let Some(u) = r.route_unavailable.as_ref().filter(|_| r.configured) {
@@ -536,6 +536,17 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                     t.text_muted,
                                 ));
                             }
+                            // The columns a narrow terminal leaves out are
+                            // said here (never silently dropped).
+                            let vw = viewport.get().w;
+                            if vw < 96 {
+                                if let Some(p) = r.provider.as_deref().filter(|p| !p.is_empty()) {
+                                    spans.push(span(format!("· provider {p}  "), t.text_muted));
+                                }
+                            }
+                            if vw < 112 && !r.source.is_empty() {
+                                spans.push(span(format!("· source {}", r.source), t.text_faint));
+                            }
                             line(spans)
                         }
                         None => line(vec![span(String::new(), t.text)]),
@@ -566,7 +577,7 @@ fn routes_table(
     // `AbstractFramework/wan2.2-t2v-a14b-diffu…` beside seventy blank
     // cells, with the `t2v`/`i2v` that told the two rows apart cut off.
     let w = abstracttui::app::use_viewport(cx).get().w;
-    let mut rows: Vec<Vec<String>> = data
+    let rows: Vec<Vec<String>> = data
         .rows
         .iter()
         .map(|r| {
@@ -654,13 +665,14 @@ fn routes_table(
     // terminal gives the table 198). The core console's routes screen
     // mounts bare in PageHost's page region and passes the viewport
     // straight through — one policy, per-screen chrome.
-    let cols = widths::columns(&rules, &mut rows, w - BLOCK_CHROME);
+    // R7.2: cells WRAP onto continuation lines instead of being cut
+    // (the kit's wrapping table); Enter still opens the route editor.
+    let rows: Vec<super::kit::Row> = rows.into_iter().map(super::kit::Row::new).collect();
+    let _ = BLOCK_CHROME;
     keeper.wire(
-        Table::new(cols)
-            .rows(rows)
-            .selection(sel)
+        super::kit::WrapTable::new(rules, rows, sel)
             .on_activate(on_activate)
-            .layout(LayoutStyle::default().grow(1.0))
+            .layout(LayoutStyle::default().grow(1.0).min_h(2))
             .element(cx, t),
     )
 }

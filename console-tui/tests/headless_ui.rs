@@ -3495,8 +3495,12 @@ fn narrow_terminal_keeps_payload_columns() {
         s.contains("supertonic-3"),
         "the model column keeps real width at 80 cols:\n{s}"
     );
+    let header = s
+        .lines()
+        .find(|l| l.trim_matches(|c| c == '│' || c == ' ').starts_with("route "))
+        .unwrap_or_default();
     assert!(
-        !s.lines().any(|l| l.contains("source")),
+        !header.contains("source"),
         "the source column drops at 80 cols instead of starving model:\n{s}"
     );
 }
@@ -4777,12 +4781,15 @@ fn double_click_opens_route_editor() {
     h.goto_screen(2);
     h.store.routes.set(Loadable::Ready(routes_fixture()));
     let s = h.turns(2);
+    // R7.2 wrapping table: a click selects the row, Enter opens it.
     let y = find_row(&s, "output.voice");
     double_click_at(&mut h, 4, y);
+    h.turns(2);
+    h.type_text("\r");
     let s = h.turns(3);
     assert!(
         s.contains("Route — Voice Output"),
-        "double-click opens the route editor:\n{s}"
+        "click + Enter opens the route editor:\n{s}"
     );
 }
 
@@ -5728,11 +5735,9 @@ fn routes_grid_prints_whole_names_when_the_terminal_has_room() {
     );
 }
 
-/// And when the terminal is genuinely too narrow, the cut keeps the end
-/// that tells rows apart. `…-t2v-a14b-diffusers-8bit` and
-/// `…-i2v-a14b-diffusers-8bit` are one head-first cut away from being
-/// the same string on screen — which is the failure the middle ellipsis
-/// exists to prevent.
+/// R7.2: a narrow terminal WRAPS a long artifact onto continuation lines
+/// instead of cutting it — `…-t2v-…` and `…-i2v-…` stay whole (read across
+/// the wrapped lines), and no ellipsis appears in the grid.
 #[test]
 fn narrow_routes_grid_keeps_the_discriminating_tail() {
     let mut h = harness_sized(Size::new(110, 34));
@@ -5741,26 +5746,32 @@ fn narrow_routes_grid_keeps_the_discriminating_tail() {
     h.store.routes.set(Loadable::Ready(wide_routes_fixture()));
     let s = h.turns(2);
     let grid = grid_rows(&s);
-    let cell = |tag: &str| -> String {
-        grid.iter()
-            .find(|l| l.contains(tag))
-            .unwrap_or_else(|| panic!("no {tag} row:\n{s}"))
-            .clone()
-    };
-    let t2v = cell("t2v");
-    let i2v = cell("i2v");
     assert!(
-        t2v.contains('\u{2026}'),
-        "110 cells really is too narrow for these artifacts: {t2v:?}"
+        !grid.iter().any(|l| l.contains('\u{2026}')),
+        "the grid wraps, never cuts:\n{}",
+        grid.join("\n")
     );
-    assert!(
-        t2v.contains("t2v-a14b-diffusers-8bit") && i2v.contains("i2v-a14b-diffusers-8bit"),
-        "the discriminating tail survives the cut: {t2v:?} / {i2v:?}"
-    );
-    assert!(
-        !t2v.contains("AbstractFramework/wan2.2-t2v"),
-        "the cell really was cut (otherwise this test proves nothing): {t2v:?}"
-    );
+    // Read the model cell across its wrap: the line holding the tag plus
+    // the continuation line under it, at the same column.
+    let lines: Vec<&str> = s.lines().collect();
+    for (tag, whole) in [
+        ("t2v", "AbstractFramework/wan2.2-t2v-a14b-diffusers-8bit"),
+        ("i2v", "AbstractFramework/wan2.2-i2v-a14b-diffusers-8bit"),
+    ] {
+        let i = lines.iter().position(|l| l.contains(tag)).expect("row");
+        let col = lines[i].find("AbstractFramework").expect("model cell");
+        let take = |l: &str| -> String {
+            l.get(col..)
+                .unwrap_or("")
+                .split("  ")
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string()
+        };
+        let joined = format!("{}{}", take(lines[i]), take(lines[i + 1]));
+        assert_eq!(joined, whole, "{tag} cell whole across its wrap:\n{s}");
+    }
     // The closed vocabulary keeps its whole word at every width.
     assert!(
         s.contains("covered by input.text"),
