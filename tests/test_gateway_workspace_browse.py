@@ -217,7 +217,7 @@ def test_data_folder_is_never_a_workspace(tmp_path: Path, monkeypatch: pytest.Mo
         for bad in (data, data / "auth", data / "workspaces", data / "workspaces" / "not-made-by-gateway"):
             r = client.post("/api/gateway/runs/start", headers=h,
                             json={"bundle_id": "ws-bundle", "flow_id": "root", "input_data": {"workspace_root": str(bad)}})
-            assert r.status_code == 400 and "data folder" in r.json()["detail"], (bad, r.text)
+            assert r.status_code == 400 and "data folder" in r.json()["detail"]["message"], (bad, r.text)
         # Echoing the caller's own gateway-made folder back is accepted.
         again = client.post("/api/gateway/runs/start", headers=h,
                             json={"bundle_id": "ws-bundle", "flow_id": "root", "session_id": "chat-1",
@@ -227,7 +227,7 @@ def test_data_folder_is_never_a_workspace(tmp_path: Path, monkeypatch: pytest.Mo
         other = client.post("/api/gateway/runs/start", headers=h,
                             json={"bundle_id": "ws-bundle", "flow_id": "root", "session_id": "chat-2",
                                   "input_data": {"workspace_root": str(session_ws)}})
-        assert other.status_code == 400 and "data folder" in other.json()["detail"]
+        assert other.status_code == 400 and "data folder" in other.json()["detail"]["message"]
 
         # A run whose stored root points into the data folder is not served.
         from abstractgateway.service import get_gateway_service
@@ -328,9 +328,9 @@ def test_the_opened_file_is_verified(tmp_path: Path) -> None:
 
 
 def _list_folders(client: TestClient, h: dict, *paths: Path) -> None:
-    """Round 9 ("Deny everything, allow listed workspaces"): the admin lists these folders read & write."""
+    """Round 11 ("Deny everything, allow listed workspaces"): the admin lists these folders read & write."""
     rows = [{"path": str(p.resolve()), "mode": "rw"} for p in paths]
-    r = client.put("/api/gateway/workspace/policy", headers=h, json={"folders": rows})
+    r = client.put("/api/gateway/workspace/policy", headers=h, json={"posture": "allowed_only", "folders": rows})
     assert r.status_code == 200, r.text
 
 
@@ -341,11 +341,12 @@ def test_launch_folder_needs_the_current_policy(tmp_path: Path, monkeypatch: pyt
     (launch / "main.py").write_text("x = 1\n")
     with client:
         # Not listed: "Deny everything, allow listed workspaces" refuses the launch folder at the start.
+        assert client.put("/api/gateway/workspace/policy", headers=h, json={"posture": "allowed_only"}).status_code == 200
         refused = client.post(
             "/api/gateway/runs/start", headers=h,
             json={"bundle_id": "ws-bundle", "flow_id": "root", "session_id": "s-launch", "input_data": {"workspace_root": str(launch)}},
         )
-        assert refused.status_code == 400 and "Deny everything, allow listed workspaces" in refused.text, refused.text
+        assert refused.status_code == 400 and "outside the workspaces the gateway allows" in refused.text, refused.text
         _list_folders(client, h, launch)
         rid = _start(client, h, workspace_root=str(launch))
         body = client.get(f"/api/gateway/runs/{rid}/workspace", headers=h).json()

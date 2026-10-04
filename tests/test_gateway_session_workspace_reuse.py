@@ -162,11 +162,15 @@ def test_client_named_workspace_root_still_wins_and_is_still_clamped(
     outside = tmp_path / "elsewhere"
     outside.mkdir()
 
-    monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", str(ws))
-
     client, headers = _client(tmp_path, monkeypatch)
     with client:
-        # Round 9: "Deny everything, allow listed workspaces" (the default posture) reaches only the shared workspace here.
+        # Round 11: "Deny everything, allow listed workspaces" with the operator's workspace listed.
+        r = client.put(
+            "/api/gateway/workspace/policy",
+            json={"posture": "allowed_only", "folders": [{"path": str(ws.resolve()), "mode": "rw"}]},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
 
         # An explicit, in-scope root beats the session folder.
         run_id = _start(
@@ -195,11 +199,9 @@ def test_echoed_session_workspace_passes_the_policy_clamp(
     """A client that echoes the gateway's own session folder must not be refused."""
     ws = tmp_path / "operator-workspace"
     ws.mkdir()
-    monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", str(ws))
-
     client, headers = _client(tmp_path, monkeypatch)
     with client:
-        # Round 9: "Deny everything, allow listed workspaces" (the default posture) reaches only the shared workspace here.
+        # Round 11: the gateway's own session folder is accepted whatever the posture.
         first = _workspace_of(client, headers, _start(client, headers, session_id="chat-a"))
         echoed = _start(
             client, headers, session_id="chat-a", input_data={"workspace_root": str(first)}

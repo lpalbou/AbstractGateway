@@ -105,11 +105,20 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     # A polite dequeue of the CALLER from a queue it joined (interaction
     # surface, same class as chat/visit/summon).
     ("POST", "/api/gateway/entities/{name}/queue/{queue_id}/leave"),
-    # ONE account's workspace folders (round 9). The handler resolves the
-    # target and refuses (403) anyone but an admin or the account itself
-    # (`me` = the caller); the write can only switch on folders the admin
-    # allowed and add own folders while the admin allows any folder.
+    # ONE account's default workspaces (round 11). The handler resolves the
+    # target and refuses (403) anyone but an admin, the account itself (`me` =
+    # the caller) or an entity's creator; every ro/rw row must lie inside the
+    # gateway's eligible set at most at its cap (400 workspace_refused).
     ("PUT", "/api/gateway/workspace/policy/{account}"),
+    # The effective-set DRY RUN (round 11): a READ despite the POST — it stores
+    # nothing and answers what a run with this one-off payload would get, for
+    # the same targets as the GET (admin, self, an entity's creator).
+    ("POST", "/api/gateway/workspace/effective/{account}"),
+    # ONE conversation's workspaces (round 11). Stored in the CALLER's plane
+    # (a session of another account is never reached); `?account=` (another
+    # account's plane) is admin-only in the handler; rows are validated like
+    # the account level.
+    ("PUT", "/api/gateway/sessions/{session_id}/workspaces"),
     # The Workspaces page's folder check (round 8): a READ despite the POST —
     # it mutates nothing and answers whether ONE typed path is an absolute,
     # existing folder (the same rule every policy write enforces). Any

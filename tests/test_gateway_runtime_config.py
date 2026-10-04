@@ -139,13 +139,13 @@ def test_write_validates_before_persist(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_workspace_resolvers_follow_the_workspace_policy(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    """Round 9: the server-workspace resolvers read the gateway workspace policy (shared workspace,
-    ro/rw rows as mounts, deny rows as blocked); the old runtime-config keys are refused."""
+    """Round 11: the server-workspace resolvers read the gateway workspace policy (ro/rw rows as
+    mounts, deny rows as blocked; there is no shared workspace); the old runtime-config keys are refused."""
+    import abstractgateway.runtime_config as runtime_config
     from abstractgateway.runtime_config import (
         RuntimeConfigError,
         resolve_workspace_blocked_paths,
         resolve_workspace_mounts,
-        resolve_workspace_root,
         write_runtime_config,
     )
     from abstractgateway.workspace_policy import write_gateway_policy
@@ -157,11 +157,11 @@ def test_workspace_resolvers_follow_the_workspace_policy(tmp_path, monkeypatch: 
         d.mkdir()
     write_gateway_policy(
         data,
-        {"shared_workspace": str(ws), "folders": [{"path": str(archive), "mode": "ro"}, {"path": str(blocked), "mode": "deny"}]},
+        {"folders": [{"path": str(ws), "mode": "rw"}, {"path": str(archive), "mode": "ro"}, {"path": str(blocked), "mode": "deny"}]},
         actor="person:admin",
     )
-    assert resolve_workspace_root(data) == ws.resolve()
-    assert resolve_workspace_mounts(data) == {"archive": archive.resolve()}
+    assert not hasattr(runtime_config, "resolve_workspace_root")
+    assert resolve_workspace_mounts(data) == {"workspace": ws.resolve(), "archive": archive.resolve()}
     assert resolve_workspace_blocked_paths(data) == (blocked.resolve(),)
 
     for key in ("workspace_root", "workspace_allowed_paths", "client_workspace_scope_overrides", "trust_client_launch_folder"):
@@ -177,7 +177,7 @@ def test_non_admin_runtime_config_read_names_no_workspace_paths(tmp_path):
     ws.mkdir()
     archive.mkdir()
     data = tmp_path / "data"
-    write_gateway_policy(data, {"shared_workspace": str(ws), "folders": [{"path": str(archive), "mode": "rw"}]}, actor="person:admin")
+    write_gateway_policy(data, {"folders": [{"path": str(ws), "mode": "rw"}, {"path": str(archive), "mode": "rw"}]}, actor="person:admin")
 
     user_view = read_runtime_config(data, is_admin=False)
     assert user_view["workspace_policy"] == {"endpoint": "/api/gateway/workspace/policy"}
