@@ -220,9 +220,22 @@ pub fn wrap_layout(
     // solve() reserves a scrollbar cell and one-cell gaps; ours are two
     // cells wide, so hand it the width minus the extra gap cells.
     let extra = (COL_GAP - 1) * (rules.len() as i32 - 1).max(0);
-    let mut ws = widths::solve(rules, &cells, width - extra + 1);
+    let mut ws = widths::solve(rules, &cells, width - extra);
     for w in ws.iter_mut() {
         *w = (*w).max(1);
+    }
+    // Never wider than the table: the solver's floors can exceed a narrow
+    // budget, so take the excess from the widest columns (their cells
+    // wrap, nothing is cut). One cell stays free for the scrollbar.
+    let gaps = COL_GAP * (ws.len() as i32 - 1).max(0);
+    while ws.iter().sum::<i32>() + gaps > width - 1 {
+        let Some((i, w)) = ws.iter().enumerate().max_by_key(|(_, w)| **w) else {
+            break;
+        };
+        if *w <= 1 {
+            break;
+        }
+        ws[i] -= 1;
     }
     let mut out = Vec::new();
     let header: Vec<Vec<String>> = rules.iter().map(|r| vec![r.title.to_string()]).collect();
@@ -370,16 +383,25 @@ impl WrapTable {
         // The last painted mapping line → row (for clicks) and the page
         // height (PgUp/PgDn), written by the draw closure.
         let painted: Rc<RefCell<(Vec<Option<usize>>, i32)>> = Rc::new(RefCell::new((vec![], 0)));
+        // An opened row taller than the pane: PgDn/PgUp scroll INSIDE it
+        // (`dscroll` lines past its first line, at most `dmax`, which the
+        // draw closure writes); ↑/↓ still move between rows.
+        let dscroll = Rc::new(Cell::new(0i32));
+        let dmax = Rc::new(Cell::new(0i32));
+        let (dscroll_ev, dmax_ev) = (dscroll.clone(), dmax.clone());
+        let dtick = cx.signal(0u32);
         let rules = Rc::new(rules);
         let painted_ev = painted.clone();
         let top_ev = top.clone();
         let rows_ev = rows.clone();
+        let dscroll_mv = dscroll.clone();
         let move_to = move |i: usize| {
             if n == 0 {
                 return;
             }
             let i = i.min(n - 1);
             if sel.get_untracked() != i {
+                dscroll_mv.set(0);
                 sel.set(i);
             }
         };
@@ -398,6 +420,18 @@ impl WrapTable {
                         }
                         Key::Down | Key::Char('j') => {
                             move_to(cur + 1);
+                            true
+                        }
+                        Key::PageUp if dscroll_ev.get() > 0 => {
+                            dscroll_ev.set((dscroll_ev.get() - (page as i32 / 2).max(1)).max(0));
+                            dtick.update(|t| *t += 1);
+                            true
+                        }
+                        Key::PageDown if dscroll_ev.get() < dmax_ev.get() => {
+                            dscroll_ev.set(
+                                (dscroll_ev.get() + (page as i32 / 2).max(1)).min(dmax_ev.get()),
+                            );
+                            dtick.update(|t| *t += 1);
                             true
                         }
                         Key::PageUp => {
@@ -473,6 +507,8 @@ impl WrapTable {
                 let top = top.clone();
                 let painted = painted.clone();
                 let empty = empty.clone();
+                let (dscroll, dmax) = (dscroll.clone(), dmax.clone());
+                let _ = dtick.get();
                 Element::new()
                     .style(LayoutStyle::default().grow(1.0).min_h(1))
                     .draw(move |canvas, rect| {
@@ -514,11 +550,23 @@ impl WrapTable {
                             .unwrap_or(first);
                         let (first, last) = ((first - header_n) as i32, (last - header_n) as i32);
                         let mut tp = top.get();
-                        if first < tp {
-                            tp = first;
-                        }
-                        if last >= tp + body_h {
-                            tp = (last - body_h + 1).min(first);
+                        let block = last - first + 1;
+                        if block > body_h {
+                            // Taller than the pane: anchored at its first
+                            // line plus the inner scroll.
+                            dmax.set(block - body_h);
+                            let d = dscroll.get().min(block - body_h);
+                            dscroll.set(d);
+                            tp = first + d;
+                        } else {
+                            dmax.set(0);
+                            dscroll.set(0);
+                            if first < tp {
+                                tp = first;
+                            }
+                            if last >= tp + body_h {
+                                tp = (last - body_h + 1).min(first);
+                            }
                         }
                         let body_n = (lines.len() - header_n) as i32;
                         tp = tp.clamp(0, (body_n - body_h).max(0));
@@ -726,6 +774,31 @@ mod tests {
 
     fn rules() -> Vec<ColRule> {
         vec![ColRule::tail("name", 6), ColRule::head("what it does", 10)]
+    }
+
+    #[test]
+    fn wrapped_lines_never_exceed_the_table_width() {
+        let rules = vec![
+            ColRule::tail("Run", 3),
+            ColRule::tail("Model", 12),
+            ColRule::tail("Status", 6),
+        ];
+        let rows = vec![Row::new(vec![
+            "run-0123456789".into(),
+            "lmstudio/a-very-long-model-identifier".into(),
+            "completed".into(),
+        ])];
+        for width in [20, 30, 40, 78] {
+            for l in wrap_layout(&rules, &rows, width, None) {
+                assert!(
+                    abstracttui::text::width(&l.text) < width,
+                    "{width}: {:?}",
+                    l.text
+                );
+            }
+            let header = &wrap_layout(&rules, &rows, width, None)[0].text;
+            assert!(header.starts_with("Run"), "{width}: {header:?}");
+        }
     }
 
     #[test]
