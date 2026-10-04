@@ -157,7 +157,7 @@ def test_account_policy_within_admin_allowance(folders: dict) -> None:
         assert eff["account"] == "default:alice"
         assert eff["folders"] == [{"path": folders["shared"], "source": "shared"}]  # extras default OFF
         assert [a["enabled"] for a in eff["available_folders"]] == [False, False]
-        assert eff["summary"].startswith("Shared workspace (shared) only.")
+        assert eff["summary"] == "Private session folder + Shared workspace (shared). Never: 1 folder."
 
         r = c.put("/api/gateway/workspace/policy/me", json={"enabled_folders": [folders["projects"]]}, headers=alice)
         assert r.status_code == 200, r.text
@@ -459,3 +459,67 @@ def test_migration_reports_missing_per_account_folders(folders: dict, tmp_path: 
     assert g["allowed_folders"] == [folders["notes"]] and g["never_allowed"] == [folders["secrets"]]
     assert g["allow_any_folder"] is False
     assert gone in _read_store(data)["_migrated"]["workspace_policy_v1"]["dropped_missing_or_conflicting"]
+
+
+def test_duplicates_are_refused_by_name(folders: dict) -> None:
+    with _client() as c:
+        r = c.put("/api/gateway/workspace/policy", json={"shared_workspace": folders["shared"], "allowed_folders": [folders["notes"], folders["notes"] + "/"]})
+        assert r.status_code == 400 and "listed twice" in r.json()["detail"], r.text
+        _setup_gateway(c, folders)
+        r = c.put("/api/gateway/workspace/policy/me", json={"enabled_folders": [folders["notes"], folders["notes"]]})
+        assert r.status_code == 400 and "listed twice" in r.json()["detail"], r.text
+
+
+def test_an_entity_cannot_change_its_own_folders(folders: dict) -> None:
+    from abstractgateway.users import GatewayUserRegistry
+
+    with _client() as c:
+        _setup_gateway(c, folders)
+        _rec, token = GatewayUserRegistry().create_user(user_id="castor", roles=["entity"])
+        entity = {"Authorization": f"Bearer {token}"}
+        assert GatewayUserRegistry().get_user("castor").principal_kind == "entity"
+        r = c.put("/api/gateway/workspace/policy/me", json={"enabled_folders": [folders["notes"]]}, headers=entity)
+        assert r.status_code == 403, r.text
+        r = c.put("/api/gateway/workspace/policy/castor", json={"enabled_folders": [folders["notes"]]})
+        assert r.status_code == 200, r.text
+        assert [f["path"] for f in r.json()["effective"]["folders"]] == [folders["shared"], folders["notes"]]
+
+
+def test_the_runtime_tool_scope_refuses_what_the_account_may_not_use(folders: dict, tmp_path: Path) -> None:
+    """Host layer (ADVERSARY V6): the run vars the gateway emits, resolved by the runtime's own tool
+    scope — an account cannot reach a folder the admin allowed but it did not switch on, nor a
+    never-allowed folder inside a switched-on one, nor anything else."""
+    from abstractruntime.integrations.abstractcore.workspace_scoped_tools import WorkspaceScope, rewrite_tool_arguments
+
+    from abstractgateway.run_workspace_guard import apply_workspace_policy
+
+    with _client() as c:
+        _setup_gateway(c, folders, never_allowed=[folders["secrets"], folders["projects_private"]])
+        alice = _user("alice")
+        c.put("/api/gateway/workspace/policy/me", json={"enabled_folders": [folders["projects"]]}, headers=alice)
+    session = tmp_path / "session-folder"
+    session.mkdir()
+    for rel in ("shared/a.txt", "projects/b.txt", "projects/private/c.txt", "notes/d.txt", "other/e.txt", "secrets/f.txt"):
+        (Path(folders["shared"]).parent / rel).write_text("x")
+    v = {"workspace_root": str(session)}
+    apply_workspace_policy(v, root_data_dir=_data_dir(tmp_path), tenant_id="default", user_id="alice")
+    scope = WorkspaceScope.from_input_data(v)
+    base = Path(folders["shared"]).parent
+    for ok in ("shared/a.txt", "projects/b.txt"):
+        out = rewrite_tool_arguments(tool_name="read_file", args={"file_path": str(base / ok)}, scope=scope)
+        assert Path(out["file_path"]).resolve() == (base / ok).resolve()
+    for refused in ("projects/private/c.txt", "notes/d.txt", "other/e.txt", "secrets/f.txt"):
+        with pytest.raises(ValueError):
+            rewrite_tool_arguments(tool_name="read_file", args={"file_path": str(base / refused)}, scope=scope)
+
+
+def test_migration_is_audited(folders: dict, tmp_path: Path) -> None:
+    from abstractgateway.workspace_policy import gateway_policy
+
+    data = _data_dir(tmp_path)
+    _write_old_store(data, {"workspace_root": folders["shared"]})
+    gateway_policy(data)
+    gateway_policy(data)
+    lines = [json.loads(ln) for ln in (data / "audit_log.jsonl").read_text().splitlines() if ln.strip()]
+    migrations = [e for e in lines if e.get("event") == "workspace_policy_changed" and e.get("scope") == "migration"]
+    assert len(migrations) == 1, migrations

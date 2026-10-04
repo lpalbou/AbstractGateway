@@ -29296,6 +29296,16 @@ def _workspace_policy_target(request: Request, account: str) -> tuple[Any, str, 
     return principal, tenant, user
 
 
+def _is_entity_account(tenant: str, user: str) -> bool:
+    try:
+        from ..users import GatewayUserRegistry
+
+        rec = GatewayUserRegistry().get_user(user, tenant_id=tenant)
+    except Exception:  # noqa: BLE001
+        return False
+    return bool(rec is not None and getattr(rec, "principal_kind", "") == "entity")
+
+
 def _account_policy_answer(tenant: str, user: str) -> Dict[str, Any]:
     from ..workspace_policy import account_policy, effective_policy, gateway_policy
 
@@ -29321,6 +29331,9 @@ async def workspace_account_policy_write(request: Request, account: str, payload
     """Change ONE account's folders. Body = any subset of {enabled_folders (subset of the gateway's
     allowed folders), own_folders (only while the admin allows any folder)}. Admin, or the account itself."""
     principal, tenant, user = _workspace_policy_target(request, account)
+    if not principal.is_admin() and _is_entity_account(tenant, user):
+        # An entity's folders are its owner-admin's decision, never the entity's own.
+        raise HTTPException(status_code=403, detail="An entity's workspace folders are changed by an admin")
     from ..runtime_config import RuntimeConfigStoreCorrupt
     from ..workspace_policy import WorkspacePolicyError, write_account_policy
 

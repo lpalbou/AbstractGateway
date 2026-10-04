@@ -24,7 +24,7 @@ serve:
 | `/api/gateway/admin/users`, `/admin/runtime-reservations` | user accounts and retained runtimes (admin) | [security.md](./security.md#tenant-and-user-isolation) |
 | `/api/gateway/admin/accounts`, `/admin/accounts/{id}/active`, `/admin/accounts/{id}/activity`, `/me/accounts`, `/me/accounts/{id}/activity`, `/me/activity` | the Accounts page: users and entities in one list (admin), your own account and your entities (everyone), the Active switch, activity from the audit log | [below](#accounts-and-activity) |
 | `/api/gateway/admin/runtime-config` | runtime settings (admin) | [configuration.md](./configuration.md) |
-| `/api/gateway/admin/user-workspace-policy`, `/workspace/policy/self`, `POST /workspace/path-check` | workspace policies: one account's own policy (admin), your own policy (everyone), and the folder check the Workspaces page runs before saving a row (`{path}` → `{path, normalized, absolute, exists, is_dir, valid, sentence}`; any signed-in principal) | [console.md](./console.md#workspaces), [configuration.md](./configuration.md#workspace-policy-filesystem-scope) |
+| `/api/gateway/workspace/policy`, `/workspace/policy/{account}`, `/workspace/effective/{account}`, `POST /workspace/path-check` | workspace folders: the gateway policy (read: everyone; write: admin), one account's folders (admin or the account itself; `me` = the caller), the effective set the gateway enforces, and the folder check run before saving a row (`{path}` → `{path, normalized, absolute, exists, is_dir, valid, sentence}`; any signed-in principal) | [below](#workspace-folders), [security.md](./security.md#workspace-folders-the-admin-allows-the-account-fine-tunes) |
 | `/api/gateway/admin/runtimes`, `?account=<id>[&tenant_id=<t>]` | the runtime inventory (admin); `account` keeps only the planes that account owns and echoes `filter` | [console.md](./console.md#runtimes-of-one-account) |
 | `/api/gateway/network`, `/network/restart` | network exposure, addresses, reverse proxy | [configuration.md](./configuration.md#api-gateway_network_v1) |
 | `/api/gateway/apps/*`, `/apps/handover/{code}`, `/apps/tui-handover`, `/api/gateway/apps/desktop-handover` | browser apps, terminal apps, the Assistant and its sign-in | [apps.md](./apps.md#http-api) |
@@ -568,11 +568,53 @@ never listed nor served. The built-in deny list (credential folders such as
 `~/.ssh`, and the gateway's data folder; see
 [Configuration](configuration.md#workspace-policy-filesystem-scope)) is never
 listed, and reading inside it answers 404, even when the run's folder
-contains it. The workspace access policy (allowed and blocked
-folders, launch-folder trust) is applied again at every call, and nothing
+contains it. The workspace policy (the account's effective folders,
+never-allowed folders, launch-folder trust) is applied again at every call, and nothing
 else in the gateway's data folder is ever served. A run cannot be started
 with a `workspace_root` inside the gateway's data folder either, except the
 conversation folder the gateway made for the same user.
+
+## Workspace folders
+
+The admin allows, the account fine-tunes (round 9). Full model and enforcement:
+[security.md](./security.md#workspace-folders-the-admin-allows-the-account-fine-tunes).
+
+`GET /api/gateway/workspace/policy` (any signed-in principal) →
+`{ok, policy}` with `policy = {shared_workspace, allowed_folders[],
+allow_any_folder, never_allowed[], launch_folder_trust,
+builtin_never_allowed[] (read-only), max_attachment_bytes (read-only)}`.
+
+`PUT /api/gateway/workspace/policy` (admin): any subset of `{shared_workspace,
+allowed_folders, allow_any_folder, never_allowed, launch_folder_trust}`; named
+fields replace, others keep, so one switch is one request. Every folder is
+checked like `POST /workspace/path-check` (absolute, existing). Refused with 400
+and a sentence: an empty shared workspace, a shared workspace inside the data
+folder or a credential folder, a never-allowed folder that contains the shared
+workspace, an allowed folder inside a never-allowed one, an unknown field, and
+the old fields (`mode`, `client_workspace_scope_overrides`, …). Removing an
+allowed folder switches it off for every account. Answers like the GET.
+
+`GET /api/gateway/workspace/policy/{account}` (admin, or the account itself;
+`{account}` = `name`, `tenant:name` or `me`) → `{ok, policy: {account,
+enabled_folders[], own_folders[]}, gateway: <gateway policy>, effective:
+<effective>}`. 404 for an account that does not exist, 403 for someone else's.
+
+`PUT /api/gateway/workspace/policy/{account}`: any subset of
+`{enabled_folders, own_folders}`. An enabled folder must be one of the gateway's
+allowed folders; own folders need `allow_any_folder` (an empty list always
+clears them) and may not sit inside a never-allowed folder. Answers like the
+GET. `/workspace/policy/self` answers 410 naming `/workspace/policy/me`.
+
+`GET /api/gateway/workspace/effective/{account}` → `{ok, account,
+shared_workspace, folders: [{path, source: "shared"|"allowed"|"own"}]
+(shared first), available_folders: [{path, enabled, never_allowed}],
+own_folders[], own_folders_allowed, own_folders_inactive, never_allowed[]
+(gateway + built-in), launch_folder_trust, summary}`; `summary` is one line
+such as "Private session folder + Shared workspace (work) + 2 folders (1 of your own). Never: 1 folder.".
+
+Run starts read the same set: a `workspace_allowed_paths` list may only narrow
+it (absent = the whole set, the shared workspace always kept), a wider folder or
+`workspace_access_mode: "all_except_ignored"` is refused with 400.
 
 ## Artifacts and filesystem handoff
 

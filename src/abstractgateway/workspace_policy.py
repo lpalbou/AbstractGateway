@@ -150,8 +150,9 @@ def _check_folder_list(raw: Any, *, what: str) -> List[str]:
     out: List[str] = []
     for item in raw:
         path = _check_folder(item, what=f"{what} entry")
-        if path not in out:
-            out.append(path)
+        if path in out:
+            raise WorkspacePolicyError(f"{what}: {path!r} is listed twice; nothing was saved.")
+        out.append(path)
     return out
 
 
@@ -416,13 +417,13 @@ def _summary(shared: str, folders: List[Dict[str, str]], never: List[str], own_i
     extras = [f for f in folders if f["source"] != "shared"]
     own = [f for f in extras if f["source"] == "own"]
     name = Path(shared).name or shared
-    text = f"Shared workspace ({name})"
+    # Parent ruling (round 9): each conversation keeps its PRIVATE session folder in the account's
+    # data plane; the shared workspace is the root every run can always reach.
+    text = f"Private session folder + Shared workspace ({name})"
     if extras:
         text += f" + {len(extras)} folder{'s' if len(extras) != 1 else ''}"
         if own:
             text += f" ({len(own)} of your own)"
-    else:
-        text += " only"
     text += "."
     if never:
         text += f" Never: {len(never)} folder{'s' if len(never) != 1 else ''}."
@@ -621,8 +622,9 @@ def write_account_policy(data_dir: Path, *, tenant_id: str, user_id: str, change
                         f"{str(item)!r} is not one of the gateway's allowed folders; an account can only switch on what "
                         "the admin allows."
                     )
-                if text not in enabled:
-                    enabled.append(text)
+                if text in enabled:
+                    raise WorkspacePolicyError(f"{text!r} is listed twice; nothing was saved.")
+                enabled.append(text)
             entry["enabled_folders"] = enabled
         if "own_folders" in changes:
             raw = changes["own_folders"]

@@ -1455,17 +1455,23 @@ browser timezone when possible, with locale only as a fallback.
 
 ### Workspace policy (filesystem scope)
 
-The gateway enforces a server-side workspace policy so thin clients cannot expand filesystem access by sending arbitrary paths.
+The gateway decides which folders each account's runs may use; thin clients
+cannot widen it by sending paths. It is a setting, not an environment variable:
+the admin sets the gateway policy (shared workspace, allowed folders, allow any
+folder, never allowed, launch-folder trust) with `PUT
+/api/gateway/workspace/policy`, and each account switches allowed folders on
+(and adds its own folders while any folder is allowed) with `PUT
+/api/gateway/workspace/policy/{account}` (`me` = the caller). `GET
+/api/gateway/workspace/effective/{account}` returns what applies. The full
+model, its enforcement and the one-time migration from the old access modes are
+in [security.md](docs/security.md#workspace-folders-the-admin-allows-the-account-fine-tunes).
 
-Operator-controlled roots:
-- `ABSTRACTGATEWAY_WORKSPACE_DIR`: base directory used for `/api/gateway/files/*` helpers and to clamp run-provided `workspace_root` / `workspace_allowed_paths`.
-- `ABSTRACTGATEWAY_WORKSPACE_MOUNTS`: additional allowed roots, newline-separated `name=/abs/path`.
-
-Client scope overrides (permissive; trusted machines only):
-- `ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE=1` (or `ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE=1`) enables honoring client-provided `workspace_*` knobs, including `workspace_access_mode=all_except_ignored`.
-
-Discoverability:
-- `GET /api/gateway/workspace/policy` returns `{policy: {...}}` including whether client overrides are enabled (mount names only; no absolute paths).
+Until an admin chooses one, the shared workspace is
+`ABSTRACTGATEWAY_WORKSPACE_DIR` when set, otherwise the gateway's working
+folder. `ABSTRACTGATEWAY_WORKSPACE_MOUNTS` is read once, by the migration (its
+folders become allowed folders). The old runtime-config workspace keys and the
+`ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE` /
+`ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE` variables are gone.
 
 Built-in deny list. These folders of the gateway's user account are never
 listed nor served by the workspace browser (`GET /runs/{run_id}/workspace/…`),
@@ -1506,7 +1512,7 @@ gateway-made folder when it named none) and gets the built-in deny rule above.
 Entity visits (the entity chat and its own-time loop) use the entity's own
 tools, which never leave `<entity home>/workspace` and the operator's mounts.
 
-Evidence: `src/abstractgateway/routes/gateway.py` (`_workspace_root`, `_workspace_mounts`, `_sanitize_run_workspace_policy`, `_apply_builtin_tool_deny`, `_browse_workspace_root`, `start_run`), `src/abstractgateway/workspace_browse.py`.
+Evidence: `src/abstractgateway/workspace_policy.py`, `src/abstractgateway/routes/gateway.py` (`_sanitize_run_workspace_policy`, `_files_scope`, `_browse_workspace_root`), `src/abstractgateway/run_workspace_guard.py`, `src/abstractgateway/workspace_browse.py`.
 
 ### Durability backend
 
@@ -2290,27 +2296,72 @@ remembered session (30 days) of the user who clicked Open. See
 [apps.md](docs/apps.md) and
 [architecture.md](docs/architecture.md#desktop-assistant-hand-over).
 
-## Workspace filesystem scope (blacklist/whitelist)
+## Workspace folders: the admin allows, the account fine-tunes
 
-AbstractGateway supports “thin clients” (browser UIs, bridges) that can trigger **filesystem-ish tools** (e.g. `list_files`, `read_file`, `write_file`). To avoid a thin client expanding server filesystem access, the gateway enforces a **workspace policy**.
+Thin clients (browser apps, bridges, the Assistant) start runs whose file tools
+(`list_files`, `read_file`, `write_file`, …) touch the gateway's computer. Which
+folders those tools may use is decided by the gateway, per account, never by
+the client. The model is the tools model: the admin allows, each account
+fine-tunes within what is allowed.
 
-Key point: the **main configuration** for filesystem allowlisting/denylisting is set when you **launch the gateway** (operator-controlled env vars). Thin clients can only request broader scopes when the gateway is started in a permissive mode.
+**Gateway policy** (admin; `GET`/`PUT /api/gateway/workspace/policy`):
 
-### Default (safe): everything outside the run workspace is blocked
+| Field | Meaning |
+|---|---|
+| `shared_workspace` | Exactly one folder, required, always available to every account. Runs that name no folder start in a folder the gateway makes for their conversation (in its data folder). |
+| `allowed_folders` | Extra folders an account may switch on. |
+| `allow_any_folder` | Off by default. On: accounts may add folders of their own. |
+| `never_allowed` | Gateway-wide deny list. It applies on top of everything and always wins. |
+| `launch_folder_trust` | On by default: a run may work in the folder its app was started from. |
 
-- Every run the gateway starts works in a folder, whatever started it (the
-  HTTP routes, email-triggered automations, the Telegram and agora bridges, entity summons,
-  scheduled runs). A run that names no `workspace_root` works in its
-  conversation's gateway-made folder, `<ABSTRACTGATEWAY_DATA_DIR>/workspaces/session-…`
-  (or a per-run folder when it has no session).
-- AbstractRuntime applies workspace scoping to filesystem-ish tool arguments. The default is:
-  - `workspace_access_mode=workspace_only`
-  - absolute paths must stay under `workspace_root`
-- A client `workspace_root` inside the gateway's data folder is refused (400),
-  except the conversation folder the gateway made for the same user; the same
-  check runs on `POST /runs/start`, `POST /runs/schedule` and entity summons.
+**Account policy** (admin or the account itself;
+`GET`/`PUT /api/gateway/workspace/policy/{account}`, `me` = the caller):
+`enabled_folders` (the allowed folders this account switched on, none by
+default) and `own_folders` (honoured only while `allow_any_folder` is on).
 
-This means that by default, **all absolute paths are effectively “blacklisted”** except the run’s `workspace_root`.
+**Effective set** (`GET /api/gateway/workspace/effective/{account}`): the shared
+workspace, then the switched-on folders, then the account's own folders, minus
+anything inside a never-allowed folder. It is computed by the gateway and it is
+the only thing enforcement reads:
+
+- **Run starts** (`POST /runs/start`, `/runs/schedule`, entity summons): a
+  `workspace_root` outside the effective set (and not the launch folder when
+  trust is on) is refused with 400, as is one inside a never-allowed folder or
+  the data folder. A client `workspace_allowed_paths` list may only narrow (each
+  entry inside the effective set; the shared workspace is always kept); absent,
+  the run gets the whole effective set. `workspace_access_mode:
+  "all_except_ignored"` (the old "any folder" mode) no longer exists and is
+  refused.
+- **Every run's tool sandbox**, whatever started it (HTTP, the Telegram, email
+  and agora bridges, schedules, entities): the host sets
+  `workspace_access_mode=workspace_or_allowed` (or a narrower `workspace_only`),
+  `workspace_allowed_paths` = the effective set, and adds every never-allowed
+  folder to `workspace_ignored_paths` (`run_workspace_guard.apply_workspace_policy`).
+- **The run workspace browser** serves a launch folder only while the policy
+  still allows it; **the server file routes** (`/files/*`, admin) use the
+  shared workspace as their root and the caller's switched-on folders as mounts.
+- An account can never exceed the admin: a folder that is not allowed cannot be
+  switched on, own folders need `allow_any_folder`, and removing an allowed
+  folder switches it off for every account.
+
+Every change is recorded in the audit log as `workspace_policy_changed`
+`{scope: gateway|account|migration, actor, changed, account?}`.
+
+**Migration** from the old model (whitelist/blacklist access modes, per-user
+allow/deny lists, launch-folder trust overrides, "Any folder (old clients)"),
+once, at the first read: the shared workspace is the old workspace root; the old
+extra workspaces and every account's allowed folders become allowed folders,
+switched on for the accounts that had them (the old extra workspaces for every
+account that existed); "allow everything except" anywhere turns
+`allow_any_folder` on; the old refused folders (gateway and per account) become
+never allowed; "Any folder (old clients)" and per-account trust are dropped.
+Folders that no longer exist are dropped and listed in the settings store under
+`_migrated.workspace_policy_v1`, next to the old block. The old runtime-config
+keys (`workspace_root`, `workspace_mounts`, `workspace_allowed_paths`,
+`workspace_blocked_paths`, `workspace_default_mode`, `trust_client_launch_folder`,
+`client_workspace_scope_overrides`, `user_workspace_policies`) are refused on
+write; the `ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE` /
+`ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE` variables are no longer read.
 
 ### Built-in deny list
 
@@ -2331,38 +2382,18 @@ credential and configuration folders of the gateway's user account (`~/.ssh`,
   the folders.
 
 Evidence:
+- Policy model, effective set, migration: `src/abstractgateway/workspace_policy.py`
 - Every run start: `src/abstractgateway/run_workspace_guard.py` (called from `WorkflowBundleGatewayHost.start_run`)
-- Client scope clamping: `src/abstractgateway/routes/gateway.py` (`_sanitize_run_workspace_policy`, `_client_workspace_scope_overrides_enabled`)
+- Client scope clamping: `src/abstractgateway/routes/gateway.py` (`_sanitize_run_workspace_policy`, `_files_scope`, `_browse_workspace_root`)
 - Browse and preview: `src/abstractgateway/workspace_browse.py`
 - Runtime tool scoping: `abstractruntime/integrations/abstractcore/workspace_scoped_tools.py`
-- Tests: `tests/test_gateway_workspace_policy_enforcement.py`
+- Tests: `tests/test_gateway_workspace_policy_r9.py`, `tests/test_gateway_workspace_policy_enforcement.py`
 
-### Operator-controlled allowlist roots (recommended)
-
-- `ABSTRACTGATEWAY_WORKSPACE_DIR`: base directory used to resolve relative workspace paths and as the default root for `/files/*` helpers.
-- `ABSTRACTGATEWAY_WORKSPACE_MOUNTS`: additional allowed roots (newline-separated `name=/abs/path`).
-
-Thin clients can discover the server policy via:
-- `GET /api/gateway/workspace/policy`
-  Note: it returns **mount names only** (no absolute paths).
-
-Canonical public server paths use `rel/path` for the main workspace root and
-`mount_alias/rel/path` for approved mounts. When two allowed roots share the
-same basename, Gateway emits deterministic digest-suffixed mount aliases so
-the public path string stays stable across discovery, import/export, and
-Runtime execution.
-
-### Permissive mode: allow thin clients to choose scope (trusted machines only)
-
-To honor client-provided workspace knobs (`workspace_root`, `workspace_access_mode`, `workspace_allowed_paths`, `workspace_ignored_paths`) beyond the operator roots, enable one of:
-
-- `ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE=1`
-- `ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE=1`
-
-In this mode, a client can request:
-- `workspace_access_mode=all_except_ignored` (“full access” unless explicitly blocked)
-
-Do **not** enable this when serving untrusted browser origins: a compromised thin client can request access to arbitrary server paths.
+Canonical public server paths use `rel/path` for the shared workspace and
+`mount_alias/rel/path` for the other folders. When two folders share the same
+basename, Gateway emits deterministic digest-suffixed mount aliases so the
+public path string stays stable across discovery, import/export, and Runtime
+execution.
 
 ### Important limitation (all modes)
 
@@ -3994,7 +4025,7 @@ serve:
 | `/api/gateway/admin/users`, `/admin/runtime-reservations` | user accounts and retained runtimes (admin) | [security.md](docs/security.md#tenant-and-user-isolation) |
 | `/api/gateway/admin/accounts`, `/admin/accounts/{id}/active`, `/admin/accounts/{id}/activity`, `/me/accounts`, `/me/accounts/{id}/activity`, `/me/activity` | the Accounts page: users and entities in one list (admin), your own account and your entities (everyone), the Active switch, activity from the audit log | [below](#accounts-and-activity) |
 | `/api/gateway/admin/runtime-config` | runtime settings (admin) | [configuration.md](docs/configuration.md) |
-| `/api/gateway/admin/user-workspace-policy`, `/workspace/policy/self`, `POST /workspace/path-check` | workspace policies: one account's own policy (admin), your own policy (everyone), and the folder check the Workspaces page runs before saving a row (`{path}` → `{path, normalized, absolute, exists, is_dir, valid, sentence}`; any signed-in principal) | [console.md](docs/console.md#workspaces), [configuration.md](docs/configuration.md#workspace-policy-filesystem-scope) |
+| `/api/gateway/workspace/policy`, `/workspace/policy/{account}`, `/workspace/effective/{account}`, `POST /workspace/path-check` | workspace folders: the gateway policy (read: everyone; write: admin), one account's folders (admin or the account itself; `me` = the caller), the effective set the gateway enforces, and the folder check run before saving a row (`{path}` → `{path, normalized, absolute, exists, is_dir, valid, sentence}`; any signed-in principal) | [below](#workspace-folders), [security.md](docs/security.md#workspace-folders-the-admin-allows-the-account-fine-tunes) |
 | `/api/gateway/admin/runtimes`, `?account=<id>[&tenant_id=<t>]` | the runtime inventory (admin); `account` keeps only the planes that account owns and echoes `filter` | [console.md](docs/console.md#runtimes-of-one-account) |
 | `/api/gateway/network`, `/network/restart` | network exposure, addresses, reverse proxy | [configuration.md](docs/configuration.md#api-gateway_network_v1) |
 | `/api/gateway/apps/*`, `/apps/handover/{code}`, `/apps/tui-handover`, `/api/gateway/apps/desktop-handover` | browser apps, terminal apps, the Assistant and its sign-in | [apps.md](docs/apps.md#http-api) |
@@ -4538,11 +4569,53 @@ never listed nor served. The built-in deny list (credential folders such as
 `~/.ssh`, and the gateway's data folder; see
 [Configuration](docs/configuration.md#workspace-policy-filesystem-scope)) is never
 listed, and reading inside it answers 404, even when the run's folder
-contains it. The workspace access policy (allowed and blocked
-folders, launch-folder trust) is applied again at every call, and nothing
+contains it. The workspace policy (the account's effective folders,
+never-allowed folders, launch-folder trust) is applied again at every call, and nothing
 else in the gateway's data folder is ever served. A run cannot be started
 with a `workspace_root` inside the gateway's data folder either, except the
 conversation folder the gateway made for the same user.
+
+## Workspace folders
+
+The admin allows, the account fine-tunes (round 9). Full model and enforcement:
+[security.md](docs/security.md#workspace-folders-the-admin-allows-the-account-fine-tunes).
+
+`GET /api/gateway/workspace/policy` (any signed-in principal) →
+`{ok, policy}` with `policy = {shared_workspace, allowed_folders[],
+allow_any_folder, never_allowed[], launch_folder_trust,
+builtin_never_allowed[] (read-only), max_attachment_bytes (read-only)}`.
+
+`PUT /api/gateway/workspace/policy` (admin): any subset of `{shared_workspace,
+allowed_folders, allow_any_folder, never_allowed, launch_folder_trust}`; named
+fields replace, others keep, so one switch is one request. Every folder is
+checked like `POST /workspace/path-check` (absolute, existing). Refused with 400
+and a sentence: an empty shared workspace, a shared workspace inside the data
+folder or a credential folder, a never-allowed folder that contains the shared
+workspace, an allowed folder inside a never-allowed one, an unknown field, and
+the old fields (`mode`, `client_workspace_scope_overrides`, …). Removing an
+allowed folder switches it off for every account. Answers like the GET.
+
+`GET /api/gateway/workspace/policy/{account}` (admin, or the account itself;
+`{account}` = `name`, `tenant:name` or `me`) → `{ok, policy: {account,
+enabled_folders[], own_folders[]}, gateway: <gateway policy>, effective:
+<effective>}`. 404 for an account that does not exist, 403 for someone else's.
+
+`PUT /api/gateway/workspace/policy/{account}`: any subset of
+`{enabled_folders, own_folders}`. An enabled folder must be one of the gateway's
+allowed folders; own folders need `allow_any_folder` (an empty list always
+clears them) and may not sit inside a never-allowed folder. Answers like the
+GET. `/workspace/policy/self` answers 410 naming `/workspace/policy/me`.
+
+`GET /api/gateway/workspace/effective/{account}` → `{ok, account,
+shared_workspace, folders: [{path, source: "shared"|"allowed"|"own"}]
+(shared first), available_folders: [{path, enabled, never_allowed}],
+own_folders[], own_folders_allowed, own_folders_inactive, never_allowed[]
+(gateway + built-in), launch_folder_trust, summary}`; `summary` is one line
+such as "Shared workspace (work) + 2 folders (1 of your own). Never: 1 folder.".
+
+Run starts read the same set: a `workspace_allowed_paths` list may only narrow
+it (absent = the whole set, the shared workspace always kept), a wider folder or
+`workspace_access_mode: "all_except_ignored"` is refused with 400.
 
 ## Artifacts and filesystem handoff
 
@@ -9702,6 +9775,8 @@ Requires AbstractRuntime 0.9.0, AbstractCore 2.25.0 and AbstractVoice 0.14.0 (in
 
 - **Edit a workflow's description** where it is listed: the owner (an admin for the gateway's workflows) clicks the pencil, types, and Enter or leaving the box saves it; Escape cancels. `PATCH /api/gateway/bundles/{bundle_id}` `{description}` (`""` goes back to the file's own text); shipped workflows refuse (409), a user on a shared workflow gets 403; the `.flow` file is never rewritten; audited as `workflow.description`. `GET /bundles` items carry `description_edited` and `actions.can_edit_description`.
 
+- **Workspace folders: the admin allows, the account fine-tunes.** The gateway policy is a shared workspace (exactly one, required, always available), allowed folders, **Allow any folder** (off by default; on = accounts may add folders of their own), **Never allowed** (gateway-wide, always wins) and launch-folder trust: `GET /api/gateway/workspace/policy` (everyone), `PUT` (admin; any subset of the fields, so one switch is one request). Each account (people, entities, the admin's own) switches allowed folders on (off by default) and, when any folder is allowed, adds its own: `GET`/`PUT /api/gateway/workspace/policy/{account}` (admin or the account itself; `me` = the caller). `GET /api/gateway/workspace/effective/{account}` is the set the gateway enforces, with a one-line `summary`. An account can never exceed the admin; removing an allowed folder switches it off everywhere. Audited as `workspace_policy_changed`. See [docs/security.md](docs/security.md#workspace-folders-the-admin-allows-the-account-fine-tunes) and [docs/api.md](docs/api.md#workspace-folders).
+
 ### Changed
 
 - **Apps page has no settings disclosures.** *Advanced: apps settings* and *Advanced: backlog settings (Continuum)* are gone: the gear in the Apps toolbar opens **Apps settings**, the gear beside Continuum's Open opens **Continuum settings** (backlog folder, exec runner and process manager as switches). Every row applies on its own (a field on blur or Enter, a switch at once) and says "Saved" beside itself; there is no Save button.
@@ -9721,6 +9796,7 @@ Requires AbstractRuntime 0.9.0, AbstractCore 2.25.0 and AbstractVoice 0.14.0 (in
 
 ### Removed
 
+- **The old workspace model**: the *Allow my list* / *Allow everything except* access modes, per-user allow/deny lists and launch-folder trust overrides, and **Any folder (old clients)**. Its stored settings are migrated once, at the first read (the old workspace root becomes the shared workspace; the old extra workspaces and every account's allowed folders become allowed folders, switched on for the accounts that had them; "allow everything except" anywhere turns **Allow any folder** on; every refused folder becomes never allowed; missing folders are dropped and listed under `_migrated.workspace_policy_v1` with the old block). The runtime-config keys `workspace_root`, `workspace_mounts`, `workspace_allowed_paths`, `workspace_blocked_paths`, `workspace_default_mode`, `trust_client_launch_folder`, `client_workspace_scope_overrides` and `user_workspace_policies` are refused on write and no longer read; `GET/PUT /api/gateway/workspace/policy/self` (now 410) and `/admin/user-workspace-policy` are gone; `ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE` / `ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE` are no longer read. A run start with `workspace_access_mode: "all_except_ignored"` or a folder outside the account's effective set answers 400; every run's tool sandbox (whatever door started it) gets the account's effective folders and the never-allowed list. The `/files/*` helpers follow the admin account's effective set and only narrow on client parameters.
 - The admin-only `POST /api/gateway/admin/core-endpoint/token/reveal`: no route returns a stored token.
 
 ### Fixed
@@ -13409,22 +13485,19 @@ The gateway exposes helpers used by thin clients and workflows:
 - File access: `GET /api/gateway/files/search|read|skim`
 - Attachments: `POST /api/gateway/attachments/ingest` and `POST /api/gateway/attachments/upload`
 
-Workspace scope is **operator-controlled at gateway launch**:
+Workspace folders are a setting the admin changes at any time (no restart):
+the gateway policy (`GET`/`PUT /api/gateway/workspace/policy`: shared
+workspace, allowed folders, allow any folder, never allowed, launch-folder
+trust) and each account's switched-on folders (`/workspace/policy/{account}`).
+A run started without `workspace_root` works in a folder the gateway makes for
+its conversation under `<ABSTRACTGATEWAY_DATA_DIR>/workspaces/`; its file tools
+reach that folder plus the account's effective folders
+(`GET /api/gateway/workspace/effective/me`). The `/files/*` helpers (admin) use
+the shared workspace as their root and the admin's switched-on folders as
+mounts; a client may only narrow them. See
+[security.md](docs/security.md#workspace-folders-the-admin-allows-the-account-fine-tunes).
 
-- Default (safe): thin clients cannot expand filesystem scope. If a run is started without `workspace_root`, the gateway creates a per-run workspace under `<ABSTRACTGATEWAY_DATA_DIR>/workspaces/<uuid>`, and filesystem-ish tool calls are scoped to that workspace (`workspace_access_mode=workspace_only`).
-- Allowlist additional roots for file helpers via `ABSTRACTGATEWAY_WORKSPACE_DIR` + `ABSTRACTGATEWAY_WORKSPACE_MOUNTS`.
-- Permissive mode (trusted machines only): enable client-provided `workspace_*` overrides (including `all_except_ignored`) via `ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE=1` (or `ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE=1`).
-
-Note: `/api/gateway/files/*` + `/api/gateway/attachments/ingest` ignore client-provided scope overrides unless client overrides are enabled.
-
-Server-side workspace mounts (operator-controlled):
-
-```bash
-# newline-separated: name=/absolute/path
-export ABSTRACTGATEWAY_WORKSPACE_MOUNTS=$'repo=/abs/path/to/repo\\ndata=/abs/path/to/data'
-```
-
-Evidence: `_workspace_mounts()` and related policy helpers in `src/abstractgateway/routes/gateway.py`, tests in `tests/test_gateway_workspace_policy_enforcement.py`.
+Evidence: `src/abstractgateway/workspace_policy.py`, `_files_scope()` in `src/abstractgateway/routes/gateway.py`, tests in `tests/test_gateway_workspace_policy_r9.py`.
 
 ## Telegram bridge
 

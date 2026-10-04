@@ -1182,17 +1182,23 @@ browser timezone when possible, with locale only as a fallback.
 
 ### Workspace policy (filesystem scope)
 
-The gateway enforces a server-side workspace policy so thin clients cannot expand filesystem access by sending arbitrary paths.
+The gateway decides which folders each account's runs may use; thin clients
+cannot widen it by sending paths. It is a setting, not an environment variable:
+the admin sets the gateway policy (shared workspace, allowed folders, allow any
+folder, never allowed, launch-folder trust) with `PUT
+/api/gateway/workspace/policy`, and each account switches allowed folders on
+(and adds its own folders while any folder is allowed) with `PUT
+/api/gateway/workspace/policy/{account}` (`me` = the caller). `GET
+/api/gateway/workspace/effective/{account}` returns what applies. The full
+model, its enforcement and the one-time migration from the old access modes are
+in [security.md](./security.md#workspace-folders-the-admin-allows-the-account-fine-tunes).
 
-Operator-controlled roots:
-- `ABSTRACTGATEWAY_WORKSPACE_DIR`: base directory used for `/api/gateway/files/*` helpers and to clamp run-provided `workspace_root` / `workspace_allowed_paths`.
-- `ABSTRACTGATEWAY_WORKSPACE_MOUNTS`: additional allowed roots, newline-separated `name=/abs/path`.
-
-Client scope overrides (permissive; trusted machines only):
-- `ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE=1` (or `ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE=1`) enables honoring client-provided `workspace_*` knobs, including `workspace_access_mode=all_except_ignored`.
-
-Discoverability:
-- `GET /api/gateway/workspace/policy` returns `{policy: {...}}` including whether client overrides are enabled (mount names only; no absolute paths).
+Until an admin chooses one, the shared workspace is
+`ABSTRACTGATEWAY_WORKSPACE_DIR` when set, otherwise the gateway's working
+folder. `ABSTRACTGATEWAY_WORKSPACE_MOUNTS` is read once, by the migration (its
+folders become allowed folders). The old runtime-config workspace keys and the
+`ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE` /
+`ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE` variables are gone.
 
 Built-in deny list. These folders of the gateway's user account are never
 listed nor served by the workspace browser (`GET /runs/{run_id}/workspace/…`),
@@ -1233,7 +1239,7 @@ gateway-made folder when it named none) and gets the built-in deny rule above.
 Entity visits (the entity chat and its own-time loop) use the entity's own
 tools, which never leave `<entity home>/workspace` and the operator's mounts.
 
-Evidence: `src/abstractgateway/routes/gateway.py` (`_workspace_root`, `_workspace_mounts`, `_sanitize_run_workspace_policy`, `_apply_builtin_tool_deny`, `_browse_workspace_root`, `start_run`), `src/abstractgateway/workspace_browse.py`.
+Evidence: `src/abstractgateway/workspace_policy.py`, `src/abstractgateway/routes/gateway.py` (`_sanitize_run_workspace_policy`, `_files_scope`, `_browse_workspace_root`), `src/abstractgateway/run_workspace_guard.py`, `src/abstractgateway/workspace_browse.py`.
 
 ### Durability backend
 

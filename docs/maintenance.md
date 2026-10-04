@@ -128,22 +128,19 @@ The gateway exposes helpers used by thin clients and workflows:
 - File access: `GET /api/gateway/files/search|read|skim`
 - Attachments: `POST /api/gateway/attachments/ingest` and `POST /api/gateway/attachments/upload`
 
-Workspace scope is **operator-controlled at gateway launch**:
+Workspace folders are a setting the admin changes at any time (no restart):
+the gateway policy (`GET`/`PUT /api/gateway/workspace/policy`: shared
+workspace, allowed folders, allow any folder, never allowed, launch-folder
+trust) and each account's switched-on folders (`/workspace/policy/{account}`).
+A run started without `workspace_root` works in a folder the gateway makes for
+its conversation under `<ABSTRACTGATEWAY_DATA_DIR>/workspaces/`; its file tools
+reach that folder plus the account's effective folders
+(`GET /api/gateway/workspace/effective/me`). The `/files/*` helpers (admin) use
+the shared workspace as their root and the admin's switched-on folders as
+mounts; a client may only narrow them. See
+[security.md](./security.md#workspace-folders-the-admin-allows-the-account-fine-tunes).
 
-- Default (safe): thin clients cannot expand filesystem scope. If a run is started without `workspace_root`, the gateway creates a per-run workspace under `<ABSTRACTGATEWAY_DATA_DIR>/workspaces/<uuid>`, and filesystem-ish tool calls are scoped to that workspace (`workspace_access_mode=workspace_only`).
-- Allowlist additional roots for file helpers via `ABSTRACTGATEWAY_WORKSPACE_DIR` + `ABSTRACTGATEWAY_WORKSPACE_MOUNTS`.
-- Permissive mode (trusted machines only): enable client-provided `workspace_*` overrides (including `all_except_ignored`) via `ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE=1` (or `ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE=1`).
-
-Note: `/api/gateway/files/*` + `/api/gateway/attachments/ingest` ignore client-provided scope overrides unless client overrides are enabled.
-
-Server-side workspace mounts (operator-controlled):
-
-```bash
-# newline-separated: name=/absolute/path
-export ABSTRACTGATEWAY_WORKSPACE_MOUNTS=$'repo=/abs/path/to/repo\\ndata=/abs/path/to/data'
-```
-
-Evidence: `_workspace_mounts()` and related policy helpers in `src/abstractgateway/routes/gateway.py`, tests in `tests/test_gateway_workspace_policy_enforcement.py`.
+Evidence: `src/abstractgateway/workspace_policy.py`, `_files_scope()` in `src/abstractgateway/routes/gateway.py`, tests in `tests/test_gateway_workspace_policy_r9.py`.
 
 ## Telegram bridge
 
