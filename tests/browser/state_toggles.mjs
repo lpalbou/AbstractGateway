@@ -183,7 +183,7 @@ try {
       disabled: tr.querySelectorAll("button[disabled]").length,
     }])));
     // Round 8: icon actions, no "⋯" menu: users Email · OpenAI API · Logs · Workspace · Rotate · Archive.
-    check(JSON.stringify(acts.castor) === JSON.stringify({ vis: ["email", "logs", "manage", "archive"], disabled: 0 }), "entity row: Email · Logs · Manage · Archive", acts.castor);
+    check(JSON.stringify(acts.castor) === JSON.stringify({ vis: ["email", "logs", "workspace", "manage", "archive"], disabled: 0 }), "entity row: Email · Logs · Workspace · Manage · Archive", acts.castor);
     check(JSON.stringify(acts.alice) === JSON.stringify({ vis: ["email", "openai_api", "logs", "workspace", "rotate", "archive"], disabled: 0 }), "user row: Email · OpenAI API · Logs · Workspace · Rotate · Archive", acts.alice);
     check(JSON.stringify(acts.admin) === JSON.stringify({ vis: ["email", "openai_api", "logs", "workspace", "rotate"], disabled: 0 }), "own row: no Archive offered", acts.admin);
     check((await page.locator("#users-section .accounts-reasons").count()) === 0 && !(await page.textContent("#users-section")).includes("don't apply to entities"), "no per-row reasons paragraph");
@@ -365,7 +365,7 @@ try {
     // "Shared with everyone" group.
     const shippedRow = await page.evaluate(() => {
       const r = document.querySelector("#workflows-table tr[data-bundle='basic-agent']");
-      const labels = Array.from(r.querySelectorAll(".workflows-actions button")).map((b) => (b.textContent.trim() || b.title || "").replace(/ .*/, ""));  // round 8: icon buttons (tooltip = title)
+      const labels = Array.from(r.querySelectorAll(".workflows-actions button")).map((b) => (b.textContent.trim() || b.getAttribute("data-af-tip") || "").replace(/ .*/, ""));  // icon buttons: the kit tooltip sentence (round 9)
       return { labels, sw: r.querySelector(".workflows-available [role=switch]")?.getAttribute("aria-checked"), groups: Array.from(document.querySelectorAll("#workflows-table tr.workflows-group .workflows-group__title")).map((t) => t.textContent), anyDelete: Array.from(document.querySelectorAll("#tab-workflows button")).some((b) => /^Delete/.test(b.textContent.trim())) };
     });
     check(JSON.stringify(shippedRow.labels) === JSON.stringify(["Export", "Open"]) && shippedRow.sw === "true" && !shippedRow.anyDelete && shippedRow.groups[0] === "Shared with everyone", "shipped workflow: Export + Open + availability switch (on); no Delete anywhere", shippedRow);
