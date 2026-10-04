@@ -644,6 +644,8 @@ def apps_section(inputs: MenuInputs, *, reachable: bool) -> Node:
             items.append(SEP)
             if a.status in {"available", "running"}:
                 items.append(Node(f"Launch {a.name}", ("assistant_launch",)))
+                if a.notice:
+                    items.append(info(a.notice))
             elif a.status == "installing":
                 pct = f" {int(a.job_percent)}%" if isinstance(a.job_percent, (int, float)) else ""
                 items.append(info(f"{a.name} — installing{pct}…"))

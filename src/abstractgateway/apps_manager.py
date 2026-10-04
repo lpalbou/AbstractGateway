@@ -3286,7 +3286,7 @@ class AppsManager:
             found = detect_assistant(self.desktop_probes(), spec=spec)
         except Exception as exc:  # noqa: BLE001 - detection never breaks the apps page
             logger.warning("detecting %s failed", spec.name, exc_info=True)
-            found = {"installed": False, "found_by": [f"detection failed: {type(exc).__name__}: {exc}"], "source": "", "launch": None, "launches": [], "bundle": None, "script": None, "package_origin": None, "version": None, "location": None, "running": False, "pid": None, "running_argv": None}
+            found = {"installed": False, "found_by": [f"detection failed: {type(exc).__name__}: {exc}"], "source": "", "launch": None, "launches": [], "bundle": None, "script": None, "package_origin": None, "version": None, "location": None, "running": False, "pid": None, "running_argv": None, "other_running": None}
         self._desktop_cache[spec.id] = (_now(), found)
         return dict(found)
 
@@ -3382,6 +3382,9 @@ class AppsManager:
                 "launch_available": launch_available,
                 "launch_blocked": code,
                 "launch_blocked_reason": launch_blocked,
+                # A running Assistant of the OTHER artifact (R10.5): its own
+                # sentence; Open still launches the one this card describes.
+                "other_running": (dict(pres["other_running"], argv=None) if pres.get("other_running") else None),
             },
         }
 

@@ -20,19 +20,31 @@ Presence (read-only, nothing is imported or launched to find it):
 - the macOS app bundle `AbstractAssistant.app` in /Applications or
   ~/Applications.
 
-Version: the package metadata (`importlib.metadata.version`), else the
-bundle's `Info.plist` (`CFBundleShortVersionString`).
+ONE ARTIFACT (R10.5, 2026-10-04): the gateway reports, launches and watches
+one Assistant — the installed PACKAGE (its console script, else this Python
+running its entry point) when it is installed, else the macOS bundle. A
+leftover bundle (a hand-built AbstractAssistant.app from weeks ago) is never
+launched over an installed package: the card said 0.13.0 and Open started a
+0.5.0 bundle.
 
-Running: a process whose command line names the assistant (psutil, the style
-of the external-app probe in apps_manager): the console script, `python -m
-abstractassistant[.cli|.macos_entry]`, the tray's `python -c "from
-abstractassistant.cli import main"`, or the bundle's own executable.
+Version: the chosen artifact's — the package metadata
+(`importlib.metadata.version`) for the package, the bundle's `Info.plist`
+(`CFBundleShortVersionString`) for the bundle.
+
+Running: a process of the CHOSEN artifact whose command line names the
+assistant (psutil, the style of the external-app probe in apps_manager): the
+console script, `python -m abstractassistant[.cli|.macos_entry]`, the tray's
+`python -c "from abstractassistant.cli import main"` (the package), or the
+bundle's own executable (the bundle). A process of the OTHER artifact is not
+"running" for the card: it is reported as `other_running` with one sentence
+("Another Assistant is running: <where> <version> — quit it to use
+<version>"), and Open still launches the chosen artifact.
 
 Launching (same machine only: it opens on the gateway computer's screen) is a
 detached process with the scrubbed environment every app gets (no token,
-secret or key): `open -a <bundle>` when the bundle exists (macOS brings a
-running one forward instead of starting a second), else the console script,
-else this Python running its entry point. A NEW Assistant started from the
+secret or key): the console script, else this Python running its entry
+point, else (no package installed) `open -a <bundle>` (macOS brings a running
+one forward instead of starting a second). A NEW Assistant started from the
 gateway (console or tray) is signed in by a one-time hand-over:
 `--gateway-url <url> --gateway-handover-file <file>` (after `--args` for
 `open -a`), the file being a 0600 JSON under <data dir>/handover/ holding
@@ -227,23 +239,47 @@ def is_assistant_argv(argv: Sequence[str], spec: DesktopAppSpec = ASSISTANT) -> 
     return False
 
 
+def _argv_artifact(argv: Sequence[str], spec: DesktopAppSpec = ASSISTANT) -> Tuple[str, Optional[str]]:
+    """("bundle", <bundle path>) for the bundle's own executable, else ("package", None)."""
+    a0 = str(argv[0]) if argv else ""
+    marker = f"{spec.bundle}/Contents/MacOS/"
+    if marker in a0:
+        return "bundle", a0[: a0.index(marker) + len(spec.bundle)]
+    return "package", None
+
+
+def other_running_sentence(other: Dict[str, Any], *, chosen_version: Optional[str], spec: DesktopAppSpec = ASSISTANT) -> str:
+    """"Another Assistant is running: /Applications/AbstractAssistant.app 0.5.0 — quit it to use 0.13.0"."""
+    where = str(other.get("location") or ("the app bundle" if other.get("artifact") == "bundle" else "another install"))
+    ver = f" {other['version']}" if other.get("version") else ""
+    use = f" to use {chosen_version}" if chosen_version else f" to use the installed {spec.name}"
+    return f"Another {spec.name} is running: {where}{ver} — quit it{use}"
+
+
 def detect_assistant(probes: Optional[DesktopProbes] = None, *, spec: DesktopAppSpec = ASSISTANT, with_running: bool = True) -> Dict[str, Any]:
     """Where the Assistant is on this machine, how to launch it, and whether it
     runs. ONE function for the console (apps_manager) and the tray (tray/apps).
 
-    {installed, found_by: [...], source: bundle|script|python|"", launch: argv|None,
+    ONE artifact: the installed package (script, else python entry point) when
+    installed, else the bundle — `launch`, `version` and `running` are all
+    that artifact's. A running process of the other artifact is
+    `other_running` {artifact, location, version, pid, sentence}, never
+    `running`.
+
+    {installed, found_by: [...], source: script|python|bundle|"", launch: argv|None,
      launches: [(source, argv)], bundle, script, package_origin, version,
-     location, running, pid, running_argv}"""
+     location, running, pid, running_argv, other_running}"""
     p = probes or system_probes()
     found: List[str] = []
     launches: List[Tuple[str, List[str]]] = []
+    bundle_launches: List[Tuple[str, List[str]]] = []
     bundle_path: Optional[str] = None
     if p.platform == "darwin":
         for base in (Path("/Applications"), Path(p.home) / "Applications"):
             b = base / spec.bundle
             if p.exists(str(b)):
                 found.append(f"bundle:{b}")
-                launches.append(("bundle", ["open", "-a", str(b)]))
+                bundle_launches.append(("bundle", ["open", "-a", str(b)]))
                 bundle_path = bundle_path or str(b)
     exe = spec.script + (".exe" if p.platform.startswith("win") else "")
     script: Optional[str] = None
@@ -272,24 +308,41 @@ def detect_assistant(probes: Optional[DesktopProbes] = None, *, spec: DesktopApp
             launches.append(("python", [p.python, "-c", f"import sys; from {mod} import {attr} as _m; sys.exit(_m())"]))
     elif mod_spec is not None:
         found.append(f"namespace-only (ignored: a folder named {spec.package}, not an install)")
+    # The package (script, then python entry point) first; the bundle only
+    # launches when no package is installed.
+    launches.extend(bundle_launches)
     installed = bool(launches)
-    version: Optional[str] = None
-    if installed and (script or origin):
-        version = p.dist_version(spec.package)
-    if not version and bundle_path:
-        version = p.plist_version(str(Path(bundle_path) / "Contents" / "Info.plist"))
     source, launch = (launches[0][0], list(launches[0][1])) if launches else ("", None)
+    artifact = "bundle" if source == "bundle" else ("package" if source else "")
+    version: Optional[str] = None
+    if artifact == "package":
+        version = p.dist_version(spec.package)
+    elif artifact == "bundle" and bundle_path:
+        version = p.plist_version(str(Path(bundle_path) / "Contents" / "Info.plist"))
     location = bundle_path if source == "bundle" else (script if source == "script" else (origin if source == "python" else None))
     pid: Optional[int] = None
     running_argv: Optional[List[str]] = None
-    if with_running:
+    other: Optional[Dict[str, Any]] = None
+    if with_running and artifact:
         try:
             for proc_pid, argv in p.processes():
-                if is_assistant_argv(argv, spec):
+                if not is_assistant_argv(argv, spec):
+                    continue
+                kind, where = _argv_artifact(argv, spec)
+                if kind == artifact:
                     pid, running_argv = proc_pid, list(argv)
                     break
+                if other is None:
+                    if kind == "bundle":
+                        other_ver = p.plist_version(str(Path(where) / "Contents" / "Info.plist")) if where else None
+                    else:
+                        other_ver = None  # another Python's package: its version is not ours to read
+                        where = str(argv[0])
+                    other = {"artifact": kind, "location": where, "version": other_ver, "pid": proc_pid, "argv": list(argv)}
         except Exception:  # noqa: BLE001 - a probe failure is "not running"
             pid = None
+    if other is not None:
+        other["sentence"] = other_running_sentence(other, chosen_version=version, spec=spec)
     return {
         "installed": installed,
         "found_by": found,
@@ -304,6 +357,7 @@ def detect_assistant(probes: Optional[DesktopProbes] = None, *, spec: DesktopApp
         "running": pid is not None,
         "pid": pid,
         "running_argv": running_argv,
+        "other_running": other,
     }
 
 

@@ -362,8 +362,11 @@ def test_assistant_detection_bundle_script_spec_and_the_namespace_trap(tmp_path:
     assert got["source"] == "script" and got["launch"] == ["/bin/abstractassistant"]
     bundle = "/Applications/AbstractAssistant.app"
     got = tray_apps.detect_assistant(_probes(tmp_path, files=[bundle], which={"abstractassistant": "/bin/abstractassistant"}), entry_point=lambda: None)
-    assert got["source"] == "bundle" and got["launch"] == ["open", "-a", bundle]
+    # R10.5: the installed package (here its script) is the one artifact; the bundle only without it.
+    assert got["source"] == "script" and got["launch"] == ["/bin/abstractassistant"]
     assert got["found_by"] == [f"bundle:{bundle}", "script:/bin/abstractassistant"]
+    got = tray_apps.detect_assistant(_probes(tmp_path, files=[bundle]), entry_point=lambda: None)
+    assert got["source"] == "bundle" and got["launch"] == ["open", "-a", bundle]
     # The gateway's own scripts folder counts even when it is not on PATH.
     script = str(tmp_path / "venv" / "bin" / "abstractassistant")
     got = tray_apps.detect_assistant(_probes(tmp_path, files=[script], platform="linux"), entry_point=lambda: None)

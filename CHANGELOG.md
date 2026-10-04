@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Apps → Assistant opens the Assistant it reports.** With the package installed and an old `AbstractAssistant.app` also present, the card showed the package's version but **Open** started the app bundle. The gateway now reports, opens and watches one Assistant: the installed package, else the bundle. When the other one runs, the Apps card and the tray say so in one sentence ("Another Assistant is running: /Applications/AbstractAssistant.app 0.5.0 — quit it to use 0.13.0") and **Open** still starts the installed one (`desktop.other_running` on the app row).
 - The tray's Workflows submenu said "No runs in the last 24 hours" while runs were active: automation occurrences (whose parent is their controller) were left out, the run page was cut before sub-runs were filtered out, and runs that started more than 24 hours ago were hidden while still running.
 
 ## [0.13.0] - 2026-10-04

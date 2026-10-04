@@ -1822,6 +1822,10 @@ CONSOLE_UI_JS = r"""
       // The Assistant opens on the gateway computer's screen: from another
       // computer the card says so, with no button.
       if (desk && app.installed && desk.launch_blocked === "other_computer") body += `<p class="ui-card__note" data-app-desktop-remote="${esc(app.id)}">${esc(desk.launch_blocked_reason || "")}</p>`;
+      // R10.5: another Assistant (the other artifact: a leftover app bundle,
+      // another install) is running. Its own sentence, from the gateway's one
+      // probe; Open stays enabled and starts the installed one.
+      if (desk && app.installed && desk.other_running && desk.other_running.sentence) body += `<p class="ui-card__note" data-app-desktop-other="${esc(app.id)}">${esc(desk.other_running.sentence)}</p>`;
       const tui = appTuiParts(app, techOn);
       body += tui.body;
       const pend = busy ? appStore.pending.get(app.id) : null;

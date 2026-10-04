@@ -168,9 +168,11 @@ def _probes(tmp_path: Path, *, files=(), which=None, spec=None, platform="darwin
 
 def test_detection_bundle_script_and_neither(tmp_path: Path) -> None:
     script = str(tmp_path / "venv" / "bin" / "abstractassistant")
+    # R10.5: ONE artifact — the installed package wins over a bundle.
     both = desk.detect_assistant(_probes(tmp_path, files=[BUNDLE, script]))
-    assert both["installed"] and both["source"] == "bundle" and both["launch"] == ["open", "-a", BUNDLE]
-    assert both["found_by"] == [f"bundle:{BUNDLE}", f"script:{script}"] and both["version"] == "0.5.0"  # package metadata first
+    assert both["installed"] and both["source"] == "script" and both["launch"] == [script]
+    assert both["found_by"] == [f"bundle:{BUNDLE}", f"script:{script}"] and both["version"] == "0.5.0"  # the package's metadata
+    assert both["launches"][-1] == ("bundle", ["open", "-a", BUNDLE])
     only_bundle = desk.detect_assistant(_probes(tmp_path, files=[BUNDLE], version=None))
     assert only_bundle["version"] == "0.4.9" and only_bundle["location"] == BUNDLE  # Info.plist
     only_script = desk.detect_assistant(_probes(tmp_path, files=[script], platform="linux"))
@@ -288,7 +290,9 @@ def test_overview_lists_the_assistant_after_the_browser_apps(amgr) -> None:
     m._desktop_cache.clear()
     a = m.desktop_row("assistant", caller={"same_machine": True, "admin": True})
     assert a["installed"] and a["status"] == "stopped" and a["actions"] == ["open"] and a["version"] == "0.5.0"
-    assert a["desktop"]["launch_available"] and a["desktop"]["launch_command"] == f"open -a {BUNDLE}" and a["desktop"]["location"] == BUNDLE
+    # R10.5: the installed package is the one artifact (the bundle is ignored for launching).
+    assert a["desktop"]["launch_available"] and a["desktop"]["launch_command"] == state["script"] and a["desktop"]["location"] == state["script"]
+    assert a["desktop"]["other_running"] is None
     state["procs"] = [(4242, ["/venv/bin/python", "-m", "abstractassistant.cli"])]
     m._desktop_cache.clear()
     a = m.desktop_row("assistant", caller={"same_machine": True, "admin": True})
@@ -428,7 +432,8 @@ def test_launch_bundle_script_running_and_the_same_machine_rule(amgr, monkeypatc
         m.launch_desktop("assistant", same_machine=False)
     assert spawned == []
     out = m.launch_desktop("assistant", same_machine=True)
-    assert spawned[-1]["argv"] == ["open", "-a", BUNDLE] and out["message"].startswith("The Assistant is starting")
+    # R10.5: package and bundle both present → the package starts, never the bundle.
+    assert spawned[-1]["argv"][0] == state["script"] and out["message"].startswith("The Assistant is starting")
     env = spawned[-1]["env"]
     assert "ABSTRACTGATEWAY_AUTH_TOKEN" not in env and "OPENAI_API_KEY" not in env
     assert not any("must-not-leak" in str(a) for a in spawned[-1]["argv"])  # never a token on argv
@@ -446,6 +451,86 @@ def test_launch_bundle_script_running_and_the_same_machine_rule(amgr, monkeypatc
     state["procs"] = [(98, [f"{BUNDLE}/Contents/MacOS/AbstractAssistant"])]
     out = m.launch_desktop("assistant", same_machine=True)
     assert spawned[-1]["argv"] == ["open", "-a", BUNDLE] and out["already_running"]
+
+
+# ---------------------------------------------------------------------------
+# 2c. R10.5: report, launch and watch ONE artifact
+# ---------------------------------------------------------------------------
+
+
+def _r105_probes(tmp_path: Path, *, bundle: bool, package: bool, procs=()) -> desk.DesktopProbes:
+    """A stale 0.5.0 app bundle and/or the installed 0.13.0 package."""
+    script = str(tmp_path / "venv" / "bin" / "abstractassistant")
+    present = ({BUNDLE} if bundle else set()) | ({script} if package else set())
+    return desk.DesktopProbes(
+        which=lambda name: None,
+        exists=lambda p: p in present,
+        find_spec=lambda name: types.SimpleNamespace(origin="/venv/lib/abstractassistant/__init__.py") if package else None,
+        platform="darwin",
+        home=tmp_path,
+        script_dirs=[str(tmp_path / "venv" / "bin")],
+        python="/venv/bin/python",
+        dist_version=lambda name: "0.13.0" if package else None,
+        plist_version=lambda path: "0.5.0" if path.startswith(BUNDLE) else None,
+        entry_point=lambda script: "abstractassistant.cli:main",
+        processes=lambda: list(procs),
+    )
+
+
+BUNDLE_PROC = (777, [f"{BUNDLE}/Contents/MacOS/AbstractAssistant"])
+
+
+def test_r105_bundle_and_package_report_and_launch_the_package(tmp_path: Path) -> None:
+    script = str(tmp_path / "venv" / "bin" / "abstractassistant")
+    d = desk.detect_assistant(_r105_probes(tmp_path, bundle=True, package=True, procs=[BUNDLE_PROC]))
+    assert d["source"] == "script" and d["launch"] == [script] and d["version"] == "0.13.0" and d["location"] == script
+    # The stale bundle runs: not "running" for the card — its own sentence.
+    assert d["running"] is False and d["pid"] is None
+    other = d["other_running"]
+    assert other["artifact"] == "bundle" and other["location"] == BUNDLE and other["version"] == "0.5.0" and other["pid"] == 777
+    assert other["sentence"] == f"Another Assistant is running: {BUNDLE} 0.5.0 — quit it to use 0.13.0"
+    # The package itself running: running, no sentence.
+    d = desk.detect_assistant(_r105_probes(tmp_path, bundle=True, package=True, procs=[(5, [script])]))
+    assert d["running"] is True and d["pid"] == 5 and d["other_running"] is None
+
+
+def test_r105_bundle_only_and_package_only(tmp_path: Path) -> None:
+    only_b = desk.detect_assistant(_r105_probes(tmp_path, bundle=True, package=False, procs=[BUNDLE_PROC]))
+    assert only_b["source"] == "bundle" and only_b["launch"] == ["open", "-a", BUNDLE] and only_b["version"] == "0.5.0"
+    assert only_b["running"] is True and only_b["other_running"] is None
+    script = str(tmp_path / "venv" / "bin" / "abstractassistant")
+    only_p = desk.detect_assistant(_r105_probes(tmp_path, bundle=False, package=True))
+    assert only_p["source"] == "script" and only_p["launch"] == [script] and only_p["version"] == "0.13.0"
+    assert only_p["running"] is False and only_p["other_running"] is None
+
+
+def test_r105_console_card_and_launch_read_the_one_probe(amgr, tmp_path: Path) -> None:
+    m, state, spawned = amgr
+    m.desktop_probes = lambda: _r105_probes(tmp_path, bundle=True, package=True, procs=[BUNDLE_PROC])
+    m._desktop_cache.clear()
+    row = m.desktop_row("assistant", caller={"same_machine": True, "admin": True})
+    assert row["version"] == "0.13.0" and row["running"] is False and row["status"] == "stopped"
+    assert row["actions"] == ["open"] and row["desktop"]["launch_available"] is True
+    assert row["desktop"]["other_running"]["sentence"] == f"Another Assistant is running: {BUNDLE} 0.5.0 — quit it to use 0.13.0"
+    out = m.launch_desktop("assistant", same_machine=True)
+    assert spawned[-1]["argv"][0] == state["script"] and "open" not in spawned[-1]["argv"][:1]
+    assert not out.get("already_running")
+
+
+def test_r105_tray_reads_the_same_probe_and_says_the_sentence(tmp_path: Path) -> None:
+    from abstractgateway.tray import apps as tray_apps
+    from abstractgateway.tray.menu_model import MenuInputs, build_menu
+    from test_gateway_tray_helper import _snap
+
+    d = desk.detect_assistant(_r105_probes(tmp_path, bundle=True, package=True, procs=[BUNDLE_PROC]))
+    entries = tray_apps.build_app_entries(None, "offline", globals_found={}, assistant=d, local_running={})
+    a = [e for e in entries if e.id == "assistant"][0]
+    assert a.status == "available" and a.notice == d["other_running"]["sentence"]
+    nodes = build_menu(MenuInputs(snap=_snap(), apps=entries, apps_fetched=True))
+    apps_node = next(n for n in nodes if n.label == "Apps")
+    labels = [c.label for c in apps_node.children if not c.separator]
+    i = labels.index("Launch Assistant")
+    assert labels[i + 1] == f"Another Assistant is running: {BUNDLE} 0.5.0 — quit it to use 0.13.0"
 
 
 def test_a_launch_that_exits_is_a_failure(amgr) -> None:
@@ -511,5 +596,7 @@ def test_console_card_pins() -> None:
     assert "Install and open" not in CONSOLE_UI_JS and "Install for Terminal" not in CONSOLE_UI_JS
     assert 'b("desktop-open", "Open", "is-primary"' in card and 'desk.launch_blocked === "other_computer"' in card
     assert "appPartsMarkup(job)" in card
+    # R10.5: another Assistant running is its own sentence; nothing disables Open for it.
+    assert "desk.other_running.sentence" in card and "data-app-desktop-other" in card
     act = CONSOLE_UI_JS[CONSOLE_UI_JS.index("async function appAction(action, id, button) {"):CONSOLE_UI_JS.index("async function appTuiAction(action, id) {")]
     assert "{ launch: true }" not in act and "/launch`" in act

@@ -87,6 +87,9 @@ class AppEntry:
     # whether the gateway would open it here (and why not).
     tui_installed: bool = False
     tui_launch_available: bool = False
+    # R10.5: a running Assistant of the OTHER artifact (apps_desktop
+    # `other_running.sentence`), shown under the app's line.
+    notice: Optional[str] = None
     tui_blocked_reason: Optional[str] = None
 
 
@@ -304,7 +307,8 @@ def build_app_entries(
     if ajob and str(ajob.get("state") or "") in {"queued", "running"}:
         out.append(AppEntry(ASSISTANT_ID, ASSISTANT_NAME, "installing", "gateway", str(ajob.get("message") or "installing"), job_percent=ajob.get("percent"), found_by=afound))
     elif a.get("launch"):
-        out.append(AppEntry(ASSISTANT_ID, ASSISTANT_NAME, "running" if a.get("running") else "available", str(a.get("source") or ""), "desktop app", found_by=afound))
+        other = a.get("other_running") if isinstance(a.get("other_running"), dict) else None
+        out.append(AppEntry(ASSISTANT_ID, ASSISTANT_NAME, "running" if a.get("running") else "available", str(a.get("source") or ""), "desktop app", found_by=afound, notice=(str(other.get("sentence")) if other and other.get("sentence") else None)))
     else:
         out.append(
             AppEntry(

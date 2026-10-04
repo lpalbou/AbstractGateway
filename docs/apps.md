@@ -416,20 +416,29 @@ Python environment as the gateway; a gateway-only install may not.
   `abstractassistant` command next to the gateway's own Python (or on `PATH`),
   the installed package (`importlib.util.find_spec`, without importing it; a
   folder that merely has the package's name does not count), and on macOS
-  `AbstractAssistant.app` in `/Applications` or `~/Applications`. The version
-  comes from the package, else from the app's `Info.plist`. It is **Running**
-  when a process on this computer is the Assistant (its command, `python -m
-  abstractassistant…`, or the app's own program). The tray's "Launch
-  Assistant" uses the same detection (`apps_desktop.detect_assistant`), so
-  the tray and the console always agree.
+  `AbstractAssistant.app` in `/Applications` or `~/Applications`.
+- **One Assistant: the installed package.** When the package is installed (its
+  command, else this Python running it), the card describes, opens and watches
+  that one; the app bundle is used only when no package is installed. The
+  version is that Assistant's (the package's, or the app's `Info.plist` for
+  the bundle). It is **Running** when a process of that Assistant runs (its
+  command, `python -m abstractassistant…`, or — for the bundle — the app's own
+  program). When the OTHER one runs (for example an older
+  `AbstractAssistant.app` next to the installed package), the card is not
+  "Running": it says so in one sentence — "Another Assistant is running:
+  /Applications/AbstractAssistant.app 0.5.0 — quit it to use 0.13.0" — and
+  **Open** still starts the installed one. The tray's "Launch Assistant" uses
+  the same detection (`apps_desktop.detect_assistant`) and shows the same
+  sentence under it, so the tray and the console always agree.
 - **Install** installs `abstractassistant` into the gateway's own Python as a
   job (`uv pip install --python <gateway python> abstractassistant`, or pip
   when there is no uv), with every `abstract*` package the gateway runs
   pinned to its current version (`name==version` requirements in the same
   command), so installing the Assistant never changes the gateway. The same
   rule as the other installs decides who may install (see [Who may install](#who-may-install)).
-- **Open** starts it on the gateway's computer: `open -a AbstractAssistant.app`
-  when the app exists, otherwise its command, as a separate process with none
+- **Open** starts it on the gateway's computer: its command (or this Python
+  running it), or `open -a AbstractAssistant.app` when only the app exists, as
+  a separate process with none
   of the gateway's tokens, secrets or keys in its environment. A running
   Assistant is not started twice: the app is brought to the front (or, when
   it was started from its command, the card says its icon is in the menu
