@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -267,3 +268,21 @@ def test_the_runtime_enforces_the_same_rule(door: str, tmp_path: Path, monkeypat
         assert (eff.mode(path) != "deny") is readable, path
         assert _can(v, "read_file", path) is readable, (door, path)
     assert _can(v, "write_file", Path(d["home_project"]) / "new.txt")
+
+
+def test_server_file_routes_follow_the_rule(ua: TestClient, tmp_path: Path) -> None:
+    """/files/*: a reopened child of a refused parent is served; a refused grandchild is not."""
+    d = _dirs(tmp_path)
+    (Path(d["home_project_private"]) / "hidden.txt").write_text("no")
+    r = _put_gateway(ua, {"posture": "allowed_only", "folders": [
+        {"path": d["home"], "mode": "deny"}, {"path": d["home_project"], "mode": "rw"}, {"path": d["home_project_private"], "mode": "deny"}]})
+    assert r.status_code == 200, r.text
+    r = ua.get("/api/gateway/files/list")
+    assert r.status_code == 200, r.text
+    listed = json.dumps(r.json()["items"])
+    assert "seed.txt" in listed and "private" not in listed, listed
+    r = ua.get("/api/gateway/files/list", params={"workspace_root": d["home_project"]})
+    assert r.status_code == 200, r.text
+    # The refused subtree inside the reopened child stays refused.
+    assert ua.get("/api/gateway/files/list", params={"workspace_root": d["home_project_private"]}).status_code in (400, 403)
+    assert ua.get("/api/gateway/files/list", params={"workspace_root": d["home_Desktop"]}).status_code in (400, 403)

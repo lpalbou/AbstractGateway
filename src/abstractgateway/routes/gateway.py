@@ -4323,15 +4323,9 @@ def _workspace_mounts() -> Dict[str, Path]:
     return resolve_workspace_mounts(gateway_data_dir_from_env())
 
 
-def _workspace_blocked_roots() -> tuple[Path, ...]:
-    from ..runtime_config import resolve_workspace_blocked_paths
-
-    return resolve_workspace_blocked_paths(gateway_data_dir_from_env())
-
-
 def _server_file_blocked_roots() -> tuple[Path, ...]:
     """What the SERVER-workspace file routes (`/files/*`, the workspace imports and exports) never
-    list, read or write: the operator's deny list plus the host's built-in protection — the whole
+    list, read or write regardless of the workspace rows: the host's built-in protection — the whole
     gateway data folder and the account's credential folders (`workspace_browse.builtin_deny_paths`,
     the same rule as the run workspace browser and every run's tools).
 
@@ -4342,7 +4336,10 @@ def _server_file_blocked_roots() -> tuple[Path, ...]:
     mail through `/files/read` (decision D3: administrators never read mail)."""
     from ..workspace_browse import builtin_deny_paths
 
-    return tuple(list(_workspace_blocked_roots()) + builtin_deny_paths(gateway_data_dir_from_env().expanduser()))
+    # The gateway's refused ROWS are not here (round 12, R12.2): they follow the most-specific-row
+    # rule through the caller's effective set (`_policy_row_rules`), so an allowed child of a
+    # refused row is served; only the built-in protection blocks absolutely.
+    return tuple(builtin_deny_paths(gateway_data_dir_from_env().expanduser()))
 
 
 def _parse_lines_or_json_list(raw: Optional[str]) -> list[str]:
