@@ -1477,9 +1477,11 @@ stored, the gateway settles it once, at its first start (recorded under
 
 - the legacy `ABSTRACTGATEWAY_WORKSPACE_ROOT` / `ABSTRACTGATEWAY_WORKSPACE_DIR`
   when set (imported once, then ignored);
-- otherwise, for a data folder that already holds work (runs, conversations,
-  accounts, an audit log), its current value, frozen, so nothing moves for an
-  existing install;
+- otherwise, for a data folder that already holds work (run or ledger files,
+  conversation folders, accounts other than the bootstrap operator), its
+  current value, frozen, so nothing moves for an existing install. It is
+  decided before this start writes anything (`abstractgateway serve` settles
+  it first);
 - otherwise, for a fresh data folder, `<data_dir>/workspace`, created on first
   use. The host lifts the data folder's built-in deny for exactly that
   directory.

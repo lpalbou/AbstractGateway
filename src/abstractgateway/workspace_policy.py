@@ -289,13 +289,13 @@ _LEGACY_SHARED_ENV = ("ABSTRACTGATEWAY_WORKSPACE_ROOT", "ABSTRACTGATEWAY_WORKSPA
 
 
 def _store_is_populated(data_dir: Path) -> bool:
-    """Does this data folder already hold work (runs, conversations, accounts)? A fresh one does not."""
+    """Does this data folder already hold WORK (runs, conversations, real accounts)? Only signals a
+    boot never writes on its own count: run/ledger files, a non-empty ``workspaces/``, and accounts
+    other than the bootstrap operator (default:admin). Called before the boot writes anything
+    (``abstractgateway serve``), and again by the boot and the first read for other launchers."""
     base = Path(data_dir)
     if not base.is_dir():
         return False
-    for name in ("first_run.json", "audit_log.jsonl"):
-        if (base / name).is_file():
-            return True
     try:
         for entry in base.iterdir():
             if entry.is_file() and (entry.name.startswith("ledger_") or entry.name.startswith("run_")):
@@ -303,14 +303,23 @@ def _store_is_populated(data_dir: Path) -> bool:
     except OSError:
         return False
     ws = base / "workspaces"
-    if ws.is_dir() and any(ws.iterdir()):
-        return True
-    users = base / "auth" / "users.json"
     try:
-        if users.is_file() and json.loads(users.read_text() or "{}"):
+        if ws.is_dir() and any(ws.iterdir()):
             return True
-    except (OSError, ValueError):
-        return True  # unreadable registry: treat as populated (never move an existing install)
+    except OSError:
+        return True
+    users_file = base / "auth" / "users.json"
+    if users_file.is_file():
+        try:
+            raw = json.loads(users_file.read_text() or "{}")
+        except (OSError, ValueError):
+            return True  # unreadable registry: treat as populated (never move an existing install)
+        users = raw.get("users") if isinstance(raw, dict) else None
+        keys = list(users.keys()) if isinstance(users, dict) else [
+            f"{u.get('tenant_id', 'default')}:{u.get('user_id', '')}" for u in (users or []) if isinstance(u, dict)
+        ]
+        if any(k != "default:admin" for k in keys):
+            return True
     return False
 
 

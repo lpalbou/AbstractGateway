@@ -531,7 +531,7 @@ def test_a_populated_gateway_freezes_its_current_value(tmp_path: Path, monkeypat
 
     data = _data(tmp_path)
     data.mkdir(parents=True)
-    (data / "audit_log.jsonl").write_text("{}\n")  # this install already did work
+    (data / "ledger_0001.jsonl").write_text("{}\n")  # this install already ran something
     before = tmp_path / "what-it-used-before"
     before.mkdir()
     monkeypatch.setattr(runtime_config, "_workspace_root_fallback", lambda: str(before))
