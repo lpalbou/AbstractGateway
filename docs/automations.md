@@ -19,7 +19,10 @@ An automation is one durable AbstractRuntime **root run**, its **controller**,
 whose run id is the automation id. The controller is a workflow that ships
 with AbstractRuntime; the gateway's runner ticks it like any other run. Each
 time the trigger fires, the controller starts one **occurrence**: an ordinary
-child run of your target workflow, with the inputs frozen at creation. An
+child run of your target workflow, with the inputs frozen at creation
+(except the workspaces of an automation that uses its owner's default: those
+are resolved when each occurrence is admitted, so a change to the default
+applies from the next run). An
 occurrence reads as a chat turn (the prompt it received and its answer). In
 **independent** mode every occurrence starts fresh; in **growing** mode each
 occurrence sees the previous ones as conversation history. Automations are

@@ -1796,6 +1796,11 @@ class WorkflowBundleGatewayHost:
         email_action_spec = register_email_action_workflow(wf_reg)
         specs[str(email_action_spec.workflow_id)] = email_action_spec
         wire_runtime_email(runtime, email_plane)
+        # Automations that use their owner's default workspaces: resolved at each occurrence's
+        # admission for THIS plane's owner (round 13; never a snapshot frozen at save time).
+        from ..automation_workspace_resolver import wire_occurrence_workspaces
+
+        wire_occurrence_workspaces(runtime, data_dir=data_root, root_data_dir=catalog_root, tenant_id=catalog_tenant, user_id=catalog_user)
 
         _install_catalog_subworkflow_guard(
             runtime=runtime,

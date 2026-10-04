@@ -5009,7 +5009,14 @@ launch folder, for example) must be reachable; a client `workspace_access_mode:
 `_gateway_workspace.{level, summary}`. An automation keeps its choice in
 `target.input_data.workspace`; a definition that sends the older
 `workspace_allowed_paths` list gets it converted ("Deny everything, allow
-listed workspaces", each workspace at its gateway cap).
+listed workspaces", each workspace at its gateway cap). An automation saved
+with **Use my default** (no payload) stores `workspace: {"configured": false}`
+and follows its owner's default: each occurrence resolves session > account >
+gateway when it is admitted (its run start), so a wider default applies from
+the next run, with no revision. Nothing of the default is stored in the
+definition (only a fail-closed fallback: the built-in denies and
+`workspace_access_mode: "workspace_only"`); derived keys a client echoes back
+with `configured: false` (an old snapshot) are ignored, never a narrowing.
 
 ## Artifacts and filesystem handoff
 
@@ -7520,7 +7527,10 @@ An automation is one durable AbstractRuntime **root run**, its **controller**,
 whose run id is the automation id. The controller is a workflow that ships
 with AbstractRuntime; the gateway's runner ticks it like any other run. Each
 time the trigger fires, the controller starts one **occurrence**: an ordinary
-child run of your target workflow, with the inputs frozen at creation. An
+child run of your target workflow, with the inputs frozen at creation
+(except the workspaces of an automation that uses its owner's default: those
+are resolved when each occurrence is admitted, so a change to the default
+applies from the next run). An
 occurrence reads as a chat turn (the prompt it received and its answer). In
 **independent** mode every occurrence starts fresh; in **growing** mode each
 occurrence sees the previous ones as conversation history. Automations are
@@ -10221,6 +10231,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Workspaces: the most specific row wins.** Rows may nest in any combination, at every level (gateway, account, session, run). Refusing `/Users/me` while allowing `/Users/me/projects` (read & write) is valid: the child is reachable and the rest refused. A refused row inside an allowed one refuses that subtree. The round-11 refusal of a row nested under a refused row is gone. Caps still bind: a row below the gateway never exceeds the gateway's most specific row at its path. Built-in refusals are absolute: a read-only or read & write row inside one is refused with `'<path>' is inside the built-in refused workspace '<built-in>'.` at every level, at the dry run, and in in-process clamps. The one exception is the account's own conversation folders inside the data folder. The effective set, its line, the run-start keys (refused rows → `workspace_ignored_paths`, resolved by the runtime with the same longest-prefix rule), the server file routes and the run workspace browser all follow the rule.
 
 ### Changed
+
+- **Automations follow your default workspaces at each run.** An automation saved with **Use my default** now stores `target.input_data.workspace = {"configured": false}`. Before, the gateway froze a snapshot of the default (`workspace_allowed_paths` …) into the definition, so a wider default never reached it, and a client echoing that snapshot narrowed it. Each occurrence now resolves session > account > gateway when it is admitted, through AbstractRuntime's `Runtime.set_occurrence_input_resolver`, wired for each plane's owner by the bundle host. The definition keeps only a fail-closed fallback: the built-in denies and `workspace_only`. Derived keys echoed with `configured: false` are ignored. A definition saved before this change (no payload, gateway-derived keys at the account level) is recognised and followed the same way. Requires abstractruntime with `set_occurrence_input_resolver`; the host refuses to build without it.
 
 - Console islands and console themes re-vendored from ui-kit 0.8.5 (round 13). In the kit, the schedule dialog gained a Workspaces slot and lost its Advanced disclosure, and tool rows gained a `.af-tool-row__state` badge style. The islands bundle only picks up its version string and the new component CSS; the themes only their provenance hash. The round-11 islands test now accepts kit 0.8.3 or later.
 

@@ -728,7 +728,14 @@ launch folder, for example) must be reachable; a client `workspace_access_mode:
 `_gateway_workspace.{level, summary}`. An automation keeps its choice in
 `target.input_data.workspace`; a definition that sends the older
 `workspace_allowed_paths` list gets it converted ("Deny everything, allow
-listed workspaces", each workspace at its gateway cap).
+listed workspaces", each workspace at its gateway cap). An automation saved
+with **Use my default** (no payload) stores `workspace: {"configured": false}`
+and follows its owner's default: each occurrence resolves session > account >
+gateway when it is admitted (its run start), so a wider default applies from
+the next run, with no revision. Nothing of the default is stored in the
+definition (only a fail-closed fallback: the built-in denies and
+`workspace_access_mode: "workspace_only"`); derived keys a client echoes back
+with `configured: false` (an old snapshot) are ignored, never a narrowing.
 
 ## Artifacts and filesystem handoff
 

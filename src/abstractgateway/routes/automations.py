@@ -475,7 +475,22 @@ def _guarded_input_data(svc: Any, principal: Any, input_data: Dict[str, Any], *,
     automation's gateway-owned workspace, and the built-in tool deny rule
     (occurrences and discussions are started by the runtime, so they carry
     the protection in their inputs rather than through `host.start_run`)."""
-    data = _strip_client_workflow_policy(copy.deepcopy(dict(input_data)))
+    from ..automation_workspace_resolver import FOLLOW_DEFAULT, follows_default, strip_derived
+
+    raw_input = dict(input_data)
+    # "Use my default" (round 13): no payload and no narrowing from the client, `workspace:
+    # {"configured": false}`, or a pre-rule definition echoed back with the gateway's derived keys.
+    # The automation then FOLLOWS its owner's default at each run (automation_workspace_resolver);
+    # the derived keys a client echoes (an old snapshot) are ignored, never a narrowing.
+    following = follows_default(raw_input) or (
+        raw_input.get("workspace") is None
+        and raw_input.get("workspace_allowed_paths") is None
+        and raw_input.get("workspaceAllowedPaths") is None
+        and str(raw_input.get("workspace_access_mode") or "").strip().lower() != "workspace_only"
+    )
+    data = _strip_client_workflow_policy(copy.deepcopy(raw_input))
+    if following:
+        strip_derived(data)
     # Server-owned keys never come from a client (reviews 47 P2-1, 52 R52-1):
     # `_meta.*`, the read-only mount, and every `_runtime` key outside the
     # client allowlist (`CLIENT_RUNTIME_KEYS`).
@@ -494,7 +509,7 @@ def _guarded_input_data(svc: Any, principal: Any, input_data: Dict[str, Any], *,
     # default_mode, folders} (absent = the account default, frozen at creation like every protected
     # input). A round-9 definition's `workspace_allowed_paths` list (already checked above) becomes
     # "Deny everything, allow listed workspaces" with each workspace at its gateway cap.
-    if not isinstance(data.get("workspace"), dict) and isinstance(dict(input_data).get("workspace_allowed_paths"), (list, str)):
+    if not following and not isinstance(data.get("workspace"), dict) and isinstance(dict(input_data).get("workspace_allowed_paths"), (list, str)):
         from ..workspace_policy import caps_for, legacy_paths_to_layer
 
         data["workspace"] = legacy_paths_to_layer(
@@ -538,7 +553,18 @@ def _guarded_input_data(svc: Any, principal: Any, input_data: Dict[str, Any], *,
         tenant_id=tenant,
         user_id=user,
     )
-    if chosen_workspace is not None:
+    if following:
+        # No snapshot of the default in the definition: the runtime resolves it at each
+        # occurrence's admission. What stays is FAIL-CLOSED (the built-in deny rule and the
+        # automation's own workspace only), for a runtime that would run it without the resolver.
+        for key in ("workspace_allowed_paths", "workspace_read_only_paths", "workspace_ignored_paths", "_gateway_workspace"):
+            data.pop(key, None)
+        from abstractruntime.utils.workspace_paths import WRITABLE_PATHS_KEY
+
+        data.pop(WRITABLE_PATHS_KEY, None)
+        data["workspace_access_mode"] = "workspace_only"
+        data["workspace"] = dict(FOLLOW_DEFAULT)
+    elif chosen_workspace is not None:
         # Kept in the definition (clients show and edit it); the guard above applied it, clamped.
         data["workspace"] = chosen_workspace
     return data
