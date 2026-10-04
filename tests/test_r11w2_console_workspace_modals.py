@@ -107,7 +107,7 @@ def test_vocabulary_workspaces_never_folders() -> None:
 def test_vendored_islands_are_the_round11_kit() -> None:
     from abstractgateway.console_islands import ISLANDS_JS
 
-    assert ISLANDS_JS.startswith("/*! @abstractframework/ui-kit 0.8.2 console islands")
+    assert ISLANDS_JS.startswith("/*! @abstractframework/ui-kit 0.8.3 console islands")
     for needle in ("workspaceAsState", "Eligible workspaces", "The gateway allows this workspace read-only", "Follow the gateway policy", "Use my default", "Add a workspace path"):
         assert needle in ISLANDS_JS, needle
     assert "Shared workspace" not in ISLANDS_JS
