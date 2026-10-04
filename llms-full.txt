@@ -2590,7 +2590,7 @@ Every error uses the OpenAI envelope, so SDKs raise their usual exceptions:
 | --- | --- | --- |
 | 400 | invalid request, unsupported parameter, unusable `response_format` | `unsupported_parameter`, `invalid_response_format` or none |
 | 401 | missing or wrong key | `invalid_api_key` |
-| 403 | the account's OpenAI API switch is off; the client is outside *Who can connect*; Guest asked for more than models; the account Open mode runs as is unavailable; a page without a key from an origin that is not accepted | `openai_api_off`, `client_not_allowed`, `guest_not_allowed`, `open_account_unavailable`, `origin_not_allowed` |
+| 403 | the account's OpenAI API switch is off, or the account is deactivated or archived (`account_inactive`); the client is outside *Who can connect*; Guest asked for more than models; the account Open mode runs as is unavailable; a page without a key from an origin that is not accepted | `openai_api_off`, `account_inactive`, `client_not_allowed`, `guest_not_allowed`, `open_account_unavailable`, `origin_not_allowed` |
 | 404 | unknown route, an unknown provider or model, or the API is stopped | `model_not_found`, `endpoint_stopped` |
 | 429 | too many refused keys from one address | `auth_lockout` |
 | 500 | a structured answer that still does not match `response_format` | `structured_output_invalid` |
