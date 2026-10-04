@@ -78,7 +78,7 @@ flowchart LR
   end
 
   Data[("Data dir: runs, ledgers, commands, artifacts, auth, settings")]
-  WS[("Workspaces: private session folders, Shared workspace, allowed workspaces")]
+  WS[("Workspaces: private session folders, allowed workspaces (gateway, account, session levels)")]
   SvcMgr["Service manager: LaunchAgent, systemd unit, local supervisor (restarts serve)"]
 
   Browser -->|HTTP| Sec
@@ -432,19 +432,21 @@ The frames, fields and end reasons are in
 
 ## Workspace guard (every run start)
 
-Every run the gateway starts works in a folder, follows its account's
-effective workspace policy, and its file tools are kept out of the gateway's
-data folder and the account's credential folders:
+Every run the gateway starts works in a folder, follows its effective
+workspaces (one-off > session > account > gateway, clamped to the gateway's
+eligible set), and its file tools are kept out of the gateway's data folder
+and the account's credential folders:
 
 ```mermaid
 flowchart TB
-  Http["Client doors: POST /runs/start, POST /runs/schedule, entity summons"] --> Policy["Workspace policy check: a workspace_root the account's posture does not reach, or inside the data folder (except the caller's own conversation folder), is refused with 400"]
+  Http["Client doors: POST /runs/start, POST /runs/schedule, entity summons, automation definitions"] --> Policy["Workspace check: a one-off workspace outside the eligible set or above a cap, a workspace_root the run does not reach, or one inside the data folder (except the caller's own conversation folder), is refused with 400 workspace_refused"]
   Policy --> Start["Workflow host start_run"]
   Internal["Gateway-made starts: Telegram, email and agora bridges, sandbox routes, automation occurrences"] --> Start
   Start --> Ensure["No folder named: the conversation's private session folder (or a per-run folder)"]
-  Ensure --> Apply["Effective workspace policy: posture (Deny everything, allow listed workspaces / Allow everything, refuse listed workspaces), Shared workspace (rw), allowed workspaces ro or rw, refused workspaces; an account narrows only"]
+  Ensure --> Level["Level: one-off workspace (input_data.workspace) > the session's choice (session_workspaces.json) > the account default > the gateway policy"]
+  Level --> Apply["Effective workspaces: min(gateway cap, the level's rule) per path; posture (Deny everything, allow listed workspaces / Allow everything, refuse listed workspaces), workspaces ro or rw, refused workspaces; recorded as _gateway_workspace.level"]
   Apply --> Deny["Built-in deny rules: workspace_builtin_deny_prefixes (data folder + credential folders), workspace_builtin_allow (the run's own folder); client-sent values dropped"]
-  Deny --> Tools["AbstractRuntime file tools enforce the rules; the agent's context lists its working directory, the Shared workspace and the allowed workspaces with their modes, never the built-in rules"]
+  Deny --> Tools["AbstractRuntime file tools enforce the rules; the agent's context lists its working directory and the allowed workspaces with their modes, never the built-in rules"]
 ```
 
 The rules are whole-folder prefixes, never a listing of a folder's contents,

@@ -1184,41 +1184,33 @@ browser timezone when possible, with locale only as a fallback.
 
 ### Workspace policy (filesystem scope)
 
-The gateway decides which workspaces each account's runs may use; thin
-clients cannot widen it by sending paths. It is a setting, not an environment
-variable, with exactly two dimensions:
+The gateway decides which workspaces each run may use; thin clients cannot
+widen it by sending paths. It is a setting, not an environment variable, at
+three levels with one shape (a posture, a default mode, rows Read-only / Read &
+write / Refused):
 
-- the posture: "Deny everything, allow listed workspaces" or "Allow everything,
-  refuse listed workspaces", the latter with a default mode;
-- each workspace's mode: read-only, read & write, or refused.
+- the gateway (admin, `PUT /api/gateway/workspace/policy`) defines the
+  eligible set: "Deny everything, allow listed workspaces" or "Allow
+  everything, refuse listed workspaces" (with a default mode), each row's mode
+  being a cap. A fresh gateway allows everything, read & write;
+- an account picks its default subset within it
+  (`PUT /api/gateway/workspace/policy/{account}`, `me` = the caller;
+  `{configured: false}` follows the gateway policy);
+- a conversation (`PUT /api/gateway/sessions/{id}/workspaces`) or a single run
+  (a `workspace` object in the start body) picks its own subset.
 
-The admin sets it with `PUT /api/gateway/workspace/policy`. Each account may
-only narrow it, with `PUT /api/gateway/workspace/policy/{account}` (`me` = the
-caller). `GET /api/gateway/workspace/effective/{account}` returns what applies,
-with its one-line summary. The full model, its enforcement and the one-time
-migration are in [security.md](./security.md#workspaces-two-dimensions).
+`GET /api/gateway/workspace/effective/{account}[?session=]` returns what
+applies, with its one-line summary. The full model, its enforcement and the
+one-time migrations are in [security.md](./security.md#workspaces-three-levels);
+the routes in [api.md](./api.md#workspaces).
 
-The shared workspace is never guessed. The stored value wins. When none is
-stored, the gateway settles it once, at its first start (recorded under
-`_migrated.shared_workspace_v1`):
-
-- the legacy `ABSTRACTGATEWAY_WORKSPACE_ROOT` / `ABSTRACTGATEWAY_WORKSPACE_DIR`
-  when set (imported once, then ignored);
-- otherwise, for a data folder that already holds work (run or ledger files,
-  conversation folders, accounts other than the bootstrap operator), its
-  current value, frozen, so nothing moves for an existing install. It is
-  decided before this start writes anything (`abstractgateway serve` settles
-  it first);
-- otherwise, for a fresh data folder, `<data_dir>/workspace`, created on first
-  use. The host lifts the data folder's built-in deny for exactly that
-  directory.
-
-An admin changes it in Accounts → Shared workspace & allowed workspaces.
-The shared workspace is not where a run writes by default: a run that names no
-`workspace_root` works in its conversation's private session folder
-(`<data dir>/workspaces/session-…`), and a relative path lands there. The
-shared workspace and the allowed workspaces are listed to the agent with their
-paths and modes.
+There is no shared workspace. A gateway that had one (round 9) lists it as a
+read & write workspace after the migration, and a run that names no
+`workspace_root` works in its conversation's private workspace
+(`<data dir>/workspaces/session-…`), where a relative path lands. The run's
+allowed workspaces are listed to the agent with their paths and modes. The
+legacy `ABSTRACTGATEWAY_WORKSPACE_ROOT` / `ABSTRACTGATEWAY_WORKSPACE_DIR` are
+read only by the migration of a pre-round-9 store.
 `ABSTRACTGATEWAY_WORKSPACE_MOUNTS` is read once, by the migration.
 These are gone:
 

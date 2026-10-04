@@ -128,23 +128,25 @@ The gateway exposes helpers used by thin clients and workflows:
 - File access: `GET /api/gateway/files/search|read|skim`
 - Attachments: `POST /api/gateway/attachments/ingest` and `POST /api/gateway/attachments/upload`
 
-Workspaces are a setting the admin changes at any time (no restart). The
-gateway policy (`GET`/`PUT /api/gateway/workspace/policy`) holds the shared
-workspace, the posture ("Deny everything, allow listed workspaces" / "Allow
-everything, refuse listed workspaces" with a default mode) and the workspace
-rows (read-only, read & write, refused). Each account may narrow it
-(`/workspace/policy/{account}`).
+Workspaces are a setting changed at any time (no restart), at three levels:
+the gateway policy (`GET`/`PUT /api/gateway/workspace/policy`: the posture
+"Deny everything, allow listed workspaces" / "Allow everything, refuse listed
+workspaces" with a default mode, and the workspace rows read-only, read &
+write, refused, each a cap), an account's default subset
+(`/workspace/policy/{account}`) and a conversation's subset
+(`/sessions/{id}/workspaces`).
 
 A run started without `workspace_root` works in a folder the gateway makes for
 its conversation under `<ABSTRACTGATEWAY_DATA_DIR>/workspaces/`. Its file tools
-also reach the account's effective workspaces
-(`GET /api/gateway/workspace/effective/me`).
+also reach the run's effective workspaces
+(`GET /api/gateway/workspace/effective/me?session=<id>`).
 
-The `/files/*` helpers (admin) use the shared workspace as their root and the
-reachable workspaces as mounts; a client may only narrow them. See
-[security.md](./security.md#workspaces-two-dimensions).
+The `/files/*` helpers (admin) use the given root or the first read & write
+workspace as their base and the other reachable workspaces as mounts; a client
+may only narrow them. See
+[security.md](./security.md#workspaces-three-levels).
 
-Evidence: `src/abstractgateway/workspace_policy.py`, `_files_scope()` in `src/abstractgateway/routes/gateway.py`, tests in `tests/test_gateway_workspace_policy_r9.py`.
+Evidence: `src/abstractgateway/workspace_policy.py`, `src/abstractgateway/session_workspaces.py`, `_files_scope()` in `src/abstractgateway/routes/gateway.py`, tests in `tests/test_gateway_workspace_policy_r11.py` and `tests/test_r11w1_levels.py`.
 
 ## Telegram bridge
 

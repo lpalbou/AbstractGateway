@@ -503,125 +503,142 @@ remembered session (30 days) of the user who clicked Open. See
 [apps.md](./apps.md) and
 [architecture.md](./architecture.md#desktop-assistant-hand-over).
 
-## Workspaces: two dimensions
+## Workspaces: three levels
 
 Thin clients (browser apps, bridges, the Assistant) start runs whose file tools
 (`list_files`, `read_file`, `write_file`, …) touch the gateway's computer. A
-workspace is a directory an agent may work in. Which workspaces each account's
-runs may use is decided by the gateway, never by the client, along exactly two
-dimensions:
+workspace is a directory an agent may work in. Which workspaces a run may use is
+decided by the gateway, never by the client, at three levels that share one
+shape: a **posture**, a **default mode** and **rows**, each row Read-only
+(`ro`), Read & write (`rw`) or Refused (`deny`).
 
-1. **What can be reached: the posture** (the only thing that opens or closes a
-   workspace).
-   - **Deny everything, allow listed workspaces** (`allowed_only`): nothing is
-     reachable except the listed workspaces. A refused row can carve a
-     sub-directory out of an allowed one.
-   - **Allow everything, refuse listed workspaces** (`any_except_denied`):
-     every directory is reachable at one **default mode** (read-only or read &
-     write), except the listed workspaces, which are refused or carry their own
-     mode.
-2. **How: each workspace's mode**, Read-only (`ro`) or Read & write (`rw`),
-   set per workspace.
+- **Deny everything, allow listed workspaces** (`allowed_only`): nothing is
+  reachable except the listed workspaces. A refused row carves a sub-directory
+  out of a listed one.
+- **Allow everything, refuse listed workspaces** (`any_except_denied`): every
+  directory is reachable at the default mode, except the listed workspaces,
+  which are refused or carry their own mode.
 
-The **Shared workspace** is always reachable, always read & write, for every
-account. Each conversation also keeps its own **private session folder** in
-its account's data plane (protected by the built-in deny list, so another
-account's agents never read it). A run that names no workspace works there: a
-relative path such as `out.txt` is written to
-`<data dir>/workspaces/session-…/out.txt` (a run without a conversation gets
-its own `<data dir>/workspaces/<run>` folder), never to the shared workspace.
-The shared workspace and the allowed workspaces are listed to the agent with
-their paths and modes, in the workspace context of every tool-using call:
+The levels:
+
+1. **Gateway (admin) = the eligible set.** `GET`/`PUT
+   /api/gateway/workspace/policy`. Each row's mode is a CAP. The built-in
+   refusals (the gateway's data folder, credential folders such as `~/.ssh`)
+   always apply. A fresh gateway allows everything, read & write.
+2. **Account = the account's default subset** (people and entities alike):
+   `GET`/`PUT /api/gateway/workspace/policy/{account}`. The account picks its
+   own posture within the eligible set and its own rows, each inside the set
+   and at most at its cap. Not configured = the gateway policy as is. A person
+   sets their own; an entity's is set by an admin or the entity's creator.
+3. **Session = one conversation's subset**, and **run = a one-off payload**
+   (Flow's run window, Observer's launch, an automation): the same shape,
+   checked against the gateway's eligible set (not the account default), stored
+   by the gateway on the conversation (`GET`/`PUT
+   /api/gateway/sessions/{id}/workspaces`) or carried in the start body
+   (`workspace`).
+
+A run gets the first that applies: run > session > account > gateway. For every
+path its mode is the lower of the gateway's cap and that level's rule (refused
+< read-only < read & write). Within a list the most specific row wins, and
+nothing re-opens beneath a refused row. `GET
+/api/gateway/workspace/effective/{account}[?session=]` returns the result and
+one line that every surface shows verbatim, for example
+`Deny everything, allow listed workspaces · /Users/me/Pictures (rw) · /Users/me/Documents (ro)`,
+next to the gateway's own line (`gateway_summary`), for example
+`Allow everything, refuse listed workspaces (rw) · /secrets (refused) · /archive (ro)`.
+A write outside the eligible set or above a cap is refused (400
+`workspace_refused`, one sentence, the offending path); the API is in
+[api.md](./api.md#workspaces).
+
+Each conversation also keeps its own **private workspace** in its account's
+data plane (protected by the built-in refusals, so another account's agents
+never read it). It is always read & write for that run and never listed. A run
+that names no workspace works there: a relative path such as `out.txt` is
+written to `<data dir>/workspaces/session-…/out.txt` (a run without a
+conversation gets its own `<data dir>/workspaces/<run>` folder). The run's
+allowed workspaces are listed to the agent with their paths and modes, in the
+workspace context of every tool-using call:
 
 ```text
 Default working directory: "<data dir>/workspaces/session-…"
-Shared workspace: "/srv/shared" (read & write)
 Allowed workspaces:
-  "/data/project" (read & write)
-  "/archive" (read-only)
+  "/Users/me/Pictures" (read & write)
+  "/Users/me/Documents" (read-only)
 ```
 
 Under "Allow everything, refuse listed workspaces" a last line gives the mode
 of everything else, for example `Everything else: (read-only)`. Refused
-workspaces are never listed as allowed, and an account's narrowing shows (a
-workspace the account lowered reads `(read-only)`). Every door that starts a
-run sets the shared workspace path (`workspace_shared_path`); a value sent by
-a client is replaced.
+workspaces are never listed as allowed. There is no "Shared workspace" line any
+more (a stale `workspace_shared_path` sent by a client is dropped).
 
-**Gateway policy** (admin): `GET`/`PUT /api/gateway/workspace/policy` with
-`{shared_workspace, posture, default_mode, folders: [{path, mode: ro|rw|deny}]}`.
+Enforcement reads only the effective set:
 
-**Account policy** (admin, or the account itself; an entity's: admin only):
-`GET`/`PUT /api/gateway/workspace/policy/{account}` (`me` = the caller) with
-`{default_mode: "ro"|null, folders: [{path, mode: ro|deny}]}`. An account only
-narrows: it can make a workspace read-only or refuse it, and lower the
-"allow everything" default to read-only. It never raises a mode.
-
-**Effective set** (`GET /api/gateway/workspace/effective/{account}`): for every
-path, the lower of the admin's rule and the account's rule (refused < read-only
-< read & write). Within each list the most specific row wins, and nothing
-re-opens beneath a refused row. One line says it, the same for every viewer:
-`Deny everything, allow listed workspaces · Shared workspace (rw) · /data/project (rw) · /archive (ro)`
-or `Allow everything, refuse listed workspaces (rw) · Shared workspace (rw) · /secrets (refused) · /archive (ro)`.
-
-Enforcement reads only that set:
-
-- **Run starts** (`POST /runs/start`, `/runs/schedule`, entity summons): a
-  `workspace_root` (for example the folder an app was launched from) is
-  accepted only when the posture reaches it. Under "Deny everything, allow
-  listed workspaces" that means it is listed; under "Allow everything, refuse
-  listed workspaces" it means it is not refused. A protected directory or
-  another conversation's folder is never accepted. A client
-  `workspace_allowed_paths` list may only narrow, and the shared workspace is
-  always kept. A client that sends `workspace_access_mode: "all_except_ignored"`
-  is refused. Refusals are 400s with a sentence; nothing is silently dropped.
-  A launch folder gets no special trust: when the posture does not reach it, a
-  client asks the person to add the workspace.
+- **Run starts** (`POST /runs/start`, `/runs/schedule`, entity summons, the
+  automation definitions): a one-off `workspace` outside the eligible set or
+  above a cap is refused; a `workspace_root` (for example the folder an app was
+  launched from) is accepted only when the run reaches it; a legacy
+  `workspace_allowed_paths` list may only narrow; a client that sends
+  `workspace_access_mode: "all_except_ignored"` is refused. Refusals are 400s
+  with a sentence; nothing is silently dropped. A launch folder gets no special
+  trust: when the run does not reach it, a client asks the person to add the
+  workspace.
 - **Every run's tool sandbox**, whatever started it (HTTP, the Telegram, email
-  and agora bridges, schedules, entities), is bound by the host
-  (`run_workspace_guard.apply_workspace_policy`):
-  - "Deny everything, allow listed workspaces" → `workspace_or_allowed` with
-    the reachable workspaces.
-  - "Allow everything, refuse listed workspaces" → `all_except_ignored`. Only
-    the gateway sets this mode, never a client.
+  and agora bridges, schedules, automations, entities), is bound by the host
+  (`run_workspace_guard.apply_workspace_policy`), which resolves the level
+  again and CLAMPS a forwarded one-off (rows outside the set dropped, modes
+  lowered), never widens:
+  - "Deny everything, allow listed workspaces" at either level →
+    `workspace_or_allowed` with the reachable workspaces.
+  - "Allow everything, refuse listed workspaces" at both levels →
+    `all_except_ignored`. Only the gateway sets this mode, never a client.
   - Refused rows → `workspace_ignored_paths`.
   - Read-only workspaces → `workspace_read_only_paths`.
   - A read-only default → every directory is read-only except the run's own
-    folder, the shared workspace and the read & write workspaces
-    (`workspace_writable_paths`, AbstractRuntime; a client's own value is
-    dropped, and child runs inherit the parent's exactly). Writes into a
-    read-only workspace are refused with a sentence; reads work.
+    folder and the read & write workspaces (`workspace_writable_paths`,
+    AbstractRuntime; a client's own value is dropped, and child runs inherit
+    the parent's exactly). Writes into a read-only workspace are refused with a
+    sentence; reads work.
+  - The level and its line are recorded on the run (`_gateway_workspace.{level,
+    summary}`), so the ledger and replay show what the run could use.
 - **A workspace inside the gateway's data folder** (for example another
   conversation folder of the same account) counts only for the account whose
   own data plane holds it. The host lifts the built-in data-folder deny for
   that path, for that account only, never for another account's plane.
-- **The run workspace browser** serves a launch folder only while the posture
-  still reaches it. **The server file routes** (`/files/*`, admin) use the
-  shared workspace as their root and the reachable workspaces as mounts;
-  exports into a workspace that is not read & write are refused.
+- **The run workspace browser** serves a launch folder only while the run still
+  reaches it. **The server file routes** (`/files/*`, admin) use the given root
+  or the first read & write workspace as their base and the other reachable
+  workspaces as mounts; exports into a workspace that is not read & write are
+  refused.
 
 Every change is recorded in the audit log as `workspace_policy_changed`
-`{scope: gateway|account|migration, actor, changed, account?}`.
+`{scope: gateway|account|session|migration, actor, changed, account?, session_id?}`.
 
-**Migration** from the old model (whitelist/blacklist access modes, per-user
-allow/deny lists, launch-folder trust, "Any folder (old clients)") runs once,
-at serve start or at the first read. It never widens anyone:
+**Every entity has a gateway account.** Entities get theirs at creation; homes
+created before entity accounts existed get one at serve start, once, minted
+like a creation (roles `entity`, token discarded) and audited as
+`entity_account_created` (reason `migration`). A record of the same name that
+is not an entity account is never adopted.
 
-- The shared workspace is the old workspace root.
-- An old "allow everything except" gateway becomes "Allow everything, refuse
-  listed workspaces" (read & write), with the old refused folders as refused
-  rows.
-- Otherwise the gateway becomes "Deny everything, allow listed workspaces".
-  The old extra workspaces and every account's allowed folders become read &
-  write rows. An account that did not have a folder another account had gets a
-  refused row for it.
-- Per-account refused folders become that account's refused rows.
-- An account in "allow everything except" under such a gateway stays narrowed
-  and is listed in `narrowed_accounts`.
-- Launch folders trusted under the old model are not added.
+**Migrations** run once, at serve start or at the first read, and never reach
+beyond the new ceiling:
+
+- From round 9 (shared workspace + "accounts narrow only"), `_migrated.workspace_policy_v2`:
+  the gateway posture becomes "Allow everything, refuse listed workspaces"
+  (operator decision), keeping its default mode; the old shared workspace
+  becomes a listed read & write row; existing rows are kept with their modes as
+  caps; each account entry becomes a configured account layer under the same
+  posture with its own read-only/refused rows and lowered default.
+- From the older model (whitelist/blacklist access modes, per-user allow/deny
+  lists, launch-folder trust, "Any folder (old clients)"),
+  `_migrated.workspace_policy_v1` first, then v2: the old workspace root (only
+  when one was configured) becomes the listed read & write row; the old extra
+  workspaces and every account's allowed folders become read & write rows; an
+  account that did not have a folder another account had gets a refused row for
+  it; old refused folders become refused rows (gateway's or the account's);
+  launch folders trusted under the old model are not added.
 
 Missing folders are dropped and listed in the settings store under
-`_migrated.workspace_policy_v1`, next to the old block. The old runtime-config
+`_migrated.workspace_policy_v1` / `_v2`, next to the old blocks. The old runtime-config
 keys (`workspace_root`, `workspace_mounts`, `workspace_allowed_paths`,
 `workspace_blocked_paths`, `workspace_default_mode`, `trust_client_launch_folder`,
 `client_workspace_scope_overrides`, `user_workspace_policies`) are refused on
@@ -647,14 +664,14 @@ credential and configuration folders of the gateway's user account (`~/.ssh`,
   the folders.
 
 Evidence:
-- Policy model, effective set, migration: `src/abstractgateway/workspace_policy.py`
+- Policy model (three levels), effective set, migrations: `src/abstractgateway/workspace_policy.py`; the session level: `src/abstractgateway/session_workspaces.py`; entity accounts: `src/abstractgateway/entity_accounts.py`
 - Every run start: `src/abstractgateway/run_workspace_guard.py` (called from `WorkflowBundleGatewayHost.start_run`)
 - Client scope clamping: `src/abstractgateway/routes/gateway.py` (`_sanitize_run_workspace_policy`, `_files_scope`, `_browse_workspace_root`)
 - Browse and preview: `src/abstractgateway/workspace_browse.py`
 - Runtime tool scoping: `abstractruntime/integrations/abstractcore/workspace_scoped_tools.py`
-- Tests: `tests/test_gateway_workspace_policy_r9.py`, `tests/test_gateway_workspace_policy_enforcement.py`
+- Tests: `tests/test_gateway_workspace_policy_r11.py`, `tests/test_r11w1_levels.py`, `tests/test_r11w1_real_boot_migration.py`, `tests/test_gateway_workspace_policy_enforcement.py`
 
-Canonical public server paths use `rel/path` for the shared workspace and
+Canonical public server paths use `rel/path` for the base workspace and
 `mount_alias/rel/path` for the other folders. When two folders share the same
 basename, Gateway emits deterministic digest-suffixed mount aliases so the
 public path string stays stable across discovery, import/export, and Runtime
