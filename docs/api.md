@@ -379,13 +379,14 @@ silently dropped. Agent-node subruns inherit the block verbatim with
 registry defaults). A caller-supplied `_runtime.skills_block` is never
 overwritten; the selection is then ignored with a labeled verdict.
 
-The gateway serves its OWN corpus for the console drawer:
+The gateway serves the corpus every Docs assistant grounds on (the kit's `DocsAssistantDrawer` in the console and the apps):
 
 ```bash
-curl -sS -H "$AUTH" "$BASE_URL/api/gateway/docs/corpus"
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/docs/corpus"            # the gateway's own llms.txt
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/docs/corpus?app=code"   # an app's llms.txt
 ```
 
-Returns `{app, source, chars, text}`. Resolution order: the
+Returns `{app, source, chars, text}`. With `app=<id>` (`code`, `flow`, `observer`, `continuum`, `entity`) the text is the llms.txt the running app serves from its own build (`GET /llms.txt` on its loopback port, `text/plain` only; `source` `app:<id>:llms.txt`); an app that is not running, an unknown id, or an app that does not serve one is a 404 that says which. Without `app` (or `app=gateway`): Resolution order: the
 `ABSTRACTGATEWAY_DOCS_CORPUS` env override first (set-but-missing is an honest
 404 naming the checked candidates, never a silent fallback), then the repo
 `llms.txt` in dev checkouts, then the corpus packaged with the wheel.

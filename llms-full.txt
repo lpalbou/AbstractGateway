@@ -4349,13 +4349,14 @@ silently dropped. Agent-node subruns inherit the block verbatim with
 registry defaults). A caller-supplied `_runtime.skills_block` is never
 overwritten; the selection is then ignored with a labeled verdict.
 
-The gateway serves its OWN corpus for the console drawer:
+The gateway serves the corpus every Docs assistant grounds on (the kit's `DocsAssistantDrawer` in the console and the apps):
 
 ```bash
-curl -sS -H "$AUTH" "$BASE_URL/api/gateway/docs/corpus"
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/docs/corpus"            # the gateway's own llms.txt
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/docs/corpus?app=code"   # an app's llms.txt
 ```
 
-Returns `{app, source, chars, text}`. Resolution order: the
+Returns `{app, source, chars, text}`. With `app=<id>` (`code`, `flow`, `observer`, `continuum`, `entity`) the text is the llms.txt the running app serves from its own build (`GET /llms.txt` on its loopback port, `text/plain` only; `source` `app:<id>:llms.txt`); an app that is not running, an unknown id, or an app that does not serve one is a 404 that says which. Without `app` (or `app=gateway`): Resolution order: the
 `ABSTRACTGATEWAY_DOCS_CORPUS` env override first (set-but-missing is an honest
 404 naming the checked candidates, never a silent fallback), then the repo
 `llms.txt` in dev checkouts, then the corpus packaged with the wheel.
@@ -6009,7 +6010,7 @@ one under **Providers**.
 
 The **Technical details** switch at the bottom of the sidebar shows commands,
 route ids and other technical information throughout the console. The top bar
-holds the docs assistant (answers grounded on this gateway's documentation),
+holds the **Docs assistant** (book icon: the same chat as every app — your question on the right, the answer on the left with Markdown, code and links, copy, attachments, live streaming, an icon-only New conversation; answers come from this gateway's llms.txt through the docs-qa workflow, as its one-line footer says),
 the appearance settings, **About**, the gateway's address with a copy button,
 who is signed in, and the sign-out control.
 
@@ -9601,6 +9602,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Requires AbstractRuntime 0.9.0, AbstractCore 2.25.0 and AbstractVoice 0.14.0 (installed automatically). The terminal console `abstractgateway-console` 0.15.0 matches this release; see [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md).
 
 ### Added
+
+- **Each app's documentation for its Docs assistant**: `GET /api/gateway/docs/corpus?app=<id>` (`code`, `flow`, `observer`, `continuum`, `entity`) returns the llms.txt the running app serves from its own build (`GET /llms.txt` on the app's loopback port, `text/plain` only), so the corpus always matches the app version in use. Not running, unknown, or an app without one: a 404 that says which. Omitted or `app=gateway`: the gateway's own corpus, as before.
+- **The console's Docs assistant is the shared kit drawer** (panel-chat `DocsAssistantDrawer` via the islands bundle's `mountDocsAssistant`, ui-kit 0.8.0): the same chat as every app — your question on the right, the answer on the left with Markdown, code, JSON and links, copy, attachments, live streaming when **Streamed replies** is on, Stop, an icon-only **New conversation** and close, and one footer line naming the grounding (the gateway's llms.txt through the docs-qa workflow). It opens from the top bar's book button. The hand-built drawer and its text **New conversation** button are gone.
 
 - **OpenAI API at `/v1`** with the standard OpenAI layout (`/v1/models`, `/v1/chat/completions`, `/v1/embeddings`, ...) and its own console page, **Models → OpenAI API**: Running/Stopped status with the **Endpoint** switch, **Restart** (ends open requests) and **Check setup**; **Connect your app** (base URL, your gateway token as the API key, **New key**); **Access** (Authentication Protected or Open, *Requests without a key run as*, Who can connect: this machine, your network, your tailnet or anywhere), applied immediately; supported surface and curl/Python/JavaScript examples with the real base URL; recent requests. Status for every account at `GET /api/gateway/openai-api`; admin `POST /api/gateway/admin/core-endpoint {enabled, access, reach, open_account}`, `/restart` and `/check`. See [docs/openai-api.md](docs/openai-api.md).
 - **Per-account OpenAI API access.** Each user account has an **OpenAI API** switch (Accounts → the row's **OpenAI API** button; admin `PUT /api/gateway/admin/accounts/{id}/openai-api {enabled}`; account rows carry `openai_api`). It is on by default for an active account and written explicitly (on for active, off for inactive accounts) the first time the endpoint starts. Off, the account's key answers `403 openai_api_off`; a deactivated or archived account's key answers `403 account_inactive`. Entities have no key.
