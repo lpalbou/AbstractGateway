@@ -16,8 +16,27 @@ On a card, a plain user sees one button for the state the app is in:
 | A newer version is published | **Update to x.y.z** beside **Open** (an admin; its tooltip: "Install the newest Flow Editor (0.8.0); a running app restarts on it") |
 | Failed | the reason, **Show details**, and **Install** again |
 
-Stop, Show log, versions, addresses and commands are under
-**Technical details**.
+The status badge beside the name is the start/stop control, one click as
+Install is (an admin):
+
+| Badge | A click | Its tooltip |
+|---|---|---|
+| **Running** (the gateway started it) | stops it (`POST /apps/{id}/stop`) | "Running — click to stop" |
+| **Stopped** (installed, not running) | starts it without opening a tab (`POST /apps/{id}/launch`) | "Stopped — click to start" |
+| **Stopped unexpectedly** / **Keeps crashing** | starts it again | "Stopped unexpectedly — click to start" |
+| **Running**, started outside the gateway | nothing: the badge is disabled | "Started outside the gateway — stop it where it was started" |
+| any badge, for a user who is not an admin | nothing: the badge is disabled | "Only an admin can start or stop apps" |
+| **Starting…** / **Stopping…** / **Not installed** | a plain pill, not a control | — |
+
+While its request runs the badge reads "Stopping…" or "Starting…"; the result
+(or the refusal, with **Show details**) shows on the card as for every other
+action. There is no separate Stop or Start button: **Open** stays (it starts a
+stopped app, then opens it). The Assistant's badge: see
+[The Assistant](#the-assistant-a-desktop-app). The gateway sends the badge on
+every row (`status_control`, see [HTTP API](#http-api)), so the web console and the
+terminal console say the same words.
+
+Show log, versions, addresses and commands are under **Technical details**.
 
 ## Updates
 
@@ -94,7 +113,7 @@ in its `details` field (`<data dir>/apps/jobs/<job>.log`).
   pipe the gateway holds open and exits when it closes).
 - An app you started stays **enabled**: the next time the gateway starts, it
   starts the app again, on the same port when that port is free. Stop the app
-  to turn this off (the console's **Stop** is under **Technical details**, or
+  to turn this off (click its **Running** badge in the console, or
   `abstractgateway apps stop <app>`). Nothing is registered with launchd, systemd or the login
   items; the gateway itself starts the apps.
 - If an app exits unexpectedly, the gateway restarts it (after 1, 2 then 4
@@ -180,8 +199,9 @@ Opening it works exactly like opening an app the gateway started (the
 one-time sign-in link below, and `/apps/<app>/` when it announces it can be
 served there): the app's server reads the same sign-in cookies whoever
 started it. The gateway does not stop, update or show the
-log of an app it did not start; the console's **Technical details** says
-"Started outside the gateway on port 3001" instead (when a newer version is
+log of an app it did not start: its **Running** badge is disabled with the
+tooltip "Started outside the gateway — stop it where it was started", and
+**Technical details** says "Started outside the gateway on port 3001" (when a newer version is
 published, the card says "Latest x.y.z · Started outside the gateway — update
 it where it was installed"), and `POST /apps/{id}/stop`
 answers 409 `started_outside_gateway`. Starting the gateway's own copy while
@@ -463,6 +483,16 @@ Python environment as the gateway; a gateway-only install may not.
   **Open** still starts the installed one. The tray's "Launch Assistant" uses
   the same detection (`apps_desktop.detect_assistant`) and shows the same
   sentence under it, so the tray and the console always agree.
+- **Its badge** (the card's start/stop control): **Running** for the
+  Assistant this gateway opened — a click quits it (`POST
+  /apps/assistant/stop`, SIGTERM: it closes cleanly), tooltip "Running —
+  click to quit"; **Running** for one started anywhere else (its menu, the
+  app bundle, a terminal) — disabled, "Started outside the gateway — stop it
+  where it was started", and `POST /apps/assistant/stop` answers 409
+  `started_outside_gateway` without touching it; **Stopped** — a click opens
+  it (the same as **Open**), tooltip "Stopped — click to start", or disabled
+  with the reason from another computer ("The Assistant runs on the gateway's
+  computer: open it there.").
 - **Install** installs `abstractassistant` into the gateway's own Python as a
   job (`uv pip install --python <gateway python> abstractassistant`, or pip
   when there is no uv), with every `abstract*` package the gateway runs
@@ -523,13 +553,13 @@ All routes are under `/api/gateway/apps` and need a signed-in principal, except 
 
 | Method and path | Who | What |
 |---|---|---|
-| `GET /apps?latest=true` | any user | Node.js status, one row per app (`kind` `web` with `interfaces[]`, see "Terminal versions", and `install_parts`; then the Assistant, `kind` `desktop` with `desktop {location, found_by, launch_command, install_command, launch_available, launch_blocked, launch_blocked_reason, other_running, restart_note, started_by_gateway, source_checkout, checkout_path, version_reason, latest_error}`); every row has `latest_version`, `update_available`, `update_label` and `update_tip` (see [Updates](#updates)) and `console_tui` (the gateway console's terminal app). `gateway_url` is where the app servers reach the gateway (on its machine); `browser_gateway_url` is the address the caller uses (e.g. `https://<host>.ts.net` behind `tailscale serve`), the one to show in any command or link. `latest=false` skips the npm registry, PyPI and GitHub release lookups (cached 10 minutes). |
+| `GET /apps?latest=true` | any user | Node.js status, one row per app (`kind` `web` with `interfaces[]`, see "Terminal versions", and `install_parts`; then the Assistant, `kind` `desktop` with `desktop {location, found_by, launch_command, install_command, launch_available, launch_blocked, launch_blocked_reason, other_running, restart_note, started_by_gateway, source_checkout, checkout_path, version_reason, latest_error}`); every row has `latest_version`, `update_available`, `update_label` and `update_tip` (see [Updates](#updates)) and `status_control {label, tone, busy, action, enabled, tip}` — the status badge for THIS caller: `action` `stop` or `launch` is what a click posts, `enabled` false with `tip` as the reason, `tip` null for a plain pill (the badge table at the top of this page) and `console_tui` (the gateway console's terminal app). `gateway_url` is where the app servers reach the gateway (on its machine); `browser_gateway_url` is the address the caller uses (e.g. `https://<host>.ts.net` behind `tailscale serve`), the one to show in any command or link. `latest=false` skips the npm registry, PyPI and GitHub release lookups (cached 10 minutes). |
 | `POST /apps/runtime/install` | admin | Install Node.js (a job), or `job: null` when one is already usable. |
 | `POST /apps/{id}/install` `{"version"?, "launch"?, "with_terminal"?}` | admin | ONE job: Node.js if needed, download, check, dependencies, then the terminal app when the row's `install_parts` has `"tui"` (`with_terminal: false` skips it); the job's `parts` are its child rows. Starts nothing unless `launch: true`. For `assistant`: installs `abstractassistant` into the gateway's Python (every `abstract*` package is pinned to its current version in the same command). |
 | `POST /apps/{id}/update` `{"version"?}` | admin | A job: install the latest (or given) version; a running app is restarted on it. For `assistant`: `abstractassistant==<version>` from PyPI with the gateway's pins; the Assistant this gateway opened reopens signed in as the caller, any other running Assistant is left alone ("Quit it and open it again to run x.y.z"). A row started outside the gateway has no `update` action. |
 | `POST /apps/{id}/launch` | admin | Start the app (waits until it answers) and mark it enabled. For `assistant`: open it on the gateway's computer, signed in as the caller, `{ok, app, already_running, signed_in_by_gateway, message}`; from another computer 409 `not_on_gateway_machine`, and nothing starts. |
 | `POST /apps/desktop-handover` `{"code"}` | no sign-in; this computer only | The Assistant trades its one-time code for a remembered sign-in: `{base_url, session_id, csrf_token, user_id, expires_at}`. Answered only for a direct caller on this computer (no proxy headers, no app-server session header): 403 otherwise; 410 for a used or expired code. |
-| `POST /apps/{id}/stop` | admin | Stop the app and mark it disabled. 409 `started_outside_gateway` for an app the gateway did not start. |
+| `POST /apps/{id}/stop` | admin | Stop the app and mark it disabled. 409 `started_outside_gateway` for an app the gateway did not start. For `assistant`: quit the Assistant this gateway opened, `{ok, app, message}`; any other running Assistant: 409 `started_outside_gateway`, nothing is quit. |
 | `POST /apps/{id}/open` `{"remember"?, "path"?, "origin"?}` | any user | A one-time `open_url` (relative to the gateway) that opens the running app signed in, at `path` inside the app when given (e.g. `/#new`): `{open_url, mounted, app_path, app_url, expires_in_s}`. `app_path` is `/apps/<id>/…` for an app served through the gateway (else `null`); `app_url` is `origin` (default: this request's address) + `app_path`. 400 `invalid_app_path` / `invalid_origin`. 409 `desktop_app` for the Assistant (use `/launch`). |
 | `GET /apps/{id}/logs?tail=200` | admin | The end of the app's log. |
 | `GET /apps/jobs`, `GET /apps/jobs/{job}` | any user | Jobs: `state` (queued, running, succeeded, failed, cancelled), `percent`, `bytes_done`, `bytes_total`, `message`, `steps`, `parts` (the child rows of an Install that covers two parts), `details` (full log on failure). |

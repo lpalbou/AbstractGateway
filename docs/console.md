@@ -521,7 +521,7 @@ rest of the console keeps working.
 
 The Apps tab and the setup guide's Apps step show the same cards (the apps
 themselves are described in [apps.md](./apps.md)). What a plain user sees on
-each card: the app's mark, name and status pill (Not installed, Installed,
+each card: the app's mark, name and status badge (Not installed, Stopped,
 Running, Installing, Stopped unexpectedly, Keeps crashing), one line of
 description (hover it for the whole sentence), and one row of buttons. The
 button rows of the cards side by side are always at the same height. Above
@@ -536,6 +536,20 @@ address the browser used to reach the gateway.
 | an install failed | the reason, **Show details**, and **Install** again |
 | installed and running | **Open** (a new tab at `/apps/<app>/`, already signed in) |
 | installed but stopped, or crashed | **Open** (starts it, then opens it); a crash also shows the reason, with **Show details** |
+
+The status badge is the start/stop control (R11.3), one click as Install is:
+**Running** stops the app ("Running — click to stop"), **Stopped** (or a
+crash) starts it without opening a tab ("Stopped — click to start"); the
+Assistant's **Running** quits the Assistant this gateway opened ("Running —
+click to quit") and its **Stopped** opens it. The badge is a button with the
+kit tooltip, reachable with Tab (Enter or Space clicks it); it reads
+"Stopping…" / "Starting…" while its request runs, and a refusal shows on the
+card with **Show details**. Disabled (still focusable, the tooltip says why):
+an app started outside the gateway ("Started outside the gateway — stop it
+where it was started") and every badge for a user who is not an admin ("Only
+an admin can start or stop apps"). There is no separate Stop or Start button,
+not even under **Technical details**. The words come from the gateway
+(`status_control` on each row, [apps.md](./apps.md#http-api)).
 
 Code has a terminal version too. Next to Code's Open: **Open in Terminal**
 when the terminal version is installed and the browser is on the gateway
@@ -757,7 +771,16 @@ groups and their keys. The local engines live on Providers, as on the web.
   `[Account: <id> ×]`; `x` lists every runtime again.
 - **6 Apps** is the web console's Apps tab: open browser apps signed in,
   install or update them, start and stop them, the desktop Assistant and
-  Node.js. `u` updates the selected app, the Assistant included, with the
+  Node.js. The status badge is the start/stop control as on the web card: the
+  status cell of the selected row is selectable (→ moves onto it and shows
+  `[Running]`, ← back to the row), Enter or Space on it — or `s` anywhere —
+  stops a running app and starts a stopped one (the Assistant: quits the one
+  the gateway opened, opens a stopped one), with no confirmation, like the
+  web's one click. The card's hint line says the web tooltip ("s Running —
+  click to stop"); an app started outside the gateway, or a user who is not an
+  admin, cannot move onto the badge: the hint line and the notice say why
+  ("Started outside the gateway — stop it where it was started", "Only an
+  admin can start or stop apps"). `u` updates the selected app, the Assistant included, with the
   gateway's label ("Update to 0.14.0") and its tooltip as the confirmation; an
   app started outside the gateway shows "Latest x.y.z · Started outside the
   gateway — update it where it was installed" and `u` only says so
