@@ -13,7 +13,8 @@ Needs AbstractGateway 0.13.0 or later (the OpenAI API routes, `POST /models/dele
 - **Apps**: `u` updates the Assistant too (Update to x.y.z, with the gateway's tooltip as the confirmation; the
   gateway reopens an Assistant it started, signed in, and leaves any other one alone with "Quit it and open it again
   to run x.y.z"). An app started outside the gateway shows "Latest x.y.z · Started outside the gateway — update it
-  where it was installed"; `u` there says so and sends nothing. The Assistant's card also shows "Another Assistant is
+  where it was installed" (an Assistant installed from a source checkout: "Installed from a source checkout — update it
+  there"); `u` there says so and sends nothing. The Assistant's card also shows "Another Assistant is
   running: …" when the other copy runs.
 - **Workspaces** (`W`, right after Accounts) shows one sentence: "Workspaces are managed from Accounts in the web
   console; the terminal console follows in the next update." The gateway moved workspaces into Accounts (a

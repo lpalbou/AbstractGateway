@@ -123,6 +123,7 @@ def _probes(tmp_path: Path, state: Dict[str, Any]) -> desk.DesktopProbes:
         plist_version=lambda path: "0.5.0" if path.startswith(BUNDLE) else None,
         entry_point=lambda s: "abstractassistant.cli:main",
         processes=lambda: list(state.get("procs") or ()),
+        dist_editable=lambda name: bool(state.get("editable")),
     )
 
 
@@ -352,6 +353,30 @@ def test_update_leaves_the_other_artifact_alone(world) -> None:
     assert m.desktop_row("assistant", caller=CALLER)["desktop"]["restart_note"] == "Quit it and open it again to run 0.14.0"
 
 
+def test_update_fails_when_the_installer_leaves_the_old_version(world) -> None:
+    m, net, state = world.m, world.net, world.state
+    net.pypi("0.14.0")
+    m.launch_desktop("assistant", same_machine=True)  # ours: must NOT be restarted onto 0.13.0
+    n_spawned = len(world.spawned)
+
+    def noop_runner(argv, *, on_line, cancelled, env=None):
+        world.ran.append(list(argv))
+        on_line("Audited 1 package in 0.1s")
+        return 0  # success, but nothing changed
+
+    m.desktop_pip_runner = noop_runner
+    job, _ = m.start_install("assistant", update=True, run_inline=True, same_machine=True)
+    d = job.to_dict()
+    assert d["state"] == "failed", d
+    err = d["error"]
+    assert err["message"] == "Asked for 0.14.0, but 0.13.0 is still installed — not updated.", err
+    assert "Audited 1 package" in (d.get("details") or ""), d.get("details")
+    assert world.quit == [] and len(world.spawned) == n_spawned, "never restarted onto the old version"
+    m._desktop_cache.clear()
+    row = m.desktop_row("assistant", caller=CALLER)
+    assert row["version"] == "0.13.0" and row["update_available"] is True
+
+
 def test_update_without_pypi_is_refused_with_the_sentence(world) -> None:
     world.net.offline = True
     with pytest.raises(am.NetworkUnavailable) as ei:
@@ -444,3 +469,54 @@ def test_installer_marker_never_downgrades_an_app_updated_in_place(world) -> Non
     out = m.apply_pending_upgrades()
     assert calls == [("flow", "0.7.0")], "code 0.10.4 stays: never down to the installer's 0.10.3"
     assert [o["app_id"] for o in out] == ["flow"]
+
+
+# ---------------------------------------------------------------------------
+# 6. An editable install (a source checkout) is shown, never updated
+# ---------------------------------------------------------------------------
+
+
+def test_editable_assistant_is_a_source_checkout_row(world) -> None:
+    m, net, state = world.m, world.net, world.state
+    net.pypi("0.14.0")
+    state["editable"] = True
+    a = _row(m.overview(caller=CALLER), "assistant")
+    assert a["version"] == "0.13.0" and a["latest_version"] == "0.14.0" and a["update_available"] is True
+    assert a["actions"] == ["open"] and a["update_label"] is None
+    assert a["update_tip"] == "Installed from a source checkout — update it there"
+    assert a["desktop"]["source_checkout"] is True
+    with pytest.raises(am.AppsError) as ei:
+        m.start_install("assistant", update=True, run_inline=True, same_machine=True)
+    assert ei.value.message == "Assistant: Installed from a source checkout — update it there."
+    assert world.ran == [], "pip never runs over a checkout"
+    # The same machine with a regular (wheel) install: the action is offered.
+    state["editable"] = False
+    m._desktop_cache.clear()
+    a = m.desktop_row("assistant", caller=CALLER)
+    assert a["actions"] == ["open", "update"] and a["desktop"]["source_checkout"] is False
+
+
+def test_editable_flag_is_read_from_direct_url_json_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib.metadata as md
+
+    answers = {
+        "editable": json.dumps({"url": "file:///src/abstractassistant", "dir_info": {"editable": True}}),
+        "wheel": json.dumps({"url": "https://files.example/abstractassistant-0.14.0.whl", "archive_info": {}}),
+        "dir-not-editable": json.dumps({"url": "file:///src/abstractassistant", "dir_info": {}}),
+        "none": None,
+    }
+
+    class _Dist:
+        def __init__(self, key):
+            self.key = key
+
+        def read_text(self, name):
+            assert name == "direct_url.json"
+            return answers[self.key]
+
+    for key, want in (("editable", True), ("wheel", False), ("dir-not-editable", False), ("none", False)):
+        monkeypatch.setattr(md, "distribution", lambda name, k=key: _Dist(k))
+        assert desk._dist_editable("abstractassistant") is want, key
+    # The real machine wires this reader (conftest replaces system_probes in
+    # tests, so the wiring is read from the module itself).
+    assert "return DesktopProbes(dist_editable=_dist_editable)" in Path(desk.__file__).read_text(encoding="utf-8")

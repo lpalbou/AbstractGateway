@@ -1826,10 +1826,12 @@ CONSOLE_UI_JS = r"""
       // another install) is running. Its own sentence, from the gateway's one
       // probe; Open stays enabled and starts the installed one.
       if (desk && app.installed && desk.other_running && desk.other_running.sentence) body += `<p class="ui-card__note" data-app-desktop-other="${esc(app.id)}">${esc(desk.other_running.sentence)}</p>`;
-      // R10.6: a newer version of an app started outside the gateway is SHOWN
-      // with where to update it (the row has no update action); an update that
-      // left a running Assistant alone says how to run the new version.
-      if (app.source === "external" && app.update_available && app.latest_version) body += `<p class="ui-card__note" data-app-update-external="${esc(app.id)}">Latest ${esc(app.latest_version)} · ${esc(app.update_tip || "")}</p>`;
+      // R10.6: a newer version of an app started outside the gateway, or of an
+      // Assistant installed from a source checkout, is SHOWN with where to
+      // update it (the row has no update action); an update that left a
+      // running Assistant alone says how to run the new version.
+      const updateElsewhere = app.source === "external" || !!(desk && desk.source_checkout);
+      if (updateElsewhere && app.update_available && app.latest_version) body += `<p class="ui-card__note" data-app-update-external="${esc(app.id)}">Latest ${esc(app.latest_version)} · ${esc(app.update_tip || "")}</p>`;
       if (desk && app.installed && desk.restart_note) body += `<p class="ui-card__note" data-app-desktop-restart="${esc(app.id)}">${esc(desk.restart_note)}</p>`;
       const tui = appTuiParts(app, techOn);
       body += tui.body;

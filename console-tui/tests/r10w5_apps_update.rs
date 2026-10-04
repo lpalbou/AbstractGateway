@@ -186,6 +186,38 @@ fn restart_and_other_artifact_notes_render() {
     );
 }
 
+#[test]
+fn a_source_checkout_assistant_shows_latest_and_u_sends_nothing() {
+    let mut a = assistant(false);
+    a["latest_version"] = json!("0.14.0");
+    a["update_available"] = json!(true);
+    a["update_tip"] = json!("Installed from a source checkout — update it there");
+    a["desktop"]["source_checkout"] = json!(true);
+    let mut h = harness((120, 40), Mount::Page(page_view));
+    h.admin();
+    h.store
+        .apps
+        .overview
+        .set(Loadable::Ready(AppsOverview::from_value(
+            &json!({"apps": [a]}),
+        )));
+    let s = h.turns(3);
+    let f = flat(&s);
+    assert!(
+        f.contains("Latest 0.14.0 · Installed from a source checkout — update it there"),
+        "{s}"
+    );
+    assert!(!f.contains("u Update"), "{s}");
+    let _ = h.shoot("apps-assistant-source-checkout");
+    h.sent();
+    let s = h.key(b"u");
+    assert!(
+        acts(h.sent()).is_empty(),
+        "u on a source checkout sends nothing"
+    );
+    assert!(!flat(&s).contains("Install the newest"), "{s}");
+}
+
 /// Live: the scratch gateway's fake PyPI offers a newer Assistant; the
 /// row says so with the gateway's words.
 #[test]

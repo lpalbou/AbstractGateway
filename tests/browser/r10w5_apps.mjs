@@ -29,6 +29,9 @@ const TIP = "Install the newest Assistant (0.14.0); a running app restarts on it
 const EXTERNAL = "Started outside the gateway — update it where it was installed";
 const FLOW_TIP = "Install the newest Flow Editor (0.8.0); a running app restarts on it";
 
+let sourceCheckout = false;
+const CHECKOUT = "Installed from a source checkout — update it there";
+
 function overview() {
   const web = (id, name, extra) => Object.assign({
     id, name, kind: "web", description: name, package: `@abstractframework/${id}`, installed: true,
@@ -66,6 +69,16 @@ function overview() {
   };
 }
 
+function overviewNow() {
+  const o = overview();
+  if (sourceCheckout) {
+    const a = o.apps.find((x) => x.id === "assistant");
+    Object.assign(a, { actions: ["open"], update_label: null, update_tip: CHECKOUT });
+    a.desktop.source_checkout = true;
+  }
+  return o;
+}
+
 const posted = [];
 
 async function open(browser, { width = 1440, height = 900, theme = "dark" } = {}) {
@@ -74,7 +87,7 @@ async function open(browser, { width = 1440, height = 900, theme = "dark" } = {}
   const page = await ctx.newPage();
   page.on("pageerror", (e) => failures.push(`pageerror@${width}/${theme}: ${e.message}`));
   if (!LIVE) {
-    await page.route(/\/api\/gateway\/apps(\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(overview()) }));
+    await page.route(/\/api\/gateway\/apps(\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(overviewNow()) }));
     await page.route("**/api/gateway/apps/*/update", async (route) => {
       posted.push({ url: route.request().url(), method: route.request().method() });
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, created: true, job: { id: "j1", kind: "app_update", app_id: "assistant", title: "Update Assistant", state: "running", percent: 5, message: "Downloading and installing Assistant 0.14.0…", steps: [], parts: [] } }) });
@@ -144,6 +157,18 @@ try {
           if (SHOTS) await page.screenshot({ path: `${SHOTS}/apps-update-running-${width}-${theme}.png`, fullPage: true });
         }
       }
+      await ctx.close();
+    }
+  }
+  if (!LIVE) {
+    // R10.6 F2: an Assistant installed from a source checkout: Latest + sentence, no Update.
+    sourceCheckout = true;
+    for (const theme of ["dark", "light"]) {
+      const { ctx, page } = await open(browser, { width: 1440, height: 900, theme });
+      const a = await cardState(page, "assistant");
+      check(a && a.anyUpdate === 0, `source checkout: no update action ${theme}`, a);
+      check(a && a.external === `Latest 0.14.0 · ${CHECKOUT}`, `source checkout: Latest + sentence ${theme}`, a && a.external);
+      if (SHOTS) await page.screenshot({ path: `${SHOTS}/apps-source-checkout-1440-${theme}.png`, fullPage: true });
       await ctx.close();
     }
   }

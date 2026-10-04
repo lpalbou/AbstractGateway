@@ -699,7 +699,7 @@ fn detail_view(
     }
     // R10.6: a newer version of an app started outside the gateway is shown
     // with where to update it (the web card's note; no action here).
-    if row.is_external() && row.update_available {
+    if row.updates_elsewhere() && row.update_available {
         if let Some(l) = &row.latest_version {
             col = wrapped(
                 col,

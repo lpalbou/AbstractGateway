@@ -280,6 +280,9 @@ pub struct DesktopInfo {
     pub restart_note: Option<String>,
     /// R10.6: PyPI could not be asked — why the latest version is unknown.
     pub latest_error: Option<String>,
+    /// R10.6: installed from a source checkout (editable): updated there,
+    /// never from the gateway.
+    pub source_checkout: bool,
 }
 
 /// The web card's one-line blurb (console_ui.py `APP_COPY`); an app the
@@ -401,6 +404,7 @@ impl AppRow {
                 other_running: d.get("other_running").and_then(|o| s(o, "sentence")),
                 restart_note: s(d, "restart_note"),
                 latest_error: s(d, "latest_error"),
+                source_checkout: b(d, "source_checkout"),
             });
         let external = v.get("external").filter(|e| e.is_object());
         Some(AppRow {
@@ -449,6 +453,17 @@ impl AppRow {
     }
     pub fn is_external(&self) -> bool {
         self.external_port.is_some()
+    }
+    /// Updated where it was installed, never from the gateway (R10.6): an
+    /// app started outside the gateway, or an Assistant installed from a
+    /// source checkout. A newer version is shown with the gateway's sentence.
+    pub fn updates_elsewhere(&self) -> bool {
+        self.is_external()
+            || self
+                .desktop
+                .as_ref()
+                .map(|d| d.source_checkout)
+                .unwrap_or(false)
     }
     fn has(&self, action: &str) -> bool {
         self.actions.iter().any(|a| a == action)
@@ -857,7 +872,7 @@ pub fn primary_verb(row: &AppRow, job: Option<&AppJob>, admin: bool) -> Option<V
 /// gateway's sentence (where to update it; the card says "Latest x.y.z"),
 /// and there is no verb when there is none.
 pub fn update_verb(row: &AppRow, active: bool, admin: bool) -> Option<VerbState> {
-    if row.is_external() {
+    if row.updates_elsewhere() {
         row.latest_version
             .as_ref()
             .filter(|_| row.update_available)?;

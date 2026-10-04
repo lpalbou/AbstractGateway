@@ -128,6 +128,25 @@ def _dist_version(name: str) -> Optional[str]:
         return None
 
 
+def _dist_editable(name: str) -> bool:
+    """True when the installed distribution says it is an editable install
+    (PEP 610 `direct_url.json`: `dir_info.editable`), i.e. a source checkout.
+    Read from that field only; never inferred from paths."""
+    try:
+        from importlib.metadata import distribution
+
+        raw = distribution(name).read_text("direct_url.json")
+    except Exception:
+        return False
+    if not raw:
+        return False
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return False
+    return bool(((data or {}).get("dir_info") or {}).get("editable") is True)
+
+
 def _entry_point(script: str) -> Optional[str]:
     """`module:attr` of a console script, read from package metadata (no import)."""
     try:
@@ -191,11 +210,14 @@ class DesktopProbes:
     plist_version: Callable[[str], Optional[str]] = _read_plist_version
     entry_point: Callable[[str], Optional[str]] = _entry_point
     processes: Callable[[], List[Tuple[int, List[str]]]] = _process_argvs
+    # PEP 610 editable flag of the installed package (R10.6). The real reader
+    # is wired by system_probes(); a probe built without it is not editable.
+    dist_editable: Callable[[str], bool] = lambda name: False
 
 
 def system_probes() -> DesktopProbes:
     """The real machine (tests replace this module function: conftest)."""
-    return DesktopProbes()
+    return DesktopProbes(dist_editable=_dist_editable)
 
 
 # ---------------------------------------------------------------------------
@@ -268,7 +290,7 @@ def detect_assistant(probes: Optional[DesktopProbes] = None, *, spec: DesktopApp
 
     {installed, found_by: [...], source: script|python|bundle|"", launch: argv|None,
      launches: [(source, argv)], bundle, script, package_origin, version,
-     location, running, pid, running_argv, other_running}"""
+     editable, location, running, pid, running_argv, other_running}"""
     p = probes or system_probes()
     found: List[str] = []
     launches: List[Tuple[str, List[str]]] = []
@@ -315,8 +337,10 @@ def detect_assistant(probes: Optional[DesktopProbes] = None, *, spec: DesktopApp
     source, launch = (launches[0][0], list(launches[0][1])) if launches else ("", None)
     artifact = "bundle" if source == "bundle" else ("package" if source else "")
     version: Optional[str] = None
+    editable = False
     if artifact == "package":
         version = p.dist_version(spec.package)
+        editable = bool(p.dist_editable(spec.package))
     elif artifact == "bundle" and bundle_path:
         version = p.plist_version(str(Path(bundle_path) / "Contents" / "Info.plist"))
     location = bundle_path if source == "bundle" else (script if source == "script" else (origin if source == "python" else None))
@@ -353,6 +377,9 @@ def detect_assistant(probes: Optional[DesktopProbes] = None, *, spec: DesktopApp
         "script": script,
         "package_origin": origin,
         "version": version,
+        # R10.6: the package is an editable install (a source checkout): the
+        # gateway never updates it (pip would put a wheel over the checkout).
+        "editable": editable,
         "location": location,
         "running": pid is not None,
         "pid": pid,

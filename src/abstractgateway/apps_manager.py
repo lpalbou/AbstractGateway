@@ -417,6 +417,7 @@ def version_newer(candidate: Any, current: Any) -> bool:
 # label + kit tooltip) and the terminal console (verb label + confirmation):
 # the row carries them, no console composes its own.
 EXTERNAL_UPDATE_SENTENCE = "Started outside the gateway — update it where it was installed"
+SOURCE_CHECKOUT_SENTENCE = "Installed from a source checkout — update it there"
 
 
 def quit_to_run_sentence(version: Any) -> str:
@@ -3416,14 +3417,23 @@ class AppsManager:
         else:
             launch_available, code, launch_blocked = True, None, None
         actions: List[str] = []
+        # An editable install (PEP 610 dir_info.editable): a source checkout.
+        # Its newer version is SHOWN, never offered (pip would put a wheel
+        # over the checkout).
+        source_checkout = bool(installed and pres.get("editable"))
         if not installed:
             if allowed and argv is not None:
                 actions.append("install")
         else:
             actions.append("open")
-            if update_available and allowed and argv is not None:
+            if update_available and allowed and argv is not None and not source_checkout:
                 actions.append("update")
-        upd_label, upd_tip = update_offer(spec.name, latest, restarts=not foreign_running) if update_available else (None, None)
+        if not update_available:
+            upd_label, upd_tip = None, None
+        elif source_checkout:
+            upd_label, upd_tip = None, SOURCE_CHECKOUT_SENTENCE
+        else:
+            upd_label, upd_tip = update_offer(spec.name, latest, restarts=not foreign_running)
         return {
             "id": spec.id,
             "name": spec.name,
@@ -3473,6 +3483,8 @@ class AppsManager:
                 # while that process runs.
                 "restart_note": restart_note,
                 "started_by_gateway": bool(ours),
+                # R10.6: installed from a source checkout (editable): no update here.
+                "source_checkout": source_checkout,
                 # PyPI could not be asked: why the latest version is unknown.
                 "latest_error": f"PyPI is not reachable: {registry_error}" if registry_error else None,
             },
@@ -3522,6 +3534,8 @@ class AppsManager:
                     )
             if parse_version(target) is None:
                 raise AppsError(f"'{target}' is not a version of {spec.name}.")
+            if self.desktop_presence(spec.id).get("editable"):
+                raise AppsError(f"{spec.name}: {SOURCE_CHECKOUT_SENTENCE}.")
             argv = list(argv[:-1]) + [f"{spec.package}=={target}"]
         package_key = spec.package.lower().replace("_", "-")
 
@@ -3576,6 +3590,15 @@ class AppsManager:
                     details="\n".join(pres.get("found_by") or []) or None,
                 )
             ver = pres.get("version") or ""
+            if target and parse_version(ver) != parse_version(target):
+                # The installer said yes but the version did not move (an
+                # editable checkout, another environment, a no-op installer):
+                # never a success, never a restart onto the old version.
+                raise AppsError(
+                    f"Asked for {target}, but {ver or 'another version'} is still installed — not updated.",
+                    hint="Show details has the whole installer output.",
+                    details="\n".join(tail) or None,
+                )
             res: Dict[str, Any] = {"version": ver, "location": pres.get("location"), "message": f"{spec.name} {ver} is installed.".replace("  ", " ")}
             if not update:
                 return res
