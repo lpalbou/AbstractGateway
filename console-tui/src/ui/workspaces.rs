@@ -26,11 +26,6 @@ pub fn hints(ctx: &Ctx) -> Vec<(&'static str, &'static str)> {
     Vec::new()
 }
 
-/// Nothing to read: the page shows a fixed sentence.
-pub fn refresh(ctx: &Ctx) {
-    let _ = ctx;
-}
-
 pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let _ = ctx;
     let width = (abstracttui::app::use_viewport(cx).get().w - 4).max(20);

@@ -763,7 +763,6 @@ impl Ctx {
             SCREEN_OPENAI => openai_api::refresh(self),
             SCREEN_ABOUT => about::refresh(self),
             SCREEN_SKILLS => skills_mcp::refresh(self),
-            SCREEN_WORKSPACES => workspaces::refresh(self),
             _ => {}
         }
     }
