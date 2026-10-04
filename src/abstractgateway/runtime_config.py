@@ -1423,8 +1423,10 @@ def migrate_legacy_backlog_root_env(data_dir: Path) -> bool:
     folder: when nothing is stored yet, the variable's value is validated and
     written as the saved setting, and `legacy_env_imported.triage_repo_root`
     records that it happened so a later clear is never undone by the
-    variable. Returns True when it stored the folder. An invalid value is not
-    stored (the gateway's own folder applies) and is logged once. Never
+    variable. Returns True when it stored the folder. The value is kept as
+    the old rung accepted it (an existing absolute folder; docs/backlog not
+    required); anything else is not stored (the gateway's own folder applies)
+    and is logged once. Never
     raises: a migration must not stop a start or a read."""
     data_dir = Path(data_dir)
     hit = _legacy_env(_ENV_TRIAGE_ROOT_LEGACY)
@@ -1441,8 +1443,14 @@ def migrate_legacy_backlog_root_env(data_dir: Path) -> bool:
             import logging
 
             log = logging.getLogger("abstractgateway.runtime_config")
+            # Kept exactly as the old environment rung accepted it: an existing folder (the
+            # process manager uses it as its repo root, which need not hold docs/backlog).
+            path = Path(raw).expanduser()
+            problem = backlog_root_problem(path, data_dir, require_backlog=False) if path.is_absolute() else "it is not an absolute path"
             try:
-                value = str(validate_backlog_root(raw, data_dir))
+                if problem:
+                    raise RuntimeConfigError(f"{name} {raw!r} cannot be the backlog folder: {problem}")
+                value = str(path.resolve())
             except RuntimeConfigError as exc:
                 done["triage_repo_root"] = {"env": name, "stored": False, "reason": str(exc), "at": _now_iso()}
                 stored[_LEGACY_ENV_IMPORTED_KEY] = done

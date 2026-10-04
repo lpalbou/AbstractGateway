@@ -157,6 +157,14 @@ def test_legacy_env_backlog_folder_is_stored_once(tmp_path: Path, monkeypatch: p
     assert store2["legacy_env_imported"]["triage_repo_root"]["stored"] is False
     assert "triage_repo_root" not in store2
 
+    # Kept as the old rung accepted it: an existing folder without docs/backlog (the process
+    # manager's repo root) is stored too.
+    data4 = tmp_path / "data4"
+    plain = tmp_path / "plain-checkout"
+    plain.mkdir()
+    monkeypatch.setenv("ABSTRACT_TRIAGE_REPO_ROOT", str(plain))
+    assert resolve_backlog_root(data4)["value"] == str(plain.resolve())
+
     # A folder saved before any import: the variable never replaces it, even after a clear.
     data3 = tmp_path / "data3"
     monkeypatch.delenv("ABSTRACT_TRIAGE_REPO_ROOT")
