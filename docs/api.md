@@ -839,8 +839,19 @@ nothing: the session's runs, ledgers and artifacts stay, and
 |---|---|
 | `POST /api/gateway/sessions/{session_id}/archive` | `{session_id, archived: true, archived_at, archived_by, changed}`; a repeat answers `changed: false` |
 | `POST /api/gateway/sessions/{session_id}/unarchive` | `{session_id, archived: false, archived_at: null, archived_by: null, changed}` |
-| `GET /api/gateway/runs?root_only=true` | leaves archived sessions out; every listing carries `archived_sessions` (how many sessions you have archived) |
+| `GET /api/gateway/runs?root_only=true` | leaves archived sessions out; every listing carries `archived_sessions` (how many sessions of the listed `kind` you have archived) |
 | `GET /api/gateway/runs?root_only=true&archived_only=true` | only the turns of archived sessions, each with `archived: true` |
+
+**Session purpose (`kind`).** A session is a `conversation` (the default) or a
+`docs` chat (a Docs assistant conversation). `POST /api/gateway/runs/start`
+takes `kind: "docs"` with a `session_id` (the kit's Docs assistant sends it);
+any other value, or `docs` without a session, is a 400. Turn listings
+(`GET /runs?root_only=true` or `archived_only=true`, without `session_id` /
+`parent_run_id`) take `kind=conversation` (the default), `kind=docs` or
+`kind=all`, so a docs chat never appears in a conversation list while staying
+in the same pool: readable by `session_id`, ledgered, archivable. Every row
+carries `kind`. The mark lives in the plane's `session_kinds.json`; a session
+without one is a conversation.
 
 The session's owner or an admin may archive it. Each account works in its own
 runtime plane, so a session that belongs to another account answers

@@ -2550,6 +2550,13 @@ class StartRunRequest(_SpeculationControlRequest):
         default=None,
         description="Optional session id to group related runs (e.g. a chat session).",
     )
+    kind: Optional[str] = Field(
+        default=None,
+        description=(
+            "What the session is for: `conversation` (default) or `docs` (a Docs assistant chat; needs session_id). "
+            "Turn listings (GET /runs?root_only=true) show conversations unless asked for `kind=docs`."
+        ),
+    )
 
 
 class StartRunResponse(BaseModel):
@@ -9089,6 +9096,23 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
         if lifecycle_purpose != "draft_test":
             raise HTTPException(status_code=400, detail="draft bundle versions require run_lifecycle.purpose='draft_test'")
 
+    session_kind_req = str(req.kind).strip() if isinstance(req.kind, str) and req.kind.strip() else None
+    if session_kind_req is not None:
+        from ..session_kinds import KINDS as _SESSION_PURPOSES
+
+        if session_kind_req not in _SESSION_PURPOSES:
+            raise HTTPException(status_code=400, detail=f"kind must be one of {', '.join(_SESSION_PURPOSES)} (got {req.kind!r})")
+        if session_kind_req != "conversation" and not (isinstance(req.session_id, str) and req.session_id.strip()):
+            raise HTTPException(status_code=400, detail=f"kind {session_kind_req!r} needs a session_id (the session it describes)")
+    if session_kind_req == "docs":
+        # Marked BEFORE the run starts, so the conversation lists never show it.
+        from ..session_kinds import SessionKindsUnreadable, mark_session_kind
+
+        try:
+            mark_session_kind(svc.config.data_dir, str(req.session_id).strip(), "docs")
+        except SessionKindsUnreadable as exc:
+            raise HTTPException(status_code=500, detail={"reason_code": "session_kinds_unreadable", "message": str(exc)}) from None
+
     try:
         session_id = str(req.session_id).strip() if isinstance(req.session_id, str) and str(req.session_id).strip() else None
         input_data = _strip_client_workflow_policy(dict(req.input_data or {}))
@@ -9643,7 +9667,7 @@ def _is_internal_workflow_id(workflow_id: Any) -> bool:
 #: (flow c5253 P1-2) and the capabilities advertise the set (`runs.list.filters`).
 _LIST_RUNS_KNOWN_PARAMS = frozenset({
     "limit", "offset", "query", "status", "workflow_id", "session_id", "parent_run_id",
-    "root_only", "include_ledger_len", "include_metrics", "include_drafts", "session_kind", "archived_only",
+    "root_only", "include_ledger_len", "include_metrics", "include_drafts", "session_kind", "archived_only", "kind",
 })
 
 
@@ -9701,6 +9725,7 @@ async def list_runs(
     include_ledger_len: bool = Query(True, description="If true, include ledger_len (may be slow for file-backed ledgers)."),
     include_metrics: bool = Query(False, description="If true, each listed run carries steps / llm_calls / tool_calls / tokens_total: the totals of that run and every sub-run below it, read from the ledger (null when the gateway has no ledger store)."),
     include_drafts: bool = Query(False, description="If true, include private draft-test runs in the response."),
+    kind: Optional[str] = Query(None, description="What the listed sessions are for, on turn listings (root_only / archived_only without session_id or parent_run_id): `conversation` (the default), `docs` (Docs assistant chats) or `all`. Every row carries `kind`."),
     archived_only: bool = Query(False, description="If true, list only runs of ARCHIVED sessions (POST /sessions/{id}/archive), each marked `archived: true`. Without it, a `root_only` listing leaves archived sessions out; a `session_id` filter always reads its session, archived or not. The response carries `archived_sessions` (how many sessions this caller has archived)."),
 ) -> Dict[str, Any]:
     """List recent runs (summary only; never returns full run.vars)."""
@@ -9746,6 +9771,20 @@ async def list_runs(
     archive_filter = (bool(root_only) or bool(archived_only)) and not (isinstance(session_id, str) and session_id.strip()) and not (
         isinstance(parent_run_id, str) and parent_run_id.strip()
     )
+    # Session purpose (session_kinds.py): turn listings show conversations by
+    # default, so a Docs assistant chat never reaches a conversation list.
+    from ..session_kinds import SessionKindsUnreadable, session_kinds as _session_kinds
+
+    want_kind = str(kind).strip().lower() if isinstance(kind, str) and kind.strip() else "conversation"
+    if want_kind not in ("conversation", "docs", "all"):
+        raise HTTPException(status_code=400, detail=f"Invalid kind {kind!r} (expected conversation|docs|all)")
+    try:
+        kinds_map = _session_kinds(svc.config.data_dir)
+    except SessionKindsUnreadable as exc:
+        raise HTTPException(status_code=500, detail={"reason_code": "session_kinds_unreadable", "message": str(exc)}) from None
+
+    def _kind_of(summary: Dict[str, Any]) -> str:
+        return kinds_map.get(str(summary.get("session_id") or ""), "conversation")
 
     def _matches_query(summary: Dict[str, Any]) -> bool:
         """The console query language over the three identity fields shown
@@ -9753,6 +9792,8 @@ async def list_runs(
         if kinds is not None and summary.get("session_kind") not in kinds:
             return False
         if archive_filter and (str(summary.get("session_id") or "") in archived_map) != bool(archived_only):
+            return False
+        if archive_filter and want_kind != "all" and _kind_of(summary) != want_kind:
             return False
         if qtext is None:
             return True
@@ -9787,6 +9828,7 @@ async def list_runs(
                 continue
             if not _matches_query(summary):
                 continue
+            summary["kind"] = _kind_of(summary)
             child_items.append(summary)
             if len(child_items) >= _child_want:
                 break
@@ -10058,16 +10100,21 @@ async def list_runs(
                 item["ledger_len"] = ledger_len
 
         for item in items:
+            item["kind"] = _kind_of(item)
             rec = archived_map.get(str(item.get("session_id") or ""))
             if rec is not None:
                 item["archived"] = True
                 item["archived_at"] = rec.get("archived_at")
+        # "Archived · N" counts the sessions of the listed purpose.
+        archived_count = len(archived_map) if want_kind == "all" else sum(
+            1 for sid in archived_map if kinds_map.get(str(sid), "conversation") == want_kind
+        )
         out_page: Dict[str, Any] = {
             "items": items,
             "count": len(items),
             "offset": int(offset),
             "has_more": has_more,
-            "archived_sessions": len(archived_map),
+            "archived_sessions": archived_count,
         }
         if scan_truncated:
             out_page["warnings"] = [

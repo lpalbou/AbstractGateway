@@ -81,7 +81,7 @@ one under **Providers**.
 
 The **Technical details** switch at the bottom of the sidebar shows commands,
 route ids and other technical information throughout the console. The top bar
-holds the **Docs assistant** (book icon: the same chat as every app — your question on the right, the answer on the left with Markdown, code and links, copy, attachments, live streaming, an icon-only New conversation; answers come from this gateway's llms.txt through the docs-qa workflow, as its one-line footer says),
+holds the **Docs assistant** (book icon: the same chat as every app — your question on the right, the answer on the left with Markdown, code and links, copy, attachments, live streaming, an icon-only New conversation; answers come from this gateway's llms.txt through the docs-qa workflow, as its one-line footer says; **Past conversations** reopens or archives an earlier docs chat, and docs chats never appear in the conversation lists),
 the appearance settings, **About**, the gateway's address with a copy button,
 who is signed in, and the sign-out control.
 

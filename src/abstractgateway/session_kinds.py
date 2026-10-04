@@ -1,0 +1,90 @@
+"""What a session is FOR: `conversation` (the default) or `docs` (a Docs
+assistant chat, round 8 R8.3).
+
+A purpose, never a client: every app and the console list the same pool of
+sessions. Docs-assistant chats live in that pool (ledgered, archivable,
+readable by `session_id`), and the turn listings (`GET /runs?root_only=true`)
+default to conversations, so a docs chat never shows in a conversation list;
+`kind=docs` lists them for the drawer's history.
+
+The mark lives beside the session archive in the principal's runtime data dir
+(`<data_dir>/session_kinds.json`); a session without a mark is a conversation
+(that is the migration):
+
+    {"schema": "gateway_session_kinds_v1",
+     "sessions": {session_id: {"kind": "docs", "marked_at"}}}
+
+An unreadable file is an error (the routes answer 500), never "no docs
+sessions": that would put every docs chat back in the conversation lists.
+"""
+
+from __future__ import annotations
+
+import datetime
+import json
+import os
+import tempfile
+import threading
+from pathlib import Path
+from typing import Any, Dict
+
+SCHEMA = "gateway_session_kinds_v1"
+FILENAME = "session_kinds.json"
+KINDS = ("conversation", "docs")
+DEFAULT_KIND = "conversation"
+
+_LOCK = threading.RLock()
+
+
+class SessionKindsUnreadable(RuntimeError):
+    """The file exists but cannot be read as the schema."""
+
+
+def _path(data_dir: Any) -> Path:
+    return Path(data_dir) / FILENAME
+
+
+def _load(data_dir: Any) -> Dict[str, Any]:
+    path = _path(data_dir)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {"schema": SCHEMA, "sessions": {}}
+    except Exception as exc:  # noqa: BLE001 - re-raised typed, with the path
+        raise SessionKindsUnreadable(f"{path} is not readable: {exc}") from exc
+    if not isinstance(raw, dict) or raw.get("schema") != SCHEMA or not isinstance(raw.get("sessions"), dict):
+        raise SessionKindsUnreadable(f"{path} is not a {SCHEMA} file")
+    return raw
+
+
+def session_kinds(data_dir: Any) -> Dict[str, str]:
+    """`{session_id: kind}` for every session that is not a conversation."""
+    with _LOCK:
+        out: Dict[str, str] = {}
+        for sid, rec in _load(data_dir)["sessions"].items():
+            kind = rec.get("kind") if isinstance(rec, dict) else None
+            if kind in KINDS and kind != DEFAULT_KIND:
+                out[str(sid)] = str(kind)
+        return out
+
+
+def mark_session_kind(data_dir: Any, session_id: str, kind: str) -> bool:
+    """Record `kind` for `session_id` (idempotent). A conversation needs no
+    mark. Returns True when the file changed."""
+    if kind not in KINDS:
+        raise ValueError(f"session kind must be one of {', '.join(KINDS)} (got {kind!r})")
+    if kind == DEFAULT_KIND:
+        return False
+    sid = str(session_id)
+    with _LOCK:
+        data = _load(data_dir)
+        if (data["sessions"].get(sid) or {}).get("kind") == kind:
+            return False
+        data["sessions"][sid] = {"kind": kind, "marked_at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")}
+        path = _path(data_dir)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(data, ensure_ascii=False, indent=2))
+        os.replace(tmp, str(path))
+        return True

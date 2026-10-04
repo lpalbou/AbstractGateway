@@ -257,8 +257,10 @@ def test_docs_qa_bundle_is_packaged_at_the_console_pinned_version() -> None:
     for dockerfile in ("Dockerfile", "Dockerfile.nvidia"):
         assert name in (ROOT / "docker" / "abstractgateway-server" / dockerfile).read_text(encoding="utf-8")
     assert f"!{name}" in (ROOT / ".gitignore").read_text(encoding="utf-8")
-    console = (ROOT / "src" / "abstractgateway" / "console.py").read_text(encoding="utf-8")
-    assert 'bundle_id: "docs-qa", bundle_version: "0.1.1"' in console
+    # The web console's Docs assistant is the kit drawer (round 8): its pin ships in the vendored islands bundle.
+    from abstractgateway.console_islands import ISLANDS_JS
+
+    assert 'bundle_id:"docs-qa",bundle_version:"0.1.1"' in ISLANDS_JS
     tui = (ROOT / "console-tui" / "src" / "ui" / "docs.rs").read_text(encoding="utf-8")
     assert 'pub const BUNDLE_VERSION: &str = "0.1.1";' in tui
 
