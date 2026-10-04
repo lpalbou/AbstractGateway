@@ -108,7 +108,7 @@ def test_gateway_policy_shape_writes_and_refusals(f: dict, tmp_path: Path) -> No
             assert needle in r.json()["detail"], r.json()["detail"]
 
         refused({"shared_workspace": ""}, "shared workspace is required")
-        refused({"shared_workspace": str(tmp_path / "missing")}, "No folder at this path")
+        refused({"shared_workspace": str(tmp_path / "missing")}, "No directory at this path")
         refused({"shared_workspace": str(_data(tmp_path).resolve())}, "never a workspace")
         refused({"folders": [f["notes"]]}, "each row is {path, mode}")
         refused({"folders": [{"path": f["notes"]}]}, "mode must be")

@@ -395,11 +395,11 @@ def check_workspace_path(raw: Any) -> Dict[str, Any]:
         "sentence": "",
     }
     if not text:
-        out["sentence"] = "Type a folder path."
+        out["sentence"] = "Type a directory path."
         return out
     p = Path(text).expanduser()
     if not p.is_absolute():
-        out["sentence"] = "Use a full path that starts with / (or ~ for the gateway's home folder)."
+        out["sentence"] = "Use a full path that starts with / (or ~ for the gateway's home directory)."
         return out
     out["absolute"] = True
     try:
@@ -409,11 +409,11 @@ def check_workspace_path(raw: Any) -> Dict[str, Any]:
         return out
     out["normalized"] = str(resolved)
     if not resolved.exists():
-        out["sentence"] = "No folder at this path on the gateway's computer."
+        out["sentence"] = "No directory at this path on the gateway's computer."
         return out
     out["exists"] = True
     if not resolved.is_dir():
-        out["sentence"] = "This is a file, not a folder."
+        out["sentence"] = "This is a file, not a directory."
         return out
     out["is_dir"] = True
     out["valid"] = True

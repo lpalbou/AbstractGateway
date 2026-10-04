@@ -53,10 +53,10 @@ def test_path_check_says_why_and_matches_the_write_rules(tmp_path: Path) -> None
         assert ok["valid"] is True and ok["sentence"] == "" and ok["normalized"] == str(folder.resolve())
         assert ok["absolute"] and ok["exists"] and ok["is_dir"]
         for path, sentence in (
-            ("", "Type a folder path."),
-            ("relative/folder", "Use a full path that starts with / (or ~ for the gateway's home folder)."),
-            (str(tmp_path / "missing"), "No folder at this path on the gateway's computer."),
-            (str(tmp_path / "notes.txt"), "This is a file, not a folder."),
+            ("", "Type a directory path."),
+            ("relative/folder", "Use a full path that starts with / (or ~ for the gateway's home directory)."),
+            (str(tmp_path / "missing"), "No directory at this path on the gateway's computer."),
+            (str(tmp_path / "notes.txt"), "This is a file, not a directory."),
         ):
             out = check(path)
             assert out["valid"] is False and out["sentence"] == sentence, (path, out)

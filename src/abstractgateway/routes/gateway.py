@@ -4582,7 +4582,7 @@ def _policy_path_problem(eff: Any, path: Path) -> Optional[str]:
         listed = ", ".join(str(p) for p in eff.reach)
         return (
             "the posture is \"Deny everything, allow listed workspaces\" and it is not one of them "
-            f"(allowed: {listed}); add it as an allowed workspace (console: Accounts → workspace icon) to use it"
+            f"(allowed: {listed}); a gateway admin adds it under Accounts → Shared workspace & allowed workspaces"
         )
     return None
 
