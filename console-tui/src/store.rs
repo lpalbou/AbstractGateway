@@ -1589,6 +1589,11 @@ pub struct NetworkData {
     /// (setting | env | default), whether the environment the gateway was
     /// started with overrides it, and what the middleware applies now.
     pub proxy: ReverseProxyView,
+    /// The whole `gateway_network_v1` body: the Network page reads the
+    /// fields this struct does not flatten (`tailscale`, `pinned_by_cli`,
+    /// `auth.reason`, `reverse_proxy.*.builtin`, `checked_at`…) exactly as
+    /// the web console does.
+    pub raw: Value,
 }
 
 /// `gateway_network_v1.reverse_proxy` flattened for the panel.
@@ -1724,6 +1729,7 @@ impl NetworkData {
                 .and_then(Value::as_str)
                 .map(str::to_string),
             proxy: ReverseProxyView::from_value(v.get("reverse_proxy")),
+            raw: v.clone(),
             warnings: v
                 .get("warnings")
                 .and_then(Value::as_array)
