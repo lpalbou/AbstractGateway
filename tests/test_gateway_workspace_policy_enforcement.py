@@ -147,3 +147,55 @@ def test_open_run_workspace_uses_the_run_folder(tmp_path: Path, monkeypatch: pyt
         assert workspace_root.exists()
         assert workspace_root.is_dir()
         assert opened == [["open-test", str(workspace_root)]]
+
+
+def test_a_run_started_by_an_in_process_door_gets_the_effective_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bridges, schedules and entities call the host's start_run directly (no HTTP clamp): the host
+    itself binds the run to the account's effective set and never honours the any-folder mode."""
+    shared, extra, secret, other = (tmp_path / n for n in ("shared", "extra", "secret", "other"))
+    for d in (shared, extra, secret, other):
+        d.mkdir()
+    client, headers = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
+    with client:
+        r = client.put(
+            "/api/gateway/workspace/policy",
+            json={"shared_workspace": str(shared), "allowed_folders": [str(extra)], "never_allowed": [str(secret)]},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+        from abstractgateway.service import get_gateway_service
+
+        host = get_gateway_service().host
+        rid = host.start_run(
+            flow_id="root",
+            bundle_id="bundle-policy",
+            input_data={"workspace_access_mode": "all_except_ignored", "workspace_allowed_paths": [str(other.resolve()), str(extra.resolve())]},
+        )
+        vars0 = host.run_store.load(rid).vars
+        assert vars0["workspace_access_mode"] == "workspace_or_allowed"
+        assert vars0["workspace_allowed_paths"] == [str(shared.resolve())], "nothing switched on, nothing outside"
+        assert str(secret.resolve()) in str(vars0["workspace_ignored_paths"]).splitlines()
+
+
+def test_the_gateway_policy_write_is_admin_only_at_both_layers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The route table admin-gates PUT /workspace/policy, and the handler refuses a non-admin on its own
+    (with the table row removed) — two layers, each checked."""
+    from abstractgateway.security import authorization
+
+    req = authorization.gateway_route_authorization_requirement("/api/gateway/workspace/policy", "PUT")
+    assert req is not None and req.admin_required and req.reason_code == "admin_required"
+    assert authorization.gateway_route_authorization_requirement("/api/gateway/workspace/policy", "GET") is None
+    monkeypatch.setenv("ABSTRACTGATEWAY_USER_AUTH", "1")
+    client, headers = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
+    monkeypatch.setattr(
+        authorization,
+        "GATEWAY_ROUTE_POLICIES",
+        tuple(p for p in authorization.GATEWAY_ROUTE_POLICIES if "/api/gateway/workspace/policy" not in p.exact),
+    )
+    with client:
+        from abstractgateway.users import GatewayUserRegistry
+
+        _rec, token = GatewayUserRegistry().create_user(user_id="alice", roles=["user"])
+        r = client.put("/api/gateway/workspace/policy", json={"allow_any_folder": True}, headers={"Authorization": f"Bearer {token}"})
+        assert r.status_code == 403, r.text
+        assert client.get("/api/gateway/workspace/policy", headers=headers).json()["policy"]["allow_any_folder"] is False

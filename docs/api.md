@@ -582,7 +582,10 @@ The admin allows, the account fine-tunes (round 9). Full model and enforcement:
 `GET /api/gateway/workspace/policy` (any signed-in principal) →
 `{ok, policy}` with `policy = {shared_workspace, allowed_folders[],
 allow_any_folder, never_allowed[], launch_folder_trust,
-builtin_never_allowed[] (read-only), max_attachment_bytes (read-only)}`.
+builtin_never_allowed[] (read-only), max_attachment_bytes (read-only)}`. A
+non-admin gets `builtin_never_allowed: []` and `builtin_never_allowed_hidden:
+true` (those paths name the gateway's home and data folder); the same holds
+for `never_allowed` in the effective set below.
 
 `PUT /api/gateway/workspace/policy` (admin): any subset of `{shared_workspace,
 allowed_folders, allow_any_folder, never_allowed, launch_folder_trust}`; named

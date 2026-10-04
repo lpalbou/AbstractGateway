@@ -543,3 +543,17 @@ def test_effective_set_drops_an_allowed_folder_inside_a_never_allowed_one(folder
     v: dict = {}
     apply_workspace_policy(v, root_data_dir=data, tenant_id="default", user_id="admin")
     assert v["workspace_allowed_paths"] == [folders["shared"]]
+
+
+def test_non_admins_never_see_the_builtin_paths(folders: dict, tmp_path: Path) -> None:
+    home_data = str(_data_dir(tmp_path).resolve())
+    with _client() as c:
+        _setup_gateway(c, folders)
+        assert home_data in c.get("/api/gateway/workspace/policy").json()["policy"]["builtin_never_allowed"]
+        assert home_data in c.get("/api/gateway/workspace/effective/me").json()["never_allowed"]
+        alice = _user("alice")
+        for path in ("/api/gateway/workspace/policy", "/api/gateway/workspace/effective/me", "/api/gateway/workspace/policy/me"):
+            body = c.get(path, headers=alice).json()
+            assert home_data not in json.dumps(body), path
+        eff = c.get("/api/gateway/workspace/effective/me", headers=alice).json()
+        assert eff["never_allowed"] == [folders["secrets"]] and eff["builtin_never_allowed_hidden"] is True

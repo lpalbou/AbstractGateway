@@ -2308,7 +2308,7 @@ fine-tunes within what is allowed.
 
 | Field | Meaning |
 |---|---|
-| `shared_workspace` | Exactly one folder, required, always available to every account. Runs that name no folder start in a folder the gateway makes for their conversation (in its data folder). |
+| `shared_workspace` | Exactly one folder, required, always available to every account (read and write). |
 | `allowed_folders` | Extra folders an account may switch on. |
 | `allow_any_folder` | Off by default. On: accounts may add folders of their own. |
 | `never_allowed` | Gateway-wide deny list. It applies on top of everything and always wins. |
@@ -2318,6 +2318,15 @@ fine-tunes within what is allowed.
 `GET`/`PUT /api/gateway/workspace/policy/{account}`, `me` = the caller):
 `enabled_folders` (the allowed folders this account switched on, none by
 default) and `own_folders` (honoured only while `allow_any_folder` is on).
+
+**Private session folder vs shared workspace.** Each conversation keeps its
+own private folder in its account's data plane
+(`<data dir>/…/workspaces/session-…`, protected by the built-in deny list:
+another account's agents never read it); a run that names no folder works
+there. The shared workspace is a root every run can always reach (read and
+write), present in every account's effective set, and the default place for
+files an agent is asked to produce "in the workspace" when no narrower folder
+is chosen.
 
 **Effective set** (`GET /api/gateway/workspace/effective/{account}`): the shared
 workspace, then the switched-on folders, then the account's own folders, minus
@@ -4583,7 +4592,10 @@ The admin allows, the account fine-tunes (round 9). Full model and enforcement:
 `GET /api/gateway/workspace/policy` (any signed-in principal) →
 `{ok, policy}` with `policy = {shared_workspace, allowed_folders[],
 allow_any_folder, never_allowed[], launch_folder_trust,
-builtin_never_allowed[] (read-only), max_attachment_bytes (read-only)}`.
+builtin_never_allowed[] (read-only), max_attachment_bytes (read-only)}`. A
+non-admin gets `builtin_never_allowed: []` and `builtin_never_allowed_hidden:
+true` (those paths name the gateway's home and data folder); the same holds
+for `never_allowed` in the effective set below.
 
 `PUT /api/gateway/workspace/policy` (admin): any subset of `{shared_workspace,
 allowed_folders, allow_any_folder, never_allowed, launch_folder_trust}`; named
@@ -4611,7 +4623,7 @@ shared_workspace, folders: [{path, source: "shared"|"allowed"|"own"}]
 (shared first), available_folders: [{path, enabled, never_allowed}],
 own_folders[], own_folders_allowed, own_folders_inactive, never_allowed[]
 (gateway + built-in), launch_folder_trust, summary}`; `summary` is one line
-such as "Shared workspace (work) + 2 folders (1 of your own). Never: 1 folder.".
+such as "Private session folder + Shared workspace (work) + 2 folders (1 of your own). Never: 1 folder.".
 
 Run starts read the same set: a `workspace_allowed_paths` list may only narrow
 it (absent = the whole set, the shared workspace always kept), a wider folder or

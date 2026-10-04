@@ -29201,10 +29201,26 @@ async def workspace_policy(request: Request) -> Dict[str, Any]:
     """The GATEWAY workspace policy (round 9): {shared_workspace, allowed_folders, allow_any_folder,
     never_allowed, launch_folder_trust, builtin_never_allowed, max_attachment_bytes}. Any signed-in
     principal: an account needs the allowed folders' paths to switch them on."""
-    _principal_from_request(request)
+    principal = _principal_from_request(request)
     from ..workspace_policy import gateway_policy
 
-    return {"ok": True, "policy": await _off_the_event_loop(gateway_policy, gateway_data_dir_from_env())}
+    policy = await _off_the_event_loop(gateway_policy, gateway_data_dir_from_env())
+    return {"ok": True, "policy": _redact_builtin_for(principal, policy)}
+
+
+def _redact_builtin_for(principal: Any, payload: Dict[str, Any], *, effective: bool = False) -> Dict[str, Any]:
+    """The built-in never-allowed folders name the gateway's home and data folder: a non-admin sees
+    that they exist (`builtin_never_allowed_hidden: true`), never the paths (the thin-client rule)."""
+    if principal is not None and principal.is_admin():
+        return payload
+    out = dict(payload)
+    if effective:
+        builtin = set(out.pop("_builtin", []) or [])
+        out["never_allowed"] = [p for p in out.get("never_allowed") or [] if p not in builtin]
+    else:
+        out["builtin_never_allowed"] = []
+    out["builtin_never_allowed_hidden"] = True
+    return out
 
 
 @router.put("/workspace/policy")
@@ -29287,15 +29303,26 @@ def _is_entity_account(tenant: str, user: str) -> bool:
     return bool(rec is not None and getattr(rec, "principal_kind", "") == "entity")
 
 
-def _account_policy_answer(tenant: str, user: str) -> Dict[str, Any]:
-    from ..workspace_policy import account_policy, effective_policy, gateway_policy
+def _effective_for(principal: Any, tenant: str, user: str) -> Dict[str, Any]:
+    from ..workspace_policy import effective_policy, gateway_policy
+
+    data_dir = gateway_data_dir_from_env()
+    eff = effective_policy(data_dir, tenant_id=tenant, user_id=user)
+    if principal is not None and principal.is_admin():
+        return eff
+    eff["_builtin"] = gateway_policy(data_dir)["builtin_never_allowed"]
+    return _redact_builtin_for(principal, eff, effective=True)
+
+
+def _account_policy_answer(principal: Any, tenant: str, user: str) -> Dict[str, Any]:
+    from ..workspace_policy import account_policy, gateway_policy
 
     data_dir = gateway_data_dir_from_env()
     return {
         "ok": True,
         "policy": account_policy(data_dir, tenant_id=tenant, user_id=user),
-        "gateway": gateway_policy(data_dir),
-        "effective": effective_policy(data_dir, tenant_id=tenant, user_id=user),
+        "gateway": _redact_builtin_for(principal, gateway_policy(data_dir)),
+        "effective": _effective_for(principal, tenant, user),
     }
 
 
@@ -29303,8 +29330,8 @@ def _account_policy_answer(tenant: str, user: str) -> Dict[str, Any]:
 async def workspace_account_policy(request: Request, account: str) -> Dict[str, Any]:
     """ONE account's workspace policy {account, enabled_folders, own_folders} with the gateway policy
     and the effective set. Admin, or the account itself (`me`)."""
-    _principal, tenant, user = _workspace_policy_target(request, account)
-    return await _off_the_event_loop(_account_policy_answer, tenant, user)
+    principal, tenant, user = _workspace_policy_target(request, account)
+    return await _off_the_event_loop(_account_policy_answer, principal, tenant, user)
 
 
 @router.put("/workspace/policy/{account}")
@@ -29335,17 +29362,15 @@ async def workspace_account_policy_write(request: Request, account: str, payload
     except WorkspacePolicyError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     _audit_account_change(request, user_id=user, tenant_id=tenant, changes={"workspace_folders": sorted(body)})
-    return await _off_the_event_loop(_account_policy_answer, tenant, user)
+    return await _off_the_event_loop(_account_policy_answer, principal, tenant, user)
 
 
 @router.get("/workspace/effective/{account}")
 async def workspace_effective(request: Request, account: str) -> Dict[str, Any]:
     """What this account's agents may use, computed by the gateway (the set every run start and
     the tool sandbox enforce): shared workspace first, then switched-on extras, then own folders."""
-    _principal, tenant, user = _workspace_policy_target(request, account)
-    from ..workspace_policy import effective_policy
-
-    out = await _off_the_event_loop(effective_policy, gateway_data_dir_from_env(), tenant_id=tenant, user_id=user)
+    principal, tenant, user = _workspace_policy_target(request, account)
+    out = await _off_the_event_loop(_effective_for, principal, tenant, user)
     out["ok"] = True
     return out
 

@@ -947,6 +947,22 @@ def begin_gateway_boot() -> None:
                     print(f"[WARN] email: {note}", file=sys.stderr, flush=True)
             except Exception:  # noqa: BLE001 - never a boot blocker
                 logging.getLogger("abstractgateway.service").warning("email legacy import failed", exc_info=True)
+            # Round 9: the old workspace model (access modes, per-user lists, "Any folder (old
+            # clients)") is migrated ONCE to the workspace policy at serve start (it would also run
+            # at the first read); `_migrated.workspace_policy_v1` keeps the old block.
+            try:
+                from .users import gateway_data_dir_from_env as _ws_data_dir
+                from .workspace_policy import ensure_migrated
+
+                if ensure_migrated(_ws_data_dir()):
+                    print(
+                        "[INFO] workspace folders: the old workspace settings were migrated to the workspace "
+                        "policy (shared workspace, allowed folders, never allowed); see Accounts.",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+            except Exception:  # noqa: BLE001 - never a boot blocker; the first read retries
+                logging.getLogger("abstractgateway.service").warning("workspace policy migration failed", exc_info=True)
             _boot_checkpoint()
             start_gateway_runner()
             _boot_checkpoint()
