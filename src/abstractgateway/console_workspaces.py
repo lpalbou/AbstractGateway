@@ -116,7 +116,8 @@ a.accounts-runtime-link:focus-visible { outline: 2px solid var(--info, var(--acc
 WORKSPACES_CSS = r"""
 /* ---- Workspaces page (round 8, console_workspaces.py). */
 .ws-page { display: flex; flex-direction: column; gap: 16px; min-width: 0; max-width: 980px; }
-.ws-summary { margin: 0; padding: 10px 14px; border-left: 3px solid var(--accent); border-radius: var(--radius-sm); background: var(--accent-subtle, transparent); font-size: var(--font-size-base); line-height: 1.45; overflow-wrap: anywhere; }
+/* Informational: the info tone (never the accent red). */
+.ws-summary { margin: 0; padding: 10px 14px; border-left: 3px solid var(--info, var(--accent)); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--info, var(--accent)) 8%, transparent); font-size: var(--font-size-base); line-height: 1.45; overflow-wrap: anywhere; }
 .ws-loading { margin: 0; color: var(--text-secondary); }
 .ws-card .ui-card__note { margin: 2px 0 0; }
 .ws-field { display: grid; gap: 6px; min-width: 0; padding-top: 12px; border-top: 1px solid var(--line-soft, var(--ui-border-1)); }
