@@ -78,7 +78,7 @@ flowchart LR
   end
 
   Data[("Data dir: runs, ledgers, commands, artifacts, auth, settings")]
-  WS[("Run workspace folders")]
+  WS[("Workspaces: private session folders, Shared workspace, allowed workspaces")]
   SvcMgr["Service manager: LaunchAgent, systemd unit, local supervisor (restarts serve)"]
 
   Browser -->|HTTP| Sec
@@ -432,17 +432,19 @@ The frames, fields and end reasons are in
 
 ## Workspace guard (every run start)
 
-Every run the gateway starts works in a folder, and its file tools are kept
-out of the gateway's data folder and the account's credential folders:
+Every run the gateway starts works in a folder, follows its account's
+effective workspace policy, and its file tools are kept out of the gateway's
+data folder and the account's credential folders:
 
 ```mermaid
 flowchart TB
-  Http["Client doors: POST /runs/start, POST /runs/schedule, entity summons"] --> Policy["Workspace policy check: workspace_root inside the allowed roots and not inside the data folder (except the caller's own conversation folder), else 400"]
+  Http["Client doors: POST /runs/start, POST /runs/schedule, entity summons"] --> Policy["Workspace policy check: a workspace_root the account's posture does not reach, or inside the data folder (except the caller's own conversation folder), is refused with 400"]
   Policy --> Start["Workflow host start_run"]
-  Internal["Gateway-made starts: Telegram, email and agora bridges, sandbox routes, schedule children"] --> Start
-  Start --> Ensure["No folder named: the conversation's gateway-made folder (or a per-run folder)"]
-  Ensure --> Deny["Built-in deny rules: workspace_builtin_deny_prefixes (data folder + credential folders), workspace_builtin_allow (the run's own folder); client-sent values dropped"]
-  Deny --> Tools["AbstractRuntime file tools enforce the rules; nothing is written into the model's prompt"]
+  Internal["Gateway-made starts: Telegram, email and agora bridges, sandbox routes, automation occurrences"] --> Start
+  Start --> Ensure["No folder named: the conversation's private session folder (or a per-run folder)"]
+  Ensure --> Apply["Effective workspace policy: posture (Deny everything, allow listed workspaces / Allow everything, refuse listed workspaces), Shared workspace (rw), allowed workspaces ro or rw, refused workspaces; an account narrows only"]
+  Apply --> Deny["Built-in deny rules: workspace_builtin_deny_prefixes (data folder + credential folders), workspace_builtin_allow (the run's own folder); client-sent values dropped"]
+  Deny --> Tools["AbstractRuntime file tools enforce the rules; the agent's context lists its working directory, the Shared workspace and the allowed workspaces with their modes, never the built-in rules"]
 ```
 
 The rules are whole-folder prefixes, never a listing of a folder's contents,

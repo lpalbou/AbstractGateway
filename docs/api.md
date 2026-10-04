@@ -531,7 +531,10 @@ folder the gateway made (`<data dir>/workspaces/session-…`), or the folder the
 client was started from. A run started without `workspace_root` gets the
 conversation's folder (a run without a session gets its own
 `<data dir>/workspaces/<run>`), and its file tools resolve relative paths
-there, never in the shared workspace. Three routes let the person who started the run see
+there, never in the shared workspace. The run carries `workspace_shared_path`
+(set by the gateway, a client value is replaced), and the agent's workspace
+context lists the shared workspace and the allowed workspaces with their paths
+and modes ([security.md](./security.md#workspaces-two-dimensions)). Three routes let the person who started the run see
 it; another user's run id answers 404.
 
 `GET /api/gateway/runs/{run_id}/workspace`:

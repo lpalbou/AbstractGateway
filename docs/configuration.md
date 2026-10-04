@@ -1216,8 +1216,9 @@ stored, the gateway settles it once, at its first start (recorded under
 An admin changes it in Accounts → Shared workspace & allowed workspaces.
 The shared workspace is not where a run writes by default: a run that names no
 `workspace_root` works in its conversation's private session folder
-(`<data dir>/workspaces/session-…`), and a relative path lands there. Agents
-reach the shared workspace by its full path.
+(`<data dir>/workspaces/session-…`), and a relative path lands there. The
+shared workspace and the allowed workspaces are listed to the agent with their
+paths and modes.
 `ABSTRACTGATEWAY_WORKSPACE_MOUNTS` is read once, by the migration.
 These are gone:
 

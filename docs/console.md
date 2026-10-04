@@ -236,7 +236,7 @@ example "Deny everything, allow listed workspaces · Shared workspace (rw) · /d
 |---|---|
 | Posture: **Deny everything, allow listed workspaces** (the default) | agents may use the shared workspace and the **Allowed workspaces** listed under it, nothing else |
 | Posture: **Allow everything, refuse listed workspaces** | agents may use any workspace; **Everything else** sets its permission (**Read-only** or **Read & write**) and the **Refused workspaces** listed under it are the exceptions |
-| **Shared workspace** | the one workspace every account's agents can always use, by its full path; always Read & write and required. A conversation that names no workspace works in its own private session folder, so a file it writes without a full path lands there, not here |
+| **Shared workspace** | the one workspace every account's agents can always use; always Read & write and required. A conversation that names no workspace works in its own private session folder, so a file it writes without a full path lands there, not here. The shared workspace and the allowed workspaces are listed to the agent with their paths and modes |
 | Rows | one row per workspace (**Add a workspace**, the remove icon on each row), each **Read-only**, **Read & write** or **Refused** (a refused workspace stays out, even inside an allowed one) |
 
 **Workspace** on an account's row opens that account's workspaces (users,

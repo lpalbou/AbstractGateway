@@ -529,8 +529,24 @@ its account's data plane (protected by the built-in deny list, so another
 account's agents never read it). A run that names no workspace works there: a
 relative path such as `out.txt` is written to
 `<data dir>/workspaces/session-…/out.txt` (a run without a conversation gets
-its own `<data dir>/workspaces/<run>` folder), never to the shared workspace,
-which agents reach by its full path.
+its own `<data dir>/workspaces/<run>` folder), never to the shared workspace.
+The shared workspace and the allowed workspaces are listed to the agent with
+their paths and modes, in the workspace context of every tool-using call:
+
+```text
+Default working directory: "<data dir>/workspaces/session-…"
+Shared workspace: "/srv/shared" (read & write)
+Allowed workspaces:
+  "/data/project" (read & write)
+  "/archive" (read-only)
+```
+
+Under "Allow everything, refuse listed workspaces" a last line gives the mode
+of everything else, for example `Everything else: (read-only)`. Refused
+workspaces are never listed as allowed, and an account's narrowing shows (a
+workspace the account lowered reads `(read-only)`). Every door that starts a
+run sets the shared workspace path (`workspace_shared_path`); a value sent by
+a client is replaced.
 
 **Gateway policy** (admin): `GET`/`PUT /api/gateway/workspace/policy` with
 `{shared_workspace, posture, default_mode, folders: [{path, mode: ro|rw|deny}]}`.
@@ -602,7 +618,7 @@ at serve start or at the first read. It never widens anyone:
 - Per-account refused folders become that account's refused rows.
 - An account in "allow everything except" under such a gateway stays narrowed
   and is listed in `narrowed_accounts`.
-- Previously trusted launch folders are not added.
+- Launch folders trusted under the old model are not added.
 
 Missing folders are dropped and listed in the settings store under
 `_migrated.workspace_policy_v1`, next to the old block. The old runtime-config

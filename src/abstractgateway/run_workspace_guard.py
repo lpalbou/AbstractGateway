@@ -147,11 +147,13 @@ def apply_workspace_policy(
       ("Allow everything, refuse listed workspaces (ro)") every folder is read-only ("/") except the run's own folder,
       the shared workspace and the read & write folders (`workspace_writable_paths`). A client never
       sets writable exceptions (dropped first).
+    - The shared workspace path (`workspace_shared_path`), so the agent's tool context names it with
+      the allowed workspaces and their modes (set here, a client value is replaced).
 
     Returns the reachable folders inside this account's OWN data plane: the caller lifts the built-in
     data-folder deny for exactly those (never another account's plane). No account (a gateway without
     sign-in) = the operator, default:admin."""
-    from abstractruntime.utils.workspace_paths import WRITABLE_PATHS_KEY
+    from abstractruntime.utils.workspace_paths import SHARED_WORKSPACE_KEY, WRITABLE_PATHS_KEY
 
     from .workspace_policy import effective_folder_paths
 
@@ -159,8 +161,11 @@ def apply_workspace_policy(
     eff = effective_folder_paths(data_dir, tenant_id=str(tenant_id or "") or "default", user_id=str(user_id or "") or "admin")
     vars0.pop(WRITABLE_PATHS_KEY, None)
     if isinstance(vars0.get("_runtime"), dict):
-        vars0["_runtime"] = {k: v for k, v in vars0["_runtime"].items() if k != WRITABLE_PATHS_KEY}
+        vars0["_runtime"] = {k: v for k, v in vars0["_runtime"].items() if k not in (WRITABLE_PATHS_KEY, SHARED_WORKSPACE_KEY)}
     shared = eff.shared
+    # The shared workspace, as a fact for the agent's workspace context (the runtime lists it as
+    # "Shared workspace: <path> (read & write)"); whatever a client sent under this key is replaced.
+    vars0[SHARED_WORKSPACE_KEY] = os.path.realpath(str(shared))
     mode = str(vars0.get("workspace_access_mode") or vars0.get("workspaceAccessMode") or "").strip().lower()
     vars0.pop("workspaceAccessMode", None)
     raw_allowed = vars0.pop("workspaceAllowedPaths", None)
