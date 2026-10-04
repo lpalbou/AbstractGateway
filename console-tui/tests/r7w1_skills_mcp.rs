@@ -143,7 +143,7 @@ fn a_curated_skill_cannot_be_archived_and_says_why() {
 fn mcp_tab_shows_servers_status_and_the_agents_switch() {
     for size in SIZES {
         let mut h = page(size);
-        h.key(b"\x1b[C");
+        h.key(b"\t");
         let s = h.shoot("mcp");
         assert!(s.contains("[MCP servers]"), "{s}");
         assert!(s.contains("No server is offered to agents yet"), "{s}");
@@ -163,7 +163,7 @@ fn mcp_tab_shows_servers_status_and_the_agents_switch() {
 #[test]
 fn turning_agents_on_asks_first_and_a_blocked_switch_says_why() {
     let mut h = page((120, 40));
-    h.key(b"\x1b[C");
+    h.key(b"\t");
     h.sent();
     let s = h.key(b" ");
     assert!(
@@ -192,7 +192,7 @@ fn turning_agents_on_asks_first_and_a_blocked_switch_says_why() {
 fn add_server_overlay_has_the_web_fields_and_esc_closes_it() {
     for size in SIZES {
         let mut h = page(size);
-        h.key(b"\x1b[C");
+        h.key(b"\t");
         let s = h.key(b"a");
         assert!(s.contains("Add MCP server"), "{s}");
         assert!(s.contains("A short name for this server"), "{s}");
@@ -331,7 +331,7 @@ fn live_mcp_test_enable_disable_archive() {
         Some(json!({"enabled": false})),
     );
     skills_mcp::refresh_for_tests(&h.store, &h.tx);
-    h.key(b"\x1b[C");
+    h.key(b"\t");
     h.until_text("calc");
     h.key(b"t");
     h.until_text("calc: Connected to fake-stdio 0.3 · 2 tools.");

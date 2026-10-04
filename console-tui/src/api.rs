@@ -49,6 +49,10 @@ pub mod sandbox_docs;
 /// the MCP servers registry (add/edit/test/agents/archive).
 #[path = "api_skills.rs"]
 pub mod skills;
+/// The Workflows page: archived list, unarchive, availability, the
+/// default workflow per app.
+#[path = "api_workflows.rs"]
+mod workflows;
 
 /// What kind of failure this is — drives which honest state the UI shows.
 #[derive(Debug, Clone, PartialEq, Eq)]

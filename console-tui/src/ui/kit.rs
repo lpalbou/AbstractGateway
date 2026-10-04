@@ -142,6 +142,9 @@ pub struct Row {
     pub cells: Vec<String>,
     pub detail: Vec<String>,
     pub dim: bool,
+    /// A group caption ("Shared with everyone"): one full-width line, never
+    /// selected (the selection steps over it).
+    pub group: bool,
 }
 
 impl Row {
@@ -159,12 +162,37 @@ impl Row {
         self.dim = dim;
         self
     }
+    /// A group caption row (the web's full-width group header row).
+    pub fn group(title: impl Into<String>) -> Row {
+        Row {
+            cells: vec![title.into()],
+            group: true,
+            ..Row::default()
+        }
+    }
+}
+
+/// The nearest selectable (non-group) row from `i`, stepping `down` first
+/// and then the other way; `None` when every row is a caption.
+pub fn selectable(rows: &[Row], i: usize, down: bool) -> Option<usize> {
+    if rows.is_empty() {
+        return None;
+    }
+    let i = i.min(rows.len() - 1);
+    let fwd = (i..rows.len()).find(|&j| !rows[j].group);
+    let back = (0..=i).rev().find(|&j| !rows[j].group);
+    if down {
+        fwd.or(back)
+    } else {
+        back.or(fwd)
+    }
 }
 
 /// What one painted line of a [`WrapTable`] is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LineKind {
     Header,
+    Group,
     Cell,
     Detail,
 }
@@ -178,8 +206,9 @@ pub struct WrapLine {
 }
 
 const COL_GAP: i32 = 2;
-/// Columns whose widest cell is at most this many cells never wrap.
-const SHORT_CELL: i32 = 12;
+/// Columns whose widest cell is at most this many cells never wrap
+/// (a version with "+N older", a state, two short words).
+const SHORT_CELL: i32 = 16;
 
 /// Lay a table out at `width` cells: column widths are solved by the
 /// shared width policy ([`widths::solve`]); a cell wider than its column
@@ -193,7 +222,11 @@ pub fn wrap_layout(
     expanded: Option<usize>,
 ) -> Vec<WrapLine> {
     let width = width.max(8);
-    let cells: Vec<Vec<String>> = rows.iter().map(|r| r.cells.clone()).collect();
+    let cells: Vec<Vec<String>> = rows
+        .iter()
+        .filter(|r| !r.group)
+        .map(|r| r.cells.clone())
+        .collect();
     // solve() reserves a scrollbar cell and one-cell gaps; ours are two
     // cells wide, so hand it the width minus the extra gap cells.
     let mut ws = wrap_widths(rules, &cells, width);
@@ -210,6 +243,19 @@ pub fn wrap_layout(
         });
     }
     for (i, r) in rows.iter().enumerate() {
+        if r.group {
+            for l in wrap_text(
+                r.cells.first().map(String::as_str).unwrap_or(""),
+                width as usize,
+            ) {
+                out.push(WrapLine {
+                    text: l,
+                    row: Some(i),
+                    kind: LineKind::Group,
+                });
+            }
+            continue;
+        }
         let wrapped: Vec<Vec<String>> = ws
             .iter()
             .enumerate()
@@ -417,15 +463,25 @@ impl WrapTable {
         let painted_ev = painted.clone();
         let top_ev = top.clone();
         let rows_ev = rows.clone();
+        let rows_mv = rows.clone();
         let move_to = move |i: usize| {
             if n == 0 {
                 return;
             }
-            let i = i.min(n - 1);
+            let down = i >= sel.get_untracked();
+            let Some(i) = selectable(&rows_mv, i.min(n - 1), down) else {
+                return;
+            };
             if sel.get_untracked() != i {
                 sel.set(i);
             }
         };
+        // A selection resting on a caption moves to the first row below it.
+        if let Some(i) = selectable(&rows, sel.get_untracked(), true) {
+            if i != sel.get_untracked() {
+                sel.set(i);
+            }
+        }
         let el = Element::new()
             .style(layout)
             .focusable()
@@ -598,6 +654,11 @@ impl WrapTable {
                                 }
                             } else if l.kind == LineKind::Detail {
                                 Style::new().fg(tokens.text_muted).bg(tokens.surface)
+                            } else if l.kind == LineKind::Group {
+                                Style::new()
+                                    .fg(tokens.accent)
+                                    .bg(tokens.surface)
+                                    .attrs(Attrs::BOLD)
                             } else if dim {
                                 Style::new().fg(tokens.text_faint).bg(tokens.surface)
                             } else {
@@ -811,6 +872,24 @@ mod tests {
         assert!(!closed.contains("detail of"));
         let open = wrap_text_table(&rules(), &rows, 40, Some(1));
         assert!(open.contains("detail of b") && !open.contains("detail of a"));
+    }
+
+    #[test]
+    fn group_captions_are_lines_and_never_selected() {
+        let rows = vec![
+            Row::group("Shared with everyone"),
+            Row::new(vec!["a".into(), "x".into()]),
+            Row::group("Mine"),
+            Row::new(vec!["b".into(), "y".into()]),
+        ];
+        let text = wrap_text_table(&rules(), &rows, 40, None);
+        assert!(
+            text.contains("Shared with everyone") && text.contains("Mine"),
+            "{text}"
+        );
+        assert_eq!(selectable(&rows, 0, true), Some(1));
+        assert_eq!(selectable(&rows, 2, true), Some(3));
+        assert_eq!(selectable(&rows, 2, false), Some(1));
     }
 
     #[test]

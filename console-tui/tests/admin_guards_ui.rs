@@ -269,7 +269,9 @@ fn non_admin_verbs_are_refused_with_the_reason() {
             let mut h = harness();
             h.on(screen, false);
             h.store.notice.set(None);
-            let s = h.key(key.as_bytes());
+            // Footer labels name keys in words ("space"); press the key.
+            let bytes: &str = if *key == "space" { " " } else { key };
+            let s = h.key(bytes.as_bytes());
             let notice = h.notice();
             assert!(
                 notice.contains("is admin-only on the gateway") && notice.contains("ana"),

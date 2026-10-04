@@ -68,7 +68,7 @@ pub fn refresh_for_tests(store: &crate::store::Store, tx: &std::sync::mpsc::Send
 
 /// The footer verbs for the current tab.
 pub fn hints(ctx: &Ctx) -> Vec<(&'static str, &'static str)> {
-    let mut out = vec![("←/→", "Skills ⇄ MCP servers"), ("Enter", "expand row")];
+    let mut out = vec![("Tab", "Skills ⇄ MCP servers"), ("Enter", "expand row")];
     if ctx.store.skills.tab.get() == 0 {
         out.extend_from_slice(&[
             ("v", "view"),
@@ -214,7 +214,7 @@ fn handle_key(cx: Scope, ctx: &Ctx, confirm: InlineConfirm, key: Key) -> bool {
     let sk = ctx.store.skills;
     let tab = sk.tab.get_untracked();
     match key {
-        Key::Left | Key::Right => {
+        Key::Tab | Key::Char('[') | Key::Char(']') => {
             sk.tab.set(if tab == 0 { 1 } else { 0 });
             true
         }

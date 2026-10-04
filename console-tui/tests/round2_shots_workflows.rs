@@ -4,9 +4,7 @@
 
 mod r2shots;
 
-use abstractgateway_console::store::{
-    workflows_from_payload, Loadable, RoutesData, RuntimeConfigData,
-};
+use abstractgateway_console::store::{Loadable, RoutesData};
 use abstractgateway_console::ui;
 use abstracttui::prelude::*;
 use r2shots::{harness, Harness, SIZES};
@@ -148,14 +146,21 @@ pub fn workflows_screen(size: (i32, i32)) -> Harness {
     h.admin();
     h.ui.screen.set(ui::SCREEN_WORKFLOWS);
     h.turns(2);
-    h.store
-        .workflows
-        .set(Loadable::Ready(workflows_from_payload(&bundles_payload())));
-    h.store
-        .runtime_config
-        .set(Loadable::Ready(RuntimeConfigData::from_value(
+    h.store.wf.data.set(Loadable::Ready(
+        abstractgateway_console::store::workflows_page::workflows_from_payload(&bundles_payload())
+            .expect("bundles fixture"),
+    ));
+    h.store.wf.defaults.set(
+        match abstractgateway_console::store::workflows_page::defaults_from_payload(
             &runtime_config_payload(),
-        )));
+        ) {
+            Ok(d) => Loadable::Ready(d),
+            Err(e) => Loadable::Failed(abstractgateway_console::api::ApiError::new(
+                abstractgateway_console::api::ApiErrorKind::Protocol,
+                e,
+            )),
+        },
+    );
     h.turns(3);
     h
 }

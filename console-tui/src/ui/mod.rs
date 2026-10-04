@@ -673,21 +673,8 @@ impl Ctx {
                 s.runtime_config.set(Loadable::NotAsked);
                 self.send(Cmd::LoadRuntimes);
             }
-            5 => {
-                // The registered workflow registry. Drafts follow the
-                // screen's own toggle, so `r` refreshes what is on screen
-                // rather than silently changing what it shows.
-                s.workflows.set(Loadable::Loading);
-                self.send(Cmd::LoadWorkflows {
-                    include_drafts: self.ui.workflow_drafts.get_untracked(),
-                });
-                // The "Default workflow per app" section reads the
-                // runtime config's agent-default rows (admin).
-                if s.conn.with_untracked(ConnPhase::is_admin) {
-                    s.runtime_config.set(Loadable::Loading);
-                    self.send(Cmd::LoadRuntimeConfig);
-                }
-            }
+            // The Workflows page reads its list and its defaults itself.
+            5 => workflows::refresh(self),
             6 => {
                 // The inline sandbox feeds its provider picker from
                 // discovery — `r` here means "re-discover providers".
@@ -1482,7 +1469,7 @@ fn wizard_goal(screen: usize) -> &'static str {
         }
         4 => "nothing to configure — storage inventory; glance and continue.",
         SCREEN_WORKFLOWS => {
-            "optional — Tab to the per-app defaults, Enter picks one; e exports, d/D delete."
+            "optional — → to the default workflow per app, Enter picks one; x exports, d archives."
         }
         SCREEN_REVIEW => "optionally run one real test (Tab to the prompt, Enter), then Finish.",
         SCREEN_WELCOME => "this computer at a glance — every step is optional; Ctrl+G jumps to a step or leaves.",
