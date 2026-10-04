@@ -138,7 +138,7 @@ def test_a_restarted_gateway_closes_the_stuck_read_aloud_wait_at_boot(tmp_path: 
         status = None
         while time.monotonic() < deadline:
             status = json.loads((data / f"run_{child}.json").read_text())["status"]
-            if status != "waiting":
+            if status not in ("waiting", "running"):  # running = the resume is mid-commit
                 break
             time.sleep(0.2)
         body = client.get(f"/api/gateway/runs/{child}", headers={"Authorization": "Bearer r13-boot"}).json()
