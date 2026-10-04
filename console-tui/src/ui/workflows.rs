@@ -61,7 +61,6 @@ pub fn hints(ctx: &Ctx) -> Vec<(&'static str, &'static str)> {
     let mut out = vec![("Tab", "tab")];
     match ctx.store.wf.tab.get() {
         0 => out.extend_from_slice(&[
-            ("Enter", "expand row"),
             ("space", "Available to users"),
             ("/", "search"),
             ("t", "drafts"),
@@ -70,6 +69,7 @@ pub fn hints(ctx: &Ctx) -> Vec<(&'static str, &'static str)> {
             ("x", "export"),
             ("f", "open in AbstractFlow"),
             ("d", "archive/unarchive"),
+            ("e", "edit description"),
             ("i", "import .flow"),
         ]),
         1 => out.extend_from_slice(&[
@@ -96,29 +96,48 @@ fn msg_ink(t: &TokenSet, tone: MsgTone) -> abstracttui::base::Rgba {
 enum Item<'a> {
     Group(&'static str),
     Row(&'a WfRow),
+    /// R8.1: with "Older versions" on, each older version is its own row
+    /// under its bundle (its own Export / Open / Archive) — rows never
+    /// expand.
+    Older(&'a WfRow, usize),
 }
 
-fn items<'a>(d: &'a WorkflowsData, query: &str) -> Vec<Item<'a>> {
+fn items<'a>(d: &'a WorkflowsData, query: &str, older: bool) -> Vec<Item<'a>> {
     let mut out = Vec::new();
     for (title, rows) in d.groups(query) {
         out.push(Item::Group(title));
         for r in rows {
             out.push(Item::Row(r));
+            if older {
+                for i in 0..r.versions.len() {
+                    if i != r.latest {
+                        out.push(Item::Older(r, i));
+                    }
+                }
+            }
         }
     }
     out
 }
 
-fn selected_row(ctx: &Ctx) -> Option<WfRow> {
+/// The highlighted row: the bundle and the version its actions act on
+/// (the latest for a bundle row, that version for an older row).
+fn selected(ctx: &Ctx) -> Option<(WfRow, usize, bool)> {
     let wf = ctx.store.wf;
     let q = wf.query.get_untracked();
+    let older = wf.older.get_untracked();
     let i = wf.sel.get_untracked();
     wf.data.with_untracked(|d| {
-        d.ready().and_then(|d| match items(d, &q).get(i) {
-            Some(Item::Row(r)) => Some((*r).clone()),
+        d.ready().and_then(|d| match items(d, &q, older).get(i) {
+            Some(Item::Row(r)) => Some(((*r).clone(), r.latest, false)),
+            Some(Item::Older(r, v)) => Some(((*r).clone(), *v, true)),
             _ => None,
         })
     })
+}
+
+fn selected_row(ctx: &Ctx) -> Option<WfRow> {
+    selected(ctx).map(|(r, _, _)| r)
 }
 
 /// The broken tab is listed only when something is broken.
@@ -248,6 +267,10 @@ fn handle_key(
     key: Key,
 ) -> bool {
     let wf = ctx.store.wf;
+    // The in-place description input owns every key while it is open.
+    if wf.editing.with_untracked(Option::is_some) {
+        return false;
+    }
     let tab = wf.tab.get_untracked();
     let ntabs = if has_broken(ctx) { 3 } else { 2 };
     match key {
@@ -285,10 +308,11 @@ fn workflows_key(
             refresh(ctx);
         }
         Key::Char('i') => open_import(cx, ctx),
-        Key::Char('x') => match selected_row(ctx) {
-            Some(r) => ctx.send(Cmd::Workflows(WfCmd::Export {
+        Key::Char('e') => edit_description(ctx),
+        Key::Char('x') => match selected(ctx) {
+            Some((r, v, _)) => ctx.send(Cmd::Workflows(WfCmd::Export {
                 bundle_id: r.bundle_id.clone(),
-                version: r.latest().version.clone(),
+                version: r.versions[v].version.clone(),
                 dir: super::sandbox::artifact_dir(),
             })),
             None => ctx
@@ -296,8 +320,8 @@ fn workflows_key(
                 .notice
                 .set(Some("no workflow selected — nothing to export".into())),
         },
-        Key::Char('f') => match selected_row(ctx) {
-            Some(r) => {
+        Key::Char('f') => match selected(ctx) {
+            Some((r, v, _)) => {
                 flow_pending.set(true);
                 ctx.store.apps.set_note("app:flow", None);
                 ctx.send(Cmd::AppAct {
@@ -307,7 +331,7 @@ fn workflows_key(
                     path: Some(format!(
                         "/?bundle={}&version={}",
                         crate::api::urlencode(&r.bundle_id),
-                        crate::api::urlencode(&r.latest().version)
+                        crate::api::urlencode(&r.versions[v].version)
                     )),
                     start_first: false,
                 });
@@ -328,14 +352,15 @@ fn workflows_key(
 /// confirm). Shipped workflows have neither — the reason is said.
 fn archive_selected(ctx: &Ctx, confirm: InlineConfirm) {
     let wf = ctx.store.wf;
-    let Some(r) = selected_row(ctx) else {
+    let Some((r, v, older_row)) = selected(ctx) else {
         ctx.store
             .notice
             .set(Some("no workflow selected — nothing to archive".into()));
         return;
     };
-    if !r.can_archive() {
-        let why = if r.latest().source == "shipped" {
+    let ver = &r.versions[v];
+    if !ver.can_archive {
+        let why = if ver.source == "shipped" {
             "Workflows that ship with the gateway can't be archived or deleted. An admin can turn off “Available to users” instead."
         } else {
             "Only an admin can archive a workflow shared by the gateway."
@@ -343,12 +368,21 @@ fn archive_selected(ctx: &Ctx, confirm: InlineConfirm) {
         wf.msg.set(Some((why.into(), MsgTone::Error)));
         return;
     }
-    let label = r.name.clone();
+    // An older-version row acts on that version only; a bundle row on all.
+    let (label, version, archived) = if older_row {
+        (
+            format!("{} {}", r.name, version_label(&ver.version)),
+            ver.version.clone(),
+            ver.archived,
+        )
+    } else {
+        (r.name.clone(), String::new(), r.archived)
+    };
     let list = list_args(ctx);
-    if r.archived {
+    if archived {
         ctx.send(Cmd::Workflows(WfCmd::Unarchive {
             bundle_id: r.bundle_id,
-            version: String::new(),
+            version,
             label,
             list,
         }));
@@ -364,12 +398,56 @@ fn archive_selected(ctx: &Ctx, confirm: InlineConfirm) {
         move || {
             c.send(Cmd::Workflows(WfCmd::Archive {
                 bundle_id: bid.clone(),
-                version: String::new(),
+                version: version.clone(),
                 label: label.clone(),
                 list,
             }))
         },
     );
+}
+
+/// `e`: edit the highlighted workflow's description in place (only when
+/// the gateway says this caller may — `actions.can_edit_description`).
+fn edit_description(ctx: &Ctx) {
+    let wf = ctx.store.wf;
+    let Some(r) = selected_row(ctx) else {
+        ctx.store
+            .notice
+            .set(Some("no workflow selected — nothing to edit".into()));
+        return;
+    };
+    if !r.can_edit_description() {
+        let why = if r.latest().source == "shipped" {
+            "Workflows that ship with the gateway keep their own description."
+        } else if r.owner == "gateway" {
+            "Only an admin can change the description of a workflow shared by the gateway."
+        } else {
+            "Only its owner can change this description."
+        };
+        wf.msg.set(Some((why.into(), MsgTone::Error)));
+        return;
+    }
+    wf.draft.set(r.description.clone());
+    wf.msg.set(None);
+    wf.editing.set(Some(r.bundle_id.clone()));
+}
+
+/// The highlighted row's actions as keys, in the web's icon order
+/// (Export · Open · Archive), then the description pencil and the switch.
+pub fn row_actions(r: &WfRow, v: usize, older_row: bool, admin: bool) -> Vec<String> {
+    let ver = &r.versions[v];
+    let mut acts = vec!["x Export".to_string(), "f Open in AbstractFlow".to_string()];
+    if ver.can_archive {
+        let archived = if older_row { ver.archived } else { r.archived };
+        acts.push(if archived { "d Unarchive" } else { "d Archive" }.into());
+    }
+    if !older_row && r.can_edit_description() {
+        acts.push("e Edit description".into());
+    }
+    if !older_row && admin && r.can_set_availability() {
+        acts.push("space Available to users".into());
+    }
+    acts
 }
 
 /// Space: the row's "Available to users" switch (admins, shared rows).
@@ -461,35 +539,131 @@ fn workflows_tab(cx: Scope, ctx: &Ctx, keeper: &super::util::FocusKeeper) -> Vie
                 ));
             }
             let label_of = |i: &str| defaults.label_of(i);
-            let rows: Vec<Row> = items(&d, &query)
+            let rows: Vec<Row> = items(&d, &query, older)
                 .into_iter()
                 .map(|it| match it {
                     Item::Group(g) => Row::group(g),
-                    Item::Row(r) => wf_row(r, admin, narrow, older, &label_of),
+                    Item::Row(r) => wf_row(r, admin, narrow, &label_of),
+                    Item::Older(r, v) => older_row(r, v, admin, narrow),
                 })
                 .collect();
             let empty = if d.rows.is_empty() { EMPTY } else { NO_MATCH };
-            let rows = if rows.is_empty() { vec![] } else { rows };
+            let editing = wf.editing.get();
+            if editing.is_none() {
+                // An in-place edit that held the keyboard has closed: the
+                // table takes it back.
+                keeper.reclaim();
+            }
+            // R8.1: rows never expand (no ▸ unfold duplicating the row).
             col = col.child(
                 keeper.wire(
                     WrapTable::new(rules, rows, wf.sel)
-                        .expanded(wf.expanded)
                         .empty(empty)
                         .element(cx, &t),
                 ),
             );
+            match editing {
+                Some(bid) => {
+                    let label = d
+                        .rows
+                        .iter()
+                        .find(|r| r.bundle_id == bid)
+                        .map(|r| r.name.clone())
+                        .unwrap_or_else(|| bid.clone());
+                    let c = ctx.clone();
+                    let (bid2, label2) = (bid.clone(), label.clone());
+                    col = col.child(kit::inline_input(
+                        cx,
+                        &t,
+                        &format!("Description of {label}:"),
+                        wf.draft,
+                        "What it does, in your words (empty = the file's own description)",
+                        move |text| {
+                            c.store
+                                .wf
+                                .msg
+                                .set(Some(("Saving...".into(), MsgTone::Plain)));
+                            c.send(Cmd::Workflows(WfCmd::SetDescription {
+                                bundle_id: bid2.clone(),
+                                label: label2.clone(),
+                                description: text.trim().to_string(),
+                                list: list_args(&c),
+                            }));
+                        },
+                        move || {
+                            wf.editing.set(None);
+                            wf.msg.set(None);
+                        },
+                    ));
+                    col = col.child(kit::sentence(
+                        &t,
+                        "Enter saves · Esc keeps the current description",
+                        width,
+                        t.text_faint,
+                    ));
+                }
+                None => {
+                    // The highlighted row's actions in ONE line (the web's
+                    // icon buttons): its own reactive line, so a selection
+                    // move never rebuilds the table.
+                    let c = ctx.clone();
+                    let tall = abstracttui::app::use_viewport(cx).get_untracked().h >= 30;
+                    let labels = defaults.clone();
+                    col = col.child(dyn_view(
+                        LayoutStyle::column().gap(0).shrink(0.0),
+                        move || {
+                            let _ = wf.sel.get();
+                            match selected(&c) {
+                                Some((r, v, older_row)) => {
+                                    let mut head = if older_row {
+                                        format!(
+                                            "{} {}",
+                                            r.name,
+                                            version_label(&r.versions[v].version)
+                                        )
+                                    } else {
+                                        r.name.clone()
+                                    };
+                                    if narrow && !older_row {
+                                        // No room for the Source / Used by
+                                        // columns: the highlighted row says them.
+                                        head = format!(
+                                            "{head} ({} · used by {})",
+                                            source_label(&r.source),
+                                            r.used_by(&|i: &str| labels.label_of(i))
+                                        );
+                                    }
+                                    let mut col = Element::new()
+                                        .style(LayoutStyle::column().gap(0).shrink(0.0));
+                                    for l in super::users::action_lines(
+                                        &head,
+                                        &row_actions(&r, v, older_row, admin),
+                                        width,
+                                    ) {
+                                        col = col.child(line(vec![span(l, t.accent)]));
+                                    }
+                                    if !older_row && admin && r.can_set_availability() && tall {
+                                        col = col.child(kit::sentence(
+                                            &t,
+                                            &format!("{AVAILABLE_LABEL}: {AVAILABLE_HELP}"),
+                                            width,
+                                            t.text_faint,
+                                        ));
+                                    }
+                                    col.build()
+                                }
+                                None => Element::new().style(LayoutStyle::default().h(0)).build(),
+                            }
+                        },
+                    ));
+                }
+            }
         }
     }
     col.build()
 }
 
-fn wf_row(
-    r: &WfRow,
-    admin: bool,
-    narrow: bool,
-    older: bool,
-    label_of: &dyn Fn(&str) -> Option<String>,
-) -> Row {
+fn wf_row(r: &WfRow, admin: bool, narrow: bool, label_of: &dyn Fn(&str) -> Option<String>) -> Row {
     let mut name = format!("{}\n{}", r.name, r.bundle_id);
     if r.deprecated {
         name.push_str(" · Deprecated");
@@ -497,11 +671,15 @@ fn wf_row(
     if r.archived {
         name.push_str(" · Archived");
     }
-    let mut cells = vec![name, r.description_text(), r.version_text()];
     let used_by = r.used_by(label_of);
+    let mut what = r.description_text();
+    if r.latest().description_edited {
+        what.push_str(" (edited)");
+    }
+    let mut cells = vec![name, what, r.version_text()];
     if !narrow {
         cells.push(source_label(&r.source).into());
-        cells.push(used_by.clone());
+        cells.push(used_by);
     }
     if admin {
         cells.push(if r.can_set_availability() {
@@ -510,73 +688,26 @@ fn wf_row(
             String::new()
         });
     }
-    let mut detail: Vec<String> = Vec::new();
-    if narrow {
-        detail.push(format!(
-            "Source: {} · Used by: {used_by}",
-            source_label(&r.source)
-        ));
+    Row::new(cells).dim(r.archived)
+}
+
+/// One older version's own row (under its bundle; "Older versions" on).
+fn older_row(r: &WfRow, v: usize, admin: bool, narrow: bool) -> Row {
+    let ver = &r.versions[v];
+    let _ = &r.name;
+    let mut name = "↳ older version".to_string();
+    if ver.archived {
+        name.push_str(" · Archived");
     }
-    let shown: Vec<&crate::store::workflows_page::Version> = if older {
-        r.versions.iter().collect()
-    } else {
-        vec![r.latest()]
-    };
-    for v in shown {
-        let mut head = format!("{} — {}", version_label(&v.version), v.meta());
-        if v.archived {
-            head.push_str(" · Archived");
-        }
-        detail.push(head);
-        for e in &v.entrypoints {
-            let mut l = format!(
-                "  {}",
-                if e.name.is_empty() {
-                    &e.flow_id
-                } else {
-                    &e.name
-                }
-            );
-            if e.deprecated {
-                l.push_str(" · Deprecated");
-            }
-            if !e.description.is_empty() {
-                l.push_str(&format!(" — {}", e.description));
-            }
-            if !e.interfaces.is_empty() {
-                let names: Vec<String> = e
-                    .interfaces
-                    .iter()
-                    .map(|i| label_of(i).unwrap_or_else(|| i.clone()))
-                    .collect();
-                l.push_str(&format!(" · {}", names.join(" · ")));
-            }
-            detail.push(l);
-        }
+    let mut cells = vec![name, ver.meta(), version_label(&ver.version)];
+    if !narrow {
+        cells.push(source_label(&ver.source).into());
+        cells.push(String::new());
     }
-    let n_older = r.versions.len().saturating_sub(1);
-    if !older && n_older > 0 {
-        detail.push(format!(
-            "{n_older} older {} — turn on “Older versions” to see them.",
-            if n_older == 1 { "version" } else { "versions" }
-        ));
+    if admin {
+        cells.push(String::new());
     }
-    let mut acts = vec!["x Export", "f Open in AbstractFlow"];
-    if r.can_archive() {
-        acts.push(if r.archived {
-            "d Unarchive"
-        } else {
-            "d Archive"
-        });
-    }
-    if admin && r.can_set_availability() {
-        acts.push("space Available to users");
-    }
-    detail.push(format!("Actions: {}", acts.join(" · ")));
-    if admin && r.can_set_availability() {
-        detail.push(format!("{AVAILABLE_LABEL}: {AVAILABLE_HELP}"));
-    }
-    Row::new(cells).detail(detail).dim(r.archived)
+    Row::new(cells).dim(true)
 }
 
 // ------------------------------------------------------------- defaults

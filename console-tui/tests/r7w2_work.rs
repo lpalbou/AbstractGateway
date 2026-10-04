@@ -321,7 +321,9 @@ fn apps_reads_the_runtime_config_for_admins_only() {
 }
 
 #[test]
-fn apps_advanced_settings_blocks_and_their_forms() {
+fn apps_settings_live_behind_the_gears_not_on_the_page() {
+    // R8.1: no "Advanced" disclosures under the cards; `a` (the toolbar
+    // gear) opens "Apps settings", `g` on the Continuum card its settings.
     let mut h = harness_sized(Size::new(150, 60));
     h.on_apps(true);
     h.store
@@ -330,35 +332,38 @@ fn apps_advanced_settings_blocks_and_their_forms() {
             &runtime_config(),
         )));
     let s = h.turns(3);
+    assert!(!s.contains("Advanced: apps settings"), "{s}");
+    assert!(!s.contains("Advanced: backlog settings"), "{s}");
+    let s = h.key(b"a");
     let f = flat(&s);
     assert!(
-        f.contains("Advanced: apps settings · 1 changed from the default"),
-        "{s}"
+        s.contains("Apps settings"),
+        "a opens the apps overlay:\n{s}"
     );
-    assert!(f.contains("Where apps listen: 127.0.0.1 · Default"), "{s}");
+    assert!(f.contains("Node.js for apps: system  Saved setting"), "{s}");
+    // The deprecated host shows only while it holds a saved value.
+    assert!(!f.contains("Where apps listen"), "{s}");
+    h.key(b"\x1b");
+    // A bare Esc resolves after the reader's 30 ms deadline.
+    std::thread::sleep(std::time::Duration::from_millis(45));
+    h.turns(3);
+    let s = h.select("continuum");
+    assert!(s.contains("g Settings"), "the card's gear:\n{s}");
+    let s = h.key(b"g");
+    let f = flat(&s);
+    assert!(s.contains("Continuum settings"), "{s}");
     assert!(
-        f.contains("Node.js for apps: system · Saved setting"),
-        "{s}"
-    );
-    assert!(
-        f.contains("Advanced: backlog settings (Continuum) · backlog folder not available"),
+        f.contains("Backlog folder: /d/backlog  The gateway's own folder"),
         "{s}"
     );
     assert!(
         f.contains("Not available: the folder does not exist"),
         "{s}"
     );
-    // a / b open the edit forms (one write path with the Runtimes knobs).
-    let s = h.key(b"a");
+    assert!(f.contains("[x] Process manager  Saved setting"), "{s}");
     assert!(
-        s.contains("Browser apps settings"),
-        "a opens the apps form:\n{s}"
-    );
-    h.key(b"\x1b");
-    let s = h.key(b"b");
-    assert!(
-        s.contains("Backlog folder"),
-        "b opens the backlog form:\n{s}"
+        !f.contains("environment (legacy)") && !f.contains("Environment (legacy)"),
+        "{s}"
     );
 }
 

@@ -214,7 +214,7 @@ pub fn view(cx: Scope_, ctx: &Ctx, t: &TokenSet) -> View {
             let Some((tenant, user)) = ws.focus.get() else {
                 return;
             };
-            let _ = c.store.accounts.with(|_| ());
+            c.store.accounts.with(|_| ());
             let rows = account_rows(&c);
             if let Some(i) = rows
                 .iter()

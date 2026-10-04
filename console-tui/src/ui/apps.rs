@@ -38,8 +38,8 @@ pub const HINTS: &[(&str, &str)] = &[
     ("t/T", "terminal"),
     ("n", "Node.js"),
     ("y", "copy"),
-    ("a", "apps settings"),
-    ("b", "backlog settings"),
+    ("a", "Apps settings"),
+    ("g", "app settings (Continuum)"),
 ];
 
 /// The text column inside the Apps block (border + padding, both sides).
@@ -172,9 +172,17 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             }
         });
     }
-    for (ch, which) in [('a', "apps"), ('b', "backlog")] {
+    // R8.1: the gears — `a` the Apps toolbar's "Apps settings", `g` the
+    // selected card's own settings (Continuum's).
+    {
         let c = ctx.clone();
-        root = root.shortcut(key(ch), move |_| settings_key(cx, &c, which));
+        root = root.shortcut(key('a'), move |_| {
+            super::app_settings::open(cx, &c, super::app_settings::Which::Apps)
+        });
+    }
+    {
+        let c = ctx.clone();
+        root = root.shortcut(key('g'), move |_| card_settings_key(cx, &c));
     }
     {
         let c = ctx.clone();
@@ -336,9 +344,6 @@ fn ready_view(
     below = below
         .child(line(vec![span(String::new(), t.text)]))
         .child(node);
-    if admin {
-        below = below.child(settings_view(t, &ctx.store.runtime_config.get(), width));
-    }
     col.child(
         Scroll::new(below.build())
             .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))
@@ -348,151 +353,27 @@ fn ready_view(
     .build()
 }
 
-/// `a` / `b`: edit the apps / backlog settings (the same forms the
-/// Runtimes knobs open; one write path, POST /admin/runtime-config).
-fn settings_key(cx: Scope, ctx: &Ctx, which: &str) {
-    if !super::util::admin_gate(&ctx.store, "changing the apps settings") {
-        return;
-    }
-    match ctx.store.runtime_config.get_untracked() {
-        Loadable::Ready(cfg) => {
-            if which == "apps" {
-                super::runtimes::open_apps_settings_form(cx, ctx, cfg);
-            } else {
-                super::runtimes::open_backlog_settings_form(cx, ctx, cfg);
-            }
-        }
-        Loadable::Failed(e) => ctx
-            .store
-            .notice
-            .set(Some(format!("Could not read the apps settings: {e}"))),
-        _ => ctx
-            .store
-            .notice
-            .set(Some("Reading the apps settings... — one moment".into())),
-    }
+/// Does this app have its own settings (a gear on its card)? Only
+/// Continuum today (backlog folder, exec runner, process manager).
+pub fn has_card_settings(app_id: &str) -> bool {
+    app_id == "continuum"
 }
 
-/// The two Advanced blocks under the apps (the web's "Advanced: apps
-/// settings" and "Advanced: backlog settings (Continuum)" disclosures):
-/// one summary line each with the key that edits them, then the current
-/// values. Data = `GET /admin/runtime-config` (the web's read).
-pub fn settings_lines(
-    cfg: &Loadable<crate::store::RuntimeConfigData>,
-) -> Vec<(String, &'static str)> {
-    let mut out: Vec<(String, &'static str)> = Vec::new();
-    match cfg {
-        Loadable::Ready(d) => {
-            if !d.apps.is_empty() {
-                let custom = d.apps.iter().filter(|a| a.source != "default").count();
-                out.push((
-                    format!(
-                        "Advanced: apps settings · {}",
-                        if custom > 0 {
-                            format!("{custom} changed from the default")
-                        } else {
-                            "all defaults".to_string()
-                        }
-                    ),
-                    "head",
-                ));
-                for a in &d.apps {
-                    let source = match a.source.as_str() {
-                        "stored" => "Saved setting",
-                        "env" => "From the environment",
-                        _ => "Default",
-                    };
-                    let now = if a.value.is_empty() {
-                        "(none)"
-                    } else {
-                        a.value.as_str()
-                    };
-                    out.push((format!("  {}: {now} · {source}", a.label), "text"));
-                    if !a.help.is_empty() {
-                        out.push((format!("    {}", a.help), "faint"));
-                    }
-                    if !a.invalid.is_empty() {
-                        out.push((format!("    Set aside: {}", a.invalid), "warn"));
-                    }
-                }
-                out.push((
-                    if d.writable {
-                        "  a edits · Empty = the default (or the value this gateway's environment gives). Applies at the next app start or download.".to_string()
-                    } else {
-                        "  Only an admin can change these.".to_string()
-                    },
-                    "faint",
-                ));
-            }
-            if !d.backlog.is_empty() {
-                let trouble = d.backlog.iter().any(|b| b.available == Some(false));
-                out.push((
-                    format!(
-                        "Advanced: backlog settings (Continuum) · {}",
-                        if trouble {
-                            "backlog folder not available"
-                        } else {
-                            "backlog folder, exec runner, process manager"
-                        }
-                    ),
-                    "head",
-                ));
-                for b in &d.backlog {
-                    let value = if b.value.is_empty() {
-                        "(hidden)"
-                    } else {
-                        b.value.as_str()
-                    };
-                    out.push((
-                        format!(
-                            "  {}: {value} · {}",
-                            b.label,
-                            crate::store::operator::backlog_source_word(&b.source)
-                        ),
-                        "text",
-                    ));
-                    if b.available == Some(false) {
-                        out.push((format!("    Not available: {}", b.reason), "warn"));
-                    }
-                }
-                out.push((
-                    if d.writable {
-                        "  b edits · Empty = not saved: the launch flag, else the default (the gateway's own folder; switches off). Applies at once.".to_string()
-                    } else {
-                        "  Only an admin can change these.".to_string()
-                    },
-                    "faint",
-                ));
-            }
+/// `g`: the selected card's gear.
+fn card_settings_key(cx: Scope, ctx: &Ctx) {
+    match selected(ctx) {
+        Some(row) if has_card_settings(&row.id) => {
+            super::app_settings::open(cx, ctx, super::app_settings::Which::Continuum)
         }
-        Loadable::Failed(e) => {
-            out.push(("Could not read the apps settings.".to_string(), "warn"));
-            out.push((format!("  {e}"), "faint"));
-        }
-        _ => out.push(("Reading the apps settings...".to_string(), "faint")),
+        Some(row) => ctx.store.notice.set(Some(format!(
+            "{} has no settings of its own — a opens the Apps settings",
+            row.name
+        ))),
+        None => ctx
+            .store
+            .notice
+            .set(Some("no app selected — nothing to set".into())),
     }
-    out
-}
-
-fn settings_view(
-    t: &TokenSet,
-    cfg: &Loadable<crate::store::RuntimeConfigData>,
-    width: usize,
-) -> View {
-    let mut col = Element::new()
-        .style(LayoutStyle::column().gap(0))
-        .child(line(vec![span(String::new(), t.text)]));
-    for (text, tone) in settings_lines(cfg) {
-        let indent = text.len() - text.trim_start().len();
-        let (ink, bold) = match tone {
-            "head" => (t.text, true),
-            "warn" => (t.warn, false),
-            "faint" => (t.text_faint, false),
-            _ => (t.text_muted, false),
-        };
-        col = wrapped(col, t, None, text.trim_start(), ink, bold, width, indent);
-    }
-    col.build()
 }
 
 fn node_view(
@@ -861,6 +742,10 @@ fn detail_view(
             }
             Err(why) => off.push((v.label.clone(), why.clone())),
         }
+    }
+    // R8.1: the card's gear, next to Open (admins; Continuum's settings).
+    if admin && has_card_settings(&row.id) {
+        on.push(("g", "Settings".to_string()));
     }
     if pending {
         col = col.child(line(vec![span("⟳ working…", t.info)]));

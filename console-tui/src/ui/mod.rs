@@ -7,6 +7,8 @@
 
 /// The About modal (F1 / ?).
 pub mod about;
+/// The Apps page's settings overlays behind the gears (R8.1).
+pub mod app_settings;
 /// The Apps screen (browser apps, the desktop Assistant, Node.js).
 pub mod apps;
 /// The Models page (the web console's catalog, round 7).
@@ -725,7 +727,7 @@ impl Ctx {
                 s.runs.set(Loadable::NotAsked);
                 s.data_homes.set(Loadable::NotAsked);
                 s.runtime_config.set(Loadable::NotAsked);
-                self.send(Cmd::load_runtimes_for(&s));
+                self.send(Cmd::load_runtimes_for(s));
             }
             // The Workflows page reads its list and its defaults itself.
             5 => workflows::refresh(self),

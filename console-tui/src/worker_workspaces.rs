@@ -76,6 +76,7 @@ fn refusal(e: &ApiError) -> String {
 }
 
 /// Write one scope; true when the gateway took it.
+#[allow(clippy::too_many_arguments)]
 fn write(
     client: &Option<GatewayClient>,
     store: &Store,

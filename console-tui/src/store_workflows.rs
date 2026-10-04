@@ -105,6 +105,11 @@ pub struct Version {
     pub entrypoints: Vec<Entry>,
     pub can_archive: bool,
     pub can_set_availability: bool,
+    /// `actions.can_edit_description` (round 8: the owner, or an admin for
+    /// the gateway's; shipped never).
+    pub can_edit_description: bool,
+    /// `description_edited`: the owner wrote this text (PATCH /bundles/{id}).
+    pub description_edited: bool,
 }
 
 impl Version {
@@ -179,6 +184,11 @@ impl WfRow {
 
     pub fn can_set_availability(&self) -> bool {
         self.latest().can_set_availability
+    }
+
+    /// The gateway says this caller may edit the description (round 8).
+    pub fn can_edit_description(&self) -> bool {
+        self.latest().can_edit_description
     }
 
     /// The "Used by" cell: plain names when the defaults table names them.
@@ -310,6 +320,8 @@ fn version_from(v: &Value) -> Version {
             .unwrap_or_default(),
         can_archive: b(&actions, "can_archive"),
         can_set_availability: b(&actions, "can_set_availability"),
+        can_edit_description: b(&actions, "can_edit_description"),
+        description_edited: b(v, "description_edited"),
     }
 }
 
@@ -630,6 +642,9 @@ pub struct WorkflowsStore {
     pub tab: Signal<usize>,
     pub sel: Signal<usize>,
     pub expanded: Signal<Option<usize>>,
+    /// R8.1: the description being edited in place (its bundle id).
+    pub editing: Signal<Option<String>>,
+    pub draft: Signal<String>,
     pub def_sel: Signal<usize>,
     pub def_expanded: Signal<Option<usize>>,
     pub broken_sel: Signal<usize>,
@@ -651,6 +666,8 @@ impl WorkflowsStore {
             tab: cx.signal(0),
             sel: cx.signal(0),
             expanded: cx.signal(None),
+            editing: cx.signal(None),
+            draft: cx.signal(String::new()),
             def_sel: cx.signal(0),
             def_expanded: cx.signal(None),
             broken_sel: cx.signal(0),
@@ -663,6 +680,7 @@ impl WorkflowsStore {
         self.defaults.set(Loadable::NotAsked);
         self.msg.set(None);
         self.defaults_msg.set(None);
+        self.editing.set(None);
     }
 }
 

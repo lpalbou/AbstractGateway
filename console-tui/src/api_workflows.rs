@@ -23,6 +23,17 @@ impl GatewayClient {
     }
 
     /// `POST /bundles/{id}/unarchive` (`{}` = every version).
+    /// `PATCH /bundles/{id} {description}` (round 8): the owner's own text
+    /// for every version ("" = back to the file's own description).
+    pub fn set_bundle_description(&self, bundle_id: &str, description: &str) -> ApiResult<Value> {
+        self.send(
+            "PATCH",
+            &format!("/bundles/{}", urlencode(bundle_id)),
+            &json!({ "description": description }),
+            false,
+        )
+    }
+
     pub fn unarchive_bundle(&self, bundle_id: &str, version: &str) -> ApiResult<Value> {
         let body = if version.is_empty() {
             json!({})

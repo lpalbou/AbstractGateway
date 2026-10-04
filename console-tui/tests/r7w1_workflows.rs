@@ -132,22 +132,28 @@ fn a_user_sees_no_availability_column() {
 }
 
 #[test]
-fn enter_expands_versions_entrypoints_and_actions() {
+fn rows_never_expand_and_older_versions_are_their_own_rows() {
+    // R8.1: no ▸ unfold — the highlighted row's actions sit in one line;
+    // "Older versions" lists each older version as its own row.
     let mut h = page((80, 24), true);
     let s = h.key(b"\r");
-    assert!(s.contains("0.0.5 — published · 2026-10-01"), "{s}");
     assert!(
-        s.contains("1 older version — turn on “Older versions” to see them."),
+        !s.contains("0.0.5 — published"),
+        "Enter expands nothing:\n{s}"
+    );
+    assert!(s.contains("Basic agent (Shipped · used by"), "{s}");
+    assert!(
+        s.contains("x Export") && s.contains("f Open in AbstractFlow"),
         "{s}"
     );
-    assert!(
-        s.contains("Actions: x Export · f Open in AbstractFlow"),
-        "{s}"
-    );
-    h.shoot("workflows-expanded");
+    h.shoot("workflows-actions");
     h.key(b"o");
     let s = h.text();
-    assert!(s.contains("0.0.4 — published"), "older versions:\n{s}");
+    assert!(
+        s.contains("↳ older version") && s.contains("0.0.4"),
+        "older versions:\n{s}"
+    );
+    assert!(s.contains("published · 2026-10-01"), "{s}");
 }
 
 #[test]

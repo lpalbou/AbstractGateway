@@ -214,6 +214,10 @@ pub fn screen(ctx: &Ctx, cx: Scope) -> View {
 /// One page key. Returns true when handled.
 fn handle_key(cx: Scope, ctx: &Ctx, confirm: InlineConfirm, key: Key) -> bool {
     let sk = ctx.store.skills;
+    // The in-place shelf folder input owns every key while it is open.
+    if sk.shelf_editing.get_untracked() {
+        return false;
+    }
     let tab = sk.tab.get_untracked();
     match key {
         Key::Tab | Key::Char('[') | Key::Char(']') => {

@@ -67,6 +67,13 @@ pub enum WfCmd {
     SetStreaming {
         on: bool,
     },
+    /// `PATCH /bundles/{id} {description}` (round 8, owner-editable).
+    SetDescription {
+        bundle_id: String,
+        label: String,
+        description: String,
+        list: ListArgs,
+    },
 }
 
 fn protocol(m: String) -> ApiError {
@@ -181,6 +188,51 @@ pub(super) fn handle(
                 store,
                 wake,
                 format!("PUT /admin/workflows/{bundle_id}/availability"),
+                res,
+                verified,
+                None,
+                on_done,
+            );
+        }
+        WfCmd::SetDescription {
+            bundle_id,
+            label,
+            description,
+            list,
+        } => {
+            let Ok(c) = require_client(client) else {
+                return;
+            };
+            let res = with_busy(store, wake, "saving the description", || {
+                c.set_bundle_description(&bundle_id, &description)
+            });
+            let verified = match &res {
+                Ok(_) => {
+                    post_msg(
+                        wake,
+                        store,
+                        format!("Saved the description of {label}."),
+                        Tone::Ok,
+                    );
+                    let editing = store.wf.editing;
+                    wake.post(move || editing.set(None));
+                    reload(&c, store, wake, list);
+                    Some(Ok(format!("{label} description saved")))
+                }
+                Err(e) => {
+                    post_msg(
+                        wake,
+                        store,
+                        format!("Not saved: {}", refusal_text(e)),
+                        Tone::Error,
+                    );
+                    None
+                }
+            };
+            finish_write(
+                store,
+                wake,
+                format!("PATCH workflow description {bundle_id}"),
                 res,
                 verified,
                 None,

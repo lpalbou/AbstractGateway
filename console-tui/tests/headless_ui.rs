@@ -3859,7 +3859,7 @@ fn footer_leads_with_the_screen_keys_at_80x24() {
         (2, "Enter/e edit route"),
         (3, "Tab tab"),
         (4, "Enter inspect runtime"),
-        (5, "Tab tab · Enter expand row"),
+        (5, "Tab tab · space Available to users"),
         (7, "u unload"),
     ] {
         h.ui.screen.set(screen);
