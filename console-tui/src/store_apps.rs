@@ -275,6 +275,56 @@ pub struct DesktopInfo {
     pub launch_blocked_reason: Option<String>,
 }
 
+/// The web card's one-line blurb (console_ui.py `APP_COPY`); an app the
+/// web does not list keeps the gateway's own description.
+pub fn app_blurb(row: &AppRow) -> String {
+    match row.id.as_str() {
+        "flow" => "Design workflows visually and run them here.",
+        "code" => "A coding assistant whose sessions survive restarts.",
+        "observer" => "Watch runs live, replay them, steer running work.",
+        "continuum" => "Your backlog, inbox and long-running processes.",
+        "entity" => "Create entities and talk with them as they learn.",
+        "assistant" => "A menu-bar assistant: chat or talk hands-free.",
+        _ => return row.description.clone(),
+    }
+    .to_string()
+}
+
+impl AppsOverview {
+    /// The address apps open at: the gateway a browser reaches + the apps
+    /// prefix (the web's `appBrowserOrigin() + apps_path_prefix`).
+    pub fn apps_base(&self) -> String {
+        let origin = self
+            .browser_gateway_url
+            .clone()
+            .or_else(|| self.gateway_url.clone())
+            .unwrap_or_default();
+        format!(
+            "{}{}",
+            origin.trim_end_matches('/'),
+            self.apps_path_prefix.as_deref().unwrap_or("/apps/")
+        )
+    }
+
+    /// The page's intro sentence, the web's words.
+    pub fn intro(&self) -> String {
+        format!(
+            "Apps open in your browser at {}…, already signed in to this gateway.",
+            self.apps_base()
+        )
+    }
+
+    /// The web card's "Address" (served through the gateway) for `row`.
+    pub fn address_of(&self, row: &AppRow) -> Option<String> {
+        let path = row.app_path.as_deref()?;
+        let origin = self
+            .browser_gateway_url
+            .clone()
+            .or_else(|| self.gateway_url.clone())?;
+        Some(format!("{}{}", origin.trim_end_matches('/'), path))
+    }
+}
+
 /// One app row (`apps_manager.app_row` / `desktop_row` / `_external_row`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AppRow {
@@ -306,6 +356,8 @@ pub struct AppRow {
     pub actions: Vec<String>,
     pub active_job: Option<AppJob>,
     pub log_path: Option<String>,
+    /// Where the gateway serves it (`/apps/<id>/`, app_proxy.py).
+    pub app_path: Option<String>,
     /// Entity: `content_summary.entities_count` (None = unknown / not reported).
     pub entities_count: Option<u64>,
     pub tui: Option<TuiIface>,
@@ -363,6 +415,7 @@ impl AppRow {
             actions: strs(v, "actions"),
             active_job: v.get("active_job").and_then(AppJob::from_value),
             log_path: s(v, "log_path"),
+            app_path: s(v, "app_path"),
             entities_count: v
                 .get("content_summary")
                 .and_then(|c| c.get("entities_count"))
@@ -411,6 +464,10 @@ pub struct AppsOverview {
     pub apps_host: Option<String>,
     pub apps_dir: Option<String>,
     pub logs_dir: Option<String>,
+    /// The prefix the gateway serves apps under (`/apps/`).
+    pub apps_path_prefix: Option<String>,
+    /// The gateway address a browser reaches (the web's own origin).
+    pub browser_gateway_url: Option<String>,
 }
 
 impl AppsOverview {
@@ -445,6 +502,8 @@ impl AppsOverview {
             apps_host: s(v, "apps_host"),
             apps_dir: s(&data, "apps_dir"),
             logs_dir: s(&data, "logs_dir"),
+            apps_path_prefix: s(v, "apps_path_prefix"),
+            browser_gateway_url: s(v, "browser_gateway_url"),
         }
     }
 
