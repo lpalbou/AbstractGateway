@@ -9,6 +9,8 @@
 pub mod about;
 /// The Apps screen (browser apps, the desktop Assistant, Node.js).
 pub mod apps;
+/// The Models page (the web console's catalog, round 7).
+pub mod catalog;
 pub mod connection;
 pub mod docs;
 pub mod entity_chat;
@@ -737,7 +739,7 @@ impl Ctx {
             // The shared screens own their reads; these are their own
             // `r` verbs (host profile + catalog + installed; a PROBING
             // engines read), reached when the root `r` handles the key.
-            SCREEN_CATALOG => self.screens.refresh_catalog(),
+            SCREEN_CATALOG => catalog::refresh(self),
             SCREEN_ENGINES => self.screens.refresh_engines(),
             SCREEN_APPS => {
                 // Rows stay on screen while re-checking (web "Check
@@ -1459,7 +1461,7 @@ fn screen_view(gcx: Scope, c: &Ctx, i: usize, t: &TokenSet) -> View {
         SCREEN_REVIEW => review::view(gcx, c, t),
         SCREEN_MODELS => models::view(gcx, c, t),
         // AbstractCore's screens, inherited — not re-implemented.
-        SCREEN_CATALOG => abstractcore_console::screens::catalog(gcx, &c.screens_for_page()),
+        SCREEN_CATALOG => catalog::view(gcx, c, t),
         SCREEN_ENGINES => abstractcore_console::screens::engines(gcx, &c.screens_for_page()),
         SCREEN_APPS => apps::view(gcx, c, t),
         SCREEN_WELCOME => welcome::view(gcx, c, t),
@@ -1537,7 +1539,7 @@ fn wizard_goal(screen: usize) -> &'static str {
             "nothing to configure — live models, memory & caches; Finish lives on Sandbox."
         }
         SCREEN_CATALOG => {
-            "optional — w downloads a model that fits this gateway host; f shows only those."
+            "optional — w downloads a model that fits this computer; f shows only those."
         }
         SCREEN_APPS => {
             "optional — i installs a browser app; o opens it signed in (a one-time link)."
@@ -1616,12 +1618,8 @@ fn install_effects(cx: Scope, ctx: &Ctx) {
                 // to NotAsked. Their own mount effect asks too, but it
                 // runs once per mount — possibly before the connection
                 // existed — so the connected transition asks again.
-                SCREEN_CATALOG => {
-                    let s = ctx.screens.store;
-                    s.host.with(Remote::is_not_asked)
-                        || s.catalog.with(Remote::is_not_asked)
-                        || s.installed.with(Remote::is_not_asked)
-                }
+                // The Models page reads on its own (catalog.rs: on mount
+                // and when a reconnect clears its slots).
                 SCREEN_ENGINES => {
                     let s = ctx.screens.store;
                     s.engines.with(Remote::is_not_asked) || s.host.with(Remote::is_not_asked)
@@ -1638,7 +1636,6 @@ fn install_effects(cx: Scope, ctx: &Ctx) {
                 match screen {
                     // Only what was never asked (ensure_*), never a full
                     // refresh: entering must not re-probe the engines.
-                    SCREEN_CATALOG => ctx.screens.ensure_catalog(),
                     SCREEN_ENGINES => ctx.screens.ensure_engines(),
                     _ => ctx.refresh_screen(screen),
                 }
@@ -2157,13 +2154,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                         pairs.push(("r", "refresh"));
                     }
                     // The shared screens publish their own verbs.
-                    SCREEN_CATALOG => {
-                        pairs.extend(abstractcore_console::screens::catalog::hints(
-                            screens_caps,
-                            &screens_access.get(),
-                        ));
-                        pairs.push(("r", "refresh"));
-                    }
+                    SCREEN_CATALOG => pairs.extend(catalog::hints(non_admin)),
                     SCREEN_ENGINES => {
                         pairs.extend(abstractcore_console::screens::engines::hints(
                             screens_caps,
@@ -2190,6 +2181,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                     SCREEN_USERS => users::ADMIN_KEYS,
                     SCREEN_WORKFLOWS => workflows::ADMIN_KEYS,
                     SCREEN_MODELS => models::ADMIN_KEYS,
+                    SCREEN_CATALOG => catalog::ADMIN_KEYS,
                     _ => &[],
                 };
                 let (screen_pairs, gated) = util::admin_hint_pairs(pairs, admin_keys, non_admin);

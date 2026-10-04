@@ -7348,8 +7348,8 @@ fn footer_hints_stay_in_lockstep_with_screens() {
         (5, "drafts"),
         (6, "run the test"),
         (7, "context estimate"),
-        // The shared screens' own verbs (abstractcore-console HINTS).
-        (8, "fits only"),
+        // The Models page (catalog.rs).
+        (8, "use as default"),
         (ui::SCREEN_NETWORK, "copy address"),
     ] {
         h.ui.screen.set(screen);
@@ -7422,6 +7422,7 @@ impl MockTransport {
         self.calls().iter().any(|c| c.starts_with(prefix))
     }
 
+    #[allow(dead_code)]
     fn count(&self, prefix: &str) -> usize {
         self.calls()
             .iter()
@@ -7615,6 +7616,7 @@ impl Harness {
         self.settle_until(needle, move |s| s.contains(&n))
     }
 
+    #[allow(dead_code)]
     fn wait_for_call(&mut self, what: &str, pred: impl Fn(&[String]) -> bool) {
         for _ in 0..400 {
             if pred(&self.mock.calls()) {
@@ -7635,31 +7637,11 @@ impl Harness {
         self.turns(2);
     }
 
-    fn open_models(&mut self) -> String {
-        self.key(b"7");
-        self.settle_until("the catalog rows", |s| {
-            s.contains("Qwen3 8B") && s.contains("Apple M5 Max")
-        })
-    }
-
     fn open_engines(&mut self) -> String {
         self.key(b"8");
         self.settle_until("the engines table", |s| {
             s.contains("Ollama") && s.contains("llama.cpp")
         })
-    }
-
-    fn select_artifact(&mut self, artifact: &str) -> String {
-        let idx = self
-            .screens
-            .catalog
-            .with_untracked(|c| {
-                c.ready()
-                    .and_then(|d| d.rows.iter().position(|r| r.artifact == artifact))
-            })
-            .unwrap_or_else(|| panic!("{artifact} is not in the catalog fixture"));
-        self.screens.catalog_sel.set(idx);
-        self.turns(2)
     }
 
     fn select_engine(&mut self, id: &str) -> String {
@@ -7674,50 +7656,6 @@ impl Harness {
         self.screens.engine_sel.set(idx);
         self.turns(2)
     }
-}
-
-#[test]
-fn models_tab_7_renders_the_shared_catalog_once() {
-    let mut h = harness_sized(Size::new(150, 40));
-    h.browse_connected();
-    let s = h.open_models();
-    assert!(s.contains("7 Models"), "tab 7 is Models:\n{s}");
-    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_CATALOG);
-    // Contract G vocabulary, rendered by the shared screen.
-    for word in ["fits", "too large", "not downloaded", "installed"] {
-        assert!(s.contains(word), "{word} rendered:\n{s}");
-    }
-    assert!(
-        s.contains("ollama: unreachable"),
-        "installed errors shown:\n{s}"
-    );
-    // The gateway footer: the screen's own verbs lead (review 2: at any
-    // width the screen's keys come before the universal ones).
-    assert!(s.contains("download") && s.contains("filter"), "{s}");
-    // Entering read host, catalog and installed ONCE each — the gateway's
-    // connected-entry effect and the screen's mount effect must not
-    // double-send.
-    assert_eq!(h.mock.count("catalog"), 1, "{:?}", h.mock.calls());
-    assert_eq!(h.mock.count("host_profile"), 1, "{:?}", h.mock.calls());
-    assert_eq!(h.mock.count("installed"), 1, "{:?}", h.mock.calls());
-    // Leave and come back: no re-read. `r` re-reads.
-    h.key(b"6");
-    h.turns(3);
-    h.key(b"7");
-    h.turns(3);
-    assert_eq!(h.mock.count("catalog"), 1);
-    h.key(b"r");
-    h.wait_for_call("a second catalog read", |calls| {
-        calls.iter().filter(|c| c.starts_with("catalog")).count() == 2
-    });
-    h.settle_until_contains("Qwen3 8B");
-    // `r` on the shared screen is ITS refresh, never a gateway command.
-    assert!(
-        h.drain_cmds()
-            .iter()
-            .all(|c| !matches!(c, Cmd::PollHostState { .. })),
-        "no gateway-lane reload for the shared screen"
-    );
 }
 
 #[test]
@@ -7760,107 +7698,6 @@ fn wizard_walks_on_to_models_and_engines_with_their_goals() {
     h.ui.screen.set(ui::SCREEN_ENGINES);
     let s = h.settle_until_contains("llama.cpp");
     assert!(s.contains("i installs a local engine"), "{s}");
-}
-
-#[test]
-fn models_filter_slash_requeries_through_the_transport() {
-    let mut h = harness_sized(Size::new(150, 40));
-    h.browse_connected();
-    h.open_models();
-    h.key(b"/");
-    let s = h.turns(2);
-    assert!(s.contains("Filter models"), "the filter input opens:\n{s}");
-    h.type_text("gemma");
-    h.turns(1);
-    h.key(b"\r");
-    let s = h.settle_until("only gemma", |s| {
-        s.contains("Gemma 3 27B") && !s.contains("Qwen3 8B")
-    });
-    assert!(s.contains("filter \"gemma\""), "{s}");
-    assert!(h.mock.called("catalog q=gemma engine=- fits=false"));
-    h.key(b"f");
-    h.wait_for_call("the fits-only re-query", |c| {
-        c.iter().any(|c| c == "catalog q=gemma engine=- fits=true")
-    });
-}
-
-#[test]
-fn download_progress_reaches_the_gateway_toast_lane() {
-    let mut h = harness_sized(Size::new(150, 40));
-    h.browse_connected();
-    h.open_models();
-    h.mock
-        .polls
-        .lock()
-        .unwrap()
-        .extend([fixture("job_running"), fixture("job_running")]);
-    // Deterministic: the job stays at 42% until released (under load the
-    // poll thread used to walk both running answers to "completed" before
-    // a frame showed them).
-    *h.mock.hold_polls.lock().unwrap() = true;
-    h.select_artifact("qwen3:8b");
-    h.key(b"w");
-    let s = h.settle_until("the job at 42%", |s| s.contains("42%"));
-    assert!(s.contains("download ollama qwen3:8b"), "{s}");
-    assert!(s.contains("c cancels"), "{s}");
-    assert!(
-        h.screens.job_running(),
-        "held at running: the job is still active"
-    );
-    *h.mock.hold_polls.lock().unwrap() = false;
-    // The outcome lands on the GATEWAY's notice signal (shared lane):
-    // the footer mirrors it and the toast effect shows it.
-    h.settle_until("the completion notice", |s| {
-        s.contains("✓ download ollama qwen3:8b completed")
-    });
-    let notice = h.store.notice.get_untracked().unwrap_or_default();
-    assert!(
-        notice.contains("download ollama qwen3:8b completed"),
-        "the gateway notice carries it: {notice}"
-    );
-    assert!(!h.screens.job_running());
-}
-
-#[test]
-fn delete_refusal_shows_the_gateways_blockers() {
-    let mut h = harness_sized(Size::new(150, 40));
-    h.browse_connected();
-    h.open_models();
-    h.key(b"v");
-    h.settle_until_contains("3 installed");
-    let idx = h
-        .screens
-        .installed
-        .with_untracked(|i| {
-            i.ready()
-                .and_then(|d| d.rows.iter().position(|r| r.provider == "mlx"))
-        })
-        .unwrap();
-    h.screens.installed_sel.set(idx);
-    h.turns(2);
-    h.key(b"d");
-    let s = h.turns(2);
-    assert!(
-        s.contains("loaded in memory right now"),
-        "blocker spelled out:\n{s}"
-    );
-    assert!(
-        s.contains("gateway host studio"),
-        "the delete names where it runs:\n{s}"
-    );
-    // The gateway refuses (409 + body) — what HttpTransport hands over.
-    *h.mock.refuse_delete.lock().unwrap() = Some(TransportError::refused(
-        "model is loaded",
-        Some(json!({"ok": false, "status": "refused", "delete_blockers": ["loaded"]})),
-    ));
-    h.key(b"1");
-    h.turns(1);
-    h.key(b"\r");
-    let s = h.settle_until_contains("refused: model is loaded");
-    assert!(s.contains("(loaded)"), "the blockers ride along:\n{s}");
-    assert!(h
-        .mock
-        .called("delete mlx mlx-community/gpt-oss-20b-4bit force=true"));
 }
 
 #[test]
@@ -7924,38 +7761,6 @@ fn a_running_install_blocks_q_and_c_cancels_it() {
     assert!(s.contains("cancelled"), "{s}");
     assert!(h.mock.called("cancel engine_install_1"));
     assert!(!h.screens.job_running());
-}
-
-#[test]
-fn a_reconnect_forgets_the_old_gateways_models_and_reloads() {
-    use abstractcore_console::screens::Remote;
-    let mut h = harness_sized(Size::new(150, 40));
-    h.browse_connected();
-    h.open_models();
-    assert_eq!(h.mock.count("catalog"), 1);
-    // The worker's probe path: Probing (+ Store::reset_domains).
-    h.store.conn.set(ConnPhase::Probing);
-    h.turns(2);
-    assert!(
-        h.screens.catalog.with_untracked(Remote::is_not_asked)
-            && h.screens.installed.with_untracked(Remote::is_not_asked)
-            && h.screens.host.with_untracked(Remote::is_not_asked),
-        "Probing resets the shared screens' reads"
-    );
-    // No read while not connected.
-    h.turns(3);
-    assert_eq!(h.mock.count("catalog"), 1, "{:?}", h.mock.calls());
-    // Connected again, still on the Models tab: it reloads by itself.
-    h.connect_as_admin();
-    h.wait_for_call("the post-reconnect catalog read", |c| {
-        c.iter().filter(|c| c.starts_with("catalog")).count() == 2
-    });
-    h.settle_until_contains("Qwen3 8B");
-    // The UI-side reset (Connect button) clears them too.
-    h.screens.engines.set(Remote::Loading);
-    let ctx_reset = h.screens;
-    abstractgateway_console::ui::reset_screens(&ctx_reset);
-    assert!(h.screens.engines.with_untracked(Remote::is_not_asked));
 }
 
 // =======================================================================

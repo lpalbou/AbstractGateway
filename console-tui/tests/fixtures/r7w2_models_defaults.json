@@ -1,0 +1,50 @@
+{
+ "ok": true,
+ "version": 1,
+ "authority": "abstractcore.local",
+ "writable": true,
+ "source": "abstractcore.local",
+ "config_file": "~/.abstractcore/config/abstractcore.json",
+ "routes": [
+  {
+   "key": "input.text",
+   "kind": "input",
+   "modality": "text",
+   "label": "Text Input",
+   "task": "text_understanding",
+   "provider": "mlx",
+   "model": "mlx-community/Qwen3.8-Flash-Next-4bit",
+   "options": {
+    "speculation": {
+     "mode": "native_mtp",
+     "num_draft_tokens": 2,
+     "require_acceleration": false
+    }
+   },
+   "source": "abstractcore.capability_defaults",
+   "configured": true
+  },
+  {
+   "key": "output.text",
+   "kind": "output",
+   "modality": "text",
+   "label": "Text Output",
+   "task": "text_generation",
+   "provider": "mlx",
+   "model": "mlx-community/Qwen3.8-Flash-Next-4bit",
+   "options": {
+    "speculation": {
+     "mode": "native_mtp",
+     "num_draft_tokens": 2,
+     "require_acceleration": false
+    }
+   },
+   "source": "abstractcore.capability_defaults",
+   "derived_from": "input.text",
+   "read_only": true,
+   "configured": true
+  }
+ ],
+ "errors": [],
+ "seeded": "recommended-v2"
+}
