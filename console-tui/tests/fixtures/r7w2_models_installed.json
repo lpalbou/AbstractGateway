@@ -1,0 +1,101 @@
+{
+ "schema": "models_installed_v1",
+ "rows": [
+  {
+   "provider": "ollama",
+   "artifact": "qwen3:0.6b",
+   "quant": "q4_k_m",
+   "size_bytes": 522653767,
+   "params_total": 751630000,
+   "location": "~/.ollama/models",
+   "loaded": false,
+   "catalog_id": "qwen3-0.6b",
+   "deletable": true,
+   "delete_blockers": [],
+   "kind": null,
+   "tasks": [],
+   "tasks_source": null,
+   "size_source": "engine",
+   "format": "gguf",
+   "family": "qwen3",
+   "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "modified_at": null
+  },
+  {
+   "provider": "ollama",
+   "artifact": "my-finetune:7b",
+   "quant": "q4_0",
+   "size_bytes": 4683087332,
+   "params_total": 7200000000,
+   "location": "~/.ollama/models",
+   "loaded": false,
+   "catalog_id": null,
+   "deletable": true,
+   "delete_blockers": [],
+   "kind": null,
+   "tasks": [],
+   "tasks_source": null,
+   "size_source": "engine",
+   "format": "gguf",
+   "family": "llama",
+   "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "modified_at": null
+  },
+  {
+   "provider": "mlx",
+   "artifact": "mlx-community/my-own-tune-4bit",
+   "quant": "4bit",
+   "size_bytes": 5000048,
+   "params_total": null,
+   "location": "~/.cache/huggingface/hub/models--mlx-community--my-own-tune-4bit",
+   "loaded": null,
+   "catalog_id": null,
+   "deletable": true,
+   "delete_blockers": [],
+   "kind": null,
+   "tasks": [],
+   "tasks_source": null,
+   "size_source": "engine",
+   "params_active": null,
+   "revisions": 1,
+   "nb_files": 2,
+   "incomplete_files": 0,
+   "companions": []
+  },
+  {
+   "provider": "mlx",
+   "artifact": "mlx-community/Qwen3-0.6B-4bit",
+   "quant": "4bit",
+   "size_bytes": 3000048,
+   "params_total": 600000000,
+   "location": "~/.cache/huggingface/hub/models--mlx-community--Qwen3-0.6B-4bit",
+   "loaded": null,
+   "catalog_id": "qwen3-0.6b",
+   "deletable": true,
+   "delete_blockers": [],
+   "kind": null,
+   "tasks": [],
+   "tasks_source": null,
+   "size_source": "engine",
+   "params_active": null,
+   "revisions": 1,
+   "nb_files": 2,
+   "incomplete_files": 0,
+   "companions": []
+  }
+ ],
+ "engines_probed": [
+  "ollama",
+  "lmstudio",
+  "mlx",
+  "huggingface"
+ ],
+ "errors": {
+  "lmstudio": "the `lms` CLI is not installed"
+ },
+ "totals": {
+  "count": 4,
+  "size_bytes": 5213741195
+ },
+ "generated_at": "2026-10-04T02:36:46Z"
+}

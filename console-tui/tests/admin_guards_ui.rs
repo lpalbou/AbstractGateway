@@ -568,9 +568,10 @@ fn entity_manage_refuses_admin_acts_for_a_non_admin() {
     assert!(only_reads(&h.drain()));
 }
 
-/// Models (9) / Engines (0) — AbstractCore's shared screens — get the
-/// admin concept from the connection: a non-admin's footer labels the
-/// admin verbs and `w` is refused with the gateway's reason.
+/// The shared Engines screen still takes the admin concept from the
+/// connection; the Models page (9, the web catalog in the terminal, round
+/// 7) labels its admin verbs in the footer and refuses `w` with the web
+/// page's words.
 #[test]
 fn core_screens_follow_the_connection_principal() {
     use abstractcore_console::screens::Access;
@@ -596,17 +597,11 @@ fn core_screens_follow_the_connection_principal() {
 
     let mut h = harness();
     let s = h.on(ui::SCREEN_CATALOG, false);
-    assert!(s.contains("download: admin only"), "footer labels it:\n{s}");
-    h.store.notice.set(None);
-    h.key(b"w");
-    let n = h.notice();
-    assert!(
-        n.contains("admin") && n.contains("signed in as ana, not an admin"),
-        "{n:?}"
-    );
+    assert!(s.contains("w/d/u/c admin only"), "footer labels it:\n{s}");
     let mut h = harness();
     let s = h.on(ui::SCREEN_CATALOG, true);
     assert!(!s.contains("admin only"), "an admin sees the verbs:\n{s}");
+    assert!(s.contains("w download"), "{s}");
 }
 
 /// A non-admin on a gateway with NO entities yet: no table takes the
