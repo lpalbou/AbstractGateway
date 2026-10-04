@@ -387,7 +387,7 @@ def normalize_chat_request(doc: Dict[str, Any]) -> Dict[str, Any]:
         # Structured outputs: AbstractCore drives them for every provider (constrained decoding
         # where the provider has it, the schema in the prompt otherwise, and the answer validated
         # against the schema). The shape is checked here so a bad schema never reaches a model.
-        from abstractcore.structured.json_schema import ResponseFormatError, parse_response_format
+        from abstractruntime.integrations.abstractcore.structured_facade import ResponseFormatError, parse_response_format
 
         try:
             kind, _schema, _name = parse_response_format(rf)
