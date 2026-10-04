@@ -1734,14 +1734,25 @@ any authenticated principal; writes require an admin principal.
 - `GET /api/gateway/host/metrics/live` — `{gpu, memory, runner}` in one call
   (1 s caches); `gpu`/`memory` carry the same in-band `supported` shape as
   `/host/metrics/gpu` and `/host/metrics/memory`.
-- `GET /api/gateway/host/runs?limit=25&window_hours=24` — recent runs across
-  every data plane on this host (admin; `/runs` answers only for the calling
+- `GET /api/gateway/host/runs?limit=25&window_hours=24` — the runs on this
+  host across every data plane (admin; `/runs` answers only for the calling
   principal's plane). `{ok, items: [{run_id, workflow_id, label, status,
-  created_at, updated_at, ledger_len, plane, started_epoch}], count, has_more,
-  planes, skipped_entity_planes?, warnings?}`. `label` decodes a catalog
-  workflow's internal id (`__catalog__v2__…<base64>`) to the name an operator
-  uses. Root runs only; the gateway's own bookkeeping runs (`__`-prefixed, but
-  never a catalog id) are excluded.
+  activity, role, created_at, updated_at, ledger_len, plane, started_epoch,
+  updated_epoch, observer_path}], count, active_count, has_more, planes,
+  skipped_entity_planes?, warnings?}`. Items are TURN ROOTS (the runtime's
+  `is_turn_root`: parent-less runs that are not automation controllers, plus
+  automation occurrences), in this order: every active root first —
+  `activity: "running"` (the root or any run below it is running), then
+  `"waiting"` (waiting for a person or an event, updated inside the window) —
+  then roots that finished inside `window_hours` of their last update
+  (`activity: "done"`), newest first. Active rows are never windowed and
+  never cut by `limit` (`active_count` counts them); `limit` bounds the
+  finished rows and `has_more` says more finished ones exist. `label` decodes
+  a catalog workflow's internal id (`__catalog__v2__…<base64>`) to the name an
+  operator uses; `observer_path` is the run's Observer page
+  (`/apps/observer/#run/<id>`, open it signed in through `POST
+  /api/gateway/apps/observer/open {path: "/#run/<id>"}`). The gateway's own
+  bookkeeping runs (`__`-prefixed, but never a catalog id) are excluded.
 - `GET /api/gateway/host/tray` — `{dependencies_installed, install_hint,
   decision: {start, reason, hint}, supervisor: {running, ready, pid,
   exit_code, failure, log_path}, can_control}`. There is no setting: the icon

@@ -330,6 +330,7 @@ class Element {{
 	    this.className = "";
 	    this.style = {{}};
 	    this.children = [];
+	    this.dataset = {{}};  // data-* (the top-bar widget's data-af-tip)
     this.classList = {{
       add: (...names) => {{
         const set = new Set(String(this.className || "").split(/\\s+/).filter(Boolean));
@@ -1588,6 +1589,7 @@ async function ensureModalityUi() {{}}
 const rendered = [];
 async function loadGatewayHost() {{}}
 function renderHostState(data) {{ rendered.push(data); }}
+function renderTopbarResources() {{}}
 async function confirmAction() {{ return true; }}
 async function api(path, options = {{}}) {{
   if (path.includes("/prompt_cache/clear_all")) throw new Error("cache clear refused");
@@ -1679,8 +1681,10 @@ function tableLoadingRow() {{}}
 function modelsEmptyRow() {{}}
 async function ensureModalityUi() {{}}
 const painted = [];
+const widget = [];
 async function loadGatewayHost() {{}}
 function renderHostState(data) {{ painted.push(data.marker); }}
+function renderTopbarResources(data) {{ widget.push(data && data.marker); }}
 const pending = [];
 async function api() {{ return new Promise((resolve) => pending.push(resolve)); }}
 const p1 = loadHostState({{ quiet: true }});
@@ -1691,10 +1695,12 @@ pending[1]({{ marker: "fresh" }});
 await p2;
 pending[0]({{ marker: "stale" }});
 await p1;
-console.log(JSON.stringify([{{ painted, kept: state.hostState && state.hostState.marker }}]));
+console.log(JSON.stringify([{{ painted, widget, kept: state.hostState && state.hostState.marker }}]));
 """
     row = _node(harness)[0]
     assert row["painted"] == ["fresh"], "the stale resolution must paint nothing"
+    # R10.3: the top-bar widget reads the same snapshot under the same guard.
+    assert row["widget"] == ["fresh"], "the stale resolution must not repaint the top-bar widget"
     assert row["kept"] == "fresh", "state.hostState must keep the fresh snapshot"
 
 

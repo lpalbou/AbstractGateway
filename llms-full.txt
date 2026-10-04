@@ -3297,18 +3297,25 @@ can see what it is doing and act on it in one click:
   it; nothing opens by itself, the menu then offers **Open X**), **Launch
   Assistant** (the desktop app), otherwise the app's name, greyed. See *Apps*
   below.
-- **Workflows** — the last 24 hours of runs, newest first: a state badge
-  (🟢 running, 🟡 waiting, ✅ completed, ❌ failed, ⚪️ cancelled), the step
-  count and how long each took, under a one-line tally. Rows are information;
-  **Open Runs in Console** at the bottom is the way in. Root runs only — a
-  deep-research run spawns dozens of children and this is a glance. The list
-  is **host-wide** (`GET /api/gateway/host/runs`), not per-principal: memory,
-  GPU and loaded models on this menu describe the machine, and the run list
-  has to describe the same machine. Catalog-published workflows are shown
-  under the name you know them by (their run id encodes scope and tenant in
-  base64) and are not mistaken for the gateway's own bookkeeping runs. Summoned
-  entities' data planes are not listed (the payload names them in
-  `skipped_entity_planes`).
+- **Workflows** — what is running now, then the last 24 hours. Under a
+  one-line tally (`Now: 2 running · 1 waiting — last 24 hours: 3 done`), the
+  active runs come first — running (🟢), then waiting for a person or an
+  event (🟡) — each with the time elapsed so far, whatever day it started;
+  then the runs that finished in the last 24 hours (✅ completed, ❌ failed,
+  ⚪️ cancelled), newest first, with how long each took. Every row shows the
+  step count and opens a small submenu: when it started, and **Open in
+  Observer** (that run's page in Observer, signed in; a stopped Observer the
+  gateway manages is started first; greyed when Observer is not installed).
+  **Open Runs in Console** at the bottom is the full list. A row is a run
+  someone started — a conversation turn or an automation's occurrence — never
+  a sub-run or an automation's controller; a run whose sub-run is working
+  counts as running. The list is **host-wide** (`GET
+  /api/gateway/host/runs`), not per-principal: memory, GPU and loaded models
+  on this menu describe the machine, and the run list has to describe the
+  same machine. Catalog-published workflows are shown under the name you know
+  them by (their run id encodes scope and tenant in base64) and are not
+  mistaken for the gateway's own bookkeeping runs. Summoned entities' data
+  planes are not listed (the payload names them in `skipped_entity_planes`).
 - **Pause / Resume Workflows** — the one high-level control over all of that:
   stop new workflow steps from running to free the machine or to look at what
   is going on (the gateway keeps answering; work queues until you resume).
@@ -5781,14 +5788,25 @@ any authenticated principal; writes require an admin principal.
 - `GET /api/gateway/host/metrics/live` — `{gpu, memory, runner}` in one call
   (1 s caches); `gpu`/`memory` carry the same in-band `supported` shape as
   `/host/metrics/gpu` and `/host/metrics/memory`.
-- `GET /api/gateway/host/runs?limit=25&window_hours=24` — recent runs across
-  every data plane on this host (admin; `/runs` answers only for the calling
+- `GET /api/gateway/host/runs?limit=25&window_hours=24` — the runs on this
+  host across every data plane (admin; `/runs` answers only for the calling
   principal's plane). `{ok, items: [{run_id, workflow_id, label, status,
-  created_at, updated_at, ledger_len, plane, started_epoch}], count, has_more,
-  planes, skipped_entity_planes?, warnings?}`. `label` decodes a catalog
-  workflow's internal id (`__catalog__v2__…<base64>`) to the name an operator
-  uses. Root runs only; the gateway's own bookkeeping runs (`__`-prefixed, but
-  never a catalog id) are excluded.
+  activity, role, created_at, updated_at, ledger_len, plane, started_epoch,
+  updated_epoch, observer_path}], count, active_count, has_more, planes,
+  skipped_entity_planes?, warnings?}`. Items are TURN ROOTS (the runtime's
+  `is_turn_root`: parent-less runs that are not automation controllers, plus
+  automation occurrences), in this order: every active root first —
+  `activity: "running"` (the root or any run below it is running), then
+  `"waiting"` (waiting for a person or an event, updated inside the window) —
+  then roots that finished inside `window_hours` of their last update
+  (`activity: "done"`), newest first. Active rows are never windowed and
+  never cut by `limit` (`active_count` counts them); `limit` bounds the
+  finished rows and `has_more` says more finished ones exist. `label` decodes
+  a catalog workflow's internal id (`__catalog__v2__…<base64>`) to the name an
+  operator uses; `observer_path` is the run's Observer page
+  (`/apps/observer/#run/<id>`, open it signed in through `POST
+  /api/gateway/apps/observer/open {path: "/#run/<id>"}`). The gateway's own
+  bookkeeping runs (`__`-prefixed, but never a catalog id) are excluded.
 - `GET /api/gateway/host/tray` — `{dependencies_installed, install_hint,
   decision: {start, reason, hint}, supervisor: {running, ready, pid,
   exit_code, failure, log_path}, can_control}`. There is no setting: the icon
@@ -6165,8 +6183,18 @@ one under **Providers**.
 The **Technical details** switch at the bottom of the sidebar shows commands,
 route ids and other technical information throughout the console. The top bar
 holds the **Docs assistant** (book icon: the same chat as every app — your question on the right, the answer on the left with Markdown, code and links, copy, attachments, live streaming, an icon-only New conversation; answers come from this gateway's llms.txt through the docs-qa workflow, as its one-line footer says; **Past conversations** reopens or archives an earlier docs chat, and docs chats never appear in the conversation lists),
-the appearance settings, **About**, the gateway's address with a copy button,
-who is signed in, and the sign-out control.
+the appearance settings, **About**, who is signed in, and the sign-out control.
+Left of them sits the **memory and compute line** — the same glance as the
+desktop tray: memory used of total (with the percentage), GPU busy % and how
+many models are loaded, with two small bars for memory and GPU (at phone
+width the memory reads as a percentage). It reads the Resources page's data
+(`GET /api/gateway/host/state`) and refreshes every 5 seconds while you are
+signed in and the browser tab is visible. Hover or focus it for the real
+values, one per line: RAM, the accelerator heap (and whose memory it counts),
+model weights and models loaded, KV caches (for models and in sessions) and
+GPU load; a figure the host does not report reads "—" or "unknown", never 0.
+Click it (or press Enter on it) to open **Resources**. The gateway's
+addresses, each with **Copy**, are on the **Network** page.
 
 **About** (the *i* button) is the compact card every AbstractFramework app
 shows: AbstractGateway and the version this gateway runs, the AbstractFramework
@@ -9814,6 +9842,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Changed
+
+- **Console top bar: a memory and compute line replaces the address.** Memory used of total (%), GPU busy % and the number of loaded models — the desktop tray's glance — from the Resources data (`GET /api/gateway/host/state`), refreshed every 5 seconds while signed in and the browser tab is visible. Its tooltip lists the real values (RAM, accelerator heap, model weights, KV caches, GPU load); a click opens Resources. The address and its copy button left the top bar: every address, with **Copy**, is on the Network page.
+- **Tray Workflows submenu: what runs now comes first.** Running runs, then runs waiting for a person or an event, each with the time elapsed so far, then the runs finished in the last 24 hours, newest first; each row opens **Open in Observer** (signed in, at that run). The tally reads `Now: 2 running · 1 waiting — last 24 hours: 3 done`.
+- `GET /api/gateway/host/runs` lists turn roots in the runtime's sense — automation occurrences included, automation controllers and sub-runs not — with `activity` (`running` when the root or a run below it runs, `waiting`, `done`), `observer_path` and `active_count`. Active rows are always listed, whatever their age and whatever `limit`; finished rows are windowed on their last update.
+
+### Fixed
+
+- The tray's Workflows submenu said "No runs in the last 24 hours" while runs were active: automation occurrences (whose parent is their controller) were left out, the run page was cut before sub-runs were filtered out, and runs that started more than 24 hours ago were hidden while still running.
 
 ## [0.13.0] - 2026-10-04
 

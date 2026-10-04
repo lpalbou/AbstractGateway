@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Console top bar: a memory and compute line replaces the address.** Memory used of total (%), GPU busy % and the number of loaded models — the desktop tray's glance — from the Resources data (`GET /api/gateway/host/state`), refreshed every 5 seconds while signed in and the browser tab is visible. Its tooltip lists the real values (RAM, accelerator heap, model weights, KV caches, GPU load); a click opens Resources. The address and its copy button left the top bar: every address, with **Copy**, is on the Network page.
+- **Tray Workflows submenu: what runs now comes first.** Running runs, then runs waiting for a person or an event, each with the time elapsed so far, then the runs finished in the last 24 hours, newest first; each row opens **Open in Observer** (signed in, at that run). The tally reads `Now: 2 running · 1 waiting — last 24 hours: 3 done`.
+- `GET /api/gateway/host/runs` lists turn roots in the runtime's sense — automation occurrences included, automation controllers and sub-runs not — with `activity` (`running` when the root or a run below it runs, `waiting`, `done`), `observer_path` and `active_count`. Active rows are always listed, whatever their age and whatever `limit`; finished rows are windowed on their last update.
+
+### Fixed
+
+- The tray's Workflows submenu said "No runs in the last 24 hours" while runs were active: automation occurrences (whose parent is their controller) were left out, the run page was cut before sub-runs were filtered out, and runs that started more than 24 hours ago were hidden while still running.
+
 ## [0.13.0] - 2026-10-04
 
 Requires AbstractRuntime 0.9.0, AbstractCore 2.25.0 and AbstractVoice 0.14.0 (installed automatically). The terminal console `abstractgateway-console` 0.15.0 matches this release; see [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md).

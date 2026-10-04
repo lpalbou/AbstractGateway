@@ -436,6 +436,33 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    .shell_header > .af-topbar-island, .shell_header > .af-topbar { margin-left: auto; min-width: 0; max-width: 100%; }
 	    .shell_header .af-topbar { flex-wrap: wrap; justify-content: flex-end; row-gap: 6px; }
+	    /* R10.3 top-bar memory/compute widget: quiet, one line, left of the cluster. */
+	    .shell_header > .topbar-resources { margin-left: auto; }
+	    .shell_header > .topbar-resources:not(.hidden) ~ .af-topbar-island, .shell_header > .topbar-resources:not(.hidden) ~ .af-topbar { margin-left: 0; }
+	    .topbar-resources {
+	      display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%;
+	      padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border, var(--line));
+	      background: transparent; color: var(--text-secondary, var(--muted)); cursor: pointer;
+	      font: inherit; font-size: var(--font-size-sm); font-variant-numeric: tabular-nums; white-space: nowrap;
+	    }
+	    .topbar-resources:hover { color: var(--text-primary, var(--text)); border-color: var(--text-secondary, var(--muted)); }
+	    .topbar-resources:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
+	    .topbar-resources.is-stale { opacity: .7; }
+	    .topbar-resources__item { display: inline-flex; align-items: center; gap: 4px; }
+	    .topbar-resources__k { color: var(--text-tertiary, var(--muted)); }
+	    .topbar-resources__v { color: var(--text-primary, var(--text)); }
+	    .topbar-resources__short { display: none; }
+	    .topbar-resources__sep { color: var(--text-tertiary, var(--muted)); }
+	    .topbar-resources__bar { position: relative; width: 4px; height: 14px; border-radius: 999px; background: var(--bg-tertiary, var(--line)); overflow: hidden; }
+	    .topbar-resources__fill { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: var(--info); }
+	    @media (max-width: 767.98px) {
+	      .topbar-resources { gap: 4px; padding: 3px 8px; }
+	      .topbar-resources__long { display: none; }
+	      .topbar-resources__short { display: inline; }
+	    }
+	    /* The kit tooltip keeps line breaks (the widget's tip is one value per
+	       line; every other tip is one sentence without breaks). */
+	    body .af-tooltip { white-space: pre-line; }
 	    @media (max-width: 767.98px) {
 	      .shell_header { gap: 8px 10px; }
 	      #page-subtitle { display: none; }
@@ -1997,6 +2024,17 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    <!-- The kit's AfTopBarActions island mounts here (console_islands.py);
 	         the static cluster below is the same public markup and stays as
 	         the no-bundle fallback (and the node-VM tests' surface). -->
+	    <!-- R10.3: the tray's discreet memory/compute line (memory used/total (%),
+	         GPU busy %, models loaded) from the Resources snapshot; kit tooltip
+	         with the real values; a click opens Resources. Gateway-owned, so it
+	         shows with the island and with the static fallback alike. -->
+	    <button id="topbar-resources" class="topbar-resources hidden" type="button" aria-label="Host resources. Open Resources." data-af-tip="Reading host resources…">
+	      <span class="topbar-resources__item"><span class="topbar-resources__bar" aria-hidden="true"><span class="topbar-resources__fill" id="topbar-res-mem-bar"></span></span><span class="topbar-resources__k">Mem</span> <span class="topbar-resources__v topbar-resources__long" id="topbar-res-mem">—</span><span class="topbar-resources__v topbar-resources__short" id="topbar-res-mem-short">—</span></span>
+	      <span class="topbar-resources__sep" aria-hidden="true">·</span>
+	      <span class="topbar-resources__item"><span class="topbar-resources__bar" aria-hidden="true"><span class="topbar-resources__fill" id="topbar-res-gpu-bar"></span></span><span class="topbar-resources__k">GPU</span> <span class="topbar-resources__v" id="topbar-res-gpu">—</span></span>
+	      <span class="topbar-resources__sep" aria-hidden="true">·</span>
+	      <span class="topbar-resources__item"><span class="topbar-resources__v" id="topbar-res-models">— models</span></span>
+	    </button>
 	    <div id="af-topbar-root" class="af-topbar-island hidden"></div>
 	    <div id="topbar-static" class="status af-topbar" role="group" aria-label="Console actions">
 	      <button id="open-appearance" class="af-topbar__btn" data-af-tip="Appearance (theme and text size)" aria-label="Appearance">◐</button>
@@ -11649,29 +11687,39 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // <option>s every 5s flicks an open suggestion popup shut.
 	      renderModelsLoadForm({ rebuildOptions: !quiet });
 	    }
-	    async function loadHostState({ quiet = false } = {}) {
+	    async function loadHostState({ quiet = false, widgetOnly = false } = {}) {
 	      if (!state.principal) return;
+	      // widgetOnly (the top bar's chain off the Resources page): refresh the
+	      // snapshot and the widget, leave the Resources DOM alone.
 	      // Sequence guard (the manageToken precedent): overlapping snapshots
 	      // must land in REQUEST order, not resolution order — a hung slow-lane
 	      // fetch resolving minutes late must never overwrite a fresher
 	      // snapshot (it would resurrect an unloaded model on screen).
 	      const seq = state.hostStateSeq = (state.hostStateSeq || 0) + 1;
 	      const msg = $("models-message");
-	      if (!quiet) {
+	      if (!quiet && !widgetOnly) {
 	        tableLoadingRow($("models-table"), 8, "Reading host residency…");
 	        tableLoadingRow($("models-caches-table"), 6, "Loading session caches…");
 	      }
+	      state.hostStateInflight = (state.hostStateInflight || 0) + 1;
 	      try {
-	        await ensureModalityUi();
+	        if (!widgetOnly) await ensureModalityUi();
 	        // Slow lane: a host mid-load answers late, not never.
 	        const data = await api("/api/gateway/host/state", { slow: true });
 	        if (seq !== state.hostStateSeq) return; // a newer call owns the paint
 	        state.hostState = data;
+	        renderTopbarResources(data, null);
+	        if (widgetOnly) return;
 	        if (msg) { msg.textContent = ""; msg.className = "message"; }
 	        renderHostState(data, { quiet });
 	        loadGatewayHost();
 	      } catch (e) {
 	        if (seq !== state.hostStateSeq) return; // stale failure: newer call owns the paint
+	        // Labeled failure, never stale numbers: the widget shows "—" with
+	        // the reason in its tooltip, like the Resources page below.
+	        state.hostState = null;
+	        renderTopbarResources(null, String(e.message || e));
+	        if (widgetOnly) return;
 	        // Labeled failure replaces content (stale pixels are the incident
 	        // class): the message names the failure and every section says
 	        // unavailable rather than keeping the last snapshot on screen.
@@ -11683,6 +11731,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const breakdown = $("models-breakdown"); if (breakdown) { breakdown.textContent = ""; breakdown.classList.add("hidden"); }
 	        const facts = $("models-host-facts"); if (facts) facts.textContent = "";
 	        const deg = $("models-degraded"); if (deg) { deg.textContent = ""; deg.classList.add("hidden"); }
+	      } finally {
+	        state.hostStateInflight = Math.max(0, (state.hostStateInflight || 1) - 1);
 	      }
 	    }
 	    // ---- Gateway card (Resources tab) + paused banner (every tab) ----------
@@ -11929,6 +11979,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        // inside the poll is the belt; the token bump is the suspenders).
 	        state.hostPollToken = (state.hostPollToken || 0) + 1;
 	        state.pausedPollToken = (state.pausedPollToken || 0) + 1;
+	        stopTopbarResourcesPoll();
 	        state.hostRunner = null;
 	        renderPausedBanner(null);
 	        $("users-section").classList.add("hidden");
@@ -12025,6 +12076,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        setActiveTab(state.activeTab);
 	      }
 	      startPausedPoll();
+	      startTopbarResourcesPoll();  // R10.3 top-bar memory/compute widget
 	      loadGatewayHost();
 	      $("open-setup").classList.toggle("hidden", !p.admin);
 	      // Skills & MCP is admin configuration (round 3, C3F): non-admins do not get the entry.
@@ -15090,6 +15142,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // the chain dies the moment another tab goes active or the user signs
 	    // out; re-entering the tab starts a fresh chain).
 	    $("tab-button-models").onclick = () => { setActiveTab("models"); loadHostState(); startHostStatePoll(); };
+	    $("topbar-resources").onclick = openResourcesFromTopbar;
 	    $("tab-button-catalog").onclick = () => { setActiveTab("catalog"); openCoreTab("catalog"); };
 	    $("tab-button-apps").onclick = () => { setActiveTab("apps"); openCoreTab("apps"); };
 	    $("tab-button-network").onclick = () => { setActiveTab("network"); openCoreTab("network"); };

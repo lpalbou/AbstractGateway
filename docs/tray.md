@@ -17,18 +17,25 @@ can see what it is doing and act on it in one click:
   it; nothing opens by itself, the menu then offers **Open X**), **Launch
   Assistant** (the desktop app), otherwise the app's name, greyed. See *Apps*
   below.
-- **Workflows** — the last 24 hours of runs, newest first: a state badge
-  (🟢 running, 🟡 waiting, ✅ completed, ❌ failed, ⚪️ cancelled), the step
-  count and how long each took, under a one-line tally. Rows are information;
-  **Open Runs in Console** at the bottom is the way in. Root runs only — a
-  deep-research run spawns dozens of children and this is a glance. The list
-  is **host-wide** (`GET /api/gateway/host/runs`), not per-principal: memory,
-  GPU and loaded models on this menu describe the machine, and the run list
-  has to describe the same machine. Catalog-published workflows are shown
-  under the name you know them by (their run id encodes scope and tenant in
-  base64) and are not mistaken for the gateway's own bookkeeping runs. Summoned
-  entities' data planes are not listed (the payload names them in
-  `skipped_entity_planes`).
+- **Workflows** — what is running now, then the last 24 hours. Under a
+  one-line tally (`Now: 2 running · 1 waiting — last 24 hours: 3 done`), the
+  active runs come first — running (🟢), then waiting for a person or an
+  event (🟡) — each with the time elapsed so far, whatever day it started;
+  then the runs that finished in the last 24 hours (✅ completed, ❌ failed,
+  ⚪️ cancelled), newest first, with how long each took. Every row shows the
+  step count and opens a small submenu: when it started, and **Open in
+  Observer** (that run's page in Observer, signed in; a stopped Observer the
+  gateway manages is started first; greyed when Observer is not installed).
+  **Open Runs in Console** at the bottom is the full list. A row is a run
+  someone started — a conversation turn or an automation's occurrence — never
+  a sub-run or an automation's controller; a run whose sub-run is working
+  counts as running. The list is **host-wide** (`GET
+  /api/gateway/host/runs`), not per-principal: memory, GPU and loaded models
+  on this menu describe the machine, and the run list has to describe the
+  same machine. Catalog-published workflows are shown under the name you know
+  them by (their run id encodes scope and tenant in base64) and are not
+  mistaken for the gateway's own bookkeeping runs. Summoned entities' data
+  planes are not listed (the payload names them in `skipped_entity_planes`).
 - **Pause / Resume Workflows** — the one high-level control over all of that:
   stop new workflow steps from running to free the machine or to look at what
   is going on (the gateway keeps answering; work queues until you resume).

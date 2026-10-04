@@ -413,8 +413,6 @@ CONSOLE_UI_CSS = r"""
     .ui-row-saved.tone-err { color: var(--error); flex-basis: 100%; }
     .ui-backlog-settings { display: grid; gap: 18px; min-width: 0; }
     .ui-backlog-settings .af-switch--row { width: 100%; max-width: none; color: var(--text-primary); }
-    #island-address { font-family: var(--font-mono); font-size: var(--font-size-sm); max-width: 26ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    @media (max-width: 1023.98px) { #island-address { display: none; } }
     /* Focus: every control the layer draws shows where the keyboard is. */
     .ui-btn:focus-visible, .ui-seg__opt:focus-visible, .first-run-step:focus-visible, details.ui-details > summary:focus-visible, .ui-log:focus-visible, a.ui-link:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; box-shadow: none; }
     .ui-seg__opt:focus-visible { outline-offset: 1px; }
@@ -3607,10 +3605,9 @@ CONSOLE_UI_JS = r"""
         about: islands.about,
         extras: [
           warmingExtra(islands.warming),
-          // The gateway's primary address (GET /network `copy_hint`: the
-          // address other devices use), with a copy button beside it.
-          { id: "island-address", label: `Gateway address: ${netPrimaryUrl()}`, text: netPrimaryUrl().replace(/^https?:\/\//, ""), hidden: !p || !netPrimaryUrl() },
-          { id: "island-address-copy", label: "Copy the gateway address", icon: "copy", hidden: !p || !netPrimaryUrl(), onClick: () => uiCopy(netPrimaryUrl()) },
+          // R10.3: no address here any more — the top bar's left of the
+          // cluster carries the memory/compute widget (#topbar-resources);
+          // the addresses, with Copy, live on the Network page.
           // Setup lives at the bottom of the sidebar (#open-setup, DESIGN-v2 §1): one labelled entry point.
           { id: "island-identity", label: "Signed in as", text: islands.identity, hidden: !p || !islands.identity },
         ],
@@ -3659,6 +3656,98 @@ CONSOLE_UI_JS = r"""
         if (r.ok) warming = applyHealthWarming(await r.json());
       } catch (_) { /* unreachable gateway: the connection pill says so */ }
       setTimeout(pollWarming, warming ? 3000 : 20000);
+    }
+    // ---- The top bar's memory/compute widget (R10.3) ----
+    // The tray's discreet realtime line, in the console: memory used/total
+    // (%) · GPU busy % · models loaded. It reads the RESOURCES data
+    // (GET /host/state, `state.hostState` — the same snapshot the Resources
+    // page renders; no second store), refreshed every few seconds while
+    // signed in. Its kit tooltip lists the real values; a click opens the
+    // Resources page. Every figure comes from the snapshot: an unknown one is
+    // "—", never an invented zero.
+    const TOPBAR_RES_POLL_MS = 5000;
+    function topbarResourcesView(data, error) {
+      if (!data || typeof data !== "object") {
+        const why = error ? `Host resources unavailable: ${error}` : "Reading host resources…";
+        return { mem: "—", memShort: "—", memFrac: null, gpu: "—", gpuFrac: null, models: "—", tip: `${why}\nClick to open Resources.`, label: `${why}. Open Resources.` };
+      }
+      const num = (v) => (typeof v === "number" && isFinite(v) && v >= 0) ? v : null;
+      const mem = (data.memory && typeof data.memory === "object") ? data.memory : {};
+      const ram = (mem.ram && typeof mem.ram === "object") ? mem.ram : {};
+      const used = num(ram.used_bytes), total = num(ram.total_bytes);
+      const pct = num(ram.percent) !== null ? num(ram.percent) : (used !== null && total ? (used / total) * 100 : null);
+      const gpuBlock = (data.gpu && typeof data.gpu === "object") ? data.gpu : {};
+      const gpuPct = gpuBlock.supported === true ? num(gpuBlock.utilization_gpu_pct) : null;
+      const totals = (data.totals && typeof data.totals === "object") ? data.totals : {};
+      const loaded = num(totals.models_resident);
+      const memText = used !== null && total !== null ? `${_fmtBytes(used)} / ${_fmtBytes(total)} (${_fmtPct(pct)})` : (pct !== null ? _fmtPct(pct) : "—");
+      const modelsText = loaded === null ? "— models" : `${loaded} model${loaded === 1 ? "" : "s"}`;
+      // The tooltip: the real values, one per line, from the same pure
+      // functions the Resources page uses (deviceMeterView, memoryBreakdown).
+      const lines = [];
+      lines.push(`RAM: ${used !== null && total !== null ? `${_fmtBytes(used)} of ${_fmtBytes(total)} (${_fmtPct(pct)})` : (pct !== null ? _fmtPct(pct) : "unknown")}`);
+      const dev = deviceMeterView(mem.device);
+      lines.push(`Accelerator heap: ${dev.value}${dev.used !== null ? ` (${dev.scope})` : ""}`);
+      const view = memoryBreakdown(data);
+      const weights = view.references.find((r) => r.key === "sum_model_weights");
+      lines.push(`Model weights: ${weights ? _fmtBytes(weights.bytes) : "unknown"} · ${loaded === null ? "models loaded unknown" : `${loaded} model${loaded === 1 ? "" : "s"} loaded`}`);
+      const kv = view.items.filter((i) => i.key === "model_caches" || i.key === "session_caches");
+      lines.push(`KV caches: ${kv.length ? kv.map((i) => `${_fmtBytes(i.bytes)} ${i.key === "model_caches" ? "for models" : "in sessions"}`).join(" · ") : "unknown"}`);
+      lines.push(`GPU load: ${gpuPct === null ? (gpuBlock.supported === true ? "unknown" : "not measured on this host") : `${_fmtPct(gpuPct)}${gpuBlock.source ? ` (via ${gpuBlock.source})` : ""}`}`);
+      if (error) lines.push(`Last refresh failed: ${error}`);
+      lines.push("Click to open Resources.");
+      return {
+        mem: memText,
+        memShort: pct === null ? "—" : _fmtPct(pct),
+        memFrac: pct === null ? null : Math.min(1, pct / 100),
+        gpu: gpuPct === null ? "—" : _fmtPct(gpuPct),
+        gpuFrac: gpuPct === null ? null : Math.min(1, gpuPct / 100),
+        models: modelsText,
+        tip: lines.join("\n"),
+        label: `Memory ${memText}, GPU ${gpuPct === null ? "unknown" : _fmtPct(gpuPct)} busy, ${modelsText} loaded. Open Resources.`,
+      };
+    }
+    function renderTopbarResources(data, error) {
+      const btn = $("topbar-resources");
+      if (!btn) throw new Error("AbstractGateway console: #topbar-resources is missing from the header (R10.3 markup).");
+      btn.classList.toggle("hidden", !state.principal);
+      const v = topbarResourcesView(data, error);
+      const set = (id, text) => { const el = $(id); if (!el) throw new Error(`AbstractGateway console: #${id} is missing from the top-bar widget.`); el.textContent = text; };
+      set("topbar-res-mem", v.mem);
+      set("topbar-res-mem-short", v.memShort);
+      set("topbar-res-gpu", v.gpu);
+      set("topbar-res-models", v.models);
+      const bar = (id, frac) => { const el = $(id); if (!el) throw new Error(`AbstractGateway console: #${id} is missing from the top-bar widget.`); el.style.height = `${frac === null ? 0 : Math.round(frac * 100)}%`; };
+      bar("topbar-res-mem-bar", v.memFrac);
+      bar("topbar-res-gpu-bar", v.gpuFrac);
+      btn.classList.toggle("is-stale", !data || !!error);
+      btn.dataset.afTip = v.tip;  // data-af-tip: the kit tooltip (islands bindTooltips)
+      btn.ariaLabel = v.label;
+    }
+    function topbarResourcesTick(token) {
+      if (token !== state.topbarResPollToken || !state.principal) return;
+      const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
+      // On the Resources page its own 5 s chain refreshes the same snapshot
+      // (and repaints this widget); elsewhere this chain does, widget only.
+      if (!hidden && state.activeTab !== "models" && !state.hostStateInflight) {
+        loadHostState({ quiet: true, widgetOnly: true }).catch(() => {});
+      }
+      setTimeout(() => topbarResourcesTick(token), TOPBAR_RES_POLL_MS);
+    }
+    function startTopbarResourcesPoll() {
+      state.topbarResPollToken = (state.topbarResPollToken || 0) + 1;
+      renderTopbarResources(state.hostState, null);
+      if (typeof setTimeout === "undefined") return;
+      topbarResourcesTick(state.topbarResPollToken);
+    }
+    function stopTopbarResourcesPoll() {
+      state.topbarResPollToken = (state.topbarResPollToken || 0) + 1;
+      const btn = $("topbar-resources");
+      if (btn) btn.classList.add("hidden");
+    }
+    function openResourcesFromTopbar() {
+      // The same door as the sidebar's Resources entry.
+      $("tab-button-models").click();
     }
     function renderIslands() {
       if (islands.topbar) islands.topbar.update(topBarIslandProps());
