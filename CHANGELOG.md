@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Models page is one page with compact cards: the separate **On this computer** list is gone; the downloaded models no catalog build accounts for are rows under **Not in the catalog** in the same list (Status All / Downloaded, with the same Delete and the chip counts including them). Each card's header is one line (name, organisation, parameters, licence, capability tags, badges) and each build is one 44 px line (engine · id · quant · size · status chips · Use as default · Delete); the recommended build keeps a small accent dot. Cards are about half as tall; on narrow windows the facts move under the id.
+- Console **About** is the shared compact card (ui-kit 0.7.0 islands, API "2"): name and version, the AbstractFramework version on this host, the gateway version, six links and the licence line, in about half the height. The list of every installed package is gone from About (it stays on `GET /api/gateway/about`). The vendored islands bundle and kit theme CSS are re-synced from ui-kit 0.7.0.
 - The OpenAI-compatible endpoint moved from `/core/v1` to `/v1`; `/core/v1` answers 308 to `/v1` and is deprecated. API keys are gateway tokens; the 0.12.0 endpoint token is still accepted (deprecated). Its settings left the Network page (a pointer remains).
 - `X-Forwarded-For` from a proxy on the gateway machine is now always used for the client address; the switch, renamed **Trust proxies on other machines**, extends it to proxies elsewhere.
 

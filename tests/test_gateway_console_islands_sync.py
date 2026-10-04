@@ -105,7 +105,7 @@ def test_islands_bundle_defines_the_documented_api() -> None:
         bundle = f.name
     out = subprocess.run([node, "-e", probe, bundle], capture_output=True, text=True, check=True, timeout=60)
     got = json.loads(out.stdout.strip().splitlines()[-1])
-    assert got["api"] == ISLANDS_PROVENANCE["api_version"] == "1"
+    assert got["api"] == ISLANDS_PROVENANCE["api_version"] == "2"
     assert got["kit"] == ISLANDS_PROVENANCE["kit_version"]
     assert got["fns"] == ["mountTopBar", "mountAppearance", "applyAppearance"]
     # The islands' ThemeSelect offers exactly the themes the console styles.

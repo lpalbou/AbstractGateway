@@ -1,18 +1,15 @@
-"""The console's About (kit 0.1.12 islands): the top-bar About action shows
-the gateway's identity (`appIdentity("abstractgateway", <served version>)`)
-plus the gateway-version rows of GET /about, formatted once by AbstractCore's
-`gateway_version_rows` (contract A-9) and templated into the page by the
-serving gateway.
+"""The console's About (kit 0.7.0 compact About, islands API 2): the top-bar
+About action shows the gateway's identity (`appIdentity("abstractgateway",
+<served version>)`), the AbstractFramework version installed on this host and
+the served gateway version, read once from GET /about (`about_payload`) and
+templated into the page by the serving gateway. NO package list (operator,
+round 5): the per-package versions of GET /about never reach the About.
 
-- The served page carries `GATEWAY_ABOUT` = `console_about_config()`, whose
-  version is the running abstractgateway and whose rows are the Python twin's
-  rows for `about_payload()`.
+- The served page carries `GATEWAY_ABOUT` = `console_about_config()`.
 - On the REAL vendored islands bundle (node vm), `consoleAboutProps` builds the
-  kit props: identity == the canonical descriptor's abstractgateway entry at the
-  served version, extraRows == those rows, and a failure is a visible row.
-- The identity descriptor compiled into the bundle equals the canonical one
-  (AbstractCore's vendored copy, byte-identical to the framework root's
-  `identity/abstractframework.json` by `scripts/check_identity_sync.py`).
+  kit props and the bundle's `AfAboutDialog` renders the compact card: name +
+  version, the two versions, six links, the licence line, no package.
+- The identity descriptor compiled into the bundle equals the canonical one.
 """
 
 from __future__ import annotations
@@ -50,14 +47,14 @@ def _node_json(script: str):
 def test_served_page_carries_the_about_facts_of_this_gateway() -> None:
     from importlib import metadata
 
-    from abstractcore.utils.identity import gateway_version_rows
-
     from abstractgateway.routes.gateway import about_payload
 
     cfg = console_about_config()
+    payload = about_payload()
     assert cfg["version"] == metadata.version("abstractgateway")
-    assert cfg["rows"] == [list(r) for r in gateway_version_rows(about_payload())]
-    assert cfg["rows"][0] == ["Gateway", f"AbstractGateway {cfg['version']}"]
+    assert cfg["gateway"] == cfg["version"]
+    assert cfg["framework"] == (payload.get("abstractframework") or None)
+    assert set(cfg) == {"version", "framework", "framework_note", "gateway", "gateway_note"}, "no package list in the About config"
     html = gateway_console_html()
     m = re.search(r"const GATEWAY_ABOUT = (\{.*?\});\n", html)
     assert m, "the console page does not template GATEWAY_ABOUT"
@@ -65,7 +62,7 @@ def test_served_page_carries_the_about_facts_of_this_gateway() -> None:
     assert "about: islands.about," in html and "islands.about = consoleAboutProps(lib" in html
 
 
-def test_about_failure_is_one_visible_row(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_about_failure_is_said_never_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     import abstractgateway.routes.gateway as gw
 
     def boom() -> dict:
@@ -73,20 +70,28 @@ def test_about_failure_is_one_visible_row(monkeypatch: pytest.MonkeyPatch) -> No
 
     monkeypatch.setattr(gw, "about_payload", boom)
     cfg = console_about_config()
-    assert cfg["rows"] == [["Gateway", "unavailable (OSError: metadata unreadable)"]]
     assert cfg["version"]  # the package's own __version__, never blank
+    assert cfg["gateway"] == cfg["version"]  # the console IS this gateway
+    assert cfg["framework"] is None
 
 
-def test_about_props_on_the_real_islands_bundle_match_the_descriptor(tmp_path: Path) -> None:
+def test_framework_not_installed_is_said(monkeypatch: pytest.MonkeyPatch) -> None:
+    import abstractgateway.routes.gateway as gw
+
+    monkeypatch.setattr(gw, "about_payload", lambda: {"abstractgateway": "9.9.9", "abstractframework": None, "packages": {"abstractcore": "2.0.0"}})
+    cfg = console_about_config()
+    assert cfg == {"version": "9.9.9", "framework": None, "framework_note": "not installed on this host", "gateway": "9.9.9", "gateway_note": ""}
+
+
+def test_about_card_on_the_real_islands_bundle(tmp_path: Path) -> None:
     require_node()
-    from abstractcore.utils.identity import about_fields, app_identity
-
     from test_gateway_console_offline import _slice_function
 
     source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
     bundle = tmp_path / "islands.js"
     bundle.write_text(ISLANDS_JS, encoding="utf-8")
-    cfg = console_about_config()
+    cfg = {"version": "9.8.7", "framework": "0.9.6", "framework_note": "", "gateway": "9.8.7", "gateway_note": ""}
+    nofw = {**cfg, "framework": None, "framework_note": "not installed on this host"}
     script = f"""
 import fs from "node:fs"; import vm from "node:vm";
 const ctx = {{ console }}; ctx.globalThis = ctx; vm.createContext(ctx);
@@ -96,39 +101,33 @@ const errors = [];
 const console2 = {{ error: (m) => errors.push(String(m)) }};
 {_slice_function(source, "consoleAboutProps").replace("console.error", "console2.error")}
 const ok = consoleAboutProps(lib, {json.dumps(cfg)});
-const empty = consoleAboutProps(lib, {{ version: "9.9.9", rows: [] }});
+const nofw = consoleAboutProps(lib, {json.dumps(nofw)});
+const empty = consoleAboutProps(lib, {{ version: "9.9.9" }});
 const noLib = consoleAboutProps({{ mountTopBar() {{}} }}, {json.dumps(cfg)});
-console.log(JSON.stringify([{{ ok, empty, noLib, errors, fns: [typeof lib.mountAbout, typeof lib.mountTopBar], kit: lib.kitVersion }}]));
+console.log(JSON.stringify([{{ ok, nofw, empty, noLib, errors, api: lib.apiVersion, fns: [typeof lib.mountAbout, typeof lib.mountTopBar, typeof lib.aboutVersionsFromGateway], kit: lib.kitVersion }}]));
 """
     out = _node_json(script)[0]
     desc = _canonical_descriptor()
     app = desc["apps"]["abstractgateway"]
-    ident = out["ok"]["identity"]
-    assert ident == {"id": "abstractgateway", "name": app["name"], "version": cfg["version"], "website": app["website"],
-                     "repo": app["repo"], "docs": app["docs"], "issues": app["issues"], "feedback": app["feedback"]}
-    assert out["ok"]["extraRows"] == cfg["rows"]
-    assert out["ok"]["label"] == "About AbstractGateway"
-    assert out["empty"]["extraRows"] == [["Gateway", "unavailable (the console page carries no gateway version rows)"]]
+    assert out["api"] == "2"
+    assert out["ok"]["identity"] == {"id": "abstractgateway", "name": app["name"], "version": "9.8.7", "website": app["website"],
+                                     "repo": app["repo"], "docs": app["docs"], "issues": app["issues"], "feedback": app["feedback"]}
+    assert out["ok"]["versions"] == {"framework": "0.9.6", "gateway": "9.8.7"}
+    assert "extraRows" not in out["ok"]
+    assert out["nofw"]["versions"] == {"framework": None, "gateway": "9.8.7", "frameworkNote": "not installed on this host"}
+    assert out["empty"]["versions"]["gatewayNote"] == "unavailable (the console page carries no gateway version)"
     assert out["noLib"] is None and any("appIdentity" in e for e in out["errors"])
-    assert out["fns"] == ["function", "function"]
-    # What the dialog lists = the kit's aboutRows(identity, extraRows), whose
-    # Python twin is about_fields (parity pinned by the kit's checks).
-    rows = about_fields(app_identity("abstractgateway", cfg["version"]), dict(cfg["rows"]))
-    text = "\n".join(f"{k}: {v}" for k, v in rows)
-    for needle in (
-        f"Application: AbstractGateway {cfg['version']}",
-        "Part of: AbstractFramework — https://abstractframework.ai",
-        "Author: Laurent-Philippe Albou, PhD (2023-2026)",
-        "Copyright: © 2023-2026 Laurent-Philippe Albou, PhD. Released under the MIT License.",
-        f"Website: {app['website']}",
-        f"Source: {app['repo']}",
-        f"Documentation: {app['docs']}",
-        f"Report an issue: {app['issues']}",
-        f"Give feedback: {app['feedback']}",
-        "Contact: contact@abstractframework.ai",
-        f"Gateway: AbstractGateway {cfg['version']}",
-    ):
-        assert needle in text, needle
+    assert out["fns"] == ["function", "function", "function"]
+
+
+def test_about_dialog_markup_from_the_bundle_has_no_package_list(tmp_path: Path) -> None:
+    """The vendored bundle carries the 0.7.0 compact card (its class names and
+    the framework note) and no longer the 0.6 rows dialog (red on a stale
+    re-sync)."""
+    for needle in ("af-about-card__versions", "af-about-card__links", "af-about-card__legal", '"not installed on the gateway host"'):
+        assert needle in ISLANDS_JS, needle
+    # the 0.6 rows dialog is gone from the vendored bundle
+    assert "af-about__rows" not in ISLANDS_JS
 
 
 def test_identity_descriptor_in_the_bundle_is_the_canonical_one(tmp_path: Path) -> None:

@@ -3326,22 +3326,26 @@ CONSOLE_UI_JS = r"""
         header_density: header === "large" ? "spacious" : header,
       };
     }
-    // About (kit 0.1.12): the kit's About dialog, owned by the top-bar
-    // cluster. Identity from the kit's vendored descriptor
-    // (`appIdentity("abstractgateway", <served version>)`); extra rows = the
-    // gateway-version rows the server formatted from GET /about
-    // (GATEWAY_ABOUT, templated by console_about_config). A bundle without
-    // appIdentity is a vendoring defect: it is logged, never papered over.
+    // About (kit 0.7.0 compact About, islands API 2): the kit's About
+    // dialog, owned by the top-bar cluster. Identity from the kit's vendored
+    // descriptor (`appIdentity("abstractgateway", <served version>)`);
+    // versions = framework + gateway as the server read them from GET /about
+    // (GATEWAY_ABOUT, templated by console_about_config). No package list.
+    // A bundle without appIdentity is a vendoring defect: logged, never
+    // papered over.
     function consoleAboutProps(lib, about) {
       if (!lib || typeof lib.appIdentity !== "function") {
         console.error("AbstractGateway console: the islands bundle has no appIdentity (kit 0.1.12+ required); About is unavailable.");
         return null;
       }
       const cfg = (about && typeof about === "object") ? about : {};
-      const rows = Array.isArray(cfg.rows) ? cfg.rows.filter((r) => Array.isArray(r) && r.length === 2).map((r) => [String(r[0]), String(r[1])]) : [];
+      const text = (v) => (typeof v === "string" && v.trim() ? v.trim() : null);
+      const versions = { framework: text(cfg.framework), gateway: text(cfg.gateway) };
+      if (text(cfg.framework_note)) versions.frameworkNote = text(cfg.framework_note);
+      if (!versions.gateway) versions.gatewayNote = text(cfg.gateway_note) || "unavailable (the console page carries no gateway version)";
       return {
         identity: lib.appIdentity("abstractgateway", String(cfg.version || "version not reported")),
-        extraRows: rows.length ? rows : [["Gateway", "unavailable (the console page carries no gateway version rows)"]],
+        versions,
         label: "About AbstractGateway",
       };
     }

@@ -36,7 +36,7 @@ from .console_theme_sync import parse_theme_css_blocks
 
 GENERATED_MODULE = "console_islands.py"
 BUNDLE_RELPATH = Path("islands") / "dist" / "af-console-islands.js"
-ISLANDS_API_VERSION = "1"
+ISLANDS_API_VERSION = "2"
 
 # Every kit file whose change can change the bundle or its CSS.
 # src/*.json: the AbstractFramework identity descriptor ships inside the bundle.

@@ -83,13 +83,12 @@ holds the docs assistant (answers grounded on this gateway's documentation),
 the appearance settings, **About**, the gateway's address with a copy button,
 who is signed in, and the sign-out control.
 
-**About** (the *i* button) shows AbstractGateway and the version this gateway
-runs, that it is part of AbstractFramework, the author, the copyright and
-licence, the website, source, documentation, issue and feedback links, the
-contact address, then the versions the gateway reports on `GET
-/api/gateway/about`: AbstractGateway, AbstractFramework (or "not installed on
-the gateway host") and every installed AbstractFramework package. If the
-gateway cannot report them, one line says "Gateway: unavailable (reason)".
+**About** (the *i* button) is the compact card every AbstractFramework app
+shows: AbstractGateway and the version this gateway runs, the AbstractFramework
+version installed on this host (or "not installed on this host"), one row of
+links (Website, Source, Docs, Issues, Feedback, Contact) and the copyright and
+licence line. It lists no packages: the per-package versions stay on `GET
+/api/gateway/about`.
 
 ### Responsive layout
 

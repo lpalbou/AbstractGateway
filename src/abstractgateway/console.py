@@ -165,35 +165,38 @@ def _console_owned_sources() -> Tuple[str, str, str, str]:
 
 
 def console_about_config() -> Dict[str, Any]:
-    """The console's About facts, computed by the SERVING gateway at render
-    time: `version` = the abstractgateway version this process runs (the
-    `abstractgateway` field of GET /about), `rows` = the gateway-version
-    rows of that same payload, formatted ONCE by AbstractCore's
-    `gateway_version_rows` (the Python twin of ui-kit `gatewayVersionRows`,
-    contract A-9 -- the islands bundle does not export the TS helper). A
-    failure is ONE visible "Gateway: unavailable (<reason>)" row, never an
-    empty About."""
+    """The console's About facts (kit 0.7.0 compact About), computed by the
+    SERVING gateway at render time from GET /about (`about_payload`):
+    `version` = the abstractgateway version this process runs, `framework` =
+    the AbstractFramework version installed on this host (None + a
+    `framework_note` when it is not installed), `gateway` = the same served
+    version. Deliberately NO package list (operator, round 5): per-package
+    versions stay on GET /about. A failure is said in `gateway_note`, never
+    an empty About."""
     import abstractgateway
 
-    try:
-        from abstractcore.utils.identity import gateway_version_rows
-    except Exception as exc:  # noqa: BLE001 - an old core must be named, not hidden
-        return {
-            "version": str(getattr(abstractgateway, "__version__", "") or "version not reported"),
-            "rows": [["Gateway", f"unavailable (the installed AbstractCore has no identity module: {exc})"]],
-        }
+    own = str(getattr(abstractgateway, "__version__", "") or "").strip()
+    framework = ""
+    note = ""
     try:
         from .routes.gateway import about_payload
 
         payload = about_payload()
-        rows = gateway_version_rows(payload)
-        version = str(payload.get("abstractgateway") or "")
-    except Exception as exc:  # noqa: BLE001 - one visible row, never an empty About
-        rows = gateway_version_rows(None, f"{type(exc).__name__}: {exc}")
-        version = ""
-    if not version:
-        version = str(getattr(abstractgateway, "__version__", "") or "version not reported")
-    return {"version": version, "rows": [[str(k), str(v)] for k, v in rows]}
+        reported = payload.get("abstractgateway")
+        gateway = reported.strip() if isinstance(reported, str) else ""
+        fw = payload.get("abstractframework")
+        framework = fw.strip() if isinstance(fw, str) else ""
+    except Exception as exc:  # noqa: BLE001 - said in the About, never hidden
+        gateway = ""
+        note = f"unavailable ({type(exc).__name__}: {exc})"
+    version = gateway or own or "version not reported"
+    return {
+        "version": version,
+        "framework": framework or None,
+        "framework_note": "" if framework else ("not installed on this host" if not note else ""),
+        "gateway": gateway or own or None,
+        "gateway_note": note if not (gateway or own) else "",
+    }
 
 
 def gateway_console_html() -> str:

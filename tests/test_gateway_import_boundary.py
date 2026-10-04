@@ -49,12 +49,11 @@ def _abstractcore_imports(path: Path) -> list[str]:
 # The tray's About (tray/app.py) reads the AbstractFramework identity through
 # `abstractcore.utils.identity` (CONTRACTS §B names it as THE shared Python
 # API for the descriptor): presentation text only, no config/LLM/tool surface.
-# The web console's About (console.py `console_about_config`) formats the
-# gateway-version rows with the same helper (contract A-9: formatted ONCE).
+# The web console's About (console.py `console_about_config`, kit 0.7.0)
+# reads GET /about directly and imports nothing from AbstractCore.
 _BOOTSTRAP_EXEMPTIONS = frozenset({
     ("cli.py", "import abstractcore"),
     ("app.py", "from abstractcore.utils.identity import about_lines, app_identity, gateway_version_rows"),
-    ("console.py", "from abstractcore.utils.identity import gateway_version_rows"),
 })
 
 
