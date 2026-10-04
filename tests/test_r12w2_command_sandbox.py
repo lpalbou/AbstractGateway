@@ -93,7 +93,7 @@ def test_never_an_environment_variable() -> None:
 
 
 def test_boot_configures_the_core_with_the_apps_scrub_and_audits(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from abstractcore.tools.sandbox import host_policy
+    from abstractruntime.integrations.abstractcore.command_sandbox_host import host_policy
 
     from abstractgateway import command_sandbox
     from abstractgateway.apps_manager import _scrubbed_child_env
@@ -121,7 +121,7 @@ def test_boot_configures_the_core_with_the_apps_scrub_and_audits(monkeypatch: py
 
 
 def test_the_flag_reaches_the_core_and_the_audit(tmp_path: Path) -> None:
-    from abstractcore.tools.sandbox import host_policy
+    from abstractruntime.integrations.abstractcore.command_sandbox_host import host_policy
 
     from abstractgateway import command_sandbox
 
@@ -145,7 +145,7 @@ def test_the_flag_reaches_the_core_and_the_audit(tmp_path: Path) -> None:
     ],
 )
 def test_the_state_line(monkeypatch: pytest.MonkeyPatch, kinds: dict, flag: bool, state: str, line: str) -> None:
-    import abstractcore.tools.sandbox as sb
+    import abstractruntime.integrations.abstractcore.command_sandbox_host as sb
 
     from abstractgateway import command_sandbox
 

@@ -1,7 +1,9 @@
 """abstractgateway.command_sandbox -- the host side of the command sandbox (round 12, R12.1).
 
 Every process-spawning tool (execute_command, the shell session, script runners) runs inside an
-OS-level sandbox built by ``abstractcore.tools.sandbox`` from the run's effective workspace set —
+OS-level sandbox built by AbstractCore's ``abstractcore.tools.sandbox`` from the run's effective
+workspace set (the gateway reaches it, like all of AbstractCore, through an AbstractRuntime facade:
+``abstractruntime.integrations.abstractcore.command_sandbox_host``) —
 the same flattened keys the file tools read (``run_workspace_guard.apply_workspace_policy``). The
 gateway owns two HOST-level facts, set ONCE per process at boot, never per run and never from an
 environment variable (DESIGN R12.1, "R12 SANDBOX SPEC — FINAL"):
@@ -43,11 +45,11 @@ def set_unsandboxed_commands(allowed: bool, *, source: str) -> None:
 
 def _reset_for_tests() -> None:
     global _flag, _flag_source, _configured
-    from abstractcore.tools.sandbox import _reset_host_for_tests
+    from abstractruntime.integrations.abstractcore.command_sandbox_host import reset_host_for_tests
 
     with _LOCK:
         _flag, _flag_source, _configured = False, None, None
-    _reset_host_for_tests()
+    reset_host_for_tests()
 
 
 def scrubbed_environment() -> Dict[str, str]:
@@ -78,7 +80,7 @@ def configure_at_boot() -> Dict[str, Any]:
     no-op that returns the first record with ``first: false`` (the env is frozen at the first boot
     of the process)."""
     global _configured
-    from abstractcore.tools.sandbox import configure_host
+    from abstractruntime.integrations.abstractcore.command_sandbox_host import configure_host
 
     with _LOCK:
         if _configured is not None:
@@ -103,13 +105,13 @@ def configure_at_boot() -> Dict[str, Any]:
 
 
 def _kinds() -> Dict[str, str]:
-    from abstractcore.tools.sandbox import host_sandbox_kind
+    from abstractruntime.integrations.abstractcore.command_sandbox_host import host_sandbox_kind
 
     return {"allowed_only": host_sandbox_kind("allowed_only"), "any_except_denied": host_sandbox_kind("any_except_denied")}
 
 
 def _state_locked() -> Dict[str, Any]:
-    from abstractcore.tools.sandbox import KIND_LABELS, KIND_NONE, host_policy
+    from abstractruntime.integrations.abstractcore.command_sandbox_host import KIND_LABELS, KIND_NONE, host_policy
 
     kinds = _kinds()
     policy = host_policy()
