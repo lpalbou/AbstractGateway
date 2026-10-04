@@ -1263,9 +1263,10 @@ pub fn workspace(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             if prefilled.get_untracked() {
                 return;
             }
-            let pair = store
-                .routes
-                .with(|r| r.ready().and_then(|d| mode_row(&d.rows, SbMode::Text).and_then(row_pair)));
+            let pair = store.routes.with(|r| {
+                r.ready()
+                    .and_then(|d| mode_row(&d.rows, SbMode::Text).and_then(row_pair))
+            });
             if let Some((p, m)) = pair {
                 prefilled.set(true);
                 if ui.sb_provider.get_untracked().is_empty() {
@@ -1583,7 +1584,10 @@ fn mode_option_label(m: SbMode, rows: Option<&[RouteRow]>) -> String {
     // The web's mode buttons: the short label, then the route's model or
     // "not configured" (`renderSandboxCapabilityOptions`).
     if m == SbMode::Text {
-        return match rows.and_then(|r| mode_row(r, SbMode::Text)).and_then(row_pair) {
+        return match rows
+            .and_then(|r| mode_row(r, SbMode::Text))
+            .and_then(row_pair)
+        {
             Some((_, model)) => format!("Text — {model}"),
             None => "Text — not configured".into(),
         };
@@ -1601,7 +1605,13 @@ fn mode_option_label(m: SbMode, rows: Option<&[RouteRow]>) -> String {
 
 /// The web's context sentence for a configured mode (`updateSandboxControls`):
 /// "Image will use mlx / flux (inherited from output.image)."
-pub fn context_ready(label: &str, provider: &str, model: &str, inherited: Option<&str>, extra: &str) -> String {
+pub fn context_ready(
+    label: &str,
+    provider: &str,
+    model: &str,
+    inherited: Option<&str>,
+    extra: &str,
+) -> String {
     let from = inherited
         .map(|k| format!(" (inherited from {k})"))
         .unwrap_or_default();
@@ -1646,7 +1656,16 @@ fn route_line(t: &TokenSet, store: &Store, m: SbMode) -> View {
                 } else {
                     String::new()
                 };
-                (context_ready(m.label(), &provider, &model, inherited_from.as_deref(), &voice), t.text)
+                (
+                    context_ready(
+                        m.label(),
+                        &provider,
+                        &model,
+                        inherited_from.as_deref(),
+                        &voice,
+                    ),
+                    t.text,
+                )
             }
             Some(ModeRoute::Incomplete { key }) => (incomplete_reason(m, &key), t.warn),
             Some(ModeRoute::NotConfigured) => (context_unconfigured(m.label()), t.warn),

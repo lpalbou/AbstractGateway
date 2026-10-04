@@ -3497,7 +3497,10 @@ fn narrow_terminal_keeps_payload_columns() {
     );
     let header = s
         .lines()
-        .find(|l| l.trim_matches(|c| c == '│' || c == ' ').starts_with("route "))
+        .find(|l| {
+            l.trim_matches(|c| c == '│' || c == ' ')
+                .starts_with("route ")
+        })
         .unwrap_or_default();
     assert!(
         !header.contains("source"),
@@ -7713,13 +7716,6 @@ fn set_network(h: &mut Harness, v: Value) -> String {
     h.turns(3)
 }
 
-
-
-
-
-
-
-
 /// `N` jumps to the Network screen (browse); the Connection screen keeps
 /// one line (saved vs running) that points there.
 #[test]
@@ -7742,8 +7738,6 @@ fn n_jumps_to_the_network_screen_and_connection_keeps_one_line() {
     h.turns(2);
     assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_NETWORK);
 }
-
-
 
 #[test]
 fn network_restart_reconnects_on_the_port_it_binds() {
@@ -7802,11 +7796,6 @@ fn network_c_in_the_url_field_still_types() {
 // Reverse proxy (mission Z): allowed origins + trust proxy, same door as
 // the mode (POST /network), the gateway's words on refusal.
 // =======================================================================
-
-
-
-
-
 
 // ---------------------------------------------------------------------
 // Operator controls (web parity): host panel (F3), paused banner,
@@ -8309,7 +8298,6 @@ fn users_w_opens_my_workspace_policy() {
     );
     assert!(s.contains("Reset to inherited"), "reset verb:\n{s}");
 }
-
 
 #[test]
 fn network_proxy_body_and_notes_use_the_gateways_words() {

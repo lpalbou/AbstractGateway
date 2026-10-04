@@ -27,13 +27,26 @@ fn net(url: &str, token: &str) -> Value {
 fn network_trust_proxies_and_origins_live() {
     let (mut h, url, token) = live(Size::new(120, 60));
     // A clean start: no manual origin, trust off.
-    http(&url, &token, "POST", "/network", Some(json!({"allowed_origins": [], "trust_proxy": false})));
+    http(
+        &url,
+        &token,
+        "POST",
+        "/network",
+        Some(json!({"allowed_origins": [], "trust_proxy": false})),
+    );
     h.ui.screen.set(ui::SCREEN_NETWORK);
-    h.until("the network page", |_, s| s.contains("Reached through another address?"));
+    h.until("the network page", |_, s| {
+        s.contains("Reached through another address?")
+    });
     // The read at connect predates the clean start: Check again (r).
     h.key(b"r");
-    let s = h.until("the clean read", |_, s| s.contains("Advanced  no manual origin · local proxy only"));
-    assert!(s.contains("Tailscale") && s.contains("scratch-mac.tail1234.ts.net"), "{s}");
+    let s = h.until("the clean read", |_, s| {
+        s.contains("Advanced  no manual origin · local proxy only")
+    });
+    assert!(
+        s.contains("Tailscale") && s.contains("scratch-mac.tail1234.ts.net"),
+        "{s}"
+    );
     h.shoot("live-network");
     // Advanced is folded with nothing set: open it.
     h.key(b"a");
@@ -69,7 +82,10 @@ fn network_trust_proxies_and_origins_live() {
         Some(json!({"allowed_origins": ["ftp://bad.example"]})),
     );
     assert_eq!(code, 400, "{refusal}");
-    let sentence = refusal["refused_reason"].as_str().expect("refused_reason").to_string();
+    let sentence = refusal["refused_reason"]
+        .as_str()
+        .expect("refused_reason")
+        .to_string();
     let s = h.until("the refusal sentence", |_, s| {
         let flat: String = s.replace('│', " ").split_whitespace().collect();
         flat.contains(&sentence.split_whitespace().collect::<String>())
@@ -89,9 +105,12 @@ fn network_trust_proxies_and_origins_live() {
     }
     h.key(b"\r");
     h.until("origin saved at the gateway", |_, _| {
-        net(&url, &token)["reverse_proxy"]["allowed_origins"]["value"] == json!(["https://gw.example.com"])
+        net(&url, &token)["reverse_proxy"]["allowed_origins"]["value"]
+            == json!(["https://gw.example.com"])
     });
-    let s = h.until("the origin listed", |_, s| s.contains("https://gw.example.com  ×"));
+    let s = h.until("the origin listed", |_, s| {
+        s.contains("https://gw.example.com  ×")
+    });
     h.shoot("live-network-origin-added");
     // Remove it: Tab back to the origin list, x.
     h.key(b"\x1b[Z");
@@ -107,7 +126,9 @@ fn network_trust_proxies_and_origins_live() {
 fn network_internet_asks_the_gateways_acknowledgement_live() {
     let (mut h, url, token) = live(Size::new(120, 60));
     h.ui.screen.set(ui::SCREEN_NETWORK);
-    h.until("the network page", |_, s| s.contains("Who can reach this gateway"));
+    h.until("the network page", |_, s| {
+        s.contains("Who can reach this gateway")
+    });
     let before = net(&url, &token)["configured"]["mode"].clone();
     // The mode list holds the keyboard: down to Internet, Enter.
     for _ in 0..3 {
@@ -119,10 +140,20 @@ fn network_internet_asks_the_gateways_acknowledgement_live() {
     });
     assert!(s.contains("[y] I understand, use Internet mode"), "{s}");
     h.shoot("live-network-internet-confirm");
-    assert_eq!(net(&url, &token)["configured"]["mode"], before, "nothing saved before y");
+    assert_eq!(
+        net(&url, &token)["configured"]["mode"],
+        before,
+        "nothing saved before y"
+    );
     h.key(b"n");
-    let s = h.until("confirm closed", |_, s| !s.contains("Before you open the gateway"));
-    assert_eq!(net(&url, &token)["configured"]["mode"], before, "n keeps:\n{s}");
+    let s = h.until("confirm closed", |_, s| {
+        !s.contains("Before you open the gateway")
+    });
+    assert_eq!(
+        net(&url, &token)["configured"]["mode"],
+        before,
+        "n keeps:\n{s}"
+    );
 }
 
 #[test]
@@ -134,7 +165,9 @@ fn multimodal_apply_recommended_and_clear_route_live() {
     h.shoot("live-multimodal");
     // Apply recommended (keep mine) → the gateway's routes carry the plan.
     h.key(b"a");
-    h.until("the apply prompt", |_, s| s.contains("Apply the framework's recommended routes"));
+    h.until("the apply prompt", |_, s| {
+        s.contains("Apply the framework's recommended routes")
+    });
     h.key(b"\r");
     h.until("applied", |h, _| {
         h.store
@@ -150,7 +183,10 @@ fn multimodal_apply_recommended_and_clear_route_live() {
         .find(|r| r["key"] == "input.text")
         .cloned()
         .unwrap();
-    assert!(text["provider"].is_string() && text["model"].is_string(), "{text}");
+    assert!(
+        text["provider"].is_string() && text["model"].is_string(),
+        "{text}"
+    );
 }
 
 #[test]
@@ -180,7 +216,9 @@ fn sandbox_text_generation_against_the_fake_upstream_live() {
 fn resources_reads_host_state_and_the_caches_tab_live() {
     let (mut h, url, token) = live(Size::new(120, 40));
     h.ui.screen.set(ui::SCREEN_MODELS);
-    let s = h.until("host state", |_, s| s.contains("RAM") && s.contains("Session caches"));
+    let s = h.until("host state", |_, s| {
+        s.contains("RAM") && s.contains("Session caches")
+    });
     assert!(s.contains("Models ("), "{s}");
     h.shoot("live-resources");
     let (code, v) = http(&url, &token, "GET", "/host/state", None);

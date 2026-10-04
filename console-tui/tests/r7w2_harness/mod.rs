@@ -31,7 +31,12 @@ impl ConsoleTransport for NoTransport {
     fn engines_status(&self, _probe: bool) -> Result<Value, TransportError> {
         Err(TransportError::unavailable("not under test"))
     }
-    fn models_catalog(&self, _q: &str, _e: Option<&str>, _f: bool) -> Result<Value, TransportError> {
+    fn models_catalog(
+        &self,
+        _q: &str,
+        _e: Option<&str>,
+        _f: bool,
+    ) -> Result<Value, TransportError> {
         Err(TransportError::unavailable("not under test"))
     }
     fn models_installed(&self, _p: Option<&str>) -> Result<Value, TransportError> {
@@ -142,7 +147,9 @@ impl Harness {
     pub fn turns(&mut self, n: usize) -> String {
         let mut last = String::new();
         for _ in 0..n {
-            self.driver.turn(&mut self.app, &mut self.term).expect("turn");
+            self.driver
+                .turn(&mut self.app, &mut self.term)
+                .expect("turn");
             last = self.term.screen().to_text();
         }
         last
@@ -174,7 +181,11 @@ impl Harness {
         }
         out
     }
-    pub fn until(&mut self, what: &str, mut pred: impl FnMut(&mut Harness, &str) -> bool) -> String {
+    pub fn until(
+        &mut self,
+        what: &str,
+        mut pred: impl FnMut(&mut Harness, &str) -> bool,
+    ) -> String {
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
             let s = self.turns(1);
@@ -237,24 +248,33 @@ pub fn live(size: Size) -> (Harness, String, String) {
         token: token.clone().into(),
     })
     .unwrap();
-    h.until("connected", |h, _| h.store.conn.with_untracked(ConnPhase::is_connected));
+    h.until("connected", |h, _| {
+        h.store.conn.with_untracked(ConnPhase::is_connected)
+    });
     (h, url, token)
 }
 
 /// Direct HTTP to the scratch gateway (state assertions, out of band).
 pub fn http(url: &str, token: &str, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
-    let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(60)).build();
+    let agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(60))
+        .build();
     let req = agent
         .request(method, &format!("{url}/api/gateway{path}"))
         .set("Authorization", &format!("Bearer {token}"));
     let resp = match body {
-        Some(b) => req.set("Content-Type", "application/json").send_string(&b.to_string()),
+        Some(b) => req
+            .set("Content-Type", "application/json")
+            .send_string(&b.to_string()),
         None => req.call(),
     };
     match resp {
         Ok(r) => {
             let code = r.status();
-            (code, serde_json::from_str(&r.into_string().unwrap_or_default()).unwrap_or(Value::Null))
+            (
+                code,
+                serde_json::from_str(&r.into_string().unwrap_or_default()).unwrap_or(Value::Null),
+            )
         }
         Err(ureq::Error::Status(code, r)) => (
             code,

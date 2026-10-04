@@ -24,13 +24,13 @@ use serde_json::Value;
 
 use super::kit::{Row, WrapTable};
 use super::util::{line, span, span_bold, wrap_text, SpanSpec};
-use abstracttui::ui::{Phase, UiEvent};
 use super::widths::{ColRule, BLOCK_CHROME};
 use super::Ctx;
 use crate::store::json::WriteState;
 use crate::store::{ConnPhase, Loadable, NetworkData};
 use crate::worker::json::JsonCmd;
 use crate::worker::Cmd;
+use abstracttui::ui::{Phase, UiEvent};
 
 /// Ask for `GET /network` once per connection (a reconnect resets the
 /// slot to NotAsked; `r` reloads explicitly). Shared by the screen and
@@ -143,7 +143,6 @@ pub fn summary(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     })
 }
 
-
 /// The web's sentence under each mode (`NET_MODE_TEXT`).
 pub fn mode_text(id: &str) -> &'static str {
     match id {
@@ -254,7 +253,11 @@ pub fn proxy_saved_line(field: &str, out: &WriteState) -> Option<(&'static str, 
                 // Said under the input instead (the gateway's words).
                 return None;
             }
-            Some(("err", "Not saved".into(), reason.unwrap_or_else(|| e.to_string())))
+            Some((
+                "err",
+                "Not saved".into(),
+                reason.unwrap_or_else(|| e.to_string()),
+            ))
         }
     }
 }
@@ -308,7 +311,9 @@ fn post_mode(ctx: &Ctx, nu: NetUi, mode: &str, ack: bool) {
     if ack {
         body["acknowledge_internet"] = Value::Bool(true);
     }
-    ctx.store.json.set_write(MODE_KEY, Some(WriteState::Pending));
+    ctx.store
+        .json
+        .set_write(MODE_KEY, Some(WriteState::Pending));
     ctx.send(Cmd::Json(JsonCmd::Send {
         key: MODE_KEY.into(),
         method: "POST".into(),
@@ -324,7 +329,9 @@ fn post_mode(ctx: &Ctx, nu: NetUi, mode: &str, ack: bool) {
 
 fn post_proxy(ctx: &Ctx, nu: NetUi, field: &str, body: Value) {
     nu.proxy_field.set(field.to_string());
-    ctx.store.json.set_write(PROXY_KEY, Some(WriteState::Pending));
+    ctx.store
+        .json
+        .set_write(PROXY_KEY, Some(WriteState::Pending));
     ctx.send(Cmd::Json(JsonCmd::Send {
         key: PROXY_KEY.into(),
         method: "POST".into(),
@@ -385,15 +392,31 @@ fn origin_add(ctx: &Ctx, nu: NetUi, d: &NetworkData) {
     }
     nu.origin_error.set(String::new());
     cur.push(typed);
-    post_proxy(ctx, nu, "allowed_origins", serde_json::json!({"allowed_origins": cur}));
+    post_proxy(
+        ctx,
+        nu,
+        "allowed_origins",
+        serde_json::json!({"allowed_origins": cur}),
+    );
 }
 
 fn origin_remove(ctx: &Ctx, nu: NetUi, d: &NetworkData, idx: usize) {
     let Some(gone) = d.proxy.origins.get(idx).cloned() else {
         return;
     };
-    let cur: Vec<String> = d.proxy.origins.iter().filter(|x| **x != gone).cloned().collect();
-    post_proxy(ctx, nu, "allowed_origins", serde_json::json!({"allowed_origins": cur}));
+    let cur: Vec<String> = d
+        .proxy
+        .origins
+        .iter()
+        .filter(|x| **x != gone)
+        .cloned()
+        .collect();
+    post_proxy(
+        ctx,
+        nu,
+        "allowed_origins",
+        serde_json::json!({"allowed_origins": cur}),
+    );
 }
 
 /// The Network page.
@@ -447,8 +470,12 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     let eff = v.get("effective");
                     let pinned = eff
                         .map(|e| {
-                            e.get("pinned_by_cli").and_then(Value::as_bool).unwrap_or(false)
-                                || e.get("overridden_by_cli").and_then(Value::as_bool).unwrap_or(false)
+                            e.get("pinned_by_cli")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false)
+                                || e.get("overridden_by_cli")
+                                    .and_then(Value::as_bool)
+                                    .unwrap_or(false)
                         })
                         .unwrap_or(false);
                     nu.notice.set(if restart || pinned {
@@ -469,7 +496,8 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                             .unwrap_or("")
                             .to_string()
                     };
-                    if e.status() == Some(409) && text("reason_code") == "acknowledgement_required" {
+                    if e.status() == Some(409) && text("reason_code") == "acknowledgement_required"
+                    {
                         let warnings = body
                             .get("warnings")
                             .and_then(Value::as_array)
@@ -485,7 +513,8 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                             .and_then(Value::as_str)
                             .unwrap_or("internet")
                             .to_string();
-                        nu.confirm.set(Some((mode, text("refused_reason"), warnings)));
+                        nu.confirm
+                            .set(Some((mode, text("refused_reason"), warnings)));
                     } else if e.status() == Some(409) {
                         let reason = if text("refused_reason").is_empty() {
                             e.to_string()
@@ -534,14 +563,16 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         .style(LayoutStyle::column().gap(0).grow(1.0))
         .shortcut(KeyChord::plain(Key::Char('w')), move |_| {
             let open = nu.warnings_open.get_untracked().unwrap_or_else(|| {
-                nu.last.with_untracked(|d| d.as_ref().map(default_warnings_open).unwrap_or(false))
+                nu.last
+                    .with_untracked(|d| d.as_ref().map(default_warnings_open).unwrap_or(false))
             });
             nu.warnings_open.set(Some(!open));
             let _ = &ctx_w;
         })
         .shortcut(KeyChord::plain(Key::Char('a')), move |_| {
             let open = nu.advanced_open.get_untracked().unwrap_or_else(|| {
-                nu.last.with_untracked(|d| d.as_ref().map(default_advanced_open).unwrap_or(false))
+                nu.last
+                    .with_untracked(|d| d.as_ref().map(default_advanced_open).unwrap_or(false))
             });
             nu.advanced_open.set(Some(!open));
             let _ = &ctx_a;
@@ -781,7 +812,11 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData, w: usize, nu: 
                     choose(&ctx_m, nu, &d_m, i)
                 }
             })
-            .layout(LayoutStyle::default().h(rows.len().max(1) as i32).shrink(0.0))
+            .layout(
+                LayoutStyle::default()
+                    .h(rows.len().max(1) as i32)
+                    .shrink(0.0),
+            )
             .element(cx, t),
         rows.len().max(1) as i32,
     );
@@ -796,7 +831,8 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData, w: usize, nu: 
             t.text_muted,
         );
     }
-    if (bl(eff, "overridden_by_cli") || bl(eff, "pinned_by_cli")) && !s(eff, "bind_host").is_empty() {
+    if (bl(eff, "overridden_by_cli") || bl(eff, "pinned_by_cli")) && !s(eff, "bind_host").is_empty()
+    {
         let saved = if s(conf, "source") == "stored" {
             "Saved"
         } else {
@@ -839,7 +875,10 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData, w: usize, nu: 
             p.wrap(&reason, t.text_muted);
         }
         for wv in &warnings {
-            for (i, l) in wrap_text(wv, w.saturating_sub(2).max(10)).into_iter().enumerate() {
+            for (i, l) in wrap_text(wv, w.saturating_sub(2).max(10))
+                .into_iter()
+                .enumerate()
+            {
                 p.text(vec![span(
                     format!("{}{l}", if i == 0 { "• " } else { "  " }),
                     t.text,
@@ -922,7 +961,8 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData, w: usize, nu: 
         }
         if can && admin {
             let ctx_r = ctx.clone();
-            let btn = p.tracked("restart", 
+            let btn = p.tracked(
+                "restart",
                 Button::new("Restart now")
                     .on_click(move || {
                         ctx_r.send(Cmd::Operator(
@@ -940,7 +980,9 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData, w: usize, nu: 
         }
     }
     let auth = raw.get("auth").unwrap_or(&null);
-    if auth.get("ok_for_mode").and_then(Value::as_bool) == Some(false) && nu.refused.get_untracked().is_none() {
+    if auth.get("ok_for_mode").and_then(Value::as_bool) == Some(false)
+        && nu.refused.get_untracked().is_none()
+    {
         let reason = s(auth, "reason");
         p.wrap_bold(
             if reason.is_empty() {
@@ -1017,7 +1059,8 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData, w: usize, nu: 
     let mut bar = Element::new().style(LayoutStyle::row().gap(2).h(1).shrink(0.0));
     if crate::store::operator::offers_public_lookup(&d) {
         let ctx_l = ctx.clone();
-        let b = p.tracked("lookup", 
+        let b = p.tracked(
+            "lookup",
             Button::new("Look up my public address")
                 .on_click(move || {
                     ctx_l.send(Cmd::Operator(crate::worker::operator::OpCmd::LookupPublic))
@@ -1027,7 +1070,8 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData, w: usize, nu: 
         bar = bar.child(b.build());
     }
     let ctx_c = ctx.clone();
-    let b = p.tracked("check", 
+    let b = p.tracked(
+        "check",
         Button::new("Check again")
             .on_click(move || {
                 ctx_c.store.network.set(Loadable::Loading);
@@ -1072,7 +1116,10 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData, w: usize, nu: 
         ]);
         if open {
             for wv in &d.warnings {
-                for (i, l) in wrap_text(wv, w.saturating_sub(2).max(10)).into_iter().enumerate() {
+                for (i, l) in wrap_text(wv, w.saturating_sub(2).max(10))
+                    .into_iter()
+                    .enumerate()
+                {
                     p.text(vec![span(
                         format!("{}{l}", if i == 0 { "• " } else { "  " }),
                         t.text_muted,
@@ -1117,7 +1164,8 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData, w: usize, nu: 
         );
     }
     let ui = ctx.ui;
-    let b = p.tracked("openai", 
+    let b = p.tracked(
+        "openai",
         Button::new("OpenAI API")
             .on_click(move || ui.screen.set(super::SCREEN_OPENAI))
             .element(cx, t),
@@ -1127,7 +1175,10 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData, w: usize, nu: 
             .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
             .child(super::util::line_styled(
                 LayoutStyle::line(1).w(44).shrink(0.0),
-                vec![span("The OpenAI-compatible API has its own page:", t.text_muted)],
+                vec![span(
+                    "The OpenAI-compatible API has its own page:",
+                    t.text_muted,
+                )],
             ))
             .child(b.build()),
         1,
@@ -1214,7 +1265,10 @@ fn proxy_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &NetworkData, p: &mut Page,
     p.text(vec![
         span_bold("Allowed origins", t.text),
         span(
-            format!("  [{}]", source_pill(&pr.origins_source, pr.origins_overridden)),
+            format!(
+                "  [{}]",
+                source_pill(&pr.origins_source, pr.origins_overridden)
+            ),
             t.text_muted,
         ),
     ]);
@@ -1282,25 +1336,29 @@ fn proxy_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &NetworkData, p: &mut Page,
         let d_add = d.clone();
         let ctx_btn = ctx.clone();
         let d_btn = d.clone();
-        let input = p.tracked("origin-input", super::util::esc_releases_focus(
-            TextInput::new()
-                .value(nu.origin_draft)
-                .placeholder("https://gateway.example.com")
-                .layout(LayoutStyle::default().w(40).h(1).shrink(1.0))
-                .on_submit(move |_text: &str| {
-                    if !pending {
-                        origin_add(&ctx_add, nu, &d_add)
-                    }
-                })
-                .element(cx, t),
-            ctx.store.notice,
-        ));
+        let input = p.tracked(
+            "origin-input",
+            super::util::esc_releases_focus(
+                TextInput::new()
+                    .value(nu.origin_draft)
+                    .placeholder("https://gateway.example.com")
+                    .layout(LayoutStyle::default().w(40).h(1).shrink(1.0))
+                    .on_submit(move |_text: &str| {
+                        if !pending {
+                            origin_add(&ctx_add, nu, &d_add)
+                        }
+                    })
+                    .element(cx, t),
+                ctx.store.notice,
+            ),
+        );
         let label = if pending && field == "allowed_origins" {
             "Saving..."
         } else {
             "Add origin"
         };
-        let btn = p.tracked("origin-add", 
+        let btn = p.tracked(
+            "origin-add",
             Button::new(label)
                 .on_click(move || {
                     if !pending {
@@ -1328,13 +1386,21 @@ fn proxy_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &NetworkData, p: &mut Page,
         o_raw
             .get(k)
             .and_then(Value::as_array)
-            .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
             .unwrap_or_default()
     };
     let mut always = strs("builtin");
     always.extend(strs("self_origins"));
     if !always.is_empty() && !pr.origins_overridden {
-        p.wrap(&format!("Always allowed: {}", always.join(" ")), t.text_faint);
+        p.wrap(
+            &format!("Always allowed: {}", always.join(" ")),
+            t.text_faint,
+        );
     }
 
     // Client address.
@@ -1359,7 +1425,14 @@ fn proxy_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &NetworkData, p: &mut Page,
             .unavailable((!admin).then(|| "Only an admin can change these.".to_string()))
             .busy(pending)
             .notice(ctx.store.notice)
-            .on_request(move |on| post_proxy(&ctx_t, nu, "trust_proxy", serde_json::json!({"trust_proxy": on})))
+            .on_request(move |on| {
+                post_proxy(
+                    &ctx_t,
+                    nu,
+                    "trust_proxy",
+                    serde_json::json!({"trust_proxy": on}),
+                )
+            })
             .element(cx, t),
         1,
     );
@@ -1400,7 +1473,10 @@ fn proxy_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &NetworkData, p: &mut Page,
             "warn" => t.warn,
             _ => t.ok,
         };
-        p.text(vec![span_bold(head, ink), span(format!("  {text}"), t.text_muted)]);
+        p.text(vec![
+            span_bold(head, ink),
+            span(format!("  {text}"), t.text_muted),
+        ]);
     } else if !admin {
         p.text(vec![span("Only an admin can change these.", t.text_muted)]);
     } else {

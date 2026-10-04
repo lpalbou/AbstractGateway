@@ -61,7 +61,9 @@ fn network(configured: &str, pinned: bool, restart: bool) -> Value {
 }
 
 fn set_net(h: &mut Harness, v: Value) -> String {
-    h.store.network.set(Loadable::Ready(NetworkData::from_value(&v)));
+    h.store
+        .network
+        .set(Loadable::Ready(NetworkData::from_value(&v)));
     h.turns(3)
 }
 
@@ -108,6 +110,13 @@ fn network_page_speaks_the_web_sentences() {
     ] {
         assert!(s.contains(needle), "missing {needle:?}:\n{s}");
     }
+    // The Tailscale row is labelled as such (the web's NET_KIND_LABEL).
+    assert!(
+        s.lines()
+            .any(|l| l.contains("Tailscale ")
+                && l.contains("http://scratch-mac.tail1234.ts.net:18811")),
+        "the Tailscale address row:\n{s}"
+    );
     // The long IPv6 URL is never cut (it wraps or fits whole).
     let flat: String = s.split_whitespace().collect::<Vec<_>>().join("");
     assert!(
@@ -123,7 +132,10 @@ fn network_advanced_opens_with_a_and_shows_origins_and_the_switch() {
     let mut v = network("lan", false, false);
     v["reverse_proxy"]["allowed_origins"]["value"] = json!([]);
     let (mut h, s) = net_page(Size::new(120, 60), v);
-    assert!(s.contains("Advanced  no manual origin · local proxy only"), "{s}");
+    assert!(
+        s.contains("Advanced  no manual origin · local proxy only"),
+        "{s}"
+    );
     assert!(!s.contains("Allowed origins"), "folded:\n{s}");
     // … open by default once an origin is saved; `a` folds and unfolds.
     let s = set_net(&mut h, network("lan", false, false));
@@ -156,21 +168,34 @@ fn network_mode_choice_posts_mode_then_internet_confirm_comes_from_the_gateway()
     h.key(b"\r");
     let cmds = h.drain();
     let sent = cmds.iter().find_map(|c| match c {
-        Cmd::Json(JsonCmd::Send { method, path, body, .. }) => Some((method.clone(), path.clone(), body.clone())),
+        Cmd::Json(JsonCmd::Send {
+            method, path, body, ..
+        }) => Some((method.clone(), path.clone(), body.clone())),
         _ => None,
     });
     assert_eq!(
         sent,
-        Some(("POST".into(), "/network".into(), json!({"mode": "internet"}))),
+        Some((
+            "POST".into(),
+            "/network".into(),
+            json!({"mode": "internet"})
+        )),
         "{cmds:?}"
     );
-    assert!(cmds.iter().any(|c| matches!(c, Cmd::LoadNetwork)), "re-read after the write");
+    assert!(
+        cmds.iter().any(|c| matches!(c, Cmd::LoadNetwork)),
+        "re-read after the write"
+    );
     // The gateway asks for the acknowledgement (409): the confirm shows its words.
     let mut e = ApiError::new(ApiErrorKind::Http(409), "acknowledgement required");
-    e.body = Some(json!({"reason_code": "acknowledgement_required", "mode": "internet",
+    e.body = Some(
+        json!({"reason_code": "acknowledgement_required", "mode": "internet",
         "refused_reason": "Internet mode needs your acknowledgement.",
-        "warnings": ["The gateway speaks plain HTTP: put a TLS proxy in front."]}));
-    h.store.json.set_write("network.mode", Some(WriteState::Failed(e)));
+        "warnings": ["The gateway speaks plain HTTP: put a TLS proxy in front."]}),
+    );
+    h.store
+        .json
+        .set_write("network.mode", Some(WriteState::Failed(e)));
     h.turns(2);
     let s = set_net(&mut h, network("lan", false, false));
     for needle in [
@@ -185,7 +210,8 @@ fn network_mode_choice_posts_mode_then_internet_confirm_comes_from_the_gateway()
     h.key(b"y");
     let cmds = h.drain();
     assert!(
-        cmds.iter().any(|c| matches!(c, Cmd::Json(JsonCmd::Send { body, .. })
+        cmds.iter()
+            .any(|c| matches!(c, Cmd::Json(JsonCmd::Send { body, .. })
             if *body == json!({"mode": "internet", "acknowledge_internet": true}))),
         "y acknowledges: {cmds:?}"
     );
@@ -208,15 +234,23 @@ fn network_refused_mode_says_why_and_how_to_fix_and_posts_nothing() {
         "nothing posted"
     );
     assert!(s.contains("Local network needs accounts."), "{s}");
-    assert!(s.contains("How to fix it: Start the gateway with accounts on."), "{s}");
+    assert!(
+        s.contains("How to fix it: Start the gateway with accounts on."),
+        "{s}"
+    );
 }
 
 #[test]
 fn network_restart_box_offers_restart_now() {
     let (_h, s) = net_page(Size::new(120, 50), network("lan", false, true));
-    assert!(s.contains("Restart to apply: Local network on port 8080."), "{s}");
     assert!(
-        s.contains("The gateway keeps running as Localhost only (127.0.0.1:18811) until it restarts."),
+        s.contains("Restart to apply: Local network on port 8080."),
+        "{s}"
+    );
+    assert!(
+        s.contains(
+            "The gateway keeps running as Localhost only (127.0.0.1:18811) until it restarts."
+        ),
         "{s}"
     );
     assert!(s.contains("Restart now"), "{s}");
@@ -237,7 +271,8 @@ fn network_origin_add_remove_and_the_gateways_refusal_verbatim() {
     h.key(b"x");
     let cmds = h.drain();
     assert!(
-        cmds.iter().any(|c| matches!(c, Cmd::Json(JsonCmd::Send { body, .. })
+        cmds.iter()
+            .any(|c| matches!(c, Cmd::Json(JsonCmd::Send { body, .. })
             if *body == json!({"allowed_origins": []}))),
         "x removes the selected origin: {cmds:?}"
     );
@@ -252,13 +287,17 @@ fn network_origin_add_remove_and_the_gateways_refusal_verbatim() {
     h.key(b"\r");
     let cmds = h.drain();
     assert!(
-        cmds.iter().any(|c| matches!(c, Cmd::Json(JsonCmd::Send { body, .. })
+        cmds.iter()
+            .any(|c| matches!(c, Cmd::Json(JsonCmd::Send { body, .. })
             if *body == json!({"allowed_origins": ["https://gw.example.com", "ftp://nope"]}))),
         "Enter adds to the list: {cmds:?}"
     );
     let mut e = ApiError::new(ApiErrorKind::Http(400), "bad origin");
-    e.body = Some(json!({"refused_reason": "ftp://nope: an origin starts with http:// or https://."}));
-    h.store.json.set_write("network.proxy", Some(WriteState::Failed(e)));
+    e.body =
+        Some(json!({"refused_reason": "ftp://nope: an origin starts with http:// or https://."}));
+    h.store
+        .json
+        .set_write("network.proxy", Some(WriteState::Failed(e)));
     h.turns(2);
     let s = set_net(&mut h, network("lan", false, false));
     assert!(
@@ -281,13 +320,16 @@ fn network_trust_switch_posts_trust_proxy() {
     let s = h.key(b" ");
     let cmds = h.drain();
     assert!(
-        cmds.iter().any(|c| matches!(c, Cmd::Json(JsonCmd::Send { body, .. })
+        cmds.iter()
+            .any(|c| matches!(c, Cmd::Json(JsonCmd::Send { body, .. })
             if *body == json!({"trust_proxy": true}))),
         "space switches trust: {cmds:?}\n{s}"
     );
     h.store.json.set_write(
         "network.proxy",
-        Some(WriteState::Done(json!({"changed": {"trust_proxy": {"applies": "live"}}}))),
+        Some(WriteState::Done(
+            json!({"changed": {"trust_proxy": {"applies": "live"}}}),
+        )),
     );
     let s = set_net(&mut h, network("lan", false, false));
     assert!(
@@ -305,10 +347,12 @@ fn network_fits_80x24_and_scrolls_to_the_focused_control() {
         h.key(b"\t");
     }
     let s = h.turns(2);
-    assert!(s.contains("Trust proxies on other machines"), "scrolled to the switch:\n{s}");
+    assert!(
+        s.contains("Trust proxies on other machines"),
+        "scrolled to the switch:\n{s}"
+    );
     h.shoot("network-80-advanced");
 }
-
 
 #[test]
 fn network_c_copies_only_an_address_that_works_now() {
@@ -327,7 +371,10 @@ fn network_c_copies_only_an_address_that_works_now() {
     );
     // Enter shows the row's note (the gateway's words).
     let s = h.key(b"\r");
-    assert!(s.contains("not listening here yet: the gateway is bound to 127.0.0.1"), "{s}");
+    assert!(
+        s.contains("not listening here yet: the gateway is bound to 127.0.0.1"),
+        "{s}"
+    );
 }
 
 #[test]
@@ -359,11 +406,20 @@ fn network_environment_overrides_are_said_and_non_admins_read_only() {
     ] {
         assert!(s.contains(needle), "missing {needle:?}:\n{s}");
     }
-    assert!(!s.contains("Always allowed"), "not under an env override:\n{s}");
+    assert!(
+        !s.contains("Always allowed"),
+        "not under an env override:\n{s}"
+    );
     v["writable"] = json!(false);
     let s = set_net(&mut h, v);
-    assert!(s.contains("Only an admin can change who can reach this gateway."), "{s}");
-    assert!(s.contains("[-] Trust proxies on other machines — Only an admin can change these."), "{s}");
+    assert!(
+        s.contains("Only an admin can change who can reach this gateway."),
+        "{s}"
+    );
+    assert!(
+        s.contains("[-] Trust proxies on other machines — Only an admin can change these."),
+        "{s}"
+    );
     assert!(!s.contains("Add origin"), "no input for a non-admin:\n{s}");
 }
 
@@ -380,4 +436,72 @@ fn network_empty_origin_says_the_web_sentence_and_sends_nothing() {
         "{s}"
     );
     assert!(!h.drain().iter().any(|c| matches!(c, Cmd::Json(_))));
+}
+
+// ---------------------------------------------------------------------
+// Resources
+// ---------------------------------------------------------------------
+
+fn host(models: Value, caches: Value) -> abstractgateway_console::store::HostStateData {
+    abstractgateway_console::store::host_state_from_payload(&json!({
+        "ok": true, "host": {"host_name": "scratch.local"},
+        "memory": {"ram": {"total_bytes": 137438953472u64, "available_bytes": 51539607552u64,
+                           "used_bytes": 85899345920u64, "percent": 62.5},
+                   "process": {"rss_bytes": 1073741824u64}},
+        "gpu": {"supported": false},
+        "models": models, "session_caches": caches, "degraded": [], "reasons": {}
+    }))
+}
+
+#[test]
+fn resources_speaks_the_web_sections_and_empty_sentences() {
+    for size in [Size::new(80, 24), Size::new(120, 40)] {
+        let mut h = harness(size);
+        h.admin_on(ui::SCREEN_MODELS);
+        h.store
+            .host_state
+            .set(Loadable::Ready(host(json!([]), json!([]))));
+        let s = h.turns(3);
+        assert!(s.contains("Resources — Memory & GPU"), "{s}");
+        assert!(s.contains("Models (0 resident)"), "{s}");
+        assert!(s.contains("Session caches"), "{s}");
+        assert!(s.contains("No models loaded right now."), "{s}");
+        h.shoot("resources-empty");
+        h.ui.models_tab.set(1);
+        let s = h.turns(3);
+        assert!(s.contains("No session prompt caches right now."), "{s}");
+    }
+    let mut h = harness(Size::new(120, 40));
+    h.admin_on(ui::SCREEN_MODELS);
+    h.store.host_state.set(Loadable::Ready(host(
+        json!([{"task": "text_generation", "provider": "mlx", "model": "qwen3-0.6b", "resident": true,
+                "state": "provider_loaded", "size_bytes": 1073741824u64}]),
+        json!([]),
+    )));
+    let s = h.turns(3);
+    assert!(s.contains("Models (1 resident)"), "{s}");
+    h.shoot("resources-one-model");
+}
+
+// ---------------------------------------------------------------------
+// Sandbox
+// ---------------------------------------------------------------------
+
+#[test]
+fn sandbox_context_sentences_are_the_webs() {
+    use abstractgateway_console::ui::sandbox::{context_ready, context_unconfigured};
+    assert_eq!(
+        context_ready("Image", "mlx-gen", "flux", Some("output.image"), ""),
+        "Image will use mlx-gen / flux (inherited from output.image)."
+    );
+    assert_eq!(
+        context_unconfigured("Music"),
+        "Music is not configured yet. Configure it in Multimodal Capabilities first."
+    );
+    let mut h = harness(Size::new(120, 40));
+    h.admin_on(ui::SCREEN_REVIEW);
+    let s = h.turns(2);
+    assert!(s.contains("╭ Sandbox"), "{s}");
+    assert!(s.contains("output "), "the web's Output field:\n{s}");
+    h.shoot("sandbox-text");
 }
