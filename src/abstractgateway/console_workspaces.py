@@ -607,13 +607,13 @@ WORKSPACES_JS = r"""
         wsRenderGateway(body, out, next);
       });
       body.append(summary, posture, wsSharedField("wsg-shared", p.shared_workspace, (path) => put({ shared_workspace: path })));
-      // ONE folder list for both postures; each row Read-only / Read & write / Denied.
-      const modes = [["ro", T.accessRead], ["rw", T.accessReadWrite], ["deny", T.accessDenied]];
+      // ONE list for both postures; each row Read & write / Read-only / Refused.
+      const modes = [["rw", T.accessReadWrite], ["ro", T.accessRead], ["deny", T.accessDenied]];  // the kit chooser's order
       if (p.posture === "allowed_only") {
-        body.append(wsFoldersField("wsg-folders", T.allowedTitle, "The workspaces agents may use besides the shared workspace. Denied carves a workspace out of an allowed one.", p.folders, (list) => put({ folders: list }), { modes, newMode: "rw" }));
+        body.append(wsFoldersField("wsg-folders", T.allowedTitle, "The workspaces agents may use besides the shared workspace. Refused keeps a workspace out of an allowed one.", p.folders, (list) => put({ folders: list }), { modes, newMode: "rw" }));
       } else {
         body.append(wsDefaultModeField(p.default_mode, (m) => put({ default_mode: m })));
-        body.append(wsFoldersField("wsg-folders", T.deniedTitle, "Denied workspaces, or workspaces with their own permission.", p.folders, (list) => put({ folders: list }), { modes, newMode: "deny" }));
+        body.append(wsFoldersField("wsg-folders", T.deniedTitle, "Refused workspaces, or workspaces with their own permission.", p.folders, (list) => put({ folders: list }), { modes, newMode: "deny" }));
       }
       for (const sec of body.querySelectorAll(".ws-field")) sec.setAttribute("data-ws-section", "");
       if (focusPosture) { const b = body.querySelector(`[data-ws-posture="${focusPosture}"]`); try { if (b) b.focus(); } catch {} }
@@ -629,7 +629,7 @@ WORKSPACES_JS = r"""
       const btns = [];
       let value = current;
       const paint = () => { for (const b of btns) { const on = b.dataset.mode === value; b.classList.toggle("is-on", on); b.setAttribute("aria-checked", on ? "true" : "false"); b.tabIndex = on ? 0 : -1; } };
-      for (const [m, text] of [["ro", T.accessRead], ["rw", T.accessReadWrite]]) {
+      for (const [m, text] of [["rw", T.accessReadWrite], ["ro", T.accessRead]]) {
         const b = wsEl("button", "ws-mode__opt", text);
         b.type = "button";
         b.setAttribute("role", "radio");
