@@ -1184,23 +1184,29 @@ browser timezone when possible, with locale only as a fallback.
 
 ### Workspace policy (filesystem scope)
 
-The gateway decides which folders each account's runs may use; thin clients
-cannot widen it by sending paths. It is a setting, not an environment variable:
-the admin sets the gateway policy (shared workspace, allowed folders, allow any
-folder, never allowed, launch-folder trust) with `PUT
-/api/gateway/workspace/policy`, and each account switches allowed folders on
-(and adds its own folders while any folder is allowed) with `PUT
-/api/gateway/workspace/policy/{account}` (`me` = the caller). `GET
-/api/gateway/workspace/effective/{account}` returns what applies. The full
-model, its enforcement and the one-time migration from the old access modes are
-in [security.md](./security.md#workspace-folders-the-admin-allows-the-account-fine-tunes).
+The gateway decides which workspaces each account's runs may use; thin
+clients cannot widen it by sending paths. It is a setting, not an environment
+variable, with exactly two dimensions:
+
+- the posture: "Deny everything, allow listed workspaces" or "Allow everything,
+  refuse listed workspaces", the latter with a default mode;
+- each workspace's mode: read-only, read & write, or refused.
+
+The admin sets it with `PUT /api/gateway/workspace/policy`. Each account may
+only narrow it, with `PUT /api/gateway/workspace/policy/{account}` (`me` = the
+caller). `GET /api/gateway/workspace/effective/{account}` returns what applies,
+with its one-line summary. The full model, its enforcement and the one-time
+migration are in [security.md](./security.md#workspaces-two-dimensions).
 
 Until an admin chooses one, the shared workspace is
 `ABSTRACTGATEWAY_WORKSPACE_DIR` when set, otherwise the gateway's working
-folder. `ABSTRACTGATEWAY_WORKSPACE_MOUNTS` is read once, by the migration (its
-folders become allowed folders). The old runtime-config workspace keys and the
-`ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE` /
-`ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE` variables are gone.
+folder. `ABSTRACTGATEWAY_WORKSPACE_MOUNTS` is read once, by the migration.
+These are gone:
+
+- the old runtime-config workspace keys;
+- launch-folder trust;
+- the `ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE` /
+  `ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE` variables.
 
 Built-in deny list. These folders of the gateway's user account are never
 listed nor served by the workspace browser (`GET /runs/{run_id}/workspace/…`),

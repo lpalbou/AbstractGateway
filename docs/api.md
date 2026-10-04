@@ -24,7 +24,7 @@ serve:
 | `/api/gateway/admin/users`, `/admin/runtime-reservations` | user accounts and retained runtimes (admin) | [security.md](./security.md#tenant-and-user-isolation) |
 | `/api/gateway/admin/accounts`, `/admin/accounts/{id}/active`, `/admin/accounts/{id}/activity`, `/me/accounts`, `/me/accounts/{id}/activity`, `/me/activity` | the Accounts page: users and entities in one list (admin), your own account and your entities (everyone), the Active switch, activity from the audit log | [below](#accounts-and-activity) |
 | `/api/gateway/admin/runtime-config` | runtime settings (admin) | [configuration.md](./configuration.md) |
-| `/api/gateway/workspace/policy`, `/workspace/policy/{account}`, `/workspace/effective/{account}`, `POST /workspace/path-check` | workspace folders: the gateway policy (read: everyone; write: admin), one account's folders (admin or the account itself; `me` = the caller), the effective set the gateway enforces, and the folder check run before saving a row (`{path}` → `{path, normalized, absolute, exists, is_dir, valid, sentence}`; any signed-in principal) | [below](#workspace-folders), [security.md](./security.md#workspace-folders-the-admin-allows-the-account-fine-tunes) |
+| `/api/gateway/workspace/policy`, `/workspace/policy/{account}`, `/workspace/effective/{account}`, `POST /workspace/path-check` | workspaces: the gateway policy (posture, default mode, workspace rows; read: everyone; write: admin), one account's narrowing (admin or the account itself; `me` = the caller), the effective set the gateway enforces, and the path check run before saving a row (`{path}` → `{path, normalized, absolute, exists, is_dir, valid, sentence}`; any signed-in principal) | [below](#workspaces), [security.md](./security.md#workspaces-two-dimensions) |
 | `/api/gateway/admin/runtimes`, `?account=<id>[&tenant_id=<t>]` | the runtime inventory (admin); `account` keeps only the planes that account owns and echoes `filter` | [console.md](./console.md#runtimes-of-one-account) |
 | `/api/gateway/network`, `/network/restart` | network exposure, addresses, reverse proxy | [configuration.md](./configuration.md#api-gateway_network_v1) |
 | `/api/gateway/apps/*`, `/apps/handover/{code}`, `/apps/tui-handover`, `/api/gateway/apps/desktop-handover` | browser apps, terminal apps, the Assistant and its sign-in | [apps.md](./apps.md#http-api) |
@@ -568,56 +568,72 @@ never listed nor served. The built-in deny list (credential folders such as
 `~/.ssh`, and the gateway's data folder; see
 [Configuration](configuration.md#workspace-policy-filesystem-scope)) is never
 listed, and reading inside it answers 404, even when the run's folder
-contains it. The workspace policy (the account's effective folders,
-never-allowed folders, launch-folder trust) is applied again at every call, and nothing
+contains it. The workspace policy (the account's posture and workspace rows)
+is applied again at every call, and nothing
 else in the gateway's data folder is ever served. A run cannot be started
 with a `workspace_root` inside the gateway's data folder either, except the
 conversation folder the gateway made for the same user.
 
-## Workspace folders
+## Workspaces
 
-The admin allows, the account fine-tunes (round 9). Full model and enforcement:
-[security.md](./security.md#workspace-folders-the-admin-allows-the-account-fine-tunes).
+Two dimensions only: the posture (what can be reached) and each workspace's
+mode (read-only or read & write); accounts narrow. Full model and enforcement:
+[security.md](./security.md#workspaces-two-dimensions).
 
-`GET /api/gateway/workspace/policy` (any signed-in principal) →
-`{ok, policy}` with `policy = {shared_workspace, allowed_folders[],
-allow_any_folder, never_allowed[], launch_folder_trust,
-builtin_never_allowed[] (read-only), max_attachment_bytes (read-only)}`. A
-non-admin gets `builtin_never_allowed: []` and `builtin_never_allowed_hidden:
-true` (those paths name the gateway's home and data folder); the same holds
-for `never_allowed` in the effective set below.
+`GET /api/gateway/workspace/policy` (any signed-in principal) → `{ok, policy}`
+with `policy = {shared_workspace, posture: "allowed_only" | "any_except_denied",
+default_mode: "ro" | "rw", folders: [{path, mode: "ro" | "rw" | "deny"}],
+builtin_never_allowed[] (read-only), max_attachment_bytes (read-only)}`.
+`allowed_only` reads "Deny everything, allow listed workspaces";
+`any_except_denied` reads "Allow everything, refuse listed workspaces", where
+`default_mode` is the mode of every unlisted directory. A non-admin gets
+`builtin_never_allowed: []` and `builtin_never_allowed_hidden: true` (those
+paths name the gateway's home and data folder).
 
 `PUT /api/gateway/workspace/policy` (admin): any subset of `{shared_workspace,
-allowed_folders, allow_any_folder, never_allowed, launch_folder_trust}`; named
-fields replace, others keep, so one switch is one request. Every folder is
-checked like `POST /workspace/path-check` (absolute, existing). Refused with 400
-and a sentence: an empty shared workspace, a shared workspace inside the data
-folder or a credential folder, a never-allowed folder that contains the shared
-workspace, an allowed folder inside a never-allowed one, an unknown field, and
-the old fields (`mode`, `client_workspace_scope_overrides`, …). Removing an
-allowed folder switches it off for every account. Answers like the GET.
+posture, default_mode, folders}`. Named fields replace and the others are kept,
+so one control is one request. Every path is checked like `POST
+/workspace/path-check` (absolute, existing). Every row states its mode; a bare
+path is refused. These are refused with a 400 and a sentence:
+
+- an empty shared workspace, or one inside the data folder or a credential directory;
+- a row inside the shared workspace, or a refused row that contains it;
+- a row inside a refused row;
+- a duplicate row;
+- a read & write or read-only row on a credential directory;
+- an unknown posture or mode;
+- any other field: the earlier `allowed_folders`, `never_allowed`,
+  `allow_any_folder`, `launch_folder_trust`, `mode`,
+  `client_workspace_scope_overrides`, … are all refused by name.
+
+The PUT answers like the GET.
 
 `GET /api/gateway/workspace/policy/{account}` (admin, or the account itself;
 `{account}` = `name`, `tenant:name` or `me`) → `{ok, policy: {account,
-enabled_folders[], own_folders[]}, gateway: <gateway policy>, effective:
-<effective>}`. 404 for an account that does not exist, 403 for someone else's.
+default_mode, folders}, gateway: <gateway policy>, effective: <effective>}`.
+404 for an account that does not exist, 403 for someone else's.
 
 `PUT /api/gateway/workspace/policy/{account}`: any subset of
-`{enabled_folders, own_folders}`. An enabled folder must be one of the gateway's
-allowed folders; own folders need `allow_any_folder` (an empty list always
-clears them) and may not sit inside a never-allowed folder. Answers like the
-GET. `/workspace/policy/self` answers 410 naming `/workspace/policy/me`.
+`{default_mode: "ro" | null, folders: [{path, mode: "ro" | "deny"}]}`. An
+account only narrows: a `rw` row or `default_mode: "rw"` is refused ("an
+account narrows the gateway's policy, it never raises it"). An entity's
+policy is changed by an admin only (403 for the entity itself). The PUT
+answers like the GET. `/workspace/policy/self` answers 410 naming
+`/workspace/policy/me`.
 
-`GET /api/gateway/workspace/effective/{account}` → `{ok, account,
-shared_workspace, folders: [{path, source: "shared"|"allowed"|"own"}]
-(shared first), available_folders: [{path, enabled, never_allowed}],
-own_folders[], own_folders_allowed, own_folders_inactive, never_allowed[]
-(gateway + built-in), launch_folder_trust, summary}`; `summary` is one line
-such as "Private session folder + Shared workspace (work) + 2 folders (1 own folder). Never: 1 folder.".
+`GET /api/gateway/workspace/effective/{account}` → `{ok, account, posture,
+default_mode (null under allowed_only), shared_workspace, folders: [{path,
+mode: "ro" | "rw" | "deny", source: "shared" | "gateway" | "account"}],
+summary}`. The shared workspace comes first, always `rw`. Each mode is the
+lower of the admin's and the account's rule. `summary` is the one line every
+surface shows verbatim, for example:
+`Deny everything, allow listed workspaces · Shared workspace (rw) · /data/project (rw) · /archive (ro)`.
 
-Run starts read the same set: a `workspace_allowed_paths` list may only narrow
-it (absent = the whole set, the shared workspace always kept), a wider folder or
-`workspace_access_mode: "all_except_ignored"` is refused with 400.
+Run starts read the same set. The `workspace_root` (a launch folder, for
+example) must be reachable by the posture. A `workspace_allowed_paths` list
+may only narrow; when it is absent the run gets the whole set, and the shared
+workspace is always kept. A client `workspace_access_mode:
+"all_except_ignored"` is refused with a 400.
 
 ## Artifacts and filesystem handoff
 

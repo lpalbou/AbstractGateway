@@ -128,17 +128,21 @@ The gateway exposes helpers used by thin clients and workflows:
 - File access: `GET /api/gateway/files/search|read|skim`
 - Attachments: `POST /api/gateway/attachments/ingest` and `POST /api/gateway/attachments/upload`
 
-Workspace folders are a setting the admin changes at any time (no restart):
-the gateway policy (`GET`/`PUT /api/gateway/workspace/policy`: shared
-workspace, allowed folders, allow any folder, never allowed, launch-folder
-trust) and each account's switched-on folders (`/workspace/policy/{account}`).
+Workspaces are a setting the admin changes at any time (no restart). The
+gateway policy (`GET`/`PUT /api/gateway/workspace/policy`) holds the shared
+workspace, the posture ("Deny everything, allow listed workspaces" / "Allow
+everything, refuse listed workspaces" with a default mode) and the workspace
+rows (read-only, read & write, refused). Each account may narrow it
+(`/workspace/policy/{account}`).
+
 A run started without `workspace_root` works in a folder the gateway makes for
-its conversation under `<ABSTRACTGATEWAY_DATA_DIR>/workspaces/`; its file tools
-reach that folder plus the account's effective folders
-(`GET /api/gateway/workspace/effective/me`). The `/files/*` helpers (admin) use
-the shared workspace as their root and the admin's switched-on folders as
-mounts; a client may only narrow them. See
-[security.md](./security.md#workspace-folders-the-admin-allows-the-account-fine-tunes).
+its conversation under `<ABSTRACTGATEWAY_DATA_DIR>/workspaces/`. Its file tools
+also reach the account's effective workspaces
+(`GET /api/gateway/workspace/effective/me`).
+
+The `/files/*` helpers (admin) use the shared workspace as their root and the
+reachable workspaces as mounts; a client may only narrow them. See
+[security.md](./security.md#workspaces-two-dimensions).
 
 Evidence: `src/abstractgateway/workspace_policy.py`, `_files_scope()` in `src/abstractgateway/routes/gateway.py`, tests in `tests/test_gateway_workspace_policy_r9.py`.
 
