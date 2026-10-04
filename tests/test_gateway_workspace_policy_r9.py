@@ -523,3 +523,23 @@ def test_migration_is_audited(folders: dict, tmp_path: Path) -> None:
     lines = [json.loads(ln) for ln in (data / "audit_log.jsonl").read_text().splitlines() if ln.strip()]
     migrations = [e for e in lines if e.get("event") == "workspace_policy_changed" and e.get("scope") == "migration"]
     assert len(migrations) == 1, migrations
+
+
+def test_effective_set_drops_an_allowed_folder_inside_a_never_allowed_one(folders: dict, tmp_path: Path) -> None:
+    """A store that reaches this state (here: the migration of an old mount inside an old refused
+    folder) still never lets the folder through: never allowed wins in the effective set itself."""
+    from abstractgateway.run_workspace_guard import apply_workspace_policy
+    from abstractgateway.workspace_policy import effective_policy
+
+    data = _data_dir(tmp_path)
+    _write_old_store(data, {
+        "workspace_root": folders["shared"],
+        "workspace_mounts": [{"name": "private", "path": folders["projects_private"]}],
+        "workspace_blocked_paths": [folders["projects"]],
+    })
+    eff = effective_policy(data, tenant_id="default", user_id="admin")
+    assert [f["path"] for f in eff["folders"]] == [folders["shared"]]
+    assert eff["available_folders"] == [{"path": folders["projects_private"], "enabled": True, "never_allowed": True}]
+    v: dict = {}
+    apply_workspace_policy(v, root_data_dir=data, tenant_id="default", user_id="admin")
+    assert v["workspace_allowed_paths"] == [folders["shared"]]

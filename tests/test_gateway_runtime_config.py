@@ -143,7 +143,7 @@ def test_workspace_resolvers_follow_the_workspace_policy(tmp_path, monkeypatch: 
     allowed folders as mounts, never allowed); the old runtime-config keys are refused."""
     from abstractgateway.runtime_config import (
         RuntimeConfigError,
-        resolve_trust_client_launch_folder,
+        resolve_launch_folder_trust,
         resolve_workspace_blocked_paths,
         resolve_workspace_mounts,
         resolve_workspace_root,
@@ -168,7 +168,7 @@ def test_workspace_resolvers_follow_the_workspace_policy(tmp_path, monkeypatch: 
     assert resolve_workspace_root(data) == ws.resolve()
     assert resolve_workspace_mounts(data) == {"archive": archive.resolve()}
     assert resolve_workspace_blocked_paths(data) == (blocked.resolve(),)
-    assert resolve_trust_client_launch_folder(data) is False
+    assert resolve_launch_folder_trust(data) is False
 
     for key in ("workspace_root", "workspace_allowed_paths", "client_workspace_scope_overrides"):
         with pytest.raises(RuntimeConfigError, match="moved to the workspace policy"):

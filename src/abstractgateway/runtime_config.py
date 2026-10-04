@@ -2112,7 +2112,7 @@ def resolve_workspace_blocked_paths(data_dir: Path) -> tuple[Path, ...]:
     return tuple(Path(p) for p in gateway_policy(Path(data_dir))["never_allowed"] if Path(p).is_dir())
 
 
-def resolve_trust_client_launch_folder(data_dir: Path) -> bool:
+def resolve_launch_folder_trust(data_dir: Path) -> bool:
     """Launch-folder trust: one gateway-wide switch (default on)."""
     from .workspace_policy import gateway_policy
 

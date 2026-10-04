@@ -5384,33 +5384,14 @@ def _resolve_request_workspace_path(
     blocked: tuple[Path, ...],
     mode: str,
 ) -> tuple[Path, Optional[str], Path]:
-    if mode == "all_except_ignored":
-        p_raw = str(raw_path or "").strip()
-        if p_raw.startswith("@"):
-            p_raw = p_raw[1:].lstrip()
-        p2 = Path(p_raw).expanduser()
-        if p2.is_absolute():
-            try:
-                resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=p_raw)
-            except HTTPException as exc:
-                if exc.status_code != 403:
-                    raise
-                try:
-                    resolved = p2.resolve()
-                except Exception:
-                    raise HTTPException(status_code=400, detail="invalid absolute path")
-                virt = None
-                root = resolved.parent
-        else:
-            resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=p_raw)
+    # Round 9: no any-folder mode; every path resolves inside the base or a mount.
+    raw_text = str(raw_path or "").strip().strip("/")
+    if raw_text and raw_text in mounts:
+        resolved = mounts[raw_text]
+        virt = raw_text
+        root = resolved
     else:
-        raw_text = str(raw_path or "").strip().strip("/")
-        if raw_text and raw_text in mounts:
-            resolved = mounts[raw_text]
-            virt = raw_text
-            root = resolved
-        else:
-            resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=raw_path)
+        resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=raw_path)
 
     if blocked and _is_under_allowed_roots(resolved, list(blocked)):
         raise HTTPException(status_code=403, detail="path is blocked by workspace_ignored_paths")
