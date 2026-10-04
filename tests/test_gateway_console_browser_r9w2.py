@@ -40,7 +40,7 @@ ALICE = "alice-r9w2-browser-token-01"
 
 
 def seed(base: str, admin: str, folders: Path) -> None:
-    """Accounts alice (user) and bob; the gateway allows <folders>/projects and never <folders>/secrets."""
+    """Accounts alice (user) and bob; the gateway: Only allowed folders, <folders>/projects Read & write."""
     assert _call(base, "POST", "/host/first-run", admin, {"outcome": "skipped"})[0] == 200
     for body in (
         {"user_id": "alice", "roles": ["user"], "token": ALICE, "email": "alice@fastmail.com"},
@@ -49,7 +49,7 @@ def seed(base: str, admin: str, folders: Path) -> None:
         code, out = _call(base, "POST", "/admin/users", admin, body)
         assert code == 200, out
     code, out = _call(base, "PUT", "/workspace/policy", admin, {
-        "allowed_folders": [str(folders / "projects")], "never_allowed": [str(folders / "secrets")], "posture": "allowed_only",
+        "posture": "allowed_only", "default_mode": "rw", "folders": [{"path": str(folders / "projects"), "mode": "rw"}],
     })
     assert code == 200, out
 

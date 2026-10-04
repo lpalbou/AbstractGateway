@@ -70,14 +70,15 @@ try {
     await btn.click();
     await page.waitForSelector("#gateway-workspace-backdrop:not([hidden]) [data-ws-summary]");
     let p = await gw();
-    const summary = await page.textContent("[data-ws-summary]");
-    check(summary.startsWith("Agents may use only the shared workspace + 1 allowed folder") && summary.endsWith("Never allowed: 1 folder, plus the gateway's own data and credential folders."), "one-line effective summary", summary);
-    check((await page.inputValue("#wsg-shared")) === p.shared_workspace, "the shared workspace shows the stored folder", [await page.inputValue("#wsg-shared"), p.shared_workspace]);
+    const line = async () => page.textContent("[data-ws-summary]");
+    check((await line()) === `Only allowed folders · Shared workspace (rw) · ${F("projects")} (rw)`, "the effective line, byte-exact", await line());
+    check((await page.inputValue("#wsg-shared")) === p.shared_workspace && (await page.textContent("[data-ws-shared-mode]")) === "Read & write", "the shared workspace: the stored folder, Read & write");
     check((await page.locator("#gateway-workspace-body button:text-is('Save')").count()) === 0, "no Save button");
-    // The two postures: a segmented switch, "Only allowed folders" on, its list under it.
+    // Two dimensions only: the posture segmented switch and the per-row permission; no switch at all.
+    check((await page.locator("#gateway-workspace-body [role=switch]").count()) === 0, "no switch in the gateway modal (no launch-folder trust, no allow-any)");
     const postures = await page.evaluate(() => Array.from(document.querySelectorAll("[role=radiogroup] [data-ws-posture]")).map((b) => [b.querySelector(".ui-seg__title").textContent, b.getAttribute("aria-checked")]));
     check(JSON.stringify(postures) === JSON.stringify([["Only allowed folders", "true"], ["Any folder except denied", "false"]]), "two postures, Only allowed folders on", postures);
-    check((await page.locator("#wsg-allowed").count()) === 1 && (await page.locator("#wsg-never").count()) === 0, "Only allowed folders shows the Allowed folders list (not Never allowed)");
+    check((await page.locator("#wsg-default").count()) === 0, "no default mode under Only allowed folders");
     // Shared workspace: invalid, empty, then valid.
     const shared = page.locator("#wsg-shared");
     await typeAndBlur(page, shared, F("a-file.txt"));
@@ -88,47 +89,45 @@ try {
     await typeAndBlur(page, shared, F("shared"));
     await page.waitForFunction(() => document.querySelector("#wsg-shared ~ .ws-folder__state").textContent === "Saved");
     check((await gw()).shared_workspace === F("shared"), "a valid shared workspace applies on blur", (await gw()).shared_workspace);
-    // Allowed folders: add notes (valid), then a missing folder (refused).
-    await page.click("[data-ws-add='wsg-allowed']");
-    const fresh = page.locator("#wsg-allowed li:last-child input");
-    check((await gw()).allowed_folders.length === 1, "adding an empty row writes nothing");
-    await typeAndBlur(page, fresh, F("notes"));
-    await page.waitForFunction(() => document.querySelector("#wsg-allowed li:last-child .ws-folder__state").textContent === "Saved");
+    // A row: added Read & write, then lowered to Read-only (granular).
+    await page.click("[data-ws-add='wsg-folders']");
+    check((await gw()).folders.length === 1, "adding an empty row writes nothing");
+    await typeAndBlur(page, page.locator("#wsg-folders li:last-child input"), F("notes"));
+    await page.waitForFunction(() => document.querySelector("#wsg-folders li:last-child .ws-folder__state").textContent === "Saved");
     p = await gw();
-    check(JSON.stringify(p.allowed_folders) === JSON.stringify([F("projects"), F("notes")]), "an allowed folder applies on blur", p.allowed_folders);
-    await page.click("[data-ws-add='wsg-allowed']");
-    await typeAndBlur(page, page.locator("#wsg-allowed li:last-child input"), F("nope-missing"));
-    await page.waitForFunction(() => /Not saved\.$/.test(document.querySelector("#wsg-allowed li:last-child .ws-folder__state").textContent));
-    check((await gw()).allowed_folders.length === 2, "a missing folder is refused with its sentence and not saved");
-    await page.click("#wsg-allowed li:last-child [data-ws-remove]");
-    // Switch the posture: Any folder except denied -> the Never allowed list under it.
+    check(JSON.stringify(p.folders) === JSON.stringify([{ path: F("projects"), mode: "rw" }, { path: F("notes"), mode: "rw" }]), "a folder applies on blur, Read & write by default", p.folders);
+    await page.click("#wsg-folders li:last-child [data-ws-mode='ro']");
+    await page.waitForFunction(() => document.querySelector("#wsg-folders li:last-child .ws-folder__state").textContent === "Saved");
+    p = await gw();
+    check(JSON.stringify(p.folders) === JSON.stringify([{ path: F("projects"), mode: "rw" }, { path: F("notes"), mode: "ro" }]), "one folder Read & write, one Read-only (granular)", p.folders);
+    check((await line()) === `Only allowed folders · Shared workspace (rw) · ${F("projects")} (rw) · ${F("notes")} (ro)`, "the line follows the modes", await line());
+    await page.click("[data-ws-add='wsg-folders']");
+    await typeAndBlur(page, page.locator("#wsg-folders li:last-child input"), F("nope-missing"));
+    await page.waitForFunction(() => /Not saved\.$/.test(document.querySelector("#wsg-folders li:last-child .ws-folder__state").textContent));
+    check((await gw()).folders.length === 2, "a missing folder is refused with its sentence and not saved");
+    await page.click("#wsg-folders li:last-child [data-ws-remove]");
+    // Posture (b): Any folder except denied, ONE default mode, rows are exceptions (a new row starts Denied).
     await page.click("[data-ws-posture='any_except_denied']");
-    await page.waitForSelector("#wsg-never");
+    await page.waitForSelector("#wsg-default");
     check((await gw()).posture === "any_except_denied", "the posture applies at once");
-    check((await page.locator("#wsg-allowed").count()) === 0 && (await page.getAttribute("[data-ws-posture='any_except_denied']", "aria-checked")) === "true", "Any folder except denied shows the Never allowed list");
-    check((await page.textContent("[data-ws-summary]")).startsWith("Agents may use the shared workspace, folders accounts add of their own"), "the summary follows the posture", await page.textContent("[data-ws-summary]"));
-    await page.click("[data-ws-add='wsg-never']");
-    await typeAndBlur(page, page.locator("#wsg-never li:last-child input"), F("alice-lab"));
-    await page.waitForFunction(() => document.querySelector("#wsg-never li:last-child .ws-folder__state").textContent === "Saved");
-    check((await gw()).never_allowed.includes(F("alice-lab")), "a Never allowed folder applies on blur");
-    await page.click("#wsg-never li:last-child [data-ws-remove]");
-    await page.waitForTimeout(400);
-    check(!(await gw()).never_allowed.includes(F("alice-lab")), "removing a Never allowed row applies at once");
-    const trust0 = (await gw()).launch_folder_trust;
-    await page.click("#wsg-launch");
+    check((await line()).startsWith("Any folder except denied (rw) · Shared workspace (rw)"), "the line under Any folder except denied", await line());
+    await page.click("#wsg-default [data-ws-default='ro']");
     await page.waitForTimeout(500);
-    check((await gw()).launch_folder_trust === !trust0, "launch-folder trust applies at once");
-    check((await page.textContent("#gateway-workspace-body")).includes("Agents may also use the folder an app was started from."), "launch-folder trust has its one sentence");
-    await page.click("#wsg-launch");
-    await page.waitForTimeout(500);
+    check((await gw()).default_mode === "ro" && (await line()).startsWith("Any folder except denied (ro) · "), "the default mode for everything else applies at once", (await gw()).default_mode);
+    await page.click("[data-ws-add='wsg-folders']");
+    await typeAndBlur(page, page.locator("#wsg-folders li:last-child input"), F("secrets"));
+    await page.waitForFunction(() => document.querySelector("#wsg-folders li:last-child .ws-folder__state").textContent === "Saved");
+    check((await gw()).folders.some((r) => r.path === F("secrets") && r.mode === "deny") && (await line()).includes(`${F("secrets")} (denied)`), "an exception row starts Denied", (await gw()).folders);
     // Reopen: the stored values.
     await page.keyboard.press("Escape");
     await page.waitForSelector("#gateway-workspace-backdrop[hidden]", { state: "attached" });
     await btn.click();
     await page.waitForSelector("#gateway-workspace-backdrop:not([hidden]) [data-ws-summary]");
-    const shown = await page.evaluate(() => ({ shared: document.querySelector("#wsg-shared").value, never: Array.from(document.querySelectorAll("#wsg-never input")).map((i) => i.value), posture: document.querySelector("[data-ws-posture][aria-checked='true']").dataset.wsPosture }));
-    check(shown.shared === F("shared") && JSON.stringify(shown.never) === JSON.stringify([F("secrets")]) && shown.posture === "any_except_denied", "a reopen shows the stored values", shown);
+    const shown = await page.evaluate(() => ({ shared: document.querySelector("#wsg-shared").value, rows: Array.from(document.querySelectorAll("#wsg-folders li")).map((li) => [li.querySelector("input").value, li.querySelector("[data-ws-mode][aria-checked='true']").dataset.wsMode]), posture: document.querySelector("[data-ws-posture][aria-checked='true']").dataset.wsPosture, def: document.querySelector("#wsg-default [aria-checked='true']").dataset.wsDefault }));
+    check(shown.shared === F("shared") && shown.posture === "any_except_denied" && shown.def === "ro" && JSON.stringify(shown.rows) === JSON.stringify([[F("projects"), "rw"], [F("notes"), "ro"], [F("secrets"), "deny"]]), "a reopen shows the stored values", shown);
     await page.click("#gateway-workspace-close");
+    // Back to the seeded posture for the account checks.
+    await apiAs(ADMIN, "PUT", "/workspace/policy", { posture: "allowed_only", default_mode: "rw", folders: [{ path: F("projects"), mode: "rw" }, { path: F("notes"), mode: "ro" }] });
     await ctx.close();
   }
   // ------------------------------------------------------------------ W3: per-account modals

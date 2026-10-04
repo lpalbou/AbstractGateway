@@ -53,15 +53,25 @@ def test_accounts_gateway_policy_button_and_modals(html: str) -> None:
         assert f'$("{mid}-close").onclick = close' in html
     assert '<h2 id="gateway-workspace-title" class="af-modal__title">Shared workspace &amp; allowed folders</h2>' in html
     js = _script(html)
-    gw = js[js.index("async function openGatewayWorkspace()") : js.index("function wsAccountKey(")]
+    gw = js[js.index("function wsText()") : js.index("function wsAccountKey(")]
     # One PUT per change, the gateway policy fields of the R9 WORKSPACE API, path-checked rows.
     assert 'api("/api/gateway/workspace/policy")' in gw and 'api("/api/gateway/workspace/policy", { method: "PUT"' in gw
-    for field in ("shared_workspace", "allowed_folders", "posture", "never_allowed", "launch_folder_trust", "builtin_never_allowed"):
+    from abstractgateway.console_workspaces import WORKSPACES_JS
+
+    modals = WORKSPACES_JS[WORKSPACES_JS.index("// ---- Workspace folders modals (round 9).") :]
+    for field in ("shared_workspace", "posture", "default_mode", "folders"):
         assert field in gw, field
+    # Exactly two dimensions (DESIGN R9 FINAL): no other control in either modal.
+    for gone in ("launch_folder_trust", "Launch-folder trust", "allowed_folders", "never_allowed", "allow_any_folder", "Allow any folder", "other_sessions", "Other sessions", "afSwitchCreate", "wsSwitchField"):
+        assert gone not in modals, gone
     # The two postures (R9 amendments) as a segmented switch, the matching list under it.
-    for label in ('"Only allowed folders"', '"Any folder except denied"', 'role", "radiogroup"', '"Allowed folders"', '"Never allowed"', '"Launch-folder trust"', "Shared workspace"):
-        assert label in js, label
-    assert 'if (p.posture === "allowed_only") {' in gw and "put({ posture: next })" in gw
+    # The words come from the kit chooser's table (islands workspaceChooserText), never retyped here.
+    for key in ("T.postureAllowedOnly", "T.postureAnyExceptDenied", "T.accessRead", "T.accessReadWrite", "T.accessDenied", "T.everythingElse", "T.sharedLabel"):
+        assert key in gw, key
+    assert 'role", "radiogroup"' in gw and "lib.workspaceChooserText" in js
+    assert 'if (p.posture === "allowed_only") {' in gw and "put({ posture: next })" in gw and "put({ default_mode: m })" in gw and "put({ folders: list })" in gw
+    # The effective line format (ADVERSARY V15): posture label · Shared workspace (rw) · path (mode).
+    assert 'join(" · ")' in gw and 'deny: "denied"' in js
     assert "/api/gateway/workspace/path-check" in js and "input.onblur = async" in js
     acc = js[js.index("async function openAccountWorkspace(a)") :]
     assert "lib.mountWorkspaceChooser(host," in acc and "/api/gateway/workspace/policy/${encodeURIComponent(key)}" in acc
@@ -97,7 +107,7 @@ def test_icon_buttons_use_the_kit_tooltip_never_a_native_title(html: str) -> Non
     assert 'typeof lib.bindTooltips !== "function") throw new Error(' in html
     from abstractgateway.console_islands import ISLANDS_CSS, ISLANDS_JS
 
-    assert "bindTooltips" in ISLANDS_JS and "mountWorkspaceChooser" in ISLANDS_JS
+    assert "bindTooltips" in ISLANDS_JS and "mountWorkspaceChooser" in ISLANDS_JS and "workspaceChooserText" in ISLANDS_JS
     assert ".af-tooltip" in ISLANDS_CSS and "--z-tooltip" in ISLANDS_CSS
     # Static icon-only buttons: data-af-tip, no title.
     for tag in re.findall(r"<button[^>]*>", html):
