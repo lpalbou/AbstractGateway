@@ -575,8 +575,8 @@ Enforcement reads only that set:
   `workspace_allowed_paths` list may only narrow, and the shared workspace is
   always kept. A client that sends `workspace_access_mode: "all_except_ignored"`
   is refused. Refusals are 400s with a sentence; nothing is silently dropped.
-  There is no launch-folder trust any more: a client asks the person to add the
-  workspace instead.
+  A launch folder gets no special trust: when the posture does not reach it, a
+  client asks the person to add the workspace.
 - **Every run's tool sandbox**, whatever started it (HTTP, the Telegram, email
   and agora bridges, schedules, entities), is bound by the host
   (`run_workspace_guard.apply_workspace_policy`):
