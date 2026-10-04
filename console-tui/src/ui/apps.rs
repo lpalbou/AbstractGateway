@@ -19,10 +19,11 @@ use abstracttui::prelude::*;
 
 use super::util::{line, span, span_bold, wrap_text};
 use super::widths;
-use super::{confirm_danger, open_form, open_prompt, Ctx};
+use super::{open_form, open_prompt, Ctx};
 use crate::store::apps::{
-    app_blurb, app_key, copyables, part_word, primary_verb, secondary_verbs, status_label, tui_key,
-    AppJob, AppNote, AppOpenLink, AppRow, AppVerb, AppsOverview, Tone, VerbState, NODE_KEY,
+    app_blurb, app_key, badge_tip, badge_verb, copyables, part_word, primary_verb, secondary_verbs,
+    status_label, tui_key, AppJob, AppNote, AppOpenLink, AppRow, AppVerb, AppsOverview, Tone,
+    VerbState, NODE_KEY,
 };
 use crate::store::{ConnPhase, Loadable};
 use crate::worker::Cmd;
@@ -32,7 +33,7 @@ pub const HINTS: &[(&str, &str)] = &[
     ("Enter/o", "open/install"),
     ("r", "check again"),
     ("i/u", "install/update"),
-    ("s/x", "start/stop"),
+    ("s / →+Enter", "the status badge: stop/start"),
     ("l", "log"),
     ("c", "cancel"),
     ("t/T", "terminal"),
@@ -137,8 +138,6 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         ('o', None),
         ('i', Some(AppVerb::Install)),
         ('u', Some(AppVerb::Update)),
-        ('s', Some(AppVerb::Start)),
-        ('x', Some(AppVerb::Stop)),
         ('l', Some(AppVerb::Log)),
         ('c', Some(AppVerb::Cancel)),
         ('t', Some(AppVerb::OpenTerminal)),
@@ -147,6 +146,11 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     ] {
         let c = ctx.clone();
         root = root.shortcut(key(ch), move |_| run_key(cx, &c, verb));
+    }
+    {
+        // R11.3: `s` = the status badge (Running → stop, Stopped → start).
+        let c = ctx.clone();
+        root = root.shortcut(key('s'), move |_| run_badge(cx, &c));
     }
     {
         let c = ctx.clone();
@@ -339,6 +343,7 @@ fn ready_view(
             apps.note_for(&tui_key(&row.id)),
             apps.is_pending(&app_key(&row.id)) || apps.is_pending(&tui_key(&row.id)),
             admin,
+            apps.on_badge.get(),
         ));
     }
     below = below
@@ -482,6 +487,8 @@ fn apps_table(
     keeper: &super::util::FocusKeeper,
 ) -> View {
     let vw = abstracttui::app::use_viewport(cx).get().w;
+    let on_badge = ctx.store.apps.on_badge.get();
+    let sel_id = d.apps.get(ctx.store.apps.sel.get()).map(|a| a.id.clone());
     let rows: Vec<Vec<String>> = d
         .apps
         .iter()
@@ -493,6 +500,12 @@ fn apps_table(
                 format!("{label} (outside)")
             } else {
                 label
+            };
+            // R11.3: the badge cell holding the cursor shows it: [Running].
+            let status = if on_badge && Some(a.id.as_str()) == sel_id.as_deref() {
+                format!("[{status}]")
+            } else {
+                status
             };
             let action = match primary_verb(a, job.as_ref(), admin) {
                 Some(v) if v.available.is_ok() => format!(
@@ -535,12 +548,46 @@ fn apps_table(
     let inner = vw - widths::BLOCK_CHROME - 2;
     let visible = (super::kit::wrap_layout(&rules, &rows, inner, None).len() as i32).clamp(2, 14);
     let ctx_act = ctx.clone();
-    keeper.wire(
-        super::kit::WrapTable::new(rules, rows, ctx.store.apps.sel)
-            .on_activate(move |_| run_key(cx, &ctx_act, None))
-            .layout(LayoutStyle::default().h(visible).shrink(0.0))
-            .element(cx, t),
-    )
+    let ctx_cell = ctx.clone();
+    let table = super::kit::WrapTable::new(rules, rows, ctx.store.apps.sel)
+        .on_activate(move |_| run_key(cx, &ctx_act, None))
+        .layout(LayoutStyle::default().h(visible).shrink(0.0))
+        .element(cx, t);
+    // R11.3: the status cell is selectable. → moves onto the badge (only
+    // when it is a live control: an app started outside the gateway, or a
+    // non-admin, gets the reason instead), ← back to the row; on the badge
+    // Enter / Space do its action. ↑/↓ leave it. On a wrapper, in the
+    // capture phase: taken before the table's own Enter (the row's Open).
+    let wrapper = Element::new()
+        .style(LayoutStyle::column().h(visible).shrink(0.0))
+        .on(abstracttui::ui::Phase::Capture, move |ectx, ev| {
+            let abstracttui::ui::UiEvent::Key(k) = ev else {
+                return;
+            };
+            if k.mods.0 != 0 {
+                return;
+            }
+            let apps = ctx_cell.store.apps;
+            match k.key {
+                Key::Right => {
+                    badge_cell_enter(&ctx_cell);
+                    ectx.stop_propagation();
+                }
+                Key::Left if apps.on_badge.get_untracked() => {
+                    apps.on_badge.set(false);
+                    ectx.stop_propagation();
+                }
+                Key::Enter | Key::Char(' ') if apps.on_badge.get_untracked() => {
+                    run_badge(cx, &ctx_cell);
+                    ectx.stop_propagation();
+                }
+                Key::Up | Key::Down | Key::Char('k') | Key::Char('j') => {
+                    apps.on_badge.set(false);
+                }
+                _ => {}
+            }
+        });
+    wrapper.child(keeper.wire(table)).build()
 }
 
 fn note_lines(
@@ -594,6 +641,7 @@ fn detail_view(
     tnote: Option<AppNote>,
     pending: bool,
     admin: bool,
+    on_badge: bool,
 ) -> View {
     let width = text_width(cx);
     let active = job.map(AppJob::is_active).unwrap_or(false);
@@ -759,6 +807,18 @@ fn detail_view(
     verbs.extend(secondary_verbs(row, job, tjob, admin));
     let mut on: Vec<(&str, String)> = Vec::new();
     let mut off: Vec<(String, String)> = Vec::new();
+    // R11.3: the status badge first, in the web's tooltip words: "s Running —
+    // click to stop" (Enter / Space while the cursor is on the badge cell),
+    // or "Running: Started outside the gateway — stop it where it was started".
+    if let Some(bv) = badge_verb(row, job) {
+        match &bv.available {
+            Ok(()) => on.push((
+                if on_badge { "Enter/s" } else { "s" },
+                badge_tip(row).unwrap_or_else(|| bv.label.clone()),
+            )),
+            Err(why) => off.push((bv.label.clone(), why.clone())),
+        }
+    }
     for v in &verbs {
         match &v.available {
             Ok(()) => {
@@ -982,8 +1042,12 @@ fn run_key(cx: Scope, ctx: &Ctx, verb: Option<AppVerb>) {
     );
     let state = match verb {
         None => primary_verb(&row, job.as_ref(), admin),
-        Some(v) => primary_verb(&row, job.as_ref(), admin)
+        // The badge's verbs (Stop / Start / the Assistant's Open) come
+        // first: `s` acts on the badge even where the row's primary is Open.
+        Some(v) => badge_verb(&row, job.as_ref())
+            .filter(|b| b.verb == v)
             .into_iter()
+            .chain(primary_verb(&row, job.as_ref(), admin))
             .chain(secondary_verbs(&row, job.as_ref(), tjob.as_ref(), admin))
             .find(|s| s.verb == v || (v == AppVerb::Open && s.verb == AppVerb::DesktopOpen)),
     };
@@ -1057,29 +1121,8 @@ fn run_key(cx: Scope, ctx: &Ctx, verb: Option<AppVerb>) {
                     .set(Some(format!("{}: no install is running", row.name))),
             }
         }
-        AppVerb::Stop => {
-            let c = ctx.clone();
-            let r = row.clone();
-            confirm_danger(
-                cx,
-                ctx.ui,
-                format!(
-                    "Stop {}? Browser tabs open on it lose their connection until it starts again.",
-                    row.name
-                ),
-                &format!("Stop {}", row.name),
-                "Keep it running",
-                move || {
-                    c.send(Cmd::AppAct {
-                        app_id: r.id.clone(),
-                        name: r.name.clone(),
-                        verb: AppVerb::Stop,
-                        path: None,
-                        start_first: false,
-                    })
-                },
-            );
-        }
+        // R11.3: the badge stops in one action, as the web badge's one click.
+        AppVerb::Stop => act(ctx, AppVerb::Stop, None, false),
         AppVerb::Install | AppVerb::Update | AppVerb::InstallTerminal => {
             let what = match state.verb {
                 AppVerb::Install if row.is_desktop() => format!(
@@ -1134,6 +1177,67 @@ fn run_key(cx: Scope, ctx: &Ctx, verb: Option<AppVerb>) {
             );
         }
     }
+}
+
+/// R11.3: → on the table: the cursor moves onto the selected row's status
+/// badge when it is a live control; otherwise the notice says why (the
+/// gateway's tip: "Started outside the gateway — stop it where it was
+/// started", "Only an admin can start or stop apps").
+fn badge_cell_enter(ctx: &Ctx) {
+    let store = ctx.store;
+    let Some(row) = selected(ctx) else {
+        return;
+    };
+    let job = store
+        .apps
+        .job_for(&app_key(&row.id), row.active_job.as_ref());
+    match badge_verb(&row, job.as_ref()) {
+        Some(v) if v.available.is_ok() => store.apps.on_badge.set(true),
+        Some(v) => {
+            store.apps.on_badge.set(false);
+            let why = v.available.err().unwrap_or_default();
+            store
+                .notice
+                .set(Some(format!("{} — {}: {why}", row.name, v.label)));
+        }
+        None => {
+            store.apps.on_badge.set(false);
+            let (label, _) =
+                status_label(&row, job.as_ref().map(AppJob::is_active).unwrap_or(false));
+            store.notice.set(Some(format!(
+                "{} — {label}: nothing to start or stop now",
+                row.name
+            )));
+        }
+    }
+}
+
+/// R11.3: the status badge's action (`s`, or Enter / Space on the badge
+/// cell): Running → stop, Stopped → start (the Assistant: its Open). The
+/// request is the one the web badge sends (POST /apps/{id}/stop | /launch).
+fn run_badge(cx: Scope, ctx: &Ctx) {
+    let store = ctx.store;
+    let Some(row) = selected(ctx) else {
+        store
+            .notice
+            .set(Some(match store.apps.overview.get_untracked() {
+                Loadable::Ready(_) => "no app selected".into(),
+                _ => "the apps are not loaded — r checks".into(),
+            }));
+        return;
+    };
+    let job = store
+        .apps
+        .job_for(&app_key(&row.id), row.active_job.as_ref());
+    let Some(v) = badge_verb(&row, job.as_ref()) else {
+        let (label, _) = status_label(&row, job.as_ref().map(AppJob::is_active).unwrap_or(false));
+        store.notice.set(Some(format!(
+            "{} — {label}: nothing to start or stop now",
+            row.name
+        )));
+        return;
+    };
+    run_key(cx, ctx, Some(v.verb));
 }
 
 /// `n`: install Node.js (confirmed), or cancel its running install.

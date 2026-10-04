@@ -287,6 +287,41 @@ pub struct DesktopInfo {
     pub version_reason: Option<String>,
 }
 
+/// R11.3: the row's status badge as the gateway sends it
+/// (`apps_manager.status_control`): the web console's badge button and this
+/// console's selectable badge cell say the same words.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct StatusControl {
+    pub label: String,
+    /// ok | muted | info | err
+    pub tone: String,
+    pub busy: bool,
+    /// stop | launch | None (not a control, or nothing to do from here)
+    pub action: Option<String>,
+    pub enabled: bool,
+    /// The kit tooltip / hint line: "Running — click to stop", or why the
+    /// control is off. None: a plain pill, not a control.
+    pub tip: Option<String>,
+}
+
+impl StatusControl {
+    pub fn from_value(v: &Value) -> Option<StatusControl> {
+        let label = s(v, "label")?;
+        Some(StatusControl {
+            label,
+            tone: s(v, "tone").unwrap_or_else(|| "muted".into()),
+            busy: b(v, "busy"),
+            action: s(v, "action"),
+            enabled: b(v, "enabled"),
+            tip: s(v, "tip"),
+        })
+    }
+    /// A control (enabled or not), i.e. not a plain pill.
+    pub fn is_control(&self) -> bool {
+        self.tip.is_some()
+    }
+}
+
 /// The web card's one-line blurb (console_ui.py `APP_COPY`); an app the
 /// web does not list keeps the gateway's own description.
 pub fn app_blurb(row: &AppRow) -> String {
@@ -380,6 +415,8 @@ pub struct AppRow {
     pub entities_count: Option<u64>,
     pub tui: Option<TuiIface>,
     pub desktop: Option<DesktopInfo>,
+    /// R11.3: the status badge (None from a gateway older than R11.3).
+    pub status_control: Option<StatusControl>,
 }
 
 impl AppRow {
@@ -447,6 +484,7 @@ impl AppRow {
                 .and_then(Value::as_u64),
             tui,
             desktop,
+            status_control: v.get("status_control").and_then(StatusControl::from_value),
             id,
         })
     }
@@ -712,9 +750,20 @@ pub fn status_label(row: &AppRow, job_active: bool) -> (String, Tone) {
     if job_active {
         return ("Installing".into(), Tone::Info);
     }
+    // R11.3: the gateway's badge words when it sends them.
+    if let Some(sc) = &row.status_control {
+        let tone = match sc.tone.as_str() {
+            "ok" => Tone::Ok,
+            "info" => Tone::Info,
+            "warn" => Tone::Warn,
+            "err" => Tone::Err,
+            _ => Tone::Muted,
+        };
+        return (sc.label.clone(), tone);
+    }
     let (l, t) = match row.status.as_str() {
         "not_installed" => ("Not installed", Tone::Muted),
-        "stopped" => ("Installed", Tone::Muted),
+        "stopped" => ("Stopped", Tone::Muted),
         "starting" => ("Starting", Tone::Info),
         "running" => ("Running", Tone::Ok),
         "stopping" => ("Stopping", Tone::Info),
@@ -735,8 +784,11 @@ pub enum AppVerb {
     DesktopOpen,
     Install,
     Update,
-    /// Start without opening (POST /launch).
+    /// The status badge on a stopped app: start without opening (POST
+    /// /launch). R11.3: `s` / Enter or Space on the badge cell.
     Start,
+    /// The status badge on a running app (POST /stop; the Assistant: quits
+    /// the copy this gateway started). Same key as Start: the badge.
     Stop,
     Log,
     /// Cancel the app's running install/update job.
@@ -756,8 +808,7 @@ impl AppVerb {
             AppVerb::Open | AppVerb::DesktopOpen => "o",
             AppVerb::Install => "i",
             AppVerb::Update => "u",
-            AppVerb::Start => "s",
-            AppVerb::Stop => "x",
+            AppVerb::Start | AppVerb::Stop => "s",
             AppVerb::Log => "l",
             AppVerb::Cancel => "c",
             AppVerb::OpenTerminal => "t",
@@ -804,6 +855,56 @@ pub fn first_run_landing(row: &AppRow) -> Option<(&'static str, &'static str)> {
         Some(("Create your first entity", "/#new"))
     } else {
         None
+    }
+}
+
+/// The sentence when a gateway older than R11.3 sends no badge.
+pub const NO_BADGE_REASON: &str =
+    "This gateway does not say whether the app can be started or stopped from here (update the gateway)";
+
+/// R11.3: the status badge as a verb — Running → Stop, Stopped → Start (the
+/// Assistant: its Open), labelled with the badge's label; off (with the
+/// gateway's tip as the reason) for an app started outside the gateway or a
+/// non-admin. None when the badge is a plain pill (not installed, starting,
+/// stopping, a job running).
+pub fn badge_verb(row: &AppRow, job: Option<&AppJob>) -> Option<VerbState> {
+    if job.map(AppJob::is_active).unwrap_or(false) || !row.installed {
+        return None;
+    }
+    let Some(sc) = &row.status_control else {
+        if matches!(row.status.as_str(), "starting" | "stopping") {
+            return None;
+        }
+        let (label, _) = status_label(row, false);
+        let verb = if row.running {
+            AppVerb::Stop
+        } else {
+            AppVerb::Start
+        };
+        return Some(VerbState::off(verb, label, NO_BADGE_REASON));
+    };
+    let tip = sc.tip.clone()?;
+    let verb = match sc.action.as_deref() {
+        Some("stop") => AppVerb::Stop,
+        Some("launch") if row.is_desktop() => AppVerb::DesktopOpen,
+        Some("launch") => AppVerb::Start,
+        _ if row.running => AppVerb::Stop,
+        _ => AppVerb::Start,
+    };
+    Some(if sc.enabled && sc.action.is_some() {
+        VerbState::on(verb, sc.label.clone())
+    } else {
+        VerbState::off(verb, sc.label.clone(), tip)
+    })
+}
+
+/// The badge's hint words (the web's kit tooltip): "Running — click to
+/// stop", or why it is off.
+pub fn badge_tip(row: &AppRow) -> Option<String> {
+    match &row.status_control {
+        Some(sc) => sc.tip.clone(),
+        None if row.installed => Some(NO_BADGE_REASON.to_string()),
+        None => None,
     }
 }
 
@@ -914,7 +1015,8 @@ pub fn update_verb(row: &AppRow, active: bool, admin: bool) -> Option<VerbState>
 /// Everything else the web offers under "Technical details", with the
 /// reason each one is unavailable. Verbs the web never shows for this
 /// kind of row are left out (a browser-only app has no terminal verbs;
-/// a desktop app has no stop/start/log — its Update is `u`, R10.6).
+/// a desktop app has no log — its Update is `u`, R10.6). Stop / Start are
+/// the status badge (`badge_verb`, R11.3), not listed here.
 pub fn secondary_verbs(
     row: &AppRow,
     job: Option<&AppJob>,
@@ -927,51 +1029,12 @@ pub fn secondary_verbs(
     // A browser app that is not installed shows no secondary verbs (the
     // web card has only Install then); a desktop app never has them.
     if !row.is_desktop() && row.installed {
-        if let Some(port) = row.external_port {
-            let why = format!(
-                "Started outside the gateway on port {port}: stop, start, update and its log belong to whatever started it"
-            );
-            out.push(VerbState::off(AppVerb::Stop, "Stop", why));
+        if row.external_port.is_some() {
+            // Its badge says why it does not stop from here (R11.3).
             out.extend(update_verb(row, active, admin));
         } else {
-            out.push(if !row.running {
-                VerbState::off(
-                    AppVerb::Stop,
-                    "Stop",
-                    format!("{} is not running", row.name),
-                )
-            } else if !row.has("stop") {
-                VerbState::off(AppVerb::Stop, "Stop", "Stopping is not available right now")
-            } else if !admin {
-                VerbState::off(AppVerb::Stop, "Stop", not_admin("stop apps"))
-            } else {
-                VerbState::on(AppVerb::Stop, "Stop")
-            });
-            out.push(if !row.installed {
-                VerbState::off(
-                    AppVerb::Start,
-                    "Start",
-                    format!("{} is not installed", row.name),
-                )
-            } else if row.running {
-                VerbState::off(
-                    AppVerb::Start,
-                    "Start",
-                    format!("{} is already running", row.name),
-                )
-            } else if active {
-                VerbState::off(AppVerb::Start, "Start", "An install is running")
-            } else if !row.has("launch") {
-                VerbState::off(
-                    AppVerb::Start,
-                    "Start",
-                    "Starting is not available right now",
-                )
-            } else if !admin {
-                VerbState::off(AppVerb::Start, "Start", not_admin("start apps"))
-            } else {
-                VerbState::on(AppVerb::Start, "Start (without opening)")
-            });
+            // R11.3: Stop / Start are the status badge (`badge_verb`), one
+            // control per action.
             out.push(if !row.has("logs") {
                 VerbState::off(
                     AppVerb::Log,
@@ -1265,6 +1328,9 @@ pub struct AppsStore {
     pub poll_gen: Signal<u64>,
     pub polling: Signal<bool>,
     pub sel: Signal<usize>,
+    /// R11.3: the selected row's status badge cell holds the cursor (→ moves
+    /// onto it, ← back): Enter / Space then do the badge's action.
+    pub on_badge: Signal<bool>,
 }
 
 impl AppsStore {
@@ -1279,6 +1345,7 @@ impl AppsStore {
             poll_gen: cx.signal(0),
             polling: cx.signal(false),
             sel: cx.signal(0),
+            on_badge: cx.signal(false),
         }
     }
 
@@ -1293,6 +1360,7 @@ impl AppsStore {
         self.open_link.set(None);
         self.poll_gen.update(|g| *g += 1);
         self.polling.set(false);
+        self.on_badge.set(false);
     }
 
     /// The job to show for `key`: the one this console tracks, else the
@@ -1456,10 +1524,26 @@ mod tests {
         }));
         assert!(ext.is_external());
         assert_eq!(primary_verb(&ext, None, true).unwrap().verb, AppVerb::Open);
+        // R11.3: Stop is the badge, never a separate verb; without an update
+        // the row offers nothing else.
         let sec = secondary_verbs(&ext, None, None, true);
-        assert_eq!(sec.len(), 1, "{sec:?}");
-        assert_eq!(sec[0].verb, AppVerb::Stop);
-        assert!(sec[0].available.as_ref().unwrap_err().contains("port 3001"));
+        assert!(sec.is_empty(), "{sec:?}");
+        // No status_control (a gateway older than R11.3): the badge is off and says so.
+        let b = badge_verb(&ext, None).unwrap();
+        assert_eq!(b.available, Err(NO_BADGE_REASON.to_string()));
+        let mut with = ext.clone();
+        with.status_control = Some(StatusControl {
+            label: "Running".into(),
+            tone: "ok".into(),
+            busy: false,
+            action: None,
+            enabled: false,
+            tip: Some("Started outside the gateway — stop it where it was started".into()),
+        });
+        assert_eq!(
+            badge_verb(&with, None).unwrap().available,
+            Err("Started outside the gateway — stop it where it was started".into())
+        );
     }
 
     #[test]
@@ -1467,16 +1551,14 @@ mod tests {
         let run = running_managed();
         let admin = secondary_verbs(&run, None, None, true);
         let find = |v: &[VerbState], verb| v.iter().find(|x| x.verb == verb).cloned().unwrap();
-        assert_eq!(find(&admin, AppVerb::Stop).available, Ok(()));
+        // R11.3: Stop / Start are the status badge, not secondary verbs.
+        assert!(!admin
+            .iter()
+            .any(|v| matches!(v.verb, AppVerb::Stop | AppVerb::Start)));
         assert_eq!(find(&admin, AppVerb::Update).label, "Update to 0.3.21");
         assert_eq!(find(&admin, AppVerb::Update).available, Ok(()));
         assert_eq!(find(&admin, AppVerb::Log).available, Ok(()));
-        assert!(find(&admin, AppVerb::Start).available.is_err());
         let user = secondary_verbs(&run, None, None, false);
-        assert_eq!(
-            find(&user, AppVerb::Stop).available,
-            Err("Only an admin can stop apps".into())
-        );
         assert_eq!(
             find(&user, AppVerb::Log).available,
             Err("Only an admin can read app logs".into())

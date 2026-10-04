@@ -192,7 +192,9 @@ impl Harness {
         self.store
             .apps
             .overview
-            .set(Loadable::Ready(AppsOverview::from_value(&fixture())));
+            .set(Loadable::Ready(AppsOverview::from_value(&fixture_for(
+                admin,
+            ))));
         let s = self.turns(3);
         self.drain();
         s
@@ -210,6 +212,76 @@ impl Harness {
     fn notice(&self) -> String {
         self.store.notice.get_untracked().unwrap_or_default()
     }
+}
+
+/// R11.3: the badge the gateway sends for this caller (apps_manager.status_control).
+fn badge(label: &str, tone: &str, action: Option<&str>, enabled: bool, tip: Option<&str>) -> Value {
+    json!({"label": label, "tone": tone, "busy": false, "action": action, "enabled": enabled, "tip": tip})
+}
+
+fn fixture_for(admin: bool) -> Value {
+    let mut v = fixture();
+    let admin_tip = "Only an admin can start or stop apps";
+    let ctl = |label: &str, tone: &str, action: &str, tip: &str| {
+        if admin {
+            badge(label, tone, Some(action), true, Some(tip))
+        } else {
+            badge(label, tone, Some(action), false, Some(admin_tip))
+        }
+    };
+    let badges = [
+        (
+            "observer",
+            badge("Not installed", "muted", None, false, None),
+        ),
+        (
+            "flow",
+            ctl("Running", "ok", "stop", "Running — click to stop"),
+        ),
+        (
+            "continuum",
+            badge(
+                "Running",
+                "ok",
+                None,
+                false,
+                Some("Started outside the gateway — stop it where it was started"),
+            ),
+        ),
+        (
+            "code",
+            ctl(
+                "Stopped unexpectedly",
+                "err",
+                "launch",
+                "Stopped unexpectedly — click to start",
+            ),
+        ),
+        (
+            "entity",
+            ctl("Running", "ok", "stop", "Running — click to stop"),
+        ),
+        (
+            "assistant",
+            badge(
+                "Stopped",
+                "muted",
+                Some("launch"),
+                false,
+                Some(if admin {
+                    "The Assistant runs on the gateway's computer: open it there."
+                } else {
+                    admin_tip
+                }),
+            ),
+        ),
+    ];
+    for app in v["apps"].as_array_mut().unwrap() {
+        let id = app["id"].as_str().unwrap().to_string();
+        let b = badges.iter().find(|(i, _)| *i == id).unwrap().1.clone();
+        app["status_control"] = b;
+    }
+    v
 }
 
 fn fixture() -> Value {
@@ -416,21 +488,20 @@ fn open_starts_a_stopped_app_first_and_entity_lands_on_new() {
 }
 
 #[test]
-fn stop_is_a_danger_confirm_defaulting_to_keep() {
+fn s_is_the_status_badge_stop_in_one_key() {
+    // R11.3: the badge stops in one action, as the web badge's one click.
     let mut h = harness();
     h.on_apps(true);
-    h.select("flow");
-    let s = h.key(b"x");
-    assert!(s.contains("Stop Flow Editor?"), "{s}");
-    h.key(b"\r");
-    assert!(app_acts(&h.drain()).is_empty(), "keep does not stop");
-    h.key(b"x");
-    h.key(b"\x1b[A");
-    h.key(b"\r");
+    let s = h.select("flow");
+    assert!(s.contains("Running — click to stop"), "{s}");
+    h.key(b"s");
     assert_eq!(
         app_acts(&h.drain()),
         vec![("flow".to_string(), AppVerb::Stop, None, false)]
     );
+    // `x` no longer stops (one control per action).
+    h.key(b"x");
+    assert!(app_acts(&h.drain()).is_empty());
 }
 
 #[test]
@@ -483,9 +554,9 @@ fn non_admin_gets_the_reason_not_the_action() {
         h.notice()
     );
     h.select("flow");
-    h.key(b"x");
+    h.key(b"s");
     assert!(
-        h.notice().contains("Only an admin can stop apps"),
+        h.notice().contains("Only an admin can start or stop apps"),
         "{}",
         h.notice()
     );
@@ -497,10 +568,10 @@ fn non_admin_gets_the_reason_not_the_action() {
     );
     // An external app cannot be stopped even by an admin — and says why.
     h.select("continuum");
-    h.key(b"x");
+    h.key(b"s");
     assert!(
         h.notice()
-            .contains("Started outside the gateway on port 3002"),
+            .contains("Started outside the gateway — stop it where it was started"),
         "{}",
         h.notice()
     );
