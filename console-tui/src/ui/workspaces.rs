@@ -685,17 +685,15 @@ fn editor_body(cx: Scope_, ctx: &Ctx, scope: &Scope, confirm: InlineConfirm) -> 
                     spans.push(span("  (the gateway's)", t.text_faint));
                 }
                 col = col.child(line(spans));
-                col = col.child(kit::sentence(
+                col = col.child(kit::sentence_indent(
                     &t,
-                    &format!(
-                        "    {}",
-                        if mode == "blacklist" {
-                            MODE_HELP_ALL
-                        } else {
-                            MODE_HELP_LIST
-                        }
-                    ),
+                    if mode == "blacklist" {
+                        MODE_HELP_ALL
+                    } else {
+                        MODE_HELP_LIST
+                    },
                     width,
+                    4,
                     t.text_faint,
                 ));
             }
