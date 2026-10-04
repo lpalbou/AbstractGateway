@@ -2625,38 +2625,16 @@ fn open_user_policy_for_selected(cx: Scope, ctx: &Ctx) {
         }));
         return;
     }
-    let config = match ctx.store.runtime_config.get_untracked() {
-        Loadable::Ready(d) => d,
-        Loadable::NotAsked => {
-            // Lazy-load law: nothing loads on screen entry, so the first
-            // `w` fires the load itself and asks for one more keypress.
-            ctx.store.runtime_config.set(Loadable::Loading);
-            ctx.send(Cmd::LoadRuntimeConfig);
-            ctx.store.notice.set(Some(
-                "loading workspace config — press w again in a moment".into(),
-            ));
-            return;
-        }
-        _ => {
-            ctx.store.notice.set(Some(
-                "runtime config still loading — try again in a moment".into(),
-            ));
-            return;
-        }
-    };
-    if !config.writable {
-        ctx.store
-            .notice
-            .set(Some("this needs an admin token".into()));
-        return;
-    }
     let tenant = if row.tenant_id.trim().is_empty() {
         "default".to_string()
     } else {
         row.tenant_id.clone()
     };
-    let user = row.owners[0].clone();
-    open_user_policy_form(cx, ctx, &config, tenant, user);
+    // R8.2: the policy lives on the Workspaces page — `w` opens it on
+    // that account (the web's Workspace link in this column).
+    let _ = cx;
+    super::workspaces::focus_account(ctx, &tenant, &row.owners[0]);
+    ctx.ui.screen.set(super::SCREEN_WORKSPACES);
 }
 
 /// The per-user workspace policy form (operator order 2026-08-19: settings
@@ -3963,10 +3941,10 @@ fn table(
                     };
                     match &policy_keys {
                         Some(keys) if keys.contains(&format!("{tenant}:{}", r.owners[0])) => {
-                            "custom (w edits)".to_string()
+                            "Own policy (w)".to_string()
                         }
-                        Some(_) => "inherited (w edits)".to_string(),
-                        None => "press w to edit".to_string(),
+                        Some(_) => "Gateway policy (w)".to_string(),
+                        None => "w: Workspaces".to_string(),
                     }
                 } else if r.kind == "entity" {
                     "via entity".to_string()

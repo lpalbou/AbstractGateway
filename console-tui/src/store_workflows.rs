@@ -244,9 +244,20 @@ impl Broken {
 pub struct WorkflowsData {
     pub rows: Vec<WfRow>,
     pub broken: Vec<Broken>,
+    /// `interfaces` {id: {label, …}} (round 8): the plain names "Used by"
+    /// shows, for everyone (no admin read needed).
+    pub interface_labels: Vec<(String, String)>,
 }
 
 impl WorkflowsData {
+    /// The plain name the list itself gives an interface id.
+    pub fn interface_label(&self, id: &str) -> Option<String> {
+        self.interface_labels
+            .iter()
+            .find(|(i, _)| i == id)
+            .map(|(_, l)| l.clone())
+    }
+
     /// "{W} workflow, {N} version the gateway could not load."
     pub fn broken_count_line(&self) -> String {
         let w = self
@@ -422,7 +433,25 @@ pub fn workflows_from_payload(v: &Value) -> Result<WorkflowsData, String> {
         g.paths.push(s(sk, "path"));
         g.can_archive = g.can_archive || b(sk, "can_archive");
     }
-    Ok(WorkflowsData { rows, broken })
+    let interface_labels = v
+        .get("interfaces")
+        .and_then(Value::as_object)
+        .map(|m| {
+            m.iter()
+                .filter_map(|(id, it)| {
+                    it.get("label")
+                        .and_then(Value::as_str)
+                        .filter(|l| !l.is_empty())
+                        .map(|l| (id.clone(), l.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(WorkflowsData {
+        rows,
+        broken,
+        interface_labels,
+    })
 }
 
 /// One option of a default-workflow picker.

@@ -20,6 +20,9 @@ use crate::store::{Loadable, Store};
 pub struct ListArgs {
     pub drafts: bool,
     pub archived: bool,
+    /// Read "Default workflow per app" too (admins only: the web hides it
+    /// and never fetches it for anyone else).
+    pub defaults: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -130,6 +133,9 @@ pub(super) fn handle(
                 let v = require_client(client)?.bundles_page(list.drafts, list.archived)?;
                 workflows_from_payload(&v).map_err(protocol)
             });
+            if !list.defaults {
+                return;
+            }
             load(
                 store,
                 wake,

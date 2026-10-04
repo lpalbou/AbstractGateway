@@ -143,7 +143,10 @@ fn continuum_switches_apply_at_once_and_the_folder_clears_to_the_gateways_own() 
     assert_eq!(sv[0].0, json!({"backlog_exec_runner": true}));
     // A second press waits for the first write to land.
     h.key(b" ");
-    assert!(saves(&mut h).is_empty(), "held while the first write is in flight");
+    assert!(
+        saves(&mut h).is_empty(),
+        "held while the first write is in flight"
+    );
     h.ui.write_done.set(Some((sv[0].1, Ok("applied".into()))));
     h.turns(2);
     // The folder: Enter, clear, Enter → null (the gateway's own folder).

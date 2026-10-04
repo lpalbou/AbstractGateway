@@ -233,14 +233,21 @@ fn picking_a_default_saves_at_once() {
 }
 
 #[test]
-fn a_user_cannot_pick_and_is_told_why() {
+fn a_user_never_sees_the_default_workflow_per_app() {
+    // R8.1: "Default workflow per app" is admin-only — hidden and never
+    // read for anyone else; Tab goes straight to Broken workflows.
     let mut h = page((120, 40), false);
-    h.key(b"\t");
     let s = h.text();
-    assert!(s.contains("Only an admin can change these."), "{s}");
+    assert!(!s.contains("Default workflow per app"), "{s}");
+    let s = h.key(b"\t");
+    assert!(s.contains("[⚠ Broken workflows]"), "{s}");
+    h.sent();
+    workflows::refresh_for_tests(&h.store, &h.tx);
+    let sent = h.sent();
     assert!(
-        s.contains("[-] Streamed replies — Only an admin can change this."),
-        "{s}"
+        sent.iter()
+            .any(|c| matches!(c, Cmd::Workflows(WfCmd::Load(l)) if !l.defaults)),
+        "a non-admin's refresh does not read the defaults: {sent:?}"
     );
 }
 

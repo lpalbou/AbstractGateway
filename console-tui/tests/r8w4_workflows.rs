@@ -249,3 +249,29 @@ fn live_description_edit() {
         .unwrap();
     assert_eq!(it["description_edited"], json!(false));
 }
+
+#[test]
+fn used_by_reads_the_lists_own_labels_for_a_non_admin() {
+    // R8.1: GET /bundles carries `interfaces` {id: {label}} — "Used by"
+    // shows the plain name without the admin's defaults read.
+    let mut h = harness((120, 40), Mount::Page(page_view));
+    h.identity("alice", false);
+    let mut it = version(
+        "user",
+        "note-taker",
+        "Note taker",
+        "1.2.0",
+        "imported",
+        json!({}),
+    );
+    it["entrypoints"][0]["interfaces"] = json!(["abstractcode.agent.v1"]);
+    let payload = json!({"items": [it], "skipped": [],
+        "interfaces": {"abstractcode.agent.v1": {"label": "AbstractCode — chat agent", "help": "", "known": true}}});
+    h.store
+        .wf
+        .data
+        .set(Loadable::Ready(workflows_from_payload(&payload).unwrap()));
+    let s = h.turns(3);
+    assert!(s.contains("AbstractCode — chat agent"), "{s}");
+    assert!(!s.contains("abstractcode.agent.v1"), "{s}");
+}

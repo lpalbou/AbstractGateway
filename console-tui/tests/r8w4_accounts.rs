@@ -332,3 +332,68 @@ fn live_email_switches_apply() {
     });
     assert_ne!(now, before);
 }
+
+/// Live: the whole console (sidebar, footer) on every R8 page at 80x24 and
+/// 120x40 — captures for the gate (`R8W4_SHOTS_DIR`), every line fits.
+#[test]
+#[ignore]
+fn live_capture_round8_pages_80x24() {
+    capture_pages(SIZES[0]);
+}
+
+#[test]
+#[ignore]
+fn live_capture_round8_pages_120x40() {
+    capture_pages(SIZES[1]);
+}
+
+/// One size per test: each test thread has its own UI runtime (a second
+/// live harness on one thread would receive the first one's worker posts).
+fn capture_pages(size: (i32, i32)) {
+    let Some((url, token)) = live_env() else {
+        eprintln!("R8W4_URL/R8W4_TOKEN not set — skipped");
+        return;
+    };
+    {
+        let mut h = live(size, Mount::Root, &url, &token);
+        for (screen, name, wait) in [
+            (ui::SCREEN_USERS, "root-accounts", "Name"),
+            (ui::SCREEN_WORKSPACES, "root-workspaces", "Gateway policy:"),
+            (
+                ui::SCREEN_WORKFLOWS,
+                "root-workflows",
+                "Shared with everyone",
+            ),
+            (ui::SCREEN_SKILLS, "root-skills", "Shelf folder:"),
+            (ui::SCREEN_APPS, "root-apps", "Apps"),
+        ] {
+            h.ui.screen.set(screen);
+            h.until_text(wait);
+            h.turns(3);
+            h.shoot(name);
+            h.assert_fits();
+        }
+        h.ui.screen.set(ui::SCREEN_USERS);
+        h.until_text("alice");
+        let idx = h.store.accounts.with_untracked(|d| {
+            d.ready()
+                .unwrap()
+                .iter()
+                .filter(|r| !r.archived)
+                .position(|r| r.id == "alice")
+        });
+        h.ui.account_sel.set(idx.unwrap());
+        h.turns(2);
+        h.key(b"g");
+        h.until_text("Account: alice");
+        h.until("filtered list", |h, _| {
+            h.store
+                .runtimes
+                .with_untracked(|r| matches!(r, Loadable::Ready(_)))
+        });
+        h.turns(3);
+        h.shoot("root-runtimes-filtered");
+        h.assert_fits();
+        h.key(b"x");
+    }
+}

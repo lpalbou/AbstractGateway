@@ -6876,11 +6876,10 @@ fn resources_w_works_with_no_model_resident_across_polls() {
     );
 }
 
-/// Runtimes: the first `w` fires the lazy runtime-config read; when it
-/// lands the inventory region re-renders — the second `w` must still
-/// reach the screen and open the form (review 2 N2).
+/// Runtimes (R8.2): `w` on a user's runtime opens the Workspaces page on
+/// that account (the policy has its own page; no form here).
 #[test]
-fn runtimes_w_works_after_the_lazy_config_lands() {
+fn runtimes_w_opens_workspaces_on_the_owner() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(4);
@@ -6888,28 +6887,9 @@ fn runtimes_w_works_after_the_lazy_config_lands() {
         .runtimes
         .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
     h.turns(2);
-    h.drain_cmds();
     h.type_text("w");
     h.turns(2);
-    assert!(
-        h.find_cmd(|c| matches!(c, Cmd::LoadRuntimeConfig))
-            .is_some(),
-        "the first w fires the lazy load"
-    );
-    h.store.runtime_config.set(Loadable::Ready(
-        abstractgateway_console::store::RuntimeConfigData::from_value(&json!({
-            "writable": true,
-            "workspace_root": {"value": "/srv/workspace", "source": "stored"},
-            "user_workspace_policies": {"value": "{}", "source": "default"}
-        })),
-    ));
-    h.turns(3);
-    h.type_text("w");
-    let s = h.turns(3);
-    assert!(
-        s.contains("Workspace policy — default:admin"),
-        "the second w opens the policy form:\n{s}"
-    );
+    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_WORKSPACES);
 }
 
 /// `u` = danger confirm, defaulting to KEEP; only the explicit danger

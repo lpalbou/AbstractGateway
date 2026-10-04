@@ -40,6 +40,7 @@ fn list_args(ctx: &Ctx) -> ListArgs {
     ListArgs {
         drafts: ctx.store.wf.drafts.get_untracked(),
         archived: ctx.store.wf.archived.get_untracked(),
+        defaults: ctx.store.conn.with_untracked(ConnPhase::is_admin),
     }
 }
 
@@ -53,6 +54,7 @@ pub fn refresh_for_tests(store: &crate::store::Store, tx: &std::sync::mpsc::Send
     let _ = tx.send(Cmd::Workflows(WfCmd::Load(ListArgs {
         drafts: store.wf.drafts.get_untracked(),
         archived: store.wf.archived.get_untracked(),
+        defaults: store.conn.with_untracked(ConnPhase::is_admin),
     })));
 }
 
@@ -140,6 +142,19 @@ fn selected_row(ctx: &Ctx) -> Option<WfRow> {
     selected(ctx).map(|(r, _, _)| r)
 }
 
+/// The tabs listed: Workflows; "Default workflow per app" for an admin
+/// only (the web hides it from everyone else); Broken when something is.
+fn shown_tabs(ctx: &Ctx) -> Vec<usize> {
+    let mut out = vec![0];
+    if ctx.store.conn.with_untracked(ConnPhase::is_admin) {
+        out.push(1);
+    }
+    if has_broken(ctx) {
+        out.push(2);
+    }
+    out
+}
+
 /// The broken tab is listed only when something is broken.
 fn has_broken(ctx: &Ctx) -> bool {
     ctx.store
@@ -225,7 +240,6 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 let broken_n = wf
                     .data
                     .with(|d| d.ready().map(|d| d.broken.len()).unwrap_or(0));
-                let _ = &tabs_ctx;
                 let mark = |on: bool, label: String| {
                     if on {
                         span_bold(format!("[{label}]"), tt.accent)
@@ -233,11 +247,11 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         span(format!(" {label} "), tt.text_muted)
                     }
                 };
-                let mut spans = vec![
-                    mark(tab == 0, "Workflows".into()),
-                    span(" ", tt.text),
-                    mark(tab == 1, DEFAULTS_TITLE.into()),
-                ];
+                let mut spans = vec![mark(tab == 0, "Workflows".into())];
+                if tabs_ctx.store.conn.with(ConnPhase::is_admin) {
+                    spans.push(span(" ", tt.text));
+                    spans.push(mark(tab == 1, DEFAULTS_TITLE.into()));
+                }
                 if broken_n > 0 {
                     spans.push(span(" ", tt.text));
                     spans.push(mark(tab == 2, format!("⚠ {BROKEN_TITLE}")));
@@ -248,6 +262,11 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 LayoutStyle::column().gap(0).grow(1.0).min_h(3),
                 move |gcx| match wf.tab.get() {
                     0 => workflows_tab(gcx, &body_ctx, &keeper),
+                    // A non-admin never sees the defaults (a tab left over
+                    // from an admin sign-in shows the list).
+                    1 if !body_ctx.store.conn.with(ConnPhase::is_admin) => {
+                        workflows_tab(gcx, &body_ctx, &keeper)
+                    }
                     1 => defaults_tab(gcx, &body_ctx, &keeper),
                     _ => broken_tab(gcx, &body_ctx, &keeper),
                 },
@@ -272,14 +291,15 @@ fn handle_key(
         return false;
     }
     let tab = wf.tab.get_untracked();
-    let ntabs = if has_broken(ctx) { 3 } else { 2 };
+    let shown = shown_tabs(ctx);
+    let at = shown.iter().position(|t| *t == tab).unwrap_or(0);
     match key {
         Key::Char('[') => {
-            wf.tab.set((tab + ntabs - 1) % ntabs);
+            wf.tab.set(shown[(at + shown.len() - 1) % shown.len()]);
             true
         }
         Key::Tab | Key::Char(']') => {
-            wf.tab.set((tab + 1) % ntabs);
+            wf.tab.set(shown[(at + 1) % shown.len()]);
             true
         }
         _ if tab == 0 => workflows_key(cx, ctx, confirm, flow_pending, key),
@@ -546,7 +566,9 @@ fn workflows_tab(cx: Scope, ctx: &Ctx, keeper: &super::util::FocusKeeper) -> Vie
                     9,
                 ));
             }
-            let label_of = |i: &str| defaults.label_of(i);
+            // The list's own labels first (everyone has them), then the
+            // admin's defaults table.
+            let label_of = |i: &str| d.interface_label(i).or_else(|| defaults.label_of(i));
             let rows: Vec<Row> = items(&d, &query, older)
                 .into_iter()
                 .map(|it| match it {
@@ -617,6 +639,7 @@ fn workflows_tab(cx: Scope, ctx: &Ctx, keeper: &super::util::FocusKeeper) -> Vie
                     let c = ctx.clone();
                     let tall = abstracttui::app::use_viewport(cx).get_untracked().h >= 30;
                     let labels = defaults.clone();
+                    let iface = d.interface_labels.clone();
                     col = col.child(dyn_view(
                         LayoutStyle::column().gap(0).shrink(0.0),
                         move || {
@@ -638,7 +661,13 @@ fn workflows_tab(cx: Scope, ctx: &Ctx, keeper: &super::util::FocusKeeper) -> Vie
                                         head = format!(
                                             "{head} ({} · used by {})",
                                             source_label(&r.source),
-                                            r.used_by(&|i: &str| labels.label_of(i))
+                                            r.used_by(&|i: &str| {
+                                                iface
+                                                    .iter()
+                                                    .find(|(x, _)| x == i)
+                                                    .map(|(_, l)| l.clone())
+                                                    .or_else(|| labels.label_of(i))
+                                            })
                                         );
                                     }
                                     let mut col = Element::new()
