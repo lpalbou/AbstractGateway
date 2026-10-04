@@ -2,7 +2,41 @@
 
 ## Unreleased
 
+Needs AbstractGateway 0.13.0 (the OpenAI API routes, `POST /models/delete-download`, the network
+`tailscale` and `reverse_proxy` fields).
+
 ### Changed
+- **Pages in the web console's sidebar order**, each with a fixed key: `1 Connection`, ACCOUNTS `2 Accounts`, WORK
+  `3 Workflows` `4 Skills & MCP` `5 Runtimes` `6 Apps`, MODELS `7 Providers` `8 OpenAI API` `9 Models`
+  `0 Multimodal`, SYSTEM `H Resources` `T Sandbox` `N Network`, then `S Setup` and `I About`. "Review & Test" is
+  now **Sandbox**; the Engines tab is gone (its engines are on Providers). The setup guide has seven steps: its
+  engines step is Providers.
+- **Providers** is the web page: Local providers (one row per engine: state, version, models; install with an
+  inline confirm showing the plan, start/stop, browse its models, cancel), Remote providers (the presets) and
+  Available Providers; `v` switches section.
+- **Models** is the web page, built here instead of AbstractCore's shared screen: one list with a header per model
+  and a row per build, the downloaded models outside the catalog under "Not in the catalog", the web's filters,
+  download with progress, delete with an inline confirm sized by a dry run (`POST /models/delete-download`), and
+  "use as default".
+- **Network** is the web page: the mode sentences, the detected addresses (including the Tailscale name) with
+  "Works now" / "Not in this mode", "Reached through another address?", and Advanced: allowed origins and
+  "Trust proxies on other machines". Internet mode asks with the gateway's own acknowledgement.
+- **Resources**, **Sandbox** and **Multimodal** use the web pages' words and wrapping tables.
+- **Setup** adds "Recommended for this computer": each recommended route with its status, engine and model and any
+  warning; `a` Use recommended defaults (then "Replace mine too" inline), `D` Download all.
+- **About** is the shared About card (name and version, AbstractFramework and AbstractGateway versions, links,
+  licence line) as a page (`I`) and an overlay (`F1` / `?`); it no longer lists every package. `--about` prints
+  the same card.
+- The key-hint bar wraps onto a second line instead of cutting the page's keys.
+
+### Added
+- **OpenAI API** page: status, base URL, your API key (masked, show, copy, new key), examples, recent requests with
+  their recorded request and response; for an admin the endpoint switch, restart, check setup, authentication, who
+  can connect and the Open-mode account.
+- Shared widgets: full-width overlay, wrapping table (rows wrap, `Enter` opens details, a tall opened row scrolls
+  with PgDn/PgUp), inline confirm, wrapping key-hint bar.
+
+### Changed (accounts and connection)
 - **Connection: "Trust proxies on other machines".** The proxy-trust switch carries the gateway's wording: a proxy on the gateway machine is always believed; the switch extends that to proxies elsewhere.
 - **Accounts: archive instead of delete.** `d` archives the selected account after a confirmation ("Archive
   <id>? They can't sign in any more. ..." / "Archive <name>? It stops acting and never wakes. ...") and

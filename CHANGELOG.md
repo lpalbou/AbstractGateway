@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Terminal console (`abstractgateway-console`, round 7): the pages follow the web console's sidebar (Providers with the local engines, OpenAI API, Models, Multimodal; Resources, Sandbox, Network; Setup and About) with the web pages' data, actions and words, through the same routes — see [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md) and [docs/console.md](docs/console.md#terminal-console-abstractgateway-console).
+
 - `GET /api/gateway/voice/defaults` (round 6): the gateway's default voice routes for every app — `tts` = the `output.voice` route (`provider`, `model`, `voice`), `stt` = the `input.voice` route (`provider`, `model`), each with `configured` and, when unset, a `note`. A request that names no engine runs exactly this route. The voice catalog (`GET /voice/voices`) now says the same: `active_tts_provider` / `active_stt_provider` are the configured routes (absent when none is set, never the speech engine's own fallback) and it carries `gateway_defaults`. Before, the catalog forwarded AbstractVoice's opinion — "openai" whenever `OPENAI_API_KEY` was in the environment — so AbstractCode showed "Gateway default · openai" on a gateway routed to supertonic and faster-whisper.
 - `POST /runs/{run_id}/audio/transcribe` answers with the route that ran (`provider`, `model`) and the server time (`duration_ms`).
 

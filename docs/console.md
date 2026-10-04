@@ -381,7 +381,7 @@ refuses, and the row says why and what to do, when the model is loaded or
 locked in memory ("Unload it first"), while its download is still running
 ("Cancel the download first"), or for LM Studio, which keeps its own library
 (delete it in LM Studio). Every delete and refusal is written to the audit log.
-The terminal console keeps its own delete for now.
+The terminal console's Models page deletes through the same route, with the same confirmation.
 
 **Not in the catalog.** With Status **All** or **Downloaded**, the models the
 local engines hold that no catalog build accounts for (`GET
@@ -552,28 +552,33 @@ requested after 30 seconds.
 
 ### Setup guide and browse mode
 
-The console has thirteen screens, listed in the web console's sidebar order.
-**1** Connection (the terminal's sign-in) comes first, then the groups:
-ACCOUNTS **2** Accounts; WORK **3** Workflows, **4** Runtimes, **5** Apps;
-MODELS **6** Providers, **7** Models, **8** Engines, **9** Multimodal; SYSTEM
-**0** Resources, **N** Network, **R** Review & Test; and **S** Setup last. A
-line above the tabs names the groups and their keys. The web console's Sandbox
-lives inside Review & Test.
+The console lists its pages in the web console's sidebar order, each with a
+fixed key. **1** Connection (the terminal's sign-in) comes first, then the
+groups: ACCOUNTS **2** Accounts; WORK **3** Workflows, **4** Skills & MCP,
+**5** Runtimes, **6** Apps; MODELS **7** Providers, **8** OpenAI API, **9**
+Models, **0** Multimodal; SYSTEM **H** Resources, **T** Sandbox, **N**
+Network; then **S** Setup and **I** About. A line above the tabs names the
+groups and their keys. The local engines live on Providers, as on the web.
 
 - **Setup guide.** For an admin whose first run is not completed, the console
-  opens the setup guide: Connection → Setup → Engines → Providers → Multimodal →
-  Models → Apps → Review, the same steps as the web console's first-run guide.
-  Multimodal shows the recommended models for this computer with fit warnings
-  (`a` applies them, `D` downloads all of them as one job, `C` cancels, `p`
-  shows the plan). Review ends with **Finish** or **Skip setup**, recorded on
-  the gateway, and a **Start at login** switch. No step is gated except
-  signing in.
+  opens the setup guide: Connection → Setup → Providers (local engines, then
+  cloud keys) → Multimodal → Models → Apps → Sandbox, the same steps as the web
+  console's first-run guide. Multimodal shows the recommended models for this
+  computer with fit warnings (`a` applies them, `D` downloads all of them as
+  one job, `C` cancels, `p` shows the plan). Sandbox ends with **Finish** or
+  **Skip setup**, recorded on the gateway, and a **Start at login** switch. No
+  step is gated except signing in.
 - **Browse mode** (free tabs) opens otherwise. `--wizard` and `--browse` choose
   the mode at launch.
 - **`Ctrl+G`** reopens the guide from browse mode; inside the guide it opens
   the guide menu: go to any step, leave for now, or skip setup.
-- **S Setup** shows this computer at a glance: memory, graphics, data folder,
-  sign-in mode, whether the gateway starts at login, and the first-run state.
+- **S Setup** shows this computer at a glance (memory, graphics, data folder,
+  sign-in mode, whether the gateway starts at login, the first-run state) and
+  **Recommended for this computer**: each recommended route with its status,
+  the engine and model that run it and any fit or engine warning, the text
+  model in use, `a` **Use recommended defaults** (keeps the routes you chose,
+  then offers **Replace mine too** inline) and `D` **Download all** (asks
+  first). Both are admin-only.
 
 ### Screens and panels
 
@@ -594,7 +599,7 @@ lives inside Review & Test.
   offers the restart, reconnects when the gateway is back and reads the network
   again. When a restart cannot apply it, the gateway's reason is shown. The
   Connection screen keeps a one-line summary.
-- **Review & Test** holds the session's change journal and the sandbox: every
+- **T Sandbox** holds the session's change journal and the sandbox: every
   output mode (text, image, voice, music, sound effects, video), file
   attachments and speak-this-reply.
 - **2 Accounts** is the web console's Accounts page: one table of users and
@@ -636,7 +641,7 @@ lives inside Review & Test.
   workflow types**. Also `t` drafts on/off, `e` export, `d` archive a version,
   `D` archive every version (nothing is deleted), `i` import a `.flow` bundle, `L` reload from disk.
   The per-app defaults are also on Runtimes (*Runtime knobs*).
-- **5 Apps** is the web console's Apps tab: open browser apps signed in,
+- **6 Apps** is the web console's Apps tab: open browser apps signed in,
   install or update them, start and stop them, the desktop Assistant and
   Node.js. Over SSH, or on a machine without a display, **Open** never starts
   a browser: it shows the one-time link to copy (`y`) and the `ssh -L` port
@@ -650,10 +655,12 @@ lives inside Review & Test.
   **start at login** (`L`,
   confirmed, then read back). A banner shows on every screen while workflows
   are paused.
-- **About** (`F1`, or `?` outside a text field) shows this console, its
-  version, the links and the connected gateway's versions from
-  `GET /api/gateway/about`. `abstractgateway-console --about --gateway-url <gateway>`
-  prints the same text without opening the interface.
+- **I About** (also `F1`, or `?` outside a text field, as an overlay) shows the
+  same card as the web console's About: this console's name and version, the
+  AbstractFramework and AbstractGateway versions from `GET /api/gateway/about`,
+  the links (Website, Source, Docs, Issues, Feedback, Contact) and the licence
+  line. `abstractgateway-console --about --gateway-url <gateway>` prints the
+  same text without opening the interface.
 
 Every on/off setting is a switch: `[x] Feature` on (highlighted), `[ ] Feature`
 off, `[-] Feature — reason` when it can't be used here. `Space` (or `Enter`)
@@ -662,8 +669,9 @@ state.
 
 Keys: `Tab` focus, `Enter` activate, `Ctrl+N` / `Ctrl+P` next and previous
 step, `Esc` back (in a text field, the first `Esc` releases it so screen keys
-work again), `1`-`9`, `0`, `N`, `R` and `S` screens, `r` refresh, `q` quit. Each screen
-lists its own actions in the footer.
+work again), `1`-`9`, `0`, `H`, `T`, `N`, `S` and `I` screens, `r` refresh,
+`q` quit. Each screen lists its own actions in the key-hint bar at the bottom,
+which wraps onto a second line rather than cutting a verb.
 
 `←` / `→` switch to the previous and next screen, wrapping from the last screen
 to the first and back, like `Ctrl+P` / `Ctrl+N` in browse mode. The arrows keep
@@ -680,27 +688,40 @@ non-admin sign-in, with the reason, and the footer marks them "admin only".
 The setup guide is admin-only, as on the web. Every write is verified with a
 follow-up read and recorded in the journal.
 
-### Models and Engines in the terminal console
+### Providers, Models and OpenAI API in the terminal console
 
-Screens 7 (**Models**) and 8 (**Engines**) are AbstractCore's own screens,
-taken from the `abstractcore-console` crate (0.4) rather than rebuilt, so they look
-and behave the same in `abstractcore-console` and here. In the gateway console
-they act on the gateway's host, through the gateway's
-`/api/gateway/host/profile`, `/engines`, `/models/catalog`,
-`/models/installed`, `/models/download`, `/models/delete`,
-`/engines/{id}/install` and `/jobs/{id}` routes:
+These three pages read and write the same gateway routes as their web pages,
+with the same wording:
 
-- **Models:** browse the catalog with a fit verdict for the gateway host,
-  download (`w`), delete after a confirm that lists any blocker (`d`), filter
-  (`/`), fits only (`f`), engine (`e`), installed view (`v`), cancel (`c`).
-- **Engines:** see which engines are installed and running; install one (`i`)
-  after a confirm that shows the exact command and the host it runs on (a dry
-  run is offered), or open its download page (`o`). Engine servers can be
-  started and stopped, and a paused install continued.
+- **7 Providers** has the web page's three sections; `v` switches between
+  them. **Local providers**: one row per engine on the gateway host with its
+  state, version and models; `Enter` opens its details (address, connection,
+  links), `i` installs it after an inline confirm that shows the plan (and the
+  install location for app engines), `s` / `x` start and stop its server, `b`
+  opens Models filtered to that engine, `c` cancels a running install.
+  **Remote providers**: the cloud and OpenAI-compatible presets; `Enter` or `a`
+  opens the connection form. **Available Providers**: the full table; `e`
+  edits or overrides, `d` deletes, `m` lists models, `t` tests.
+- **9 Models** is one list, like the web page: one header line per model and
+  one row per build (engine, id, quantization, size, status), with the models
+  you downloaded that the catalog does not know listed under **Not in the
+  catalog**. Filters: `/` search, `z` quantization, `p` provider, `t`
+  capability, `s` Downloaded / All, `f` fits this computer, `x` clears; `m`
+  searches Hugging Face. `w` downloads (with progress, `c` cancels), `d`
+  deletes after an inline confirm that states how much it frees ("Files only —
+  nothing in your runs is touched."; a loaded or locked model is refused with
+  the reason), `u` makes a downloaded text model the default.
+- **8 OpenAI API** shows the endpoint's status and base URL, your API key
+  (masked; `v` shows it, `y` copies it, `n` issues a new one, shown once), the
+  examples (`s` picks one, `c` copies it with the key in clear) and the recent
+  requests (`Tab`, then `Enter` opens one with its recorded request and
+  response; `f` shows the full record). Administrators also get the Endpoint
+  switch (`e`), Restart (`x`), Check setup (`h`), Authentication (`a`), Who can
+  connect (`w`) and the Open-mode account (`u`). See
+  [openai-api.md](./openai-api.md).
 
-Downloads, deletes and installs are admin-only and run on the gateway host; a
-refusal (for example installs disabled on a remote gateway, or a loaded model)
-is shown with the gateway's reason.
+Downloads, deletes, installs and endpoint changes are admin-only; a refusal is
+shown with the gateway's reason.
 
 The terminal console needs no gateway-side component beyond the admin API. The
 crate version is independent of the Python package version; see
