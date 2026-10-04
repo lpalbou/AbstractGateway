@@ -757,7 +757,11 @@ groups and their keys. The local engines live on Providers, as on the web.
   `[Account: <id> ×]`; `x` lists every runtime again.
 - **6 Apps** is the web console's Apps tab: open browser apps signed in,
   install or update them, start and stop them, the desktop Assistant and
-  Node.js. `a` opens **Apps settings** (Node.js for apps, ports, npm registry,
+  Node.js. `u` updates the selected app, the Assistant included, with the
+  gateway's label ("Update to 0.14.0") and its tooltip as the confirmation; an
+  app started outside the gateway shows "Latest x.y.z · Started outside the
+  gateway — update it where it was installed" and `u` only says so
+  ([Updates](./apps.md#updates)). `a` opens **Apps settings** (Node.js for apps, ports, npm registry,
   Node.js download index); `g` on the Continuum card opens its settings
   (backlog folder, backlog exec runner, process manager). Each row applies on
   its own and says "Saved" beside it; empty returns to the default (the

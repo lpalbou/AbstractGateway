@@ -113,7 +113,9 @@ pages are usable at 80×24.
    with dry-run-gated purge.
 - **6 Apps** (WORK) — the web console's Apps tab: browser apps (Flow, Code,
   Observer…), the desktop Assistant and Node.js. `Enter`/`o` opens an
-  app signed in (a one-time link), `i`/`u` install/update, `s`/`x`
+  app signed in (a one-time link), `i`/`u` install/update (`u` also updates
+  the Assistant; its confirmation is the web button's tooltip; an app started
+  outside the gateway shows "Latest x.y.z" and where to update it), `s`/`x`
   start/stop, `l` log, `c` cancel, `t`/`T` terminal apps, `n` Node.js,
   `y` copy, `r` check again, `a` **Apps settings**, `g` the Continuum card's
   settings (backlog folder, exec runner, process manager; each row applies

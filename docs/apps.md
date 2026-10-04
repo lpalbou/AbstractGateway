@@ -13,10 +13,39 @@ On a card, a plain user sees one button for the state the app is in:
 | Not installed | **Install** |
 | Installing | a progress bar (one row per part, e.g. "Code in the browser" and "Code in the terminal") and **Cancel** |
 | Installed (running or not) | **Open**, and **Open in Terminal** right beside it when the app's terminal version is installed |
+| A newer version is published | **Update to x.y.z** beside **Open** (an admin; its tooltip: "Install the newest Flow Editor (0.8.0); a running app restarts on it") |
 | Failed | the reason, **Show details**, and **Install** again |
 
-Stop, Show log, Update, versions, addresses and commands are under
+Stop, Show log, versions, addresses and commands are under
 **Technical details**.
+
+## Updates
+
+Every app row says when a newer version is published: the browser apps from
+the npm registry (`dist-tags.latest`), the Assistant from PyPI
+(`<pypi_url>/abstractassistant/json`, `info.version`). One cache serves the
+npm registry, PyPI and GitHub (the terminal apps' releases): an answer is
+reused for 10 minutes, a failure for 1 minute, then the registry is asked
+again, so a version published while the gateway runs shows up within 10
+minutes without a restart (**Check again** asks the gateway at once, still
+through that cache). `update_available` is true when that version is newer
+than the installed one (semantic versions, prereleases before their release).
+
+- **An app the gateway installed** (browser apps, the Assistant) gets **Update
+  to x.y.z**: one click starts the update as a job, the same one as Install
+  for that version. A running browser app restarts on the new version. The
+  Assistant: see [The Assistant](#the-assistant-a-desktop-app).
+- **An app started outside the gateway** shows "Latest 0.8.0 · Started outside
+  the gateway — update it where it was installed" and has no update action:
+  its process belongs to whoever started it.
+- The button's label and tooltip come from the gateway (`update_label`,
+  `update_tip` on the row), so the web console and the terminal console show
+  the same words; in the terminal console `u` updates the selected app, with
+  the tooltip as its confirmation.
+- When the installer upgrades the framework with no gateway running, it leaves
+  the apps' versions in `<data dir>/apps-upgrade.pending` and the gateway
+  brings each installed app UP to that version at its next start; an app you
+  already updated past it from the Apps page is kept as it is.
 
 ## What happens when you click Install
 
@@ -150,7 +179,9 @@ one-time sign-in link below, and `/apps/<app>/` when it announces it can be
 served there): the app's server reads the same sign-in cookies whoever
 started it. The gateway does not stop, update or show the
 log of an app it did not start; the console's **Technical details** says
-"Started outside the gateway on port 3001" instead, and `POST /apps/{id}/stop`
+"Started outside the gateway on port 3001" instead (when a newer version is
+published, the card says "Latest x.y.z · Started outside the gateway — update
+it where it was installed"), and `POST /apps/{id}/stop`
 answers 409 `started_outside_gateway`. Starting the gateway's own copy while
 an outside one runs does nothing (the app is already running).
 
@@ -370,7 +401,7 @@ open a running one (as themselves).
 ## Without internet
 
 - Apps already installed keep working offline.
-- Installing needs the npm registry (and PyPI for Node.js). When it cannot be
+- Installing needs the npm registry (and PyPI for Node.js and the Assistant). When it cannot be
   reached, the Apps page says so on each app and the Install button is off;
   a job that loses the network fails with "The npm registry
   (registry.npmjs.org) is not reachable…". The gateway does not ship app
@@ -453,6 +484,17 @@ Python environment as the gateway; a gateway-only install may not.
   token is ever on its command line or in its environment. An Assistant that
   is already running cannot receive a code: if it is not signed in, quit it
   and open it again from here.
+- **Update to x.y.z** (when PyPI has a newer `abstractassistant`) runs the
+  install job with `abstractassistant==<latest>` and the same pins (the
+  Assistant itself is never pinned to its old version). An Assistant this
+  gateway opened is quit and opened again on the new version, signed in as
+  the admin who clicked Update ("a running app restarts on it"). An Assistant
+  the gateway did not open (started from its command or a script such as
+  `scripts/start-local.sh`, or the other one of the two above) is left alone:
+  the tooltip, the job's result and the card say "Quit it and open it again
+  to run 0.14.0" until that process ends. When PyPI cannot be reached,
+  **Technical details** say "PyPI is not reachable: …" and there is no
+  Update. The gateway remembers which Assistant it opened only while it runs.
 - **From another computer** the card says "The Assistant runs on the gateway's
   computer: open it there." with no button: it is a desktop app for that
   computer's screen.
@@ -465,10 +507,10 @@ All routes are under `/api/gateway/apps` and need a signed-in principal, except 
 
 | Method and path | Who | What |
 |---|---|---|
-| `GET /apps?latest=true` | any user | Node.js status, one row per app (`kind` `web` with `interfaces[]`, see "Terminal versions", and `install_parts`; then the Assistant, `kind` `desktop` with `desktop {location, found_by, launch_command, install_command, launch_available, launch_blocked, launch_blocked_reason}`) and `console_tui` (the gateway console's terminal app). `gateway_url` is where the app servers reach the gateway (on its machine); `browser_gateway_url` is the address the caller uses (e.g. `https://<host>.ts.net` behind `tailscale serve`), the one to show in any command or link. `latest=false` skips the npm registry and GitHub release lookups (cached 10 minutes). |
+| `GET /apps?latest=true` | any user | Node.js status, one row per app (`kind` `web` with `interfaces[]`, see "Terminal versions", and `install_parts`; then the Assistant, `kind` `desktop` with `desktop {location, found_by, launch_command, install_command, launch_available, launch_blocked, launch_blocked_reason, other_running, restart_note, started_by_gateway, latest_error}`); every row has `latest_version`, `update_available`, `update_label` and `update_tip` (see [Updates](#updates)) and `console_tui` (the gateway console's terminal app). `gateway_url` is where the app servers reach the gateway (on its machine); `browser_gateway_url` is the address the caller uses (e.g. `https://<host>.ts.net` behind `tailscale serve`), the one to show in any command or link. `latest=false` skips the npm registry, PyPI and GitHub release lookups (cached 10 minutes). |
 | `POST /apps/runtime/install` | admin | Install Node.js (a job), or `job: null` when one is already usable. |
 | `POST /apps/{id}/install` `{"version"?, "launch"?, "with_terminal"?}` | admin | ONE job: Node.js if needed, download, check, dependencies, then the terminal app when the row's `install_parts` has `"tui"` (`with_terminal: false` skips it); the job's `parts` are its child rows. Starts nothing unless `launch: true`. For `assistant`: installs `abstractassistant` into the gateway's Python (every `abstract*` package is pinned to its current version in the same command). |
-| `POST /apps/{id}/update` `{"version"?}` | admin | A job: install the latest (or given) version; a running app is restarted on it. |
+| `POST /apps/{id}/update` `{"version"?}` | admin | A job: install the latest (or given) version; a running app is restarted on it. For `assistant`: `abstractassistant==<version>` from PyPI with the gateway's pins; the Assistant this gateway opened reopens signed in as the caller, any other running Assistant is left alone ("Quit it and open it again to run x.y.z"). A row started outside the gateway has no `update` action. |
 | `POST /apps/{id}/launch` | admin | Start the app (waits until it answers) and mark it enabled. For `assistant`: open it on the gateway's computer, signed in as the caller, `{ok, app, already_running, signed_in_by_gateway, message}`; from another computer 409 `not_on_gateway_machine`, and nothing starts. |
 | `POST /apps/desktop-handover` `{"code"}` | no sign-in; this computer only | The Assistant trades its one-time code for a remembered sign-in: `{base_url, session_id, csrf_token, user_id, expires_at}`. Answered only for a direct caller on this computer (no proxy headers, no app-server session header): 403 otherwise; 410 for a used or expired code. |
 | `POST /apps/{id}/stop` | admin | Stop the app and mark it disabled. 409 `started_outside_gateway` for an app the gateway did not start. |
