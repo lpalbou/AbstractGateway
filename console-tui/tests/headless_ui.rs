@@ -8181,8 +8181,12 @@ fn users_w_opens_the_parked_workspaces_page() {
         s.contains("Workspaces are managed from Accounts in the web console;"),
         "the Workspaces page:\n{s}"
     );
+    // Round 12: the one read is the policy (the command sandbox state line).
     let sent = h.drain_cmds();
-    assert!(sent.is_empty(), "the parked page sent {sent:?}");
+    assert!(
+        sent.iter().all(|c| matches!(c, abstractgateway_console::worker::Cmd::LoadWorkspacePolicy)),
+        "the parked page sent {sent:?}"
+    );
 }
 
 #[test]

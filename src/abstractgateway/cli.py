@@ -784,6 +784,15 @@ def main(argv: list[str] | None = None) -> None:
         "0 turns the watchdog off. Default: 30. Not active with --reload.",
     )
     serve.add_argument(
+        "--unsandboxed-commands",
+        action="store_true",
+        dest="unsandboxed_commands",
+        help="Allow commands (execute_command, the shell, local helpers) to run WITHOUT an operating-system sandbox "
+        "on a host that has none (no macOS sandbox-exec, no Linux bubblewrap/Landlock). Off by default: there, "
+        "commands are refused. Where a sandbox exists, every command is confined to its run's workspaces whatever "
+        "this flag says. Audited at boot and shown on the console (Security). There is no environment variable.",
+    )
+    serve.add_argument(
         "--no-runner",
         action="store_true",
         help="Serve the HTTP API without starting the runner (use `abstractgateway runner` in another process).",
@@ -810,6 +819,12 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     runner = sub.add_parser("runner", help="Run the AbstractGateway runner worker (no HTTP)")
+    runner.add_argument(
+        "--unsandboxed-commands",
+        action="store_true",
+        dest="unsandboxed_commands",
+        help="Same as `serve --unsandboxed-commands`, for the split runner process (it executes the tools).",
+    )
 
     cfg_cmd = sub.add_parser("config", help="Run the AbstractGateway configuration helper")
     cfg_cmd.add_argument("config_args", nargs=argparse.REMAINDER, help="Arguments forwarded to abstractgateway-config")
@@ -1015,6 +1030,17 @@ def main(argv: list[str] | None = None) -> None:
         # stderr, idempotent, and never fatal: a Gateway must still start.
         # ------------------------------------------------------------------
         _migrate_legacy_core_config_store()
+
+        # Round 12 (R12.1): `--unsandboxed-commands` is a flag of THIS process only (never an
+        # environment variable); the boot applies it with the scrubbed environment and audits it.
+        from .command_sandbox import set_unsandboxed_commands
+
+        set_unsandboxed_commands(bool(getattr(args, "unsandboxed_commands", False)), source="serve")
+        if getattr(args, "unsandboxed_commands", False):
+            if getattr(args, "reload", False):
+                _stderr("[WARN] --unsandboxed-commands is ignored with --reload: the app runs in uvicorn's reloader child, where commands stay sandboxed or refused")
+            else:
+                _stderr("[WARN] --unsandboxed-commands: on a host with no command sandbox, commands run WITHOUT one (audited; shown on the console)")
 
         # ------------------------------------------------------------------
         # First run: an unconfigured `serve` binds loopback and
@@ -1254,8 +1280,10 @@ def main(argv: list[str] | None = None) -> None:
         prev_live_role = process_role()
         set_process_role(ROLE_RUNNER)
 
+        from .command_sandbox import set_unsandboxed_commands
         from .service import start_gateway_runner, stop_gateway_runner
 
+        set_unsandboxed_commands(bool(getattr(args, "unsandboxed_commands", False)), source="runner")
         stop = threading.Event()
 
         def _handle(_signum, _frame) -> None:  # pragma: no cover

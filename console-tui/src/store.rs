@@ -2884,6 +2884,8 @@ pub struct Store {
     pub runtime_config: Signal<Loadable<RuntimeConfigData>>,
     /// `GET /about` of the connected gateway (About modal).
     pub about: Signal<Loadable<Value>>,
+    /// `GET /workspace/policy` (Workspaces page: the command sandbox state line).
+    pub workspace_policy: Signal<Loadable<Value>>,
     /// Network exposure + reachable addresses (Connection screen).
     pub network: Signal<Loadable<NetworkData>>,
     /// Operator controls: host runner/tray/update, paused-banner poll,
@@ -3711,6 +3713,7 @@ impl Store {
             apps: apps::AppsStore::create(cx),
             runtime_config: cx.signal(Loadable::default()),
             about: cx.signal(Loadable::default()),
+            workspace_policy: cx.signal(Loadable::default()),
             network: cx.signal(Loadable::default()),
             op: operator::OperatorStore::create(cx),
             json: json::JsonStore::create(cx),
@@ -3800,6 +3803,7 @@ impl Store {
             apps,
             runtime_config,
             about,
+            workspace_policy,
             network,
             op,
             json,
@@ -3862,6 +3866,7 @@ impl Store {
         apps.reset();
         runtime_config.set(Loadable::NotAsked);
         about.set(Loadable::NotAsked);
+        workspace_policy.set(Loadable::NotAsked);
         network.set(Loadable::NotAsked);
         op.reset();
         json.reset();

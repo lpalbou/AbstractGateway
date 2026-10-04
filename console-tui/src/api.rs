@@ -479,6 +479,13 @@ impl GatewayClient {
         self.get("/about", false)
     }
 
+    /// The gateway workspace policy with the host's command sandbox state
+    /// (`GET /workspace/policy` → `{policy, command_sandbox: {state, line,
+    /// sentence, …}}`, round 12) — the Workspaces page's state line.
+    pub fn workspace_policy(&self) -> ApiResult<Value> {
+        self.get("/workspace/policy", false)
+    }
+
     pub fn me(&self) -> ApiResult<Value> {
         self.get("/me", false)
     }

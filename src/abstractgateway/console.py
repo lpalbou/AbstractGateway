@@ -1826,6 +1826,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .accounts-head { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 	    .accounts-head:not(:has(button:not(.hidden))) { display: none; }
 	    .accounts-head__actions { display: flex; gap: 8px 12px; flex-wrap: wrap; align-items: center; justify-content: flex-end; }
+	    .accounts-command-sandbox { margin: 6px 0 0; font-size: var(--font-size-sm); color: var(--muted); }
+	    .accounts-command-sandbox[data-state="refused"], .accounts-command-sandbox[data-state="unsandboxed"], .accounts-command-sandbox[data-state="partial"], .accounts-command-sandbox[data-state="error"] { color: var(--warning, var(--danger)); }
 	    .accounts-head__archived { display: inline-flex; align-items: center; margin-right: 4px; }
 	    .accounts-head__archived[hidden] { display: none; }
 	    .accounts-head__archived .af-switch__reason { display: none; }
@@ -2625,6 +2627,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                  <button id="accounts-create-entity" class="secondary" type="button" title="Summon a new entity from a spark template (the name is permanent)">Create entity</button>
 	                </div>
 	              </div>
+	              <!-- Round 12 (R12.1): the host's command sandbox, a STATE line (never a control) with
+	                   the kit tooltip: "Commands sandboxed: macOS sandbox-exec" / "Commands refused: no
+	                   sandbox on this host" / "Unsandboxed commands allowed (flag)" (GET /workspace/policy
+	                   → command_sandbox; the TUI Workspaces page shows the same line). -->
+	              <p id="accounts-command-sandbox" class="accounts-command-sandbox" tabindex="0" data-af-tip="" hidden></p>
 	              <div id="issued-token" class="issued hidden"></div>
 	              <div id="users-message" class="message" role="status" aria-live="polite"></div>
 	              <div class="users-table-wrap">
@@ -12242,9 +12249,28 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       slot.hidden = !admin;
       accountsUi.archivedSwitch.classList.toggle("hidden", !admin);
     }
+    // Round 12 (R12.1): the host's command sandbox state line under the Accounts head (everyone
+    // signed in): the gateway's line verbatim, its sentence as the kit tooltip; never a control.
+    async function loadCommandSandboxState() {
+      const el = $("accounts-command-sandbox");
+      try {
+        const out = await api("/api/gateway/workspace/policy");
+        const cs = out && out.command_sandbox;
+        if (!cs || typeof cs.line !== "string") throw new Error("GET /workspace/policy answered without command_sandbox (round 12 seam).");
+        el.textContent = cs.line;
+        el.setAttribute("data-af-tip", cs.sentence || cs.line);
+        el.dataset.state = String(cs.state || "");
+      } catch (e) {
+        el.textContent = `Commands: ${e && e.message ? e.message : String(e)}`;
+        el.setAttribute("data-af-tip", "The command sandbox state could not be read.");
+        el.dataset.state = "error";
+      }
+      el.hidden = false;
+    }
     async function loadAccounts() {
       const admin = accountsAdmin();
       renderAccountsArchivedSwitch();
+      loadCommandSandboxState();
       const path = admin ? `/api/gateway/admin/accounts${accountsUi.showArchived ? "?include_archived=true" : ""}` : "/api/gateway/me/accounts";
       const out = await api(path);
       if (!out || !Array.isArray(out.accounts)) throw new Error(`GET ${path.replace("/api/gateway", "")} answered without an accounts list (accounts-api seam, DESIGN-v3 §2.2).`);

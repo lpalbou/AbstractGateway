@@ -15317,8 +15317,18 @@ async def discovery_tools() -> Dict[str, Any]:
             items.append({**spec, "enabled": True, "approval_default": "ask"})
     except Exception as e:  # noqa: BLE001 - a broken registry must not hide the other tools
         catalog_warnings.append(f"MCP tools unavailable: {type(e).__name__}: {e}")
+    # Round 12 (R12.1): process-spawning tools carry `sandboxed` (true|false) + `sandbox` (the state
+    # sentence, e.g. "Sandboxed to this run's workspaces") for the tool cards; the host state rides along.
+    from ..command_sandbox import state as command_sandbox_state
+    from ..command_sandbox import tool_sandbox_fields
+
+    for row in items:
+        fields = tool_sandbox_fields(str(row.get("name") or ""))
+        if fields is not None:
+            row.update(fields)
     tool_mode = str(os.getenv("ABSTRACTGATEWAY_TOOL_MODE") or "approval").strip().lower() or "approval"
     out: Dict[str, Any] = {
+        "command_sandbox": command_sandbox_state(),
         "items": items,
         "tool_mode": tool_mode,
         # Pointers to the other discovery surfaces (the audit's map): entity
@@ -29338,7 +29348,10 @@ async def workspace_policy(request: Request) -> Dict[str, Any]:
     from ..workspace_policy import gateway_policy
 
     policy = await _off_the_event_loop(gateway_policy, gateway_data_dir_from_env())
-    return {"ok": True, "policy": _redact_builtin_for(principal, policy)}
+    from ..command_sandbox import state as command_sandbox_state
+
+    # Round 12 (R12.1): the host's command sandbox state (a state line on the console and the TUI).
+    return {"ok": True, "policy": _redact_builtin_for(principal, policy), "command_sandbox": command_sandbox_state()}
 
 
 def _redact_builtin_for(principal: Any, payload: Dict[str, Any]) -> Dict[str, Any]:

@@ -1147,6 +1147,15 @@ def _eager_rehydrate_principal_runners() -> Dict[str, Any]:
 
 def start_gateway_runner() -> None:
     global _rehydrate_thread
+    # Round 12 (R12.1): the command sandbox's HOST policy — the scrubbed environment every command
+    # starts from and `--unsandboxed-commands` — set once for this process (serve's boot thread or
+    # the split runner) BEFORE any runner can execute a tool, and audited. Never skipped: without it
+    # a command would start from the gateway's own environment.
+    from .command_sandbox import configure_at_boot
+
+    rec = configure_at_boot()
+    if rec.get("first"):
+        print(f"[INFO] commands: {rec['line']}", file=sys.stderr, flush=True)
     # Effective-spec crash-window reconcile (structural-edit build c4859):
     # the blueprint overlay + derived effective file are two atomic writes;
     # a crash between them (or a re-vendor under a standing overlay) leaves

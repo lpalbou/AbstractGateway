@@ -1,4 +1,7 @@
-//! Round 10 (Y1): the Workspaces screen is PARKED. The gateway moved
+//! Round 10 (Y1): the Workspaces screen is PARKED. Round 12 (R12.1): it
+//! also shows the host's command sandbox state line, its ONE read being
+//! `GET /workspace/policy` (`Cmd::LoadWorkspacePolicy`); still no write,
+//! no verb, none of the removed routes. The gateway moved
 //! workspaces into Accounts in round 9 and removed the routes the old
 //! screen called (`/admin/user-workspace-policy`, `/workspace/policy/self`,
 //! the runtime-config `workspace_*` keys). The screen shows exactly one
@@ -12,7 +15,9 @@
 
 mod r8w4;
 
+use abstractgateway_console::store::Loadable;
 use abstractgateway_console::ui::{self, workspaces};
+use abstractgateway_console::worker::Cmd;
 use r8w4::{harness, live, live_env, Mount, SIZES};
 
 const SENTENCE: &str = "Workspaces are managed from Accounts in the web console; the terminal console follows in the next update.";
@@ -74,11 +79,12 @@ fn w_shows_one_sentence_and_sends_nothing() {
             ] {
                 assert!(!s.contains(gone), "{gone:?} still shown:\n{s}");
             }
-            // Stay on the page a while (effects, ticks): still nothing.
+            // Stay on the page a while (effects, ticks): only the one
+            // policy read (the command sandbox state line), nothing else.
             h.turns(10);
             let sent = h.sent();
             assert!(
-                sent.is_empty(),
+                sent.iter().all(|c| matches!(c, Cmd::LoadWorkspacePolicy)),
                 "admin={admin}: the parked page sent {sent:?}"
             );
             h.assert_fits();
@@ -86,7 +92,29 @@ fn w_shows_one_sentence_and_sends_nothing() {
     }
 }
 
-/// The page alone: Enter, r, x, arrows — no verb, no command, no overlay.
+/// Round 12: the command sandbox state line is the gateway's, verbatim,
+/// with its sentence (the web tooltip) below it.
+#[test]
+fn the_command_sandbox_state_line_shows() {
+    for (line, sentence) in [
+        ("Commands sandboxed: macOS sandbox-exec", "Every command a run starts is confined by the operating system to that run's workspaces."),
+        ("Commands refused: no sandbox on this host", "Commands are refused because this host has no command sandbox."),
+        ("Unsandboxed commands allowed (flag)", "This host has no command sandbox and the gateway was started with --unsandboxed-commands."),
+    ] {
+        let mut h = harness((100, 30), Mount::Page(page_view));
+        h.admin();
+        h.store.workspace_policy.set(Loadable::Ready(serde_json::json!({
+            "policy": {}, "command_sandbox": {"state": "x", "line": line, "sentence": sentence}
+        })));
+        h.turns(3);
+        let s = flat(&h.text());
+        assert!(s.contains(line), "{line:?} missing: {s}");
+        assert!(s.contains(sentence), "{sentence:?} missing: {s}");
+        assert!(s.contains(SENTENCE), "{s}");
+    }
+}
+
+/// The page alone: Enter, r, x, arrows — no verb, no write, no overlay.
 #[test]
 fn no_key_on_the_page_does_anything() {
     let mut h = harness((80, 24), Mount::Page(page_view));
@@ -101,7 +129,7 @@ fn no_key_on_the_page_does_anything() {
     assert_eq!(before, after, "the page changed on a key");
     assert!(flat(&after).contains(SENTENCE), "{after}");
     let sent = h.sent();
-    assert!(sent.is_empty(), "{sent:?}");
+    assert!(sent.iter().all(|c| matches!(c, Cmd::LoadWorkspacePolicy)), "{sent:?}");
 }
 
 /// The footer offers no verb on this page.

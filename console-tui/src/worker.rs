@@ -352,6 +352,8 @@ pub enum Cmd {
     LoadRuntimeConfig,
     /// The gateway's versions (`GET /about`) for the About modal.
     LoadAbout,
+    /// The workspace policy + command sandbox state (Workspaces page).
+    LoadWorkspacePolicy,
     SaveRuntimeConfig {
         body: Body,
         form_id: Option<u64>,
@@ -2223,6 +2225,14 @@ fn handle(
             "reading the gateway's versions",
             store.about,
             || require_client(client)?.about(),
+        ),
+
+        Cmd::LoadWorkspacePolicy => load(
+            store,
+            wake,
+            "reading the workspace policy",
+            store.workspace_policy,
+            || require_client(client)?.workspace_policy(),
         ),
 
         Cmd::LoadRuntimeConfig => load(
