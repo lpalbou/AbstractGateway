@@ -2523,7 +2523,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                     facts about this machine, and this line names them. -->
 	                <div class="entity-kv"><span class="entity-kv-key">Desktop icon</span><span class="entity-kv-val"><span id="gateway-host-tray-note" class="muted"></span></span></div>
 	                <!-- R13.1: the previous process's last event-loop watchdog incident (admins; /host/runner last_hang). -->
-	                <div id="gateway-host-hang-row" class="entity-kv hidden"><span class="entity-kv-key">Last restart</span><span class="entity-kv-val"><span id="gateway-host-hang"></span> <span id="gateway-host-hang-dump" class="muted"></span></span></div>
+	                <div id="gateway-host-hang-row" class="entity-kv hidden"><span class="entity-kv-key">Last restart</span><span class="entity-kv-val"><span id="gateway-host-hang"></span><span id="gateway-host-hang-dump" class="muted" style="display:block; overflow-wrap:anywhere"></span></span></div>
 	                <!-- Start at login: a real switch (admin), confirmed, verified by GET. -->
 	                <div id="gateway-host-login-row" class="entity-kv hidden"><span class="entity-kv-key">Start at login</span><span class="entity-kv-val"><span id="gateway-host-login-text" class="muted">…</span> <button id="gateway-host-login-toggle" type="button" role="switch" class="af-switch af-switch--sm kv-switch hidden" aria-checked="false" aria-label="Start at login"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Start at login</span></span></button></span></div>
 	              </div>
