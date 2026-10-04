@@ -283,6 +283,8 @@ pub struct DesktopInfo {
     /// R10.6: installed from a source checkout (editable): updated there,
     /// never from the gateway.
     pub source_checkout: bool,
+    /// Why a source checkout shows no version (its pyproject declares none).
+    pub version_reason: Option<String>,
 }
 
 /// The web card's one-line blurb (console_ui.py `APP_COPY`); an app the
@@ -405,6 +407,7 @@ impl AppRow {
                 restart_note: s(d, "restart_note"),
                 latest_error: s(d, "latest_error"),
                 source_checkout: b(d, "source_checkout"),
+                version_reason: s(d, "version_reason"),
             });
         let external = v.get("external").filter(|e| e.is_object());
         Some(AppRow {

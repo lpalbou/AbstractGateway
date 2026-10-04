@@ -3485,6 +3485,10 @@ class AppsManager:
                 "started_by_gateway": bool(ours),
                 # R10.6: installed from a source checkout (editable): no update here.
                 "source_checkout": source_checkout,
+                # Its folder, and why no version is shown when its pyproject
+                # declares none (never the editable install's stale metadata).
+                "checkout_path": (pres.get("checkout") or {}).get("path") if source_checkout else None,
+                "version_reason": (pres.get("checkout") or {}).get("reason") if source_checkout else None,
                 # PyPI could not be asked: why the latest version is unknown.
                 "latest_error": f"PyPI is not reachable: {registry_error}" if registry_error else None,
             },

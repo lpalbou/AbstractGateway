@@ -123,7 +123,7 @@ def _probes(tmp_path: Path, state: Dict[str, Any]) -> desk.DesktopProbes:
         plist_version=lambda path: "0.5.0" if path.startswith(BUNDLE) else None,
         entry_point=lambda s: "abstractassistant.cli:main",
         processes=lambda: list(state.get("procs") or ()),
-        dist_editable=lambda name: bool(state.get("editable")),
+        editable_checkout=lambda name: state.get("checkout") if state.get("editable") else None,
     )
 
 
@@ -480,8 +480,10 @@ def test_editable_assistant_is_a_source_checkout_row(world) -> None:
     m, net, state = world.m, world.net, world.state
     net.pypi("0.14.0")
     state["editable"] = True
+    state["checkout"] = {"path": "/src/abstractassistant", "version": "0.13.0", "reason": None}
     a = _row(m.overview(caller=CALLER), "assistant")
     assert a["version"] == "0.13.0" and a["latest_version"] == "0.14.0" and a["update_available"] is True
+    assert a["desktop"]["checkout_path"] == "/src/abstractassistant" and a["desktop"]["version_reason"] is None
     assert a["actions"] == ["open"] and a["update_label"] is None
     assert a["update_tip"] == "Installed from a source checkout — update it there"
     assert a["desktop"]["source_checkout"] is True
@@ -496,13 +498,41 @@ def test_editable_assistant_is_a_source_checkout_row(world) -> None:
     assert a["actions"] == ["open", "update"] and a["desktop"]["source_checkout"] is False
 
 
-def test_editable_flag_is_read_from_direct_url_json_only(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_source_checkout_version_is_the_checkouts_own(world) -> None:
+    """The editable dist's metadata says 0.7.0 (stale); the checkout's
+    pyproject says 0.12.3: the row shows 0.12.3 and compares with it."""
+    m, net, state = world.m, world.net, world.state
+    net.pypi("0.12.3")
+    state["version"] = "0.7.0"  # the editable dist's stale metadata
+    state["editable"] = True
+    state["checkout"] = {"path": "/src/abstractassistant", "version": "0.12.3", "reason": None}
+    a = m.desktop_row("assistant", caller=CALLER)
+    assert a["version"] == "0.12.3" and a["update_available"] is False and a["update_tip"] is None
+    # Unreadable pyproject: no version (never the stale one), with the reason.
+    state["checkout"] = {"path": "/src/abstractassistant", "version": None, "reason": "No pyproject.toml in the checkout /src/abstractassistant."}
+    m._desktop_cache.clear()
+    a = m.desktop_row("assistant", caller=CALLER)
+    assert a["version"] is None and a["update_available"] is False
+    assert a["desktop"]["version_reason"] == "No pyproject.toml in the checkout /src/abstractassistant."
+
+
+def test_editable_checkout_reads_direct_url_and_the_checkout_pyproject(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import importlib.metadata as md
 
+    good = tmp_path / "checkout"
+    good.mkdir()
+    (good / "pyproject.toml").write_text('[project]\nname = "abstractassistant"\nversion = "0.12.3"\n', encoding="utf-8")
+    dyn = tmp_path / "dynamic"
+    dyn.mkdir()
+    (dyn / "pyproject.toml").write_text('[project]\nname = "abstractassistant"\ndynamic = ["version"]\n', encoding="utf-8")
+    empty = tmp_path / "empty"
+    empty.mkdir()
     answers = {
-        "editable": json.dumps({"url": "file:///src/abstractassistant", "dir_info": {"editable": True}}),
+        "editable": json.dumps({"url": good.as_uri(), "dir_info": {"editable": True}}),
+        "dynamic": json.dumps({"url": dyn.as_uri(), "dir_info": {"editable": True}}),
+        "missing": json.dumps({"url": empty.as_uri(), "dir_info": {"editable": True}}),
         "wheel": json.dumps({"url": "https://files.example/abstractassistant-0.14.0.whl", "archive_info": {}}),
-        "dir-not-editable": json.dumps({"url": "file:///src/abstractassistant", "dir_info": {}}),
+        "dir-not-editable": json.dumps({"url": good.as_uri(), "dir_info": {}}),
         "none": None,
     }
 
@@ -514,9 +544,15 @@ def test_editable_flag_is_read_from_direct_url_json_only(monkeypatch: pytest.Mon
             assert name == "direct_url.json"
             return answers[self.key]
 
-    for key, want in (("editable", True), ("wheel", False), ("dir-not-editable", False), ("none", False)):
+    def got(key):
         monkeypatch.setattr(md, "distribution", lambda name, k=key: _Dist(k))
-        assert desk._dist_editable("abstractassistant") is want, key
+        return desk._editable_checkout("abstractassistant")
+
+    assert got("editable") == {"path": str(good), "version": "0.12.3", "reason": None}
+    assert got("dynamic") == {"path": str(dyn), "version": None, "reason": f"The checkout's pyproject.toml has no [project].version ({dyn / 'pyproject.toml'})."}
+    assert got("missing") == {"path": str(empty), "version": None, "reason": f"No pyproject.toml in the checkout {empty}."}
+    for key in ("wheel", "dir-not-editable", "none"):
+        assert got(key) is None, key
     # The real machine wires this reader (conftest replaces system_probes in
     # tests, so the wiring is read from the module itself).
-    assert "return DesktopProbes(dist_editable=_dist_editable)" in Path(desk.__file__).read_text(encoding="utf-8")
+    assert "return DesktopProbes(editable_checkout=_editable_checkout)" in Path(desk.__file__).read_text(encoding="utf-8")

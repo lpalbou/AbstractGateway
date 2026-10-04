@@ -193,6 +193,9 @@ fn a_source_checkout_assistant_shows_latest_and_u_sends_nothing() {
     a["update_available"] = json!(true);
     a["update_tip"] = json!("Installed from a source checkout — update it there");
     a["desktop"]["source_checkout"] = json!(true);
+    a["version"] = Value::Null;
+    a["desktop"]["version_reason"] =
+        json!("No pyproject.toml in the checkout /src/abstractassistant.");
     let mut h = harness((120, 40), Mount::Page(page_view));
     h.admin();
     h.store
@@ -208,6 +211,10 @@ fn a_source_checkout_assistant_shows_latest_and_u_sends_nothing() {
         "{s}"
     );
     assert!(!f.contains("u Update"), "{s}");
+    assert!(
+        f.contains("No pyproject.toml in the checkout /src/abstractassistant."),
+        "{s}"
+    );
     let _ = h.shoot("apps-assistant-source-checkout");
     h.sent();
     let s = h.key(b"u");

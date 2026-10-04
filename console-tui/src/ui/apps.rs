@@ -689,10 +689,14 @@ fn detail_view(
             );
         }
         // R10.5 / R10.6: another Assistant runs; an update left one alone.
-        for note in [&desk.other_running, &desk.restart_note]
-            .into_iter()
-            .flatten()
-            .filter(|_| row.installed)
+        for note in [
+            &desk.version_reason,
+            &desk.other_running,
+            &desk.restart_note,
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|_| row.installed)
         {
             col = wrapped(col, t, None, note, t.text_muted, false, width, 0);
         }

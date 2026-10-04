@@ -503,7 +503,11 @@ Python environment as the gateway; a gateway-only install may not.
   **Show details**) and nothing is restarted.
 - **Installed from a source checkout** (an editable install: the package's
   `direct_url.json` says `dir_info.editable: true`, as `scripts/build.sh`
-  installs it): the card shows its version and, when PyPI has a newer one,
+  installs it): the card shows the version the checkout's own
+  `pyproject.toml` declares (`[project].version`, in the folder
+  `direct_url.json` names; the editable install's metadata goes stale as the
+  checkout moves on, and when the checkout declares no readable version the
+  card shows none, with the reason) and, when PyPI has a newer one,
   "Latest x.y.z · Installed from a source checkout — update it there", with
   no Update (installing a PyPI wheel would replace the checkout);
   `POST /apps/assistant/update` refuses with the same sentence.
@@ -519,7 +523,7 @@ All routes are under `/api/gateway/apps` and need a signed-in principal, except 
 
 | Method and path | Who | What |
 |---|---|---|
-| `GET /apps?latest=true` | any user | Node.js status, one row per app (`kind` `web` with `interfaces[]`, see "Terminal versions", and `install_parts`; then the Assistant, `kind` `desktop` with `desktop {location, found_by, launch_command, install_command, launch_available, launch_blocked, launch_blocked_reason, other_running, restart_note, started_by_gateway, source_checkout, latest_error}`); every row has `latest_version`, `update_available`, `update_label` and `update_tip` (see [Updates](#updates)) and `console_tui` (the gateway console's terminal app). `gateway_url` is where the app servers reach the gateway (on its machine); `browser_gateway_url` is the address the caller uses (e.g. `https://<host>.ts.net` behind `tailscale serve`), the one to show in any command or link. `latest=false` skips the npm registry, PyPI and GitHub release lookups (cached 10 minutes). |
+| `GET /apps?latest=true` | any user | Node.js status, one row per app (`kind` `web` with `interfaces[]`, see "Terminal versions", and `install_parts`; then the Assistant, `kind` `desktop` with `desktop {location, found_by, launch_command, install_command, launch_available, launch_blocked, launch_blocked_reason, other_running, restart_note, started_by_gateway, source_checkout, checkout_path, version_reason, latest_error}`); every row has `latest_version`, `update_available`, `update_label` and `update_tip` (see [Updates](#updates)) and `console_tui` (the gateway console's terminal app). `gateway_url` is where the app servers reach the gateway (on its machine); `browser_gateway_url` is the address the caller uses (e.g. `https://<host>.ts.net` behind `tailscale serve`), the one to show in any command or link. `latest=false` skips the npm registry, PyPI and GitHub release lookups (cached 10 minutes). |
 | `POST /apps/runtime/install` | admin | Install Node.js (a job), or `job: null` when one is already usable. |
 | `POST /apps/{id}/install` `{"version"?, "launch"?, "with_terminal"?}` | admin | ONE job: Node.js if needed, download, check, dependencies, then the terminal app when the row's `install_parts` has `"tui"` (`with_terminal: false` skips it); the job's `parts` are its child rows. Starts nothing unless `launch: true`. For `assistant`: installs `abstractassistant` into the gateway's Python (every `abstract*` package is pinned to its current version in the same command). |
 | `POST /apps/{id}/update` `{"version"?}` | admin | A job: install the latest (or given) version; a running app is restarted on it. For `assistant`: `abstractassistant==<version>` from PyPI with the gateway's pins; the Assistant this gateway opened reopens signed in as the caller, any other running Assistant is left alone ("Quit it and open it again to run x.y.z"). A row started outside the gateway has no `update` action. |

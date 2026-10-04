@@ -1831,6 +1831,7 @@ CONSOLE_UI_JS = r"""
       // update it (the row has no update action); an update that left a
       // running Assistant alone says how to run the new version.
       const updateElsewhere = app.source === "external" || !!(desk && desk.source_checkout);
+      if (desk && desk.source_checkout && desk.version_reason) body += `<p class="ui-card__note" data-app-version-reason="${esc(app.id)}">${esc(desk.version_reason)}</p>`;
       if (updateElsewhere && app.update_available && app.latest_version) body += `<p class="ui-card__note" data-app-update-external="${esc(app.id)}">Latest ${esc(app.latest_version)} · ${esc(app.update_tip || "")}</p>`;
       if (desk && app.installed && desk.restart_note) body += `<p class="ui-card__note" data-app-desktop-restart="${esc(app.id)}">${esc(desk.restart_note)}</p>`;
       const tui = appTuiParts(app, techOn);

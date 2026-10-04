@@ -76,6 +76,7 @@ import subprocess
 import sys
 import sysconfig
 import threading
+import urllib.parse
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -128,23 +129,41 @@ def _dist_version(name: str) -> Optional[str]:
         return None
 
 
-def _dist_editable(name: str) -> bool:
-    """True when the installed distribution says it is an editable install
-    (PEP 610 `direct_url.json`: `dir_info.editable`), i.e. a source checkout.
-    Read from that field only; never inferred from paths."""
+def _editable_checkout(name: str) -> Optional[Dict[str, Any]]:
+    """None unless the installed distribution says it is an editable install
+    (PEP 610 `direct_url.json`: `dir_info.editable` true) — read from that
+    field only, never inferred from paths. Then {path, version, reason}: the
+    source checkout `url` (file://) names, and the version its own
+    pyproject.toml declares (`[project].version`) — the editable dist's
+    metadata goes stale as the checkout moves on. No readable static version:
+    version None with the reason."""
     try:
         from importlib.metadata import distribution
 
         raw = distribution(name).read_text("direct_url.json")
+        data = json.loads(raw) if raw else None
     except Exception:
-        return False
-    if not raw:
-        return False
+        return None
+    if not isinstance(data, dict) or ((data.get("dir_info") or {}).get("editable") is not True):
+        return None
+    url = str(data.get("url") or "")
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "file" or not parsed.path:
+        return {"path": None, "version": None, "reason": f"The editable install names no local checkout ({url or 'no url'})."}
+    path = Path(urllib.parse.unquote(parsed.path))
+    pyproject = path / "pyproject.toml"
     try:
-        data = json.loads(raw)
-    except Exception:
-        return False
-    return bool(((data or {}).get("dir_info") or {}).get("editable") is True)
+        import tomllib
+
+        project = (tomllib.loads(pyproject.read_text(encoding="utf-8")).get("project") or {})
+    except FileNotFoundError:
+        return {"path": str(path), "version": None, "reason": f"No pyproject.toml in the checkout {path}."}
+    except Exception as exc:  # noqa: BLE001
+        return {"path": str(path), "version": None, "reason": f"The checkout's pyproject.toml could not be read: {type(exc).__name__}."}
+    version = project.get("version")
+    if not isinstance(version, str) or not version.strip():
+        return {"path": str(path), "version": None, "reason": f"The checkout's pyproject.toml has no [project].version ({pyproject})."}
+    return {"path": str(path), "version": version.strip(), "reason": None}
 
 
 def _entry_point(script: str) -> Optional[str]:
@@ -210,14 +229,15 @@ class DesktopProbes:
     plist_version: Callable[[str], Optional[str]] = _read_plist_version
     entry_point: Callable[[str], Optional[str]] = _entry_point
     processes: Callable[[], List[Tuple[int, List[str]]]] = _process_argvs
-    # PEP 610 editable flag of the installed package (R10.6). The real reader
-    # is wired by system_probes(); a probe built without it is not editable.
-    dist_editable: Callable[[str], bool] = lambda name: False
+    # The installed package's source checkout when it is an editable install
+    # (R10.6, PEP 610). The real reader is wired by system_probes(); a probe
+    # built without it sees no checkout.
+    editable_checkout: Callable[[str], Optional[Dict[str, Any]]] = lambda name: None
 
 
 def system_probes() -> DesktopProbes:
     """The real machine (tests replace this module function: conftest)."""
-    return DesktopProbes(dist_editable=_dist_editable)
+    return DesktopProbes(editable_checkout=_editable_checkout)
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +310,8 @@ def detect_assistant(probes: Optional[DesktopProbes] = None, *, spec: DesktopApp
 
     {installed, found_by: [...], source: script|python|bundle|"", launch: argv|None,
      launches: [(source, argv)], bundle, script, package_origin, version,
-     editable, location, running, pid, running_argv, other_running}"""
+     editable, checkout {path, version, reason}, location, running, pid,
+     running_argv, other_running}"""
     p = probes or system_probes()
     found: List[str] = []
     launches: List[Tuple[str, List[str]]] = []
@@ -337,10 +358,14 @@ def detect_assistant(probes: Optional[DesktopProbes] = None, *, spec: DesktopApp
     source, launch = (launches[0][0], list(launches[0][1])) if launches else ("", None)
     artifact = "bundle" if source == "bundle" else ("package" if source else "")
     version: Optional[str] = None
-    editable = False
+    checkout: Optional[Dict[str, Any]] = None
     if artifact == "package":
         version = p.dist_version(spec.package)
-        editable = bool(p.dist_editable(spec.package))
+        checkout = p.editable_checkout(spec.package)
+        if checkout is not None:
+            # A source checkout: its own pyproject version, or none (never the
+            # editable dist's stale metadata).
+            version = checkout.get("version")
     elif artifact == "bundle" and bundle_path:
         version = p.plist_version(str(Path(bundle_path) / "Contents" / "Info.plist"))
     location = bundle_path if source == "bundle" else (script if source == "script" else (origin if source == "python" else None))
@@ -379,7 +404,8 @@ def detect_assistant(probes: Optional[DesktopProbes] = None, *, spec: DesktopApp
         "version": version,
         # R10.6: the package is an editable install (a source checkout): the
         # gateway never updates it (pip would put a wheel over the checkout).
-        "editable": editable,
+        "editable": checkout is not None,
+        "checkout": dict(checkout) if checkout is not None else None,
         "location": location,
         "running": pid is not None,
         "pid": pid,
