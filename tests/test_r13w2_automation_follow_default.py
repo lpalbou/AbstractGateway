@@ -132,6 +132,29 @@ def test_an_echoed_old_snapshot_is_ignored(live: TestClient, tmp_path: Path) -> 
     assert sorted(run_vars["workspace_allowed_paths"]) == sorted([d["pictures"], d["documents"]])
 
 
+def test_an_echoed_snapshot_naming_a_now_refused_workspace_is_ignored_not_refused(live: TestClient, tmp_path: Path) -> None:
+    """The echo is the gateway's own old data: with configured:false it is dropped before any
+    check, so a workspace the admin has refused since never blocks an unrelated edit."""
+    d = _dirs(tmp_path)
+    _set_default(live, [{"path": d["pictures"], "mode": "rw"}, {"path": d["documents"], "mode": "rw"}])
+    aid = _create(live, "echo-refused", {"prompt": "x"})
+    body = _definition(live, aid)
+    target = body["definition"]["target"]
+    # The admin refuses documents afterwards (and the account default drops it).
+    r = live.put("/api/gateway/workspace/policy", headers=HEADERS, json={"posture": "any_except_denied", "default_mode": "rw", "folders": [{"path": d["documents"], "mode": "deny"}]})
+    assert r.status_code == 200, r.text
+    _set_default(live, [{"path": d["pictures"], "mode": "rw"}])
+    echoed = {**target["input_data"], "prompt": "renamed task", "workspace_allowed_paths": [d["pictures"], d["documents"]], "workspace_access_mode": "workspace_or_allowed"}
+    r = live.patch(f"/api/gateway/automations/{aid}", headers=HEADERS, json={
+        "command_id": "edit-refused", "expected_revision": body["summary"]["revision"],
+        "changes": {"target": {"bundle_ref": target["bundle_ref"], "flow_id": target["flow_id"], "input_data": echoed}}})
+    assert r.status_code == 200, r.text
+    wait_until(lambda: _definition(live, aid)["definition"]["revision"] == 2, timeout_s=20)
+    stored = _definition(live, aid)["definition"]["target"]["input_data"]
+    assert stored["prompt"] == "renamed task" and stored["workspace"] == {"configured": False}
+    assert "workspace_allowed_paths" not in stored
+
+
 def test_an_explicit_choice_is_kept_as_before(live: TestClient, tmp_path: Path) -> None:
     d = _dirs(tmp_path)
     _set_default(live, [{"path": d["pictures"], "mode": "rw"}])
