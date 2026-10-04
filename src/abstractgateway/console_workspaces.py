@@ -462,6 +462,7 @@ WORKSPACES_JS = r"""
         input.autocomplete = "off";
         input.value = value || "";
         input.dataset.saved = value || "";
+        input.title = value || "";
         input.placeholder = "/full/path/to/folder";
         input.setAttribute("aria-label", `${label}: folder path`);
         const st = wsEl("p", "ws-folder__state");
@@ -504,6 +505,7 @@ WORKSPACES_JS = r"""
             await commit(next);
             input.value = check.normalized;
             input.dataset.saved = check.normalized;
+            input.title = check.normalized;
             rm.setAttribute("aria-label", `Remove ${check.normalized} from ${label.toLowerCase()}`);
             say("Saved", "ok");
           } catch (e) {
