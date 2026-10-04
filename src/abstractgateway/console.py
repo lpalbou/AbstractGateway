@@ -2581,7 +2581,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            <section id="users-section" class="session-only hidden accounts-page">
 	              <div class="accounts-head">
 	                <div class="accounts-head__actions">
-	                  <button id="accounts-gw-workspace" class="secondary accounts-gw-workspace hidden" type="button">Shared workspace &amp; allowed folders</button>
+	                  <button id="accounts-gw-workspace" class="secondary accounts-gw-workspace hidden" type="button">Shared workspace &amp; allowed workspaces</button>
                   <span id="accounts-archived-slot" class="accounts-head__archived" hidden></span>
 	                  <button id="open-create-user" type="button" title="Create a gateway user and issue their token (shown once)">Create user</button>
 	                  <button id="accounts-create-entity" class="secondary" type="button" title="Summon a new entity from a spark template (the name is permanent)">Create entity</button>
@@ -3131,7 +3131,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
   <div id="account-workspace-backdrop" class="af-modal-backdrop" hidden>
     <div class="af-modal" role="dialog" aria-modal="true" aria-labelledby="account-workspace-title">
       <div class="af-modal__header">
-        <h2 id="account-workspace-title" class="af-modal__title">Workspace folders</h2>
+        <h2 id="account-workspace-title" class="af-modal__title">Workspaces</h2>
         <button id="account-workspace-close" class="af-modal__close" type="button" aria-label="Close" data-af-tip="Close">×</button>
       </div>
       <div id="account-workspace-body" class="af-modal__body account-modal-body wsm-body"></div>
@@ -3140,7 +3140,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
   <div id="gateway-workspace-backdrop" class="af-modal-backdrop" hidden>
     <div class="af-modal af-modal--wide" role="dialog" aria-modal="true" aria-labelledby="gateway-workspace-title">
       <div class="af-modal__header">
-        <h2 id="gateway-workspace-title" class="af-modal__title">Shared workspace &amp; allowed folders</h2>
+        <h2 id="gateway-workspace-title" class="af-modal__title">Shared workspace &amp; allowed workspaces</h2>
         <button id="gateway-workspace-close" class="af-modal__close" type="button" aria-label="Close" data-af-tip="Close">×</button>
       </div>
       <div id="gateway-workspace-body" class="af-modal__body wsm-body"></div>
@@ -6614,11 +6614,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            return b;
 	          };
 	          if (r.kind === "default") {
-	            policyTd.append(wsOpen("Shared workspace", "Shared workspace and allowed folders of this gateway", () => openGatewayWorkspace()));
+	            policyTd.append(wsOpen("Shared workspace", "Shared workspace and allowed workspaces of this gateway", () => openGatewayWorkspace()));
 	          } else if ((r.kind === "user" || r.kind === "entity") && enabledOwners.length === 1) {
 	            const o = enabledOwners[0];
 	            const own = Boolean(state.principal && state.principal.user_id === o.user_id && (state.principal.tenant_id || "default") === (r.tenant_id || "default"));
-	            policyTd.append(wsOpen("Folders", `Workspace folders ${o.user_id}'s agents may use`, () => openAccountWorkspace({ id: o.user_id, tenant_id: r.tenant_id || "default", kind: r.kind, role: r.kind === "entity" ? "entity" : "user", own })));
+	            policyTd.append(wsOpen("Workspaces", `Workspaces ${o.user_id}'s agents may use`, () => openAccountWorkspace({ id: o.user_id, tenant_id: r.tenant_id || "default", kind: r.kind, role: r.kind === "entity" ? "entity" : "user", own })));
 	          } else {
 	            policyTd.textContent = "None";
 	            policyTd.className = "muted";
@@ -12389,7 +12389,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           // Admins: the account's OpenAI API switch (a non-admin's row carries it unavailable, so no button).
           add("openai_api", "openai", `OpenAI API for ${a.id} (${a.openai_api ? "on" : "off"})`, () => openAccountOpenAI(a));
           add("logs", "logs", `Activity of ${a.id}`, () => openAccountLogs(a));
-          add("workspace", "folder", `Workspace folders of ${a.id}`, () => openAccountWorkspace(a));
+          add("workspace", "folder", `Workspaces of ${a.id}`, () => openAccountWorkspace(a));
           if (a.kind === "entity") {
             add("manage", "manage", `Manage ${a.id}`, () => openEntityManage(a.id));
           } else {

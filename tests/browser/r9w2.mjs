@@ -64,20 +64,20 @@ try {
   {
     const { ctx, page } = await open(browser);
     const btn = page.locator("#accounts-gw-workspace");
-    check(await btn.isVisible() && (await btn.textContent()) === "Shared workspace & allowed folders", "admin sees the gateway button");
+    check(await btn.isVisible() && (await btn.textContent()) === "Shared workspace & allowed workspaces", "admin sees the gateway button");
     const first = await page.evaluate(() => document.querySelector(".accounts-head__actions > :not([hidden]):not(.hidden)").id);
     check(first === "accounts-gw-workspace", "the button is the first control at the top of Accounts", first);
     await btn.click();
     await page.waitForSelector("#gateway-workspace-backdrop:not([hidden]) [data-ws-summary]");
     let p = await gw();
     const line = async () => page.textContent("[data-ws-summary]");
-    check((await line()) === `Only allowed folders · Shared workspace (rw) · ${F("projects")} (rw)`, "the effective line, byte-exact", await line());
+    check((await line()) === `Only allowed workspaces · Shared workspace (rw) · ${F("projects")} (rw)`, "the effective line, byte-exact", await line());
     check((await page.inputValue("#wsg-shared")) === p.shared_workspace && (await page.textContent("[data-ws-shared-mode]")) === "Read & write", "the shared workspace: the stored folder, Read & write");
     check((await page.locator("#gateway-workspace-body button:text-is('Save')").count()) === 0, "no Save button");
     // Two dimensions only: the posture segmented switch and the per-row permission; no switch at all.
     check((await page.locator("#gateway-workspace-body [role=switch]").count()) === 0, "no switch in the gateway modal (no launch-folder trust, no allow-any)");
     const postures = await page.evaluate(() => Array.from(document.querySelectorAll("[role=radiogroup] [data-ws-posture]")).map((b) => [b.querySelector(".ui-seg__title").textContent, b.getAttribute("aria-checked")]));
-    check(JSON.stringify(postures) === JSON.stringify([["Only allowed folders", "true"], ["Any folder except denied", "false"]]), "two postures, Only allowed folders on", postures);
+    check(JSON.stringify(postures) === JSON.stringify([["Only allowed workspaces", "true"], ["Any workspace except denied", "false"]]), "two postures, Only allowed folders on", postures);
     check((await page.locator("#wsg-default").count()) === 0, "no default mode under Only allowed folders");
     // Shared workspace: invalid, empty, then valid.
     const shared = page.locator("#wsg-shared");
@@ -100,7 +100,7 @@ try {
     await page.waitForFunction(() => document.querySelector("#wsg-folders li:last-child .ws-folder__state").textContent === "Saved");
     p = await gw();
     check(JSON.stringify(p.folders) === JSON.stringify([{ path: F("projects"), mode: "rw" }, { path: F("notes"), mode: "ro" }]), "one folder Read & write, one Read-only (granular)", p.folders);
-    check((await line()) === `Only allowed folders · Shared workspace (rw) · ${F("projects")} (rw) · ${F("notes")} (ro)`, "the line follows the modes", await line());
+    check((await line()) === `Only allowed workspaces · Shared workspace (rw) · ${F("projects")} (rw) · ${F("notes")} (ro)`, "the line follows the modes", await line());
     await page.click("[data-ws-add='wsg-folders']");
     await typeAndBlur(page, page.locator("#wsg-folders li:last-child input"), F("nope-missing"));
     await page.waitForFunction(() => /Not saved\.$/.test(document.querySelector("#wsg-folders li:last-child .ws-folder__state").textContent));
@@ -110,10 +110,10 @@ try {
     await page.click("[data-ws-posture='any_except_denied']");
     await page.waitForSelector("#wsg-default");
     check((await gw()).posture === "any_except_denied", "the posture applies at once");
-    check((await line()).startsWith("Any folder except denied (rw) · Shared workspace (rw)"), "the line under Any folder except denied", await line());
+    check((await line()).startsWith("Any workspace except denied (rw) · Shared workspace (rw)"), "the line under Any folder except denied", await line());
     await page.click("#wsg-default [data-ws-default='ro']");
     await page.waitForTimeout(500);
-    check((await gw()).default_mode === "ro" && (await line()).startsWith("Any folder except denied (ro) · "), "the default mode for everything else applies at once", (await gw()).default_mode);
+    check((await gw()).default_mode === "ro" && (await line()).startsWith("Any workspace except denied (ro) · "), "the default mode for everything else applies at once", (await gw()).default_mode);
     await page.click("[data-ws-add='wsg-folders']");
     await typeAndBlur(page, page.locator("#wsg-folders li:last-child input"), F("secrets"));
     await page.waitForFunction(() => document.querySelector("#wsg-folders li:last-child .ws-folder__state").textContent === "Saved");
@@ -137,7 +137,7 @@ try {
     check(JSON.stringify(rowsWithFolder) === JSON.stringify(["admin", "alice", "bob", "castor"]), "the folder icon on every live row (users, entity, admin)", rowsWithFolder);
     await page.click("tr[data-user='alice'] button[data-action='workspace']");
     await page.waitForSelector("#account-workspace-body [data-workspace='effective']");
-    check((await page.textContent("#account-workspace-title")) === "Workspace folders — alice", "the modal names the account");
+    check((await page.textContent("#account-workspace-title")) === "Workspaces — alice", "the modal names the account");
     const before = await acct("default:alice");
     check((await page.textContent("[data-workspace='effective']")) === `Agents may use: ${before.effective.summary}`, "the effective set in one line, from the gateway", [await page.textContent("[data-workspace='effective']"), before.effective.summary]);
     check((await page.textContent("[data-workspace='shared-always']")) === "Always on" && (await page.textContent("#account-workspace-body")).includes(F("shared")), "the shared workspace is shown, always on");
@@ -202,7 +202,7 @@ try {
     const tips = await page.evaluate(() => Object.fromEntries(Array.from(document.querySelectorAll("tr[data-user='alice'] .accounts-actions__buttons > button, tr[data-user='castor'] .accounts-actions__buttons > button")).map((b) => [`${b.closest("tr").dataset.user}:${b.dataset.action}`, { tip: b.dataset.afTip, title: b.getAttribute("title") }])));
     const want = {
       "alice:email": "Email address and mailbox of alice", "alice:openai_api": "OpenAI API access for alice", "alice:logs": "Activity log of alice",
-      "alice:workspace": "Workspace folders alice's agents may use", "alice:rotate": "Rotate alice's sign-in token", "alice:archive": "Archive alice (kept, hidden)",
+      "alice:workspace": "Workspaces alice's agents may use", "alice:rotate": "Rotate alice's sign-in token", "alice:archive": "Archive alice (kept, hidden)",
       "castor:manage": "Manage castor (mind, voice, prompt…)",
     };
     for (const [k, v] of Object.entries(want)) check(tips[k] && tips[k].tip === v && tips[k].title === null, `tooltip ${k}`, tips[k]);
@@ -222,10 +222,10 @@ try {
     await page.keyboard.press("Tab");
     await page.waitForTimeout(250);
     const kb = await page.evaluate(() => { const t = document.querySelector(".af-tooltip"); return t && !t.hidden ? t.textContent : null; });
-    check(kb === "Workspace folders alice's agents may use", "keyboard focus shows the tooltip", kb);
+    check(kb === "Workspaces alice's agents may use", "keyboard focus shows the tooltip", kb);
     await page.keyboard.press("Tab");
     await page.waitForTimeout(50);
-    const moved = await page.evaluate(() => document.querySelector(".af-tooltip").hidden || document.querySelector(".af-tooltip").textContent !== "Workspace folders alice's agents may use");
+    const moved = await page.evaluate(() => document.querySelector(".af-tooltip").hidden || document.querySelector(".af-tooltip").textContent !== "Workspaces alice's agents may use");
     check(moved, "blur hides the previous tooltip");
     // One tooltip element only (the islands binding is shared with the top bar).
     check((await page.locator(".af-tooltip").count()) === 1, "one tooltip element per page", await page.locator(".af-tooltip").count());

@@ -105,7 +105,7 @@ try {
     check((await page.locator("#users-section .accounts-reasons").count()) === 0, "no reasons paragraph");
     check((await page.locator("#users-table [data-action='delete']").count()) === 0 && !(await page.textContent("#users-table")).includes("Delete"), "no Delete anywhere in the table");
     check(JSON.stringify(rows.alice.vis) === JSON.stringify(["email", "openai_api", "logs", "workspace", "rotate", "archive"]), "user: Email · OpenAI API · Logs · Workspace · Rotate · Archive", rows.alice);
-    check(JSON.stringify(rows.alice.tips) === JSON.stringify(["Email address and mailbox of alice", "OpenAI API access for alice", "Activity log of alice", "Workspace folders alice's agents may use", "Rotate alice's sign-in token", "Archive alice (kept, hidden)"]), "user: explicit tooltip sentences (R9.2)", rows.alice.tips);
+    check(JSON.stringify(rows.alice.tips) === JSON.stringify(["Email address and mailbox of alice", "OpenAI API access for alice", "Activity log of alice", "Workspaces alice's agents may use", "Rotate alice's sign-in token", "Archive alice (kept, hidden)"]), "user: explicit tooltip sentences (R9.2)", rows.alice.tips);
     check(JSON.stringify(rows.castor.vis) === JSON.stringify(["email", "logs", "workspace", "manage", "archive"]), "entity: Email · Logs · Workspace · Manage · Archive (no token)", rows.castor);
     check(rows.castor.tips[3] === "Manage castor (mind, voice, prompt…)", "entity Manage sentence", rows.castor.tips);
     check(JSON.stringify(rows.admin.vis) === JSON.stringify(["email", "openai_api", "logs", "workspace", "rotate"]), "own row: no Archive", rows.admin);
@@ -116,7 +116,7 @@ try {
     await page.hover("tr[data-user='alice'] button[data-action='workspace']");
     await page.waitForSelector(".af-tooltip:not([hidden])", { timeout: 3000 });
     const tip = await page.evaluate(() => document.querySelector(".af-tooltip:not([hidden])").textContent);
-    check(tip === "Workspace folders alice's agents may use", "hovering an action shows its kit tooltip", tip);
+    check(tip === "Workspaces alice's agents may use", "hovering an action shows its kit tooltip", tip);
     await page.mouse.move(5, 5);
     await page.waitForSelector(".af-tooltip[hidden]", { state: "attached", timeout: 3000 });
     await page.focus("tr[data-user='alice'] button[data-action='logs']");

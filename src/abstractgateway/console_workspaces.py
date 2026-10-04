@@ -123,7 +123,7 @@ WORKSPACES_CSS = r"""
 .wsm-summary { margin: 0; padding: 10px 14px; border-left: 3px solid var(--info, var(--accent)); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--info, var(--accent)) 8%, transparent); font-size: var(--font-size-base); line-height: 1.45; overflow-wrap: anywhere; }
 .wsm-loading, .wsm-note { margin: 0; color: var(--text-secondary); font-size: var(--font-size-md); }
 .wsm-error { margin: 0; color: var(--error, #c0392b); }
-/* The modal's title already says "Workspace folders — <id>": the chooser's own heading stays for
+/* The modal's title already says "Workspaces — <id>": the chooser's own heading stays for
    screen readers (it labels the section) but is not shown twice. */
 .wsm-chooser > .af-workspace > .af-settings-group__head { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .wsm-reset { display: grid; gap: 6px; padding-top: 12px; border-top: 1px solid var(--line-soft, var(--ui-border-1)); justify-items: start; }
@@ -196,7 +196,7 @@ WORKSPACES_JS = r"""
       email: (n) => `Email address and mailbox of ${n}`,
       openai_api: (n) => `OpenAI API access for ${n}`,
       logs: (n) => `Activity log of ${n}`,
-      workspace: (n) => `Workspace folders ${n}'s agents may use`,
+      workspace: (n) => `Workspaces ${n}'s agents may use`,
       manage: (n) => `Manage ${n} (mind, voice, prompt…)`,
       rotate: (n) => `Rotate ${n}'s sign-in token`,
       archive: (n) => `Archive ${n} (kept, hidden)`,
@@ -342,12 +342,12 @@ WORKSPACES_JS = r"""
         input.value = value || "";
         input.dataset.saved = value || "";
         if (modes) input.dataset.mode = (row && row.mode) || newMode;
-        input.placeholder = "/absolute/path/to/folder";
-        input.setAttribute("aria-label", `${label}: folder path`);
+        input.placeholder = "Add a workspace path";
+        input.setAttribute("aria-label", `${label}: workspace path`);
         const st = wsEl("p", "ws-folder__state");
         st.setAttribute("aria-live", "polite");
         const say = wsRowState(st);
-        const tipFor = (v) => `Remove ${v || "this folder"} from ${label}`;
+        const tipFor = (v) => `Remove ${v || "this workspace"} from ${label}`;
         const rm = accountIconButton("remove", tipFor(value), tipFor(value), true);
         rm.setAttribute("data-ws-remove", "");
         input.onkeydown = (ev) => {
@@ -407,7 +407,7 @@ WORKSPACES_JS = r"""
           // Read-only / Read & write: a two-option segmented control (radio group), one PUT per change.
           const seg = wsEl("div", "ws-mode");
           seg.setAttribute("role", "radiogroup");
-          seg.setAttribute("aria-label", `${T.accessLabel || "Permission"}: ${value || "new folder"}`);
+          seg.setAttribute("aria-label", `${T.accessLabel}: ${value || "new workspace"}`);
           const opts2 = modes;
           const btns = [];
           const paint = () => { for (const b of btns) { const on = b.dataset.mode === (input.dataset.mode || newMode); b.classList.toggle("is-on", on); b.setAttribute("aria-checked", on ? "true" : "false"); b.tabIndex = on ? 0 : -1; } };
@@ -449,7 +449,7 @@ WORKSPACES_JS = r"""
         return li;
       };
       for (const r of rows) addRow(r, false);
-      const add = wsEl("button", "secondary ws-add", "Add folder");
+      const add = wsEl("button", "secondary ws-add", "Add a workspace");
       add.type = "button";
       add.setAttribute("data-ws-add", id);
       add.onclick = () => {
@@ -471,7 +471,7 @@ WORKSPACES_JS = r"""
       input.autocomplete = "off";
       input.value = value || "";
       input.dataset.saved = value || "";
-      input.placeholder = "/absolute/path/to/folder";
+      input.placeholder = "Add a workspace path";
       input.setAttribute("aria-label", "Shared workspace");
       const st = wsEl("p", "ws-folder__state");
       st.setAttribute("aria-live", "polite");
@@ -515,7 +515,7 @@ WORKSPACES_JS = r"""
     function wsText() {
       const lib = islandsLib();
       const T = lib && lib.workspaceChooserText;
-      if (!T || !T.postureAllowedOnly || !T.postureAnyExceptDenied || !T.accessRead || !T.accessReadWrite || !T.accessDenied || !T.everythingElse || !T.foldersTitle || !T.sharedLabel) throw new Error("AbstractGateway console: the islands bundle has no workspaceChooserText (ui-kit 0.8.1+ required).");
+      if (!T || !T.postureAllowedOnly || !T.postureAnyExceptDenied || !T.accessRead || !T.accessReadWrite || !T.accessDenied || !T.everythingElse || !T.accessLabel || !T.allowedTitle || !T.deniedTitle || !T.sharedLabel) throw new Error("AbstractGateway console: the islands bundle has no workspaceChooserText (ui-kit 0.8.1+ required).");
       return T;
     }
     function wsPostures() {
@@ -548,10 +548,10 @@ WORKSPACES_JS = r"""
     }
     // The posture: a segmented switch (radio group), applies on click (one PUT).
     function wsPostureField(current, apply) {
-      const f = wsField("Folders agents may use", "");
+      const f = wsField("Workspaces agents may use", "");
       const seg = wsEl("div", "ui-seg ws-seg");
       seg.setAttribute("role", "radiogroup");
-      seg.setAttribute("aria-label", "Folders agents may use");
+      seg.setAttribute("aria-label", "Workspaces agents may use");
       const buttons = [];
       for (const o of wsPostures()) {
         const on = o.id === current;
@@ -610,10 +610,10 @@ WORKSPACES_JS = r"""
       // ONE folder list for both postures; each row Read-only / Read & write / Denied.
       const modes = [["ro", T.accessRead], ["rw", T.accessReadWrite], ["deny", T.accessDenied]];
       if (p.posture === "allowed_only") {
-        body.append(wsFoldersField("wsg-folders", T.foldersTitle, "The folders agents may use besides the shared workspace. Denied carves a folder out of an allowed one.", p.folders, (list) => put({ folders: list }), { modes, newMode: "rw" }));
+        body.append(wsFoldersField("wsg-folders", T.allowedTitle, "The workspaces agents may use besides the shared workspace. Denied carves a workspace out of an allowed one.", p.folders, (list) => put({ folders: list }), { modes, newMode: "rw" }));
       } else {
         body.append(wsDefaultModeField(p.default_mode, (m) => put({ default_mode: m })));
-        body.append(wsFoldersField("wsg-folders", T.foldersTitle, "Exceptions: denied folders, or folders with their own permission.", p.folders, (list) => put({ folders: list }), { modes, newMode: "deny" }));
+        body.append(wsFoldersField("wsg-folders", T.deniedTitle, "Denied workspaces, or workspaces with their own permission.", p.folders, (list) => put({ folders: list }), { modes, newMode: "deny" }));
       }
       for (const sec of body.querySelectorAll(".ws-field")) sec.setAttribute("data-ws-section", "");
       if (focusPosture) { const b = body.querySelector(`[data-ws-posture="${focusPosture}"]`); try { if (b) b.focus(); } catch {} }
@@ -673,7 +673,7 @@ WORKSPACES_JS = r"""
         p = wsGatewayPolicy(await api("/api/gateway/workspace/policy"));
       } catch (e) {
         body.textContent = "";
-        body.append(wsEl("p", "wsm-error", `The folder policy could not be loaded: ${emailErrorText(e)}`));
+        body.append(wsEl("p", "wsm-error", `The workspace policy could not be loaded: ${emailErrorText(e)}`));
         return;
       }
       wsRenderGateway(body, p, null);
@@ -707,7 +707,7 @@ WORKSPACES_JS = r"""
       const key = wsAccountKey(a);
       const path = `/api/gateway/workspace/policy/${encodeURIComponent(key)}`;
       const kind = a.kind === "entity" ? "entity" : (a.role === "admin" ? "admin" : "user");
-      $("account-workspace-title").textContent = `Workspace folders — ${a.id}`;
+      $("account-workspace-title").textContent = `Workspaces — ${a.id}`;
       const body = $("account-workspace-body");
       body.textContent = "";
       body.setAttribute("data-ws-account", a.id);
@@ -737,7 +737,7 @@ WORKSPACES_JS = r"""
         if (reset.querySelector(".wsm-confirm")) return;
         const box = wsEl("div", "wsm-confirm");
         box.setAttribute("role", "group");
-        box.append(wsEl("span", "", `Follow the gateway policy for ${a.id}? Their own read-only and denied folders are removed.`));
+        box.append(wsEl("span", "", `Follow the gateway policy for ${a.id}? Their own read-only and denied workspaces are removed.`));
         const yes = wsEl("button", "danger", "Follow");
         yes.type = "button";
         const no = wsEl("button", "secondary", "Cancel");
@@ -767,7 +767,7 @@ WORKSPACES_JS = r"""
       try {
         props.state = wsAccountState(await api(path));
       } catch (e) {
-        props.loadError = `${a.id}'s folders could not be loaded: ${emailErrorText(e)}`;
+        props.loadError = `${a.id}'s workspaces could not be loaded: ${emailErrorText(e)}`;
       }
       if (wsStore.accIsland) wsStore.accIsland.update(Object.assign({}, props));
     }

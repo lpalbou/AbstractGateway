@@ -45,13 +45,13 @@ def test_no_workspaces_page_and_no_old_model(html: str) -> None:
 def test_accounts_gateway_policy_button_and_modals(html: str) -> None:
     head = html[html.index('<div class="accounts-head__actions">') : html.index('id="open-create-user"')]
     # The FIRST control at the top of Accounts, admin-only (hidden until the principal is an admin).
-    assert re.search(r'<button id="accounts-gw-workspace" class="[^"]*\bhidden\b[^"]*" type="button">Shared workspace &amp; allowed folders</button>', head)
+    assert re.search(r'<button id="accounts-gw-workspace" class="[^"]*\bhidden\b[^"]*" type="button">Shared workspace &amp; allowed workspaces</button>', head)
     assert '$("accounts-gw-workspace").classList.toggle("hidden", !p.admin);' in html
     assert '$("accounts-gw-workspace").onclick = () => openGatewayWorkspace();' in html
     for mid in ("gateway-workspace", "account-workspace"):
         assert f'id="{mid}-backdrop" class="af-modal-backdrop" hidden' in html
         assert f'$("{mid}-close").onclick = close' in html
-    assert '<h2 id="gateway-workspace-title" class="af-modal__title">Shared workspace &amp; allowed folders</h2>' in html
+    assert '<h2 id="gateway-workspace-title" class="af-modal__title">Shared workspace &amp; allowed workspaces</h2>' in html
     js = _script(html)
     gw = js[js.index("function wsText()") : js.index("function wsAccountKey(")]
     # One PUT per change, the gateway policy fields of the R9 WORKSPACE API, path-checked rows.
@@ -66,7 +66,7 @@ def test_accounts_gateway_policy_button_and_modals(html: str) -> None:
         assert gone not in modals, gone
     # The two postures (R9 amendments) as a segmented switch, the matching list under it.
     # The words come from the kit chooser's table (islands workspaceChooserText), never retyped here.
-    for key in ("T.postureAllowedOnly", "T.postureAnyExceptDenied", "T.accessRead", "T.accessReadWrite", "T.accessDenied", "T.everythingElse", "T.sharedLabel"):
+    for key in ("T.postureAllowedOnly", "T.postureAnyExceptDenied", "T.accessRead", "T.accessReadWrite", "T.accessDenied", "T.everythingElse", "T.sharedLabel", "T.allowedTitle", "T.deniedTitle"):
         assert key in gw, key
     assert 'role", "radiogroup"' in gw and "lib.workspaceChooserText" in js
     assert 'if (p.posture === "allowed_only") {' in gw and "put({ posture: next })" in gw and "put({ default_mode: m })" in gw and "put({ folders: list })" in gw
@@ -85,7 +85,7 @@ def test_folder_icon_on_every_account_with_the_r92_sentences(html: str) -> None:
         "`Email address and mailbox of ${n}`",
         "`OpenAI API access for ${n}`",
         "`Activity log of ${n}`",
-        "`Workspace folders ${n}'s agents may use`",
+        "`Workspaces ${n}'s agents may use`",
         "`Manage ${n} (mind, voice, prompt…)`",
         "`Rotate ${n}'s sign-in token`",
         "`Archive ${n} (kept, hidden)`",
@@ -97,6 +97,19 @@ def test_folder_icon_on_every_account_with_the_r92_sentences(html: str) -> None:
     ws = render.index('add("workspace", "folder"')
     assert ws < render.index('if (a.kind === "entity") {\n            add("manage"')
     assert "openAccountWorkspace(a)" in render
+
+
+def test_workspaces_vocabulary_never_folders(html: str) -> None:
+    # DESIGN "Vocabulary": user-facing text says workspaces, never folders (API field names may stay).
+    from abstractgateway.console_workspaces import WORKSPACES_JS
+
+    modals = WORKSPACES_JS[WORKSPACES_JS.index("// ---- Workspace folders modals (round 9).") :]
+    strings = re.findall(r'"([^"\\]*)"|`([^`]*)`', re.sub(r"^\s*//.*$", "", modals, flags=re.M))
+    texts = [a or b for a, b in strings]
+    offenders = [t for t in texts if re.search(r"\bfolders?\b", t, flags=re.I) and " " in t and not t.startswith(("GET", "PUT", "/api", "AbstractGateway console:"))]
+    assert offenders == [], offenders
+    tips = WORKSPACES_JS[WORKSPACES_JS.index("const ACCOUNT_TIPS") : WORKSPACES_JS.index("};", WORKSPACES_JS.index("const ACCOUNT_TIPS"))]
+    assert "folder" not in tips.lower()
 
 
 def test_icon_buttons_use_the_kit_tooltip_never_a_native_title(html: str) -> None:

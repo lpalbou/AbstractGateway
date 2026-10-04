@@ -33,7 +33,7 @@ The sidebar groups the tabs in four sections, in this order:
 
 | Group | Tab | What it covers |
 |---|---|---|
-| Accounts | **Accounts** | every user and entity in one table: the **Active** switch, email, a link to each account's runtimes, activity (Logs), workspace folders, token rotation, entity management, the administrator's **Shared workspace & allowed folders** and **Email for everyone** switches ([below](#accounts)) |
+| Accounts | **Accounts** | every user and entity in one table: the **Active** switch, email, a link to each account's runtimes, activity (Logs), workspaces, token rotation, entity management, the administrator's **Shared workspace & allowed workspaces** and **Email for everyone** switches ([below](#accounts)) |
 | Work | **Workflows** | the workflow bundles on this gateway, shared by the gateway or your own (name, what each does, version, source, the apps that use it, availability to users), import, export, open in AbstractFlow, archive, the default workflow for each app and the **Streamed replies** setting ([below](#workflows)) |
 | Work | **Skills & MCP** | administrators: **Skills** — the skills shelf setting and every skill (curated and imported, **Show archived**) with View, Export and Archive, import a `.zip` or folder, Duplicate to edit a curated one; **MCP servers** — whether agents are offered tools, an **Enabled for agents** switch per server, add, edit, test and archive ([configuration.md](./configuration.md#skills-shelf)) |
 | Work | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches; `#runtimes?account=<id>` lists one account's runtimes ([below](#runtimes-of-one-account)) |
@@ -115,8 +115,8 @@ on it, in one table (`GET /api/gateway/admin/accounts`, see
 [api.md](./api.md#accounts-and-activity)). Above it, **Create user** issues a
 user and their token (shown once) and **Create entity** summons a new entity
 from a spark template (its name is permanent, [entities.md](./entities.md)).
-Administrators also have **Shared workspace & allowed folders** first in that
-row: the folders every agent may use ([below](#workspace-folders)).
+Administrators also have **Shared workspace & allowed workspaces** first in
+that row: the workspaces every agent may use ([below](#workspaces)).
 
 | Column | Shows |
 |---|---|
@@ -131,8 +131,8 @@ entity"). Only the actions that apply to a row are shown: your own row has no
 **Archive** and an entity has no token to rotate. The action buttons are
 44 px targets. Hover one, or reach it with the keyboard, and a tooltip says
 what it does for whom: "Email address and mailbox of alice", "OpenAI API
-access for alice", "Activity log of alice", "Workspace folders alice's agents
-may use", "Manage castor (mind, voice, prompt…)", "Rotate alice's sign-in
+access for alice", "Activity log of alice", "Workspaces alice's agents may
+use", "Manage castor (mind, voice, prompt…)", "Rotate alice's sign-in
 token", "Archive alice (kept, hidden)". The same tooltip explains every icon
 button in the console (Workflows, Models, Apps, the top bar…): it appears
 after a short pause, stays inside the window and Escape hides it. The table never scrolls sideways: long names and
@@ -178,8 +178,8 @@ it is off by default and your browser remembers it.
   "Test notification"). The footer says what the audit log does not
   record (page views and reads, mail received, what agents send with their
   email tools).
-- **Workspace** opens "Workspace folders — <id>", the folders that account's
-  agents may use ([below](#workspace-folders)).
+- **Workspace** opens "Workspaces — <id>", the workspaces that account's
+  agents may use ([below](#workspaces)).
 - **Rotate token** asks in a row under the account ("Rotate the token of
   alice? The current token stops working now; the new one is shown once."),
   then issues the new token and shows it once. Entities have no token to rotate.
@@ -201,53 +201,52 @@ tools for users** and **Sign-in by email** ([email.md](./email.md#administrators
 Someone who is not an administrator sees the page as **Your account** ("Your
 account and the entities you created."): the same table with their own row and
 one row per entity they created (`GET /api/gateway/me/accounts`). There is no
-Create user, no Shared workspace & allowed folders and no Email for everyone;
-their own row's **Workspace** opens their own folders; it has no **Rotate token**
+Create user, no Shared workspace & allowed workspaces and no Email for everyone;
+their own row's **Workspace** opens their own workspaces; it has no **Rotate token**
 (only an admin rotates tokens), they can archive an entity they created but not
 unarchive it, and an entity's Active switch says "Only an admin can suspend an
 entity." Archived accounts are not listed for them. See [security.md](./security.md#who-sees-which-account).
 
 
-### Workspace folders
+### Workspaces
 
-Agents read and write in folders the administrator allows; each account can
-narrow that further ([security.md](./security.md) explains how the gateway
-enforces it). Two things decide it: **what** agents may reach (the posture
-and its folders) and **how** (Read-only or Read & write, per folder).
+A workspace is a directory an agent may work in. The administrator decides
+which workspaces agents may reach; each account can narrow that further
+([security.md](./security.md) explains how the gateway enforces it). Two
+things decide it: **what** agents may reach (the posture and its workspaces)
+and **how** (Read-only or Read & write, per workspace).
 
-**Shared workspace & allowed folders** (administrators, top of Accounts)
-opens the gateway's folder policy. The line at the top states it exactly, for
-example "Only allowed folders · Shared workspace (rw) · /data/project (rw) ·
-/archive (ro)" or "Any folder except denied (rw) · Shared workspace (rw) ·
+**Shared workspace & allowed workspaces** (administrators, top of Accounts)
+opens the gateway's policy. The line at the top states it exactly, for
+example "Only allowed workspaces · Shared workspace (rw) · /data/project (rw) ·
+/archive (ro)" or "Any workspace except denied (rw) · Shared workspace (rw) ·
 /secrets (denied) · /archive (ro)".
 
 | Control | What it does |
 |---|---|
-| Posture: **Only allowed folders** (the default) | agents may use the shared workspace and the listed folders, nothing else |
-| Posture: **Any folder except denied** | agents may use any folder; **Everything else** sets its permission (**Read-only** or **Read & write**) and the listed folders are the exceptions |
-| **Shared workspace** | the one folder every conversation, automation and entity works in (each conversation also keeps a private folder); always Read & write and required |
-| **Folders** | one row per folder (**Add folder**, the remove icon on each row), each **Read-only**, **Read & write** or **Denied** (a denied folder is refused, even inside an allowed one) |
+| Posture: **Only allowed workspaces** (the default) | agents may use the shared workspace and the **Allowed workspaces** listed under it, nothing else |
+| Posture: **Any workspace except denied** | agents may use any workspace; **Everything else** sets its permission (**Read-only** or **Read & write**) and the **Denied workspaces** listed under it are the exceptions |
+| **Shared workspace** | the one workspace every conversation, automation and entity works in (each conversation also keeps a private one); always Read & write and required |
+| Rows | one row per workspace (**Add a workspace**, the remove icon on each row), each **Read-only**, **Read & write** or **Denied** (a denied workspace is refused, even inside an allowed one) |
 
-**Workspace** on an account's row opens that account's folders (users,
+**Workspace** on an account's row opens that account's workspaces (users,
 entities and your own row) in the same chooser, with the same words, as the
 Workspace settings of AbstractCode and the Assistant. An account can only
-narrow what the gateway allows: lower a folder to Read-only or deny it, and
-under Any folder except denied lower everything else to Read-only; it never
-gains a folder or a permission the gateway does not give. The line at the top,
-"Agents may use: …", is the gateway's own summary of what applies.
+narrow what the gateway allows: lower a workspace to Read-only or deny it, and
+under Any workspace except denied lower everything else to Read-only; it never
+gains a workspace or a permission the gateway does not give. The line at the
+top, "Agents may use: …", is the gateway's own summary of what applies.
 **Follow the gateway policy** removes the account's own limits, after asking.
-An entity's folders are changed by an administrator; someone who is not an
-administrator opens their own folders from their own row.
+An entity's workspaces are changed by an administrator; someone who is not an
+administrator opens their own from their own row.
 
-Every change applies at once; there is no Save button. A folder row applies
-when you leave the field (or press Enter): the gateway first checks the path
+Every change applies at once; there is no Save button. A row applies when you
+leave the field (or press Enter): the gateway first checks the path
 (`POST /api/gateway/workspace/path-check`) and says in a sentence why it
-cannot be used ("Use a full path that starts with / …", "No folder at this
-path on the gateway's computer.", "This is a file, not a folder."); such a
-row is not saved, and a refused change ends with "Not saved.". A saved row
-shows "Saved" for a moment. The API is `GET`/`PUT /api/gateway/workspace/policy`
-and `GET`/`PUT /api/gateway/workspace/policy/{account}`
-([api.md](./api.md)).
+cannot be used; such a row is not saved, and a refused change ends with "Not
+saved.". A saved row shows "Saved" for a moment. The API is
+`GET`/`PUT /api/gateway/workspace/policy` and
+`GET`/`PUT /api/gateway/workspace/policy/{account}` ([api.md](./api.md)).
 
 ### Runtimes of one account
 
@@ -256,9 +255,9 @@ The Runtime link on an Accounts row opens **Runtimes** at
 chip "Account: alice" names the filter, only that account's runtimes are
 listed, and a single runtime opens at once. The link survives a reload; the
 × on the chip shows every runtime again. The **Workspace** column opens the
-folders that apply: **Shared workspace** (the gateway policy) for the default
-runtime, **Folders** (the owner's Workspace folders) for a user's or an
-entity's runtime.
+workspaces that apply: **Shared workspace** (the gateway policy) for the
+default runtime, **Workspaces** (the owner's) for a user's or an entity's
+runtime.
 
 ### Workflows
 
