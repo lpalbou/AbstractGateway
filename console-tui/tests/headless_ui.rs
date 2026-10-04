@@ -234,6 +234,13 @@ impl Harness {
         self.ui.screen.set(n);
         self.turns(2);
     }
+    /// Providers, on its "Available Providers" section (the third; the
+    /// page opens on Local providers like the web's).
+    fn goto_available_providers(&mut self) {
+        self.goto_screen(ui::SCREEN_PROVIDERS);
+        ui::providers::set_section(&self.store, 2);
+        self.turns(2);
+    }
 }
 
 fn admin_identity() -> Identity {
@@ -1268,7 +1275,7 @@ fn applied_recommended_summary_counts_unavailable_rows() {
 fn profiles_table_renders_without_secrets() {
     let mut h = harness();
     h.connect_as_admin();
-    h.goto_screen(1);
+    h.goto_available_providers();
     h.store.profiles.set(Loadable::Ready(profiles_fixture()));
     h.store.providers.set(Loadable::Ready(providers_fixture()));
     let s = h.turns(2);
@@ -1276,12 +1283,13 @@ fn profiles_table_renders_without_secrets() {
     // their virtual endpoint:<id>; synthetic rows their bare id.
     assert!(s.contains("endpoint:acme"), "managed provider name:\n{s}");
     assert!(s.contains("openai"), "synthetic provider name:\n{s}");
+    // The web table's Status cell: state · scope · key fingerprint (8).
     assert!(
-        s.contains("stored (deadbee"),
+        s.contains("key deadbeef") && !s.contains("deadbeef1234"),
         "key state shows fingerprint:\n{s}"
     );
     assert!(
-        s.contains("env"),
+        s.contains("environment"),
         "synthetic origin says where it comes from:\n{s}"
     );
     // The second table is GONE; discovery-only names live in ONE line.
@@ -1323,7 +1331,7 @@ fn profiles_table_renders_without_secrets() {
 fn models_drilldown_uses_join_law_provider_names() {
     let mut h = harness();
     h.connect_as_admin();
-    h.goto_screen(1);
+    h.goto_available_providers();
     h.store.profiles.set(Loadable::Ready(profiles_fixture()));
     h.turns(2);
     // Row 0 = acme (managed).
@@ -1358,7 +1366,7 @@ fn models_drilldown_uses_join_law_provider_names() {
 fn add_profile_form_validates_and_sends_create() {
     let mut h = harness();
     h.connect_as_admin();
-    h.goto_screen(1);
+    h.goto_available_providers();
     h.store.profiles.set(Loadable::Ready(profiles_fixture()));
     h.turns(2);
 
@@ -1443,7 +1451,7 @@ fn add_profile_form_validates_and_sends_create() {
 fn edit_profile_never_echoes_stored_key_and_closes_on_success() {
     let mut h = harness();
     h.connect_as_admin();
-    h.goto_screen(1);
+    h.goto_available_providers();
     h.store.profiles.set(Loadable::Ready(profiles_fixture()));
     h.turns(2);
 
@@ -1540,7 +1548,7 @@ fn edit_profile_never_echoes_stored_key_and_closes_on_success() {
 fn synthetic_row_override_opens_prefilled_create() {
     let mut h = harness();
     h.connect_as_admin();
-    h.goto_screen(1);
+    h.goto_available_providers();
     h.store.profiles.set(Loadable::Ready(profiles_fixture()));
     h.turns(2);
     // Move selection to row 1 (openai, synthetic).
@@ -1583,7 +1591,7 @@ fn synthetic_row_override_opens_prefilled_create() {
 fn override_save_posts_create_with_prefilled_identity() {
     let mut h = harness();
     h.connect_as_admin();
-    h.goto_screen(1);
+    h.goto_available_providers();
     h.store.profiles.set(Loadable::Ready(profiles_fixture()));
     h.turns(2);
     h.key(b"\x1b[B");
@@ -1618,7 +1626,7 @@ fn override_save_posts_create_with_prefilled_identity() {
 fn escape_closes_form_modal() {
     let mut h = harness();
     h.connect_as_admin();
-    h.goto_screen(1);
+    h.goto_available_providers();
     h.store.profiles.set(Loadable::Ready(profiles_fixture()));
     h.turns(2);
     h.type_text("a");
@@ -1641,7 +1649,7 @@ fn escape_closes_form_modal() {
 fn delete_profile_needs_danger_confirm() {
     let mut h = harness();
     h.connect_as_admin();
-    h.goto_screen(1);
+    h.goto_available_providers();
     h.store.profiles.set(Loadable::Ready(profiles_fixture()));
     h.turns(2);
     h.type_text("d");
@@ -3222,7 +3230,7 @@ fn review_screen_renders_whole_at_both_sizes() {
 fn providers_t_jumps_to_inline_sandbox_prefilled() {
     let mut h = harness();
     h.connect_as_admin();
-    h.goto_screen(1);
+    h.goto_available_providers();
     h.store.profiles.set(Loadable::Ready(profiles_fixture()));
     h.store.providers.set(Loadable::Ready(providers_fixture()));
     h.turns(3);
@@ -3294,7 +3302,7 @@ fn browse_mode_number_keys_jump_screens() {
 fn reprobe_resets_cached_domains() {
     let mut h = harness();
     h.connect_as_admin();
-    h.goto_screen(1);
+    h.goto_available_providers();
     h.store.profiles.set(Loadable::Ready(profiles_fixture()));
     h.store.providers.set(Loadable::Ready(providers_fixture()));
     h.store.models.update(|m| {
@@ -3566,7 +3574,7 @@ fn token_waits_for_open_prompt() {
 fn escape_on_dirty_form_warns_then_discards() {
     let mut h = harness();
     h.connect_as_admin();
-    h.goto_screen(1);
+    h.goto_available_providers();
     h.store.profiles.set(Loadable::Ready(profiles_fixture()));
     h.turns(2);
     h.type_text("a");
@@ -3601,7 +3609,7 @@ fn escape_on_dirty_form_warns_then_discards() {
 fn dirty_guard_disarms_on_edit_after_warning() {
     let mut h = harness();
     h.connect_as_admin();
-    h.goto_screen(1);
+    h.goto_available_providers();
     h.store.profiles.set(Loadable::Ready(profiles_fixture()));
     h.turns(2);
     h.type_text("a");
@@ -3839,7 +3847,7 @@ fn footer_leads_with_the_screen_keys_at_80x24() {
     h.connect_as_admin();
     h.ui.wizard.set(false);
     for (screen, lead) in [
-        (1usize, "a add connection"),
+        (1usize, "v local/remote/available"),
         (2, "Enter/e edit route"),
         (3, "space Active"),
         (4, "Enter inspect runtime"),
@@ -4205,7 +4213,7 @@ fn wizard_steps_carry_a_goal_line() {
 fn profile_form_folds_advanced_fields_on_create() {
     let mut h = harness();
     h.connect_as_admin();
-    h.goto_screen(1);
+    h.goto_available_providers();
     h.store.profiles.set(Loadable::Ready(profiles_fixture()));
     h.turns(2);
     h.type_text("a");
@@ -4738,15 +4746,23 @@ fn double_click_opens_entity_manage_menu() {
 fn enter_activates_profile_editor() {
     let mut h = harness();
     h.connect_as_admin();
-    h.goto_screen(1);
+    h.goto_available_providers();
     h.store.profiles.set(Loadable::Ready(profiles_fixture()));
     h.store.providers.set(Loadable::Ready(providers_fixture()));
     h.turns(2);
+    // R7.2: Enter expands the row (description, endpoint, its actions);
+    // e opens the editor (the web row's Edit button).
     h.type_text("\r");
     let s = h.turns(3);
     assert!(
+        s.contains("test endpoint") && s.contains("e Edit · d Delete"),
+        "Enter expands the selected profile:\n{s}"
+    );
+    h.type_text("e");
+    let s = h.turns(3);
+    assert!(
         s.contains("Edit profile 'acme'"),
-        "Enter activates the selected profile into its editor:\n{s}"
+        "e opens the selected profile in its editor:\n{s}"
     );
 }
 
@@ -7341,7 +7357,7 @@ fn footer_hints_stay_in_lockstep_with_screens() {
     h.connect_as_admin();
     h.ui.wizard.set(false);
     for (screen, needle) in [
-        (1usize, "add connection"),
+        (1usize, "local/remote/available"),
         (2, "edit route"),
         (3, "l logs"),
         (4, "inspect runtime"),
@@ -7642,13 +7658,6 @@ impl Harness {
         })
     }
 
-    fn open_engines(&mut self) -> String {
-        self.key(b"8");
-        self.settle_until("the engines table", |s| {
-            s.contains("Ollama") && s.contains("llama.cpp")
-        })
-    }
-
     fn select_artifact(&mut self, artifact: &str) -> String {
         let idx = self
             .screens
@@ -7659,19 +7668,6 @@ impl Harness {
             })
             .unwrap_or_else(|| panic!("{artifact} is not in the catalog fixture"));
         self.screens.catalog_sel.set(idx);
-        self.turns(2)
-    }
-
-    fn select_engine(&mut self, id: &str) -> String {
-        let idx = self
-            .screens
-            .engines
-            .with_untracked(|e| {
-                e.ready()
-                    .and_then(|d| d.engines.iter().position(|r| r.id == id))
-            })
-            .unwrap_or_else(|| panic!("{id} is not in the engines fixture"));
-        self.screens.engine_sel.set(idx);
         self.turns(2)
     }
 }
@@ -7718,48 +7714,6 @@ fn models_tab_7_renders_the_shared_catalog_once() {
             .all(|c| !matches!(c, Cmd::PollHostState { .. })),
         "no gateway-lane reload for the shared screen"
     );
-}
-
-#[test]
-fn eight_jumps_to_engines_in_browse_and_is_refused_in_the_wizard() {
-    let mut h = harness_sized(Size::new(150, 40));
-    h.browse_connected();
-    let s = h.open_engines();
-    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_ENGINES);
-    assert!(s.contains("8 Engines"), "{s}");
-    assert!(
-        s.contains("gateway host studio"),
-        "the engines screen names the gateway host:\n{s}"
-    );
-    assert!(h.mock.called("engines_status probe=false"));
-    assert!(s.contains("open download page"), "engines footer:\n{s}");
-    // Wizard: digits are refused WITH a reason, 0 included.
-    h.ui.wizard.set(true);
-    h.ui.screen.set(1);
-    h.turns(2);
-    h.key(b"8");
-    let s = h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 1, "wizard does not jump");
-    assert!(
-        s.contains("screen jumps (1-9,0,H,T,N,S,I) work in browse mode"),
-        "{s}"
-    );
-}
-
-#[test]
-fn wizard_walks_on_to_models_and_engines_with_their_goals() {
-    let mut h = harness_sized(Size::new(150, 40));
-    h.connect_as_admin();
-    h.ui.wizard.set(true);
-    h.ui.screen.set(ui::SCREEN_CATALOG);
-    let s = h.settle_until_contains("Qwen3 8B");
-    assert!(
-        s.contains("Step 6/8") && s.contains("w downloads a model"),
-        "{s}"
-    );
-    h.ui.screen.set(ui::SCREEN_ENGINES);
-    let s = h.settle_until_contains("llama.cpp");
-    assert!(s.contains("i installs a local engine"), "{s}");
 }
 
 #[test]
@@ -7861,101 +7815,6 @@ fn delete_refusal_shows_the_gateways_blockers() {
     assert!(h
         .mock
         .called("delete mlx mlx-community/gpt-oss-20b-4bit force=true"));
-}
-
-#[test]
-fn install_confirm_shows_argv_and_the_gateway_host() {
-    let mut h = harness_sized(Size::new(150, 40));
-    h.browse_connected();
-    h.open_engines();
-    h.select_engine("ollama");
-    h.key(b"i");
-    let s = h.turns(2);
-    assert!(
-        s.contains("Install Ollama on gateway host studio (10.0.0.5:8080)?"),
-        "{s}"
-    );
-    assert!(
-        s.contains("command   brew install ollama"),
-        "the exact argv:\n{s}"
-    );
-    assert!(s.contains("runs on   gateway host studio"), "{s}");
-    assert!(s.contains("Dry run"), "{s}");
-    // Default = cancel; nothing is sent.
-    h.key(b"\r");
-    h.settle_until_contains("install cancelled — nothing ran");
-    assert!(!h.mock.called("install"));
-    // Dry run asks the gateway, runs nothing.
-    h.key(b"i");
-    h.turns(2);
-    h.key(b"2");
-    h.turns(1);
-    h.key(b"\r");
-    h.settle_until_contains("dry run: install ollama would run `brew install ollama`");
-    assert!(h.mock.called("install ollama dry_run=true"));
-}
-
-#[test]
-fn a_running_install_blocks_q_and_c_cancels_it() {
-    let mut h = harness_sized(Size::new(150, 40));
-    h.browse_connected();
-    h.open_engines();
-    h.mock.polls.lock().unwrap().extend((0..400).map(|_| {
-        MockTransport::job_doc(
-            "engine_install",
-            "running",
-            json!({"engine": "ollama", "provider": null, "artifact": null,
-                   "percent": null, "message": "==> Downloading ollama"}),
-        )
-    }));
-    h.select_engine("ollama");
-    h.key(b"i");
-    h.turns(2);
-    h.key(b"1");
-    h.turns(1);
-    h.key(b"\r");
-    h.settle_until_contains("Downloading ollama");
-    assert!(h.screens.job_running());
-    // Browse-mode q refuses while the gateway job runs.
-    h.key(b"q");
-    h.settle_until_contains("models/engines job is running on the gateway");
-    h.key(b"c");
-    let s = h.settle_until_contains("⊘ install ollama cancelled");
-    assert!(s.contains("cancelled"), "{s}");
-    assert!(h.mock.called("cancel engine_install_1"));
-    assert!(!h.screens.job_running());
-}
-
-#[test]
-fn a_reconnect_forgets_the_old_gateways_models_and_reloads() {
-    use abstractcore_console::screens::Remote;
-    let mut h = harness_sized(Size::new(150, 40));
-    h.browse_connected();
-    h.open_models();
-    assert_eq!(h.mock.count("catalog"), 1);
-    // The worker's probe path: Probing (+ Store::reset_domains).
-    h.store.conn.set(ConnPhase::Probing);
-    h.turns(2);
-    assert!(
-        h.screens.catalog.with_untracked(Remote::is_not_asked)
-            && h.screens.installed.with_untracked(Remote::is_not_asked)
-            && h.screens.host.with_untracked(Remote::is_not_asked),
-        "Probing resets the shared screens' reads"
-    );
-    // No read while not connected.
-    h.turns(3);
-    assert_eq!(h.mock.count("catalog"), 1, "{:?}", h.mock.calls());
-    // Connected again, still on the Models tab: it reloads by itself.
-    h.connect_as_admin();
-    h.wait_for_call("the post-reconnect catalog read", |c| {
-        c.iter().filter(|c| c.starts_with("catalog")).count() == 2
-    });
-    h.settle_until_contains("Qwen3 8B");
-    // The UI-side reset (Connect button) clears them too.
-    h.screens.engines.set(Remote::Loading);
-    let ctx_reset = h.screens;
-    abstractgateway_console::ui::reset_screens(&ctx_reset);
-    assert!(h.screens.engines.with_untracked(Remote::is_not_asked));
 }
 
 // =======================================================================

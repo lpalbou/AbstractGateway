@@ -22,7 +22,6 @@
 //! stored secret is never echoed, never resubmitted.
 
 use abstracttui::prelude::*;
-use abstracttui::widgets::Table;
 use serde_json::{json, Value};
 
 use super::util::{ellipsize, error_panel, error_panel_hint, field, line, span, span_bold};
@@ -56,6 +55,258 @@ pub enum ProfileFormMode {
     /// prefilled from the env/core row — same id, so the managed copy
     /// shadows the synthetic row in the server's merged list.
     Override(Profile),
+    /// A preset (Remote providers) or a local provider's "Set up
+    /// connection": a CREATE prefilled with the family's id, name and
+    /// description (console.py `openEndpointModalForFamily` +
+    /// `selectProviderPreset`). The String is the dialog title.
+    Preset(Profile, String),
+}
+
+/// The engines section's code (Local providers).
+#[path = "providers_engines.rs"]
+pub mod engines;
+
+/// The page's three sections, in the web's order (console.py
+/// `tab-providers`): Local providers, Remote providers, Available Providers.
+pub const SECTIONS: [&str; 3] = ["Local providers", "Remote providers", "Available Providers"];
+
+/// Each section's note, verbatim from the web page.
+pub const SECTION_NOTES: [&str; 3] = [
+    "Engines that run models on this computer, and their server connections.",
+    "Cloud accounts and OpenAI-compatible servers. Keys stay on the gateway; only fingerprints are shown.",
+    "Configured providers available to this Gateway principal. Use their provider ids in Flow nodes and Core capability defaults.",
+];
+
+/// The JSON-lane slot holding the shown section (durable across tab
+/// switches, forgotten on reconnect like every slot).
+const SLOT_SECTION: &str = "ui.providers.section";
+
+/// The section on screen (0 Local, 1 Remote, 2 Available).
+pub fn section(store: &crate::store::Store) -> usize {
+    match store.json.get(SLOT_SECTION) {
+        Loadable::Ready(v) => v.as_u64().unwrap_or(0).min(2) as usize,
+        _ => 0,
+    }
+}
+
+pub fn set_section(store: &crate::store::Store, i: usize) {
+    store
+        .json
+        .set(SLOT_SECTION, Loadable::Ready(json!(i.min(2))));
+}
+
+/// The footer's key hints for the section on screen.
+pub fn hints(store: &crate::store::Store) -> Vec<(&'static str, &'static str)> {
+    let mut v = vec![("v", "local/remote/available")];
+    match section(store) {
+        0 => v.extend([
+            ("Enter", "details"),
+            ("i", "install"),
+            ("s", "start"),
+            ("x", "stop"),
+            ("b", "browse models"),
+            ("c", "cancel install"),
+            ("a/e", "connection"),
+            ("k", "check again"),
+        ]),
+        1 => v.extend([("Enter", "configure"), ("r", "refresh")]),
+        _ => v.extend([
+            ("Enter", "details"),
+            ("a", "add connection"),
+            ("e", "edit/override"),
+            ("d", "delete"),
+            ("m", "models"),
+            ("t", "test"),
+            ("r", "refresh"),
+        ]),
+    }
+    v
+}
+
+/// `r` / first look: the profiles + discovery (Remote / Available and the
+/// local connections) and the engines.
+pub fn refresh(ctx: &Ctx) {
+    let s = &ctx.store;
+    s.profiles.set(Loadable::Loading);
+    s.providers.set(Loadable::Loading);
+    ctx.send(Cmd::LoadProfiles);
+    ctx.send(Cmd::LoadProviders);
+    engines::refresh(ctx);
+}
+
+/// The remote families shown as presets (console.py
+/// `REMOTE_PROVIDER_FAMILIES` over `ENDPOINT_FAMILIES`):
+/// (id, label, default name, summary, description).
+pub const REMOTE_PRESETS: [(&str, &str, &str, &str, &str); 5] = [
+    (
+        "openai",
+        "OpenAI",
+        "OpenAI",
+        "OpenAI API or an OpenAI-compatible OpenAI deployment.",
+        "OpenAI account connection for GPT and embedding models.",
+    ),
+    (
+        "anthropic",
+        "Anthropic",
+        "Anthropic",
+        "Anthropic Claude API or a Claude-compatible Anthropic proxy.",
+        "Anthropic account connection for Claude models.",
+    ),
+    (
+        "openrouter",
+        "OpenRouter",
+        "OpenRouter",
+        "OpenRouter account connection for multi-provider routing.",
+        "OpenRouter connection for hosted model routing.",
+    ),
+    (
+        "portkey",
+        "Portkey",
+        "Portkey",
+        "Portkey gateway connection for governed provider routing.",
+        "Portkey connection for gateway-managed provider routing.",
+    ),
+    (
+        "openai-compatible",
+        "Custom OpenAI-compatible",
+        "Custom endpoint",
+        "Any generic /v1 endpoint such as vLLM, llama.cpp, LocalAI, or a private gateway.",
+        "Custom OpenAI-compatible endpoint connection.",
+    ),
+];
+
+/// The local families' preset words (LM Studio, Ollama): (label, name, description).
+fn local_family_words(family: &str) -> (&'static str, &'static str, &'static str) {
+    match family {
+        "lmstudio" => (
+            "LM Studio",
+            "LM Studio",
+            "LM Studio server connection for local or LAN model serving.",
+        ),
+        "ollama" => (
+            "Ollama",
+            "Ollama",
+            "Ollama server connection for local or LAN model serving.",
+        ),
+        _ => (
+            "Custom OpenAI-compatible",
+            "Custom endpoint",
+            "Custom OpenAI-compatible endpoint connection.",
+        ),
+    }
+}
+
+/// `endpointKeyText`.
+fn key_text(p: &Profile) -> String {
+    if p.api_key_set {
+        format!(
+            "key {}",
+            p.api_key_fingerprint
+                .as_deref()
+                .unwrap_or("")
+                .chars()
+                .take(8)
+                .collect::<String>()
+        )
+    } else {
+        "no key".into()
+    }
+}
+
+/// A preset's state (`renderProviderPresets`): "Not connected",
+/// "Connected · key …" or "N connections".
+pub fn preset_status(family: &str, profiles: &[Profile]) -> String {
+    let mine: Vec<&Profile> = profiles
+        .iter()
+        .filter(|p| {
+            p.family == family && !engines::LOCAL_CONNECTION_PROFILE_IDS.contains(&p.id.as_str())
+        })
+        .collect();
+    match mine.len() {
+        0 => "Not connected".into(),
+        1 => format!("Connected · {}", key_text(mine[0])),
+        n => format!("{n} connections"),
+    }
+}
+
+/// A blank profile seeded for a CREATE (presets, local connections).
+fn seed(id: &str, family: &str, name: &str, description: &str) -> Profile {
+    Profile {
+        id: id.to_string(),
+        display_name: name.to_string(),
+        description: description.to_string(),
+        family: family.to_string(),
+        base_url: String::new(),
+        default_base_url: None,
+        api_key_set: false,
+        api_key_fingerprint: None,
+        scope: String::new(),
+        enabled: true,
+        synthetic: false,
+        allowed_models: Vec::new(),
+        provider_id: None,
+        source: None,
+        discovered_model_count: None,
+    }
+}
+
+/// Open the connection form for a remote preset (`openEndpointModalForFamily`).
+pub fn open_preset(cx: Scope, ctx: &Ctx, family: &str) {
+    let Some((id, label, name, _, desc)) = REMOTE_PRESETS.iter().find(|p| p.0 == family) else {
+        return;
+    };
+    let pid = if *id == "openai-compatible" {
+        "custom-endpoint"
+    } else {
+        id
+    };
+    open_profile_form(
+        cx,
+        ctx,
+        ProfileFormMode::Preset(seed(pid, id, name, desc), format!("Configure {label}")),
+    );
+}
+
+/// A local provider's "Set up connection" / "Add connection"
+/// (`openLocalProviderConnection`).
+pub fn open_local_connection(cx: Scope, ctx: &Ctx, engine: &str) {
+    let Some((family, fixed, name, desc)) = engines::local_connection(engine) else {
+        ctx.store.notice.set(Some(format!(
+            "{engine} runs inside the gateway: it has no server connection to set up"
+        )));
+        return;
+    };
+    let (label, fname, fdesc) = local_family_words(family);
+    let p = match fixed {
+        Some(id) => seed(id, family, name, desc),
+        None => seed(family, family, fname, fdesc),
+    };
+    open_profile_form(
+        cx,
+        ctx,
+        ProfileFormMode::Preset(p, format!("Configure {label}")),
+    );
+}
+
+/// A local provider's connection rows, for `e` (Edit / Override).
+fn local_connection_profiles(store: &crate::store::Store, engine: &str) -> Vec<Profile> {
+    let Some((family, fixed, _, _)) = engines::local_connection(engine) else {
+        return Vec::new();
+    };
+    store.profiles.with_untracked(|d| {
+        d.ready()
+            .map(|d| {
+                d.profiles
+                    .iter()
+                    .filter(|p| match fixed {
+                        Some(id) => p.id == id,
+                        None => p.family == family,
+                    })
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
 }
 
 pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
@@ -69,30 +320,88 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             .profiles
             .with(|d| d.ready().map(|d| d.profiles.len()).unwrap_or(0))
     });
+    let eui = engines::EnginesUi::new(cx, ctx.screens.store.engine_sel);
+    engines::install_effects(cx, ctx, eui);
+    // First look: read the engines once per connection.
+    {
+        let ctx_load = ctx.clone();
+        cx.effect(move || {
+            let connected = store.conn.with(ConnPhase::is_connected);
+            if connected
+                && matches!(
+                    store.json.get_untracked(engines::SLOT_ENGINES),
+                    Loadable::NotAsked
+                )
+            {
+                engines::refresh(&ctx_load);
+            }
+        });
+    }
+    let preset_sel = cx.signal(0usize);
+    let avail_expanded = cx.signal(Option::<usize>::None);
 
     let ctx_add = ctx.clone();
     let ctx_edit = ctx.clone();
     let ctx_del = ctx.clone();
     let ctx_models = ctx.clone();
     let ctx_test = ctx.clone();
+    let ctx_keys = ctx.clone();
+    let ctx_enter = ctx.clone();
 
-    Element::new()
-        .style(LayoutStyle::column().gap(1))
+    let mut page = Element::new()
+        .style(LayoutStyle::column().gap(0).grow(1.0))
+        .shortcut(KeyChord::plain(Key::Char('v')), move |_| {
+            set_section(&store, (section(&store) + 1) % 3);
+        })
         .shortcut(KeyChord::plain(Key::Char('a')), move |_| {
-            // Every guard SAYS why it refused (F2: a footer-advertised
-            // key that silently does nothing reads as a dead app).
-            if store.conn.with_untracked(ConnPhase::is_connected) {
-                open_profile_form(cx, &ctx_add, ProfileFormMode::Create);
-            } else {
+            if !store.conn.with_untracked(ConnPhase::is_connected) {
                 store.notice.set(Some(
                     "not connected — probe on the Connection screen first".into(),
                 ));
+                return;
+            }
+            match section(&store) {
+                0 => match engines::selected(&store, eui) {
+                    Some(e) => {
+                        let id = e.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+                        open_local_connection(cx, &ctx_add, &id);
+                    }
+                    None => store.notice.set(Some("no engine selected".into())),
+                },
+                1 => {
+                    let i = preset_sel.get_untracked().min(REMOTE_PRESETS.len() - 1);
+                    open_preset(cx, &ctx_add, REMOTE_PRESETS[i].0);
+                }
+                _ => open_profile_form(cx, &ctx_add, ProfileFormMode::Create),
             }
         })
         .shortcut(KeyChord::plain(Key::Char('e')), move |_| {
+            if section(&store) == 0 {
+                let Some(e) = engines::selected(&store, eui) else {
+                    store.notice.set(Some("no engine selected".into()));
+                    return;
+                };
+                let id = e.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+                match local_connection_profiles(&store, &id).into_iter().next() {
+                    Some(p) if p.synthetic => {
+                        open_profile_form(cx, &ctx_edit, ProfileFormMode::Override(p))
+                    }
+                    Some(p) => open_profile_form(cx, &ctx_edit, ProfileFormMode::Edit(p)),
+                    None => store.notice.set(Some(format!(
+                        "{id} has no connection yet — a sets one up"
+                    ))),
+                }
+                return;
+            }
             edit_selected_profile(cx, &ctx_edit);
         })
         .shortcut(KeyChord::plain(Key::Char('d')), move |_| {
+            if section(&store) != 2 {
+                store.notice.set(Some(
+                    "d deletes a connection on Available Providers (v switches)".into(),
+                ));
+                return;
+            }
             if let Some(p) = selected_profile(&ctx_del) {
                 if p.synthetic {
                     store.notice.set(Some(format!(
@@ -126,59 +435,246 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     .notice
                     .set(Some("no provider selected — nothing to test".into()));
             }
-        })
-        .child(
+        });
+    // The engine verbs (Local providers) + the open install question's
+    // answers. Elsewhere they say where they live.
+    for ch in ['i', 's', 'x', 'b', 'c', 'k', 'A', 'T', 'y', 'u', 'n'] {
+        let ctx_k = ctx_keys.clone();
+        page = page.shortcut(KeyChord::plain(Key::Char(ch)), move |_| {
+            if section(&ctx_k.store) == 0 {
+                engines::key(&ctx_k, eui, ch);
+            } else if matches!(ch, 'i' | 's' | 'x' | 'b' | 'c' | 'k') {
+                ctx_k.store.notice.set(Some(
+                    "engine keys work on Local providers — v switches sections".into(),
+                ));
+            }
+        });
+    }
+    let _ = ctx_enter;
+    page.child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
+        let t = tt;
+        let cur = section(&store);
+        let mut spans = vec![span(" ", t.text_faint)];
+        for (i, name) in SECTIONS.iter().enumerate() {
+            if i > 0 {
+                spans.push(span("  │  ", t.text_faint));
+            }
+            if i == cur {
+                spans.push(span_bold(format!("▸ {name}"), t.accent));
+            } else {
+                spans.push(span(name.to_string(), t.text_muted));
+            }
+        }
+        spans.push(span("   v switches", t.text_faint));
+        line(spans)
+    }))
+    .child(dyn_view_scoped(LayoutStyle::column().grow(1.0), {
+        let ctx_body = ctx.clone();
+        // ONE keeper for the three sections: switching keeps the keyboard
+        // on the page (the section's table takes it over).
+        let keeper = super::util::FocusKeeper::new();
+        move |gcx| {
+            let cur = section(&store);
+            let t = tt;
+            let width = abstracttui::app::use_viewport(gcx).get().w - widths::BLOCK_CHROME - 2;
+            let mut note = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
+            for l in super::util::wrap_text(SECTION_NOTES[cur], width.max(20) as usize) {
+                note = note.child(line(vec![span(l, t.text_faint)]));
+            }
+            let body: View = match cur {
+                0 => engines::section(gcx, &ctx_body, eui, &t, keeper.clone()),
+                // Forms open on the PAGE scope (cx): a section region rebuilds
+                // on every read and would dispose an open form with it.
+                1 => presets_section(cx, &ctx_body, &t, preset_sel, keeper.clone()),
+                _ => available_section(gcx, &ctx_body, &t, avail_expanded, keeper.clone()),
+            };
             Block::new()
                 .border(BorderKind::Rounded)
-                .title("Available providers (a adds a connection)")
+                .title(SECTIONS[cur])
                 .fill(t.surface)
                 .layout(
                     LayoutStyle::column()
                         .gap(0)
                         .grow(1.0)
-                        .padding(Edges::all(1)),
+                        .padding(Edges::hv(1, 0)),
                 )
-                .child(dyn_view_scoped(LayoutStyle::default().grow(1.0), {
-                    let ctx_act = ctx.clone();
-                    let keeper = super::util::FocusKeeper::new();
-                    move |gcx| {
-                        let data = store.profiles.get();
-                        let ctx_act = ctx_act.clone();
-                        super::util::loadable_view_kept(
-                            &keeper,
-                            &tt,
-                            &store.conn.get(),
-                            || store.tick.get(),
-                            &data,
-                            |d: &ProfilesData| d.profiles.is_empty(),
-                            "no providers yet — press a to add a connection",
-                            |d| {
-                                unified_table(gcx, &tt, d, ui.profile_sel, &keeper, move |_| {
-                                    // Activation (Enter / Space / double-
-                                    // click) = the `e` path: Edit for
-                                    // managed rows, Override for
-                                    // synthetic ones — one body.
-                                    edit_selected_profile(cx, &ctx_act);
-                                })
-                            },
-                        )
-                    }
-                }))
-                // Selected-row action honesty — the TUI stand-in for
-                // the web's per-row Edit/Delete vs Override buttons.
-                .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
-                    selection_hint(&tt, &store.profiles.get(), ui.profile_sel.get())
-                }))
-                // Discovery demoted to facts: the default pair + what
-                // is registered but has no connection yet.
-                .child(dyn_view_scoped(
-                    LayoutStyle::default().shrink(0.0),
-                    move |_| discovery_footer(&tt, &store.providers.get(), &store.profiles.get()),
-                ))
-                .element(t)
-                .build(),
+                .child(note.build())
+                .child(body)
+                .element(&t)
+                .build()
+        }
+    }))
+    .build()
+}
+
+/// Remote providers: one row per preset with its connection state; Enter
+/// (or a) opens the connection form for that family.
+fn presets_section(
+    page_cx: Scope,
+    ctx: &Ctx,
+    t: &TokenSet,
+    sel: Signal<usize>,
+    keeper: super::util::FocusKeeper,
+) -> View {
+    let store = ctx.store;
+    let tt = *t;
+    let ctx_open = ctx.clone();
+    dyn_view_scoped(LayoutStyle::column().grow(1.0), move |gcx| {
+        let profiles: Vec<Profile> = store
+            .profiles
+            .get()
+            .ready()
+            .map(|d| d.profiles.clone())
+            .unwrap_or_default();
+        let rows: Vec<super::kit::Row> = REMOTE_PRESETS
+            .iter()
+            .map(|(id, label, _, summary, _)| {
+                super::kit::Row::new(vec![
+                    label.to_string(),
+                    summary.to_string(),
+                    preset_status(id, &profiles),
+                ])
+            })
+            .collect();
+        let rules = vec![
+            widths::ColRule::head("provider", 10),
+            widths::ColRule::head("what it is", 20),
+            widths::ColRule::head("state", 20),
+        ];
+        let ctx_a = ctx_open.clone();
+        keeper.wire(
+            super::kit::WrapTable::new(rules, rows, sel)
+                .on_activate(move |i| {
+                    let i = i.min(REMOTE_PRESETS.len() - 1);
+                    open_preset(page_cx, &ctx_a, REMOTE_PRESETS[i].0);
+                })
+                .element(gcx, &tt),
         )
+    })
+}
+
+/// Available Providers: the web table's columns (Name, Provider ID, Type,
+/// Models, Status) as wrapping rows; Enter shows a row's description,
+/// endpoint and actions.
+fn available_section(
+    cx: Scope,
+    ctx: &Ctx,
+    t: &TokenSet,
+    expanded: Signal<Option<usize>>,
+    keeper: super::util::FocusKeeper,
+) -> View {
+    let store = ctx.store;
+    let ui = ctx.ui;
+    let tt = *t;
+    let _ = cx;
+    Element::new()
+        .style(LayoutStyle::column().gap(0).grow(1.0))
+        .child(dyn_view_scoped(
+            LayoutStyle::default().grow(1.0),
+            move |gcx| {
+                let data = store.profiles.get();
+                super::util::loadable_view_kept(
+                    &keeper,
+                    &tt,
+                    &store.conn.get(),
+                    || store.tick.get(),
+                    &data,
+                    |d: &ProfilesData| d.profiles.is_empty(),
+                    "No available providers configured yet.",
+                    |d| available_table(gcx, &tt, d, ui.profile_sel, expanded, &keeper),
+                )
+            },
+        ))
+        .child(dyn_view(LayoutStyle::column().shrink(0.0), move || {
+            selection_hint(&tt, &store.profiles.get(), ui.profile_sel.get())
+        }))
+        .child(dyn_view_scoped(
+            LayoutStyle::default().shrink(0.0),
+            move |_| discovery_footer(&tt, &store.providers.get(), &store.profiles.get()),
+        ))
         .build()
+}
+
+/// The family's label as the web table prints it (`endpointFamilyInfo`).
+pub fn family_label(family: &str) -> String {
+    match family {
+        "openai" => "OpenAI",
+        "anthropic" => "Anthropic",
+        "openrouter" => "OpenRouter",
+        "portkey" => "Portkey",
+        "lmstudio" => "LM Studio",
+        "ollama" => "Ollama",
+        _ => "Custom OpenAI-compatible",
+    }
+    .to_string()
+}
+
+/// One Available Providers row: [Name, Provider ID, Type, Models, Status]
+/// + the detail lines (description, endpoint, origin, actions).
+pub fn available_row(p: &Profile) -> super::kit::Row {
+    let endpoint = if !p.base_url.is_empty() {
+        p.base_url.clone()
+    } else {
+        "provider default".into()
+    };
+    let models = if !p.allowed_models.is_empty() {
+        format!("{} restricted", p.allowed_models.len())
+    } else {
+        "live discovery".into()
+    };
+    let scope = if p.scope.is_empty() { "user" } else { &p.scope };
+    let status = format!(
+        "{} · {scope} · {}",
+        if p.enabled { "enabled" } else { "disabled" },
+        key_text(p)
+    );
+    let desc = if p.description.is_empty() {
+        "No description".to_string()
+    } else {
+        p.description.clone()
+    };
+    let actions = if p.synthetic {
+        format!("{} · e Override · m models · t test", synthetic_origin(p))
+    } else {
+        "e Edit · d Delete · m models · t test".to_string()
+    };
+    super::kit::Row::new(vec![
+        if p.display_name.is_empty() {
+            p.id.clone()
+        } else {
+            p.display_name.clone()
+        },
+        p.provider_name(),
+        family_label(&p.family),
+        models,
+        status,
+    ])
+    .detail(vec![desc, format!("Endpoint {endpoint}"), actions])
+    .dim(!p.enabled)
+}
+
+fn available_table(
+    cx: Scope,
+    t: &TokenSet,
+    data: &ProfilesData,
+    sel: Signal<usize>,
+    expanded: Signal<Option<usize>>,
+    keeper: &super::util::FocusKeeper,
+) -> View {
+    let rows: Vec<super::kit::Row> = data.profiles.iter().map(available_row).collect();
+    let rules = vec![
+        widths::ColRule::head("Name", 10),
+        widths::ColRule::tail("Provider ID", 14),
+        widths::ColRule::head("Type", 8),
+        widths::ColRule::head("Models", 9),
+        widths::ColRule::head("Status", 14),
+    ];
+    keeper.wire(
+        super::kit::WrapTable::new(rules, rows, sel)
+            .expanded(expanded)
+            .empty("No available providers configured yet.")
+            .element(cx, t),
+    )
 }
 
 /// Where a synthetic row comes from, in operator words.
@@ -226,142 +722,35 @@ fn edit_selected_profile(cx: Scope, ctx: &Ctx) {
     }
 }
 
-/// The ONE provider table (web "Available Providers" parity): every
-/// row is a profiles-payload row — managed, env/core-synthetic, or an
-/// auto-probed local server. The first column carries the provider
-/// NAME rows answer to (the join law), because that string — not the
-/// internal profile id — is what flows/pins/routes reference.
-fn unified_table(
-    cx: Scope,
-    t: &TokenSet,
-    data: &ProfilesData,
-    sel: Signal<usize>,
-    keeper: &super::util::FocusKeeper,
-    on_activate: impl FnMut(usize) + 'static,
-) -> View {
-    // Width-aware columns: which columns APPEAR is a breakpoint decision
-    // (narrow terminals get fewer, honest columns instead of a silently
-    // amputated payload column — filed 0900); how wide the survivors are
-    // is MEASURED from the rows by `ui::widths`, so a wide terminal
-    // prints every base URL whole.
-    let vw = abstracttui::app::use_viewport(cx).get().w;
-    let wide = vw >= 104;
-    let mut rows: Vec<Vec<String>> = data
-        .profiles
-        .iter()
-        .map(|p| {
-            let url = if p.base_url.is_empty() {
-                p.default_base_url.clone().unwrap_or_default()
-            } else {
-                p.base_url.clone()
-            };
-            let mut row = vec![p.provider_name()];
-            if wide {
-                row.push(p.family.clone());
-            }
-            // The FULL URL: two endpoints on the same host differ in
-            // their path, so a 38-char cap printed one string for both.
-            row.push(if url.is_empty() { "—".into() } else { url });
-            row.push(if p.api_key_set {
-                match &p.api_key_fingerprint {
-                    Some(f) => format!("stored ({})", ellipsize(f, 8)),
-                    None => "stored".into(),
-                }
-            } else {
-                "none".into()
-            });
-            if wide {
-                // Web-table parity: an allowlist restricts the profile;
-                // otherwise it serves live discovery — and synthetic
-                // local rows already know their live count.
-                row.push(if !p.allowed_models.is_empty() {
-                    format!("{} restr", p.allowed_models.len())
-                } else {
-                    match p.discovered_model_count {
-                        Some(n) if n > 0 => format!("{n} live"),
-                        _ => "live".into(),
-                    }
-                });
-            }
-            row.push(if p.enabled { "yes".into() } else { "NO".into() });
-            row.push(origin_label(p));
-            row
-        })
-        .collect();
-    // Provider names and base URLs discriminate on their TAIL (`…/v1` vs
-    // `…/v1/openai`); the rest print bounded phrases whose floor is their
-    // widest word.
-    let mut rules = vec![widths::ColRule::tail("provider", 16)];
-    if wide {
-        rules.push(widths::ColRule::head("family", 12));
-    }
-    rules.push(widths::ColRule::tail("base URL", 20));
-    rules.push(widths::ColRule::head("API key", 14));
-    if wide {
-        rules.push(widths::ColRule::head("models", 8));
-    }
-    rules.push(widths::ColRule::head("enabled", 7));
-    rules.push(widths::ColRule::head("origin", 8));
-    // The screen's bordered block spends one cell on each side.
-    let cols = widths::columns(&rules, &mut rows, vw - widths::BLOCK_CHROME);
-    keeper.wire(
-        Table::new(cols)
-            .rows(rows)
-            .selection(sel)
-            .on_activate(on_activate)
-            .layout(LayoutStyle::default().grow(1.0))
-            .element(cx, t),
-    )
-}
-
-/// One word for where a row lives: managed rows show their scope
-/// (gateway/user — who sees them); synthetic rows show their source
-/// (env / core / auto-detected local server).
-fn origin_label(p: &Profile) -> String {
-    if p.synthetic {
-        if p.source.as_deref() == Some("reachable-default") {
-            "auto".into()
-        } else if p.scope == "environment" {
-            "env".into()
-        } else {
-            "core".into()
-        }
-    } else if p.scope.is_empty() {
-        "managed".into()
-    } else {
-        p.scope.clone()
-    }
-}
-
 /// The per-row action line — what THIS row supports and why (the web
 /// shows it as per-row buttons; a TUI says it under the table).
 fn selection_hint(t: &TokenSet, data: &Loadable<ProfilesData>, sel: usize) -> View {
     let Some(p) = data.ready().and_then(|d| d.profiles.get(sel)) else {
         return line(vec![span(String::new(), t.text_faint)]);
     };
-    if p.synthetic {
-        line(vec![
-            span_bold(p.provider_name(), t.accent),
-            span(
-                format!(
-                    " — {} · e override → managed copy · m models · t test",
-                    synthetic_origin(p)
-                ),
-                t.text_muted,
-            ),
-        ])
+    let text = if p.synthetic {
+        format!(
+            "{} — {} · e override → managed copy · m models · t test",
+            p.provider_name(),
+            synthetic_origin(p)
+        )
     } else {
-        line(vec![
-            span_bold(p.provider_name(), t.accent),
-            span(
-                format!(
-                    " — managed ({} scope) · e edit · d delete · m models · t test",
-                    if p.scope.is_empty() { "user" } else { &p.scope }
-                ),
-                t.text_muted,
-            ),
-        ])
+        format!(
+            "{} — managed ({} scope) · e edit · d delete · m models · t test",
+            p.provider_name(),
+            if p.scope.is_empty() { "user" } else { &p.scope }
+        )
+    };
+    let w = (abstracttui::app::current_viewport().w.max(40) - 6) as usize;
+    let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
+    for (i, l) in super::util::wrap_text(&text, w).into_iter().enumerate() {
+        col = col.child(line(vec![if i == 0 {
+            span_bold(l, t.accent)
+        } else {
+            span(l, t.text_muted)
+        }]));
     }
+    col.build()
 }
 
 /// Discovery facts under the one list: the gateway default pair and
@@ -401,10 +790,13 @@ fn discovery_footer(
                 // Affordance FIRST: the line right-truncates on narrow
                 // terminals, and the teaching must survive over tail
                 // names.
-                col = col.child(line(vec![span(
-                    format!("not configured yet (a adds one): {}", free.join(", ")),
-                    t.text_faint,
-                )]));
+                let w = (abstracttui::app::current_viewport().w.max(40) - 6) as usize;
+                for l in super::util::wrap_text(
+                    &format!("not configured yet (a adds one): {}", free.join(", ")),
+                    w,
+                ) {
+                    col = col.child(line(vec![span(l, t.text_faint)]));
+                }
             }
         }
     }
@@ -526,10 +918,11 @@ pub fn open_models_modal(cx: Scope, ctx: &Ctx, provider: String) {
 /// copy shadows the env/core row in the server's merged list.
 pub fn open_profile_form(cx: Scope, ctx: &Ctx, mode: ProfileFormMode) {
     let store = ctx.store;
-    let (create, existing, prefill) = match mode {
-        ProfileFormMode::Create => (true, None, None),
-        ProfileFormMode::Edit(p) => (false, Some(p), None),
-        ProfileFormMode::Override(p) => (true, None, Some(p)),
+    let (create, existing, prefill, preset_title) = match mode {
+        ProfileFormMode::Create => (true, None, None, None),
+        ProfileFormMode::Edit(p) => (false, Some(p), None, None),
+        ProfileFormMode::Override(p) => (true, None, Some(p), None),
+        ProfileFormMode::Preset(p, title) => (true, None, Some(p), Some(title)),
     };
     let can_gateway_scope = store.profiles.with_untracked(|p| {
         p.ready()
@@ -541,7 +934,9 @@ pub fn open_profile_form(cx: Scope, ctx: &Ctx, mode: ProfileFormMode) {
     store.discover.set(Loadable::NotAsked);
 
     let ctx2 = ctx.clone();
-    super::open_form_guarded(ctx, cx, Size::new(76, 28), move |mcx, close, guard| {
+    // Full-width overlay (R7.2: modals are overlays, Esc closes).
+    let vp = abstracttui::app::use_viewport(cx).get_untracked();
+    super::open_form_guarded(ctx, cx, vp, move |mcx, close, guard| {
         let theme = use_theme(mcx);
         // `ex` carries EDIT semantics (static id, stored-key note,
         // clear checkbox, PUT); `seed` only prefills fields — it is
@@ -688,6 +1083,7 @@ pub fn open_profile_form(cx: Scope, ctx: &Ctx, mode: ProfileFormMode) {
         let families3 = families.clone();
 
         let title = match (&ex, &over) {
+            _ if preset_title.is_some() => preset_title.clone().unwrap_or_default(),
             (Some(p), _) => format!("Edit profile '{}'", p.id),
             (None, Some(p)) => format!(
                 "Override '{}' — create a managed connection",
@@ -698,12 +1094,13 @@ pub fn open_profile_form(cx: Scope, ctx: &Ctx, mode: ProfileFormMode) {
         // The web's override banner, one honest line: the provider
         // already works — this SAVE mints an explicit managed profile
         // that takes precedence over the env/core row.
-        let override_note: Option<String> = over.as_ref().map(|p| {
-            format!(
-                "already usable from {} — saving creates a managed override",
-                synthetic_origin(p)
-            )
-        });
+        let override_note: Option<String> =
+            over.as_ref().filter(|_| preset_title.is_none()).map(|p| {
+                format!(
+                    "already usable from {} — saving creates a managed override",
+                    synthetic_origin(p)
+                )
+            });
         let scope_was_gateway = ex.as_ref().map(|p| p.scope == "gateway").unwrap_or(false);
 
         let key_note: View = {
