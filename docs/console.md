@@ -251,7 +251,7 @@ changes the bundle. **Broken workflows** appears only when the gateway refused a
 bundle file: the workflow, the versions affected and why it cannot run, with
 **Archive** to hide them.
 
-**Default workflow per app** comes next: "When an app asks for "an agent"
+**Default workflow per app** (administrators only; other accounts do not see it) comes next: "When an app asks for "an agent"
 without naming a workflow, the gateway runs this one." One row per interface,
 with its plain name ("AbstractCode — chat agent", "Assistant", "Deep research",
 …), a (?) that says what it is for, and the interface id in small type. The

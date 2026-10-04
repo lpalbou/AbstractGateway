@@ -967,7 +967,10 @@ rewritten (Export keeps the original bytes); the text applies to every version
 and is kept next to the owner's archive file (`config/workflow_descriptions.json`).
 Each attempt is audited as `workflow.description` (lengths, never the text).
 `GET /api/gateway/bundles` items carry the effective `description`,
-`description_edited` and `actions.can_edit_description`.
+`description_edited` and `actions.can_edit_description`; the envelope's
+`interfaces` (`{<interface id>: {label, help, known}}`) names every interface
+the listed workflows declare, readable by any signed-in account (the console's
+"Used by" column).
 
 The input-schema endpoint returns a versioned payload with:
 

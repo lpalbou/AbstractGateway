@@ -108,3 +108,14 @@ def test_shipped_refuses(gw):
 def test_bad_bodies_are_refused(gw, payload):
     res = gw["c"].patch("/api/gateway/bundles/alice-wf", headers=gw["alice"], json=payload)
     assert res.status_code == 422, res.text
+
+
+def test_the_list_names_interfaces_for_everyone(gw):
+    """Round 8 (adversary F2): GET /bundles carries the plain names of the interfaces its
+    workflows declare, so a non-admin's "Used by" never needs the admin settings read."""
+    c = gw["c"]
+    res = c.get("/api/gateway/bundles?all_versions=true", headers=gw["alice"])
+    assert res.status_code == 200, res.text
+    ifaces = res.json()["interfaces"]
+    assert ifaces["abstractcode.agent.v1"]["label"] == "AbstractCode \u2014 chat agent"
+    assert ifaces["abstractcode.agent.v1"]["known"] is True and ifaces["abstractcode.agent.v1"]["help"]

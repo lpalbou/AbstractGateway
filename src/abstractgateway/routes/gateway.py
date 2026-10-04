@@ -8061,8 +8061,18 @@ async def list_bundles(
     skipped_rows = governed_skipped
     if want_iface:
         skipped_rows = []  # a picker lists runnable workflows only
+    # Plain names of the interfaces the listed workflows declare (round 8): the console's
+    # "Used by" column reads them here, so a non-admin never needs the admin settings read.
+    from ..agent_defaults import interface_info as _interface_info
+
+    iface_ids = sorted({str(i) for it in items for ep in (it.get("entrypoints") or []) for i in (ep.get("interfaces") or []) if i})
+    interfaces_out: Dict[str, Dict[str, Any]] = {}
+    for iface in iface_ids:
+        info = _interface_info(iface)
+        interfaces_out[iface] = {"label": info.get("label") or iface, "help": info.get("help") or "", "known": info.get("label") not in (None, iface)}
     return {
         "items": items,
+        "interfaces": interfaces_out,
         "executable_for": want_iface or None,
         "default_bundle_id": default_bundle_id,
         "default_agent_workflows": agent_defaults,

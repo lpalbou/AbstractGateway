@@ -1700,7 +1700,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .workflows-fold-what, .workflows-fold-meta { font-size: var(--af-helper-size, var(--font-size-md)); color: var(--muted); font-weight: 400; }
 	    .workflows-fold-what { color: var(--text); font-size: var(--font-size-base); }
 	    .workflows-usedby__item { display: block; }
-	    .workflows-usedby__item code { white-space: normal; overflow-wrap: anywhere; }
+	    .workflows-usedby__item code { white-space: normal; overflow-wrap: normal; word-break: normal; }
 	    .workflows-usedby__item > .help-q { margin-left: 6px; }
 	    .workflows-usedby__item + .workflows-usedby__item { margin-top: 4px; }
 	    /* Round 8: the three actions are icon buttons in ONE row that never wraps. */
@@ -4332,7 +4332,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	      return 0;
 	    }
+	    // Plain names for "Used by": GET /bundles `interfaces` {id: {label, help, known}}
+	    // (readable by everyone, round 8); the admin's agent-defaults rows add nothing a user lacks.
 	    function workflowInterfaceInfo(iface) {
+	      const listed = (state.workflowsInterfaces || {})[iface];
+	      if (listed && listed.known) return listed;
 	      const rows = (agentDefStore.data && agentDefStore.data.agents && agentDefStore.data.agents.default_workflow) || {};
 	      return rows[iface] || null;
 	    }
@@ -4406,13 +4410,20 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const info = workflowInterfaceInfo(iface);
 	        const item = document.createElement("span");
 	        item.className = "workflows-usedby__item";
-	        if (info && info.label) {
+	        if (info && info.label && info.label !== iface) {
 	          const name = document.createElement("span");
 	          name.textContent = info.label;
+	          name.title = iface;
 	          item.append(name, workflowHelpQ(info.label, `${info.help || ""} (${iface})`.trim()));
 	        } else {
+	          // An interface no app names: its id, breakable only after a dot (never mid-word).
 	          const code = document.createElement("code");
-	          code.textContent = iface;
+	          code.className = "workflows-iface-id";
+	          code.title = iface;
+	          String(iface).split(".").forEach((part, i, all) => {
+	            code.append(document.createTextNode(part + (i < all.length - 1 ? "." : "")));
+	            if (i < all.length - 1) code.append(document.createElement("wbr"));
+	          });
 	          item.append(code);
 	        }
 	        td.append(item);
@@ -4788,6 +4799,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        state.workflows = data.items || [];
 	        state.workflowsSkipped = data.skipped || [];
 	        state.workflowsDefaultId = data.default_bundle_id || "";
+	        state.workflowsInterfaces = data.interfaces || {};
 	        if (!keepMessage) $("workflows-message").textContent = "";
 	        renderWorkflows();
 	      } catch (err) {
@@ -12456,6 +12468,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // Email modal, for everyone; it is never rendered on the page.
       if (!$("my-email-section").classList.contains("in-modal")) $("my-email-section").classList.add("hidden");
       $("runtimes-section").classList.toggle("hidden", !p.admin);
+      $("agent-defaults-section").classList.toggle("hidden", !p.admin);  // round 8: admin-only (users get no error card)
       // Retained runtimes: shown only for admins AND only when reservations
       // exist (the Runtimes tab is the table + the
       // tabbed panel — recovery UI appears when there is something to
@@ -15598,7 +15611,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // tab opens (shared ensureDataHomes cache).
 	    $("tab-button-runtimes").onclick = () => { setActiveTab("runtimes"); loadRuntimes(); };
 	    bindSkillsMcpPage();
-	    $("tab-button-workflows").onclick = () => { setActiveTab("workflows"); mountWorkflowSwitches(); loadWorkflows(); mountAgentDefaults("workflows", $("agent-defaults-root")); };
+	    $("tab-button-workflows").onclick = () => { setActiveTab("workflows"); mountWorkflowSwitches(); loadWorkflows(); if (state.principal && state.principal.admin) mountAgentDefaults("workflows", $("agent-defaults-root")); };
 	    $("workflows-refresh").onclick = () => loadWorkflows();
 	    $("app-settings-close").onclick = () => appSettingsModalClose();
 	    $("workflows-search").oninput = () => renderWorkflows();

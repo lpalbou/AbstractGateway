@@ -198,6 +198,12 @@ try {
     await page.waitForTimeout(200);
     check(await page.locator("#workflows-table tr").count() === before, "clicking a row unfolds nothing");
     check((await mine.getAttribute("aria-expanded")) === null && (await mine.getAttribute("tabindex")) === null, "a row is not a button");
+    // A non-admin: no admin-only section, no error card; "Used by" shows plain app names (id as tooltip).
+    check(await page.locator("#agent-defaults-section").isHidden(), "alice: Default workflow per app hidden");
+    check(await page.getByText("Could not read the default workflows").count() === 0, "alice: no 'Could not read the default workflows' card");
+    const orch = page.locator('#workflows-table tr.workflows-row[data-bundle="abstractassistant-orchestrator"] td.workflows-usedby');
+    check((await orch.innerText()).includes("Assistant") && !(await orch.innerText()).includes("abstractassistant.agent.v1"), "alice: Used by shows the app name, not the interface id", await orch.innerText());
+    check(await orch.locator('[title="abstractassistant.agent.v1"]').count() === 1, "alice: the interface id is the tooltip");
     // Icon buttons with tooltips, one row.
     const acts = await mine.locator("td.workflows-actions button").evaluateAll((bs) => bs.map((b) => ({ title: b.title, label: b.getAttribute("aria-label"), text: b.textContent.trim(), top: Math.round(b.getBoundingClientRect().top), w: Math.round(b.getBoundingClientRect().width), h: Math.round(b.getBoundingClientRect().height) })));
     check(acts.map((a) => a.title).join("|") === "Export|Open in AbstractFlow|Archive", "actions: Export · Open · Archive tooltips", acts.map((a) => a.title));
