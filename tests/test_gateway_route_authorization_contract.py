@@ -109,6 +109,13 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     # "user-level by design — every principal may read their own policy"; the
     # PUT writes that same per-user entry and nobody else's.
     ("PUT", "/api/gateway/workspace/policy/self"),
+    # The Workspaces page's folder check (round 8): a READ despite the POST —
+    # it mutates nothing and answers whether ONE typed path is an absolute,
+    # existing folder (the same rule every policy write enforces). Any
+    # signed-in principal: a user checks folders for their own policy, whose
+    # PUT above already names a missing folder in its refusal; the gateway
+    # policy's writes stay admin-gated by the runtime-config row.
+    ("POST", "/api/gateway/workspace/path-check"),
     # The caller's OWN email account and notification preferences (framework
     # backlog 0992). Every handler resolves the plane from the authenticated
     # principal (mail/accounts.py `plane_for_principal`), never from a path or
