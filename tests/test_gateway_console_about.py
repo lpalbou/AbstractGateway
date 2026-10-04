@@ -83,6 +83,30 @@ def test_framework_not_installed_is_said(monkeypatch: pytest.MonkeyPatch) -> Non
     assert cfg == {"version": "9.9.9", "framework": None, "framework_note": "not installed on this host", "gateway": "9.9.9", "gateway_note": ""}
 
 
+def test_framework_version_is_the_installer_recorded_release(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Installer installs put only abstractgateway[...] in the gateway's tool
+    environment: a stale `abstractframework` distribution (0.4.2) must not
+    win over the release the installer recorded in bootstrap.env (0.9.6)."""
+    from importlib import metadata
+
+    import abstractgateway.self_update as su
+    from abstractgateway.routes.gateway import about_payload
+
+    (tmp_path / su.INSTALLER_STATE_FILE).write_text("FRAMEWORK_VERSION=0.9.6\nPROFILE=apple\n", encoding="utf-8")
+    monkeypatch.setattr(su, "_data_dir", lambda: tmp_path)
+    real = metadata.version
+    monkeypatch.setattr(metadata, "version", lambda name: "0.4.2" if name == "abstractframework" else real(name))
+    assert about_payload()["abstractframework"] == "0.9.6"
+    assert console_about_config()["framework"] == "0.9.6"
+    # Without an installer record, the distribution metadata is used.
+    (tmp_path / su.INSTALLER_STATE_FILE).unlink()
+    assert about_payload()["abstractframework"] == "0.4.2"
+    # Neither: not installed (the console says so).
+    monkeypatch.setattr(metadata, "version", lambda name: (_ for _ in ()).throw(metadata.PackageNotFoundError(name)) if name == "abstractframework" else real(name))
+    assert about_payload()["abstractframework"] is None
+    assert console_about_config()["framework_note"] == "not installed on this host"
+
+
 def test_about_card_on_the_real_islands_bundle(tmp_path: Path) -> None:
     require_node()
     from test_gateway_console_offline import _slice_function

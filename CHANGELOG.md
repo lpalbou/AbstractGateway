@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `GET /api/gateway/about` (and every About that reads it) reports the AbstractFramework release the installer recorded (`bootstrap.env` `FRAMEWORK_VERSION`) before the `abstractframework` package metadata: installer installs have no such package in the gateway's environment, so About said "not installed" or showed a stale leftover version.
+
 - Models page: the filters-in-use label no longer overlaps the "N of M models" count on a narrow screen.
 
 ### Changed

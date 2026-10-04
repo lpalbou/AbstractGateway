@@ -1600,8 +1600,12 @@ Public (no sign-in): which versions this gateway runs, for About screens.
  "packages": {"abstractcore": "2.18.0", "abstractruntime": "0.7.0", "abstractskill": "0.3.0"}}
 ```
 
-`abstractframework` is null when the framework meta-package is not installed
-on the gateway computer. Versions only: no paths, host names or settings.
+`abstractframework` is the AbstractFramework release the installer recorded
+for this gateway (`FRAMEWORK_VERSION` in the data directory's `bootstrap.env`)
+when there is one, else the version of the `abstractframework` package
+installed beside the gateway, else null (not installed). The installer puts
+only `abstractgateway[...]` in the gateway's environment, so its record is
+the one that names the release. Versions only: no paths, host names or settings.
 
 ## Host control (pause, desktop tray, restart, update)
 

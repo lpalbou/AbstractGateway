@@ -15170,7 +15170,8 @@ def about_payload() -> Dict[str, Any]:
     """GET /about: {abstractframework: version | null, abstractgateway:
     version, packages: {name: version}} — every installed AbstractFramework
     package (distribution names starting with "abstract"), versions only: no
-    paths, no hosts, no secrets."""
+    paths, no hosts, no secrets. `abstractframework` is the installer-recorded
+    release first (`installed_framework_version`)."""
     from importlib import metadata
 
     packages: Dict[str, str] = {}
@@ -15190,10 +15191,28 @@ def about_payload() -> Dict[str, Any]:
             return None
 
     return {
-        "abstractframework": _v("abstractframework"),
+        "abstractframework": installed_framework_version(_v("abstractframework")),
         "abstractgateway": _v("abstractgateway"),
         "packages": dict(sorted(packages.items())),
     }
+
+
+def installed_framework_version(dist_version: Optional[str] = None, data_dir: Optional[Path] = None) -> Optional[str]:
+    """The AbstractFramework release this gateway belongs to, for About:
+    the release the AbstractFramework INSTALLER recorded in the data dir
+    (`bootstrap.env` FRAMEWORK_VERSION) first — installer installs put only
+    `abstractgateway[...]` in the gateway's tool environment, so the
+    `abstractframework` distribution there is absent or a stale leftover —
+    then that distribution's metadata (`pip install abstractframework`),
+    else None (the caller says "not installed")."""
+    from ..self_update import _data_dir, read_installer_state
+
+    try:
+        state = read_installer_state(Path(data_dir) if data_dir is not None else _data_dir())
+    except Exception:  # noqa: BLE001 - an unreadable data dir falls back to the metadata
+        state = None
+    recorded = str((state or {}).get("FRAMEWORK_VERSION") or "").strip()
+    return recorded or (dist_version or None)
 
 
 @router.get("/about")
