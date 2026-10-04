@@ -562,6 +562,10 @@ def migrate_store_v2(stored: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def _legacy_root_env() -> bool:
+    return any(str(os.getenv(n) or "").strip() for n in ("ABSTRACTGATEWAY_WORKSPACE_ROOT", "ABSTRACTGATEWAY_WORKSPACE_DIR"))
+
+
 def ensure_migrated(data_dir: Path) -> bool:
     """Run the one-time migrations the store still needs (pre-round-9 -> v1 -> v2). True when one ran.
     Idempotent: decided from the store's SHAPE (a v2 store has no shared workspace and no v1 account
@@ -569,24 +573,26 @@ def ensure_migrated(data_dir: Path) -> bool:
     rc = _store_mod()
     data_dir = Path(data_dir)
     stored = rc._read_store(data_dir)
-    legacy = POLICY_KEY not in stored and _legacy_present(stored)
+    # A store with no policy yet: the old model's keys, or the legacy workspace-root env (its
+    # folder becomes one listed read & write workspace, once; the env is ignored afterwards).
+    legacy = POLICY_KEY not in stored and (_legacy_present(stored) or _legacy_root_env())
     if not legacy and not _is_v1_policy(stored):
         return False
     with rc.store_lock(data_dir):
         stored = rc._read_store(data_dir, strict=True)
-        legacy = POLICY_KEY not in stored and _legacy_present(stored)
+        legacy = POLICY_KEY not in stored and (_legacy_present(stored) or _legacy_root_env())
         if not legacy and not _is_v1_policy(stored):
             return False
         new = stored
         if legacy:
-            had_root = bool(str(stored.get("workspace_root") or "").strip()) or any(
-                str(os.getenv(n) or "").strip() for n in ("ABSTRACTGATEWAY_WORKSPACE_ROOT", "ABSTRACTGATEWAY_WORKSPACE_DIR")
+            root = str(stored.get("workspace_root") or "").strip() or next(
+                (str(os.getenv(n)).strip() for n in ("ABSTRACTGATEWAY_WORKSPACE_DIR", "ABSTRACTGATEWAY_WORKSPACE_ROOT") if str(os.getenv(n) or "").strip()),
+                "",
             )
             new = migrate_store(new, accounts=_registry_accounts(data_dir))
-            if not had_root:
-                # Nothing was configured: no guessed folder becomes a row.
-                new[POLICY_KEY] = {k: v for k, v in new[POLICY_KEY].items() if k != "shared_workspace"}
-                new[POLICY_KEY]["shared_workspace"] = ""
+            # The configured old root becomes the listed rw row (v2); nothing configured = no
+            # guessed folder becomes a row.
+            new[POLICY_KEY]["shared_workspace"] = str(_real(Path(root))) if root else ""
         new = migrate_store_v2(new)
         new["_last_changed_by"] = "system:workspace_policy_migration"
         new["_last_changed_at"] = _now()

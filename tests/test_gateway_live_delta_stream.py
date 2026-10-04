@@ -385,7 +385,7 @@ def test_a_client_cannot_reach_the_data_folder_by_scheduling(gw) -> None:
         r = client.post("/api/gateway/runs/schedule", headers=HEADERS,
                         json={"bundle_id": "live", "flow_id": "root", "start_at": "now",
                               "input_data": {"prompt": "d", "workspace_root": str(bad)}})
-        assert r.status_code == 400 and "data folder" in r.json()["detail"], (bad, r.text)
+        assert r.status_code == 400 and "data folder" in r.json()["detail"]["message"], (bad, r.text)
 
 
 def test_every_host_run_start_gets_a_workspace_and_the_deny_rule(gw) -> None:

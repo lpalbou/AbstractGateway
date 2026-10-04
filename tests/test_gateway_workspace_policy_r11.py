@@ -596,3 +596,18 @@ def test_a_client_cannot_reopen_a_host_read_only_mount(f: dict, tmp_path: Path) 
         assert f["notes"] in v["workspace_writable_paths"]
         with pytest.raises(ValueError, match="read-only"):
             _write(_scope(v), Path(f["notes"]) / "x.txt")
+
+
+def test_the_legacy_workspace_env_becomes_one_listed_workspace_once(f: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A store with no policy and the legacy ABSTRACTGATEWAY_WORKSPACE_DIR: its folder is listed read & write,
+    once (no shared workspace); afterwards the env is ignored."""
+    from abstractgateway.workspace_policy import ensure_migrated, gateway_policy
+
+    data = _data(tmp_path)
+    _write_old_store(data, {"executor": "codex"})
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", f["pictures"])
+    g = gateway_policy(data)
+    assert g["posture"] == "any_except_denied" and g["folders"] == [{"path": f["pictures"], "mode": "rw"}]
+    assert "shared_workspace" not in _read_store(data)["workspace_policy"]
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", f["notes"])
+    assert ensure_migrated(data) is False and gateway_policy(data)["folders"] == [{"path": f["pictures"], "mode": "rw"}]

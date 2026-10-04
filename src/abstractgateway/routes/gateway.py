@@ -10016,8 +10016,8 @@ async def get_run_input_data(run_id: str) -> Dict[str, Any]:
     def _public_run_workspace_defaults(vars_obj: Dict[str, Any]) -> Dict[str, Any]:
         """Return minimal workspace knobs needed to continue a run (e.g. Follow Up).
 
-        We prefer relative paths when they are under the operator workspace root to avoid
-        leaking absolute server paths to thin clients.
+        Paths stay absolute: there is no operator workspace root to make them relative to any
+        more (round 11: no shared workspace), and the run's own folder is the caller's.
         """
 
         def _maybe_rel(raw: str) -> str:
@@ -10034,13 +10034,7 @@ async def get_run_input_data(run_id: str) -> Dict[str, Any]:
                 resolved = p.resolve()
             except Exception:
                 resolved = p
-            try:
-                base = _workspace_root()
-                rel = resolved.relative_to(base)
-                rel_s = rel.as_posix()
-                return rel_s if rel_s else "."
-            except Exception:
-                return str(resolved)
+            return str(resolved)
 
         out: Dict[str, Any] = {}
         for key in ("workspace_root", "workspace_access_mode", "workspace_allowed_paths", "workspace_ignored_paths"):
