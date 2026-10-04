@@ -31,6 +31,10 @@ pub mod email;
 #[path = "store_accounts.rs"]
 pub mod accounts;
 
+/// The Skills & MCP page (web console parity, R7.2).
+#[path = "store_skills.rs"]
+pub mod skills;
+
 /// Remote data honesty: never render a guess.
 #[derive(Clone, Debug, Default)]
 pub enum Loadable<T> {
@@ -2981,6 +2985,8 @@ pub struct Store {
     /// Operator controls: host runner/tray/update, paused-banner poll,
     /// the caller's own workspace policy (see `store::operator`).
     pub op: operator::OperatorStore,
+    /// The Skills & MCP page.
+    pub skills: skills::SkillsStore,
     /// Per-provider model lists (route editor + provider browser).
     pub models: Signal<HashMap<String, Loadable<Vec<String>>>>,
     /// Result of the LAST discover-models call — a single slot, which
@@ -3775,6 +3781,7 @@ impl Store {
             about: cx.signal(Loadable::default()),
             network: cx.signal(Loadable::default()),
             op: operator::OperatorStore::create(cx),
+            skills: skills::SkillsStore::create(cx),
             models: cx.signal(HashMap::new()),
             discover: cx.signal(Loadable::default()),
             sandbox: cx.signal(Loadable::default()),
@@ -3859,6 +3866,7 @@ impl Store {
             about,
             network,
             op,
+            skills,
             models,
             discover,
             sandbox,
@@ -3916,6 +3924,7 @@ impl Store {
         about.set(Loadable::NotAsked);
         network.set(Loadable::NotAsked);
         op.reset();
+        skills.reset();
         models.update(|m| m.clear());
         discover.set(Loadable::NotAsked);
         sandbox.set(Loadable::NotAsked);

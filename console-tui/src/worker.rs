@@ -29,6 +29,10 @@ pub mod entities;
 /// workflow import/reload, skills reseed, WAN lookup, own workspace policy).
 #[path = "worker_operator.rs"]
 pub mod operator;
+/// The Skills & MCP page (skills list/detail/import/export/archive, the
+/// MCP servers registry).
+#[path = "worker_skills.rs"]
+pub mod skills;
 use crate::store::{
     entities_from_payload, models_from_payload, runtimes_from_payload, users_from_payload,
     AvailabilityData, ConnPhase, DiscoverOutcome, DownloadOffer, DownloadStatus, Identity,
@@ -313,6 +317,8 @@ pub enum Cmd {
     },
     /// Operator controls — see `worker::operator::OpCmd`.
     Operator(operator::OpCmd),
+    /// The Skills & MCP page — see `worker::skills::SkCmd`.
+    Skills(skills::SkCmd),
     /// `POST /network {allowed_origins?, trust_proxy?}` (reverse proxy,
     /// mission Z) then re-read. Only the named fields change; the gateway
     /// validates and its words are shown verbatim.
@@ -2134,6 +2140,7 @@ fn handle(
         }
 
         Cmd::Operator(op) => operator::handle(client, store, wake, tx, op, on_done),
+        Cmd::Skills(c) => skills::handle(client, store, wake, c, on_done),
 
         Cmd::LoadAbout => load(
             store,
