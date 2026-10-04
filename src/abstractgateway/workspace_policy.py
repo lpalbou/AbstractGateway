@@ -17,8 +17,12 @@ THREE LEVELS (DESIGN "R11.1 FINAL"); there is NO shared workspace:
    and RUN (a one-off ``workspace`` object in a start body / automation): same shape, replacing
    the account default for that conversation/run.
 
-A path's effective mode = min(gateway cap, the chosen layer's rule) with deny < ro < rw; within a
-list the most specific row wins and nothing re-opens beneath a deny. The run's PRIVATE workspace
+A path's effective mode = min(gateway cap, the chosen layer's rule) with deny < ro < rw. NESTING
+(round 12, R12.2): within one list the MOST SPECIFIC row wins (the longest real-path prefix), so a
+refused parent with an allowed child row is valid (the child is reachable, the rest of the parent
+refused) and a refused row inside an allowed one refuses that subtree. Built-in refusals are absolute:
+no row re-opens them (``'X' is inside the built-in refused workspace 'Y'``), except the account's own
+conversation folders inside the data folder. The run's PRIVATE workspace
 (``<data>/workspaces/session-…``) is always read & write for that run and never listed here.
 
 ``resolve_effective`` is the ONE computation every enforcement point reads (run starts on every
@@ -230,14 +234,44 @@ def _check_rows(raw: Any, *, what: str, modes: Tuple[str, ...] = MODES) -> List[
         if any(r["path"] == path for r in out):
             raise WorkspacePolicyError(f"{what}: {path!r} is listed twice; nothing was saved.", path=path)
         out.append({"path": path, "mode": mode})
-    for row in out:
-        for other in out:
-            if other is not row and other["mode"] == "deny" and _under(Path(row["path"]), Path(other["path"])):
-                raise WorkspacePolicyError(
-                    f"{what}: {row['path']!r} is inside the refused workspace {other['path']!r}; nothing re-opens under a refusal.",
-                    path=row["path"],
-                )
+    # Nesting (R12.2): rows may nest in any combination; the most specific row decides (``_rule``).
     return out
+
+
+def builtin_sentence(path: str, hit: Path) -> str:
+    return f"'{path}' is inside the built-in refused workspace '{hit}'."
+
+
+def conversation_folder(path: Path, data_dir: Path) -> bool:
+    """True for a conversation (run) folder INSIDE the gateway data folder: ``<data>/workspaces/<name>/…``
+    (the operator's plane) or ``<data>/users/<tenant>/<runtime>/runtime/workspaces/<name>/…`` (an
+    account's plane). The only rows a built-in refusal admits (each account reaches its own only)."""
+    try:
+        parts = _real(Path(path)).relative_to(_real(Path(data_dir))).parts
+    except ValueError:
+        return False
+    if len(parts) >= 2 and parts[0] == "workspaces":
+        return True
+    return len(parts) >= 6 and parts[0] == "users" and parts[3] == "runtime" and parts[4] == "workspaces"
+
+
+def builtin_hit(path: Path, builtins: Iterable[Path], data_dir: Path) -> Optional[Path]:
+    """The built-in refusal that ``path`` lies inside and that no row may re-open, or None."""
+    hit = _under_any(Path(path), builtins)
+    if hit is None or conversation_folder(Path(path), data_dir):
+        return None
+    return _real(hit)
+
+
+def check_builtin_rows(rows: List[Dict[str, str]], builtins: Iterable[Path], data_dir: Path, *, what: str) -> None:
+    """An ro/rw row inside a built-in refusal is refused (a refusal row there never widens)."""
+    builtins = list(builtins)
+    for row in rows:
+        if row["mode"] == "deny":
+            continue
+        hit = builtin_hit(Path(row["path"]), builtins, data_dir)
+        if hit is not None:
+            raise WorkspacePolicyError(f"{what}: {builtin_sentence(row['path'], hit)}", path=row["path"])
 
 
 # ---------------------------------------------------------------- stored shapes
@@ -628,15 +662,34 @@ def gateway_policy(data_dir: Path) -> Dict[str, Any]:
 
 
 def _rule(rows: List[Dict[str, str]], path: Path) -> Optional[str]:
-    """The mode of the most specific row containing ``path``; a refusal anywhere above it wins."""
+    """The mode of the MOST SPECIFIC row containing ``path`` (the longest real-path prefix; R12.2),
+    deny included: a refused parent does not override an allowed child row, and a refused child
+    refuses its subtree inside an allowed parent. None = no row contains ``path``."""
     best: Optional[Dict[str, str]] = None
+    best_len = -1
     for row in rows:
         if _under(path, Path(row["path"])):
-            if row["mode"] == "deny":
-                return "deny"
-            if best is None or len(row["path"]) > len(best["path"]):
-                best = row
+            n = len(_real(Path(row["path"])).parts)
+            if n > best_len:
+                best, best_len = row, n
     return best["mode"] if best else None
+
+
+def rows_refuse(path: Path, refused: Iterable[Path], reachable: Iterable[Path]) -> bool:
+    """R12.2 on FLATTENED rows (the effective set as the runtime receives it): the longest real-path
+    prefix of ``path`` among the refused and the reachable rows decides; a tie is refused; no row
+    containing ``path`` = False (the caller's default applies). The runtime's scope check and the
+    sandbox profile follow the same rule ("R12 NESTING RULE — FINAL")."""
+    rp = _real(Path(path))
+    best_len, best_refused = -1, False
+    for rows, is_refused in ((refused, True), (reachable, False)):
+        for row in rows:
+            r = _real(Path(row))
+            if rp == r or _under(rp, r):
+                n = len(r.parts)
+                if n > best_len or (n == best_len and is_refused):
+                    best_len, best_refused = n, is_refused
+    return best_refused
 
 
 def _min(a: str, b: str) -> str:
@@ -663,7 +716,10 @@ class Caps:
         rp = _real(Path(path))
         hit = _under_any(rp, self.builtin)
         if hit is not None:
-            # Only a listed row INSIDE the protected folder (this account's own plane) lifts it.
+            # Built-in refusals are absolute (R12.2); the one exception is a listed conversation
+            # folder of this account's own plane inside the data folder.
+            if builtin_hit(rp, self.builtin, self.data_dir) is not None:
+                return "deny"
             inside = [r for r in self.rows if r["mode"] != "deny" and _under(rp, Path(r["path"])) and _under(Path(r["path"]), hit)]
             if not inside:
                 return "deny"
@@ -953,6 +1009,7 @@ def validate_layer(caps: Caps, raw: Any, *, what: str = "workspaces", base: Opti
         layer["default_mode"] = _check_default(changes["default_mode"])
     if "folders" in changes:
         layer["folders"] = _check_rows(changes["folders"], what="Workspaces")
+        check_builtin_rows(layer["folders"], caps.builtin, caps.data_dir, what="Workspaces")
     if (
         layer["posture"] == "any_except_denied"
         and layer["default_mode"] == "rw"
@@ -993,10 +1050,13 @@ def write_gateway_policy(data_dir: Path, changes: Dict[str, Any], *, actor: str)
             g["default_mode"] = _check_default(changes["default_mode"])
         if "folders" in changes:
             g["folders"] = _check_rows(changes["folders"], what="Workspaces")
-        creds = _credential_folders(data_dir)
-        for row in g["folders"]:
-            if row["mode"] != "deny" and _under_any(Path(row["path"]), creds) is not None:
-                raise WorkspacePolicyError(f"{row['path']} is a protected credential directory; it is never a workspace.", path=row["path"])
+        from .runtime_config import resolve_workspace_builtin_deny_enabled
+
+        # Built-in refusals are absolute (R12.2): the credential folders always, the data folder
+        # while the built-in rule is on (its conversation folders excepted).
+        builtins = [Path(p) for p in builtin_refused(data_dir)] if resolve_workspace_builtin_deny_enabled(data_dir) else _credential_folders(data_dir)
+        if "folders" in changes:
+            check_builtin_rows(g["folders"], builtins, data_dir, what="Workspaces")
         stored[POLICY_KEY] = {k: g[k] for k in GATEWAY_FIELDS}
         stored["_last_changed_by"] = str(actor)
         stored["_last_changed_at"] = _now()
@@ -1113,6 +1173,10 @@ def clamp_layer(caps: Caps, raw: Any, clamped: Optional[List[Dict[str, Any]]] = 
             continue
         mode = asked
         if mode != "deny":
+            hit = builtin_hit(Path(real), caps.builtin, caps.data_dir)
+            if hit is not None:
+                note({"path": real, "asked": asked, "got": None, "sentence": builtin_sentence(real, hit)})
+                continue
             cap = caps.cap(Path(real))
             if cap == "deny":
                 note({"path": real, "asked": asked, "got": None, "sentence": f"{real} is outside the workspaces the gateway allows ({caps.g['summary']})."})

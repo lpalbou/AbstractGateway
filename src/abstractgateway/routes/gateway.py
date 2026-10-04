@@ -32,7 +32,7 @@ import time
 import uuid
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List, NoReturn, Optional, Tuple, Union
+from typing import Any, Dict, List, NamedTuple, NoReturn, Optional, Tuple, Union
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.encoders import jsonable_encoder
@@ -4996,9 +4996,9 @@ def _build_file_index_for_root(
     except Exception:
         root_abs = root
 
-    blocked_paths: tuple[Path, ...] = ()
+    blocked_paths: tuple = ()
     if blocked:
-        resolved_blocked: list[Path] = []
+        resolved_blocked: list = [b for b in blocked if isinstance(b, _RowRule)]
         for b in blocked:
             if not isinstance(b, Path):
                 continue
@@ -5014,11 +5014,26 @@ def _build_file_index_for_root(
             return True
         except Exception:
             return False
+
+    abs_blocked = tuple(b for b in blocked_paths if isinstance(b, Path))
+    row_rules = tuple(b for b in blocked_paths if isinstance(b, _RowRule))
+
+    def _blocked_fast(p: Path) -> bool:
+        # No per-path resolve (hot loop); R12.2 longest row prefix, a tie refused.
+        if any(p == b or _is_under_fast(p, b) for b in abs_blocked):
+            return True
+        best_len, best_refused = -1, False
+        for r in row_rules:
+            if p == r.path or _is_under_fast(p, r.path):
+                n = len(r.path.parts)
+                if n > best_len or (n == best_len and r.refused):
+                    best_len, best_refused = n, r.refused
+        return best_refused
     out: list[str] = []
     for dirpath, dirnames, filenames in os.walk(root_abs):
         cur = Path(dirpath)
         if blocked_paths:
-            if any(cur == b or _is_under_fast(cur, b) for b in blocked_paths):
+            if _blocked_fast(cur):
                 dirnames[:] = []
                 continue
 
@@ -5026,7 +5041,7 @@ def _build_file_index_for_root(
         for d in dirnames:
             p = cur / d
             if blocked_paths:
-                if any(p == b or _is_under_fast(p, b) for b in blocked_paths):
+                if _blocked_fast(p):
                     continue
             try:
                 if ignore is not None and ignore.is_ignored(p, is_dir=True):
@@ -5039,7 +5054,7 @@ def _build_file_index_for_root(
         for fn in filenames:
             p = cur / fn
             if blocked_paths:
-                if any(p == b or _is_under_fast(p, b) for b in blocked_paths):
+                if _blocked_fast(p):
                     continue
             try:
                 if ignore is not None and ignore.is_ignored(p, is_dir=False):
@@ -5132,8 +5147,33 @@ def _get_file_index(
         return out
 
 
-def _blocked_workspace_path(path: Path, blocked: tuple[Path, ...]) -> bool:
-    return bool(blocked and _is_under_allowed_roots(path, list(blocked)))
+class _RowRule(NamedTuple):
+    """A workspace-policy row in a file route's ``blocked`` tuple (R12.2): a refused row, or a
+    reachable row nested inside one. Plain ``Path`` entries (built-ins, a client's own extra ignored
+    paths) block absolutely; row rules follow the most-specific-row rule
+    (``workspace_policy.rows_refuse``)."""
+
+    path: Path
+    refused: bool
+
+
+def _policy_row_rules(eff: Any) -> list:
+    """The effective refused rows + the reachable rows nested inside one, as row rules."""
+    deny = [Path(p) for p in eff.deny]
+    reopen = [Path(p) for p in eff.reach if any(_is_under_allowed_roots(Path(p), [d]) for d in deny)]
+    return [_RowRule(p, True) for p in deny] + [_RowRule(p, False) for p in reopen]
+
+
+def _blocked_workspace_path(path: Path, blocked: tuple) -> bool:
+    if not blocked:
+        return False
+    from ..workspace_policy import rows_refuse
+
+    absolute = [b for b in blocked if isinstance(b, Path)]
+    if absolute and _is_under_allowed_roots(path, absolute):
+        return True
+    rules = [b for b in blocked if isinstance(b, _RowRule)]
+    return bool(rules) and rows_refuse(path, [r.path for r in rules if r.refused], [r.path for r in rules if not r.refused])
 
 
 def _workspace_entry_payload(*, root: Path, child: Path, virtual_path: str, mount: Optional[str] = None) -> Dict[str, Any]:
@@ -5371,8 +5411,8 @@ def _files_scope(
     folders inside its effective folders, extra ignored paths); anything wider is refused (400), and
     the removed any-folder mode is refused by name."""
     eff = _principal_effective_folders(principal)
-    blocked = [p for p in _server_file_blocked_roots() if not any(_is_under_allowed_roots(a, [p]) for a in eff.plane_allow)]
-    blocked += list(eff.deny)
+    blocked: list = [p for p in _server_file_blocked_roots() if not any(_is_under_allowed_roots(a, [p]) for a in eff.plane_allow)]
+    blocked += _policy_row_rules(eff)  # R12.2: the most specific row wins
     mode = _client_access_mode(workspace_access_mode) or "workspace_or_allowed"
 
     def _check(field: str, value: Path) -> None:
@@ -5433,7 +5473,7 @@ def _resolve_request_workspace_path(
     else:
         resolved, virt, _mount, root = _resolve_workspace_path(base=base, mounts=mounts, raw_path=raw_path)
 
-    if blocked and _is_under_allowed_roots(resolved, list(blocked)):
+    if _blocked_workspace_path(resolved, blocked):
         raise HTTPException(status_code=403, detail="path is blocked by workspace_ignored_paths")
     return resolved, virt, root
 
@@ -10250,14 +10290,23 @@ def _browse_workspace_root(svc: Any, principal: GatewayPrincipal, run: Any) -> t
     root = _resolve_user_path(raw_root, base=_workspace_root())
     data_dir = gateway_data_dir_from_env()
     eff = _principal_effective_folders(principal)
-    blocked_roots = list(eff.deny)
     data_root = data_dir.expanduser().resolve()
     kind = _gateway_folder_kind(
         root, principal=principal, session_id=getattr(run, "session_id", None), recorded=vars_obj.get("_gateway_workspace")
     )
     # A policy-allowed folder of this account's own data plane is served like the run's own folder.
     own = root if (kind or _is_under_allowed_roots(root, list(eff.plane_allow))) else None
-    is_blocked = deny_check(data_root=data_root, own_folder=own, blocked_roots=blocked_roots)
+    builtin_blocked = deny_check(data_root=data_root, own_folder=own, blocked_roots=[])
+    from ..workspace_policy import rows_refuse
+
+    refused_rows = list(eff.deny)
+    reachable_rows = list(eff.reach) + [root]
+
+    def is_blocked(p: Path) -> bool:
+        # Built-ins absolute; the policy rows follow R12.2 (the most specific row wins, the run's own
+        # workspace counting as a read & write row, a tie refused) — the runtime's own rule.
+        return builtin_blocked(p) or rows_refuse(p, refused_rows, reachable_rows)
+
     if is_blocked(root):
         raise HTTPException(
             status_code=403,

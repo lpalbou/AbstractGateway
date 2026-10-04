@@ -125,7 +125,11 @@ def test_gateway_policy_shape_writes_and_refusals(f: dict, tmp_path: Path) -> No
         refused({"folders": [{"path": "relative/x", "mode": "rw"}]}, "Use a full path")
         refused({"folders": [{"path": str(tmp_path / "missing"), "mode": "rw"}]}, "No directory at this path")
         refused({"folders": [{"path": f["notes"], "mode": "rw"}, {"path": f["notes"] + "/", "mode": "ro"}]}, "listed twice")
-        refused({"folders": [{"path": f["project"], "mode": "deny"}, {"path": f["project_private"], "mode": "rw"}]}, "nothing re-opens under a refusal")
+        # R12.2: a refused parent with an allowed child row is valid (the most specific row wins);
+        # test_r12w2_nesting.py covers the rule itself. Restore the two rows afterwards.
+        nested = _put(c, {"folders": [{"path": f["project"], "mode": "deny"}, {"path": f["project_private"], "mode": "rw"}]})
+        assert nested.status_code == 200, nested.text
+        _put(c, {"folders": [{"path": f["project"], "mode": "rw"}, {"path": f["archive"], "mode": "ro"}]})
         refused({"posture": "whitelist"}, "posture must be")
         refused({"default_mode": "deny"}, "default_mode must be")
         for old in ("allowed_folders", "never_allowed", "allow_any_folder", "launch_folder_trust", "client_workspace_scope_overrides"):
@@ -210,7 +214,7 @@ def test_an_account_picks_its_own_subset_among_the_eligible_set(f: dict) -> None
         assert d["path"] == f["archive"]
         # Outside the eligible set: a refused workspace, a sub-folder of it, a protected folder.
         refused({"folders": [{"path": f["secrets"], "mode": "ro"}]}, "outside the workspaces the gateway allows")
-        refused({"folders": [{"path": str(_data_from_env()), "mode": "ro"}]}, "outside the workspaces the gateway allows")
+        refused({"folders": [{"path": str(_data_from_env()), "mode": "ro"}]}, "is inside the built-in refused workspace")  # R12.2
         refused({"posture": "maybe"}, "posture must be")
         refused({"configured": False, "posture": "allowed_only"}, "configured: false")
         refused({"enabled_folders": []}, "Two dimensions only")
@@ -536,13 +540,15 @@ def test_no_old_keys_means_no_model_migration(tmp_path: Path) -> None:
 
 
 def test_the_most_specific_rule_and_a_deny_above_it(tmp_path: Path) -> None:
+    """R12.2: the most specific row wins, deny included (a refused parent no longer overrides)."""
     from abstractgateway.workspace_policy import _rule
 
     a = tmp_path / "a"
     (a / "b" / "c").mkdir(parents=True)
     rows = [{"path": str(a / "b"), "mode": "rw"}, {"path": str(a), "mode": "ro"}]
     assert _rule(rows, a / "b" / "c") == "rw" and _rule(rows, a / "x") == "ro" and _rule(rows, tmp_path) is None
-    assert _rule([{"path": str(a), "mode": "deny"}, {"path": str(a / "b"), "mode": "rw"}], a / "b" / "c") == "deny"
+    nested = [{"path": str(a), "mode": "deny"}, {"path": str(a / "b"), "mode": "rw"}]
+    assert _rule(nested, a / "b" / "c") == "rw" and _rule(nested, a / "x") == "deny"
 
 
 def test_an_account_default_read_only_binds_its_runs(f: dict, tmp_path: Path) -> None:
