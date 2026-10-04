@@ -489,6 +489,13 @@ def _capability_refusal(principal) -> Optional[str]:
     return "The OpenAI API is off for your account. An admin can turn it on in Accounts."
 
 
+def _inactive_account(token: str) -> Optional[str]:
+    from .users import GatewayUserRegistry
+
+    rec = GatewayUserRegistry().inactive_record_for(token)
+    return rec.user_id if rec is not None else None
+
+
 def refuse_for_guest(doc: Any) -> None:
     """Guest (Open mode, no key): models only — no tools, no files, images or audio in the input."""
     if not isinstance(doc, dict):
@@ -809,6 +816,13 @@ class CoreEndpoint:
                     code="guest_not_allowed")(scope, receive, send)
         else:
             note["client"] = "refused"
+            inactive = await asyncio.to_thread(_inactive_account, credential.strip()) if credential.strip() else None
+            if inactive is not None:
+                note["client"] = inactive
+                return await openai_error(
+                    403, f"The account {inactive} is not active (deactivated or archived), so its key can't use the "
+                         "OpenAI API. An admin can turn it back on in Accounts.", type_="permission_error",
+                    code="account_inactive")(scope, receive, send)
             message = ("Incorrect API key provided: use your gateway token." if authorization
                        else "You didn't provide an API key: send your gateway token as Authorization: Bearer <token>.")
             return await openai_error(401, message, code="invalid_api_key",

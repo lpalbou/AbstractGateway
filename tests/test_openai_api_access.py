@@ -256,3 +256,17 @@ def test_no_route_answers_a_stored_token_in_clear(gw, monkeypatch):
                 assert secret not in r.text, f"{method} {path} answered a stored token"
             checked += 1
     assert checked > 50
+
+
+def test_a_deactivated_or_archived_accounts_key_answers_403_not_401(gw):
+    _make(gw, "bob", BOB_TOKEN)
+    _set(gw, enabled=True)
+    assert gw.admin.get("/v1/models", headers=BOB).status_code == 200
+    assert gw.admin.put("/api/gateway/admin/accounts/bob/active", headers=ADMIN, json={"active": False}).status_code == 200
+    r = gw.admin.get("/v1/models", headers=BOB)
+    assert r.status_code == 403 and r.json()["error"]["code"] == "account_inactive"
+    assert r.json()["error"]["type"] == "permission_error"
+    assert gw.admin.post("/api/gateway/admin/accounts/bob/archive", headers=ADMIN).status_code == 200
+    assert gw.admin.get("/v1/models", headers=BOB).json()["error"]["code"] == "account_inactive"
+    # A key that belongs to no account stays a 401.
+    assert gw.admin.get("/v1/models", headers={"Authorization": "Bearer not-a-token-at-all"}).status_code == 401

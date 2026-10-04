@@ -757,6 +757,21 @@ class GatewayUserRegistry:
             self._save_store_unlocked(records, reservations)
             return updated, reservation, previous_runtime_id
 
+    def inactive_record_for(self, token: str) -> Optional[GatewayUserRecord]:
+        """The deactivated or archived account this token belongs to, or None. Lets a door answer
+        "not active" (403) instead of "wrong key" (401) to the holder of a real token."""
+        if not token:
+            return None
+        with self._lock:
+            records = self._load_unlocked()
+        fp = token_fingerprint(token)
+        for rec in records.values():
+            if (rec.enabled and not rec.archived) or not rec.token_hash or rec.token_fingerprint != fp:
+                continue
+            if verify_gateway_token(token, rec.token_hash):
+                return rec
+        return None
+
     def authenticate(self, token: str) -> Optional[GatewayPrincipal]:
         if not token:
             return None
