@@ -43,7 +43,8 @@ never schedules or runs anything itself.
       "automations_endpoint": "/api/gateway/automations",
       "trigger_sources_endpoint": "/api/gateway/trigger-sources",
       "command_types": ["automation.revise", "automation.pause", "automation.resume",
-                        "automation.run_now", "automation.stop_current", "automation.archive"]
+                        "automation.run_now", "automation.stop_current", "automation.archive",
+                        "automation.unarchive"]
     }
   ```
 
@@ -66,7 +67,7 @@ export AUTH="Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstr
 | `GET /api/gateway/automations` | list your automations, older scheduled runs included ([List and read](#list-and-read)) |
 | `GET /api/gateway/automations/{automation_id}` | one automation: definition and summary |
 | `PATCH /api/gateway/automations/{automation_id}` | revise title, target, trigger, context or policy ([Change](#change-an-automation)) |
-| `POST /api/gateway/automations/{automation_id}/commands` | pause, resume, run now, stop the current run, archive |
+| `POST /api/gateway/automations/{automation_id}/commands` | pause, resume, run now, stop the current run, archive, unarchive |
 | `GET /api/gateway/automations/{automation_id}/occurrences` | every run of the automation as a chat turn ([Occurrences](#occurrences)) |
 | `GET /api/gateway/automations/{automation_id}/attention` | the notifications you have not seen ([Attention](#attention-and-seen)) |
 | `POST /api/gateway/automations/{automation_id}/seen` | record what you have seen |
@@ -299,11 +300,15 @@ never inherit the grant: their tools ask as in any chat.
 
 | Route | Answer |
 |---|---|
-| `GET /api/gateway/automations?status=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor}`, newest first |
+| `GET /api/gateway/automations?status=&archived_only=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, archived_automations}`, newest first |
 | `GET /api/gateway/automations/{automation_id}` | `{definition, active_revision, summary: AutomationSummary}` |
 
 - `status` is a comma-separated subset of `active`, `paused`, `completed`,
   `failed`, `archived`. `limit` is 1 to 200 (default 50).
+- Archived automations are left out of the list unless you ask for them:
+  `archived_only=true` lists only archived ones (it cannot be combined with
+  `status`), or name `archived` in `status`. `archived_automations` is how
+  many of yours are archived, on every page.
 - Read every page, following `next_cursor` until it is `null`: older
   scheduled runs ([Legacy](#older-scheduled-runs-legacy)) come on the last
   page. `changed_since` is refused (422 `unsupported_feature`); poll complete
@@ -321,7 +326,7 @@ never inherit the grant: their tools ask as in any chat.
  "last_occurrence": {"run_id", "index", "status", "attempts", "fired_at", "finished_at"?, "excerpt", "notify"},
  "attention": {"pending_waits": 0, "unread": false, "unseen_count": 0, "cursor": "att1:3", "items": [], "waits": []},
  "legacy": false, "revision": 1, "updated_at": "…",
- "capabilities": ["revise", "pause", "resume", "run_now", "stop_current", "archive", "discuss"],
+ "capabilities": ["revise", "pause", "resume", "run_now", "stop_current", "archive", "discuss"],  // archived: ["unarchive", "discuss"]
  "session_kind": "automation"}
 ```
 
@@ -337,8 +342,8 @@ never inherit the grant: their tools ask as in any chat.
 - `last_occurrence.excerpt` holds the first 280 characters of its answer.
 - `attention` is described in [Attention](#attention-and-seen); `items` and
   `waits` hold up to 20 entries each.
-- `capabilities` lists what the automation accepts. An archived, completed or
-  failed automation lists `["discuss"]` only.
+- `capabilities` lists what the automation accepts. An archived automation
+  lists `["unarchive", "discuss"]`; a completed or failed one `["discuss"]`.
 
 `definition` is the stored definition (target, trigger, context, policy,
 revision); `active_revision` is the revision in force.
@@ -379,6 +384,7 @@ revision); `active_revision` is the revision in force.
 | `automation.revise` | `payload: {changes, expected_revision?}`; the same as `PATCH` |
 | `automation.stop_current` | cancels the running occurrence |
 | `automation.archive` | no more occurrences; the history is kept |
+| `automation.unarchive` | back to **paused** with its history; `resume` re-arms the trigger |
 
 **The receipt means queued.** A command is `accepted` when it is written to
 the gateway's durable command inbox. The runner hands it to AbstractRuntime,
@@ -389,8 +395,9 @@ different command answers 409 `identity_conflict`.
 
 **The route refuses at once what the state already rules out** (409):
 
-- any command but `archive` on an archived, completed or failed automation
-  (`invalid_state`);
+- any command but `unarchive` (and a repeated `archive`) on an archived
+  automation, any command but `archive` on a completed or failed one, and
+  `unarchive` on an automation that is not archived (`invalid_state`);
 - `run_now` while an occurrence is running or waiting to run
   (`automation_busy`), or when the trigger has no ticks left (`invalid_state`);
 - `pause` when paused, `resume` when not paused, `stop_current` with nothing

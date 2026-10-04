@@ -272,6 +272,11 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     ("POST", "/api/gateway/sessions/{session_id}/prompt_cache/prepare"),
     ("POST", "/api/gateway/sessions/{session_id}/prompt_cache/clear"),
     ("POST", "/api/gateway/sessions/{session_id}/prompt_cache/rebuild"),
+    # --- session archive (round 5): a mark in the CALLER's plane; a session
+    # another account owns is absent from that plane and answers 404
+    # (test_session_archive.py pins it) --------------------------------------
+    ("POST", "/api/gateway/sessions/{session_id}/archive"),
+    ("POST", "/api/gateway/sessions/{session_id}/unarchive"),
     # --- entity interaction surfaces (chat class) --------------------------
     # The richer rationale lives in test_gateway_entities_admin_gate.py;
     # entity MUTATION routes (state/substrate/skills/voice/...) are policy-

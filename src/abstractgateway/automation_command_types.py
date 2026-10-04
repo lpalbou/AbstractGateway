@@ -32,6 +32,7 @@ AUTOMATION_COMMAND_TYPES: tuple[str, ...] = (
     "automation.run_now",
     "automation.stop_current",
     "automation.archive",
+    "automation.unarchive",
 )
 
 COMMAND_TYPES: tuple[str, ...] = LEGACY_COMMAND_TYPES + AUTOMATION_COMMAND_TYPES

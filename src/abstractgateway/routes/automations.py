@@ -292,9 +292,11 @@ def _attention_item(raw: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _capabilities(status: str) -> List[str]:
-    if status in ("archived", "completed", "failed"):
+    if status == "archived":
+        return ["unarchive", "discuss"]
+    if status in ("completed", "failed"):
         return ["discuss"]
-    return list(AUTOMATION_SUMMARY_CAPABILITIES)
+    return [c for c in AUTOMATION_SUMMARY_CAPABILITIES if c != "unarchive"]
 
 
 def automation_summary_row(svc: Any, principal: Any, controller: Any) -> Dict[str, Any]:
@@ -621,15 +623,36 @@ def _audit_automation(request: Request, *, automation_id: str, command: str) -> 
         pass
 
 
-def _list(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str], limit: int) -> Dict[str, Any]:
+def _archived_count(svc: Any, principal: Any, run_store: Any) -> int:
+    """How many of this principal's automations are archived (legacy roots included)."""
+    n = len(list_automations(run_store, status="archived", limit=1_000_000).items)
+    rows = run_store.list_run_index(role="legacy_schedule", limit=100_000)
+    for row in rows:
+        if str(row.get("parent_run_id") or "").strip():
+            continue
+        run = run_store.load(str(row["run_id"]))
+        if run is not None and legacy_summary_row(run, run_store)["status"] == "archived":
+            n += 1
+    return n
+
+
+def _list(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str], limit: int, archived_only: bool = False) -> Dict[str, Any]:
+    if archived_only and status:
+        raise AutomationError(422, "invalid_request", "archived_only and status cannot be combined", field="archived_only")
     wanted = filter_values(status) if status else None
     if wanted is not None:
         unknown = sorted(s for s in wanted if s not in AUTOMATION_STATUSES)
         if unknown or not wanted:
             raise AutomationError(422, "invalid_request", f"unknown status {unknown or status!r} (expected {'|'.join(AUTOMATION_STATUSES)})", field="status")
+    elif archived_only:
+        wanted = ["archived"]
+    else:
+        # Archived automations leave the default listing (archived_only=true lists them).
+        wanted = [s for s in AUTOMATION_STATUSES if s != "archived"]
     run_store = svc.host.run_store
     try:
-        page = list_automations(run_store, status=None, cursor=cursor, limit=limit)
+        # The status filter rides the runtime's page so a page is never short of what it hides.
+        page = list_automations(run_store, status=list(wanted), cursor=cursor, limit=limit)
     except InvalidCursor as e:
         raise AutomationError(422, "invalid_request", str(e), field="cursor")
     items: List[Dict[str, Any]] = []
@@ -656,7 +679,7 @@ def _list(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str]
             summary = legacy_summary_row(run, run_store)
             if wanted is None or summary["status"] in wanted:
                 items.append(summary)
-    return {"items": items, "next_cursor": page.next_cursor}
+    return {"items": items, "next_cursor": page.next_cursor, "archived_automations": _archived_count(svc, principal, run_store)}
 
 
 @router.get("/automations")
@@ -666,14 +689,17 @@ async def list_automations_route(
     cursor: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),
     changed_since: Optional[str] = Query(None, description="Not supported in v1 (422 unsupported_feature): poll full pages."),
+    archived_only: bool = Query(False, description="If true, list only archived automations. Without it (and without `status`), archived automations are left out. The response carries `archived_automations` (how many this principal has archived)."),
 ) -> Dict[str, Any]:
     """Every automation of this principal, newest first, as full pages; legacy
-    `scheduled:*` roots follow on the last page with `legacy: true`."""
+    `scheduled:*` roots follow on the last page with `legacy: true`. Archived
+    automations are listed only with `archived_only=true` (or an explicit
+    `status` naming `archived`)."""
     principal = _principal_from_request(request)
     if changed_since is not None:
         raise AutomationError(422, "unsupported_feature", str(ChangedSinceUnsupported()), field="changed_since")
     svc = get_gateway_service()
-    return await _off_the_event_loop(_list, svc, principal, status, cursor, limit)
+    return await _off_the_event_loop(_list, svc, principal, status, cursor, limit, bool(archived_only))
 
 
 def _get(svc: Any, principal: Any, automation_id: str) -> Dict[str, Any]:
@@ -765,7 +791,16 @@ def _refuse_at_the_door(controller: Any, type_: str, *, command_id: str) -> None
     runtime re-checks at application (the state may move in between)."""
     state = (controller.vars.get("_runtime") or {})["automation"]
     status = automation_status(controller)
-    if status in ("archived", "completed", "failed") and type_ != "automation.archive":
+    if type_ == "automation.unarchive":
+        # Back to paused, history kept (the runtime revives a controller that ended when archived).
+        if status != "archived":
+            raise AutomationError(409, "invalid_state", "Automation is not archived.", command_id=command_id)
+        return
+    if status == "archived":
+        if type_ != "automation.archive":
+            raise AutomationError(409, "invalid_state", "Automation is archived; only unarchive is possible.", command_id=command_id)
+        return
+    if status in ("completed", "failed") and type_ != "automation.archive":
         raise AutomationError(409, "invalid_state", f"Automation is {status}; only archive is possible.", command_id=command_id)
     if type_ == "automation.run_now":
         if state.get("pending_occurrence") is not None or state.get("manual_pending") is not None:

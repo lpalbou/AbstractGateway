@@ -28,12 +28,13 @@ def test_constants_are_the_contract_lists() -> None:
         "automation.run_now",
         "automation.stop_current",
         "automation.archive",
+        "automation.unarchive",
     )
     assert set(LEGACY_COMMAND_TYPES) == {
         "pause", "resume", "cancel", "conclude", "emit_event", "update_schedule", "compact_memory", "inject_guidance",
     }
     assert COMMAND_TYPES == LEGACY_COMMAND_TYPES + AUTOMATION_COMMAND_TYPES
-    assert AUTOMATION_SUMMARY_CAPABILITIES == ("revise", "pause", "resume", "run_now", "stop_current", "archive", "discuss")
+    assert AUTOMATION_SUMMARY_CAPABILITIES == ("revise", "pause", "resume", "run_now", "stop_current", "archive", "unarchive", "discuss")
 
 
 def _string_collections(path: Path) -> list[set[str]]:

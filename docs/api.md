@@ -800,10 +800,10 @@ typed waits, attention and operations, is in [automations.md](./automations.md).
 |---|---|
 | `GET /api/gateway/trigger-sources` | `{items: [{id, version, label, capabilities, config_schema, event_schema, available, unavailable_reason?}]}` |
 | `POST /api/gateway/automations` | `{request_id, title?, target, trigger?, context?, policy?}` → `{automation_id, revision, summary}` |
-| `GET /api/gateway/automations?status=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor}` (older scheduled runs on the last page, `legacy: true`) |
+| `GET /api/gateway/automations?status=&archived_only=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, archived_automations}` (older scheduled runs on the last page, `legacy: true`). Archived automations are left out unless `archived_only=true` (only them) or `status` names `archived`; `archived_automations` counts yours |
 | `GET /api/gateway/automations/{automation_id}` | `{definition, active_revision, summary}` |
 | `PATCH /api/gateway/automations/{automation_id}` | `{command_id, expected_revision?, changes}` → `{command_id, accepted, duplicate, seq}` |
-| `POST /api/gateway/automations/{automation_id}/commands` | `{command_id, type: automation.pause|resume|run_now|stop_current|archive|revise, payload?}` → the same receipt |
+| `POST /api/gateway/automations/{automation_id}/commands` | `{command_id, type: automation.pause|resume|run_now|stop_current|archive|unarchive|revise, payload?}` → the same receipt. `unarchive` brings an archived automation back **paused** with its history (409 `invalid_state` when it is not archived); an archived automation accepts only `unarchive` |
 | `GET /api/gateway/automations/{automation_id}/occurrences?cursor=&limit=` | `{items: [occurrence], next_cursor}`, newest first |
 | `GET /api/gateway/automations/{automation_id}/attention?cursor=&limit=` | `{items: [attention item], next_cursor}`: your unseen items, oldest first |
 | `POST /api/gateway/automations/{automation_id}/seen` | `{attention_cursor}` → `{attention_cursor}` (moves forward only) |
@@ -824,6 +824,28 @@ With `include_metrics=true` each row also carries `steps`, `llm_calls`,
 below it, read from the ledger on either store backend (null when the gateway
 has no ledger store). AbstractCode's conversation card shows the sum of its
 turns' `tool_calls`.
+
+### Archived sessions
+
+A conversation can be archived to take it out of the list. Archiving deletes
+nothing: the session's runs, ledgers and artifacts stay, and
+`GET /api/gateway/runs?session_id=<id>` still reads it (its rows then carry
+`archived: true` and `archived_at`).
+
+| Route | Answer |
+|---|---|
+| `POST /api/gateway/sessions/{session_id}/archive` | `{session_id, archived: true, archived_at, archived_by, changed}`; a repeat answers `changed: false` |
+| `POST /api/gateway/sessions/{session_id}/unarchive` | `{session_id, archived: false, archived_at: null, archived_by: null, changed}` |
+| `GET /api/gateway/runs?root_only=true` | leaves archived sessions out; every listing carries `archived_sessions` (how many sessions you have archived) |
+| `GET /api/gateway/runs?root_only=true&archived_only=true` | only the turns of archived sessions, each with `archived: true` |
+
+The session's owner or an admin may archive it. Each account works in its own
+runtime plane, so a session that belongs to another account answers
+`404 {"detail": {"reason_code": "session_not_found"}}`. The mark and its
+history (every archive and unarchive) are kept in the plane's
+`session_archive.json`; each call writes a `session.archived` /
+`session.unarchived` audit event. Automations are archived with the
+`automation.archive` command and brought back with `automation.unarchive`.
 
 ## Beyond the core
 

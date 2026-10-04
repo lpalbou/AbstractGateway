@@ -4711,10 +4711,10 @@ typed waits, attention and operations, is in [automations.md](docs/automations.m
 |---|---|
 | `GET /api/gateway/trigger-sources` | `{items: [{id, version, label, capabilities, config_schema, event_schema, available, unavailable_reason?}]}` |
 | `POST /api/gateway/automations` | `{request_id, title?, target, trigger?, context?, policy?}` → `{automation_id, revision, summary}` |
-| `GET /api/gateway/automations?status=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor}` (older scheduled runs on the last page, `legacy: true`) |
+| `GET /api/gateway/automations?status=&archived_only=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, archived_automations}` (older scheduled runs on the last page, `legacy: true`). Archived automations are left out unless `archived_only=true` (only them) or `status` names `archived`; `archived_automations` counts yours |
 | `GET /api/gateway/automations/{automation_id}` | `{definition, active_revision, summary}` |
 | `PATCH /api/gateway/automations/{automation_id}` | `{command_id, expected_revision?, changes}` → `{command_id, accepted, duplicate, seq}` |
-| `POST /api/gateway/automations/{automation_id}/commands` | `{command_id, type: automation.pause|resume|run_now|stop_current|archive|revise, payload?}` → the same receipt |
+| `POST /api/gateway/automations/{automation_id}/commands` | `{command_id, type: automation.pause|resume|run_now|stop_current|archive|unarchive|revise, payload?}` → the same receipt. `unarchive` brings an archived automation back **paused** with its history (409 `invalid_state` when it is not archived); an archived automation accepts only `unarchive` |
 | `GET /api/gateway/automations/{automation_id}/occurrences?cursor=&limit=` | `{items: [occurrence], next_cursor}`, newest first |
 | `GET /api/gateway/automations/{automation_id}/attention?cursor=&limit=` | `{items: [attention item], next_cursor}`: your unseen items, oldest first |
 | `POST /api/gateway/automations/{automation_id}/seen` | `{attention_cursor}` → `{attention_cursor}` (moves forward only) |
@@ -4735,6 +4735,28 @@ With `include_metrics=true` each row also carries `steps`, `llm_calls`,
 below it, read from the ledger on either store backend (null when the gateway
 has no ledger store). AbstractCode's conversation card shows the sum of its
 turns' `tool_calls`.
+
+### Archived sessions
+
+A conversation can be archived to take it out of the list. Archiving deletes
+nothing: the session's runs, ledgers and artifacts stay, and
+`GET /api/gateway/runs?session_id=<id>` still reads it (its rows then carry
+`archived: true` and `archived_at`).
+
+| Route | Answer |
+|---|---|
+| `POST /api/gateway/sessions/{session_id}/archive` | `{session_id, archived: true, archived_at, archived_by, changed}`; a repeat answers `changed: false` |
+| `POST /api/gateway/sessions/{session_id}/unarchive` | `{session_id, archived: false, archived_at: null, archived_by: null, changed}` |
+| `GET /api/gateway/runs?root_only=true` | leaves archived sessions out; every listing carries `archived_sessions` (how many sessions you have archived) |
+| `GET /api/gateway/runs?root_only=true&archived_only=true` | only the turns of archived sessions, each with `archived: true` |
+
+The session's owner or an admin may archive it. Each account works in its own
+runtime plane, so a session that belongs to another account answers
+`404 {"detail": {"reason_code": "session_not_found"}}`. The mark and its
+history (every archive and unarchive) are kept in the plane's
+`session_archive.json`; each call writes a `session.archived` /
+`session.unarchived` audit event. Automations are archived with the
+`automation.archive` command and brought back with `automation.unarchive`.
 
 ## Beyond the core
 
@@ -6724,7 +6746,8 @@ never schedules or runs anything itself.
       "automations_endpoint": "/api/gateway/automations",
       "trigger_sources_endpoint": "/api/gateway/trigger-sources",
       "command_types": ["automation.revise", "automation.pause", "automation.resume",
-                        "automation.run_now", "automation.stop_current", "automation.archive"]
+                        "automation.run_now", "automation.stop_current", "automation.archive",
+                        "automation.unarchive"]
     }
   ```
 
@@ -6747,7 +6770,7 @@ export AUTH="Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstr
 | `GET /api/gateway/automations` | list your automations, older scheduled runs included ([List and read](#list-and-read)) |
 | `GET /api/gateway/automations/{automation_id}` | one automation: definition and summary |
 | `PATCH /api/gateway/automations/{automation_id}` | revise title, target, trigger, context or policy ([Change](#change-an-automation)) |
-| `POST /api/gateway/automations/{automation_id}/commands` | pause, resume, run now, stop the current run, archive |
+| `POST /api/gateway/automations/{automation_id}/commands` | pause, resume, run now, stop the current run, archive, unarchive |
 | `GET /api/gateway/automations/{automation_id}/occurrences` | every run of the automation as a chat turn ([Occurrences](#occurrences)) |
 | `GET /api/gateway/automations/{automation_id}/attention` | the notifications you have not seen ([Attention](#attention-and-seen)) |
 | `POST /api/gateway/automations/{automation_id}/seen` | record what you have seen |
@@ -6980,11 +7003,15 @@ never inherit the grant: their tools ask as in any chat.
 
 | Route | Answer |
 |---|---|
-| `GET /api/gateway/automations?status=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor}`, newest first |
+| `GET /api/gateway/automations?status=&archived_only=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, archived_automations}`, newest first |
 | `GET /api/gateway/automations/{automation_id}` | `{definition, active_revision, summary: AutomationSummary}` |
 
 - `status` is a comma-separated subset of `active`, `paused`, `completed`,
   `failed`, `archived`. `limit` is 1 to 200 (default 50).
+- Archived automations are left out of the list unless you ask for them:
+  `archived_only=true` lists only archived ones (it cannot be combined with
+  `status`), or name `archived` in `status`. `archived_automations` is how
+  many of yours are archived, on every page.
 - Read every page, following `next_cursor` until it is `null`: older
   scheduled runs ([Legacy](#older-scheduled-runs-legacy)) come on the last
   page. `changed_since` is refused (422 `unsupported_feature`); poll complete
@@ -7002,7 +7029,7 @@ never inherit the grant: their tools ask as in any chat.
  "last_occurrence": {"run_id", "index", "status", "attempts", "fired_at", "finished_at"?, "excerpt", "notify"},
  "attention": {"pending_waits": 0, "unread": false, "unseen_count": 0, "cursor": "att1:3", "items": [], "waits": []},
  "legacy": false, "revision": 1, "updated_at": "…",
- "capabilities": ["revise", "pause", "resume", "run_now", "stop_current", "archive", "discuss"],
+ "capabilities": ["revise", "pause", "resume", "run_now", "stop_current", "archive", "discuss"],  // archived: ["unarchive", "discuss"]
  "session_kind": "automation"}
 ```
 
@@ -7018,8 +7045,8 @@ never inherit the grant: their tools ask as in any chat.
 - `last_occurrence.excerpt` holds the first 280 characters of its answer.
 - `attention` is described in [Attention](#attention-and-seen); `items` and
   `waits` hold up to 20 entries each.
-- `capabilities` lists what the automation accepts. An archived, completed or
-  failed automation lists `["discuss"]` only.
+- `capabilities` lists what the automation accepts. An archived automation
+  lists `["unarchive", "discuss"]`; a completed or failed one `["discuss"]`.
 
 `definition` is the stored definition (target, trigger, context, policy,
 revision); `active_revision` is the revision in force.
@@ -7060,6 +7087,7 @@ revision); `active_revision` is the revision in force.
 | `automation.revise` | `payload: {changes, expected_revision?}`; the same as `PATCH` |
 | `automation.stop_current` | cancels the running occurrence |
 | `automation.archive` | no more occurrences; the history is kept |
+| `automation.unarchive` | back to **paused** with its history; `resume` re-arms the trigger |
 
 **The receipt means queued.** A command is `accepted` when it is written to
 the gateway's durable command inbox. The runner hands it to AbstractRuntime,
@@ -7070,8 +7098,9 @@ different command answers 409 `identity_conflict`.
 
 **The route refuses at once what the state already rules out** (409):
 
-- any command but `archive` on an archived, completed or failed automation
-  (`invalid_state`);
+- any command but `unarchive` (and a repeated `archive`) on an archived
+  automation, any command but `archive` on a completed or failed one, and
+  `unarchive` on an automation that is not archived (`invalid_state`);
 - `run_now` while an occurrence is running or waiting to run
   (`automation_busy`), or when the trigger has no ticks left (`invalid_state`);
 - `pause` when paused, `resume` when not paused, `stop_current` with nothing
@@ -9342,6 +9371,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - OpenAI API at `/v1` (standard layout: `/v1/models`, `/v1/chat/completions`, `/v1/embeddings`, ...) with its own console page, **Models → OpenAI API**: Running/Stopped status with the Endpoint switch, Restart (ends open requests) and Check setup; Connect your app (base URL, your gateway token as the API key, New key); Authentication (Protected or Open) and Who can connect (this machine, your network, your tailnet, anywhere), applied immediately with plain warnings; supported surface and curl/Python/JavaScript examples with the real base URL; recent requests from the audit log (client, model, tokens, latency, status, Open in Observer when a run is named). Status for every account at `GET /api/gateway/openai-api`, logs at `GET /api/gateway/openai-api/logs`; admin `POST /api/gateway/admin/core-endpoint {reach}`, `/restart` and `/check`. See [docs/openai-api.md](docs/openai-api.md).
 - OpenAI conformance at the `/v1` boundary, checked with the official `openai` Python SDK: the standard error envelope `{"error": {message, type, param, code}}` (validation errors answer 400), `GET /v1/models/{id}`, structured `tool_calls` for every model, chat stream chunks with the role on the first delta and `finish_reason` on the last, `stream_options.include_usage`, `max_completion_tokens`, base64 embeddings (the SDK default), `404 model_not_found` for an id that is not `provider/model` (and, with AbstractCore branch `round4/2026-10-03`, for an unknown provider), and `400 unsupported_parameter` for `response_format` (other than text), `n > 1`, `logprobs` and `logit_bias`. Request fields that would re-route a provider or carry a credential (`base_url`, `api_key`, `provider`, `provider_kwargs`, `headers`, and the like) are refused with `400 unsupported_parameter` in JSON bodies, form bodies and query strings: the model is chosen by `model` alone, through the gateway's providers. `x-request-id` on every response; browser SDKs that send a key may call from any origin.
+- Archive a conversation: `POST /api/gateway/sessions/{session_id}/archive` and `/unarchive` (the session's owner or an admin; runs, ledgers and artifacts are kept; audited as `session.archived` / `session.unarchived`). `GET /api/gateway/runs?root_only=true` leaves archived sessions out, `archived_only=true` lists only them, and every listing carries `archived_sessions`. An archived session stays readable by its id.
+- `automation.unarchive` brings an archived automation back paused with its history (needs AbstractRuntime branch `round4/2026-10-03`). `GET /api/gateway/automations` leaves archived automations out unless `archived_only=true` (or `status` names `archived`) and carries `archived_automations`.
 - Network: the Tailscale name (`tailscale status --json`, when the CLI is installed and Tailscale runs) is listed with the addresses, and every detected address (LAN, Bonjour, Tailscale) is an accepted browser origin without a manual entry or a restart. **Reached through another address?** explains it; manual allowed origins and proxy trust sit under **Advanced**.
 
 - Models page: **Delete** (a trash-bin icon, tooltip "Delete") on every downloaded build. The confirmation states the size from the gateway ("Deletes 351 MB from this computer. Files only — nothing in your runs is touched."), the row shows a busy state, then "Not downloaded" and what was freed. New admin route `POST /api/gateway/models/delete-download` (`model_download_delete_v1`, `dry_run` measures): removes the files with the engine's own mechanism (Ollama delete, Hugging Face / MLX cache folder, one GGUF quant's files), refuses a model that is loaded or locked ("Unload it first"), still downloading, or managed by LM Studio, and writes `model.download_deleted` / `model.download_delete_refused` audit events. Needs AbstractCore with per-quant GGUF delete and the repo-scoped cache delete (branch `round4/2026-10-03`). The terminal console keeps its own delete for now.

@@ -9447,7 +9447,7 @@ def _is_internal_workflow_id(workflow_id: Any) -> bool:
 #: (flow c5253 P1-2) and the capabilities advertise the set (`runs.list.filters`).
 _LIST_RUNS_KNOWN_PARAMS = frozenset({
     "limit", "offset", "query", "status", "workflow_id", "session_id", "parent_run_id",
-    "root_only", "include_ledger_len", "include_metrics", "include_drafts", "session_kind",
+    "root_only", "include_ledger_len", "include_metrics", "include_drafts", "session_kind", "archived_only",
 })
 
 
@@ -9505,6 +9505,7 @@ async def list_runs(
     include_ledger_len: bool = Query(True, description="If true, include ledger_len (may be slow for file-backed ledgers)."),
     include_metrics: bool = Query(False, description="If true, each listed run carries steps / llm_calls / tool_calls / tokens_total: the totals of that run and every sub-run below it, read from the ledger (null when the gateway has no ledger store)."),
     include_drafts: bool = Query(False, description="If true, include private draft-test runs in the response."),
+    archived_only: bool = Query(False, description="If true, list only runs of ARCHIVED sessions (POST /sessions/{id}/archive), each marked `archived: true`. Without it, a `root_only` listing leaves archived sessions out; a `session_id` filter always reads its session, archived or not. The response carries `archived_sessions` (how many sessions this caller has archived)."),
 ) -> Dict[str, Any]:
     """List recent runs (summary only; never returns full run.vars)."""
     # Unknown query params are REFUSED, not ignored (flow c5253 P1-2): a
@@ -9536,10 +9537,26 @@ async def list_runs(
     qtext = str(query).strip().lower() if isinstance(query, str) and query.strip() else None
     qglob = _query_is_glob(qtext) if qtext is not None else False
 
+    # Archived sessions (session_archive.py, this caller's plane): out of a
+    # root_only listing by default, the only rows with archived_only, always
+    # readable through an explicit session_id. An unreadable archive is a 500,
+    # never "nothing archived".
+    from ..session_archive import SessionArchiveUnreadable, archived_sessions as _archived_sessions
+
+    try:
+        archived_map = _archived_sessions(svc.config.data_dir)
+    except SessionArchiveUnreadable as exc:
+        raise HTTPException(status_code=500, detail={"reason_code": "session_archive_unreadable", "message": str(exc)}) from None
+    archive_filter = (bool(root_only) or bool(archived_only)) and not (isinstance(session_id, str) and session_id.strip()) and not (
+        isinstance(parent_run_id, str) and parent_run_id.strip()
+    )
+
     def _matches_query(summary: Dict[str, Any]) -> bool:
         """The console query language over the three identity fields shown
         (and the session_kind filter, which every branch applies here)."""
         if kinds is not None and summary.get("session_kind") not in kinds:
+            return False
+        if archive_filter and (str(summary.get("session_id") or "") in archived_map) != bool(archived_only):
             return False
         if qtext is None:
             return True
@@ -9844,7 +9861,18 @@ async def list_runs(
                         pass
                 item["ledger_len"] = ledger_len
 
-        out_page: Dict[str, Any] = {"items": items, "count": len(items), "offset": int(offset), "has_more": has_more}
+        for item in items:
+            rec = archived_map.get(str(item.get("session_id") or ""))
+            if rec is not None:
+                item["archived"] = True
+                item["archived_at"] = rec.get("archived_at")
+        out_page: Dict[str, Any] = {
+            "items": items,
+            "count": len(items),
+            "offset": int(offset),
+            "has_more": has_more,
+            "archived_sessions": len(archived_map),
+        }
         if scan_truncated:
             out_page["warnings"] = [
                 "#TRUNCATION the run scan hit its cost cap — deeper matches may exist beyond this page"

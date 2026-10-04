@@ -1012,3 +1012,35 @@ def test_growing_budget_round_trip_in_create_list_detail_and_revise(live: TestCl
             "changes": {"context": {"mode": "growing", "growing": {"max_tokens": bad}}}})
         assert rejected.status_code == 422, rejected.text
         assert _envelope(rejected)["field"] == "context.growing.max_tokens"
+
+
+def test_d7_unarchive_brings_an_archived_automation_back_paused_and_the_list_hides_archived(live: TestClient) -> None:
+    """GATEWAY ARCHIVE CONTRACT (round 5): `automation.unarchive` -> paused, history kept;
+    the default list leaves archived automations out, `archived_only=true` lists them,
+    and every page says how many are archived."""
+    from abstractgateway.service import get_gateway_service
+
+    aid = _create(live, request_id="arch")["automation_id"]
+    keep = _create(live, request_id="keep")["automation_id"]
+    _run_now_and_wait(live, aid, "o1", index=1)
+    r = live.post(f"/api/gateway/automations/{aid}/commands", headers=HEADERS, json={"command_id": "u0", "type": "automation.unarchive"})
+    assert r.status_code == 409 and _envelope(r)["reason_code"] == "invalid_state"  # not archived
+    _command(live, aid, "automation.archive", "x1")
+    wait_until(lambda: live.get(f"/api/gateway/automations/{aid}", headers=HEADERS).json()["summary"]["status"] == "archived")
+    wait_until(lambda: get_gateway_service().host.run_store.load(aid).status.value == "completed")  # the controller ended
+    page = live.get("/api/gateway/automations", headers=HEADERS).json()
+    assert [s["automation_id"] for s in page["items"]] == [keep] and page["archived_automations"] == 1
+    arch = live.get("/api/gateway/automations?archived_only=true", headers=HEADERS).json()
+    assert [s["automation_id"] for s in arch["items"]] == [aid] and arch["archived_automations"] == 1
+    assert arch["items"][0]["capabilities"] == ["unarchive", "discuss"]
+    assert live.get("/api/gateway/automations?archived_only=true&status=active", headers=HEADERS).status_code == 422
+    _command(live, aid, "automation.unarchive", "u1")
+    wait_until(lambda: live.get(f"/api/gateway/automations/{aid}", headers=HEADERS).json()["summary"]["status"] == "paused")
+    wait_until(lambda: get_gateway_service().host.run_store.load(aid).status.value == "waiting")  # revived, parked
+    detail = live.get(f"/api/gateway/automations/{aid}", headers=HEADERS).json()
+    assert detail["definition"]["archived_at"] is None and "unarchive" not in detail["summary"]["capabilities"]
+    assert [o["index"] for o in _occurrences(live, aid)] == [1]  # history kept
+    page = live.get("/api/gateway/automations", headers=HEADERS).json()
+    assert {s["automation_id"] for s in page["items"]} == {aid, keep} and page["archived_automations"] == 0
+    # Paused, not archived: run_now works again.
+    _run_now_and_wait(live, aid, "o2", index=2)

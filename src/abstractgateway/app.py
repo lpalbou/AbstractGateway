@@ -157,6 +157,10 @@ app.include_router(engines_router, prefix="/api")
 from .routes.model_download_delete import router as model_download_delete_router  # noqa: E402
 
 app.include_router(model_download_delete_router, prefix="/api")
+# Archive / unarchive a session (conversation): routes/session_archive.py.
+from .routes.session_archive import router as session_archive_router  # noqa: E402
+
+app.include_router(session_archive_router, prefix="/api")
 # Browser apps (Node runtime, npm installs, supervised app servers): literal
 # /gateway/apps/... paths, included before the parametrized gateway router.
 # The handover route lives at /apps/handover/{code}, outside /api/gateway, so
