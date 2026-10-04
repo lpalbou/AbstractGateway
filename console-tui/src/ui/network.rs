@@ -280,6 +280,9 @@ struct NetUi {
     warnings_open: Signal<Option<bool>>,
     advanced_open: Signal<Option<bool>>,
     scroll: Signal<i32>,
+    /// Which control (in page order) held the keyboard: a rebuild (fresh
+    /// data, a fold) gives it back, so a save never sends the caret home.
+    focus: Signal<usize>,
     /// The last Ready read (shown while a refresh is in flight).
     last: Signal<Option<NetworkData>>,
 }
@@ -408,6 +411,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         warnings_open: cx.signal(None),
         advanced_open: cx.signal(None),
         scroll: cx.signal(0),
+        focus: cx.signal(0),
         last: cx.signal(None),
     };
     // Keep the last read: a refresh never blanks the page.
@@ -576,6 +580,16 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     }
                     let state = store.network.get();
                     let last = nu.last.get();
+                    // A rebuild on these too (the focused control comes back).
+                    let _ = (
+                        nu.advanced_open.get(),
+                        nu.warnings_open.get(),
+                        nu.confirm.get(),
+                        nu.refused.get(),
+                        nu.notice.get(),
+                        nu.origin_error.get(),
+                        store.json.writes.get(),
+                    );
                     match (state, last) {
                         (Loadable::Failed(e), None) => {
                             let w = (vp.get_untracked().w - BLOCK_CHROME - 2).max(20) as usize;
@@ -649,6 +663,8 @@ struct Page {
     y: i32,
     w: usize,
     scroll: Signal<i32>,
+    focus: Signal<usize>,
+    next: usize,
 }
 
 impl Page {
@@ -674,11 +690,20 @@ impl Page {
     fn control(&mut self, el: Element, h: i32) {
         let y = self.y;
         let scroll = self.scroll;
+        let focus = self.focus;
+        let idx = self.next;
+        self.next += 1;
         let el = el.on(Phase::Target, move |_, ev| {
             if matches!(ev, UiEvent::FocusIn) {
+                focus.set(idx);
                 scroll.set((y - 2).max(0));
             }
         });
+        let el = if focus.get_untracked() == idx {
+            el.autofocus()
+        } else {
+            el
+        };
         let c = std::mem::replace(&mut self.col, Element::new());
         self.col = c.child(el.build());
         self.y += h;
@@ -699,6 +724,8 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData, w: usize, nu: 
         y: 0,
         w,
         scroll: nu.scroll,
+        focus: nu.focus,
+        next: 0,
     };
 
     // ---- Who can reach this gateway ----
@@ -737,8 +764,7 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData, w: usize, nu: 
                 }
             })
             .layout(LayoutStyle::default().h(rows.len().max(1) as i32).shrink(0.0))
-            .element(cx, t)
-            .autofocus(),
+            .element(cx, t),
         rows.len().max(1) as i32,
     );
     // Every mode's sentence (the web shows them in the segmented choice).
@@ -1075,10 +1101,10 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData, w: usize, nu: 
     p.control(
         Element::new()
             .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
-            .child(line(vec![span(
-                "The OpenAI-compatible API has its own page:",
-                t.text_muted,
-            )]))
+            .child(super::util::line_styled(
+                LayoutStyle::line(1).w(44).shrink(0.0),
+                vec![span("The OpenAI-compatible API has its own page:", t.text_muted)],
+            ))
             .child(
                 Button::new("OpenAI API")
                     .on_click(move || ui.screen.set(super::SCREEN_OPENAI))
