@@ -703,7 +703,11 @@ one-off is `input_data.workspace` (`POST /runs/start` also takes a top-level
 `workspace`, moved there). With a `session_id` it wins for that run and is
 saved onto the session when the session has no choice yet. At the HTTP doors a
 row outside the eligible set or above its cap is refused (400
-`workspace_refused`); the in-process doors drop or lower it, never widen. A
+`workspace_refused`); the in-process doors drop or lower it, never widen, and
+record each such row on the run as `_gateway_workspace.clamped: [{path, asked,
+got, sentence}]` (`got` null = dropped; the sentence is the HTTP door's).
+`GET /runs/{run_id}/workspace` also answers `workspace_level`,
+`workspace_summary` and `workspace_clamped`. A
 legacy `workspace_allowed_paths` list may only narrow; a `workspace_root` (a
 launch folder, for example) must be reachable; a client `workspace_access_mode:
 "all_except_ignored"` is refused. The run records the level under its vars

@@ -151,7 +151,8 @@ def apply_workspace_policy(
     - LEVEL: a one-off ``workspace`` object in the run's input (Flow run window, Observer launch, an
       automation definition) > the session's stored choice > the account default > the gateway
       policy. A one-off is CLAMPED to the gateway's eligible set and caps here (rows outside are
-      dropped, modes lowered); the HTTP doors refuse such a payload before (400 workspace_refused).
+      dropped, modes lowered, each recorded with its sentence under `_gateway_workspace.clamped`);
+      the HTTP doors refuse such a payload before (400 workspace_refused).
     - WHAT: "Deny everything, allow listed workspaces" (at either level) -> `workspace_or_allowed` with
       the ro/rw workspaces; "Allow everything…" at both levels -> `all_except_ignored` (set here,
       never by a client); refused rows -> `workspace_ignored_paths`. A client's narrower
@@ -173,8 +174,9 @@ def apply_workspace_policy(
     user = str(user_id or "") or "admin"
     raw_one_off = vars0.pop("workspace", None)
     one_off = None
+    clamped: List[Dict[str, Any]] = []
     if isinstance(raw_one_off, dict):
-        one_off = clamp_layer(caps_for(data_dir, tenant_id=tenant, user_id=user), raw_one_off)
+        one_off = clamp_layer(caps_for(data_dir, tenant_id=tenant, user_id=user), raw_one_off, clamped)
     _eff_payload, eff = resolve_effective(
         data_dir,
         tenant_id=tenant,
@@ -247,6 +249,11 @@ def apply_workspace_policy(
     record = dict(vars0.get("_gateway_workspace") or {}) if isinstance(vars0.get("_gateway_workspace"), dict) else {}
     record["level"] = eff.level
     record["summary"] = _eff_payload["summary"]
+    # What the gateway took away from a stored or forwarded one-off, with the reason (never silent).
+    if clamped:
+        record["clamped"] = clamped
+    else:
+        record.pop("clamped", None)
     vars0["_gateway_workspace"] = record
     return [str(p) for p in plane if any(_under(p, r) or _under(r, p) for r in reach)]
 

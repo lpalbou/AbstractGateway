@@ -586,7 +586,9 @@ Enforcement reads only the effective set:
   and agora bridges, schedules, automations, entities), is bound by the host
   (`run_workspace_guard.apply_workspace_policy`), which resolves the level
   again and CLAMPS a forwarded one-off (rows outside the set dropped, modes
-  lowered), never widens:
+  lowered), never widens, and never silently: each clamped row is recorded on
+  the run with its sentence (`_gateway_workspace.clamped`, shown by
+  `GET /runs/{id}/workspace`):
   - "Deny everything, allow listed workspaces" at either level →
     `workspace_or_allowed` with the reachable workspaces.
   - "Allow everything, refuse listed workspaces" at both levels →

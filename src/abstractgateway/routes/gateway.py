@@ -10304,6 +10304,20 @@ async def get_run_workspace(run_id: str, request: Request) -> Dict[str, Any]:
         "host": {"hostname": socket.gethostname(), "caller_is_this_machine": same_machine},
         # POST /runs/{run_id}/workspace/open is admin-only and acts on THIS host.
         "open_supported": bool(exists and same_machine and principal.is_admin()),
+        # The workspaces this run could use (round 11): its level and line, and what the gateway
+        # took away from a stored or forwarded one-off, each with its sentence.
+        **_run_workspace_record(run),
+    }
+
+
+def _run_workspace_record(run: Any) -> Dict[str, Any]:
+    vars_obj = getattr(run, "vars", None)
+    rec = vars_obj.get("_gateway_workspace") if isinstance(vars_obj, dict) else None
+    rec = rec if isinstance(rec, dict) else {}
+    return {
+        "workspace_level": rec.get("level"),
+        "workspace_summary": rec.get("summary"),
+        "workspace_clamped": list(rec.get("clamped") or []),
     }
 
 

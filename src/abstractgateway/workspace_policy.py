@@ -1076,31 +1076,49 @@ def legacy_paths_to_layer(caps: Caps, paths: Iterable[Any]) -> Dict[str, Any]:
     return {"posture": "allowed_only", "default_mode": "rw", "folders": rows}
 
 
-def clamp_layer(caps: Caps, raw: Any) -> Optional[Dict[str, Any]]:
+def clamp_layer(caps: Caps, raw: Any, clamped: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]:
     """A one-off layer CLAMPED (never refused) to the gateway's eligible set and caps: what an
     in-process door (automation occurrence, host start) applies to a stored or forwarded payload.
     Rows that are not existing directories or are outside the eligible set are dropped, modes above
-    the cap lowered; a malformed object is None (the run follows the next level)."""
+    the cap lowered; a malformed object is None (the run follows the next level).
+
+    Nothing is silent: each dropped or lowered row is appended to ``clamped`` as
+    ``{path, asked, got, sentence}`` (``got`` null = dropped), with the sentence an HTTP door would
+    have refused it with; the host records the list on the run (``_gateway_workspace.clamped``)."""
+    from .runtime_config import check_workspace_path
+
     if not isinstance(raw, dict) or raw.get("posture") not in POSTURES:
+        if clamped is not None and raw is not None:
+            clamped.append({"path": None, "asked": None, "got": None, "sentence": "The run's workspace object was malformed and was ignored; the run follows the next level."})
         return None
+    note = clamped.append if clamped is not None else (lambda _x: None)
     default = "ro" if raw.get("default_mode") == "ro" else "rw"
     if raw["posture"] == "any_except_denied" and caps.any and caps.g["default_mode"] == "ro":
+        if raw.get("default_mode") == "rw":
+            note({"path": None, "asked": "rw", "got": "ro", "sentence": "The gateway allows unlisted workspaces read-only, so the default is read-only."})
         default = "ro"
     rows: List[Dict[str, str]] = []
     for item in raw.get("folders") or []:
         if not isinstance(item, dict) or item.get("mode") not in MODES or not isinstance(item.get("path"), str):
+            note({"path": item.get("path") if isinstance(item, dict) else None, "asked": item.get("mode") if isinstance(item, dict) else None,
+                  "got": None, "sentence": "This row is not {path, mode: ro|rw|deny}; it was dropped."})
             continue
-        p = Path(item["path"]).expanduser()
-        if not p.is_absolute() or not p.is_dir():
+        asked = item["mode"]
+        checked = check_workspace_path(item["path"])
+        if not checked.get("valid"):
+            note({"path": item["path"], "asked": asked, "got": None, "sentence": f"{item['path']}: {checked.get('sentence') or 'not a directory.'}"})
             continue
-        real = str(_real(p))
+        real = str(_real(Path(checked["normalized"])))
         if any(r["path"] == real for r in rows):
             continue
-        mode = item["mode"]
+        mode = asked
         if mode != "deny":
             cap = caps.cap(Path(real))
             if cap == "deny":
+                note({"path": real, "asked": asked, "got": None, "sentence": f"{real} is outside the workspaces the gateway allows ({caps.g['summary']})."})
                 continue
-            mode = _min(mode, cap)
+            if _RANK[mode] > _RANK[cap]:
+                note({"path": real, "asked": asked, "got": cap, "sentence": f"{READ_ONLY_CAP_SENTENCE}: {real}."})
+                mode = cap
         rows.append({"path": real, "mode": mode})
     return {"posture": raw["posture"], "default_mode": default, "folders": rows}

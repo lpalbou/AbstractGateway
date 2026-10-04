@@ -317,3 +317,38 @@ def test_automations_store_input_data_workspace(tmp_path: Path, monkeypatch: pyt
             "folders": [{"path": d["archive"], "mode": "ro"}, {"path": d["pictures"], "mode": "rw"}],
         }
         assert not _can(data, "write_file", Path(d["archive"]) / "a.txt") and _can(data, "read_file", Path(d["archive"]) / "seed.txt")
+
+
+@pytest.mark.parametrize("door", ["host", "automation"])
+def test_an_in_process_clamp_is_recorded_with_its_sentence(door: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """ADVERSARY F1: a stored/forwarded one-off narrowed by the gateway since is never clamped silently:
+    each dropped or lowered row is on the run (`_gateway_workspace.clamped`) with the sentence the HTTP
+    door would have refused it with, and GET /runs/{id}/workspace shows it."""
+    d = _dirs(tmp_path)
+    client, headers = _bundle_client(tmp_path, monkeypatch)
+    with client:
+        _gateway_any(client, d, headers)  # archive ro (cap), secrets refused
+        stored = {"posture": "allowed_only", "default_mode": "rw", "folders": [
+            {"path": d["secrets"], "mode": "rw"},   # now outside the eligible set -> dropped
+            {"path": d["archive"], "mode": "rw"},   # above its cap -> lowered to ro
+            {"path": d["pictures"], "mode": "rw"},  # kept
+        ]}
+        v = _starts(client, headers, tmp_path)[door]("chat-c", {"workspace": stored})
+        clamped = v["_gateway_workspace"]["clamped"]
+        assert clamped == [
+            {"path": d["secrets"], "asked": "rw", "got": None,
+             "sentence": f"{d['secrets']} is outside the workspaces the gateway allows ({client.get('/api/gateway/workspace/policy', headers=headers).json()['policy']['summary']})."},
+            {"path": d["archive"], "asked": "rw", "got": "ro", "sentence": f"The gateway allows this workspace read-only: {d['archive']}."},
+        ]
+        # The same sentences the HTTP door refuses with.
+        r = client.post("/api/gateway/workspace/effective/me", headers=headers, json={"workspace": {**stored, "folders": stored["folders"][1:2]}})
+        assert r.json()["detail"]["message"] == clamped[1]["sentence"]
+        if door == "host":
+            from abstractgateway.service import get_gateway_service
+
+            run_id = next(r.run_id for r in get_gateway_service().host.run_store.list_runs(limit=50) if (r.vars or {}).get("_gateway_workspace", {}).get("clamped"))
+            shown = client.get(f"/api/gateway/runs/{run_id}/workspace", headers=headers).json()
+            assert shown["workspace_level"] == "run" and shown["workspace_clamped"] == clamped
+        # A one-off within the set records nothing.
+        v = _starts(client, headers, tmp_path)[door]("chat-c2", {"workspace": {**stored, "folders": stored["folders"][2:]}})
+        assert "clamped" not in v["_gateway_workspace"]
