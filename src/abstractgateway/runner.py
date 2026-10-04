@@ -61,6 +61,25 @@ from abstractruntime.storage.commands import (
 
 logger = logging.getLogger(__name__)
 
+# R13.1: when this process started (wall clock, UTC). A legacy streamed-speech
+# wait created before it belongs to a dead process.
+_PROCESS_STARTED_AT = datetime.datetime.now(datetime.timezone.utc)
+INTERRUPTED_VOICE_STREAM_SENTENCE = (
+    "Read aloud was interrupted because the gateway restarted; the audio was not finished. Press Read aloud again."
+)
+
+
+def _parse_iso_utc(value: Any) -> Optional[datetime.datetime]:
+    try:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        dt = datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return dt if dt.tzinfo else dt.replace(tzinfo=datetime.timezone.utc)
+    except Exception:
+        return None
+
+
 
 def _is_lost_resume_race(exc: BaseException) -> bool:
     """True for the refusal AbstractRuntime gives a resume whose wait is gone.
@@ -1626,6 +1645,44 @@ class GatewayRunner:
             # exactly the "parent stuck forever on a finished child" incident
             # this pass exists to prevent — it must be visible (0070 audit).
             logger.exception("GatewayRunner: terminal-subworkflow wait repair pass failed (will retry next poll)")
+
+        # R13.1: a streamed-speech wait left by a process that died mid-stream
+        # (runtimes before R13.1 parked the stream's child run on an event
+        # only that process could send) is closed with a sentence — never a
+        # run that waits forever.
+        try:
+            self._close_interrupted_voice_streams(waiting=waiting_all)
+        except Exception:
+            logger.exception("GatewayRunner: interrupted voice-stream close pass failed (will retry next poll)")
+
+    def _close_interrupted_voice_streams(self, waiting: Any) -> List[str]:
+        """Close every legacy streamed-speech wait created before this process started."""
+        from abstractruntime.integrations.abstractcore import (
+            get_abstractcore_run_facade,
+            is_interrupted_voice_stream_wait,
+        )
+
+        closed: List[str] = []
+        for r in waiting or []:
+            wait = getattr(r, "waiting", None)
+            if wait is None or not is_interrupted_voice_stream_wait(wait):
+                continue
+            created = _parse_iso_utc(getattr(r, "created_at", None))
+            if created is not None and created >= _PROCESS_STARTED_AT:
+                continue  # a stream THIS process holds (an older runtime) is live, not orphaned
+            try:
+                facade = get_abstractcore_run_facade(self._host.runtime)
+                facade.close_interrupted_voice_stream(r.run_id, reason=INTERRUPTED_VOICE_STREAM_SENTENCE)
+            except Exception as e:
+                if _is_lost_resume_race(e):
+                    continue
+                logger.warning("GatewayRunner: could not close interrupted voice stream %s (retries next poll): %s", r.run_id, e)
+                continue
+            closed.append(r.run_id)
+            logger.warning("GatewayRunner: closed interrupted voice stream %s (parent %s): %s", r.run_id, getattr(r, "parent_run_id", None), INTERRUPTED_VOICE_STREAM_SENTENCE)
+        if closed:
+            self._voice_streams_closed = (list(getattr(self, "_voice_streams_closed", [])) + closed)[-20:]
+        return closed
 
     def _repair_terminal_subworkflow_waits(self, waiting: Any = None) -> None:
         if waiting is None:

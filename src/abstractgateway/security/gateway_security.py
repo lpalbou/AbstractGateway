@@ -1430,23 +1430,14 @@ class GatewaySecurityMiddleware:
                     if buffered_body is None:
                         return await self._app(scope, receive, _send_wrapped)
 
-                    # Replay buffered body to downstream app.
-                    sent = False
+                    # Replay the buffered body, then hand over to the
+                    # connection's own receive (R13.1): a replay that keeps
+                    # answering "empty body" without suspending made every
+                    # StreamingResponse's disconnect listener a busy loop on
+                    # the event loop — the 2026-10-04 watchdog incident.
+                    from ..asgi_receive import replay_body_receive
 
-                    async def _replay_receive():
-                        # After the body, hand over to the connection's own
-                        # receive (it waits, and reports http.disconnect).
-                        # Answering "empty body" forever without suspending
-                        # turned every StreamingResponse's disconnect listener
-                        # into a busy loop on the event loop (R13.1, the
-                        # 2026-10-04 21:23 watchdog restart during Read aloud).
-                        nonlocal sent
-                        if sent:
-                            return await receive()
-                        sent = True
-                        return {"type": "http.request", "body": buffered_body, "more_body": False}
-
-                    return await self._app(scope, _replay_receive, _send_wrapped)
+                    return await self._app(scope, replay_body_receive(buffered_body, then=receive), _send_wrapped)
                 finally:
                     try:
                         sem.release()

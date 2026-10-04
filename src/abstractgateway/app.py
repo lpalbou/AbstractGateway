@@ -32,6 +32,9 @@ async def _lifespan(_app: FastAPI):
     # service manager restarts the gateway (loop_watchdog.py). Off unless
     # `serve` configured it.
     loop_watchdog.start_configured()
+    # The previous process's newest hang (R13.1): read once, shown by the
+    # console's Resources page and the terminal console.
+    loop_watchdog.load_last_incident()
     begin_gateway_boot()
     # Browser apps marked enabled start with the gateway, as its children
     # (never launchd/systemd), on a background thread; they stop with it.
@@ -152,6 +155,12 @@ app.add_middleware(
 from starlette.middleware.gzip import GZipMiddleware  # noqa: E402
 
 app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+# Outermost (R13.1): the requests the event loop is serving, named in the
+# watchdog's incident file if the loop ever hangs (loop_watchdog.py).
+from .loop_watchdog import InflightRequests  # noqa: E402
+
+app.add_middleware(InflightRequests)
 
 # Entities routers first: their literal paths (/gateway/entities/...) must win
 # over any parametrized /gateway/... routes in the main gateway router.

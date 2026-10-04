@@ -515,7 +515,7 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
 
     wd_flag = getattr(args, "watchdog_seconds", None)
     wd_limit = loop_watchdog.DEFAULT_WATCHDOG_SECONDS if wd_flag is None else float(wd_flag)
-    loop_watchdog.configure(wd_limit)
+    loop_watchdog.configure(wd_limit, incident_dir=Path(data_dir) / "incidents")
     if loop_watchdog.configured_limit_s() is None:
         _stderr("Event-loop watchdog: off (--watchdog-seconds 0); a hung gateway is not restarted")
     else:

@@ -34,6 +34,7 @@ from starlette.responses import JSONResponse
 from abstractruntime.integrations.abstractcore.server_facade import serve_core_request
 
 from . import network_exposure as ne
+from .asgi_receive import replay_body_receive
 from .runtime_config import resolve_network_setting, store_lock
 from .users import gateway_data_dir_from_env
 
@@ -531,13 +532,7 @@ def refuse_routing_fields(names) -> None:
 
 async def _form_field_names(scope, raw: bytes) -> List[str]:
     """The field names of a form body (multipart or urlencoded), parsed by Starlette."""
-    sent = {"done": False}
-
-    async def receive():
-        if sent["done"]:
-            return {"type": "http.disconnect"}
-        sent["done"] = True
-        return {"type": "http.request", "body": raw, "more_body": False}
+    receive = replay_body_receive(raw)
 
     try:
         form = await Request(dict(scope, type="http"), receive).form(max_files=1000, max_fields=10000)
@@ -720,8 +715,7 @@ async def _core_models(scope, settings: EndpointSettings, *, authenticated: bool
     body = bytearray()
     status = {"code": 0}
 
-    async def receive():
-        return {"type": "http.request", "body": b"", "more_body": False}
+    receive = replay_body_receive(b"")
 
     async def send(message):
         if message["type"] == "http.response.start":
@@ -889,13 +883,7 @@ class CoreEndpoint:
             body = raw
             headers = [(k, v) for k, v in headers if k.lower() != b"content-length"]
             headers.append((b"content-length", str(len(body)).encode()))
-            replayed = {"done": False}
-
-            async def downstream_receive():
-                if replayed["done"]:
-                    return await receive()
-                replayed["done"] = True
-                return {"type": "http.request", "body": body, "more_body": False}
+            downstream_receive = replay_body_receive(body, then=receive)
 
         core_scope = dict(scope, path=path, raw_path=path.encode(), root_path="", headers=headers)
         stop = asyncio.Event()
@@ -1331,8 +1319,7 @@ async def _count_models(settings: EndpointSettings) -> int:
     body = bytearray()
     status = {"code": 0}
 
-    async def receive():
-        return {"type": "http.request", "body": b"", "more_body": False}
+    receive = replay_body_receive(b"")
 
     async def send(message):
         if message["type"] == "http.response.start":

@@ -12652,102 +12652,35 @@ async def voice_tts_stream(run_id: str, req: VoiceTTSRequest) -> StreamingRespon
         }
     }
 
-    try:
-        events = await asyncio.to_thread(
-            stream_voice,
-            str(getattr(run, "run_id", rid)),
-            text=text,
-            output=output_spec,
-            params=params,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"TTS stream setup failed: {e}")
+    timeout_s = _voice_tts_timeout_s()
+    req_timeout = getattr(req, "timeout_s", None)
+    if req_timeout is not None and float(req_timeout) > 0:
+        timeout_s = min(float(req_timeout), timeout_s) if timeout_s > 0 else float(req_timeout)
+    parent_run_id = str(getattr(run, "run_id", rid))
 
-    def _iter_events():
-        # Idle watchdog (2026-07-17 wedge): a head-of-line-locked synthesis
-        # used to park this stream forever with ZERO events. Events are pulled
-        # on a feeder thread; each wait on the handoff queue is bounded — an
-        # idle gap over the watchdog ceiling emits a loud terminal error event
-        # instead of a silent forever-stream. The feeder thread itself cannot
-        # be killed if the backend is truly wedged; the stream ends honestly.
-        import queue as _queue
+    # R13.1: bounded admission, engine setup and event pulling strictly off
+    # the event loop, a "queued" line when the engine is busy, an idle
+    # watchdog line, clean-up even when the client leaves (voice_stream.py).
+    from ..voice_stream import open_voice_stream
 
-        timeout_s = _voice_tts_timeout_s()
-        req_timeout = getattr(req, "timeout_s", None)
-        if req_timeout is not None and float(req_timeout) > 0:
-            timeout_s = min(float(req_timeout), timeout_s) if timeout_s > 0 else float(req_timeout)
-        if timeout_s <= 0:
-            try:
-                for event in events:
-                    if isinstance(event, dict):
-                        event.setdefault("request_id", request_id)
-                        yield _voice_stream_jsonl(event)
-                    else:
-                        yield _voice_stream_jsonl({"type": "event", "request_id": request_id, "value": str(event)})
-            except GeneratorExit:
-                close = getattr(events, "close", None)
-                if callable(close):
-                    close()
-                raise
-            except Exception as e:
-                yield _voice_stream_jsonl({"type": "error", "ok": False, "request_id": request_id, "error": str(e)})
-            finally:
-                close = getattr(events, "close", None)
-                if callable(close):
-                    try:
-                        close()
-                    except Exception:
-                        pass
-            return
-
-        handoff: "_queue.Queue[tuple[str, Any]]" = _queue.Queue(maxsize=64)
-
-        def _feed() -> None:
-            try:
-                for event in events:
-                    handoff.put(("event", event))
-                handoff.put(("end", None))
-            except Exception as e:  # noqa: BLE001 - surfaced as a stream error event
-                handoff.put(("error", e))
-
-        feeder = threading.Thread(target=_feed, name=f"tts-stream-feed-{request_id[:8]}", daemon=True)
-        feeder.start()
-        try:
-            while True:
-                try:
-                    kind, value = handoff.get(timeout=timeout_s)
-                except _queue.Empty:
-                    detail = _voice_tts_timeout_fail_loud(
-                        svc=svc,
-                        parent_run_id=str(getattr(run, "run_id", rid)),
-                        request_id=request_id,
-                        timeout_s=timeout_s,
-                    )
-                    yield _voice_stream_jsonl({"type": "error", "ok": False, "request_id": request_id, "error": detail, "watchdog_timeout": True})
-                    return
-                if kind == "end":
-                    return
-                if kind == "error":
-                    yield _voice_stream_jsonl({"type": "error", "ok": False, "request_id": request_id, "error": str(value)})
-                    return
-                event = value
-                if isinstance(event, dict):
-                    event.setdefault("request_id", request_id)
-                    yield _voice_stream_jsonl(event)
-                else:
-                    yield _voice_stream_jsonl({"type": "event", "request_id": request_id, "value": str(event)})
-        finally:
-            close = getattr(events, "close", None)
-            if callable(close):
-                try:
-                    close()
-                except Exception:
-                    pass
-
-    return StreamingResponse(
-        _iter_events(),
-        media_type="application/x-ndjson",
-        headers={"X-Content-Type-Options": "nosniff"},
+    return await open_voice_stream(
+        setup=lambda: stream_voice(parent_run_id, text=text, output=output_spec, params=params),
+        request_id=request_id,
+        timeout_s=timeout_s,
+        sem=_get_voice_synth_semaphore(),
+        max_concurrency=_voice_synth_max_concurrency(),
+        on_idle_timeout=lambda: _voice_tts_timeout_fail_loud(
+            svc=svc, parent_run_id=parent_run_id, request_id=request_id, timeout_s=timeout_s
+        ),
+        setup_error=lambda exc: HTTPException(status_code=500, detail=f"TTS stream setup failed: {exc}"),
+        busy_error=lambda n: HTTPException(
+            status_code=503,
+            detail=(
+                f"Read aloud is busy: {n} voice syntheses are already running on this gateway "
+                "(ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY). Try again in a moment."
+            ),
+        ),
+        encode=_voice_stream_jsonl,
     )
 
 
@@ -29056,9 +28989,19 @@ def _host_runner_payload() -> Dict[str, Any]:
 
 @router.get("/host/runner")
 async def host_runner_state(request: Request) -> Dict[str, Any]:
-    """Execution state of THIS process: paused?, by whom, ticks still finishing, restart/shutdown capability."""
-    _principal_from_request(request)
-    return _host_runner_payload()
+    """Execution state of THIS process: paused?, by whom, ticks still finishing, restart/shutdown capability.
+
+    Admins also get `last_hang` (R13.1): the previous process's newest
+    event-loop watchdog incident ({at, blocked_s, reason, top_frame,
+    dump_path, file, line}) or null — the console's Resources page and the
+    terminal console show its `line`."""
+    principal = _principal_from_request(request)
+    payload = _host_runner_payload()
+    if principal.is_admin():
+        from .. import loop_watchdog
+
+        payload["last_hang"] = loop_watchdog.last_incident_view()
+    return payload
 
 
 @router.post("/host/pause")

@@ -30,34 +30,56 @@ loops act on. ``time.monotonic()`` does not advance while the machine sleeps
 The watchdog runs only under `abstractgateway serve` (the CLI configures it
 before the server starts); an app imported elsewhere (tests, `--reload`'s
 child) has it off and `/api/health` says so.
+
+Incident file (R13.1): before exiting, the watchdog writes
+``<data_dir>/incidents/watchdog-<UTC stamp>.json`` (when it was blocked, for
+how long, the innermost frame of the loop thread and the innermost gateway
+frame, the requests in flight, the loop stack) and
+``watchdog-<stamp>.threads.txt`` (the faulthandler dump of every thread). The
+next process reads the newest one at startup (`last_incident()`); the console's
+Resources page shows "Gateway restarted at <time> after a hang — <reason>" and
+the terminal console the same line. The log keeps the full dump too.
 """
 
 from __future__ import annotations
 
 import asyncio
+import datetime
 import faulthandler
+import json
 import os
 import sys
 import threading
 import time
 import traceback
-from typing import Any, Callable, Dict, Optional
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
 
 DEFAULT_WATCHDOG_SECONDS = 30.0
 # EX_TEMPFAIL (sysexits.h): "temporary failure, the invoker should retry".
 WATCHDOG_EXIT_CODE = 75
 BACKSTOP_GRACE_S = 15.0
 
+INCIDENT_SCHEMA = "abstractgateway.watchdog_incident.v1"
+
 _configured_limit_s: Optional[float] = None
+_incident_dir: Optional[Path] = None
+_last_incident: Optional[Dict[str, Any]] = None
 _active: Optional["LoopWatchdog"] = None
 _lock = threading.Lock()
 
+# Requests the event loop is serving now: {token: (method, path, monotonic start)}.
+# Written on the loop thread, read by the watchdog thread when it fires (a
+# snapshot copy; a torn read costs one line of forensics, never correctness).
+_inflight: Dict[int, tuple] = {}
 
-def configure(limit_s: Optional[float]) -> None:
+
+def configure(limit_s: Optional[float], *, incident_dir: Optional[Path] = None) -> None:
     """Called by `serve` before uvicorn starts: the limit for THIS process
-    (None or <= 0 = off)."""
-    global _configured_limit_s
+    (None or <= 0 = off) and where an incident file goes (``<data_dir>/incidents``)."""
+    global _configured_limit_s, _incident_dir
     _configured_limit_s = float(limit_s) if limit_s is not None and float(limit_s) > 0 else None
+    _incident_dir = Path(incident_dir) if incident_dir is not None else None
 
 
 def configured_limit_s() -> Optional[float]:
@@ -72,8 +94,163 @@ def _write(stream: Any, text: str) -> None:
         pass
 
 
+def _frame_dict(fs: traceback.FrameSummary) -> Dict[str, Any]:
+    return {"file": _short_path(fs.filename), "line": fs.lineno, "function": fs.name}
+
+
+def _short_path(path: str) -> str:
+    """`…/site-packages/starlette/responses.py` → `starlette/responses.py`; a gateway
+    file → `abstractgateway/…` (no home directory in the console)."""
+    norm = str(path or "").replace("\\", "/")
+    for marker in ("/site-packages/", "/src/", "/lib/python"):
+        if marker in norm:
+            tail = norm.rsplit(marker, 1)[1]
+            if marker == "/lib/python":
+                tail = tail.split("/", 1)[1] if "/" in tail else tail
+            return tail
+    return norm.rsplit("/", 1)[-1]
+
+
+def _frame_text(fd: Optional[Dict[str, Any]]) -> str:
+    return f"{fd['file']}:{fd['line']} {fd['function']}" if fd else "unknown"
+
+
+def incident_reason(incident: Dict[str, Any]) -> str:
+    """One sentence: where the loop was blocked (and from which gateway code, for which request)."""
+    top = incident.get("top_frame")
+    gw = incident.get("gateway_frame")
+    text = f"the event loop was blocked in {_frame_text(top)}"
+    if gw and gw != top:
+        text += f" (called from {_frame_text(gw)})"
+    reqs = incident.get("requests_in_flight") or []
+    if reqs:
+        oldest = max(reqs, key=lambda r: float(r.get("age_s") or 0))
+        text += f" while serving {oldest.get('method')} {oldest.get('path')}"
+    return text
+
+
+def build_incident(watchdog: "LoopWatchdog", age_s: float) -> Dict[str, Any]:
+    tid = watchdog._loop_thread_id
+    frame = sys._current_frames().get(tid) if tid is not None else None
+    stack = traceback.extract_stack(frame) if frame is not None else []
+    frames = [_frame_dict(fs) for fs in stack]
+    gateway_frames = [f for f in frames if str(f["file"]).startswith("abstractgateway/") and f["file"] != "abstractgateway/loop_watchdog.py"]
+    now = time.monotonic()
+    requests = [
+        {"method": m, "path": p, "age_s": round(now - t0, 1)}
+        for (m, p, t0) in list(_inflight.values())
+    ]
+    incident: Dict[str, Any] = {
+        "schema": INCIDENT_SCHEMA,
+        "at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+        "pid": os.getpid(),
+        "limit_s": watchdog.limit_s,
+        "blocked_s": round(float(age_s), 1),
+        "exit_code": WATCHDOG_EXIT_CODE,
+        "top_frame": frames[-1] if frames else None,
+        "gateway_frame": gateway_frames[-1] if gateway_frames else None,
+        "requests_in_flight": sorted(requests, key=lambda r: -float(r["age_s"]))[:10],
+        "loop_stack": frames[-40:],
+    }
+    incident["reason"] = incident_reason(incident)
+    return incident
+
+
+def write_incident(watchdog: "LoopWatchdog", age_s: float, *, directory: Optional[Path] = None) -> Optional[Path]:
+    """Write ``watchdog-<stamp>.json`` (+ ``.threads.txt``) into the incident directory; never raises."""
+    target = directory if directory is not None else _incident_dir
+    if target is None:
+        return None
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        incident = build_incident(watchdog, age_s)
+        stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        dump = target / f"watchdog-{stamp}.threads.txt"
+        try:
+            with open(dump, "w", encoding="utf-8") as fh:
+                fh.write(f"gateway watchdog {incident['at']}: {incident['reason']}\n")
+                fh.flush()
+                faulthandler.dump_traceback(file=fh, all_threads=True)
+            incident["dump_path"] = str(dump)
+        except Exception:
+            pass
+        path = target / f"watchdog-{stamp}.json"
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(incident, indent=2, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, path)
+        return path
+    except Exception:
+        return None
+
+
+def read_last_incident(directory: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    """The newest incident file (by its UTC stamp), or None. Never raises."""
+    target = directory if directory is not None else _incident_dir
+    if target is None:
+        return None
+    try:
+        files = sorted(p for p in Path(target).glob("watchdog-*.json") if p.is_file())
+        for path in reversed(files):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if isinstance(data, dict) and data.get("schema") == INCIDENT_SCHEMA:
+                data["file"] = str(path)
+                data.setdefault("reason", incident_reason(data))
+                return data
+    except Exception:
+        return None
+    return None
+
+
+def load_last_incident() -> Optional[Dict[str, Any]]:
+    """Startup (off the loop's hot path, once): remember the previous process's newest incident."""
+    global _last_incident
+    _last_incident = read_last_incident()
+    return _last_incident
+
+
+def last_incident() -> Optional[Dict[str, Any]]:
+    return _last_incident
+
+
+def last_incident_view() -> Optional[Dict[str, Any]]:
+    """What the console and the terminal console show (`/api/gateway/host/runner` → `last_hang`)."""
+    inc = _last_incident
+    if not inc:
+        return None
+    at = str(inc.get("at") or "")
+    return {
+        "at": at,
+        "blocked_s": inc.get("blocked_s"),
+        "reason": str(inc.get("reason") or ""),
+        "top_frame": _frame_text(inc.get("top_frame")),
+        "dump_path": inc.get("dump_path"),
+        "file": inc.get("file"),
+        "line": f"Gateway restarted at {at} after a hang — {inc.get('reason') or 'unknown'}",
+    }
+
+
+class InflightRequests:
+    """Outermost ASGI wrapper: remembers which requests the loop is serving, for the incident file."""
+
+    def __init__(self, app: Any) -> None:
+        self._app = app
+
+    async def __call__(self, scope, receive, send):  # noqa: ANN001 - ASGI signature
+        if scope.get("type") != "http":
+            return await self._app(scope, receive, send)
+        token = id(scope)
+        _inflight[token] = (str(scope.get("method") or ""), str(scope.get("path") or ""), time.monotonic())
+        try:
+            return await self._app(scope, receive, send)
+        finally:
+            _inflight.pop(token, None)
+
+
 def _exit_after_stall(watchdog: "LoopWatchdog", age_s: float) -> None:
-    """Default stall action: forensics to the log, then a distinct exit."""
+    """Default stall action: forensics to the log (and the incident file), then a distinct exit."""
     stream = watchdog.stream
     _write(
         stream,
@@ -87,6 +264,9 @@ def _exit_after_stall(watchdog: "LoopWatchdog", age_s: float) -> None:
         faulthandler.dump_traceback(file=stream, all_threads=True)
     except Exception:
         pass
+    incident_path = write_incident(watchdog, age_s)
+    if incident_path is not None:
+        _write(stream, f"[FATAL] gateway watchdog: incident written to {incident_path}\n")
     _write(stream, f"[FATAL] gateway watchdog: exiting with code {WATCHDOG_EXIT_CODE}\n")
     os._exit(WATCHDOG_EXIT_CODE)
 
