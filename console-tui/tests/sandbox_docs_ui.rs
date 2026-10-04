@@ -233,7 +233,7 @@ fn image_mode_dispatches_the_web_route_and_renders_the_saved_file() {
     h.review();
     let s = h.turns(2);
     assert!(
-        s.contains("output.image.text_to_image will use mlx-gen / test-flux"),
+        s.contains("Image will use mlx-gen / test-flux."),
         "the media route line names the configured pair:\n{s}"
     );
     assert!(
@@ -382,9 +382,7 @@ fn video_task_row_inherits_the_parent_like_the_server() {
     h.review();
     let s = h.turns(2);
     assert!(
-        s.contains(
-            "output.video.text_to_video will use mlx-gen / test-ltx (inherited from output.video)"
-        ),
+        s.contains("Video will use mlx-gen / test-ltx (inherited from output.video)."),
         "the route line names the inherited pair and its source:\n{s}"
     );
     assert!(

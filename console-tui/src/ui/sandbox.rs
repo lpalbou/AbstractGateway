@@ -1379,6 +1379,9 @@ pub fn workspace(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                 ))
                                 .build(),
                         )
+                        // A hint beside the picker: cut with a visible `…`
+                        // when narrow (the pickers / route line below carry
+                        // the same facts whole).
                         .child(line(vec![span(teach, t.text_muted)]))
                         .build()
                 }))
@@ -1389,7 +1392,7 @@ pub fn workspace(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         let t = tt;
                         match ws.mode.get() {
                             SbMode::Text => text_controls(gcx, &ctx2, &t, prov_ix, model_ix),
-                            m => route_line(&t, &store, m),
+                            m => route_line(&t, &store, m, abstracttui::app::use_viewport(gcx).get().w),
                         }
                     }
                 }))
@@ -1623,7 +1626,7 @@ pub fn context_unconfigured(label: &str) -> String {
     format!("{label} is not configured yet. Configure it in Multimodal Capabilities first.")
 }
 
-fn route_line(t: &TokenSet, store: &Store, m: SbMode) -> View {
+fn route_line(t: &TokenSet, store: &Store, m: SbMode, vw: i32) -> View {
     let msg = match store.routes.get() {
         Loadable::NotAsked => (
             "routes not loaded yet — connect first".to_string(),
@@ -1671,7 +1674,13 @@ fn route_line(t: &TokenSet, store: &Store, m: SbMode) -> View {
             Some(ModeRoute::NotConfigured) => (context_unconfigured(m.label()), t.warn),
         },
     };
-    field(t, "route", line(vec![span(msg.0, msg.1)]))
+    // Wrapped, never cut (a long artifact id is the evidence).
+    let w = (vw - super::widths::BLOCK_CHROME - 2 - 19).max(20);
+    let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
+    for l in super::util::wrap_text(&msg.0, w as usize) {
+        col = col.child(line(vec![span(l, msg.1)]));
+    }
+    field(t, "route", col.build())
 }
 
 /// Text mode: provider + model pickers (unchanged honesty arms) and the

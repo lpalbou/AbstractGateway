@@ -706,7 +706,11 @@ struct Page {
 impl Page {
     fn text(&mut self, spans: Vec<SpanSpec>) {
         let c = std::mem::replace(&mut self.col, Element::new());
-        self.col = c.child(line(spans));
+        // shrink(0): a squeezed line paints over its neighbours.
+        self.col = c.child(super::util::line_styled(
+            LayoutStyle::line(1).shrink(0.0),
+            spans,
+        ));
         self.y += 1;
     }
     fn blank(&mut self, t: &TokenSet) {
@@ -768,7 +772,7 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData, w: usize, nu: 
     let s = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
     let bl = |v: &Value, k: &str| v.get(k).and_then(Value::as_bool).unwrap_or(false);
     let mut p = Page {
-        col: Element::new().style(LayoutStyle::column().gap(0).shrink(0.0)),
+        col: Element::new().style(LayoutStyle::column().gap(0).shrink(0.0).w(w as i32)),
         y: 0,
         w,
         scroll: nu.scroll,
@@ -1042,7 +1046,7 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData, w: usize, nu: 
             "addresses",
             WrapTable::new(rules, rows, nu.addr_sel)
                 .expanded(nu.addr_open)
-                .layout(LayoutStyle::default().h(table_h).shrink(0.0))
+                .layout(LayoutStyle::default().w(w as i32).h(table_h).shrink(0.0))
                 .element(cx, t)
                 .shortcut(KeyChord::plain(Key::Char('c')), move |_| {
                     let a = addrs.get(addr_sel.get_untracked()).cloned();
@@ -1202,6 +1206,7 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData, w: usize, nu: 
     });
     let content = p.col.build();
     Scroll::new(content)
+        .axes(false, true)
         .offset_y(scroll)
         .extent_signal(extent)
         .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))

@@ -237,3 +237,62 @@ fn resources_reads_host_state_and_the_caches_tab_live() {
     }
     h.shoot("live-resources-caches");
 }
+
+/// Text captures of every page state this suite owns, at 80×24 and
+/// 120×40, through the capture terminal (the PTY recorder's pyte cannot
+/// replay the engine's scroll optimisation; this is the exact frame).
+#[test]
+#[ignore = "talks to a live gateway; run with --ignored"]
+fn captures_80x24_live() {
+    captures_at(Size::new(80, 24));
+}
+
+#[test]
+#[ignore = "talks to a live gateway; run with --ignored"]
+fn captures_120x40_live() {
+    captures_at(Size::new(120, 40));
+}
+
+fn captures_at(size: Size) {
+    {
+        let (mut h, _url, _token) = live(size);
+        h.ui.screen.set(ui::SCREEN_NETWORK);
+        h.until("network", |_, s| s.contains("Who can reach this gateway"));
+        h.shoot("network");
+        h.key(b"\t");
+        for _ in 0..8 {
+            h.key(b"\x1b[B");
+        }
+        h.key(b"\r");
+        h.shoot("network-tailscale-row");
+        h.key(b"w");
+        h.shoot("network-what-to-know");
+        h.key(b"a");
+        for _ in 0..5 {
+            h.key(b"\t");
+        }
+        h.shoot("network-advanced");
+        h.ui.screen.set(ui::SCREEN_MODELS);
+        h.until("resources", |_, s| s.contains("RAM"));
+        h.shoot("resources");
+        h.ui.models_tab.set(1);
+        h.turns(3);
+        h.shoot("resources-caches");
+        h.ui.screen.set(ui::SCREEN_ROUTES);
+        h.until("multimodal", |_, s| s.contains("input.text"));
+        h.shoot("multimodal");
+        h.ui.screen.set(ui::SCREEN_REVIEW);
+        h.until("sandbox", |_, s| s.contains("╭ Sandbox"));
+        for (i, name) in ["text", "image", "voice", "music", "sfx", "video"]
+            .iter()
+            .enumerate()
+        {
+            h.store
+                .sandbox_ws
+                .mode
+                .set(abstractgateway_console::ui::sandbox::SbMode::from_index(i));
+            h.turns(4);
+            h.shoot(&format!("sandbox-{name}"));
+        }
+    }
+}
