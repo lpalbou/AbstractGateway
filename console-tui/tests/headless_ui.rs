@@ -547,7 +547,9 @@ fn boots_to_connection_wizard_step() {
     assert!(screen.contains("2 Accounts"), "page bar:\n{screen}");
     assert!(screen.contains("3 Workflows"), "page bar:\n{screen}");
     assert!(
-        screen.contains("ACCOUNTS 2 · WORK 3-5 · MODELS 6-9 · SYSTEM 0 N R · S Setup"),
+        screen.contains(
+            "ACCOUNTS 2 · WORK 3 5 6 · MODELS 7 8 9 0 · SYSTEM H T N · S Setup · I About"
+        ),
         "group line:\n{screen}"
     );
     assert!(screen.contains("Gateway URL"), "url field:\n{screen}");
@@ -613,7 +615,7 @@ fn pagehost_browse_navigation_digits_and_chords() {
             .notice
             .get_untracked()
             .unwrap_or_default()
-            .contains("screen jumps (1-9, 0, N, R, S) work in browse mode"),
+            .contains("screen jumps (1-9,0,H,T,N,S,I) work in browse mode"),
         "wizard digit refusal carries its reason"
     );
 }
@@ -861,14 +863,13 @@ fn wizard_walks_the_web_guide_order() {
         seen,
         vec![
             ui::SCREEN_WELCOME,
-            ui::SCREEN_ENGINES,
             ui::SCREEN_PROVIDERS,
             ui::SCREEN_ROUTES,
             ui::SCREEN_CATALOG,
             ui::SCREEN_APPS,
             ui::SCREEN_REVIEW,
         ],
-        "Ctrl+N walks welcome → engines → providers → model (routes, catalog) → apps → done"
+        "Ctrl+N walks welcome → engines (Providers) → model (routes, catalog) → apps → done"
     );
     // Back walks the same path in reverse.
     h.key(b"\x10");
@@ -1020,8 +1021,8 @@ fn ctrl_g_in_the_guide_jumps_to_any_step() {
         s.contains("Go to 1. Connection"),
         "the steps are listed:\n{s}"
     );
-    // Options: stay (initial), leave, skip, steps 1..8 → Down ×9 = step 7 (Apps).
-    for _ in 0..9 {
+    // Options: stay (initial), leave, skip, steps 1..7 → Down ×8 = step 6 (Apps).
+    for _ in 0..8 {
         h.key(b"\x1b[B");
         h.turn();
     }
@@ -1034,7 +1035,7 @@ fn ctrl_g_in_the_guide_jumps_to_any_step() {
     );
     assert!(h.ui.wizard.get_untracked(), "still in the guide");
     let s = h.turns(1);
-    assert!(s.contains("Step 7/8"), "the step kicker follows:\n{s}");
+    assert!(s.contains("Step 6/7"), "the step kicker follows:\n{s}");
 }
 
 /// Jumping past Connection keeps the terminal's sign-in gate.
@@ -3270,9 +3271,9 @@ fn browse_mode_number_keys_jump_screens() {
     h.type_text("2");
     h.turns(2);
     assert_eq!(h.ui.screen.get_untracked(), 3, "2 → accounts screen");
-    h.type_text("4");
+    h.type_text("5");
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 4, "4 → runtimes screen");
+    assert_eq!(h.ui.screen.get_untracked(), 4, "5 → runtimes screen");
     // In wizard mode the number keys must NOT jump (gating).
     h.ui.wizard.set(true);
     h.ui.screen.set(2);
@@ -3643,9 +3644,10 @@ fn dirty_guard_disarms_on_edit_after_warning() {
 /// knob surface with per-knob PROVENANCE (value + which layer set it).
 #[test]
 fn runtime_knobs_render_with_provenance() {
-    // Two rows taller than the default harness: the knobs gained a second
-    // button row (backlog settings + skills reseed).
-    let mut h = harness_sized(Size::new(110, 36));
+    // Three rows taller than the default harness: the knobs gained a second
+    // button row (backlog settings + skills reseed) and the key-hint bar
+    // wraps onto a second line (R7.2).
+    let mut h = harness_sized(Size::new(110, 37));
     h.connect_as_admin();
     h.goto_screen(4);
     h.store
@@ -3797,7 +3799,7 @@ fn title_bar_and_separator_survive_content_pressure() {
         .set(Loadable::Ready(host_state_fixture()));
     for wizard in [true, false] {
         h.ui.wizard.set(wizard);
-        for screen in 0..ui::SCREENS.len() {
+        for screen in ui::NAV_ORDER {
             h.ui.screen.set(screen);
             let scr = h.turns(3);
             // The Setup step has no jump key: its tab is titled bare.
@@ -3813,7 +3815,7 @@ fn title_bar_and_separator_survive_content_pressure() {
             // Row 1 separates the title from the tabs: the screen
             // list's group line (DESIGN-v2 §1), never a component.
             assert!(
-                lines[1].contains("ACCOUNTS 2 · WORK 3-5"),
+                lines[1].contains("ACCOUNTS 2 · WORK 3 5 6 · MODELS 7 8 9 0 · SYSTEM H T N"),
                 "group line under the title (wizard={wizard} screen={screen}):\n{scr}"
             );
             // With 8 tabs the bar OVERFLOWS at 110 cols and windows
@@ -3846,10 +3848,13 @@ fn footer_leads_with_the_screen_keys_at_80x24() {
     ] {
         h.ui.screen.set(screen);
         let s = h.turns(3);
-        let footer = s.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("");
+        // The key-hint bar wraps onto two lines (R7.2): its FIRST line
+        // leads with the screen's own verb.
+        let rows: Vec<&str> = s.lines().filter(|l| !l.trim().is_empty()).collect();
+        let first = rows[rows.len() - 2];
         assert!(
-            footer.trim_start().starts_with(lead),
-            "screen {screen} footer leads with '{lead}':\n{footer}"
+            first.trim_start().starts_with(lead),
+            "screen {screen} footer leads with '{lead}':\n{s}"
         );
     }
 }
@@ -4163,14 +4168,14 @@ fn wizard_steps_carry_a_goal_line() {
     let mut h = harness();
     h.connect_as_admin();
     h.ui.wizard.set(true);
-    // The guide's steps carry "Step N/8" (the web guide's kicker) and
+    // The guide's steps carry "Step N/7" (the web guide's kicker) and
     // their goal; screens off the guide's path keep "Step goal:".
     for (screen, step, needle) in [
-        (ui::SCREEN_WELCOME, "Step 2/8", "this computer at a glance"),
-        (1usize, "Step 4/8", "cloud providers only need a key"),
-        (2, "Step 5/8", "a applies the recommended set"),
-        (ui::SCREEN_APPS, "Step 7/8", "i installs a browser app"),
-        (6, "Step 8/8", "run one real test"),
+        (ui::SCREEN_WELCOME, "Step 2/7", "this computer at a glance"),
+        (1usize, "Step 3/7", "install a local engine"),
+        (2, "Step 4/7", "a applies the recommended set"),
+        (ui::SCREEN_APPS, "Step 6/7", "i installs a browser app"),
+        (6, "Step 7/7", "run one real test"),
         (3, "Step goal:", "a creates a user"),
         (4, "Step goal:", "storage inventory"),
         (5, "Step goal:", "per-app defaults"),
@@ -4188,7 +4193,7 @@ fn wizard_steps_carry_a_goal_line() {
     h.ui.screen.set(1);
     let s = h.turns(2);
     assert!(
-        !s.contains("Step goal:") && !s.contains("Step 4/8"),
+        !s.contains("Step goal:") && !s.contains("Step 3/7"),
         "browse mode has no goal line:\n{s}"
     );
 }
@@ -7285,19 +7290,19 @@ fn models_tab_warmup_form_picks_provider_and_model_from_the_catalogs() {
 /// tab rides the end of the lockstep arrays, so the existing digit
 /// tests (4 → users at :406) keep passing untouched.
 #[test]
-fn digit_8_jumps_to_the_models_tab() {
+fn key_h_jumps_to_the_resources_tab() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(1);
     h.store.profiles.set(Loadable::Ready(profiles_fixture()));
     h.store.providers.set(Loadable::Ready(providers_fixture()));
     h.turns(2);
-    h.type_text("0");
+    h.type_text("H");
     h.turns(2);
     assert_eq!(
         h.ui.screen.get_untracked(),
         7,
-        "digit 0 → Resources (screen index 7)"
+        "H → Resources (screen index 7)"
     );
     // Entering the tab arms the generation-gated poll chain: exactly
     // one first poll, under the CURRENT generation.
@@ -7345,7 +7350,7 @@ fn footer_hints_stay_in_lockstep_with_screens() {
         (7, "context estimate"),
         // The shared screens' own verbs (abstractcore-console HINTS).
         (8, "fits only"),
-        (9, "open download page"),
+        (ui::SCREEN_NETWORK, "copy address"),
     ] {
         h.ui.screen.set(screen);
         let s = h.turns(2);
@@ -7736,7 +7741,7 @@ fn eight_jumps_to_engines_in_browse_and_is_refused_in_the_wizard() {
     let s = h.turns(2);
     assert_eq!(h.ui.screen.get_untracked(), 1, "wizard does not jump");
     assert!(
-        s.contains("screen jumps (1-9, 0, N, R, S) work in browse mode"),
+        s.contains("screen jumps (1-9,0,H,T,N,S,I) work in browse mode"),
         "{s}"
     );
 }
@@ -9616,14 +9621,14 @@ fn the_current_screen_key_keeps_the_screen_keys_live() {
     let mut h = harness_sized(Size::new(80, 24));
     h.connect_as_admin();
     h.goto_screen(1);
-    h.key(b"0");
+    h.key(b"H");
     h.turns(2);
     h.store
         .host_state
         .set(Loadable::Ready(host_state_fixture()));
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 7, "0 jumps to Resources");
-    h.key(b"0");
+    assert_eq!(h.ui.screen.get_untracked(), 7, "H jumps to Resources");
+    h.key(b"H");
     h.turns(2);
     h.type_text("w");
     let s = h.turns(3);
@@ -9967,12 +9972,12 @@ fn arrows_switch_the_global_tab_and_wrap() {
     h.turns(2);
     assert_eq!(h.ui.screen.get_untracked(), 0, "Left → Connection");
     // Connected: the URL field does not hold the caret, so the arrow is
-    // the root's — Left on the first screen wraps to the last (Setup).
+    // the root's — Left on the first screen wraps to the last (About).
     h.key(LEFT);
     h.turns(2);
     assert_eq!(
         h.ui.screen.get_untracked(),
-        ui::SCREEN_WELCOME,
+        ui::SCREEN_ABOUT,
         "Left on the first screen wraps to the last"
     );
     h.key(RIGHT);
@@ -10155,11 +10160,11 @@ fn arrows_do_not_switch_the_screen_behind_a_modal() {
     h.key(LEFT);
     h.turns(2);
     assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_PROVIDERS);
-    // Positive control: closed, Right is global again.
+    // Positive control: closed, Right is global again (Providers → OpenAI API).
     h.press_escape();
     h.key(RIGHT);
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_CATALOG);
+    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_OPENAI);
 }
 
 /// The footer teaches the arrows beside Ctrl+P/N in browse mode.

@@ -1305,6 +1305,12 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
     let active =
         cx.signal(SCREEN_IDS[ui.screen.get_untracked().min(SCREEN_IDS.len() - 1)].to_string());
     cx.effect(move || {
+        // Engines has no page since round 7: its local engines are on
+        // Providers. Anything still naming the old screen lands there.
+        if ui.screen.get() == SCREEN_ENGINES {
+            ui.screen.set(SCREEN_PROVIDERS);
+            return;
+        }
         let id = SCREEN_IDS[ui.screen.get().min(SCREEN_IDS.len() - 1)];
         if active.with_untracked(|a| a != id) {
             active.set(id.to_string());

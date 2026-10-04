@@ -30,13 +30,12 @@ pub fn step_copy(screen: usize) -> (&'static str, &'static str) {
     match screen {
         super::SCREEN_CONNECTION => ("Connection", "Sign in to the gateway (the terminal needs a token)."),
         super::SCREEN_WELCOME => ("Welcome", "Check this computer."),
-        super::SCREEN_ENGINES => (
-            "Local engines",
-            "Engines run AI models on this computer. Install one if you want local models.",
-        ),
+        // Round 7: the guide's engines step is the Providers page (its
+        // local engines, then the cloud providers' keys) — the web
+        // guide's engines lede, word for word.
         super::SCREEN_PROVIDERS => (
-            "Cloud providers",
-            "Cloud providers only need an API key.",
+            "Local engines",
+            "Engines run AI models on this computer. Install one if you want local models; cloud providers only need an API key (Providers tab).",
         ),
         super::SCREEN_ROUTES => (
             "Default model",
