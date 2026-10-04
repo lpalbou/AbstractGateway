@@ -311,7 +311,7 @@ def test_open_in_observer_is_greyed_when_observer_cannot_open(tmp_path: Path) ->
     from abstractgateway.tray.menu_model import observer_open_available, workflow_items
     from abstractgateway.tray.apps import AppEntry
     from abstractgateway.tray.sampler import RunRow
-    from tests.test_gateway_tray_helper import _snap
+    from test_gateway_tray_helper import _snap
 
     snap = _snap(runs=(RunRow("r", "w", "running", 1, 5.0, time.time() - 5, observer_path="/apps/observer/#run/r"),))
     assert observer_open_available(()) is False
