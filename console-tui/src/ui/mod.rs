@@ -2257,6 +2257,7 @@ mod nav_tests {
                 "1 Connection",
                 "2 Accounts",
                 "3 Workflows",
+                "4 Skills & MCP",
                 "5 Runtimes",
                 "6 Apps",
                 "7 Providers",
@@ -2306,13 +2307,13 @@ mod nav_tests {
     }
 
     #[test]
-    fn group_line_lists_noncontiguous_keys_as_a_list() {
+    fn group_line_lists_the_work_keys() {
         abstracttui::app::set_theme_by_id("abstract-dark");
         let keys: Vec<char> = NAV_GROUPS[1]
             .1
             .iter()
             .filter_map(|m| screen_key(*m))
             .collect();
-        assert_eq!(keys, ['3', '5', '6']);
+        assert_eq!(keys, ['3', '4', '5', '6']);
     }
 }

@@ -555,9 +555,8 @@ fn boots_to_connection_wizard_step() {
     assert!(screen.contains("2 Accounts"), "page bar:\n{screen}");
     assert!(screen.contains("3 Workflows"), "page bar:\n{screen}");
     assert!(
-        screen.contains(
-            "ACCOUNTS 2 · WORK 3 5 6 · MODELS 7 8 9 0 · SYSTEM H T N · S Setup · I About"
-        ),
+        screen
+            .contains("ACCOUNTS 2 · WORK 3-6 · MODELS 7 8 9 0 · SYSTEM H T N · S Setup · I About"),
         "group line:\n{screen}"
     );
     assert!(screen.contains("Gateway URL"), "url field:\n{screen}");
@@ -2156,7 +2155,7 @@ fn users_and_entities_render_with_admin_gate() {
             .is_some(),
         "selection-driven detail load fired"
     );
-    assert!(s.contains("m manage"), "the entity row's keys:\n{s}");
+    assert!(s.contains("m Manage"), "the entity row's keys:\n{s}");
     h.type_text("i");
     let s = h.turns(3);
     assert!(s.contains("Entity inspector"), "drawer open:\n{s}");
@@ -3831,7 +3830,7 @@ fn title_bar_and_separator_survive_content_pressure() {
             // Row 1 separates the title from the tabs: the screen
             // list's group line (DESIGN-v2 §1), never a component.
             assert!(
-                lines[1].contains("ACCOUNTS 2 · WORK 3 5 6 · MODELS 7 8 9 0 · SYSTEM H T N"),
+                lines[1].contains("ACCOUNTS 2 · WORK 3-6 · MODELS 7 8 9 0 · SYSTEM H T N"),
                 "group line under the title (wizard={wizard} screen={screen}):\n{scr}"
             );
             // With 8 tabs the bar OVERFLOWS at 110 cols and windows
@@ -3857,9 +3856,9 @@ fn footer_leads_with_the_screen_keys_at_80x24() {
     for (screen, lead) in [
         (1usize, "v local/remote/available"),
         (2, "Enter/e edit route"),
-        (3, "space Active"),
+        (3, "Tab tab"),
         (4, "Enter inspect runtime"),
-        (5, "Tab workflows ⇄ defaults"),
+        (5, "Tab tab · Enter expand row"),
         (7, "u unload"),
     ] {
         h.ui.screen.set(screen);
@@ -7387,7 +7386,7 @@ fn footer_hints_stay_in_lockstep_with_screens() {
     for (screen, needle) in [
         (1usize, "local/remote/available"),
         (2, "edit route"),
-        (3, "l logs"),
+        (3, "l Logs"),
         (4, "inspect runtime"),
         (5, "drafts"),
         (6, "run the test"),

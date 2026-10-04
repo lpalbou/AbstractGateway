@@ -223,7 +223,7 @@ fn group_line_and_tabs_follow_the_web_sidebar() {
         let group = s.lines().nth(1).unwrap_or_default();
         assert!(
             group.contains(
-                "ACCOUNTS 2 · WORK 3 5 6 · MODELS 7 8 9 0 · SYSTEM H T N · S Setup · I About"
+                "ACCOUNTS 2 · WORK 3-6 · MODELS 7 8 9 0 · SYSTEM H T N · S Setup · I About"
             ),
             "{group}"
         );
