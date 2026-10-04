@@ -579,7 +579,10 @@ fn skills_tab(cx: Scope, ctx: &Ctx, keeper: &super::util::FocusKeeper) -> View {
         }
     }
     if admin {
-        col = col.child(shelf_row(cx, ctx, width));
+        // Tracked: closing the in-place input re-renders the table, which
+        // takes the keyboard back (the keeper was told to reclaim it).
+        let _ = sk.shelf_editing.get();
+        col = col.child(shelf_row(cx, ctx, width, keeper));
     }
     col.build()
 }
@@ -674,7 +677,7 @@ fn edit_shelf(ctx: &Ctx) {
 /// /admin/runtime-config` `skills.shelf`; writes = POST
 /// /admin/runtime-config `{"skills.shelf": …}` and POST
 /// /admin/skills/reseed (the web's own routes).
-fn shelf_row(cx: Scope, ctx: &Ctx, width: i32) -> View {
+fn shelf_row(cx: Scope, ctx: &Ctx, width: i32, keeper: &super::util::FocusKeeper) -> View {
     let store = ctx.store;
     let sk = store.skills;
     // Read the setting once an admin is here (the web reads it with the tab).
@@ -694,6 +697,7 @@ fn shelf_row(cx: Scope, ctx: &Ctx, width: i32) -> View {
     // The folder save's outcome, in place.
     {
         let ui = ctx.ui;
+        let keeper_saved = keeper.clone();
         cx.effect(move || {
             if let Some((fid, out)) = ui.write_done.get() {
                 if sk.shelf_form.get_untracked() == Some(fid) {
@@ -701,6 +705,7 @@ fn shelf_row(cx: Scope, ctx: &Ctx, width: i32) -> View {
                     sk.shelf_form.set(None);
                     match out {
                         Ok(_) => {
+                            keeper_saved.reclaim();
                             sk.shelf_editing.set(false);
                             sk.shelf_msg.set(Some(("Saved".into(), MsgTone::Ok)));
                         }
@@ -713,6 +718,7 @@ fn shelf_row(cx: Scope, ctx: &Ctx, width: i32) -> View {
         });
     }
     let c = ctx.clone();
+    let keeper = keeper.clone();
     dyn_view_scoped(LayoutStyle::column().gap(0).shrink(0.0), move |gcx| {
         let t = use_theme(gcx).get().tokens;
         let cfg = c.store.runtime_config.get();
@@ -749,6 +755,8 @@ fn shelf_row(cx: Scope, ctx: &Ctx, width: i32) -> View {
             }
         };
         if editing {
+            let keeper_submit = keeper.clone();
+            let keeper_cancel = keeper.clone();
             let c_save = c.clone();
             let sh = shelf.clone();
             col = col.child(kit::inline_input(
@@ -760,6 +768,7 @@ fn shelf_row(cx: Scope, ctx: &Ctx, width: i32) -> View {
                 move |typed| {
                     let body = super::runtimes::skills_shelf_body(&sh, &typed);
                     if body.as_object().is_none_or(|m| m.is_empty()) {
+                        keeper_submit.reclaim();
                         sk.shelf_editing.set(false);
                         return;
                     }
@@ -772,6 +781,7 @@ fn shelf_row(cx: Scope, ctx: &Ctx, width: i32) -> View {
                     });
                 },
                 move || {
+                    keeper_cancel.reclaim();
                     sk.shelf_editing.set(false);
                     sk.shelf_msg.set(None);
                 },

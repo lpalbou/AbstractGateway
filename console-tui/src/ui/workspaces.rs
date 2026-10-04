@@ -98,6 +98,18 @@ pub fn refresh(ctx: &Ctx) {
     }
 }
 
+/// [`refresh`] for a harness that holds the store and the command channel
+/// but no `Ctx` (the live drive tests).
+pub fn refresh_for_tests(store: &crate::store::Store, tx: &std::sync::mpsc::Sender<Cmd>) {
+    if store.conn.with_untracked(ConnPhase::is_admin) {
+        let _ = tx.send(Cmd::LoadRuntimeConfig);
+        let _ = tx.send(Cmd::load_accounts_for(store));
+    } else {
+        let _ = tx.send(Cmd::Operator(OpCmd::LoadMyPolicy));
+        let _ = tx.send(Cmd::Workspaces(WsCmd::LoadPublic));
+    }
+}
+
 /// The Accounts Workspace jump: the page focused on that account's row
 /// (the web's `#workspaces?account=<id>`). The caller switches screens.
 pub fn focus_account(ctx: &Ctx, tenant_id: &str, user_id: &str) {
@@ -162,21 +174,36 @@ pub fn view(cx: Scope_, ctx: &Ctx, t: &TokenSet) -> View {
             if !c.store.conn.with(ConnPhase::is_connected) {
                 return;
             }
+            // Each slot loads only while never read (a slot landing must
+            // not re-send the others: that would reset them to Loading).
             let admin = c.store.conn.with(ConnPhase::is_admin);
-            let need = if admin {
-                c.store
-                    .runtime_config
-                    .with(|r| matches!(r, Loadable::NotAsked))
-                    || c.store.accounts.with(|r| matches!(r, Loadable::NotAsked))
+            let not_asked = |l: bool| l;
+            if admin {
+                if not_asked(
+                    c.store
+                        .runtime_config
+                        .with(|r| matches!(r, Loadable::NotAsked)),
+                ) {
+                    c.store.runtime_config.set(Loadable::Loading);
+                    c.send(Cmd::LoadRuntimeConfig);
+                }
+                if not_asked(c.store.accounts.with(|r| matches!(r, Loadable::NotAsked))) {
+                    c.send(Cmd::load_accounts_for(&c.store));
+                }
             } else {
-                c.store
-                    .op
-                    .my_policy
-                    .with(|r| matches!(r, Loadable::NotAsked))
-                    || ws.public.with(|r| matches!(r, Loadable::NotAsked))
-            };
-            if need {
-                refresh(&c);
+                if not_asked(
+                    c.store
+                        .op
+                        .my_policy
+                        .with(|r| matches!(r, Loadable::NotAsked)),
+                ) {
+                    c.store.op.my_policy.set(Loadable::Loading);
+                    c.send(Cmd::Operator(OpCmd::LoadMyPolicy));
+                }
+                if not_asked(ws.public.with(|r| matches!(r, Loadable::NotAsked))) {
+                    ws.public.set(Loadable::Loading);
+                    c.send(Cmd::Workspaces(WsCmd::LoadPublic));
+                }
             }
         });
     }
@@ -497,28 +524,17 @@ pub fn open_editor(cx: Scope_, ctx: &Ctx, scope: Scope) {
                 }
                 false
             }));
-            let keys_ctx = c.clone();
-            let keys_scope = scope.clone();
+            // The keys live on the editor body itself (inside its scroll,
+            // so ↑/↓ choose a line instead of scrolling the page).
             let root = Element::new()
                 .focusable()
-                .autofocus()
-                .style(LayoutStyle::column().gap(0).grow(1.0))
-                .on(Phase::Bubble, move |ectx, ev| {
-                    if let UiEvent::Key(k) = ev {
-                        if k.mods.0 != 0 || ws.editing.get_untracked().is_some() {
-                            return;
-                        }
-                        if editor_key(&keys_ctx, &keys_scope, confirm, k.key) {
-                            ectx.stop_propagation();
-                        }
-                    }
-                });
+                .style(LayoutStyle::column().gap(0).grow(1.0));
             let root = confirm.keys(root);
             let body_ctx = c.clone();
             let body_scope = scope.clone();
             root.child(dyn_view_scoped(
                 LayoutStyle::column().gap(0).grow(1.0),
-                move |gcx| editor_body(gcx, &body_ctx, &body_scope),
+                move |gcx| editor_body(gcx, &body_ctx, &body_scope, confirm),
             ))
             .child(confirm.view(&use_theme(mcx).get().tokens, 0))
             .build()
@@ -606,7 +622,7 @@ fn editor_key(ctx: &Ctx, scope: &Scope, confirm: InlineConfirm, key: Key) -> boo
     true
 }
 
-fn editor_body(cx: Scope_, ctx: &Ctx, scope: &Scope) -> View {
+fn editor_body(cx: Scope_, ctx: &Ctx, scope: &Scope, confirm: InlineConfirm) -> View {
     let t = use_theme(cx).get().tokens;
     let ws = ctx.store.ws;
     let width = (abstracttui::app::use_viewport(cx).get().w - 8).max(20);
@@ -739,6 +755,23 @@ fn editor_body(cx: Scope_, ctx: &Ctx, scope: &Scope) -> View {
         col = col.child(kit::sentence(&t, &text, width, ink));
     }
     let _ = mode_label;
+    // Not editing: the editor takes the keyboard back (an in-place input
+    // that held it has just closed).
+    if editing.is_none() {
+        col = col.focusable().autofocus();
+    }
+    let keys_ctx = ctx.clone();
+    let keys_scope = scope.clone();
+    let col = col.on(Phase::Bubble, move |ectx, ev| {
+        if let UiEvent::Key(k) = ev {
+            if k.mods.0 != 0 || ws.editing.get_untracked().is_some() || confirm.is_open() {
+                return;
+            }
+            if editor_key(&keys_ctx, &keys_scope, confirm, k.key) {
+                ectx.stop_propagation();
+            }
+        }
+    });
     Scroll::new(col.build())
         .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))
         .scrollbar_auto_hide(true)

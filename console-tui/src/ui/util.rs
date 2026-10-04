@@ -66,6 +66,13 @@ impl FocusKeeper {
         }
     }
 
+    /// Hand the keyboard back to the next instance (round 8: an in-place
+    /// input that held it closed — the page's primary widget takes it
+    /// again when it re-renders).
+    pub fn reclaim(&self) {
+        self.held.set(true);
+    }
+
     /// A focusable stand-in for a widget-less state (the screen's keys
     /// stay live on an empty list or while loading).
     pub fn anchor(&self, content: View) -> View {

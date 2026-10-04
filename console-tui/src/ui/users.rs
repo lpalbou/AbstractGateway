@@ -465,12 +465,17 @@ fn accounts_tab(cx: Scope, ctx: &Ctx, tt: &TokenSet, keeper: &super::util::Focus
                 move || {
                     let sel = ui.account_sel.get();
                     match rows.get(sel) {
-                        Some(r) => kit::sentence(
-                            &t2,
-                            &format!("{}: {}", r.id, row_actions(r).join(" · ")),
-                            width,
-                            t2.accent,
-                        ),
+                        Some(r) => {
+                            // Whole actions only: a narrow terminal wraps to
+                            // a second line between two actions, never
+                            // inside one.
+                            let mut col =
+                                Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
+                            for l in action_lines(&r.id, &row_actions(r), width) {
+                                col = col.child(line(vec![span(l, t2.accent)]));
+                            }
+                            col.build()
+                        }
                         None => Element::new().style(LayoutStyle::default().h(0)).build(),
                     }
                 },
@@ -623,6 +628,32 @@ pub fn row_actions(r: &AccountRow) -> Vec<String> {
     add(r.runtime_id.is_some(), "g Runtime");
     add(r.refusal("suspend").is_none(), "space Active");
     keys
+}
+
+/// `<id>: a · b · c` laid out in lines no wider than `width`, breaking
+/// only between two actions.
+pub fn action_lines(id: &str, actions: &[String], width: i32) -> Vec<String> {
+    let w = width.max(20) as usize;
+    let mut out = Vec::new();
+    let mut cur = format!("{id}:");
+    for (i, a) in actions.iter().enumerate() {
+        let piece = if i == 0 {
+            format!(" {a}")
+        } else {
+            format!(" · {a}")
+        };
+        let fits = abstracttui::text::width(&cur) as usize
+            + abstracttui::text::width(&piece) as usize
+            <= w;
+        if fits || i == 0 {
+            cur.push_str(&piece);
+        } else {
+            out.push(format!("{cur} ·"));
+            cur = format!("  {a}");
+        }
+    }
+    out.push(cur);
+    out
 }
 
 /// `g`: the Runtimes page filtered to the selected account (the web's
