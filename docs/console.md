@@ -217,7 +217,8 @@ turns on what it needs within that allowance
 **Shared workspace & allowed folders** (administrators, top of Accounts)
 opens the gateway's folder policy. A line at the top sums it up, for example
 "Agents may use the shared workspace + 2 allowed folders (each account turns
-them on); accounts may not add folders of their own. Never: 3 folders."
+them on); accounts may not add folders of their own. Never allowed: 1 folder,
+plus the gateway's own data and credential folders."
 
 | Control | What it does |
 |---|---|

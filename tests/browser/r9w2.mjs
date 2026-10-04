@@ -71,7 +71,7 @@ try {
     await page.waitForSelector("#gateway-workspace-backdrop:not([hidden]) [data-ws-summary]");
     let p = await gw();
     const summary = await page.textContent("[data-ws-summary]");
-    check(summary.startsWith("Agents may use the shared workspace + 1 allowed folder") && summary.includes("accounts may not add folders of their own") && /Never: \d+ folders?\./.test(summary), "one-line effective summary", summary);
+    check(summary.startsWith("Agents may use the shared workspace + 1 allowed folder") && summary.includes("accounts may not add folders of their own") && summary.endsWith("Never allowed: 1 folder, plus the gateway's own data and credential folders."), "one-line effective summary", summary);
     check((await page.inputValue("#wsg-shared")) === p.shared_workspace, "the shared workspace shows the stored folder", [await page.inputValue("#wsg-shared"), p.shared_workspace]);
     check((await page.locator("#gateway-workspace-body button:text-is('Save')").count()) === 0, "no Save button");
     // Shared workspace: invalid, empty, then valid.

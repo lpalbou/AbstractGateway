@@ -121,6 +121,9 @@ WORKSPACES_CSS = r"""
 .wsm-summary { margin: 0; padding: 10px 14px; border-left: 3px solid var(--info, var(--accent)); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--info, var(--accent)) 8%, transparent); font-size: var(--font-size-base); line-height: 1.45; overflow-wrap: anywhere; }
 .wsm-loading, .wsm-note { margin: 0; color: var(--text-secondary); font-size: var(--font-size-md); }
 .wsm-error { margin: 0; color: var(--error, #c0392b); }
+/* The modal's title already says "Workspace folders — <id>": the chooser's own heading stays for
+   screen readers (it labels the section) but is not shown twice. */
+.wsm-chooser > .af-workspace > .af-settings-group__head { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .wsm-reset { display: grid; gap: 6px; padding-top: 12px; border-top: 1px solid var(--line-soft, var(--ui-border-1)); justify-items: start; }
 .wsm-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 12px; border-radius: var(--radius-md); background: var(--ui-surface-2, var(--bg-secondary)); }
 .ws-field { display: grid; gap: 6px; min-width: 0; padding-top: 12px; border-top: 1px solid var(--line-soft, var(--ui-border-1)); }
@@ -462,11 +465,11 @@ WORKSPACES_JS = r"""
     // One line: what agents may use, gateway-wide. Presentation of the server's values only.
     function wsGatewaySummary(p) {
       const allowed = p.allowed_folders.length;
-      const never = p.never_allowed.length + p.builtin_never_allowed.length;
+      const never = p.never_allowed.length;
       const parts = [allowed ? `the shared workspace + ${wsPlural(allowed, "allowed folder", "allowed folders")} (each account turns them on)` : "the shared workspace"];
       parts.push(p.allow_any_folder ? "accounts may add folders of their own" : "accounts may not add folders of their own");
       if (p.launch_folder_trust) parts.push("the folder an app starts in");
-      return `Agents may use ${parts.join("; ")}. Never: ${wsPlural(never, "folder", "folders")}.`;
+      return `Agents may use ${parts.join("; ")}. Never allowed: ${never ? wsPlural(never, "folder", "folders") : "none"}, plus the gateway's own data and credential folders.`;
     }
     function closeGatewayWorkspace() {
       const backdrop = $("gateway-workspace-backdrop");
