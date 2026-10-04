@@ -1032,8 +1032,8 @@ These exist to help thin clients adapt to the deployed gateway.
 - Capabilities (best-effort): `GET /api/gateway/discovery/capabilities`
 - Providers/models discovery (best-effort): `GET /api/gateway/discovery/providers`, `GET /api/gateway/discovery/providers/{provider}/models`
 - Tools (thin-client allowlist help): `GET /api/gateway/discovery/tools`. Round
-  12: each process-spawning tool row (`execute_command`, `shell_exec`,
-  `local_helper_start`) carries `sandboxed: true|false` and `sandbox` (the
+  12: each process-spawning tool row (AbstractRuntime's `SANDBOXED_TOOL_NAMES`:
+  `execute_command`, `shell_exec`, `local_helper_start`, `execute_python`) carries `sandboxed: true|false` and `sandbox` (the
   state sentence, for example "Sandboxed to this run's workspaces"), and the
   answer carries `command_sandbox` (as on `GET /workspace/policy`)
 - Skills inventory: `GET /api/gateway/skills` — the abstractskill shelf with

@@ -696,8 +696,8 @@ execution.
 
 ## Command sandbox
 
-Every tool that starts a process (`execute_command`, `shell_exec`, the local
-helpers: AbstractRuntime's `SANDBOXED_TOOL_NAMES`) runs inside an
+Every tool that starts a process (`execute_command`, `shell_exec`,
+`execute_python`, the local helpers: AbstractRuntime's `SANDBOXED_TOOL_NAMES`) runs inside an
 **operating-system sandbox** built from the run's effective workspaces. These
 are the same keys the file tools read, so the two cannot disagree: the run's
 private workspace read & write, the allowed workspaces with their modes, the
