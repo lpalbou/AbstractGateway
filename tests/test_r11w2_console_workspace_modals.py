@@ -107,7 +107,11 @@ def test_vocabulary_workspaces_never_folders() -> None:
 def test_vendored_islands_are_the_round11_kit() -> None:
     from abstractgateway.console_islands import ISLANDS_JS
 
-    assert ISLANDS_JS.startswith("/*! @abstractframework/ui-kit 0.8.3 console islands")
+    import re
+
+    # The round-11 kit (0.8.3) or a later one (0.8.4 = round 13: AfScheduleDialog only, islands body unchanged).
+    m = re.match(r"/\*! @abstractframework/ui-kit (\d+)\.(\d+)\.(\d+) console islands", ISLANDS_JS)
+    assert m and tuple(int(x) for x in m.groups()) >= (0, 8, 3), ISLANDS_JS[:80]
     for needle in ("workspaceAsState", "Eligible workspaces", "The gateway allows this workspace read-only", "Follow the gateway policy", "Use my default", "Add a workspace path"):
         assert needle in ISLANDS_JS, needle
     assert "Shared workspace" not in ISLANDS_JS
