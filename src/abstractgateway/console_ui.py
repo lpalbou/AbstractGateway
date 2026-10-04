@@ -2810,7 +2810,7 @@ CONSOLE_UI_JS = r"""
       const options = opts.map((o) => `<option value="${esc(o.id)}"${o.selected ? " selected" : ""}${o.available === false && !o.selected ? " disabled" : ""}>${esc(o.label)}${o.available === false ? ` — ${esc(o.reason || "unavailable")}` : ""}</option>`).join("");
       return `<div class="oai-field" data-oai-open-account-field><label class="oai-field__title" for="oai-open-account">Requests without a key run as</label>`
         + `<select id="oai-open-account" data-oai-open-account aria-describedby="oai-open-account-help"${busy || oaiStore.busy ? " disabled" : ""}>${options}</select>`
-        + `<p class="ui-card__note" id="oai-open-account-help">Guest may only use models: no tools, no files or images. An account brings its own models and providers, and its requests show in its log. Never an admin.</p></div>`;
+        + `<p class="ui-card__note" id="oai-open-account-help">Guest may use the models (chat, embeddings, speech, images) with no tools, files or attachments. An account brings its own models and providers, and its requests show in its log. Never an admin.</p></div>`;
     }
     function oaiAccessCard(d) {
       const reach = (Array.isArray(d.reach_options) ? d.reach_options : []).filter((o) => o.shown !== false)

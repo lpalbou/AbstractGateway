@@ -57,10 +57,13 @@ REACH_LABELS = {
 
 
 # Open (no key) mode: anonymous requests run as this account. The built-in guest
-# may only use models (no tools, no files or media inputs, no media generation).
+# may USE the models (chat, responses, embeddings, text-to-speech, image
+# generation when routed) but with no tools, no files, attachments or media
+# inputs, no workspace, email or run tools; it never reaches /api/gateway.
 GUEST_ACCOUNT = "guest"
 GUEST_LABEL = "Guest (models only)"
-GUEST_PATHS = frozenset({"/v1/models", "/v1/chat/completions", "/v1/responses", "/v1/embeddings"})
+GUEST_PATHS = frozenset({"/v1/models", "/v1/chat/completions", "/v1/responses", "/v1/embeddings",
+                         "/v1/audio/speech", "/v1/images/generations"})
 _GUEST_TOOL_FIELDS = ("tools", "tool_choice", "functions", "function_call")
 _TEXT_PARTS = frozenset({"text", "input_text", "output_text"})
 

@@ -123,10 +123,17 @@ def test_open_mode_runs_as_the_builtin_guest_by_default_models_only(gw):
         assert r.status_code == 403, r.text
         assert r.json()["error"]["code"] == "guest_not_allowed" and r.json()["error"]["param"] == param
         assert r.json()["error"]["type"] == "permission_error"
-    r = lan.post("/v1/audio/speech", json={"model": "x/y", "input": "hi", "voice": "a"})
-    assert r.status_code == 403 and r.json()["error"]["code"] == "guest_not_allowed"
+    # Text in, media out is using a model; anything that carries a file or attachment is not.
+    assert lan.post("/v1/audio/speech", json={"model": "x/y", "input": "hi", "voice": "a"}).status_code == 200
+    assert lan.post("/v1/embeddings", json={"model": "x/y", "input": "hi"}).status_code == 200
     r = lan.post("/v1/audio/transcriptions", files={"file": ("a.wav", b"RIFF", "audio/wav")}, data={"model": "x/y"})
     assert r.status_code == 403 and r.json()["error"]["code"] == "guest_not_allowed"
+    r = lan.post("/v1/images/edits", files={"image": ("a.png", b"PNG", "image/png")}, data={"model": "x/y", "prompt": "p"})
+    assert r.status_code == 403 and r.json()["error"]["code"] == "guest_not_allowed"
+    # The guest never reaches the console API: every /api/gateway route needs a signed-in account.
+    for path in ("/api/gateway/openai-api", "/api/gateway/openai-api/logs", "/api/gateway/runs", "/api/gateway/me/accounts"):
+        assert lan.get(path).status_code == 401, path
+        assert lan.get(path, headers={"Authorization": "Bearer not-needed"}).status_code == 401, path
 
 
 def test_open_mode_runs_as_a_chosen_account_never_an_admin(gw):

@@ -153,9 +153,10 @@ by default for an active account; off, that account's key answers
 the endpoint is turned on, the switch is written on for every active account
 and off for inactive ones. Without a key (Open mode), requests run as the
 account the admin chose: by default the built-in **Guest**, which may only use
-models (`/v1/models`, chat, responses, embeddings; no tools, no image, audio or
-file inputs, no media generation, anonymous towards AbstractCore so only local
-engines answer); or a user account, whose models and providers it then uses
+models (`/v1/models`, chat, responses, embeddings, text-to-speech and image
+generation when an engine is routed) with no tools, no files, attachments or
+image/audio inputs, no workspace, email or run tools, never any `/api/gateway`
+route, and anonymous towards AbstractCore so only local engines answer; or a user account, whose models and providers it then uses
 and whose log shows the requests. Never an admin, and never an account whose
 switch is off. The operator's own token (not an account) is always accepted.
 
