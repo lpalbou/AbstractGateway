@@ -40,9 +40,6 @@ pub mod skills;
 /// default workflow per app, streamed replies).
 #[path = "worker_workflows.rs"]
 pub mod workflows;
-/// The Workspaces page (gateway + per-account workspace policies, R8.2).
-#[path = "worker_workspaces.rs"]
-pub mod workspaces;
 use crate::store::{
     entities_from_payload, models_from_payload, runtimes_from_payload, users_from_payload,
     AvailabilityData, ConnPhase, DiscoverOutcome, DownloadOffer, DownloadStatus, Identity,
@@ -342,8 +339,6 @@ pub enum Cmd {
     Json(json::JsonCmd),
     /// The Skills & MCP page — see `worker::skills::SkCmd`.
     Skills(skills::SkCmd),
-    /// The Workspaces page (R8.2).
-    Workspaces(workspaces::WsCmd),
     /// The Workflows page — see `worker::workflows::WfCmd`.
     Workflows(workflows::WfCmd),
     /// `POST /network {allowed_origins?, trust_proxy?}` (reverse proxy,
@@ -358,14 +353,6 @@ pub enum Cmd {
     /// The gateway's versions (`GET /about`) for the About modal.
     LoadAbout,
     SaveRuntimeConfig {
-        body: Body,
-        form_id: Option<u64>,
-    },
-    /// ONE user's workspace policy (single-entry PUT — never the map
-    /// replace, so it cannot clobber other users' entries).
-    SaveUserWorkspacePolicy {
-        tenant_id: String,
-        user_id: String,
         body: Body,
         form_id: Option<u64>,
     },
@@ -2229,7 +2216,6 @@ fn handle(
         Cmd::Json(j) => json::handle(client, store, wake, j),
         Cmd::Skills(c) => skills::handle(client, store, wake, c, on_done),
         Cmd::Workflows(c) => workflows::handle(client, store, wake, c, on_done),
-        Cmd::Workspaces(c) => workspaces::handle(client, store, wake, c, on_done),
 
         Cmd::LoadAbout => load(
             store,
@@ -2255,35 +2241,6 @@ fn handle(
             let action = "POST runtime config".to_string();
             let (write, verify) = with_busy(store, wake, "saving runtime config", || {
                 let write = require_client(client).and_then(|c| c.save_runtime_config(&body));
-                let verify = require_client(client).and_then(|c| c.runtime_config());
-                (write, verify)
-            });
-            let verified = verify
-                .as_ref()
-                .ok()
-                .map(|_| Ok("GET reloaded runtime config".to_string()));
-            finish_write(store, wake, action, write, verified, form_id, on_done);
-            if let Ok(v) = verify {
-                publish_ready(
-                    wake,
-                    store.runtime_config,
-                    RuntimeConfigData::from_value(&v),
-                );
-            }
-        }
-
-        Cmd::SaveUserWorkspacePolicy {
-            tenant_id,
-            user_id,
-            body,
-            form_id,
-        } => {
-            let action = format!("PUT workspace policy {tenant_id}:{user_id}");
-            let (write, verify) = with_busy(store, wake, "saving workspace policy", || {
-                let write = require_client(client)
-                    .and_then(|c| c.save_user_workspace_policy(&tenant_id, &user_id, &body));
-                // Verify-after-write: the knobs surface carries the per-user
-                // map, so reloading it re-renders every summary honestly.
                 let verify = require_client(client).and_then(|c| c.runtime_config());
                 (write, verify)
             });

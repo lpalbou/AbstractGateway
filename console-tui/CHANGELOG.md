@@ -6,21 +6,20 @@ Needs AbstractGateway 0.13.0 or later (the OpenAI API routes, `POST /models/dele
 `tailscale` and `reverse_proxy` fields, the Skills & MCP and account OpenAI API routes).
 
 ### Added
-- **Workspaces** (`W`, right after Accounts): which folders agents may read and write — the gateway policy and every
-  user account (its **Own policy** switch and one sentence), the summary in one line on top. The editor (`Enter`) has
-  the access mode as a segmented switch (**Allow my list** / **Allow everything except**), **Launch-folder trust**,
-  the allowed and refused folders as rows edited in place (`POST /workspace/path-check` first: a folder the gateway
-  refuses, or one already listed, is not saved and the reason is shown), **Default folder** (gateway) and **Any
-  folder (old clients)**. **Own policy** on starts from the gateway's mode and trust; off asks first. Every change
-  applies at once and says "Saved". A non-admin sees their summary in one line and edits their own policy.
 - **Runtimes filtered to one account**: `g` on an Accounts row opens Runtimes with `[Account: <id> ×]`
   (`GET /admin/runtimes?account=`); `x` lists every runtime again.
 
 ### Changed
+- **Workspaces** (`W`, right after Accounts) shows one sentence: "Workspaces are managed from Accounts in the web
+  console; the terminal console follows in the next update." The gateway moved workspaces into Accounts (a
+  posture and per-account workspaces) and removed the routes the page used (`/admin/user-workspace-policy`,
+  `/workspace/policy/self`, the runtime-config `workspace_*` keys); the page now sends no request, and `w` on an
+  Accounts or Runtimes row opens it. The Runtimes knobs no longer list workspace settings or offer **Edit workspace
+  access policy**.
 - **Accounts** columns are Name · Email (the address and the mailbox state in one column, e.g.
   `alice@example.com · connected`, or "No address") · Runtime · Active at every width; the selected row's actions
   are listed on one line under the table in the web console's order (Email, OpenAI API, Logs, Workspace, Manage,
-  Rotate, Archive, Runtime), wrapping only between two actions. `w` opens Workspaces on that account.
+  Rotate, Archive, Runtime), wrapping only between two actions.
 - **Email for everyone** shows its three switches directly (**Mailboxes for users**, **Agent email tools for
   users**, **Sign-in by email**); there is no Advanced.
 - **Skills & MCP**: the shelf folder is one row under the skills list — `f` edits it in place (`Enter` saves, `Esc`

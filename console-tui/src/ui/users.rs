@@ -791,34 +791,10 @@ fn manage_selected_entity(cx: Scope, ctx: &Ctx) {
     }
 }
 
-/// `w`: the selected account's workspace policy — your own on your row
-/// (and always for a non-admin), a user's own policy as the admin, the
-/// reason for an entity.
+/// `w`: the Workspaces screen (parked until the terminal follows round
+/// 9's Accounts workspace model: one sentence, no request).
 fn workspace_selected(_cx: Scope, ctx: &Ctx) {
-    // R8.2: the policy lives on its own page now — the Workspace action
-    // opens Workspaces focused on that account (the web's
-    // `#workspaces?account=<id>`); a non-admin's page is their own policy.
-    let row = selected_account(ctx);
-    let admin = ctx.store.conn.with_untracked(ConnPhase::is_admin);
-    match row {
-        Some(r) if r.is_entity() => match r.refusal("workspace") {
-            Some(why) => ctx.store.notice.set(Some(why)),
-            None => ctx.store.notice.set(Some(format!(
-                "{}'s file access is set on the entity itself (workspace mounts) — m manages it",
-                r.id
-            ))),
-        },
-        Some(r) if r.refusal("workspace").is_some() && !is_own(&ctx.store, &r) => {
-            ctx.store.notice.set(r.refusal("workspace"))
-        }
-        Some(r) => {
-            if admin {
-                super::workspaces::focus_account(ctx, &r.tenant_id, &r.id);
-            }
-            ctx.ui.screen.set(super::SCREEN_WORKSPACES);
-        }
-        None => ctx.ui.screen.set(super::SCREEN_WORKSPACES),
-    }
+    ctx.ui.screen.set(super::SCREEN_WORKSPACES);
 }
 
 /// `@`: Email. Your row → the full account email view; another user's

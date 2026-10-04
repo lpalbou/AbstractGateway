@@ -27,7 +27,6 @@ pub mod models;
 /// The caller's own mailbox and notifications (Users screen, `@`).
 pub mod my_email;
 /// The caller's own workspace policy (Users screen, `w`).
-pub mod my_policy;
 pub mod network;
 /// The OpenAI API page (round 7).
 pub mod openai_api;
@@ -45,8 +44,8 @@ pub mod util;
 pub mod welcome;
 pub mod widths;
 pub mod workflows;
-/// Workspaces (ACCOUNTS, after Accounts): the gateway and per-account
-/// workspace policies (R8.2).
+/// Workspaces (ACCOUNTS, after Accounts): parked until the terminal
+/// follows round 9's Accounts workspace model (one sentence, no request).
 pub mod workspaces;
 
 use std::cell::RefCell;
@@ -101,7 +100,7 @@ pub const SCREENS: [&str; 17] = [
     "About",
     // Skills agents can load and the MCP tool servers (ui/skills_mcp.rs).
     "Skills & MCP",
-    // Which folders agents may read and write (ui/workspaces.rs, R8.2).
+    // Parked: managed from Accounts in the web console (ui/workspaces.rs).
     "Workspaces",
 ];
 

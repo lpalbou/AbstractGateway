@@ -21,8 +21,7 @@ use crate::store::email::{
     MyNotifications,
 };
 use crate::store::operator::{
-    my_policy_body, seed_report_text, start_again_hint, tray_note, HostRunner, HostUpdate,
-    MyPolicy, StartAtLogin,
+    seed_report_text, start_again_hint, tray_note, HostRunner, HostUpdate, StartAtLogin,
 };
 use crate::store::{JournalEntry, Loadable, NetworkData, RuntimeConfigData, Store};
 
@@ -111,13 +110,6 @@ pub enum OpCmd {
     /// POST /network/restart, then the restart watcher (reconnecting to
     /// the address the new exposure serves on).
     RestartNetwork,
-    LoadMyPolicy,
-    /// PUT /workspace/policy/self (`clear` = `{}` back to inherited).
-    SaveMyPolicy {
-        body: Body,
-        clear: bool,
-        form_id: Option<u64>,
-    },
     /// Point the email routes at an entity's mailbox (`Some(id)`: the
     /// `/accounts/{id}/email…` mirror) or back at the caller's own.
     EmailSubject(Option<String>),
@@ -209,9 +201,7 @@ impl OpCmd {
     /// The form awaiting this command (released on a worker panic).
     pub fn form_id(&self) -> Option<u64> {
         match self {
-            OpCmd::ImportWorkflow { form_id, .. }
-            | OpCmd::SaveMyPolicy { form_id, .. }
-            | OpCmd::Email { form_id, .. } => *form_id,
+            OpCmd::ImportWorkflow { form_id, .. } | OpCmd::Email { form_id, .. } => *form_id,
             _ => None,
         }
     }
@@ -983,64 +973,6 @@ pub(super) fn handle(
                     .notice
                     .set(Some(format!("public address lookup failed: {e}"))),
             });
-        }
-
-        OpCmd::LoadMyPolicy => load(
-            store,
-            wake,
-            "reading my workspace policy",
-            op.my_policy,
-            || {
-                require_client(client)?
-                    .my_workspace_policy()
-                    .map(|v| MyPolicy::from_value(&v))
-            },
-        ),
-
-        OpCmd::SaveMyPolicy {
-            body,
-            clear,
-            form_id,
-        } => {
-            let action = if clear {
-                "RESET my workspace policy to inherited".to_string()
-            } else {
-                "PUT my workspace policy".to_string()
-            };
-            let (write, verify) = with_busy(store, wake, "saving my workspace policy", || {
-                let write = require_client(client).and_then(|c| c.save_my_workspace_policy(&body));
-                let verify = require_client(client).and_then(|c| c.my_workspace_policy());
-                (write, verify)
-            });
-            let verified = verify.as_ref().ok().map(|v| {
-                let got = MyPolicy::from_value(v);
-                // Read back what the store holds and compare it to what
-                // was asked, field by field (the body builder's shape).
-                let now = my_policy_body(
-                    &got.mode,
-                    &got.trust,
-                    &got.allowed.join("\n"),
-                    &got.blocked.join("\n"),
-                );
-                if now == body.0 {
-                    Ok(format!(
-                        "GET /workspace/policy/self — {}",
-                        got.effective_text()
-                    ))
-                } else {
-                    Err(format!(
-                        "GET /workspace/policy/self holds {now}, not {}",
-                        body.0
-                    ))
-                }
-            });
-            // A refused save keeps the form's edits: only a landed write
-            // republishes (the form body rebuilds from the published value).
-            let wrote = write.is_ok();
-            finish_write(store, wake, action, write, verified, form_id, on_done);
-            if let (true, Ok(v)) = (wrote, verify) {
-                publish_ready(wake, op.my_policy, MyPolicy::from_value(&v));
-            }
         }
 
         OpCmd::EmailSubject(subject) => {

@@ -16,9 +16,8 @@
 
 use abstractgateway_console::api::sandbox_docs::route_test_body;
 use abstractgateway_console::api::{ApiErrorKind, ApiResult, GatewayClient};
-use abstractgateway_console::store::{RoutesData, RuntimeConfigData};
+use abstractgateway_console::store::RoutesData;
 use abstractgateway_console::ui::routes::route_save_body;
-use abstractgateway_console::ui::runtimes::WorkspaceDefaults;
 use serde_json::{json, Value};
 
 fn client(var: &str) -> GatewayClient {
@@ -123,8 +122,6 @@ fn every_console_gated_verb_is_admin_only_on_the_gateway() {
     u.entities().expect("entity roster is user-level");
     u.bundles(false).expect("workflow list is user-level");
     u.host_state().expect("resources snapshot is user-level");
-    u.my_workspace_policy()
-        .expect("own workspace policy is user-level");
     println!("user-level reads answered");
 }
 
@@ -225,61 +222,4 @@ fn web_exact_payloads_behave_like_the_web_on_the_gateway() {
             println!("download dry run refused on the artifact (not the shape): {e}");
         }
     }
-
-    // --- Workspace defaults: a save never promotes inherited values ----
-    let before = RuntimeConfigData::from_value(&a.runtime_config().expect("GET knobs"));
-    println!(
-        "before: trust={} ({}) bypass={} ({}) root='{}' ({})",
-        before.trust_client_launch_folder,
-        before.trust_client_launch_folder_source,
-        before.client_workspace_scope_overrides,
-        before.client_workspace_scope_overrides_source,
-        before.workspace_root,
-        before.workspace_root_source
-    );
-    let body = WorkspaceDefaults::prefill(&before).body();
-    println!("web-shaped save body: {body}");
-    a.save_runtime_config(&body).expect("POST knobs (web body)");
-    let after = RuntimeConfigData::from_value(&a.runtime_config().unwrap());
-    println!(
-        "after: trust={} ({}) bypass={} ({}) root='{}' ({})",
-        after.trust_client_launch_folder,
-        after.trust_client_launch_folder_source,
-        after.client_workspace_scope_overrides,
-        after.client_workspace_scope_overrides_source,
-        after.workspace_root,
-        after.workspace_root_source
-    );
-    for (name, was, now) in [
-        (
-            "trust_client_launch_folder",
-            &before.trust_client_launch_folder_source,
-            &after.trust_client_launch_folder_source,
-        ),
-        (
-            "client_workspace_scope_overrides",
-            &before.client_workspace_scope_overrides_source,
-            &after.client_workspace_scope_overrides_source,
-        ),
-        (
-            "workspace_root",
-            &before.workspace_root_source,
-            &after.workspace_root_source,
-        ),
-    ] {
-        if was != "stored" {
-            assert_ne!(
-                now, "stored",
-                "{name}: an inherited value was promoted to a stored setting"
-            );
-        }
-    }
-    assert_eq!(
-        after.trust_client_launch_folder,
-        before.trust_client_launch_folder
-    );
-    assert_eq!(
-        after.client_workspace_scope_overrides,
-        before.client_workspace_scope_overrides
-    );
 }

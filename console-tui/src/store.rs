@@ -42,10 +42,6 @@ pub mod skills;
 #[path = "store_workflows.rs"]
 pub mod workflows_page;
 
-/// The Workspaces page (R8.2): the gateway policy + per-account policies.
-#[path = "store_workspaces.rs"]
-pub mod workspaces;
-
 /// Remote data honesty: never render a guess.
 #[derive(Clone, Debug, Default)]
 pub enum Loadable<T> {
@@ -1781,26 +1777,6 @@ impl NetworkData {
 #[derive(Clone, Debug, Default)]
 pub struct RuntimeConfigData {
     pub writable: bool,
-    pub workspace_root: String,
-    pub workspace_root_source: String,
-    pub workspace_allowed_paths: String,
-    pub workspace_allowed_paths_source: String,
-    pub workspace_blocked_paths: String,
-    pub workspace_blocked_paths_source: String,
-    pub client_workspace_scope_overrides: bool,
-    pub client_workspace_scope_overrides_source: String,
-    /// Launch-folder trust (default true server-side): an agent may write
-    /// in the folder it was started from.
-    pub trust_client_launch_folder: bool,
-    pub trust_client_launch_folder_source: String,
-    /// Gateway default posture: "whitelist" (deny all, allow listed) or
-    /// "blacklist" (allow all, refuse listed) — what users inherit.
-    pub workspace_default_mode: String,
-    pub workspace_default_mode_source: String,
-    /// Per-user policy overrides as pretty JSON ("" = none) — edited as
-    /// text; the gateway deep-validates on save.
-    pub user_workspace_policies: String,
-    pub user_workspace_policies_source: String,
     /// (knob, rendered value, source) — enumerated from the payload,
     /// never a hardcoded knob list (the gateway grows knobs).
     pub knobs: Vec<(String, String, String)>,
@@ -2032,20 +2008,6 @@ pub struct AppsSetting {
 impl RuntimeConfigData {
     pub fn from_value(v: &Value) -> RuntimeConfigData {
         let mut knobs = Vec::new();
-        let mut workspace_root = String::new();
-        let mut workspace_root_source = "default".to_string();
-        let mut workspace_allowed_paths = String::new();
-        let mut workspace_allowed_paths_source = "default".to_string();
-        let mut workspace_blocked_paths = String::new();
-        let mut workspace_blocked_paths_source = "default".to_string();
-        let mut client_workspace_scope_overrides = false;
-        let mut client_workspace_scope_overrides_source = "default".to_string();
-        let mut trust_client_launch_folder = true;
-        let mut trust_client_launch_folder_source = "default".to_string();
-        let mut workspace_default_mode = "whitelist".to_string();
-        let mut workspace_default_mode_source = "default".to_string();
-        let mut user_workspace_policies = String::new();
-        let mut user_workspace_policies_source = "default".to_string();
         if let Some(obj) = v.as_object() {
             for (key, val) in obj {
                 // Knobs are the {value, source} objects; other keys
@@ -2055,92 +2017,6 @@ impl RuntimeConfigData {
                 };
                 if operator::BACKLOG_KEYS.contains(&key.as_str()) {
                     continue; // their own rows (store::operator)
-                }
-                if key == "workspace_root" {
-                    workspace_root = match value {
-                        Value::Null => String::new(),
-                        Value::String(s) => s.clone(),
-                        other => other.to_string(),
-                    };
-                    workspace_root_source = source.as_str().unwrap_or("?").to_string();
-                    continue;
-                }
-                if key == "workspace_mounts" {
-                    let mounts_text = match value {
-                        Value::Null => String::new(),
-                        Value::String(s) => s.clone(),
-                        other => other.to_string(),
-                    };
-                    if workspace_allowed_paths.trim().is_empty() {
-                        workspace_allowed_paths = mounts_text
-                            .lines()
-                            .map(|line| line.trim())
-                            .filter(|line| !line.is_empty())
-                            .map(|line| {
-                                line.split_once('=')
-                                    .map(|(_, path)| path.trim())
-                                    .unwrap_or(line)
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        workspace_allowed_paths_source = source.as_str().unwrap_or("?").to_string();
-                    }
-                    continue;
-                }
-                if key == "workspace_allowed_paths" {
-                    workspace_allowed_paths = match value {
-                        Value::Null => String::new(),
-                        Value::String(s) => s.clone(),
-                        other => other.to_string(),
-                    };
-                    workspace_allowed_paths_source = source.as_str().unwrap_or("?").to_string();
-                    continue;
-                }
-                if key == "workspace_blocked_paths" {
-                    workspace_blocked_paths = match value {
-                        Value::Null => String::new(),
-                        Value::String(s) => s.clone(),
-                        other => other.to_string(),
-                    };
-                    workspace_blocked_paths_source = source.as_str().unwrap_or("?").to_string();
-                    continue;
-                }
-                if key == "client_workspace_scope_overrides" {
-                    client_workspace_scope_overrides = match value {
-                        Value::Bool(b) => *b,
-                        Value::String(s) => matches!(s.as_str(), "1" | "true" | "yes" | "on"),
-                        _ => false,
-                    };
-                    client_workspace_scope_overrides_source =
-                        source.as_str().unwrap_or("?").to_string();
-                    continue;
-                }
-                if key == "trust_client_launch_folder" {
-                    trust_client_launch_folder = match value {
-                        Value::Bool(b) => *b,
-                        Value::String(s) => matches!(s.as_str(), "1" | "true" | "yes" | "on"),
-                        _ => true,
-                    };
-                    trust_client_launch_folder_source = source.as_str().unwrap_or("?").to_string();
-                    continue;
-                }
-                if key == "workspace_default_mode" {
-                    if let Some(m) = value.as_str() {
-                        if m == "whitelist" || m == "blacklist" {
-                            workspace_default_mode = m.to_string();
-                        }
-                    }
-                    workspace_default_mode_source = source.as_str().unwrap_or("?").to_string();
-                    continue;
-                }
-                if key == "user_workspace_policies" {
-                    user_workspace_policies = match value {
-                        Value::Object(map) if map.is_empty() => String::new(),
-                        Value::Object(_) => serde_json::to_string_pretty(value).unwrap_or_default(),
-                        _ => String::new(),
-                    };
-                    user_workspace_policies_source = source.as_str().unwrap_or("?").to_string();
-                    continue;
                 }
                 let rendered = match value {
                     Value::Null => "—".to_string(),
@@ -2202,20 +2078,6 @@ impl RuntimeConfigData {
             .unwrap_or_default();
         RuntimeConfigData {
             writable: b(v, "writable").unwrap_or(false),
-            workspace_root,
-            workspace_root_source,
-            workspace_allowed_paths,
-            workspace_allowed_paths_source,
-            workspace_blocked_paths,
-            workspace_blocked_paths_source,
-            client_workspace_scope_overrides,
-            client_workspace_scope_overrides_source,
-            trust_client_launch_folder,
-            trust_client_launch_folder_source,
-            workspace_default_mode,
-            workspace_default_mode_source,
-            user_workspace_policies,
-            user_workspace_policies_source,
             knobs,
             executors,
             apps,
@@ -3031,8 +2893,6 @@ pub struct Store {
     pub json: json::JsonStore,
     /// The Skills & MCP page.
     pub skills: skills::SkillsStore,
-    /// The Workspaces page (R8.2).
-    pub ws: workspaces::WorkspacesStore,
     /// The Workflows page.
     pub wf: workflows_page::WorkflowsStore,
     /// Per-provider model lists (route editor + provider browser).
@@ -3855,7 +3715,6 @@ impl Store {
             op: operator::OperatorStore::create(cx),
             json: json::JsonStore::create(cx),
             skills: skills::SkillsStore::create(cx),
-            ws: workspaces::WorkspacesStore::create(cx),
             wf: workflows_page::WorkflowsStore::create(cx),
             models: cx.signal(HashMap::new()),
             discover: cx.signal(Loadable::default()),
@@ -3945,7 +3804,6 @@ impl Store {
             op,
             json,
             skills,
-            ws,
             wf,
             models,
             discover,
@@ -4008,7 +3866,6 @@ impl Store {
         op.reset();
         json.reset();
         skills.reset();
-        ws.reset();
         wf.reset();
         models.update(|m| m.clear());
         discover.set(Loadable::NotAsked);

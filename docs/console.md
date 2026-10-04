@@ -693,7 +693,7 @@ groups and their keys. The local engines live on Providers, as on the web.
   and a read-only mailbox line; an entity: the entity's own mailbox form), `o`
   OpenAI API (admin, user rows: one switch), `l` logs ("Activity — <id>", `f` /
   `F` change the filter: All, Sign-ins, Runs, Automations, Email; `o` opens a
-  run in Observer), `w` opens **Workspaces** on that account, `t` rotate token,
+  run in Observer), `w` opens **Workspaces**, `t` rotate token,
   `m` manage (entities), `d` archive (asks inline) or unarchive, `g` opens
   **Runtimes** filtered to that account. Also `a` create user, `e`
   edit user, `n` create entity, `c` talk with an entity, `i` inspect, `s` spark
@@ -702,22 +702,10 @@ groups and their keys. The local engines live on Providers, as on the web.
   (`Tab`): the three switches **Mailboxes for users**, **Agent email tools for
   users** and **Sign-in by email**, each applied at once. Someone who is not an administrator
   sees their own row and the entities they created.
-- **W Workspaces** sets which folders agents may read and write. The top line
-  says what the gateway policy allows and how many accounts have their own;
-  the table lists the **Gateway policy** and every user account with its
-  **Own policy** switch and one sentence ("Follows the gateway policy." or
-  what its own policy allows). `Enter` edits the highlighted policy:
-  **Access** is a segmented switch (**Allow my list** / **Allow everything
-  except**; `←` / `→` or Space), **Launch-folder trust** is a switch, and the
-  **Allowed folders** and **Refused folders** are rows: `Enter` edits a row in
-  place, **+ Add folder** adds one, `x` removes one. The gateway policy also
-  has **Default folder** and, like an account, **Any folder (old clients)**.
-  The gateway checks a typed folder first; when it can't be used, or is
-  already listed, it says so and nothing is saved. For an account, **Own
-  policy** on starts from the gateway's access mode and launch-folder trust;
-  off asks first, then the account follows the gateway policy again. Every
-  change applies at once and says "Saved". Someone who is not an
-  administrator sees their summary in one line and edits their own policy.
+- **W Workspaces** shows one sentence for now: "Workspaces are managed from
+  Accounts in the web console; the terminal console follows in the next
+  update." The page reads and changes nothing; `w` on an Accounts or Runtimes
+  row opens it. Set workspaces in the web console ([Workspaces](#workspaces)).
 - **Your email settings** (`@` on your own row): your **Email address**, your
   **Mailbox** (tabs **IMAP**, the default, **Google** and **Microsoft**; the
   IMAP pane shows the incoming and outgoing servers, filled in as soon as the

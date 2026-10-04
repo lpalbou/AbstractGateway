@@ -54,8 +54,7 @@ pages are usable at 80×24.
    row says why it can't). Per row: `@` email (your row: My email; another
    user: their address only and their mailbox status; an entity: its own
    mailbox form), `l` activity (sign-ins, changes, runs, automations, email; `f`
-   filters; `o` opens a run in Observer), `w` opens **Workspaces** on that
-   account, `o` OpenAI API (user rows), `t` rotate, `m` manage (entities), `d`
+   filters; `o` opens a run in Observer), `w` opens **Workspaces**, `o` OpenAI API (user rows), `t` rotate, `m` manage (entities), `d`
    archive / unarchive (asks inline), `g` opens **Runtimes** filtered to the
    account (`GET /admin/runtimes?account=`), `h` show archived; the line under
    the table lists the selected row's actions, Enter shows why any can't apply. Rows wrap instead of cutting text.
@@ -83,16 +82,10 @@ pages are usable at 80×24.
    from selected — saving is admin-only), and **talk** with an entity
    (`c`: open a hosted visit, send turns, close with the reflection
    pass; one visit at a time).
-- **W Workspaces** (ACCOUNTS) — which folders agents may read and write: the
-   gateway policy and every user account (its **Own policy** switch and one
-   sentence), the summary in one line on top. `Enter` opens the editor:
-   **Access** (Allow my list / Allow everything except), **Launch-folder
-   trust**, the allowed and refused folders as rows (`Enter` edits in place,
-   **+ Add folder**, `x` removes; `POST /workspace/path-check` first),
-   **Default folder** (gateway) and **Any folder (old clients)**. Each change
-   applies at once (`POST /admin/runtime-config`, `PUT
-   /admin/user-workspace-policy`, `PUT /workspace/policy/self` for a
-   non-admin).
+- **W Workspaces** (ACCOUNTS) — one sentence for now: "Workspaces are
+   managed from Accounts in the web console; the terminal console follows in
+   the next update." The page sends no request (the gateway moved workspaces
+   into Accounts in 0.13.0).
 - **3 Workflows** (WORK) — the web console's Workflows page in three tabs
    (`Tab`): **Workflows** (the "Shared with everyone" and "Mine" groups,
    search `/`, `t` drafts, `o` older versions (each its own row), `h` show

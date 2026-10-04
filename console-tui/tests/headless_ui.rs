@@ -3685,11 +3685,7 @@ fn runtime_knobs_render_with_provenance() {
     h.store.runtime_config.set(Loadable::Ready(
         abstractgateway_console::store::RuntimeConfigData::from_value(&json!({
             "writable": true,
-            "workspace_root": {"value": "/srv/workspace", "source": "stored"},
-            "workspace_allowed_paths": {"value": "/srv/archive\n/srv/notes", "source": "stored"},
-            "workspace_blocked_paths": {"value": "/srv/secrets", "source": "stored"},
-            "client_workspace_scope_overrides": {"value": true, "source": "stored"},
-            "trust_client_launch_folder": {"value": true, "source": "stored"},
+            "workspace_policy": {"endpoint": "/api/gateway/workspace/policy"},
             "process_manager": {"value": false, "source": "default"},
             "executor": {"value": "codex", "source": "stored"},
             "operator_email": {"value": null, "source": "default"},
@@ -3702,21 +3698,21 @@ fn runtime_knobs_render_with_provenance() {
     let s = h.turns(2);
     assert!(s.contains("Runtime knobs"), "knob block:\n{s}");
     assert!(
-        s.contains("default_workspace: /srv/workspace  (stored)"),
-        "workspace root rendered:\n{s}"
+        s.contains("executor: codex  (stored)"),
+        "a knob with its source:\n{s}"
     );
-    assert!(
-        s.contains("launch_folder_trust: true  (stored)"),
-        "launch-folder trust knob rendered:\n{s}"
-    );
-    assert!(
-        s.contains("scope_overrides: true  (stored)"),
-        "advanced scope-overrides toggle rendered separately:\n{s}"
-    );
-    assert!(
-        s.contains("Edit workspace access policy"),
-        "admin editor entry point missing:\n{s}"
-    );
+    // Round 10 (Y1): the round-9 gateway serves no workspace knobs (the
+    // policy lives under Accounts): no workspace row, no editor, and the
+    // `workspace_policy` pointer is not rendered as a knob.
+    for gone in [
+        "default_workspace",
+        "launch_folder_trust",
+        "scope_overrides",
+        "Edit workspace access policy",
+        "workspace_policy",
+    ] {
+        assert!(!s.contains(gone), "{gone:?} still rendered:\n{s}");
+    }
     assert!(
         s.contains("executor: codex  (stored)"),
         "knob value + provenance:\n{s}"
@@ -8159,9 +8155,9 @@ fn backlog_settings_rows_and_skills_reseed_in_the_knobs() {
 }
 
 #[test]
-fn users_w_opens_my_workspace_policy() {
-    // R8.2: the workspace policy left the Accounts page — `w` on your own
-    // row opens the Workspaces page (its own sidebar entry) on that row.
+fn users_w_opens_the_parked_workspaces_page() {
+    // Round 10 (Y1): `w` on an Accounts row opens the parked Workspaces
+    // page (one sentence, no request).
     let mut h = harness_sized(Size::new(140, 44));
     h.connect_as_admin();
     h.goto_screen(3);
@@ -8182,9 +8178,11 @@ fn users_w_opens_my_workspace_policy() {
     );
     let s = h.turns(2);
     assert!(
-        s.contains("Workspaces — Which folders agents may read and write"),
+        s.contains("Workspaces are managed from Accounts in the web console;"),
         "the Workspaces page:\n{s}"
     );
+    let sent = h.drain_cmds();
+    assert!(sent.is_empty(), "the parked page sent {sent:?}");
 }
 
 #[test]

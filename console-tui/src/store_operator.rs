@@ -45,8 +45,6 @@ pub struct OperatorStore {
     /// Generation gate for the 15 s `/host/runner` poll behind the
     /// paused banner (the host-state poll precedent).
     pub runner_poll_gen: Signal<u64>,
-    /// `GET /workspace/policy/self` — the caller's own policy.
-    pub my_policy: Signal<Loadable<MyPolicy>>,
     /// `GET /host/start-at-login` (admin) — the F3 panel's and the
     /// setup guide's toggle.
     pub start_at_login: Signal<Loadable<StartAtLogin>>,
@@ -78,7 +76,6 @@ impl OperatorStore {
             update: cx.signal(Loadable::default()),
             lifecycle: cx.signal(None),
             runner_poll_gen: cx.signal(0),
-            my_policy: cx.signal(Loadable::default()),
             start_at_login: cx.signal(Loadable::default()),
             network_restart_offer: cx.signal(None),
             my_email: cx.signal(Loadable::default()),
@@ -98,7 +95,6 @@ impl OperatorStore {
         self.runner.set(Loadable::NotAsked);
         self.tray.set(Loadable::NotAsked);
         self.update.set(Loadable::NotAsked);
-        self.my_policy.set(Loadable::NotAsked);
         self.start_at_login.set(Loadable::NotAsked);
         self.network_restart_offer.set(None);
         self.my_email.set(Loadable::NotAsked);
@@ -660,104 +656,6 @@ impl HostUpdate {
 }
 
 // ---------------------------------------------------------------------
-// The caller's own workspace policy (`GET/PUT /workspace/policy/self`)
-// ---------------------------------------------------------------------
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct MyPolicy {
-    pub tenant_id: String,
-    pub user_id: String,
-    /// The stored entry's fields ("" = not set / inherit).
-    pub mode: String,
-    /// "on" | "off" | "" (inherit).
-    pub trust: String,
-    pub allowed: Vec<String>,
-    pub blocked: Vec<String>,
-    pub customized: bool,
-    pub eff_mode: String,
-    pub eff_trust: bool,
-    pub eff_allowed: usize,
-    pub eff_blocked: usize,
-}
-
-impl MyPolicy {
-    pub fn from_value(v: &Value) -> MyPolicy {
-        let null = Value::Null;
-        let entry = v.get("policy").filter(|p| p.is_object()).unwrap_or(&null);
-        let eff = v.get("effective").unwrap_or(&null);
-        MyPolicy {
-            tenant_id: s(v, "tenant_id").unwrap_or_default(),
-            user_id: s(v, "user_id").unwrap_or_default(),
-            mode: s(entry, "mode").unwrap_or_default(),
-            trust: match entry
-                .get("trust_client_launch_folder")
-                .and_then(Value::as_bool)
-            {
-                Some(true) => "on".into(),
-                Some(false) => "off".into(),
-                None => String::new(),
-            },
-            allowed: strs(entry, "workspace_allowed_paths"),
-            blocked: strs(entry, "workspace_blocked_paths"),
-            customized: v
-                .get("customized")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-            eff_mode: s(eff, "mode").unwrap_or_else(|| "whitelist".into()),
-            eff_trust: eff
-                .get("trust_client_launch_folder")
-                .and_then(Value::as_bool)
-                == Some(true),
-            eff_allowed: strs(eff, "workspace_allowed_paths").len(),
-            eff_blocked: strs(eff, "workspace_blocked_paths").len(),
-        }
-    }
-
-    /// The web console's "Effective: …" line.
-    pub fn effective_text(&self) -> String {
-        format!(
-            "Effective: {} mode · launch-folder trust {} · {} allowed · {} refused",
-            self.eff_mode,
-            if self.eff_trust { "on" } else { "off" },
-            self.eff_allowed,
-            self.eff_blocked
-        )
-    }
-}
-
-/// The PUT body the web console sends (`saveMyWorkspacePolicy`): only the
-/// fields the user set; lists are one path per line, blanks dropped. `{}`
-/// clears the entry back to inherited.
-pub fn my_policy_body(mode: &str, trust: &str, allowed: &str, blocked: &str) -> Value {
-    let mut body = serde_json::Map::new();
-    if !mode.is_empty() {
-        body.insert("mode".into(), Value::String(mode.to_string()));
-    }
-    if !trust.is_empty() {
-        body.insert(
-            "trust_client_launch_folder".into(),
-            Value::Bool(trust == "on"),
-        );
-    }
-    let list = |raw: &str| -> Vec<Value> {
-        raw.lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .map(|l| Value::String(l.to_string()))
-            .collect()
-    };
-    let al = list(allowed);
-    if !al.is_empty() {
-        body.insert("workspace_allowed_paths".into(), Value::Array(al));
-    }
-    let bl = list(blocked);
-    if !bl.is_empty() {
-        body.insert("workspace_blocked_paths".into(), Value::Array(bl));
-    }
-    Value::Object(body)
-}
-
-// ---------------------------------------------------------------------
 // Backlog settings (`triage_repo_root`, `backlog_exec_runner`,
 // `process_manager` in GET /admin/runtime-config)
 // ---------------------------------------------------------------------
@@ -1121,31 +1019,6 @@ mod tests {
         assert!(old
             .confirm_text()
             .starts_with("AbstractGateway 0.6.0 is available (you have 0.5.1)"));
-    }
-
-    #[test]
-    fn my_policy_parses_and_builds_the_web_body() {
-        let p = MyPolicy::from_value(&json!({
-            "tenant_id": "default", "user_id": "admin",
-            "policy": {"mode": "blacklist", "trust_client_launch_folder": false,
-                       "workspace_blocked_paths": ["/a", "/b"]},
-            "customized": true,
-            "effective": {"mode": "blacklist", "trust_client_launch_folder": false,
-                          "workspace_allowed_paths": [], "workspace_blocked_paths": ["/a", "/b"]}
-        }));
-        assert_eq!(p.mode, "blacklist");
-        assert_eq!(p.trust, "off");
-        assert_eq!(p.blocked, vec!["/a", "/b"]);
-        assert_eq!(
-            p.effective_text(),
-            "Effective: blacklist mode · launch-folder trust off · 0 allowed · 2 refused"
-        );
-        assert_eq!(my_policy_body("", "", "", ""), json!({}));
-        assert_eq!(
-            my_policy_body("whitelist", "on", " /x \n\n/y", ""),
-            json!({"mode": "whitelist", "trust_client_launch_folder": true,
-                   "workspace_allowed_paths": ["/x", "/y"]})
-        );
     }
 
     fn backlog_payload() -> Value {

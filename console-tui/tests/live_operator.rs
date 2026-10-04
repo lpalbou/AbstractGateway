@@ -11,7 +11,7 @@
 //! change gateway state and need the worker's watcher / verify path).
 
 use abstractgateway_console::api::GatewayClient;
-use abstractgateway_console::store::operator::{tray_note, HostRunner, HostUpdate, MyPolicy};
+use abstractgateway_console::store::operator::{tray_note, HostRunner, HostUpdate};
 use abstractgateway_console::store::NetworkData;
 
 /// A HERMETIC gateway only: no default URL, and the operator's usual
@@ -48,14 +48,6 @@ fn host_reads_parse_into_what_the_panel_shows() {
     let u = HostUpdate::from_value(&c.host_update().expect("GET /host/update (admin)"));
     println!("version: {} · {}", u.version_text(), u.hint_text());
     assert!(!u.current.is_empty());
-    let p = MyPolicy::from_value(&c.my_workspace_policy().expect("GET /workspace/policy/self"));
-    println!(
-        "my policy: {}:{} · {}",
-        p.tenant_id,
-        p.user_id,
-        p.effective_text()
-    );
-    assert!(!p.user_id.is_empty());
 }
 
 #[test]

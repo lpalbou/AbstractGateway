@@ -10,7 +10,7 @@
 //! lazily on first look.
 
 use abstracttui::prelude::*;
-use abstracttui::widgets::{Disclosure, SubmitPolicy, Table, Tabs, TextArea, TextAreaState};
+use abstracttui::widgets::{Disclosure, Table, Tabs};
 use serde_json::{json, Value};
 
 use super::util::{ellipsize, field, line, loadable_view, span, span_bold};
@@ -28,7 +28,7 @@ use crate::worker::Cmd;
 /// under the table the second.
 pub const RUNTIME_TITLE: &str =
     "Runtimes — a runtime is a user's own data plane: their runs, flows, sessions and memory";
-pub const RUNTIME_FOOTNOTE: &str = "Each user gets one, named after them, unless an admin bound them to a shared one  ·  w workspace policy";
+pub const RUNTIME_FOOTNOTE: &str = "Each user gets one, named after them, unless an admin bound them to a shared one  ·  w workspaces";
 /// The whole note, wrapped under the table when the terminal is too narrow
 /// for the title to carry its first sentence.
 pub const RUNTIME_NOTE: &str = "A runtime is a user's own data plane: their runs, flows, sessions and memory. Each user gets one, named after them, unless an admin bound them to a shared one. w workspace policy.";
@@ -461,18 +461,6 @@ fn admin_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     move |gcx| {
                         let data = store.runtimes.get();
                         let ctx_choose = ctx_table.clone();
-                        // The per-user policy keys feed the table's policy
-                        // column when the config has loaded (lazy law: the
-                        // column teaches "press w" until then).
-                        let policy_keys = match store.runtime_config.get() {
-                            Loadable::Ready(cfg) => Some(
-                                serde_json::from_str::<Value>(&cfg.user_workspace_policies)
-                                    .ok()
-                                    .and_then(|v| v.as_object().map(|m| m.keys().cloned().collect()))
-                                    .unwrap_or_default(),
-                            ),
-                            _ => None,
-                        };
                         super::util::loadable_view_kept(
                             &keeper,
                             &tt,
@@ -482,7 +470,7 @@ fn admin_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                             |d: &Vec<RuntimeRow>| d.is_empty(),
                             "no runtimes reported",
                             |d| {
-                                table(gcx, &tt, d, ui.runtime_sel, policy_keys.clone(), &keeper, move |idx| choose(&ctx_choose, idx))
+                                table(gcx, &tt, d, ui.runtime_sel, &keeper, move |idx| choose(&ctx_choose, idx))
                             },
                         )
                     },
@@ -613,20 +601,7 @@ fn admin_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 // The folded header carries the live posture summary so the
                 // config surface is discoverable WITHOUT expanding (operator
                 // 2026-08-19: a bare folded title read as "no config here").
-                let knobs_title: String = match store.runtime_config.get() {
-                    Loadable::Ready(d) => {
-                        let count_lines = |s: &str| s.lines().filter(|l| !l.trim().is_empty()).count();
-                        format!(
-                            "Runtime knobs (gateway-wide) — {} · launch-folder trust {} · {} allowed · {} blocked · {} per-user",
-                            if d.workspace_default_mode == "blacklist" { "allow-all posture" } else { "deny-all posture" },
-                            if d.trust_client_launch_folder { "on" } else { "off" },
-                            count_lines(&d.workspace_allowed_paths),
-                            count_lines(&d.workspace_blocked_paths),
-                            user_policy_count(&d),
-                        )
-                    }
-                    _ => "Runtime knobs (gateway-wide) — workspace access policy, launch-folder trust, executors".to_string(),
-                };
+                let knobs_title = "Runtime knobs (gateway-wide) — executors, apps, agent defaults".to_string();
                 Disclosure::new(knobs_title)
                     .folded(ui.rt_knobs_folded)
                     .max_body_rows(0)
@@ -644,9 +619,6 @@ fn admin_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                 |d: &RuntimeConfigData| {
                                     d.knobs.is_empty()
                                         && d.executors.is_empty()
-                                        && d.workspace_root.is_empty()
-                                        && d.workspace_allowed_paths.is_empty()
-                                        && d.workspace_blocked_paths.is_empty()
                                         && d.apps.is_empty()
                                         && d.agent_defaults.is_empty()
                                         && d.skills_shelf.is_none()
@@ -1217,112 +1189,6 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
             span_bold("read-only (backend refuses writes)", t.warn),
         ]));
     }
-    rows.push(line(vec![
-        span(format!("{:>20}: ", "default_workspace"), t.text_muted),
-        span(
-            ellipsize(
-                if d.workspace_root.trim().is_empty() {
-                    "—"
-                } else {
-                    d.workspace_root.as_str()
-                },
-                48,
-            ),
-            t.text,
-        ),
-        span(format!("  ({})", d.workspace_root_source), t.text_faint),
-    ]));
-    rows.push(line(vec![
-        span(format!("{:>20}: ", "allowed_workspaces"), t.text_muted),
-        {
-            let mounts_line = if d.workspace_allowed_paths.trim().is_empty() {
-                "—".to_string()
-            } else {
-                d.workspace_allowed_paths.replace('\n', " · ")
-            };
-            span(ellipsize(&mounts_line, 48), t.text)
-        },
-        span(
-            format!("  ({})", d.workspace_allowed_paths_source),
-            t.text_faint,
-        ),
-    ]));
-    rows.push(line(vec![
-        span(format!("{:>20}: ", "blocked_workspaces"), t.text_muted),
-        {
-            let blocked_line = if d.workspace_blocked_paths.trim().is_empty() {
-                "—".to_string()
-            } else {
-                d.workspace_blocked_paths.replace('\n', " · ")
-            };
-            span(ellipsize(&blocked_line, 48), t.text)
-        },
-        span(
-            format!("  ({})", d.workspace_blocked_paths_source),
-            t.text_faint,
-        ),
-    ]));
-    rows.push(line(vec![
-        span(format!("{:>20}: ", "default_posture"), t.text_muted),
-        span(
-            if d.workspace_default_mode == "blacklist" {
-                "allow everything, refuse listed folders"
-            } else {
-                "deny everything, allow listed folders"
-            },
-            t.text,
-        ),
-        span(
-            format!("  ({})", d.workspace_default_mode_source),
-            t.text_faint,
-        ),
-    ]));
-    rows.push(line(vec![
-        span(format!("{:>20}: ", "launch_folder_trust"), t.text_muted),
-        span(
-            if d.trust_client_launch_folder {
-                "true"
-            } else {
-                "false"
-            },
-            t.text,
-        ),
-        span(
-            format!("  ({})", d.trust_client_launch_folder_source),
-            t.text_faint,
-        ),
-        span("   scope_overrides: ", t.text_muted),
-        span(
-            if d.client_workspace_scope_overrides {
-                "true"
-            } else {
-                "false"
-            },
-            t.text,
-        ),
-        span(
-            format!("  ({})", d.client_workspace_scope_overrides_source),
-            t.text_faint,
-        ),
-    ]));
-    rows.push(line(vec![
-        span(format!("{:>20}: ", "per_user_policies"), t.text_muted),
-        {
-            let count = user_policy_count(d);
-            span(
-                if count == 0 {
-                    "— (press w on a user runtime row to customize)".to_string()
-                } else {
-                    format!("{count} account(s) customized — w on a user row edits")
-                },
-                t.text,
-            )
-        },
-        span(
-            format!("  ({})", d.user_workspace_policies_source),
-            t.text_faint,
-        ),
-    ]));
     for (key, value, source) in &d.knobs {
         rows.push(line(vec![
             span(format!("{key:>20}: "), t.text_muted),
@@ -1491,8 +1357,6 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
         .child(if d.writable {
             let ctx5 = ctx.clone();
             let current_shelf = d.clone();
-            let ctx2 = ctx.clone();
-            let current = d.clone();
             let ctx3 = ctx.clone();
             let current_apps = d.clone();
             let ctx4 = ctx.clone();
@@ -1502,12 +1366,6 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
 
             let row1 = Element::new()
                 .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                .child(
-                    Button::new("Edit workspace access policy")
-                        .on_click(move || open_workspace_policy_form(cx, &ctx2, current.clone()))
-                        .element(cx, t)
-                        .build(),
-                )
                 .child(if current_apps.apps.is_empty() {
                     Element::new().style(LayoutStyle::default().h(0)).build()
                 } else {
@@ -2274,653 +2132,12 @@ pub(crate) fn open_apps_settings_form(cx: Scope, ctx: &Ctx, current: RuntimeConf
     );
 }
 
-/// The gateway-wide workspace defaults form, as the web models it
-/// (console.py renderGatewayPolicyModal / saveWorkspacePolicyModal).
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct WorkspaceDefaults {
-    pub root: String,
-    pub allowed: String,
-    pub blocked: String,
-    /// "whitelist" | "blacklist".
-    pub mode: String,
-    /// Launch-folder trust: None = inherit (not stored).
-    pub trust: Option<bool>,
-    /// The legacy full bypass: None = inherit (not stored).
-    pub overrides: Option<bool>,
-}
-
-impl WorkspaceDefaults {
-    /// The form's prefill: only STORED choices for the root and the two
-    /// switches (a resolved env/default value written back would become a
-    /// stored setting); the path lists and the posture as served.
-    pub fn prefill(c: &RuntimeConfigData) -> WorkspaceDefaults {
-        let stored = |source: &str| source == "stored";
-        WorkspaceDefaults {
-            root: if stored(&c.workspace_root_source) {
-                c.workspace_root.clone()
-            } else {
-                String::new()
-            },
-            allowed: c.workspace_allowed_paths.clone(),
-            blocked: c.workspace_blocked_paths.clone(),
-            mode: if c.workspace_default_mode == "blacklist" {
-                "blacklist".into()
-            } else {
-                "whitelist".into()
-            },
-            trust: stored(&c.trust_client_launch_folder_source)
-                .then_some(c.trust_client_launch_folder),
-            overrides: stored(&c.client_workspace_scope_overrides_source)
-                .then_some(c.client_workspace_scope_overrides),
-        }
-    }
-
-    /// `POST /admin/runtime-config` body, the web's exact shape: the root
-    /// is null when blank (inherit), trust is null when inherited, the
-    /// bypass is named only when chosen. `user_workspace_policies` is
-    /// DELIBERATELY absent: present-but-empty deletes the whole per-user
-    /// map server-side (per-user edits ride the single-entry PUT).
-    pub fn body(&self) -> Value {
-        let root = self.root.trim();
-        let mode = if self.mode.is_empty() {
-            "whitelist"
-        } else {
-            self.mode.as_str()
-        };
-        let mut body = json!({
-            "workspace_default_mode": mode,
-            "workspace_root": if root.is_empty() { Value::Null } else { Value::String(root.to_string()) },
-            "workspace_allowed_paths": self.allowed.trim(),
-            "workspace_blocked_paths": self.blocked.trim(),
-            "trust_client_launch_folder": self.trust.map(Value::Bool).unwrap_or(Value::Null),
-        });
-        if let Some(on) = self.overrides {
-            body["client_workspace_scope_overrides"] = Value::Bool(on);
-        }
-        body
-    }
-}
-
-/// Tri-state select index: 0 = inherit, 1 = on, 2 = off.
-fn tri_index(v: Option<bool>) -> usize {
-    match v {
-        None => 0,
-        Some(true) => 1,
-        Some(false) => 2,
-    }
-}
-
-fn tri_value(ix: usize) -> Option<bool> {
-    match ix {
-        1 => Some(true),
-        2 => Some(false),
-        _ => None,
-    }
-}
-
-fn open_workspace_policy_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
-    if !current.writable {
-        ctx.store
-            .notice
-            .set(Some("this needs an admin token".into()));
-        return;
-    }
-    let ctx2 = ctx.clone();
-    open_form(ctx, cx, Size::new(92, 32), move |mcx, close| {
-        let theme = use_theme(mcx);
-        let t0 = theme.get().tokens;
-        // Only STORED choices prefill (the web's renderGatewayPolicyModal):
-        // writing a resolved env/default value back would silently promote
-        // it to a stored setting.
-        let pre = WorkspaceDefaults::prefill(&current);
-        let workspace_root = mcx.signal(pre.root.clone());
-        let workspace_allowed_paths = mcx.signal(pre.allowed.clone());
-        let workspace_blocked_paths = mcx.signal(pre.blocked.clone());
-        let allow_client_scope = mcx.signal(tri_index(pre.overrides));
-        let trust_launch_folder = mcx.signal(tri_index(pre.trust));
-        let default_mode = mcx.signal(pre.mode.clone());
-        let allowed_state = TextAreaState::new(mcx);
-        allowed_state.set_text(pre.allowed.clone());
-        let blocked_state = TextAreaState::new(mcx);
-        blocked_state.set_text(pre.blocked.clone());
-        let root_placeholder = if current.workspace_root.trim().is_empty() {
-            "blank = inherit (env/default fallback)".to_string()
-        } else {
-            format!("blank = inherit ({})", current.workspace_root.trim())
-        };
-        let inherit_label = |now: bool| {
-            SelectOption::new(format!("inherit (now {})", if now { "on" } else { "off" }))
-        };
-        let trust_options = vec![
-            inherit_label(current.trust_client_launch_folder),
-            SelectOption::new("on"),
-            SelectOption::new("off"),
-        ];
-        let overrides_options = vec![
-            inherit_label(current.client_workspace_scope_overrides),
-            SelectOption::new("on"),
-            SelectOption::new("off"),
-        ];
-        let form_error = mcx.signal(Option::<String>::None);
-        let in_flight = mcx.signal(false);
-        let form_id = crate::worker::next_form_id();
-
-        super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
-
-        let ctx_save = ctx2.clone();
-        let close_cancel = close.clone();
-        Element::new()
-            .focusable()
-            .autofocus()
-            .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold(
-                "Workspace access policy",
-                t0.accent,
-            )]))
-            .child(line(vec![span(
-                "choose whether trusted clients may use their launch folder, plus extra allowed and blocked workspaces",
-                t0.text_faint,
-            )]))
-            .child(field(
-                &t0,
-                "default workspace",
-                TextInput::new()
-                    .value(workspace_root)
-                    .placeholder(root_placeholder)
-                    .placeholder_while_focused(true)
-                    .layout(LayoutStyle::default().w(60).h(1))
-                    .element(mcx, &t0)
-                    .build(),
-            ))
-            .child(field(
-                &t0,
-                "launch folder trust",
-                Select::new(trust_options)
-                    .value(trust_launch_folder)
-                    .layout(LayoutStyle::default().w(24).h(1).shrink(0.0))
-                    .element(mcx, &t0)
-                    .build(),
-            ))
-            .child(line(vec![span(
-                "  an agent may write in the folder it was started from (gateway default on)",
-                t0.text_faint,
-            )]))
-            .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
-                let label = if default_mode.get() == "blacklist" {
-                    "allow everything, refuse listed folders (wide grant)"
-                } else {
-                    "deny everything, allow listed folders (shipped default)"
-                };
-                line(vec![span("default posture: ", t0.text_muted), span(label, t0.text)])
-            }))
-            .child(
-                Button::new("change default posture")
-                    .on_click(move || {
-                        default_mode.update(|m| {
-                            *m = if m == "blacklist" { "whitelist".to_string() } else { "blacklist".to_string() }
-                        });
-                    })
-                    .element(mcx, &t0)
-                    .build(),
-            )
-            .child(field(
-                &t0,
-                "full bypass (legacy)",
-                Select::new(overrides_options)
-                    .value(allow_client_scope)
-                    .layout(LayoutStyle::default().w(24).h(1).shrink(0.0))
-                    .element(mcx, &t0)
-                    .build(),
-            ))
-            .child(line(vec![span(
-                "  unlike launch-folder trust (one folder), clients may scope ANY server folder — postures stop applying",
-                t0.text_faint,
-            )]))
-            .child(field(
-                &t0,
-                "allowed workspaces",
-                TextArea::new()
-                    .state(&allowed_state)
-                    .placeholder("/abs/path, one per line")
-                    .on_change(move |s: &str| {
-                        if workspace_allowed_paths.with_untracked(|cur| cur != s) {
-                            workspace_allowed_paths.set(s.to_string());
-                        }
-                    })
-                    .submit_policy(SubmitPolicy::EnterInserts)
-                    .rows(4, 6)
-                    .layout(LayoutStyle::default().basis(Dimension::Cells(0)).grow(1.0))
-                    .element(mcx, &t0)
-                    .build(),
-            ))
-            .child(field(
-                &t0,
-                "blocked workspaces",
-                TextArea::new()
-                    .state(&blocked_state)
-                    .placeholder("/abs/path, one per line")
-                    .on_change(move |s: &str| {
-                        if workspace_blocked_paths.with_untracked(|cur| cur != s) {
-                            workspace_blocked_paths.set(s.to_string());
-                        }
-                    })
-                    .submit_policy(SubmitPolicy::EnterInserts)
-                    .rows(3, 5)
-                    .layout(LayoutStyle::default().basis(Dimension::Cells(0)).grow(1.0))
-                    .element(mcx, &t0)
-                    .build(),
-            ))
-            .child(line(vec![span(
-                "per-user policies: press w on a user runtime row (single-entry saves — this form never touches them)",
-                t0.text_faint,
-            )]))
-            .child(super::message_slot(theme, form_error, in_flight))
-            .child(
-                Element::new()
-                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                    .child(
-                        Button::new("Save")
-                            .on_click(move || {
-                                if in_flight.get_untracked() {
-                                    return;
-                                }
-                                let body = WorkspaceDefaults {
-                                    root: workspace_root.get_untracked(),
-                                    allowed: workspace_allowed_paths.get_untracked(),
-                                    blocked: workspace_blocked_paths.get_untracked(),
-                                    mode: default_mode.get_untracked(),
-                                    trust: tri_value(trust_launch_folder.get_untracked()),
-                                    overrides: tri_value(allow_client_scope.get_untracked()),
-                                }
-                                .body();
-                                form_error.set(None);
-                                in_flight.set(true);
-                                ctx_save.send(Cmd::SaveRuntimeConfig {
-                                    body: body.into(),
-                                    form_id: Some(form_id),
-                                });
-                            })
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .child(
-                        Button::new("Cancel (Esc)")
-                            .on_click(move || close_cancel())
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .build(),
-            )
-            .build()
-    });
-}
-
-/// How many accounts carry a custom workspace policy (parsed from the
-/// knobs payload's per-user map — one source for the header summary and
-/// the knobs row).
-fn user_policy_count(d: &RuntimeConfigData) -> usize {
-    serde_json::from_str::<Value>(&d.user_workspace_policies)
-        .ok()
-        .and_then(|v| v.as_object().map(|m| m.len()))
-        .unwrap_or(0)
-}
-
-/// ONE user's stored policy entry from the knobs payload ({} = inherits).
-fn user_policy_entry(d: &RuntimeConfigData, key: &str) -> serde_json::Map<String, Value> {
-    serde_json::from_str::<Value>(&d.user_workspace_policies)
-        .ok()
-        .and_then(|v| v.get(key).and_then(Value::as_object).cloned())
-        .unwrap_or_default()
-}
-
-/// The Accounts screen's Workspace action for a user (admin): the same
-/// per-user policy form as `w` here, loading the runtime config first
-/// when it was never read (one more keypress, said so).
-pub fn open_user_policy(cx: Scope, ctx: &Ctx, tenant: String, user: String) {
-    let config = match ctx.store.runtime_config.get_untracked() {
-        Loadable::Ready(d) => d,
-        Loadable::Failed(e) => {
-            ctx.store.runtime_config.set(Loadable::Loading);
-            ctx.send(Cmd::LoadRuntimeConfig);
-            ctx.store.notice.set(Some(format!(
-                "couldn't read the workspace config ({e}) — reading again; press w in a moment"
-            )));
-            return;
-        }
-        Loadable::NotAsked => {
-            ctx.store.runtime_config.set(Loadable::Loading);
-            ctx.send(Cmd::LoadRuntimeConfig);
-            ctx.store.notice.set(Some(
-                "loading workspace config — press w again in a moment".into(),
-            ));
-            return;
-        }
-        Loadable::Loading => {
-            ctx.store.notice.set(Some(
-                "workspace config still loading — try again in a moment".into(),
-            ));
-            return;
-        }
-    };
-    if !config.writable {
-        ctx.store
-            .notice
-            .set(Some("this needs an admin token".into()));
-        return;
-    }
-    open_user_policy_form(cx, ctx, &config, tenant, user);
-}
-
-/// `w` on the highlighted INVENTORY row (users.rs `e/t/d` idiom): open the
-/// per-user workspace policy form. Refuses, with a notice naming why, on
-/// rows that resolve to no single principal.
+/// `w` on the highlighted inventory row: the Workspaces screen (parked
+/// until the terminal follows round 9's Accounts workspace model — it
+/// shows one sentence and sends nothing).
 fn open_user_policy_for_selected(cx: Scope, ctx: &Ctx) {
-    let idx = ctx.ui.runtime_sel.get_untracked();
-    let row = ctx
-        .store
-        .runtimes
-        .with_untracked(|d| d.ready().and_then(|rows| rows.get(idx).cloned()));
-    let Some(row) = row else {
-        ctx.store
-            .notice
-            .set(Some("no runtime highlighted — nothing to configure".into()));
-        return;
-    };
-    if row.kind == "entity" {
-        ctx.store.notice.set(Some(
-            "entity filesystem access is configured on the entity itself (workspace mounts), not here".into(),
-        ));
-        return;
-    }
-    if row.owners.len() != 1 {
-        ctx.store.notice.set(Some(if row.owners.is_empty() {
-            "no live user binds this plane — there is no principal to configure".to_string()
-        } else {
-            "several users bind this plane — configure each user from screen 2 (Accounts, w)"
-                .to_string()
-        }));
-        return;
-    }
-    let tenant = if row.tenant_id.trim().is_empty() {
-        "default".to_string()
-    } else {
-        row.tenant_id.clone()
-    };
-    // R8.2: the policy lives on the Workspaces page — `w` opens it on
-    // that account (the web's Workspace link in this column).
     let _ = cx;
-    super::workspaces::focus_account(ctx, &tenant, &row.owners[0]);
     ctx.ui.screen.set(super::SCREEN_WORKSPACES);
-}
-
-/// The per-user workspace policy form (operator order 2026-08-19: settings
-/// live ON the runtime, with an explicit posture choice — deny-all+allow
-/// list, or allow-all+refuse list). Three-state fields cycle on click;
-/// blank = inherit. Save PUTs the SINGLE entry — never the map.
-fn open_user_policy_form(
-    cx: Scope,
-    ctx: &Ctx,
-    config: &RuntimeConfigData,
-    tenant: String,
-    user: String,
-) {
-    let key = format!("{tenant}:{user}");
-    let entry = user_policy_entry(config, &key);
-    let customized = !entry.is_empty();
-    let str_of = |v: Option<&Value>| -> String {
-        v.and_then(Value::as_str)
-            .map(str::to_string)
-            .unwrap_or_default()
-    };
-    let tri_of = |v: Option<&Value>| -> String {
-        match v.and_then(Value::as_bool) {
-            Some(true) => "on".to_string(),
-            Some(false) => "off".to_string(),
-            None => String::new(),
-        }
-    };
-    let lines_of = |v: Option<&Value>| -> String {
-        v.and_then(Value::as_array)
-            .map(|a| {
-                a.iter()
-                    .filter_map(Value::as_str)
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
-            .unwrap_or_default()
-    };
-    let mode0 = str_of(entry.get("mode"));
-    let trust0 = tri_of(entry.get("trust_client_launch_folder"));
-    let overrides0 = tri_of(entry.get("client_workspace_scope_overrides"));
-    let allowed0 = lines_of(entry.get("workspace_allowed_paths"));
-    let blocked0 = lines_of(entry.get("workspace_blocked_paths"));
-
-    let ctx2 = ctx.clone();
-    open_form(ctx, cx, Size::new(92, 30), move |mcx, close| {
-        let theme = use_theme(mcx);
-        let t0 = theme.get().tokens;
-        let mode = mcx.signal(mode0.clone());
-        let trust = mcx.signal(trust0.clone());
-        let overrides = mcx.signal(overrides0.clone());
-        let allowed = mcx.signal(allowed0.clone());
-        let blocked = mcx.signal(blocked0.clone());
-        let allowed_state = TextAreaState::new(mcx);
-        allowed_state.set_text(allowed0.clone());
-        let blocked_state = TextAreaState::new(mcx);
-        blocked_state.set_text(blocked0.clone());
-        let form_error = mcx.signal(Option::<String>::None);
-        let in_flight = mcx.signal(false);
-        let form_id = crate::worker::next_form_id();
-
-        super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
-
-        let tenant_save = tenant.clone();
-        let user_save = user.clone();
-        let tenant_reset = tenant.clone();
-        let user_reset = user.clone();
-        let ctx_save = ctx2.clone();
-        let ctx_reset = ctx2.clone();
-        let close_cancel = close.clone();
-        Element::new()
-            .focusable()
-            .autofocus()
-            .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold(
-                format!("Workspace policy — {key}"),
-                t0.accent,
-            )]))
-            .child(line(vec![span(
-                if customized {
-                    "this user has a custom policy · blank/inherit fields fall back to the gateway defaults"
-                } else {
-                    "this user inherits the gateway defaults · anything you set here overrides them"
-                },
-                t0.text_faint,
-            )]))
-            .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
-                let label = match trust.get().as_str() {
-                    "on" => "on — agents may write in the folder they are started from",
-                    "off" => "off — launch folders get no special treatment",
-                    _ => "inherit gateway default",
-                };
-                line(vec![span("launch-folder trust: ", t0.text_muted), span(label, t0.text)])
-            }))
-            .child(
-                Button::new("change launch-folder trust")
-                    .on_click(move || {
-                        trust.update(|v| {
-                            *v = match v.as_str() {
-                                "" => "on".to_string(),
-                                "on" => "off".to_string(),
-                                _ => String::new(),
-                            }
-                        });
-                    })
-                    .element(mcx, &t0)
-                    .build(),
-            )
-            .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
-                let label = match mode.get().as_str() {
-                    "whitelist" => "deny everything, allow listed folders",
-                    "blacklist" => "allow everything, refuse listed folders",
-                    _ => "inherit — deny everything, allow listed folders (gateway default)",
-                };
-                line(vec![span("posture: ", t0.text_muted), span(label, t0.text)])
-            }))
-            .child(
-                Button::new("change posture")
-                    .on_click(move || {
-                        mode.update(|m| {
-                            *m = match m.as_str() {
-                                "" => "whitelist".to_string(),
-                                "whitelist" => "blacklist".to_string(),
-                                _ => String::new(),
-                            }
-                        });
-                    })
-                    .element(mcx, &t0)
-                    .build(),
-            )
-            .child(field(
-                &t0,
-                "allowed folders",
-                TextArea::new()
-                    .state(&allowed_state)
-                    .placeholder("/abs/path, one per line — extra roots on top of the gateway-wide ones")
-                    .on_change(move |s: &str| {
-                        if allowed.with_untracked(|cur| cur != s) {
-                            allowed.set(s.to_string());
-                        }
-                    })
-                    .submit_policy(SubmitPolicy::EnterInserts)
-                    .rows(3, 5)
-                    .layout(LayoutStyle::default().basis(Dimension::Cells(0)).grow(1.0))
-                    .element(mcx, &t0)
-                    .build(),
-            ))
-            .child(field(
-                &t0,
-                "refused folders",
-                TextArea::new()
-                    .state(&blocked_state)
-                    .placeholder("/abs/path, one per line — denied in every posture")
-                    .on_change(move |s: &str| {
-                        if blocked.with_untracked(|cur| cur != s) {
-                            blocked.set(s.to_string());
-                        }
-                    })
-                    .submit_policy(SubmitPolicy::EnterInserts)
-                    .rows(3, 5)
-                    .layout(LayoutStyle::default().basis(Dimension::Cells(0)).grow(1.0))
-                    .element(mcx, &t0)
-                    .build(),
-            ))
-            .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
-                let label = match overrides.get().as_str() {
-                    "on" => "granted — clients may scope ANY server path",
-                    "off" => "refused",
-                    _ => "inherit gateway default",
-                };
-                line(vec![span("scope overrides (admin-classed): ", t0.text_muted), span(label, t0.text)])
-            }))
-            .child(
-                Button::new("change scope overrides")
-                    .on_click(move || {
-                        overrides.update(|v| {
-                            *v = match v.as_str() {
-                                "" => "on".to_string(),
-                                "on" => "off".to_string(),
-                                _ => String::new(),
-                            }
-                        });
-                    })
-                    .element(mcx, &t0)
-                    .build(),
-            )
-            .child(super::message_slot(theme, form_error, in_flight))
-            .child(
-                Element::new()
-                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                    .child(
-                        Button::new("Save")
-                            .on_click(move || {
-                                if in_flight.get_untracked() {
-                                    return;
-                                }
-                                let mut policy = serde_json::Map::new();
-                                let m = mode.get_untracked();
-                                if !m.is_empty() {
-                                    policy.insert("mode".into(), Value::String(m));
-                                }
-                                let tr = trust.get_untracked();
-                                if !tr.is_empty() {
-                                    policy.insert(
-                                        "trust_client_launch_folder".into(),
-                                        Value::Bool(tr == "on"),
-                                    );
-                                }
-                                let ov = overrides.get_untracked();
-                                if !ov.is_empty() {
-                                    policy.insert(
-                                        "client_workspace_scope_overrides".into(),
-                                        Value::Bool(ov == "on"),
-                                    );
-                                }
-                                let list = |raw: &str| -> Vec<Value> {
-                                    raw.lines()
-                                        .map(str::trim)
-                                        .filter(|l| !l.is_empty())
-                                        .map(|l| Value::String(l.to_string()))
-                                        .collect()
-                                };
-                                let al = list(&allowed.get_untracked());
-                                if !al.is_empty() {
-                                    policy.insert("workspace_allowed_paths".into(), Value::Array(al));
-                                }
-                                let bl = list(&blocked.get_untracked());
-                                if !bl.is_empty() {
-                                    policy.insert("workspace_blocked_paths".into(), Value::Array(bl));
-                                }
-                                form_error.set(None);
-                                in_flight.set(true);
-                                ctx_save.send(Cmd::SaveUserWorkspacePolicy {
-                                    tenant_id: tenant_save.clone(),
-                                    user_id: user_save.clone(),
-                                    body: json!({ "policy": Value::Object(policy) }).into(),
-                                    form_id: Some(form_id),
-                                });
-                            })
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .child(
-                        Button::new("Reset to inherited")
-                            .on_click(move || {
-                                if in_flight.get_untracked() {
-                                    return;
-                                }
-                                form_error.set(None);
-                                in_flight.set(true);
-                                ctx_reset.send(Cmd::SaveUserWorkspacePolicy {
-                                    tenant_id: tenant_reset.clone(),
-                                    user_id: user_reset.clone(),
-                                    body: json!({ "policy": Value::Null }).into(),
-                                    form_id: Some(form_id),
-                                });
-                            })
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .child(
-                        Button::new("Cancel (Esc)")
-                            .on_click(move || close_cancel())
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .build(),
-            )
-            .build()
-    });
 }
 
 /// The Sessions tab: the chosen plane's top-level runs (spinner while
@@ -3909,7 +3126,6 @@ fn table(
     t: &TokenSet,
     data: &[RuntimeRow],
     sel: Signal<usize>,
-    policy_keys: Option<std::collections::HashSet<String>>,
     keeper: &super::util::FocusKeeper,
     on_choose: impl FnMut(usize) + Clone + 'static,
 ) -> View {
@@ -3944,26 +3160,11 @@ fn table(
                 _ => "—".into(),
             });
             row.push(size);
-            // The policy column TEACHES the gesture in-row (operator
-            // 2026-08-19: "how do you want an external user to know it
-            // has to press w"): every eligible row names the key; once
-            // the config is loaded it also says custom vs inherited.
+            // The workspace column names the key; `w` opens the Workspaces
+            // screen (parked: managed from Accounts in the web console).
             row.push(
-                if (r.kind == "user" || r.kind == "default") && r.owners.len() == 1 {
-                    let tenant = if r.tenant_id.trim().is_empty() {
-                        "default"
-                    } else {
-                        r.tenant_id.as_str()
-                    };
-                    match &policy_keys {
-                        Some(keys) if keys.contains(&format!("{tenant}:{}", r.owners[0])) => {
-                            "Own policy".to_string()
-                        }
-                        Some(_) => "Gateway policy".to_string(),
-                        None => "w: Workspaces".to_string(),
-                    }
-                } else if r.kind == "entity" {
-                    "Set in Manage".to_string()
+                if matches!(r.kind.as_str(), "user" | "default" | "entity") {
+                    "w: Workspaces".to_string()
                 } else {
                     "—".to_string()
                 },
@@ -3986,7 +3187,7 @@ fn table(
     }
     rules.push(widths::ColRule::head("entity state", 12));
     rules.push(widths::ColRule::head("size", 9));
-    rules.push(widths::ColRule::head("workspace policy", 15));
+    rules.push(widths::ColRule::head("workspaces", 15));
     if wide {
         rules.push(widths::ColRule::head("note", 16));
     }
@@ -4338,56 +3539,5 @@ mod tests {
     fn the_note_line_names_the_half_that_answered() {
         assert_eq!(query_bit("*.jpg"), "q=\"*.jpg\" (glob)");
         assert_eq!(query_bit("photo"), "q=\"photo\"");
-    }
-
-    fn config(v: serde_json::Value) -> RuntimeConfigData {
-        RuntimeConfigData::from_value(&v)
-    }
-
-    /// Inherited (non-stored) values never prefill the gateway defaults
-    /// form, so a save cannot promote them to stored settings — the web's
-    /// renderGatewayPolicyModal rule.
-    #[test]
-    fn workspace_defaults_prefill_only_stored_choices() {
-        let inherited = config(json!({
-            "writable": true,
-            "workspace_root": {"value": "/srv/ws", "source": "env"},
-            "trust_client_launch_folder": {"value": true, "source": "default"},
-            "client_workspace_scope_overrides": {"value": false, "source": "default"},
-            "workspace_allowed_paths": {"value": "/a\n/b", "source": "stored"},
-            "workspace_blocked_paths": {"value": "", "source": "default"},
-            "workspace_default_mode": {"value": "whitelist", "source": "default"},
-        }));
-        let pre = WorkspaceDefaults::prefill(&inherited);
-        assert_eq!(pre.root, "", "an env root is not a stored choice");
-        assert_eq!(pre.trust, None);
-        assert_eq!(pre.overrides, None);
-        assert_eq!(pre.allowed, "/a\n/b");
-        assert_eq!(
-            pre.body(),
-            json!({
-                "workspace_default_mode": "whitelist",
-                "workspace_root": null,
-                "workspace_allowed_paths": "/a\n/b",
-                "workspace_blocked_paths": "",
-                "trust_client_launch_folder": null,
-            }),
-            "inherit = null trust, no bypass key (the web's exact body)"
-        );
-        let stored = config(json!({
-            "workspace_root": {"value": "/srv/ws", "source": "stored"},
-            "trust_client_launch_folder": {"value": false, "source": "stored"},
-            "client_workspace_scope_overrides": {"value": true, "source": "stored"},
-            "workspace_default_mode": {"value": "blacklist", "source": "stored"},
-        }));
-        let body = WorkspaceDefaults::prefill(&stored).body();
-        assert_eq!(body["workspace_root"], "/srv/ws");
-        assert_eq!(body["trust_client_launch_folder"], false);
-        assert_eq!(body["client_workspace_scope_overrides"], true);
-        assert_eq!(body["workspace_default_mode"], "blacklist");
-        assert!(
-            body.get("user_workspace_policies").is_none(),
-            "never names the per-user map"
-        );
     }
 }

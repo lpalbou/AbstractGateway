@@ -1311,23 +1311,6 @@ impl GatewayClient {
         self.send("POST", "/network/restart", &serde_json::json!({}), false)
     }
 
-    /// ONE user's workspace policy (per-runtime settings form). Identity
-    /// components are the registry's safe charset ([A-Za-z0-9_.@-]) — no
-    /// URL-encoding needed.
-    pub fn save_user_workspace_policy(
-        &self,
-        tenant_id: &str,
-        user_id: &str,
-        body: &Value,
-    ) -> ApiResult<Value> {
-        self.send(
-            "PUT",
-            &format!("/admin/user-workspace-policy?tenant_id={tenant_id}&user_id={user_id}"),
-            body,
-            false,
-        )
-    }
-
     // ---- voice ------------------------------------------------------------
 
     /// TTS voice catalog for one (provider, model) pair — feeds the

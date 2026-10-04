@@ -168,30 +168,6 @@ impl GatewayClient {
     pub fn network_lookup_public(&self) -> ApiResult<Value> {
         self.get("/network?lookup_public=1", true)
     }
-
-    // ---- the caller's own workspace policy --------------------------------
-
-    /// `GET /workspace/policy/self` — any principal, their own entry.
-    pub fn my_workspace_policy(&self) -> ApiResult<Value> {
-        self.get("/workspace/policy/self", false)
-    }
-
-    /// `POST /workspace/path-check {path}` → `{path, normalized, absolute,
-    /// exists, is_dir, valid, sentence}` (R8.2; any signed-in principal;
-    /// the same rules as the write validator).
-    pub fn workspace_path_check(&self, path: &str) -> ApiResult<Value> {
-        self.send(
-            "POST",
-            "/workspace/path-check",
-            &serde_json::json!({ "path": path }),
-            false,
-        )
-    }
-
-    /// `PUT /workspace/policy/self` — `{}` clears back to inherited.
-    pub fn save_my_workspace_policy(&self, body: &Value) -> ApiResult<Value> {
-        self.send("PUT", "/workspace/policy/self", body, false)
-    }
 }
 
 /// A `multipart/form-data` body: one `file` part (octet-stream) followed

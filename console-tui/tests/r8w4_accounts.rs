@@ -158,25 +158,19 @@ fn g_opens_the_runtimes_page_filtered_to_the_account() {
 }
 
 #[test]
-fn w_opens_the_workspaces_page_on_that_account() {
-    let mut h = page((80, 24));
-    select(&mut h, "bob");
-    h.key(b"w");
-    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_WORKSPACES);
-    assert_eq!(
-        h.store.ws.focus.get_untracked(),
-        Some(("default".to_string(), "bob".to_string()))
-    );
-    // An entity has no per-account policy: the reason, no jump.
-    let mut h = page((80, 24));
-    select(&mut h, "castor");
-    h.key(b"w");
-    assert_eq!(h.ui.screen.get_untracked(), 0, "no jump");
-    let n = h.store.notice.get_untracked().unwrap_or_default();
-    assert!(
-        n.contains("castor's file access is set on the entity itself"),
-        "{n}"
-    );
+fn w_opens_the_parked_workspaces_page() {
+    // Round 10 (Y1): the Workspaces page is parked (one sentence, no
+    // request) — `w` jumps there from any row, user or entity, and the
+    // jump itself sends nothing.
+    for who in ["bob", "castor"] {
+        let mut h = page((80, 24));
+        select(&mut h, who);
+        h.sent();
+        h.key(b"w");
+        assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_WORKSPACES, "{who}");
+        let sent = h.sent();
+        assert!(sent.is_empty(), "{who}: {sent:?}");
+    }
 }
 
 #[test]
