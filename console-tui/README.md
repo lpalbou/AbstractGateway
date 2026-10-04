@@ -11,7 +11,7 @@ right `Drawer` hosts the entity inspector), talking to the gateway's admin HTTP 
 
 The pages follow the web console's sidebar, in its order and groups, each
 with a fixed key: **1** Connection (the terminal's sign-in), ACCOUNTS **2**
-Accounts, WORK **3** Workflows, **4** Skills & MCP, **5** Runtimes, **6** Apps,
+Accounts, **W** Workspaces, WORK **3** Workflows, **4** Skills & MCP, **5** Runtimes, **6** Apps,
 MODELS **7** Providers, **8** OpenAI API, **9** Models, **0** Multimodal,
 SYSTEM **H** Resources, **T** Sandbox, **N** Network, then **S** Setup and
 **I** About. They are shared by a **setup guide** (the wizard: the web
@@ -49,22 +49,23 @@ pages are usable at 80×24.
    (admin, auth mode, routing mode), and the network panel (including
    the web console's "Look up my public address").
 - **2 Accounts** (ACCOUNTS) — one table of users and entities
-   (`GET /admin/accounts`): kind, email address, mailbox, runtime and the
-   **Active** switch (Space: deactivate a user, suspend an entity; your own
+   (`GET /admin/accounts`): Name (and kind), Email (address and mailbox
+   state in one column), Runtime and the **Active** switch (Space: deactivate a user, suspend an entity; your own
    row says why it can't). Per row: `@` email (your row: My email; another
    user: their address only and their mailbox status; an entity: its own
    mailbox form), `l` activity (sign-ins, changes, runs, automations, email; `f`
-   filters; `o` opens a run in Observer), `w` workspace policy, `o` OpenAI
-   API (user rows), `t` rotate, `m` manage (entities), `d` archive /
-   unarchive (asks inline), `h` show archived; Enter shows a row's actions
-   and why any can't apply. Rows wrap instead of cutting text.
+   filters; `o` opens a run in Observer), `w` opens **Workspaces** on that
+   account, `o` OpenAI API (user rows), `t` rotate, `m` manage (entities), `d`
+   archive / unarchive (asks inline), `g` opens **Runtimes** filtered to the
+   account (`GET /admin/runtimes?account=`), `h` show archived; the line under
+   the table lists the selected row's actions, Enter shows why any can't apply. Rows wrap instead of cutting text.
    Also create and edit users (create shows the token
    exactly once, with clipboard copy; the email address at the top level,
    runtime and tenant under Advanced; user/admin/readonly roles; the
-   **Active** switch on the table, Space), the **Mailboxes for users**
-   switch, **My email** (`@`: email address, mailbox, two notification
-   switches, agent email tools), token rotation, your own workspace
-   policy (`w`, as the web console's "My workspace"), runtime reservations
+   **Active** switch on the table, Space), **Email for everyone** (`Tab`:
+   **Mailboxes for users**, **Agent email tools for users**, **Sign-in by
+   email**), **My email** (`@`: email address, mailbox, two notification
+   switches, agent email tools), token rotation, runtime reservations
    (`v`: transfer a retained runtime to a user; data is never deleted), and the
    entity roster with a per-entity **manage menu** (`m`): state
    wake/sleep(+dream)/pause, mind substrate, voice triple, work order,
@@ -82,16 +83,31 @@ pages are usable at 80×24.
    from selected — saving is admin-only), and **talk** with an entity
    (`c`: open a hosted visit, send turns, close with the reflection
    pass; one visit at a time).
+- **W Workspaces** (ACCOUNTS) — which folders agents may read and write: the
+   gateway policy and every user account's (own policy or follows the
+   gateway), the effective policy in one line on top. `Enter` opens the
+   editor: **Access** (Allow my list / Allow everything except), **Trust the
+   launch folder**, the allowed and refused folders as rows (`Enter` edits in
+   place, **+ Add a folder**, `x` removes; `POST /workspace/path-check` first),
+   **Follow the gateway policy** for an account with its own. Each change
+   applies at once (`POST /admin/runtime-config`, `PUT
+   /admin/user-workspace-policy`, `PUT /workspace/policy/self` for a
+   non-admin).
 - **3 Workflows** (WORK) — the web console's Workflows page in three tabs
    (`Tab`): **Workflows** (the "Shared with everyone" and "Mine" groups,
-   search `/`, `t` drafts, `o` older versions, `h` show archived, Space
-   **Available to users**, `x` export `.flow`, `f` open in AbstractFlow,
-   `d` archive / unarchive, `i` import `.flow`), **Default workflow per app**
+   search `/`, `t` drafts, `o` older versions (each its own row), `h` show
+   archived; rows never expand, the selected row's actions sit on one line:
+   `x` export `.flow`, `f` open in AbstractFlow, `d` archive / unarchive, `e`
+   edit the description in place (`PATCH /bundles/{id}`, when
+   `actions.can_edit_description`), Space **Available to users**; `i` import
+   `.flow`), **Default workflow per app**
    (Enter picks, saved at once; `s` Streamed replies) and **Broken
    workflows** (`d` archives). Same routes as the web page.
 - **4 Skills & MCP** (WORK) — the skills shelf (search, show archived, view /
    save / duplicate, import a `.zip` or folder, export `.zip`, archive) and
-   the MCP servers (add / edit, test, **Enabled for agents**, archive).
+   the MCP servers (add / edit, test, **Enabled for agents**, archive); one
+   row under the skills shows the shelf folder (`f` edits it in place, `u`
+   **Refresh curated shelf**).
 - **5 Runtimes** (WORK) — the web console's run table (Run, Workflow,
    Status, Node, Session, Updated) as wrapping rows, `Enter` opens a run's
    details in place, `t` **Root runs only**; the data-plane inventory
@@ -106,7 +122,9 @@ pages are usable at 80×24.
   Observer…), the desktop Assistant and Node.js. `Enter`/`o` opens an
   app signed in (a one-time link), `i`/`u` install/update, `s`/`x`
   start/stop, `l` log, `c` cancel, `t`/`T` terminal apps, `n` Node.js,
-  `y` copy, `r` check again (admin-only writes).
+  `y` copy, `r` check again, `a` **Apps settings**, `g` the Continuum card's
+  settings (backlog folder, exec runner, process manager; each row applies
+  on its own) (admin-only writes).
 - **7 Providers** (MODELS) — the web console's Providers page in three
    sections (`v` switches): **Local providers**, one row per engine on the
    gateway host (`GET /engines`) with state, version and models — `Enter`

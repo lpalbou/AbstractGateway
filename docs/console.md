@@ -560,7 +560,7 @@ requested after 30 seconds.
 
 The console lists its pages in the web console's sidebar order, each with a
 fixed key. **1** Connection (the terminal's sign-in) comes first, then the
-groups: ACCOUNTS **2** Accounts; WORK **3** Workflows, **4** Skills & MCP,
+groups: ACCOUNTS **2** Accounts, **W** Workspaces; WORK **3** Workflows, **4** Skills & MCP,
 **5** Runtimes, **6** Apps; MODELS **7** Providers, **8** OpenAI API, **9**
 Models, **0** Multimodal; SYSTEM **H** Resources, **T** Sandbox, **N**
 Network; then **S** Setup and **I** About. A line above the tabs names the
@@ -609,10 +609,13 @@ groups and their keys. The local engines live on Providers, as on the web.
   output mode (text, image, voice, music, sound effects, video), file
   attachments and speak-this-reply.
 - **2 Accounts** is the web console's Accounts page: one table of users and
-  entities with name and kind (Admin, User or Entity), email address, mailbox,
-  runtime and **Active** (`[x]` on, `[ ]` off, `[-]` when it can't be switched
-  here, "Archived"). Long cells wrap onto more lines; `Enter` on a row shows its
-  actions with their keys and the reason of every action that can't apply.
+  entities with the columns **Name** (and kind: Admin, User or Entity),
+  **Email** (the address and the mailbox state, for example
+  `alice@example.com · connected`, or "No address"), **Runtime** and **Active**
+  (`[x]` on, `[ ]` off, `[-]` when it can't be switched here, "Archived"). Long
+  cells wrap onto more lines; nothing scrolls sideways. The line under the table
+  lists the selected row's actions with their keys, in the web console's order;
+  `Enter` on a row shows the reason of every action that can't apply.
   **Show archived** (`h`, admin) lists archived accounts with Logs and
   Unarchive. Keys on the selected row: Space switches Active (deactivating a
   user or suspending an entity asks first, inline under the table), `@` email
@@ -620,14 +623,27 @@ groups and their keys. The local engines live on Providers, as on the web.
   and a read-only mailbox line; an entity: the entity's own mailbox form), `o`
   OpenAI API (admin, user rows: one switch), `l` logs ("Activity — <id>", `f` /
   `F` change the filter: All, Sign-ins, Runs, Automations, Email; `o` opens a
-  run in Observer), `w` workspace policy, `t` rotate token, `m` manage
-  (entities), `d` archive (asks inline) or unarchive. Also `a` create user, `e`
+  run in Observer), `w` opens **Workspaces** on that account, `t` rotate token,
+  `m` manage (entities), `d` archive (asks inline) or unarchive, `g` opens
+  **Runtimes** filtered to that account. Also `a` create user, `e`
   edit user, `n` create entity, `c` talk with an entity, `i` inspect, `s` spark
   templates, `v` retained runtimes (transfer one to a user; data is never deleted) and `x` reset an old per-user
   mailbox override. **Email for everyone** (admin) is the page's second tab
-  (`Tab`): **Mailboxes for users** and, under Advanced, **Agent email tools
-  for users** and **Sign-in by email**. Someone who is not an administrator
+  (`Tab`): the three switches **Mailboxes for users**, **Agent email tools for
+  users** and **Sign-in by email**, each applied at once. Someone who is not an administrator
   sees their own row and the entities they created.
+- **W Workspaces** sets which folders agents may read and write. The top line
+  is the effective policy of the highlighted row; the table lists the
+  **Gateway policy** and every user account ("Own policy · …" or "Follows the
+  gateway policy"). `Enter` edits the highlighted policy: **Access** is a
+  segmented switch (**Allow my list** / **Allow everything except**; `←` / `→`
+  or Space), **Trust the launch folder** is a switch, and the **Allowed
+  folders** and **Refused folders** are rows: `Enter` edits a row in place,
+  **+ Add a folder** adds one, `x` removes one. The gateway checks a typed
+  folder first and says why when it can't be used; nothing is saved then. An
+  account with its own policy offers **Follow the gateway policy** (asks
+  first). Every change applies at once and says "Saved". Someone who is not an
+  administrator sees the gateway policy in one line and edits their own.
 - **Your email settings** (`@` on your own row): your **Email address**, your
   **Mailbox** (tabs **IMAP**, the default, **Google** and **Microsoft**; the
   IMAP pane shows the incoming and outgoing servers, filled in as soon as the
@@ -644,12 +660,15 @@ groups and their keys. The local engines live on Providers, as on the web.
   (`Tab`). **Workflows** groups the bundles under **Shared with everyone** and
   **Mine**: name and id, what it does, version (+N older), source, the apps that
   use it and, for an admin, **Available to users**. `/` searches, `t` Drafts,
-  `o` Older versions and `h` Show archived switch what is listed; `Enter` shows
-  a row's versions, entrypoints and actions. Space switches **Available to
-  users** (admin, shared workflows), `x` exports the latest version as a
-  `.flow` file on this machine, `f` opens it in AbstractFlow, `d` archives (it
-  asks first; workflows are never deleted) or unarchives, `i` imports `.flow`
-  files from this machine. **Default workflow per app** lists each app and
+  `o` Older versions and `h` Show archived switch what is listed; with Older
+  versions on, each older version is its own row with its own actions. The line
+  under the table lists the selected row's actions: `x` exports that version as
+  a `.flow` file on this machine, `f` opens it in AbstractFlow, `d` archives
+  (it asks first; workflows are never deleted) or unarchives, `e` edits the
+  description in place (shown when the gateway lets you: your own workflows,
+  or the gateway's as an admin; `Enter` saves, `Esc` keeps, empty returns to
+  the file's own description), Space switches **Available to users** (admin,
+  shared workflows), and `i` imports `.flow` files from this machine. **Default workflow per app** lists each app and
   what it runs; `Enter` picks a workflow and saves it at once, `o` shows
   **Other workflow types**, `s` switches **Streamed replies**. **Broken
   workflows** appears when the gateway could not load some versions, with the
@@ -659,7 +678,10 @@ groups and their keys. The local engines live on Providers, as on the web.
   `/` searches, `h` Show archived, `v` opens a skill (an imported one can be
   edited and saved, a curated one duplicated to edit), `x` exports it as a
   `.zip` on this machine, `i` imports a `.zip` or a skill folder from this
-  machine, `d` archives an imported skill or unarchives. **MCP servers**: each
+  machine, `d` archives an imported skill or unarchives. One row under the list
+  shows the shelf folder: `f` edits it in place (`Enter` saves, `Esc` keeps,
+  empty = the gateway's own copy) and `u` runs **Refresh curated shelf**.
+  **MCP servers**: each
   server's transport, status and tools; Space switches **Enabled for agents**
   (turning it on asks first; it needs a successful test), `a` adds and `e`
   edits a server (a command or a URL with headers, **Test connection**,
@@ -668,10 +690,16 @@ groups and their keys. The local engines live on Providers, as on the web.
   Node, Session, Updated) as wrapping rows: `Enter` opens a run's details in
   place, `t` switches **Root runs only**, `c` cancels a run (it asks first,
   inline) and `s` steers it. The data planes, Artifacts, Cache and Logs are
-  wrapping tables with the web page's column names.
+  wrapping tables with the web page's column names. Opened from an account
+  (`g` on Accounts), the page lists that account's runtimes with the chip
+  `[Account: <id> ×]`; `x` lists every runtime again.
 - **6 Apps** is the web console's Apps tab: open browser apps signed in,
   install or update them, start and stop them, the desktop Assistant and
-  Node.js. Over SSH, or on a machine without a display, **Open** never starts
+  Node.js. `a` opens **Apps settings** (Node.js for apps, ports, npm registry,
+  Node.js download index); `g` on the Continuum card opens its settings
+  (backlog folder, backlog exec runner, process manager). Each row applies on
+  its own and says "Saved" beside it; empty returns to the default (the
+  gateway's own folder for the backlog). Over SSH, or on a machine without a display, **Open** never starts
   a browser: it shows the one-time link to copy (`y`) and the `ssh -L` port
   forwards that make it work from your own computer.
 - **F2** opens the docs assistant (questions answered from the gateway's own
@@ -697,7 +725,7 @@ state.
 
 Keys: `Tab` focus, `Enter` activate, `Ctrl+N` / `Ctrl+P` next and previous
 step, `Esc` back (in a text field, the first `Esc` releases it so screen keys
-work again), `1`-`9`, `0`, `H`, `T`, `N`, `S` and `I` screens, `r` refresh,
+work again), `1`-`9`, `0`, `W`, `H`, `T`, `N`, `S` and `I` screens, `r` refresh,
 `q` quit. Each screen lists its own actions in the key-hint bar at the bottom,
 which wraps onto a second line rather than cutting a verb.
 

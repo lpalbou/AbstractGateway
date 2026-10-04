@@ -5,8 +5,27 @@
 Needs AbstractGateway 0.13.0 or later (the OpenAI API routes, `POST /models/delete-download`, the network
 `tailscale` and `reverse_proxy` fields, the Skills & MCP and account OpenAI API routes).
 
+### Added
+- **Workspaces** (`W`, right after Accounts): which folders agents may read and write — the gateway policy and every
+  user account's, the effective policy in one line on top. The editor (`Enter`) has the access mode as a segmented
+  switch (**Allow my list** / **Allow everything except**), **Trust the launch folder**, the allowed and refused
+  folders as rows edited in place (`POST /workspace/path-check` first: a folder the gateway refuses is not saved and
+  its sentence is shown), and **Follow the gateway policy** for an account with its own. Every change applies at
+  once and says "Saved". A non-admin sees the gateway policy in one line and edits their own.
+- **Runtimes filtered to one account**: `g` on an Accounts row opens Runtimes with `[Account: <id> ×]`
+  (`GET /admin/runtimes?account=`); `x` lists every runtime again.
+
 ### Changed
-- **Pages in the web console's sidebar order**, each with a fixed key: `1 Connection`, ACCOUNTS `2 Accounts`, WORK
+- **Accounts** columns are Name · Email (the address and the mailbox state in one column, e.g.
+  `alice@example.com · connected`, or "No address") · Runtime · Active at every width; the selected row's actions
+  are listed on one line under the table in the web console's order (Email, OpenAI API, Logs, Workspace, Manage,
+  Rotate, Archive, Runtime), wrapping only between two actions. `w` opens Workspaces on that account.
+- **Email for everyone** shows its three switches directly (**Mailboxes for users**, **Agent email tools for
+  users**, **Sign-in by email**); there is no Advanced.
+- **Skills & MCP**: the shelf folder is one row under the skills list — `f` edits it in place (`Enter` saves, `Esc`
+  keeps, empty = the gateway's own copy), `u` runs **Refresh curated shelf**.
+- **Pages in the web console's sidebar order**, each with a fixed key: `1 Connection`, ACCOUNTS `2 Accounts`
+  `W Workspaces`, WORK
   `3 Workflows` `4 Skills & MCP` `5 Runtimes` `6 Apps`, MODELS `7 Providers` `8 OpenAI API` `9 Models`
   `0 Multimodal`, SYSTEM `H Resources` `T Sandbox` `N Network`, then `S Setup` and `I About`. "Review & Test" is
   renamed **Sandbox**; the Engines page is merged into Providers. The setup guide has seven steps: its
@@ -26,7 +45,11 @@ Needs AbstractGateway 0.13.0 or later (the OpenAI API routes, `POST /models/dele
   Enter opens a run's details in place, `t` switches **Root runs only**, and Cancel asks inline in the web's
   words. Artifacts, Cache and Logs are wrapping tables with the web's column names.
 - **Apps** uses the web page's intro, card blurbs and technical rows (Address, On this machine, npm, Terminal),
-  with Node.js and the Advanced apps and backlog settings (`a` / `b` to edit) under the list.
+  with Node.js under the list. The settings sit behind the gears, as on the web: `a` opens **Apps settings**
+  (Node.js for apps, ports, npm registry, Node.js download index; the deprecated "Where apps listen" only while it
+  holds a saved value) and `g` on the Continuum card opens its settings (backlog folder, backlog exec runner,
+  process manager). Each row applies on its own (`Enter` on a text row, Space on a switch) and says "Saved" or the
+  gateway's refusal beside it; a switch set by a launch flag says so. The backlog folder has no environment source.
 - **Setup** adds "Recommended for this computer": each recommended route with its status, engine and model and any
   warning; `a` Use recommended defaults (then "Replace mine too" inline), `D` Download all.
 - **About** is the shared About card (name and version, AbstractFramework and AbstractGateway versions, links,
@@ -34,8 +57,10 @@ Needs AbstractGateway 0.13.0 or later (the OpenAI API routes, `POST /models/dele
   `--about` prints the same card.
 - The key-hint bar wraps onto a second line instead of cutting the page's keys.
 - **Workflows page rebuilt to match the web console.** Rows are grouped **Shared with everyone** and **Mine**;
-  search (`/`), **Drafts** (`t`), **Older versions** (`o`) and **Show archived** (`h`); Enter shows a row's
-  versions, entrypoints and actions. Space switches **Available to users** (admin, shared workflows), `x` exports
+  search (`/`), **Drafts** (`t`), **Older versions** (`o`: each older version is its own row with its own Export,
+  Open and Archive) and **Show archived** (`h`). Rows never expand: the selected row's actions sit on one line
+  under the table, and `e` edits the description in place (`PATCH /bundles/{id}`; shown only when the gateway
+  allows it: your own workflows, or the gateway's as an admin; empty returns to the file's own description). Space switches **Available to users** (admin, shared workflows), `x` exports
   the latest version as `<id>@<version>.flow`, `f` opens it in AbstractFlow (a one-time link), `d` archives (asks
   inline, in the web's words) or unarchives, `i` imports `.flow` files. The **Default workflow per app** and
   **Broken workflows** sections are tabs (`Tab`); the defaults show the web console's options ("Gateway default:
