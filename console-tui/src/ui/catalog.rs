@@ -992,6 +992,12 @@ pub fn with_state<R>(f: impl FnOnce(&PageState) -> R) -> R {
 fn edit<R>(f: impl FnOnce(&mut PageState) -> R) -> R {
     PAGE.with(|p| f(&mut p.borrow_mut()))
 }
+/// A download this page started (or adopted) is still running on the
+/// gateway — `q` asks before quitting while one is.
+pub fn download_running() -> bool {
+    with_state(|p| p.jobs.values().any(job_active))
+}
+
 /// Forget the page state (tests; a reconnect).
 pub fn reset_state() {
     edit(|p| *p = PageState::default());

@@ -572,10 +572,12 @@ fn browse_models_opens_the_models_page_filtered_to_the_engine() {
     h.key(b"b");
     h.turns(2);
     assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_CATALOG);
+    // The Models page took the hand-over: its Provider filter is the engine.
     assert_eq!(
-        h.screens.engine_filter.get_untracked().as_deref(),
-        Some("mlx")
+        abstractgateway_console::ui::catalog::with_state(|p| p.filters.provider.clone()),
+        "mlx"
     );
+    assert_eq!(h.screens.engine_filter.get_untracked(), None, "consumed");
 }
 
 #[test]

@@ -1150,14 +1150,15 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
             // q quits from browse; in wizard it is refused WITH A REASON
             // (a swallowed key is a dead-action experience — F3).
             if !ui.wizard.get_untracked() {
-                // A Models/Engines job runs ON THE GATEWAY and survives
-                // us, but the console is its only live progress view —
-                // quitting mid-download is a decision, not a keystroke.
+                // A download or an engine install runs ON THE GATEWAY and
+                // survives us, but the console is its only live progress
+                // view — quitting mid-download is a decision, not a keystroke.
                 if ctx_q.screens.store.job_running()
                     || providers::engines::engine_job_running(&ctx_q.store)
+                    || catalog::download_running()
                 {
                     ctx_q.store.notice.set(Some(
-                        "a models/engines job is running on the gateway — c on Models/Engines \
+                        "a models/engines job is running on the gateway — c on Models or Providers \
                          cancels it (Ctrl+C quits anyway; the gateway keeps running it)"
                             .into(),
                     ));
