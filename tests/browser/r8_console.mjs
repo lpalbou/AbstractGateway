@@ -51,11 +51,17 @@ async function noSideScroll(page, what) {
   const over = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   check(over <= 1, `no horizontal scroll: ${what}`, over);
 }
+// Full-page screenshots: the shell scrolls inside its own container, so it grows for the shot
+// (then the style is removed again).
+const GROW = "html,body,.shell,.shell_main,.shell_content{height:auto!important;max-height:none!important;overflow:visible!important}.shell_topbar,.shell_header{position:static!important}";
 async function shot(page, name) {
   if (!SHOTS) return;
   fs.mkdirSync(SHOTS, { recursive: true });
   const file = path.join(SHOTS, `${name}.png`);
+  const tag = await page.addStyleTag({ content: GROW });
+  await page.waitForTimeout(150);
   await page.screenshot({ path: file, fullPage: true });
+  await tag.evaluate((el) => el.remove());
   shots.push(file);
 }
 async function shotEl(page, selector, name) {
@@ -97,7 +103,8 @@ try {
     const same = await page.evaluate(() => {
       const row = document.querySelector('[data-app-card="continuum"] .ui-card__actions');
       const btns = Array.from(row.querySelectorAll("button"));
-      return btns.length >= 2 && btns.every((b) => Math.abs(b.getBoundingClientRect().top - btns[0].getBoundingClientRect().top) < 4);
+      const r = (b) => b.getBoundingClientRect();
+      return btns.length >= 2 && btns.every((b) => Math.abs(r(b).top - r(btns[0]).top) < 2 && Math.abs(r(b).height - r(btns[0]).height) < 2);
     });
     check(same, "Continuum gear beside the primary action (one row)");
     await gear.click();

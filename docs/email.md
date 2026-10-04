@@ -308,20 +308,19 @@ makes the page honest ("a code is on its way" or "ask your admin"). Requests are
 account (3 per 15 minutes) and per client address (10 per 15 minutes) before any lookup or
 background send, codes are stored only as keyed hashes, and every request, issue and use is
 recorded in the audit log without the code. An administrator who prefers no such answer turns
-**Sign-in by email** off under Advanced; users without an email address use the administrator's
+**Sign-in by email** off (Accounts → *Email for everyone*); users without an email address use the administrator's
 token rotation.
 
 ## Administrators
 
 Administrators decide what is **available** to users. The **Email for everyone** section under the
-Accounts table has one switch, **Mailboxes for users**; two more sit under its Advanced disclosure
-(`GET/PUT /api/gateway/admin/email/capabilities`, which returns each one's label and description):
+Accounts table holds three switches, directly in the card (`GET/PUT /api/gateway/admin/email/capabilities`, which returns each one's label and description):
 
 | Capability | Label | Default | Meaning |
 |---|---|---|---|
 | `email` | Mailboxes for users | on | users may connect their own mailbox for their agents, automations and notifications (off: no watcher, no sending, no notifications; settings are kept) |
-| `email_agent_tools` | Agent email tools for users (Advanced) | on | users may let their agents use their mailbox; each user still switches it on for themselves |
-| `email_recovery` | Sign-in by email (Advanced) | on (gateway-wide only) | "Forgot your token? Email me a sign-in code" on the sign-in page |
+| `email_agent_tools` | Agent email tools for users | on | users may let their agents use their mailbox; each user still switches it on for themselves |
+| `email_recovery` | Sign-in by email | on (gateway-wide only) | "Forgot your token? Email me a sign-in code" on the sign-in page |
 
 ```bash
 curl -sS -X PUT -H "$ADMIN" "$BASE_URL/api/gateway/admin/email/capabilities" -d '{"email": false}'

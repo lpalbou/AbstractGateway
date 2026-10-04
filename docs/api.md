@@ -954,6 +954,21 @@ Bundle inspection and editor run-schema helpers:
 - `GET /api/gateway/bundles/{bundle_id}/flows/{flow_id}`
 - `GET /api/gateway/bundles/{bundle_id}/flows/{flow_id}/input_schema`
 
+Workflow description (the console's inline edit on the Workflows page):
+
+| Route | Body → answer |
+|---|---|
+| `PATCH /api/gateway/bundles/{bundle_id}` | `{description}` (at most 2000 characters; `""` goes back to the file's own description) → `{ok, bundle_id, owner, description, description_edited, updated_by, updated_at}` |
+
+Only the owner may: a user for their own workflows, an admin for the gateway's.
+A user on a shared workflow gets `403 admin_required`, another user's workflow
+is `404`, a shipped workflow `409 workflow_shipped`. The `.flow` file is never
+rewritten (Export keeps the original bytes); the text applies to every version
+and is kept next to the owner's archive file (`config/workflow_descriptions.json`).
+Each attempt is audited as `workflow.description` (lengths, never the text).
+`GET /api/gateway/bundles` items carry the effective `description`,
+`description_edited` and `actions.can_edit_description`.
+
 The input-schema endpoint returns a versioned payload with:
 
 - `version`
@@ -1899,7 +1914,7 @@ Administrators (status and the switch only; administrators never read mail):
 | `GET /admin/users` | every row carries `email_address` and `mailbox{state: connected \| receive_only \| not_connected \| paused \| unavailable, address, provider, reason}` from the same resolver as `GET /me/email` (so your own row matches your card; `email` stays the raw record field); each human row also carries `email_account: {configured, address, state, admin_enabled, agent_tools_available, capabilities}` (`capabilities`: `{email, email_agent_tools}` as `{value, source: user \| gateway \| built-in}`; `user` = a per-user override) |
 | `GET /admin/users/{user_id}/email` | `configured`, `address`, `auth_kind`, `user_enabled`, `admin_enabled`, `effective_enabled`, `status` (last test / last error), `capabilities` (`{value, source: user \| gateway \| built-in}`), `agent_tools` (`available`, `user_enabled`, `active`), `watcher`, `state` |
 | `PUT /admin/users/{user_id}/email` | `{enabled?, agent_tools?, inherit?: ["email", "email_agent_tools"]}` — per-user capabilities; `enabled: false` = no watcher, no sending, no notifications (settings kept); `agent_tools` = Agent email tools available |
-| `GET /admin/email/capabilities` | `capabilities[{id, label, description, per_user, advanced, default, built_in_default}]`: `email` "Mailboxes for users" (on), under Advanced `email_agent_tools` "Agent email tools for users" (on) and `email_recovery` "Sign-in by email" (on) |
+| `GET /admin/email/capabilities` | `capabilities[{id, label, description, per_user, advanced, default, built_in_default}]`: `email` "Mailboxes for users" (on), `email_agent_tools` "Agent email tools for users" (on) and `email_recovery` "Sign-in by email" (on) |
 | `PUT /admin/email/capabilities` | `{email?, email_agent_tools?, email_recovery?, reset?: [...]}`; `tools_reloaded`: how many built hosts were rebuilt so every user's agents follow the change |
 | `GET /admin/email/oauth-clients` | bring-your-own OAuth clients: `client_id`, `client_secret_set`, `tenant` per provider |
 | `PUT /admin/email/oauth-clients/{provider}` | `{client_id, client_secret?, tenant?}`; an empty `client_id` removes the provider's client; omitting `client_secret` keeps the stored one for the same id |

@@ -152,7 +152,9 @@ CONSOLE_UI_CSS = r"""
     .ui-btn.is-text:hover:not(:disabled) { text-decoration: underline; }
     .ui-btn__glyph { display: inline-block; margin-right: 7px; font: 650 11px/1 var(--font-mono); letter-spacing: -.02em; color: var(--text-secondary); }
     .ui-card__actions > .ui-btn { white-space: nowrap; }
-    .ui-btn.ui-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 44px; min-width: 44px; min-height: 44px; padding: 0; }
+    /* An icon button beside a text button keeps that button's height (34 px; the touch floor
+       below makes both 44 px) so the action row stays one even line. */
+    .ui-btn.ui-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 40px; min-width: 40px; min-height: 34px; padding: 0; }
     .ui-icon-btn .button-icon { display: inline-flex; }
     .ui-icon-btn .button-icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
     .ui-card-grid.is-aligned > .ui-card > .ui-card__actions:not(:empty) { min-height: 48px; }
@@ -410,6 +412,7 @@ CONSOLE_UI_CSS = r"""
     .ui-row-saved.tone-ok { color: var(--success); }
     .ui-row-saved.tone-err { color: var(--error); flex-basis: 100%; }
     .ui-backlog-settings { display: grid; gap: 18px; min-width: 0; }
+    .ui-backlog-settings .af-switch--row { width: 100%; max-width: none; color: var(--text-primary); }
     #island-address { font-family: var(--font-mono); font-size: var(--font-size-sm); max-width: 26ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     @media (max-width: 1023.98px) { #island-address { display: none; } }
     /* Focus: every control the layer draws shows where the keyboard is. */

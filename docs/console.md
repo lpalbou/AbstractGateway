@@ -37,7 +37,7 @@ The sidebar groups the tabs in four sections, in this order:
 | Work | **Workflows** | the workflow bundles on this gateway, shared by the gateway or your own (name, what each does, version, source, the apps that use it, availability to users), import, export, open in AbstractFlow, archive, the default workflow for each app and the **Streamed replies** setting ([below](#workflows)) |
 | Work | **Skills & MCP** | administrators: **Skills** — the skills shelf setting and every skill (curated and imported, **Show archived**) with View, Export and Archive, import a `.zip` or folder, Duplicate to edit a curated one; **MCP servers** — whether agents are offered tools, an **Enabled for agents** switch per server, add, edit, test and archive ([configuration.md](./configuration.md#skills-shelf)) |
 | Work | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches |
-| Work | **Apps** | the browser apps, Code's terminal app and the desktop Assistant (below), plus *Advanced: apps settings* and *Advanced: backlog settings (Continuum)* |
+| Work | **Apps** | the browser apps, Code's terminal app and the desktop Assistant (below), no settings disclosures: the toolbar gear opens **Apps settings** and the gear beside Continuum's Open opens **Continuum settings** (backlog folder, exec runner, process manager), each a dialog whose rows apply on their own |
 | Models | **Providers** | **Local providers**: one card per local engine on the gateway host (Ollama, LM Studio, MLX, llama.cpp, Hugging Face, vLLM) with its status, install, start, stop, **Browse models** and its server connection; **Remote providers**: OpenAI, Anthropic, OpenRouter, Portkey and custom OpenAI-compatible connections with write-only keys (shown as fingerprints); then the **Available Providers** table ([below](#models-and-local-providers)) |
 | Models | **OpenAI API** | the OpenAI-compatible API at `/v1`: status with Endpoint switch, Restart and Check setup; the base URL and your API key (your gateway token); Authentication and Who can connect, applied at once; supported surface and snippets; recent requests ([openai-api.md](./openai-api.md)) |
 | Models | **Models** | browse models that fit this machine, download them, delete installed ones (below) |
@@ -187,8 +187,8 @@ it is off by default and your browser remembers it.
   never deleted (`DELETE /api/gateway/admin/users/{id}` answers `410`).
 
 Under the table, **Email for everyone** (administrators) holds the switch
-**Mailboxes for users**, with **Agent email tools for users** and **Sign-in by
-email** under Advanced ([email.md](./email.md#administrators)). Below the page,
+three switches, directly in the card: **Mailboxes for users**, **Agent email
+tools for users** and **Sign-in by email** ([email.md](./email.md#administrators)). Below the page,
 **Workspace policy** is your own workspace policy.
 
 Someone who is not an administrator sees the page as **Your account** ("Your
@@ -214,16 +214,15 @@ A user sees the shared bundles an admin left available, and their own.
 | Column | Shows |
 |---|---|
 | **Name** | the default entrypoint's name, with the bundle id under it, and **Deprecated** / **Archived** pills when they apply |
-| **What it does** | the default entrypoint's description (the whole text when the row is expanded) |
+| **What it does** | the owner's description when they wrote one, else the default entrypoint's (two lines; click shows it whole). The owner (an admin for shared ones; never a shipped bundle) edits it in place: the pencil opens a text box, Enter or leaving the box saves it (`PATCH /api/gateway/bundles/{id}`), Escape cancels, "Saved" shows beside it |
 | **Version** | the latest version ("+2 older" when there are more; a manifest version 0.0.0 reads "unversioned") |
 | **Source** | a badge: "Shipped", "Imported" or "From AbstractFlow" |
 | **Used by** | the plain names of the apps that ask for its interfaces, each with a (?) that explains it, or "No app" |
 | **Available to users** | (administrators only, shared bundles) a switch; off hides the workflow from users' lists and app pickers |
-| **Actions** | **Export**, **Open** (in AbstractFlow, a new tab) and **Archive** for imported and published bundles |
+| **Actions** | icon buttons with tooltips, in one row that never wraps: **Export**, **Open in AbstractFlow** (a new tab) and **Archive** (or **Unarchive**) for imported and published bundles |
 
-Click a row to expand it: each version with its channel, date and the same
-actions, and its entrypoints with their names, descriptions and the apps that
-use them. The toolbar has a search field, the switches **Drafts**, **Older
+Rows do not expand. With **Older versions** on, each older version is its own
+row under its bundle (version, channel, date and its own three actions). The toolbar has a search field, the switches **Drafts**, **Older
 versions** and **Show archived**, and **Import .flow**. Everyone can import: a
 user's import lands in **Mine**, an admin's in the shared group.
 

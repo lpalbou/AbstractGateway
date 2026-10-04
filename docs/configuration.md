@@ -774,8 +774,8 @@ Three ways, same semantics:
 
 | | Web console | Console TUI | CLI |
 |---|---|---|---|
-| Where | Apps → *Advanced: apps settings* (one field per setting, with its source pill) | Runtimes → *Runtime knobs* → *Edit apps settings* | `abstractgateway apps config get [NAME] [--json]` |
-| Change | type, *Save apps settings* (only changed fields are sent; empty = clear) | one line per setting (stored value prefilled; empty = clear) | `abstractgateway apps config set NAME VALUE` (`""` clears) |
+| Where | Apps → the toolbar gear → *Apps settings* (one field per setting) | Runtimes → *Runtime knobs* → *Edit apps settings* | `abstractgateway apps config get [NAME] [--json]` |
+| Change | type; the field applies on blur or Enter ("Saved" beside it; empty = clear) | one line per setting (stored value prefilled; empty = clear) | `abstractgateway apps config set NAME VALUE` (`""` clears) |
 | Refusal | the gateway's sentence (*Not saved*) | the form shows the gateway's sentence | `refused: <sentence>`, exit 2 |
 
 The CLI works on the data dir directly (`--data-dir`, default: the `serve`
@@ -902,10 +902,16 @@ triage and process routes, the exec runner at each poll, the skills shelf):
 1. the launch flag of the running gateway: `abstractgateway serve --backlog-root PATH`
    and `--exec-runner on|off` (for that run only; source `flag`);
 2. the saved setting (source `stored`);
-3. an environment value (`ABSTRACTGATEWAY_TRIAGE_REPO_ROOT`,
-   `ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER`; source `env`;
-   supported for compatibility, never needed; a saved value wins);
+3. exec runner only: an environment value (`ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER`;
+   source `env`; supported for compatibility, never needed; a saved value wins);
 4. the default (source `default`).
+
+The backlog folder reads no environment variable. A folder an older launcher
+still exports as `ABSTRACTGATEWAY_TRIAGE_REPO_ROOT` (or
+`ABSTRACT_TRIAGE_REPO_ROOT`) is stored once as the saved setting, at the next
+start (an unusable one is not stored and the gateway's own folder applies);
+from then on the variable is ignored, and clearing the setting never brings it
+back.
 
 `GET /api/gateway/admin/runtime-config` serves each as `{value, source, key,
 label, help, cli, flag?}`; the backlog folder also carries `available`,
@@ -921,8 +927,8 @@ switch is `on` or `off`; a refusal is one plain sentence):
 
 | | Web console | CLI | Continuum |
 |---|---|---|---|
-| Where | Apps → *Advanced: backlog settings (Continuum)* | `abstractgateway config get [KEY] [--json]` | Settings → *Gateway administration* |
-| Change | edit, *Save backlog settings*; *Use the gateway's own folder* | `abstractgateway config set KEY VALUE`, `abstractgateway config unset KEY` | *Change…*, *Use the gateway's own folder*, *Enable* / *Disable* |
+| Where | Apps → the gear on the Continuum card → *Continuum settings* | `abstractgateway config get [KEY] [--json]` | Settings → *Gateway administration* |
+| Change | the folder applies on blur or Enter, the two switches at once ("Saved" beside the row); *Use the gateway's own folder* | `abstractgateway config set KEY VALUE`, `abstractgateway config unset KEY` | *Change…*, *Use the gateway's own folder*, *Enable* / *Disable* |
 
 `config set` goes through the running gateway's door when one serves this
 data dir on this machine (it applies at once and lands in the audit log);

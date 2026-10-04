@@ -311,7 +311,9 @@ Workflows are archived, never deleted: `DELETE /bundles/{bundle_id}` answers
 (optional body `{"bundle_version": "..."}`) hide a bundle from lists and refuse
 its new runs while the file and every past run stay; an admin archives shared
 bundles, a user their own, and bundles that ship with the gateway (including
-`basic-agent`) answer `409`.
+`basic-agent`) answer `409`. `PATCH /bundles/{bundle_id}` `{"description"}`
+follows the same rule (the owner, an admin for shared bundles, `409` for
+shipped ones) and is audited as `workflow.description`.
 
 ### Workflow availability
 

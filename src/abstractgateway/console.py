@@ -1700,6 +1700,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .workflows-fold-what, .workflows-fold-meta { font-size: var(--af-helper-size, var(--font-size-md)); color: var(--muted); font-weight: 400; }
 	    .workflows-fold-what { color: var(--text); font-size: var(--font-size-base); }
 	    .workflows-usedby__item { display: block; }
+	    .workflows-usedby__item code { white-space: normal; overflow-wrap: anywhere; }
 	    .workflows-usedby__item > .help-q { margin-left: 6px; }
 	    .workflows-usedby__item + .workflows-usedby__item { margin-top: 4px; }
 	    /* Round 8: the three actions are icon buttons in ONE row that never wraps. */

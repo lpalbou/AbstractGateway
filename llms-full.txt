@@ -1047,8 +1047,8 @@ Three ways, same semantics:
 
 | | Web console | Console TUI | CLI |
 |---|---|---|---|
-| Where | Apps → *Advanced: apps settings* (one field per setting, with its source pill) | Runtimes → *Runtime knobs* → *Edit apps settings* | `abstractgateway apps config get [NAME] [--json]` |
-| Change | type, *Save apps settings* (only changed fields are sent; empty = clear) | one line per setting (stored value prefilled; empty = clear) | `abstractgateway apps config set NAME VALUE` (`""` clears) |
+| Where | Apps → the toolbar gear → *Apps settings* (one field per setting) | Runtimes → *Runtime knobs* → *Edit apps settings* | `abstractgateway apps config get [NAME] [--json]` |
+| Change | type; the field applies on blur or Enter ("Saved" beside it; empty = clear) | one line per setting (stored value prefilled; empty = clear) | `abstractgateway apps config set NAME VALUE` (`""` clears) |
 | Refusal | the gateway's sentence (*Not saved*) | the form shows the gateway's sentence | `refused: <sentence>`, exit 2 |
 
 The CLI works on the data dir directly (`--data-dir`, default: the `serve`
@@ -1175,10 +1175,16 @@ triage and process routes, the exec runner at each poll, the skills shelf):
 1. the launch flag of the running gateway: `abstractgateway serve --backlog-root PATH`
    and `--exec-runner on|off` (for that run only; source `flag`);
 2. the saved setting (source `stored`);
-3. an environment value (`ABSTRACTGATEWAY_TRIAGE_REPO_ROOT`,
-   `ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER`; source `env`;
-   supported for compatibility, never needed; a saved value wins);
+3. exec runner only: an environment value (`ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER`;
+   source `env`; supported for compatibility, never needed; a saved value wins);
 4. the default (source `default`).
+
+The backlog folder reads no environment variable. A folder an older launcher
+still exports as `ABSTRACTGATEWAY_TRIAGE_REPO_ROOT` (or
+`ABSTRACT_TRIAGE_REPO_ROOT`) is stored once as the saved setting, at the next
+start (an unusable one is not stored and the gateway's own folder applies);
+from then on the variable is ignored, and clearing the setting never brings it
+back.
 
 `GET /api/gateway/admin/runtime-config` serves each as `{value, source, key,
 label, help, cli, flag?}`; the backlog folder also carries `available`,
@@ -1194,8 +1200,8 @@ switch is `on` or `off`; a refusal is one plain sentence):
 
 | | Web console | CLI | Continuum |
 |---|---|---|---|
-| Where | Apps → *Advanced: backlog settings (Continuum)* | `abstractgateway config get [KEY] [--json]` | Settings → *Gateway administration* |
-| Change | edit, *Save backlog settings*; *Use the gateway's own folder* | `abstractgateway config set KEY VALUE`, `abstractgateway config unset KEY` | *Change…*, *Use the gateway's own folder*, *Enable* / *Disable* |
+| Where | Apps → the gear on the Continuum card → *Continuum settings* | `abstractgateway config get [KEY] [--json]` | Settings → *Gateway administration* |
+| Change | the folder applies on blur or Enter, the two switches at once ("Saved" beside the row); *Use the gateway's own folder* | `abstractgateway config set KEY VALUE`, `abstractgateway config unset KEY` | *Change…*, *Use the gateway's own folder*, *Enable* / *Disable* |
 
 `config set` goes through the running gateway's door when one serves this
 data dir on this machine (it applies at once and lands in the audit log);
@@ -2092,7 +2098,9 @@ Workflows are archived, never deleted: `DELETE /bundles/{bundle_id}` answers
 (optional body `{"bundle_version": "..."}`) hide a bundle from lists and refuse
 its new runs while the file and every past run stay; an admin archives shared
 bundles, a user their own, and bundles that ship with the gateway (including
-`basic-agent`) answer `409`.
+`basic-agent`) answer `409`. `PATCH /bundles/{bundle_id}` `{"description"}`
+follows the same rule (the owner, an admin for shared bundles, `409` for
+shipped ones) and is audited as `workflow.description`.
 
 ### Workflow availability
 
@@ -3049,7 +3057,7 @@ Four settings control the apps: `apps.node` (*Node.js for apps*),
 listen*) is **deprecated**: apps always listen on `127.0.0.1` and open
 through the gateway. It accepts only a loopback address; an older saved
 `0.0.0.0` (or `ABSTRACTGATEWAY_APPS_HOST`) is ignored with one warning in the
-gateway's log, and clearing it removes the warning. Change them from the Apps page (*Advanced: apps settings*), the
+gateway's log, and clearing it removes the warning. Change them from the Apps page (the toolbar gear, *Apps settings*), the
 terminal console (Runtimes → *Runtime knobs* → *Edit apps settings*) or the
 CLI:
 
@@ -4916,6 +4924,21 @@ Bundle inspection and editor run-schema helpers:
 - `GET /api/gateway/bundles/{bundle_id}/flows/{flow_id}`
 - `GET /api/gateway/bundles/{bundle_id}/flows/{flow_id}/input_schema`
 
+Workflow description (the console's inline edit on the Workflows page):
+
+| Route | Body → answer |
+|---|---|
+| `PATCH /api/gateway/bundles/{bundle_id}` | `{description}` (at most 2000 characters; `""` goes back to the file's own description) → `{ok, bundle_id, owner, description, description_edited, updated_by, updated_at}` |
+
+Only the owner may: a user for their own workflows, an admin for the gateway's.
+A user on a shared workflow gets `403 admin_required`, another user's workflow
+is `404`, a shipped workflow `409 workflow_shipped`. The `.flow` file is never
+rewritten (Export keeps the original bytes); the text applies to every version
+and is kept next to the owner's archive file (`config/workflow_descriptions.json`).
+Each attempt is audited as `workflow.description` (lengths, never the text).
+`GET /api/gateway/bundles` items carry the effective `description`,
+`description_edited` and `actions.can_edit_description`.
+
 The input-schema endpoint returns a versioned payload with:
 
 - `version`
@@ -5861,7 +5884,7 @@ Administrators (status and the switch only; administrators never read mail):
 | `GET /admin/users` | every row carries `email_address` and `mailbox{state: connected \| receive_only \| not_connected \| paused \| unavailable, address, provider, reason}` from the same resolver as `GET /me/email` (so your own row matches your card; `email` stays the raw record field); each human row also carries `email_account: {configured, address, state, admin_enabled, agent_tools_available, capabilities}` (`capabilities`: `{email, email_agent_tools}` as `{value, source: user \| gateway \| built-in}`; `user` = a per-user override) |
 | `GET /admin/users/{user_id}/email` | `configured`, `address`, `auth_kind`, `user_enabled`, `admin_enabled`, `effective_enabled`, `status` (last test / last error), `capabilities` (`{value, source: user \| gateway \| built-in}`), `agent_tools` (`available`, `user_enabled`, `active`), `watcher`, `state` |
 | `PUT /admin/users/{user_id}/email` | `{enabled?, agent_tools?, inherit?: ["email", "email_agent_tools"]}` — per-user capabilities; `enabled: false` = no watcher, no sending, no notifications (settings kept); `agent_tools` = Agent email tools available |
-| `GET /admin/email/capabilities` | `capabilities[{id, label, description, per_user, advanced, default, built_in_default}]`: `email` "Mailboxes for users" (on), under Advanced `email_agent_tools` "Agent email tools for users" (on) and `email_recovery` "Sign-in by email" (on) |
+| `GET /admin/email/capabilities` | `capabilities[{id, label, description, per_user, advanced, default, built_in_default}]`: `email` "Mailboxes for users" (on), `email_agent_tools` "Agent email tools for users" (on) and `email_recovery` "Sign-in by email" (on) |
 | `PUT /admin/email/capabilities` | `{email?, email_agent_tools?, email_recovery?, reset?: [...]}`; `tools_reloaded`: how many built hosts were rebuilt so every user's agents follow the change |
 | `GET /admin/email/oauth-clients` | bring-your-own OAuth clients: `client_id`, `client_secret_set`, `tenant` per provider |
 | `PUT /admin/email/oauth-clients/{provider}` | `{client_id, client_secret?, tenant?}`; an empty `client_id` removes the provider's client; omitting `client_secret` keeps the stored one for the same id |
@@ -5940,7 +5963,7 @@ The sidebar groups the tabs in four sections, in this order:
 | Work | **Workflows** | the workflow bundles on this gateway, shared by the gateway or your own (name, what each does, version, source, the apps that use it, availability to users), import, export, open in AbstractFlow, archive, the default workflow for each app and the **Streamed replies** setting ([below](#workflows)) |
 | Work | **Skills & MCP** | administrators: **Skills** — the skills shelf setting and every skill (curated and imported, **Show archived**) with View, Export and Archive, import a `.zip` or folder, Duplicate to edit a curated one; **MCP servers** — whether agents are offered tools, an **Enabled for agents** switch per server, add, edit, test and archive ([configuration.md](docs/configuration.md#skills-shelf)) |
 | Work | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches |
-| Work | **Apps** | the browser apps, Code's terminal app and the desktop Assistant (below), plus *Advanced: apps settings* and *Advanced: backlog settings (Continuum)* |
+| Work | **Apps** | the browser apps, Code's terminal app and the desktop Assistant (below), no settings disclosures: the toolbar gear opens **Apps settings** and the gear beside Continuum's Open opens **Continuum settings** (backlog folder, exec runner, process manager), each a dialog whose rows apply on their own |
 | Models | **Providers** | **Local providers**: one card per local engine on the gateway host (Ollama, LM Studio, MLX, llama.cpp, Hugging Face, vLLM) with its status, install, start, stop, **Browse models** and its server connection; **Remote providers**: OpenAI, Anthropic, OpenRouter, Portkey and custom OpenAI-compatible connections with write-only keys (shown as fingerprints); then the **Available Providers** table ([below](#models-and-local-providers)) |
 | Models | **OpenAI API** | the OpenAI-compatible API at `/v1`: status with Endpoint switch, Restart and Check setup; the base URL and your API key (your gateway token); Authentication and Who can connect, applied at once; supported surface and snippets; recent requests ([openai-api.md](docs/openai-api.md)) |
 | Models | **Models** | browse models that fit this machine, download them, delete installed ones (below) |
@@ -6090,8 +6113,8 @@ it is off by default and your browser remembers it.
   never deleted (`DELETE /api/gateway/admin/users/{id}` answers `410`).
 
 Under the table, **Email for everyone** (administrators) holds the switch
-**Mailboxes for users**, with **Agent email tools for users** and **Sign-in by
-email** under Advanced ([email.md](docs/email.md#administrators)). Below the page,
+three switches, directly in the card: **Mailboxes for users**, **Agent email
+tools for users** and **Sign-in by email** ([email.md](docs/email.md#administrators)). Below the page,
 **Workspace policy** is your own workspace policy.
 
 Someone who is not an administrator sees the page as **Your account** ("Your
@@ -6117,16 +6140,15 @@ A user sees the shared bundles an admin left available, and their own.
 | Column | Shows |
 |---|---|
 | **Name** | the default entrypoint's name, with the bundle id under it, and **Deprecated** / **Archived** pills when they apply |
-| **What it does** | the default entrypoint's description (the whole text when the row is expanded) |
+| **What it does** | the owner's description when they wrote one, else the default entrypoint's (two lines; click shows it whole). The owner (an admin for shared ones; never a shipped bundle) edits it in place: the pencil opens a text box, Enter or leaving the box saves it (`PATCH /api/gateway/bundles/{id}`), Escape cancels, "Saved" shows beside it |
 | **Version** | the latest version ("+2 older" when there are more; a manifest version 0.0.0 reads "unversioned") |
 | **Source** | a badge: "Shipped", "Imported" or "From AbstractFlow" |
 | **Used by** | the plain names of the apps that ask for its interfaces, each with a (?) that explains it, or "No app" |
 | **Available to users** | (administrators only, shared bundles) a switch; off hides the workflow from users' lists and app pickers |
-| **Actions** | **Export**, **Open** (in AbstractFlow, a new tab) and **Archive** for imported and published bundles |
+| **Actions** | icon buttons with tooltips, in one row that never wraps: **Export**, **Open in AbstractFlow** (a new tab) and **Archive** (or **Unarchive**) for imported and published bundles |
 
-Click a row to expand it: each version with its channel, date and the same
-actions, and its entrypoints with their names, descriptions and the apps that
-use them. The toolbar has a search field, the switches **Drafts**, **Older
+Rows do not expand. With **Older versions** on, each older version is its own
+row under its bundle (version, channel, date and its own three actions). The toolbar has a search field, the switches **Drafts**, **Older
 versions** and **Show archived**, and **Import .flow**. Everyone can import: a
 user's import lands in **Mine**, an admin's in the shared group.
 
@@ -7854,20 +7876,19 @@ makes the page honest ("a code is on its way" or "ask your admin"). Requests are
 account (3 per 15 minutes) and per client address (10 per 15 minutes) before any lookup or
 background send, codes are stored only as keyed hashes, and every request, issue and use is
 recorded in the audit log without the code. An administrator who prefers no such answer turns
-**Sign-in by email** off under Advanced; users without an email address use the administrator's
+**Sign-in by email** off (Accounts → *Email for everyone*); users without an email address use the administrator's
 token rotation.
 
 ## Administrators
 
 Administrators decide what is **available** to users. The **Email for everyone** section under the
-Accounts table has one switch, **Mailboxes for users**; two more sit under its Advanced disclosure
-(`GET/PUT /api/gateway/admin/email/capabilities`, which returns each one's label and description):
+Accounts table holds three switches, directly in the card (`GET/PUT /api/gateway/admin/email/capabilities`, which returns each one's label and description):
 
 | Capability | Label | Default | Meaning |
 |---|---|---|---|
 | `email` | Mailboxes for users | on | users may connect their own mailbox for their agents, automations and notifications (off: no watcher, no sending, no notifications; settings are kept) |
-| `email_agent_tools` | Agent email tools for users (Advanced) | on | users may let their agents use their mailbox; each user still switches it on for themselves |
-| `email_recovery` | Sign-in by email (Advanced) | on (gateway-wide only) | "Forgot your token? Email me a sign-in code" on the sign-in page |
+| `email_agent_tools` | Agent email tools for users | on | users may let their agents use their mailbox; each user still switches it on for themselves |
+| `email_recovery` | Sign-in by email | on (gateway-wide only) | "Forgot your token? Email me a sign-in code" on the sign-in page |
 
 ```bash
 curl -sS -X PUT -H "$ADMIN" "$BASE_URL/api/gateway/admin/email/capabilities" -d '{"email": false}'
@@ -9566,8 +9587,15 @@ Requires AbstractRuntime 0.9.0, AbstractCore 2.25.0 and AbstractVoice 0.14.0 (in
 - **Network**: the Tailscale name (when the Tailscale CLI is installed and Tailscale runs) is listed with the addresses, and every detected address (LAN, Bonjour, Tailscale) is an accepted browser origin without a manual entry or a restart. **Reached through another address?** explains reverse proxies and Tailscale in plain words; manual allowed origins and proxy trust sit under **Advanced**.
 - **Terminal console**: pages in the web console's sidebar order with the web pages' data, actions and words — Accounts, Workflows, a **Skills & MCP** page, Providers with the local engines, OpenAI API, Models, Multimodal, Resources, Sandbox, Network, Setup and About. See [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md) and [docs/console.md](docs/console.md#terminal-console-abstractgateway-console).
 
+- **Edit a workflow's description** where it is listed: the owner (an admin for the gateway's workflows) clicks the pencil, types, and Enter or leaving the box saves it; Escape cancels. `PATCH /api/gateway/bundles/{bundle_id}` `{description}` (`""` goes back to the file's own text); shipped workflows refuse (409), a user on a shared workflow gets 403; the `.flow` file is never rewritten; audited as `workflow.description`. `GET /bundles` items carry `description_edited` and `actions.can_edit_description`.
+
 ### Changed
 
+- **Apps page has no settings disclosures.** *Advanced: apps settings* and *Advanced: backlog settings (Continuum)* are gone: the gear in the Apps toolbar opens **Apps settings**, the gear beside Continuum's Open opens **Continuum settings** (backlog folder, exec runner and process manager as switches). Every row applies on its own (a field on blur or Enter, a switch at once) and says "Saved" beside itself; there is no Save button.
+- **The backlog folder reads no environment variable.** It is the `--backlog-root` launch flag, the saved setting, or the gateway's own folder. A folder an older launcher still exports as `ABSTRACTGATEWAY_TRIAGE_REPO_ROOT` / `ABSTRACT_TRIAGE_REPO_ROOT` is stored once as the saved setting (at the next start), then the variable is ignored.
+- **Workflows rows no longer expand.** With **Older versions** on, each older version is its own row with its own actions. Export, Open in AbstractFlow and Archive are icon buttons with tooltips in one row that never wraps.
+- **Skills & MCP**: the shelf folder is one row under the Skills list (folder field and **Refresh curated shelf**), not a disclosure.
+- **Email for everyone** shows its three switches (Mailboxes for users, Agent email tools for users, Sign-in by email) directly in the card; the Advanced disclosure is gone.
 - **The OpenAI-compatible endpoint moved from `/core/v1` to `/v1`.** `/core/v1` answers `308` to `/v1` (method and body kept) and is deprecated. API keys are gateway tokens; the 0.12.0 endpoint token is still accepted (deprecated). Its settings moved from the Network page to the OpenAI API page (Network keeps a pointer). Migration: point your apps at `/v1` and use each caller's gateway token as the key. A 0.12.0 settings file without *Who can connect* reads as **Devices on my network**.
 - **Models page is one list with compact cards.** Downloaded models no catalog build accounts for are rows under **Not in the catalog** in the same list (Status All / Downloaded, the same Delete, included in the chip counts); the separate **On this computer** list is removed. Each card's header is one line (name, organisation, parameters, licence, capability tags, badges) and each build is one line (engine · id · quant · size · status chips · Use as default · Delete); the recommended build keeps a small accent dot. On narrow windows the facts move under the id.
 - **Console About** is the shared compact card (ui-kit 0.8.0 islands, API "2"): name and version, the AbstractFramework version on this host, the gateway version, six links and the licence line. The per-package list stays on `GET /api/gateway/about`.

@@ -350,7 +350,7 @@ Four settings control the apps: `apps.node` (*Node.js for apps*),
 listen*) is **deprecated**: apps always listen on `127.0.0.1` and open
 through the gateway. It accepts only a loopback address; an older saved
 `0.0.0.0` (or `ABSTRACTGATEWAY_APPS_HOST`) is ignored with one warning in the
-gateway's log, and clearing it removes the warning. Change them from the Apps page (*Advanced: apps settings*), the
+gateway's log, and clearing it removes the warning. Change them from the Apps page (the toolbar gear, *Apps settings*), the
 terminal console (Runtimes → *Runtime knobs* → *Edit apps settings*) or the
 CLI:
 

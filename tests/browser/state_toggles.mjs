@@ -157,7 +157,8 @@ try {
     await page.waitForSelector("#first-run-backdrop.hidden", { state: "attached", timeout: 5000 });
     await openAccount(page);
     await page.waitForSelector("#users-table tr[data-user='castor']");
-    await page.evaluate(() => { document.getElementById("email-caps-advanced").open = true; });
+    // Round 8: the three Email for everyone switches sit directly in the card (no Advanced disclosure).
+    check(await page.locator("#email-caps-advanced").count() === 0, "Email for everyone: no Advanced disclosure");
     await page.waitForFunction(() => document.getElementById("email-cap-email").getAttribute("aria-checked") === "true", null, { timeout: 10000 });
     await labelScale(page, "#users-section", "accounts section");
     const caps = await page.evaluate(() => ["email-cap-email", "email-cap-agent-tools", "email-cap-recovery"].map((id) => { const b = document.getElementById(id); return [id, b.getAttribute("role"), b.getAttribute("aria-checked")]; }));
