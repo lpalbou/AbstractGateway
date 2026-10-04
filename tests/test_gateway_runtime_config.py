@@ -140,10 +140,9 @@ def test_write_validates_before_persist(monkeypatch: pytest.MonkeyPatch):
 
 def test_workspace_resolvers_follow_the_workspace_policy(tmp_path, monkeypatch: pytest.MonkeyPatch):
     """Round 9: the server-workspace resolvers read the gateway workspace policy (shared workspace,
-    allowed folders as mounts, never allowed); the old runtime-config keys are refused."""
+    ro/rw rows as mounts, deny rows as blocked); the old runtime-config keys are refused."""
     from abstractgateway.runtime_config import (
         RuntimeConfigError,
-        resolve_launch_folder_trust,
         resolve_workspace_blocked_paths,
         resolve_workspace_mounts,
         resolve_workspace_root,
@@ -153,24 +152,19 @@ def test_workspace_resolvers_follow_the_workspace_policy(tmp_path, monkeypatch: 
 
     data = tmp_path / "data"
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(data))
-    ws = tmp_path / "workspace"
-    ws.mkdir()
-    archive = tmp_path / "archive"
-    archive.mkdir()
-    blocked = tmp_path / "blocked"
-    blocked.mkdir()
-
+    ws, archive, blocked = tmp_path / "workspace", tmp_path / "archive", tmp_path / "blocked"
+    for d in (ws, archive, blocked):
+        d.mkdir()
     write_gateway_policy(
         data,
-        {"shared_workspace": str(ws), "allowed_folders": [str(archive)], "never_allowed": [str(blocked)], "launch_folder_trust": False},
+        {"shared_workspace": str(ws), "folders": [{"path": str(archive), "mode": "ro"}, {"path": str(blocked), "mode": "deny"}]},
         actor="person:admin",
     )
     assert resolve_workspace_root(data) == ws.resolve()
     assert resolve_workspace_mounts(data) == {"archive": archive.resolve()}
     assert resolve_workspace_blocked_paths(data) == (blocked.resolve(),)
-    assert resolve_launch_folder_trust(data) is False
 
-    for key in ("workspace_root", "workspace_allowed_paths", "client_workspace_scope_overrides"):
+    for key in ("workspace_root", "workspace_allowed_paths", "client_workspace_scope_overrides", "trust_client_launch_folder"):
         with pytest.raises(RuntimeConfigError, match="moved to the workspace policy"):
             write_runtime_config(data, {key: str(ws)}, actor="person:admin")
 
@@ -179,12 +173,11 @@ def test_non_admin_runtime_config_read_names_no_workspace_paths(tmp_path):
     from abstractgateway.runtime_config import read_runtime_config
     from abstractgateway.workspace_policy import write_gateway_policy
 
-    ws = tmp_path / "workspace"
+    ws, archive = tmp_path / "workspace", tmp_path / "archive"
     ws.mkdir()
-    archive = tmp_path / "archive"
     archive.mkdir()
     data = tmp_path / "data"
-    write_gateway_policy(data, {"shared_workspace": str(ws), "allowed_folders": [str(archive)]}, actor="person:admin")
+    write_gateway_policy(data, {"shared_workspace": str(ws), "folders": [{"path": str(archive), "mode": "rw"}]}, actor="person:admin")
 
     user_view = read_runtime_config(data, is_admin=False)
     assert user_view["workspace_policy"] == {"endpoint": "/api/gateway/workspace/policy"}

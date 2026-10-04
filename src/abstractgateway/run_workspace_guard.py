@@ -67,7 +67,9 @@ def ensure_run_workspace(
     vars0["_gateway_workspace"] = {"kind": "session" if session_scoped else "run", "path": str(ws_dir)}
 
 
-def apply_builtin_tool_deny(vars0: Dict[str, Any], *, root_data_dir: Any, read_only_mounts: Sequence[str] = ()) -> None:
+def apply_builtin_tool_deny(
+    vars0: Dict[str, Any], *, root_data_dir: Any, read_only_mounts: Sequence[str] = (), policy_allow: Sequence[str] = ()
+) -> None:
     """See the module docstring. `root_data_dir` is the gateway's ROOT data
     folder (per-user data folders live inside it); the admin switch
     `workspace_builtin_deny` (stored there) turns the rule off for runs."""
@@ -102,6 +104,12 @@ def apply_builtin_tool_deny(vars0: Dict[str, Any], *, root_data_dir: Any, read_o
                 raise ValueError(f"read-only mount {mount} is not declared in the run's workspace_read_only_paths")
             if _under(Path(real), data_root) and real not in allow:
                 allow.append(real)
+    for extra in policy_allow:
+        # Folders of the account's OWN data plane its workspace policy allows (apply_workspace_policy
+        # computed them for this account only); never anything outside the data folder's planes.
+        real = os.path.realpath(str(extra))
+        if _under(Path(real), data_root) and real not in allow:
+            allow.append(real)
     if allow:
         vars0["workspace_builtin_allow"] = allow
 
@@ -125,58 +133,94 @@ def _path_list(raw: Any) -> List[str]:
     return [ln.strip() for ln in text.splitlines() if ln.strip()]
 
 
-def apply_workspace_policy(vars0: Dict[str, Any], *, root_data_dir: Any, tenant_id: str = "", user_id: str = "") -> None:
-    """The account's EFFECTIVE workspace policy (round 9, workspace_policy.effective_policy) binds
-    the run's tool sandbox, whichever door started it (HTTP, bridges, schedules, entities):
+def apply_workspace_policy(
+    vars0: Dict[str, Any], *, root_data_dir: Any, tenant_id: str = "", user_id: str = ""
+) -> List[str]:
+    """The account's EFFECTIVE workspace policy (round 9, workspace_policy) binds the run's tool
+    sandbox, whichever door started it (HTTP, bridges, schedules, entities). Two dimensions only:
 
-    - the access mode is "workspace_or_allowed" (or a narrower "workspace_only"); the removed
-      any-folder mode "all_except_ignored" is never honoured here — it becomes "workspace_or_allowed";
-    - workspace_allowed_paths: absent = the effective folders; present = only the entries inside an
-      effective folder (the doors already refused wider entries with a 400; the host only narrows),
-      plus the shared workspace, which is always present;
-    - workspace_ignored_paths gains every never-allowed folder (never allowed wins).
+    - WHAT (the posture): "Deny everything, allow listed workspaces" -> `workspace_or_allowed` with the ro/rw folders;
+      "Allow everything, refuse listed workspaces" -> `all_except_ignored` (set here, never by a client); denied rows ->
+      `workspace_ignored_paths`. A client's narrower `workspace_only`, or its own allowed list (only the
+      entries the posture reaches, plus the shared workspace), narrows.
+    - HOW (per folder): read-only folders -> `workspace_read_only_paths`; with a read-only default
+      ("Allow everything, refuse listed workspaces (ro)") every folder is read-only ("/") except the run's own folder,
+      the shared workspace and the read & write folders (`workspace_writable_paths`). A client never
+      sets writable exceptions (dropped first).
 
-    No account (a gateway without sign-in) = the operator, default:admin."""
+    Returns the reachable folders inside this account's OWN data plane: the caller lifts the built-in
+    data-folder deny for exactly those (never another account's plane). No account (a gateway without
+    sign-in) = the operator, default:admin."""
+    from abstractruntime.utils.workspace_paths import WRITABLE_PATHS_KEY
+
     from .workspace_policy import effective_folder_paths
 
     data_dir = Path(str(root_data_dir)).expanduser()
-    folders, never, _builtin, _trust = effective_folder_paths(
-        data_dir, tenant_id=str(tenant_id or "") or "default", user_id=str(user_id or "") or "admin"
-    )
-    shared = folders[0]
+    eff = effective_folder_paths(data_dir, tenant_id=str(tenant_id or "") or "default", user_id=str(user_id or "") or "admin")
+    vars0.pop(WRITABLE_PATHS_KEY, None)
+    if isinstance(vars0.get("_runtime"), dict):
+        vars0["_runtime"] = {k: v for k, v in vars0["_runtime"].items() if k != WRITABLE_PATHS_KEY}
+    shared = eff.shared
     mode = str(vars0.get("workspace_access_mode") or vars0.get("workspaceAccessMode") or "").strip().lower()
     vars0.pop("workspaceAccessMode", None)
     raw_allowed = vars0.pop("workspaceAllowedPaths", None)
     if "workspace_allowed_paths" in vars0:
         raw_allowed = vars0.get("workspace_allowed_paths")
+    plane = [Path(os.path.realpath(str(p))) for p in eff.plane_allow]
+
+    def _reachable(real: Path) -> bool:
+        if any(_under(real, p) for p in plane):
+            return True
+        if any(_under(real, Path(os.path.realpath(str(b)))) for b in eff.builtin):
+            return False
+        return eff.mode(real) != "deny"
+
+    reach: List[Path] = list(eff.reach)
     if mode == "workspace_only":
         vars0["workspace_access_mode"] = "workspace_only"
         vars0.pop("workspace_allowed_paths", None)
+        reach = []
+    elif raw_allowed is None or (mode == "all_except_ignored" and eff.any_folder):
+        vars0["workspace_access_mode"] = "all_except_ignored" if eff.any_folder else "workspace_or_allowed"
+        vars0["workspace_allowed_paths"] = [str(p) for p in eff.reach]
     else:
         vars0["workspace_access_mode"] = "workspace_or_allowed"
-        if raw_allowed is None:
-            kept = [str(p) for p in folders]
-        else:
-            kept = [str(shared)]
-            for item in _path_list(raw_allowed):
-                p = Path(str(item)).expanduser()
-                if not p.is_absolute():
-                    continue
-                real = Path(os.path.realpath(str(p)))
-                if any(_under(real, Path(os.path.realpath(str(f)))) for f in folders) and str(real) not in kept:
-                    kept.append(str(real))
+        kept = [str(shared)]
+        reach = [shared]
+        for item in _path_list(raw_allowed):
+            p = Path(str(item)).expanduser()
+            if not p.is_absolute():
+                continue
+            real = Path(os.path.realpath(str(p)))
+            if _reachable(real) and str(real) not in kept:
+                kept.append(str(real))
+                reach.append(real)
         vars0["workspace_allowed_paths"] = kept
+
+    # HOW: read-only folders, and the read-only default with its writable exceptions.
+    raw_root = vars0.get("workspace_root")
+    root = os.path.realpath(str(Path(str(raw_root)).expanduser())) if isinstance(raw_root, str) and raw_root.strip() else None
+    ro = [str(p) for p in eff.read_only]
+    if eff.any_folder and eff.default_mode == "ro" and vars0["workspace_access_mode"] == "all_except_ignored":
+        ro = ["/"] + ro
+    if ro:
+        existing_ro = _path_list(vars0.get("workspace_read_only_paths"))
+        vars0["workspace_read_only_paths"] = list(dict.fromkeys(existing_ro + ro))
+        writable = ([root] if root else []) + [str(p) for p in eff.writable]
+        vars0[WRITABLE_PATHS_KEY] = list(dict.fromkeys(writable))
+
     raw_ignored = vars0.pop("workspaceIgnoredPaths", None)
     if "workspace_ignored_paths" in vars0:
         raw_ignored = vars0.get("workspace_ignored_paths")
     ignored: List[str] = []
     if raw_ignored is not None:
         ignored = _path_list(raw_ignored)
-    merged = list(dict.fromkeys(ignored + [str(p) for p in never]))
+    merged = list(dict.fromkeys(ignored + [str(p) for p in eff.deny]))
     if merged:
         vars0["workspace_ignored_paths"] = "\n".join(merged)
     else:
         vars0.pop("workspace_ignored_paths", None)
+    return [str(p) for p in plane if any(_under(p, r) or _under(r, p) for r in reach)]
 
 
 def guard_run_vars(
@@ -197,5 +241,5 @@ def guard_run_vars(
     caller, never read from `vars0`, so no client key can open the data folder.
     """
     ensure_run_workspace(vars0, data_dir=data_dir, session_id=session_id, tenant_id=tenant_id, user_id=user_id)
-    apply_workspace_policy(vars0, root_data_dir=root_data_dir, tenant_id=tenant_id, user_id=user_id)
-    apply_builtin_tool_deny(vars0, root_data_dir=root_data_dir, read_only_mounts=read_only_mounts)
+    plane_allow = apply_workspace_policy(vars0, root_data_dir=root_data_dir, tenant_id=tenant_id, user_id=user_id)
+    apply_builtin_tool_deny(vars0, root_data_dir=root_data_dir, read_only_mounts=read_only_mounts, policy_allow=plane_allow)

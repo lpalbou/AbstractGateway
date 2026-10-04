@@ -1,30 +1,31 @@
 """abstractgateway.workspace_policy -- which folders an account's agents may use (round 9, operator 2026-10-04).
 
-The workspace model is the tools model: the ADMIN allows, the ACCOUNT fine-tunes within what is allowed.
+EXACTLY TWO DIMENSIONS (operator, "Round 9 — FINAL workspace wording"):
 
-Gateway policy (admin; stored under ``workspace_policy`` in ``<data>/config/runtime_config.json``):
+1. WHAT can be reached — the POSTURE, the only mechanism that opens or closes a folder:
+   - ``allowed_only`` ("Deny everything, allow listed workspaces"): everything is denied, then the listed workspaces are
+     allowed (a ``deny`` row carves a sub-folder out of an allowed one);
+   - ``any_except_denied`` ("Allow everything, refuse listed workspaces"): everything is allowed at ONE default mode
+     (``default_mode``, ro or rw), then the listed folders are exceptions (denied, or their own mode).
+   Plus the shared workspace, always in, always read & write.
+2. HOW — per folder, read-only (``ro``) or read & write (``rw``), granular.
 
-- ``shared_workspace``: exactly one folder, always present, the root every agent / session / entity
-  starts from (the gateway still makes per-session folders in its data folder, as before).
-- ``allowed_folders``: extra folders an account may switch on.
-- ``allow_any_folder``: off by default; on = accounts may add folders of their own.
-- ``never_allowed``: a gateway-wide deny list; it applies on top of everything and always wins.
-- ``launch_folder_trust``: a run may work in the folder its app was started from (default on).
+Gateway policy (admin; ``workspace_policy`` in ``<data>/config/runtime_config.json``):
+``{shared_workspace, posture, default_mode, folders: [{path, mode: ro|rw|deny}]}``.
 
-Account policy (human, entity or the admin's own; stored under ``account_workspace_policies``
-keyed ``tenant:user``):
+Account policy (people, entities, the admin's own; ``account_workspace_policies[tenant:user]``):
+narrows only — ``{default_mode: "ro"|None, folders: [{path, mode: ro|deny}]}``. The effective mode
+of a path is the lower of the admin's rule and the account's rule for it (deny < ro < rw); within
+each list the most specific row wins, and nothing re-opens beneath a deny.
 
-- ``enabled_folders``: the admin-allowed extras this account switched ON (default none);
-  always a subset of ``allowed_folders``.
-- ``own_folders``: the account's own folders, honoured only while ``allow_any_folder`` is on.
+The agent always also has its PRIVATE session folder (in its account's data plane). A row inside
+the gateway's data folder (e.g. another conversation folder) counts only for the account whose own
+data plane holds it; the host lifts the built-in data-folder deny for exactly that path.
 
 ``effective_policy`` is the ONE computation every enforcement point reads (run starts, the host's
-tool sandbox, the run workspace browser, the server file routes): the shared workspace, then the
-enabled extras, then the own folders, minus anything inside a never-allowed folder.
-
-The old model (whitelist/blacklist "access mode", per-user allow/deny lists and trust overrides,
-"Any folder (old clients)") is migrated ONCE, deterministically (``migrate_store``), and its keys are
-refused on write afterwards. No retro-compatibility: every client runs the new versions.
+tool sandbox, the run workspace browser, the server file routes). The old model (access modes,
+per-user allow/deny lists, launch-folder trust, "Any folder (old clients)") is migrated ONCE
+(``migrate_store``) and its keys are refused afterwards.
 """
 
 from __future__ import annotations
@@ -32,14 +33,19 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Tuple
 
 POLICY_KEY = "workspace_policy"
 ACCOUNTS_KEY = "account_workspace_policies"
 MIGRATION_MARKER = "workspace_policy_v1"
 
-GATEWAY_FIELDS = ("shared_workspace", "allowed_folders", "allow_any_folder", "never_allowed", "launch_folder_trust")
-ACCOUNT_FIELDS = ("enabled_folders", "own_folders")
+GATEWAY_FIELDS = ("shared_workspace", "posture", "default_mode", "folders")
+ACCOUNT_FIELDS = ("default_mode", "folders")
+POSTURES = ("allowed_only", "any_except_denied")
+POSTURE_LABELS = {"allowed_only": "Deny everything, allow listed workspaces", "any_except_denied": "Allow everything, refuse listed workspaces"}
+GATEWAY_MODES = ("ro", "rw", "deny")
+ACCOUNT_MODES = ("ro", "deny")
+_RANK = {"deny": 0, "ro": 1, "rw": 2}
 
 # Keys of the old model. Stored values are migrated once; writes naming them are refused.
 LEGACY_STORE_KEYS = (
@@ -52,10 +58,12 @@ LEGACY_STORE_KEYS = (
     "user_workspace_policies",
 )
 LEGACY_WRITE_KEYS = LEGACY_STORE_KEYS + ("workspace_allowed_paths",)
+# Field names of the intermediate round-9 drafts, refused by name on the policy routes.
+_DRAFT_FIELDS = ("allowed_folders", "never_allowed", "allow_any_folder", "launch_folder_trust", "enabled_folders", "own_folders", "other_sessions", "mode")
 LEGACY_MOVED_SENTENCE = (
-    "moved to the workspace policy: PUT /api/gateway/workspace/policy {shared_workspace, allowed_folders, "
-    "allow_any_folder, never_allowed, launch_folder_trust} for the gateway, PUT /api/gateway/workspace/policy/{account} "
-    "{enabled_folders, own_folders} for one account. The access modes and \"Any folder (old clients)\" no longer exist"
+    "moved to the workspace policy: PUT /api/gateway/workspace/policy {shared_workspace, posture, default_mode, "
+    "folders: [{path, mode}]} for the gateway, PUT /api/gateway/workspace/policy/{account} {default_mode, folders} "
+    "for one account. The access modes, launch-folder trust and \"Any folder (old clients)\" no longer exist"
 )
 
 
@@ -126,6 +134,43 @@ def builtin_never_allowed(data_dir: Path) -> List[str]:
     return [str(p) for p in builtin_deny_paths(Path(data_dir).expanduser())]
 
 
+def _credential_folders(data_dir: Path) -> List[Path]:
+    data_root = _real(Path(data_dir))
+    return [Path(p) for p in builtin_never_allowed(data_dir) if _real(Path(p)) != data_root]
+
+
+def account_plane(data_dir: Path, *, tenant_id: str, user_id: str) -> Tuple[Path, List[Path]]:
+    """(this account's own data plane, sub-folders of it that belong to OTHER accounts).
+
+    The operator (default:admin) runs in the gateway's data folder itself, which also holds every
+    other account's plane under ``users/``; any other account's plane is ``users/<tenant>/<runtime>``
+    (service._config_for_principal)."""
+    base = _real(Path(data_dir))
+    tenant = str(tenant_id or "default") or "default"
+    user = str(user_id or "") or "admin"
+    if tenant == "default" and user == "admin":
+        return base, [base / "users"]
+    runtime_id = user
+    try:
+        from .users import GatewayUserRegistry, safe_principal_component
+
+        path = base / "auth" / "users.json"
+        reg = GatewayUserRegistry(path) if path.exists() else GatewayUserRegistry()
+        rec = reg.get_user(user, tenant_id=tenant)
+        if rec is not None and str(getattr(rec, "runtime_id", "") or "").strip():
+            runtime_id = str(rec.runtime_id)
+        runtime_id = safe_principal_component(runtime_id, default=user)
+        tenant = safe_principal_component(tenant, default="default")
+    except Exception:  # noqa: BLE001 - the user id is the runtime id by default
+        pass
+    return base / "users" / tenant / runtime_id, []
+
+
+def in_own_plane(path: Path, data_dir: Path, *, tenant_id: str, user_id: str) -> bool:
+    plane, others = account_plane(data_dir, tenant_id=tenant_id, user_id=user_id)
+    return _under(path, plane) and _under_any(path, others) is None
+
+
 def _default_shared_workspace() -> str:
     return str(_store_mod()._workspace_root_fallback())
 
@@ -135,24 +180,46 @@ def _check_folder(raw: Any, *, what: str) -> str:
     from .runtime_config import check_workspace_path
 
     if not isinstance(raw, str):
-        raise WorkspacePolicyError(f"{what}: a folder path (text) is required, got {type(raw).__name__}")
+        raise WorkspacePolicyError(f"{what}: a workspace path (text) is required, got {type(raw).__name__}")
     out = check_workspace_path(raw)
     if not out.get("valid"):
-        raise WorkspacePolicyError(f"{what} {str(raw).strip()!r}: {out.get('sentence') or 'not a folder'}")
+        raise WorkspacePolicyError(f"{what} {str(raw).strip()!r}: {out.get('sentence') or 'not a directory'}")
     return str(_real(Path(out["normalized"])))
 
 
-def _check_folder_list(raw: Any, *, what: str) -> List[str]:
+def _check_rows(raw: Any, *, what: str, modes: Tuple[str, ...]) -> List[Dict[str, str]]:
+    """Written rows: each ``{path, mode}`` with an explicit mode (a row always says its permission)."""
     if raw is None:
         return []
     if not isinstance(raw, list):
-        raise WorkspacePolicyError(f"{what} must be a list of folder paths")
-    out: List[str] = []
+        raise WorkspacePolicyError(f"{what} must be a list of rows {{path, mode}}")
+    names = {"ro": "\"ro\" (read-only)", "rw": "\"rw\" (read & write)", "deny": "\"deny\" (denied)"}
+    allowed_txt = " or ".join(names[m] for m in modes)
+    out: List[Dict[str, str]] = []
     for item in raw:
-        path = _check_folder(item, what=f"{what} entry")
-        if path in out:
+        if not isinstance(item, dict):
+            raise WorkspacePolicyError(f"{what}: each row is {{path, mode}} with mode {allowed_txt}.")
+        unknown = sorted(set(item) - {"path", "mode"})
+        if unknown:
+            raise WorkspacePolicyError(f"{what}: unknown row field(s) {unknown}; a row is {{path, mode}}.")
+        mode = item.get("mode")
+        if mode == "rw" and "rw" not in modes:
+            raise WorkspacePolicyError(
+                f"{what}: {item.get('path')!r} cannot be read & write here — an account narrows the gateway's policy "
+                "(read-only or denied), it never raises it."
+            )
+        if mode not in modes:
+            raise WorkspacePolicyError(f"{what}: mode must be {allowed_txt}; got {mode!r}")
+        path = _check_folder(item.get("path"), what=f"{what} entry")
+        if any(r["path"] == path for r in out):
             raise WorkspacePolicyError(f"{what}: {path!r} is listed twice; nothing was saved.")
-        out.append(path)
+        out.append({"path": path, "mode": mode})
+    for row in out:
+        for other in out:
+            if other is not row and other["mode"] == "deny" and _under(Path(row["path"]), Path(other["path"])):
+                raise WorkspacePolicyError(
+                    f"{what}: {row['path']!r} is inside the refused workspace {other['path']!r}; nothing re-opens under a deny."
+                )
     return out
 
 
@@ -165,31 +232,43 @@ def _strict_bool(raw: Any, *, what: str) -> bool:
 # ---------------------------------------------------------------- stored shapes
 
 
+def _rows(raw: Any, modes: Tuple[str, ...]) -> List[Dict[str, str]]:
+    out: List[Dict[str, str]] = []
+    for item in raw or []:
+        if isinstance(item, dict) and isinstance(item.get("path"), str) and item["path"].strip() and item.get("mode") in modes:
+            out.append({"path": item["path"], "mode": item["mode"]})
+    return out
+
+
 def _stored_gateway(stored: Dict[str, Any]) -> Dict[str, Any]:
     raw = stored.get(POLICY_KEY)
     raw = raw if isinstance(raw, dict) else {}
     shared = str(raw.get("shared_workspace") or "").strip() or _default_shared_workspace()
+    posture = raw.get("posture") if raw.get("posture") in POSTURES else "allowed_only"
     return {
         "shared_workspace": str(_real(Path(shared))),
-        "allowed_folders": [str(x) for x in (raw.get("allowed_folders") or []) if isinstance(x, str) and x.strip()],
-        "allow_any_folder": raw.get("allow_any_folder") is True,
-        "never_allowed": [str(x) for x in (raw.get("never_allowed") or []) if isinstance(x, str) and x.strip()],
-        "launch_folder_trust": raw.get("launch_folder_trust") is not False,
+        "posture": posture,
+        "default_mode": "ro" if raw.get("default_mode") == "ro" else "rw",
+        "folders": _rows(raw.get("folders"), GATEWAY_MODES),
     }
 
 
-def _stored_accounts(stored: Dict[str, Any]) -> Dict[str, Dict[str, List[str]]]:
+def _stored_accounts(stored: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     raw = stored.get(ACCOUNTS_KEY)
-    out: Dict[str, Dict[str, List[str]]] = {}
+    out: Dict[str, Dict[str, Any]] = {}
     if not isinstance(raw, dict):
         return out
     for key, entry in raw.items():
-        if not isinstance(entry, dict):
-            continue
-        out[str(key)] = {
-            field: [str(x) for x in (entry.get(field) or []) if isinstance(x, str) and x.strip()] for field in ACCOUNT_FIELDS
-        }
+        if isinstance(entry, dict):
+            out[str(key)] = {
+                "default_mode": "ro" if entry.get("default_mode") == "ro" else None,
+                "folders": _rows(entry.get("folders"), ACCOUNT_MODES),
+            }
     return out
+
+
+def _empty_entry() -> Dict[str, Any]:
+    return {"default_mode": None, "folders": []}
 
 
 def _read(data_dir: Path) -> Dict[str, Any]:
@@ -243,25 +322,24 @@ def _as_list(raw: Any) -> List[str]:
 
 
 def migrate_store(stored: Dict[str, Any], *, accounts: Iterable[str] = ()) -> Dict[str, Any]:
-    """Pure: the old model's keys -> the new model, deterministically (operator rule, round 9):
+    """Pure: the old model's keys -> the posture model, deterministically, without widening anyone:
 
     - shared_workspace = the gateway's current default workspace root (stored > env > default);
-    - allowed_folders = the gateway's extra workspaces (mounts), then every account's allowed
-      folders (accounts in key order), each once. Switches ON for the accounts that had them:
-      an account's own allowed folders, and the gateway's extra workspaces for every account
-      that existed (``accounts``, plus default:admin) — the old gateway list applied to all of
-      them, so nobody loses a folder; accounts created later start with the extras off;
-    - blacklist ("allow everything except") as the gateway default OR for any account ->
-      allow_any_folder ON;
-    - never_allowed = the gateway's refused folders, then every account's refused folders
-      (deny wins: a per-account refusal becomes gateway-wide rather than being lost);
-    - "Any folder (old clients)" (client_workspace_scope_overrides) is dropped, gateway-wide and
-      per account; per-account launch-folder trust is dropped (one gateway switch);
-    - launch_folder_trust = the gateway's trust (default on);
-    - folders that no longer exist are dropped and listed under the migration record.
+    - the old gateway default "allow everything except" -> posture any_except_denied (default rw):
+      the old refused folders become ``deny`` rows; every account's refused folders become that
+      account's ``deny`` rows;
+    - otherwise posture allowed_only: the old extra workspaces and every account's allowed folders
+      become ``rw`` rows (each once); an account that did NOT have a folder another account had gets
+      a ``deny`` override for it (nobody gains access); the old refused folders become ``deny`` rows
+      (gateway's) / account ``deny`` rows (per account); an account in "allow everything except"
+      under such a gateway stays allowed_only (conservative) and is listed in ``narrowed_accounts``;
+    - "Any folder (old clients)" and launch-folder trust are dropped: previously trusted launch
+      folders are NOT added (clients ask the person to add them);
+    - folders that no longer exist, and rows that would sit inside a denied folder, are dropped and
+      listed under the migration record.
 
     Returns a NEW store dict: old keys removed, the old block kept verbatim under
-    ``_migrated.workspace_policy_v1`` with what was dropped."""
+    ``_migrated.workspace_policy_v1``."""
     rc = _store_mod()
     out = dict(stored)
     dropped: List[str] = []
@@ -273,7 +351,6 @@ def migrate_store(stored: Dict[str, Any], *, accounts: Iterable[str] = ()) -> Di
 
     raw_mounts = stored.get("workspace_mounts")
     if isinstance(raw_mounts, list):
-        # Read the stored entries as they are, so a folder that no longer exists is REPORTED as dropped.
         mount_paths = [str(e.get("path") or "") for e in raw_mounts if isinstance(e, dict)]
     else:
         mounts_payload = rc._workspace_mounts_payload(stored)
@@ -289,63 +366,75 @@ def migrate_store(stored: Dict[str, Any], *, accounts: Iterable[str] = ()) -> Di
             users_raw = None
     users: Dict[str, Dict[str, Any]] = {}
     if isinstance(users_raw, dict):
-        # The stored entries as they are (keys folded to tenant:user), so missing folders are REPORTED as dropped.
         for raw_key, raw_entry in users_raw.items():
             key = rc._normalize_user_policy_key(raw_key, strict=False)
             if key and isinstance(raw_entry, dict):
                 users[key] = raw_entry
 
-    allowed = _existing_dirs(mount_paths, dropped)
-    gateway_extras = [p for p in allowed if p != shared]
-    existing_accounts = sorted({rc._normalize_user_policy_key(a, strict=False) or "" for a in accounts} | {"default:admin"} | set(users))
+    gateway_never = _existing_dirs(_as_list(stored.get("workspace_blocked_paths")), dropped)
+    gateway_never_kept: List[str] = []
+    for p in gateway_never:
+        if _under(Path(shared), Path(p)):
+            dropped.append(p)  # a deny containing the shared workspace cannot stay (shared always in)
+        else:
+            gateway_never_kept.append(p)
+    deny_paths = [Path(p) for p in gateway_never_kept]
+
+    def _not_denied(paths: List[str]) -> List[str]:
+        kept = []
+        for p in paths:
+            if p == shared or _under(Path(p), Path(shared)):
+                continue  # already reachable: the shared workspace
+            if _under_any(Path(p), deny_paths) is not None:
+                dropped.append(p)
+                continue
+            kept.append(p)
+        return kept
+
+    existing_accounts = sorted(
+        {rc._normalize_user_policy_key(a, strict=False) or "" for a in accounts} | {"default:admin"} | set(users)
+    )
     existing_accounts = [a for a in existing_accounts if a]
-    per_account: Dict[str, Dict[str, List[str]]] = {}
-    for key in sorted(users):
-        own_allowed = _existing_dirs(_as_list(users[key].get("workspace_allowed_paths")), dropped)
-        for p in own_allowed:
-            if p not in allowed:
-                allowed.append(p)
-        per_account[key] = {"own_allowed": own_allowed}
-    account_entries: Dict[str, Dict[str, List[str]]] = {}
-    for key in existing_accounts:
-        enabled = list(gateway_extras)
-        for p in (per_account.get(key) or {}).get("own_allowed", []):
-            if p != shared and p not in enabled:
-                enabled.append(p)
-        if enabled:
-            account_entries[key] = {"enabled_folders": enabled, "own_folders": []}
-    allowed = [p for p in allowed if p != shared]
+    per_user_allowed = {k: _not_denied(_existing_dirs(_as_list(users[k].get("workspace_allowed_paths")), dropped)) for k in sorted(users)}
+    per_user_never = {k: _existing_dirs(_as_list(users[k].get("workspace_blocked_paths")), dropped) for k in sorted(users)}
 
     default_mode = str(stored.get("workspace_default_mode") or "").strip().lower()
-    allow_any = default_mode == "blacklist" or any(str(e.get("mode") or "").strip().lower() == "blacklist" for e in users.values())
-
-    never = _existing_dirs(_as_list(stored.get("workspace_blocked_paths")), dropped)
-    for key in sorted(users):
-        for p in _existing_dirs(_as_list(users[key].get("workspace_blocked_paths")), dropped):
-            if p not in never:
-                never.append(p)
-    # Shared always present: a refused folder that contains the shared workspace cannot stay.
-    never_kept = []
-    for p in never:
-        if _under(Path(shared), Path(p)):
-            dropped.append(p)
-        else:
-            never_kept.append(p)
-
-    trust_raw = stored.get("trust_client_launch_folder")
-    trust = True if trust_raw is None else bool(rc._bool(trust_raw, True))
+    account_rows: Dict[str, List[Dict[str, str]]] = {k: [] for k in existing_accounts}
+    narrowed: List[str] = []
+    rows: List[Dict[str, str]] = []
+    if default_mode == "blacklist":
+        posture = "any_except_denied"
+        rows = [{"path": p, "mode": "deny"} for p in gateway_never_kept]
+    else:
+        posture = "allowed_only"
+        mounts = _not_denied(_existing_dirs(mount_paths, dropped))
+        extra: List[str] = []
+        for key in sorted(per_user_allowed):
+            for p in per_user_allowed[key]:
+                if p not in mounts and p not in extra:
+                    extra.append(p)
+        rows = [{"path": p, "mode": "rw"} for p in mounts + extra] + [{"path": p, "mode": "deny"} for p in gateway_never_kept]
+        for key in existing_accounts:
+            had = set(per_user_allowed.get(key) or [])
+            for p in extra:
+                if p not in had:
+                    account_rows[key].append({"path": p, "mode": "deny"})
+            if str((users.get(key) or {}).get("mode") or "").strip().lower() == "blacklist":
+                narrowed.append(key)
+    for key in sorted(per_user_never):
+        for p in per_user_never[key]:
+            if p == shared or _under(Path(shared), Path(p)):
+                dropped.append(p)
+                continue
+            if not any(r["path"] == p for r in account_rows.setdefault(key, [])):
+                account_rows[key].append({"path": p, "mode": "deny"})
 
     for k in LEGACY_STORE_KEYS:
         out.pop(k, None)
-    out[POLICY_KEY] = {
-        "shared_workspace": shared,
-        "allowed_folders": allowed,
-        "allow_any_folder": bool(allow_any),
-        "never_allowed": never_kept,
-        "launch_folder_trust": trust,
-    }
-    if account_entries:
-        out[ACCOUNTS_KEY] = account_entries
+    out[POLICY_KEY] = {"shared_workspace": shared, "posture": posture, "default_mode": "rw", "folders": rows}
+    accounts_out = {k: {"default_mode": None, "folders": v} for k, v in sorted(account_rows.items()) if v}
+    if accounts_out:
+        out[ACCOUNTS_KEY] = accounts_out
     else:
         out.pop(ACCOUNTS_KEY, None)
     migrated = dict(out.get("_migrated") or {}) if isinstance(out.get("_migrated"), dict) else {}
@@ -353,7 +442,10 @@ def migrate_store(stored: Dict[str, Any], *, accounts: Iterable[str] = ()) -> Di
         "at": _now(),
         "old": old_block,
         "env_mounts": str(os.getenv(rc._ENV_WORKSPACE_MOUNTS) or "") or None,
-        "dropped_missing_or_conflicting": dropped,
+        "dropped_missing_or_conflicting": list(dict.fromkeys(dropped)),
+        "narrowed_accounts": narrowed,
+        "launch_folder_trust_dropped": "trust_client_launch_folder" in stored
+        or any("trust_client_launch_folder" in u for u in users.values()),
     }
     out["_migrated"] = migrated
     return out
@@ -396,8 +488,7 @@ def ensure_migrated(data_dir: Path) -> bool:
 def gateway_policy(data_dir: Path) -> Dict[str, Any]:
     from .runtime_config import resolve_workspace_builtin_deny_enabled
 
-    stored = _read(data_dir)
-    g = _stored_gateway(stored)
+    g = _stored_gateway(_read(data_dir))
     try:
         max_bytes = int(str(os.getenv("ABSTRACTGATEWAY_MAX_ATTACHMENT_BYTES", "") or "").strip() or 0)
     except ValueError:
@@ -409,86 +500,137 @@ def gateway_policy(data_dir: Path) -> Dict[str, Any]:
 
 def account_policy(data_dir: Path, *, tenant_id: str, user_id: str) -> Dict[str, Any]:
     key = account_key(tenant_id, user_id)
-    entry = _stored_accounts(_read(data_dir)).get(key) or {"enabled_folders": [], "own_folders": []}
-    return {"account": key, "enabled_folders": list(entry.get("enabled_folders") or []), "own_folders": list(entry.get("own_folders") or [])}
+    entry = _stored_accounts(_read(data_dir)).get(key) or _empty_entry()
+    return {"account": key, "default_mode": entry["default_mode"], "folders": entry["folders"]}
 
 
-def _summary(shared: str, folders: List[Dict[str, str]], never: List[str], own_inactive: bool) -> str:
-    extras = [f for f in folders if f["source"] != "shared"]
-    own = [f for f in extras if f["source"] == "own"]
-    name = Path(shared).name or shared
-    # Parent ruling (round 9): each conversation keeps its PRIVATE session folder in the account's
-    # data plane; the shared workspace is the root every run can always reach.
-    text = f"Private session folder + Shared workspace ({name})"
-    if extras:
-        text += f" + {len(extras)} folder{'s' if len(extras) != 1 else ''}"
-        if own:
-            # Neutral: an admin reads this line about another account too.
-            text += f" ({len(own)} own folder{'s' if len(own) != 1 else ''})"
-    text += "."
-    if never:
-        text += f" Never: {len(never)} folder{'s' if len(never) != 1 else ''}."
-    if own_inactive:
-        text += " Own folders are off: the admin no longer allows any folder."
-    return text
+def _rule(rows: List[Dict[str, str]], path: Path) -> Optional[str]:
+    """The mode of the most specific row containing ``path``; a deny anywhere above it wins."""
+    best: Optional[Dict[str, str]] = None
+    for row in rows:
+        if _under(path, Path(row["path"])):
+            if row["mode"] == "deny":
+                return "deny"
+            if best is None or len(row["path"]) > len(best["path"]):
+                best = row
+    return best["mode"] if best else None
+
+
+def _min(a: str, b: str) -> str:
+    return a if _RANK[a] <= _RANK[b] else b
+
+
+class _Resolver:
+    """The effective mode of any path for one account (deny < ro < rw)."""
+
+    def __init__(self, g: Dict[str, Any], acc: Dict[str, Any], data_dir: Path, tenant: str, user: str) -> None:
+        self.g, self.acc, self.data_dir, self.tenant, self.user = g, acc, Path(data_dir), tenant, user
+        self.shared = Path(g["shared_workspace"])
+        self.any = g["posture"] == "any_except_denied"
+        self.default = _min(g["default_mode"], acc["default_mode"] or "rw") if self.any else None
+        # Rows inside the data folder count only inside this account's own plane.
+        self.rows = [r for r in g["folders"] if self._row_usable(r)]
+
+    def _row_usable(self, row: Dict[str, str]) -> bool:
+        p = Path(row["path"])
+        if _under(p, self.data_dir) and not in_own_plane(p, self.data_dir, tenant_id=self.tenant, user_id=self.user):
+            return False
+        return True
+
+    def mode(self, path: Path) -> str:
+        if _under(path, self.shared):
+            return "rw"
+        admin = _rule(self.rows, path)
+        if admin is None:
+            admin = self.g["default_mode"] if self.any else "deny"
+            account_default = self.acc["default_mode"] or "rw"
+        else:
+            account_default = "rw"
+        account = _rule(self.acc["folders"], path) or account_default
+        return _min(admin, account)
+
+
+def _summary(posture: str, default: Optional[str], shared: str, folders: List[Dict[str, str]]) -> str:
+    """One line, the same for every viewer: posture label, then the shared workspace, then each folder."""
+    head = POSTURE_LABELS[posture] + (f" ({default})" if posture == "any_except_denied" else "")
+    parts = [head, "Shared workspace (rw)"]
+    for f in folders:
+        if f["source"] == "shared":
+            continue
+        parts.append(f"{f['path']} ({'refused' if f['mode'] == 'deny' else f['mode']})")
+    return " · ".join(parts)
 
 
 def effective_policy(data_dir: Path, *, tenant_id: Optional[str], user_id: Optional[str]) -> Dict[str, Any]:
     """What this account's agents may use, computed server-side (the only input of enforcement)."""
     g = gateway_policy(data_dir)
     key = account_key(tenant_id, user_id)
-    acc = _stored_accounts(_read(data_dir)).get(key) or {"enabled_folders": [], "own_folders": []}
-    never_paths = [Path(p) for p in g["never_allowed"]]
-    builtin = [Path(p) for p in g["builtin_never_allowed"]]
-    enabled = set(acc.get("enabled_folders") or [])
-
-    folders: List[Dict[str, str]] = [{"path": g["shared_workspace"], "source": "shared"}]
+    tenant, _, user = key.partition(":")
+    acc = _stored_accounts(_read(data_dir)).get(key) or _empty_entry()
+    res = _Resolver(g, acc, Path(data_dir), tenant, user)
+    folders: List[Dict[str, str]] = [{"path": g["shared_workspace"], "mode": "rw", "source": "shared"}]
     seen = {g["shared_workspace"]}
-    available: List[Dict[str, Any]] = []
-    for p in g["allowed_folders"]:
-        on = p in enabled
-        blocked = _under_any(Path(p), never_paths) is not None
-        available.append({"path": p, "enabled": on, "never_allowed": blocked})
-        if on and not blocked and p not in seen and Path(p).is_dir():
-            folders.append({"path": p, "source": "allowed"})
-            seen.add(p)
-    own = list(acc.get("own_folders") or [])
-    own_inactive = bool(own) and not g["allow_any_folder"]
-    if g["allow_any_folder"]:
-        for p in own:
-            if p in seen or _under_any(Path(p), never_paths) or _under_any(Path(p), builtin) or not Path(p).is_dir():
-                continue
-            folders.append({"path": p, "source": "own"})
-            seen.add(p)
-    never_all = list(dict.fromkeys(g["never_allowed"] + g["builtin_never_allowed"]))
+    for row in res.rows:
+        if row["path"] in seen:
+            continue
+        folders.append({"path": row["path"], "mode": res.mode(Path(row["path"])) if row["mode"] != "deny" else "deny", "source": "gateway"})
+        seen.add(row["path"])
+    for row in acc["folders"]:
+        if row["path"] in seen:
+            continue
+        folders.append({"path": row["path"], "mode": _min(row["mode"], res.mode(Path(row["path"]))), "source": "account"})
+        seen.add(row["path"])
     return {
         "account": key,
+        "posture": g["posture"],
+        "default_mode": res.default,
         "shared_workspace": g["shared_workspace"],
         "folders": folders,
-        "available_folders": available,
-        "own_folders": own,
-        "own_folders_allowed": bool(g["allow_any_folder"]),
-        "own_folders_inactive": own_inactive,
-        "never_allowed": never_all,
-        "launch_folder_trust": bool(g["launch_folder_trust"]),
-        "summary": _summary(g["shared_workspace"], folders, g["never_allowed"], own_inactive),
+        "summary": _summary(g["posture"], res.default, g["shared_workspace"], folders),
     }
 
 
-def effective_folder_paths(
-    data_dir: Path, *, tenant_id: Optional[str], user_id: Optional[str]
-) -> Tuple[List[Path], List[Path], List[Path], bool]:
-    """(effective folders [shared first], the gateway's never-allowed folders, the built-in
-    never-allowed folders [data folder + credential folders], launch_folder_trust) as Paths.
-    The built-in ones are enforced by the host as deny prefixes with the run's own folder as the
-    one exception (run_workspace_guard), so they are kept apart from the gateway's list."""
-    eff = effective_policy(data_dir, tenant_id=tenant_id, user_id=user_id)
+class EffectiveScope(NamedTuple):
+    """The effective set for enforcement (Paths, realpath)."""
+
+    posture: str
+    default_mode: Optional[str]
+    shared: Path
+    reach: List[Path]          # ro/rw folders (shared first)
+    read_only: List[Path]      # ro folders
+    writable: List[Path]       # rw folders (shared first) — exceptions inside read-only roots
+    deny: List[Path]           # gateway + account deny rows
+    builtin: List[Path]
+    plane_allow: List[Path]    # reachable folders inside this account's own data plane
+    resolver: Any
+
+    @property
+    def any_folder(self) -> bool:
+        return self.posture == "any_except_denied"
+
+    def mode(self, path: Path) -> str:
+        return self.resolver.mode(_real(path))
+
+
+def effective_folder_paths(data_dir: Path, *, tenant_id: Optional[str], user_id: Optional[str]) -> EffectiveScope:
     g = gateway_policy(data_dir)
-    return (
-        [Path(f["path"]) for f in eff["folders"]],
-        [Path(p) for p in g["never_allowed"]],
-        [Path(p) for p in g["builtin_never_allowed"]],
-        bool(eff["launch_folder_trust"]),
+    key = account_key(tenant_id, user_id)
+    tenant, _, user = key.partition(":")
+    acc = _stored_accounts(_read(data_dir)).get(key) or _empty_entry()
+    res = _Resolver(g, acc, Path(data_dir), tenant, user)
+    eff = effective_policy(data_dir, tenant_id=tenant_id, user_id=user_id)
+    reach = [_real(Path(f["path"])) for f in eff["folders"] if f["mode"] in ("ro", "rw")]
+    return EffectiveScope(
+        posture=g["posture"],
+        default_mode=res.default,
+        shared=_real(Path(g["shared_workspace"])),
+        reach=reach,
+        read_only=[_real(Path(f["path"])) for f in eff["folders"] if f["mode"] == "ro"],
+        writable=[_real(Path(f["path"])) for f in eff["folders"] if f["mode"] == "rw"],
+        deny=[_real(Path(f["path"])) for f in eff["folders"] if f["mode"] == "deny"],
+        builtin=[Path(p) for p in g["builtin_never_allowed"]],
+        plane_allow=[p for p in reach if _under(p, Path(data_dir))],
+        resolver=res,
     )
 
 
@@ -520,8 +662,14 @@ def audit_policy_change(scope: str, *, actor: str, changed: List[str], account: 
 def _refuse_unknown(changes: Dict[str, Any], fields: Tuple[str, ...], *, what: str) -> None:
     unknown = sorted(str(k) for k in changes if k not in fields)
     if unknown:
-        legacy = [k for k in unknown if k in LEGACY_WRITE_KEYS or k in ("mode", "workspace_access_mode")]
-        hint = " The access modes and \"Any folder (old clients)\" no longer exist." if legacy else ""
+        old = [k for k in unknown if k in LEGACY_WRITE_KEYS or k in _DRAFT_FIELDS or k == "workspace_access_mode"]
+        hint = (
+            " Two dimensions only: the posture with its workspace rows {path, mode}, and each workspace's mode. "
+            "Separate allowed and never-allowed lists, launch-folder trust, the access modes and \"Any folder (old "
+            "clients)\" no longer exist."
+            if old
+            else ""
+        )
         raise WorkspacePolicyError(f"unknown {what} field(s) {unknown}; nothing was saved. Accepted: {list(fields)}.{hint}")
 
 
@@ -531,7 +679,7 @@ def write_gateway_policy(data_dir: Path, changes: Dict[str, Any], *, actor: str)
     data_dir = Path(data_dir)
     changes = dict(changes or {})
     changes.pop("ok", None)
-    for ro in ("builtin_never_allowed", "max_attachment_bytes"):
+    for ro in ("builtin_never_allowed", "max_attachment_bytes", "builtin_never_allowed_hidden"):
         changes.pop(ro, None)  # read-only echoes of a GET are tolerated, never stored
     _refuse_unknown(changes, GATEWAY_FIELDS, what="gateway workspace policy")
     ensure_migrated(data_dir)
@@ -541,49 +689,44 @@ def write_gateway_policy(data_dir: Path, changes: Dict[str, Any], *, actor: str)
         if "shared_workspace" in changes:
             raw = changes["shared_workspace"]
             if raw is None or (isinstance(raw, str) and not raw.strip()):
-                raise WorkspacePolicyError("The shared workspace is required: choose a folder (it cannot be empty).")
+                raise WorkspacePolicyError("The shared workspace is required: choose a directory (it cannot be empty).")
             g["shared_workspace"] = _check_folder(raw, what="Shared workspace")
-        if "allowed_folders" in changes:
-            g["allowed_folders"] = _check_folder_list(changes["allowed_folders"], what="Allowed folders")
-        if "never_allowed" in changes:
-            g["never_allowed"] = _check_folder_list(changes["never_allowed"], what="Never allowed")
-        if "allow_any_folder" in changes:
-            g["allow_any_folder"] = _strict_bool(changes["allow_any_folder"], what="allow_any_folder")
-        if "launch_folder_trust" in changes:
-            g["launch_folder_trust"] = _strict_bool(changes["launch_folder_trust"], what="launch_folder_trust")
+        if "posture" in changes:
+            if changes["posture"] not in POSTURES:
+                raise WorkspacePolicyError(
+                    f"posture must be \"allowed_only\" (Deny everything, allow listed workspaces) or \"any_except_denied\" (Any workspace "
+                    f"except denied); got {changes['posture']!r}"
+                )
+            g["posture"] = changes["posture"]
+        if "default_mode" in changes:
+            if changes["default_mode"] not in ("ro", "rw"):
+                raise WorkspacePolicyError(f"default_mode must be \"ro\" or \"rw\"; got {changes['default_mode']!r}")
+            g["default_mode"] = changes["default_mode"]
+        if "folders" in changes:
+            g["folders"] = _check_rows(changes["folders"], what="Workspaces", modes=GATEWAY_MODES)
 
         shared = Path(g["shared_workspace"])
-        builtin = [Path(p) for p in builtin_never_allowed(data_dir)]
-        hit = _under_any(shared, builtin)
+        hit = _under_any(shared, [Path(p) for p in builtin_never_allowed(data_dir)])
         if hit is not None:
             raise WorkspacePolicyError(
-                f"Shared workspace {str(shared)!r} is inside {str(hit)!r} (the gateway's data folder or a credential "
-                "folder), which is never a workspace."
+                f"Shared workspace {str(shared)!r} is inside {str(hit)!r} (the gateway's data directory or a credential "
+                "directory), which is never a workspace."
             )
-        for p in g["never_allowed"]:
-            if _under(shared, Path(p)):
+        creds = _credential_folders(data_dir)
+        for row in g["folders"]:
+            p = Path(row["path"])
+            if row["mode"] == "deny" and _under(shared, p):
                 raise WorkspacePolicyError(
-                    f"Never allowed {p!r} contains the shared workspace {str(shared)!r}; the shared workspace is always "
-                    "allowed. Refuse a folder inside it, or move the shared workspace first."
+                    f"{row['path']!r} contains the shared workspace {str(shared)!r}, which is always read & write; deny a "
+                    "workspace inside it, or move the shared workspace first."
                 )
-        never_paths = [Path(p) for p in g["never_allowed"]]
-        for p in g["allowed_folders"]:
-            hit = _under_any(Path(p), never_paths) or _under_any(Path(p), builtin)
-            if hit is not None:
-                raise WorkspacePolicyError(f"Allowed folder {p!r} is inside never-allowed {str(hit)!r}; never allowed wins.")
-        g["allowed_folders"] = [p for p in g["allowed_folders"] if p != g["shared_workspace"]]
-
+            if _under(p, shared):
+                raise WorkspacePolicyError(
+                    f"{row['path']!r} is inside the shared workspace, which is always read & write; list workspaces outside it."
+                )
+            if row["mode"] != "deny" and _under_any(p, creds) is not None:
+                raise WorkspacePolicyError(f"{row['path']!r} is a protected credential directory; it is never a workspace.")
         stored[POLICY_KEY] = {k: g[k] for k in GATEWAY_FIELDS}
-        # An extra the admin no longer allows is no longer switched on anywhere.
-        accounts = _stored_accounts(stored)
-        allowed_set = set(g["allowed_folders"])
-        for key, entry in accounts.items():
-            entry["enabled_folders"] = [p for p in entry.get("enabled_folders") or [] if p in allowed_set]
-        accounts = {k: v for k, v in accounts.items() if v.get("enabled_folders") or v.get("own_folders")}
-        if accounts:
-            stored[ACCOUNTS_KEY] = accounts
-        else:
-            stored.pop(ACCOUNTS_KEY, None)
         stored["_last_changed_by"] = str(actor)
         stored["_last_changed_at"] = _now()
         rc._write_store(data_dir, stored)
@@ -592,7 +735,8 @@ def write_gateway_policy(data_dir: Path, changes: Dict[str, Any], *, actor: str)
 
 
 def write_account_policy(data_dir: Path, *, tenant_id: str, user_id: str, changes: Dict[str, Any], actor: str) -> Dict[str, Any]:
-    """Partial update of ONE account: enabled_folders ⊆ allowed_folders; own_folders only while any folder is allowed."""
+    """Partial update of ONE account. Narrows only: rows are read-only or denied (never read & write),
+    and default_mode may only be lowered to read-only (it applies under "Allow everything, refuse listed workspaces")."""
     rc = _store_mod()
     data_dir = Path(data_dir)
     key = account_key(tenant_id, user_id)
@@ -603,44 +747,21 @@ def write_account_policy(data_dir: Path, *, tenant_id: str, user_id: str, change
     ensure_migrated(data_dir)
     with rc.store_lock(data_dir):
         stored = rc._read_store(data_dir, strict=True)
-        g = _stored_gateway(stored)
         accounts = _stored_accounts(stored)
-        entry = accounts.get(key) or {"enabled_folders": [], "own_folders": []}
-        never_paths = [Path(p) for p in g["never_allowed"]]
-        builtin = [Path(p) for p in builtin_never_allowed(data_dir)]
-        if "enabled_folders" in changes:
-            raw = changes["enabled_folders"]
-            if raw is None:
-                raw = []
-            if not isinstance(raw, list):
-                raise WorkspacePolicyError("enabled_folders must be a list of folder paths")
-            allowed = set(g["allowed_folders"])
-            enabled: List[str] = []
-            for item in raw:
-                text = str(_real(Path(str(item or "").strip()))) if isinstance(item, str) and item.strip() else ""
-                if text not in allowed:
-                    raise WorkspacePolicyError(
-                        f"{str(item)!r} is not one of the gateway's allowed folders; an account can only switch on what "
-                        "the admin allows."
-                    )
-                if text in enabled:
-                    raise WorkspacePolicyError(f"{text!r} is listed twice; nothing was saved.")
-                enabled.append(text)
-            entry["enabled_folders"] = enabled
-        if "own_folders" in changes:
-            raw = changes["own_folders"]
-            own = _check_folder_list(raw if raw is not None else [], what="My folders")
-            if own and not g["allow_any_folder"]:
+        entry = accounts.get(key) or _empty_entry()
+        if "default_mode" in changes:
+            raw = changes["default_mode"]
+            if raw == "rw":
                 raise WorkspacePolicyError(
-                    "Your own folders need the admin's \"Allow any folder\"; it is off, so only the shared workspace and "
-                    "the allowed folders can be used."
+                    "An account cannot raise the default to read & write; it follows the gateway's default or lowers it "
+                    "to read-only (\"ro\")."
                 )
-            for p in own:
-                hit = _under_any(Path(p), never_paths) or _under_any(Path(p), builtin)
-                if hit is not None:
-                    raise WorkspacePolicyError(f"{p!r} is inside never-allowed {str(hit)!r}; never allowed wins.")
-            entry["own_folders"] = [p for p in own if p != g["shared_workspace"]]
-        if entry.get("enabled_folders") or entry.get("own_folders"):
+            if raw not in ("ro", None):
+                raise WorkspacePolicyError(f"default_mode must be \"ro\" or null (the gateway's); got {raw!r}")
+            entry["default_mode"] = raw
+        if "folders" in changes:
+            entry["folders"] = _check_rows(changes["folders"], what="Workspaces", modes=ACCOUNT_MODES)
+        if entry["default_mode"] or entry["folders"]:
             accounts[key] = entry
         else:
             accounts.pop(key, None)

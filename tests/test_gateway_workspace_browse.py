@@ -188,7 +188,7 @@ def test_session_workspace_routes_end_to_end(tmp_path: Path, monkeypatch: pytest
         assert "etc-link" not in [e["name"] for e in listed["entries"]] and listed["hidden"]["outside_links"] == 1
 
         # The deny list binds at browse time too.
-        ok = client.put("/api/gateway/workspace/policy", headers=h, json={"never_allowed": [str(root / "sub")]})
+        ok = client.put("/api/gateway/workspace/policy", headers=h, json={"folders": [{"path": str(root / "sub"), "mode": "deny"}]})
         assert ok.status_code == 200, ok.text
         listed = client.get(f"/api/gateway/runs/{rid}/workspace/files", headers=h).json()
         assert "sub" not in [e["name"] for e in listed["entries"]] and listed["hidden"]["blocked"] == 1
@@ -246,6 +246,7 @@ def test_a_launch_folder_that_contains_the_data_folder_never_serves_it(tmp_path:
     denied it too."""
     client, h = _client(tmp_path, monkeypatch)
     with client:
+        _list_folders(client, h, tmp_path)
         rid = _start(client, h, workspace_root=str(tmp_path))
         listing = client.get(f"/api/gateway/runs/{rid}/workspace/files", headers=h).json()
         names = [e["name"] for e in listing["entries"]]
@@ -272,6 +273,7 @@ def test_builtin_deny_list_hides_credential_folders(tmp_path: Path, monkeypatch:
     (home / ".ssh" / "id_ed25519").write_text("PRIVATE")
     (home / "notes.txt").write_text("ok")
     with client:
+        _list_folders(client, h, home)
         rid = _start(client, h, workspace_root=str(home))
         names = [e["name"] for e in client.get(f"/api/gateway/runs/{rid}/workspace/files", headers=h).json()["entries"]]
         assert ".ssh" not in names and "notes.txt" in names
@@ -301,6 +303,7 @@ def test_a_forged_marker_proves_nothing(tmp_path: Path, monkeypatch: pytest.Monk
     os.symlink(launch / MARKER, launch / "alias.json")
     (launch / "a.txt").write_text("a")
     with client:
+        _list_folders(client, h, launch)
         rid = _start(client, h, workspace_root=str(launch))
         body = client.get(f"/api/gateway/runs/{rid}/workspace", headers=h).json()
         assert body["kind"] == "launch_folder"
@@ -324,18 +327,32 @@ def test_the_opened_file_is_verified(tmp_path: Path) -> None:
         _open_verified((tmp_path / "secret" / "key.txt").resolve(), root)  # a real file outside
 
 
+def _list_folders(client: TestClient, h: dict, *paths: Path) -> None:
+    """Round 9 ("Deny everything, allow listed workspaces"): the admin lists these folders read & write."""
+    rows = [{"path": str(p.resolve()), "mode": "rw"} for p in paths]
+    r = client.put("/api/gateway/workspace/policy", headers=h, json={"folders": rows})
+    assert r.status_code == 200, r.text
+
+
 def test_launch_folder_needs_the_current_policy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     client, h = _client(tmp_path, monkeypatch)
     launch = tmp_path / "project"
     launch.mkdir()
     (launch / "main.py").write_text("x = 1\n")
     with client:
+        # Not listed: "Deny everything, allow listed workspaces" refuses the launch folder at the start.
+        refused = client.post(
+            "/api/gateway/runs/start", headers=h,
+            json={"bundle_id": "ws-bundle", "flow_id": "root", "session_id": "s-launch", "input_data": {"workspace_root": str(launch)}},
+        )
+        assert refused.status_code == 400 and "Deny everything, allow listed workspaces" in refused.text, refused.text
+        _list_folders(client, h, launch)
         rid = _start(client, h, workspace_root=str(launch))
         body = client.get(f"/api/gateway/runs/{rid}/workspace", headers=h).json()
         assert body["kind"] == "launch_folder" and body["workspace_root"] == str(launch.resolve())
         assert client.get(f"/api/gateway/runs/{rid}/workspace/content?path=main.py", headers=h).content == b"x = 1\n"
-        # The admin withdraws launch-folder trust: the folder is no longer served.
-        assert client.put("/api/gateway/workspace/policy", headers=h, json={"launch_folder_trust": False}).status_code == 200
+        # The admin removes the folder: it is no longer served.
+        assert client.put("/api/gateway/workspace/policy", headers=h, json={"folders": []}).status_code == 200
         r = client.get(f"/api/gateway/runs/{rid}/workspace/files", headers=h)
         assert r.status_code == 403 and "policy" in r.json()["detail"]
 
@@ -434,6 +451,7 @@ def test_builtin_deny_is_prefixes_and_the_prompt_is_stable_while_the_data_folder
         assert Path(ok["file_path"]).resolve() == (own / "notes.txt").resolve()
         # ...and a run whose launch folder CONTAINS the data folder is refused
         # everything in it by the host rule (not merely by the workspace bound).
+        _list_folders(client, h, tmp_path)
         wide = _start(client, h, workspace_root=str(tmp_path))
         vw = rs.load(wide).vars
         assert "workspace_builtin_allow" not in vw
@@ -457,6 +475,7 @@ def test_a_client_cannot_send_the_hosts_builtin_entries(tmp_path: Path, monkeypa
         assert v["workspace_builtin_allow"] == [v["workspace_root"]], "the client's allow entry is dropped"
         assert str((tmp_path / "runtime").resolve()) in v["workspace_builtin_deny_prefixes"]
         # A run outside the data folder gets NO allow entry: the client's is dropped, not kept.
+        _list_folders(client, h, tmp_path)
         wide = _start(client, h, workspace_root=str(tmp_path), workspace_builtin_allow=["/"])
         assert "workspace_builtin_allow" not in get_gateway_service().host.run_store.load(wide).vars
         # With the rule turned off by an admin, a client still cannot set it.

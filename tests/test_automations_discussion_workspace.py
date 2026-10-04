@@ -65,7 +65,10 @@ def test_discussion_gets_its_own_folder_and_the_mount(live: TestClient) -> None:
     assert (own / "note.txt").read_text() == "written by the discussion"
     assert (automation_ws / "note.txt").read_text() == before
 
-    # A later turn through /runs/start writing INTO the mount is refused.
+    # A later turn through /runs/start writing INTO the mount is refused. The caller names another
+    # workspace the policy allows (round 9: listed), and the discussion's anchoring still wins.
+    listed = live.put("/api/gateway/workspace/policy", headers=HEADERS, json={"folders": [{"path": os.path.realpath("/tmp"), "mode": "rw"}]})
+    assert listed.status_code == 200, listed.text
     r = live.post("/api/gateway/runs/start", headers=HEADERS, json={
         "bundle_id": live.bundle_ref, "flow_id": "writer", "session_id": out["session_id"],
         "input_data": {"prompt": "overwrite", "path": str(automation_ws / "note.txt"), "workspace_root": "/tmp", "_runtime": {}}})

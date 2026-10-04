@@ -2095,28 +2095,23 @@ def resolve_workspace_root(data_dir: Path) -> Path:
 
 
 def resolve_workspace_mounts(data_dir: Path) -> Dict[str, Path]:
-    """The gateway's allowed folders as deterministic {mount name: folder} (existing folders only).
+    """The gateway's ro/rw folder rows as deterministic {mount name: folder} (existing folders only).
     Used where no account is known; account-scoped doors read workspace_policy.effective_policy."""
     from abstractruntime.utils.workspace_paths import build_workspace_mounts
 
     from .workspace_policy import gateway_policy
 
-    dirs = [Path(p) for p in gateway_policy(Path(data_dir))["allowed_folders"] if Path(p).is_dir()]
+    rows = gateway_policy(Path(data_dir))["folders"]
+    dirs = [Path(r["path"]) for r in rows if r["mode"] in ("ro", "rw") and Path(r["path"]).is_dir()]
     return dict(build_workspace_mounts(allowed_dirs=dirs, used_names=set()))
 
 
 def resolve_workspace_blocked_paths(data_dir: Path) -> tuple[Path, ...]:
-    """The gateway's NEVER ALLOWED folders (existing folders only)."""
+    """The gateway's DENIED folders (its `deny` rows; existing folders only)."""
     from .workspace_policy import gateway_policy
 
-    return tuple(Path(p) for p in gateway_policy(Path(data_dir))["never_allowed"] if Path(p).is_dir())
-
-
-def resolve_launch_folder_trust(data_dir: Path) -> bool:
-    """Launch-folder trust: one gateway-wide switch (default on)."""
-    from .workspace_policy import gateway_policy
-
-    return bool(gateway_policy(Path(data_dir))["launch_folder_trust"])
+    rows = gateway_policy(Path(data_dir))["folders"]
+    return tuple(Path(r["path"]) for r in rows if r["mode"] == "deny" and Path(r["path"]).is_dir())
 
 
 def _workspace_builtin_deny_payload(stored: Dict[str, Any], data_dir: Path) -> Dict[str, Any]:

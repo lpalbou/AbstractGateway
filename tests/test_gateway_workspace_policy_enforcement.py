@@ -72,18 +72,15 @@ def _make_client(*, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Te
 
 
 def test_run_start_over_http_binds_the_effective_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Round 9 end to end: POST /runs/start refuses the removed any-folder mode and a wider folder,
-    and the started run's own vars carry the account's effective set (the host's tool sandbox)."""
-    shared, extra, secret, other = (tmp_path / n for n in ("shared", "extra", "secret", "other"))
-    for d in (shared, extra, secret, other):
+    """Round 9 end to end: POST /runs/start refuses the any-folder mode from a client and an unlisted
+    or refused workspace; the started run's own vars carry the posture's binding (host sandbox)."""
+    shared, extra, archive, secret, other = (tmp_path / n for n in ("shared", "extra", "archive", "secret", "other"))
+    for d in (shared, extra, archive, secret, other):
         d.mkdir()
     client, headers = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
     with client:
-        r = client.put(
-            "/api/gateway/workspace/policy",
-            json={"shared_workspace": str(shared), "allowed_folders": [str(extra)], "never_allowed": [str(secret)], "launch_folder_trust": False},
-            headers=headers,
-        )
+        rows = [{"path": str(extra.resolve()), "mode": "rw"}, {"path": str(archive.resolve()), "mode": "ro"}, {"path": str(secret.resolve()), "mode": "deny"}]
+        r = client.put("/api/gateway/workspace/policy", json={"shared_workspace": str(shared), "folders": rows}, headers=headers)
         assert r.status_code == 200, r.text
 
         def start(input_data: dict):
@@ -91,23 +88,19 @@ def test_run_start_over_http_binds_the_effective_set(tmp_path: Path, monkeypatch
 
         r = start({"workspace_access_mode": "all_except_ignored"})
         assert r.status_code == 400 and "no longer exists" in r.text, r.text
-        r = start({"workspace_allowed_paths": [str(extra.resolve())]})  # allowed, but not switched on
-        assert r.status_code == 400 and "outside the folders" in r.text, r.text
         r = start({"workspace_root": str(other.resolve())})
-        assert r.status_code == 400, r.text
+        assert r.status_code == 400 and "Deny everything, allow listed workspaces" in r.text, r.text
         r = start({"workspace_root": str(secret.resolve())})
-        assert r.status_code == 400 and "never allows" in r.text, r.text
+        assert r.status_code == 400 and "refused workspace" in r.text, r.text
 
-        assert client.put("/api/gateway/workspace/policy/me", json={"enabled_folders": [str(extra.resolve())]}, headers=headers).status_code == 200
         r = start({})
         assert r.status_code == 200, r.text
-        run = client.get(f"/api/gateway/runs/{r.json()['run_id']}", headers=headers)
-        assert run.status_code == 200, run.text
         from abstractgateway.service import get_gateway_service
 
         vars0 = get_gateway_service().host.run_store.load(r.json()["run_id"]).vars
         assert vars0["workspace_access_mode"] == "workspace_or_allowed"
-        assert vars0["workspace_allowed_paths"] == [str(shared.resolve()), str(extra.resolve())]
+        assert vars0["workspace_allowed_paths"] == [str(shared.resolve()), str(extra.resolve()), str(archive.resolve())]
+        assert vars0["workspace_read_only_paths"] == [str(archive.resolve())]
         assert str(secret.resolve()) in str(vars0["workspace_ignored_paths"]).splitlines()
 
 
@@ -150,18 +143,16 @@ def test_open_run_workspace_uses_the_run_folder(tmp_path: Path, monkeypatch: pyt
 
 
 def test_a_run_started_by_an_in_process_door_gets_the_effective_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Bridges, schedules and entities call the host's start_run directly (no HTTP clamp): the host
-    itself binds the run to the account's effective set and never honours the any-folder mode."""
+    """Bridges, schedules and entities call the host's start_run directly (no HTTP check): the host
+    itself binds the run to the posture, never honours a client's any-folder mode under "Deny
+    everything, allow listed workspaces", and drops a client's writable exceptions."""
     shared, extra, secret, other = (tmp_path / n for n in ("shared", "extra", "secret", "other"))
     for d in (shared, extra, secret, other):
         d.mkdir()
     client, headers = _make_client(tmp_path=tmp_path, monkeypatch=monkeypatch)
     with client:
-        r = client.put(
-            "/api/gateway/workspace/policy",
-            json={"shared_workspace": str(shared), "allowed_folders": [str(extra)], "never_allowed": [str(secret)]},
-            headers=headers,
-        )
+        rows = [{"path": str(extra.resolve()), "mode": "ro"}, {"path": str(secret.resolve()), "mode": "deny"}]
+        r = client.put("/api/gateway/workspace/policy", json={"shared_workspace": str(shared), "folders": rows}, headers=headers)
         assert r.status_code == 200, r.text
         from abstractgateway.service import get_gateway_service
 
@@ -169,11 +160,17 @@ def test_a_run_started_by_an_in_process_door_gets_the_effective_set(tmp_path: Pa
         rid = host.start_run(
             flow_id="root",
             bundle_id="bundle-policy",
-            input_data={"workspace_access_mode": "all_except_ignored", "workspace_allowed_paths": [str(other.resolve()), str(extra.resolve())]},
+            input_data={
+                "workspace_access_mode": "all_except_ignored",
+                "workspace_allowed_paths": [str(other.resolve()), str(extra.resolve())],
+                "workspace_writable_paths": [str(extra.resolve())],
+            },
         )
         vars0 = host.run_store.load(rid).vars
         assert vars0["workspace_access_mode"] == "workspace_or_allowed"
-        assert vars0["workspace_allowed_paths"] == [str(shared.resolve())], "nothing switched on, nothing outside"
+        assert vars0["workspace_allowed_paths"] == [str(shared.resolve()), str(extra.resolve())], "nothing unlisted"
+        assert vars0["workspace_read_only_paths"] == [str(extra.resolve())]
+        assert str(extra.resolve()) not in (vars0.get("workspace_writable_paths") or [])
         assert str(secret.resolve()) in str(vars0["workspace_ignored_paths"]).splitlines()
 
 
@@ -196,6 +193,6 @@ def test_the_gateway_policy_write_is_admin_only_at_both_layers(tmp_path: Path, m
         from abstractgateway.users import GatewayUserRegistry
 
         _rec, token = GatewayUserRegistry().create_user(user_id="alice", roles=["user"])
-        r = client.put("/api/gateway/workspace/policy", json={"allow_any_folder": True}, headers={"Authorization": f"Bearer {token}"})
+        r = client.put("/api/gateway/workspace/policy", json={"posture": "any_except_denied"}, headers={"Authorization": f"Bearer {token}"})
         assert r.status_code == 403, r.text
-        assert client.get("/api/gateway/workspace/policy", headers=headers).json()["policy"]["allow_any_folder"] is False
+        assert client.get("/api/gateway/workspace/policy", headers=headers).json()["policy"]["posture"] == "allowed_only"

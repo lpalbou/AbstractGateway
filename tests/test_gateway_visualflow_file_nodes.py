@@ -285,7 +285,6 @@ def test_gateway_server_file_mount_alias_round_trips_across_search_import_run_an
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", str(workspace))
-    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE", "1")
     monkeypatch.setenv("ABSTRACTGATEWAY_POLL_S", "0.05")
     monkeypatch.setenv("ABSTRACTGATEWAY_TICK_WORKERS", "1")
 
@@ -293,6 +292,10 @@ def test_gateway_server_file_mount_alias_round_trips_across_search_import_run_an
 
     headers = {"Authorization": f"Bearer {token}"}
     with TestClient(app) as client:
+        # Round 9: the admin lists both folders (Deny everything, allow listed workspaces).
+        both = [str(first.resolve()), str(second.resolve())]
+        rows = [{"path": p, "mode": "rw"} for p in both]
+        assert client.put("/api/gateway/workspace/policy", json={"folders": rows}, headers=headers).status_code == 200
         scope = {
             "workspace_root": str(workspace),
             "workspace_access_mode": "workspace_or_allowed",
@@ -386,12 +389,14 @@ def test_gateway_files_list_browses_root_and_mount_filters(tmp_path: Path, monke
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", str(workspace))
-    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE", "1")
 
     from abstractgateway.app import app
 
     headers = {"Authorization": f"Bearer {token}"}
     with TestClient(app) as client:
+        one = [str(mounted.resolve())]
+        rows = [{"path": p, "mode": "rw"} for p in one]
+        assert client.put("/api/gateway/workspace/policy", json={"folders": rows}, headers=headers).status_code == 200
         scope = {
             "workspace_root": str(workspace),
             "workspace_access_mode": "workspace_or_allowed",
@@ -478,7 +483,6 @@ def test_gateway_visualflow_import_read_and_export_artifact_nodes(tmp_path: Path
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", str(workspace))
-    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE", "1")
     monkeypatch.setenv("ABSTRACTGATEWAY_POLL_S", "0.05")
     monkeypatch.setenv("ABSTRACTGATEWAY_TICK_WORKERS", "1")
 

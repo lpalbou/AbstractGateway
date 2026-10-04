@@ -166,9 +166,7 @@ def test_client_named_workspace_root_still_wins_and_is_still_clamped(
 
     client, headers = _client(tmp_path, monkeypatch)
     with client:
-        from abstractgateway.workspace_policy import write_gateway_policy
-
-        write_gateway_policy(tmp_path / "runtime", {"launch_folder_trust": False}, actor="person:test")
+        # Round 9: "Deny everything, allow listed workspaces" (the default posture) reaches only the shared workspace here.
 
         # An explicit, in-scope root beats the session folder.
         run_id = _start(
@@ -201,9 +199,7 @@ def test_echoed_session_workspace_passes_the_policy_clamp(
 
     client, headers = _client(tmp_path, monkeypatch)
     with client:
-        from abstractgateway.workspace_policy import write_gateway_policy
-
-        write_gateway_policy(tmp_path / "runtime", {"launch_folder_trust": False}, actor="person:test")
+        # Round 9: "Deny everything, allow listed workspaces" (the default posture) reaches only the shared workspace here.
         first = _workspace_of(client, headers, _start(client, headers, session_id="chat-a"))
         echoed = _start(
             client, headers, session_id="chat-a", input_data={"workspace_root": str(first)}
