@@ -613,7 +613,7 @@ shared_workspace, folders: [{path, source: "shared"|"allowed"|"own"}]
 (shared first), available_folders: [{path, enabled, never_allowed}],
 own_folders[], own_folders_allowed, own_folders_inactive, never_allowed[]
 (gateway + built-in), launch_folder_trust, summary}`; `summary` is one line
-such as "Private session folder + Shared workspace (work) + 2 folders (1 of your own). Never: 1 folder.".
+such as "Private session folder + Shared workspace (work) + 2 folders (1 own folder). Never: 1 folder.".
 
 Run starts read the same set: a `workspace_allowed_paths` list may only narrow
 it (absent = the whole set, the shared workspace always kept), a wider folder or

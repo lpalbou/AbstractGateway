@@ -423,12 +423,13 @@ def _summary(shared: str, folders: List[Dict[str, str]], never: List[str], own_i
     if extras:
         text += f" + {len(extras)} folder{'s' if len(extras) != 1 else ''}"
         if own:
-            text += f" ({len(own)} of your own)"
+            # Neutral: an admin reads this line about another account too.
+            text += f" ({len(own)} own folder{'s' if len(own) != 1 else ''})"
     text += "."
     if never:
         text += f" Never: {len(never)} folder{'s' if len(never) != 1 else ''}."
     if own_inactive:
-        text += " Your own folders are off: the admin no longer allows any folder."
+        text += " Own folders are off: the admin no longer allows any folder."
     return text
 
 

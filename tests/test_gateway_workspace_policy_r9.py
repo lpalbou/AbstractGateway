@@ -192,6 +192,7 @@ def test_account_policy_within_admin_allowance(folders: dict) -> None:
         r = c.put("/api/gateway/workspace/policy/me", json={"own_folders": [folders["mine"]]}, headers=alice)
         assert r.status_code == 200, r.text
         assert [f["source"] for f in r.json()["effective"]["folders"]] == ["shared", "allowed", "own"]
+        assert r.json()["effective"]["summary"] == "Private session folder + Shared workspace (shared) + 2 folders (1 own folder). Never: 1 folder."
         r = c.put("/api/gateway/workspace/policy/me", json={"own_folders": [folders["secrets"]]}, headers=alice)
         assert r.status_code == 400 and "never allowed wins" in r.json()["detail"]
 
@@ -200,6 +201,7 @@ def test_account_policy_within_admin_allowance(folders: dict) -> None:
         eff = c.get("/api/gateway/workspace/effective/me", headers=alice).json()
         assert [f["source"] for f in eff["folders"]] == ["shared", "allowed"]
         assert eff["own_folders_inactive"] is True and eff["own_folders"] == [folders["mine"]]
+        assert eff["summary"].endswith("Own folders are off: the admin no longer allows any folder.")
 
         # Admin removes an allowed folder: no account keeps it switched on.
         c.put("/api/gateway/workspace/policy", json={"allowed_folders": [folders["notes"]]})
