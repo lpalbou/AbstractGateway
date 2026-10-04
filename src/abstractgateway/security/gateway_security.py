@@ -1434,9 +1434,15 @@ class GatewaySecurityMiddleware:
                     sent = False
 
                     async def _replay_receive():
+                        # After the body, hand over to the connection's own
+                        # receive (it waits, and reports http.disconnect).
+                        # Answering "empty body" forever without suspending
+                        # turned every StreamingResponse's disconnect listener
+                        # into a busy loop on the event loop (R13.1, the
+                        # 2026-10-04 21:23 watchdog restart during Read aloud).
                         nonlocal sent
                         if sent:
-                            return {"type": "http.request", "body": b"", "more_body": False}
+                            return await receive()
                         sent = True
                         return {"type": "http.request", "body": buffered_body, "more_body": False}
 
