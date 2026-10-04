@@ -417,9 +417,11 @@ Evidence: CLI flag `--no-runner` in `src/abstractgateway/cli.py`, lock lifecycle
 
 `abstractgateway serve` runs an event-loop watchdog. When the event loop has
 not run for `--watchdog-seconds` (default 30), the gateway writes the blocked
-stacks to its log and exits with code 75; the LaunchAgent, the systemd unit or
-the local supervisor then restarts it. `GET /api/health` reports the
-watchdog's state. See [deployment.md](./deployment.md) and
+stacks to its log and to `<data dir>/incidents/`, and exits with code 75; the
+LaunchAgent, the systemd unit or the local supervisor then restarts it. The
+console's Resources page (Gateway card) and the terminal console then show
+"Gateway restarted at <time> after a hang — <reason>". `GET /api/health`
+reports the watchdog's state. See [deployment.md](./deployment.md) and
 [troubleshooting.md](./troubleshooting.md#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75).
 
 ## OpenAI API

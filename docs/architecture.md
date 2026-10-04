@@ -207,9 +207,27 @@ browser on this computer from one elsewhere on the network
 - **Event-loop watchdog** (`src/abstractgateway/loop_watchdog.py`): under
   `serve`, a tick on the event loop and a checker thread; when the loop has
   not run for `--watchdog-seconds` (default 30) the gateway writes the blocked
-  stacks to its log and exits with code 75, so the LaunchAgent, systemd unit
-  or local supervisor restarts it. `GET /api/health` reports its state. See
+  stacks to its log and to an incident file (`<data dir>/incidents/watchdog-<UTC
+  stamp>.json` + `.threads.txt`) and exits with code 75, so the LaunchAgent,
+  systemd unit or local supervisor restarts it. The next process reads the
+  newest incident; the console's Resources page (Gateway card, "Last restart")
+  and the terminal console show "Gateway restarted at <time> after a hang —
+  <reason>". `GET /api/health` reports its state. See
   [deployment.md](./deployment.md).
+- **Nothing blocks the event loop** (R13.1): a request body that arrived
+  without a Content-Length (the console's `/apps/<id>/` proxy streams bodies)
+  is buffered by the security middleware and replayed through
+  `asgi_receive.replay_body_receive`, which suspends after the body (a replay
+  that kept answering "empty body" made every streaming response's disconnect
+  listener a busy loop — the 2026-10-04 watchdog incident). Streamed speech
+  (`voice_stream.py`) holds one permit of the voice synthesis bound
+  (`ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY`) from engine setup until its engine
+  thread ends, sets up and pulls the engine on worker threads, and hands
+  events to the loop through a bounded queue; a busy engine is announced to
+  the client with a `queued` line. Reading a reply aloud is never a wait of
+  the run: the durable child run is recorded completed when the stream ends,
+  and the runner closes any streamed-speech wait an older process left
+  behind.
 - **Session and model-file housekeeping** (`src/abstractgateway/session_archive.py`,
   `model_download_delete.py`): archive and unarchive a conversation (history
   kept), and delete a downloaded model's files with the engine's own

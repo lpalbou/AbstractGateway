@@ -42,7 +42,7 @@ The sidebar groups the tabs in four sections, in this order:
 | Models | **OpenAI API** | the OpenAI-compatible API at `/v1`: status with Endpoint switch, Restart and Check setup; the base URL and your API key (your gateway token); Authentication and Who can connect, applied at once; supported surface and snippets; recent requests ([openai-api.md](./openai-api.md)) |
 | Models | **Models** | browse models that fit this machine, download them, delete installed ones (below) |
 | Models | **Multimodal** | capability route defaults, the text reasoning effort, the MTP (speculative decoding) default, and model weights per route |
-| System | **Resources** | memory and GPU meters, resident models (warm up, lock, unload), session prompt caches, and the **Gateway** card (pause, update, restart, desktop icon, start at login) |
+| System | **Resources** | memory and GPU meters, resident models (warm up, lock, unload), session prompt caches, and the **Gateway** card (pause, update, restart, desktop icon, start at login, last restart after a hang) |
 | System | **Sandbox** | quick chat and media generation against the configured defaults |
 | System | **Network** | who can reach the gateway (localhost only, local network, internet), its addresses (with the Tailscale name when Tailscale runs), *Reached through another address?* (Tailscale, a reverse proxy: detected addresses are accepted automatically), and *Advanced*: manual allowed origins and *Trust proxies on other machines* ([configuration.md](./configuration.md#network-exposure-localhost--local-network--internet)) |
 
@@ -60,6 +60,13 @@ could start the gateway at login, it says why instead of offering the switch.
 **Workflows paused** (the Gateway card) is a switch for admins: on, no new
 workflow step starts and work already inside a call finishes; the console and
 the apps keep answering. A banner on every tab says so while it is on.
+
+**Last restart** (the Gateway card, admins) appears after the event-loop
+watchdog restarted the gateway: "Gateway restarted at <time> after a hang —
+<reason>", the reason naming the code the event loop was stuck in and the
+request it was serving, with the path of the file holding every thread's
+stack (`<data dir>/incidents/`). The terminal console shows the same line in
+its host panel (F3). No incident, no row.
 
 Every persistent on/off setting in the console is a switch labelled by the
 feature (highlighted when on). It applies at once, shows the new state, and an

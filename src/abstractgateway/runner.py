@@ -1664,6 +1664,8 @@ class GatewayRunner:
 
         closed: List[str] = []
         for r in waiting or []:
+            if getattr(r, "actor_id", None) != "gateway":
+                continue  # only gateway-owned run trees (the subworkflow repair's rule)
             wait = getattr(r, "waiting", None)
             if wait is None or not is_interrupted_voice_stream_wait(wait):
                 continue
