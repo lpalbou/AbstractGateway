@@ -851,7 +851,10 @@ any other value, or `docs` without a session, is a 400. Turn listings
 `kind=all`, so a docs chat never appears in a conversation list while staying
 in the same pool: readable by `session_id`, ledgered, archivable. Every row
 carries `kind`. The mark lives in the plane's `session_kinds.json`; a session
-without one is a conversation.
+without one is a conversation. A run of the shipped `docs-qa` workflow marks
+its session `docs` even without `kind`, and the first turn listing runs a
+one-time migration (`docs_qa_bundle_v1`) that marks every existing session
+whose turn root ran `docs-qa` (matched on the workflow's bundle id).
 
 The session's owner or an admin may archive it. Each account works in its own
 runtime plane, so a session that belongs to another account answers

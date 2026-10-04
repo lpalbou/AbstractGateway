@@ -9104,6 +9104,12 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
             raise HTTPException(status_code=400, detail=f"kind must be one of {', '.join(_SESSION_PURPOSES)} (got {req.kind!r})")
         if session_kind_req != "conversation" and not (isinstance(req.session_id, str) and req.session_id.strip()):
             raise HTTPException(status_code=400, detail=f"kind {session_kind_req!r} needs a session_id (the session it describes)")
+    if session_kind_req is None and isinstance(req.session_id, str) and req.session_id.strip():
+        # A docs-qa run is a docs chat whichever client starts it (the terminal console too).
+        from ..session_kinds import DOCS_QA_BUNDLE_ID
+
+        if bundle_id and bundle_id.split("@", 1)[0] == DOCS_QA_BUNDLE_ID:
+            session_kind_req = "docs"
     if session_kind_req == "docs":
         # Marked BEFORE the run starts, so the conversation lists never show it.
         from ..session_kinds import SessionKindsUnreadable, mark_session_kind
@@ -9773,7 +9779,20 @@ async def list_runs(
     )
     # Session purpose (session_kinds.py): turn listings show conversations by
     # default, so a Docs assistant chat never reaches a conversation list.
-    from ..session_kinds import SessionKindsUnreadable, session_kinds as _session_kinds
+    from ..session_kinds import SessionKindsUnreadable, docs_qa_migration_done, migrate_docs_qa_sessions, session_kinds as _session_kinds
+
+    # One-time migration: sessions whose turn root ran docs-qa (before the
+    # kind existed) become docs chats. Off the event loop (it reads the index).
+    try:
+        if not docs_qa_migration_done(svc.config.data_dir):
+            def _migrate() -> int:
+                lister = getattr(rs, "list_run_index", None)
+                rows = lister(root_only=True, limit=10_000_000) if callable(lister) else [run_summary(r) for r in rs.list_runs(limit=10_000_000)]
+                return migrate_docs_qa_sessions(svc.config.data_dir, rows)
+
+            await asyncio.to_thread(_migrate)
+    except SessionKindsUnreadable as exc:
+        raise HTTPException(status_code=500, detail={"reason_code": "session_kinds_unreadable", "message": str(exc)}) from None
 
     want_kind = str(kind).strip().lower() if isinstance(kind, str) and kind.strip() else "conversation"
     if want_kind not in ("conversation", "docs", "all"):
