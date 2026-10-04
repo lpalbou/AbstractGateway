@@ -1947,7 +1947,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      <span class="shell_brand_mark" aria-hidden="true">↔</span>
 	      <span class="shell_brand_name">AbstractGateway</span>
 	      <!-- Below 1024 px the sidebar is a drawer: its close button. -->
-	      <button id="nav-close" class="shell_nav_close" type="button" aria-label="Close navigation" title="Close">×</button>
+	      <button id="nav-close" class="shell_nav_close" type="button" aria-label="Close navigation" data-af-tip="Close the navigation">×</button>
 	    </div>
 	    <!-- Sidebar groups (DESIGN-v2 §1): what an admin does most -> configures -> maintains.
 	         Captions are the kit eyebrow style (.af-nav-group), never buttons. -->
@@ -1955,7 +1955,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      <div class="shell_nav_group af-nav-group" role="group" aria-labelledby="nav-group-accounts">
 	        <div id="nav-group-accounts" class="shell_nav_caption af-nav-group__caption">Accounts</div>
 	        <button id="tab-button-users" class="tab-button shell_nav_item" type="button" title="People who use this gateway and the entities that act on it"><span class="shell_nav_icon" aria-hidden="true">☾</span><span class="shell_nav_label">Accounts</span></button>
-	        <button id="tab-button-workspaces" class="tab-button shell_nav_item" type="button" title="Which folders agents may read and write, for the gateway and per account"><span class="shell_nav_icon" aria-hidden="true">▢</span><span class="shell_nav_label">Workspaces</span></button>
 	      </div>
 	      <div class="shell_nav_group af-nav-group" role="group" aria-labelledby="nav-group-work">
 	        <div id="nav-group-work" class="shell_nav_caption af-nav-group__caption">Work</div>
@@ -1987,7 +1986,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	  <div id="nav-backdrop" class="shell_nav_backdrop" aria-hidden="true"></div>
 	  <div class="shell_main">
 	  <header class="shell_header">
-	    <button id="nav-toggle" class="shell_nav_toggle" type="button" aria-controls="console-nav" aria-expanded="false" aria-label="Open navigation" title="Sections">☰</button>
+	    <button id="nav-toggle" class="shell_nav_toggle" type="button" aria-controls="console-nav" aria-expanded="false" aria-label="Open navigation" data-af-tip="Show the console sections">☰</button>
 	    <div class="shell_header_titles">
 	      <h1 id="page-title">AbstractGateway Console</h1>
 	      <div id="page-subtitle" class="brand-subtitle">Users &amp; summoned entities, runtimes, providers, and multimodal capabilities</div>
@@ -2000,7 +1999,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	         the no-bundle fallback (and the node-VM tests' surface). -->
 	    <div id="af-topbar-root" class="af-topbar-island hidden"></div>
 	    <div id="topbar-static" class="status af-topbar" role="group" aria-label="Console actions">
-	      <button id="open-appearance" class="af-topbar__btn" title="Appearance" aria-label="Appearance">◐</button>
+	      <button id="open-appearance" class="af-topbar__btn" data-af-tip="Appearance (theme and text size)" aria-label="Appearance">◐</button>
 	      <span id="status-dot" class="dot"></span>
 	      <span id="status-text">Signed out</span>
 	      <button id="sign-out" class="af-topbar__pill af-topbar__pill--connected hidden" title="Sign out of the gateway session" aria-label="Sign out">
@@ -2089,7 +2088,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                <div>
 	                  <p class="section-note workflows-purpose">Workflows are the programs your apps and automations run. They come in bundles (.flow files): some ship with the gateway, others you import or publish from AbstractFlow.</p>
 	                </div>
-	                <button id="workflows-refresh" class="secondary icon-only" title="Reload the workflow registry" aria-label="Refresh workflows"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
+	                <button id="workflows-refresh" class="secondary icon-only" data-af-tip="Reload the workflow list" aria-label="Refresh workflows"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
 	              </div>
 	              <div class="list-toolbar workflows-toolbar">
 	                <input id="workflows-search" type="search" placeholder="Search by name, description or id" aria-label="Search workflows">
@@ -2206,7 +2205,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">◎</span><span>Runtimes</span></h2>
 	                  <p class="section-note">A runtime is a user's own data plane: their runs, flows, sessions and memory. Each user gets one, named after them, unless an admin bound them to a shared one. Entities have their own too. Click a runtime to open its runs and cache below; the default runtime's cache also lists every machine-wide store.</p>
 	                </div>
-	                <button id="runtimes-refresh" class="secondary icon-only" title="Reload the runtime inventory" aria-label="Refresh runtimes"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
+	                <button id="runtimes-refresh" class="secondary icon-only" data-af-tip="Reload the runtime list" aria-label="Refresh runtimes"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
 	              </div>
 	              <div id="runtimes-message" class="message"></div>
 	              <!-- Round 8: `#runtimes?account=<id>` (the Accounts Runtime link) = GET /admin/runtimes?account=<id>;
@@ -2225,7 +2224,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">▷</span><span>Runtime <span id="runtime-detail-name"></span></span></h2>
 	                  <p id="runtime-detail-sub" class="section-note">Runs, sessions and caches on this plane.</p>
 	                </div>
-	                <button id="runtime-detail-refresh" class="secondary icon-only" title="Reload this runtime's view" aria-label="Refresh runtime detail"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
+	                <button id="runtime-detail-refresh" class="secondary icon-only" data-af-tip="Reload this runtime's details" aria-label="Refresh runtime detail"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
 	              </div>
 	              <!-- Console-TUI mirror: TWO tabs — Sessions |
 	                   Data & cache — and NOTHING loads until a runtime is
@@ -2497,7 +2496,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">▦</span><span>Memory &amp; GPU</span></h2>
 	                  <p class="section-note">Live truth from the host behind this gateway: RAM pressure, accelerator memory, GPU load. Refreshes every 5 seconds while this tab is open; a failed probe is named below, never blanked.</p>
 	                </div>
-	                <button id="models-refresh" class="secondary icon-only" title="Reload host state now" aria-label="Refresh host state"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
+	                <button id="models-refresh" class="secondary icon-only" data-af-tip="Reload the loaded models, memory and GPU state" aria-label="Refresh host state"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
 	              </div>
 	              <div id="models-message" class="message"></div>
 	              <div id="models-degraded" class="entity-chip-row hidden"></div>
@@ -2571,10 +2570,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      <div id="tab-openai" class="tab-panel">
 	        <div id="openai-root" class="core-console-root"></div>
 	      </div>
-	      <!-- WORKSPACES (round 8, console_workspaces.py): the gateway policy + per-account policies; rows apply on blur. -->
-	      <div id="tab-workspaces" class="tab-panel">
-	        <div id="workspaces-root" class="ws-page session-only"></div>
-	      </div>
 	      <div id="tab-users" class="tab-panel">
 	        <div id="account" class="session-summary">No active session.</div>
 	        <div class="tab-grid tab-grid-wide">
@@ -2586,7 +2581,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            <section id="users-section" class="session-only hidden accounts-page">
 	              <div class="accounts-head">
 	                <div class="accounts-head__actions">
-	                  <span id="accounts-archived-slot" class="accounts-head__archived" hidden></span>
+	                  <button id="accounts-gw-workspace" class="secondary accounts-gw-workspace hidden" type="button">Shared workspace &amp; allowed folders</button>
+                  <span id="accounts-archived-slot" class="accounts-head__archived" hidden></span>
 	                  <button id="open-create-user" type="button" title="Create a gateway user and issue their token (shown once)">Create user</button>
 	                  <button id="accounts-create-entity" class="secondary" type="button" title="Summon a new entity from a spark template (the name is permanent)">Create entity</button>
 	                </div>
@@ -2625,7 +2621,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
             <div id="my-email-section" class="session-only account-page hidden">
               <div class="account-page__head">
                 <h2 class="section-title"><span class="section-icon" aria-hidden="true">✉</span><span>My email address and mailbox</span></h2>
-                <button id="my-email-refresh" class="secondary icon-only" type="button" title="Reload" aria-label="Reload my email address and mailbox"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
+                <button id="my-email-refresh" class="secondary icon-only" type="button" data-af-tip="Reload your email address and mailbox" aria-label="Reload my email address and mailbox"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
               </div>
               <p id="my-email-message" class="inline-state" role="status" aria-live="polite"></p>
               <p id="my-email-notices" class="af-form__help" hidden></p>
@@ -2819,7 +2815,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                <div class="section-actions">
 	                  <button id="open-create-entity" title="Summon a new entity from a spark template (the name is permanent — validated before anything is written)" aria-label="Summon entity"><span class="button-icon" aria-hidden="true">☾</span><span>Summon entity</span></button>
 	                  <button id="open-templates" class="secondary" title="View, edit, and version the spark templates entities are born from" aria-label="Manage templates"><span class="button-icon" aria-hidden="true">✎</span><span>Templates</span></button>
-	                  <button id="entities-refresh" class="secondary icon-only" title="Reload the entity roster" aria-label="Refresh entities"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
+	                  <button id="entities-refresh" class="secondary icon-only" data-af-tip="Reload the entity list" aria-label="Refresh entities"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
 	                </div>
 	              </div>
 	              <table>
@@ -2889,7 +2885,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      <div class="modal-body">
 	        <div class="inline" style="margin-bottom: 8px; align-items: center;">
 	          <label>Show<select id="log-modal-tail-size"><option value="65536">last 64 KB</option><option value="262144">last 256 KB</option><option value="1048576">last 1 MB</option></select></label>
-	          <button id="log-modal-refresh" class="secondary icon-only" title="Re-read the tail" aria-label="Refresh log tail"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
+	          <button id="log-modal-refresh" class="secondary icon-only" data-af-tip="Read the latest lines of this log again" aria-label="Refresh log tail"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
 	          <span id="log-modal-status" class="muted" style="font-size: 12px;"></span>
 	        </div>
 	        <pre id="log-modal-pre"></pre>
@@ -3073,7 +3069,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     <div class="af-modal af-modal--wide" role="dialog" aria-modal="true" aria-labelledby="skill-modal-title">
       <div class="af-modal__header">
         <h2 id="skill-modal-title" class="af-modal__title">Skill</h2>
-        <button id="skill-modal-close" class="af-modal__close" type="button" aria-label="Close">×</button>
+        <button id="skill-modal-close" class="af-modal__close" type="button" aria-label="Close" data-af-tip="Close">×</button>
       </div>
       <div id="skill-modal-body" class="af-modal__body"></div>
       <div class="af-modal__footer">
@@ -3086,7 +3082,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     <div class="af-modal af-modal--wide" role="dialog" aria-modal="true" aria-labelledby="mcp-modal-title">
       <div class="af-modal__header">
         <h2 id="mcp-modal-title" class="af-modal__title">Add MCP server</h2>
-        <button id="mcp-modal-close" class="af-modal__close" type="button" aria-label="Close">×</button>
+        <button id="mcp-modal-close" class="af-modal__close" type="button" aria-label="Close" data-af-tip="Close">×</button>
       </div>
       <div id="mcp-modal-body" class="af-modal__body"></div>
       <div class="af-modal__footer">
@@ -3104,7 +3100,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     <div class="af-modal af-modal--wide" role="dialog" aria-modal="true" aria-labelledby="app-settings-title">
       <div class="af-modal__header">
         <h2 id="app-settings-title" class="af-modal__title">Settings</h2>
-        <button id="app-settings-close" class="af-modal__close" type="button" aria-label="Close">×</button>
+        <button id="app-settings-close" class="af-modal__close" type="button" aria-label="Close" data-af-tip="Close">×</button>
       </div>
       <div id="app-settings-body" class="af-modal__body"></div>
     </div>
@@ -3115,7 +3111,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     <div class="af-modal" role="dialog" aria-modal="true" aria-labelledby="account-email-title">
       <div class="af-modal__header">
         <h2 id="account-email-title" class="af-modal__title">Email</h2>
-        <button id="account-email-close" class="af-modal__close" type="button" aria-label="Close">×</button>
+        <button id="account-email-close" class="af-modal__close" type="button" aria-label="Close" data-af-tip="Close">×</button>
       </div>
       <div id="account-email-body" class="af-modal__body account-modal-body"></div>
     </div>
@@ -3125,16 +3121,36 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     <div class="af-modal" role="dialog" aria-modal="true" aria-labelledby="account-openai-title">
       <div class="af-modal__header">
         <h2 id="account-openai-title" class="af-modal__title">OpenAI API</h2>
-        <button id="account-openai-close" class="af-modal__close" type="button" aria-label="Close">×</button>
+        <button id="account-openai-close" class="af-modal__close" type="button" aria-label="Close" data-af-tip="Close">×</button>
       </div>
       <div id="account-openai-body" class="af-modal__body account-modal-body"></div>
+    </div>
+  </div>
+  <!-- Workspace folders (round 9, console_workspaces.py): ONE account's folders (the kit
+       WorkspaceChooser) and the gateway policy (admins). Rows apply at once; no Save. -->
+  <div id="account-workspace-backdrop" class="af-modal-backdrop" hidden>
+    <div class="af-modal" role="dialog" aria-modal="true" aria-labelledby="account-workspace-title">
+      <div class="af-modal__header">
+        <h2 id="account-workspace-title" class="af-modal__title">Workspace folders</h2>
+        <button id="account-workspace-close" class="af-modal__close" type="button" aria-label="Close" data-af-tip="Close">×</button>
+      </div>
+      <div id="account-workspace-body" class="af-modal__body account-modal-body wsm-body"></div>
+    </div>
+  </div>
+  <div id="gateway-workspace-backdrop" class="af-modal-backdrop" hidden>
+    <div class="af-modal af-modal--wide" role="dialog" aria-modal="true" aria-labelledby="gateway-workspace-title">
+      <div class="af-modal__header">
+        <h2 id="gateway-workspace-title" class="af-modal__title">Shared workspace &amp; allowed folders</h2>
+        <button id="gateway-workspace-close" class="af-modal__close" type="button" aria-label="Close" data-af-tip="Close">×</button>
+      </div>
+      <div id="gateway-workspace-body" class="af-modal__body wsm-body"></div>
     </div>
   </div>
   <div id="account-logs-backdrop" class="af-modal-backdrop" hidden>
     <div class="af-modal" role="dialog" aria-modal="true" aria-labelledby="account-logs-title">
       <div class="af-modal__header">
         <h2 id="account-logs-title" class="af-modal__title">Activity</h2>
-        <button id="account-logs-close" class="af-modal__close" type="button" aria-label="Close">×</button>
+        <button id="account-logs-close" class="af-modal__close" type="button" aria-label="Close" data-af-tip="Close">×</button>
       </div>
       <div class="af-modal__body account-modal-body">
         <div id="account-logs-filters" class="account-logs-filters" role="group" aria-label="Show"></div>
@@ -3154,7 +3170,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     <div id="entity-manage-section" class="af-modal af-modal--wide entity-manage" role="dialog" aria-modal="true" aria-labelledby="entity-manage-title">
       <div class="af-modal__header">
         <h2 id="entity-manage-title" class="af-modal__title" tabindex="-1" data-af-autofocus>Manage — <span id="entity-manage-name">entity</span></h2>
-        <button id="entity-manage-close" class="af-modal__close" type="button" aria-label="Close">×</button>
+        <button id="entity-manage-close" class="af-modal__close" type="button" aria-label="Close" data-af-tip="Close">×</button>
       </div>
       <div class="af-tabs entity-manage-tabs">
         <div class="af-tabs__list" role="tablist" aria-label="Manage sections">
@@ -3781,7 +3797,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // door (users & entities), where they run, then setup (providers,
 	    // capability defaults), then validation (sandbox). A stale persisted
 	    // "entities" value folds into "users" below.
-	    const TABS = ["users", "workspaces", "runtimes", "workflows", "skills", "providers", "openai", "defaults", "sandbox", "models", "catalog", "apps", "network"];
+	    const TABS = ["users", "runtimes", "workflows", "skills", "providers", "openai", "defaults", "sandbox", "models", "catalog", "apps", "network"];
 	    // Retired tab ids and their new homes: a persisted value or a `#<id>` link
 	    // still lands there (entities merged into users; DESIGN-v3 §7: the Engines
 	    // tab merged into Providers).
@@ -3990,7 +4006,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    const TAB_TITLES = {
 	      users: ["Accounts", "People who use this gateway and the entities that act on it"],
-	      workspaces: ["Workspaces", "Which folders agents may read and write"],
 	      runtimes: ["Runtimes", "Each user's own data plane: runs, flows, sessions and memory"],
       workflows: ["Workflows", "Bundles, versions, import and export"],
       skills: ["Skills & MCP", "Skills agents can load, and MCP tool servers"],
@@ -4026,7 +4041,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        $("page-subtitle").textContent = t[1];
 	      }
 	      writeStringSetting(ACTIVE_TAB_KEY, next);
-	      wsOnTabChange(next);  // drops a `#runtimes?account=` / `#workspaces?account=` link when leaving its page (console_workspaces.py)
+	      wsOnTabChange(next);  // drops a `#runtimes?account=` link when leaving the Runtimes page (console_workspaces.py)
 	      if (next === "skills") openSkillsMcpPage();  // console_skills_mcp.py
 	      mcOnTabChange(next);  // the catalog's `#catalog?...` link follows the tab (console_catalog.py)
 	    }
@@ -4258,7 +4273,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      b.type = "button";
 	      b.className = `secondary icon-only workflows-icon-btn ${cls}`;
 	      b.innerHTML = `<span class="button-icon" aria-hidden="true">${icon}</span>`;
-	      b.title = title;
+	      b.setAttribute("data-af-tip", title);
 	      b.setAttribute("aria-label", ariaLabel);
 	      b.onclick = (ev) => { ev.stopPropagation(); onClick(); };
 	      return b;
@@ -4267,13 +4282,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const v = version || row.latest;
 	      const label = version ? `${row.name} ${v.bundle_version}` : row.name;
 	      const out = [];
-	      out.push(workflowIconButton("workflows-export", ICONS.download, "Export", `Export ${label}`, () => exportWorkflow(row.bundle_id, v.bundle_version)));
-	      out.push(workflowIconButton("workflows-open-flow", ICONS.openNew, "Open in AbstractFlow", `Open ${label} in AbstractFlow`, () => openWorkflowInFlow(row, v)));
+	      out.push(workflowIconButton("workflows-export", ICONS.download, `Export ${label} as a .flow file`, `Export ${label}`, () => exportWorkflow(row.bundle_id, v.bundle_version)));
+	      out.push(workflowIconButton("workflows-open-flow", ICONS.openNew, `Open ${label} in AbstractFlow`, `Open ${label} in AbstractFlow`, () => openWorkflowInFlow(row, v)));
 	      const acts = v.actions || {};
 	      if (v.archived && acts.can_archive) {
-	        out.push(workflowIconButton("workflows-unarchive", ICONS.unarchive, "Unarchive", `Unarchive ${label}`, () => unarchiveWorkflow(row, version ? v.bundle_version : null)));
+	        out.push(workflowIconButton("workflows-unarchive", ICONS.unarchive, `Unarchive ${label} (shown again)`, `Unarchive ${label}`, () => unarchiveWorkflow(row, version ? v.bundle_version : null)));
 	      } else if (!v.archived && acts.can_archive) {
-	        out.push(workflowIconButton("workflows-archive", ICONS.archive, "Archive", `Archive ${label}`, () => archiveWorkflow(row, version ? v.bundle_version : null, anchorFor())));
+	        out.push(workflowIconButton("workflows-archive", ICONS.archive, `Archive ${label} (kept, hidden)`, `Archive ${label}`, () => archiveWorkflow(row, version ? v.bundle_version : null, anchorFor())));
 	      }
 	      return out;
 	    }
@@ -4288,7 +4303,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      box.append(text);
 	      const can = Boolean(row.latest && row.latest.actions && row.latest.actions.can_edit_description);
 	      if (!can) return box;
-	      const pencil = workflowIconButton("workflows-desc-edit", ICONS.pencil, "Edit description", `Edit the description of ${row.name}`, () => workflowDescriptionEdit(row, box));
+	      const pencil = workflowIconButton("workflows-desc-edit", ICONS.pencil, `Edit the description of ${row.name}`, `Edit the description of ${row.name}`, () => workflowDescriptionEdit(row, box));
 	      const note = document.createElement("span");
 	      note.className = "inline-state workflows-desc-note";
 	      note.setAttribute("role", "status");
@@ -6519,15 +6534,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        if (filter && !(data.filter && data.filter.account === filter.account)) throw new Error("GET /admin/runtimes?account= answered without its filter (round-8 seam).");
 	        const rows = Array.isArray(data.runtimes) ? data.runtimes : [];
 	        state.runtimeRows = rows;
-	        // One cheap GET feeds every row's policy badge (never N+1) and the
-	        // policy modal's cached state.
+	        // The runtime-config cache (state.runtimeConfig) for the runtime modals.
 	        try {
 	          const cfg = await api("/api/gateway/admin/runtime-config");
-	          const map = cfg?.user_workspace_policies?.value;
-	          state.userPolicyKeys = new Set(map && typeof map === "object" ? Object.keys(map) : []);
 	          renderRuntimeConfig(cfg);
 	        } catch (e) {
-	          state.userPolicyKeys = state.userPolicyKeys || new Set();
+	          /* the runtime-config cache is optional here */
 	        }
 	        $("runtimes-message").textContent = (data.warnings || []).join(" · ");
 	        body.textContent = "";
@@ -6587,18 +6599,26 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          size.textContent = (typeof r.size_bytes === "number") ? _fmtBytes(r.size_bytes) : "";
 	          if (r.size_note) size.title = r.size_note;
 	          tr.append(size);
-	          // Workspace cell (round 8): a link to the Workspaces page — the gateway policy for the
-	          // default plane, the owner's row for a one-owner user plane. Entities: their folders live in Manage.
+	          // Workspace cell (round 9): opens the folder modals — the gateway policy for the default
+	          // plane, the owner's Workspace folders for a one-owner user or entity plane.
 	          const policyTd = document.createElement("td");
 	          const enabledOwners = (r.owners || []).filter((o) => o && o.enabled !== false && o.user_id);
+	          const wsOpen = (text, aria, onOpen) => {
+	            const b = document.createElement("button");
+	            b.type = "button";
+	            b.className = "link-button";
+	            b.textContent = text;
+	            b.setAttribute("aria-label", aria);
+	            b.onclick = (ev) => { ev.stopPropagation(); onOpen(); };
+	            b.onkeydown = (ev) => ev.stopPropagation();
+	            return b;
+	          };
 	          if (r.kind === "default") {
-	            policyTd.append(workspacesLink("Gateway policy", null));
-	          } else if (r.kind === "user" && enabledOwners.length === 1) {
-	            const key = `${r.tenant_id || "default"}:${enabledOwners[0].user_id}`;
-	            const own = state.userPolicyKeys && state.userPolicyKeys.has(key);
-	            policyTd.append(workspacesLink(own ? "Own policy" : "Gateway policy", { account: enabledOwners[0].user_id, tenant_id: r.tenant_id || "default" }));
-	          } else if (r.kind === "entity") {
-	            policyTd.innerHTML = `<span class="muted">Set in Manage</span>`;
+	            policyTd.append(wsOpen("Shared workspace", "Shared workspace and allowed folders of this gateway", () => openGatewayWorkspace()));
+	          } else if ((r.kind === "user" || r.kind === "entity") && enabledOwners.length === 1) {
+	            const o = enabledOwners[0];
+	            const own = Boolean(state.principal && state.principal.user_id === o.user_id && (state.principal.tenant_id || "default") === (r.tenant_id || "default"));
+	            policyTd.append(wsOpen("Folders", `Workspace folders ${o.user_id}'s agents may use`, () => openAccountWorkspace({ id: o.user_id, tenant_id: r.tenant_id || "default", kind: r.kind, role: r.kind === "entity" ? "entity" : "user", own })));
 	          } else {
 	            policyTd.textContent = "None";
 	            policyTd.className = "muted";
@@ -11933,6 +11953,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       $("users-section").classList.toggle("hidden", Boolean(state.manageName));
       // RBAC: a non-admin sees the same table (own row + own entities) without the admin tools.
       $("open-create-user").classList.toggle("hidden", !p.admin);
+      $("accounts-gw-workspace").classList.toggle("hidden", !p.admin);  // round 9: the gateway folder policy (admins)
       $("email-caps-section").classList.toggle("hidden", !p.admin);
       // DESIGN-v2 §2: the entities are rows of the Accounts table (for everyone, RBAC-scoped);
       // the admin's own email UI opens from their row (Email); a user keeps it on the page too.
@@ -12344,37 +12365,37 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
             return true;
           }, (e) => usersMessage(emailErrorText(e), "error"));
         }
-        // Actions (round 8): icon buttons with tooltips, only those that apply, in one fixed order —
-        // users Email · OpenAI API · Logs · Workspace · Rotate · Archive; entities Email · Logs ·
-        // Manage · Archive (no token, no per-account workspace: their folders are set in Manage);
-        // archived rows Logs · Unarchive.
+        // Actions (round 8, tooltips round 9): icon buttons with the kit tooltip (an explicit
+        // sentence each, ACCOUNT_TIPS), only those that apply, in one fixed order — users
+        // Email · OpenAI API · Logs · Workspace · Rotate · Archive; entities Email · Logs ·
+        // Workspace · Manage · Archive; archived rows Logs · Unarchive.
         const actions = document.createElement("td");
         actions.className = "actions accounts-actions";
         actions.setAttribute("data-label", "Actions");
         const buttons = document.createElement("div");
         buttons.className = "accounts-actions__buttons";
-        const add = (key, icon, tip, aria, onClick, danger) => {
+        const add = (key, icon, aria, onClick, danger) => {
           if (!accountCan(a, key)) return;
-          const b = accountIconButton(icon, tip, aria, danger);
+          const b = accountIconButton(icon, ACCOUNT_TIPS[key](a.id), aria, danger);
           b.setAttribute("data-action", key);
           b.onclick = onClick;
           buttons.append(b);
         };
         if (archived) {
-          add("logs", "logs", "Logs", `Activity of ${a.id}`, () => openAccountLogs(a));
-          add("unarchive", "unarchive", "Unarchive", `Unarchive ${a.id}`, () => unarchiveAccount(a));
+          add("logs", "logs", `Activity of ${a.id}`, () => openAccountLogs(a));
+          add("unarchive", "unarchive", `Unarchive ${a.id}`, () => unarchiveAccount(a));
         } else {
-          add("email", "mail", "Email", `Email for ${a.id}`, () => openAccountEmail(a));
+          add("email", "mail", `Email for ${a.id}`, () => openAccountEmail(a));
           // Admins: the account's OpenAI API switch (a non-admin's row carries it unavailable, so no button).
-          add("openai_api", "openai", `OpenAI API: ${a.openai_api ? "on" : "off"}`, `OpenAI API for ${a.id} (${a.openai_api ? "on" : "off"})`, () => openAccountOpenAI(a));
-          add("logs", "logs", "Logs", `Activity of ${a.id}`, () => openAccountLogs(a));
+          add("openai_api", "openai", `OpenAI API for ${a.id} (${a.openai_api ? "on" : "off"})`, () => openAccountOpenAI(a));
+          add("logs", "logs", `Activity of ${a.id}`, () => openAccountLogs(a));
+          add("workspace", "folder", `Workspace folders of ${a.id}`, () => openAccountWorkspace(a));
           if (a.kind === "entity") {
-            add("manage", "manage", "Manage", `Manage ${a.id}`, () => openEntityManage(a.id));
+            add("manage", "manage", `Manage ${a.id}`, () => openEntityManage(a.id));
           } else {
-            add("workspace", "folder", "Workspace", `Workspace policy for ${a.id}`, () => openWorkspacesFor({ account: a.id, tenant_id: a.tenant_id || "default" }));
-            add("rotate", "rotate", "Rotate token", `Rotate the token of ${a.id}`, () => askRotateAccount(tr, a));
+            add("rotate", "rotate", `Rotate the token of ${a.id}`, () => askRotateAccount(tr, a));
           }
-          add("archive", "archive", "Archive", `Archive ${a.id}`, () => askArchiveAccount(tr, a), true);
+          add("archive", "archive", `Archive ${a.id}`, () => askArchiveAccount(tr, a), true);
         }
         actions.append(buttons);
         tr.append(actions);
@@ -14478,7 +14499,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // the first painted screen still showed the pre-login error row).
       if (state.activeTab === "users") loadEntities();
       if (state.activeTab === "runtimes") loadRuntimes();  // data homes ride along inside loadRuntimes (cached)
-      if (state.activeTab === "workspaces") loadWorkspaces();
       if (state.activeTab === "models") { loadHostState(); startHostStatePoll(); }
       if (state.activeTab === "catalog" || state.activeTab === "providers" || state.activeTab === "apps" || state.activeTab === "network" || state.activeTab === "openai") openCoreTab(state.activeTab);
       try {
@@ -15052,7 +15072,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // Runs tab loader fires from there. Cache sizes load when the Cache
 	    // tab opens (shared ensureDataHomes cache).
 	    $("tab-button-runtimes").onclick = () => { runtimesClearFilter(); setActiveTab("runtimes"); loadRuntimes(); };
-	    $("tab-button-workspaces").onclick = () => { setActiveTab("workspaces"); loadWorkspaces(); };
 	    bindSkillsMcpPage();
 	    $("tab-button-workflows").onclick = () => { setActiveTab("workflows"); mountWorkflowSwitches(); loadWorkflows(); if (state.principal && state.principal.admin) mountAgentDefaults("workflows", $("agent-defaults-root")); };
 	    $("workflows-refresh").onclick = () => loadWorkflows();
@@ -15167,6 +15186,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("accounts-create-entity").onclick = openEntityCreate;
 	    $("account-email-close").onclick = closeAccountEmail;
 	    $("account-openai-close").onclick = closeAccountOpenAI;
+	    $("account-workspace-close").onclick = closeAccountWorkspace;
+	    $("gateway-workspace-close").onclick = closeGatewayWorkspace;
+	    $("accounts-gw-workspace").onclick = () => openGatewayWorkspace();
 	    $("account-logs-close").onclick = closeAccountLogs;
 	    $("entity-create-cancel").onclick = closeEntityCreate;
 	    $("open-templates").onclick = openTemplates;

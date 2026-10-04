@@ -185,10 +185,10 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert 'id="runtime-subtab-runs"' not in console.text  # no Runs tab (dm#35)
     assert 'id="runtime-subtab-sessions"' in console.text
     assert 'id="runtime-subtab-caches"' in console.text
-    # Workspace access policy (round 8): its own page "Workspaces" (sidebar, right after
-    # Accounts); the old modal and the Accounts disclosure are gone.
+    # Workspace folders (round 9): no Workspaces page; two modals opened from Accounts.
     assert 'id="runtime-settings-section"' not in console.text
-    assert 'id="tab-button-workspaces"' in console.text and 'id="workspaces-root"' in console.text
+    assert 'id="tab-button-workspaces"' not in console.text and 'id="workspaces-root"' not in console.text
+    assert 'id="gateway-workspace-backdrop"' in console.text and 'id="account-workspace-backdrop"' in console.text
     assert 'id="workspace-policy-modal-backdrop"' not in console.text
     assert 'id="wsp-mode-cards"' not in console.text
     assert 'id="my-workspace-policy-section"' not in console.text

@@ -148,7 +148,7 @@ try {
     await signIn(page, "admin", ADMIN);
     // Sidebar (DESIGN-v2 §1): four groups in order, Setup at the bottom opens the guide.
     const nav = await page.evaluate(() => Array.from(document.querySelectorAll("#console-nav .af-nav-group")).map((g) => [g.querySelector(".af-nav-group__caption").textContent.trim(), Array.from(g.querySelectorAll(".tab-button")).map((b) => b.id.replace("tab-button-", ""))]));
-    check(JSON.stringify(nav) === JSON.stringify([["Accounts", ["users", "workspaces"]], ["Work", ["workflows", "skills", "runtimes", "apps"]], ["Models", ["providers", "openai", "catalog", "defaults"]], ["System", ["models", "sandbox", "network"]]]), "sidebar groups in order", nav);
+    check(JSON.stringify(nav) === JSON.stringify([["Accounts", ["users"]], ["Work", ["workflows", "skills", "runtimes", "apps"]], ["Models", ["providers", "openai", "catalog", "defaults"]], ["System", ["models", "sandbox", "network"]]]), "sidebar groups in order", nav);
     check((await page.locator("#topbar-static #open-setup, #af-topbar-root [id*=setup]").count()) === 0, "no Setup button in the top bar");
     await page.click("#open-setup");
     await page.waitForSelector("#first-run-backdrop:not(.hidden)", { timeout: 10000 });
@@ -452,8 +452,8 @@ try {
     check(head.title === "Your account" && head.sub === "Your account and the entities you created.", "non-admin page title: Your account", head);
     check(await page.locator("#my-email-section").isHidden(), "no inline 'My email address and mailbox' section on a user's page");
     check(await page.evaluate(() => !document.getElementById("tab-users").innerText.includes("My email address and mailbox")), "the old inline section title is gone from the page");
-    // Round 8: the workspace policy left the account page for its own Workspaces page.
-    check(await page.evaluate(() => !document.getElementById("my-workspace-policy-section") && !document.getElementById("tab-button-workspaces").classList.contains("hidden")), "no workspace policy on the account page; Workspaces is in the sidebar for a user too");
+    // Round 9: no Workspaces page; a user reaches their own folders from their Accounts row.
+    check(await page.evaluate(() => !document.getElementById("my-workspace-policy-section") && !document.getElementById("tab-button-workspaces")), "no workspace policy on the account page and no Workspaces entry");
     await page.click("tr[data-user='bob'] button[data-action='email']");
     await page.waitForSelector("#account-email-backdrop:not([hidden]) #my-email-section", { timeout: 10000 });
     const card = await page.evaluate(() => ({ title: document.getElementById("account-email-title").textContent, text: document.getElementById("my-email-registered-text").textContent, link: document.getElementById("my-email-registered-change").textContent, shown: document.getElementById("my-email-registered-view").checkVisibility() }));

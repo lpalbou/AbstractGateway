@@ -83,7 +83,7 @@ def test_an_extra_row_has_the_same_trash_confirmation_and_delete_route() -> None
     cat, installed, _ = _fixture()
     out = _run(cat, "merged", installed=installed)
     row = out["html"].split('data-mc-art="ollama/my-own-model:7b"')[1].split("</li>")[0]
-    assert 'data-mc-action="delete-ask"' in row and 'aria-label="Delete" title="Delete"' in row and 'data-icon="trash"' in row
+    assert 'data-mc-action="delete-ask"' in row and re.search(r'aria-label="Delete" data-af-tip="Delete [^"]+ from this computer \(files only\)"', row) and 'title="Delete"' not in row and 'data-icon="trash"' in row
     assert ">Downloaded<" in row and "q4_k_m" in row and "Use as default" not in row
     confirm = out["confirmHtml"].split('data-mc-art="ollama/my-own-model:7b"')[1].split("</li>")[0]
     assert 'data-mc-del-confirm="ollama/my-own-model:7b"' in confirm and "from this computer. Files only" in confirm

@@ -1,16 +1,13 @@
-"""Round 8 (DESIGN.md R8.2) server and markup contract, always on (the browser proofs are
-test_gateway_console_browser_{workspaces,accounts}.py, opt-in):
+"""Round 8 (DESIGN.md R8.2) server contract, always on (the console markup of round 9 is
+test_r9w2_console_workspace_modals.py; the browser proofs are opt-in):
 
-- POST /workspace/path-check: the Workspaces page's folder rows are checked with the SAME rules the
-  policy writes enforce (absolute, existing directory) and say why in plain words.
+- POST /workspace/path-check: folder rows are checked with the SAME rules the policy writes
+  enforce (absolute, existing directory) and say why in plain words.
 - GET /admin/runtimes?account=<id>: the Accounts Runtime link's filter is the server's.
-- The console: "Workspaces" right after Accounts; Accounts = Name · Email · Runtime · Active ·
-  Actions with icon actions (no "⋯" menu); the old workspace disclosure and modal are gone.
 """
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pytest
@@ -96,34 +93,3 @@ def test_runtimes_account_filter_is_server_side() -> None:
         assert c.get("/api/gateway/admin/runtimes?account=nobody&include_sizes=false").json()["runtimes"] == []
         # Still admin-only.
         assert c.get("/api/gateway/admin/runtimes?account=alice", headers=alice).status_code == 403
-
-
-def _html() -> str:
-    from abstractgateway.console import gateway_console_html
-
-    return gateway_console_html()
-
-
-def test_console_markup_round8_accounts_and_workspaces() -> None:
-    html = _html()
-    nav = html[html.index('<nav class="shell_nav"') : html.index("</nav>")]
-    order = re.findall(r'id="tab-button-([a-z]+)"', nav)
-    assert order[:2] == ["users", "workspaces"], order
-    assert '<span class="shell_nav_label">Workspaces</span>' in nav
-    assert 'id="tab-workspaces"' in html and 'id="workspaces-root"' in html
-    # Accounts: ONE Email column; the policy left the page (no disclosure, no modal).
-    assert "<th>Name</th><th>Email</th><th>Runtime</th><th>Active</th><th>Actions</th>" in html
-    for gone in ('id="my-workspace-policy-section"', 'id="workspace-policy-modal-backdrop"', 'id="wsp-mode-cards"', "openWorkspacePolicyModal", "openGatewayPolicyModal"):
-        assert gone not in html, gone
-    render = html[html.index("function renderAccounts(rows)") : html.index("function askRotateAccount(")]
-    # Icon actions only: no kit menu, no "⋯", every action through accountIconButton with a tooltip.
-    assert "af-menu" not in render and "⋯" not in render and "accountMenu(" not in html
-    for action in ('"email", "mail", "Email"', '"openai_api", "openai"', '"logs", "logs", "Logs"', '"workspace", "folder", "Workspace"',
-                   '"manage", "manage", "Manage"', '"rotate", "rotate", "Rotate token"', '"archive", "archive", "Archive"', '"unarchive", "unarchive", "Unarchive"'):
-        assert action in render, action
-    # The Runtime cell links to the filtered Runtimes page; the Workspace icon to the Workspaces page.
-    assert "runtimesHref({ account: a.id" in html and "openWorkspacesFor({ account: a.id" in html
-    assert 'id="runtimes-filter"' in html and "/api/gateway/admin/runtimes${filter ?" in html
-    # Rows apply on blur; the path check runs first; no Save button on the page.
-    assert "/api/gateway/workspace/path-check" in html and "input.onblur = async" in html
-    assert re.search(r"\.icon-btn\[data-tip\]::after\s*\{[^}]*content: attr\(data-tip\)", html)

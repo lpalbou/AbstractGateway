@@ -1865,7 +1865,7 @@ CONSOLE_UI_JS = r"""
       // Round 8: an app's own settings sit behind a gear beside Open (admin only),
       // opening the settings modal (APP_SETTINGS_DOORS); never a disclosure on the page.
       const gear = admin && APP_SETTINGS_DOORS[app.id]
-        ? `<button type="button" class="ui-btn is-ghost ui-icon-btn" data-app-action="settings" data-app="${esc(app.id)}" aria-label="${esc(`${name} settings`)}" title="Settings"><span class="button-icon" aria-hidden="true">${ICONS.gear}</span></button>`
+        ? `<button type="button" class="ui-btn is-ghost ui-icon-btn" data-app-action="settings" data-app="${esc(app.id)}" aria-label="${esc(`${name} settings`)}" data-af-tip="${esc(`${name} settings`)}"><span class="button-icon" aria-hidden="true">${ICONS.gear}</span></button>`
         : "";
       const row = primary + tui.button + gear;
       // Technical details ON: the secondary line (text buttons + facts), the
@@ -1929,7 +1929,7 @@ CONSOLE_UI_JS = r"""
       const appsBase = `${appBrowserOrigin()}${d.apps_path_prefix || "/apps/"}`;
       let intro = `<div class="ui-toolbar"><span data-apps-base>Apps open in your browser at <code class="ui-ellip">${esc(appsBase)}…</code>, already signed in to this gateway.</span>`
         + `<button type="button" class="ui-btn is-quiet" data-app-action="refresh">${appStore.loading ? "Checking..." : "Check again"}</button>`
-        + (state.principal && state.principal.admin ? `<button type="button" class="ui-btn is-ghost ui-icon-btn" data-app-action="apps-settings" aria-label="Apps settings" title="Apps settings"><span class="button-icon" aria-hidden="true">${ICONS.gear}</span></button>` : "")
+        + (state.principal && state.principal.admin ? `<button type="button" class="ui-btn is-ghost ui-icon-btn" data-app-action="apps-settings" aria-label="Apps settings" data-af-tip="Settings shared by every app (Node.js, ports, registries)"><span class="button-icon" aria-hidden="true">${ICONS.gear}</span></button>` : "")
         + `</div>`;
       intro += appRuntimeMarkup(d);
       if (d.registry && d.registry.reachable === false) intro += `<div class="ui-alert tone-warn" role="alert"><strong>The app store (npm) is not reachable.</strong><span>Installed apps keep working; installing needs the internet.</span></div>`;
@@ -2787,7 +2787,7 @@ CONSOLE_UI_JS = r"""
         const shown = oaiStore.reveal ? kept : OAI_MASK;
         out += `<code class="ui-ellip is-block oai-key${oaiStore.reveal ? "" : " is-masked"}" data-oai-key-value aria-label="${oaiStore.reveal ? "Your API key" : "Your API key, hidden"}">${esc(shown)}</code>`
           + `<span class="ui-addr__note">Your gateway token: apps use it as their API key and act as you.</span></div>`
-          + `<div class="ui-addr__side"><button type="button" class="ui-btn is-ghost oai-eye" data-oai-action="reveal" aria-pressed="${oaiStore.reveal ? "true" : "false"}" aria-label="${oaiStore.reveal ? "Hide key" : "Show key"}" title="${oaiStore.reveal ? "Hide key" : "Show key"}">${oaiEyeIcon(oaiStore.reveal)}</button>`
+          + `<div class="ui-addr__side"><button type="button" class="ui-btn is-ghost oai-eye" data-oai-action="reveal" aria-pressed="${oaiStore.reveal ? "true" : "false"}" aria-label="${oaiStore.reveal ? "Hide key" : "Show key"}" data-af-tip="${oaiStore.reveal ? "Hide your API key" : "Show your API key"}">${oaiEyeIcon(oaiStore.reveal)}</button>`
           + `<button type="button" class="ui-btn is-ghost ui-addr__copy" data-oai-action="copy-key" aria-label="Copy API key">Copy</button>`
           + `<button type="button" class="ui-btn is-ghost" data-oai-action="new-key"${oaiStore.busy ? " disabled" : ""}>New key</button></div></li>`;
         return out;
@@ -3680,6 +3680,11 @@ CONSOLE_UI_JS = r"""
         return;
       }
       islands.lib = lib;
+      // The kit tooltip (round 9): every [data-af-tip] icon button in the console, bound once
+      // (delegated; shared with the kit's own React islands). A bundle without it is a
+      // vendoring defect and fails here, loudly.
+      if (typeof lib.bindTooltips !== "function") throw new Error("AbstractGateway console: the islands bundle has no bindTooltips (ui-kit 0.8.1+ required).");
+      islands.tooltips = lib.bindTooltips(document);
       islands.about = consoleAboutProps(lib, typeof GATEWAY_ABOUT !== "undefined" ? GATEWAY_ABOUT : null);
       const host = $("af-topbar-root");
       const legacy = $("topbar-static");

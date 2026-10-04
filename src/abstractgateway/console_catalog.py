@@ -529,11 +529,11 @@ CATALOG_JS = r"""
     function mcDeleteButton(a, attrs, admin) {
       const cur = mcStore.del.get(mcKey(a));
       const icon = `<span class="button-icon" aria-hidden="true">${ICONS.trash}</span>`;
-      if (cur && cur.phase === "checking") return `<button type="button" class="ui-btn is-ghost mc-del" disabled aria-busy="true" aria-label="Checking" title="Checking...">${icon}</button>`;
-      if (cur && cur.phase === "deleting") return `<button type="button" class="ui-btn is-ghost mc-del" disabled aria-busy="true" aria-label="Deleting" title="Deleting...">${icon}</button>`;
+      if (cur && cur.phase === "checking") return `<button type="button" class="ui-btn is-ghost mc-del" disabled aria-busy="true" aria-label="Checking" data-af-tip="Checking what a delete would free">${icon}</button>`;
+      if (cur && cur.phase === "deleting") return `<button type="button" class="ui-btn is-ghost mc-del" disabled aria-busy="true" aria-label="Deleting" data-af-tip="Deleting the downloaded files">${icon}</button>`;
       if (cur && cur.phase === "confirm") return "";
-      const title = admin ? "Delete" : "Only an admin can delete downloaded models";
-      return `<button type="button" class="ui-btn is-ghost mc-del" data-mc-action="delete-ask" ${attrs} aria-label="Delete" title="${title}"${admin ? "" : " disabled"}>${icon}</button>`;
+      const tip = admin ? `Delete ${a.artifact || "this model"} from this computer (files only)` : "Only an admin can delete downloaded models";
+      return `<button type="button" class="ui-btn is-ghost mc-del" data-mc-action="delete-ask" ${attrs} aria-label="Delete" data-af-tip="${esc(tip)}"${admin ? "" : " disabled"}>${icon}</button>`;
     }
     function mcDeleteConfirmMarkup(a) {
       const cur = mcStore.del.get(mcKey(a));

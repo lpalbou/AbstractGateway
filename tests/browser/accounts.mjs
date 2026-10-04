@@ -93,7 +93,7 @@ try {
     const { ctx, page } = await open(browser, 1440, 900);
     const rows = await page.evaluate(() => Object.fromEntries(Array.from(document.querySelectorAll("#users-table tr.accounts-row")).map((tr) => [tr.dataset.user, {
       vis: Array.from(tr.querySelectorAll(".accounts-actions__buttons > button")).map((b) => b.dataset.action),
-      tips: Array.from(tr.querySelectorAll(".accounts-actions__buttons > button")).map((b) => b.dataset.tip),
+      tips: Array.from(tr.querySelectorAll(".accounts-actions__buttons > button")).map((b) => b.dataset.afTip),
       icons: Array.from(tr.querySelectorAll(".accounts-actions__buttons > button")).every((b) => b.classList.contains("icon-btn") && b.textContent.trim() === "" && b.querySelector("svg") && b.getAttribute("aria-label") && !b.title),
       size: Array.from(tr.querySelectorAll(".accounts-actions__buttons > button")).map((b) => { const r = b.getBoundingClientRect(); return Math.min(Math.round(r.width), Math.round(r.height)); }),
       menus: tr.querySelectorAll(".af-menu, .af-menu__button").length,
@@ -105,22 +105,26 @@ try {
     check((await page.locator("#users-section .accounts-reasons").count()) === 0, "no reasons paragraph");
     check((await page.locator("#users-table [data-action='delete']").count()) === 0 && !(await page.textContent("#users-table")).includes("Delete"), "no Delete anywhere in the table");
     check(JSON.stringify(rows.alice.vis) === JSON.stringify(["email", "openai_api", "logs", "workspace", "rotate", "archive"]), "user: Email · OpenAI API · Logs · Workspace · Rotate · Archive", rows.alice);
-    check(JSON.stringify(rows.alice.tips) === JSON.stringify(["Email", "OpenAI API: on", "Logs", "Workspace", "Rotate token", "Archive"]), "user: tooltips name each action", rows.alice.tips);
-    check(JSON.stringify(rows.castor.vis) === JSON.stringify(["email", "logs", "manage", "archive"]), "entity: Email · Logs · Manage · Archive (no token, no Workspace)", rows.castor);
+    check(JSON.stringify(rows.alice.tips) === JSON.stringify(["Email address and mailbox of alice", "OpenAI API access for alice", "Activity log of alice", "Workspace folders alice's agents may use", "Rotate alice's sign-in token", "Archive alice (kept, hidden)"]), "user: explicit tooltip sentences (R9.2)", rows.alice.tips);
+    check(JSON.stringify(rows.castor.vis) === JSON.stringify(["email", "logs", "workspace", "manage", "archive"]), "entity: Email · Logs · Workspace · Manage · Archive (no token)", rows.castor);
+    check(rows.castor.tips[3] === "Manage castor (mind, voice, prompt…)", "entity Manage sentence", rows.castor.tips);
     check(JSON.stringify(rows.admin.vis) === JSON.stringify(["email", "openai_api", "logs", "workspace", "rotate"]), "own row: no Archive", rows.admin);
     check(Object.values(rows).every((r) => r.icons && r.menus === 0 && r.size.every((x) => x >= 44)), "icon buttons only: no label, no '⋯' menu, 44 px targets", rows);
     check(!(await page.textContent("#users-table")).includes("⋯"), "no '⋯' anywhere in the table");
     check(rows.alice.email === "alice@fastmail.com · not connected" && rows.bob.email === "No address", "ONE Email column: 'address · state' / 'No address'", [rows.alice.email, rows.bob.email]);
-    // Tooltips: shown on hover and on keyboard focus (CSS from data-tip), never a native title.
+    // Tooltips: the kit tooltip (data-af-tip), on hover and on keyboard focus, never a native title.
     await page.hover("tr[data-user='alice'] button[data-action='workspace']");
-    const tip = await page.evaluate(() => { const b = document.querySelector("tr[data-user='alice'] button[data-action='workspace']"); const cs = getComputedStyle(b, "::after"); return { display: cs.display, content: cs.content }; });
-    check(tip.display === "block" && tip.content === '"Workspace"', "hovering an action shows its tooltip", tip);
+    await page.waitForSelector(".af-tooltip:not([hidden])", { timeout: 3000 });
+    const tip = await page.evaluate(() => document.querySelector(".af-tooltip:not([hidden])").textContent);
+    check(tip === "Workspace folders alice's agents may use", "hovering an action shows its kit tooltip", tip);
     await page.mouse.move(5, 5);
+    await page.waitForSelector(".af-tooltip[hidden]", { state: "attached", timeout: 3000 });
     await page.focus("tr[data-user='alice'] button[data-action='logs']");
     await page.keyboard.press("Shift+Tab");
     await page.keyboard.press("Tab");
-    const ftip = await page.evaluate(() => getComputedStyle(document.activeElement, "::after").display);
-    check(ftip === "block", "keyboard focus shows the tooltip too", ftip);
+    await page.waitForSelector(".af-tooltip:not([hidden])", { timeout: 3000 });
+    const ftip = await page.evaluate(() => document.querySelector(".af-tooltip:not([hidden])").textContent);
+    check(ftip === "Activity log of alice", "keyboard focus shows the tooltip too", ftip);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "an open tooltip does not widen the page");
     // Wrap, never truncate (operator rule): the long id and address are shown whole; the row grows.
     const wrapped = await page.evaluate((id) => { const tr = document.querySelector(`tr[data-user='${id}']`); const out = {}; for (const [k, sel] of [["name", ".accounts-name strong"], ["email", ".accounts-col-email .accounts-cell-text"], ["runtime", ".accounts-col-runtime .accounts-cell-text"]]) { const s = tr.querySelector(sel); const cs = getComputedStyle(s); const cell = s.closest("td").getBoundingClientRect(); const box = s.getBoundingClientRect(); out[k] = { text: s.textContent, clipped: box.right > cell.right + 1 || (cs.display !== "inline" && s.scrollWidth > s.clientWidth + 1) || cs.textOverflow === "ellipsis" || cs.whiteSpace === "nowrap", lines: s.getClientRects().length > 1 ? s.getClientRects().length : Math.round(box.height / (parseFloat(cs.lineHeight) || 20)) }; } return out; }, LONG_ID);

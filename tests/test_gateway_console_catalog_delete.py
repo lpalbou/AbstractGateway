@@ -86,7 +86,7 @@ vm.runInContext(`mountModelCatalog("tab", ROOT, { syncHash: false })`, Object.as
 await settle();
 const html = root.innerHTML;
 out.buttons = (html.match(/data-mc-action="delete-ask"/g) || []).length;
-out.trash = (html.match(/data-mc-action="delete-ask"[^>]*aria-label="Delete" title="Delete">(<span class="button-icon" aria-hidden="true"><svg data-icon="trash"><\/svg><\/span>)<\/button>/g) || []).length;
+out.trash = (html.match(/data-mc-action="delete-ask"[^>]*aria-label="Delete" data-af-tip="Delete [^"]+ from this computer \(files only\)">(<span class="button-icon" aria-hidden="true"><svg data-icon="trash"><\/svg><\/span>)<\/button>/g) || []).length;
 out.disabledButtons = (html.match(/data-mc-action="delete-ask"[^>]*disabled/g) || []).length;
 const A = __TARGET__;
 const L = __LMS__;
