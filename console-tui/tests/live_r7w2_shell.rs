@@ -369,3 +369,50 @@ fn sidebar_keys_live() {
         assert!(s.contains(title), "{title}:\n{s}");
     }
 }
+
+/// Text captures of every page at 80×24 and 120×40 from the integrated
+/// console against the scratch gateway (R7W2_SHOTS_DIR), each checked for
+/// no line wider than the terminal and the page's title on screen.
+/// One size per test: each live harness owns a worker thread posting into
+/// its own app, so two apps never share one test thread.
+#[test]
+#[ignore = "talks to a live gateway; run with --ignored"]
+fn capture_every_page_80x24_live() {
+    capture_every_page(Size::new(80, 24));
+}
+
+#[test]
+#[ignore = "talks to a live gateway; run with --ignored"]
+fn capture_every_page_120x40_live() {
+    capture_every_page(Size::new(120, 40));
+}
+
+fn capture_every_page(size: Size) {
+    {
+        let mut h = live(size);
+        for screen in ui::NAV_ORDER {
+            h.ui.screen.set(screen);
+            // Let the page's reads land (the worker answers on its thread).
+            let deadline = Instant::now() + Duration::from_secs(6);
+            let mut s = h.turns(3);
+            while Instant::now() < deadline
+                && (s.contains("reading") || s.contains("Loading") || s.contains("Checking"))
+            {
+                std::thread::sleep(Duration::from_millis(100));
+                s = h.turns(2);
+            }
+            std::thread::sleep(Duration::from_millis(300));
+            let s = h.turns(3);
+            for l in s.lines() {
+                assert!(
+                    abstracttui::text::width(l) <= size.w,
+                    "{}: line wider than {}: {l:?}",
+                    ui::SCREENS[screen],
+                    size.w
+                );
+            }
+            let name = ui::SCREEN_IDS[screen];
+            h.shoot(&format!("page-{name}"));
+        }
+    }
+}
