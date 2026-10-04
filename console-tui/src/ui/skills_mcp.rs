@@ -33,7 +33,7 @@ use crate::worker::{Body, Cmd};
 use abstracttui::widgets::{SubmitPolicy, TextArea, TextAreaState};
 
 /// The verbs only an admin may use (the web hides them for others).
-pub const ADMIN_KEYS: &[&str] = &["i", "a", "e", "t", "d", "space"];
+pub const ADMIN_KEYS: &[&str] = &["i", "a", "e", "t", "d", "space", "f", "u"];
 
 /// A labelled form row that keeps its line under height pressure (a
 /// form inside a Scroll must never lose a field to a crushed row).
@@ -77,6 +77,8 @@ pub fn hints(ctx: &Ctx) -> Vec<(&'static str, &'static str)> {
             ("x", "export"),
             ("i", "import"),
             ("d", "archive/unarchive"),
+            ("f", "shelf folder"),
+            ("u", "Refresh curated shelf"),
         ]);
     } else {
         out.extend_from_slice(&[
@@ -258,6 +260,20 @@ fn handle_key(cx: Scope, ctx: &Ctx, confirm: InlineConfirm, key: Key) -> bool {
                     .store
                     .notice
                     .set(Some("no skill selected — nothing to export".into())),
+            }
+            true
+        }
+        Key::Char('f') if tab == 0 => {
+            if super::util::admin_gate(&ctx.store, "changing the skills shelf folder") {
+                edit_shelf(ctx);
+            }
+            true
+        }
+        Key::Char('u') if tab == 0 => {
+            if super::util::admin_gate(&ctx.store, "refreshing the curated skills shelf") {
+                sk.shelf_msg
+                    .set(Some(("Working...".into(), MsgTone::Plain)));
+                ctx.send(Cmd::Operator(crate::worker::operator::OpCmd::ReseedSkills));
             }
             true
         }
@@ -562,7 +578,226 @@ fn skills_tab(cx: Scope, ctx: &Ctx, keeper: &super::util::FocusKeeper) -> View {
             );
         }
     }
+    if admin {
+        col = col.child(shelf_row(cx, ctx, width));
+    }
     col.build()
+}
+
+// ------------------------------------------------------------ shelf row
+
+/// The shelf's source in the web's words (`skillsShelfSourcePill`); None
+/// for the gateway's own copy (the web shows no pill then).
+pub fn shelf_source_words(source: &str) -> Option<&'static str> {
+    match source {
+        "seeded" => None,
+        "stored" => Some("Saved setting"),
+        "env" => Some("Environment (legacy)"),
+        "checkout" => Some("Framework checkout"),
+        _ => Some("None"),
+    }
+}
+
+/// The shelf row's lines when not editing (tests read these).
+pub fn shelf_lines(sh: &crate::store::SkillsShelf, width: i32) -> Vec<(String, &'static str)> {
+    let mut out = Vec::new();
+    let folder = if sh.source == "stored" && !sh.value.is_empty() {
+        sh.value.clone()
+    } else if !sh.default_path.is_empty() {
+        format!("(the gateway's own copy) {}", sh.default_path)
+    } else {
+        "(the gateway's own copy)".to_string()
+    };
+    let mut head = format!("Shelf folder: {folder}");
+    if let Some(w) = shelf_source_words(&sh.source) {
+        head.push_str(&format!(" · {w}"));
+    }
+    // The two verbs stay together: on the folder's line when it fits,
+    // else on their own line (never split mid-label).
+    const KEYS: &str = "f change · u Refresh curated shelf";
+    if abstracttui::text::width(&head) as i32 + 3 + KEYS.len() as i32 <= width {
+        out.push((format!("{head}   {KEYS}"), "text"));
+    } else {
+        out.push((head, "text"));
+        out.push((KEYS.to_string(), "keys"));
+    }
+    let v = if sh.bundled_version.is_empty() {
+        String::new()
+    } else {
+        format!(" (version {})", sh.bundled_version)
+    };
+    out.push((
+        format!("Empty: the gateway's own copy of the curated shelf{v}, refreshed at each start."),
+        "faint",
+    ));
+    if !sh.available {
+        out.push((format!("Not available: {}", sh.reason), "warn"));
+    }
+    for w in &sh.warnings {
+        out.push((w.clone(), "warn"));
+    }
+    out
+}
+
+/// `f`: edit the folder in place (prefilled with the SAVED value only — a
+/// default written back would silently become a saved setting).
+fn edit_shelf(ctx: &Ctx) {
+    let sk = ctx.store.skills;
+    let shelf = match ctx.store.runtime_config.get_untracked() {
+        Loadable::Ready(d) => d.skills_shelf,
+        _ => {
+            ctx.store.notice.set(Some(
+                "Reading the skills shelf setting... — one moment".into(),
+            ));
+            return;
+        }
+    };
+    let Some(sh) = shelf else {
+        sk.shelf_msg.set(Some((
+            "This gateway did not report its skills shelf.".into(),
+            MsgTone::Error,
+        )));
+        return;
+    };
+    sk.shelf_draft.set(if sh.source == "stored" {
+        sh.value.clone()
+    } else {
+        String::new()
+    });
+    sk.shelf_msg.set(None);
+    sk.shelf_editing.set(true);
+}
+
+/// The R8.1 shelf row under the skills list: ONE inline row — the folder
+/// (edited in place: Enter saves, Esc keeps) and "Refresh curated shelf"
+/// — plus the helper line and the outcome. Data = `GET
+/// /admin/runtime-config` `skills.shelf`; writes = POST
+/// /admin/runtime-config `{"skills.shelf": …}` and POST
+/// /admin/skills/reseed (the web's own routes).
+fn shelf_row(cx: Scope, ctx: &Ctx, width: i32) -> View {
+    let store = ctx.store;
+    let sk = store.skills;
+    // Read the setting once an admin is here (the web reads it with the tab).
+    {
+        let c = ctx.clone();
+        cx.effect(move || {
+            if c.store.conn.with(ConnPhase::is_admin)
+                && c.store
+                    .runtime_config
+                    .with_untracked(|r| matches!(r, Loadable::NotAsked))
+            {
+                c.store.runtime_config.set(Loadable::Loading);
+                c.send(Cmd::LoadRuntimeConfig);
+            }
+        });
+    }
+    // The folder save's outcome, in place.
+    {
+        let ui = ctx.ui;
+        cx.effect(move || {
+            if let Some((fid, out)) = ui.write_done.get() {
+                if sk.shelf_form.get_untracked() == Some(fid) {
+                    ui.write_done.set(None);
+                    sk.shelf_form.set(None);
+                    match out {
+                        Ok(_) => {
+                            sk.shelf_editing.set(false);
+                            sk.shelf_msg.set(Some(("Saved".into(), MsgTone::Ok)));
+                        }
+                        Err(e) => sk
+                            .shelf_msg
+                            .set(Some((format!("Not saved: {e}"), MsgTone::Error))),
+                    }
+                }
+            }
+        });
+    }
+    let c = ctx.clone();
+    dyn_view_scoped(LayoutStyle::column().gap(0).shrink(0.0), move |gcx| {
+        let t = use_theme(gcx).get().tokens;
+        let cfg = c.store.runtime_config.get();
+        let editing = sk.shelf_editing.get();
+        let msg = sk.shelf_msg.get();
+        let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
+        let shelf = match &cfg {
+            Loadable::Ready(d) => match &d.skills_shelf {
+                Some(sh) => sh.clone(),
+                None => {
+                    return kit::sentence(
+                        &t,
+                        "This gateway did not report its skills shelf.",
+                        width,
+                        t.error,
+                    )
+                }
+            },
+            Loadable::Failed(e) => {
+                return kit::sentence(
+                    &t,
+                    &format!("Could not read the skills shelf setting. {e}"),
+                    width,
+                    t.error,
+                )
+            }
+            _ => {
+                return kit::sentence(
+                    &t,
+                    "Reading the skills shelf setting...",
+                    width,
+                    t.text_muted,
+                )
+            }
+        };
+        if editing {
+            let c_save = c.clone();
+            let sh = shelf.clone();
+            col = col.child(kit::inline_input(
+                gcx,
+                &t,
+                "Shelf folder:",
+                sk.shelf_draft,
+                shelf.default_path.clone(),
+                move |typed| {
+                    let body = super::runtimes::skills_shelf_body(&sh, &typed);
+                    if body.as_object().is_none_or(|m| m.is_empty()) {
+                        sk.shelf_editing.set(false);
+                        return;
+                    }
+                    let fid = crate::worker::next_form_id();
+                    sk.shelf_form.set(Some(fid));
+                    sk.shelf_msg.set(Some(("Saving...".into(), MsgTone::Plain)));
+                    c_save.send(Cmd::SaveRuntimeConfig {
+                        body: body.into(),
+                        form_id: Some(fid),
+                    });
+                },
+                move || {
+                    sk.shelf_editing.set(false);
+                    sk.shelf_msg.set(None);
+                },
+            ));
+            col = col.child(kit::sentence(
+                &t,
+                "Enter saves · Esc keeps the current folder · empty = the gateway's own copy",
+                width,
+                t.text_faint,
+            ));
+        } else {
+            for (text, tone) in shelf_lines(&shelf, width) {
+                let ink = match tone {
+                    "keys" => t.accent,
+                    "warn" => t.warn,
+                    "faint" => t.text_faint,
+                    _ => t.text,
+                };
+                col = col.child(kit::sentence(&t, &text, width, ink));
+            }
+        }
+        if let Some((text, tone)) = msg {
+            col = col.child(kit::sentence(&t, &text, width, msg_ink(&t, tone)));
+        }
+        col.build()
+    })
 }
 
 fn mcp_tab(cx: Scope, ctx: &Ctx, keeper: &super::util::FocusKeeper) -> View {

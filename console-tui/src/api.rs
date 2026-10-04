@@ -1058,6 +1058,19 @@ impl GatewayClient {
         self.get("/admin/runtimes?include_sizes=true", true)
     }
 
+    /// R8.2: the runtimes ONE account owns (`?account=<id>&tenant_id=<t>`;
+    /// the gateway filters on the owners and echoes `filter`).
+    pub fn runtimes_for(&self, account: &str, tenant_id: &str) -> ApiResult<Value> {
+        let mut path = format!(
+            "/admin/runtimes?include_sizes=true&account={}",
+            urlencode(account)
+        );
+        if !tenant_id.is_empty() {
+            path.push_str(&format!("&tenant_id={}", urlencode(tenant_id)));
+        }
+        self.get(&path, true)
+    }
+
     /// One PAGE of runs with the console's filters (parity with the web
     /// console's Runs toolbar). `include_ledger_len=false` matches the web
     /// and skips a per-row cost the server warns is slow on file ledgers.

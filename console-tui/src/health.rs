@@ -78,7 +78,7 @@ fn slots() -> Vec<Slot> {
         domain!(users, Some(|_| Cmd::LoadUsers)),
         domain!(accounts, Some(Cmd::load_accounts_for)),
         domain!(entities, Some(|_| Cmd::LoadEntities)),
-        domain!(runtimes, Some(|_| Cmd::LoadRuntimes)),
+        domain!(runtimes, Some(Cmd::load_runtimes_for)),
         domain!(runtime_config, Some(|_| Cmd::LoadRuntimeConfig)),
         // The runs slot is plane-scoped (it follows the CHOSEN runtime
         // on the Runtimes screen; nothing loads before a choice —

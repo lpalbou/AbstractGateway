@@ -245,8 +245,8 @@ pub fn hints(ctx: &Ctx) -> Vec<(&'static str, &'static str)> {
     if store.acc.tab.get() == 1 {
         return vec![
             ("Tab", "tab"),
+            ("↑/↓", "move"),
             ("space", "switch"),
-            ("Enter", "Advanced"),
             ("r", "refresh"),
         ];
     }
@@ -255,12 +255,13 @@ pub fn hints(ctx: &Ctx) -> Vec<(&'static str, &'static str)> {
         ("Enter", "expand row"),
         ("space", "Active"),
         ("@", "Email"),
+        ("o", "OpenAI API"),
         ("l", "Logs"),
         ("w", "Workspace"),
         ("m", "Manage"),
-        ("o", "OpenAI API"),
         ("t", "Rotate token"),
         ("d", "Archive/Unarchive"),
+        ("g", "Runtime"),
         ("h", "Show archived"),
         ("a", "Create user"),
         ("n", "Create entity"),
@@ -335,6 +336,7 @@ fn handle_key(cx: Scope, ctx: &Ctx, confirm: InlineConfirm, key: Key) -> bool {
             }
         }
         Key::Char('w') => workspace_selected(cx, ctx),
+        Key::Char('g') => runtime_selected(ctx),
         Key::Char('@') => email_selected(cx, ctx),
         Key::Char('l') => open_activity(cx, ctx),
         Key::Char('o') => openai_selected(cx, ctx),
@@ -427,27 +429,21 @@ fn accounts_tab(cx: Scope, ctx: &Ctx, tt: &TokenSet, keeper: &super::util::Focus
         }
         Loadable::Ready(all) => {
             let rows: Vec<AccountRow> = all.into_iter().filter(|r| show || !r.archived).collect();
-            let narrow = vw < 110;
-            let rules = if narrow {
-                vec![
-                    widths::ColRule::tail("Name", 10),
-                    widths::ColRule::head("Email address · Mailbox", 18),
-                    widths::ColRule::head("Active", 6),
-                ]
-            } else {
-                vec![
-                    widths::ColRule::tail("Name", 10),
-                    widths::ColRule::tail("Email address", 14),
-                    widths::ColRule::head("Mailbox", 14),
-                    widths::ColRule::tail("Runtime", 8),
-                    widths::ColRule::head("Active", 6),
-                ]
-            };
+            // R8.2: Name · Email (ONE column: address + connection state)
+            // · Runtime (g opens the Runtimes page filtered to it) · Active
+            // — at every width; cells wrap, nothing scrolls sideways.
+            let rules = vec![
+                widths::ColRule::tail("Name", 10),
+                widths::ColRule::head("Email", 16),
+                widths::ColRule::tail("Runtime", 8),
+                widths::ColRule::head("Active", 6),
+            ];
             let own = own_key(&store);
             let table_rows: Vec<Row> = rows
                 .iter()
-                .map(|r| account_row(r, narrow, own.as_ref()))
+                .map(|r| account_row(r, false, own.as_ref()))
                 .collect();
+
             let ctx_act = ctx.clone();
             col = col.child(
                 keeper.wire(
@@ -458,6 +454,27 @@ fn accounts_tab(cx: Scope, ctx: &Ctx, tt: &TokenSet, keeper: &super::util::Focus
                         .element(cx, tt),
                 ),
             );
+            // The highlighted row's actions in ONE line — the web's icon
+            // buttons (no "⋯" menu): each key, in the web's order.
+            // Its own reactive line: a selection move must not rebuild
+            // the table (a double-click's second press needs the same
+            // table instance as its first).
+            let t2 = *tt;
+            col = col.child(dyn_view(
+                LayoutStyle::column().gap(0).shrink(0.0),
+                move || {
+                    let sel = ui.account_sel.get();
+                    match rows.get(sel) {
+                        Some(r) => kit::sentence(
+                            &t2,
+                            &format!("{}: {}", r.id, row_actions(r).join(" · ")),
+                            width,
+                            t2.accent,
+                        ),
+                        None => Element::new().style(LayoutStyle::default().h(0)).build(),
+                    }
+                },
+            ));
         }
     }
     col = col.child(kind_legend(tt));
@@ -492,26 +509,9 @@ fn active_cell(r: &AccountRow) -> String {
 /// they are on, and why the others can't apply (visible, never
 /// tooltip-only).
 fn account_row(r: &AccountRow, narrow: bool, _own: Option<&(String, String)>) -> Row {
-    let address = r
-        .email_address
-        .clone()
-        .unwrap_or_else(|| "No address".into());
+    let _ = narrow;
     let runtime = r.runtime_id.clone().unwrap_or_else(|| "No runtime".into());
-    let cells = if narrow {
-        vec![
-            name_cell(r),
-            format!("{address} · {}\nRuntime {runtime}", r.mailbox_cell()),
-            active_cell(r),
-        ]
-    } else {
-        vec![
-            name_cell(r),
-            address,
-            r.mailbox_cell(),
-            runtime,
-            active_cell(r),
-        ]
-    };
+    let cells = vec![name_cell(r), email_cell(r), runtime, active_cell(r)];
     let mut detail = vec![crate::store::accounts::kind_help(r.kind_label()).to_string()];
     if r.mailbox.state == "receive_only" {
         if let Some(why) = &r.mailbox.reason {
@@ -524,39 +524,8 @@ fn account_row(r: &AccountRow, narrow: bool, _own: Option<&(String, String)>) ->
     if let Some(why) = r.refusal("suspend").filter(|_| !r.archived) {
         detail.push(format!("Active: {why}"));
     }
-    let mut keys: Vec<String> = Vec::new();
-    let mut add = |avail: bool, k: &str| {
-        if avail {
-            keys.push(k.to_string());
-        }
-    };
-    if r.archived {
-        add(r.refusal("logs").is_none(), "l Logs");
-        add(r.refusal("unarchive").is_none(), "d Unarchive");
-    } else {
-        add(r.refusal("email").is_none(), "@ Email");
-        if let Some(a) = &r.openai_action {
-            add(
-                a.available,
-                if r.openai_api {
-                    "o OpenAI API (on)"
-                } else {
-                    "o OpenAI API (off)"
-                },
-            );
-        }
-        add(r.refusal("logs").is_none(), "l Logs");
-        if r.is_entity() {
-            add(r.refusal("manage").is_none(), "m Manage");
-        } else {
-            add(r.refusal("workspace").is_none(), "w Workspace");
-            add(r.refusal("rotate").is_none(), "t Rotate token");
-        }
-        add(r.refusal("archive").is_none(), "d Archive");
-        add(r.refusal("suspend").is_none(), "space Active");
-    }
-    if !keys.is_empty() {
-        detail.push(format!("Actions: {}", keys.join(" · ")));
+    if let Some(m) = mailbox_detail(r) {
+        detail.push(m);
     }
     let names: &[(&str, &str)] = if r.archived {
         &[]
@@ -581,6 +550,95 @@ fn account_row(r: &AccountRow, narrow: bool, _own: Option<&(String, String)>) ->
         }
     }
     Row::new(cells).detail(detail).dim(r.archived || !r.active)
+}
+
+/// The Email cell (R8.2: ONE column): the address and the mailbox's
+/// connection state — `test@x · connected`, `No address`.
+pub fn email_cell(r: &AccountRow) -> String {
+    let state = match r.mailbox.state.as_str() {
+        "connected" => "connected",
+        "receive_only" => "receive only",
+        "not_connected" => "not connected",
+        "paused" => "paused",
+        "unavailable" => "not available",
+        _ => "",
+    };
+    let address = r.email_address.as_ref().or(r.mailbox.address.as_ref());
+    match (address, state) {
+        (None, _) => "No address".into(),
+        (Some(a), "") => a.clone(),
+        (Some(a), s) => format!("{a} · {s}"),
+    }
+}
+
+/// The detail line naming the mailbox in full when the cell abbreviates
+/// it (a different connected address, or a receive-only reason).
+fn mailbox_detail(r: &AccountRow) -> Option<String> {
+    match (
+        r.mailbox.state.as_str(),
+        &r.mailbox.address,
+        &r.email_address,
+    ) {
+        ("connected", Some(m), Some(a)) if m != a => Some(format!("Mailbox: connected as {m}")),
+        ("connected", Some(m), None) => Some(format!("Mailbox: connected as {m}")),
+        _ => None,
+    }
+}
+
+/// The row's actions as keys, in the web's icon order (users: Email ·
+/// OpenAI API · Logs · Workspace · Rotate · Archive; entities: Email ·
+/// Logs · Manage · Archive), then Runtime and Active — only the ones that
+/// apply (why the others don't is in the row's detail, Enter).
+pub fn row_actions(r: &AccountRow) -> Vec<String> {
+    let mut keys: Vec<String> = Vec::new();
+    let mut add = |avail: bool, k: &str| {
+        if avail {
+            keys.push(k.to_string());
+        }
+    };
+    if r.archived {
+        add(r.refusal("logs").is_none(), "l Logs");
+        add(r.refusal("unarchive").is_none(), "d Unarchive");
+        return keys;
+    }
+    add(r.refusal("email").is_none(), "@ Email");
+    if let Some(a) = &r.openai_action {
+        add(
+            a.available,
+            if r.openai_api {
+                "o OpenAI API (on)"
+            } else {
+                "o OpenAI API (off)"
+            },
+        );
+    }
+    add(r.refusal("logs").is_none(), "l Logs");
+    if r.is_entity() {
+        add(r.refusal("manage").is_none(), "m Manage");
+    } else {
+        add(r.refusal("workspace").is_none(), "w Workspace");
+        add(r.refusal("rotate").is_none(), "t Rotate");
+    }
+    add(r.refusal("archive").is_none(), "d Archive");
+    add(r.runtime_id.is_some(), "g Runtime");
+    add(r.refusal("suspend").is_none(), "space Active");
+    keys
+}
+
+/// `g`: the Runtimes page filtered to the selected account (the web's
+/// Runtime link, `#runtimes?account=<id>`).
+fn runtime_selected(ctx: &Ctx) {
+    if !super::util::admin_gate(&ctx.store, "the Runtimes page") {
+        return;
+    }
+    let Some(r) = selected_account(ctx) else {
+        ctx.store
+            .notice
+            .set(Some("no account selected — no runtime to show".into()));
+        return;
+    };
+    super::runtimes::show_account(ctx, &r.id, &r.tenant_id);
+    ctx.ui.screen.set(super::SCREEN_RUNTIMES);
 }
 
 /// The screen's block title (DESIGN-v2 §2.1: the page line, in words).
@@ -702,23 +760,30 @@ fn manage_selected_entity(cx: Scope, ctx: &Ctx) {
 /// `w`: the selected account's workspace policy — your own on your row
 /// (and always for a non-admin), a user's own policy as the admin, the
 /// reason for an entity.
-fn workspace_selected(cx: Scope, ctx: &Ctx) {
-    let row = if uses_accounts(ctx) {
-        selected_account(ctx)
-    } else {
-        None
-    };
+fn workspace_selected(_cx: Scope, ctx: &Ctx) {
+    // R8.2: the policy lives on its own page now — the Workspace action
+    // opens Workspaces focused on that account (the web's
+    // `#workspaces?account=<id>`); a non-admin's page is their own policy.
+    let row = selected_account(ctx);
+    let admin = ctx.store.conn.with_untracked(ConnPhase::is_admin);
     match row {
-        None => super::my_policy::open(cx, ctx),
-        Some(r) if is_own(&ctx.store, &r) => super::my_policy::open(cx, ctx),
-        Some(r) => match r.refusal("workspace") {
+        Some(r) if r.is_entity() => match r.refusal("workspace") {
             Some(why) => ctx.store.notice.set(Some(why)),
-            None if r.is_entity() => ctx.store.notice.set(Some(format!(
+            None => ctx.store.notice.set(Some(format!(
                 "{}'s file access is set on the entity itself (workspace mounts) — m manages it",
                 r.id
             ))),
-            None => super::runtimes::open_user_policy(cx, ctx, r.tenant_id.clone(), r.id.clone()),
         },
+        Some(r) if r.refusal("workspace").is_some() && !is_own(&ctx.store, &r) => {
+            ctx.store.notice.set(r.refusal("workspace"))
+        }
+        Some(r) => {
+            if admin {
+                super::workspaces::focus_account(ctx, &r.tenant_id, &r.id);
+            }
+            ctx.ui.screen.set(super::SCREEN_WORKSPACES);
+        }
+        None => ctx.ui.screen.set(super::SCREEN_WORKSPACES),
     }
 }
 
@@ -1469,7 +1534,7 @@ fn confirm_transfer(cx: Scope, ctx: &Ctx, row: crate::store::ReservationRow, tar
 pub const MAILBOXES_LABEL: &str = "Mailboxes for users";
 pub const MAILBOXES_HELP: &str = "Users may connect their own mailbox for their agents, automations and notifications. You never see anyone's mail.";
 pub const AGENT_TOOLS_LABEL: &str = "Agent email tools for users";
-pub const AGENT_TOOLS_HELP: &str = "Each user still opts in on their own page.";
+pub const AGENT_TOOLS_HELP: &str = "Users may let their agents and workflows use their mailbox. Each user still switches the tools on for themselves.";
 pub const RECOVERY_LABEL: &str = "Sign-in by email";
 pub const RECOVERY_HELP: &str = "Shows 'Forgot your token?' on the sign-in page. Whoever controls a user's mailbox can then sign in as that user.";
 
@@ -1482,7 +1547,6 @@ fn email_switches(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let tt = *t;
     let form_id = crate::worker::next_form_id();
     let busy = cx.signal(Option::<&'static str>::None);
-    let advanced = cx.signal(false);
     let sw_mail = cx.signal(true);
     let sw_tools = cx.signal(true);
     let sw_rec = cx.signal(true);
@@ -1585,15 +1649,15 @@ fn email_switches(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         if !store.conn.with(ConnPhase::is_admin) {
             return Element::new().style(LayoutStyle::default().h(0)).build();
         }
-        // Rebuilt when the read lands or fails (the unavailable reason),
-        // or Advanced opens — never by a switch press.
+        // Rebuilt when the read lands or fails (the unavailable reason) —
+        // never by a switch press.
         let _ = store.op.email_caps.with(|c| match c {
             Loadable::Ready(_) => 1,
             Loadable::Failed(_) => 2,
             _ => 0,
         });
-        let open = advanced.get();
-        let mut col = Element::new()
+        // R8.1: the three switches sit directly in the card (no Advanced).
+        Element::new()
             .style(LayoutStyle::column().gap(0).shrink(0.0))
             .child(row(
                 scx,
@@ -1603,36 +1667,24 @@ fn email_switches(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 sw_mail,
                 false,
             ))
-            .child(
-                Button::new(if open {
-                    "Advanced ▾"
-                } else {
-                    "Advanced ▸  agent email tools, sign-in by email"
-                })
-                .on_click(move || advanced.update(|v| *v = !*v))
-                .element(scx, &tt)
-                .build(),
-            );
-        if open {
-            col = col
-                .child(row(
-                    scx,
-                    "email_agent_tools",
-                    AGENT_TOOLS_LABEL,
-                    AGENT_TOOLS_HELP,
-                    sw_tools,
-                    true,
-                ))
-                .child(row(
-                    scx,
-                    "email_recovery",
-                    RECOVERY_LABEL,
-                    RECOVERY_HELP,
-                    sw_rec,
-                    true,
-                ));
-        }
-        col.child(line(vec![span(String::new(), tt.text)])).build()
+            .child(row(
+                scx,
+                "email_agent_tools",
+                AGENT_TOOLS_LABEL,
+                AGENT_TOOLS_HELP,
+                sw_tools,
+                false,
+            ))
+            .child(row(
+                scx,
+                "email_recovery",
+                RECOVERY_LABEL,
+                RECOVERY_HELP,
+                sw_rec,
+                false,
+            ))
+            .child(line(vec![span(String::new(), tt.text)]))
+            .build()
     })
 }
 

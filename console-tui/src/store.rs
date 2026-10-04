@@ -42,6 +42,10 @@ pub mod skills;
 #[path = "store_workflows.rs"]
 pub mod workflows_page;
 
+/// The Workspaces page (R8.2): the gateway policy + per-account policies.
+#[path = "store_workspaces.rs"]
+pub mod workspaces;
+
 /// Remote data honesty: never render a guess.
 #[derive(Clone, Debug, Default)]
 pub enum Loadable<T> {
@@ -1478,6 +1482,25 @@ impl RuntimeRow {
             liveness: s(v, "liveness"),
             note: s(v, "note"),
         })
+    }
+}
+
+/// The Runtimes page's account filter (R8.2): the web's
+/// `#runtimes?account=<id>` deep link, chip `Account: <id>` with ×.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuntimeFilter {
+    pub account: String,
+    pub tenant_id: String,
+}
+
+impl RuntimeFilter {
+    /// The chip's words (the web's `Account: <id>`).
+    pub fn chip(&self) -> String {
+        if self.tenant_id.is_empty() || self.tenant_id == "default" {
+            format!("Account: {}", self.account)
+        } else {
+            format!("Account: {}/{}", self.tenant_id, self.account)
+        }
     }
 }
 
@@ -2987,6 +3010,10 @@ pub struct Store {
     pub activity: Signal<Option<(String, String, Loadable<accounts::ActivityData>)>>,
     pub entities: Signal<Loadable<Vec<EntityRow>>>,
     pub runtimes: Signal<Loadable<Vec<RuntimeRow>>>,
+    /// R8.2: the Runtimes page filtered to ONE account (`GET
+    /// /admin/runtimes?account=<id>&tenant_id=<t>`), set by the Accounts
+    /// Runtime jump; None = every runtime.
+    pub runtime_filter: Signal<Option<RuntimeFilter>>,
     /// The registered workflow registry: one row per bundle, plus the
     /// versions the gateway refused to serve.
     pub workflows: Signal<Loadable<WorkflowsData>>,
@@ -3004,6 +3031,8 @@ pub struct Store {
     pub json: json::JsonStore,
     /// The Skills & MCP page.
     pub skills: skills::SkillsStore,
+    /// The Workspaces page (R8.2).
+    pub ws: workspaces::WorkspacesStore,
     /// The Workflows page.
     pub wf: workflows_page::WorkflowsStore,
     /// Per-provider model lists (route editor + provider browser).
@@ -3817,6 +3846,7 @@ impl Store {
             activity: cx.signal(None),
             entities: cx.signal(Loadable::default()),
             runtimes: cx.signal(Loadable::default()),
+            runtime_filter: cx.signal(None),
             workflows: cx.signal(Loadable::default()),
             apps: apps::AppsStore::create(cx),
             runtime_config: cx.signal(Loadable::default()),
@@ -3825,6 +3855,7 @@ impl Store {
             op: operator::OperatorStore::create(cx),
             json: json::JsonStore::create(cx),
             skills: skills::SkillsStore::create(cx),
+            ws: workspaces::WorkspacesStore::create(cx),
             wf: workflows_page::WorkflowsStore::create(cx),
             models: cx.signal(HashMap::new()),
             discover: cx.signal(Loadable::default()),
@@ -3905,6 +3936,7 @@ impl Store {
             activity,
             entities,
             runtimes,
+            runtime_filter,
             workflows,
             apps,
             runtime_config,
@@ -3913,6 +3945,7 @@ impl Store {
             op,
             json,
             skills,
+            ws,
             wf,
             models,
             discover,
@@ -3965,6 +3998,8 @@ impl Store {
         activity.set(None);
         entities.set(Loadable::NotAsked);
         runtimes.set(Loadable::NotAsked);
+        // Another gateway's account means nothing here.
+        runtime_filter.set(None);
         workflows.set(Loadable::NotAsked);
         apps.reset();
         runtime_config.set(Loadable::NotAsked);
@@ -3973,6 +4008,7 @@ impl Store {
         op.reset();
         json.reset();
         skills.reset();
+        ws.reset();
         wf.reset();
         models.update(|m| m.clear());
         discover.set(Loadable::NotAsked);

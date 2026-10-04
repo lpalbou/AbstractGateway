@@ -40,6 +40,9 @@ pub mod skills;
 /// default workflow per app, streamed replies).
 #[path = "worker_workflows.rs"]
 pub mod workflows;
+/// The Workspaces page (gateway + per-account workspace policies, R8.2).
+#[path = "worker_workspaces.rs"]
+pub mod workspaces;
 use crate::store::{
     entities_from_payload, models_from_payload, runtimes_from_payload, users_from_payload,
     AvailabilityData, ConnPhase, DiscoverOutcome, DownloadOffer, DownloadStatus, Identity,
@@ -240,6 +243,10 @@ pub enum Cmd {
     },
     LoadEntities,
     LoadRuntimes,
+    /// R8.2: the inventory filtered to one account (`?account=&tenant_id=`).
+    LoadRuntimesFor {
+        filter: crate::store::RuntimeFilter,
+    },
     /// The registered workflow registry (bundles + the versions refused).
     LoadWorkflows {
         include_drafts: bool,
@@ -335,6 +342,8 @@ pub enum Cmd {
     Json(json::JsonCmd),
     /// The Skills & MCP page — see `worker::skills::SkCmd`.
     Skills(skills::SkCmd),
+    /// The Workspaces page (R8.2).
+    Workspaces(workspaces::WsCmd),
     /// The Workflows page — see `worker::workflows::WfCmd`.
     Workflows(workflows::WfCmd),
     /// `POST /network {allowed_origins?, trust_proxy?}` (reverse proxy,
@@ -596,6 +605,15 @@ impl Cmd {
     /// else `GET /admin/accounts`. Every Accounts refresh path (screen load,
     /// `r`, the health retry after a network failure) goes through here so
     /// none can send a non-admin to the admin-only route.
+    /// The inventory read the Runtimes page wants now: filtered when the
+    /// Accounts Runtime jump set an account, else every runtime.
+    pub fn load_runtimes_for(store: &Store) -> Cmd {
+        match store.runtime_filter.get_untracked() {
+            Some(filter) => Cmd::LoadRuntimesFor { filter },
+            None => Cmd::LoadRuntimes,
+        }
+    }
+
     pub fn load_accounts_for(store: &Store) -> Cmd {
         if store.conn.with_untracked(ConnPhase::is_known_non_admin) {
             Cmd::LoadMyAccounts
@@ -2005,6 +2023,13 @@ fn handle(
                 .runtimes()
                 .map(|v| runtimes_from_payload(&v))
         }),
+        Cmd::LoadRuntimesFor { filter } => {
+            load(store, wake, "loading runtimes", store.runtimes, || {
+                require_client(client)?
+                    .runtimes_for(&filter.account, &filter.tenant_id)
+                    .map(|v| runtimes_from_payload(&v))
+            })
+        }
 
         Cmd::LoadArtifacts {
             offset,
@@ -2204,6 +2229,7 @@ fn handle(
         Cmd::Json(j) => json::handle(client, store, wake, j),
         Cmd::Skills(c) => skills::handle(client, store, wake, c, on_done),
         Cmd::Workflows(c) => workflows::handle(client, store, wake, c, on_done),
+        Cmd::Workspaces(c) => workspaces::handle(client, store, wake, c, on_done),
 
         Cmd::LoadAbout => load(
             store,

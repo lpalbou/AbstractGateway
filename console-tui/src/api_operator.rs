@@ -176,6 +176,24 @@ impl GatewayClient {
         self.get("/workspace/policy/self", false)
     }
 
+    /// `GET /workspace/policy` — the gateway policy, safe for any principal
+    /// (counts, no server paths): a non-admin's Workspaces line (R8.2).
+    pub fn server_workspace_policy(&self) -> ApiResult<Value> {
+        self.get("/workspace/policy", false)
+    }
+
+    /// `POST /workspace/path-check {path}` → `{path, normalized, absolute,
+    /// exists, is_dir, valid, sentence}` (R8.2; any signed-in principal;
+    /// the same rules as the write validator).
+    pub fn workspace_path_check(&self, path: &str) -> ApiResult<Value> {
+        self.send(
+            "POST",
+            "/workspace/path-check",
+            &serde_json::json!({ "path": path }),
+            false,
+        )
+    }
+
     /// `PUT /workspace/policy/self` — `{}` clears back to inherited.
     pub fn save_my_workspace_policy(&self, body: &Value) -> ApiResult<Value> {
         self.send("PUT", "/workspace/policy/self", body, false)

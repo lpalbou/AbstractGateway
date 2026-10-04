@@ -43,6 +43,9 @@ pub mod util;
 pub mod welcome;
 pub mod widths;
 pub mod workflows;
+/// Workspaces (ACCOUNTS, after Accounts): the gateway and per-account
+/// workspace policies (R8.2).
+pub mod workspaces;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -59,7 +62,7 @@ use crate::worker::Cmd;
 use abstractcore_console::screens::Remote;
 use util::{line, span, span_bold};
 
-pub const SCREENS: [&str; 16] = [
+pub const SCREENS: [&str; 17] = [
     "Connection",
     // Local engines + remote connections + the available providers
     // (round 7: the Engines screen merged in, the web's Providers page).
@@ -96,6 +99,8 @@ pub const SCREENS: [&str; 16] = [
     "About",
     // Skills agents can load and the MCP tool servers (ui/skills_mcp.rs).
     "Skills & MCP",
+    // Which folders agents may read and write (ui/workspaces.rs, R8.2).
+    "Workspaces",
 ];
 
 /// Screens with semantic weight get NAMES (round-4 P3-2): the bare
@@ -128,6 +133,8 @@ pub const SCREEN_OPENAI: usize = 13;
 pub const SCREEN_ABOUT: usize = 14;
 /// The Skills & MCP page (round 7, R7-W1).
 pub const SCREEN_SKILLS: usize = 15;
+/// The Workspaces page (round 8, R8.2): right after Accounts.
+pub const SCREEN_WORKSPACES: usize = 16;
 /// The screen list in the order it is SHOWN — the web console's sidebar
 /// (console.py `shell_nav`): Connection (the terminal's sign-in) above the
 /// groups, then ACCOUNTS (Accounts), WORK (Workflows, Skills & MCP,
@@ -135,9 +142,10 @@ pub const SCREEN_SKILLS: usize = 15;
 /// SYSTEM (Resources, Sandbox, Network), then Setup and About at the
 /// bottom. The `SCREEN_*` indexes stay stable ids (the wizard, tests and
 /// the refresh table key on them); this is only the display/jump order.
-pub const NAV_ORDER: [usize; 15] = [
+pub const NAV_ORDER: [usize; 16] = [
     SCREEN_CONNECTION,
     SCREEN_USERS,
+    SCREEN_WORKSPACES,
     SCREEN_WORKFLOWS,
     SCREEN_SKILLS,
     SCREEN_RUNTIMES,
@@ -160,7 +168,7 @@ pub const SCREEN_RUNTIMES: usize = 4;
 /// its screens in order. Connection sits above them; Setup and About
 /// below them (no group).
 pub const NAV_GROUPS: [(&str, &[usize]); 4] = [
-    ("ACCOUNTS", &[SCREEN_USERS]),
+    ("ACCOUNTS", &[SCREEN_USERS, SCREEN_WORKSPACES]),
     (
         "WORK",
         &[
@@ -196,7 +204,7 @@ pub fn nav_pos(i: usize) -> usize {
 }
 
 /// The keys listed in the footer for the screen jumps.
-pub const SCREEN_KEYS_HINT: &str = "1-9,0,H,T,N,S,I";
+pub const SCREEN_KEYS_HINT: &str = "1-9,0,W,H,T,N,S,I";
 
 /// The first-run wizard, in the web guide's order (`console.py`
 /// `FIRST_RUN_STEPS` = welcome → engines → model → apps → done), mapped
@@ -228,6 +236,7 @@ pub fn screen_key(i: usize) -> Option<char> {
     match i {
         SCREEN_CONNECTION => Some('1'),
         SCREEN_USERS => Some('2'),
+        SCREEN_WORKSPACES => Some('W'),
         SCREEN_WORKFLOWS => Some('3'),
         SCREEN_SKILLS => Some('4'),
         SCREEN_RUNTIMES => Some('5'),
@@ -256,7 +265,7 @@ pub fn screen_title(i: usize) -> String {
 /// Stable PageHost page ids, parallel to `SCREENS`. `ui.screen: usize`
 /// stays the source of truth (the wizard gate reads indexes); a two-way
 /// equality-guarded bridge keeps PageHost's string `active` in lockstep.
-pub const SCREEN_IDS: [&str; 16] = [
+pub const SCREEN_IDS: [&str; 17] = [
     "connection",
     "providers",
     "routes",
@@ -275,6 +284,7 @@ pub const SCREEN_IDS: [&str; 16] = [
     "openai",
     "about",
     "skills",
+    "workspaces",
 ];
 
 /// Durable per-screen UI state (Copy: all signals).
@@ -715,7 +725,7 @@ impl Ctx {
                 s.runs.set(Loadable::NotAsked);
                 s.data_homes.set(Loadable::NotAsked);
                 s.runtime_config.set(Loadable::NotAsked);
-                self.send(Cmd::LoadRuntimes);
+                self.send(Cmd::load_runtimes_for(&s));
             }
             // The Workflows page reads its list and its defaults itself.
             5 => workflows::refresh(self),
@@ -752,6 +762,7 @@ impl Ctx {
             SCREEN_OPENAI => openai_api::refresh(self),
             SCREEN_ABOUT => about::refresh(self),
             SCREEN_SKILLS => skills_mcp::refresh(self),
+            SCREEN_WORKSPACES => workspaces::refresh(self),
             _ => {}
         }
     }
@@ -1472,6 +1483,7 @@ fn screen_view(gcx: Scope, c: &Ctx, i: usize, t: &TokenSet) -> View {
         SCREEN_OPENAI => openai_api::view(gcx, c, t),
         SCREEN_ABOUT => about::page(gcx, c, t),
         SCREEN_SKILLS => skills_mcp::screen(c, gcx),
+        SCREEN_WORKSPACES => workspaces::view(gcx, c, t),
         _ => unreachable!("screen {i} has no page"),
     }
 }
@@ -2096,6 +2108,9 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                         pairs.push(("c", "cancel run"));
                         pairs.push(("s", "steer run"));
                         pairs.push(("t", "root runs only"));
+                        if store.runtime_filter.get().is_some() {
+                            pairs.push(("x", "every runtime"));
+                        }
                         pairs.push(("r", "refresh"));
                     }
                     // Named arms from here down (the numbered arms above
@@ -2106,6 +2121,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                     // footer_hints_stay_in_lockstep_with_screens.
                     SCREEN_WORKFLOWS => pairs.extend(workflows::hints(&ctx_hints)),
                     SCREEN_SKILLS => pairs.extend(skills_mcp::hints(&ctx_hints)),
+                    SCREEN_WORKSPACES => pairs.extend(workspaces::hints(&ctx_hints)),
                     SCREEN_REVIEW => {
                         pairs.push(("Tab→prompt, Enter", "run the test (REAL generation)"));
                         pairs.push(("r", "refresh providers"));
@@ -2256,6 +2272,7 @@ mod nav_tests {
             [
                 "1 Connection",
                 "2 Accounts",
+                "W Workspaces",
                 "3 Workflows",
                 "4 Skills & MCP",
                 "5 Runtimes",
@@ -2283,6 +2300,8 @@ mod nav_tests {
         );
         assert_eq!(screen_key(SCREEN_ENGINES), None);
         assert_eq!(nav_group(SCREEN_USERS), Some("ACCOUNTS"));
+        // R8.2: Workspaces is its own entry right after Accounts.
+        assert_eq!(nav_group(SCREEN_WORKSPACES), Some("ACCOUNTS"));
         assert_eq!(nav_group(SCREEN_APPS), Some("WORK"));
         assert_eq!(nav_group(SCREEN_OPENAI), Some("MODELS"));
         assert_eq!(nav_group(SCREEN_ROUTES), Some("MODELS"));

@@ -916,6 +916,19 @@ pub(super) fn handle(
                     (write, verify)
                 });
             let report = write.as_ref().ok().map(seed_report_text);
+            // The Skills tab's shelf row says the outcome in place (R8.1).
+            {
+                let s = *store;
+                let line = match (&write, &report) {
+                    (Ok(_), Some(r)) => (format!("Refreshed. {r}"), crate::store::skills::Tone::Ok),
+                    (Err(e), _) => (
+                        format!("Not refreshed: {}", crate::worker::skills::refusal_text(e)),
+                        crate::store::skills::Tone::Error,
+                    ),
+                    _ => ("Refreshed.".to_string(), crate::store::skills::Tone::Ok),
+                };
+                wake.post(move || s.skills.shelf_msg.set(Some(line.clone())));
+            }
             let verified = verify.as_ref().ok().map(|v| {
                 let d = RuntimeConfigData::from_value(v);
                 let shelf = d

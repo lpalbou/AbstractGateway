@@ -570,6 +570,14 @@ pub struct SkillsStore {
     pub form_note: Signal<Option<String>>,
     /// Bumped when an MCP save succeeded (the open form closes).
     pub form_saved: Signal<u64>,
+    /// R8.1 shelf row: the folder field is being edited (in place).
+    pub shelf_editing: Signal<bool>,
+    /// The folder field's text while editing.
+    pub shelf_draft: Signal<String>,
+    /// The shelf row's own line ("Saved", "Refreshed. …", "Not saved: …").
+    pub shelf_msg: Signal<Option<(String, Tone)>>,
+    /// The folder save in flight (its form id), if any.
+    pub shelf_form: Signal<Option<u64>>,
 }
 
 impl SkillsStore {
@@ -592,6 +600,10 @@ impl SkillsStore {
             form_test: cx.signal(None),
             form_note: cx.signal(None),
             form_saved: cx.signal(0),
+            shelf_editing: cx.signal(false),
+            shelf_draft: cx.signal(String::new()),
+            shelf_msg: cx.signal(None),
+            shelf_form: cx.signal(None),
         }
     }
 
@@ -605,6 +617,9 @@ impl SkillsStore {
         self.detail_msg.set(None);
         self.form_test.set(None);
         self.form_note.set(None);
+        self.shelf_editing.set(false);
+        self.shelf_msg.set(None);
+        self.shelf_form.set(None);
     }
 }
 

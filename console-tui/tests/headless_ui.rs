@@ -555,8 +555,9 @@ fn boots_to_connection_wizard_step() {
     assert!(screen.contains("2 Accounts"), "page bar:\n{screen}");
     assert!(screen.contains("3 Workflows"), "page bar:\n{screen}");
     assert!(
-        screen
-            .contains("ACCOUNTS 2 · WORK 3-6 · MODELS 7 8 9 0 · SYSTEM H T N · S Setup · I About"),
+        screen.contains(
+            "ACCOUNTS 2 W · WORK 3-6 · MODELS 7 8 9 0 · SYSTEM H T N · S Setup · I About"
+        ),
         "group line:\n{screen}"
     );
     assert!(screen.contains("Gateway URL"), "url field:\n{screen}");
@@ -595,8 +596,8 @@ fn pagehost_browse_navigation_digits_and_chords() {
     h.turns(2);
     assert_eq!(
         h.ui.screen.get_untracked(),
-        ui::SCREEN_WORKFLOWS,
-        "Ctrl+N advances one step"
+        ui::SCREEN_WORKSPACES,
+        "Ctrl+N advances one step (R8.2: Workspaces follows Accounts)"
     );
     // Ctrl+P walks back one.
     h.key(b"\x10");
@@ -622,7 +623,7 @@ fn pagehost_browse_navigation_digits_and_chords() {
             .notice
             .get_untracked()
             .unwrap_or_default()
-            .contains("screen jumps (1-9,0,H,T,N,S,I) work in browse mode"),
+            .contains("screen jumps (1-9,0,W,H,T,N,S,I) work in browse mode"),
         "wizard digit refusal carries its reason"
     );
 }
@@ -3830,7 +3831,7 @@ fn title_bar_and_separator_survive_content_pressure() {
             // Row 1 separates the title from the tabs: the screen
             // list's group line (DESIGN-v2 §1), never a component.
             assert!(
-                lines[1].contains("ACCOUNTS 2 · WORK 3-6 · MODELS 7 8 9 0 · SYSTEM H T N"),
+                lines[1].contains("ACCOUNTS 2 W · WORK 3-6 · MODELS 7 8 9 0 · SYSTEM H T N"),
                 "group line under the title (wizard={wizard} screen={screen}):\n{scr}"
             );
             // With 8 tabs the bar OVERFLOWS at 110 cols and windows
@@ -8178,8 +8179,8 @@ fn backlog_settings_rows_and_skills_reseed_in_the_knobs() {
 
 #[test]
 fn users_w_opens_my_workspace_policy() {
-    use abstractgateway_console::store::operator::MyPolicy;
-    use abstractgateway_console::worker::operator::OpCmd;
+    // R8.2: the workspace policy left the Accounts page — `w` on your own
+    // row opens the Workspaces page (its own sidebar entry) on that row.
     let mut h = harness_sized(Size::new(140, 44));
     h.connect_as_admin();
     h.goto_screen(3);
@@ -8192,31 +8193,17 @@ fn users_w_opens_my_workspace_policy() {
     h.turns(2);
     let _ = h.drain_cmds();
     h.type_text("w");
-    let s = h.turns(2);
-    assert!(s.contains("My workspace policy"), "form opens:\n{s}");
-    assert!(
-        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::LoadMyPolicy)))
-            .is_some(),
-        "it reads GET /workspace/policy/self"
+    h.turns(2);
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        ui::SCREEN_WORKSPACES,
+        "w opens the Workspaces page"
     );
-    h.store
-        .op
-        .my_policy
-        .set(Loadable::Ready(MyPolicy::from_value(&json!({
-            "tenant_id": "default", "user_id": "admin", "policy": {}, "customized": false,
-            "effective": {"mode": "whitelist", "trust_client_launch_folder": true,
-                          "workspace_allowed_paths": [], "workspace_blocked_paths": []}
-        }))));
     let s = h.turns(2);
     assert!(
-        s.contains("Effective: whitelist mode · launch-folder trust on · 0 allowed · 0 refused"),
-        "effective:\n{s}"
+        s.contains("Workspaces — Which folders agents may read and write"),
+        "the Workspaces page:\n{s}"
     );
-    assert!(
-        s.contains("inherits the gateway defaults"),
-        "inherit state:\n{s}"
-    );
-    assert!(s.contains("Reset to inherited"), "reset verb:\n{s}");
 }
 
 #[test]
@@ -9081,8 +9068,8 @@ fn arrows_switch_the_global_tab_and_wrap() {
     h.turns(2);
     assert_eq!(
         h.ui.screen.get_untracked(),
-        ui::SCREEN_WORKFLOWS,
-        "Right → the next screen"
+        ui::SCREEN_WORKSPACES,
+        "Right → the next screen (R8.2: Workspaces follows Accounts)"
     );
     h.key(LEFT);
     h.turns(2);
@@ -9917,11 +9904,16 @@ fn accounts_table_has_the_design_columns_and_the_active_switch() {
         .users
         .set(Loadable::Ready(users_from_payload(&users)));
     let s = h.turns(3);
-    for col in ["Name", "Email address", "Mailbox", "Runtime", "Active"] {
+    // R8.2: Name · Email (ONE column: address + state) · Runtime · Active.
+    for col in ["Name", "Email", "Runtime", "Active"] {
         assert!(s.contains(col), "column {col:?}:\n{s}");
     }
+    assert!(
+        !s.contains("Mailbox  ") && !s.contains("Email address"),
+        "one Email column:\n{s}"
+    );
     assert!(!s.contains("enabled"), "no State/enabled column:\n{s}");
-    assert!(s.contains("Connected as a@x.io"), "{s}");
+    assert!(s.contains("a@x.io · connected"), "{s}");
     // The own row's switch is unavailable; Enter shows the reason.
     assert!(s.contains("[-]"), "own row unavailable:\n{s}");
     h.key(b"\r");
@@ -10019,9 +10011,8 @@ fn users_admin_switch_mailboxes_for_users_applies_at_once() {
     let s = h.turns(3);
     assert!(s.contains("[x] Mailboxes for users"), "{s}");
     assert!(s.contains("You never see anyone's mail."), "{s}");
-    assert!(!s.contains("Sign-in by email"), "Advanced is folded:\n{s}");
-    click_text(&mut h, &s, "Advanced ▸");
-    let s = h.turns(2);
+    // R8.1: the three switches sit directly in the card — no Advanced.
+    assert!(!s.contains("Advanced"), "no Advanced disclosure:\n{s}");
     assert!(s.contains("[x] Agent email tools for users"), "{s}");
     assert!(s.contains("[ ] Sign-in by email"), "{s}");
     assert!(!s.contains("Save"), "no Save for a switch:\n{s}");

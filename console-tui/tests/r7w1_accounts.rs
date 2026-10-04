@@ -82,8 +82,8 @@ fn the_table_has_the_web_columns_kinds_and_switches() {
                 && s.contains("Entity"),
             "{s}"
         );
-        assert!(s.contains("Connected as alice@example.test"), "{s}");
-        assert!(s.contains("Receive only — no outgoing server"), "{s}");
+        assert!(s.contains("alice@example.test · connected"), "{s}");
+        assert!(s.contains("receive only"), "{s}");
         assert!(s.contains("No address"), "{s}");
         assert!(!s.contains("carol"), "archived hidden:\n{s}");
         assert!(s.contains("[-]") && s.contains("[x]"), "{s}");
@@ -123,7 +123,7 @@ fn enter_shows_the_row_actions_and_reasons() {
     select(&mut h, "alice");
     let s = h.key(b"\r");
     assert!(
-        s.contains("Actions: @ Email · o OpenAI API (on) · l Logs · w Workspace"),
+        s.contains("alice: @ Email · o OpenAI API (on) · l Logs · w Workspace"),
         "{s}"
     );
     select(&mut h, "bob");
@@ -145,7 +145,7 @@ fn show_archived_lists_them_with_unarchive_only() {
     );
     select(&mut h, "carol");
     let s = h.key(b"\r");
-    assert!(s.contains("Actions: l Logs · d Unarchive"), "{s}");
+    assert!(s.contains("carol: l Logs · d Unarchive"), "{s}");
     h.shoot("accounts-archived");
     h.sent();
     h.key(b"d");

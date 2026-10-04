@@ -365,7 +365,7 @@ fn seven_opens_providers_on_its_local_engines_and_is_refused_in_the_wizard() {
         "wizard does not jump"
     );
     assert!(
-        s.contains("screen jumps (1-9,0,H,T,N,S,I) work in browse mode"),
+        s.contains("screen jumps (1-9,0,W,H,T,N,S,I) work in browse mode"),
         "{s}"
     );
 }

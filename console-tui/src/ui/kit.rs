@@ -14,6 +14,10 @@
 //! - [`key_hint_bar`]: the key-hint footer, wrapping onto a second line on
 //!   a narrow terminal instead of dropping verbs.
 //!
+//! - [`inline_input`] (round 8): the web's "edit in place" field — a
+//!   one-line input shown where the value was; Enter saves, Esc keeps the
+//!   old value. Nothing opens a dialog.
+//!
 //! Switch rows are [`super::switch::Switch`] (`[x]`/`[ ]` + the feature
 //! label) — unchanged.
 
@@ -928,6 +932,50 @@ impl InlineConfirm {
             col.build()
         })
     }
+}
+
+/// The web's in-place edit (round 8: the skills shelf folder, a
+/// workflow's description, a workspace folder row): `label` then a
+/// one-line input that takes the keyboard at once. Enter calls
+/// `on_submit` with the text; Esc calls `on_cancel` (the page restores
+/// the old value). The page shows its own "Saved" / refusal line.
+pub fn inline_input(
+    cx: Scope,
+    t: &TokenSet,
+    label: &str,
+    value: Signal<String>,
+    placeholder: impl Into<String>,
+    on_submit: impl Fn(String) + 'static,
+    on_cancel: impl Fn() + 'static,
+) -> View {
+    let lw = abstracttui::text::width(label) as i32 + 1;
+    let cancel = Rc::new(on_cancel);
+    let cancel_key = cancel.clone();
+    Element::new()
+        .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
+        .on(Phase::Capture, move |ectx, ev| {
+            if let UiEvent::Key(k) = ev {
+                if k.key == Key::Escape {
+                    cancel_key();
+                    ectx.stop_propagation();
+                }
+            }
+        })
+        .child(super::util::line_styled(
+            LayoutStyle::line(1).w(lw).shrink(0.0),
+            vec![span_bold(label.to_string(), t.text)],
+        ))
+        .child(
+            TextInput::new()
+                .value(value)
+                .placeholder(placeholder)
+                .on_submit(move |s: &str| on_submit(s.to_string()))
+                .layout(LayoutStyle::default().grow(1.0).h(1))
+                .element(cx, t)
+                .autofocus()
+                .build(),
+        )
+        .build()
 }
 
 /// A one-line muted sentence (empty/error text helpers keep the WUI words).

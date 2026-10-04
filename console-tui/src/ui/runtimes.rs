@@ -52,6 +52,36 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     })
 }
 
+/// The Accounts Runtime jump (R8.2): the Runtimes page filtered to ONE
+/// account — the web's `#runtimes?account=<id>` (same route, `GET
+/// /admin/runtimes?account=`). The caller switches the screen.
+pub fn show_account(ctx: &Ctx, account: &str, tenant_id: &str) {
+    let store = ctx.store;
+    let filter = crate::store::RuntimeFilter {
+        account: account.to_string(),
+        tenant_id: tenant_id.to_string(),
+    };
+    store.runtime_filter.set(Some(filter.clone()));
+    // A chosen plane of another account would mislead under the filter.
+    ctx.ui.rt_detail.set(None);
+    ctx.ui.runtime_sel.set(0);
+    store.runtimes.set(Loadable::Loading);
+    ctx.send(Cmd::LoadRuntimesFor { filter });
+}
+
+/// `x`: every runtime again (the chip's ×).
+fn clear_account_filter(ctx: &Ctx) {
+    let store = ctx.store;
+    if store.runtime_filter.get_untracked().is_none() {
+        return;
+    }
+    store.runtime_filter.set(None);
+    ctx.ui.rt_detail.set(None);
+    ctx.ui.runtime_sel.set(0);
+    store.runtimes.set(Loadable::Loading);
+    ctx.send(Cmd::LoadRuntimes);
+}
+
 fn admin_only_view(t: &TokenSet, ctx: &Ctx) -> View {
     let why = ctx
         .store
@@ -323,6 +353,7 @@ fn admin_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let ctx_inspect = ctx.clone();
     let ctx_forget = ctx.clone();
     let ctx_open_row = ctx.clone();
+    let ctx_clear = ctx.clone();
     // The inventory region regenerates when data lands (the runtimes
     // read, the lazy runtime-config read behind `w`): the keeper carries
     // the keyboard from one table instance to the next.
@@ -370,6 +401,10 @@ fn admin_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         .shortcut(KeyChord::plain(Key::Char('o')), move |_| {
             open_selected_row(cx, &ctx_open_row);
         })
+        // R8.2: `x` removes the account filter (the chip's ×).
+        .shortcut(KeyChord::plain(Key::Char('x')), move |_| {
+            clear_account_filter(&ctx_clear);
+        })
         .shortcut(KeyChord::plain(Key::Char('F')), move |_| {
             forget_stale_homes(cx, &ctx_forget);
         })
@@ -394,6 +429,17 @@ fn admin_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         .min_h(6)
                         .padding(Edges::hv(1, 0)),
                 )
+                // R8.2: the account filter chip (the Accounts Runtime
+                // jump); zero rows when every runtime is listed.
+                .child(dyn_view(LayoutStyle::column().shrink(0.0), move || {
+                    match store.runtime_filter.get() {
+                        Some(f) => line(vec![
+                            span_bold(format!("[{} ×]", f.chip()), tt.accent),
+                            span("  x shows every runtime", tt.text_faint),
+                        ]),
+                        None => Element::new().style(LayoutStyle::default().h(0)).build(),
+                    }
+                }))
                 .child(dyn_view_scoped(
                     LayoutStyle::default().shrink(1.0),
                     move |gcx| {
