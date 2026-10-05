@@ -41,19 +41,30 @@ pub fn sandbox_line(slot: &Loadable<Value>) -> (String, String, bool) {
         Loadable::Ready(v) => {
             let cs = v.get("command_sandbox");
             let line = cs.and_then(|c| c.get("line")).and_then(Value::as_str);
-            let sentence = cs.and_then(|c| c.get("sentence")).and_then(Value::as_str).unwrap_or("");
-            let state = cs.and_then(|c| c.get("state")).and_then(Value::as_str).unwrap_or("");
+            let sentence = cs
+                .and_then(|c| c.get("sentence"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let state = cs
+                .and_then(|c| c.get("state"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
             match line {
                 Some(l) => (l.to_string(), sentence.to_string(), state != "sandboxed"),
                 None => (
-                    "Commands: this gateway does not report a command sandbox (an older gateway)".into(),
+                    "Commands: this gateway does not report a command sandbox (an older gateway)"
+                        .into(),
                     String::new(),
                     true,
                 ),
             }
         }
         Loadable::Failed(e) => (format!("Commands: unavailable ({e})"), String::new(), true),
-        Loadable::Loading | Loadable::NotAsked => ("Commands: reading GET /api/gateway/workspace/policy…".into(), String::new(), false),
+        Loadable::Loading | Loadable::NotAsked => (
+            "Commands: reading GET /api/gateway/workspace/policy…".into(),
+            String::new(),
+            false,
+        ),
     }
 }
 
@@ -78,7 +89,11 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         let ctx_load = ctx.clone();
         cx.effect(move || {
             let connected = store.conn.with(ConnPhase::is_connected);
-            if connected && store.workspace_policy.with_untracked(|a| matches!(a, Loadable::NotAsked)) {
+            if connected
+                && store
+                    .workspace_policy
+                    .with_untracked(|a| matches!(a, Loadable::NotAsked))
+            {
                 load(&ctx_load);
             }
         });
@@ -90,11 +105,19 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         let t = theme.get().tokens;
         let w = (vp.get().w - 4).max(20);
         let (line, sentence, warn) = sandbox_line(&store.workspace_policy.get());
-        let mut views = vec![kit::sentence(&t, &line, w, if warn { t.warn } else { t.text })];
+        let mut views = vec![kit::sentence(
+            &t,
+            &line,
+            w,
+            if warn { t.warn } else { t.text },
+        )];
         if !sentence.is_empty() {
             views.push(kit::sentence(&t, &sentence, w, t.text_muted));
         }
-        Element::new().style(LayoutStyle::column().gap(0)).children(views).build()
+        Element::new()
+            .style(LayoutStyle::column().gap(0))
+            .children(views)
+            .build()
     });
     Element::new()
         .focusable()
@@ -133,11 +156,15 @@ mod tests {
         assert_eq!(line, "Commands sandboxed: macOS sandbox-exec");
         assert!(sentence.starts_with("Every command"));
         assert!(!warn);
-        let refused = Loadable::Ready(json!({"command_sandbox": {"state": "refused", "line": "Commands refused: no sandbox on this host", "sentence": "x"}}));
+        let refused = Loadable::Ready(
+            json!({"command_sandbox": {"state": "refused", "line": "Commands refused: no sandbox on this host", "sentence": "x"}}),
+        );
         let (line, _, warn) = sandbox_line(&refused);
         assert_eq!(line, "Commands refused: no sandbox on this host");
         assert!(warn);
-        let flag = Loadable::Ready(json!({"command_sandbox": {"state": "unsandboxed", "line": "Unsandboxed commands allowed (flag)", "sentence": "y"}}));
+        let flag = Loadable::Ready(
+            json!({"command_sandbox": {"state": "unsandboxed", "line": "Unsandboxed commands allowed (flag)", "sentence": "y"}}),
+        );
         assert_eq!(sandbox_line(&flag).0, "Unsandboxed commands allowed (flag)");
     }
 

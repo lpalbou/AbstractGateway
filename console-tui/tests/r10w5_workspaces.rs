@@ -129,7 +129,10 @@ fn no_key_on_the_page_does_anything() {
     assert_eq!(before, after, "the page changed on a key");
     assert!(flat(&after).contains(SENTENCE), "{after}");
     let sent = h.sent();
-    assert!(sent.iter().all(|c| matches!(c, Cmd::LoadWorkspacePolicy)), "{sent:?}");
+    assert!(
+        sent.iter().all(|c| matches!(c, Cmd::LoadWorkspacePolicy)),
+        "{sent:?}"
+    );
 }
 
 /// The footer offers no verb on this page.
