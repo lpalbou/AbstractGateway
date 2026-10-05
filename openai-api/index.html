@@ -1,0 +1,1334 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Deployable HTTP/SSE gateway for durable AbstractRuntime runs.">
+      
+      
+      
+        <link rel="canonical" href="https://www.lpalbou.info/AbstractGateway/openai-api/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>OpenAI API - AbstractGateway</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#openai-api" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="AbstractGateway" class="md-header__button md-logo" aria-label="AbstractGateway" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AbstractGateway
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              OpenAI API
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/lpalbou/abstractgateway" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpalbou/abstractgateway
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="AbstractGateway" class="md-nav__button md-logo" aria-label="AbstractGateway" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    AbstractGateway
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/lpalbou/abstractgateway" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpalbou/abstractgateway
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../console/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consoles (web + terminal)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Browser & Terminal Apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../engines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Engines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-downloads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Downloads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tray/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Tray
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../shipped-workflows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Shipped Workflows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deep-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deep Research Workflow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apple-local-gateway-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apple Silicon Local Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../automations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Automations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../email/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Email
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../entities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Summoned Entities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../maintenance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operator Tooling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#turn-it-on" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Turn it on
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connect" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connect
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-is-supported" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is supported
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="What is supported">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Errors
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#access" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Access
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#request-log" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request log
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#admin-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin API
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#moving-from-corev1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Moving from /core/v1
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="openai-api">OpenAI API<a class="headerlink" href="#openai-api" title="Permanent link">&para;</a></h1>
+<p>AbstractGateway serves an OpenAI-compatible API on its own listener, so any app,
+SDK or tool that speaks the OpenAI API can use the models this gateway reaches
+(local engines and connected providers) through one address:</p>
+<div class="highlight"><pre><span></span><code>http://&lt;gateway host&gt;:&lt;port&gt;/v1
+</code></pre></div>
+<p>The API key is the caller's own <strong>gateway token</strong>. There is no separate process
+or port: the API follows the gateway's <a href="../configuration/#network-exposure-localhost--local-network--internet">Network</a>
+setting, and AbstractCore answers each request behind it.</p>
+<h2 id="turn-it-on">Turn it on<a class="headerlink" href="#turn-it-on" title="Permanent link">&para;</a></h2>
+<p>Open the web console, <strong>Models → OpenAI API</strong>. An admin sees five cards; any
+other account sees Status (running or not, the base URL), Connect your app
+(their own key), Docs and Recent requests (their own):</p>
+<ul>
+<li><strong>Status</strong>: Running or Stopped, the base URL with <strong>Copy</strong>; for an admin, the <strong>Endpoint</strong>
+  switch (on: apps can connect; off: apps get 404 and open requests end),
+  <strong>Restart</strong> (ends open requests, keeps serving) and <strong>Check setup</strong> (settings,
+  AbstractCore's server, whether the gateway listens where <em>Who can connect</em>
+  needs it, and how many models <code>/v1/models</code> lists).</li>
+<li><strong>Connect your app</strong>: the base URL and the API key. The key is the token you
+  sign in with, shown masked (<code>••••</code>) with an eye to reveal it and <strong>Copy</strong>. The
+  page fills it in from what this browser kept when you signed in with your
+  token: no gateway route ever returns a stored token. Signed in with a link or
+  an emailed code, the browser has no copy: <strong>New key</strong> makes one. <strong>New key</strong>
+  replaces your gateway token everywhere (the old one stops working) and the
+  gateway shows the new key once; this browser keeps it for the page.</li>
+<li><strong>Access</strong> (admin): <em>Authentication</em>, who requests without a key run as, and
+  <em>Who can connect</em> (below). Changes apply to the next request.</li>
+<li><strong>Docs</strong>: what is supported, links to this page and to AbstractCore's server
+  docs, and a first request (curl, Python, JavaScript) with your base URL and
+  your key (masked on the page; <strong>Copy example</strong> copies it in clear).</li>
+<li><strong>Recent requests</strong>: time, client (account and address), model, tokens in and
+  out, latency and status, newest first, refreshed every 5 s. A row opens to the
+  request and the response as recorded (see <a href="#request-log">Request log</a>) with
+  <strong>Open in Observer</strong> when the request belongs to a run. An admin sees every
+  request; anyone else sees their own.</li>
+</ul>
+<h2 id="connect">Connect<a class="headerlink" href="#connect" title="Permanent link">&para;</a></h2>
+<p>Use <code>provider/model</code> as the model name, as listed by <code>GET /v1/models</code>.</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>http://127.0.0.1:8080/v1/chat/completions<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer YOUR_GATEWAY_TOKEN"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"model": "ollama/qwen3:4b", "messages": [{"role": "user", "content": "Hello"}]}'</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">openai</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenAI</span>
+
+<span class="n">client</span> <span class="o">=</span> <span class="n">OpenAI</span><span class="p">(</span><span class="n">base_url</span><span class="o">=</span><span class="s2">"http://127.0.0.1:8080/v1"</span><span class="p">,</span> <span class="n">api_key</span><span class="o">=</span><span class="s2">"YOUR_GATEWAY_TOKEN"</span><span class="p">)</span>
+<span class="n">reply</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+    <span class="n">model</span><span class="o">=</span><span class="s2">"ollama/qwen3:4b"</span><span class="p">,</span>
+    <span class="n">messages</span><span class="o">=</span><span class="p">[{</span><span class="s2">"role"</span><span class="p">:</span> <span class="s2">"user"</span><span class="p">,</span> <span class="s2">"content"</span><span class="p">:</span> <span class="s2">"Hello"</span><span class="p">}],</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">reply</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">content</span><span class="p">)</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="k">import</span><span class="w"> </span><span class="nx">OpenAI</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s2">"openai"</span><span class="p">;</span>
+
+<span class="kd">const</span><span class="w"> </span><span class="nx">client</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="ow">new</span><span class="w"> </span><span class="nx">OpenAI</span><span class="p">({</span><span class="w"> </span><span class="nx">baseURL</span><span class="o">:</span><span class="w"> </span><span class="s2">"http://127.0.0.1:8080/v1"</span><span class="p">,</span><span class="w"> </span><span class="nx">apiKey</span><span class="o">:</span><span class="w"> </span><span class="s2">"YOUR_GATEWAY_TOKEN"</span><span class="w"> </span><span class="p">});</span>
+<span class="kd">const</span><span class="w"> </span><span class="nx">reply</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">client</span><span class="p">.</span><span class="nx">chat</span><span class="p">.</span><span class="nx">completions</span><span class="p">.</span><span class="nx">create</span><span class="p">({</span>
+<span class="w">  </span><span class="nx">model</span><span class="o">:</span><span class="w"> </span><span class="s2">"ollama/qwen3:4b"</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">messages</span><span class="o">:</span><span class="w"> </span><span class="p">[{</span><span class="w"> </span><span class="nx">role</span><span class="o">:</span><span class="w"> </span><span class="s2">"user"</span><span class="p">,</span><span class="w"> </span><span class="nx">content</span><span class="o">:</span><span class="w"> </span><span class="s2">"Hello"</span><span class="w"> </span><span class="p">}],</span>
+<span class="p">});</span>
+<span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="nx">reply</span><span class="p">.</span><span class="nx">choices</span><span class="p">[</span><span class="mf">0</span><span class="p">].</span><span class="nx">message</span><span class="p">.</span><span class="nx">content</span><span class="p">);</span>
+</code></pre></div>
+<p>The console fills in your real base URL and the gateway's default text model.</p>
+<h2 id="what-is-supported">What is supported<a class="headerlink" href="#what-is-supported" title="Permanent link">&para;</a></h2>
+<p>Checked with the official <code>openai</code> Python SDK:</p>
+<table>
+<thead>
+<tr>
+<th>Endpoint</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /v1/models</code></td>
+<td><code>{object: "list", data: [{id, object: "model", created, owned_by}]}</code></td>
+</tr>
+<tr>
+<td><code>GET /v1/models/{id}</code></td>
+<td>one model; <code>404 model_not_found</code> otherwise</td>
+</tr>
+<tr>
+<td><code>POST /v1/chat/completions</code></td>
+<td><code>id</code>, <code>object</code>, <code>created</code>, <code>model</code>, <code>choices[].message</code>, <code>finish_reason</code>, <code>usage.{prompt,completion,total}_tokens</code>; <code>tools</code> and <code>tool_choice</code> with structured <code>tool_calls</code> (<code>finish_reason: "tool_calls"</code>) and <code>role: "tool"</code> results; <code>stream: true</code> as SSE <code>data:</code> chunks (<code>chat.completion.chunk</code>, role on the first delta, <code>finish_reason</code> on the last chunk) ending with <code>data: [DONE]</code>; <code>stream_options.include_usage</code> adds a final chunk with <code>choices: []</code> and <code>usage</code>; <code>max_completion_tokens</code> (or <code>max_tokens</code>)</td>
+</tr>
+<tr>
+<td><code>POST /v1/chat/completions</code> with <code>response_format</code></td>
+<td>structured outputs: <code>{"type": "json_object"}</code> and <code>{"type": "json_schema", "json_schema": {"name", "schema", "strict"?}}</code>, also through the SDK's <code>chat.completions.parse(response_format=&lt;Pydantic model&gt;)</code>; for every provider (see below); with <code>stream: true</code> the validated JSON arrives as one content chunk</td>
+</tr>
+<tr>
+<td><code>POST /v1/embeddings</code></td>
+<td><code>encoding_format</code> <code>float</code> or <code>base64</code> (the SDK's default)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Structured outputs on every provider.</strong> AbstractCore's structured-output
+support runs the request: a provider that can constrain decoding receives the
+schema as the constraint (Ollama <code>format</code>, LM Studio, llama.cpp and other
+OpenAI-compatible servers <code>response_format</code>, MLX or Transformers with Outlines,
+OpenAI, Anthropic's forced tool); any other model gets the schema in its prompt.
+Every answer is then validated against your schema (type, properties, required,
+<code>additionalProperties</code>, items, enum, const, anyOf/oneOf/allOf, local <code>$ref</code>,
+length, pattern and number bounds); an answer that does not match is retried
+with the violation fed back, and one that still does not match answers
+<code>500 structured_output_invalid</code>. A schema that cannot be used answers
+<code>400 invalid_response_format</code> before any model runs. The answer's <code>usage</code> is not
+reported for structured requests yet.</p>
+<p>Also served when an engine for the capability is set up (AbstractCore answers;
+not part of the SDK checks): <code>POST /v1/responses</code>, <code>POST /v1/audio/speech</code>,
+<code>POST /v1/audio/transcriptions</code>, <code>POST /v1/audio/translations</code>,
+<code>POST /v1/images/generations</code>, <code>POST /v1/images/edits</code>,
+<code>POST /v1/images/variations</code>.</p>
+<p>Not yet: <code>response_format</code> together with <code>tools</code>, <code>text.format</code> on
+<code>/v1/responses</code>, <code>n</code> greater than 1, <code>logprobs</code>, <code>logit_bias</code> (each answers
+<code>400 unsupported_parameter</code> with the parameter named), and files, batches,
+assistants, fine-tuning, moderations and realtime (<code>404</code>).</p>
+<p>Refused with <code>400 unsupported_parameter</code> (the field named in <code>param</code>), in a JSON
+body, a form body or the query string: fields that would point a provider
+somewhere else or carry a credential: <code>base_url</code>, <code>api_base</code>, <code>api_key</code>,
+<code>provider</code>, <code>provider_hint</code>, <code>provider_kwargs</code>, <code>headers</code>, <code>extra_headers</code>,
+<code>default_headers</code>, <code>endpoint</code>, <code>upstream</code>, <code>upstream_base_url</code>, <code>base_url_key</code>,
+<code>organization</code>, <code>project</code>. The model is chosen by <code>model</code> alone, through this
+gateway's providers and their stored settings. To use your own key for a cloud
+provider, send it in the <code>X-AbstractCore-Provider-API-Key</code> header.</p>
+<p>Accepted and ignored: <code>user</code>, <code>store</code>, <code>metadata</code>, <code>service_tier</code>,
+<code>parallel_tool_calls</code> and the <code>OpenAI-Organization</code> / <code>OpenAI-Project</code> headers.</p>
+<h3 id="errors">Errors<a class="headerlink" href="#errors" title="Permanent link">&para;</a></h3>
+<p>Every error uses the OpenAI envelope, so SDKs raise their usual exceptions:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"error"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Incorrect API key provided: use your gateway token."</span><span class="p">,</span><span class="w"> </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"invalid_request_error"</span><span class="p">,</span><span class="w"> </span><span class="nt">"param"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w"> </span><span class="nt">"code"</span><span class="p">:</span><span class="w"> </span><span class="s2">"invalid_api_key"</span><span class="p">}}</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th>When</th>
+<th><code>code</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>400</td>
+<td>invalid request, unsupported parameter, unusable <code>response_format</code></td>
+<td><code>unsupported_parameter</code>, <code>invalid_response_format</code> or none</td>
+</tr>
+<tr>
+<td>401</td>
+<td>missing or wrong key</td>
+<td><code>invalid_api_key</code></td>
+</tr>
+<tr>
+<td>403</td>
+<td>the account's OpenAI API switch is off, or the account is deactivated or archived (<code>account_inactive</code>); the client is outside <em>Who can connect</em>; Guest asked for more than models; the account Open mode runs as is unavailable; a page without a key from an origin that is not accepted</td>
+<td><code>openai_api_off</code>, <code>account_inactive</code>, <code>client_not_allowed</code>, <code>guest_not_allowed</code>, <code>open_account_unavailable</code>, <code>origin_not_allowed</code></td>
+</tr>
+<tr>
+<td>404</td>
+<td>unknown route, an unknown provider or model, or the API is stopped</td>
+<td><code>model_not_found</code>, <code>endpoint_stopped</code></td>
+</tr>
+<tr>
+<td>429</td>
+<td>too many refused keys from one address</td>
+<td><code>auth_lockout</code></td>
+</tr>
+<tr>
+<td>500</td>
+<td>a structured answer that still does not match <code>response_format</code></td>
+<td><code>structured_output_invalid</code></td>
+</tr>
+</tbody>
+</table>
+<p>Each response carries <code>x-request-id</code>.</p>
+<h2 id="access">Access<a class="headerlink" href="#access" title="Permanent link">&para;</a></h2>
+<p><strong>Who may use it.</strong> Identities are the gateway's own accounts. A caller's key is
+their gateway token and the request runs as that account. Each account has an
+<strong>OpenAI API</strong> switch (Accounts → the row's <strong>OpenAI API</strong> button, admins): on
+by default for an active account; off, that account's key answers
+<code>403 openai_api_off</code> at <code>/v1</code> (its console sign-in is unchanged). The first time
+the endpoint is turned on, the switch is written on for every active account
+and off for inactive ones. Without a key (Open mode), requests run as the
+account the admin chose: by default the built-in <strong>Guest</strong>, which may only use
+models (<code>/v1/models</code>, chat, responses, embeddings, text-to-speech and image
+generation when an engine is routed) with no tools, no files, attachments or
+image/audio inputs, no workspace, email or run tools, never any <code>/api/gateway</code>
+route, and anonymous towards AbstractCore so only local engines answer; or a user account, whose models and providers it then uses
+and whose log shows the requests. Never an admin, and never an account whose
+switch is off. The operator's own token (not an account) is always accepted.</p>
+<p><strong>Authentication</strong></p>
+<ul>
+<li><strong>Protected (API key)</strong> (default): every request sends a gateway token as
+  <code>Authorization: Bearer &lt;token&gt;</code>. The gateway resolves it to the account; the
+  token never reaches AbstractCore. Repeated wrong keys from one address are
+  locked out like sign-in attempts.</li>
+<li><strong>Open (no key)</strong>: requests without a key are served, as Guest or the chosen
+  account (above). SDKs still require some key value; any text works, for
+  example <code>not-needed</code> (a key that is not a gateway token is served without
+  one). Open applies only to direct clients on this machine, your network or
+  your VPN: a request through a proxy, in Internet mode, or with proxies
+  elsewhere trusted needs a key. As Guest, cloud providers whose keys are stored
+  on the gateway still need a key; open clients can use local engines or send
+  their own provider key in <code>X-AbstractCore-Provider-API-Key</code>.</li>
+</ul>
+<p><strong>Who can connect</strong> filters on the client address:</p>
+<table>
+<thead>
+<tr>
+<th>Choice</th>
+<th>Admits</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>This machine only (default)</td>
+<td>loopback</td>
+</tr>
+<tr>
+<td>Devices on my network</td>
+<td>also private LAN and link-local addresses</td>
+</tr>
+<tr>
+<td>Tailnet (shown when this device is on Tailscale)</td>
+<td>also Tailscale addresses (<code>100.64.0.0/10</code>, <code>fd7a:115c:a1e0::/48</code>)</td>
+</tr>
+<tr>
+<td>Anywhere</td>
+<td>every address; needs <strong>Internet</strong> on the Network page (with its confirmation) and Protected</td>
+</tr>
+</tbody>
+</table>
+<p>The client address is the socket peer, or the first <code>X-Forwarded-For</code> hop when
+the peer is a proxy on this machine (<code>tailscale serve</code>, a local nginx) or when
+<strong>Trust proxies on other machines</strong> is on. A proxy on this machine that forwards
+without <code>X-Forwarded-For</code> counts as <em>Anywhere</em>. The gateway must also listen
+where you allow: the page says so when Network is set to this computer only.</p>
+<p><strong>Browsers.</strong> A web page that sends a key may call the API from any origin (the
+key is the credential; no cookie is used). Without a key, only the gateway's
+<a href="../configuration/#detected-addresses-are-accepted-origins">accepted origins</a>
+may call it.</p>
+<h2 id="request-log">Request log<a class="headerlink" href="#request-log" title="Permanent link">&para;</a></h2>
+<p>Each <code>/v1</code> request writes one line to the gateway's audit log
+(<code>&lt;data dir&gt;/audit_log.jsonl</code>; no other store) with an <code>openai_api</code> object:
+client, model, <code>prompt_tokens</code>, <code>completion_tokens</code>, <code>stream</code>, <code>run_id</code> when the
+request sent <code>X-AbstractCore-Run-Id</code>, <code>run_as</code> for an Open-mode account, and the
+<code>request</code> and <code>response</code> as they crossed <code>/v1</code>. A streamed answer is recorded
+assembled (content, tool calls, finish reason, usage). Credentials are removed
+before the line is written: fields named like a credential (<code>api_key</code>,
+<code>authorization</code>, <code>token</code>, <code>password</code>, <code>secret</code>, ...) and every occurrence of the
+caller's key and the internal endpoint key read <code>[redacted]</code>; inline media
+(<code>data:</code> URLs) is replaced by its type and size; a side larger than 256 KB is
+kept to that size and marked truncated. Who reads it: an admin, every request;
+anyone else, their own. The log shares the audit log's rotation and retention
+(<code>ABSTRACTGATEWAY_AUDIT_LOG_*</code>); with the audit log off, the card stays empty.</p>
+<h2 id="admin-api">Admin API<a class="headerlink" href="#admin-api" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Route</th>
+<th>Who</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/api/gateway/openai-api</code></td>
+<td>any account</td>
+<td>status <code>gateway_openai_api_v1</code>: everyone <code>role</code>, <code>writable</code>, <code>enabled</code>, <code>running</code>, <code>base_url</code>, <code>key{own_token, user_id, fingerprint, allowed}</code> (<code>fingerprint</code>: first 12 hex digits of the token's SHA-256, never the token), <code>docs</code>, <code>support</code>, <code>example_model</code> (a text model <code>/v1/models</code> lists; null when stopped); an admin also <code>access</code>, <code>reach</code>, <code>reach_options[]</code>, <code>open_account</code>, <code>open_account_options[]</code>, <code>warnings[]</code>, <code>listener</code>, <code>tailscale</code>, <code>open_requests</code>, <code>legacy_base_url</code></td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/gateway/openai-api/logs?limit=</code></td>
+<td>any account</td>
+<td><code>{rows[{request_id, ts, client, user_id, ip, method, path, model, prompt_tokens, completion_tokens, stream, duration_ms, status, run_id, observer_path, recorded}], scope}</code>: every request for an admin, the caller's own otherwise</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/gateway/openai-api/logs/{request_id}</code></td>
+<td>any account</td>
+<td><code>{row{..., request, response, user_agent}}</code>, the recorded request and response (redacted); someone else's id answers 404 for a non-admin</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/gateway/admin/core-endpoint</code></td>
+<td>admin</td>
+<td><code>{enabled?, access?: token\|open, reach?: machine\|network\|tailnet\|anywhere, open_account?: guest\|&lt;user id&gt;}</code>; <code>409</code> with the reason when refused</td>
+</tr>
+<tr>
+<td>PUT</td>
+<td><code>/api/gateway/admin/accounts/{id}/openai-api</code></td>
+<td>admin</td>
+<td><code>{enabled}</code>: the account's OpenAI API switch; answers the account row (<code>openai_api</code>)</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/gateway/admin/core-endpoint/restart</code></td>
+<td>admin</td>
+<td>ends open requests; <code>{ended_requests}</code></td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/gateway/admin/core-endpoint/check</code></td>
+<td>admin</td>
+<td><code>{checks[{id, ok, text}], ok}</code></td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/gateway/admin/core-endpoint</code></td>
+<td>admin</td>
+<td>the same status</td>
+</tr>
+</tbody>
+</table>
+<p>Settings live in <code>&lt;data dir&gt;/config/core_endpoint.json</code> (owner-only, atomic
+writes).</p>
+<h2 id="moving-from-corev1">Moving from <code>/core/v1</code><a class="headerlink" href="#moving-from-corev1" title="Permanent link">&para;</a></h2>
+<p><code>/core/v1/...</code> answers <code>308 Permanent Redirect</code> to <code>/v1/...</code> (method and body
+kept) and is deprecated: point your apps at <code>/v1</code>. The dedicated endpoint token
+of gateway 0.12.0 is still accepted as a key (deprecated: use gateway tokens);
+<code>/api/gateway/admin/core-endpoint/token/rotate</code> still makes a new one (answered
+once), and the reveal route is gone: no route returns a stored token. A 0.12.0 settings file without <em>Who can
+connect</em> reads as <strong>Devices on my network</strong>.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

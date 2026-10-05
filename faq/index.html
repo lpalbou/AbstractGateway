@@ -1317,6 +1317,95 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#what-happens-when-the-gateway-hangs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What happens when the gateway hangs?
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#openai-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenAI API
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="OpenAI API">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#can-i-use-this-gateway-from-an-openai-sdk-or-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can I use this gateway from an OpenAI SDK or app?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#who-can-call-the-openai-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who can call the OpenAI API?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#my-app-uses-corev1-does-it-still-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        My app uses /core/v1. Does it still work?
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#accounts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Accounts
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Accounts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#can-i-delete-an-account" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can I delete an account?
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1888,6 +1977,95 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#what-happens-when-the-gateway-hangs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What happens when the gateway hangs?
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#openai-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenAI API
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="OpenAI API">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#can-i-use-this-gateway-from-an-openai-sdk-or-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can I use this gateway from an OpenAI SDK or app?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#who-can-call-the-openai-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who can call the OpenAI API?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#my-app-uses-corev1-does-it-still-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        My app uses /core/v1. Does it still work?
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#accounts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Accounts
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Accounts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#can-i-delete-an-account" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can I delete an account?
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2165,6 +2343,9 @@ its thin-client discovery/catalog contract:</p>
 GET /api/gateway/audio/music/providers
 GET /api/gateway/audio/music/models
 </code></pre></div>
+<p>A sound effect is the same route with <code>task: "text_to_audio"</code>; give its length in <code>seconds</code>
+(<code>{"prompt": "laser gunshot", "task": "text_to_audio", "seconds": 3}</code>). Without <code>seconds</code> a sound
+effect is 5 seconds and music 30 seconds (Stable Audio 3).</p>
 <p>Higher apps should feature-detect music from
 <code>capabilities.contracts.flow_editor.media.generated_music</code> or
 <code>capabilities.contracts.assistant.media.generated_music</code>.</p>
@@ -2231,6 +2412,36 @@ abstractgateway<span class="w"> </span>serve<span class="w"> </span>--no-runner<
 </code></pre></div>
 <p>The runner uses a lock file (<code>gateway_runner.lock</code>) to prevent double-ticking on the same data dir. A locked-out runner keeps retrying acquisition in the background; a newly started process asks a live holder to yield (newest process wins), and the holder heartbeats the lock file so <code>GET /api/health</code> can report whether anyone is actually ticking the data dir (<code>runner.runners[].status</code>).</p>
 <p>Evidence: CLI flag <code>--no-runner</code> in <code>src/abstractgateway/cli.py</code>, lock lifecycle (<code>_run</code>/<code>_acquire_singleton_lock</code>/<code>runner_status</code>) in <code>src/abstractgateway/runner.py</code>.</p>
+<h3 id="what-happens-when-the-gateway-hangs">What happens when the gateway hangs?<a class="headerlink" href="#what-happens-when-the-gateway-hangs" title="Permanent link">&para;</a></h3>
+<p><code>abstractgateway serve</code> runs an event-loop watchdog. When the event loop has
+not run for <code>--watchdog-seconds</code> (default 30), the gateway writes the blocked
+stacks to its log and exits with code 75; the LaunchAgent, the systemd unit or
+the local supervisor then restarts it. <code>GET /api/health</code> reports the
+watchdog's state. See <a href="../deployment/">deployment.md</a> and
+<a href="../troubleshooting/#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75">troubleshooting.md</a>.</p>
+<h2 id="openai-api">OpenAI API<a class="headerlink" href="#openai-api" title="Permanent link">&para;</a></h2>
+<h3 id="can-i-use-this-gateway-from-an-openai-sdk-or-app">Can I use this gateway from an OpenAI SDK or app?<a class="headerlink" href="#can-i-use-this-gateway-from-an-openai-sdk-or-app" title="Permanent link">&para;</a></h3>
+<p>Yes. An admin turns on the API on the console's <strong>OpenAI API</strong> page. Point the
+SDK at <code>http://&lt;gateway&gt;/v1</code> and use your gateway token as the API key; the
+model name is <code>provider/model</code> as listed by <code>GET /v1/models</code>. Chat completions
+(with tools, streaming and structured outputs through <code>response_format</code>
+<code>json_object</code> or <code>json_schema</code>) and embeddings are supported. See
+<a href="../openai-api/">openai-api.md</a>.</p>
+<h3 id="who-can-call-the-openai-api">Who can call the OpenAI API?<a class="headerlink" href="#who-can-call-the-openai-api" title="Permanent link">&para;</a></h3>
+<p>Every account with its <strong>OpenAI API</strong> switch on (Accounts, on by default for an
+active account), from the addresses <em>Who can connect</em> allows (this machine,
+your network, your tailnet or anywhere). In Open mode, requests without a key
+run as the built-in <strong>Guest</strong> (models only) or an account the admin chooses,
+never an admin. An admin sees every request in the log; anyone else sees their
+own. See <a href="../openai-api/#access">openai-api.md</a>.</p>
+<h3 id="my-app-uses-corev1-does-it-still-work">My app uses <code>/core/v1</code>. Does it still work?<a class="headerlink" href="#my-app-uses-corev1-does-it-still-work" title="Permanent link">&para;</a></h3>
+<p>Yes: <code>/core/v1/...</code> answers <code>308</code> to <code>/v1/...</code> with the method and body kept,
+and is deprecated. Point the app at <code>/v1</code>.</p>
+<h2 id="accounts">Accounts<a class="headerlink" href="#accounts" title="Permanent link">&para;</a></h2>
+<h3 id="can-i-delete-an-account">Can I delete an account?<a class="headerlink" href="#can-i-delete-an-account" title="Permanent link">&para;</a></h3>
+<p>No. Accounts are archived, never deleted: <strong>Archive</strong> signs the account out
+and stops it, and keeps its runtime, runs and history; <strong>Unarchive</strong> brings it
+back inactive. See <a href="../console/#accounts">console.md</a>.</p>
 <h2 id="related-docs">Related docs<a class="headerlink" href="#related-docs" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Docs index: <a href="../">README.md</a></li>
@@ -2240,6 +2451,8 @@ abstractgateway<span class="w"> </span>serve<span class="w"> </span>--no-runner<
 <li>Automations: <a href="../automations/">automations.md</a></li>
 <li>Security: <a href="../security/">security.md</a></li>
 <li>Configuration: <a href="../configuration/">configuration.md</a></li>
+<li>OpenAI API: <a href="../openai-api/">openai-api.md</a></li>
+<li>Consoles: <a href="../console/">console.md</a></li>
 <li>Architecture: <a href="../architecture/">architecture.md</a></li>
 <li>Operator tooling (optional): <a href="../maintenance/">maintenance.md</a></li>
 </ul>

@@ -1233,6 +1233,7 @@ desktop Assistant, scripts) and <strong>AbstractRuntime</strong>:</p>
     Asst["Desktop Assistant"]
     Tray["Desktop tray helper (separate process)"]
     CLI["abstractgateway CLI"]
+    OAI["OpenAI-compatible apps and SDKs"]
   end
 
   subgraph GW["AbstractGateway process (abstractgateway serve)"]
@@ -1254,6 +1255,8 @@ desktop Assistant, scripts) and <strong>AbstractRuntime</strong>:</p>
     AppsMgr["Apps manager: Node.js, npm installs, app processes"]
     Jobs["Engine installs and model download jobs"]
     HostCtl["Host control: pause, restart, update"]
+    V1["OpenAI API /v1: gateway-token keys, Who can connect, request log"]
+    Watchdog["Event-loop watchdog: exits 75 when the loop is blocked"]
   end
 
   subgraph Lower["Framework packages"]
@@ -1262,7 +1265,8 @@ desktop Assistant, scripts) and <strong>AbstractRuntime</strong>:</p>
   end
 
   Data[("Data dir: runs, ledgers, commands, artifacts, auth, settings")]
-  WS[("Run workspace folders")]
+  WS[("Workspaces: private session folders, allowed workspaces (gateway, account, session levels)")]
+  SvcMgr["Service manager: LaunchAgent, systemd unit, local supervisor (restarts serve)"]
 
   Browser --&gt;|HTTP| Sec
   Browser --&gt;|app pages| AppSrv
@@ -1271,6 +1275,10 @@ desktop Assistant, scripts) and <strong>AbstractRuntime</strong>:</p>
   Asst --&gt;|HTTP, gateway session| Sec
   CLI --&gt;|HTTP or data dir| Sec
   Tray --&gt;|loopback HTTP, ephemeral token| Sec
+  OAI --&gt;|"HTTP /v1, gateway token as API key"| Sec
+  Sec --&gt; V1
+  V1 --&gt;|serving facade| Core
+  V1 --&gt;|request log| Data
   Sec --&gt; Routes
   Sec --&gt; Console
   Routes -.-&gt;|installs, open folder, workspace host| Same
@@ -1297,6 +1305,7 @@ desktop Assistant, scripts) and <strong>AbstractRuntime</strong>:</p>
   AppsMgr --&gt;|launches with a hand-over file| Asst
   Handover --&gt; AppSrv
   Handover --&gt; Asst
+  Watchdog -.-&gt;|"exit code 75"| SvcMgr
 </code></pre></div>
 <p>Browser apps reach the gateway through their own app server on this computer,
 which relays every call with the browser's address (<code>X-Forwarded-For</code>) and its
@@ -1372,6 +1381,24 @@ browser on this computer from one elsewhere on the network
   bind (<code>localhost</code>, <code>lan</code>, <code>internet</code>) at <code>serve</code> time, checks that the auth
   posture allows it, discovers the addresses, and serves the reverse-proxy
   settings the security middleware reads per request.</li>
+<li><strong>OpenAI API</strong> (<code>src/abstractgateway/core_endpoint.py</code>,
+  <code>routes/core_endpoint.py</code>): serves the OpenAI-compatible API at <code>/v1</code> on the
+  gateway listener. The security middleware resolves the caller's gateway
+  token to an account; this layer applies the account's <strong>OpenAI API</strong> switch,
+  Open mode (Guest or the chosen account), <em>Who can connect</em> and the request
+  log in the audit log, then hands the request to AbstractCore's serving
+  routes through AbstractRuntime's serving facade. See
+  <a href="../openai-api/">openai-api.md</a>.</li>
+<li><strong>Event-loop watchdog</strong> (<code>src/abstractgateway/loop_watchdog.py</code>): under
+  <code>serve</code>, a tick on the event loop and a checker thread; when the loop has
+  not run for <code>--watchdog-seconds</code> (default 30) the gateway writes the blocked
+  stacks to its log and exits with code 75, so the LaunchAgent, systemd unit
+  or local supervisor restarts it. <code>GET /api/health</code> reports its state. See
+  <a href="../deployment/">deployment.md</a>.</li>
+<li><strong>Session and model-file housekeeping</strong> (<code>src/abstractgateway/session_archive.py</code>,
+  <code>model_download_delete.py</code>): archive and unarchive a conversation (history
+  kept), and delete a downloaded model's files with the engine's own
+  mechanism, refused while the model is loaded, locked or downloading.</li>
 <li><strong>Engines and model downloads</strong> (<code>src/abstractgateway/engines_install.py</code>,
   <code>src/abstractgateway/model_downloads.py</code>, <code>routes/engines.py</code>): engine
   installs are gateway jobs; model downloads, deletes and the catalog come from
@@ -1574,15 +1601,19 @@ their events to a private file and the API process reads them from there:</p>
 <p>The frames, fields and end reasons are in
 <a href="../api/#4b-live-replies-token-deltas-on-the-same-stream">api.md</a>.</p>
 <h2 id="workspace-guard-every-run-start">Workspace guard (every run start)<a class="headerlink" href="#workspace-guard-every-run-start" title="Permanent link">&para;</a></h2>
-<p>Every run the gateway starts works in a folder, and its file tools are kept
-out of the gateway's data folder and the account's credential folders:</p>
+<p>Every run the gateway starts works in a folder, follows its effective
+workspaces (one-off &gt; session &gt; account &gt; gateway, clamped to the gateway's
+eligible set), and its file tools are kept out of the gateway's data folder
+and the account's credential folders:</p>
 <div class="highlight"><pre><span></span><code>flowchart TB
-  Http["Client doors: POST /runs/start, POST /runs/schedule, entity summons"] --&gt; Policy["Workspace policy check: workspace_root inside the allowed roots and not inside the data folder (except the caller's own conversation folder), else 400"]
+  Http["Client doors: POST /runs/start, POST /runs/schedule, entity summons, automation definitions"] --&gt; Policy["Workspace check: a one-off workspace outside the eligible set or above a cap, a workspace_root the run does not reach, or one inside the data folder (except the caller's own conversation folder), is refused with 400 workspace_refused"]
   Policy --&gt; Start["Workflow host start_run"]
-  Internal["Gateway-made starts: Telegram, email and agora bridges, sandbox routes, schedule children"] --&gt; Start
-  Start --&gt; Ensure["No folder named: the conversation's gateway-made folder (or a per-run folder)"]
-  Ensure --&gt; Deny["Built-in deny rules: workspace_builtin_deny_prefixes (data folder + credential folders), workspace_builtin_allow (the run's own folder); client-sent values dropped"]
-  Deny --&gt; Tools["AbstractRuntime file tools enforce the rules; nothing is written into the model's prompt"]
+  Internal["Gateway-made starts: Telegram, email and agora bridges, sandbox routes, automation occurrences"] --&gt; Start
+  Start --&gt; Ensure["No folder named: the conversation's private session folder (or a per-run folder)"]
+  Ensure --&gt; Level["Level: one-off workspace (input_data.workspace) &gt; the session's choice (session_workspaces.json) &gt; the account default &gt; the gateway policy"]
+  Level --&gt; Apply["Effective workspaces: min(gateway cap, the level's rule) per path; posture (Deny everything, allow listed workspaces / Allow everything, refuse listed workspaces), workspaces ro or rw, refused workspaces; recorded as _gateway_workspace.level"]
+  Apply --&gt; Deny["Built-in deny rules: workspace_builtin_deny_prefixes (data folder + credential folders), workspace_builtin_allow (the run's own folder); client-sent values dropped"]
+  Deny --&gt; Tools["AbstractRuntime file tools enforce the rules; the agent's context lists its working directory and the allowed workspaces with their modes, never the built-in rules"]
 </code></pre></div>
 <p>The rules are whole-folder prefixes, never a listing of a folder's contents,
 so the model's prompt stays the same from turn to turn. An admin can turn the

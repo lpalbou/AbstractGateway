@@ -646,10 +646,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#managed-openai-compatible-serving" class="md-nav__link">
+  <a href="#openai-api" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Managed OpenAI-compatible serving
+        OpenAI API
       
     </span>
   </a>
@@ -856,6 +856,78 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#workspaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workspaces
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Workspaces">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#gateway-the-eligible-set-admin" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gateway: the eligible set (admin)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#account-the-accounts-default-subset" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Account: the account's default subset
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#session-one-conversations-subset" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session: one conversation's subset
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#effective-set" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Effective set
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#run-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run start
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#artifacts-and-filesystem-handoff" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -935,6 +1007,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Automations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#archived-sessions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Archived sessions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1460,10 +1549,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#managed-openai-compatible-serving" class="md-nav__link">
+  <a href="#openai-api" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Managed OpenAI-compatible serving
+        OpenAI API
       
     </span>
   </a>
@@ -1670,6 +1759,78 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#workspaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workspaces
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Workspaces">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#gateway-the-eligible-set-admin" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gateway: the eligible set (admin)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#account-the-accounts-default-subset" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Account: the account's default subset
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#session-one-conversations-subset" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session: one conversation's subset
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#effective-set" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Effective set
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#run-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run start
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#artifacts-and-filesystem-handoff" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1749,6 +1910,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Automations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#archived-sessions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Archived sessions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -2034,7 +2212,7 @@
 
 <h1 id="abstractgateway-api-overview">AbstractGateway — API overview<a class="headerlink" href="#abstractgateway-api-overview" title="Permanent link">&para;</a></h1>
 <p>The HTTP API is implemented with FastAPI under the <code>/api</code> prefix:
-- Health: <code>GET /api/health</code>
+- Health: <code>GET /api/health</code> (unauthenticated; <code>status</code>, <code>runner</code>, <code>watchdog: {enabled, limit_s, last_tick_age_s}</code> — see <a href="../troubleshooting/#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75">troubleshooting.md</a>)
 - Gateway surface: <code>/api/gateway/*</code> (durable runs + operator tooling)</p>
 <p>The API is documented at runtime:
 - OpenAPI JSON: <code>GET /openapi.json</code>
@@ -2074,6 +2252,16 @@ serve:</p>
 <td><code>/api/gateway/admin/runtime-config</code></td>
 <td>runtime settings (admin)</td>
 <td><a href="../configuration/">configuration.md</a></td>
+</tr>
+<tr>
+<td><code>/api/gateway/workspace/policy</code>, <code>/workspace/policy/{account}</code>, <code>/sessions/{id}/workspaces</code>, <code>/workspace/effective/{account}</code> (GET and dry-run POST), <code>POST /workspace/path-check</code></td>
+<td>workspaces, three levels: the gateway policy = the eligible set (read: everyone; write: admin), one account's default subset (admin, the account itself, an entity's creator; <code>me</code> = the caller), one conversation's subset (its owner, or an admin), the effective set the gateway enforces, and the path check run before saving a row (<code>{path}</code> → <code>{path, normalized, absolute, exists, is_dir, valid, sentence}</code>; any signed-in principal)</td>
+<td><a href="#workspaces">below</a>, <a href="../security/#workspaces-three-levels">security.md</a></td>
+</tr>
+<tr>
+<td><code>/api/gateway/admin/runtimes</code>, <code>?account=&lt;id&gt;[&amp;tenant_id=&lt;t&gt;]</code></td>
+<td>the runtime inventory (admin); <code>account</code> keeps only the planes that account owns and echoes <code>filter</code></td>
+<td><a href="../console/#runtimes-of-one-account">console.md</a></td>
 </tr>
 <tr>
 <td><code>/api/gateway/network</code>, <code>/network/restart</code></td>
@@ -2132,10 +2320,13 @@ serve:</p>
 </tr>
 </tbody>
 </table>
-<h2 id="managed-openai-compatible-serving">Managed OpenAI-compatible serving<a class="headerlink" href="#managed-openai-compatible-serving" title="Permanent link">&para;</a></h2>
-<p>The optional <code>/core/v1</code> endpoint serves Core inference on this Gateway listener.
-Admins manage enablement and the separate serving token through
-<code>/api/gateway/admin/core-endpoint</code>; see <a href="../configuration/#openai-compatible-endpoint">endpoint configuration</a> for access modes and routes.</p>
+<h2 id="openai-api">OpenAI API<a class="headerlink" href="#openai-api" title="Permanent link">&para;</a></h2>
+<p>The OpenAI-compatible API is served at <code>/v1</code> on this Gateway listener
+(<code>/v1/models</code>, <code>/v1/chat/completions</code>, <code>/v1/embeddings</code>, ...); callers use their
+gateway token as the API key. <code>/core/v1</code> answers 308 to <code>/v1</code> (deprecated).
+Status and logs: <code>GET /api/gateway/openai-api[/logs]</code>; admin changes:
+<code>/api/gateway/admin/core-endpoint</code>. See <a href="../openai-api/">openai-api.md</a> for the
+supported surface, access settings and errors.</p>
 <h2 id="auth">Auth<a class="headerlink" href="#auth" title="Permanent link">&para;</a></h2>
 <p>By default, <code>/api/gateway/*</code> is protected by <code>GatewaySecurityMiddleware</code> (bearer token + origin allowlist).<br />
 See: <a href="../security/">security.md</a>.</p>
@@ -2427,10 +2618,11 @@ silently dropped. Agent-node subruns inherit the block verbatim with
 <code>read_skill</code> appended to explicit child allowlists (empty allowlists keep
 registry defaults). A caller-supplied <code>_runtime.skills_block</code> is never
 overwritten; the selection is then ignored with a labeled verdict.</p>
-<p>The gateway serves its OWN corpus for the console drawer:</p>
-<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/docs/corpus"</span>
+<p>The gateway serves the corpus every Docs assistant grounds on (the kit's <code>DocsAssistantDrawer</code> in the console and the apps):</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/docs/corpus"</span><span class="w">            </span><span class="c1"># the gateway's own llms.txt</span>
+curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/docs/corpus?app=code"</span><span class="w">   </span><span class="c1"># an app's llms.txt</span>
 </code></pre></div>
-<p>Returns <code>{app, source, chars, text}</code>. Resolution order: the
+<p>Returns <code>{app, source, chars, text}</code>. With <code>app=&lt;id&gt;</code> (<code>code</code>, <code>flow</code>, <code>observer</code>, <code>continuum</code>, <code>entity</code>) the text is the llms.txt the running app serves from its own build (<code>GET /llms.txt</code> on its loopback port, <code>text/plain</code> only; <code>source</code> <code>app:&lt;id&gt;:llms.txt</code>); an app that is not running, an unknown id, or an app that does not serve one is a 404 that says which. Without <code>app</code> (or <code>app=gateway</code>): Resolution order: the
 <code>ABSTRACTGATEWAY_DOCS_CORPUS</code> env override first (set-but-missing is an honest
 404 naming the checked candidates, never a silent fallback), then the repo
 <code>llms.txt</code> in dev checkouts, then the corpus packaged with the wheel.</p>
@@ -2540,7 +2732,13 @@ of several megabytes in <code>&lt;data dir&gt;/live</code> while it runs.</p>
 <h2 id="a-runs-workspace-folder-browse-and-preview">A run's workspace folder (browse and preview)<a class="headerlink" href="#a-runs-workspace-folder-browse-and-preview" title="Permanent link">&para;</a></h2>
 <p>A run works in a folder on the gateway computer: the conversation's own
 folder the gateway made (<code>&lt;data dir&gt;/workspaces/session-…</code>), or the folder the
-client was started from. Three routes let the person who started the run see
+client was started from. A run started without <code>workspace_root</code> gets the
+conversation's folder (a run without a session gets its own
+<code>&lt;data dir&gt;/workspaces/&lt;run&gt;</code>), and its file tools resolve relative paths
+there, never in another workspace. This private workspace is always read &amp;
+write for its run and is never listed. The agent's workspace context lists the
+run's allowed workspaces with their paths and modes
+(<a href="../security/#workspaces-three-levels">security.md</a>). Three routes let the person who started the run see
 it; another user's run id answers 404.</p>
 <p><code>GET /api/gateway/runs/{run_id}/workspace</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"run_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"…"</span><span class="p">,</span><span class="w"> </span><span class="nt">"workspace_root"</span><span class="p">:</span><span class="w"> </span><span class="s2">"/Users/me/Library/Application Support/abstractgateway/workspaces/session-chat-1-3f2a…"</span><span class="p">,</span>
@@ -2570,11 +2768,145 @@ never listed nor served. The built-in deny list (credential folders such as
 <code>~/.ssh</code>, and the gateway's data folder; see
 <a href="../configuration/#workspace-policy-filesystem-scope">Configuration</a>) is never
 listed, and reading inside it answers 404, even when the run's folder
-contains it. The workspace access policy (allowed and blocked
-folders, launch-folder trust) is applied again at every call, and nothing
+contains it. The run's effective workspaces are applied again at every call, and nothing
 else in the gateway's data folder is ever served. A run cannot be started
 with a <code>workspace_root</code> inside the gateway's data folder either, except the
 conversation folder the gateway made for the same user.</p>
+<h2 id="workspaces">Workspaces<a class="headerlink" href="#workspaces" title="Permanent link">&para;</a></h2>
+<p>Three levels, the same shape at each: a posture (<code>allowed_only</code> = "Deny
+everything, allow listed workspaces", <code>any_except_denied</code> = "Allow everything,
+refuse listed workspaces"), a <code>default_mode</code> (<code>ro</code> | <code>rw</code>, the mode of every
+unlisted directory under "Allow everything…") and rows <code>{path, mode: "ro" |
+"rw" | "deny"}</code> (Read-only, Read &amp; write, Refused). There is no shared
+workspace. Full model and enforcement:
+<a href="../security/#workspaces-three-levels">security.md</a>.</p>
+<p><strong>Refusals.</strong> Every workspace write, the dry run and every run start refuse
+with HTTP 400 and one shape:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"detail"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"reason"</span><span class="p">:</span><span class="w"> </span><span class="s2">"workspace_refused"</span><span class="p">,</span><span class="w"> </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"The gateway allows this workspace read-only: /archive."</span><span class="p">,</span><span class="w"> </span><span class="nt">"path"</span><span class="p">:</span><span class="w"> </span><span class="s2">"/archive"</span><span class="p">}}</span>
+</code></pre></div>
+<p><code>path</code> names the offending path, or is null. Clients show <code>message</code> (plus
+"Not saved." after a write). A permission refusal is a 403 whose <code>detail</code> is
+a sentence.</p>
+<h3 id="gateway-the-eligible-set-admin">Gateway: the eligible set (admin)<a class="headerlink" href="#gateway-the-eligible-set-admin" title="Permanent link">&para;</a></h3>
+<p><code>GET /api/gateway/workspace/policy</code> (any signed-in principal) → <code>{ok, policy}</code>
+with <code>policy = {posture, default_mode, folders: [{path, mode}], builtin_refused[]
+(read-only), max_attachment_bytes (read-only), summary}</code>. Each row's mode is
+the CAP: no level below may reach outside the set or raise a cap. A fresh
+gateway answers <code>any_except_denied</code>, <code>rw</code>, no rows. The built-in refusals (the
+gateway's data folder, credential folders) always apply; a non-admin gets
+<code>builtin_refused: []</code> and <code>builtin_refused_hidden: true</code> (those paths name the
+gateway's home and data folder).</p>
+<p><code>PUT /api/gateway/workspace/policy</code> (admin): any subset of <code>{posture,
+default_mode, folders}</code>. Named fields replace and the others are kept, so one
+control is one request. Every path is checked like <code>POST
+/workspace/path-check</code> (absolute, existing). Every row states its mode. These
+are refused:</p>
+<ul>
+<li>a duplicate row;</li>
+<li>a read &amp; write or read-only row inside a built-in refusal (the data folder,
+  except a conversation folder <code>&lt;data&gt;/workspaces/&lt;name&gt;</code> or
+  <code>&lt;data&gt;/users/&lt;tenant&gt;/&lt;runtime&gt;/runtime/workspaces/&lt;name&gt;</code>, and the
+  credential directories): <code>Workspaces: '&lt;path&gt;' is inside the built-in
+  refused workspace '&lt;built-in&gt;'.</code> (the account, session and run levels and
+  the dry run answer the same sentence);</li>
+<li>an unknown posture or mode;</li>
+<li><code>shared_workspace</code>: "shared_workspace no longer exists: list it as a
+  workspace (folders: [{path, mode: "rw"}]). Nothing was saved.";</li>
+<li>any other field: the earlier <code>allowed_folders</code>, <code>never_allowed</code>,
+  <code>allow_any_folder</code>, <code>launch_folder_trust</code>, <code>mode</code>,
+  <code>client_workspace_scope_overrides</code>, … are all refused by name.</li>
+</ul>
+<p>Rows may nest in any combination: <strong>the most specific row wins</strong> (the longest
+real-path prefix, refused rows included). A refused <code>/Users/me</code> with an
+allowed <code>/Users/me/projects</code> (rw) is valid, and so is a refused row inside an
+allowed one.</p>
+<p>The PUT answers like the GET. The GET also carries <code>command_sandbox</code> (round
+12), the host's command sandbox state: <code>{state:
+"sandboxed"|"partial"|"unsandboxed"|"refused", kind, line, sentence,
+unsandboxed_commands_allowed, configured, flag}</code>. <code>line</code> is shown verbatim
+(for example "Commands sandboxed: macOS sandbox-exec") and <code>sentence</code> is its
+tooltip; see <a href="../security/#command-sandbox">security.md</a>.</p>
+<h3 id="account-the-accounts-default-subset">Account: the account's default subset<a class="headerlink" href="#account-the-accounts-default-subset" title="Permanent link">&para;</a></h3>
+<p><code>GET /api/gateway/workspace/policy/{account}</code> (<code>{account}</code> = <code>name</code>,
+<code>tenant:name</code>, an entity's slug, or <code>me</code>) → <code>{ok, policy: {account,
+configured, posture, default_mode, folders}, gateway: &lt;gateway policy&gt;,
+effective: &lt;effective at the account level&gt;, can_edit}</code>. <code>configured: false</code>
+means "follow the gateway policy"; the policy block then carries the gateway's
+posture and default with no rows. 404 for an account that does not exist.</p>
+<p><code>PUT /api/gateway/workspace/policy/{account}</code>: <code>{configured: false}</code> follows
+the gateway policy again; any of <code>{posture, default_mode, folders}</code>
+configures the account (unnamed fields keep the stored value, else start from
+the gateway's posture and default with no rows). A read-only or read &amp; write
+row must lie inside the eligible set (under "Deny everything…", under a listed
+row; under "Allow everything…", outside every refused row and built-in
+refusal) at most at its cap; otherwise the PUT is refused with "<path> is
+outside the workspaces the gateway allows (<gateway summary>)." or "The
+gateway allows this workspace read-only: <path>.". A Refused row only needs an
+existing directory: a refusal never widens. Who: an admin for any account; a
+person for their own; an entity's workspaces by an admin or the entity's
+creator ("Only an admin or <entity>'s creator can change its workspaces."
+otherwise). The PUT answers like the GET. <code>/workspace/policy/self</code> answers 410
+naming <code>/workspace/policy/me</code>.</p>
+<h3 id="session-one-conversations-subset">Session: one conversation's subset<a class="headerlink" href="#session-one-conversations-subset" title="Permanent link">&para;</a></h3>
+<p><code>GET /api/gateway/sessions/{session_id}/workspaces</code> → <code>{ok, policy:
+{session_id, account, configured, posture, default_mode, folders}, gateway,
+account_default: &lt;effective at the account level&gt;, effective: &lt;effective at
+the session level&gt;}</code>. It works before the session's first run (nothing stored
+= <code>configured: false</code>, "Use my default", whose display base is the account
+default). <code>PUT</code> takes the account level's body and checks: <code>{configured:
+false}</code> resets; rows are checked against the GATEWAY's eligible set, not the
+account default (a conversation may use a workspace the account default does
+not list). The gateway stores the choice in the owner's plane
+(<code>&lt;plane data dir&gt;/session_workspaces.json</code>), so every app opening the
+conversation sees it and it survives restarts. Only the session's owner, or an
+admin with <code>?account=&lt;tenant:name&gt;</code>, reads or changes it. Audited
+(<code>workspace_policy_changed</code>, scope <code>session</code>).</p>
+<h3 id="effective-set">Effective set<a class="headerlink" href="#effective-set" title="Permanent link">&para;</a></h3>
+<p><code>GET /api/gateway/workspace/effective/{account}[?session=&lt;id&gt;]</code> → <code>{ok,
+account, session_id, level: "run" | "session" | "account" | "gateway",
+posture, default_mode, folders: [{path, mode, cap, source: "gateway" |
+"account" | "session" | "run"}], summary, gateway_summary}</code>. <code>level</code> is the
+level that applies (session &gt; account &gt; gateway); each <code>mode</code> is the lower of
+the gateway's cap and the level's rule; <code>default_mode</code> is always <code>ro</code> or <code>rw</code>
+(under "Deny everything…" it applies to nothing). <code>summary</code> and
+<code>gateway_summary</code> are the lines every surface shows verbatim:</p>
+<div class="highlight"><pre><span></span><code>Deny everything, allow listed workspaces · /Users/me/Pictures (rw) · /Users/me/Documents (ro)
+Allow everything, refuse listed workspaces (rw) · /secrets (refused) · /archive (ro)
+</code></pre></div>
+<p>The default mode appears in parentheses only under "Allow everything…".</p>
+<p><code>POST /api/gateway/workspace/effective/{account}</code> is a dry run: body
+<code>{workspace: {posture, default_mode, folders} | null, session?: &lt;id&gt;}</code> →
+the same shape (<code>level: "run"</code> for a payload; <code>null</code> = what a run would get).
+Nothing is stored; a payload a run start would refuse is refused the same way.</p>
+<h3 id="run-start">Run start<a class="headerlink" href="#run-start" title="Permanent link">&para;</a></h3>
+<p>Every door (<code>POST /runs/start</code>, schedules, <code>host.start_run</code> for bridges and
+entities, automation occurrences) resolves a one-off <code>workspace</code> &gt; the
+session's choice &gt; the account default &gt; the gateway policy, clamps it to the
+eligible set and caps, and sets the run's workspace arguments
+(<code>workspace_access_mode</code>, allowed, read-only, writable and ignored paths). The
+one-off is <code>input_data.workspace</code> (<code>POST /runs/start</code> also takes a top-level
+<code>workspace</code>, moved there). With a <code>session_id</code> it wins for that run and is
+saved onto the session when the session has no choice yet. At the HTTP doors a
+row outside the eligible set or above its cap is refused (400
+<code>workspace_refused</code>); the in-process doors drop or lower it, never widen, and
+record each such row on the run as <code>_gateway_workspace.clamped: [{path, asked,
+got, sentence}]</code> (<code>got</code> null = dropped; the sentence is the HTTP door's).
+<code>GET /runs/{run_id}/workspace</code> also answers <code>workspace_level</code>,
+<code>workspace_summary</code> and <code>workspace_clamped</code>. A
+legacy <code>workspace_allowed_paths</code> list may only narrow; a <code>workspace_root</code> (a
+launch folder, for example) must be reachable; a client <code>workspace_access_mode:
+"all_except_ignored"</code> is refused. The run records the level under its vars
+<code>_gateway_workspace.{level, summary}</code>. An automation keeps its choice in
+<code>target.input_data.workspace</code>; a definition that sends the older
+<code>workspace_allowed_paths</code> list gets it converted ("Deny everything, allow
+listed workspaces", each workspace at its gateway cap). An automation saved
+with <strong>Use my default</strong> (no payload) stores <code>workspace: {"configured": false}</code>
+and follows its owner's default: each occurrence resolves session &gt; account &gt;
+gateway when it is admitted (its run start), so a wider default applies from
+the next run, with no revision. Nothing of the default is stored in the
+definition (only a fail-closed fallback: the built-in denies and
+<code>workspace_access_mode: "workspace_only"</code>); derived keys a client echoes back
+with <code>configured: false</code> (an old snapshot) are ignored, never a narrowing. Every automation's workspaces, an explicit choice included, are guarded again at each occurrence against the policy as it is then: a workspace the admin refused or capped since is dropped or lowered for that run and recorded with its sentence (<code>_gateway_workspace.clamped</code>); the keys derived when the definition was saved are never used.</p>
 <h2 id="artifacts-and-filesystem-handoff">Artifacts and filesystem handoff<a class="headerlink" href="#artifacts-and-filesystem-handoff" title="Permanent link">&para;</a></h2>
 <p>Gateway artifacts are the cross-package representation for files, media, and
 large payloads. Thin clients should pass artifact refs across runs instead of
@@ -2760,8 +3092,8 @@ typed waits, attention and operations, is in <a href="../automations/">automatio
 <td><code>{request_id, title?, target, trigger?, context?, policy?}</code> → <code>{automation_id, revision, summary}</code></td>
 </tr>
 <tr>
-<td><code>GET /api/gateway/automations?status=&amp;cursor=&amp;limit=</code></td>
-<td><code>{items: [AutomationSummary], next_cursor}</code> (older scheduled runs on the last page, <code>legacy: true</code>)</td>
+<td><code>GET /api/gateway/automations?status=&amp;archived_only=&amp;cursor=&amp;limit=</code></td>
+<td><code>{items: [AutomationSummary], next_cursor, archived_automations}</code> (older scheduled runs on the last page, <code>legacy: true</code>). Archived automations are left out unless <code>archived_only=true</code> (only them) or <code>status</code> names <code>archived</code>; <code>archived_automations</code> counts yours</td>
 </tr>
 <tr>
 <td><code>GET /api/gateway/automations/{automation_id}</code></td>
@@ -2773,7 +3105,7 @@ typed waits, attention and operations, is in <a href="../automations/">automatio
 </tr>
 <tr>
 <td><code>POST /api/gateway/automations/{automation_id}/commands</code></td>
-<td><code>{command_id, type: automation.pause|resume|run_now|stop_current|archive|revise, payload?}</code> → the same receipt</td>
+<td><code>{command_id, type: automation.pause|resume|run_now|stop_current|archive|unarchive|revise, payload?}</code> → the same receipt. <code>unarchive</code> brings an archived automation back <strong>paused</strong> with its history (409 <code>invalid_state</code> when it is not archived); an archived automation accepts only <code>unarchive</code></td>
 </tr>
 <tr>
 <td><code>GET /api/gateway/automations/{automation_id}/occurrences?cursor=&amp;limit=</code></td>
@@ -2802,7 +3134,63 @@ with the <code>resume</code> command above; the answer's shape depends on the wa
 <code>occurrence_index</code> and <code>legacy</code>, plus <code>workspace_root</code> on turn rows (the folder
 the run works in; absent on sub-runs), accept <code>session_kind=chat,discussion</code>, and
 <code>root_only=true</code> returns conversation turns, one per occurrence
-(<a href="../automations/#automations-in-run-lists">automations.md</a>).</p>
+(<a href="../automations/#automations-in-run-lists">automations.md</a>).
+With <code>include_metrics=true</code> each row also carries <code>steps</code>, <code>llm_calls</code>,
+<code>tool_calls</code> and <code>tokens_total</code>: the totals of that run and every sub-run
+below it, read from the ledger on either store backend (null when the gateway
+has no ledger store). AbstractCode's conversation card shows the sum of its
+turns' <code>tool_calls</code>.</p>
+<h3 id="archived-sessions">Archived sessions<a class="headerlink" href="#archived-sessions" title="Permanent link">&para;</a></h3>
+<p>A conversation can be archived to take it out of the list. Archiving deletes
+nothing: the session's runs, ledgers and artifacts stay, and
+<code>GET /api/gateway/runs?session_id=&lt;id&gt;</code> still reads it (its rows then carry
+<code>archived: true</code> and <code>archived_at</code>).</p>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Answer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>POST /api/gateway/sessions/{session_id}/archive</code></td>
+<td><code>{session_id, archived: true, archived_at, archived_by, changed}</code>; a repeat answers <code>changed: false</code></td>
+</tr>
+<tr>
+<td><code>POST /api/gateway/sessions/{session_id}/unarchive</code></td>
+<td><code>{session_id, archived: false, archived_at: null, archived_by: null, changed}</code></td>
+</tr>
+<tr>
+<td><code>GET /api/gateway/runs?root_only=true</code></td>
+<td>leaves archived sessions out; every listing carries <code>archived_sessions</code> (how many sessions of the listed <code>kind</code> you have archived)</td>
+</tr>
+<tr>
+<td><code>GET /api/gateway/runs?root_only=true&amp;archived_only=true</code></td>
+<td>only the turns of archived sessions, each with <code>archived: true</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Session purpose (<code>kind</code>).</strong> A session is a <code>conversation</code> (the default) or a
+<code>docs</code> chat (a Docs assistant conversation). <code>POST /api/gateway/runs/start</code>
+takes <code>kind: "docs"</code> with a <code>session_id</code> (the kit's Docs assistant sends it);
+any other value, or <code>docs</code> without a session, is a 400. Turn listings
+(<code>GET /runs?root_only=true</code> or <code>archived_only=true</code>, without <code>session_id</code> /
+<code>parent_run_id</code>) take <code>kind=conversation</code> (the default), <code>kind=docs</code> or
+<code>kind=all</code>, so a docs chat never appears in a conversation list while staying
+in the same pool: readable by <code>session_id</code>, ledgered, archivable. Every row
+carries <code>kind</code>. The mark lives in the plane's <code>session_kinds.json</code>; a session
+without one is a conversation. A run of the shipped <code>docs-qa</code> workflow marks
+its session <code>docs</code> even without <code>kind</code>, and the first turn listing runs a
+one-time migration (<code>docs_qa_bundle_v1</code>) that marks every existing session
+whose turn root ran <code>docs-qa</code> (matched on the workflow's bundle id).</p>
+<p>The session's owner or an admin may archive it. Each account works in its own
+runtime plane, so a session that belongs to another account answers
+<code>404 {"detail": {"reason_code": "session_not_found"}}</code>. The mark and its
+history (every archive and unarchive) are kept in the plane's
+<code>session_archive.json</code>; each call writes a <code>session.archived</code> /
+<code>session.unarchived</code> audit event. Automations are archived with the
+<code>automation.archive</code> command and brought back with <code>automation.unarchive</code>.</p>
 <h2 id="beyond-the-core">Beyond the core<a class="headerlink" href="#beyond-the-core" title="Permanent link">&para;</a></h2>
 <p><code>/api/gateway/*</code> also includes optional operator/tooling endpoints (reports inbox, triage queue, backlog browsing + exec runner, process manager, file/attachment helpers, embeddings, voice, discovery, …).<br />
 See: <a href="../maintenance/">maintenance.md</a>.</p>
@@ -2811,7 +3199,11 @@ See: <a href="../maintenance/">maintenance.md</a>.</p>
 <ul>
 <li>Capabilities (best-effort): <code>GET /api/gateway/discovery/capabilities</code></li>
 <li>Providers/models discovery (best-effort): <code>GET /api/gateway/discovery/providers</code>, <code>GET /api/gateway/discovery/providers/{provider}/models</code></li>
-<li>Tools (thin-client allowlist help): <code>GET /api/gateway/discovery/tools</code></li>
+<li>Tools (thin-client allowlist help): <code>GET /api/gateway/discovery/tools</code>. Round
+  12: each process-spawning tool row (AbstractRuntime's <code>SANDBOXED_TOOL_NAMES</code>:
+  <code>execute_command</code>, <code>shell_exec</code>, <code>local_helper_start</code>, <code>execute_python</code>) carries <code>sandboxed: true|false</code> and <code>sandbox</code> (the
+  state sentence, for example "Sandboxed to this run's workspaces"), and the
+  answer carries <code>command_sandbox</code> (as on <code>GET /workspace/policy</code>)</li>
 <li>Skills inventory: <code>GET /api/gateway/skills</code> — the abstractskill shelf with
   trust verdicts (roster rows <code>{name, description, trust_level, blocked,
   requires_review, tree_hash, source, has_scripts, reasons}</code>); degradations
@@ -2899,6 +3291,32 @@ reason codes.</p>
 <li><code>GET /api/gateway/bundles/{bundle_id}/flows/{flow_id}</code></li>
 <li><code>GET /api/gateway/bundles/{bundle_id}/flows/{flow_id}/input_schema</code></li>
 </ul>
+<p>Workflow description (the console's inline edit on the Workflows page):</p>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Body → answer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>PATCH /api/gateway/bundles/{bundle_id}</code></td>
+<td><code>{description}</code> (at most 2000 characters; <code>""</code> goes back to the file's own description) → <code>{ok, bundle_id, owner, description, description_edited, updated_by, updated_at}</code></td>
+</tr>
+</tbody>
+</table>
+<p>Only the owner may: a user for their own workflows, an admin for the gateway's.
+A user on a shared workflow gets <code>403 admin_required</code>, another user's workflow
+is <code>404</code>, a shipped workflow <code>409 workflow_shipped</code>. The <code>.flow</code> file is never
+rewritten (Export keeps the original bytes); the text applies to every version
+and is kept next to the owner's archive file (<code>config/workflow_descriptions.json</code>).
+Each attempt is audited as <code>workflow.description</code> (lengths, never the text).
+<code>GET /api/gateway/bundles</code> items carry the effective <code>description</code>,
+<code>description_edited</code> and <code>actions.can_edit_description</code>; the envelope's
+<code>interfaces</code> (<code>{&lt;interface id&gt;: {label, help, known}}</code>) names every interface
+the listed workflows declare, readable by any signed-in account (the console's
+"Used by" column).</p>
 <p>The input-schema endpoint returns a versioned payload with:</p>
 <ul>
 <li><code>version</code></li>
@@ -3101,6 +3519,7 @@ and <code>turns[]</code> (<code>run_id</code>, <code>created_at</code>, <code>st
 - <code>POST /api/gateway/runs/{run_id}/videos/generate</code>
 - <code>POST /api/gateway/runs/{run_id}/videos/from_image</code>
 - <code>POST /api/gateway/runs/{run_id}/music/generate</code>
+- <code>GET /api/gateway/voice/defaults</code>
 - <code>GET /api/gateway/voice/voices</code>
 - <code>GET /api/gateway/audio/speech/models</code>
 - <code>GET /api/gateway/audio/transcriptions/models</code>
@@ -3108,10 +3527,16 @@ and <code>turns[]</code> (<code>run_id</code>, <code>created_at</code>, <code>st
 - <code>GET /api/gateway/audio/music/models</code>
 - <code>GET /api/gateway/vision/provider_models</code>
 - <code>GET /api/gateway/vision/adapters</code></p>
+<p><code>/voice/defaults</code> is the one answer to "which engines speak and listen by default":</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"tts"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"route"</span><span class="p">:</span><span class="w"> </span><span class="s2">"output.voice"</span><span class="p">,</span><span class="w"> </span><span class="nt">"configured"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">"provider"</span><span class="p">:</span><span class="w"> </span><span class="s2">"supertonic"</span><span class="p">,</span><span class="w"> </span><span class="nt">"model"</span><span class="p">:</span><span class="w"> </span><span class="s2">"supertonic-3"</span><span class="p">,</span><span class="w"> </span><span class="nt">"voice"</span><span class="p">:</span><span class="w"> </span><span class="s2">"M3"</span><span class="p">},</span>
+<span class="w"> </span><span class="nt">"stt"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"route"</span><span class="p">:</span><span class="w"> </span><span class="s2">"input.voice"</span><span class="p">,</span><span class="w"> </span><span class="nt">"configured"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">"provider"</span><span class="p">:</span><span class="w"> </span><span class="s2">"faster-whisper"</span><span class="p">,</span><span class="w"> </span><span class="nt">"model"</span><span class="p">:</span><span class="w"> </span><span class="s2">"large-v3"</span><span class="p">},</span>
+<span class="w"> </span><span class="nt">"source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"capability_defaults"</span><span class="p">}</span>
+</code></pre></div>
+<p>A route the administrator has not set reads <code>{"configured": false, "provider": null, "model": null, "note": "No gateway default is set for …"}</code>. A synthesis or transcription request that names no provider and no model runs exactly these routes, so apps show "Gateway default · supertonic / supertonic-3" from here — never from the voice catalog's engine-side fields. The catalog repeats the answer (<code>gateway_defaults</code>; <code>active_tts_provider</code> / <code>active_stt_provider</code> = the configured routes, absent when unset). <code>/audio/transcribe</code> returns the route that ran (<code>provider</code>, <code>model</code>) and <code>duration_ms</code>; a <code>language</code> hint skips the engine's language detection (faster-whisper large-v3 on an Apple-Silicon CPU: ~25 s → ~9 s for a 4 s clip).</p>
 <p><code>/voice/tts</code> returns a durable audio artifact after synthesis. <code>/voice/tts/stream</code>
 returns JSON Lines stream events for progressive playback when discovery advertises
 <code>capabilities.contracts.assistant.voice.tts.streaming=true</code>; successful streams still
-finish with a Runtime-owned child-run audio artifact.</p>
+finish with a Runtime-owned child-run audio artifact. The stream is real streaming: the engine splits the text at sentence boundaries (first segment one short clause), each segment is sent as soon as it is synthesised while the next one is synthesised, and the setup runs off the event loop. The terminal <code>done</code> event's <code>metrics</code> carry <code>ttfb_s</code>, <code>rtf</code>, <code>device</code> and, on the CPU, <code>device_reason</code>.</p>
 <p>The catalog endpoints proxy AbstractCore Server routes when
 <code>ABSTRACTCORE_SERVER_BASE_URL</code>
 is configured. Gateway uses explicit Core auth settings for that hop and never
@@ -3349,6 +3774,12 @@ are the same as AbstractCore's own <code>/acore/*</code> routes; <code>abstractc
 <td><code>host_job_v1</code> (kind <code>delete</code>)</td>
 </tr>
 <tr>
+<td><code>POST /models/delete-download</code></td>
+<td>admin</td>
+<td><code>{"provider", "artifact", "dry_run": bool}</code> (the catalog's own names)</td>
+<td><code>model_download_delete_v1</code>, see "Delete a download" below</td>
+</tr>
+<tr>
 <td><code>GET /jobs</code></td>
 <td>user</td>
 <td><code>kind</code>, <code>status</code></td>
@@ -3450,6 +3881,45 @@ each source reports: <a href="../model-downloads/">model-downloads.md</a>.</p>
 </tr>
 </tbody>
 </table>
+<p><strong>Delete a download</strong> (<code>POST /models/delete-download</code>, the console's
+Models-page Delete). Synchronous; removes one downloaded artifact with its
+engine's own mechanism: Ollama's <code>DELETE /api/delete</code> (what <code>ollama rm</code> does),
+the Hugging Face / MLX cache folder of the repo, or, for <code>org/repo:QUANT</code>
+(a llama.cpp GGUF quant), only that quant's files (the repo goes when it was
+the last model file set). <code>dry_run: true</code> deletes nothing and answers the
+exact bytes for the confirmation. Answers:</p>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th>Body</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>200</td>
+<td><code>{"schema": "model_download_delete_v1", "ok": true, "status": "planned" \| "deleted", "provider", "artifact", "freed_bytes", "paths", "command", "also_used_by", "presence": "installed" \| "absent", "message"}</code></td>
+</tr>
+<tr>
+<td>409 <code>refused</code></td>
+<td><code>reason</code>: <code>resident</code> (this gateway or the engine has it loaded: "Unload it first"), <code>locked</code> ("Unlock and unload it first"), <code>downloading</code> (its download is still running), <code>managed_elsewhere</code> (LM Studio: its CLI has no remove command, delete it in LM Studio), <code>engine_not_running</code>, <code>unknown_location</code>, <code>remote_engine</code>; <code>message</code> and <code>fix</code> are sentences to show as they are</td>
+</tr>
+<tr>
+<td>404 <code>not_found</code></td>
+<td><code>reason: "not_downloaded"</code></td>
+</tr>
+<tr>
+<td>502 <code>failed</code></td>
+<td><code>reason: "engine_failed"</code>: the engine did not delete; <code>command</code> names what ran</td>
+</tr>
+</tbody>
+</table>
+<p>A build whose files AbstractCore files under the sibling engine of the shared
+Hugging Face cache (MLX vs Hugging Face) is deleted all the same, and
+<code>also_used_by</code> names that engine. Every real delete writes
+<code>model.download_deleted</code> (<code>provider</code>, <code>artifact</code>, <code>actor</code>, <code>freed_bytes</code>,
+<code>paths</code>) to <code>&lt;data_dir&gt;/audit_log.jsonl</code>; every refusal (a dry run's too)
+writes <code>model.download_delete_refused</code> with its <code>reason</code> and <code>dry_run</code>.</p>
 <p>Example:</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-s<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$GW</span><span class="s2">/api/gateway/models/catalog?q=qwen3&amp;fits=1"</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span><span class="s1">'.rows[0].artifacts[0].fit'</span>
 curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">"</span><span class="w"> </span>-H<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span><span class="se">\</span>
@@ -3678,8 +4148,12 @@ carries a <code>caches</code> array and <code>clear_all</code> always carries <c
 <div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"abstractframework"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.5.0"</span><span class="p">,</span><span class="w"> </span><span class="nt">"abstractgateway"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.7.1"</span><span class="p">,</span>
 <span class="w"> </span><span class="nt">"packages"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"abstractcore"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2.18.0"</span><span class="p">,</span><span class="w"> </span><span class="nt">"abstractruntime"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.7.0"</span><span class="p">,</span><span class="w"> </span><span class="nt">"abstractskill"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.3.0"</span><span class="p">}}</span>
 </code></pre></div>
-<p><code>abstractframework</code> is null when the framework meta-package is not installed
-on the gateway computer. Versions only: no paths, host names or settings.</p>
+<p><code>abstractframework</code> is the AbstractFramework release the installer recorded
+for this gateway (<code>FRAMEWORK_VERSION</code> in the data directory's <code>bootstrap.env</code>)
+when there is one, else the version of the <code>abstractframework</code> package
+installed beside the gateway, else null (not installed). The installer puts
+only <code>abstractgateway[...]</code> in the gateway's environment, so its record is
+the one that names the release. Versions only: no paths, host names or settings.</p>
 <h2 id="host-control-pause-desktop-tray-restart-update">Host control (pause, desktop tray, restart, update)<a class="headerlink" href="#host-control-pause-desktop-tray-restart-update" title="Permanent link">&para;</a></h2>
 <p>The process's own controls — the surface behind the desktop tray icon and
 the console's Gateway card (see <a href="../tray/">tray.md</a>). Reads are available to
@@ -3698,14 +4172,25 @@ any authenticated principal; writes require an admin principal.</p>
 <li><code>GET /api/gateway/host/metrics/live</code> — <code>{gpu, memory, runner}</code> in one call
   (1 s caches); <code>gpu</code>/<code>memory</code> carry the same in-band <code>supported</code> shape as
   <code>/host/metrics/gpu</code> and <code>/host/metrics/memory</code>.</li>
-<li><code>GET /api/gateway/host/runs?limit=25&amp;window_hours=24</code> — recent runs across
-  every data plane on this host (admin; <code>/runs</code> answers only for the calling
+<li><code>GET /api/gateway/host/runs?limit=25&amp;window_hours=24</code> — the runs on this
+  host across every data plane (admin; <code>/runs</code> answers only for the calling
   principal's plane). <code>{ok, items: [{run_id, workflow_id, label, status,
-  created_at, updated_at, ledger_len, plane, started_epoch}], count, has_more,
-  planes, skipped_entity_planes?, warnings?}</code>. <code>label</code> decodes a catalog
-  workflow's internal id (<code>__catalog__v2__…&lt;base64&gt;</code>) to the name an operator
-  uses. Root runs only; the gateway's own bookkeeping runs (<code>__</code>-prefixed, but
-  never a catalog id) are excluded.</li>
+  activity, role, created_at, updated_at, ledger_len, plane, started_epoch,
+  updated_epoch, observer_path}], count, active_count, has_more, planes,
+  skipped_entity_planes?, warnings?}</code>. Items are TURN ROOTS (the runtime's
+  <code>is_turn_root</code>: parent-less runs that are not automation controllers, plus
+  automation occurrences), in this order: every active root first —
+  <code>activity: "running"</code> (the root or any run below it is running), then
+  <code>"waiting"</code> (waiting for a person or an event, updated inside the window) —
+  then roots that finished inside <code>window_hours</code> of their last update
+  (<code>activity: "done"</code>), newest first. Active rows are never windowed and
+  never cut by <code>limit</code> (<code>active_count</code> counts them); <code>limit</code> bounds the
+  finished rows and <code>has_more</code> says more finished ones exist. <code>label</code> decodes
+  a catalog workflow's internal id (<code>__catalog__v2__…&lt;base64&gt;</code>) to the name an
+  operator uses; <code>observer_path</code> is the run's Observer page
+  (<code>/apps/observer/#run/&lt;id&gt;</code>, open it signed in through <code>POST
+  /api/gateway/apps/observer/open {path: "/#run/&lt;id&gt;"}</code>). The gateway's own
+  bookkeeping runs (<code>__</code>-prefixed, but never a catalog id) are excluded.</li>
 <li><code>GET /api/gateway/host/tray</code> — <code>{dependencies_installed, install_hint,
   decision: {start, reason, hint}, supervisor: {running, ready, pid,
   exit_code, failure, log_path}, can_control}</code>. There is no setting: the icon
@@ -4052,7 +4537,7 @@ automations can read and send mail as them.</p>
 </tr>
 <tr>
 <td><code>GET /admin/email/capabilities</code></td>
-<td><code>capabilities[{id, label, description, per_user, advanced, default, built_in_default}]</code>: <code>email</code> "Mailboxes for users" (on), under Advanced <code>email_agent_tools</code> "Agent email tools for users" (on) and <code>email_recovery</code> "Sign-in by email" (on)</td>
+<td><code>capabilities[{id, label, description, per_user, advanced, default, built_in_default}]</code>: <code>email</code> "Mailboxes for users" (on), <code>email_agent_tools</code> "Agent email tools for users" (on) and <code>email_recovery</code> "Sign-in by email" (on)</td>
 </tr>
 <tr>
 <td><code>PUT /admin/email/capabilities</code></td>

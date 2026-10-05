@@ -1505,12 +1505,11 @@ makes the page honest ("a code is on its way" or "ask your admin"). Requests are
 account (3 per 15 minutes) and per client address (10 per 15 minutes) before any lookup or
 background send, codes are stored only as keyed hashes, and every request, issue and use is
 recorded in the audit log without the code. An administrator who prefers no such answer turns
-<strong>Sign-in by email</strong> off under Advanced; users without an email address use the administrator's
+<strong>Sign-in by email</strong> off (Accounts → <em>Email for everyone</em>); users without an email address use the administrator's
 token rotation.</p>
 <h2 id="administrators">Administrators<a class="headerlink" href="#administrators" title="Permanent link">&para;</a></h2>
 <p>Administrators decide what is <strong>available</strong> to users. The <strong>Email for everyone</strong> section under the
-Accounts table has one switch, <strong>Mailboxes for users</strong>; two more sit under its Advanced disclosure
-(<code>GET/PUT /api/gateway/admin/email/capabilities</code>, which returns each one's label and description):</p>
+Accounts table holds three switches, directly in the card (<code>GET/PUT /api/gateway/admin/email/capabilities</code>, which returns each one's label and description):</p>
 <table>
 <thead>
 <tr>
@@ -1529,13 +1528,13 @@ Accounts table has one switch, <strong>Mailboxes for users</strong>; two more si
 </tr>
 <tr>
 <td><code>email_agent_tools</code></td>
-<td>Agent email tools for users (Advanced)</td>
+<td>Agent email tools for users</td>
 <td>on</td>
 <td>users may let their agents use their mailbox; each user still switches it on for themselves</td>
 </tr>
 <tr>
 <td><code>email_recovery</code></td>
-<td>Sign-in by email (Advanced)</td>
+<td>Sign-in by email</td>
 <td>on (gateway-wide only)</td>
 <td>"Forgot your token? Email me a sign-in code" on the sign-in page</td>
 </tr>

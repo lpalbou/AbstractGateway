@@ -471,6 +471,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#detected-addresses-are-accepted-origins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Detected addresses are accepted origins
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#reached-through-tailscale-https" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1445,6 +1456,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#detected-addresses-are-accepted-origins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Detected addresses are accepted origins
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#reached-through-tailscale-https" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1850,7 +1872,7 @@ sentence-transformer embeddings on the Gateway host.</p>
 - <code>AbstractRuntime&gt;=0.8.5</code> (per-user email: run binding, event inbox, <code>email.received@1</code>, the email facade; the automatic-mail loop guard, in-process media children, and pause stopping an automation's retries)
 - <code>abstractcore&gt;=2.24.0</code> (mail, media capabilities, and request-scoped authentication for the managed OpenAI-compatible endpoint)
 - <code>abstractvoice&gt;=0.13.0</code> (the voice listings import <code>abstractvoice.engine_runtime</code>)
-- <code>abstractagent&gt;=0.3.17</code>
+- <code>abstractagent&gt;=0.3.18</code> (Python execution inside the run's command sandbox, round 12)
 - <code>AbstractMemory[lancedb]&gt;=0.3.0</code></p>
 <p>Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
 the newer memory-agent API directly.</p>
@@ -1982,7 +2004,11 @@ users remain on <code>1 user = 1 runtime</code> routing.</p>
 <p>Browser apps should exchange a Gateway user token for an opaque Gateway browser
 session through <code>/api/gateway/session/login</code>; the raw bearer token should not be
 kept in browser storage, and the login response body does not expose the session
-id or CSRF token. Session-authenticated writes carry
+id or CSRF token. One exception: the web
+console keeps the token a person typed at sign-in in session storage (local
+storage with <em>Remember this browser</em>) so the OpenAI API page can show that
+person their own API key without any server route returning a stored token; it
+is removed at sign-out. Session-authenticated writes carry
 <code>X-AbstractGateway-Session</code> plus <code>X-AbstractGateway-CSRF</code>, and
 <code>/api/gateway/session/logout</code> revokes the session. Apps such as AbstractFlow,
 AbstractCode, AbstractAssistant, and AbstractObserver should authenticate as the
@@ -2029,7 +2055,10 @@ runtime-config key (<code>network</code>); there is no environment variable for 
   port a restart binds (the saved one, else the running one).</li>
 <li><strong><code>serve --host/--port</code> win</strong> over a saved value that differs and are then
   reported as <code>effective.overridden_by_cli: true</code> (a flag that shadows nothing
-  saved overrides nothing). A restart replays the same command
+  saved overrides nothing). <code>effective.pinned_by_cli: true</code> says that <code>--host</code>
+  decides the listening address even with nothing saved (the default mode
+  differs from where it listens); the console's Network page then names the
+  flag above the choices. A restart replays the same command
   line, so it cannot apply the setting: the status says so
   (<code>restart.applies: false</code> + <code>restart.reason</code>) and the restart route refuses.</li>
 <li><strong>The login service lets the setting apply.</strong> The LaunchAgent,
@@ -2098,12 +2127,12 @@ change from the console, the TUI or the CLI (another process) is live at once.</
 <tbody>
 <tr>
 <td><code>allowed_origins</code></td>
-<td>Browser origins whose pages may call the gateway, <strong>added</strong> to the always-allowed <code>http://localhost:*</code>, <code>http://127.0.0.1:*</code> (and, in a network mode, the gateway's own LAN origins). An https page calling its own address through a TLS proxy on the gateway machine that keeps the browser's <code>Host</code> (for example <code>tailscale serve</code>) needs no entry: see <a href="#reached-through-tailscale-https">Reached through Tailscale</a>.</td>
+<td>Browser origins whose pages may call the gateway, <strong>added</strong> to the always-allowed <code>http://localhost:*</code>, <code>http://127.0.0.1:*</code> and to the <a href="#detected-addresses-are-accepted-origins">detected addresses</a>. Use it for a proxy or tunnel with its own name. An https page calling its own address through a TLS proxy on the gateway machine that keeps the browser's <code>Host</code> (for example <code>tailscale serve</code>) needs no entry: see <a href="#reached-through-tailscale-https">Reached through Tailscale</a>.</td>
 <td>none</td>
 </tr>
 <tr>
 <td><code>trust_proxy</code></td>
-<td>Take the client address from <code>X-Forwarded-For</code> (sign-in lockouts, audit log). Only when your own proxy sits in front of every request: otherwise any client chooses the address the gateway sees.</td>
+<td>Take the client address from <code>X-Forwarded-For</code> sent by a proxy on <strong>another machine</strong> (sign-in lockouts, audit log, the OpenAI API's <em>Who can connect</em>). A proxy on the gateway machine (loopback peer) is always believed. Only when your own proxy sits in front of every request: otherwise any client chooses the address the gateway sees.</td>
 <td>off</td>
 </tr>
 </tbody>
@@ -2171,7 +2200,7 @@ last two):</p>
 <tbody>
 <tr>
 <td>Where</td>
-<td>Network → <em>Advanced: reverse proxy</em></td>
+<td>Network → <em>Advanced</em></td>
 <td>Connection screen, below the addresses</td>
 <td><code>abstractgateway network …</code></td>
 </tr>
@@ -2183,7 +2212,7 @@ last two):</p>
 </tr>
 <tr>
 <td>Trust proxy</td>
-<td><em>Trust the proxy's client address</em> switch</td>
+<td><em>Trust proxies on other machines</em> switch</td>
 <td>checkbox (Space)</td>
 <td><code>set --trust-proxy on\|off</code></td>
 </tr>
@@ -2209,8 +2238,12 @@ reverse-proxy-only change (<code>mode</code> is optional).</p>
 <p><code>GET /api/gateway/network</code> lists every address a client can use, discovered on
 each call: loopback; each up interface's IPv4/IPv6 (loopback, link-local and
 down interfaces skipped; macOS names from <code>networksetup</code>, e.g. "Wi-Fi"; VPN
-<code>utun</code>/CGNAT addresses labelled "VPN"); the Bonjour name <code>&lt;LocalHostName&gt;.local</code>
-when it resolves. Discovery uses <code>psutil</code> when importable, else <code>ifconfig -a</code>
+<code>utun</code>/CGNAT addresses labelled "VPN", or "Tailscale" for this device's
+tailnet IPs); the Bonjour name <code>&lt;LocalHostName&gt;.local</code> when it resolves; the
+Tailscale name (<code>kind: tailscale</code>, <code>https_url</code> for <code>tailscale serve</code>) when the
+<code>tailscale</code> CLI is installed and Tailscale is running (<code>tailscale status
+--json</code>, cached 60 s; nothing is listed and nothing fails without it). The
+payload's <code>tailscale</code> field is <code>{dns_name, ips[]}</code> or <code>null</code>. Discovery uses <code>psutil</code> when importable, else <code>ifconfig -a</code>
 (macOS/BSD) or <code>ip -o addr show up</code> (Linux), else the hostname's own
 resolution. Each row says whether the gateway listens there now
 (<code>reachable</code>). The WAN address (<code>kind: public</code>) is looked up only on request
@@ -2258,6 +2291,16 @@ addresses above (false behind a proxy or tunnel).</p>
 <span class="w">  </span><span class="nt">"warnings"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"Traffic is plain HTTP: …"</span><span class="p">]</span>
 <span class="p">}</span>
 </code></pre></div>
+<h3 id="detected-addresses-are-accepted-origins">Detected addresses are accepted origins<a class="headerlink" href="#detected-addresses-are-accepted-origins" title="Permanent link">&para;</a></h3>
+<p>A browser page served by this gateway at one of the addresses it detects is
+accepted without a manual origin: <code>http://&lt;address&gt;:&lt;listening port&gt;</code> for every
+interface address, the Bonjour name and the Tailscale name and IPs, plus
+<code>https://&lt;tailscale name&gt;</code> (<code>tailscale serve</code>). The list is refreshed in the
+background every 60 s, so an address that appears later (a new Wi-Fi network,
+Tailscale coming up) is accepted without a restart. A DNS-rebinding page keeps
+its own name in its Origin and is still refused. Use <code>allowed_origins</code> only
+for a proxy or tunnel with a name of its own. The console shows this under
+<strong>Network → Reached through another address?</strong>.</p>
 <h3 id="reached-through-tailscale-https">Reached through Tailscale (https)<a class="headerlink" href="#reached-through-tailscale-https" title="Permanent link">&para;</a></h3>
 <p>Reached through Tailscale? On the gateway machine run
 <code>tailscale serve --bg http://127.0.0.1:&lt;port&gt;</code> and open
@@ -2289,80 +2332,9 @@ gateway's bind and auth posture are read from <code>&lt;data&gt;/run/gateway-net
 <code>restart</code> asks the running gateway. See <a href="../security/#network-exposure">security.md</a>
 for what each mode changes for someone on your network.</p>
 <h2 id="openai-compatible-endpoint">OpenAI-compatible endpoint<a class="headerlink" href="#openai-compatible-endpoint" title="Permanent link">&para;</a></h2>
-<p>In the web console, open <strong>Network → OpenAI-compatible endpoint</strong> as an admin.
-Turn on <strong>Enable endpoint</strong>, then copy a <strong>Base URL</strong> into your OpenAI-compatible
-client. The endpoint is disabled by default. It shares the Gateway listener,
-port and Network exposure; there is no separate Core process or port to open.
-The default URL is <code>http://127.0.0.1:8080/core/v1</code>. Other reachable addresses
-appear in the same card. A Network bind/port change still requires its normal
-restart; endpoint enablement and token changes apply to subsequent requests
-immediately. Requests already running may finish.</p>
-<p>Choose <strong>Requires token</strong> to protect every serving request. Enabling the
-endpoint generates a token if none exists. Admins can <strong>Show</strong>, <strong>Copy token</strong>,
-or <strong>Regenerate token</strong>. Regeneration immediately invalidates the old token for
-new requests; update connected apps. The serving token is separate from
-Gateway sign-in, cloud provider API keys, and any outbound remote-Core token.
-It is stored in <code>&lt;data dir&gt;/config/core_endpoint.json</code> with owner-only permissions
-and atomic replacement. Status responses never include the token; explicit
-admin reveal/rotation responses use <code>Cache-Control: no-store</code>.</p>
-<p><strong>Open on local network</strong> permits direct loopback, private LAN and private VPN
-clients without a token. It follows the same listener: choose <strong>Local network</strong>
-above if other devices should connect. Public peers, Internet mode and
-reverse-proxy connections require the token even when Open is selected. An
-Internet-to-LAN change keeps token protection until the running Internet bind
-is restarted. Configure proxies to supply forwarded headers, and enable
-Network's proxy trust only for your own proxy. Keep public deployments behind
-TLS and proxy request limits, as with the standalone Core server.</p>
-<p>Open clients may use local providers or supply their own provider key in
-<code>X-AbstractCore-Provider-API-Key</code>. Using server-held cloud provider credentials
-requires the endpoint token. A supplied invalid bearer token is rejected,
-even in Open mode. Gateway sessions and Gateway user tokens do not authorize
-Core serving. Browser requests also follow Network's allowed-origin policy.</p>
-<p>Use <code>provider/model</code> as the model name. For example:</p>
-<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>http://127.0.0.1:8080/core/v1/chat/completions<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$ABSTRACTCORE_ENDPOINT_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-H<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"model":"ollama/your-installed-model","messages":[{"role":"user","content":"Hello"}],"stream":true}'</span>
-</code></pre></div>
-<p>The mount exposes <code>GET /v1/models</code> and <code>POST /v1/chat/completions</code>, <code>/v1/responses</code>,
-<code>/v1/embeddings</code>, <code>/v1/audio/speech</code>, <code>/v1/audio/transcriptions</code>,
-<code>/v1/audio/translations</code>, <code>/v1/images/generations</code>, <code>/v1/images/edits</code>, and
-<code>/v1/images/variations</code>, all below <code>/core</code>. Capability availability and supported
-operations follow Core and its installed plugins (unsupported operations retain
-Core's errors). Core configuration and model-management routes are not exposed.
-Streaming passes through Runtime's server facade directly to Core's ASGI server.</p>
-<p>Admin API (Gateway authentication):</p>
-<table>
-<thead>
-<tr>
-<th>Method</th>
-<th>Route</th>
-<th>Result</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>GET</td>
-<td><code>/api/gateway/admin/core-endpoint</code></td>
-<td>Enabled state, access mode, token presence and base URL</td>
-</tr>
-<tr>
-<td>POST</td>
-<td><code>/api/gateway/admin/core-endpoint</code></td>
-<td>Save optional <code>enabled</code> boolean and <code>access</code> (<code>token</code> or <code>open</code>)</td>
-</tr>
-<tr>
-<td>POST</td>
-<td><code>/api/gateway/admin/core-endpoint/token/reveal</code></td>
-<td>Return the existing serving token</td>
-</tr>
-<tr>
-<td>POST</td>
-<td><code>/api/gateway/admin/core-endpoint/token/rotate</code></td>
-<td>Generate/replace and return the serving token</td>
-</tr>
-</tbody>
-</table>
+<p>The OpenAI-compatible API is served at <code>http://&lt;gateway&gt;/v1</code> and managed on the
+console's <strong>OpenAI API</strong> page. See <a href="../openai-api/">openai-api.md</a> for what it
+supports, the access settings, the request log and its admin API.</p>
 <h2 id="two-entry-points-one-store">Two entry points, one store<a class="headerlink" href="#two-entry-points-one-store" title="Permanent link">&para;</a></h2>
 <p>AbstractCore (low level) and AbstractGateway (high level) are the two entry
 points to the framework, and they share configuration. Where AbstractCore holds
@@ -2652,7 +2624,7 @@ loads, bundles register, and the failure surfaces when a run actually needs that
 model — naming the capability route that configured the pair, how to change it,
 and how to download it.</p>
 <h3 id="models-and-engines">Models and engines<a class="headerlink" href="#models-and-engines" title="Permanent link">&para;</a></h3>
-<p>The <strong>Models</strong> and <strong>Engines</strong> tabs of the web console, the terminal console
+<p>The <strong>Models</strong> and <strong>Providers</strong> pages (local engines) of the web console, the terminal console
 and the <code>abstractgateway models …</code> / <code>abstractgateway engines …</code> commands show
 the same things AbstractCore shows (<code>abstractcore models …</code>, <code>abstractcore
 engines …</code>): the host's hardware, the local inference engines, a model catalog
@@ -2826,13 +2798,13 @@ or the next download (the two URLs).</p>
 <tbody>
 <tr>
 <td>Where</td>
-<td>Apps → <em>Advanced: apps settings</em> (one field per setting, with its source pill)</td>
+<td>Apps → the toolbar gear → <em>Apps settings</em> (one field per setting)</td>
 <td>Runtimes → <em>Runtime knobs</em> → <em>Edit apps settings</em></td>
 <td><code>abstractgateway apps config get [NAME] [--json]</code></td>
 </tr>
 <tr>
 <td>Change</td>
-<td>type, <em>Save apps settings</em> (only changed fields are sent; empty = clear)</td>
+<td>type; the field applies on blur or Enter ("Saved" beside it; empty = clear)</td>
 <td>one line per setting (stored value prefilled; empty = clear)</td>
 <td><code>abstractgateway apps config set NAME VALUE</code> (<code>""</code> clears)</td>
 </tr>
@@ -3044,11 +3016,16 @@ triage and process routes, the exec runner at each poll, the skills shelf):</p>
 <li>the launch flag of the running gateway: <code>abstractgateway serve --backlog-root PATH</code>
    and <code>--exec-runner on|off</code> (for that run only; source <code>flag</code>);</li>
 <li>the saved setting (source <code>stored</code>);</li>
-<li>an environment value (<code>ABSTRACTGATEWAY_TRIAGE_REPO_ROOT</code>,
-   <code>ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER</code>; source <code>env</code>;
-   supported for compatibility, never needed; a saved value wins);</li>
 <li>the default (source <code>default</code>).</li>
 </ol>
+<p>Neither reads an environment variable. A value an older launcher still
+exports (<code>ABSTRACTGATEWAY_TRIAGE_REPO_ROOT</code> / <code>ABSTRACT_TRIAGE_REPO_ROOT</code> for
+the folder, <code>ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER</code> /
+<code>ABSTRACT_BACKLOG_EXEC_RUNNER</code> for the runner) is stored once as the saved
+setting, at the next start (a folder that does not exist is not stored and the
+gateway's own folder applies); from then on the variable is ignored, and
+changing or clearing the setting never brings it back. For a value that holds
+for one run only, use the launch flags above.</p>
 <p><code>GET /api/gateway/admin/runtime-config</code> serves each as <code>{value, source, key,
 label, help, cli, flag?}</code>; the backlog folder also carries <code>available</code>,
 <code>reason</code> (why it is not usable, without the path), <code>default_path</code> and, under a
@@ -3071,13 +3048,13 @@ switch is <code>on</code> or <code>off</code>; a refusal is one plain sentence):
 <tbody>
 <tr>
 <td>Where</td>
-<td>Apps → <em>Advanced: backlog settings (Continuum)</em></td>
+<td>Apps → the gear on the Continuum card → <em>Continuum settings</em></td>
 <td><code>abstractgateway config get [KEY] [--json]</code></td>
 <td>Settings → <em>Gateway administration</em></td>
 </tr>
 <tr>
 <td>Change</td>
-<td>edit, <em>Save backlog settings</em>; <em>Use the gateway's own folder</em></td>
+<td>the folder applies on blur or Enter, the two switches at once ("Saved" beside the row); <em>Use the gateway's own folder</em></td>
 <td><code>abstractgateway config set KEY VALUE</code>, <code>abstractgateway config unset KEY</code></td>
 <td><em>Change…</em>, <em>Use the gateway's own folder</em>, <em>Enable</em> / <em>Disable</em></td>
 </tr>
@@ -3358,7 +3335,9 @@ and image-to-video are configured separately in the Multimodal Capabilities tab
 through <code>output.image.image_to_image</code>, <code>output.image.image_upscale</code>, and
 <code>output.video.image_to_video</code>. The Sandbox renders generated images, videos,
 voice, sound, and music artifacts inline when the route completes, while keeping artifact
-links available for opening the raw content. Text chat can include uploaded
+links available for opening the raw content. In SFX and Music mode a <strong>Length (seconds)</strong> field
+sits with the composer: 5 seconds for SFX and 30 for Music by default, and each mode keeps the
+value you type; the request carries it as <code>seconds</code>. Text chat can include uploaded
 attachments such as images, audio, video, PDFs, Markdown, or text documents.
 Uploaded attachments are stored as Gateway artifacts and then materialized by
 Runtime into provider-ready media for AbstractCore, so vision-capable
@@ -3370,14 +3349,41 @@ server-derived context as provenance and never uses browser metadata for auth,
 runtime routing, or credential selection. Country grounding is inferred from the
 browser timezone when possible, with locale only as a fallback.</p>
 <h3 id="workspace-policy-filesystem-scope">Workspace policy (filesystem scope)<a class="headerlink" href="#workspace-policy-filesystem-scope" title="Permanent link">&para;</a></h3>
-<p>The gateway enforces a server-side workspace policy so thin clients cannot expand filesystem access by sending arbitrary paths.</p>
-<p>Operator-controlled roots:
-- <code>ABSTRACTGATEWAY_WORKSPACE_DIR</code>: base directory used for <code>/api/gateway/files/*</code> helpers and to clamp run-provided <code>workspace_root</code> / <code>workspace_allowed_paths</code>.
-- <code>ABSTRACTGATEWAY_WORKSPACE_MOUNTS</code>: additional allowed roots, newline-separated <code>name=/abs/path</code>.</p>
-<p>Client scope overrides (permissive; trusted machines only):
-- <code>ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE=1</code> (or <code>ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE=1</code>) enables honoring client-provided <code>workspace_*</code> knobs, including <code>workspace_access_mode=all_except_ignored</code>.</p>
-<p>Discoverability:
-- <code>GET /api/gateway/workspace/policy</code> returns <code>{policy: {...}}</code> including whether client overrides are enabled (mount names only; no absolute paths).</p>
+<p>The gateway decides which workspaces each run may use; thin clients cannot
+widen it by sending paths. It is a setting, not an environment variable, at
+three levels with one shape (a posture, a default mode, rows Read-only / Read &amp;
+write / Refused):</p>
+<ul>
+<li>the gateway (admin, <code>PUT /api/gateway/workspace/policy</code>) defines the
+  eligible set: "Deny everything, allow listed workspaces" or "Allow
+  everything, refuse listed workspaces" (with a default mode), each row's mode
+  being a cap. A fresh gateway allows everything, read &amp; write;</li>
+<li>an account picks its default subset within it
+  (<code>PUT /api/gateway/workspace/policy/{account}</code>, <code>me</code> = the caller;
+  <code>{configured: false}</code> follows the gateway policy);</li>
+<li>a conversation (<code>PUT /api/gateway/sessions/{id}/workspaces</code>) or a single run
+  (a <code>workspace</code> object in the start body) picks its own subset.</li>
+</ul>
+<p><code>GET /api/gateway/workspace/effective/{account}[?session=]</code> returns what
+applies, with its one-line summary. The full model, its enforcement and the
+one-time migrations are in <a href="../security/#workspaces-three-levels">security.md</a>;
+the routes in <a href="../api/#workspaces">api.md</a>.</p>
+<p>There is no shared workspace. A gateway that had one (round 9) lists it as a
+read &amp; write workspace after the migration, and a run that names no
+<code>workspace_root</code> works in its conversation's private workspace
+(<code>&lt;data dir&gt;/workspaces/session-…</code>), where a relative path lands. The run's
+allowed workspaces are listed to the agent with their paths and modes. The
+legacy <code>ABSTRACTGATEWAY_WORKSPACE_ROOT</code> / <code>ABSTRACTGATEWAY_WORKSPACE_DIR</code> are
+read once, by a store that has no workspace policy yet: the folder becomes one
+listed read &amp; write workspace, and the variables are ignored afterwards.
+<code>ABSTRACTGATEWAY_WORKSPACE_MOUNTS</code> is read once, by the migration.
+These are gone:</p>
+<ul>
+<li>the old runtime-config workspace keys;</li>
+<li>launch-folder trust;</li>
+<li>the <code>ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE</code> /
+  <code>ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE</code> variables.</li>
+</ul>
 <p>Built-in deny list. These folders of the gateway's user account are never
 listed nor served by the workspace browser (<code>GET /runs/{run_id}/workspace/…</code>),
 for anyone:</p>
@@ -3412,7 +3418,7 @@ inherit it from their schedule), works in a folder (its conversation's
 gateway-made folder when it named none) and gets the built-in deny rule above.
 Entity visits (the entity chat and its own-time loop) use the entity's own
 tools, which never leave <code>&lt;entity home&gt;/workspace</code> and the operator's mounts.</p>
-<p>Evidence: <code>src/abstractgateway/routes/gateway.py</code> (<code>_workspace_root</code>, <code>_workspace_mounts</code>, <code>_sanitize_run_workspace_policy</code>, <code>_apply_builtin_tool_deny</code>, <code>_browse_workspace_root</code>, <code>start_run</code>), <code>src/abstractgateway/workspace_browse.py</code>.</p>
+<p>Evidence: <code>src/abstractgateway/workspace_policy.py</code>, <code>src/abstractgateway/routes/gateway.py</code> (<code>_sanitize_run_workspace_policy</code>, <code>_files_scope</code>, <code>_browse_workspace_root</code>), <code>src/abstractgateway/run_workspace_guard.py</code>, <code>src/abstractgateway/workspace_browse.py</code>.</p>
 <h3 id="durability-backend">Durability backend<a class="headerlink" href="#durability-backend" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>ABSTRACTGATEWAY_STORE_BACKEND</code>: <code>file</code> (default) or <code>sqlite</code><br />
@@ -3613,7 +3619,7 @@ does not implicitly install them.</p>
 <li><code>POST /api/gateway/runs/{run_id}/images/upscale</code>: creates a durable Runtime child run for image upscaling from a run-visible <code>image_artifact</code>. Optional <code>resolution</code> accepts a shortest-edge integer or a scale factor such as <code>2x</code>; <code>scale</code>, <code>softness</code>, <code>seed</code>, <code>quantize</code>, and <code>vae_tiling</code> values are passed through only when the client supplies them.</li>
 <li><code>POST /api/gateway/runs/{run_id}/videos/generate</code>: creates a durable Runtime child run for text-to-video and returns an artifact-backed video result. Optional batch <code>count</code> / <code>n</code>, <code>seeds</code>, ordered <code>lora_adapters</code>, and <code>flow_shift</code> values are passed through only when the client supplies them. Batch responses also return <code>video_artifacts</code>.</li>
 <li><code>POST /api/gateway/runs/{run_id}/videos/from_image</code>: creates a durable Runtime child run for image-to-video and returns an artifact-backed video result. Optional batch <code>count</code> / <code>n</code>, <code>seeds</code>, ordered <code>lora_adapters</code>, and <code>flow_shift</code> values are passed through only when the client supplies them. Batch responses also return <code>video_artifacts</code>.</li>
-<li><code>POST /api/gateway/runs/{run_id}/music/generate</code>: creates a durable Runtime child run and returns an artifact-backed music result for thin clients.</li>
+<li><code>POST /api/gateway/runs/{run_id}/music/generate</code>: creates a durable Runtime child run and returns an artifact-backed music result for thin clients. <code>task: "text_to_audio"</code> makes a sound effect. <code>seconds</code> is the clip length (<code>duration_s</code> is accepted as the same value; two different values answer 400, a value that is not a number between 0 and 3600 answers 422); without it a sound effect is 5 seconds and music keeps the backend default (30 seconds for Stable Audio 3), and the model's own maximum applies (120 seconds for the Stable Audio 3 small checkpoints). <code>music_model</code> selects the checkpoint that runs.</li>
 </ul>
 <p>Direct image, image-edit, image-upscale, text-to-video, and image-to-video child runs advertise
 <code>event_name=abstract.progress</code>. Thin clients should stream the returned
@@ -3631,9 +3637,17 @@ then the final artifact.</p>
 <h2 id="cli-flags">CLI flags<a class="headerlink" href="#cli-flags" title="Permanent link">&para;</a></h2>
 <p><code>abstractgateway --help</code> shows all subcommands (serve/runner/migrate/triage/…).</p>
 <p>Most-used:
-- <code>abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray]</code>
+- <code>abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands]</code>
   (<code>--no-tray</code>: no menu bar / tray icon for this run, for a test or scratch
-  gateway next to your usual one)
+  gateway next to your usual one; <code>--watchdog-seconds N</code>, default 30, <code>0</code> = off:
+  a gateway whose event loop stays blocked for N seconds writes the blocked
+  stacks to its log and exits with code 75 so its service manager restarts it,
+  see <a href="../deployment/">deployment.md</a>; <code>--unsandboxed-commands</code>, off by
+  default and with no environment variable: on a host with no command sandbox
+  (no macOS <code>sandbox-exec</code>, no Linux bubblewrap/Landlock), let commands run
+  unsandboxed instead of refusing them. It is audited at boot and shown on the
+  console. The split <code>abstractgateway runner</code> takes the same flag. See
+  <a href="../security/#command-sandbox">security.md</a>)
   (host/port default to the <a href="#network-exposure-localhost--local-network--internet">network exposure</a>
   setting; with none stored, <code>--host</code> defaults to <code>127.0.0.1</code> when no auth is
   configured, else <code>0.0.0.0</code>, and <code>--port</code> to <code>8080</code>. Explicit flags override the setting.)

@@ -1485,7 +1485,11 @@ see <a href="../api/">api.md</a>.</p>
 whose run id is the automation id. The controller is a workflow that ships
 with AbstractRuntime; the gateway's runner ticks it like any other run. Each
 time the trigger fires, the controller starts one <strong>occurrence</strong>: an ordinary
-child run of your target workflow, with the inputs frozen at creation. An
+child run of your target workflow, with the inputs frozen at creation
+(except its workspaces: they are checked again when each occurrence is
+admitted, against the gateway policy and your default as they are then; a
+wider default applies from the next run, and a workspace the admin refused or
+capped since is dropped or lowered for that run, with the reason recorded). An
 occurrence reads as a chat turn (the prompt it received and its answer). In
 <strong>independent</strong> mode every occurrence starts fresh; in <strong>growing</strong> mode each
 occurrence sees the previous ones as conversation history. Automations are
@@ -1507,7 +1511,8 @@ never schedules or runs anything itself.</p>
     "automations_endpoint": "/api/gateway/automations",
     "trigger_sources_endpoint": "/api/gateway/trigger-sources",
     "command_types": ["automation.revise", "automation.pause", "automation.resume",
-                      "automation.run_now", "automation.stop_current", "automation.archive"]
+                      "automation.run_now", "automation.stop_current", "automation.archive",
+                      "automation.unarchive"]
   }
 </code></pre></div>
 <ul>
@@ -1549,7 +1554,7 @@ never schedules or runs anything itself.</p>
 </tr>
 <tr>
 <td><code>POST /api/gateway/automations/{automation_id}/commands</code></td>
-<td>pause, resume, run now, stop the current run, archive</td>
+<td>pause, resume, run now, stop the current run, archive, unarchive</td>
 </tr>
 <tr>
 <td><code>GET /api/gateway/automations/{automation_id}/occurrences</code></td>
@@ -1874,8 +1879,8 @@ never inherit the grant: their tools ask as in any chat.</p>
 </thead>
 <tbody>
 <tr>
-<td><code>GET /api/gateway/automations?status=&amp;cursor=&amp;limit=</code></td>
-<td><code>{items: [AutomationSummary], next_cursor}</code>, newest first</td>
+<td><code>GET /api/gateway/automations?status=&amp;archived_only=&amp;cursor=&amp;limit=</code></td>
+<td><code>{items: [AutomationSummary], next_cursor, archived_automations}</code>, newest first</td>
 </tr>
 <tr>
 <td><code>GET /api/gateway/automations/{automation_id}</code></td>
@@ -1886,6 +1891,10 @@ never inherit the grant: their tools ask as in any chat.</p>
 <ul>
 <li><code>status</code> is a comma-separated subset of <code>active</code>, <code>paused</code>, <code>completed</code>,
   <code>failed</code>, <code>archived</code>. <code>limit</code> is 1 to 200 (default 50).</li>
+<li>Archived automations are left out of the list unless you ask for them:
+  <code>archived_only=true</code> lists only archived ones (it cannot be combined with
+  <code>status</code>), or name <code>archived</code> in <code>status</code>. <code>archived_automations</code> is how
+  many of yours are archived, on every page.</li>
 <li>Read every page, following <code>next_cursor</code> until it is <code>null</code>: older
   scheduled runs (<a href="#older-scheduled-runs-legacy">Legacy</a>) come on the last
   page. <code>changed_since</code> is refused (422 <code>unsupported_feature</code>); poll complete
@@ -1901,7 +1910,7 @@ never inherit the grant: their tools ask as in any chat.</p>
  "last_occurrence": {"run_id", "index", "status", "attempts", "fired_at", "finished_at"?, "excerpt", "notify"},
  "attention": {"pending_waits": 0, "unread": false, "unseen_count": 0, "cursor": "att1:3", "items": [], "waits": []},
  "legacy": false, "revision": 1, "updated_at": "…",
- "capabilities": ["revise", "pause", "resume", "run_now", "stop_current", "archive", "discuss"],
+ "capabilities": ["revise", "pause", "resume", "run_now", "stop_current", "archive", "discuss"],  // archived: ["unarchive", "discuss"]
  "session_kind": "automation"}
 </code></pre></div>
 <ul>
@@ -1917,8 +1926,8 @@ never inherit the grant: their tools ask as in any chat.</p>
 <li><code>last_occurrence.excerpt</code> holds the first 280 characters of its answer.</li>
 <li><code>attention</code> is described in <a href="#attention-and-seen">Attention</a>; <code>items</code> and
   <code>waits</code> hold up to 20 entries each.</li>
-<li><code>capabilities</code> lists what the automation accepts. An archived, completed or
-  failed automation lists <code>["discuss"]</code> only.</li>
+<li><code>capabilities</code> lists what the automation accepts. An archived automation
+  lists <code>["unarchive", "discuss"]</code>; a completed or failed one <code>["discuss"]</code>.</li>
 </ul>
 <p><code>definition</code> is the stored definition (target, trigger, context, policy,
 revision); <code>active_revision</code> is the revision in force.</p>
@@ -1974,6 +1983,10 @@ revision); <code>active_revision</code> is the revision in force.</p>
 <td><code>automation.archive</code></td>
 <td>no more occurrences; the history is kept</td>
 </tr>
+<tr>
+<td><code>automation.unarchive</code></td>
+<td>back to <strong>paused</strong> with its history; <code>resume</code> re-arms the trigger</td>
+</tr>
 </tbody>
 </table>
 <p><strong>The receipt means queued.</strong> A command is <code>accepted</code> when it is written to
@@ -1984,8 +1997,9 @@ answers <code>duplicate: true</code> with the first <code>seq</code>; the same <
 different command answers 409 <code>identity_conflict</code>.</p>
 <p><strong>The route refuses at once what the state already rules out</strong> (409):</p>
 <ul>
-<li>any command but <code>archive</code> on an archived, completed or failed automation
-  (<code>invalid_state</code>);</li>
+<li>any command but <code>unarchive</code> (and a repeated <code>archive</code>) on an archived
+  automation, any command but <code>archive</code> on a completed or failed one, and
+  <code>unarchive</code> on an automation that is not archived (<code>invalid_state</code>);</li>
 <li><code>run_now</code> while an occurrence is running or waiting to run
   (<code>automation_busy</code>), or when the trigger has no ticks left (<code>invalid_state</code>);</li>
 <li><code>pause</code> when paused, <code>resume</code> when not paused, <code>stop_current</code> with nothing

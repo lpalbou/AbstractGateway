@@ -1221,18 +1221,22 @@ abstractgateway<span class="w"> </span>config<span class="w"> </span><span class
 - Workspace policy: <code>GET /api/gateway/workspace/policy</code>
 - File access: <code>GET /api/gateway/files/search|read|skim</code>
 - Attachments: <code>POST /api/gateway/attachments/ingest</code> and <code>POST /api/gateway/attachments/upload</code></p>
-<p>Workspace scope is <strong>operator-controlled at gateway launch</strong>:</p>
-<ul>
-<li>Default (safe): thin clients cannot expand filesystem scope. If a run is started without <code>workspace_root</code>, the gateway creates a per-run workspace under <code>&lt;ABSTRACTGATEWAY_DATA_DIR&gt;/workspaces/&lt;uuid&gt;</code>, and filesystem-ish tool calls are scoped to that workspace (<code>workspace_access_mode=workspace_only</code>).</li>
-<li>Allowlist additional roots for file helpers via <code>ABSTRACTGATEWAY_WORKSPACE_DIR</code> + <code>ABSTRACTGATEWAY_WORKSPACE_MOUNTS</code>.</li>
-<li>Permissive mode (trusted machines only): enable client-provided <code>workspace_*</code> overrides (including <code>all_except_ignored</code>) via <code>ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE=1</code> (or <code>ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE=1</code>).</li>
-</ul>
-<p>Note: <code>/api/gateway/files/*</code> + <code>/api/gateway/attachments/ingest</code> ignore client-provided scope overrides unless client overrides are enabled.</p>
-<p>Server-side workspace mounts (operator-controlled):</p>
-<div class="highlight"><pre><span></span><code><span class="c1"># newline-separated: name=/absolute/path</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_WORKSPACE_MOUNTS</span><span class="o">=</span><span class="s1">$'repo=/abs/path/to/repo\\ndata=/abs/path/to/data'</span>
-</code></pre></div>
-<p>Evidence: <code>_workspace_mounts()</code> and related policy helpers in <code>src/abstractgateway/routes/gateway.py</code>, tests in <code>tests/test_gateway_workspace_policy_enforcement.py</code>.</p>
+<p>Workspaces are a setting changed at any time (no restart), at three levels:
+the gateway policy (<code>GET</code>/<code>PUT /api/gateway/workspace/policy</code>: the posture
+"Deny everything, allow listed workspaces" / "Allow everything, refuse listed
+workspaces" with a default mode, and the workspace rows read-only, read &amp;
+write, refused, each a cap), an account's default subset
+(<code>/workspace/policy/{account}</code>) and a conversation's subset
+(<code>/sessions/{id}/workspaces</code>).</p>
+<p>A run started without <code>workspace_root</code> works in a folder the gateway makes for
+its conversation under <code>&lt;ABSTRACTGATEWAY_DATA_DIR&gt;/workspaces/</code>. Its file tools
+also reach the run's effective workspaces
+(<code>GET /api/gateway/workspace/effective/me?session=&lt;id&gt;</code>).</p>
+<p>The <code>/files/*</code> helpers (admin) use the given root or the first read &amp; write
+workspace as their base and the other reachable workspaces as mounts; a client
+may only narrow them. See
+<a href="../security/#workspaces-three-levels">security.md</a>.</p>
+<p>Evidence: <code>src/abstractgateway/workspace_policy.py</code>, <code>src/abstractgateway/session_workspaces.py</code>, <code>_files_scope()</code> in <code>src/abstractgateway/routes/gateway.py</code>, tests in <code>tests/test_gateway_workspace_policy_r11.py</code> and <code>tests/test_r11w1_levels.py</code>.</p>
 <h2 id="telegram-bridge">Telegram bridge<a class="headerlink" href="#telegram-bridge" title="Permanent link">&para;</a></h2>
 <p>Background bridges can ingest external messages and start durable runs (thin-client semantics), and may also emit events for specialized workflows.</p>
 <p>Enable (Telegram):

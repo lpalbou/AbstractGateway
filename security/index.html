@@ -903,27 +903,16 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#workspace-filesystem-scope-blacklistwhitelist" class="md-nav__link">
+  <a href="#workspaces-three-levels" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Workspace filesystem scope (blacklist/whitelist)
+        Workspaces: three levels
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Workspace filesystem scope (blacklist/whitelist)">
+    <nav class="md-nav" aria-label="Workspaces: three levels">
       <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#default-safe-everything-outside-the-run-workspace-is-blocked" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Default (safe): everything outside the run workspace is blocked
-      
-    </span>
-  </a>
-  
-</li>
         
           <li class="md-nav__item">
   <a href="#built-in-deny-list" class="md-nav__link">
@@ -936,41 +925,19 @@
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#operator-controlled-allowlist-roots-recommended" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Operator-controlled allowlist roots (recommended)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#permissive-mode-allow-thin-clients-to-choose-scope-trusted-machines-only" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Permissive mode: allow thin clients to choose scope (trusted machines only)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#important-limitation-all-modes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Important limitation (all modes)
-      
-    </span>
-  </a>
-  
-</li>
-        
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#command-sandbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Command sandbox
+      
+    </span>
+  </a>
   
 </li>
       
@@ -1091,10 +1058,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#managed-core-serving" class="md-nav__link">
+  <a href="#openai-api" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Managed Core serving
+        OpenAI API
       
     </span>
   </a>
@@ -1350,27 +1317,16 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#workspace-filesystem-scope-blacklistwhitelist" class="md-nav__link">
+  <a href="#workspaces-three-levels" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Workspace filesystem scope (blacklist/whitelist)
+        Workspaces: three levels
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Workspace filesystem scope (blacklist/whitelist)">
+    <nav class="md-nav" aria-label="Workspaces: three levels">
       <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#default-safe-everything-outside-the-run-workspace-is-blocked" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Default (safe): everything outside the run workspace is blocked
-      
-    </span>
-  </a>
-  
-</li>
         
           <li class="md-nav__item">
   <a href="#built-in-deny-list" class="md-nav__link">
@@ -1383,41 +1339,19 @@
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#operator-controlled-allowlist-roots-recommended" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Operator-controlled allowlist roots (recommended)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#permissive-mode-allow-thin-clients-to-choose-scope-trusted-machines-only" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Permissive mode: allow thin clients to choose scope (trusted machines only)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#important-limitation-all-modes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Important limitation (all modes)
-      
-    </span>
-  </a>
-  
-</li>
-        
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#command-sandbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Command sandbox
+      
+    </span>
+  </a>
   
 </li>
       
@@ -1538,10 +1472,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#managed-core-serving" class="md-nav__link">
+  <a href="#openai-api" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Managed Core serving
+        OpenAI API
       
     </span>
   </a>
@@ -1842,7 +1776,9 @@ the shared registry return <code>403</code>. Read routes are unchanged.</p>
 (optional body <code>{"bundle_version": "..."}</code>) hide a bundle from lists and refuse
 its new runs while the file and every past run stay; an admin archives shared
 bundles, a user their own, and bundles that ship with the gateway (including
-<code>basic-agent</code>) answer <code>409</code>.</p>
+<code>basic-agent</code>) answer <code>409</code>. <code>PATCH /bundles/{bundle_id}</code> <code>{"description"}</code>
+follows the same rule (the owner, an admin for shared bundles, <code>409</code> for
+shipped ones) and is audited as <code>workflow.description</code>.</p>
 <h3 id="workflow-availability">Workflow availability<a class="headerlink" href="#workflow-availability" title="Permanent link">&para;</a></h3>
 <p><code>PUT /api/gateway/admin/workflows/{bundle_id}/availability</code> with
 <code>{"available": false}</code> (admin only; <code>403</code> otherwise) hides a shared workflow
@@ -1880,9 +1816,12 @@ available at <code>GET /api/gateway/workflow-catalog</code>.</p>
 <h2 id="origin-allowlist-browserorigin-defense">Origin allowlist (browser/origin defense)<a class="headerlink" href="#origin-allowlist-browserorigin-defense" title="Permanent link">&para;</a></h2>
 <p>If the request includes an <code>Origin</code> header, the middleware allows it only when
 it matches the allowlist (glob-style patterns, fnmatch). The allowlist is
-<code>http://localhost:*</code> and <code>http://127.0.0.1:*</code>, the gateway's own LAN origins in
-a network mode, plus the <strong><code>allowed_origins</code> setting</strong> (console: Network →
-<em>Advanced: reverse proxy</em>; TUI: Connection screen; CLI:
+<code>http://localhost:*</code> and <code>http://127.0.0.1:*</code>, the pages served at the
+addresses the gateway detects (<code>http://&lt;interface address, Bonjour or Tailscale
+name&gt;:&lt;listening port&gt;</code> and <code>https://&lt;Tailscale name&gt;</code>, refreshed every 60 s;
+see <a href="../configuration/#detected-addresses-are-accepted-origins">configuration.md</a>),
+plus the <strong><code>allowed_origins</code> setting</strong> (console: Network → <em>Advanced</em>; TUI:
+Connection screen; CLI:
 <code>abstractgateway network set --allowed-origins https://gateway.example.com</code>).
 The setting is read per request: a change applies to the next request, no
 restart. Each origin is validated (<code>scheme://host[:port]</code>, no path, no trailing
@@ -2012,24 +1951,156 @@ otherwise), once, within two minutes (410 after). The resulting session is a
 remembered session (30 days) of the user who clicked Open. See
 <a href="../apps/">apps.md</a> and
 <a href="../architecture/#desktop-assistant-hand-over">architecture.md</a>.</p>
-<h2 id="workspace-filesystem-scope-blacklistwhitelist">Workspace filesystem scope (blacklist/whitelist)<a class="headerlink" href="#workspace-filesystem-scope-blacklistwhitelist" title="Permanent link">&para;</a></h2>
-<p>AbstractGateway supports “thin clients” (browser UIs, bridges) that can trigger <strong>filesystem-ish tools</strong> (e.g. <code>list_files</code>, <code>read_file</code>, <code>write_file</code>). To avoid a thin client expanding server filesystem access, the gateway enforces a <strong>workspace policy</strong>.</p>
-<p>Key point: the <strong>main configuration</strong> for filesystem allowlisting/denylisting is set when you <strong>launch the gateway</strong> (operator-controlled env vars). Thin clients can only request broader scopes when the gateway is started in a permissive mode.</p>
-<h3 id="default-safe-everything-outside-the-run-workspace-is-blocked">Default (safe): everything outside the run workspace is blocked<a class="headerlink" href="#default-safe-everything-outside-the-run-workspace-is-blocked" title="Permanent link">&para;</a></h3>
+<h2 id="workspaces-three-levels">Workspaces: three levels<a class="headerlink" href="#workspaces-three-levels" title="Permanent link">&para;</a></h2>
+<p>Thin clients (browser apps, bridges, the Assistant) start runs whose file tools
+(<code>list_files</code>, <code>read_file</code>, <code>write_file</code>, …) touch the gateway's computer. A
+workspace is a directory an agent may work in. Which workspaces a run may use is
+decided by the gateway, never by the client, at three levels that share one
+shape: a <strong>posture</strong>, a <strong>default mode</strong> and <strong>rows</strong>, each row Read-only
+(<code>ro</code>), Read &amp; write (<code>rw</code>) or Refused (<code>deny</code>).</p>
 <ul>
-<li>Every run the gateway starts works in a folder, whatever started it (the
-  HTTP routes, email-triggered automations, the Telegram and agora bridges, entity summons,
-  scheduled runs). A run that names no <code>workspace_root</code> works in its
-  conversation's gateway-made folder, <code>&lt;ABSTRACTGATEWAY_DATA_DIR&gt;/workspaces/session-…</code>
-  (or a per-run folder when it has no session).</li>
-<li>AbstractRuntime applies workspace scoping to filesystem-ish tool arguments. The default is:</li>
-<li><code>workspace_access_mode=workspace_only</code></li>
-<li>absolute paths must stay under <code>workspace_root</code></li>
-<li>A client <code>workspace_root</code> inside the gateway's data folder is refused (400),
-  except the conversation folder the gateway made for the same user; the same
-  check runs on <code>POST /runs/start</code>, <code>POST /runs/schedule</code> and entity summons.</li>
+<li><strong>Deny everything, allow listed workspaces</strong> (<code>allowed_only</code>): nothing is
+  reachable except the listed workspaces. A refused row carves a sub-directory
+  out of a listed one.</li>
+<li><strong>Allow everything, refuse listed workspaces</strong> (<code>any_except_denied</code>): every
+  directory is reachable at the default mode, except the listed workspaces,
+  which are refused or carry their own mode.</li>
 </ul>
-<p>This means that by default, <strong>all absolute paths are effectively “blacklisted”</strong> except the run’s <code>workspace_root</code>.</p>
+<p>The levels:</p>
+<ol>
+<li><strong>Gateway (admin) = the eligible set.</strong> <code>GET</code>/<code>PUT
+   /api/gateway/workspace/policy</code>. Each row's mode is a CAP. The built-in
+   refusals (the gateway's data folder, credential folders such as <code>~/.ssh</code>)
+   always apply. A fresh gateway allows everything, read &amp; write.</li>
+<li><strong>Account = the account's default subset</strong> (people and entities alike):
+   <code>GET</code>/<code>PUT /api/gateway/workspace/policy/{account}</code>. The account picks its
+   own posture within the eligible set and its own rows, each inside the set
+   and at most at its cap. Not configured = the gateway policy as is. A person
+   sets their own; an entity's is set by an admin or the entity's creator.</li>
+<li><strong>Session = one conversation's subset</strong>, and <strong>run = a one-off payload</strong>
+   (Flow's run window, Observer's launch, an automation): the same shape,
+   checked against the gateway's eligible set (not the account default), stored
+   by the gateway on the conversation (<code>GET</code>/<code>PUT
+   /api/gateway/sessions/{id}/workspaces</code>) or carried in the start body
+   (<code>workspace</code>).</li>
+</ol>
+<p>A run gets the first that applies: run &gt; session &gt; account &gt; gateway. For every
+path its mode is the lower of the gateway's cap and that level's rule (refused
+&lt; read-only &lt; read &amp; write). <strong>Nesting: the most specific row wins</strong> (the
+longest real-path prefix), refused rows included. Refusing <code>/Users/me</code> while
+allowing <code>/Users/me/projects</code> (read &amp; write) is valid at every level: the
+child is reachable and the rest of <code>/Users/me</code> is refused. A refused row inside
+an allowed one refuses that subtree. Caps still bind: a row below the gateway
+never exceeds the gateway's cap at its path (the gateway's most specific row
+there), so a child of a read-only gateway row stays read-only, and a child of a
+refused gateway row is eligible only where the gateway lists it. The built-in
+refusals are absolute: a read-only or read &amp; write row inside one is refused
+at every level with <code>'&lt;path&gt;' is inside the built-in refused workspace
+'&lt;built-in&gt;'.</code> (the one exception: a conversation folder of the account's own
+data plane, below). The effective set, its line, the dry run, the run's file
+tools, the server file routes, the workspace browser and the command sandbox
+all apply this one rule. <code>GET
+/api/gateway/workspace/effective/{account}[?session=]</code> returns the result and
+one line that every surface shows verbatim, for example
+<code>Deny everything, allow listed workspaces · /Users/me/Pictures (rw) · /Users/me/Documents (ro)</code>,
+next to the gateway's own line (<code>gateway_summary</code>), for example
+<code>Allow everything, refuse listed workspaces (rw) · /secrets (refused) · /archive (ro)</code>.
+A write outside the eligible set or above a cap is refused (400
+<code>workspace_refused</code>, one sentence, the offending path); the API is in
+<a href="../api/#workspaces">api.md</a>.</p>
+<p>Each conversation also keeps its own <strong>private workspace</strong> in its account's
+data plane (protected by the built-in refusals, so another account's agents
+never read it). It is always read &amp; write for that run and never listed. A run
+that names no workspace works there: a relative path such as <code>out.txt</code> is
+written to <code>&lt;data dir&gt;/workspaces/session-…/out.txt</code> (a run without a
+conversation gets its own <code>&lt;data dir&gt;/workspaces/&lt;run&gt;</code> folder). The run's
+allowed workspaces are listed to the agent with their paths and modes, in the
+workspace context of every tool-using call:</p>
+<div class="highlight"><pre><span></span><code>Default working directory: "&lt;data dir&gt;/workspaces/session-…"
+Allowed workspaces:
+  "/Users/me/Pictures" (read &amp; write)
+  "/Users/me/Documents" (read-only)
+</code></pre></div>
+<p>Under "Allow everything, refuse listed workspaces" a last line gives the mode
+of everything else, for example <code>Everything else: (read-only)</code>. Refused
+workspaces are never listed as allowed. There is no "Shared workspace" line any
+more (a stale <code>workspace_shared_path</code> sent by a client is dropped).</p>
+<p>Enforcement reads only the effective set:</p>
+<ul>
+<li><strong>Run starts</strong> (<code>POST /runs/start</code>, <code>/runs/schedule</code>, entity summons, the
+  automation definitions): a one-off <code>workspace</code> outside the eligible set or
+  above a cap is refused; a <code>workspace_root</code> (for example the folder an app was
+  launched from) is accepted only when the run reaches it; a legacy
+  <code>workspace_allowed_paths</code> list may only narrow; a client that sends
+  <code>workspace_access_mode: "all_except_ignored"</code> is refused. Refusals are 400s
+  with a sentence; nothing is silently dropped. A launch folder gets no special
+  trust: when the run does not reach it, a client asks the person to add the
+  workspace.</li>
+<li><strong>Every run's tool sandbox</strong>, whatever started it (HTTP, the Telegram, email
+  and agora bridges, schedules, automations, entities), is bound by the host
+  (<code>run_workspace_guard.apply_workspace_policy</code>), which resolves the level
+  again and CLAMPS a forwarded one-off (rows outside the set dropped, modes
+  lowered), never widens, and never silently: each clamped row is recorded on
+  the run with its sentence (<code>_gateway_workspace.clamped</code>, shown by
+  <code>GET /runs/{id}/workspace</code>):</li>
+<li>"Deny everything, allow listed workspaces" at either level →
+    <code>workspace_or_allowed</code> with the reachable workspaces.</li>
+<li>"Allow everything, refuse listed workspaces" at both levels →
+    <code>all_except_ignored</code>. Only the gateway sets this mode, never a client.</li>
+<li>Refused rows → <code>workspace_ignored_paths</code>. AbstractRuntime resolves a path
+    by the longest prefix among the run's own folder, the allowed paths and the
+    refused paths (a tie is refused), so a refused parent with an allowed child
+    reaches the runtime exactly as the gateway computed it.</li>
+<li>Read-only workspaces → <code>workspace_read_only_paths</code>.</li>
+<li>A read-only default → every directory is read-only except the run's own
+    folder and the read &amp; write workspaces (<code>workspace_writable_paths</code>,
+    AbstractRuntime; a client's own value is dropped, and child runs inherit
+    the parent's exactly). Writes into a read-only workspace are refused with a
+    sentence; reads work.</li>
+<li>The level and its line are recorded on the run (<code>_gateway_workspace.{level,
+    summary}</code>), so the ledger and replay show what the run could use.</li>
+<li><strong>A workspace inside the gateway's data folder</strong> (for example another
+  conversation folder of the same account) counts only for the account whose
+  own data plane holds it. The host lifts the built-in data-folder deny for
+  that path, for that account only, never for another account's plane.</li>
+<li><strong>The run workspace browser</strong> serves a launch folder only while the run still
+  reaches it. <strong>The server file routes</strong> (<code>/files/*</code>, admin) use the given root
+  or the first read &amp; write workspace as their base and the other reachable
+  workspaces as mounts; exports into a workspace that is not read &amp; write are
+  refused.</li>
+</ul>
+<p>Every change is recorded in the audit log as <code>workspace_policy_changed</code>
+<code>{scope: gateway|account|session|migration, actor, changed, account?, session_id?}</code>.</p>
+<p><strong>Every entity has a gateway account.</strong> Entities get theirs at creation; homes
+created before entity accounts existed get one at serve start, once, minted
+like a creation (roles <code>entity</code>, token discarded) and audited as
+<code>entity_account_created</code> (reason <code>migration</code>). A record of the same name that
+is not an entity account is never adopted.</p>
+<p><strong>Migrations</strong> run once, at serve start or at the first read, and never reach
+beyond the new ceiling:</p>
+<ul>
+<li>From round 9 (shared workspace + "accounts narrow only"), <code>_migrated.workspace_policy_v2</code>:
+  the gateway posture becomes "Allow everything, refuse listed workspaces"
+  (operator decision), keeping its default mode; the old shared workspace
+  becomes a listed read &amp; write row; existing rows are kept with their modes as
+  caps; each account entry becomes a configured account layer under the same
+  posture with its own read-only/refused rows and lowered default.</li>
+<li>From the older model (whitelist/blacklist access modes, per-user allow/deny
+  lists, launch-folder trust, "Any folder (old clients)"),
+  <code>_migrated.workspace_policy_v1</code> first, then v2: the old workspace root (only
+  when one was configured) becomes the listed read &amp; write row; the old extra
+  workspaces and every account's allowed folders become read &amp; write rows; an
+  account that did not have a folder another account had gets a refused row for
+  it; old refused folders become refused rows (gateway's or the account's);
+  launch folders trusted under the old model are not added.</li>
+</ul>
+<p>Missing folders are dropped and listed in the settings store under
+<code>_migrated.workspace_policy_v1</code> / <code>_v2</code>, next to the old blocks. The old runtime-config
+keys (<code>workspace_root</code>, <code>workspace_mounts</code>, <code>workspace_allowed_paths</code>,
+<code>workspace_blocked_paths</code>, <code>workspace_default_mode</code>, <code>trust_client_launch_folder</code>,
+<code>client_workspace_scope_overrides</code>, <code>user_workspace_policies</code>) are refused on
+write; the <code>ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE</code> /
+<code>ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE</code> variables are no longer read.</p>
 <h3 id="built-in-deny-list">Built-in deny list<a class="headerlink" href="#built-in-deny-list" title="Permanent link">&para;</a></h3>
 <p>Whatever the workspace policy allows, the gateway's data folder and the
 credential and configuration folders of the gateway's user account (<code>~/.ssh</code>,
@@ -2048,35 +2119,74 @@ credential and configuration folders of the gateway's user account (<code>~/.ssh
   the folders.</li>
 </ul>
 <p>Evidence:
+- Policy model (three levels), effective set, migrations: <code>src/abstractgateway/workspace_policy.py</code>; the session level: <code>src/abstractgateway/session_workspaces.py</code>; entity accounts: <code>src/abstractgateway/entity_accounts.py</code>
 - Every run start: <code>src/abstractgateway/run_workspace_guard.py</code> (called from <code>WorkflowBundleGatewayHost.start_run</code>)
-- Client scope clamping: <code>src/abstractgateway/routes/gateway.py</code> (<code>_sanitize_run_workspace_policy</code>, <code>_client_workspace_scope_overrides_enabled</code>)
+- Client scope clamping: <code>src/abstractgateway/routes/gateway.py</code> (<code>_sanitize_run_workspace_policy</code>, <code>_files_scope</code>, <code>_browse_workspace_root</code>)
 - Browse and preview: <code>src/abstractgateway/workspace_browse.py</code>
 - Runtime tool scoping: <code>abstractruntime/integrations/abstractcore/workspace_scoped_tools.py</code>
-- Tests: <code>tests/test_gateway_workspace_policy_enforcement.py</code></p>
-<h3 id="operator-controlled-allowlist-roots-recommended">Operator-controlled allowlist roots (recommended)<a class="headerlink" href="#operator-controlled-allowlist-roots-recommended" title="Permanent link">&para;</a></h3>
+- Tests: <code>tests/test_gateway_workspace_policy_r11.py</code>, <code>tests/test_r11w1_levels.py</code>, <code>tests/test_r11w1_real_boot_migration.py</code>, <code>tests/test_gateway_workspace_policy_enforcement.py</code>, <code>tests/test_r12w2_nesting.py</code> (the nesting rule)</p>
+<p>Canonical public server paths use <code>rel/path</code> for the base workspace and
+<code>mount_alias/rel/path</code> for the other folders. When two folders share the same
+basename, Gateway emits deterministic digest-suffixed mount aliases so the
+public path string stays stable across discovery, import/export, and Runtime
+execution.</p>
+<h2 id="command-sandbox">Command sandbox<a class="headerlink" href="#command-sandbox" title="Permanent link">&para;</a></h2>
+<p>Every tool that starts a process (<code>execute_command</code>, <code>shell_exec</code>,
+<code>execute_python</code>, the local helpers: AbstractRuntime's <code>SANDBOXED_TOOL_NAMES</code>) runs inside an
+<strong>operating-system sandbox</strong> built from the run's effective workspaces. These
+are the same keys the file tools read, so the two cannot disagree: the run's
+private workspace read &amp; write, the allowed workspaces with their modes, the
+refused workspaces, the built-in refusals and the posture's default mode. The
+command string is never parsed. <code>cd</code>, <code>$(…)</code>, symlinks, scripts and
+interpreters are all confined by the kernel:</p>
 <ul>
-<li><code>ABSTRACTGATEWAY_WORKSPACE_DIR</code>: base directory used to resolve relative workspace paths and as the default root for <code>/files/*</code> helpers.</li>
-<li><code>ABSTRACTGATEWAY_WORKSPACE_MOUNTS</code>: additional allowed roots (newline-separated <code>name=/abs/path</code>).</li>
+<li><strong>macOS</strong>: <code>/usr/bin/sandbox-exec</code> with a generated profile.</li>
+<li><strong>Linux</strong>: bubblewrap (<code>bwrap</code>) when installed; Landlock (kernel 5.13 or
+  later) for "Deny everything, allow listed workspaces" when bubblewrap is
+  missing.</li>
+<li><strong>Anything else</strong> (Windows, Linux without either): the command is
+  <strong>refused</strong> with one sentence and the run continues.</li>
 </ul>
-<p>Thin clients can discover the server policy via:
-- <code>GET /api/gateway/workspace/policy</code><br />
-  Note: it returns <strong>mount names only</strong> (no absolute paths).</p>
-<p>Canonical public server paths use <code>rel/path</code> for the main workspace root and
-<code>mount_alias/rel/path</code> for approved mounts. When two allowed roots share the
-same basename, Gateway emits deterministic digest-suffixed mount aliases so
-the public path string stays stable across discovery, import/export, and
-Runtime execution.</p>
-<h3 id="permissive-mode-allow-thin-clients-to-choose-scope-trusted-machines-only">Permissive mode: allow thin clients to choose scope (trusted machines only)<a class="headerlink" href="#permissive-mode-allow-thin-clients-to-choose-scope-trusted-machines-only" title="Permanent link">&para;</a></h3>
-<p>To honor client-provided workspace knobs (<code>workspace_root</code>, <code>workspace_access_mode</code>, <code>workspace_allowed_paths</code>, <code>workspace_ignored_paths</code>) beyond the operator roots, enable one of:</p>
+<p>Every command starts from the gateway's <strong>scrubbed environment</strong>. This is the
+same scrub the gateway applies to the apps it starts: nothing named
+<code>ABSTRACTGATEWAY_*</code> / <code>ABSTRACTCORE_*</code>, and no <code>*_TOKEN</code>, <code>*_SECRET</code>,
+<code>*_API_KEY</code>, <code>*_PASSWORD</code> or <code>*_KEY</code>. Each command also gets a private
+<code>TMPDIR</code> inside the run's workspace. The gateway sets this host policy once
+per process at boot (<code>command_sandbox.configure_at_boot</code>, from
+<code>start_gateway_runner</code>; AbstractCore's <code>configure_host</code>). From then on a
+spawning tool call that does not carry a run's sandbox is refused.</p>
+<p><strong><code>abstractgateway serve --unsandboxed-commands</code></strong> (also on the split
+<code>abstractgateway runner</code>) re-enables commands on a host with <strong>no</strong> sandbox.
+They then run with the gateway's own file access, still with the scrubbed
+environment. The flag is off by default and has no environment variable. Where
+a sandbox exists it changes nothing. With <code>--reload</code> it is ignored (the app
+runs in uvicorn's reloader child). It is audited at boot as
+<code>command_sandbox_configured</code>
+<code>{actor: "system:serve"|"system:runner", source, kind, state, line, unsandboxed_commands_allowed, env_keys}</code>.</p>
+<p><strong>State, not a control.</strong> <code>GET /api/gateway/workspace/policy</code> and <code>GET
+/api/gateway/discovery/tools</code> carry <code>command_sandbox</code> <code>{state:
+sandboxed|partial|unsandboxed|refused, kind, line, sentence,
+unsandboxed_commands_allowed, configured, flag}</code>. The console shows <code>line</code>
+under the Accounts head, with <code>sentence</code> as its tooltip, and the terminal
+console shows it on its Workspaces page:</p>
 <ul>
-<li><code>ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE=1</code></li>
-<li><code>ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE=1</code></li>
+<li><code>Commands sandboxed: macOS sandbox-exec</code> (or <code>Linux bubblewrap</code>)</li>
+<li><code>Commands refused: no sandbox on this host</code></li>
+<li><code>Unsandboxed commands allowed (flag)</code></li>
 </ul>
-<p>In this mode, a client can request:
-- <code>workspace_access_mode=all_except_ignored</code> (“full access” unless explicitly blocked)</p>
-<p>Do <strong>not</strong> enable this when serving untrusted browser origins: a compromised thin client can request access to arbitrary server paths.</p>
-<h3 id="important-limitation-all-modes">Important limitation (all modes)<a class="headerlink" href="#important-limitation-all-modes" title="Permanent link">&para;</a></h3>
-<p><code>execute_command</code> is <strong>not</strong> an OS sandbox: even if the runtime sets the default working directory under <code>workspace_root</code>, the command itself can reference absolute paths or <code>cd ..</code>. The built-in deny list does not confine shell commands either.</p>
+<p>In <code>/discovery/tools</code>, each process-spawning tool row carries <code>sandboxed:
+true|false</code> and <code>sandbox</code> (for example "Sandboxed to this run's workspaces"),
+so the apps' tool cards can show the state.</p>
+<p><strong>Evidence per command.</strong> The runtime stamps every spawning call with the
+paths it enforced (the hidden <code>_sandbox</code> argument, recorded with the tool call
+in the run ledger). The tool result carries <code>sandbox: {kind, label, posture,
+default_mode, private_workspace, tmpdir, allowed: [{path, mode}], refused: [...],
+builtin_refused: &lt;count&gt;}</code> and the line <code>Sandbox: macOS sandbox-exec</code>, or
+<code>Sandbox: none — commands refused on this host</code>.</p>
+<p>Evidence: <code>src/abstractgateway/command_sandbox.py</code>, <code>src/abstractgateway/cli.py</code>
+(<code>--unsandboxed-commands</code>), AbstractCore <code>abstractcore/tools/sandbox.py</code>,
+AbstractRuntime <code>workspace_scoped_tools.py</code> (<code>sandbox_stamp</code>). Tests:
+<code>tests/test_r12w2_command_sandbox.py</code>, <code>tests/test_r12w2_nesting.py</code>.</p>
 <h2 id="common-security-env-vars">Common security env vars<a class="headerlink" href="#common-security-env-vars" title="Permanent link">&para;</a></h2>
 <p>All are loaded by <code>load_gateway_auth_policy_from_env()</code> (see <code>src/abstractgateway/security/gateway_security.py</code>).</p>
 <h3 id="enabledisable">Enable/disable<a class="headerlink" href="#enabledisable" title="Permanent link">&para;</a></h3>
@@ -2134,10 +2244,12 @@ Runtime execution.</p>
 </ul>
 <h3 id="reverse-proxies">Reverse proxies<a class="headerlink" href="#reverse-proxies" title="Permanent link">&para;</a></h3>
 <ul>
-<li>The <code>trust_proxy</code> setting (console: Network → <em>Advanced: reverse proxy</em> →
-  <em>Trust the proxy's client address</em>; TUI: Connection screen checkbox; CLI:
-  <code>abstractgateway network set --trust-proxy on|off</code>). On: <code>X-Forwarded-For</code> is
-  used for IP attribution (audit log) and lockout tracking. Read per request:
+<li><code>X-Forwarded-For</code> from a proxy on the gateway machine (loopback peer, such
+  as <code>tailscale serve</code>) is always used for IP attribution (audit log) and
+  lockout tracking. The <code>trust_proxy</code> setting (console: Network → <em>Advanced</em> →
+  <em>Trust proxies on other machines</em>; TUI: Connection screen checkbox; CLI:
+  <code>abstractgateway network set --trust-proxy on|off</code>) extends that to a proxy
+  on another machine. Read per request:
   it applies to the next request. Only when your own proxy sits in front of
   every request; otherwise any client chooses the address the gateway sees.
   The ephemeral tray token never honours it (raw socket peer only).</li>
@@ -2160,8 +2272,8 @@ Runtime execution.</p>
 <li>API overview: <a href="../api/">api.md</a></li>
 <li>FAQ: <a href="../faq/">faq.md</a></li>
 </ul>
-<h2 id="managed-core-serving">Managed Core serving<a class="headerlink" href="#managed-core-serving" title="Permanent link">&para;</a></h2>
-<p>The optional <code>/core/v1</code> endpoint has a dedicated serving token and an explicit local-network open mode. Gateway user sessions do not grant serving access. Only admins can manage or reveal the token; Core retains its cloud-provider credential protections. See <a href="../configuration/#openai-compatible-endpoint">endpoint access and credential rules</a>.</p>
+<h2 id="openai-api">OpenAI API<a class="headerlink" href="#openai-api" title="Permanent link">&para;</a></h2>
+<p>The OpenAI-compatible API at <code>/v1</code> is stopped by default. In <strong>Protected</strong> mode a caller's API key is their own gateway token, resolved by the security middleware; the gateway forwards authenticated requests to Core with its own internal credential, so a caller's token never reaches Core, and refused keys count toward the per-address lockout. <strong>Open</strong> mode serves direct local, LAN and VPN clients without a key, never through a proxy or in Internet mode, and Core keeps stored cloud-provider credentials for authenticated callers. <strong>Who can connect</strong> filters on the client address (the socket peer, or <code>X-Forwarded-For</code> from a proxy on this machine or a trusted proxy); <strong>Anywhere</strong> requires Internet mode with its acknowledgement and Protected. Request fields that would re-route a provider or carry a credential (<code>base_url</code>, <code>api_key</code>, <code>provider</code>, <code>headers</code>, ...) are refused with 400, so a caller cannot make the gateway connect to an address of its choosing. Browser pages without a key are limited to the accepted origins. Every request is one audit-log line (no prompts or replies). See <a href="../openai-api/">openai-api.md</a>.</p>
 
 
 

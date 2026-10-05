@@ -419,6 +419,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#updates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Updates
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-happens-when-you-click-install" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1084,6 +1095,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#updates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Updates
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-happens-when-you-click-install" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1330,13 +1352,95 @@ desktop app, the <strong>Assistant</strong> (see <a href="#the-assistant-a-deskt
 <td><strong>Open</strong>, and <strong>Open in Terminal</strong> right beside it when the app's terminal version is installed</td>
 </tr>
 <tr>
+<td>A newer version is published</td>
+<td><strong>Update to x.y.z</strong> beside <strong>Open</strong> (an admin; its tooltip: "Install the newest Flow Editor (0.8.0); a running app restarts on it")</td>
+</tr>
+<tr>
 <td>Failed</td>
 <td>the reason, <strong>Show details</strong>, and <strong>Install</strong> again</td>
 </tr>
 </tbody>
 </table>
-<p>Stop, Show log, Update, versions, addresses and commands are under
-<strong>Technical details</strong>.</p>
+<p>The status badge beside the name is the start/stop control, one click as
+Install is (an admin):</p>
+<table>
+<thead>
+<tr>
+<th>Badge</th>
+<th>A click</th>
+<th>Its tooltip</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Running</strong> (the gateway started it)</td>
+<td>stops it (<code>POST /apps/{id}/stop</code>)</td>
+<td>"Running — click to stop"</td>
+</tr>
+<tr>
+<td><strong>Stopped</strong> (installed, not running)</td>
+<td>starts it without opening a tab (<code>POST /apps/{id}/launch</code>)</td>
+<td>"Stopped — click to start"</td>
+</tr>
+<tr>
+<td><strong>Stopped unexpectedly</strong> / <strong>Keeps crashing</strong></td>
+<td>starts it again</td>
+<td>"Stopped unexpectedly — click to start"</td>
+</tr>
+<tr>
+<td><strong>Running</strong>, started outside the gateway</td>
+<td>nothing: the badge is disabled</td>
+<td>"Started outside the gateway — stop it where it was started"</td>
+</tr>
+<tr>
+<td>any badge, for a user who is not an admin</td>
+<td>nothing: the badge is disabled</td>
+<td>"Only an admin can start or stop apps"</td>
+</tr>
+<tr>
+<td><strong>Starting…</strong> / <strong>Stopping…</strong> / <strong>Not installed</strong></td>
+<td>a plain pill, not a control</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p>While its request runs the badge reads "Stopping…" or "Starting…"; the result
+(or the refusal, with <strong>Show details</strong>) shows on the card as for every other
+action. There is no separate Stop or Start button: <strong>Open</strong> stays (it starts a
+stopped app, then opens it). The Assistant's badge: see
+<a href="#the-assistant-a-desktop-app">The Assistant</a>. The gateway sends the badge on
+every row (<code>status_control</code>, see <a href="#http-api">HTTP API</a>), so the web console and the
+terminal console say the same words.</p>
+<p>Show log, versions, addresses and commands are under <strong>Technical details</strong>.</p>
+<h2 id="updates">Updates<a class="headerlink" href="#updates" title="Permanent link">&para;</a></h2>
+<p>Every app row says when a newer version is published: the browser apps from
+the npm registry (<code>dist-tags.latest</code>), the Assistant from PyPI
+(<code>&lt;pypi_url&gt;/abstractassistant/json</code>, <code>info.version</code>). One cache serves the
+npm registry, PyPI and GitHub (the terminal apps' releases): an answer is
+reused for 10 minutes, a failure for 1 minute, then the registry is asked
+again, so a version published while the gateway runs shows up within 10
+minutes without a restart (<strong>Check again</strong> asks the gateway at once, still
+through that cache). <code>update_available</code> is true when that version is newer
+than the installed one (semantic versions, prereleases before their release).</p>
+<ul>
+<li><strong>An app the gateway installed</strong> (browser apps, the Assistant) gets <strong>Update
+  to x.y.z</strong>: one click starts the update as a job, the same one as Install
+  for that version. A running browser app restarts on the new version. The
+  Assistant: see <a href="#the-assistant-a-desktop-app">The Assistant</a>.</li>
+<li><strong>An app started outside the gateway</strong> shows "Latest 0.8.0 · Started outside
+  the gateway — update it where it was installed" and has no update action:
+  its process belongs to whoever started it. An Assistant installed from a
+  source checkout likewise shows "Latest x.y.z · Installed from a source
+  checkout — update it there".</li>
+<li>The button's label and tooltip come from the gateway (<code>update_label</code>,
+  <code>update_tip</code> on the row), so the web console and the terminal console show
+  the same words; in the terminal console <code>u</code> updates the selected app, with
+  the tooltip as its confirmation.</li>
+<li>When the installer upgrades the framework with no gateway running, it leaves
+  the apps' versions in <code>&lt;data dir&gt;/apps-upgrade.pending</code> and the gateway
+  brings each installed app UP to that version at its next start; an app you
+  already updated past it from the Apps page is kept as it is.</li>
+</ul>
 <h2 id="what-happens-when-you-click-install">What happens when you click Install<a class="headerlink" href="#what-happens-when-you-click-install" title="Permanent link">&para;</a></h2>
 <ol>
 <li><strong>Node.js.</strong> The apps are small Node.js servers. If the gateway finds
@@ -1380,7 +1484,7 @@ in its <code>details</code> field (<code>&lt;data dir&gt;/apps/jobs/&lt;job&gt;.
   pipe the gateway holds open and exits when it closes).</li>
 <li>An app you started stays <strong>enabled</strong>: the next time the gateway starts, it
   starts the app again, on the same port when that port is free. Stop the app
-  to turn this off (the console's <strong>Stop</strong> is under <strong>Technical details</strong>, or
+  to turn this off (click its <strong>Running</strong> badge in the console, or
   <code>abstractgateway apps stop &lt;app&gt;</code>). Nothing is registered with launchd, systemd or the login
   items; the gateway itself starts the apps.</li>
 <li>If an app exits unexpectedly, the gateway restarts it (after 1, 2 then 4
@@ -1461,8 +1565,11 @@ Opening it works exactly like opening an app the gateway started (the
 one-time sign-in link below, and <code>/apps/&lt;app&gt;/</code> when it announces it can be
 served there): the app's server reads the same sign-in cookies whoever
 started it. The gateway does not stop, update or show the
-log of an app it did not start; the console's <strong>Technical details</strong> says
-"Started outside the gateway on port 3001" instead, and <code>POST /apps/{id}/stop</code>
+log of an app it did not start: its <strong>Running</strong> badge is disabled with the
+tooltip "Started outside the gateway — stop it where it was started", and
+<strong>Technical details</strong> says "Started outside the gateway on port 3001" (when a newer version is
+published, the card says "Latest x.y.z · Started outside the gateway — update
+it where it was installed"), and <code>POST /apps/{id}/stop</code>
 answers 409 <code>started_outside_gateway</code>. Starting the gateway's own copy while
 an outside one runs does nothing (the app is already running).</p>
 <h2 id="who-may-install">Who may install<a class="headerlink" href="#who-may-install" title="Permanent link">&para;</a></h2>
@@ -1637,7 +1744,7 @@ port the gateway chose. The bind address is always <code>127.0.0.1</code>.</p>
 listen</em>) is <strong>deprecated</strong>: apps always listen on <code>127.0.0.1</code> and open
 through the gateway. It accepts only a loopback address; an older saved
 <code>0.0.0.0</code> (or <code>ABSTRACTGATEWAY_APPS_HOST</code>) is ignored with one warning in the
-gateway's log, and clearing it removes the warning. Change them from the Apps page (<em>Advanced: apps settings</em>), the
+gateway's log, and clearing it removes the warning. Change them from the Apps page (the toolbar gear, <em>Apps settings</em>), the
 terminal console (Runtimes → <em>Runtime knobs</em> → <em>Edit apps settings</em>) or the
 CLI:</p>
 <div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>apps<span class="w"> </span>config<span class="w"> </span>get<span class="w"> </span><span class="o">[</span>NAME<span class="o">]</span><span class="w"> </span><span class="o">[</span>--json<span class="o">]</span>
@@ -1652,7 +1759,7 @@ open a running one (as themselves).</p>
 <h2 id="without-internet">Without internet<a class="headerlink" href="#without-internet" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Apps already installed keep working offline.</li>
-<li>Installing needs the npm registry (and PyPI for Node.js). When it cannot be
+<li>Installing needs the npm registry (and PyPI for Node.js and the Assistant). When it cannot be
   reached, the Apps page says so on each app and the Install button is off;
   a job that loses the network fails with "The npm registry
   (registry.npmjs.org) is not reachable…". The gateway does not ship app
@@ -1692,20 +1799,39 @@ Python environment as the gateway; a gateway-only install may not.</p>
   <code>abstractassistant</code> command next to the gateway's own Python (or on <code>PATH</code>),
   the installed package (<code>importlib.util.find_spec</code>, without importing it; a
   folder that merely has the package's name does not count), and on macOS
-  <code>AbstractAssistant.app</code> in <code>/Applications</code> or <code>~/Applications</code>. The version
-  comes from the package, else from the app's <code>Info.plist</code>. It is <strong>Running</strong>
-  when a process on this computer is the Assistant (its command, <code>python -m
-  abstractassistant…</code>, or the app's own program). The tray's "Launch
-  Assistant" uses the same detection (<code>apps_desktop.detect_assistant</code>), so
-  the tray and the console always agree.</li>
+  <code>AbstractAssistant.app</code> in <code>/Applications</code> or <code>~/Applications</code>.</li>
+<li><strong>One Assistant: the installed package.</strong> When the package is installed (its
+  command, else this Python running it), the card describes, opens and watches
+  that one; the app bundle is used only when no package is installed. The
+  version is that Assistant's (the package's, or the app's <code>Info.plist</code> for
+  the bundle). It is <strong>Running</strong> when a process of that Assistant runs (its
+  command, <code>python -m abstractassistant…</code>, or — for the bundle — the app's own
+  program). When the OTHER one runs (for example an older
+  <code>AbstractAssistant.app</code> next to the installed package), the card is not
+  "Running": it says so in one sentence — "Another Assistant is running:
+  /Applications/AbstractAssistant.app 0.5.0 — quit it to use 0.13.0" — and
+  <strong>Open</strong> still starts the installed one. The tray's "Launch Assistant" uses
+  the same detection (<code>apps_desktop.detect_assistant</code>) and shows the same
+  sentence under it, so the tray and the console always agree.</li>
+<li><strong>Its badge</strong> (the card's start/stop control): <strong>Running</strong> for the
+  Assistant this gateway opened — a click quits it (<code>POST
+  /apps/assistant/stop</code>, SIGTERM: it closes cleanly), tooltip "Running —
+  click to quit"; <strong>Running</strong> for one started anywhere else (its menu, the
+  app bundle, a terminal) — disabled, "Started outside the gateway — stop it
+  where it was started", and <code>POST /apps/assistant/stop</code> answers 409
+  <code>started_outside_gateway</code> without touching it; <strong>Stopped</strong> — a click opens
+  it (the same as <strong>Open</strong>), tooltip "Stopped — click to start", or disabled
+  with the reason from another computer ("The Assistant runs on the gateway's
+  computer: open it there.").</li>
 <li><strong>Install</strong> installs <code>abstractassistant</code> into the gateway's own Python as a
   job (<code>uv pip install --python &lt;gateway python&gt; abstractassistant</code>, or pip
   when there is no uv), with every <code>abstract*</code> package the gateway runs
   pinned to its current version (<code>name==version</code> requirements in the same
   command), so installing the Assistant never changes the gateway. The same
   rule as the other installs decides who may install (see <a href="#who-may-install">Who may install</a>).</li>
-<li><strong>Open</strong> starts it on the gateway's computer: <code>open -a AbstractAssistant.app</code>
-  when the app exists, otherwise its command, as a separate process with none
+<li><strong>Open</strong> starts it on the gateway's computer: its command (or this Python
+  running it), or <code>open -a AbstractAssistant.app</code> when only the app exists, as
+  a separate process with none
   of the gateway's tokens, secrets or keys in its environment. A running
   Assistant is not started twice: the app is brought to the front (or, when
   it was started from its command, the card says its icon is in the menu
@@ -1720,6 +1846,31 @@ Python environment as the gateway; a gateway-only install may not.</p>
   token is ever on its command line or in its environment. An Assistant that
   is already running cannot receive a code: if it is not signed in, quit it
   and open it again from here.</li>
+<li><strong>Update to x.y.z</strong> (when PyPI has a newer <code>abstractassistant</code>) runs the
+  install job with <code>abstractassistant==&lt;latest&gt;</code> and the same pins (the
+  Assistant itself is never pinned to its old version). An Assistant this
+  gateway opened is quit and opened again on the new version, signed in as
+  the admin who clicked Update ("a running app restarts on it"). An Assistant
+  the gateway did not open (started from its command or a script such as
+  <code>scripts/start-local.sh</code>, or the other one of the two above) is left alone:
+  the tooltip, the job's result and the card say "Quit it and open it again
+  to run 0.14.0" until that process ends. When PyPI cannot be reached,
+  <strong>Technical details</strong> say "PyPI is not reachable: …" and there is no
+  Update. The gateway remembers which Assistant it opened only while it runs.
+  The update must land: when the installer finishes but the requested version
+  is not the one installed afterwards, the job fails with "Asked for 0.14.0,
+  but 0.13.0 is still installed — not updated." (the installer output under
+  <strong>Show details</strong>) and nothing is restarted.</li>
+<li><strong>Installed from a source checkout</strong> (an editable install: the package's
+  <code>direct_url.json</code> says <code>dir_info.editable: true</code>, as <code>scripts/build.sh</code>
+  installs it): the card shows the version the checkout's own
+  <code>pyproject.toml</code> declares (<code>[project].version</code>, in the folder
+  <code>direct_url.json</code> names; the editable install's metadata goes stale as the
+  checkout moves on, and when the checkout declares no readable version the
+  card shows none, with the reason) and, when PyPI has a newer one,
+  "Latest x.y.z · Installed from a source checkout — update it there", with
+  no Update (installing a PyPI wheel would replace the checkout);
+  <code>POST /apps/assistant/update</code> refuses with the same sentence.</li>
 <li><strong>From another computer</strong> the card says "The Assistant runs on the gateway's
   computer: open it there." with no button: it is a desktop app for that
   computer's screen.</li>
@@ -1740,7 +1891,7 @@ Python environment as the gateway; a gateway-only install may not.</p>
 <tr>
 <td><code>GET /apps?latest=true</code></td>
 <td>any user</td>
-<td>Node.js status, one row per app (<code>kind</code> <code>web</code> with <code>interfaces[]</code>, see "Terminal versions", and <code>install_parts</code>; then the Assistant, <code>kind</code> <code>desktop</code> with <code>desktop {location, found_by, launch_command, install_command, launch_available, launch_blocked, launch_blocked_reason}</code>) and <code>console_tui</code> (the gateway console's terminal app). <code>gateway_url</code> is where the app servers reach the gateway (on its machine); <code>browser_gateway_url</code> is the address the caller uses (e.g. <code>https://&lt;host&gt;.ts.net</code> behind <code>tailscale serve</code>), the one to show in any command or link. <code>latest=false</code> skips the npm registry and GitHub release lookups (cached 10 minutes).</td>
+<td>Node.js status, one row per app (<code>kind</code> <code>web</code> with <code>interfaces[]</code>, see "Terminal versions", and <code>install_parts</code>; then the Assistant, <code>kind</code> <code>desktop</code> with <code>desktop {location, found_by, launch_command, install_command, launch_available, launch_blocked, launch_blocked_reason, other_running, restart_note, started_by_gateway, source_checkout, checkout_path, version_reason, latest_error}</code>); every row has <code>latest_version</code>, <code>update_available</code>, <code>update_label</code> and <code>update_tip</code> (see <a href="#updates">Updates</a>) and <code>status_control {label, tone, busy, action, enabled, tip}</code> — the status badge for THIS caller: <code>action</code> <code>stop</code> or <code>launch</code> is what a click posts, <code>enabled</code> false with <code>tip</code> as the reason, <code>tip</code> null for a plain pill (the badge table at the top of this page) and <code>console_tui</code> (the gateway console's terminal app). <code>gateway_url</code> is where the app servers reach the gateway (on its machine); <code>browser_gateway_url</code> is the address the caller uses (e.g. <code>https://&lt;host&gt;.ts.net</code> behind <code>tailscale serve</code>), the one to show in any command or link. <code>latest=false</code> skips the npm registry, PyPI and GitHub release lookups (cached 10 minutes).</td>
 </tr>
 <tr>
 <td><code>POST /apps/runtime/install</code></td>
@@ -1755,7 +1906,7 @@ Python environment as the gateway; a gateway-only install may not.</p>
 <tr>
 <td><code>POST /apps/{id}/update</code> <code>{"version"?}</code></td>
 <td>admin</td>
-<td>A job: install the latest (or given) version; a running app is restarted on it.</td>
+<td>A job: install the latest (or given) version; a running app is restarted on it. For <code>assistant</code>: <code>abstractassistant==&lt;version&gt;</code> from PyPI with the gateway's pins; the Assistant this gateway opened reopens signed in as the caller, any other running Assistant is left alone ("Quit it and open it again to run x.y.z"). A row started outside the gateway has no <code>update</code> action.</td>
 </tr>
 <tr>
 <td><code>POST /apps/{id}/launch</code></td>
@@ -1770,7 +1921,7 @@ Python environment as the gateway; a gateway-only install may not.</p>
 <tr>
 <td><code>POST /apps/{id}/stop</code></td>
 <td>admin</td>
-<td>Stop the app and mark it disabled. 409 <code>started_outside_gateway</code> for an app the gateway did not start.</td>
+<td>Stop the app and mark it disabled. 409 <code>started_outside_gateway</code> for an app the gateway did not start. For <code>assistant</code>: quit the Assistant this gateway opened, <code>{ok, app, message}</code>; any other running Assistant: 409 <code>started_outside_gateway</code>, nothing is quit.</td>
 </tr>
 <tr>
 <td><code>POST /apps/{id}/open</code> <code>{"remember"?, "path"?, "origin"?}</code></td>

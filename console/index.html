@@ -426,6 +426,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#workspaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workspaces
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#runtimes-of-one-account" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Runtimes of one account
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#workflows" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -509,10 +531,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#models-and-engines-in-the-terminal-console" class="md-nav__link">
+  <a href="#providers-models-and-openai-api-in-the-terminal-console" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Models and Engines in the terminal console
+        Providers, Models and OpenAI API in the terminal console
       
     </span>
   </a>
@@ -1063,6 +1085,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#workspaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workspaces
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#runtimes-of-one-account" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Runtimes of one account
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#workflows" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1146,10 +1190,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#models-and-engines-in-the-terminal-console" class="md-nav__link">
+  <a href="#providers-models-and-openai-api-in-the-terminal-console" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Models and Engines in the terminal console
+        Providers, Models and OpenAI API in the terminal console
       
     </span>
   </a>
@@ -1248,7 +1292,7 @@ You can also sign in with a user id and token (the admin's first token is in
 <tr>
 <td>Accounts</td>
 <td><strong>Accounts</strong></td>
-<td>every user and entity in one table: the <strong>Active</strong> switch, email, activity (Logs), workspace policy, token rotation, entity management, and the administrator's <strong>Email for everyone</strong> switches (<a href="#accounts">below</a>)</td>
+<td>every user and entity in one table: the <strong>Active</strong> switch, email, a link to each account's runtimes, activity (Logs), workspaces, token rotation, entity management, the administrator's <strong>Eligible workspaces</strong> and <strong>Email for everyone</strong> switches (<a href="#accounts">below</a>)</td>
 </tr>
 <tr>
 <td>Work</td>
@@ -1257,18 +1301,28 @@ You can also sign in with a user id and token (the admin's first token is in
 </tr>
 <tr>
 <td>Work</td>
+<td><strong>Skills &amp; MCP</strong></td>
+<td>administrators: <strong>Skills</strong> — the skills shelf setting and every skill (curated and imported, <strong>Show archived</strong>) with View, Export and Archive, import a <code>.zip</code> or folder, Duplicate to edit a curated one; <strong>MCP servers</strong> — whether agents are offered tools, an <strong>Enabled for agents</strong> switch per server, add, edit, test and archive (<a href="../configuration/#skills-shelf">configuration.md</a>)</td>
+</tr>
+<tr>
+<td>Work</td>
 <td><strong>Runtimes</strong></td>
-<td>execution planes: runs (cancel, steer), sessions, data and caches</td>
+<td>execution planes: runs (cancel, steer), sessions, data and caches; <code>#runtimes?account=&lt;id&gt;</code> lists one account's runtimes (<a href="#runtimes-of-one-account">below</a>)</td>
 </tr>
 <tr>
 <td>Work</td>
 <td><strong>Apps</strong></td>
-<td>the browser apps, Code's terminal app and the desktop Assistant (below), plus <em>Advanced: apps settings</em> and <em>Advanced: backlog settings (Continuum)</em></td>
+<td>the browser apps, Code's terminal app and the desktop Assistant (below), no settings disclosures: the toolbar gear opens <strong>Apps settings</strong> and the gear beside Continuum's Open opens <strong>Continuum settings</strong> (backlog folder, exec runner, process manager), each a dialog whose rows apply on their own</td>
 </tr>
 <tr>
 <td>Models</td>
 <td><strong>Providers</strong></td>
 <td><strong>Local providers</strong>: one card per local engine on the gateway host (Ollama, LM Studio, MLX, llama.cpp, Hugging Face, vLLM) with its status, install, start, stop, <strong>Browse models</strong> and its server connection; <strong>Remote providers</strong>: OpenAI, Anthropic, OpenRouter, Portkey and custom OpenAI-compatible connections with write-only keys (shown as fingerprints); then the <strong>Available Providers</strong> table (<a href="#models-and-local-providers">below</a>)</td>
+</tr>
+<tr>
+<td>Models</td>
+<td><strong>OpenAI API</strong></td>
+<td>the OpenAI-compatible API at <code>/v1</code>: status with Endpoint switch, Restart and Check setup; the base URL and your API key (your gateway token); Authentication and Who can connect, applied at once; supported surface and snippets; recent requests (<a href="../openai-api/">openai-api.md</a>)</td>
 </tr>
 <tr>
 <td>Models</td>
@@ -1293,7 +1347,7 @@ You can also sign in with a user id and token (the admin's first token is in
 <tr>
 <td>System</td>
 <td><strong>Network</strong></td>
-<td>who can reach the gateway (localhost only, local network, internet), its addresses, admin-only <a href="../configuration/#openai-compatible-endpoint">OpenAI-compatible endpoint controls</a>, and <em>Advanced: reverse proxy</em> (<a href="../configuration/#network-exposure-localhost--local-network--internet">configuration.md</a>)</td>
+<td>who can reach the gateway (localhost only, local network, internet), its addresses (with the Tailscale name when Tailscale runs), <em>Reached through another address?</em> (Tailscale, a reverse proxy: detected addresses are accepted automatically), and <em>Advanced</em>: manual allowed origins and <em>Trust proxies on other machines</em> (<a href="../configuration/#network-exposure-localhost--local-network--internet">configuration.md</a>)</td>
 </tr>
 </tbody>
 </table>
@@ -1325,16 +1379,25 @@ OpenAI-compatible) are always listed, marked "needs an API key" until you add
 one under <strong>Providers</strong>.</p>
 <p>The <strong>Technical details</strong> switch at the bottom of the sidebar shows commands,
 route ids and other technical information throughout the console. The top bar
-holds the docs assistant (answers grounded on this gateway's documentation),
-the appearance settings, <strong>About</strong>, the gateway's address with a copy button,
-who is signed in, and the sign-out control.</p>
-<p><strong>About</strong> (the <em>i</em> button) shows AbstractGateway and the version this gateway
-runs, that it is part of AbstractFramework, the author, the copyright and
-licence, the website, source, documentation, issue and feedback links, the
-contact address, then the versions the gateway reports on <code>GET
-/api/gateway/about</code>: AbstractGateway, AbstractFramework (or "not installed on
-the gateway host") and every installed AbstractFramework package. If the
-gateway cannot report them, one line says "Gateway: unavailable (reason)".</p>
+holds the <strong>Docs assistant</strong> (book icon: the same chat as every app — your question on the right, the answer on the left with Markdown, code and links, copy, attachments, live streaming, an icon-only New conversation; answers come from this gateway's llms.txt through the docs-qa workflow, as its one-line footer says; <strong>Past conversations</strong> reopens or archives an earlier docs chat, and docs chats never appear in the conversation lists),
+the appearance settings, <strong>About</strong>, who is signed in, and the sign-out control.
+Left of them sits the <strong>memory and compute line</strong> — the same glance as the
+desktop tray: memory used of total (with the percentage), GPU busy % and how
+many models are loaded, with two small bars for memory and GPU (at phone
+width the memory reads as a percentage). It reads the Resources page's data
+(<code>GET /api/gateway/host/state</code>) and refreshes every 5 seconds while you are
+signed in and the browser tab is visible. Hover or focus it for the real
+values, one per line: RAM, the accelerator heap (and whose memory it counts),
+model weights and models loaded, KV caches (for models and in sessions) and
+GPU load; a figure the host does not report reads "—" or "unknown", never 0.
+Click it (or press Enter on it) to open <strong>Resources</strong>. The gateway's
+addresses, each with <strong>Copy</strong>, are on the <strong>Network</strong> page.</p>
+<p><strong>About</strong> (the <em>i</em> button) is the compact card every AbstractFramework app
+shows: AbstractGateway and the version this gateway runs, the AbstractFramework
+version installed on this host (or "not installed on this host"), one row of
+links (Website, Source, Docs, Issues, Feedback, Contact) and the copyright and
+licence line. It lists no packages: the per-package versions stay on <code>GET
+/api/gateway/about</code>.</p>
 <h3 id="responsive-layout">Responsive layout<a class="headerlink" href="#responsive-layout" title="Permanent link">&para;</a></h3>
 <p>The web console works in any browser window and on phones and tablets:</p>
 <ul>
@@ -1356,7 +1419,22 @@ gateway cannot report them, one line says "Gateway: unavailable (reason)".</p>
 on it, in one table (<code>GET /api/gateway/admin/accounts</code>, see
 <a href="../api/#accounts-and-activity">api.md</a>). Above it, <strong>Create user</strong> issues a
 user and their token (shown once) and <strong>Create entity</strong> summons a new entity
-from a spark template (its name is permanent, <a href="../entities/">entities.md</a>).</p>
+from a spark template (its name is permanent, <a href="../entities/">entities.md</a>).
+Administrators also have <strong>Eligible workspaces</strong> first in that row: the
+workspaces accounts may choose from, and the most each one allows
+(<a href="#workspaces">below</a>).</p>
+<p>Below that row, everyone signed in sees the host's <strong>command sandbox</strong> as a
+state line, with an explanation in its tooltip:</p>
+<ul>
+<li><strong>Commands sandboxed: macOS sandbox-exec</strong> (or Linux bubblewrap): every
+  command a run starts is confined by the operating system to that run's
+  workspaces.</li>
+<li><strong>Commands refused: no sandbox on this host</strong>.</li>
+<li><strong>Unsandboxed commands allowed (flag)</strong>: the gateway was started with
+  <code>serve --unsandboxed-commands</code>.</li>
+</ul>
+<p>It is a state, not a control. The terminal console shows the same line on its
+<strong>Workspaces</strong> page (<a href="../security/#command-sandbox">security.md</a>).</p>
 <table>
 <thead>
 <tr>
@@ -1370,16 +1448,12 @@ from a spark template (its name is permanent, <a href="../entities/">entities.md
 <td>the account id and a kind chip: <strong>Admin</strong>, <strong>User</strong> or <strong>Entity</strong> (hover it for the role)</td>
 </tr>
 <tr>
-<td><strong>Email address</strong></td>
-<td>where the account's sign-in codes and notifications go: the registered email address, else the account's own connected mailbox address; "No address" when it has neither</td>
-</tr>
-<tr>
-<td><strong>Mailbox</strong></td>
-<td>"Connected as x@y", "Receive only — no outgoing server" (with the reason under it), "Not connected" or "Paused" (users and entities alike: an entity has its own mailbox)</td>
+<td><strong>Email</strong></td>
+<td>the account's address and its mailbox state in one line: <code>alice@example.org · connected</code>, <code>· not connected</code>, <code>· receive only</code> (with the reason under it) or <code>· paused</code>; "No address" when the account has neither a registered address nor a connected mailbox (users and entities alike: an entity has its own mailbox)</td>
 </tr>
 <tr>
 <td><strong>Runtime</strong></td>
-<td>the account's runtime id (plain text that wraps), or "No runtime"</td>
+<td>the account's runtime id as a link to the Runtimes page filtered to that account (administrators; plain text for everyone else), or "No runtime"</td>
 </tr>
 <tr>
 <td><strong>Active</strong></td>
@@ -1387,17 +1461,23 @@ from a spark template (its name is permanent, <a href="../entities/">entities.md
 </tr>
 <tr>
 <td><strong>Actions</strong></td>
-<td>users: <strong>Email</strong>, <strong>Logs</strong>, <strong>Workspace</strong> and a "⋯" menu (<strong>Rotate token</strong>, <strong>Archive</strong>); entities: <strong>Email</strong>, <strong>Logs</strong>, <strong>Manage</strong> and a "⋯" menu (<strong>Archive</strong>); archived rows: <strong>Logs</strong> and a "⋯" menu (<strong>Unarchive</strong>)</td>
+<td>icon buttons, each with a tooltip sentence: users <strong>Email</strong>, <strong>OpenAI API</strong>, <strong>Logs</strong>, <strong>Workspace</strong>, <strong>Rotate token</strong>, <strong>Archive</strong>; entities <strong>Email</strong>, <strong>Logs</strong>, <strong>Workspace</strong>, <strong>Manage</strong>, <strong>Archive</strong>; archived rows <strong>Logs</strong>, <strong>Unarchive</strong></td>
 </tr>
 </tbody>
 </table>
 <p>Rows are tinted by kind (a legend under the table reads "Tint: admin · user ·
 entity"). Only the actions that apply to a row are shown: your own row has no
-<strong>Archive</strong>, and an entity has no <strong>Rotate token</strong> (hover the "⋯" button for
-why). The table never scrolls sideways: long names and addresses wrap, and when
-the table does not fit (narrow windows, tablets, phones) each account becomes
-one flat block: name, kind chip and Active, then the address and mailbox, then
-the runtime, then the actions.</p>
+<strong>Archive</strong> and an entity has no token to rotate. The action buttons are
+44 px targets. Hover one, or reach it with the keyboard, and a tooltip says
+what it does for whom: "Email address and mailbox of alice", "OpenAI API
+access for alice", "Activity log of alice", "Workspaces alice's agents may
+use", "Manage castor (mind, voice, prompt…)", "Rotate alice's sign-in
+token", "Archive alice (kept, hidden)". The same tooltip explains every icon
+button in the console (Workflows, Models, Apps, the top bar…): it appears
+after a short pause, stays inside the window and Escape hides it. The table never scrolls sideways: long names and
+addresses wrap, and below about 900 px of window width each account becomes
+one flat block: name, kind chip and Active, then the email line, then the
+runtime, then the actions, which wrap.</p>
 <p><strong>Show archived</strong> (administrators, above the table) lists archived accounts too;
 it is off by default and your browser remembers it.</p>
 <ul>
@@ -1420,6 +1500,11 @@ it is off by default and your browser remembers it.</p>
   entity's own mailbox (an entity is an AI user: its agents read and send from
   it, and notifications about its runs go to its address); the administrator
   and the entity's creator can open it.</li>
+<li><strong>OpenAI API</strong> (administrators, user rows) opens a dialog with the
+  account's <strong>OpenAI API</strong> switch: on, the account's gateway token works as an
+  API key at <code>/v1</code>; off, its requests answer <code>403 openai_api_off</code> (its console
+  sign-in is unchanged). Entities have no key and never use the OpenAI API
+  (<a href="../openai-api/#access">openai-api.md</a>).</li>
 <li><strong>Logs</strong> opens "Activity — <id>": the account's sign-ins, token rotations,
   runs started, automation commands, account changes and email events from the
   gateway's audit log, newest first, in your local time. The chips <strong>All</strong>,
@@ -1431,10 +1516,13 @@ it is off by default and your browser remembers it.</p>
   "Test notification"). The footer says what the audit log does not
   record (page views and reads, mail received, what agents send with their
   email tools).</li>
-<li><strong>Workspace</strong> (users) opens the account's workspace policy (which folders its
-  agents may read and write).</li>
-<li><strong>Rotate token</strong> issues a new token for a user (the old one stops working at
-  once; the new one is shown once). Entities have no token to rotate.</li>
+<li><strong>Workspace</strong> opens "Workspaces — <id>", the workspaces that account's
+  agents use (<a href="#workspaces">below</a>). Every row has it — users, entities
+  (including entities older than entity accounts: the gateway gives each one
+  an account at start) and your own.</li>
+<li><strong>Rotate token</strong> asks in a row under the account ("Rotate the token of
+  alice? The current token stops working now; the new one is shown once."),
+  then issues the new token and shows it once. Entities have no token to rotate.</li>
 <li><strong>Manage</strong> (entities) opens the entity's lifecycle, mind and voice,
   capabilities and prompt; <strong>Talk</strong> is there too. <strong>Mind &amp; voice</strong> uses the
   shared pickers: <strong>Gateway default</strong> (the gateway's text model and default
@@ -1443,19 +1531,99 @@ it is off by default and your browser remembers it.</p>
   in any more. Their runtime, runs and history are kept; you can unarchive
   later." / for an entity: "It stops acting and never wakes. Its memory, runs
   and history are kept"). Nothing is deleted. <strong>Unarchive</strong> brings the account
-  back inactive: turn <strong>Active</strong> on to let it sign in (or act).</li>
+  back inactive: turn <strong>Active</strong> on to let it sign in (or act). Accounts are
+  never deleted (<code>DELETE /api/gateway/admin/users/{id}</code> answers <code>410</code>).</li>
 </ul>
 <p>Under the table, <strong>Email for everyone</strong> (administrators) holds the switch
-<strong>Mailboxes for users</strong>, with <strong>Agent email tools for users</strong> and <strong>Sign-in by
-email</strong> under Advanced (<a href="../email/#administrators">email.md</a>). Below the page,
-<strong>Workspace policy</strong> is your own workspace policy.</p>
+three switches, directly in the card: <strong>Mailboxes for users</strong>, <strong>Agent email
+tools for users</strong> and <strong>Sign-in by email</strong> (<a href="../email/#administrators">email.md</a>).</p>
 <p>Someone who is not an administrator sees the page as <strong>Your account</strong> ("Your
 account and the entities you created."): the same table with their own row and
 one row per entity they created (<code>GET /api/gateway/me/accounts</code>). There is no
-Create user and no Email for everyone; their own row has no <strong>Rotate token</strong>
+Create user, no Eligible workspaces and no Email for everyone;
+their own row's <strong>Workspace</strong> opens their own workspaces, and an entity's row
+opens that entity's; it has no <strong>Rotate token</strong>
 (only an admin rotates tokens), they can archive an entity they created but not
 unarchive it, and an entity's Active switch says "Only an admin can suspend an
 entity." Archived accounts are not listed for them. See <a href="../security/#who-sees-which-account">security.md</a>.</p>
+<h3 id="workspaces">Workspaces<a class="headerlink" href="#workspaces" title="Permanent link">&para;</a></h3>
+<p>A workspace is a directory an agent may work in. Three levels decide which
+workspaces a run may use, each inside the one above
+(<a href="../security/">security.md</a> explains how the gateway enforces it):</p>
+<ol>
+<li><strong>Eligible workspaces</strong> — the administrator's set: what any account may
+   choose from, and the most each workspace allows.</li>
+<li><strong>An account's workspaces</strong> — what that account's agents use, among the
+   eligible ones (every account has its own: users and entities).</li>
+<li><strong>One conversation's workspaces</strong> — chosen in the apps (AbstractCode,
+   Flow, Observer, the Assistant) for one conversation or one run, inside the
+   account's.</li>
+</ol>
+<p>Rows may nest: <strong>the most specific row wins</strong>. Refusing <code>/Users/me</code> and
+allowing <code>/Users/me/projects</code> (Read &amp; write) is valid; the child is usable and
+the rest of <code>/Users/me</code> is refused. A refused row inside an allowed one refuses
+that part. The chooser shows the gateway's answer; it has no rule of its own.</p>
+<p>Every run also has its own private workspace (<code>&lt;data dir&gt;/workspaces/session-…</code>):
+a file written without a full path lands there. It is always available, read &amp;
+write, and never listed. The workspaces a run may use are listed to its agent
+with their paths and modes.</p>
+<p>Both dialogs below are the same chooser, with the same words, as the apps'
+workspace settings. Their parts:</p>
+<table>
+<thead>
+<tr>
+<th>Part</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Gateway: …</strong> (account level)</td>
+<td>the eligible set in one line, as the gateway states it, e.g. "Gateway: Allow everything, refuse listed workspaces (rw) · /secrets (refused) · /archive (ro)"</td>
+</tr>
+<tr>
+<td><strong>Follow the gateway policy</strong> (account level)</td>
+<td>a switch: on, the account gets exactly the eligible set; off, the account has its own posture and rows (starting from what applied)</td>
+</tr>
+<tr>
+<td>Posture</td>
+<td><strong>Deny everything, allow listed workspaces</strong> (only the <strong>Allowed workspaces</strong> listed below) or <strong>Allow everything, refuse listed workspaces</strong> (any workspace except the <strong>Refused workspaces</strong> listed below; <strong>Everything else</strong> sets <strong>Read-only</strong> or <strong>Read &amp; write</strong> for the rest)</td>
+</tr>
+<tr>
+<td>Rows</td>
+<td>one row per workspace: the path, <strong>Read &amp; write</strong> / <strong>Read-only</strong> / <strong>Refused</strong>, and a remove icon; <strong>Add a workspace path</strong> adds one (Refused under Allow everything, refuse listed workspaces; under Deny everything, allow listed workspaces Read &amp; write in Eligible workspaces and Read-only in an account)</td>
+</tr>
+<tr>
+<td>The last line</td>
+<td>what applies, as the gateway states it, e.g. "Deny everything, allow listed workspaces · /Users/me/Pictures (rw) · /Users/me/Documents (ro)"</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Eligible workspaces</strong> (administrators, top of Accounts) holds the
+administrator's set. A row's mode is its <strong>cap</strong>: no account can use that
+workspace with more. Under it, the gateway's own data directory and credentials
+are listed as always refused. A fresh gateway starts at Allow everything,
+refuse listed workspaces (Read &amp; write), with no row.</p>
+<p><strong>Workspace</strong> on an account's row opens that account's level. An account
+chooses among the eligible workspaces: a path outside them, or a mode above a
+workspace's cap, is refused with the gateway's sentence. A mode above the cap
+is shown greyed and keeps its tooltip, "The gateway allows this workspace
+read-only" (reachable with the keyboard too). An entity's workspaces are set by
+its creator or an administrator; someone who is not an administrator opens
+their own from their own row.</p>
+<p>Every change applies at once and is saved by the gateway; there is no Save
+button. When the gateway refuses a change, its sentence shows under the control
+with "Not saved." and nothing changes. The API is <code>GET</code>/<code>PUT
+/api/gateway/workspace/policy</code> (eligible workspaces) and <code>GET</code>/<code>PUT
+/api/gateway/workspace/policy/{account}</code> (<code>me</code> for your own) (<a href="../api/">api.md</a>).</p>
+<h3 id="runtimes-of-one-account">Runtimes of one account<a class="headerlink" href="#runtimes-of-one-account" title="Permanent link">&para;</a></h3>
+<p>The Runtime link on an Accounts row opens <strong>Runtimes</strong> at
+<code>#runtimes?account=&lt;id&gt;</code> (<code>GET /api/gateway/admin/runtimes?account=&lt;id&gt;</code>): a
+chip "Account: alice" names the filter, only that account's runtimes are
+listed, and a single runtime opens at once. The link survives a reload; the
+× on the chip shows every runtime again. The <strong>Workspace</strong> column opens the
+workspaces that apply: <strong>Eligible workspaces</strong> for the default runtime,
+<strong>Workspaces</strong> (the owner's) for a user's or an entity's runtime.</p>
 <h3 id="workflows">Workflows<a class="headerlink" href="#workflows" title="Permanent link">&para;</a></h3>
 <p>The <strong>Workflows</strong> tab starts with what workflows are: the programs your apps
 and automations run, packaged as bundles (<code>.flow</code> files) that ship with the
@@ -1478,7 +1646,7 @@ A user sees the shared bundles an admin left available, and their own.</p>
 </tr>
 <tr>
 <td><strong>What it does</strong></td>
-<td>the default entrypoint's description (the whole text when the row is expanded)</td>
+<td>the owner's description when they wrote one, else the default entrypoint's (two lines; click shows it whole). The owner (an admin for shared ones; never a shipped bundle) edits it in place: the pencil opens a text box, Enter or leaving the box saves it (<code>PATCH /api/gateway/bundles/{id}</code>), Escape cancels, "Saved" shows beside it</td>
 </tr>
 <tr>
 <td><strong>Version</strong></td>
@@ -1498,13 +1666,12 @@ A user sees the shared bundles an admin left available, and their own.</p>
 </tr>
 <tr>
 <td><strong>Actions</strong></td>
-<td><strong>Export</strong>, <strong>Open</strong> (in AbstractFlow, a new tab) and <strong>Archive</strong> for imported and published bundles</td>
+<td>icon buttons with tooltips, in one row that never wraps: <strong>Export</strong>, <strong>Open in AbstractFlow</strong> (a new tab) and <strong>Archive</strong> (or <strong>Unarchive</strong>) for imported and published bundles</td>
 </tr>
 </tbody>
 </table>
-<p>Click a row to expand it: each version with its channel, date and the same
-actions, and its entrypoints with their names, descriptions and the apps that
-use them. The toolbar has a search field, the switches <strong>Drafts</strong>, <strong>Older
+<p>Rows do not expand. With <strong>Older versions</strong> on, each older version is its own
+row under its bundle (version, channel, date and its own three actions). The toolbar has a search field, the switches <strong>Drafts</strong>, <strong>Older
 versions</strong> and <strong>Show archived</strong>, and <strong>Import .flow</strong>. Everyone can import: a
 user's import lands in <strong>Mine</strong>, an admin's in the shared group.</p>
 <p>Workflows are never deleted. <strong>Archive</strong> asks in the row ("Archive … ? It
@@ -1529,7 +1696,7 @@ titled <code>&lt;name&gt; · &lt;bundle id&gt;@&lt;version&gt;</code>, so Save c
 changes the bundle. <strong>Broken workflows</strong> appears only when the gateway refused a
 bundle file: the workflow, the versions affected and why it cannot run, with
 <strong>Archive</strong> to hide them.</p>
-<p><strong>Default workflow per app</strong> comes next: "When an app asks for "an agent"
+<p><strong>Default workflow per app</strong> (administrators only; other accounts do not see it) comes next: "When an app asks for "an agent"
 without naming a workflow, the gateway runs this one." One row per interface,
 with its plain name ("AbstractCode — chat agent", "Assistant", "Deep research",
 …), a (?) that says what it is for, and the interface id in small type. The
@@ -1599,22 +1766,25 @@ machine that runs <code>abstractgateway serve</code>, not the computer your brow
 on. The catalog data, the presence checks and the fit verdicts come from
 AbstractCore (<code>GET /api/gateway/models/catalog</code>, contract <code>model_catalog_v1</code>);
 downloads are the gateway's own jobs (see <a href="../model-downloads/">Model downloads</a>).</p>
-<p><strong>Models</strong> (tab id <code>catalog</code>) shows the catalog as <strong>one card per model</strong>:</p>
+<p><strong>Models</strong> (tab id <code>catalog</code>) is one page: the catalog as <strong>one compact card
+per model</strong>, and the downloaded models the catalog does not know in the same
+list.</p>
 <ul>
-<li>The card header: the model's name, organisation, parameter count and
-  licence, its capabilities (Text, Thinking, Tools, Vision, Audio, Embedding,
-  Voice, Image, Video) and a <strong>Starter</strong> badge for the models of the recommended
-  starter set.</li>
-<li>The card body: one row per downloadable build (artifact) of that model: the
+<li>The card header is one line: the model's name, organisation, parameter count
+  and licence, its capabilities (Text, Thinking, Tools, Vision, Audio,
+  Embedding, Voice, Image, Video) as small tags, and a <strong>Starter</strong> badge for the
+  models of the recommended starter set.</li>
+<li>The card body: one line per downloadable build (artifact) of that model: the
   provider (MLX, Ollama, LM Studio, Hugging Face, ...), the artifact id (long
   ids are shortened with "..."; hover to read the whole id, click it to copy
-  it), the quantization (4-bit, 8-bit, 16-bit, ... and its bits per weight),
-  the download size ("about" when the size is estimated from the parameter
+  it), the quantization (4-bit, 8-bit, 16-bit, ...; hover for the exact
+  quantization and bits per weight), the download size ("about" when the size is estimated from the parameter
   count), whether the weights are already here (Downloaded, Not downloaded,
   Unknown, Remote) and whether it fits this machine (Fits, Tight, Partial
-  offload, Too large; hover the pill for the numbers behind it). The build
-  recommended for this computer comes first and is marked; the others are
-  quieter.</li>
+  offload, Too large; hover the pill for the numbers behind it), then the
+  actions. The build recommended for this computer comes first, with a small
+  accent dot before its id; the others are quieter. On a narrow window the
+  facts move under the id; every button is at least 44 px.</li>
 <li>One action per row: <strong>Download</strong> (a download shows its progress bar with
   bytes, speed and time left, and <strong>Cancel</strong>, the same progress display as the
   setup guide), then <strong>Use as default</strong> once a text model is downloaded (it
@@ -1644,7 +1814,8 @@ downloads are the gateway's own jobs (see <a href="../model-downloads/">Model do
   answered carry a warning. The query is part of the address:
   <code>/console#catalog?hf=smollm</code>.</li>
 <li><strong>Provider</strong>, <strong>Capability</strong> and <strong>Status</strong> (Downloaded, Not downloaded)
-  chips, each with the number of builds it would show.</li>
+  chips, each with the number of builds it would show (the rows under "Not in
+  the catalog" included).</li>
 <li><strong>Fits this computer</strong> hides the builds that do not fit (only Fits and Tight
   remain).</li>
 <li>A live count: "12 of 77 models · 31 artifacts shown". The row with the search
@@ -1657,16 +1828,37 @@ downloads are the gateway's own jobs (see <a href="../model-downloads/">Model do
   (<code>downloaded</code>, <code>not_downloaded</code>), <code>fits=1</code> and <code>hf</code> (Hugging Face mode and
   its query).</li>
 </ul>
-<p>Below the cards, <strong>On this computer</strong> is AbstractCore's own list of the models
-the local engines hold (including models that are not in the catalog), with
-their size and location, and <strong>Delete</strong> (with a confirmation that names the
-model and any blocker, such as a model that is loaded right now).</p>
+<p><strong>Delete</strong> (a trash-bin icon; its tooltip names the build: "Delete <build> from
+this computer (files only)") sits on every downloaded build's
+row. A click first asks the gateway what the delete would free, then shows one
+sentence under the row with that size, for example "Deletes 351 MB from this
+computer. Files only — nothing in your runs is touched.", with <strong>Keep</strong> and
+<strong>Delete</strong>. Only the downloaded files go (the Ollama model through Ollama's own
+delete, the MLX / Hugging Face cache folder, or one GGUF quant's files, leaving
+the repo's other quants); runs, conversations and settings are not touched. The
+row then says "Not downloaded" and offers <strong>Download</strong> again. The gateway
+refuses, and the row says why and what to do, when the model is loaded or
+locked in memory ("Unload it first"), while its download is still running
+("Cancel the download first"), or for LM Studio, which keeps its own library
+(delete it in LM Studio). Every delete and refusal is written to the audit log.
+The terminal console's Models page deletes through the same route, with the same confirmation.</p>
+<p><strong>Not in the catalog.</strong> With Status <strong>All</strong> or <strong>Downloaded</strong>, the models the
+local engines hold that no catalog build accounts for (<code>GET
+/api/gateway/models/installed</code>: an Ollama tag you pulled yourself, a Hugging
+Face or MLX repository downloaded elsewhere) follow the cards as plain rows
+under a small <strong>Not in the catalog</strong> heading: provider, id, the quantization
+the engine reports, the size on disk, Downloaded (and Loaded) chips, and the
+same <strong>Delete</strong> with the same confirmation and refusals. They follow the
+Provider filter and the search; a capability, <strong>Fits this computer</strong>, the 4-bit
+/ 8-bit chips and Hugging Face mode leave them out, because nothing is known
+about them there. A model the catalog does know is never listed twice. If the
+engines' list cannot be read the page says so under that heading.</p>
 <p>The setup guide's <strong>Default model</strong> step shows the same catalog cards with
 <strong>Fits this computer</strong> already on; <strong>Open in the Models tab</strong> carries the
 filters over. An engine card's <strong>Browse models</strong> opens the tab filtered to that
 engine's builds.</p>
-<p><strong>Local providers</strong> (the Providers tab, id <code>providers</code>; the Engines tab of
-0.10.0 and older merged into it, and a <code>#engines</code> link opens Providers):</p>
+<p><strong>Local providers</strong> (the Providers tab, id <code>providers</code>; a <code>#engines</code> link
+opens Providers):</p>
 <ul>
 <li>One card per engine with a status pill (Ready, Running, Installing, Needs
   your approval, Needs Apple tools, Not installed, Not for this computer),
@@ -1707,7 +1899,7 @@ rest of the console keeps working.</p>
 <h3 id="apps-tab">Apps tab<a class="headerlink" href="#apps-tab" title="Permanent link">&para;</a></h3>
 <p>The Apps tab and the setup guide's Apps step show the same cards (the apps
 themselves are described in <a href="../apps/">apps.md</a>). What a plain user sees on
-each card: the app's mark, name and status pill (Not installed, Installed,
+each card: the app's mark, name and status badge (Not installed, Stopped,
 Running, Installing, Stopped unexpectedly, Keeps crashing), one line of
 description (hover it for the whole sentence), and one row of buttons. The
 button rows of the cards side by side are always at the same height. Above
@@ -1744,6 +1936,19 @@ address the browser used to reach the gateway.</p>
 </tr>
 </tbody>
 </table>
+<p>The status badge is the start/stop control (R11.3), one click as Install is:
+<strong>Running</strong> stops the app ("Running — click to stop"), <strong>Stopped</strong> (or a
+crash) starts it without opening a tab ("Stopped — click to start"); the
+Assistant's <strong>Running</strong> quits the Assistant this gateway opened ("Running —
+click to quit") and its <strong>Stopped</strong> opens it. The badge is a button with the
+kit tooltip, reachable with Tab (Enter or Space clicks it); it reads
+"Stopping…" / "Starting…" while its request runs, and a refusal shows on the
+card with <strong>Show details</strong>. Disabled (still focusable, the tooltip says why):
+an app started outside the gateway ("Started outside the gateway — stop it
+where it was started") and every badge for a user who is not an admin ("Only
+an admin can start or stop apps"). There is no separate Stop or Start button,
+not even under <strong>Technical details</strong>. The words come from the gateway
+(<code>status_control</code> on each row, <a href="../apps/#http-api">apps.md</a>).</p>
 <p>Code has a terminal version too. Next to Code's Open: <strong>Open in Terminal</strong>
 when the terminal version is installed and the browser is on the gateway
 machine (a new terminal window opens there, signed in). The plain view never
@@ -1819,28 +2024,33 @@ screen says where it went (or why none was sent); <strong>Use code</strong> give
 a new token, shown once to copy (the old one stops working). A new code can be
 requested after 30 seconds.</p>
 <h3 id="setup-guide-and-browse-mode">Setup guide and browse mode<a class="headerlink" href="#setup-guide-and-browse-mode" title="Permanent link">&para;</a></h3>
-<p>The console has thirteen screens, listed in the web console's sidebar order.
-<strong>1</strong> Connection (the terminal's sign-in) comes first, then the groups:
-ACCOUNTS <strong>2</strong> Accounts; WORK <strong>3</strong> Workflows, <strong>4</strong> Runtimes, <strong>5</strong> Apps;
-MODELS <strong>6</strong> Providers, <strong>7</strong> Models, <strong>8</strong> Engines, <strong>9</strong> Multimodal; SYSTEM
-<strong>0</strong> Resources, <strong>N</strong> Network, <strong>R</strong> Review &amp; Test; and <strong>S</strong> Setup last. A
-line above the tabs names the groups and their keys. The web console's Sandbox
-lives inside Review &amp; Test.</p>
+<p>The console lists its pages in the web console's sidebar order, each with a
+fixed key. <strong>1</strong> Connection (the terminal's sign-in) comes first, then the
+groups: ACCOUNTS <strong>2</strong> Accounts, <strong>W</strong> Workspaces; WORK <strong>3</strong> Workflows, <strong>4</strong> Skills &amp; MCP,
+<strong>5</strong> Runtimes, <strong>6</strong> Apps; MODELS <strong>7</strong> Providers, <strong>8</strong> OpenAI API, <strong>9</strong>
+Models, <strong>0</strong> Multimodal; SYSTEM <strong>H</strong> Resources, <strong>T</strong> Sandbox, <strong>N</strong>
+Network; then <strong>S</strong> Setup and <strong>I</strong> About. A line above the tabs names the
+groups and their keys. The local engines live on Providers, as on the web.</p>
 <ul>
 <li><strong>Setup guide.</strong> For an admin whose first run is not completed, the console
-  opens the setup guide: Connection → Setup → Engines → Providers → Multimodal →
-  Models → Apps → Review, the same steps as the web console's first-run guide.
-  Multimodal shows the recommended models for this computer with fit warnings
-  (<code>a</code> applies them, <code>D</code> downloads all of them as one job, <code>C</code> cancels, <code>p</code>
-  shows the plan). Review ends with <strong>Finish</strong> or <strong>Skip setup</strong>, recorded on
-  the gateway, and a <strong>Start at login</strong> switch. No step is gated except
-  signing in.</li>
+  opens the setup guide: Connection → Setup → Providers (local engines, then
+  cloud keys) → Multimodal → Models → Apps → Sandbox, the same steps as the web
+  console's first-run guide. Multimodal shows the recommended models for this
+  computer with fit warnings (<code>a</code> applies them, <code>D</code> downloads all of them as
+  one job, <code>C</code> cancels, <code>p</code> shows the plan). Sandbox ends with <strong>Finish</strong> or
+  <strong>Skip setup</strong>, recorded on the gateway, and a <strong>Start at login</strong> switch. No
+  step is gated except signing in.</li>
 <li><strong>Browse mode</strong> (free tabs) opens otherwise. <code>--wizard</code> and <code>--browse</code> choose
   the mode at launch.</li>
 <li><strong><code>Ctrl+G</code></strong> reopens the guide from browse mode; inside the guide it opens
   the guide menu: go to any step, leave for now, or skip setup.</li>
-<li><strong>S Setup</strong> shows this computer at a glance: memory, graphics, data folder,
-  sign-in mode, whether the gateway starts at login, and the first-run state.</li>
+<li><strong>S Setup</strong> shows this computer at a glance (memory, graphics, data folder,
+  sign-in mode, whether the gateway starts at login, the first-run state) and
+  <strong>Recommended for this computer</strong>: each recommended route with its status,
+  the engine and model that run it and any fit or engine warning, the text
+  model in use, <code>a</code> <strong>Use recommended defaults</strong> (keeps the routes you chose,
+  then offers <strong>Replace mine too</strong> inline) and <code>D</code> <strong>Download all</strong> (asks
+  first). Both are admin-only.</li>
 </ul>
 <h3 id="screens-and-panels">Screens and panels<a class="headerlink" href="#screens-and-panels" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1861,26 +2071,37 @@ lives inside Review &amp; Test.</p>
   offers the restart, reconnects when the gateway is back and reads the network
   again. When a restart cannot apply it, the gateway's reason is shown. The
   Connection screen keeps a one-line summary.</li>
-<li><strong>Review &amp; Test</strong> holds the session's change journal and the sandbox: every
+<li><strong>T Sandbox</strong> holds the session's change journal and the sandbox: every
   output mode (text, image, voice, music, sound effects, video), file
   attachments and speak-this-reply.</li>
 <li><strong>2 Accounts</strong> is the web console's Accounts page: one table of users and
-  entities with name, kind (Admin, User or Entity, coloured, with a legend),
-  email address, mailbox, runtime and <strong>Active</strong> (<code>[x]</code> on, <code>[ ]</code> off,
-  <code>[-] reason</code> when it can't be switched). Under the table, the selected row's
-  keys and the reason of every action that can't apply to it, then the
-  administrator's <strong>Mailboxes for users</strong> switch (Advanced: <strong>Agent email tools
-  for users</strong>, <strong>Sign-in by email</strong>). Keys on the selected row: Space switches
-  Active (deactivate a user, suspend an entity; it asks first), <code>@</code> email
+  entities with the columns <strong>Name</strong> (and kind: Admin, User or Entity),
+  <strong>Email</strong> (the address and the mailbox state, for example
+  <code>alice@example.com · connected</code>, or "No address"), <strong>Runtime</strong> and <strong>Active</strong>
+  (<code>[x]</code> on, <code>[ ]</code> off, <code>[-]</code> when it can't be switched here, "Archived"). Long
+  cells wrap onto more lines; nothing scrolls sideways. The line under the table
+  lists the selected row's actions with their keys, in the web console's order;
+  <code>Enter</code> on a row shows the reason of every action that can't apply.
+  <strong>Show archived</strong> (<code>h</code>, admin) lists archived accounts with Logs and
+  Unarchive. Keys on the selected row: Space switches Active (deactivating a
+  user or suspending an entity asks first, inline under the table), <code>@</code> email
   (your own row: your email settings, below; another user: their email address
-  with Save and a read-only mailbox line; an entity: why it has no mailbox),
-  <code>l</code> activity ("Activity — <id>", <code>f</code> / <code>F</code> change the filter: All, Sign-ins,
-  Runs, Automations, Email; times in your local time), <code>w</code> workspace policy,
-  <code>t</code> rotate, <code>m</code> manage (entities), <code>d</code> delete. Also <code>a</code> create user, <code>e</code> edit
-  user, <code>n</code> create entity, <code>c</code> talk with an entity, <code>i</code> inspect, <code>s</code> spark
-  templates, <code>v</code> kept data of deleted users and <code>x</code> reset an old per-user
-  mailbox override. Someone who is not an administrator sees their own row and
-  the entities they created.</li>
+  and a read-only mailbox line; an entity: the entity's own mailbox form), <code>o</code>
+  OpenAI API (admin, user rows: one switch), <code>l</code> logs ("Activity — <id>", <code>f</code> /
+  <code>F</code> change the filter: All, Sign-ins, Runs, Automations, Email; <code>o</code> opens a
+  run in Observer), <code>w</code> opens <strong>Workspaces</strong>, <code>t</code> rotate token,
+  <code>m</code> manage (entities), <code>d</code> archive (asks inline) or unarchive, <code>g</code> opens
+  <strong>Runtimes</strong> filtered to that account. Also <code>a</code> create user, <code>e</code>
+  edit user, <code>n</code> create entity, <code>c</code> talk with an entity, <code>i</code> inspect, <code>s</code> spark
+  templates, <code>v</code> retained runtimes (transfer one to a user; data is never deleted) and <code>x</code> reset an old per-user
+  mailbox override. <strong>Email for everyone</strong> (admin) is the page's second tab
+  (<code>Tab</code>): the three switches <strong>Mailboxes for users</strong>, <strong>Agent email tools for
+  users</strong> and <strong>Sign-in by email</strong>, each applied at once. Someone who is not an administrator
+  sees their own row and the entities they created.</li>
+<li><strong>W Workspaces</strong> shows one sentence for now: "Workspaces are managed from
+  Accounts in the web console; the terminal console follows in the next
+  update." The page reads and changes nothing; <code>w</code> on an Accounts or Runtimes
+  row opens it. Set workspaces in the web console (<a href="#workspaces">Workspaces</a>).</li>
 <li><strong>Your email settings</strong> (<code>@</code> on your own row): your <strong>Email address</strong>, your
   <strong>Mailbox</strong> (tabs <strong>IMAP</strong>, the default, <strong>Google</strong> and <strong>Microsoft</strong>; the
   IMAP pane shows the incoming and outgoing servers, filled in as soon as the
@@ -1893,19 +2114,63 @@ lives inside Review &amp; Test.</p>
   sentence, for example "Not sent: hourly limit reached (100 of 100 this hour)
   — resets at 14:05."), the <strong>Agent email tools</strong> switch and Advanced
   (recipient rules, send limits, folder) — see <a href="../email/">email.md</a>.</li>
-<li><strong>3 Workflows</strong> lists one row per bundle: name, what it does, version (+N
-  older), source and the apps that use it, with the selected bundle's versions
-  and entrypoints below, and <strong>Broken workflows</strong> when the gateway refused a
-  bundle file. <strong>Default workflow per app</strong> sits under it (<code>Tab</code> moves between
-  the two): the plain name of each app's interface, what runs ("Clients
-  choose", "Built in: …", a workflow, or "Broken"), and the selected row's
-  help; <code>Enter</code> picks a default and saves it at once, <code>o</code> shows <strong>Other
-  workflow types</strong>. Also <code>t</code> drafts on/off, <code>e</code> export, <code>d</code> archive a version,
-  <code>D</code> archive every version (nothing is deleted), <code>i</code> import a <code>.flow</code> bundle, <code>L</code> reload from disk.
-  The per-app defaults are also on Runtimes (<em>Runtime knobs</em>).</li>
-<li><strong>5 Apps</strong> is the web console's Apps tab: open browser apps signed in,
+<li><strong>3 Workflows</strong> is the web console's Workflows page, with three tabs
+  (<code>Tab</code>). <strong>Workflows</strong> groups the bundles under <strong>Shared with everyone</strong> and
+  <strong>Mine</strong>: name and id, what it does, version (+N older), source, the apps that
+  use it and, for an admin, <strong>Available to users</strong>. <code>/</code> searches, <code>t</code> Drafts,
+  <code>o</code> Older versions and <code>h</code> Show archived switch what is listed; with Older
+  versions on, each older version is its own row with its own actions. The line
+  under the table lists the selected row's actions: <code>x</code> exports that version as
+  a <code>.flow</code> file on this machine, <code>f</code> opens it in AbstractFlow, <code>d</code> archives
+  (it asks first; workflows are never deleted) or unarchives, <code>e</code> edits the
+  description in place (shown when the gateway lets you: your own workflows,
+  or the gateway's as an admin; <code>Enter</code> saves, <code>Esc</code> keeps, empty returns to
+  the file's own description), Space switches <strong>Available to users</strong> (admin,
+  shared workflows), and <code>i</code> imports <code>.flow</code> files from this machine. <strong>Default workflow per app</strong> (admin only) lists each app and
+  what it runs; <code>Enter</code> picks a workflow and saves it at once, <code>o</code> shows
+  <strong>Other workflow types</strong>, <code>s</code> switches <strong>Streamed replies</strong>. <strong>Broken
+  workflows</strong> appears when the gateway could not load some versions, with the
+  reason; <code>d</code> archives them.</li>
+<li><strong>4 Skills &amp; MCP</strong> is the web console's page of the same name, with two tabs
+  (<code>Tab</code>). <strong>Skills</strong>: the shelf (name, what it does, version, trust, source);
+  <code>/</code> searches, <code>h</code> Show archived, <code>v</code> opens a skill (an imported one can be
+  edited and saved, a curated one duplicated to edit), <code>x</code> exports it as a
+  <code>.zip</code> on this machine, <code>i</code> imports a <code>.zip</code> or a skill folder from this
+  machine, <code>d</code> archives an imported skill or unarchives. One row under the list
+  shows the shelf folder: <code>f</code> edits it in place (<code>Enter</code> saves, <code>Esc</code> keeps,
+  empty = the gateway's own copy) and <code>u</code> runs <strong>Refresh curated shelf</strong>.
+  <strong>MCP servers</strong>: each
+  server's transport, status and tools; Space switches <strong>Enabled for agents</strong>
+  (turning it on asks first; it needs a successful test), <code>a</code> adds and <code>e</code>
+  edits a server (a command or a URL with headers, <strong>Test connection</strong>,
+  <strong>Save</strong>), <code>t</code> tests it, <code>d</code> archives or unarchives. Writes are admin-only.</li>
+<li><strong>5 Runtimes</strong> shows the web console's run table (Run, Workflow, Status,
+  Node, Session, Updated) as wrapping rows: <code>Enter</code> opens a run's details in
+  place, <code>t</code> switches <strong>Root runs only</strong>, <code>c</code> cancels a run (it asks first,
+  inline) and <code>s</code> steers it. The data planes, Artifacts, Cache and Logs are
+  wrapping tables with the web page's column names. Opened from an account
+  (<code>g</code> on Accounts), the page lists that account's runtimes with the chip
+  <code>[Account: &lt;id&gt; ×]</code>; <code>x</code> lists every runtime again.</li>
+<li><strong>6 Apps</strong> is the web console's Apps tab: open browser apps signed in,
   install or update them, start and stop them, the desktop Assistant and
-  Node.js. Over SSH, or on a machine without a display, <strong>Open</strong> never starts
+  Node.js. The status badge is the start/stop control as on the web card: the
+  status cell of the selected row is selectable (→ moves onto it and shows
+  <code>[Running]</code>, ← back to the row), Enter or Space on it — or <code>s</code> anywhere —
+  stops a running app and starts a stopped one (the Assistant: quits the one
+  the gateway opened, opens a stopped one), with no confirmation, like the
+  web's one click. The card's hint line says the web tooltip ("s Running —
+  click to stop"); an app started outside the gateway, or a user who is not an
+  admin, cannot move onto the badge: the hint line and the notice say why
+  ("Started outside the gateway — stop it where it was started", "Only an
+  admin can start or stop apps"). <code>u</code> updates the selected app, the Assistant included, with the
+  gateway's label ("Update to 0.14.0") and its tooltip as the confirmation; an
+  app started outside the gateway shows "Latest x.y.z · Started outside the
+  gateway — update it where it was installed" and <code>u</code> only says so
+  (<a href="../apps/#updates">Updates</a>). <code>a</code> opens <strong>Apps settings</strong> (Node.js for apps, ports, npm registry,
+  Node.js download index); <code>g</code> on the Continuum card opens its settings
+  (backlog folder, backlog exec runner, process manager). Each row applies on
+  its own and says "Saved" beside it; empty returns to the default (the
+  gateway's own folder for the backlog). Over SSH, or on a machine without a display, <strong>Open</strong> never starts
   a browser: it shows the one-time link to copy (<code>y</code>) and the <code>ssh -L</code> port
   forwards that make it work from your own computer.</li>
 <li><strong>F2</strong> opens the docs assistant (questions answered from the gateway's own
@@ -1917,10 +2182,12 @@ lives inside Review &amp; Test.</p>
   <strong>start at login</strong> (<code>L</code>,
   confirmed, then read back). A banner shows on every screen while workflows
   are paused.</li>
-<li><strong>About</strong> (<code>F1</code>, or <code>?</code> outside a text field) shows this console, its
-  version, the links and the connected gateway's versions from
-  <code>GET /api/gateway/about</code>. <code>abstractgateway-console --about --gateway-url &lt;gateway&gt;</code>
-  prints the same text without opening the interface.</li>
+<li><strong>I About</strong> (also <code>F1</code>, or <code>?</code> outside a text field, as an overlay) shows the
+  same card as the web console's About: this console's name and version, the
+  AbstractFramework and AbstractGateway versions from <code>GET /api/gateway/about</code>,
+  the links (Website, Source, Docs, Issues, Feedback, Contact) and the licence
+  line. <code>abstractgateway-console --about --gateway-url &lt;gateway&gt;</code> prints the
+  same text without opening the interface.</li>
 </ul>
 <p>Every on/off setting is a switch: <code>[x] Feature</code> on (highlighted), <code>[ ] Feature</code>
 off, <code>[-] Feature — reason</code> when it can't be used here. <code>Space</code> (or <code>Enter</code>)
@@ -1928,8 +2195,9 @@ switches the focused one; it applies at once and the status line names the new
 state.</p>
 <p>Keys: <code>Tab</code> focus, <code>Enter</code> activate, <code>Ctrl+N</code> / <code>Ctrl+P</code> next and previous
 step, <code>Esc</code> back (in a text field, the first <code>Esc</code> releases it so screen keys
-work again), <code>1</code>-<code>9</code>, <code>0</code>, <code>N</code>, <code>R</code> and <code>S</code> screens, <code>r</code> refresh, <code>q</code> quit. Each screen
-lists its own actions in the footer.</p>
+work again), <code>1</code>-<code>9</code>, <code>0</code>, <code>W</code>, <code>H</code>, <code>T</code>, <code>N</code>, <code>S</code> and <code>I</code> screens, <code>r</code> refresh,
+<code>q</code> quit. Each screen lists its own actions in the key-hint bar at the bottom,
+which wraps onto a second line rather than cutting a verb.</p>
 <p><code>←</code> / <code>→</code> switch to the previous and next screen, wrapping from the last screen
 to the first and back, like <code>Ctrl+P</code> / <code>Ctrl+N</code> in browse mode. The arrows keep
 their own meaning wherever the focused element uses them: a text field moves its
@@ -1943,26 +2211,39 @@ screens; <code>Ctrl+N</code> walks the guide.</p>
 non-admin sign-in, with the reason, and the footer marks them "admin only".
 The setup guide is admin-only, as on the web. Every write is verified with a
 follow-up read and recorded in the journal.</p>
-<h3 id="models-and-engines-in-the-terminal-console">Models and Engines in the terminal console<a class="headerlink" href="#models-and-engines-in-the-terminal-console" title="Permanent link">&para;</a></h3>
-<p>Screens 7 (<strong>Models</strong>) and 8 (<strong>Engines</strong>) are AbstractCore's own screens,
-taken from the <code>abstractcore-console</code> crate (0.4) rather than rebuilt, so they look
-and behave the same in <code>abstractcore-console</code> and here. In the gateway console
-they act on the gateway's host, through the gateway's
-<code>/api/gateway/host/profile</code>, <code>/engines</code>, <code>/models/catalog</code>,
-<code>/models/installed</code>, <code>/models/download</code>, <code>/models/delete</code>,
-<code>/engines/{id}/install</code> and <code>/jobs/{id}</code> routes:</p>
+<h3 id="providers-models-and-openai-api-in-the-terminal-console">Providers, Models and OpenAI API in the terminal console<a class="headerlink" href="#providers-models-and-openai-api-in-the-terminal-console" title="Permanent link">&para;</a></h3>
+<p>These three pages read and write the same gateway routes as their web pages,
+with the same wording:</p>
 <ul>
-<li><strong>Models:</strong> browse the catalog with a fit verdict for the gateway host,
-  download (<code>w</code>), delete after a confirm that lists any blocker (<code>d</code>), filter
-  (<code>/</code>), fits only (<code>f</code>), engine (<code>e</code>), installed view (<code>v</code>), cancel (<code>c</code>).</li>
-<li><strong>Engines:</strong> see which engines are installed and running; install one (<code>i</code>)
-  after a confirm that shows the exact command and the host it runs on (a dry
-  run is offered), or open its download page (<code>o</code>). Engine servers can be
-  started and stopped, and a paused install continued.</li>
+<li><strong>7 Providers</strong> has the web page's three sections; <code>v</code> switches between
+  them. <strong>Local providers</strong>: one row per engine on the gateway host with its
+  state, version and models; <code>Enter</code> opens its details (address, connection,
+  links), <code>i</code> installs it after an inline confirm that shows the plan (and the
+  install location for app engines), <code>s</code> / <code>x</code> start and stop its server, <code>b</code>
+  opens Models filtered to that engine, <code>c</code> cancels a running install.
+  <strong>Remote providers</strong>: the cloud and OpenAI-compatible presets; <code>Enter</code> or <code>a</code>
+  opens the connection form. <strong>Available Providers</strong>: the full table; <code>e</code>
+  edits or overrides, <code>d</code> deletes, <code>m</code> lists models, <code>t</code> tests.</li>
+<li><strong>9 Models</strong> is one list, like the web page: one header line per model and
+  one row per build (engine, id, quantization, size, status), with the models
+  you downloaded that the catalog does not know listed under <strong>Not in the
+  catalog</strong>. Filters: <code>/</code> search, <code>z</code> quantization, <code>p</code> provider, <code>t</code>
+  capability, <code>s</code> Downloaded / All, <code>f</code> fits this computer, <code>x</code> clears; <code>m</code>
+  searches Hugging Face. <code>w</code> downloads (with progress, <code>c</code> cancels), <code>d</code>
+  deletes after an inline confirm that states how much it frees ("Files only —
+  nothing in your runs is touched."; a loaded or locked model is refused with
+  the reason), <code>u</code> makes a downloaded text model the default.</li>
+<li><strong>8 OpenAI API</strong> shows the endpoint's status and base URL, your API key
+  (masked; <code>v</code> shows it, <code>y</code> copies it, <code>n</code> issues a new one, shown once), the
+  examples (<code>s</code> picks one, <code>c</code> copies it with the key in clear) and the recent
+  requests (<code>Tab</code>, then <code>Enter</code> opens one with its recorded request and
+  response; <code>f</code> shows the full record). Administrators also get the Endpoint
+  switch (<code>e</code>), Restart (<code>x</code>), Check setup (<code>h</code>), Authentication (<code>a</code>), Who can
+  connect (<code>w</code>) and the Open-mode account (<code>u</code>). See
+  <a href="../openai-api/">openai-api.md</a>.</li>
 </ul>
-<p>Downloads, deletes and installs are admin-only and run on the gateway host; a
-refusal (for example installs disabled on a remote gateway, or a loaded model)
-is shown with the gateway's reason.</p>
+<p>Downloads, deletes, installs and endpoint changes are admin-only; a refusal is
+shown with the gateway's reason.</p>
 <p>The terminal console needs no gateway-side component beyond the admin API. The
 crate version is independent of the Python package version; see
 <a href="../console-tui/CHANGELOG.md"><code>console-tui/CHANGELOG.md</code></a>.</p>

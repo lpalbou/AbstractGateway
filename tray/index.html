@@ -1242,18 +1242,25 @@ can see what it is doing and act on it in one click:</p>
   it; nothing opens by itself, the menu then offers <strong>Open X</strong>), <strong>Launch
   Assistant</strong> (the desktop app), otherwise the app's name, greyed. See <em>Apps</em>
   below.</li>
-<li><strong>Workflows</strong> — the last 24 hours of runs, newest first: a state badge
-  (🟢 running, 🟡 waiting, ✅ completed, ❌ failed, ⚪️ cancelled), the step
-  count and how long each took, under a one-line tally. Rows are information;
-  <strong>Open Runs in Console</strong> at the bottom is the way in. Root runs only — a
-  deep-research run spawns dozens of children and this is a glance. The list
-  is <strong>host-wide</strong> (<code>GET /api/gateway/host/runs</code>), not per-principal: memory,
-  GPU and loaded models on this menu describe the machine, and the run list
-  has to describe the same machine. Catalog-published workflows are shown
-  under the name you know them by (their run id encodes scope and tenant in
-  base64) and are not mistaken for the gateway's own bookkeeping runs. Summoned
-  entities' data planes are not listed (the payload names them in
-  <code>skipped_entity_planes</code>).</li>
+<li><strong>Workflows</strong> — what is running now, then the last 24 hours. Under a
+  one-line tally (<code>Now: 2 running · 1 waiting — last 24 hours: 3 done</code>), the
+  active runs come first — running (🟢), then waiting for a person or an
+  event (🟡) — each with the time elapsed so far, whatever day it started;
+  then the runs that finished in the last 24 hours (✅ completed, ❌ failed,
+  ⚪️ cancelled), newest first, with how long each took. Every row shows the
+  step count and opens a small submenu: when it started, and <strong>Open in
+  Observer</strong> (that run's page in Observer, signed in; a stopped Observer the
+  gateway manages is started first; greyed when Observer is not installed).
+  <strong>Open Runs in Console</strong> at the bottom is the full list. A row is a run
+  someone started — a conversation turn or an automation's occurrence — never
+  a sub-run or an automation's controller; a run whose sub-run is working
+  counts as running. The list is <strong>host-wide</strong> (<code>GET
+  /api/gateway/host/runs</code>), not per-principal: memory, GPU and loaded models
+  on this menu describe the machine, and the run list has to describe the
+  same machine. Catalog-published workflows are shown under the name you know
+  them by (their run id encodes scope and tenant in base64) and are not
+  mistaken for the gateway's own bookkeeping runs. Summoned entities' data
+  planes are not listed (the payload names them in <code>skipped_entity_planes</code>).</li>
 <li><strong>Pause / Resume Workflows</strong> — the one high-level control over all of that:
   stop new workflow steps from running to free the machine or to look at what
   is going on (the gateway keeps answering; work queues until you resume).</li>
@@ -1466,7 +1473,7 @@ not depend on its apps:</p>
 <tr>
 <td>Assistant</td>
 <td>the same detection as the console's Assistant card (<code>apps_desktop.detect_assistant</code>): <code>AbstractAssistant.app</code> in /Applications or ~/Applications, the <code>abstractassistant</code> command (this Python's scripts folder, or PATH), or the package in this Python (<code>importlib.util.find_spec</code>, without importing it)</td>
-<td><strong>Launch Assistant</strong> when found (also while it runs): the gateway opens it (<code>POST /api/gateway/apps/assistant/launch</code>, the console's Open), connected and signed in to this gateway; <strong>Install Assistant…</strong> when the gateway can install it into its own Python (the console's Install); otherwise <strong>Assistant</strong>, greyed</td>
+<td><strong>Launch Assistant</strong> when found (also while it runs): the installed package, else the app bundle — the one the console's card describes; when the other one runs, the line under it says so ("Another Assistant is running: /Applications/AbstractAssistant.app 0.5.0 — quit it to use 0.13.0"). The gateway opens it (<code>POST /api/gateway/apps/assistant/launch</code>, the console's Open), connected and signed in to this gateway; <strong>Install Assistant…</strong> when the gateway can install it into its own Python (the console's Install); otherwise <strong>Assistant</strong>, greyed</td>
 </tr>
 <tr>
 <td>Code's terminal version (the only app with one today)</td>
