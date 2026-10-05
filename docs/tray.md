@@ -367,7 +367,7 @@ terminal does the same thing:
   no release; it is offered the release only when the release's gateway is
   newer than the one installed.
 - **What runs.** The confirmation names the script's address
-  (`https://raw.githubusercontent.com/lpalbou/AbstractFramework/main/scripts/install.sh`),
+  (`https://abstractframework.ai/install.sh`),
   the commit and the script's sha256, and the command:
   `/bin/sh install.sh --yes --no-start --no-open --no-modify-path --data-dir <data folder>`.
   The gateway runs exactly the file it checked, written to a new file of its own
