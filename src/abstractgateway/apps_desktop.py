@@ -153,7 +153,10 @@ def _editable_checkout(name: str) -> Optional[Dict[str, Any]]:
     path = Path(urllib.parse.unquote(parsed.path))
     pyproject = path / "pyproject.toml"
     try:
-        import tomllib
+        try:
+            import tomllib
+        except ModuleNotFoundError:  # Python 3.10: tomli is a dependency there
+            import tomli as tomllib
 
         project = (tomllib.loads(pyproject.read_text(encoding="utf-8")).get("project") or {})
     except FileNotFoundError:
