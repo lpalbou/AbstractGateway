@@ -49,6 +49,7 @@ try {
           shown: !!row && !row.classList.contains("hidden") && getComputedStyle(row).display !== "none",
           text: (document.getElementById("gateway-host-hang") || {}).textContent || "",
           dump: (document.getElementById("gateway-host-hang-dump") || {}).textContent || "",
+          tip: (document.getElementById("gateway-host-hang") || { getAttribute: () => "" }).getAttribute("data-af-tip") || "",
           key: row ? row.querySelector(".entity-kv-key").textContent : "",
           left: r ? r.left : -1, right: r ? r.right : 0, vw: document.documentElement.clientWidth,
           scrollW: document.documentElement.scrollWidth,
@@ -58,6 +59,7 @@ try {
       check(st.key === "Last restart", `row label (${tag})`, st.key);
       check(/^Gateway restarted at .+ after a hang — the event loop was blocked in starlette\/responses\.py:245 listen_for_disconnect \(called from abstractgateway\/security\/gateway_security\.py:1443 __call__\) while serving POST \/api\/gateway\/runs\/c45d73be\/voice\/tts\/stream$/.test(st.text), `the line names the time, the frame, the gateway frame and the request (${tag})`, st.text);
       check(st.dump.startsWith("Every thread's stack: ") && st.dump.endsWith(".threads.txt"), `the dump path (${tag})`, st.dump);
+      check(st.tip.includes("Blocked 30.9 s in starlette/responses.py:245 listen_for_disconnect") && st.tip.includes("Stack dump: ") && st.tip.includes("Incident file: "), `kit tooltip names the top frame, the dump and the incident file (${tag})`, st.tip);
       check(st.left >= 0 && st.scrollW <= st.vw + 1, `inside the viewport, no horizontal scroll (${tag})`, st);
       if (SHOTS) {
         const card = await page.$("#gateway-host-hang-row");

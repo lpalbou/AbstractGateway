@@ -165,6 +165,7 @@ def write_incident(watchdog: "LoopWatchdog", age_s: float, *, directory: Optiona
         target.mkdir(parents=True, exist_ok=True)
         incident = build_incident(watchdog, age_s)
         stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        incident["stamp"] = stamp
         dump = target / f"watchdog-{stamp}.threads.txt"
         try:
             with open(dump, "w", encoding="utf-8") as fh:
@@ -223,6 +224,7 @@ def last_incident_view() -> Optional[Dict[str, Any]]:
     at = str(inc.get("at") or "")
     return {
         "at": at,
+        "stamp": inc.get("stamp"),
         "blocked_s": inc.get("blocked_s"),
         "reason": str(inc.get("reason") or ""),
         "top_frame": _frame_text(inc.get("top_frame")),

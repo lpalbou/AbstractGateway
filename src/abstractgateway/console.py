@@ -2523,7 +2523,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                     facts about this machine, and this line names them. -->
 	                <div class="entity-kv"><span class="entity-kv-key">Desktop icon</span><span class="entity-kv-val"><span id="gateway-host-tray-note" class="muted"></span></span></div>
 	                <!-- R13.1: the previous process's last event-loop watchdog incident (admins; /host/runner last_hang). -->
-	                <div id="gateway-host-hang-row" class="entity-kv hidden"><span class="entity-kv-key">Last restart</span><span class="entity-kv-val"><span id="gateway-host-hang"></span><span id="gateway-host-hang-dump" class="muted" style="display:block; overflow-wrap:anywhere"></span></span></div>
+	                <div id="gateway-host-hang-row" class="entity-kv hidden"><span class="entity-kv-key">Last restart</span><span class="entity-kv-val"><span id="gateway-host-hang" tabindex="0" data-af-tip=""></span><span id="gateway-host-hang-dump" class="muted" style="display:block; overflow-wrap:anywhere"></span></span></div>
 	                <!-- Start at login: a real switch (admin), confirmed, verified by GET. -->
 	                <div id="gateway-host-login-row" class="entity-kv hidden"><span class="entity-kv-key">Start at login</span><span class="entity-kv-val"><span id="gateway-host-login-text" class="muted">…</span> <button id="gateway-host-login-toggle" type="button" role="switch" class="af-switch af-switch--sm kv-switch hidden" aria-checked="false" aria-label="Start at login"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Start at login</span></span></button></span></div>
 	              </div>
@@ -11808,7 +11808,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const hang = runner.last_hang || null;
 	        hangRow.classList.toggle("hidden", !hang);
 	        if (hang) {
-	          $("gateway-host-hang").textContent = `Gateway restarted at ${_gwFmtWhen(hang.at)} after a hang — ${hang.reason || "unknown"}`;
+	          const hangEl = $("gateway-host-hang");
+	          hangEl.textContent = `Gateway restarted at ${_gwFmtWhen(hang.at)} after a hang — ${hang.reason || "unknown"}`;
+	          hangEl.setAttribute("data-af-tip", [`Blocked ${hang.blocked_s ?? "?"} s in ${hang.top_frame || "an unknown frame"}`, hang.dump_path ? `Stack dump: ${hang.dump_path}` : "", hang.file ? `Incident file: ${hang.file}` : ""].filter(Boolean).join("\\n"));
 	          $("gateway-host-hang-dump").textContent = hang.dump_path ? `Every thread's stack: ${hang.dump_path}` : "";
 	        }
 	      }
