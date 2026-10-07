@@ -37,7 +37,10 @@ fn other_user_email_is_address_only_with_an_inline_save() {
     );
     let inner = r2email::inside_modal(&s);
     for banned in ["Password", "Incoming mail", " Connect "] {
-        assert!(!inner.contains(banned), "{banned:?} (no mailbox form):\n{s}");
+        assert!(
+            !inner.contains(banned),
+            "{banned:?} (no mailbox form):\n{s}"
+        );
     }
     let _ = h.sent();
     h.key(b"\x1b[F");

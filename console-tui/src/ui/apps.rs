@@ -18,9 +18,9 @@ use abstracttui::app::{ChoiceOutcome, ChoicePrompt};
 use abstracttui::prelude::*;
 
 use super::util::{line, span, span_bold, wrap_text};
-use super::widths;
 use super::w::action::{button, On};
 use super::w::{Action, Cell, Col, ColW, DataTable};
+use super::widths;
 use super::{open_form, open_prompt, Ctx};
 use crate::store::apps::{
     app_blurb, app_key, badge_tip, badge_verb, copyables, part_word, primary_verb, secondary_verbs,
@@ -111,8 +111,6 @@ fn selected(ctx: &Ctx) -> Option<AppRow> {
         .with_untracked(|o| o.ready().and_then(|d| d.apps.get(sel).cloned()))
 }
 
-
-
 // ---------------------------------------------------------------------
 // R15 Apps (DESIGN-TUI.md §3.2): head (title, subtitle, Check again, the
 // Apps settings gear), ONE table (App · Status badge control · Version ·
@@ -149,7 +147,10 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             .overview
             .with(|o| o.ready().and_then(|d| d.apps.get(i).map(|a| a.id.clone())));
         if let Some(id) = id {
-            if ui.apps_key.with_untracked(|k| k.as_deref() != Some(id.as_str())) {
+            if ui
+                .apps_key
+                .with_untracked(|k| k.as_deref() != Some(id.as_str()))
+            {
                 ui.apps_key.set(Some(id));
             }
         }
@@ -234,9 +235,10 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     }
     let ctx_head = ctx.clone();
     let ctx_body = ctx.clone();
-    root.child(dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |hcx| {
-        apps_head(hcx, &ctx_head, &tt)
-    }))
+    root.child(dyn_view_scoped(
+        LayoutStyle::column().shrink(0.0),
+        move |hcx| apps_head(hcx, &ctx_head, &tt),
+    ))
     .child(dyn_view_scoped(
         LayoutStyle::default().grow(1.0),
         move |gcx| {
@@ -302,7 +304,9 @@ fn apps_head(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let w = (crate::ui::page_viewport(cx).get().w - 2).max(20);
     let c = ctx.clone();
     let check = Action::label("check", "Check again").key('r');
-    let mut buttons = vec![button(cx, t, &check, On::Page, true, move || check_again(&c))];
+    let mut buttons = vec![button(cx, t, &check, On::Page, true, move || {
+        check_again(&c)
+    })];
     let mut bw = check.width() + 1;
     if admin {
         let gear = Action::glyph("settings", "Apps settings")
@@ -314,7 +318,12 @@ fn apps_head(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             super::app_settings::open(cx, &c, super::app_settings::Which::Apps)
         }));
     }
-    let mut btn_row = Element::new().style(LayoutStyle::row().height(Dimension::Cells(1)).gap(1).shrink(0.0));
+    let mut btn_row = Element::new().style(
+        LayoutStyle::row()
+            .height(Dimension::Cells(1))
+            .gap(1)
+            .shrink(0.0),
+    );
     for b in buttons {
         btn_row = btn_row.child(b);
     }
@@ -322,7 +331,9 @@ fn apps_head(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let side = title_w + bw + 2 <= w;
     let titles = Element::new()
         .style(if side {
-            LayoutStyle::column().width(Dimension::Cells(w - bw - 1)).shrink(0.0)
+            LayoutStyle::column()
+                .width(Dimension::Cells(w - bw - 1))
+                .shrink(0.0)
         } else {
             LayoutStyle::column().shrink(0.0)
         })
@@ -399,7 +410,14 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &AppsOverview, admin: bool)
             .style(LayoutStyle::column().shrink(0.0))
             .focusable()
             .autofocus()
-            .child(col.child(node).child(line(vec![span("∅ this gateway lists no apps", t.text_muted)])).build())
+            .child(
+                col.child(node)
+                    .child(line(vec![span(
+                        "∅ this gateway lists no apps",
+                        t.text_muted,
+                    )]))
+                    .build(),
+            )
             .build();
     }
     col = col.child(apps_table(cx, ctx, t, d, admin, &job_of));
@@ -512,7 +530,12 @@ fn verb_id(v: AppVerb) -> &'static str {
 /// A row's actions: the primary one, the secondary ones (Update, the
 /// terminal version, Show log), the card's gear (Continuum) — labelled
 /// buttons in the web's words; a refused one faint with its reason.
-pub fn app_actions(row: &AppRow, job: Option<&AppJob>, tjob: Option<&AppJob>, admin: bool) -> Vec<Action> {
+pub fn app_actions(
+    row: &AppRow,
+    job: Option<&AppJob>,
+    tjob: Option<&AppJob>,
+    admin: bool,
+) -> Vec<Action> {
     let mut verbs: Vec<VerbState> = Vec::new();
     if let Some(p) = primary_verb(row, job, admin) {
         verbs.push(p);
@@ -559,7 +582,10 @@ fn apps_table(
         .iter()
         .map(|a| {
             let job = job_of(&app_key(&a.id), a.active_job.as_ref());
-            let tjob = job_of(&tui_key(&a.id), a.tui.as_ref().and_then(|x| x.active_job.as_ref()));
+            let tjob = job_of(
+                &tui_key(&a.id),
+                a.tui.as_ref().and_then(|x| x.active_job.as_ref()),
+            );
             let active = job.as_ref().map(AppJob::is_active).unwrap_or(false);
             let (label, tone) = status_label(a, active);
             // R11.3 / A3: the badge's LABEL is the state only; the action
@@ -628,11 +654,10 @@ fn apps_table(
 /// Select the app `id` (the verbs read the store's index at once).
 fn select_app(ctx: &Ctx, id: &str) {
     ctx.ui.apps_key.set(Some(id.to_string()));
-    let i = ctx
-        .store
-        .apps
-        .overview
-        .with_untracked(|o| o.ready().and_then(|d| d.apps.iter().position(|a| a.id == id)));
+    let i = ctx.store.apps.overview.with_untracked(|o| {
+        o.ready()
+            .and_then(|d| d.apps.iter().position(|a| a.id == id))
+    });
     if let Some(i) = i {
         if ctx.store.apps.sel.get_untracked() != i {
             ctx.store.apps.sel.set(i);
@@ -646,10 +671,11 @@ fn app_action(cx: Scope, ctx: &Ctx, key: &str, id: &str) {
     match id {
         "badge" => run_badge(cx, ctx),
         "settings" => card_settings_key(cx, ctx),
-        other => match verb_of(other) {
-            Some(v) => run_key(cx, ctx, Some(v)),
-            None => {}
-        },
+        other => {
+            if let Some(v) = verb_of(other) {
+                run_key(cx, ctx, Some(v))
+            }
+        }
     }
 }
 
@@ -731,7 +757,17 @@ fn node_view(
             .refused((!admin).then(|| "Only an admin can cancel an install".to_string()));
         col = col.child(
             Element::new()
-                .style(LayoutStyle::row().height(Dimension::Cells(1)).shrink(0.0).padding(Edges { left: 2, right: 0, top: 0, bottom: 0 }))
+                .style(
+                    LayoutStyle::row()
+                        .height(Dimension::Cells(1))
+                        .shrink(0.0)
+                        .padding(Edges {
+                            left: 2,
+                            right: 0,
+                            top: 0,
+                            bottom: 0,
+                        }),
+                )
                 .child(button(cx, t, &a, On::Page, true, move || node_key(cx, &c)))
                 .build(),
         );
@@ -770,12 +806,31 @@ fn node_view(
             .refused(why.clone());
         col = col.child(
             Element::new()
-                .style(LayoutStyle::row().height(Dimension::Cells(1)).shrink(0.0).padding(Edges { left: 2, right: 0, top: 0, bottom: 0 }))
+                .style(
+                    LayoutStyle::row()
+                        .height(Dimension::Cells(1))
+                        .shrink(0.0)
+                        .padding(Edges {
+                            left: 2,
+                            right: 0,
+                            top: 0,
+                            bottom: 0,
+                        }),
+                )
                 .child(button(cx, t, &a, On::Page, true, move || node_key(cx, &c)))
                 .build(),
         );
         if let Some(w) = why {
-            col = wrapped(col, t, Some("Install Node.js:"), &w, t.text_faint, false, width, 2);
+            col = wrapped(
+                col,
+                t,
+                Some("Install Node.js:"),
+                &w,
+                t.text_faint,
+                false,
+                width,
+                2,
+            );
         }
     }
     if let Some(note) = note {
@@ -783,7 +838,6 @@ fn node_view(
     }
     col.build()
 }
-
 
 fn note_lines(
     mut col: Element,
@@ -1367,7 +1421,6 @@ fn run_key(cx: Scope, ctx: &Ctx, verb: Option<AppVerb>) {
         }
     }
 }
-
 
 /// R11.3: the status badge's action (`s`, or Enter / Space on the badge
 /// cell): Running → stop, Stopped → start (the Assistant: its Open). The

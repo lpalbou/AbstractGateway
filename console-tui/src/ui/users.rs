@@ -9,9 +9,9 @@ use abstracttui::prelude::*;
 use abstracttui::widgets::{Table, Tone};
 use serde_json::{json, Value};
 
+use super::util::{field, line, span, span_bold};
 use super::w::action::{button, On};
 use super::w::{Action, Cell, Col, ColW, DataTable, Row as WRow};
-use super::util::{field, line, span, span_bold};
 use super::widths;
 use super::{open_form, Ctx};
 use crate::store::accounts::{activity_time, AccountRow, ACTIVITY_EMPTY, ACTIVITY_FILTERS};
@@ -184,7 +184,10 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         let rows = visible_accounts(&store);
         if let Some(r) = rows.get(i) {
             let k = row_key(r);
-            if ui.acc_key.with_untracked(|cur| cur.as_deref() != Some(k.as_str())) {
+            if ui
+                .acc_key
+                .with_untracked(|cur| cur.as_deref() != Some(k.as_str()))
+            {
                 ui.acc_key.set(Some(k));
             }
         }
@@ -192,19 +195,17 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let keys = ctx.clone();
     let tt = *t;
     Element::new()
-        .style(
-            LayoutStyle::column()
-                .grow(1.0)
-                .padding(Edges {
-                    left: 1,
-                    right: 1,
-                    top: 0,
-                    bottom: 0,
-                }),
-        )
+        .style(LayoutStyle::column().grow(1.0).padding(Edges {
+            left: 1,
+            right: 1,
+            top: 0,
+            bottom: 0,
+        }))
         .on(abstracttui::ui::Phase::Bubble, move |ectx, ev| {
             if let abstracttui::ui::UiEvent::Key(k) = ev {
-                if k.mods.0 != 0 && !matches!(k.key, Key::Char(c) if c.is_ascii_uppercase() || c == '@') {
+                if k.mods.0 != 0
+                    && !matches!(k.key, Key::Char(c) if c.is_ascii_uppercase() || c == '@')
+                {
                     return;
                 }
                 if handle_key(cx, &keys, k.key) {
@@ -259,11 +260,19 @@ fn head(_cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 .tooltip("The workspaces accounts may choose from, and the most each one allows.");
             let c = ctx.clone();
             let wd = a.width();
-            push(button(hcx, &tt, &a, On::Page, true, move || eligible_workspaces(hcx, &c)), wd, &mut buttons);
+            push(
+                button(hcx, &tt, &a, On::Page, true, move || {
+                    eligible_workspaces(hcx, &c)
+                }),
+                wd,
+                &mut buttons,
+            );
             let c = ctx.clone();
             let tg = super::w::Toggle::new(show)
                 .label("Show archived")
-                .tip("Archived accounts can't sign in or act; their runs and history are kept.  (h)")
+                .tip(
+                    "Archived accounts can't sign in or act; their runs and history are kept.  (h)",
+                )
                 .on_change(move |v| c.store.acc.show_archived.set(v));
             let wd = tg.width();
             push(tg.view(hcx, &tt), wd, &mut buttons);
@@ -272,7 +281,13 @@ fn head(_cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 .tooltip("Create a gateway user and issue their token (shown once)");
             let c = ctx.clone();
             let wd = a.width();
-            push(button(hcx, &tt, &a, On::Page, true, move || open_user_form(hcx, &c, None)), wd, &mut buttons);
+            push(
+                button(hcx, &tt, &a, On::Page, true, move || {
+                    open_user_form(hcx, &c, None)
+                }),
+                wd,
+                &mut buttons,
+            );
         }
         let a = Action::label("create_entity", "Create entity")
             .key('n')
@@ -289,7 +304,12 @@ fn head(_cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             &mut buttons,
         );
         let title_w = abstracttui::text::width(title).max(abstracttui::text::width(subtitle));
-        let mut btn_row = Element::new().style(LayoutStyle::row().height(Dimension::Cells(1)).gap(1).shrink(0.0));
+        let mut btn_row = Element::new().style(
+            LayoutStyle::row()
+                .height(Dimension::Cells(1))
+                .gap(1)
+                .shrink(0.0),
+        );
         for b in buttons {
             btn_row = btn_row.child(b);
         }
@@ -297,7 +317,9 @@ fn head(_cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         let side = title_w + bw + 2 <= w;
         let title_views = Element::new()
             .style(if side {
-                LayoutStyle::column().width(Dimension::Cells(w - bw - 1)).shrink(0.0)
+                LayoutStyle::column()
+                    .width(Dimension::Cells(w - bw - 1))
+                    .shrink(0.0)
             } else {
                 LayoutStyle::column().shrink(0.0)
             })
@@ -306,7 +328,12 @@ fn head(_cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 vec![super::w::Ink::new(title, tt.text).bold()],
                 None,
             ))
-            .child(super::w::form::sentence(&tt, subtitle, (w - if side { bw + 2 } else { 0 }).max(20), tt.text_muted))
+            .child(super::w::form::sentence(
+                &tt,
+                subtitle,
+                (w - if side { bw + 2 } else { 0 }).max(20),
+                tt.text_muted,
+            ))
             .build();
         if side {
             Element::new()
@@ -352,7 +379,10 @@ fn sandbox_state(ctx: &Ctx, t: &TokenSet) -> View {
                 .style(LayoutStyle::line(1).shrink(0.0))
                 .child(super::w::paint::fill_line(
                     LayoutStyle::fill(),
-                    vec![super::w::Ink::new(l, if warn { tt.warn } else { tt.text_muted })],
+                    vec![super::w::Ink::new(
+                        l,
+                        if warn { tt.warn } else { tt.text_muted },
+                    )],
                     None,
                 ));
             c = c.child(super::w::tip::with_tip(scx, line_el, sentence.clone()).build());
@@ -493,7 +523,10 @@ fn account_table_row(
         Cell::text("Archived", t.text_muted)
     } else {
         let refused = if is_own {
-            Some(r.refusal("suspend").unwrap_or_else(|| OWN_ACCOUNT_REASON.to_string()))
+            Some(
+                r.refusal("suspend")
+                    .unwrap_or_else(|| OWN_ACCOUNT_REASON.to_string()),
+            )
         } else if !admin {
             Some("Only an admin can switch an account's Active state.".to_string())
         } else {
@@ -513,7 +546,13 @@ fn account_table_row(
     };
     WRow::new(
         row_key(r),
-        vec![name, email, runtime, active, Cell::Actions(row_actions(r, admin))],
+        vec![
+            name,
+            email,
+            runtime,
+            active,
+            Cell::Actions(row_actions(r, admin)),
+        ],
     )
     .dim(r.archived || !r.active)
     .note(note)
@@ -621,7 +660,11 @@ pub fn row_actions(r: &AccountRow, admin: bool) -> Vec<Action> {
             Action::glyph("rotate", "Rotate")
                 .key('t')
                 .tooltip(format!("Rotate {n}'s sign-in token"))
-                .refused(if admin { r.refusal("rotate") } else { Some("Only an admin can rotate a token.".into()) }),
+                .refused(if admin {
+                    r.refusal("rotate")
+                } else {
+                    Some("Only an admin can rotate a token.".into())
+                }),
         );
     }
     out.push(
@@ -649,7 +692,9 @@ fn select_key(ctx: &Ctx, key: &str) {
 /// action runs; a refused action says why (status bar) and does nothing.
 fn row_action(cx: Scope, ctx: &Ctx, key: &str, id: &str) {
     select_key(ctx, key);
-    let Some(r) = selected_account(ctx) else { return };
+    let Some(r) = selected_account(ctx) else {
+        return;
+    };
     let admin = ctx.store.conn.with_untracked(ConnPhase::is_admin);
     // The admin-only verbs answer with the gateway-wide admin sentence.
     let gate = match id {
@@ -670,7 +715,9 @@ fn row_action(cx: Scope, ctx: &Ctx, key: &str, id: &str) {
                 return;
             }
         } else {
-            ctx.store.notice.set(Some(format!("{} has no {id} action", r.id)));
+            ctx.store
+                .notice
+                .set(Some(format!("{} has no {id} action", r.id)));
             return;
         }
     }
@@ -693,7 +740,7 @@ fn row_action(cx: Scope, ctx: &Ctx, key: &str, id: &str) {
 pub fn hints(ctx: &Ctx) -> Vec<(&'static str, &'static str)> {
     let store = ctx.store;
     let admin = store.conn.with(ConnPhase::is_admin);
-    let _ = store.accounts.with(|_| ());
+    store.accounts.with(|_| ());
     let _ = ctx.ui.acc_key.get();
     let mut out = vec![("↑↓", "rows"), ("Enter", "Email"), ("Tab", "actions")];
     if admin {
@@ -876,7 +923,9 @@ fn rotate_selected(cx: Scope, ctx: &Ctx) {
     if !super::util::admin_gate(&ctx.store, "rotating a token") {
         return;
     }
-    let Some(r) = selected_account(ctx) else { return };
+    let Some(r) = selected_account(ctx) else {
+        return;
+    };
     if let Some(why) = r.refusal("rotate") {
         ctx.store.notice.set(Some(why));
         return;
@@ -909,11 +958,11 @@ fn rotate_selected(cx: Scope, ctx: &Ctx) {
     );
 }
 
-/// The web's archive confirmation sentence.
-
 /// Archive (confirmed) / Unarchive (at once — it comes back inactive).
 fn archive_selected(cx: Scope, ctx: &Ctx) {
-    let Some(r) = selected_account(ctx) else { return };
+    let Some(r) = selected_account(ctx) else {
+        return;
+    };
     let verb = if r.archived { "unarchive" } else { "archive" };
     if let Some(why) = r.refusal(verb) {
         ctx.store.notice.set(Some(why));
@@ -947,7 +996,9 @@ fn switch_active(cx: Scope, ctx: &Ctx, want: bool) {
     if !super::util::admin_gate(&ctx.store, "switching an account's Active state") {
         return;
     }
-    let Some(r) = selected_account(ctx) else { return };
+    let Some(r) = selected_account(ctx) else {
+        return;
+    };
     if is_own(&ctx.store, &r) {
         ctx.store.notice.set(Some(
             r.refusal("suspend")
@@ -980,7 +1031,10 @@ fn switch_active(cx: Scope, ctx: &Ctx, want: bool) {
     }
     let (question, verb) = if r.is_entity() {
         (
-            format!("Suspend {}? It stops acting until you turn Active back on.", r.id),
+            format!(
+                "Suspend {}? It stops acting until you turn Active back on.",
+                r.id
+            ),
             "Suspend",
         )
     } else {
@@ -1000,7 +1054,9 @@ fn openai_selected(cx: Scope, ctx: &Ctx) {
     if !super::util::admin_gate(&ctx.store, "changing who may use the OpenAI API") {
         return;
     }
-    let Some(r) = selected_account(ctx) else { return };
+    let Some(r) = selected_account(ctx) else {
+        return;
+    };
     match &r.openai_action {
         None => {
             ctx.store.notice.set(Some(
@@ -1140,7 +1196,12 @@ fn email_card(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         let mut body = Element::new().style(LayoutStyle::column().shrink(0.0));
         for (key, label, help, on) in [
             ("email", MAILBOXES_LABEL, MAILBOXES_HELP, vals.0),
-            ("email_agent_tools", AGENT_TOOLS_LABEL, AGENT_TOOLS_HELP, vals.1),
+            (
+                "email_agent_tools",
+                AGENT_TOOLS_LABEL,
+                AGENT_TOOLS_HELP,
+                vals.1,
+            ),
             ("email_recovery", RECOVERY_LABEL, RECOVERY_HELP, vals.2),
         ] {
             let c = ctx.clone();
@@ -1199,7 +1260,6 @@ thread_local! {
     static OBSERVER_PENDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-
 pub const NON_ADMIN_TITLE: &str = "Your account";
 pub const NON_ADMIN_SUBTITLE: &str = "Your account and the entities you created.";
 
@@ -1226,12 +1286,6 @@ fn visible_len(store: &crate::store::Store) -> usize {
             .unwrap_or(0)
     })
 }
-
-
-
-
-
-
 
 /// The Email cell (R8.2: ONE column): the address and the mailbox's
 /// connection state — `test@x · connected`, `No address`.
@@ -1273,7 +1327,6 @@ fn mailbox_detail(r: &AccountRow) -> Option<String> {
         _ => None,
     }
 }
-
 
 /// `<id>: a · b · c` laid out in lines no wider than `width`, breaking
 /// only between two actions.
@@ -1398,7 +1451,6 @@ fn edit_selected_user(cx: Scope, ctx: &Ctx) {
             .set(Some("no account selected — nothing to edit".into())),
     }
 }
-
 
 /// ONE manage entry — the `m` key and an entity row's activation.
 fn manage_selected_entity(cx: Scope, ctx: &Ctx) {
@@ -1536,9 +1588,6 @@ pub fn other_mailbox_line(r: &AccountRow) -> String {
     }
 }
 
-
-
-
 /// The archive confirm, in the web's words (DESIGN-v3 §1.3).
 pub fn archive_question(r: &AccountRow) -> String {
     if r.is_entity() {
@@ -1554,8 +1603,6 @@ pub fn archive_question(r: &AccountRow) -> String {
     }
 }
 
-
-
 /// The kind chip's tone: admin accent, user neutral, entity info — the
 /// web's row tints, as colour on the chip (the engine Table has no
 /// per-row ink).
@@ -1566,9 +1613,6 @@ pub fn kind_tone(label: &str) -> Tone {
         _ => Tone::Muted,
     }
 }
-
-
-
 
 /// Retained runtime planes (a user moved to another runtime, or a deleted
 /// user before 0.11): transfer to a living user. Never purged — accounts
@@ -1773,7 +1817,6 @@ pub const AGENT_TOOLS_HELP: &str = "Users may let their agents and workflows use
 pub const RECOVERY_LABEL: &str = "Sign-in by email";
 pub const RECOVERY_HELP: &str = "Shows 'Forgot your token?' on the sign-in page. Whoever controls a user's mailbox can then sign in as that user.";
 
-
 /// Why your own row's Active switch is unavailable (state-toggles §4).
 pub const OWN_ACCOUNT_REASON: &str = "You can't deactivate your own account.";
 
@@ -1786,7 +1829,6 @@ fn own_key(store: &crate::store::Store) -> Option<(String, String)> {
         _ => None,
     })
 }
-
 
 /// Create (existing=None) or edit a user.
 fn open_user_form(cx: Scope, ctx: &Ctx, existing: Option<UserRow>) {
@@ -2193,10 +2235,11 @@ fn open_activity(cx: Scope, ctx: &Ctx) {
                     });
                 }
             };
-            let chips = super::w::Segmented::new(ACTIVITY_FILTERS.iter().map(|(l, _)| l.to_string()), None)
-                .bind(filter)
-                .on_pick(reload)
-                .view(mcx, &t);
+            let chips =
+                super::w::Segmented::new(ACTIVITY_FILTERS.iter().map(|(l, _)| l.to_string()), None)
+                    .bind(filter)
+                    .on_pick(reload)
+                    .view(mcx, &t);
             let sel = mcx.signal(Option::<String>::None);
             let ctx_o = ctx2.clone();
             let table = dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |gcx| {
@@ -2240,7 +2283,10 @@ fn open_activity(cx: Scope, ctx: &Ctx) {
                                     vec![
                                         Cell::text(activity_time(&e.ts, &today), t.text_muted),
                                         Cell::text(title, if e.ok { t.text } else { t.error }),
-                                        Cell::text(e.detail.clone().unwrap_or_default(), t.text_muted),
+                                        Cell::text(
+                                            e.detail.clone().unwrap_or_default(),
+                                            t.text_muted,
+                                        ),
                                         Cell::Actions(acts),
                                     ],
                                 )
@@ -2272,7 +2318,12 @@ fn open_activity(cx: Scope, ctx: &Ctx) {
                             .view(gcx, &t),
                         );
                         if let Some(note) = d.note.clone().filter(|n| !n.trim().is_empty()) {
-                            col = col.child(super::w::form::sentence(&t, note.trim(), w, t.text_faint));
+                            col = col.child(super::w::form::sentence(
+                                &t,
+                                note.trim(),
+                                w,
+                                t.text_faint,
+                            ));
                         }
                         col.build()
                     }
@@ -2282,9 +2333,17 @@ fn open_activity(cx: Scope, ctx: &Ctx) {
             Element::new()
                 .style(LayoutStyle::column().grow(1.0))
                 .child(chips)
-                .child(Element::new().style(LayoutStyle::line(1).shrink(0.0)).build())
+                .child(
+                    Element::new()
+                        .style(LayoutStyle::line(1).shrink(0.0))
+                        .build(),
+                )
                 .child(table)
-                .child(Element::new().style(LayoutStyle::default().grow(1.0)).build())
+                .child(
+                    Element::new()
+                        .style(LayoutStyle::default().grow(1.0))
+                        .build(),
+                )
                 .child(super::w::form::button_row(vec![button(
                     mcx,
                     &t,

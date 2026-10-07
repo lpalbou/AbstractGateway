@@ -90,14 +90,18 @@ fn a_opens_apps_settings_and_a_row_applies_on_enter() {
         let s = h.key(b"a");
         h.shoot("apps-settings-overlay");
         assert!(s.contains("Apps settings"), "{s}");
-        assert!(s.contains("Node.js for apps: auto"), "{s}");
+        // R15: one form modal — the field (focused, Enter applies) and its
+        // source line.
+        assert!(
+            s.contains("Node.js for apps") && s.contains("now auto"),
+            "{s}"
+        );
         assert!(
             !s.contains("Where apps listen"),
             "deprecated host hidden while not saved:\n{s}"
         );
         assert!(!s.contains("Save"), "no Save button:\n{s}");
         h.sent();
-        h.key(b"\r");
         h.type_text("managed");
         h.key(b"\r");
         let sv = saves(&mut h);
@@ -116,13 +120,17 @@ fn g_on_the_continuum_card_opens_its_settings() {
         let mut h = page(size, "default");
         h.store.apps.sel.set(1);
         let s = h.turns(3);
-        assert!(s.contains("g Settings"), "the gear beside Open:\n{s}");
+        let row = s.lines().find(|l| l.contains("Continuum")).expect(&s);
+        assert!(row.contains("⊛"), "the gear beside Open:\n{s}");
         let s = h.key(b"g");
         h.shoot("apps-continuum-settings");
         assert!(s.contains("Continuum settings"), "{s}");
-        assert!(s.contains("Backlog folder: /srv/repo"), "{s}");
         assert!(
-            s.contains("[ ] Backlog exec runner") && s.contains("[x] Process manager"),
+            s.contains("Backlog folder") && s.contains("now /srv/repo"),
+            "{s}"
+        );
+        assert!(
+            s.contains("●─ Backlog exec runner") && s.contains("━● Process manager"),
             "{s}"
         );
         assert!(!s.to_lowercase().contains("environment (legacy)"), "{s}");
@@ -137,7 +145,9 @@ fn continuum_switches_apply_at_once_and_the_folder_clears_to_the_gateways_own() 
     h.turns(2);
     h.key(b"g");
     h.sent();
-    h.key(b"\x1b[B");
+    // Folder field (focused) → its button → the exec runner toggle.
+    h.key(b"\t");
+    h.key(b"\t");
     h.key(b" ");
     let sv = saves(&mut h);
     assert_eq!(sv[0].0, json!({"backlog_exec_runner": true}));
@@ -149,14 +159,8 @@ fn continuum_switches_apply_at_once_and_the_folder_clears_to_the_gateways_own() 
     );
     h.ui.write_done.set(Some((sv[0].1, Ok("applied".into()))));
     h.turns(2);
-    // The folder: Enter, clear, Enter → null (the gateway's own folder).
-    h.key(b"\x1b[A");
-    h.key(b"\r");
-    h.key(b"\x1b[F");
-    for _ in 0..12 {
-        h.key(b"\x7f");
-    }
-    h.key(b"\r");
+    // The folder: the web's "Use the gateway's own folder" → null.
+    h.click_text("Use the gateway's own folder");
     assert_eq!(saves(&mut h)[0].0, json!({"triage_repo_root": null}));
 }
 

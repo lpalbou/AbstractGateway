@@ -43,10 +43,8 @@ pub fn caret_tracked(cx: Scope, caret: Caret, el: Element) -> Element {
                 caret.set(Some(id));
             }
         }
-        UiEvent::FocusOut => {
-            if caret.is_alive() && caret.get_untracked() == Some(id) {
-                caret.set(None);
-            }
+        UiEvent::FocusOut if caret.is_alive() && caret.get_untracked() == Some(id) => {
+            caret.set(None);
         }
         _ => {}
     })

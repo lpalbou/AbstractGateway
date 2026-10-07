@@ -9396,7 +9396,10 @@ fn my_email_page_reads_in_the_design_order_with_the_design_words() {
     assert!(at("│Email address") < at("│Mailbox"), "{s}");
     assert!(at("│Mailbox") < at("│Notifications"), "{s}");
     assert!(at("│Notifications") < at("●─ Agent email tools"), "{s}");
-    assert!(at("●─ Agent email tools") < at("│Recipients and limits"), "{s}");
+    assert!(
+        at("●─ Agent email tools") < at("│Recipients and limits"),
+        "{s}"
+    );
     assert!(
         s.contains("Where sign-in codes and notifications go"),
         "{s}"

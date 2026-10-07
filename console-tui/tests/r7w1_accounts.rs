@@ -67,9 +67,14 @@ fn the_table_has_the_web_columns_kinds_and_switches() {
         let mut h = page(size);
         let s = h.shoot("accounts");
         // R15: the web title + subtitle, the head buttons, one table.
-        assert!(s.contains("Accounts") && s.contains("People who use this gateway"), "{s}");
         assert!(
-            s.contains("●─ Show archived") && s.contains("Create user") && s.contains("Create entity"),
+            s.contains("Accounts") && s.contains("People who use this gateway"),
+            "{s}"
+        );
+        assert!(
+            s.contains("●─ Show archived")
+                && s.contains("Create user")
+                && s.contains("Create entity"),
             "{s}"
         );
         for col in ["Name", "Email", "Runtime", "Active", "Actions"] {
@@ -145,13 +150,18 @@ fn row_actions_name_themselves_on_focus_and_refused_ones_say_why() {
         Some("You can't archive your own account.")
     );
     assert!(
-        !h.sent().iter().any(|c| matches!(c, Cmd::ArchiveAccount { .. })),
+        !h.sent()
+            .iter()
+            .any(|c| matches!(c, Cmd::ArchiveAccount { .. })),
         "a refused action sends nothing"
     );
     // bob: the receive-only reason sits under the row (wrapped).
     select(&mut h, "bob");
     let s = h.text();
-    assert!(s.contains("receive only") && s.contains("No outgoing"), "{s}");
+    assert!(
+        s.contains("receive only") && s.contains("No outgoing"),
+        "{s}"
+    );
 }
 
 #[test]
@@ -164,7 +174,10 @@ fn show_archived_lists_them_with_unarchive_only() {
         "{s}"
     );
     // An archived row offers Logs and Unarchive only.
-    let carol = s.lines().find(|l| l.trim_start().starts_with("carol")).expect(&s);
+    let carol = s
+        .lines()
+        .find(|l| l.trim_start().starts_with("carol"))
+        .expect(&s);
     assert!(carol.trim_end().ends_with("≣ ⤒"), "{s}");
     select(&mut h, "carol");
     h.shoot("accounts-archived");

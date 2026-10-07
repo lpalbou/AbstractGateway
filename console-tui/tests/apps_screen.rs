@@ -360,7 +360,10 @@ fn app_acts(cmds: &[Cmd]) -> Vec<(String, AppVerb, Option<String>, bool)> {
 fn every_web_card_state_renders() {
     let mut h = harness();
     let s = h.on_apps(true);
-    assert!(s.contains("Install and open the apps that work with this gateway"), "{s}");
+    assert!(
+        s.contains("Install and open the apps that work with this gateway"),
+        "{s}"
+    );
     // R15: the web card's words in a table — the badge is the state (an
     // external app's too), the actions are labelled buttons.
     for want in [
@@ -381,7 +384,10 @@ fn every_web_card_state_renders() {
         assert!(s.contains(want), "'{want}' on the Apps screen:\n{s}");
     }
     // Footer: the screen's verbs.
-    assert!(s.contains("Enter Open") && s.contains("s status badge"), "{s}");
+    assert!(
+        s.contains("Enter Open") && s.contains("s status badge"),
+        "{s}"
+    );
     // Detail of the external app says why it cannot be stopped.
     let s = h.select("continuum");
     assert!(

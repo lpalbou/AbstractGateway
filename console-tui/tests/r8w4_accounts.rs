@@ -61,19 +61,6 @@ fn page(size: (i32, i32)) -> r8w4::Harness {
     h
 }
 
-/// The page's text with the block borders and line breaks folded away
-/// (a wrapped action line reads as one; the wrap's trailing "·" joins).
-fn flat(s: &str) -> String {
-    s.lines()
-        .map(|l| l.trim_matches(|c| c == '│' || c == ' '))
-        .collect::<Vec<_>>()
-        .join(" ")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .replace("· ·", "·")
-}
-
 fn select(h: &mut r8w4::Harness, id: &str) {
     let idx = h.store.accounts.with_untracked(|d| {
         d.ready()
@@ -100,11 +87,17 @@ fn four_columns_at_every_width_and_nothing_scrolls_sideways() {
         }
         // One Email column (the card under the table names "Mailboxes for
         // users"; no Mailbox/Email address column).
-        assert!(!header.contains("Mailbox") && !s.contains("Email address"), "{s}");
+        assert!(
+            !header.contains("Mailbox") && !s.contains("Email address"),
+            "{s}"
+        );
         assert!(s.contains("alice@example.test · connected"), "{s}");
         assert!(s.contains("No address"), "{s}");
         // ("reading…" is the email card's word while it loads, not a cut.)
-        assert!(!s.replace("reading…", "").contains('…'), "a cell was cut:\n{s}");
+        assert!(
+            !s.replace("reading…", "").contains('…'),
+            "a cell was cut:\n{s}"
+        );
         h.assert_fits();
     }
 }
@@ -127,7 +120,10 @@ fn the_highlighted_rows_actions_sit_in_one_line_in_the_web_order() {
         };
         assert!(row("alice").contains("@ ⇄ ≣ ◫ ⊜ ↻ ⊟"), "{s}");
         assert!(row("castor").contains("@ ≣ ◫ ⊜ ⬖ ⊟"), "{s}");
-        assert!(row("alice").contains("alice    ━●"), "runtime link + Active:\n{s}");
+        assert!(
+            row("alice").contains("alice    ━●"),
+            "runtime link + Active:\n{s}"
+        );
         assert!(!s.contains('⋯'), "no menu:\n{s}");
     }
 }

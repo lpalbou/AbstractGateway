@@ -132,7 +132,6 @@ fn notice(h: &r8w4::Harness) -> String {
     h.store.notice.get_untracked().unwrap_or_default()
 }
 
-
 #[test]
 fn badge_verb_follows_the_gateways_status_control() {
     let row = |v: Value| AppRow::from_value(&v).unwrap();
@@ -177,7 +176,10 @@ fn running_badge_is_a_button_that_stops() {
         let mut h = page(size, true, false);
         let s = select(&mut h, "flow");
         assert!(s.contains("Running"), "{s}");
-        assert!(!s.contains("click to stop") || flat(&s).contains("Running"), "{s}");
+        assert!(
+            !s.contains("click to stop") || flat(&s).contains("Running"),
+            "{s}"
+        );
         h.key(b"\t"); // the selected row's first control: its badge
         assert_eq!(
             h.ui.focus_line.get_untracked().as_deref(),

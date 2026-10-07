@@ -906,7 +906,6 @@ fn put(ctx: &Ctx, st: &St, target: &Target, item: &Item, body: Value) {
     }));
 }
 
-
 fn note_of(st: &St, key: &str) -> Option<(String, NoteTone)> {
     st.notes.with_untracked(|n| {
         n.iter()
@@ -933,9 +932,6 @@ pub fn segmented(options: &[(String, bool)], current: usize) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
-
-
-
 
 /// Open the chooser for `target` (R15: ONE form modal — every control a
 /// widget: the follow Toggle, the posture Segmented, each row's permission
@@ -1063,8 +1059,8 @@ fn indent(v: View, n: i32) -> View {
 }
 
 fn chooser_body(cx: Scope, ctx: &Ctx, target: &Target, st: St, width: i32) -> View {
-    use super::w::paint::{fill_line, Ink};
     use super::w::form::sentence;
+    use super::w::paint::{fill_line, Ink};
     let t = use_theme(cx).get().tokens;
     let level = target.level();
     let slot = ctx.store.json.get(&target.slot());
@@ -1133,17 +1129,27 @@ fn chooser_body(cx: Scope, ctx: &Ctx, target: &Target, st: St, width: i32) -> Vi
                     .child(tg.view(cx, &t))
                     .build(),
             )
-            .child(indent(sentence(&t, T::FOLLOW_GATEWAY_HELP, width - 3, t.text_muted), 3))
+            .child(indent(
+                sentence(&t, T::FOLLOW_GATEWAY_HELP, width - 3, t.text_muted),
+                3,
+            ))
             .child(note_line(st, it.key(), width));
     }
     // ---- The posture
     col = col.child(heading(T::POSTURE_LABEL));
     if view.following || view.locked {
-        col = col.child(indent(sentence(&t, view.posture.label(), width - 2, t.text), 2));
+        col = col.child(indent(
+            sentence(&t, view.posture.label(), width - 2, t.text),
+            2,
+        ));
     } else {
         let cur = POSTURES.iter().position(|p| *p == view.posture);
         let labels: Vec<String> = POSTURES.iter().map(|p| p.label().to_string()).collect();
-        let narrow = labels.iter().map(|l| abstracttui::text::width(l) + 3).sum::<i32>() > width - 2;
+        let narrow = labels
+            .iter()
+            .map(|l| abstracttui::text::width(l) + 3)
+            .sum::<i32>()
+            > width - 2;
         let c = ctx.clone();
         let tgt = target.clone();
         let pol = state.policy.clone();
@@ -1152,13 +1158,22 @@ fn chooser_body(cx: Scope, ctx: &Ctx, target: &Target, st: St, width: i32) -> Vi
             .autofocus_chosen(is_last("posture"))
             .on_pick(move |i| {
                 if free(&st) && Some(i) != cur {
-                    put(&c, &st, &tgt, &Item::Posture, posture_payload(level, &pol, POSTURES[i]));
+                    put(
+                        &c,
+                        &st,
+                        &tgt,
+                        &Item::Posture,
+                        posture_payload(level, &pol, POSTURES[i]),
+                    );
                 }
             });
         col = col.child(indent(seg.view(cx, &t), 2));
     }
     col = col
-        .child(indent(sentence(&t, view.posture.help(), width - 2, t.text_muted), 2))
+        .child(indent(
+            sentence(&t, view.posture.help(), width - 2, t.text_muted),
+            2,
+        ))
         .child(note_line(st, Item::Posture.key(), width));
     // ---- Rows: Allowed, then Refused (built-in refusals last, fixed)
     let editable_level = !view.following && !view.locked;
@@ -1173,7 +1188,11 @@ fn chooser_body(cx: Scope, ctx: &Ctx, target: &Target, st: St, width: i32) -> Vi
             let mut head = Element::new().style(LayoutStyle::row().shrink(0.0));
             head = head.child(
                 Element::new()
-                    .style(LayoutStyle::column().width(Dimension::Cells(width - 6)).shrink(0.0))
+                    .style(
+                        LayoutStyle::column()
+                            .width(Dimension::Cells(width - 6))
+                            .shrink(0.0),
+                    )
                     .child(indent(
                         sentence(
                             &t,
@@ -1194,23 +1213,23 @@ fn chooser_body(cx: Scope, ctx: &Ctx, target: &Target, st: St, width: i32) -> Vi
                     .tooltip(format!("{} {}", T::REMOVE, r.path))
                     .danger();
                 head = head.child(super::w::action::button(
-                        cx,
-                        &t,
-                        &a,
-                        super::w::action::On::Raised,
-                        true,
-                        move || {
-                            if free(&st) {
-                                put(
-                                    &c,
-                                    &st,
-                                    &tgt,
-                                    &Item::Row(path.clone()),
-                                    remove_payload(level, &pol, &path),
-                                );
-                            }
-                        },
-                    ));
+                    cx,
+                    &t,
+                    &a,
+                    super::w::action::On::Raised,
+                    true,
+                    move || {
+                        if free(&st) {
+                            put(
+                                &c,
+                                &st,
+                                &tgt,
+                                &Item::Row(path.clone()),
+                                remove_payload(level, &pol, &path),
+                            );
+                        }
+                    },
+                ));
             }
             col = col.child(head.build());
             if r.builtin {
@@ -1224,7 +1243,10 @@ fn chooser_body(cx: Scope, ctx: &Ctx, target: &Target, st: St, width: i32) -> Vi
                     4,
                 ));
             } else if !r.editable || !editable_level {
-                col = col.child(indent(sentence(&t, r.mode.label(), width - 4, t.text_muted), 4));
+                col = col.child(indent(
+                    sentence(&t, r.mode.label(), width - 4, t.text_muted),
+                    4,
+                ));
             } else {
                 let cur = MODES.iter().position(|m| *m == r.mode);
                 let mut seg =
@@ -1248,14 +1270,22 @@ fn chooser_body(cx: Scope, ctx: &Ctx, target: &Target, st: St, width: i32) -> Vi
                     if reasons.iter().any(|(m, _)| *m == want) {
                         return;
                     }
-                    put(&c, &st, &tgt, &Item::Row(path.clone()), mode_payload(level, &pol, &path, want));
+                    put(
+                        &c,
+                        &st,
+                        &tgt,
+                        &Item::Row(path.clone()),
+                        mode_payload(level, &pol, &path, want),
+                    );
                 });
                 col = col.child(
                     Element::new()
                         .style(LayoutStyle::row().height(Dimension::Cells(1)).shrink(0.0))
                         .child(indent(
                             fill_line(
-                                LayoutStyle::default().width(Dimension::Cells(12)).height(Dimension::Cells(1)),
+                                LayoutStyle::default()
+                                    .width(Dimension::Cells(12))
+                                    .height(Dimension::Cells(1)),
                                 vec![Ink::new(format!("{}:", T::ACCESS_LABEL), t.text_muted)],
                                 None,
                             ),
@@ -1266,7 +1296,12 @@ fn chooser_body(cx: Scope, ctx: &Ctx, target: &Target, st: St, width: i32) -> Vi
                 );
                 for (md, why) in &r.reasons {
                     col = col.child(indent(
-                        sentence(&t, &format!("{}: {why}", md.label()), width - 4, t.text_faint),
+                        sentence(
+                            &t,
+                            &format!("{}: {why}", md.label()),
+                            width - 4,
+                            t.text_faint,
+                        ),
                         4,
                     ));
                 }
@@ -1302,7 +1337,10 @@ fn chooser_body(cx: Scope, ctx: &Ctx, target: &Target, st: St, width: i32) -> Vi
                 });
             col = col.child(indent(seg.view(cx, &t), 4));
         } else {
-            col = col.child(indent(sentence(&t, mode.label(), width - 4, t.text_muted), 4));
+            col = col.child(indent(
+                sentence(&t, mode.label(), width - 4, t.text_muted),
+                4,
+            ));
         }
         col = col.child(note_line(st, Item::EverythingElse.key(), width));
     }
@@ -1325,12 +1363,25 @@ fn chooser_body(cx: Scope, ctx: &Ctx, target: &Target, st: St, width: i32) -> Vi
             .on_submit(move |_| add_enter())
             .layout(LayoutStyle::default().grow(1.0).h(1))
             .element(cx, &t);
-        let field = if is_last("add") { field.autofocus() } else { field }.build();
+        let field = if is_last("add") {
+            field.autofocus()
+        } else {
+            field
+        }
+        .build();
         let a = super::w::Action::label("add", T::ADD);
-        let btn = super::w::action::button(cx, &t, &a, super::w::action::On::Raised, true, move || add());
+        let btn =
+            super::w::action::button(cx, &t, &a, super::w::action::On::Raised, true, move || {
+                add()
+            });
         col = col.child(
             Element::new()
-                .style(LayoutStyle::row().height(Dimension::Cells(1)).gap(1).shrink(0.0))
+                .style(
+                    LayoutStyle::row()
+                        .height(Dimension::Cells(1))
+                        .gap(1)
+                        .shrink(0.0),
+                )
                 .child(field)
                 .child(btn)
                 .build(),
@@ -1342,7 +1393,11 @@ fn chooser_body(cx: Scope, ctx: &Ctx, target: &Target, st: St, width: i32) -> Vi
     }
     // The effective line, verbatim.
     col = col
-        .child(Element::new().style(LayoutStyle::line(1).shrink(0.0)).build())
+        .child(
+            Element::new()
+                .style(LayoutStyle::line(1).shrink(0.0))
+                .build(),
+        )
         .child(sentence(&t, &view.summary, width, t.text));
     col.build()
 }

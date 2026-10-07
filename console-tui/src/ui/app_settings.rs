@@ -182,9 +182,10 @@ pub fn open(cx: Scope, ctx: &Ctx, which: Which) {
         }
     }
     let c = ctx.clone();
-    super::w::FormModal::new(which.title())
-        .size(100, 34)
-        .open(ctx, cx, move |mcx, close, _guard, w| {
+    super::w::FormModal::new(which.title()).size(100, 34).open(
+        ctx,
+        cx,
+        move |mcx, close, _guard, w| {
             let st = St {
                 notes: mcx.signal(Vec::new()),
                 pending: mcx.signal(Vec::new()),
@@ -234,7 +235,8 @@ pub fn open(cx: Scope, ctx: &Ctx, which: Which) {
                     move || close2(),
                 )]))
                 .build()
-        });
+        },
+    );
 }
 
 fn modal_body(cx: Scope, ctx: &Ctx, which: Which, st: St, width: i32) -> View {
@@ -264,10 +266,20 @@ fn modal_body(cx: Scope, ctx: &Ctx, which: Which, st: St, width: i32) -> View {
     let last = st.last.get_untracked();
     let mut col = Element::new().style(LayoutStyle::column().shrink(0.0));
     if list.is_empty() {
-        col = col.child(sentence(&t, "This gateway reports no settings here.", width, t.text_muted));
+        col = col.child(sentence(
+            &t,
+            "This gateway reports no settings here.",
+            width,
+            t.text_muted,
+        ));
     }
     if !d.writable {
-        col = col.child(sentence(&t, "Only an admin can change these.", width, t.warn));
+        col = col.child(sentence(
+            &t,
+            "Only an admin can change these.",
+            width,
+            t.warn,
+        ));
     }
     let label_w = list
         .iter()
@@ -304,7 +316,12 @@ fn modal_body(cx: Scope, ctx: &Ctx, which: Which, st: St, width: i32) -> View {
                     });
                 col = col.child(
                     Element::new()
-                        .style(LayoutStyle::row().height(Dimension::Cells(1)).shrink(0.0).gap(2))
+                        .style(
+                            LayoutStyle::row()
+                                .height(Dimension::Cells(1))
+                                .shrink(0.0)
+                                .gap(2),
+                        )
                         .child(tg.view(cx, &t))
                         .child(fill_line(
                             LayoutStyle::default().grow(1.0).height(Dimension::Cells(1)),
@@ -345,12 +362,24 @@ fn modal_body(cx: Scope, ctx: &Ctx, which: Which, st: St, width: i32) -> View {
                         .element(cx, &t);
                     if is_last { el.autofocus() } else { el }.build()
                 } else {
-                    fill_line(LayoutStyle::line(1), vec![Ink::new(r.now.clone(), t.text)], None)
+                    fill_line(
+                        LayoutStyle::line(1),
+                        vec![Ink::new(r.now.clone(), t.text)],
+                        None,
+                    )
                 };
                 let mut line_el = Element::new()
-                    .style(LayoutStyle::row().height(Dimension::Cells(1)).shrink(0.0).gap(1))
+                    .style(
+                        LayoutStyle::row()
+                            .height(Dimension::Cells(1))
+                            .shrink(0.0)
+                            .gap(1),
+                    )
                     .child(fill_line(
-                        LayoutStyle::default().width(Dimension::Cells(label_w)).height(Dimension::Cells(1)).shrink(0.0),
+                        LayoutStyle::default()
+                            .width(Dimension::Cells(label_w))
+                            .height(Dimension::Cells(1))
+                            .shrink(0.0),
                         vec![Ink::new(r.label.clone(), t.text)],
                         None,
                     ))
@@ -405,7 +434,11 @@ fn modal_body(cx: Scope, ctx: &Ctx, which: Which, st: St, width: i32) -> View {
         if let Some(wn) = &r.warn {
             col = col.child(sentence(&t, wn, width, t.warn));
         }
-        col = col.child(Element::new().style(LayoutStyle::line(1).shrink(0.0)).build());
+        col = col.child(
+            Element::new()
+                .style(LayoutStyle::line(1).shrink(0.0))
+                .build(),
+        );
     }
     col = col.child(sentence(
         &t,
@@ -469,8 +502,6 @@ fn send(ctx: &Ctx, st: &St, key: &str, body: Value) {
         form_id: Some(fid),
     });
 }
-
-
 
 fn tone_ink(t: &TokenSet, tone: Tone) -> abstracttui::base::Rgba {
     match tone {

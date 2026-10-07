@@ -107,19 +107,29 @@ impl Segmented {
             };
             let pick = self.on_pick.clone();
             let af = self.autofocus_chosen && fixed;
-            row = row.child(segment(cx, t, label.clone(), chosen, why, tip, af, move || {
-                if let Some(b) = bound {
-                    b.set(i);
-                }
-                if let Some(p) = &pick {
-                    p(i);
-                }
-            }));
+            row = row.child(segment(
+                cx,
+                t,
+                label.clone(),
+                chosen,
+                why,
+                tip,
+                af,
+                move || {
+                    if let Some(b) = bound {
+                        b.set(i);
+                    }
+                    if let Some(p) = &pick {
+                        p(i);
+                    }
+                },
+            ));
         }
         row.build()
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn segment(
     cx: Scope,
     t: &TokenSet,

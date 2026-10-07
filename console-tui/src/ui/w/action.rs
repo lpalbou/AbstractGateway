@@ -159,7 +159,7 @@ pub fn button(
     a: &Action,
     on: On,
     tab_stop: bool,
-    mut on_press: impl FnMut() + 'static,
+    on_press: impl FnMut() + 'static,
 ) -> View {
     let face = a.face();
     let w = a.width();
@@ -193,7 +193,7 @@ pub fn button(
     let hovered = cx.signal(false);
     let focused = cx.signal(false);
     let pressed = cx.signal(false);
-    let press: Rc<RefCell<Box<dyn FnMut()>>> = Rc::new(RefCell::new(Box::new(move || on_press())));
+    let press: Rc<RefCell<Box<dyn FnMut()>>> = Rc::new(RefCell::new(Box::new(on_press)));
     let mut el = Element::new()
         .style(
             LayoutStyle::default()

@@ -22,6 +22,7 @@ pub const ON: &str = "━●";
 pub const OFF: &str = "●─";
 
 type Getter = Rc<dyn Fn() -> bool>;
+type ChangeFn = Rc<RefCell<Option<Box<dyn FnMut(bool)>>>>;
 
 pub struct Toggle {
     value: Getter,
@@ -139,7 +140,7 @@ impl Toggle {
         let (sel_fg, sel_bg, accent) = (t.selection_fg, t.selection_bg, t.accent);
         let hovered = cx.signal(false);
         let focused = cx.signal(false);
-        let cb: Rc<RefCell<Option<Box<dyn FnMut(bool)>>>> = Rc::new(RefCell::new(self.on_change));
+        let cb: ChangeFn = Rc::new(RefCell::new(self.on_change));
         let value = self.value.clone();
         let busy = self.busy.clone();
         let mut el = Element::new()

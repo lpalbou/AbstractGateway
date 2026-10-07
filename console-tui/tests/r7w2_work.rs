@@ -364,14 +364,18 @@ fn apps_settings_live_behind_the_gears_not_on_the_page() {
     let f = flat(&s);
     assert!(s.contains("Continuum settings"), "{s}");
     assert!(f.contains("Backlog folder"), "{s}");
-    assert!(f.contains("The gateway's own folder · now /d/backlog"), "{s}");
+    assert!(
+        f.contains("The gateway's own folder · now /d/backlog"),
+        "{s}"
+    );
     assert!(f.contains("Use the gateway's own folder"), "{s}");
     assert!(
         f.contains("Not available: the folder does not exist"),
         "{s}"
     );
     assert!(
-        s.lines().any(|l| l.contains("━● Process manager") && l.contains("Saved setting")),
+        s.lines()
+            .any(|l| l.contains("━● Process manager") && l.contains("Saved setting")),
         "{s}"
     );
     assert!(

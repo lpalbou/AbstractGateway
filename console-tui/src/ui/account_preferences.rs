@@ -325,12 +325,15 @@ fn body(
             )
             .value(chosen)
             .on_change(move |i| {
-                let Some((value, _)) = opts2.get(i) else { return };
+                let Some((value, _)) = opts2.get(i) else {
+                    return;
+                };
                 if *value == app2.value || st.pending.with_untracked(Option::is_some) {
                     return;
                 }
                 st.pending.set(Some(app2.interface.clone()));
-                st.notes.update(|n| n.retain(|(k, _, _)| *k != app2.interface));
+                st.notes
+                    .update(|n| n.retain(|(k, _, _)| *k != app2.interface));
                 c.store.json.set_write(&wk, Some(WriteState::Pending));
                 let slot = wk.trim_end_matches(".write").to_string();
                 c.send(Cmd::Json(JsonCmd::Send {
@@ -361,7 +364,12 @@ fn body(
         let label = super::w::tip::with_tip(
             cx,
             Element::new()
-                .style(LayoutStyle::default().width(Dimension::Cells(label_w)).height(Dimension::Cells(1)).shrink(0.0))
+                .style(
+                    LayoutStyle::default()
+                        .width(Dimension::Cells(label_w))
+                        .height(Dimension::Cells(1))
+                        .shrink(0.0),
+                )
                 .child(label),
             app.help.clone().unwrap_or_default(),
         )
@@ -372,7 +380,11 @@ fn body(
                 .child(label)
                 .child(
                     Element::new()
-                        .style(LayoutStyle::default().width(Dimension::Cells((width - label_w).min(56))).height(Dimension::Cells(1)))
+                        .style(
+                            LayoutStyle::default()
+                                .width(Dimension::Cells((width - label_w).min(56)))
+                                .height(Dimension::Cells(1)),
+                        )
                         .child(select)
                         .build(),
                 )
@@ -399,20 +411,24 @@ fn body(
                         .map(|(_, t, tone)| (t.clone(), *tone))
                 });
                 match note {
-                    Some((text, tone)) => {
-                        sentence(&t, &text, width, if tone == Tone::Ok { t.ok } else { t.error })
-                    }
+                    Some((text, tone)) => sentence(
+                        &t,
+                        &text,
+                        width,
+                        if tone == Tone::Ok { t.ok } else { t.error },
+                    ),
                     None => Element::new().style(LayoutStyle::default().h(0)).build(),
                 }
             }));
         }
-        col = col.child(Element::new().style(LayoutStyle::line(1).shrink(0.0)).build());
+        col = col.child(
+            Element::new()
+                .style(LayoutStyle::line(1).shrink(0.0))
+                .build(),
+        );
     }
     col.build()
 }
-
-
-
 
 #[cfg(test)]
 mod tests {

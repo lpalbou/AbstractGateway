@@ -27,9 +27,6 @@ use r8w4::{harness, Mount, SIZES};
 use serde_json::{json, Value};
 
 const UP: &[u8] = b"\x1b[A";
-const DOWN: &[u8] = b"\x1b[B";
-const RIGHT: &[u8] = b"\x1b[C";
-const LEFT: &[u8] = b"\x1b[D";
 
 fn fx(name: &str) -> Value {
     let path = format!(
@@ -62,7 +59,10 @@ fn inside_modal(s: &str) -> String {
         ) {
             // A modal box starts its top border with ╭ then a run of ─.
             let w = x1.saturating_sub(x0);
-            if w > 20 && best.map(|(_, a, b)| w > b - a).unwrap_or(true) && l.get(x0 + 1) == Some(&'─') {
+            if w > 20
+                && best.map(|(_, a, b)| w > b - a).unwrap_or(true)
+                && l.get(x0 + 1) == Some(&'─')
+            {
                 best = Some((y, x0, x1));
             }
         }
@@ -212,7 +212,10 @@ fn every_row_humans_and_entities_has_the_workspaces_action() {
             .unwrap_or_else(|| panic!("{id} row:\n{s}"));
         assert!(row.contains("◫"), "{id}:\n{s}");
     }
-    let castor = s.lines().find(|l| l.trim_start().starts_with("castor")).unwrap();
+    let castor = s
+        .lines()
+        .find(|l| l.trim_start().starts_with("castor"))
+        .unwrap();
     assert!(castor.contains("@ ≣ ◫ ⊜ ⬖ ⊟"), "{s}");
 }
 
@@ -276,14 +279,23 @@ fn eligible_workspaces_shows_posture_caps_builtins_and_the_ceiling_line() {
         );
         assert!(f.contains("Workspaces agents may use"), "{s}");
         // R15: the posture is a Segmented (both choices are buttons).
-        assert!(f.contains("Deny everything, allow listed workspaces"), "{s}");
-        assert!(f.contains("Allow everything, refuse listed workspaces"), "{s}");
+        assert!(
+            f.contains("Deny everything, allow listed workspaces"),
+            "{s}"
+        );
+        assert!(
+            f.contains("Allow everything, refuse listed workspaces"),
+            "{s}"
+        );
         assert!(
             f.contains("Agents may only work in the listed workspaces."),
             "{s}"
         );
         assert!(f.contains("Allowed workspaces"), "{s}");
-        assert!(f.contains("Permission: Read & write Read-only Refused"), "{s}");
+        assert!(
+            f.contains("Permission: Read & write Read-only Refused"),
+            "{s}"
+        );
         assert!(
             !f.contains("Gateway: "),
             "no gateway line at the gateway level:\n{s}"

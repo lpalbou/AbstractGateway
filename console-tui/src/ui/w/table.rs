@@ -433,7 +433,7 @@ impl DataTable {
                 if n == 0 {
                     return;
                 }
-                let cur = untrack(|| sel_k()).unwrap_or(0);
+                let cur = untrack(&sel_k).unwrap_or(0);
                 let page = (max_rows / 2).max(1) as usize;
                 let next = match k.key {
                     Key::Up => Some(cur.saturating_sub(1)),

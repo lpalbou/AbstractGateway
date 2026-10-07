@@ -97,7 +97,10 @@ fn d_archives_an_entity_after_the_confirm_never_deletes() {
         flat.contains("Archive castor? It stops acting and never wakes. Its memory, runs and history are kept; you can unarchive later."),
         "{s}"
     );
-    assert!(s.contains("Archive") && s.contains("Cancel"), "confirm:\n{s}");
+    assert!(
+        s.contains("Archive") && s.contains("Cancel"),
+        "confirm:\n{s}"
+    );
     assert!(h.sent().is_empty(), "nothing sent before the confirm");
     h.key(b"\x1b[A");
     h.key(b"\r");

@@ -45,7 +45,10 @@ fn inside_modal(s: &str) -> String {
         ) {
             // A modal box starts its top border with ╭ then a run of ─.
             let w = x1.saturating_sub(x0);
-            if w > 20 && best.map(|(_, a, b)| w > b - a).unwrap_or(true) && l.get(x0 + 1) == Some(&'─') {
+            if w > 20
+                && best.map(|(_, a, b)| w > b - a).unwrap_or(true)
+                && l.get(x0 + 1) == Some(&'─')
+            {
                 best = Some((y, x0, x1));
             }
         }
@@ -168,11 +171,13 @@ fn the_modal_reads_like_the_web_and_a_pick_is_one_put() {
             "{s}"
         );
         // R15: each app is a label + a Select showing the current choice.
-        let row = |label: &str, value: &str| {
-            s.lines().any(|l| l.contains(label) && l.contains(value))
-        };
+        let row =
+            |label: &str, value: &str| s.lines().any(|l| l.contains(label) && l.contains(value));
         assert!(row("AbstractCode — chat agent", "CodeAct agent"), "{s}");
-        assert!(row("Assistant", "Gateway default (AbstractAssistant"), "{s}");
+        assert!(
+            row("Assistant", "Gateway default (AbstractAssistant"),
+            "{s}"
+        );
         h.assert_fits();
         // Enter opens the Select's list: the gateway default first.
         h.key(b"\r");
