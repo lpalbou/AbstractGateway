@@ -720,7 +720,15 @@ refused workspaces, the built-in refusals and the posture's default mode. The
 command string is never parsed. `cd`, `$(…)`, symlinks, scripts and
 interpreters are all confined by the kernel:
 
-- **macOS**: `/usr/bin/sandbox-exec` with a generated profile.
+- **macOS**: `/usr/bin/sandbox-exec` with a generated profile. Under "Deny
+  everything, allow listed workspaces" it denies reading and writing user data
+  (`/Users`, `/Volumes`, `/private/var/root`, the gateway user's home) and the
+  shared temp folders (`/private/tmp`, `/private/var/folders`), where other
+  processes leave files. System folders (`/usr`, `/System`, `/Library`, `/opt`,
+  `/usr/local`, `/Applications`) stay readable, because commands need their
+  programs and libraries, but nothing outside the listed workspaces and the
+  run's private temp folder can be written. A refused workspace is denied
+  wherever it is.
 - **Linux**: bubblewrap (`bwrap`) when installed; Landlock (kernel 5.13 or
   later) for "Deny everything, allow listed workspaces" when bubblewrap is
   missing.

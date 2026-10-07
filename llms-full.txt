@@ -2543,7 +2543,15 @@ refused workspaces, the built-in refusals and the posture's default mode. The
 command string is never parsed. `cd`, `$(…)`, symlinks, scripts and
 interpreters are all confined by the kernel:
 
-- **macOS**: `/usr/bin/sandbox-exec` with a generated profile.
+- **macOS**: `/usr/bin/sandbox-exec` with a generated profile. Under "Deny
+  everything, allow listed workspaces" it denies reading and writing user data
+  (`/Users`, `/Volumes`, `/private/var/root`, the gateway user's home) and the
+  shared temp folders (`/private/tmp`, `/private/var/folders`), where other
+  processes leave files. System folders (`/usr`, `/System`, `/Library`, `/opt`,
+  `/usr/local`, `/Applications`) stay readable, because commands need their
+  programs and libraries, but nothing outside the listed workspaces and the
+  run's private temp folder can be written. A refused workspace is denied
+  wherever it is.
 - **Linux**: bubblewrap (`bwrap`) when installed; Landlock (kernel 5.13 or
   later) for "Deny everything, allow listed workspaces" when bubblewrap is
   missing.
@@ -10439,6 +10447,7 @@ Requires AbstractRuntime 0.9.1, AbstractCore 2.25.1 and AbstractAgent 0.3.19 (in
 
 - **Local pages in `browser_probe` stay inside the run's workspaces** (AbstractCore 2.25.1, AbstractRuntime 0.9.1). A local page is served to the headless browser from a private loopback origin limited to the files the run may read, never as `file://`, so a page in an allowed workspace can no longer show a refused folder's files through `<img src="file:///…">`, `../` links or symlinks; refused loads are listed in the report. Docs: security ("Browser probe").
 - **Linux command sandbox: nested workspaces** (AbstractCore 2.25.1). An allowed workspace inside a refused folder is now reachable under bubblewrap too (it failed closed before); see security ("Command sandbox").
+- **macOS command sandbox: the shared temp folders are denied** under "Deny everything, allow listed workspaces" (AbstractCore 2.25.1): `/private/tmp` and `/private/var/folders` join user data; system folders stay readable and unwritable. See security ("Command sandbox").
 
 ### Terminal console
 

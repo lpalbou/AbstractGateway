@@ -26,6 +26,7 @@ Requires AbstractRuntime 0.9.1, AbstractCore 2.25.1 and AbstractAgent 0.3.19 (in
 
 - **Local pages in `browser_probe` stay inside the run's workspaces** (AbstractCore 2.25.1, AbstractRuntime 0.9.1). A local page is served to the headless browser from a private loopback origin limited to the files the run may read, never as `file://`, so a page in an allowed workspace can no longer show a refused folder's files through `<img src="file:///…">`, `../` links or symlinks; refused loads are listed in the report. Docs: security ("Browser probe").
 - **Linux command sandbox: nested workspaces** (AbstractCore 2.25.1). An allowed workspace inside a refused folder is now reachable under bubblewrap too (it failed closed before); see security ("Command sandbox").
+- **macOS command sandbox: the shared temp folders are denied** under "Deny everything, allow listed workspaces" (AbstractCore 2.25.1): `/private/tmp` and `/private/var/folders` join user data; system folders stay readable and unwritable. See security ("Command sandbox").
 
 ### Terminal console
 
