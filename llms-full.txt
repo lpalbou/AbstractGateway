@@ -10069,7 +10069,7 @@ conversation continues.
   restart).
 - Sleep is not a hang. Waking a computer can make the clock jump by minutes;
   the watchdog and the backstop both check once more whether the event loop
-  is still running before acting, and a live loop only leaves the log line
+  is still running before acting; a live loop at most leaves the log line
   `[WARN] gateway watchdog: the event loop resumed after …s; not restarted`.
   On Windows the backstop is still faulthandler's timer, which cannot make
   that check, so a long sleep can restart the gateway there. To confirm after a sleep/wake, the incident folder stays empty and
