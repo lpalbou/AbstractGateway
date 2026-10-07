@@ -1076,13 +1076,15 @@ CONSOLE_UI_JS = r"""
       if (!box || !box.clientWidth) return;  // hidden tab: measured when shown
       const avail = box.clientWidth;
       if (table.classList.contains("ui-stacked")) {
-        const natural = Number(table.dataset.uiNatural || 0);
-        if (natural && natural <= avail) {
-          table.classList.remove("ui-stacked");
-          if (table.scrollWidth > box.clientWidth + 1) {
-            table.dataset.uiNatural = String(table.scrollWidth);
-            table.classList.add("ui-stacked");
-          }
+        // RE-MEASURE, never trust the width recorded when it stacked: that
+        // width can be a transient one (a row rendered before its data, a
+        // long message since gone), and a table judged against it stayed as
+        // cards after the viewport grew back. Unstacking and measuring in the
+        // same task paints nothing in between.
+        table.classList.remove("ui-stacked");
+        if (table.scrollWidth > box.clientWidth + 1) {
+          table.dataset.uiNatural = String(table.scrollWidth);
+          table.classList.add("ui-stacked");
         }
       } else if (table.scrollWidth > avail + 1) {
         table.dataset.uiNatural = String(table.scrollWidth);

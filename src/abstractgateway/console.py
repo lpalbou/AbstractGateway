@@ -808,6 +808,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .state-pill.covered { color: var(--cyan); border-color: color-mix(in srgb, var(--info) 36%, transparent); background: color-mix(in srgb, var(--info) 8%, transparent); }
 	    .capability-derived td { color: var(--muted); }
 	    .actions { display: flex; gap: 6px; flex-wrap: nowrap; align-items: center; }
+	    /* An actions CELL stays a table cell: a flex <td> leaves the column grid
+	       (its box no longer matches its header and the row border breaks under
+	       it). Its buttons sit in one row with the same 6 px gap. The card layout
+	       (table.ui-stacked) keeps its own flex row for the cell. */
+	    td.actions { display: table-cell; white-space: nowrap; vertical-align: middle; }
+	    td.actions > * + * { margin-left: 6px; }
     th:last-child, td:last-child { width: 1%; white-space: nowrap; }
     /* In-table actions are GHOSTS (filled tertiary
        pills at table density turned every table into a wall of blue —
@@ -1235,7 +1241,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .capability-table td.capability-route-cell code { font-size: var(--font-size-sm); }
 	    /* A real table cell (a flex <td> leaves the column grid and its box no
 	       longer matches its column): icons in one row, a read-only note wraps. */
-	    .capability-table td.actions { display: table-cell; white-space: nowrap; }
 	    .capability-table td.actions > * + * { margin-left: 4px; }
 	    .capability-table td.actions > .muted { white-space: normal; display: block; margin: 0 0 4px; }
 	    .capability-table td.actions > .muted + * { margin-left: 0; }
@@ -1654,8 +1659,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .users-table-wrap { overflow-x: auto; }
 	    .users-table td { font-size: var(--font-size-base); vertical-align: middle; }
 	    /* A table cell, not a flex box: a flex td drops out of the row's borders. */
-	    .users-table td.actions { display: table-cell; white-space: nowrap; }
-	    .users-table td.actions > button + button { margin-left: 6px; }
 	    .users-table .row-confirm > td { padding-top: 0; }
 	    .users-override { color: var(--warn, var(--warning)); }
 	    .users-mailbox__body { min-width: 0; overflow-wrap: break-word; word-break: normal; }
