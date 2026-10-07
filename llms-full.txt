@@ -10427,7 +10427,7 @@ Requires AbstractRuntime 0.9.1, AbstractCore 2.25.1 and AbstractAgent 0.3.19 (in
 - **Streamed speech never blocks the event loop and is bounded.** `POST /runs/{id}/voice/tts/stream` (`voice_stream.py`): one permit of the voice synthesis bound (`ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY`) per stream, held until its engine thread is done (also after the client left); past the bound a request waits one second, then gets 503 "Read aloud is busy: N voice syntheses are already running on this gateway …". The engine setup and the engine's events run on worker threads; the response body only awaits a bounded queue (it holds no worker thread and yields between chunks; a slow client makes the engine wait). An engine busy for more than a second (another stream, or the model using the machine) is announced with a first line `{"type": "queued", "message": "Waiting for the voice engine: …"}`. The engine's stream is closed on its own thread when the client leaves. Time to first audio is unchanged (one sentence of synthesis).
 - **Read aloud is never a wait of the run, and a restart can no longer leave one.** With AbstractRuntime 0.9.1 the stream records its child run already completed when it ends (no `WAIT_EVENT abstractcore.voice.tts.stream:<uuid>` while audio streams; the apps showed that waiting record as "Waiting for an event › Streaming voice synthesis is running."). The runner closes any such wait left by an older process at startup: the child run completes with "Read aloud was interrupted because the gateway restarted; the audio was not finished. Press Read aloud again." and the conversation goes on.
 - **One replay helper for buffered request bodies.** The security middleware and the core endpoint's internal sub-requests build their replayed `receive` through `asgi_receive.replay_body_receive` (after the body it waits on the connection, or until cancelled for a sub-request). The core endpoint's sub-requests answered "empty body" forever after the body, the same busy loop 0.13.0 fixed in the middleware. A structural test fails if any module builds its own replay.
-- **Upgrading from 0.9.x no longer drops a user's allowed folders** (round 14, D1). The 0.13.0 workspace migration filtered the old allowed folders by a guessed root (the folder the gateway was started in, usually your home folder) and then kept no row for it: folders under it vanished from Accounts → Workspaces and the API, without being listed as dropped (access was not lost, since the posture allows everything not refused). The migration no longer uses the guess. A store 0.13.0 already migrated is repaired once at the next start from the old block it kept (`_migrated.workspace_policy_v1.old`): the lost rows come back (a path already listed keeps its mode), recorded under `_migrated.workspace_policy_v1_repair` and in the audit log (scope `migration_repair`).
+- **Upgrading from 0.9.x no longer drops a user's allowed folders**. The 0.13.0 workspace migration filtered the old allowed folders by a guessed root (the folder the gateway was started in, usually your home folder) and then kept no row for it: folders under it vanished from Accounts → Workspaces and the API, without being listed as dropped (access was not lost, since the posture allows everything not refused). The migration no longer uses the guess. A store 0.13.0 already migrated is repaired once at the next start from the old block it kept (`_migrated.workspace_policy_v1.old`): the lost rows come back (a path already listed keeps its mode), recorded under `_migrated.workspace_policy_v1_repair` and in the audit log (scope `migration_repair`).
 
 ### Added
 
@@ -10444,7 +10444,7 @@ Requires AbstractRuntime 0.9.1, AbstractCore 2.25.1 and AbstractAgent 0.3.19 (in
 
 - `abstractgateway-console` 0.15.1: workspaces on Accounts like the web console (`E` Eligible workspaces,
   `w` on every row, the kit's words), per-account Preferences (`p`), the memory and compute line in the title bar,
-  the **last restart** row in F3; the parked Workspaces page is gone (`W` opens Accounts). See
+  the **last restart** row in F3; the separate Workspaces page is gone (`W` opens Accounts). See
   [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md).
 
 ## [0.13.0] - 2026-10-05
@@ -13200,6 +13200,13 @@ browser on this computer from one elsewhere on the network
   at every run start, for the HTTP routes, the Telegram bridge and the backlog
   advisor alike, and records the choice as `resolved_workflow`. See
   [configuration.md](docs/configuration.md#default-agent-workflow).
+- **Account preferences** (`src/abstractgateway/account_preferences.py`,
+  `routes/account_preferences.py`): each account's default workflow per app,
+  stored in the same settings store under `account_preferences`
+  (`GET`/`PUT /api/gateway/accounts/{me|account}/preferences`). The admin
+  setting above stays the gateway default; an account overrides it for itself,
+  and the Assistant, AbstractCode and the consoles read and write it instead of
+  keeping the choice on the device. See [api.md](docs/api.md#account-preferences).
 - **Run workspace guard** (`src/abstractgateway/run_workspace_guard.py`):
   called from the workflow host's `start_run` for every run, whatever started
   it. It gives a run that named no folder its conversation's gateway-made
@@ -13495,6 +13502,7 @@ flowchart TB
   Level --> Apply["Effective workspaces: min(gateway cap, the level's rule) per path; posture (Deny everything, allow listed workspaces / Allow everything, refuse listed workspaces), workspaces ro or rw, refused workspaces; recorded as _gateway_workspace.level"]
   Apply --> Deny["Built-in deny rules: workspace_builtin_deny_prefixes (data folder + credential folders), workspace_builtin_allow (the run's own folder); client-sent values dropped"]
   Deny --> Tools["AbstractRuntime file tools enforce the rules; the agent's context lists its working directory and the allowed workspaces with their modes, never the built-in rules"]
+  Tools --> Sandbox["Commands run inside the OS sandbox built from the same set (macOS sandbox-exec, Linux bubblewrap or Landlock); the most specific workspace wins on every platform"]
 ```
 
 The rules are whole-folder prefixes, never a listing of a folder's contents,

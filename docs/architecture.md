@@ -171,6 +171,13 @@ browser on this computer from one elsewhere on the network
   at every run start, for the HTTP routes, the Telegram bridge and the backlog
   advisor alike, and records the choice as `resolved_workflow`. See
   [configuration.md](./configuration.md#default-agent-workflow).
+- **Account preferences** (`src/abstractgateway/account_preferences.py`,
+  `routes/account_preferences.py`): each account's default workflow per app,
+  stored in the same settings store under `account_preferences`
+  (`GET`/`PUT /api/gateway/accounts/{me|account}/preferences`). The admin
+  setting above stays the gateway default; an account overrides it for itself,
+  and the Assistant, AbstractCode and the consoles read and write it instead of
+  keeping the choice on the device. See [api.md](./api.md#account-preferences).
 - **Run workspace guard** (`src/abstractgateway/run_workspace_guard.py`):
   called from the workflow host's `start_run` for every run, whatever started
   it. It gives a run that named no folder its conversation's gateway-made
@@ -466,6 +473,7 @@ flowchart TB
   Level --> Apply["Effective workspaces: min(gateway cap, the level's rule) per path; posture (Deny everything, allow listed workspaces / Allow everything, refuse listed workspaces), workspaces ro or rw, refused workspaces; recorded as _gateway_workspace.level"]
   Apply --> Deny["Built-in deny rules: workspace_builtin_deny_prefixes (data folder + credential folders), workspace_builtin_allow (the run's own folder); client-sent values dropped"]
   Deny --> Tools["AbstractRuntime file tools enforce the rules; the agent's context lists its working directory and the allowed workspaces with their modes, never the built-in rules"]
+  Tools --> Sandbox["Commands run inside the OS sandbox built from the same set (macOS sandbox-exec, Linux bubblewrap or Landlock); the most specific workspace wins on every platform"]
 ```
 
 The rules are whole-folder prefixes, never a listing of a folder's contents,
