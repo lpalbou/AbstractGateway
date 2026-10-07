@@ -183,7 +183,7 @@ it is off by default and your browser remembers it.
   turn Active back on."; on resumes it in the state it had before.
 - **Email** opens a dialog. On your own row it holds your email settings: your
   email address, your mailbox, the **Job failed** and **Approval needed**
-  notifications, **Agent email tools** and Advanced ([email.md](./email.md)).
+  notifications, **Agent email tools** and **Recipients and limits** ([email.md](./email.md)).
   An administrator's own row adds one sentence: the address also receives the
   administrator's sign-in codes and notifications, and the mailbox serves the
   administrator's own agents. On another user's row it holds only that user's
@@ -821,7 +821,7 @@ Connection, Network and About.
   the mailbox's **Active** switch, Test and Disconnect, the **Job failed** and
   **Approval needed** notifications with **Send a test** (its answer is a
   sentence, for example "Not sent: hourly limit reached (100 of 100 this hour)
-  — resets at 14:05."), the **Agent email tools** switch and Advanced
+  — resets at 14:05."), the **Agent email tools** switch and **Recipients and limits**
   (recipient rules, send limits, folder) — see [email.md](./email.md).
 - **3 Workflows** is the web console's Workflows page, with three tabs
   (`Tab`). **Workflows** groups the bundles under **Shared with everyone** and

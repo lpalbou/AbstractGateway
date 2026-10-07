@@ -623,7 +623,7 @@ last two):
 
 | | Web console | Console TUI | CLI |
 |---|---|---|---|
-| Where | Network → *Advanced* | Connection screen, below the addresses | `abstractgateway network …` |
+| Where | Network → *Reached through another address?* | Connection screen, below the addresses | `abstractgateway network …` |
 | Add/replace origins | type an origin, *Add origin* (Enter); × on a chip removes it | *browser origins* line: comma-separated list, Enter saves, empty clears | `set --allowed-origins https://a,https://b` (`""` clears) |
 | Trust proxy | *Trust proxies on other machines* switch | checkbox (Space) | `set --trust-proxy on\|off` |
 | See values + source | pills: *Saved setting* / *Default* / *Set by the environment* | `[saved setting]` / `[default]` / `[environment override]` + the override line | `network show` (`--json` = the payload) |
@@ -929,7 +929,11 @@ banner speaks only about `gaps` — a recommended model that is absent *and*
 whose route has nothing serving it. Route text generation at a model of your
 own and the starter kit's LM Studio build stops being reported as missing:
 nothing on this host needs it. A route whose *own* model is not downloaded is
-still reported, on that row, in the Weights column. "Apply recommended" is a
+still reported, on that row, in the Weights column: the state (installed, not
+downloaded, remote, not checked) and AbstractCore's one short sentence ("In the
+Hugging Face cache."), with the probe's detail, the fix and the evidence path in
+the pill's tooltip. Every provider a route can name is checked, faster-whisper
+and Stable Audio included. "Apply recommended" is a
 standing action in the section head (`a` on the TUI Routes screen), available
 whether or not the banner has anything to say.
 
@@ -1409,14 +1413,14 @@ Gateway Console and `POST /api/gateway/config/provider-endpoint-profiles` let
 signed-in users define reusable provider connections through a guided setup
 flow for `openai`, `anthropic`, `openrouter`, `portkey`, `lmstudio`, `ollama`,
 or `openai-compatible`. A connection includes a stable id, display name,
-description, optional base URL, optional API key, and optional advanced model
-allowlist. The raw API key is write-only: responses include only `api_key_set`
+description, optional base URL, optional API key, and an optional list of
+visible models. The raw API key is write-only: responses include only `api_key_set`
 and a short fingerprint. AbstractCore owns model capability metadata, so normal
 setup does not ask users to classify models manually.
 
 The console's **Test** action calls the selected provider through
 `POST /api/gateway/config/provider-endpoint-profiles/discover-models` and
-previews model discovery before saving. Leave the advanced model restriction
+previews model discovery before saving. Leave **Visible models**
 empty to keep live discovery active, or select one or more models to store a
 fixed allowlist. The **Multimodal Capabilities** tab shows configured provider
 connections and direct providers that are already usable from scoped
@@ -2184,7 +2188,7 @@ it matches the allowlist (glob-style patterns, fnmatch). The allowlist is
 addresses the gateway detects (`http://<interface address, Bonjour or Tailscale
 name>:<listening port>` and `https://<Tailscale name>`, refreshed every 60 s;
 see [configuration.md](docs/configuration.md#detected-addresses-are-accepted-origins)),
-plus the **`allowed_origins` setting** (console: Network → *Advanced*; TUI:
+plus the **`allowed_origins` setting** (console: Network → *Reached through another address?*; TUI:
 Connection screen; CLI:
 `abstractgateway network set --allowed-origins https://gateway.example.com`).
 The setting is read per request: a change applies to the next request, no
@@ -2686,7 +2690,7 @@ All are loaded by `load_gateway_auth_policy_from_env()` (see `src/abstractgatewa
 
 - `X-Forwarded-For` from a proxy on the gateway machine (loopback peer, such
   as `tailscale serve`) is always used for IP attribution (audit log) and
-  lockout tracking. The `trust_proxy` setting (console: Network → *Advanced* →
+  lockout tracking. The `trust_proxy` setting (console: Network → *Reached through another address?* →
   *Trust proxies on other machines*; TUI: Connection screen checkbox; CLI:
   `abstractgateway network set --trust-proxy on|off`) extends that to a proxy
   on another machine. Read per request:
@@ -6725,7 +6729,7 @@ it is off by default and your browser remembers it.
   turn Active back on."; on resumes it in the state it had before.
 - **Email** opens a dialog. On your own row it holds your email settings: your
   email address, your mailbox, the **Job failed** and **Approval needed**
-  notifications, **Agent email tools** and Advanced ([email.md](docs/email.md)).
+  notifications, **Agent email tools** and **Recipients and limits** ([email.md](docs/email.md)).
   An administrator's own row adds one sentence: the address also receives the
   administrator's sign-in codes and notifications, and the mailbox serves the
   administrator's own agents. On another user's row it holds only that user's
@@ -7363,7 +7367,7 @@ Connection, Network and About.
   the mailbox's **Active** switch, Test and Disconnect, the **Job failed** and
   **Approval needed** notifications with **Send a test** (its answer is a
   sentence, for example "Not sent: hourly limit reached (100 of 100 this hour)
-  — resets at 14:05."), the **Agent email tools** switch and Advanced
+  — resets at 14:05."), the **Agent email tools** switch and **Recipients and limits**
   (recipient rules, send limits, folder) — see [email.md](docs/email.md).
 - **3 Workflows** is the web console's Workflows page, with three tabs
   (`Tab`). **Workflows** groups the bundles under **Shared with everyone** and
@@ -8492,7 +8496,7 @@ two-step verification is on.
 
 Microsoft 365 / Outlook needs OAuth2. In the **Mailbox** card, pick the **Google** or **Microsoft**
 tab and select **Sign in with Google** / **Sign in with Microsoft** (your own client id and secret go
-under the tab's **Advanced**):
+under the tab's **Sign-in app**):
 
 - **Microsoft** uses a device code by default: open the link shown in any browser, on any machine,
   and enter the code.
@@ -8551,7 +8555,7 @@ Your agents and workflows — chats, workflow runs and automations, from every c
 Assistant, Observer, the consoles) — get the email tools (list and search mail, read a message,
 list folders, send, reply, download an attachment) only when **all** of these hold:
 
-1. **Agent email tools for users** is on (the administrator's Advanced setting; on by default);
+1. **Agent email tools for users** is on (an administrator's setting; on by default);
 2. your mailbox is connected and in use, and mailboxes are allowed for you;
 3. you switched **Agent email tools** on (your account page in the web console, the terminal
    console, or `PUT /api/gateway/me/email/agent-tools {"enabled": true}`). Your own switch is off
@@ -8592,7 +8596,7 @@ code — goes through the same checks, in this order:
    Until AbstractCore 2.21 the defaults were 20 and 100 and connecting a mailbox stored them
    unmarked; an upgrade treats exactly that pair as the old defaults, so the mailbox follows the new
    ones. Any other unmarked value is kept (the limits document's `source` is `legacy`; `default`
-   and `user` are the other values). Set new values under Advanced in your email settings to move
+   and `user` are the other values). Set new values under **Recipients and limits** in your email settings to move
    on.
 
 On top of the policy, the approval gate still decides whether an agent's send runs unattended: a
@@ -8945,7 +8949,7 @@ Optional:
 Common:
 
 - Browser origins and trust proxy are settings, not variables: the console's
-  Network → *Advanced: reverse proxy*, the TUI's Connection screen, or
+  Network → *Reached through another address?*, the TUI's Connection screen, or
   `abstractgateway network set --allowed-origins https://gateway.example.com --trust-proxy on`
   (inside a container: `docker exec <container> abstractgateway network set …`).
   They apply to the next request. `ABSTRACTGATEWAY_ALLOWED_ORIGINS` in the
@@ -10436,7 +10440,8 @@ Requires AbstractRuntime 0.9.1, AbstractCore 2.25.1 and AbstractAgent 0.3.19 (in
 - **Read aloud is never a wait of the run, and a restart can no longer leave one.** With AbstractRuntime 0.9.1 the stream records its child run already completed when it ends (no `WAIT_EVENT abstractcore.voice.tts.stream:<uuid>` while audio streams; the apps showed that waiting record as "Waiting for an event › Streaming voice synthesis is running."). The runner closes any such wait left by an older process at startup: the child run completes with "Read aloud was interrupted because the gateway restarted; the audio was not finished. Press Read aloud again." and the conversation goes on.
 - **One replay helper for buffered request bodies.** The security middleware and the core endpoint's internal sub-requests build their replayed `receive` through `asgi_receive.replay_body_receive` (after the body it waits on the connection, or until cancelled for a sub-request). The core endpoint's sub-requests answered "empty body" forever after the body, the same busy loop 0.13.0 fixed in the middleware. A structural test fails if any module builds its own replay.
 - **Upgrading from 0.9.x no longer drops a user's allowed folders**. The 0.13.0 workspace migration filtered the old allowed folders by a guessed root (the folder the gateway was started in, usually your home folder) and then kept no row for it: folders under it vanished from Accounts → Workspaces and the API, without being listed as dropped (access was not lost, since the posture allows everything not refused). The migration no longer uses the guess. A store 0.13.0 already migrated is repaired once at the next start from the old block it kept (`_migrated.workspace_policy_v1.old`): the lost rows come back (a path already listed keeps its mode), recorded under `_migrated.workspace_policy_v1_repair` and in the audit log (scope `migration_repair`).
-
+- **Console → Multimodal: the route and the capability never overlap, and Weights says one sentence.** The route pill was a grid item that gave its column no minimum width, so the table shrank the column under it and the pill was painted over the capability name in every row; it is now a plain box that never shrinks, the capability name wraps in its own cell. The Weights cell shows the state pill and AbstractCore's one short sentence (`summary`: "In the Hugging Face cache.", "Not in Piper's voice folder."); the probe's detail, the fix and the evidence path are the pill's kit tooltip (focusable) instead of a ten-line cell. Route actions are icon buttons with kit tooltips (Edit, Clear, Download; a missing download tool shows a copy button for its command), the model id is capped by viewport, Source is a plain note: the grid stays a table from 1280 px and turns into cards below. Every provider a route can name now has a weights answer (AbstractCore 2.25.1): the Voice Input row reads "installed" with its snapshot for faster-whisper `large-v3`. The terminal console's `w` notice carries the same sentence. Tests: `tests/test_r14w7_multimodal_layout_browser.py` (no overlapping boxes in any row at 1680/1440/1280/834, light and dark).
+- **No "Advanced" disclosure anywhere in the console.** What they hid is a visible section named for its content, with the terminal console's names: Email **Recipients and limits** and **Sign-in app**, Create user **Runtime and tenant**, Configure provider **Visible models**, Create entity **Optional configuration**; Network shows allowed origins and proxy trust inside **Reached through another address?**; Workflows lists **Other workflow types** as a named group and the streamed-replies CLI line as a plain sub-line. Tests: `tests/test_r15_console_no_advanced_browser.py`.
 ### Added
 
 - **Per-account client preferences** (`GET`/`PUT /api/gateway/accounts/{me|account}/preferences`): the gateway keeps each account's default workflow per app (`default_workflow` {`abstractcode.agent.v1`, `abstractassistant.agent.v1`}: a workflow, or `null` for the gateway's per-app default, which stays the admin setting `agents.default_workflow.<interface>`). Only declared keys are accepted; a workflow the account may not run is refused with a sentence and nothing is stored. Anyone sets their own; an admin any account's; an entity's by an admin or its creator. Each app row carries `gateway_default_label` ("Gateway default (<name>)"), the account's `state` (default, set, broken with the reason), what a run would start (`effective`) and the `choices`. The Assistant and AbstractCode now read and write it instead of keeping the choice on the device.

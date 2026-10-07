@@ -146,7 +146,7 @@ Optional:
 Common:
 
 - Browser origins and trust proxy are settings, not variables: the console's
-  Network → *Advanced: reverse proxy*, the TUI's Connection screen, or
+  Network → *Reached through another address?*, the TUI's Connection screen, or
   `abstractgateway network set --allowed-origins https://gateway.example.com --trust-proxy on`
   (inside a container: `docker exec <container> abstractgateway network set …`).
   They apply to the next request. `ABSTRACTGATEWAY_ALLOWED_ORIGINS` in the

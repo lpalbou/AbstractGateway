@@ -361,7 +361,7 @@ it matches the allowlist (glob-style patterns, fnmatch). The allowlist is
 addresses the gateway detects (`http://<interface address, Bonjour or Tailscale
 name>:<listening port>` and `https://<Tailscale name>`, refreshed every 60 s;
 see [configuration.md](./configuration.md#detected-addresses-are-accepted-origins)),
-plus the **`allowed_origins` setting** (console: Network → *Advanced*; TUI:
+plus the **`allowed_origins` setting** (console: Network → *Reached through another address?*; TUI:
 Connection screen; CLI:
 `abstractgateway network set --allowed-origins https://gateway.example.com`).
 The setting is read per request: a change applies to the next request, no
@@ -863,7 +863,7 @@ All are loaded by `load_gateway_auth_policy_from_env()` (see `src/abstractgatewa
 
 - `X-Forwarded-For` from a proxy on the gateway machine (loopback peer, such
   as `tailscale serve`) is always used for IP attribution (audit log) and
-  lockout tracking. The `trust_proxy` setting (console: Network → *Advanced* →
+  lockout tracking. The `trust_proxy` setting (console: Network → *Reached through another address?* →
   *Trust proxies on other machines*; TUI: Connection screen checkbox; CLI:
   `abstractgateway network set --trust-proxy on|off`) extends that to a proxy
   on another machine. Read per request:
