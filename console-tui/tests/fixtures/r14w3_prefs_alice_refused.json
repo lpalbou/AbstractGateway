@@ -1,0 +1,7 @@
+{
+ "detail": {
+  "reason": "preference_refused",
+  "message": "default_workflow.abstractcode.agent.v1 = 'nope:zzz' refused: workflow bundle 'nope' is not on this gateway.",
+  "key": "default_workflow"
+ }
+}

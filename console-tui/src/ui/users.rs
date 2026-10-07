@@ -274,6 +274,7 @@ pub fn hints(ctx: &Ctx) -> Vec<(&'static str, &'static str)> {
         ("o", "OpenAI API"),
         ("l", "Logs"),
         ("w", "Workspaces"),
+        ("p", "Preferences"),
         ("m", "Manage"),
         ("t", "Rotate token"),
         ("d", "Archive/Unarchive"),
@@ -354,6 +355,7 @@ fn handle_key(cx: Scope, ctx: &Ctx, confirm: InlineConfirm, key: Key) -> bool {
         }
         Key::Char('w') => workspace_selected(cx, ctx),
         Key::Char('E') => eligible_workspaces(cx, ctx),
+        Key::Char('p') => preferences_selected(cx, ctx),
         Key::Char('g') => runtime_selected(ctx),
         Key::Char('@') => email_selected(cx, ctx),
         Key::Char('l') => open_activity(cx, ctx),
@@ -597,6 +599,15 @@ fn account_row(r: &AccountRow, narrow: bool, _own: Option<&(String, String)>) ->
             detail.push(format!("{label}: {why}"));
         }
     }
+    if let Some(a) = r
+        .preferences_action
+        .as_ref()
+        .filter(|a| !a.available && !r.archived)
+    {
+        if let Some(why) = &a.reason {
+            detail.push(format!("Preferences: {why}"));
+        }
+    }
     Row::new(cells).detail(detail).dim(r.archived || !r.active)
 }
 
@@ -671,6 +682,10 @@ pub fn row_actions(r: &AccountRow) -> Vec<String> {
     add(r.refusal("logs").is_none(), "l Logs");
     // R11.2: every row (humans, entities, the admin's own) has Workspaces.
     add(r.refusal("workspace").is_none(), "w Workspaces");
+    // R14.2: the default workflow per app (users and entities).
+    if let Some(a) = &r.preferences_action {
+        add(a.available, "p Preferences");
+    }
     if r.is_entity() {
         add(r.refusal("manage").is_none(), "m Manage");
     } else {
@@ -867,6 +882,28 @@ pub fn account_workspace_target(r: &AccountRow) -> super::workspace_chooser::Tar
             format!("{}:{}", r.tenant_id, r.id)
         },
         id: r.id.clone(),
+    }
+}
+
+/// `p`: the selected account's Preferences (the default workflow per app;
+/// R14.2, the web row's "Default workflows of <id>").
+fn preferences_selected(cx: Scope, ctx: &Ctx) {
+    let Some(r) = selected_account(ctx) else {
+        ctx.store
+            .notice
+            .set(Some("no account selected — no preferences to show".into()));
+        return;
+    };
+    match &r.preferences_action {
+        None => ctx.store.notice.set(Some(
+            "this gateway does not offer per-account preferences (GET /accounts/{id}/preferences needs a newer gateway)".into(),
+        )),
+        Some(a) if !a.available => ctx.store.notice.set(Some(
+            a.reason
+                .clone()
+                .unwrap_or_else(|| format!("Preferences are not available for {}.", r.id)),
+        )),
+        Some(_) => super::account_preferences::open(cx, ctx, r),
     }
 }
 

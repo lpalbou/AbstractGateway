@@ -65,6 +65,9 @@ pub struct AccountRow {
     pub openai_api: bool,
     /// `actions.openai_api` (round 5; absent on older gateways).
     pub openai_action: Option<Action>,
+    /// `actions.preferences` (round 14, R14-W2's per-account preferences;
+    /// absent on gateways older than the route — the `p` key says so).
+    pub preferences_action: Option<Action>,
 }
 
 impl AccountRow {
@@ -109,6 +112,10 @@ impl AccountRow {
             available: a.get("available").and_then(Value::as_bool).unwrap_or(false),
             reason: s(a, "reason"),
         });
+        let preferences_action = acts.get("preferences").map(|a| Action {
+            available: a.get("available").and_then(Value::as_bool).unwrap_or(false),
+            reason: s(a, "reason"),
+        });
         Ok(AccountRow {
             own: v.get("own").and_then(Value::as_bool).unwrap_or(false),
             openai_api: v
@@ -116,6 +123,7 @@ impl AccountRow {
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
             openai_action,
+            preferences_action,
             tenant_id: s(v, "tenant_id").unwrap_or_else(|| "default".into()),
             email_address: s(v, "email_address").filter(|a| !a.trim().is_empty()),
             runtime_id: s(v, "runtime_id"),

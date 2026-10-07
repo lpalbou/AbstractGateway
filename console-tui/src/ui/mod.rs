@@ -7,6 +7,8 @@
 
 /// The About modal (F1 / ?).
 pub mod about;
+/// An account's client preferences (Accounts `p`, round 14).
+pub mod account_preferences;
 /// The Apps page's settings overlays behind the gears (R8.1).
 pub mod app_settings;
 /// The Apps screen (browser apps, the desktop Assistant, Node.js).

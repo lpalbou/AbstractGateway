@@ -1,0 +1,211 @@
+{
+ "ok": true,
+ "account": "default:castor",
+ "can_edit": true,
+ "preferences": {
+  "default_workflow": {
+   "abstractcode.agent.v1": null,
+   "abstractassistant.agent.v1": null
+  }
+ },
+ "declared": {
+  "default_workflow": {
+   "label": "Default workflow",
+   "help": "The workflow each app runs for this account unless a conversation picks another. Gateway default follows the admin's Default workflow per app."
+  }
+ },
+ "apps": [
+  {
+   "interface": "abstractcode.agent.v1",
+   "label": "AbstractCode — chat agent",
+   "app": "AbstractCode",
+   "help": "The agent AbstractCode chats and automations run when they ask for \"an agent\": a prompt in, a reply out.",
+   "value": null,
+   "state": "default",
+   "reason": null,
+   "gateway_default": {
+    "available": true,
+    "name": "Basic agent",
+    "value": "basic-agent:81795ea9",
+    "workflow_id": "basic-agent@0.0.5:81795ea9",
+    "reason": null
+   },
+   "gateway_default_label": "Gateway default (Basic agent)",
+   "effective": {
+    "source": "gateway",
+    "available": true,
+    "value": "basic-agent:81795ea9",
+    "name": "Basic agent",
+    "reason": null,
+    "bundle_id": "basic-agent",
+    "bundle_version": "0.0.5",
+    "flow_id": "81795ea9",
+    "registry_scope": "private",
+    "workflow_id": "basic-agent@0.0.5:81795ea9"
+   },
+   "choices": [
+    {
+     "value": "basic-agent:81795ea9",
+     "label": "Basic agent",
+     "name": "Basic agent",
+     "workflow_id": "basic-agent@0.0.5:81795ea9",
+     "bundle_id": "basic-agent",
+     "bundle_version": "0.0.5",
+     "flow_id": "81795ea9",
+     "registry_scope": "private"
+    },
+    {
+     "value": "codeact-agent:codeact",
+     "label": "CodeAct agent",
+     "name": "CodeAct agent",
+     "workflow_id": "codeact-agent@0.1.0:codeact",
+     "bundle_id": "codeact-agent",
+     "bundle_version": "0.1.0",
+     "flow_id": "codeact",
+     "registry_scope": "private"
+    },
+    {
+     "value": "coding-agent:coder",
+     "label": "Coding agent (chat)",
+     "name": "Coding agent (chat)",
+     "workflow_id": "coding-agent@0.2.8:coder",
+     "bundle_id": "coding-agent",
+     "bundle_version": "0.2.8",
+     "flow_id": "coder",
+     "registry_scope": "private"
+    },
+    {
+     "value": "deep-research:deep-research",
+     "label": "Deep research",
+     "name": "Deep research",
+     "workflow_id": "deep-research@0.1.8:deep-research",
+     "bundle_id": "deep-research",
+     "bundle_version": "0.1.8",
+     "flow_id": "deep-research",
+     "registry_scope": "private"
+    },
+    {
+     "value": "memact-agent:memact",
+     "label": "MemAct agent",
+     "name": "MemAct agent",
+     "workflow_id": "memact-agent@0.1.0:memact",
+     "bundle_id": "memact-agent",
+     "bundle_version": "0.1.0",
+     "flow_id": "memact",
+     "registry_scope": "private"
+    },
+    {
+     "value": "meta-baseline:meta-baseline",
+     "label": "Single call (baseline)",
+     "name": "Single call (baseline)",
+     "workflow_id": "meta-baseline@0.1.1:meta-baseline",
+     "bundle_id": "meta-baseline",
+     "bundle_version": "0.1.1",
+     "flow_id": "meta-baseline",
+     "registry_scope": "private"
+    },
+    {
+     "value": "meta-consensus:meta-consensus",
+     "label": "Consensus",
+     "name": "Consensus",
+     "workflow_id": "meta-consensus@0.1.1:meta-consensus",
+     "bundle_id": "meta-consensus",
+     "bundle_version": "0.1.1",
+     "flow_id": "meta-consensus",
+     "registry_scope": "private"
+    },
+    {
+     "value": "meta-debate:meta-debate",
+     "label": "Debate",
+     "name": "Debate",
+     "workflow_id": "meta-debate@0.1.1:meta-debate",
+     "bundle_id": "meta-debate",
+     "bundle_version": "0.1.1",
+     "flow_id": "meta-debate",
+     "registry_scope": "private"
+    },
+    {
+     "value": "meta-deliberate:meta-deliberate",
+     "label": "Plan, answer, verify",
+     "name": "Plan, answer, verify",
+     "workflow_id": "meta-deliberate@0.1.1:meta-deliberate",
+     "bundle_id": "meta-deliberate",
+     "bundle_version": "0.1.1",
+     "flow_id": "meta-deliberate",
+     "registry_scope": "private"
+    },
+    {
+     "value": "meta-perspectives:meta-perspectives",
+     "label": "Three perspectives",
+     "name": "Three perspectives",
+     "workflow_id": "meta-perspectives@0.1.1:meta-perspectives",
+     "bundle_id": "meta-perspectives",
+     "bundle_version": "0.1.1",
+     "flow_id": "meta-perspectives",
+     "registry_scope": "private"
+    },
+    {
+     "value": "meta-reflect:meta-reflect",
+     "label": "Reflect and revise",
+     "name": "Reflect and revise",
+     "workflow_id": "meta-reflect@0.1.1:meta-reflect",
+     "bundle_id": "meta-reflect",
+     "bundle_version": "0.1.1",
+     "flow_id": "meta-reflect",
+     "registry_scope": "private"
+    },
+    {
+     "value": "react-agent:react",
+     "label": "ReAct agent",
+     "name": "ReAct agent",
+     "workflow_id": "react-agent@0.1.0:react",
+     "bundle_id": "react-agent",
+     "bundle_version": "0.1.0",
+     "flow_id": "react",
+     "registry_scope": "private"
+    }
+   ]
+  },
+  {
+   "interface": "abstractassistant.agent.v1",
+   "label": "Assistant",
+   "app": "Assistant",
+   "help": "The workflow the menu-bar Assistant runs for each request: it answers with tools or makes images, video or music.",
+   "value": null,
+   "state": "default",
+   "reason": null,
+   "gateway_default": {
+    "available": true,
+    "name": "AbstractAssistant Orchestrator",
+    "value": "abstractassistant-orchestrator:d5d4e5a1",
+    "workflow_id": "abstractassistant-orchestrator@0.0.0:d5d4e5a1",
+    "reason": null
+   },
+   "gateway_default_label": "Gateway default (AbstractAssistant Orchestrator)",
+   "effective": {
+    "source": "gateway",
+    "available": true,
+    "value": "abstractassistant-orchestrator:d5d4e5a1",
+    "name": "AbstractAssistant Orchestrator",
+    "reason": null,
+    "bundle_id": "abstractassistant-orchestrator",
+    "bundle_version": "0.0.0",
+    "flow_id": "d5d4e5a1",
+    "registry_scope": "private",
+    "workflow_id": "abstractassistant-orchestrator@0.0.0:d5d4e5a1"
+   },
+   "choices": [
+    {
+     "value": "abstractassistant-orchestrator:d5d4e5a1",
+     "label": "AbstractAssistant Orchestrator",
+     "name": "AbstractAssistant Orchestrator",
+     "workflow_id": "abstractassistant-orchestrator@0.0.0:d5d4e5a1",
+     "bundle_id": "abstractassistant-orchestrator",
+     "bundle_version": "0.0.0",
+     "flow_id": "d5d4e5a1",
+     "registry_scope": "private"
+    }
+   ]
+  }
+ ]
+}
