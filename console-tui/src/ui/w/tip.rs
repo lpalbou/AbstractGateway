@@ -24,6 +24,20 @@ thread_local! {
     static FOCUS_LINE: RefCell<Option<Signal<Option<String>>>> = const { RefCell::new(None) };
     /// The overlay store tooltips draw on (installed by the shell).
     static OVERLAYS: RefCell<Option<Overlays>> = const { RefCell::new(None) };
+    /// The status bar's notice lane (refused presses say their reason).
+    static NOTICE: RefCell<Option<Signal<Option<String>>>> = const { RefCell::new(None) };
+}
+
+/// Install the notice lane a refused control writes its reason into.
+pub fn install_notice(notice: Signal<Option<String>>) {
+    NOTICE.with(|n| *n.borrow_mut() = Some(notice));
+}
+
+/// Say `text` in the status bar's notice lane (a refused press).
+pub fn say(text: &str) {
+    if let Some(n) = NOTICE.with(|n| *n.borrow()).filter(|n| n.is_alive()) {
+        n.set(Some(text.to_string()));
+    }
 }
 
 /// Install the shell's focus line + overlay store (once, at root mount;

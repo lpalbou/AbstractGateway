@@ -1378,6 +1378,7 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
     // page in a generation scope (PageHost's semantics: the outgoing
     // page's scope dies on switch; durable state lives in UiState).
     w::tip::install(ui.focus_line, ctx.overlays.clone());
+    w::tip::install_notice(ctx.store.notice);
     install_page_viewport(ui.page_vp);
     {
         let vp = abstracttui::app::use_viewport(cx);

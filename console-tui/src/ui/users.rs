@@ -358,11 +358,21 @@ fn table_region(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         let vp = crate::ui::page_viewport(gcx).get();
         let w = (vp.w - 2).max(20);
         let data = store.accounts.get();
+        // With no table to take the keyboard, a focus anchor keeps the
+        // page's keys alive (summon, create, refresh).
+        let anchor = |v: View| -> View {
+            Element::new()
+                .style(LayoutStyle::column().shrink(0.0))
+                .focusable()
+                .autofocus()
+                .child(v)
+                .build()
+        };
         let rows: Vec<AccountRow> = match data {
             Loadable::NotAsked | Loadable::Loading => {
-                return super::w::form::sentence(&tt, "Loading…", w, tt.text_muted);
+                return anchor(super::w::form::sentence(&tt, "Loading…", w, tt.text_muted));
             }
-            Loadable::Failed(e) => return super::util::error_panel(&tt, &e),
+            Loadable::Failed(e) => return anchor(super::util::error_panel(&tt, &e)),
             Loadable::Ready(all) => all.into_iter().filter(|r| show || !r.archived).collect(),
         };
         let own = own_key(&store);
@@ -614,6 +624,18 @@ fn row_action(cx: Scope, ctx: &Ctx, key: &str, id: &str) {
     select_key(ctx, key);
     let Some(r) = selected_account(ctx) else { return };
     let admin = ctx.store.conn.with_untracked(ConnPhase::is_admin);
+    // The admin-only verbs answer with the gateway-wide admin sentence.
+    let gate = match id {
+        "openai" => Some("changing who may use the OpenAI API"),
+        "rotate" => Some("rotating a token"),
+        "runtime" => Some("the Runtimes page"),
+        _ => None,
+    };
+    if let Some(what) = gate {
+        if !super::util::admin_gate(&ctx.store, what) {
+            return;
+        }
+    }
     if id != "runtime" {
         if let Some(a) = row_actions(&r, admin).into_iter().find(|a| a.id == id) {
             if let Err(why) = a.enabled {

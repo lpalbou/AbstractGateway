@@ -1,5 +1,5 @@
 //! Toggle (DESIGN-TUI.md §4.4): a state-showing switch — `━●` on (ok
-//! ink), `●─` off (muted), `◌─` while its write is in flight, faint when
+//! ink), `●─` off (muted) — the current state also while its write is in flight (" · saving…" follows the label) —, faint when
 //! it cannot be switched here (the reason in its tooltip). The feature
 //! label follows when given (table cells omit it: the column header is
 //! the label). No verbs: the label names the feature, the glyph shows the
@@ -20,7 +20,6 @@ use abstracttui::ui::{MouseButton, MouseKind, Phase, UiEvent};
 
 pub const ON: &str = "━●";
 pub const OFF: &str = "●─";
-pub const BUSY: &str = "◌─";
 
 type Getter = Rc<dyn Fn() -> bool>;
 
@@ -103,12 +102,27 @@ impl Toggle {
         self
     }
 
-    /// Cells it takes on one line.
+    /// The text after the glyph: the feature label, then — for a labelled
+    /// toggle that cannot be switched — the reason (visible, never
+    /// tooltip-only), then " · saving…" while a write is in flight.
+    fn tail(label: &Option<String>, refused: &Option<String>, busy: bool) -> Option<String> {
+        let l = label.as_ref()?;
+        let mut out = l.clone();
+        if let Some(why) = refused {
+            out.push_str(" — ");
+            out.push_str(why);
+        }
+        if busy {
+            out.push_str(" · saving…");
+        }
+        Some(out)
+    }
+
+    /// Cells it takes on one line (the longest the tail can be).
     pub fn width(&self) -> i32 {
-        2 + self
-            .label
-            .as_ref()
-            .map(|l| 1 + abstracttui::text::width(l))
+        let refused = self.allowed.clone().err();
+        2 + Self::tail(&self.label, &refused, true)
+            .map(|l| 1 + abstracttui::text::width(&l))
             .unwrap_or(0)
     }
 
@@ -138,6 +152,28 @@ impl Toggle {
             })
             .hover_signal(hovered)
             .focus_signal(focused);
+        // A refused toggle still takes the focus (its reason must be
+        // reachable from the keyboard: the tooltip + status bar show it) and
+        // a press says the reason instead of doing anything.
+        if !allowed && self.tab_stop {
+            el = el.focusable();
+            let why = self.allowed.clone().err().unwrap_or_default();
+            el = el.on(Phase::Bubble, move |ctx, ev| {
+                let pressed = match ev {
+                    UiEvent::Key(k) => {
+                        (k.key == Key::Char(' ') || k.key == Key::Enter)
+                            && k.mods.0 == 0
+                            && focused.get_untracked()
+                    }
+                    UiEvent::Mouse(m) => matches!(m.kind, MouseKind::Down(MouseButton::Left)),
+                    _ => false,
+                };
+                if pressed {
+                    ctx.stop_propagation();
+                    super::tip::say(&why);
+                }
+            });
+        }
         if allowed {
             if self.tab_stop {
                 el = el.focusable();
@@ -174,18 +210,15 @@ impl Toggle {
                 }
             });
         }
+        let refused = self.allowed.clone().err();
         let el = el.child(dyn_view(LayoutStyle::fill(), move || {
             let (h, f) = (hovered.get(), focused.get());
             let on = value();
             let is_busy = busy();
-            let glyph = if is_busy {
-                BUSY
-            } else if on {
-                ON
-            } else {
-                OFF
-            };
-            let label = label.clone();
+            let tail = Self::tail(&label, &refused, is_busy);
+            // Busy keeps showing the CURRENT state (the gateway's until the
+            // write is verified); " · saving…" in the tail says it is moving.
+            let glyph = if on { ON } else { OFF };
             Element::new()
                 .style(LayoutStyle::fill())
                 .draw(move |canvas, rect| {
@@ -200,7 +233,15 @@ impl Toggle {
                         muted
                     };
                     let mut gs = Style::new().fg(gink);
-                    let mut ls = Style::new().fg(if allowed { text } else { faint });
+                    // The kit's terminal rule (state-toggles.md): ON reads
+                    // highlighted (accent, bold), OFF plain, unavailable faint.
+                    let mut ls = if !allowed {
+                        Style::new().fg(faint)
+                    } else if on {
+                        Style::new().fg(accent).bold()
+                    } else {
+                        Style::new().fg(text)
+                    };
                     if f {
                         gs = Style::new().fg(sel_fg).bg(sel_bg);
                         ls = Style::new().fg(sel_fg).bg(sel_bg);
@@ -209,7 +250,7 @@ impl Toggle {
                         ls = ls.fg(accent);
                     }
                     canvas.print_styled(Point::new(rect.x, rect.y), glyph, &gs);
-                    if let Some(l) = &label {
+                    if let Some(l) = &tail {
                         let l = super::paint::fit(l, rect.w - 3);
                         canvas.print_styled(Point::new(rect.x + 3, rect.y), &l, &ls);
                     }

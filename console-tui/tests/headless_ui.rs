@@ -2143,7 +2143,6 @@ fn users_and_entities_render_with_admin_gate() {
         !s.contains("castorp") && !s.contains("hypnosp"),
         "no registry entity principal as a user row:\n{s}"
     );
-    assert!(s.contains("kind:"), "kind legend:\n{s}");
     // Selecting the entity row keeps its manage snapshot warm; `i`
     // toggles the inspector drawer.
     h.select_account("testor");
@@ -2153,7 +2152,8 @@ fn users_and_entities_render_with_admin_gate() {
             .is_some(),
         "selection-driven detail load fired"
     );
-    assert!(s.contains("m Manage"), "the entity row's keys:\n{s}");
+    // R15: the entity row carries the Manage button (⬖, key m).
+    assert!(s.contains("⬖"), "the entity row's Manage button:\n{s}");
     h.type_text("i");
     let s = h.turns(3);
     assert!(s.contains("Entity inspector"), "drawer open:\n{s}");
@@ -2212,8 +2212,8 @@ fn create_user_flow_and_token_shown_once() {
 
     h.type_text("bob");
     h.turn();
-    // User ID → Role → Email address → Advanced ▸ → Create user
-    for _ in 0..4 {
+    // User ID → Role → Email address → Runtime → Tenant → Create user
+    for _ in 0..5 {
         h.key(b"\t");
         h.turn();
     }
@@ -2269,12 +2269,10 @@ fn rotate_token_asks_inline_first() {
     h.turns(2);
     h.type_text("t");
     let s = h.turns(2);
-    assert!(
-        s.contains("Rotate the token of admin? The current token stops working now;"),
-        "confirm:\n{s}"
-    );
-    assert!(s.contains("[y] Rotate"), "{s}");
-    h.type_text("n");
+    // R15: a must-choose prompt with the web's sentence (Cancel first).
+    assert!(s.contains("Rotate the token of admin?"), "confirm:\n{s}");
+    assert!(s.contains("Rotate") && s.contains("Cancel"), "{s}");
+    h.type_text("\r"); // Cancel is preselected
     h.turns(2);
     assert!(
         h.find_cmd(|c| matches!(c, Cmd::PatchUser { .. })).is_none(),
@@ -2282,8 +2280,7 @@ fn rotate_token_asks_inline_first() {
     );
     h.type_text("t");
     h.turns(2);
-    h.type_text("y");
-    h.turns(2);
+    answer_danger(&mut h);
     match h.find_cmd(|c| matches!(c, Cmd::PatchUser { .. })) {
         Some(Cmd::PatchUser { user_id, body, .. }) => {
             assert_eq!(user_id, "admin");
@@ -2590,7 +2587,10 @@ fn talk_opens_a_visit_sends_turns_and_renders_replies() {
     h.press_escape();
     let s = h.turns(2);
     assert!(!s.contains("Talk — Testor"), "Esc hides the panel:\n{s}");
-    assert!(s.contains("Accounts — people"), "still on Accounts:\n{s}");
+    assert!(
+        s.contains("People who use this gateway"),
+        "still on Accounts:\n{s}"
+    );
     assert_eq!(
         h.store.entity_chat.get_untracked().chat_id.as_deref(),
         Some("chat_42"),
@@ -3838,7 +3838,7 @@ fn footer_leads_with_the_screen_keys_at_80x24() {
     for (screen, lead) in [
         (1usize, "v local/remote/available"),
         (2, "Enter/e edit route"),
-        (3, "Tab tab"),
+        (3, "↑↓ rows · Enter Email"),
         (4, "Enter inspect runtime"),
         (5, "Tab tab · space Available to users"),
         (7, "u unload"),
@@ -4111,8 +4111,8 @@ fn first_run_screens_survive_tight_height() {
     h.goto_screen(3);
     let s = h.turns(3);
     assert!(
-        s.contains("alice") && s.contains("kind:"),
-        "the accounts table and its legend render (not crushed):\n{s}"
+        s.contains("alice") && s.contains("Actions"),
+        "the accounts table renders (not crushed):\n{s}"
     );
 
     // Review with one journal entry (the operator who did the wizard
@@ -4274,6 +4274,15 @@ fn connection_screen_fits_at_macos_default_80x24() {
 use abstractgateway_console::store::{RunScope, RunsData};
 
 /// SGR mouse press+release at 1-based cell (x, y).
+/// Answer a destructive confirmation (`confirm_danger`: the danger option
+/// is first, Cancel/Keep preselected): Up, then Enter.
+fn answer_danger(h: &mut Harness) {
+    h.key(b"\x1b[A");
+    h.turn();
+    h.key(b"\r");
+    h.turns(2);
+}
+
 fn click_at(h: &mut Harness, x: usize, y: usize) {
     h.key(format!("\x1b[<0;{x};{y}M").as_bytes());
     h.key(format!("\x1b[<0;{x};{y}m").as_bytes());
@@ -4706,9 +4715,10 @@ fn double_click_opens_user_editor() {
     let y = find_row(&s, "alice");
     double_click_at(&mut h, 4, y);
     let s = h.turns(3);
+    // R15 §2.3: double-click = Enter = the row's FIRST action (Email).
     assert!(
-        s.contains("Edit user 'alice'"),
-        "double-click selects then opens the editor:\n{s}"
+        s.contains("Email — alice"),
+        "double-click selects then runs the first action:\n{s}"
     );
     assert_eq!(
         h.ui.account_sel.get_untracked(),
@@ -4736,9 +4746,14 @@ fn double_click_opens_entity_manage_menu() {
     double_click_at(&mut h, 4, y);
     let s = h.turns(3);
     assert!(
-        s.contains("Manage entity 'Testor'"),
-        "double-click opens the manage menu:\n{s}"
+        s.contains("Email — testor"),
+        "double-click runs the entity row's first action (Email):\n{s}"
     );
+    h.press_escape();
+    // Manage stays one key (or its ⬖ button) away.
+    h.type_text("m");
+    let s = h.turns(3);
+    assert!(s.contains("Manage entity 'Testor'"), "m opens Manage:\n{s}");
 }
 
 /// COMPLAINT A, providers unified table: Enter on the focused table
@@ -7352,7 +7367,7 @@ fn footer_hints_stay_in_lockstep_with_screens() {
     for (screen, needle) in [
         (1usize, "local/remote/available"),
         (2, "edit route"),
-        (3, "l Logs"),
+        (3, "Enter Email"),
         (4, "inspect runtime"),
         (5, "drafts"),
         (6, "run the test"),
@@ -9380,8 +9395,8 @@ fn my_email_page_reads_in_the_design_order_with_the_design_words() {
     // Email address → Mailbox → Notifications → Agent email tools → Advanced.
     assert!(at("│Email address") < at("│Mailbox"), "{s}");
     assert!(at("│Mailbox") < at("│Notifications"), "{s}");
-    assert!(at("│Notifications") < at("[ ] Agent email tools"), "{s}");
-    assert!(at("[ ] Agent email tools") < at("│ Advanced ▸  who"), "{s}");
+    assert!(at("│Notifications") < at("●─ Agent email tools"), "{s}");
+    assert!(at("●─ Agent email tools") < at("│Recipients and limits"), "{s}");
     assert!(
         s.contains("Where sign-in codes and notifications go"),
         "{s}"
@@ -9391,9 +9406,9 @@ fn my_email_page_reads_in_the_design_order_with_the_design_words() {
         "the connected status line:\n{s}"
     );
     assert!(s.contains("Test") && s.contains("Disconnect"), "{s}");
-    // The switches: on = [x], off = [ ].
-    assert!(s.contains("[x] Job failed"), "{s}");
-    assert!(s.contains("[ ] Approval needed"), "{s}");
+    // The switches (R15 Toggle): on = ━●, off = ●─.
+    assert!(s.contains("━● Job failed"), "{s}");
+    assert!(s.contains("●─ Approval needed"), "{s}");
     // Never the old verbs, never a Save for a switch.
     for banned in [
         "Save and test",
@@ -9446,7 +9461,7 @@ fn my_email_switches_apply_at_once_and_say_the_new_state() {
     }
     assert!(s.contains("Approval needed · saving…"), "busy:\n{s}");
     // The shown state stays the gateway's until the write is verified.
-    assert!(s.contains("[ ] Approval needed"), "{s}");
+    assert!(s.contains("●─ Approval needed"), "{s}");
     click_text(&mut h, &s, "Agent email tools");
     h.turns(2);
     assert!(
@@ -9460,11 +9475,11 @@ fn my_email_unavailable_switches_say_why_and_send_nothing() {
     let mut h = harness_sized(Size::new(140, 60));
     let s = open_my_email(&mut h, &my_email_not_connected());
     assert!(
-        s.contains("[-] Job failed — Connect a mailbox first."),
+        s.contains("━● Job failed — Connect a mailbox first."),
         "{s}"
     );
     assert!(
-        s.contains("[-] Agent email tools — Connect a mailbox first."),
+        s.contains("●─ Agent email tools — Connect a mailbox first."),
         "{s}"
     );
     let _ = h.drain_cmds();
@@ -9488,7 +9503,7 @@ fn my_email_agent_tools_reason_follows_the_admin() {
     v["agent_tools"] = json!({"on": false, "available": false, "unavailable_reason": "Your admin turned agent email tools off.", "active": false});
     let s = open_my_email(&mut h, &v);
     assert!(
-        s.contains("[-] Agent email tools — Your admin turned agent email tools off."),
+        s.contains("●─ Agent email tools — Your admin turned agent email tools off."),
         "{s}"
     );
     // A gateway older than the contract (no unavailable_reason, no
@@ -9818,8 +9833,8 @@ fn my_email_active_in_the_mailbox_card_and_test_says_the_api_sentence() {
         s.contains("Your mailbox is a different account: me@example.test."),
         "{s}"
     );
-    assert!(at("│Mailbox") < at("[x] Active"), "{s}");
-    assert!(at("[x] Active") < at("│Notifications"), "{s}");
+    assert!(at("│Mailbox") < at("━● Active"), "{s}");
+    assert!(at("━● Active") < at("│Notifications"), "{s}");
     assert!(
         s.contains("Off pauses watching, sending and notifications"),
         "{s}"
@@ -9854,10 +9869,10 @@ fn my_email_active_in_the_mailbox_card_and_test_says_the_api_sentence() {
     );
     assert!(!s.contains("rate_limited") && !s.contains("queued"), "{s}");
     // Advanced: compact sentences, no Use this mailbox, no test button.
-    click_text(&mut h, &s, "│ Advanced ▸  who");
+    // R15 D1: "Recipients and limits" is a visible section (no fold).
     let s = h.turns(3);
     assert!(
-        s.contains("Your agents may send to: only the Allowed list"),
+        s.contains("Your agents may send to:") && s.contains("only the Allowed list"),
         "{s}"
     );
     // Recipient rules (round 3): the two lists and the precedence sentence.
@@ -9903,15 +9918,9 @@ fn accounts_table_has_the_design_columns_and_the_active_switch() {
     );
     assert!(!s.contains("enabled"), "no State/enabled column:\n{s}");
     assert!(s.contains("a@x.io · connected"), "{s}");
-    // The own row's switch is unavailable; Enter shows the reason.
-    assert!(s.contains("[-]"), "own row unavailable:\n{s}");
-    h.key(b"\r");
-    let s = h.turns(2);
-    assert!(
-        s.contains("Active: You can't deactivate your own account."),
-        "own row unavailable, with the reason:\n{s}"
-    );
-    h.key(b"\r");
+    // R15: the Active column is a Toggle (━● on / ●─ off); the own row's
+    // is refused (faint, the reason in its tooltip and on a press).
+    assert!(s.contains("━●"), "Active toggles:\n{s}");
     // Own row (admin, selected first): space says why, sends nothing.
     let _ = h.drain_cmds();
     h.type_text(" ");
@@ -9949,12 +9958,12 @@ fn accounts_table_has_the_design_columns_and_the_active_switch() {
     assert!(h
         .find_cmd(|c| matches!(c, Cmd::SetAccountActive { .. }))
         .is_none());
+    // R15: a must-choose prompt (danger option first, Cancel preselected).
     assert!(
-        s.contains("[y] Deactivate") && s.contains("[n] Keep"),
-        "inline confirm:\n{s}"
+        s.contains("Deactivate") && s.contains("Cancel"),
+        "confirm prompt:\n{s}"
     );
-    h.type_text("y");
-    h.turns(2);
+    answer_danger(&mut h);
     match h.find_cmd(|c| matches!(c, Cmd::SetAccountActive { .. })) {
         Some(Cmd::SetAccountActive {
             id, entity, active, ..
@@ -9998,12 +10007,12 @@ fn users_admin_switch_mailboxes_for_users_applies_at_once() {
     // "Email for everyone" is the page's second tab.
     h.key(b"\t");
     let s = h.turns(3);
-    assert!(s.contains("[x] Mailboxes for users"), "{s}");
+    assert!(s.contains("━● Mailboxes for users"), "{s}");
     assert!(s.contains("You never see anyone's mail."), "{s}");
     // R8.1: the three switches sit directly in the card — no Advanced.
     assert!(!s.contains("Advanced"), "no Advanced disclosure:\n{s}");
-    assert!(s.contains("[x] Agent email tools for users"), "{s}");
-    assert!(s.contains("[ ] Sign-in by email"), "{s}");
+    assert!(s.contains("━● Agent email tools for users"), "{s}");
+    assert!(s.contains("●─ Sign-in by email"), "{s}");
     assert!(!s.contains("Save"), "no Save for a switch:\n{s}");
     let _ = h.drain_cmds();
     click_text(&mut h, &s, "Mailboxes for users");
@@ -10040,16 +10049,14 @@ fn create_user_asks_the_email_address_at_the_top_level() {
             && s.contains("they have none; they can add it later."),
         "{s}"
     );
-    assert!(
-        !s.contains("The data plane their runs") && !s.contains("Tenant"),
-        "Advanced folded:\n{s}"
-    );
+    // R15 D1: no "Advanced" — the bindings sit in a visible section
+    // named by its content.
+    assert!(!s.contains("Advanced"), "no Advanced:\n{s}");
+    assert!(s.contains("Runtime and tenant"), "{s}");
     assert!(
         !s.contains("optional") && !s.contains("never used for auth"),
         "{s}"
     );
-    click_text(&mut h, &s, "Advanced ▸  runtime");
-    let s = h.turns(2);
     assert!(
         s.contains("The data plane their runs, flows and sessions live in.")
             && s.contains("Empty = their own, named after them."),
@@ -10257,23 +10264,23 @@ fn switch_ink_on_screen_marks_on_off_and_unavailable() {
             .enumerate()
             .find_map(|(i, l)| l.find(needle).map(|c| (i, l[..c].chars().count())))
             .unwrap_or_else(|| panic!("{needle:?} not on screen:\n{s}"));
-        // The label's first letter (after "[x] ").
+        // The label's first letter (after "━● ").
         h.term
             .screen()
-            .cell(col as i32 + 4, row as i32)
+            .cell(col as i32 + 3, row as i32)
             .map(|c| c.paint)
             .expect("cell")
     };
     let mut h = harness_sized(Size::new(140, 60));
     open_my_email(&mut h, &my_email_fixture());
-    let on = paint_at(&h, "[x] Job failed");
-    let off = paint_at(&h, "[ ] Approval needed");
+    let on = paint_at(&h, "━● Job failed");
+    let off = paint_at(&h, "●─ Approval needed");
     assert!(on.attrs.contains(BOLD), "ON is bold: {on:?}");
     assert!(!off.attrs.contains(BOLD), "OFF is plain: {off:?}");
     assert_ne!(on.fg, off.fg, "ON has the accent ink");
     let mut h = harness_sized(Size::new(140, 60));
     open_my_email(&mut h, &my_email_not_connected());
-    let na = paint_at(&h, "[-] Job failed");
+    let na = paint_at(&h, "━● Job failed");
     assert!(!na.attrs.contains(BOLD), "unavailable is not bold");
     assert_ne!(na.fg, off.fg, "unavailable is faint, not the plain ink");
 }
@@ -10283,8 +10290,7 @@ fn my_email_advanced_folder_saves_on_enter_and_is_unavailable_without_a_mailbox(
     use abstractgateway_console::worker::operator::EmailAction;
     let mut h = harness_sized(Size::new(140, 90));
     let s = open_my_email(&mut h, &my_email_fixture());
-    click_text(&mut h, &s, "│ Advanced ▸  who");
-    h.turns(2);
+    // R15 D1: "Recipients and limits" is a visible section (no fold).
     for _ in 0..30 {
         h.key(b"\x1b[<65;70;30M");
     }
@@ -10315,8 +10321,7 @@ fn my_email_advanced_folder_saves_on_enter_and_is_unavailable_without_a_mailbox(
     }
     let mut h = harness_sized(Size::new(140, 90));
     let s = open_my_email(&mut h, &my_email_not_connected());
-    click_text(&mut h, &s, "│ Advanced ▸  who");
-    h.turns(2);
+    // R15 D1: "Recipients and limits" is a visible section (no fold).
     for _ in 0..30 {
         h.key(b"\x1b[<65;70;30M");
     }
@@ -10331,7 +10336,7 @@ fn my_email_recipient_rules_add_to_always_denied_sends_both_lists() {
     use abstractgateway_console::worker::operator::EmailAction;
     let mut h = harness_sized(Size::new(140, 90));
     let s = open_my_email(&mut h, &my_email_fixture());
-    click_text(&mut h, &s, "│ Advanced ▸  who");
+    // R15 D1: "Recipients and limits" is a visible section (no fold).
     let s = h.turns(3);
     let adds: Vec<(usize, String)> = s
         .lines()
