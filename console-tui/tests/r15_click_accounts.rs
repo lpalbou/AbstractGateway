@@ -400,3 +400,40 @@ fn a_modal_opened_from_a_row_survives_the_accounts_reload_it_causes() {
         "the modal survived the reload:\n{s}"
     );
 }
+
+#[test]
+fn enter_in_a_popup_commits_the_choice_never_the_form() {
+    // A4: "Enter on the last field = Save" never fires from an open popup.
+    // Create user: type the id, Tab to the Role picker, Enter opens its
+    // popup, Enter commits the choice — no CreateUser is sent.
+    let mut h = page();
+    h.click_text("Create user");
+    h.type_text("bob");
+    h.key(b"\t");
+    let s = h.key(b"\r"); // opens the Role popup
+    assert!(s.contains("Read-only — can look"), "the Role popup is open:\n{s}");
+    h.key(b"\r"); // commits the highlighted role
+    assert!(
+        !h.sent().iter().any(|c| matches!(c, Cmd::CreateUser { .. })),
+        "Enter in the popup created nothing"
+    );
+    // Preferences: Enter on the open Select commits exactly one PUT.
+    let mut h = page();
+    click_row(&mut h, "alice", "⊜");
+    h.sent();
+    h.store.json.set(
+        "prefs.default.alice",
+        Loadable::Ready(serde_json::from_str(include_str!("fixtures/r14w3_prefs_alice_set.json")).unwrap()),
+    );
+    h.turns(3);
+    h.key(b"\r"); // open the first Select
+    h.key(b"\x1b[A");
+    h.key(b"\x1b[A");
+    h.key(b"\r"); // commit the gateway default
+    let puts: Vec<_> = h
+        .sent()
+        .into_iter()
+        .filter(|c| matches!(c, Cmd::Json(JsonCmd::Send { method, .. }) if method == "PUT"))
+        .collect();
+    assert_eq!(puts.len(), 1, "one PUT for one commit: {puts:?}");
+}

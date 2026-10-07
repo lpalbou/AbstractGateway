@@ -9132,6 +9132,78 @@ fn right_walks_every_screen_in_order() {
     }
 }
 
+/// R15 §2.2 / §6.3 — THE OPERATOR'S BUG: ←/→ died on Apps and Network
+/// once their data loaded (the engine's Scroll swallowed the arrows; the
+/// Apps table ate Right). The walk now runs with REAL data on every screen
+/// and with the focus INSIDE the page (two Tabs into its controls) before
+/// each arrow — both directions, wrapping at both ends.
+#[test]
+fn r15_arrows_switch_screens_with_real_data_and_focus_inside_the_page() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.ui.wizard.set(false);
+    let apps: Value = serde_json::from_str(include_str!("fixtures/r14w3_apps.json")).unwrap();
+    h.store.apps.overview.set(Loadable::Ready(
+        abstractgateway_console::store::apps::AppsOverview::from_value(&apps),
+    ));
+    h.store.network.set(Loadable::Ready(
+        abstractgateway_console::store::NetworkData::from_value(&network_fixture(
+            "lan", "0.0.0.0", false, true,
+        )),
+    ));
+    h.store
+        .users
+        .set(Loadable::Ready(users_from_payload(&users_fixture())));
+    h.store
+        .entities
+        .set(Loadable::Ready(entities_from_payload(&entities_fixture())));
+    h.store.routes.set(Loadable::Ready(routes_fixture()));
+    h.store
+        .runtimes
+        .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
+    let order = ui::NAV_ORDER;
+    for dir in [RIGHT, LEFT] {
+        for i in 0..order.len() {
+            let from = order[i];
+            h.ui.screen.set(from);
+            h.turns(3);
+            // Focus into the page's controls (never into a page text field:
+            // the caret keeps its arrows by design — tested below).
+            for _ in 0..2 {
+                h.key(b"\t");
+                h.turns(1);
+            }
+            if h.ui.caret.get_untracked().is_some() {
+                // A page text field holds the caret: the arrow is the
+                // caret's, the screen stays; Esc hands the keyboard back.
+                h.key(dir);
+                h.turns(2);
+                assert_eq!(h.ui.screen.get_untracked(), from, "the caret keeps its arrows");
+                h.press_escape();
+                h.turns(2);
+                assert!(h.ui.caret.get_untracked().is_none(), "Esc released the caret");
+            }
+            h.key(dir);
+            h.turns(3);
+            let want = if dir == RIGHT {
+                order[(i + 1) % order.len()]
+            } else {
+                order[(i + order.len() - 1) % order.len()]
+            };
+            assert_eq!(
+                h.ui.screen.get_untracked(),
+                want,
+                "{} from {} (focus inside the page, data loaded)",
+                if dir == RIGHT { "Right" } else { "Left" },
+                ui::SCREENS[from]
+            );
+        }
+    }
+}
+
 /// A focused text field keeps Left/Right for its caret; once the field
 /// lets go of the caret (Esc), the same key switches the tab.
 #[test]

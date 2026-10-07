@@ -1940,7 +1940,7 @@ fn open_user_form(cx: Scope, ctx: &Ctx, existing: Option<UserRow>) {
                     MultiSelect::new(vec![
                         SelectOption::keyed("user", "User — runs workflows on their own runtime"),
                         SelectOption::keyed("admin", "Admin — manages this gateway"),
-                        SelectOption::keyed("readonly", "Read-only — can look, not change"),
+                        SelectOption::keyed("readonly", "Read-only — can look, cannot change anything"),
                     ])
                     .values(roles)
                     .placeholder("pick a role…")
