@@ -5,13 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.13.1] - 2026-10-07
+
+Requires AbstractRuntime 0.9.1, AbstractCore 2.25.1 and AbstractAgent 0.3.19 (installed automatically). The terminal console `abstractgateway-console` 0.15.1 matches this release; see [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md).
 
 ### Fixed
 
 - **Streamed speech never blocks the event loop and is bounded.** `POST /runs/{id}/voice/tts/stream` (`voice_stream.py`): one permit of the voice synthesis bound (`ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY`) per stream, held until its engine thread is done (also after the client left); past the bound a request waits one second, then gets 503 "Read aloud is busy: N voice syntheses are already running on this gateway …". The engine setup and the engine's events run on worker threads; the response body only awaits a bounded queue (it holds no worker thread and yields between chunks; a slow client makes the engine wait). An engine busy for more than a second (another stream, or the model using the machine) is announced with a first line `{"type": "queued", "message": "Waiting for the voice engine: …"}`. The engine's stream is closed on its own thread when the client leaves. Time to first audio is unchanged (one sentence of synthesis).
 - **Read aloud is never a wait of the run, and a restart can no longer leave one.** With AbstractRuntime 0.9.1 the stream records its child run already completed when it ends (no `WAIT_EVENT abstractcore.voice.tts.stream:<uuid>` while audio streams; the apps showed that waiting record as "Waiting for an event › Streaming voice synthesis is running."). The runner closes any such wait left by an older process at startup: the child run completes with "Read aloud was interrupted because the gateway restarted; the audio was not finished. Press Read aloud again." and the conversation goes on.
 - **One replay helper for buffered request bodies.** The security middleware and the core endpoint's internal sub-requests build their replayed `receive` through `asgi_receive.replay_body_receive` (after the body it waits on the connection, or until cancelled for a sub-request). The core endpoint's sub-requests answered "empty body" forever after the body, the same busy loop 0.13.0 fixed in the middleware. A structural test fails if any module builds its own replay.
+- **Upgrading from 0.9.x no longer drops a user's allowed folders** (round 14, D1). The 0.13.0 workspace migration filtered the old allowed folders by a guessed root (the folder the gateway was started in, usually your home folder) and then kept no row for it: folders under it vanished from Accounts → Workspaces and the API, without being listed as dropped (access was not lost, since the posture allows everything not refused). The migration no longer uses the guess. A store 0.13.0 already migrated is repaired once at the next start from the old block it kept (`_migrated.workspace_policy_v1.old`): the lost rows come back (a path already listed keeps its mode), recorded under `_migrated.workspace_policy_v1_repair` and in the audit log (scope `migration_repair`).
 
 ### Added
 
@@ -24,13 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Local pages in `browser_probe` stay inside the run's workspaces** (AbstractCore 2.25.1, AbstractRuntime 0.9.1). A local page is served to the headless browser from a private loopback origin limited to the files the run may read, never as `file://`, so a page in an allowed workspace can no longer show a refused folder's files through `<img src="file:///…">`, `../` links or symlinks; refused loads are listed in the report. Docs: security ("Browser probe").
 - **Linux command sandbox: nested workspaces** (AbstractCore 2.25.1). An allowed workspace inside a refused folder is now reachable under bubblewrap too (it failed closed before); see security ("Command sandbox").
 
-### Fixed
-
-- **Upgrading from 0.9.x no longer drops a user's allowed folders** (round 14, D1). The 0.13.0 workspace migration filtered the old allowed folders by a guessed root (the folder the gateway was started in, usually your home folder) and then kept no row for it: folders under it vanished from Accounts → Workspaces and the API, without being listed as dropped (access was not lost, since the posture allows everything not refused). The migration no longer uses the guess. A store 0.13.0 already migrated is repaired once at the next start from the old block it kept (`_migrated.workspace_policy_v1.old`): the lost rows come back (a path already listed keeps its mode), recorded under `_migrated.workspace_policy_v1_repair` and in the audit log (scope `migration_repair`).
-
 ### Terminal console
 
-- `abstractgateway-console` (unreleased): workspaces on Accounts like the web console (`E` Eligible workspaces,
+- `abstractgateway-console` 0.15.1: workspaces on Accounts like the web console (`E` Eligible workspaces,
   `w` on every row, the kit's words), per-account Preferences (`p`), the memory and compute line in the title bar,
   the **last restart** row in F3; the parked Workspaces page is gone (`W` opens Accounts). See
   [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md).
