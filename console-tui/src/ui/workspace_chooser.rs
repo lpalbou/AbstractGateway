@@ -30,13 +30,10 @@
 //! `scripts/check_workspace_wording.py` diffs that fixture against the
 //! live kit file.
 
-use abstracttui::base::Rgba;
 use abstracttui::prelude::*;
-use abstracttui::ui::{Phase, UiEvent};
+
 use serde_json::{json, Value};
 
-use super::kit;
-use super::util::{line, span, span_bold, wrap_text};
 use super::Ctx;
 use crate::api::{ApiError, ApiErrorKind};
 use crate::store::json::WriteState;
@@ -854,11 +851,9 @@ pub fn items(v: &ChooserView) -> Vec<Item> {
 
 /// The key hints of the overlay.
 pub const HINTS: &[(&str, &str)] = &[
-    ("↑/↓", "choose"),
-    ("←/→", "change"),
-    ("space", "switch"),
-    ("Enter", "add"),
-    ("x", "remove"),
+    ("Tab", "next control"),
+    ("Enter/Space", "press / pick"),
+    ("Esc", "close"),
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -869,14 +864,14 @@ enum NoteTone {
 
 #[derive(Clone, Copy)]
 struct St {
-    sel: Signal<usize>,
-    editing: Signal<bool>,
+    /// The add field's text.
     draft: Signal<String>,
     notes: Signal<Vec<(String, String, NoteTone)>>,
     /// The item key of the write in flight.
     pending: Signal<Option<String>>,
-    scroll: Signal<i32>,
-    viewport: Signal<(i32, i32)>,
+    /// The item last changed: its control takes the keyboard back after
+    /// the re-read rebuilds the body (keyboard users keep their place).
+    last: Signal<Option<String>>,
 }
 
 fn set_note(st: &St, key: &str, text: &str, tone: NoteTone) {
@@ -896,6 +891,7 @@ fn load(ctx: &Ctx, target: &Target) {
 fn put(ctx: &Ctx, st: &St, target: &Target, item: &Item, body: Value) {
     let wk = target.write_key();
     st.pending.set(Some(item.key()));
+    st.last.set(Some(item.key()));
     st.notes.update(|n| n.retain(|(k, _, _)| *k != item.key()));
     ctx.store.json.set_write(&wk, Some(WriteState::Pending));
     ctx.send(Cmd::Json(JsonCmd::Send {
@@ -910,103 +906,6 @@ fn put(ctx: &Ctx, st: &St, target: &Target, item: &Item, body: Value) {
     }));
 }
 
-/// Open the chooser overlay for `target`. Gateway level: admins only.
-pub fn open(cx: Scope, ctx: &Ctx, target: Target) {
-    if target == Target::Gateway
-        && !super::util::admin_gate(&ctx.store, "changing the eligible workspaces")
-    {
-        return;
-    }
-    if !ctx
-        .store
-        .conn
-        .with_untracked(crate::store::ConnPhase::is_connected)
-    {
-        ctx.store.notice.set(Some(
-            "not connected — probe on the Connection screen first".into(),
-        ));
-        return;
-    }
-    load(ctx, &target);
-    let c = ctx.clone();
-    kit::open_overlay(ctx, cx, target.title(), HINTS, move |mcx, _close, guard| {
-        let st = St {
-            sel: mcx.signal(0),
-            editing: mcx.signal(false),
-            draft: mcx.signal(String::new()),
-            notes: mcx.signal(Vec::new()),
-            pending: mcx.signal(None),
-            scroll: mcx.signal(0),
-            viewport: mcx.signal((0, 0)),
-        };
-        // The write's outcome beside its item ("Saved" / the refusal).
-        {
-            let store = c.store;
-            let wk = target.write_key();
-            mcx.effect(move || {
-                let w = store.json.write(&wk);
-                let Some(key) = st.pending.get_untracked() else {
-                    return;
-                };
-                match w {
-                    Some(WriteState::Done(_)) => {
-                        set_note(&st, &key, T::SAVED, NoteTone::Ok);
-                        if key == "add" {
-                            st.draft.set(String::new());
-                            st.editing.set(false);
-                        }
-                    }
-                    Some(WriteState::Failed(e)) => set_note(
-                        &st,
-                        &key,
-                        &refusal_text(&error_sentence(&e)),
-                        NoteTone::Error,
-                    ),
-                    _ => return,
-                }
-                st.pending.set(None);
-                store.json.set_write(&wk, None);
-            });
-        }
-        // Esc first closes an open add row (the overlay stays).
-        *guard.borrow_mut() = Some(Box::new(move || {
-            if st.editing.get_untracked() {
-                st.editing.set(false);
-                st.notes.update(|n| n.retain(|(k, _, _)| k != "add"));
-                return true;
-            }
-            false
-        }));
-        let body_ctx = c.clone();
-        let tgt = target.clone();
-        Element::new()
-            .style(LayoutStyle::column().gap(0).grow(1.0))
-            .child(dyn_view_scoped(
-                LayoutStyle::column().gap(0).grow(1.0),
-                move |gcx| overlay_body(gcx, &body_ctx, &tgt, st),
-            ))
-            .build()
-    });
-}
-
-/// Lines with a running count (the selection's line range drives the scroll).
-struct Lines {
-    col: Vec<View>,
-    n: i32,
-}
-
-impl Lines {
-    fn push(&mut self, v: View) {
-        self.col.push(v);
-        self.n += 1;
-    }
-    fn wrap(&mut self, text: &str, indent: usize, width: i32, ink: Rgba) {
-        let pad = " ".repeat(indent);
-        for l in wrap_text(text, (width - indent as i32).max(10) as usize) {
-            self.push(line(vec![span(format!("{pad}{l}"), ink)]));
-        }
-    }
-}
 
 fn note_of(st: &St, key: &str) -> Option<(String, NoteTone)> {
     st.notes.with_untracked(|n| {
@@ -1035,21 +934,144 @@ pub fn segmented(options: &[(String, bool)], current: usize) -> String {
         .join(" ")
 }
 
-fn overlay_body(cx: Scope, ctx: &Ctx, target: &Target, st: St) -> View {
+
+
+
+/// Open the chooser for `target` (R15: ONE form modal — every control a
+/// widget: the follow Toggle, the posture Segmented, each row's permission
+/// Segmented with above-cap modes disabled + the kit sentence, a remove
+/// button, the add field + Add; one PUT per change, "Saved" / the
+/// gateway's sentence + "Not saved." under the control). Gateway level:
+/// admins only.
+pub fn open(cx: Scope, ctx: &Ctx, target: Target) {
+    if target == Target::Gateway
+        && !super::util::admin_gate(&ctx.store, "changing the eligible workspaces")
+    {
+        return;
+    }
+    if !ctx
+        .store
+        .conn
+        .with_untracked(crate::store::ConnPhase::is_connected)
+    {
+        ctx.store.notice.set(Some(
+            "not connected — probe on the Connection screen first".into(),
+        ));
+        return;
+    }
+    load(ctx, &target);
+    let c = ctx.clone();
+    let level = target.level();
+    super::w::FormModal::new(target.title())
+        .lead(level.help())
+        .size(104, 36)
+        .open(ctx, cx, move |mcx, close, _guard, w| {
+            let st = St {
+                draft: mcx.signal(String::new()),
+                notes: mcx.signal(Vec::new()),
+                pending: mcx.signal(None),
+                last: mcx.signal(None),
+            };
+            // The write's outcome beside its item ("Saved" / the refusal).
+            {
+                let store = c.store;
+                let wk = target.write_key();
+                mcx.effect(move || {
+                    let w = store.json.write(&wk);
+                    let Some(key) = st.pending.get_untracked() else {
+                        return;
+                    };
+                    match w {
+                        Some(WriteState::Done(_)) => {
+                            set_note(&st, &key, T::SAVED, NoteTone::Ok);
+                            if key == "add" {
+                                st.draft.set(String::new());
+                            }
+                        }
+                        Some(WriteState::Failed(e)) => set_note(
+                            &st,
+                            &key,
+                            &refusal_text(&error_sentence(&e)),
+                            NoteTone::Error,
+                        ),
+                        _ => return,
+                    }
+                    st.pending.set(None);
+                    store.json.set_write(&wk, None);
+                });
+            }
+            let body_ctx = c.clone();
+            let tgt = target.clone();
+            let t = use_theme(mcx).get().tokens;
+            let close2 = close.clone();
+            let body = dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |gcx| {
+                chooser_body(gcx, &body_ctx, &tgt, st, w)
+            });
+            Element::new()
+                .style(LayoutStyle::column().grow(1.0))
+                .child(
+                    Scroll::new(body)
+                        .axes(false, true)
+                        .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))
+                        .scrollbar_auto_hide(true)
+                        .view(mcx),
+                )
+                .child(super::w::form::button_row(vec![super::w::action::button(
+                    mcx,
+                    &t,
+                    &super::w::Action::label("close", "Close"),
+                    super::w::action::On::Raised,
+                    true,
+                    move || close2(),
+                )]))
+                .build()
+        });
+}
+
+/// One write at a time (a press while one is in flight would act on the
+/// state shown before it landed): Some(()) when free.
+fn free(st: &St) -> bool {
+    st.pending.with_untracked(Option::is_none)
+}
+
+fn note_line(st: St, key: String, width: i32) -> View {
+    dyn_view(LayoutStyle::column().gap(0).shrink(0.0), move || {
+        let t = abstracttui::app::current_theme().tokens;
+        let _ = st.notes.get();
+        match note_of(&st, &key) {
+            Some((text, tone)) => super::w::form::sentence(
+                &t,
+                &text,
+                width,
+                if tone == NoteTone::Ok { t.ok } else { t.error },
+            ),
+            None => Element::new().style(LayoutStyle::default().h(0)).build(),
+        }
+    })
+}
+
+fn indent(v: View, n: i32) -> View {
+    Element::new()
+        .style(LayoutStyle::column().shrink(0.0).padding(Edges {
+            left: n,
+            right: 0,
+            top: 0,
+            bottom: 0,
+        }))
+        .child(v)
+        .build()
+}
+
+fn chooser_body(cx: Scope, ctx: &Ctx, target: &Target, st: St, width: i32) -> View {
+    use super::w::paint::{fill_line, Ink};
+    use super::w::form::sentence;
     let t = use_theme(cx).get().tokens;
-    let width = (crate::ui::page_viewport(cx).get().w - 8).max(24);
     let level = target.level();
     let slot = ctx.store.json.get(&target.slot());
     let state = match slot {
         Loadable::Ready(v) => as_state(&v, level),
         Loadable::Failed(e) => Err(error_sentence(&e)),
-        _ => {
-            return Element::new()
-                .style(LayoutStyle::column().gap(0))
-                .child(kit::sentence(&t, level.help(), width, t.text_muted))
-                .child(kit::sentence(&t, T::LOADING, width, t.text_muted))
-                .build()
-        }
+        _ => return sentence(&t, T::LOADING, width, t.text_muted),
     };
     let view = state
         .as_ref()
@@ -1058,440 +1080,268 @@ fn overlay_body(cx: Scope, ctx: &Ctx, target: &Target, st: St) -> View {
     let (state, view) = match (state, view) {
         (Ok(s), Ok(v)) => (s, v),
         (Err(e), _) | (_, Err(e)) => {
-            return Element::new()
-                .style(LayoutStyle::column().gap(0))
-                .child(kit::sentence(&t, level.help(), width, t.text_muted))
-                .child(kit::sentence(
-                    &t,
-                    &format!("{} could not be loaded: {e}", target.what()),
-                    width,
-                    t.error,
-                ))
-                .build()
+            return sentence(
+                &t,
+                &format!("{} could not be loaded: {e}", target.what()),
+                width,
+                t.error,
+            )
         }
     };
-    let list = items(&view);
-    let at = st.sel.get().min(list.len().saturating_sub(1));
-    let sel_item = list.get(at).cloned();
-    let editing = st.editing.get();
-    let busy = st.pending.get().is_some();
-    let mut out = Lines {
-        col: Vec::new(),
-        n: 0,
+    let busy_key = st.pending.get();
+    let last = st.last.get_untracked();
+    let is_last = |k: &str| last.as_deref() == Some(k);
+    let mut col = Element::new().style(LayoutStyle::column().shrink(0.0));
+    let heading = |s: &str| {
+        fill_line(
+            LayoutStyle::line(1).shrink(0.0),
+            vec![Ink::new(s, t.text).bold()],
+            None,
+        )
     };
-    let mut sel_range = (0, 0);
-    let mark = |it: &Item| -> (&'static str, Rgba) {
-        if sel_item.as_ref() == Some(it) {
-            ("▸ ", t.accent)
-        } else {
-            ("  ", t.text)
-        }
-    };
-    // A note line under an item: its own reactive view, so an outcome
-    // never rebuilds an open add row.
-    let note_view = |key: String| -> View {
-        dyn_view(LayoutStyle::column().gap(0).shrink(0.0), move || {
-            let t = use_theme(cx).get().tokens;
-            let _ = st.notes.get();
-            match note_of(&st, &key) {
-                Some((text, tone)) => kit::sentence_indent(
-                    &t,
-                    &text,
-                    width,
-                    6,
-                    if tone == NoteTone::Ok { t.ok } else { t.error },
-                ),
-                None => Element::new().style(LayoutStyle::default().h(0)).build(),
-            }
-        })
-    };
-
-    out.wrap(level.help(), 0, width, t.text_muted);
     if let Some(g) = &view.gateway_line {
-        out.wrap(g, 0, width, t.text);
+        col = col.child(sentence(&t, g, width, t.text));
     }
     if view.locked {
-        out.wrap(T::LOCKED, 0, width, t.warn);
+        col = col.child(sentence(&t, T::LOCKED, width, t.warn));
     }
     // ---- Follow the gateway policy (account level)
     if level == Level::Account {
         let it = Item::Follow;
-        let (m, ink) = mark(&it);
-        let start = out.n;
-        let unavailable = view.locked.then_some(T::LOCKED);
-        out.push(line(vec![
-            span(m, ink),
-            span_bold(
-                super::switch::switch_text(
-                    T::FOLLOW_GATEWAY,
-                    view.following,
-                    unavailable,
-                    busy && st.pending.get_untracked().as_deref() == Some("follow"),
-                ),
-                if view.following { t.accent } else { ink },
-            ),
-        ]));
-        out.wrap(T::FOLLOW_GATEWAY_HELP, 6, width, t.text_faint);
-        out.push(note_view(it.key()));
-        if sel_item.as_ref() == Some(&it) {
-            sel_range = (start, out.n);
-        }
+        let c = ctx.clone();
+        let tgt = target.clone();
+        let s2 = state.clone();
+        let tg = super::w::Toggle::new(view.following)
+            .label(T::FOLLOW_GATEWAY)
+            .busy(busy_key.as_deref() == Some("follow"))
+            .refused(view.locked.then(|| T::LOCKED.to_string()))
+            .tip(T::FOLLOW_GATEWAY_HELP)
+            .autofocus(is_last("follow"))
+            .on_change(move |want| {
+                if !free(&st) {
+                    return;
+                }
+                match follow_payload(&s2, want) {
+                    Ok(b) => put(&c, &st, &tgt, &Item::Follow, b),
+                    Err(e) => set_note(&st, "follow", &e, NoteTone::Error),
+                }
+            });
+        col = col
+            .child(
+                Element::new()
+                    .style(LayoutStyle::line(1).shrink(0.0))
+                    .child(tg.view(cx, &t))
+                    .build(),
+            )
+            .child(indent(sentence(&t, T::FOLLOW_GATEWAY_HELP, width - 3, t.text_muted), 3))
+            .child(note_line(st, it.key(), width));
     }
     // ---- The posture
-    {
-        let it = Item::Posture;
-        let (m, ink) = mark(&it);
-        let start = out.n;
-        out.push(line(vec![span(m, ink), span_bold(T::POSTURE_LABEL, ink)]));
-        if view.following || view.locked {
-            out.push(line(vec![span(
-                format!("      {}", view.posture.label()),
-                t.text,
-            )]));
-        } else {
-            for p in POSTURES {
-                let on = p == view.posture;
-                out.push(line(vec![span(
-                    format!("      {} {}", if on { "(•)" } else { "( )" }, p.label()),
-                    if on { t.accent } else { t.text },
-                )]));
-            }
-        }
-        out.wrap(view.posture.help(), 6, width, t.text_faint);
-        out.push(note_view(it.key()));
-        if sel_item.as_ref() == Some(&it) {
-            sel_range = (start, out.n);
-        }
+    col = col.child(heading(T::POSTURE_LABEL));
+    if view.following || view.locked {
+        col = col.child(indent(sentence(&t, view.posture.label(), width - 2, t.text), 2));
+    } else {
+        let cur = POSTURES.iter().position(|p| *p == view.posture);
+        let labels: Vec<String> = POSTURES.iter().map(|p| p.label().to_string()).collect();
+        let narrow = labels.iter().map(|l| abstracttui::text::width(l) + 3).sum::<i32>() > width - 2;
+        let c = ctx.clone();
+        let tgt = target.clone();
+        let pol = state.policy.clone();
+        let seg = super::w::Segmented::new(labels, cur)
+            .vertical(narrow)
+            .autofocus_chosen(is_last("posture"))
+            .on_pick(move |i| {
+                if free(&st) && Some(i) != cur {
+                    put(&c, &st, &tgt, &Item::Posture, posture_payload(level, &pol, POSTURES[i]));
+                }
+            });
+        col = col.child(indent(seg.view(cx, &t), 2));
     }
+    col = col
+        .child(indent(sentence(&t, view.posture.help(), width - 2, t.text_muted), 2))
+        .child(note_line(st, Item::Posture.key(), width));
     // ---- Rows: Allowed, then Refused (built-in refusals last, fixed)
-    let row_lines = |out: &mut Lines, r: &ViewRow, sel_range: &mut (i32, i32)| {
-        let it = Item::Row(r.path.clone());
-        let (m, ink) = mark(&it);
-        let start = out.n;
-        for (i, l) in wrap_text(&r.path, (width - 6).max(10) as usize)
-            .into_iter()
-            .enumerate()
-        {
-            out.push(line(vec![
-                span(
-                    if i == 0 {
-                        format!("  {m}  ")
-                    } else {
-                        "      ".into()
-                    },
-                    ink,
+    let editable_level = !view.following && !view.locked;
+    let rows_block = |col: Element, title: &str, rows: &[&ViewRow]| -> Element {
+        if rows.is_empty() {
+            return col;
+        }
+        let mut col = col.child(heading(title));
+        for r in rows {
+            let it = Item::Row(r.path.clone());
+            // The path, wrapped, with its remove button (editable rows).
+            let mut head = Element::new().style(LayoutStyle::row().shrink(0.0));
+            head = head.child(indent(
+                sentence(
+                    &t,
+                    &r.path,
+                    width - 8,
+                    if r.builtin { t.text_muted } else { t.text },
                 ),
-                span(l, if r.builtin { t.text_muted } else { t.text }),
-            ]));
-        }
-        if r.builtin {
-            out.push(line(vec![span(
-                format!("        {} — {}", Mode::Deny.label(), T::BUILTIN_REFUSED),
-                t.text_faint,
-            )]));
-        } else if !r.editable {
-            out.push(line(vec![span(
-                format!("        {}", r.mode.label()),
-                t.text_muted,
-            )]));
-        } else {
-            let opts: Vec<(String, bool)> = MODES
-                .iter()
-                .map(|md| (md.label().to_string(), r.allowed.contains(md)))
-                .collect();
-            let cur = MODES.iter().position(|md| *md == r.mode).unwrap_or(0);
-            out.push(line(vec![span(
-                format!("        {}: {}", T::ACCESS_LABEL, segmented(&opts, cur)),
-                if sel_item.as_ref() == Some(&it) {
-                    t.accent
-                } else {
-                    t.text
-                },
-            )]));
-            for (md, why) in &r.reasons {
-                out.wrap(&format!("{}: {why}", md.label()), 8, width, t.text_faint);
+                2,
+            ));
+            if r.editable && editable_level && !r.builtin {
+                let c = ctx.clone();
+                let tgt = target.clone();
+                let pol = state.policy.clone();
+                let path = r.path.clone();
+                let a = super::w::Action::glyph("archive", T::REMOVE)
+                    .tooltip(format!("{} {}", T::REMOVE, r.path))
+                    .danger();
+                head = head
+                    .child(Element::new().style(LayoutStyle::default().grow(1.0)).build())
+                    .child(super::w::action::button(
+                        cx,
+                        &t,
+                        &a,
+                        super::w::action::On::Raised,
+                        true,
+                        move || {
+                            if free(&st) {
+                                put(
+                                    &c,
+                                    &st,
+                                    &tgt,
+                                    &Item::Row(path.clone()),
+                                    remove_payload(level, &pol, &path),
+                                );
+                            }
+                        },
+                    ));
             }
+            col = col.child(head.build());
+            if r.builtin {
+                col = col.child(indent(
+                    sentence(
+                        &t,
+                        &format!("{} — {}", Mode::Deny.label(), T::BUILTIN_REFUSED),
+                        width - 4,
+                        t.text_muted,
+                    ),
+                    4,
+                ));
+            } else if !r.editable || !editable_level {
+                col = col.child(indent(sentence(&t, r.mode.label(), width - 4, t.text_muted), 4));
+            } else {
+                let cur = MODES.iter().position(|m| *m == r.mode);
+                let mut seg =
+                    super::w::Segmented::new(MODES.iter().map(|m| m.label().to_string()), cur);
+                for (i, m) in MODES.iter().enumerate() {
+                    if let Some(why) = r.reason(*m) {
+                        seg = seg.disable(i, why);
+                    }
+                }
+                let c = ctx.clone();
+                let tgt = target.clone();
+                let pol = state.policy.clone();
+                let path = r.path.clone();
+                let reasons = r.reasons.clone();
+                let seg = seg.autofocus_chosen(is_last(&it.key())).on_pick(move |i| {
+                    let want = MODES[i];
+                    if !free(&st) || Some(i) == cur {
+                        return;
+                    }
+                    // Never sent above the cap (the button is disabled too).
+                    if reasons.iter().any(|(m, _)| *m == want) {
+                        return;
+                    }
+                    put(&c, &st, &tgt, &Item::Row(path.clone()), mode_payload(level, &pol, &path, want));
+                });
+                col = col.child(
+                    Element::new()
+                        .style(LayoutStyle::row().height(Dimension::Cells(1)).shrink(0.0))
+                        .child(indent(
+                            fill_line(
+                                LayoutStyle::default().width(Dimension::Cells(12)).height(Dimension::Cells(1)),
+                                vec![Ink::new(format!("{}:", T::ACCESS_LABEL), t.text_muted)],
+                                None,
+                            ),
+                            4,
+                        ))
+                        .child(seg.view(cx, &t))
+                        .build(),
+                );
+                for (md, why) in &r.reasons {
+                    col = col.child(indent(
+                        sentence(&t, &format!("{}: {why}", md.label()), width - 4, t.text_faint),
+                        4,
+                    ));
+                }
+            }
+            col = col.child(note_line(st, it.key(), width));
         }
-        out.push(note_view(it.key()));
-        if sel_item.as_ref() == Some(&it) {
-            *sel_range = (start, out.n);
-        }
+        col
     };
     let allowed = view.allowed_rows();
     let refused = view.refused_rows();
-    if !allowed.is_empty() {
-        out.push(line(vec![span_bold(
-            format!("  {}", T::ALLOWED_TITLE),
-            t.text,
-        )]));
-        for r in &allowed {
-            row_lines(&mut out, r, &mut sel_range);
-        }
-    }
-    if !refused.is_empty() {
-        out.push(line(vec![span_bold(
-            format!("  {}", T::DENIED_TITLE),
-            t.text,
-        )]));
-        for r in &refused {
-            row_lines(&mut out, r, &mut sel_range);
-        }
-    }
+    col = rows_block(col, T::ALLOWED_TITLE, &allowed);
+    col = rows_block(col, T::DENIED_TITLE, &refused);
     // ---- Everything else (posture b)
     if let Some((mode, editable)) = view.everything_else {
-        let it = Item::EverythingElse;
-        let (m, ink) = mark(&it);
-        let start = out.n;
-        out.push(line(vec![span(m, ink), span_bold(T::EVERYTHING_ELSE, ink)]));
-        if editable {
-            let opts: Vec<(String, bool)> = ACCESS
-                .iter()
-                .map(|md| (md.label().to_string(), true))
-                .collect();
-            let cur = ACCESS.iter().position(|md| *md == mode).unwrap_or(0);
-            out.push(line(vec![span(
-                format!("        {}: {}", T::ACCESS_LABEL, segmented(&opts, cur)),
-                if sel_item.as_ref() == Some(&it) {
-                    t.accent
-                } else {
-                    t.text
-                },
-            )]));
-        } else {
-            out.push(line(vec![span(
-                format!("        {}", mode.label()),
-                t.text_muted,
-            )]));
-        }
-        out.push(note_view(it.key()));
-        if sel_item.as_ref() == Some(&it) {
-            sel_range = (start, out.n);
-        }
-    }
-    // ---- The add row
-    if view.can_add {
-        let it = Item::Add;
-        let (m, ink) = mark(&it);
-        let start = out.n;
-        if editing && sel_item.as_ref() == Some(&it) {
+        col = col.child(heading(T::EVERYTHING_ELSE));
+        if editable && editable_level {
+            let cur = ACCESS.iter().position(|a| *a == mode);
             let c = ctx.clone();
             let tgt = target.clone();
-            let policy = state.policy.clone();
-            out.push(kit::inline_input(
-                cx,
-                &t,
-                &format!("{m}{}:", T::ADD_PLACEHOLDER),
-                st.draft,
-                T::ADD_PLACEHOLDER,
-                move |typed| {
-                    if typed.trim().is_empty() || st.pending.get_untracked().is_some() {
-                        return;
+            let pol = state.policy.clone();
+            let seg = super::w::Segmented::new(ACCESS.iter().map(|m| m.label().to_string()), cur)
+                .autofocus_chosen(is_last("everything-else"))
+                .on_pick(move |i| {
+                    if free(&st) && Some(i) != cur {
+                        put(
+                            &c,
+                            &st,
+                            &tgt,
+                            &Item::EverythingElse,
+                            default_mode_payload(level, &pol, ACCESS[i]),
+                        );
                     }
-                    put(
-                        &c,
-                        &st,
-                        &tgt,
-                        &Item::Add,
-                        add_payload(level, &policy, &typed),
-                    );
-                },
-                move || st.editing.set(false),
-            ));
+                });
+            col = col.child(indent(seg.view(cx, &t), 4));
         } else {
-            out.push(line(vec![
-                span(m, ink),
-                span(format!("+ {}", T::ADD_PLACEHOLDER), ink),
-                span(format!("  (Enter: {})", T::ADD), t.text_faint),
-            ]));
+            col = col.child(indent(sentence(&t, mode.label(), width - 4, t.text_muted), 4));
         }
-        out.push(note_view(it.key()));
-        if sel_item.as_ref() == Some(&it) {
-            sel_range = (start, out.n);
-        }
+        col = col.child(note_line(st, Item::EverythingElse.key(), width));
     }
-    if view.posture == Posture::AllowedOnly && allowed.is_empty() {
-        out.wrap(T::EMPTY_ALLOWED, 0, width, t.text_muted);
-    }
-    // The effective line, verbatim.
-    out.push(line(vec![span(String::new(), t.text)]));
-    out.wrap(&view.summary, 0, width, t.text);
-
-    // Keep the selection on screen.
-    {
-        let (vh, scroll) = (st.viewport.get_untracked().1, st.scroll.get_untracked());
-        if vh > 0 {
-            let (a, b) = sel_range;
-            let want = if a < scroll {
-                a
-            } else if b > scroll + vh {
-                (b - vh).max(0)
-            } else {
-                scroll
-            };
-            if want != scroll {
-                st.scroll.set(want);
-            }
-        }
-    }
-
-    let mut col = Element::new().style(LayoutStyle::column().gap(0));
-    for v in out.col {
-        col = col.child(v);
-    }
-    if !editing {
-        col = col.focusable().autofocus();
-    }
-    let keys_ctx = ctx.clone();
-    let tgt = target.clone();
-    let col = col.on(Phase::Bubble, move |ectx, ev| {
-        if let UiEvent::Key(k) = ev {
-            if k.mods.0 != 0 || st.editing.get_untracked() {
+    // ---- The add row: a text field + Add (Enter in the field adds too).
+    if view.can_add && editable_level {
+        let c = ctx.clone();
+        let tgt = target.clone();
+        let pol = state.policy.clone();
+        let add = std::rc::Rc::new(move || {
+            let typed = st.draft.get_untracked();
+            if typed.trim().is_empty() || !free(&st) {
                 return;
             }
-            let handled = handle_key(&keys_ctx, &tgt, st, &state, &view, &list, k.key);
-            if handled {
-                ectx.stop_propagation();
-            }
-        }
-    });
-    Scroll::new(col.build())
-        .axes(false, true)
-        .offset_y(st.scroll)
-        .viewport_size_signal(st.viewport)
-        .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))
-        .scrollbar_auto_hide(true)
-        .view(cx)
-}
-
-/// The step from `cur` one place left (-1) or right (+1), clamped.
-fn step(len: usize, cur: usize, dir: i32) -> Option<usize> {
-    let next = cur as i32 + dir;
-    (next >= 0 && (next as usize) < len).then_some(next as usize)
-}
-
-fn handle_key(
-    ctx: &Ctx,
-    target: &Target,
-    st: St,
-    state: &State,
-    view: &ChooserView,
-    list: &[Item],
-    key: Key,
-) -> bool {
-    let n = list.len();
-    let at = st.sel.get_untracked().min(n.saturating_sub(1));
-    let level = target.level();
-    let Some(item) = list.get(at).cloned() else {
-        // Nothing selectable (following / locked): the arrows stay ours.
-        return matches!(key, Key::Up | Key::Down | Key::Left | Key::Right);
-    };
-    let busy = st.pending.with_untracked(Option::is_some);
-    match key {
-        Key::Up => {
-            st.sel.set(at.saturating_sub(1));
-            true
-        }
-        Key::Down => {
-            st.sel.set((at + 1).min(n.saturating_sub(1)));
-            true
-        }
-        // One write at a time (a press while one is in flight would act on
-        // the state shown before it landed).
-        Key::Left | Key::Right | Key::Char(' ') | Key::Enter | Key::Char('x') | Key::Delete
-            if busy =>
-        {
-            true
-        }
-        Key::Left | Key::Right => {
-            let dir = if key == Key::Left { -1 } else { 1 };
-            match &item {
-                Item::Posture => {
-                    let cur = POSTURES
-                        .iter()
-                        .position(|p| *p == view.posture)
-                        .unwrap_or(0);
-                    if let Some(i) = step(POSTURES.len(), cur, dir) {
-                        put(
-                            ctx,
-                            &st,
-                            target,
-                            &item,
-                            posture_payload(level, &state.policy, POSTURES[i]),
-                        );
-                    }
-                }
-                Item::Row(path) => {
-                    if let Some(r) = view.rows.iter().find(|r| &r.path == path && !r.builtin) {
-                        let cur = MODES.iter().position(|m| *m == r.mode).unwrap_or(0);
-                        if let Some(i) = step(MODES.len(), cur, dir) {
-                            let want = MODES[i];
-                            match r.reason(want) {
-                                // Above the cap: refused with the kit's sentence (the
-                                // line under the row says it; the status line echoes the
-                                // refused press), nothing sent.
-                                Some(why) => ctx
-                                    .store
-                                    .notice
-                                    .set(Some(format!("{}: {why}", want.label()))),
-                                None => put(
-                                    ctx,
-                                    &st,
-                                    target,
-                                    &item,
-                                    mode_payload(level, &state.policy, path, want),
-                                ),
-                            }
-                        }
-                    }
-                }
-                Item::EverythingElse => {
-                    let cur = view
-                        .everything_else
-                        .and_then(|(m, _)| ACCESS.iter().position(|a| *a == m))
-                        .unwrap_or(0);
-                    if let Some(i) = step(ACCESS.len(), cur, dir) {
-                        put(
-                            ctx,
-                            &st,
-                            target,
-                            &item,
-                            default_mode_payload(level, &state.policy, ACCESS[i]),
-                        );
-                    }
-                }
-                _ => return false,
-            }
-            true
-        }
-        Key::Char(' ') | Key::Enter => {
-            match &item {
-                Item::Follow => match follow_payload(state, !view.following) {
-                    Ok(b) => put(ctx, &st, target, &item, b),
-                    Err(e) => set_note(&st, &item.key(), &e, NoteTone::Error),
-                },
-                Item::Add if key == Key::Enter => {
-                    st.notes.update(|n| n.retain(|(k, _, _)| k != "add"));
-                    st.editing.set(true);
-                }
-                _ => return key == Key::Char(' '),
-            }
-            true
-        }
-        Key::Char('x') | Key::Delete => {
-            if let Item::Row(path) = &item {
-                put(
-                    ctx,
-                    &st,
-                    target,
-                    &item,
-                    remove_payload(level, &state.policy, path),
-                );
-                return true;
-            }
-            false
-        }
-        _ => false,
+            put(&c, &st, &tgt, &Item::Add, add_payload(level, &pol, &typed));
+        });
+        let add_enter = add.clone();
+        let field = TextInput::new()
+            .value(st.draft)
+            .placeholder(T::ADD_PLACEHOLDER)
+            .on_submit(move |_| add_enter())
+            .layout(LayoutStyle::default().grow(1.0).h(1))
+            .element(cx, &t);
+        let field = if is_last("add") { field.autofocus() } else { field }.build();
+        let a = super::w::Action::label("add", T::ADD);
+        let btn = super::w::action::button(cx, &t, &a, super::w::action::On::Raised, true, move || add());
+        col = col.child(
+            Element::new()
+                .style(LayoutStyle::row().height(Dimension::Cells(1)).gap(1).shrink(0.0))
+                .child(field)
+                .child(btn)
+                .build(),
+        );
+        col = col.child(note_line(st, Item::Add.key(), width));
     }
+    if view.posture == Posture::AllowedOnly && allowed.is_empty() {
+        col = col.child(sentence(&t, T::EMPTY_ALLOWED, width, t.text_muted));
+    }
+    // The effective line, verbatim.
+    col = col
+        .child(Element::new().style(LayoutStyle::line(1).shrink(0.0)).build())
+        .child(sentence(&t, &view.summary, width, t.text));
+    col.build()
 }
 
 // ---------------------------------------------------------------------------

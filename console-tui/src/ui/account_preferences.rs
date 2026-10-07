@@ -13,11 +13,8 @@
 //! `actions.preferences`).
 
 use abstracttui::prelude::*;
-use abstracttui::ui::{Phase, UiEvent};
 use serde_json::{json, Value};
 
-use super::kit;
-use super::util::{line, span, span_bold, wrap_text};
 use super::Ctx;
 use crate::store::accounts::AccountRow;
 use crate::store::json::WriteState;
@@ -200,19 +197,15 @@ enum Tone {
 
 #[derive(Clone, Copy)]
 struct St {
-    /// The app row under the cursor.
-    sel: Signal<usize>,
-    /// Picking: the option under the cursor of the open row.
-    picking: Signal<Option<usize>>,
     /// (interface, text, tone) beside each row.
     notes: Signal<Vec<(String, String, Tone)>>,
     /// The interface of the write in flight.
     pending: Signal<Option<String>>,
-    scroll: Signal<i32>,
-    viewport: Signal<(i32, i32)>,
 }
 
-/// `p` on an Accounts row: the row's Preferences.
+/// `p` / the ⊜ button on an Accounts row: the row's Preferences (R15: one
+/// form modal — each app a Select, every commit one PUT, "Saved." /
+/// "Not saved. …" under the row).
 pub fn open(cx: Scope, ctx: &Ctx, row: AccountRow) {
     let slot = format!("prefs.{}.{}", row.tenant_id, row.id);
     let wk = format!("{slot}.write");
@@ -221,29 +214,23 @@ pub fn open(cx: Scope, ctx: &Ctx, row: AccountRow) {
     ctx.send(Cmd::Json(JsonCmd::get(&slot, p.clone())));
     let c = ctx.clone();
     let id = row.id.clone();
-    kit::open_overlay(
-        ctx,
-        cx,
-        title(&id),
-        &[("↑/↓", "choose"), ("Enter", "change / pick")],
-        move |mcx, _close, guard| {
+    super::w::FormModal::new(title(&id))
+        .lead(lead(&id))
+        .size(96, 30)
+        .open(ctx, cx, move |mcx, close, _guard, w| {
             let st = St {
-                sel: mcx.signal(0),
-                picking: mcx.signal(None),
                 notes: mcx.signal(Vec::new()),
                 pending: mcx.signal(None),
-                scroll: mcx.signal(0),
-                viewport: mcx.signal((0, 0)),
             };
             {
                 let store = c.store;
                 let wk = wk.clone();
                 mcx.effect(move || {
-                    let w = store.json.write(&wk);
+                    let wst = store.json.write(&wk);
                     let Some(iface) = st.pending.get_untracked() else {
                         return;
                     };
-                    let (text, tone) = match w {
+                    let (text, tone) = match wst {
                         Some(WriteState::Done(_)) => (SAVED.to_string(), Tone::Ok),
                         Some(WriteState::Failed(e)) => (refusal(&e), Tone::Error),
                         _ => return,
@@ -256,39 +243,51 @@ pub fn open(cx: Scope, ctx: &Ctx, row: AccountRow) {
                     store.json.set_write(&wk, None);
                 });
             }
-            // Esc first closes an open pick list (the overlay stays).
-            *guard.borrow_mut() = Some(Box::new(move || {
-                if st.picking.get_untracked().is_some() {
-                    st.picking.set(None);
-                    return true;
-                }
-                false
-            }));
             let (c2, slot2, wk2, p2, id2) =
                 (c.clone(), slot.clone(), wk.clone(), p.clone(), id.clone());
+            let t = use_theme(mcx).get().tokens;
+            let close2 = close.clone();
             Element::new()
-                .style(LayoutStyle::column().gap(0).grow(1.0))
+                .style(LayoutStyle::column().grow(1.0))
                 .child(dyn_view_scoped(
-                    LayoutStyle::column().gap(0).grow(1.0),
-                    move |gcx| body(gcx, &c2, &slot2, &wk2, &p2, &id2, st),
+                    LayoutStyle::column().shrink(0.0),
+                    move |gcx| body(gcx, &c2, &slot2, &wk2, &p2, &id2, st, w),
                 ))
+                .child(Element::new().style(LayoutStyle::default().grow(1.0)).build())
+                .child(super::w::form::button_row(vec![super::w::action::button(
+                    mcx,
+                    &t,
+                    &super::w::Action::label("close", "Close"),
+                    super::w::action::On::Raised,
+                    true,
+                    move || close2(),
+                )]))
                 .build()
-        },
-    );
+        });
 }
 
-fn body(cx: Scope, ctx: &Ctx, slot: &str, wk: &str, path: &str, id: &str, st: St) -> View {
+#[allow(clippy::too_many_arguments)]
+fn body(
+    cx: Scope,
+    ctx: &Ctx,
+    slot: &str,
+    wk: &str,
+    path: &str,
+    id: &str,
+    st: St,
+    width: i32,
+) -> View {
+    use super::w::form::sentence;
     let t = use_theme(cx).get().tokens;
-    let width = (crate::ui::page_viewport(cx).get().w - 8).max(24);
     let prefs = match ctx.store.json.get(slot) {
         Loadable::Ready(v) => parse(&v),
         Loadable::Failed(e) => Err(super::workspace_chooser::error_sentence(&e)),
-        _ => return kit::sentence(&t, READING, width, t.text_muted),
+        _ => return sentence(&t, READING, width, t.text_muted),
     };
     let prefs = match prefs {
         Ok(p) => p,
         Err(e) => {
-            return kit::sentence(
+            return sentence(
                 &t,
                 &format!("Could not read the preferences of {id}: {e}"),
                 width,
@@ -296,176 +295,116 @@ fn body(cx: Scope, ctx: &Ctx, slot: &str, wk: &str, path: &str, id: &str, st: St
             )
         }
     };
-    let n = prefs.apps.len();
-    let at = st.sel.get().min(n.saturating_sub(1));
-    let picking = st.picking.get();
-    let busy = st.pending.get().is_some();
-    let mut lines: Vec<View> = Vec::new();
-    let mut sel_range = (0, 0);
-    for l in wrap_text(&lead(id), width as usize) {
-        lines.push(line(vec![span(l, t.text_muted)]));
-    }
-    for (i, app) in prefs.apps.iter().enumerate() {
-        let selected = i == at;
-        let start = lines.len() as i32;
-        let (mark, ink) = if selected {
-            ("▸ ", t.accent)
+    let label_w = prefs
+        .apps
+        .iter()
+        .map(|a| abstracttui::text::width(&a.label) + 2)
+        .max()
+        .unwrap_or(10)
+        .min(width / 2);
+    let mut col = Element::new().style(LayoutStyle::column().shrink(0.0));
+    for app in prefs.apps.iter() {
+        let opts = app.options();
+        let cur = opts.iter().position(|(v, _)| *v == app.value).unwrap_or(0);
+        let chosen = cx.signal(cur);
+        let select = if prefs.can_edit {
+            let c = ctx.clone();
+            let app2 = app.clone();
+            let opts2 = opts.clone();
+            let (wk, path) = (wk.to_string(), path.to_string());
+            abstracttui::app::select::Select::new(
+                opts.iter()
+                    .map(|(_, l)| abstracttui::app::select::SelectOption::new(l.clone()))
+                    .collect(),
+            )
+            .value(chosen)
+            .on_change(move |i| {
+                let Some((value, _)) = opts2.get(i) else { return };
+                if *value == app2.value || st.pending.with_untracked(Option::is_some) {
+                    return;
+                }
+                st.pending.set(Some(app2.interface.clone()));
+                st.notes.update(|n| n.retain(|(k, _, _)| *k != app2.interface));
+                c.store.json.set_write(&wk, Some(WriteState::Pending));
+                let slot = wk.trim_end_matches(".write").to_string();
+                c.send(Cmd::Json(JsonCmd::Send {
+                    key: wk.clone(),
+                    method: "PUT".into(),
+                    path: path.clone(),
+                    body: put_body(&app2.interface, value.as_deref()),
+                    slow: false,
+                    label: format!("{} — {}", app2.label, "Default workflow"),
+                    reload: vec![(slot, path.clone())],
+                    journal: false,
+                }));
+            })
+            .view(cx)
         } else {
-            ("  ", t.text)
+            sentence(&t, &app.current_label(), width - label_w, t.text)
         };
-        let open = selected && picking.is_some();
-        let mut spans = vec![span(mark, ink), span_bold(format!("{}: ", app.label), ink)];
-        if !open {
-            spans.push(span(app.current_label(), t.text));
-            if prefs.can_edit && selected && !busy {
-                spans.push(span("  (Enter: change)", t.text_faint));
-            }
-            if busy && st.pending.get_untracked().as_deref() == Some(app.interface.as_str()) {
-                spans.push(span(" · saving…", t.text_faint));
-            }
-        }
-        lines.push(line(spans));
-        if open {
-            let cur = picking.unwrap_or(0);
-            for (j, (v, label)) in app.options().iter().enumerate() {
-                let on = *v == app.value;
-                let here = j == cur;
-                lines.push(line(vec![span(
-                    format!(
-                        "    {}{} {label}",
-                        if here { "▸" } else { " " },
-                        if on { "●" } else { " " }
-                    ),
-                    if here { t.accent } else { t.text },
-                )]));
-            }
-        }
+        let label = super::w::paint::fill_line(
+            LayoutStyle::default()
+                .width(Dimension::Cells(label_w))
+                .height(Dimension::Cells(1))
+                .shrink(0.0),
+            vec![super::w::Ink::new(&app.label, t.text)],
+            None,
+        );
+        let label = super::w::tip::with_tip(
+            cx,
+            Element::new()
+                .style(LayoutStyle::default().width(Dimension::Cells(label_w)).height(Dimension::Cells(1)).shrink(0.0))
+                .child(label),
+            app.help.clone().unwrap_or_default(),
+        )
+        .build();
+        col = col.child(
+            Element::new()
+                .style(LayoutStyle::row().height(Dimension::Cells(1)).shrink(0.0))
+                .child(label)
+                .child(
+                    Element::new()
+                        .style(LayoutStyle::default().width(Dimension::Cells((width - label_w).min(56))).height(Dimension::Cells(1)))
+                        .child(select)
+                        .build(),
+                )
+                .build(),
+        );
         if let Some(h) = &app.help {
-            for l in wrap_text(h, (width - 6).max(10) as usize) {
-                lines.push(line(vec![span(format!("      {l}"), t.text_faint)]));
-            }
+            col = col.child(sentence(&t, h, width, t.text_faint));
         }
-        if let Some(s) = app.state_line() {
-            for l in wrap_text(&s, (width - 6).max(10) as usize) {
-                lines.push(line(vec![span(format!("      {l}"), t.warn)]));
-            }
+        if let Some(sl) = app.state_line() {
+            col = col.child(sentence(&t, &sl, width, t.warn));
         }
-        // "Saved." / "Not saved. …" beside the row.
-        let note = st.notes.with_untracked(|n| {
-            n.iter()
-                .find(|(k, _, _)| *k == app.interface)
-                .map(|(_, tx, tone)| (tx.clone(), *tone))
-        });
-        if let Some((text, tone)) = note {
-            for l in wrap_text(&text, (width - 6).max(10) as usize) {
-                lines.push(line(vec![span(
-                    format!("      {l}"),
-                    if tone == Tone::Ok { t.ok } else { t.error },
-                )]));
-            }
-        }
-        if selected {
-            sel_range = (start, lines.len() as i32);
-        }
-    }
-    let _ = st.notes.get();
-    // Keep the selected row (and its pick list) on screen.
-    {
-        let (vh, scroll) = (st.viewport.get_untracked().1, st.scroll.get_untracked());
-        if vh > 0 {
-            let (a, b) = sel_range;
-            let want = if a < scroll {
-                a
-            } else if b > scroll + vh {
-                (b - vh).max(0).min(a)
-            } else {
-                scroll
-            };
-            if want != scroll {
-                st.scroll.set(want);
-            }
-        }
-    }
-    let mut col = Element::new()
-        .style(LayoutStyle::column().gap(0))
-        .focusable()
-        .autofocus();
-    for v in lines {
-        col = col.child(v);
-    }
-    let keys_ctx = ctx.clone();
-    let (wk, path) = (wk.to_string(), path.to_string());
-    let col = col.on(Phase::Bubble, move |ectx, ev| {
-        if let UiEvent::Key(k) = ev {
-            if k.mods.0 != 0 {
-                return;
-            }
-            let handled = keys(&keys_ctx, &prefs, st, &wk, &path, k.key);
-            if handled {
-                ectx.stop_propagation();
-            }
-        }
-    });
-    Scroll::new(col.build())
-        .axes(false, true)
-        .offset_y(st.scroll)
-        .viewport_size_signal(st.viewport)
-        .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))
-        .scrollbar_auto_hide(true)
-        .view(cx)
-}
-
-fn keys(ctx: &Ctx, prefs: &Prefs, st: St, wk: &str, path: &str, key: Key) -> bool {
-    let n = prefs.apps.len();
-    let at = st.sel.get_untracked().min(n.saturating_sub(1));
-    let Some(app) = prefs.apps.get(at) else {
-        return false;
-    };
-    let busy = st.pending.with_untracked(Option::is_some);
-    match (st.picking.get_untracked(), key) {
-        (Some(cur), Key::Up) => st.picking.set(Some(cur.saturating_sub(1))),
-        (Some(cur), Key::Down) => st
-            .picking
-            .set(Some((cur + 1).min(app.options().len().saturating_sub(1)))),
-        (Some(cur), Key::Enter) | (Some(cur), Key::Char(' ')) => {
-            st.picking.set(None);
-            let opts = app.options();
-            let Some((value, _)) = opts.get(cur) else {
-                return true;
-            };
-            if *value == app.value || busy {
-                return true;
-            }
-            st.pending.set(Some(app.interface.clone()));
-            st.notes
-                .update(|n| n.retain(|(k, _, _)| *k != app.interface));
-            ctx.store.json.set_write(wk, Some(WriteState::Pending));
-            let slot = wk.trim_end_matches(".write").to_string();
-            ctx.send(Cmd::Json(JsonCmd::Send {
-                key: wk.to_string(),
-                method: "PUT".into(),
-                path: path.to_string(),
-                body: put_body(&app.interface, value.as_deref()),
-                slow: false,
-                label: format!("{} — {}", app.label, "Default workflow"),
-                reload: vec![(slot, path.to_string())],
-                journal: false,
+        // The row's live state line (its own region: an outcome never
+        // rebuilds the Selects, so focus stays where the keyboard is).
+        {
+            let iface = app.interface.clone();
+            col = col.child(dyn_view(LayoutStyle::column().shrink(0.0), move || {
+                let t = abstracttui::app::current_theme().tokens;
+                if st.pending.get().as_deref() == Some(iface.as_str()) {
+                    return sentence(&t, "Saving…", width, t.text_muted);
+                }
+                let note = st.notes.with(|n| {
+                    n.iter()
+                        .find(|(k, _, _)| *k == iface)
+                        .map(|(_, t, tone)| (t.clone(), *tone))
+                });
+                match note {
+                    Some((text, tone)) => {
+                        sentence(&t, &text, width, if tone == Tone::Ok { t.ok } else { t.error })
+                    }
+                    None => Element::new().style(LayoutStyle::default().h(0)).build(),
+                }
             }));
         }
-        (None, Key::Up) => st.sel.set(at.saturating_sub(1)),
-        (None, Key::Down) => st.sel.set((at + 1).min(n.saturating_sub(1))),
-        (None, Key::Enter) | (None, Key::Char(' ')) => {
-            if prefs.can_edit && !busy {
-                let opts = app.options();
-                st.picking.set(Some(
-                    opts.iter().position(|(v, _)| *v == app.value).unwrap_or(0),
-                ));
-            }
-        }
-        _ => return false,
+        col = col.child(Element::new().style(LayoutStyle::line(1).shrink(0.0)).build());
     }
-    true
+    col.build()
 }
+
+
+
 
 #[cfg(test)]
 mod tests {

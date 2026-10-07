@@ -9,7 +9,6 @@ use abstracttui::prelude::*;
 use abstracttui::widgets::{Table, Tone};
 use serde_json::{json, Value};
 
-use super::kit::{self, Row, WrapTable};
 use super::w::action::{button, On};
 use super::w::{Action, Cell, Col, ColW, DataTable, Row as WRow};
 use super::util::{field, line, span, span_bold};
@@ -1474,19 +1473,15 @@ fn email_selected(cx: Scope, ctx: &Ctx) {
 
 /// Another user's mailbox, read-only, in the web's words.
 pub fn other_mailbox_line(r: &AccountRow) -> String {
+    // The web's sentences (console.py, another user's Email modal).
     match r.mailbox.state.as_str() {
-        "connected" => match &r.mailbox.address {
-            Some(a) => format!("Connected as {a}."),
-            None => "Connected.".to_string(),
-        },
-        "paused" => format!("Paused — {} turned their mailbox off.", r.id),
-        "unavailable" => r
-            .mailbox
-            .reason
-            .clone()
-            .unwrap_or_else(|| "Mailboxes are not available for this account.".into()),
+        "connected" => format!(
+            "Mailbox: connected as {}. You never see anyone's mail.",
+            r.mailbox.address.clone().unwrap_or_default()
+        ),
+        "paused" => format!("Mailbox: paused by {}. You never see anyone's mail.", r.id),
         _ => format!(
-            "Not connected — only {} can connect a mailbox. You never see anyone's mail.",
+            "Mailbox: not connected — only {} can connect a mailbox. You never see anyone's mail.",
             r.id
         ),
     }
@@ -1524,236 +1519,7 @@ pub fn kind_tone(label: &str) -> Tone {
 }
 
 
-/// `l`: the activity of the selected account (admin) or your own.
-fn open_activity(cx: Scope, ctx: &Ctx) {
-    let target = if uses_accounts(ctx) {
-        match selected_account(ctx) {
-            Some(r) => {
-                if let Some(why) = r.refusal("logs") {
-                    ctx.store.notice.set(Some(why));
-                    return;
-                }
-                if is_own(&ctx.store, &r) {
-                    None
-                } else {
-                    Some((r.id.clone(), r.tenant_id.clone()))
-                }
-            }
-            None => None,
-        }
-    } else {
-        None
-    };
-    let who = match (&target, own_key(&ctx.store)) {
-        (Some((id, _)), _) => id.clone(),
-        (None, Some((id, _))) => id,
-        (None, None) => "you".to_string(),
-    };
-    let key = target
-        .as_ref()
-        .map(|(i, t)| format!("{t}/{i}"))
-        .unwrap_or_else(|| "me".to_string());
-    let filter = ctx.ui.activity_filter;
-    filter.set(0);
-    // A non-admin reads its own entities' activity through /me/accounts.
-    let mine = ctx.store.conn.with_untracked(ConnPhase::is_known_non_admin);
-    ctx.send(Cmd::LoadActivity {
-        target: target.clone(),
-        mine,
-        key: key.clone(),
-        kind: String::new(),
-    });
-    let ctx2 = ctx.clone();
-    super::open_form(
-        ctx,
-        cx,
-        crate::ui::page_viewport(cx).get_untracked(),
-        move |mcx, _close| {
-            let theme = use_theme(mcx);
-            let store = ctx2.store;
-            let cycle = {
-                let ctx3 = ctx2.clone();
-                let target = target.clone();
-                let key = key.clone();
-                move |dir: isize| {
-                    let n = ACTIVITY_FILTERS.len() as isize;
-                    let next = (filter.get_untracked() as isize + dir).rem_euclid(n) as usize;
-                    filter.set(next);
-                    ctx3.send(Cmd::LoadActivity {
-                        target: target.clone(),
-                        mine,
-                        key: key.clone(),
-                        kind: ACTIVITY_FILTERS[next].1.to_string(),
-                    });
-                }
-            };
-            let cycle_b = cycle.clone();
-            let sel = mcx.signal(0usize);
-            // The list regenerates on each filter: the keeper hands the
-            // keyboard (and with it Esc) to each new instance.
-            let keeper = super::util::FocusKeeper::new();
-            let open_obs = {
-                let ctx_o = ctx2.clone();
-                move || {
-                    let ev = store.activity.with_untracked(|a| match a {
-                        Some((_, _, Loadable::Ready(d))) => {
-                            d.events.get(sel.get_untracked()).cloned()
-                        }
-                        _ => None,
-                    });
-                    let Some(ev) = ev else { return };
-                    let path = match (&ev.observer_path, &ev.run_id) {
-                        (Some(p), _) => p.clone(),
-                        (None, Some(id)) => format!("/apps/observer/#run/{id}"),
-                        _ => {
-                            ctx_o
-                                .store
-                                .notice
-                                .set(Some("this event has no run to open".into()));
-                            return;
-                        }
-                    };
-                    OBSERVER_PENDING.with(|p| p.set(true));
-                    ctx_o.send(Cmd::AppAct {
-                        app_id: "observer".into(),
-                        name: "AbstractObserver".into(),
-                        verb: crate::store::apps::AppVerb::Open,
-                        path: Some(path),
-                        start_first: false,
-                    });
-                }
-            };
-            Element::new()
-                .focusable()
-                .autofocus()
-                .style(LayoutStyle::column().gap(0).grow(1.0))
-                .shortcut(KeyChord::plain(Key::Char('f')), move |_| cycle(1))
-                .shortcut(KeyChord::plain(Key::Char('F')), move |_| cycle_b(-1))
-                .shortcut(KeyChord::plain(Key::Char('o')), move |_| open_obs())
-                .child(dyn_view(LayoutStyle::line(1), {
-                    let who = who.clone();
-                    move || {
-                        let t = theme.get().tokens;
-                        line(vec![span_bold(format!("Activity — {who}"), t.accent)])
-                    }
-                }))
-                // The filter chips: the current one lit (f / F cycle).
-                .child(dyn_view(LayoutStyle::line(1), move || {
-                    let t = theme.get().tokens;
-                    let cur = filter.get();
-                    let mut spans = vec![];
-                    for (i, (label, _)) in ACTIVITY_FILTERS.iter().enumerate() {
-                        if i > 0 {
-                            spans.push(span(" · ", t.text_faint));
-                        }
-                        if i == cur {
-                            spans.push(span_bold(format!("[{label}]"), t.accent));
-                        } else {
-                            spans.push(span(label.to_string(), t.text_muted));
-                        }
-                    }
-                    line(spans)
-                }))
-                .child(dyn_view_scoped(
-                    LayoutStyle::column().grow(1.0).min_h(3),
-                    move |gcx| {
-                        let t = theme.get().tokens;
-                        let width = crate::ui::page_viewport(gcx).get().w - 6;
-                        match store.activity.get().map(|(_, _, d)| d) {
-                            None | Some(Loadable::NotAsked) | Some(Loadable::Loading) => {
-                                keeper.anchor(line(vec![span("Loading…", t.text_muted)]))
-                            }
-                            Some(Loadable::Failed(e)) => keeper.anchor(kit::sentence(
-                                &t,
-                                &crate::worker::skills::refusal_text(&e),
-                                width,
-                                t.error,
-                            )),
-                            Some(Loadable::Ready(d)) if d.events.is_empty() => keeper
-                                .anchor(kit::sentence(&t, ACTIVITY_EMPTY, width, t.text_muted)),
-                            Some(Loadable::Ready(d)) => {
-                                keeper.wire(activity_table(gcx, &t, &d, sel))
-                            }
-                        }
-                    },
-                ))
-                .child(dyn_view_scoped(
-                    LayoutStyle::column().gap(0).shrink(0.0),
-                    move |gcx| {
-                        let t = theme.get().tokens;
-                        let width = crate::ui::page_viewport(gcx).get().w - 6;
-                        let mut col =
-                            Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
-                        if let Some((_, _, Loadable::Ready(d))) = store.activity.get() {
-                            if let Some(note) = d.note.clone().filter(|n| !n.trim().is_empty()) {
-                                col =
-                                    col.child(kit::sentence(&t, note.trim(), width, t.text_faint));
-                            }
-                        }
-                        col.child(kit::key_hint_bar(
-                            &t,
-                            &[
-                                ("f / F", "filter"),
-                                ("Enter", "expand"),
-                                ("o", "Open in Observer"),
-                                ("esc", "close"),
-                            ],
-                            width,
-                        ))
-                        .build()
-                    },
-                ))
-                .build()
-        },
-    );
-}
 
-/// One row per event, newest first (time · event · detail), wrapping;
-/// the run and its Observer link in the row's detail.
-fn activity_table(
-    cx: Scope,
-    t: &TokenSet,
-    d: &crate::store::accounts::ActivityData,
-    sel: Signal<usize>,
-) -> Element {
-    let today = crate::localtime::local_today();
-    let rows: Vec<Row> = d
-        .events
-        .iter()
-        .map(|e| {
-            let title = if e.ok {
-                e.title.clone()
-            } else {
-                format!("✗ {}", e.title)
-            };
-            let mut detail = Vec::new();
-            if let Some(id) = &e.run_id {
-                detail.push(format!("Run {id} — o Open in Observer"));
-            } else if e.observer_path.is_some() {
-                detail.push("o Open in Observer".into());
-            }
-            Row::new(vec![
-                activity_time(&e.ts, &today),
-                title,
-                e.detail.clone().unwrap_or_default(),
-            ])
-            .detail(detail)
-            .dim(!e.ok)
-        })
-        .collect();
-    let expanded = cx.signal(None);
-    WrapTable::new(
-        vec![
-            widths::ColRule::head("Time", 11),
-            widths::ColRule::head("Event", 16),
-            widths::ColRule::head("Detail", 20),
-        ],
-        rows,
-        sel,
-    )
-    .expanded(expanded)
-    .element(cx, t)
-}
 
 /// Retained runtime planes (a user moved to another runtime, or a deleted
 /// user before 0.11): transfer to a living user. Never purged — accounts
@@ -2000,7 +1766,7 @@ fn open_user_form(cx: Scope, ctx: &Ctx, existing: Option<UserRow>) {
             let tenant = mcx.signal(String::new());
             let runtime = mcx.signal(String::new());
             // Advanced (create only): the tenant and runtime binding.
-            let advanced = mcx.signal(false);
+            let advanced = mcx.signal(true);
             let form_error = mcx.signal(Option::<String>::None);
             let in_flight = mcx.signal(false);
             let esc_armed = mcx.signal(false);
@@ -2104,16 +1870,11 @@ fn open_user_form(cx: Scope, ctx: &Ctx, existing: Option<UserRow>) {
                 .child(if create {
                     // A disclosure (not a setting): opens the two rarely-set
                     // bindings below.
-                    dyn_view_scoped(LayoutStyle::line(1).shrink(0.0), move |dcx| {
+                    // R15 D1: no "Advanced" — a visible section named by its
+                    // content (COORD "R15 SECTION NAMES").
+                    dyn_view_scoped(LayoutStyle::line(1).shrink(0.0), move |_dcx| {
                         let t = theme.get().tokens;
-                        Button::new(if advanced.get() {
-                            "Advanced ▾"
-                        } else {
-                            "Advanced ▸  runtime, tenant"
-                        })
-                        .on_click(move || advanced.update(|v| *v = !*v))
-                        .element(dcx, &t)
-                        .build()
+                        line(vec![span_bold(RUNTIME_TENANT_SECTION, t.text)])
                     })
                 } else {
                     Element::new().style(LayoutStyle::default().h(0)).build()
@@ -2246,6 +2007,8 @@ fn open_user_form(cx: Scope, ctx: &Ctx, existing: Option<UserRow>) {
     );
 }
 
+/// R15 D1 section name (shared with the web console).
+pub const RUNTIME_TENANT_SECTION: &str = "Runtime and tenant";
 pub const USER_ID_HELP: &str = "Letters, digits, dots or dashes. This is how they sign in.";
 pub const EMAIL_ADDRESS_HELP: &str =
     "Where sign-in codes and notifications go. Leave empty if they have none; they can add it later.";
@@ -2319,4 +2082,191 @@ pub fn open_token_modal(cx: Scope, ctx: &Ctx, user: String, token: String) {
                 .build()
         },
     );
+}
+
+/// Activity — <id> (Logs): the web modal — filter chips as a Segmented,
+/// the events as a table with an "Open in Observer" button on rows that
+/// carry a run, the API's note under it.
+fn open_activity(cx: Scope, ctx: &Ctx) {
+    let target = if uses_accounts(ctx) {
+        match selected_account(ctx) {
+            Some(r) => {
+                if let Some(why) = r.refusal("logs") {
+                    ctx.store.notice.set(Some(why));
+                    return;
+                }
+                if is_own(&ctx.store, &r) {
+                    None
+                } else {
+                    Some((r.id.clone(), r.tenant_id.clone()))
+                }
+            }
+            None => None,
+        }
+    } else {
+        None
+    };
+    let who = match (&target, own_key(&ctx.store)) {
+        (Some((id, _)), _) => id.clone(),
+        (None, Some((id, _))) => id,
+        (None, None) => "you".to_string(),
+    };
+    let key = target
+        .as_ref()
+        .map(|(i, t)| format!("{t}/{i}"))
+        .unwrap_or_else(|| "me".to_string());
+    let filter = ctx.ui.activity_filter;
+    filter.set(0);
+    let mine = ctx.store.conn.with_untracked(ConnPhase::is_known_non_admin);
+    ctx.send(Cmd::LoadActivity {
+        target: target.clone(),
+        mine,
+        key: key.clone(),
+        kind: String::new(),
+    });
+    let ctx2 = ctx.clone();
+    super::w::FormModal::new(format!("Activity — {who}"))
+        .size(110, 34)
+        .open(ctx, cx, move |mcx, close, _guard, w| {
+            let store = ctx2.store;
+            let t = use_theme(mcx).get().tokens;
+            let reload = {
+                let ctx3 = ctx2.clone();
+                let target = target.clone();
+                let key = key.clone();
+                move |i: usize| {
+                    filter.set(i);
+                    ctx3.send(Cmd::LoadActivity {
+                        target: target.clone(),
+                        mine,
+                        key: key.clone(),
+                        kind: ACTIVITY_FILTERS[i].1.to_string(),
+                    });
+                }
+            };
+            let chips = super::w::Segmented::new(ACTIVITY_FILTERS.iter().map(|(l, _)| l.to_string()), None)
+                .bind(filter)
+                .on_pick(reload)
+                .view(mcx, &t);
+            let sel = mcx.signal(Option::<String>::None);
+            let ctx_o = ctx2.clone();
+            let table = dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |gcx| {
+                let t = use_theme(gcx).get().tokens;
+                let vp = crate::ui::page_viewport(gcx).get();
+                match store.activity.get().map(|(_, _, d)| d) {
+                    None | Some(Loadable::NotAsked) | Some(Loadable::Loading) => {
+                        super::w::form::sentence(&t, "Loading…", w, t.text_muted)
+                    }
+                    Some(Loadable::Failed(e)) => super::w::form::sentence(
+                        &t,
+                        &crate::worker::skills::refusal_text(&e),
+                        w,
+                        t.error,
+                    ),
+                    Some(Loadable::Ready(d)) => {
+                        let today = crate::localtime::local_today();
+                        let events = d.events.clone();
+                        let rows: Vec<WRow> = events
+                            .iter()
+                            .enumerate()
+                            .map(|(i, e)| {
+                                let title = if e.ok {
+                                    e.title.clone()
+                                } else {
+                                    format!("✗ {}", e.title)
+                                };
+                                let mut acts = Vec::new();
+                                if e.run_id.is_some() || e.observer_path.is_some() {
+                                    acts.push(
+                                        Action::label("observer", "Open in Observer")
+                                            .key('o')
+                                            .tooltip(match &e.run_id {
+                                                Some(id) => format!("Open run {id} in Observer"),
+                                                None => "Open in Observer".into(),
+                                            }),
+                                    );
+                                }
+                                WRow::new(
+                                    i.to_string(),
+                                    vec![
+                                        Cell::text(activity_time(&e.ts, &today), t.text_muted),
+                                        Cell::text(title, if e.ok { t.text } else { t.error }),
+                                        Cell::text(e.detail.clone().unwrap_or_default(), t.text_muted),
+                                        Cell::Actions(acts),
+                                    ],
+                                )
+                            })
+                            .collect();
+                        let ctx_a = ctx_o.clone();
+                        let ev2 = events.clone();
+                        let mut col = Element::new().style(LayoutStyle::column().shrink(0.0));
+                        col = col.child(
+                            DataTable::new(
+                                vec![
+                                    Col::new("Time", ColW::Fit { min: 5, max: 12 }),
+                                    Col::new("Event", ColW::Fit { min: 10, max: 28 }),
+                                    Col::new("Detail", ColW::Flex { weight: 1, min: 12 }),
+                                    Col::new("", ColW::Fit { min: 0, max: 20 }),
+                                ],
+                                rows,
+                                sel,
+                            )
+                            .width(w)
+                            .max_rows((vp.h - 14).max(4))
+                            .empty(ACTIVITY_EMPTY)
+                            .autofocus()
+                            .on_action(move |k, _id| {
+                                if let Some(e) = k.parse::<usize>().ok().and_then(|i| ev2.get(i)) {
+                                    open_in_observer(&ctx_a, e);
+                                }
+                            })
+                            .view(gcx, &t),
+                        );
+                        if let Some(note) = d.note.clone().filter(|n| !n.trim().is_empty()) {
+                            col = col.child(super::w::form::sentence(&t, note.trim(), w, t.text_faint));
+                        }
+                        col.build()
+                    }
+                }
+            });
+            let close2 = close.clone();
+            Element::new()
+                .style(LayoutStyle::column().grow(1.0))
+                .child(chips)
+                .child(Element::new().style(LayoutStyle::line(1).shrink(0.0)).build())
+                .child(table)
+                .child(Element::new().style(LayoutStyle::default().grow(1.0)).build())
+                .child(super::w::form::button_row(vec![button(
+                    mcx,
+                    &t,
+                    &Action::label("close", "Close"),
+                    On::Raised,
+                    true,
+                    move || close2(),
+                )]))
+                .build()
+        });
+}
+
+/// "Open in Observer" for one activity event (a one-time signed-in link
+/// through the Apps lane; the link modal opens on the Accounts page).
+fn open_in_observer(ctx: &Ctx, e: &crate::store::accounts::ActivityEvent) {
+    let path = match (&e.observer_path, &e.run_id) {
+        (Some(p), _) => p.clone(),
+        (None, Some(id)) => format!("/apps/observer/#run/{id}"),
+        _ => {
+            ctx.store
+                .notice
+                .set(Some("this event has no run to open".into()));
+            return;
+        }
+    };
+    OBSERVER_PENDING.with(|p| p.set(true));
+    ctx.send(Cmd::AppAct {
+        app_id: "observer".into(),
+        name: "AbstractObserver".into(),
+        verb: crate::store::apps::AppVerb::Open,
+        path: Some(path),
+        start_first: false,
+    });
 }

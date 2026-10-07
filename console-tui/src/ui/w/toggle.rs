@@ -1,11 +1,14 @@
 //! Toggle (DESIGN-TUI.md §4.4): a state-showing switch — `━●` on (ok
-//! ink), `●─` off (muted), faint when it cannot be switched here (the
-//! reason in its tooltip). The feature label follows when given (table
-//! cells omit it: the column header is the label). No verbs: the label
-//! names the feature, the glyph shows the state.
+//! ink), `●─` off (muted), `◌─` while its write is in flight, faint when
+//! it cannot be switched here (the reason in its tooltip). The feature
+//! label follows when given (table cells omit it: the column header is
+//! the label). No verbs: the label names the feature, the glyph shows the
+//! state.
 //!
-//! Immediate mode: the toggle shows `on` and asks `on_change(!on)`; the
-//! caller writes (one PUT) and the store's answer re-renders it.
+//! Immediate mode: the toggle shows its value and asks `on_change(!on)`;
+//! the caller writes (one PUT) and the store's answer re-renders it.
+//! `Toggle::bound(sig)` reads the value from a signal INSIDE its paint, so
+//! the answer never rebuilds the control (keyboard focus stays on it).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -17,26 +20,44 @@ use abstracttui::ui::{MouseButton, MouseKind, Phase, UiEvent};
 
 pub const ON: &str = "━●";
 pub const OFF: &str = "●─";
+pub const BUSY: &str = "◌─";
+
+type Getter = Rc<dyn Fn() -> bool>;
 
 pub struct Toggle {
-    on: bool,
+    value: Getter,
     label: Option<String>,
     allowed: Result<(), String>,
     tip: Option<String>,
-    busy: bool,
+    busy: Getter,
     tab_stop: bool,
+    autofocus: bool,
     on_change: Option<Box<dyn FnMut(bool)>>,
 }
 
 impl Toggle {
+    /// A toggle showing a fixed value (rebuilt by its region on change).
     pub fn new(on: bool) -> Toggle {
+        Toggle::from_getter(Rc::new(move || on))
+    }
+    /// A toggle showing `sig` (tracked inside its paint).
+    pub fn bound(sig: Signal<bool>) -> Toggle {
+        Toggle::from_getter(Rc::new(move || sig.get()))
+    }
+    /// `Switch::new(label, sig)`'s shape on the Toggle (a bound, labelled
+    /// toggle) — the conversion of the old `[x]` switch.
+    pub fn switch(label: impl Into<String>, sig: Signal<bool>) -> Toggle {
+        Toggle::bound(sig).label(label)
+    }
+    fn from_getter(value: Getter) -> Toggle {
         Toggle {
-            on,
+            value,
             label: None,
             allowed: Ok(()),
             tip: None,
-            busy: false,
+            busy: Rc::new(|| false),
             tab_stop: true,
+            autofocus: false,
             on_change: None,
         }
     }
@@ -58,12 +79,23 @@ impl Toggle {
         self.tip = Some(t.into());
         self
     }
+    /// A write is in flight (fixed).
     pub fn busy(mut self, b: bool) -> Toggle {
-        self.busy = b;
+        self.busy = Rc::new(move || b);
+        self
+    }
+    /// A write is in flight (read reactively in the paint).
+    pub fn busy_when(mut self, f: impl Fn() -> bool + 'static) -> Toggle {
+        self.busy = Rc::new(f);
         self
     }
     pub fn tab_stop(mut self, s: bool) -> Toggle {
         self.tab_stop = s;
+        self
+    }
+    /// Take the keyboard when mounted (focus restore after a rebuild).
+    pub fn autofocus(mut self, a: bool) -> Toggle {
+        self.autofocus = a;
         self
     }
     pub fn on_change(mut self, f: impl FnMut(bool) + 'static) -> Toggle {
@@ -81,15 +113,7 @@ impl Toggle {
     }
 
     pub fn view(self, cx: Scope, t: &TokenSet) -> View {
-        let on = self.on;
-        let allowed = self.allowed.is_ok() && !self.busy;
-        let glyph = if self.busy {
-            "◌─".to_string()
-        } else if on {
-            ON.to_string()
-        } else {
-            OFF.to_string()
-        };
+        let allowed = self.allowed.is_ok();
         let label = self.label.clone();
         let w = self.width();
         let (ok, muted, faint, text) = (t.ok, t.text_muted, t.text_faint, t.text);
@@ -97,6 +121,8 @@ impl Toggle {
         let hovered = cx.signal(false);
         let focused = cx.signal(false);
         let cb: Rc<RefCell<Option<Box<dyn FnMut(bool)>>>> = Rc::new(RefCell::new(self.on_change));
+        let value = self.value.clone();
+        let busy = self.busy.clone();
         let mut el = Element::new()
             .style(
                 LayoutStyle::default()
@@ -106,18 +132,29 @@ impl Toggle {
             )
             .role(abstracttui::ui::Role::Checkbox)
             .access_label(label.clone().unwrap_or_default())
-            .access_value(move || if on { "on".into() } else { "off".into() })
+            .access_value({
+                let v = value.clone();
+                move || if v() { "on".into() } else { "off".into() }
+            })
             .hover_signal(hovered)
             .focus_signal(focused);
         if allowed {
             if self.tab_stop {
                 el = el.focusable();
+                if self.autofocus {
+                    el = el.autofocus();
+                }
             }
             let cb1 = cb.clone();
+            let (v1, b1) = (value.clone(), busy.clone());
             el = el.on(Phase::Bubble, move |ctx, ev| {
-                let fire = |cb: &Rc<RefCell<Option<Box<dyn FnMut(bool)>>>>| {
-                    if let Some(f) = cb.borrow_mut().as_mut() {
-                        f(!on);
+                let fire = || {
+                    if untrack(|| b1()) {
+                        return;
+                    }
+                    let now = untrack(|| v1());
+                    if let Some(f) = cb1.borrow_mut().as_mut() {
+                        f(!now);
                     }
                 };
                 match ev {
@@ -126,12 +163,12 @@ impl Toggle {
                     {
                         if focused.get_untracked() {
                             ctx.stop_propagation();
-                            fire(&cb1);
+                            fire();
                         }
                     }
                     UiEvent::Mouse(m) if matches!(m.kind, MouseKind::Down(MouseButton::Left)) => {
                         ctx.stop_propagation();
-                        fire(&cb1);
+                        fire();
                     }
                     _ => {}
                 }
@@ -139,7 +176,15 @@ impl Toggle {
         }
         let el = el.child(dyn_view(LayoutStyle::fill(), move || {
             let (h, f) = (hovered.get(), focused.get());
-            let glyph = glyph.clone();
+            let on = value();
+            let is_busy = busy();
+            let glyph = if is_busy {
+                BUSY
+            } else if on {
+                ON
+            } else {
+                OFF
+            };
             let label = label.clone();
             Element::new()
                 .style(LayoutStyle::fill())
@@ -163,7 +208,7 @@ impl Toggle {
                     } else if h && allowed {
                         ls = ls.fg(accent);
                     }
-                    canvas.print_styled(Point::new(rect.x, rect.y), &glyph, &gs);
+                    canvas.print_styled(Point::new(rect.x, rect.y), glyph, &gs);
                     if let Some(l) = &label {
                         let l = super::paint::fit(l, rect.w - 3);
                         canvas.print_styled(Point::new(rect.x + 3, rect.y), &l, &ls);

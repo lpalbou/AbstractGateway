@@ -22,6 +22,7 @@ pub struct Segmented {
     /// segment's paint, so a pick never rebuilds the row (focus stays on
     /// the segment the keyboard is on).
     bound: Option<Signal<usize>>,
+    autofocus_chosen: bool,
 }
 
 impl Segmented {
@@ -37,7 +38,13 @@ impl Segmented {
             vertical: false,
             on_pick: None,
             bound: None,
+            autofocus_chosen: false,
         }
+    }
+    /// Focus the chosen segment when mounted (focus restore after a rebuild).
+    pub fn autofocus_chosen(mut self, a: bool) -> Segmented {
+        self.autofocus_chosen = a;
+        self
     }
     /// Bind the chosen index to `sig` (picks write it; see `bound`).
     pub fn bind(mut self, sig: Signal<usize>) -> Segmented {
@@ -99,7 +106,8 @@ impl Segmented {
                 None => Rc::new(move || fixed),
             };
             let pick = self.on_pick.clone();
-            row = row.child(segment(cx, t, label.clone(), chosen, why, tip, move || {
+            let af = self.autofocus_chosen && fixed;
+            row = row.child(segment(cx, t, label.clone(), chosen, why, tip, af, move || {
                 if let Some(b) = bound {
                     b.set(i);
                 }
@@ -119,6 +127,7 @@ fn segment(
     chosen: Rc<dyn Fn() -> bool>,
     disabled: Option<String>,
     tip: Option<String>,
+    autofocus: bool,
     on_pick: impl Fn() + 'static,
 ) -> View {
     let w = abstracttui::text::width(&label) + 2;
@@ -148,6 +157,9 @@ fn segment(
         })
         .hover_signal(hovered)
         .focus_signal(focused);
+    if !off && autofocus {
+        el = el.autofocus();
+    }
     if !off {
         el = el.focusable().on(Phase::Bubble, move |ctx, ev| match ev {
             UiEvent::Key(k)

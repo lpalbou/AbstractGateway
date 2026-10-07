@@ -30,10 +30,9 @@
 //! administrator's gateway-wide email switches live on the Users screen.
 
 use abstracttui::prelude::*;
-use abstracttui::widgets::{Scroll, Tabs};
+use abstracttui::widgets::Scroll;
 use serde_json::json;
 
-use super::switch::Switch;
 use super::util::{ellipsize, field, line, span, span_bold, wrap_text};
 use super::{open_form, Ctx};
 use crate::store::email::{
@@ -111,13 +110,11 @@ struct Page {
     /// The last "Send a test" sentence, shown under the button.
     test_result: Signal<Option<Result<String, String>>>,
     confirm_disconnect: Signal<bool>,
-    advanced: Signal<bool>,
     new_entry: Signal<String>,
     new_deny_entry: Signal<String>,
     per_hour: Signal<String>,
     per_day: Signal<String>,
     folder: Signal<String>,
-    oauth_advanced: Signal<bool>,
     client_id: Signal<String>,
     client_secret: Signal<String>,
     tenant: Signal<String>,
@@ -380,13 +377,11 @@ fn open_for(cx: Scope, ctx: &Ctx, entity: Option<String>) {
                 addr_gen: mcx.signal(0),
                 test_result: mcx.signal(None),
                 confirm_disconnect: mcx.signal(false),
-                advanced: mcx.signal(false),
                 new_entry: mcx.signal(String::new()),
                 new_deny_entry: mcx.signal(String::new()),
                 per_hour: mcx.signal(String::new()),
                 per_day: mcx.signal(String::new()),
                 folder: mcx.signal(String::new()),
-                oauth_advanced: mcx.signal(false),
                 client_id: mcx.signal(String::new()),
                 client_secret: mcx.signal(String::new()),
                 tenant: mcx.signal(String::new()),
@@ -649,39 +644,42 @@ fn cycle_w(
     value: Signal<String>,
     options: &'static [(&'static str, &'static str)],
     w: i32,
-    mut on_pick: impl FnMut(String) + 'static,
+    on_pick: impl FnMut(String) + 'static,
 ) -> View {
-    let t0 = *t;
+    // R15: a labelled Segmented (one Tab stop per option; Enter/Space or a
+    // click picks) bound to an index kept in step with `value`.
+    let idx = cx.signal(
+        options
+            .iter()
+            .position(|(k, _)| *k == value.get_untracked())
+            .unwrap_or(0),
+    );
+    cx.effect(move || {
+        let v = value.get();
+        if let Some(i) = options.iter().position(|(k, _)| *k == v) {
+            if idx.get_untracked() != i {
+                idx.set(i);
+            }
+        }
+    });
+    let on_pick = std::rc::Rc::new(std::cell::RefCell::new(on_pick));
+    let lw = (abstracttui::text::width(label) + 2).min(w);
     Element::new()
-        .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
-        .child(dyn_view(LayoutStyle::line(1).w(w), move || {
-            let cur = value.get();
-            let shown = options
-                .iter()
-                .find(|(k, _)| *k == cur)
-                .map(|(_, v)| *v)
-                .unwrap_or("?");
-            line(vec![
-                span(format!("{label}: "), t0.text_muted),
-                span(shown, t0.text),
-            ])
-        }))
+        .style(LayoutStyle::row().h(1).shrink(0.0))
+        .child(super::w::paint::fill_line(
+            LayoutStyle::default().w(lw).h(1).shrink(0.0),
+            vec![super::w::Ink::new(format!("{label}: "), t.text_muted)],
+            None,
+        ))
         .child(
-            Button::new("change")
-                .on_click(move || {
-                    let mut next = String::new();
-                    value.update(|v| {
-                        let i = options
-                            .iter()
-                            .position(|(k, _)| *k == v.as_str())
-                            .unwrap_or(0);
-                        *v = options[(i + 1) % options.len()].0.to_string();
-                        next = v.clone();
-                    });
-                    on_pick(next);
+            super::w::Segmented::new(options.iter().map(|(_, v)| v.to_string()), None)
+                .bind(idx)
+                .on_pick(move |i| {
+                    let next = options[i].0.to_string();
+                    value.set(next.clone());
+                    (on_pick.borrow_mut())(next);
                 })
-                .element(cx, &t0)
-                .build(),
+                .view(cx, t),
         )
         .build()
 }
@@ -840,30 +838,20 @@ fn mailbox_card(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> Vie
     if e.configured {
         return col.child(connected_view(cx, ctx, &t0, e, p)).build();
     }
-    col = col.child(
-        Tabs::new()
-            .tab(TABS[0], || {
-                Element::new().style(LayoutStyle::default().h(0)).build()
-            })
-            .tab(TABS[1], || {
-                Element::new().style(LayoutStyle::default().h(0)).build()
-            })
-            .tab(TABS[2], || {
-                Element::new().style(LayoutStyle::default().h(0)).build()
-            })
-            .active(p.tab)
-            .on_change({
-                let ctx = ctx.clone();
-                move |i| {
+    // IMAP | Google | Microsoft: a Segmented (one Tab stop per segment).
+    {
+        let ctx = ctx.clone();
+        col = col.child(
+            super::w::Segmented::new(TABS.iter().map(|s| s.to_string()), None)
+                .bind(p.tab)
+                .on_pick(move |i| {
                     if i == TAB_IMAP {
                         discover(&ctx, &p.other_address.get_untracked());
                     }
-                }
-            })
-            .layout(LayoutStyle::column().h(2).shrink(0.0))
-            .element(cx, &t0)
-            .build(),
-    );
+                })
+                .view(cx, &t0),
+        );
+    }
     let ctx_tab = ctx.clone();
     let e_tab = e.clone();
     col.child(dyn_view_scoped(
@@ -909,11 +897,9 @@ fn connected_view(_cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> 
     let ctx_use = ctx.clone();
     col = col
         .child(
-            Switch::new("Active", p.sw_use)
-                .fill()
+            super::w::Toggle::switch("Active", p.sw_use)
                 .busy_when(move || p.busy.get() == Some("enabled"))
-                .notice(ctx.store.notice)
-                .on_request(move |want| {
+                .on_change(move |want| {
                     send(
                         &ctx_use,
                         p,
@@ -926,8 +912,7 @@ fn connected_view(_cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> 
                         },
                     )
                 })
-                .element(_cx, &t0)
-                .build(),
+                .view(_cx, &t0),
         )
         .child(helper(&t0, &format!("    {ACTIVE_HELP}"), p.wrap_w));
     let (c_test, c_disc) = (ctx.clone(), ctx.clone());
@@ -1339,16 +1324,10 @@ fn oauth_tab(
         LayoutStyle::column().gap(0).shrink(0.0),
         move |acx| {
             let t = t0;
-            let open = p.oauth_advanced.get();
             let mut c = Element::new()
                 .style(LayoutStyle::column().gap(0).shrink(0.0))
-                .child(
-                    Button::new(if open { "Advanced ▾" } else { "Advanced ▸" })
-                        .on_click(move || p.oauth_advanced.update(|v| *v = !*v))
-                        .element(acx, &t)
-                        .build(),
-                );
-            if open {
+                .child(heading(&t, SIGN_IN_APP_SECTION));
+            {
                 c = c
                     .child(helper(
                         &t,
@@ -1395,12 +1374,10 @@ fn notifications_card(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) 
         Element::new()
             .style(LayoutStyle::column().gap(0).shrink(0.0))
             .child(
-                Switch::new(label, sig)
-                    .fill()
-                    .unavailable(reason.clone())
+                super::w::Toggle::switch(label, sig)
+                    .refused(reason.clone())
                     .busy_when(move || p.busy.get() == Some(key))
-                    .notice(ctx.store.notice)
-                    .on_request(move |want| {
+                    .on_change(move |want| {
                         send(
                             &ctx,
                             p,
@@ -1415,8 +1392,7 @@ fn notifications_card(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) 
                             ),
                         )
                     })
-                    .element(cx, &t0)
-                    .build(),
+                    .view(cx, &t0),
             )
             .child(helper(&t0, &format!("    {help}"), p.wrap_w))
             .build()
@@ -1488,12 +1464,10 @@ fn agent_tools_card(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) ->
         .style(LayoutStyle::column().gap(0).shrink(0.0))
         .child(heading(&t0, "Agent email tools"))
         .child(
-            Switch::new("Agent email tools", sig)
-                .fill()
-                .unavailable(e.agent_tools_unavailable())
+            super::w::Toggle::switch("Agent email tools", sig)
+                .refused(e.agent_tools_unavailable())
                 .busy_when(move || p.busy.get() == Some("agent_tools"))
-                .notice(ctx.store.notice)
-                .on_request(move |want| {
+                .on_change(move |want| {
                     send(
                         &ctx2,
                         p,
@@ -1506,8 +1480,7 @@ fn agent_tools_card(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) ->
                         },
                     )
                 })
-                .element(cx, &t0)
-                .build(),
+                .view(cx, &t0),
         )
         .child(helper(&t0, &format!("    {AGENT_TOOLS_HELP}"), p.wrap_w))
         .build()
@@ -1515,38 +1488,19 @@ fn agent_tools_card(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) ->
 
 // ---------------------------------------------------------------- 5
 
-fn advanced_card(_cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> View {
-    let t0 = *t;
-    let e2 = e.clone();
-    let ctx2 = ctx.clone();
+fn advanced_card(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> View {
+    // R15 D1: no "Advanced" — a visible section named by its content (the
+    // name the web uses too, COORD "R15 SECTION NAMES").
     Element::new()
         .style(LayoutStyle::column().gap(0).shrink(0.0))
-        .child(dyn_view_scoped(
-            LayoutStyle::row().h(1).shrink(0.0),
-            move |bcx| {
-                let t = t0;
-                let open = p.advanced.get();
-                Button::new(if open {
-                    "Advanced ▾"
-                } else {
-                    "Advanced ▸  who your agents may send to, limits, folder"
-                })
-                .on_click(move || p.advanced.update(|v| *v = !*v))
-                .element(bcx, &t)
-                .build()
-            },
-        ))
-        .child(dyn_view_scoped(
-            LayoutStyle::column().gap(0).shrink(0.0),
-            move |acx| {
-                if !p.advanced.get() {
-                    return Element::new().style(LayoutStyle::default().h(0)).build();
-                }
-                advanced_body(acx, &ctx2, &t0, &e2, p)
-            },
-        ))
+        .child(heading(t, RECIPIENTS_SECTION))
+        .child(advanced_body(cx, ctx, t, e, p))
         .build()
 }
+
+/// R15 D1 section names (shared with the web console).
+pub const RECIPIENTS_SECTION: &str = "Recipients and limits";
+pub const SIGN_IN_APP_SECTION: &str = "Sign-in app";
 
 const MODES: &[(&str, &str)] = &[
     ("allowlist", "only the Allowed list"),
@@ -1777,7 +1731,7 @@ pub fn other_address_help(user_id: &str) -> String {
 /// show: only that user can connect a mailbox (round-1 rule).
 pub fn other_not_connected(user_id: &str) -> String {
     format!(
-        "Not connected \u{2014} only {user_id} can connect a mailbox. You never see anyone's mail."
+        "Mailbox: not connected \u{2014} only {user_id} can connect a mailbox. You never see anyone's mail."
     )
 }
 
@@ -1901,8 +1855,7 @@ pub fn open_other(
                         _ => Element::new().style(LayoutStyle::default().h(0)).build(),
                     }
                 }))
-                .child(gap())
-                .child(heading(&t0, "Mailbox"));
+                .child(gap());
             for l in wrap_text(&mailbox, wrap_w) {
                 col = col.child(line(vec![span(l, t0.text_muted)]));
             }
