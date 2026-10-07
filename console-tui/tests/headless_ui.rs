@@ -10289,7 +10289,7 @@ fn switch_ink_on_screen_marks_on_off_and_unavailable() {
 fn my_email_advanced_folder_saves_on_enter_and_is_unavailable_without_a_mailbox() {
     use abstractgateway_console::worker::operator::EmailAction;
     let mut h = harness_sized(Size::new(140, 90));
-    let s = open_my_email(&mut h, &my_email_fixture());
+    let _ = open_my_email(&mut h, &my_email_fixture());
     // R15 D1: "Recipients and limits" is a visible section (no fold).
     for _ in 0..30 {
         h.key(b"\x1b[<65;70;30M");
@@ -10320,7 +10320,7 @@ fn my_email_advanced_folder_saves_on_enter_and_is_unavailable_without_a_mailbox(
         other => panic!("PUT /me/email/folder, got {other:?}"),
     }
     let mut h = harness_sized(Size::new(140, 90));
-    let s = open_my_email(&mut h, &my_email_not_connected());
+    let _ = open_my_email(&mut h, &my_email_not_connected());
     // R15 D1: "Recipients and limits" is a visible section (no fold).
     for _ in 0..30 {
         h.key(b"\x1b[<65;70;30M");
@@ -10335,7 +10335,7 @@ fn my_email_recipient_rules_add_to_always_denied_sends_both_lists() {
     // list sends the mode with BOTH lists (an older {mode, entries} policy reads as Allowed).
     use abstractgateway_console::worker::operator::EmailAction;
     let mut h = harness_sized(Size::new(140, 90));
-    let s = open_my_email(&mut h, &my_email_fixture());
+    let _ = open_my_email(&mut h, &my_email_fixture());
     // R15 D1: "Recipients and limits" is a visible section (no fold).
     let s = h.turns(3);
     let adds: Vec<(usize, String)> = s

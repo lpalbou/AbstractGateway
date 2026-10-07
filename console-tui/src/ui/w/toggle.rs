@@ -29,6 +29,8 @@ pub struct Toggle {
     allowed: Result<(), String>,
     tip: Option<String>,
     busy: Getter,
+    /// Reserve room for " · saving…" (a toggle whose write can be in flight).
+    busy_reserve: bool,
     tab_stop: bool,
     autofocus: bool,
     on_change: Option<Box<dyn FnMut(bool)>>,
@@ -55,6 +57,7 @@ impl Toggle {
             allowed: Ok(()),
             tip: None,
             busy: Rc::new(|| false),
+            busy_reserve: false,
             tab_stop: true,
             autofocus: false,
             on_change: None,
@@ -80,11 +83,13 @@ impl Toggle {
     }
     /// A write is in flight (fixed).
     pub fn busy(mut self, b: bool) -> Toggle {
+        self.busy_reserve |= b;
         self.busy = Rc::new(move || b);
         self
     }
     /// A write is in flight (read reactively in the paint).
     pub fn busy_when(mut self, f: impl Fn() -> bool + 'static) -> Toggle {
+        self.busy_reserve = true;
         self.busy = Rc::new(f);
         self
     }
@@ -121,8 +126,7 @@ impl Toggle {
     /// Cells it takes on one line.
     pub fn width(&self) -> i32 {
         let refused = self.allowed.clone().err();
-        // The saving note is not reserved (it is transient; it truncates).
-        2 + Self::tail(&self.label, &refused, false)
+        2 + Self::tail(&self.label, &refused, self.busy_reserve)
             .map(|l| 1 + abstracttui::text::width(&l))
             .unwrap_or(0)
     }
