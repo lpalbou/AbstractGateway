@@ -104,7 +104,11 @@ impl FormModal {
                         vec![Ink::new(title.clone(), t.accent).bold()],
                         None,
                     ))
-                    .child(Element::new().style(LayoutStyle::default().grow(1.0)).build())
+                    .child(
+                        Element::new()
+                            .style(LayoutStyle::default().grow(1.0))
+                            .build(),
+                    )
                     .child(super::action::button(
                         mcx,
                         &t,
@@ -124,7 +128,11 @@ impl FormModal {
                     ));
                 }
             }
-            col = col.child(Element::new().style(LayoutStyle::line(1).shrink(0.0)).build());
+            col = col.child(
+                Element::new()
+                    .style(LayoutStyle::line(1).shrink(0.0))
+                    .build(),
+            );
             col.child(build(mcx, close, guard, inner_w)).build()
         });
     }
@@ -165,7 +173,11 @@ pub fn sentence(t: &TokenSet, text: &str, width: i32, ink: Rgba) -> View {
     let _ = t;
     let mut col = Element::new().style(LayoutStyle::column().shrink(0.0));
     for l in wrap(text, width) {
-        col = col.child(fill_line(LayoutStyle::line(1).shrink(0.0), vec![Ink::new(l, ink)], None));
+        col = col.child(fill_line(
+            LayoutStyle::line(1).shrink(0.0),
+            vec![Ink::new(l, ink)],
+            None,
+        ));
     }
     col.build()
 }
@@ -191,8 +203,17 @@ pub fn state_line(state: Signal<FieldState>, width: i32) -> View {
 /// A row of buttons (right-aligned footer of a form).
 pub fn button_row(views: Vec<View>) -> View {
     let mut row = Element::new()
-        .style(LayoutStyle::row().height(Dimension::Cells(1)).shrink(0.0).gap(1))
-        .child(Element::new().style(LayoutStyle::default().grow(1.0)).build());
+        .style(
+            LayoutStyle::row()
+                .height(Dimension::Cells(1))
+                .shrink(0.0)
+                .gap(1),
+        )
+        .child(
+            Element::new()
+                .style(LayoutStyle::default().grow(1.0))
+                .build(),
+        );
     for v in views {
         row = row.child(v);
     }

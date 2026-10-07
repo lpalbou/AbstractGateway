@@ -78,6 +78,13 @@ struct H {
 
 fn harness(size: Size) -> H {
     abstracttui::app::set_theme_by_id("abstract-dark");
+    // R15 rail: from 120x32 the console shows a 21-cell nav rail; these
+    // suites pin PAGE layouts, so a wide size keeps its page width.
+    let size = if size.w >= 120 && size.h >= 32 {
+        Size::new(size.w + 21, size.h)
+    } else {
+        size
+    };
     let mut app = App::new(size);
     let overlays = app.overlays();
     let quitter = app.quitter();
@@ -187,12 +194,21 @@ impl H {
     /// the way an operator does, with a click on its field column.
     fn focus_prompt(&mut self) {
         let s = self.turns(1);
-        let row = s
+        let (row, line) = s
             .lines()
-            .position(|l| l.contains("│prompt "))
-            .expect("prompt row on screen")
-            + 1;
-        self.type_text(&format!("\x1b[<0;25;{row}M\x1b[<0;25;{row}m"));
+            .enumerate()
+            .find(|(_, l)| l.contains("│prompt "))
+            .expect("prompt row on screen");
+        let row = row + 1;
+        // R15: the field column is found on screen (a nav rail may sit left).
+        let x = line
+            .chars()
+            .collect::<String>()
+            .find("│prompt ")
+            .map(|b| line[..b].chars().count())
+            .unwrap_or(0)
+            + 25;
+        self.type_text(&format!("\x1b[<0;{x};{row}M\x1b[<0;{x};{row}m"));
         self.turns(2);
     }
 }
@@ -549,16 +565,10 @@ fn media_mode_renders_whole_at_80x24() {
 fn header_advertises_docs_assistant_when_connected() {
     let mut h = harness(Size::new(110, 34));
     let s = h.turns(2);
-    assert!(
-        !s.contains("F2 docs assistant"),
-        "not advertised disconnected:\n{s}"
-    );
+    assert!(!s.contains("✦ Docs"), "not advertised disconnected:\n{s}");
     h.connect();
     let s = h.turns(2);
-    assert!(
-        s.contains("F2 docs assistant"),
-        "advertised when connected:\n{s}"
-    );
+    assert!(s.contains("✦ Docs"), "advertised when connected:\n{s}");
 }
 
 /// F2 = the docs assistant: refused (with a reason) while disconnected;

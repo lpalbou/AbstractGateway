@@ -91,7 +91,13 @@ fn rail_item(cx: Scope, ctx: &Ctx, t: &TokenSet, i: usize, active: bool, prefix:
     let key = screen_key(i).map(|k| k.to_string()).unwrap_or_default();
     let hovered = cx.signal(false);
     let c = ctx.clone();
-    let (sel_fg, sel_bg, text, accent, faint) = (t.selection_fg, t.selection_bg, t.text, t.accent, t.text_faint);
+    let (sel_fg, sel_bg, text, accent, faint) = (
+        t.selection_fg,
+        t.selection_bg,
+        t.text,
+        t.accent,
+        t.text_faint,
+    );
     let prefix = prefix.to_string();
     let el = Element::new()
         .style(LayoutStyle::line(1).shrink(0.0))
@@ -115,7 +121,12 @@ fn rail_item(cx: Scope, ctx: &Ctx, t: &TokenSet, i: usize, active: bool, prefix:
             } else {
                 (text, None)
             };
-            let pad = (RAIL_W - 1 - abstracttui::text::width(&prefix) - abstracttui::text::width(label) - abstracttui::text::width(&key)).max(1);
+            let pad = (RAIL_W
+                - 1
+                - abstracttui::text::width(&prefix)
+                - abstracttui::text::width(label)
+                - abstracttui::text::width(&key))
+            .max(1);
             fill_line(
                 LayoutStyle::fill(),
                 vec![
@@ -154,7 +165,11 @@ pub fn rail(cx: Scope, ctx: &Ctx, t: &TokenSet, height: i32) -> View {
     );
     let mut used = 0;
     for (name, members) in NAV_GROUPS.iter() {
-        let shown: Vec<usize> = members.iter().copied().filter(|i| nav_visible(ctx, *i)).collect();
+        let shown: Vec<usize> = members
+            .iter()
+            .copied()
+            .filter(|i| nav_visible(ctx, *i))
+            .collect();
         if shown.is_empty() {
             continue;
         }
@@ -171,7 +186,15 @@ pub fn rail(cx: Scope, ctx: &Ctx, t: &TokenSet, height: i32) -> View {
     }
     let foot = [SCREEN_CONNECTION, SCREEN_WELCOME, SCREEN_ABOUT];
     let gap = (height - used - foot.len() as i32 - if wizard { 1 } else { 0 }).max(1);
-    col = col.child(Element::new().style(LayoutStyle::default().height(Dimension::Cells(gap)).shrink(1.0)).build());
+    col = col.child(
+        Element::new()
+            .style(
+                LayoutStyle::default()
+                    .height(Dimension::Cells(gap))
+                    .shrink(1.0),
+            )
+            .build(),
+    );
     if wizard {
         col = col.child(fill_line(
             LayoutStyle::line(1).shrink(0.0),
@@ -190,10 +213,18 @@ pub fn rail(cx: Scope, ctx: &Ctx, t: &TokenSet, height: i32) -> View {
 /// titles windowed around the active one, `‹ ›` as click targets.
 pub fn strip(cx: Scope, ctx: &Ctx, t: &TokenSet, width: i32) -> View {
     let screen = ctx.ui.screen.get();
-    let order: Vec<usize> = NAV_ORDER.iter().copied().filter(|i| nav_visible(ctx, *i)).collect();
+    let order: Vec<usize> = NAV_ORDER
+        .iter()
+        .copied()
+        .filter(|i| nav_visible(ctx, *i))
+        .collect();
     let pos = order.iter().position(|i| *i == screen).unwrap_or(0);
     let group = super::nav_group(screen).unwrap_or("");
-    let cap = if group.is_empty() { String::new() } else { format!(" {group} ") };
+    let cap = if group.is_empty() {
+        String::new()
+    } else {
+        format!(" {group} ")
+    };
     let cap_w = abstracttui::text::width(&cap);
     let w_of = |i: usize| abstracttui::text::width(SCREENS[i]) + 2;
     let budget = width - cap_w - 4;
@@ -218,7 +249,9 @@ pub fn strip(cx: Scope, ctx: &Ctx, t: &TokenSet, width: i32) -> View {
     }
     let mut row = Element::new().style(LayoutStyle::row().height(Dimension::Cells(1)).shrink(0.0));
     row = row.child(fill_line(
-        LayoutStyle::default().width(Dimension::Cells(cap_w)).height(Dimension::Cells(1)),
+        LayoutStyle::default()
+            .width(Dimension::Cells(cap_w))
+            .height(Dimension::Cells(1)),
         vec![Ink::new(cap, t.text_muted).bold()],
         None,
     ));
@@ -250,7 +283,9 @@ pub fn strip(cx: Scope, ctx: &Ctx, t: &TokenSet, width: i32) -> View {
         } else {
             tt.surface_raised = t.bg;
         }
-        row = row.child(action::button(cx, &tt, &a, On::Page, false, move || go(&c, i)));
+        row = row.child(action::button(cx, &tt, &a, On::Page, false, move || {
+            go(&c, i)
+        }));
     }
     row = row.child(arrow(cx, "›", order.get(hi + 1).copied()));
     row.build()
@@ -288,24 +323,41 @@ pub fn header(cx: Scope, ctx: &Ctx, t: &TokenSet, vp: Size) -> View {
         let c = ctx.clone();
         let mut t2 = tt;
         t2.text = if wv.stale { t.text_faint } else { t.text_muted };
-        row = row.child(action::button(cx, &t2, &a, On::Page, false, move || go(&c, SCREEN_MODELS)));
+        row = row.child(action::button(cx, &t2, &a, On::Page, false, move || {
+            go(&c, SCREEN_MODELS)
+        }));
     } else {
         let u = ui.conn_url.get();
         row = row.child(fill_line(
-            LayoutStyle::default().width(Dimension::Cells(abstracttui::text::width(&u).min(44) + 1)).height(Dimension::Cells(1)),
+            LayoutStyle::default()
+                .width(Dimension::Cells(abstracttui::text::width(&u).min(44) + 1))
+                .height(Dimension::Cells(1)),
             vec![Ink::new(u, t.text_muted)],
             None,
         ));
     }
-    row = row.child(Element::new().style(LayoutStyle::default().grow(1.0)).build());
+    row = row.child(
+        Element::new()
+            .style(LayoutStyle::default().grow(1.0))
+            .build(),
+    );
     let (dot, dot_ink, ident) = match &conn {
         ConnPhase::NotConnected => ("○", t.text_muted, "not connected".to_string()),
         ConnPhase::Probing => ("◌", t.info, "probing…".to_string()),
-        ConnPhase::Verifying(id) => ("◌", t.warn, format!("{}@{} — verifying…", id.user_id, id.tenant_id)),
+        ConnPhase::Verifying(id) => (
+            "◌",
+            t.warn,
+            format!("{}@{} — verifying…", id.user_id, id.tenant_id),
+        ),
         ConnPhase::Connected(id) => (
             "●",
             t.ok,
-            format!("{}@{}{}", id.user_id, id.tenant_id, if id.admin { " (admin)" } else { "" }),
+            format!(
+                "{}@{}{}",
+                id.user_id,
+                id.tenant_id,
+                if id.admin { " (admin)" } else { "" }
+            ),
         ),
         ConnPhase::Unauthorized(_) => ("●", t.error, "unauthorized".to_string()),
         ConnPhase::Forbidden(_) => ("●", t.error, "forbidden".to_string()),
@@ -313,23 +365,37 @@ pub fn header(cx: Scope, ctx: &Ctx, t: &TokenSet, vp: Size) -> View {
         ConnPhase::Unreachable(_) => ("○", t.error, "unreachable".to_string()),
     };
     row = row.child(fill_line(
-        LayoutStyle::default().width(Dimension::Cells(2)).height(Dimension::Cells(1)).shrink(0.0),
+        LayoutStyle::default()
+            .width(Dimension::Cells(2))
+            .height(Dimension::Cells(1))
+            .shrink(0.0),
         vec![Ink::new(dot, dot_ink)],
         None,
     ));
     let c = ctx.clone();
     let a = Action::label("identity", ident).tooltip("Signed in as — open Connection");
-    row = row.child(action::button(cx, &tt, &a, On::Page, false, move || go(&c, SCREEN_CONNECTION)));
+    row = row.child(action::button(cx, &tt, &a, On::Page, false, move || {
+        go(&c, SCREEN_CONNECTION)
+    }));
     if conn.is_connected() {
         let c = ctx.clone();
-        let a = Action::label("docs", if short { "✦" } else { "✦ Docs" }).tooltip("Docs assistant  (F2)");
+        let a = Action::label("docs", if vp.w < 100 { "✦" } else { "✦ Docs" })
+            .tooltip("Docs assistant  (F2)");
         row = row.child(action::button(cx, &tt, &a, On::Page, false, move || {
             super::docs::open(&c, cx);
         }));
     }
     let dark = abstracttui::app::current_theme().dark;
-    let a = Action::label("theme", if dark { "☾" } else { "☼" }).tooltip("Appearance: switch the light / dark theme  (Ctrl+T)");
-    row = row.child(action::button(cx, &tt, &a, On::Page, false, super::w::theme::flip));
+    let a = Action::label("theme", if dark { "☾" } else { "☼" })
+        .tooltip("Appearance: switch the light / dark theme  (Ctrl+T)");
+    row = row.child(action::button(
+        cx,
+        &tt,
+        &a,
+        On::Page,
+        false,
+        super::w::theme::flip,
+    ));
     row.build()
 }
 
@@ -343,7 +409,13 @@ pub fn open_keys(ctx: &Ctx, cx: Scope) {
         .size(72, (n + 10).min(40))
         .open(ctx, cx, move |mcx, close, _guard, w| {
             let t = use_theme(mcx).get().tokens;
-            let kw = pairs.iter().map(|(k, _)| abstracttui::text::width(k)).max().unwrap_or(4).min(w / 3) + 2;
+            let kw = pairs
+                .iter()
+                .map(|(k, _)| abstracttui::text::width(k))
+                .max()
+                .unwrap_or(4)
+                .min(w / 3)
+                + 2;
             let mut col = Element::new().style(LayoutStyle::column().grow(1.0));
             for (k, v) in &pairs {
                 col = col.child(fill_line(

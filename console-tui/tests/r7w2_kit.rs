@@ -12,6 +12,13 @@ use abstractgateway_console::ui::widths::ColRule;
 
 fn mount(size: Size) -> (App, CaptureTerm, Driver) {
     abstracttui::app::set_theme_by_id("abstract-dark");
+    // R15 rail: from 120x32 the console shows a 21-cell nav rail; these
+    // suites pin PAGE layouts, so a wide size keeps its page width.
+    let size = if size.w >= 120 && size.h >= 32 {
+        Size::new(size.w + 21, size.h)
+    } else {
+        size
+    };
     let mut app = App::new(size);
     app.mount(move |cx| {
         let t = use_theme(cx).get().tokens;

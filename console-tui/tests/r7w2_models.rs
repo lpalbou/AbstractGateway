@@ -86,6 +86,13 @@ fn fixture(name: &str) -> Value {
 fn harness(size: Size) -> H {
     catalog::reset_state();
     abstracttui::app::set_theme_by_id("abstract-dark");
+    // R15 rail: from 120x32 the console shows a 21-cell nav rail; these
+    // suites pin PAGE layouts, so a wide size keeps its page width.
+    let size = if size.w >= 120 && size.h >= 32 {
+        Size::new(size.w + 21, size.h)
+    } else {
+        size
+    };
     let mut app = App::new(size);
     let overlays = app.overlays();
     let quitter = app.quitter();
@@ -299,7 +306,10 @@ fn refused(status: u16, body: Value) -> ApiError {
 fn one_list_with_model_headers_artifact_rows_and_not_in_the_catalog() {
     let mut h = harness(Size::new(170, 50));
     let s = h.open(true);
-    assert!(s.contains("9 Models"), "tab 9 is Models:\n{s}");
+    assert!(
+        s.contains("Models — browse, download and delete models"),
+        "tab 9 is Models:\n{s}"
+    );
     for needle in [
         "This computer: Apple M5 Max",
         "4 of 4 models · 16 artifacts shown",

@@ -1424,6 +1424,7 @@ pub fn workspace(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                     .shrink(0.0),
                             )
                             .element(gcx, &t);
+                        let prompt = super::w::caret_tracked(gcx, ui.caret, prompt);
                         // NO autofocus (REVIEW-1 M1): this slot re-mounts
                         // on every guide→browse flip, and a caret parked
                         // here ate the screen keys (`3` typed "3") — in

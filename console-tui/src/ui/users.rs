@@ -1526,8 +1526,7 @@ fn open_reservations_modal(cx: Scope, ctx: &Ctx) {
                                 // never from the viewport — over-budgeting
                                 // here would clamp the last columns to
                                 // nothing.
-                                let vw = RESV_MODAL_W
-                                    .min(crate::ui::page_viewport(gcx).get().w)
+                                let vw = RESV_MODAL_W.min(crate::ui::page_viewport(gcx).get().w)
                                     - RESV_MODAL_CHROME;
                                 let mut table_rows: Vec<Vec<String>> = rows
                                     .iter()

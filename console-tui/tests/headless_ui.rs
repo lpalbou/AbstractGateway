@@ -545,20 +545,18 @@ fn boots_to_connection_wizard_step() {
     let mut h = harness();
     let screen = h.turn();
     assert!(
-        screen.contains("AbstractGateway Console"),
+        screen.contains("AbstractGateway · wizard"),
         "header:\n{screen}"
     );
-    // PageHost bar: numbered titles, engine-drawn active underline.
-    assert!(screen.contains("1 Connection"), "page bar:\n{screen}");
-    // DESIGN-v2 §1: the shown order is the web sidebar's groups —
-    // Accounts second, then the WORK screens.
-    assert!(screen.contains("2 Accounts"), "page bar:\n{screen}");
-    assert!(screen.contains("3 Workflows"), "page bar:\n{screen}");
-    assert!(
-        screen
-            .contains("ACCOUNTS 2 · WORK 3-6 · MODELS 7 8 9 0 · SYSTEM H T N · S Setup · I About"),
-        "group line:\n{screen}"
+    // R15 nav strip (110 cols): clickable titles in the web sidebar's
+    // order — Connection, then Accounts, then the WORK screens.
+    let strip = screen.lines().nth(1).unwrap_or_default();
+    let (c, a, w) = (
+        strip.find("Connection"),
+        strip.find("Accounts"),
+        strip.find("Workflows"),
     );
+    assert!(c.is_some() && c < a && a < w, "nav strip order:\n{screen}");
     assert!(screen.contains("Gateway URL"), "url field:\n{screen}");
     assert!(screen.contains("Admin token"), "token field:\n{screen}");
     assert!(
@@ -3814,30 +3812,17 @@ fn title_bar_and_separator_survive_content_pressure() {
         for screen in ui::NAV_ORDER {
             h.ui.screen.set(screen);
             let scr = h.turns(3);
-            // The Setup step has no jump key: its tab is titled bare.
-            let want = match ui::screen_key(screen) {
-                Some(k) => format!("{k} {}", ui::SCREENS[screen]),
-                None => ui::SCREENS[screen].to_string(),
-            };
+            let want = ui::SCREENS[screen];
             let lines: Vec<&str> = scr.lines().collect();
             assert!(
-                lines[0].contains("AbstractGateway Console"),
+                lines[0].contains("AbstractGateway ·"),
                 "title bar at row 0 (wizard={wizard} screen={screen}):\n{scr}"
             );
-            // Row 1 separates the title from the tabs: the screen
-            // list's group line (DESIGN-v2 §1), never a component.
+            // R15: row 1 is the nav strip (110 cols), windowed around the
+            // ACTIVE screen — its title is always on it.
             assert!(
-                lines[1].contains("ACCOUNTS 2 · WORK 3-6 · MODELS 7 8 9 0 · SYSTEM H T N"),
-                "group line under the title (wizard={wizard} screen={screen}):\n{scr}"
-            );
-            // With 8 tabs the bar OVERFLOWS at 110 cols and windows
-            // (sticky around the active tab) — so the chrome check is
-            // "the ACTIVE tab's title sits on row 2", which holds at
-            // every screen; "1 Connection" is honestly behind ‹ when
-            // the window has slid right.
-            assert!(
-                lines[2].contains(&want),
-                "tab bar at row 2 shows '{want}' (wizard={wizard} screen={screen}):\n{scr}"
+                lines[1].contains(want),
+                "nav strip at row 1 shows '{want}' (wizard={wizard} screen={screen}):\n{scr}"
             );
         }
     }
@@ -3862,8 +3847,9 @@ fn footer_leads_with_the_screen_keys_at_80x24() {
         let s = h.turns(3);
         // The key-hint bar wraps onto two lines (R7.2): its FIRST line
         // leads with the screen's own verb.
+        // R15 §2.7: ONE status row (the last), leading with the screen's keys.
         let rows: Vec<&str> = s.lines().filter(|l| !l.trim().is_empty()).collect();
-        let first = rows[rows.len() - 2];
+        let first = rows[rows.len() - 1];
         assert!(
             first.trim_start().starts_with(lead),
             "screen {screen} footer leads with '{lead}':\n{s}"
@@ -4260,7 +4246,7 @@ fn connection_screen_fits_at_macos_default_80x24() {
     let s = h.turns(3);
     let lines: Vec<&str> = s.lines().collect();
     assert!(
-        lines[0].contains("AbstractGateway Console"),
+        lines[0].contains("AbstractGateway ·"),
         "title survives:\n{s}"
     );
     // The connected identity badge (admin@default) must render — it was
@@ -4954,7 +4940,7 @@ fn gateway_reset_forgets_the_chosen_runtime() {
 /// re-mount the table's `.autofocus()` and yank focus off the tabs
 /// bar — turning the next arrow key into a plane switch (which LOADS).
 #[test]
-fn busy_tick_does_not_steal_focus_from_the_tabs_bar() {
+fn busy_tick_does_not_steal_focus_from_the_inspector_segments() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(4);
@@ -4979,33 +4965,21 @@ fn busy_tick_does_not_steal_focus_from_the_tabs_bar() {
         rows: vec![],
     }));
     h.turns(2);
-
-    // Reach the tabs bar with the keyboard and prove it owns ←/→.
-    h.key(b"\t");
+    h.key(b"\t"); // Runs segment
     h.turns(1);
-    h.key(b"\x1b[C"); // Right → Data & cache
-    h.turns(2);
-    assert_eq!(
-        h.ui.rt_tab.get_untracked(),
-        1,
-        "tabs bar reachable via Tab; Right switches"
-    );
-    h.key(b"\x1b[D"); // Left → Sessions
-    h.turns(2);
-    assert_eq!(h.ui.rt_tab.get_untracked(), 0);
+    h.key(b"\t"); // Artifacts segment
+    h.turns(1);
     let _ = h.drain_cmds();
-
     // The busy heartbeat ticks while some op runs elsewhere.
     h.store.tick.update(|t| *t += 1);
     h.turns(2);
-
-    // Focus must still be on the tabs bar: Right switches tabs…
-    h.key(b"\x1b[C");
+    // Focus must still be on the Artifacts segment: Enter picks it…
+    h.key(b"\r");
     h.turns(2);
     assert_eq!(
         h.ui.rt_tab.get_untracked(),
         1,
-        "focus stays on the tabs bar across busy ticks"
+        "focus stays on the segment across busy ticks"
     );
     // …and an arrow key must NOT move the inventory selection (a moved
     // selection is a CHOOSE — it loads another plane nobody picked).
@@ -5019,9 +4993,6 @@ fn busy_tick_does_not_steal_focus_from_the_tabs_bar() {
     );
 }
 
-/// Layout pin: the redesigned screen must FIT at the macOS default
-/// 80x24 — inventory header, inspector tabs, and the footer hints all
-/// visible with a runtime chosen (the 0240 shrink class).
 #[test]
 fn runtimes_inspector_fits_at_80x24() {
     let mut h = harness_sized(Size::new(80, 24));
@@ -5344,7 +5315,8 @@ fn routes_screen_shows_weight_availability_and_no_banner_when_every_route_is_ans
 /// store), and keeps the actionable verb.
 #[test]
 fn routes_screen_banners_only_the_routes_with_no_model_at_all() {
-    let mut h = harness_sized(Size::new(150, 44));
+    // R15: 171 wide = the old 150-cell page beside the nav rail.
+    let mut h = harness_sized(Size::new(171, 44));
     h.connect_as_admin();
     h.goto_screen(2);
     h.store.routes.set(Loadable::Ready(routes_fixture()));
@@ -5698,6 +5670,12 @@ fn grid_rows(screen: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut inside = false;
     for l in screen.lines() {
+        // R15: drop the nav rail (20 cells + its │) when the frame has one.
+        let l: String = if l.chars().nth(20) == Some('│') {
+            l.chars().skip(21).collect()
+        } else {
+            l.to_string()
+        };
         let body = l.trim_matches(|c| c == '│' || c == ' ');
         if body.starts_with("route ") {
             inside = true;
@@ -6625,7 +6603,9 @@ fn models_tab_renders_gauges_and_table_from_fixture() {
 /// them. Nothing was removed and nothing was reordered.
 #[test]
 fn models_table_and_its_lock_verb_are_reachable_at_80x24() {
-    let mut h = harness_sized(Size::new(80, 24));
+    // R15: the shell chrome shrank by 3 rows; 80x21 keeps the 80x24 page area
+    // this test was written against (the overflow guard below needs it).
+    let mut h = harness_sized(Size::new(80, 21));
     h.connect_as_admin();
     h.goto_screen(7);
     h.store
@@ -7141,7 +7121,8 @@ fn models_tab_states_the_gateway_process_rss_exactly_once() {
 /// the strip explains it in the spec's words, wrapped, never truncated.
 #[test]
 fn models_tab_names_the_gguf_case_when_weights_exceed_the_accelerator_heap() {
-    let mut h = harness();
+    // R15: 110x31 keeps the old page area (the shell chrome shrank by 3 rows).
+    let mut h = harness_sized(Size::new(110, 31));
     h.connect_as_admin();
     h.goto_screen(7);
     let mut d = host_state_fixture();
@@ -7717,7 +7698,8 @@ fn set_network(h: &mut Harness, v: Value) -> String {
 /// one line (saved vs running) that points there.
 #[test]
 fn n_jumps_to_the_network_screen_and_connection_keeps_one_line() {
-    let mut h = harness_sized(Size::new(120, 40));
+    // R15: 141 wide = a 120-cell page beside the nav rail.
+    let mut h = harness_sized(Size::new(141, 40));
     h.connect_as_admin();
     h.ui.wizard.set(false);
     h.ui.screen.set(0);
@@ -7764,9 +7746,9 @@ fn network_c_in_the_url_field_still_types() {
     h.store.notice.set(None);
     h.ui.conn_url.set(String::new());
     h.turn();
-    // Connected, the URL field no longer holds the caret (M2): Tab past
-    // the tab bar into it.
-    for _ in 0..2 {
+    // Connected, the URL field no longer holds the caret (M2): one Tab
+    // reaches it (R15: the nav is a mouse target, not a Tab stop).
+    for _ in 0..1 {
         h.key(b"\t");
         h.turn();
     }
@@ -8066,7 +8048,8 @@ fn host_panel_start_at_login_toggle_confirms_then_puts() {
 #[test]
 fn finish_step_offers_start_at_login() {
     use abstractgateway_console::worker::operator::OpCmd;
-    let mut h = harness_sized(Size::new(150, 44));
+    // R15: 171 wide = a 150-cell page beside the nav rail.
+    let mut h = harness_sized(Size::new(171, 44));
     h.connect_as_admin();
     h.ui.wizard.set(true);
     h.ui.screen.set(ui::SCREEN_REVIEW);
@@ -8534,16 +8517,24 @@ fn about_is_on_the_connection_screen_and_question_mark() {
     h.goto_screen(0);
     let s = h.turns(2);
     assert!(
-        s.contains("About: F1 (or ?)"),
+        s.contains("About: F1 — this console"),
         "Connection screen names the About key:\n{s}"
     );
     h.connect_as_admin();
     h.goto_screen(3);
-    h.key(b"?");
+    // R15 D5: F1 opens About, `?` the keys panel.
+    h.key(b"\x1bOP");
     let s = h.turns(2);
     assert!(
         s.contains("Contact           contact@abstractframework.ai"),
-        "? opens About:\n{s}"
+        "F1 opens About:\n{s}"
+    );
+    h.press_escape();
+    h.key(b"?");
+    let s = h.turns(2);
+    assert!(
+        s.contains("Keys — Accounts"),
+        "? opens the keys panel:\n{s}"
     );
 }
 
@@ -9167,8 +9158,11 @@ fn arrows_move_the_caret_in_a_focused_text_field() {
 /// A widget that uses Left/Right keeps them: the Runtimes inspector's
 /// tabs bar switches its own tabs (and clamps at its edge) instead of
 /// the global tab. Off the bar, the same key is global again.
+/// R15 A1: the inspector's Runs | Artifacts | Cache | Logs choice is a
+/// Segmented — ONE Tab stop per segment, Enter/Space picks — and ←/→ stay
+/// the SCREEN keys even with a segment focused (no third exception).
 #[test]
-fn arrows_stay_with_a_focused_tabs_bar() {
+fn inspector_segments_take_tab_and_enter_and_arrows_stay_global() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(4);
@@ -9193,36 +9187,32 @@ fn arrows_stay_with_a_focused_tabs_bar() {
         rows: vec![],
     }));
     h.turns(2);
-    h.key(b"\t"); // focus the inspector's tabs bar
+    h.key(b"\t"); // the "Runs" segment
     h.turns(1);
-    h.key(RIGHT);
+    h.key(b"\t"); // the "Artifacts" segment
+    h.turns(1);
+    h.key(b"\r");
+    h.turns(2);
+    assert_eq!(h.ui.rt_tab.get_untracked(), 1, "Enter picked Artifacts");
+    assert_eq!(h.ui.screen.get_untracked(), 4);
+    // Focus stayed on the segment: Space picks it again (no-op), Shift+Tab
+    // goes back to Runs and Enter picks it.
+    h.key(b"\x1b[Z");
+    h.turns(1);
+    h.key(b"\r");
     h.turns(2);
     assert_eq!(
         h.ui.rt_tab.get_untracked(),
-        1,
-        "Right switched the inner tab"
+        0,
+        "Shift+Tab + Enter picked Runs"
     );
-    assert_eq!(h.ui.screen.get_untracked(), 4, "…not the global tab");
-    h.key(LEFT);
-    h.turns(2);
-    h.key(LEFT); // the bar's first tab: clamps, still the bar's key
-    h.turns(2);
-    assert_eq!(h.ui.rt_tab.get_untracked(), 0);
-    assert_eq!(
-        h.ui.screen.get_untracked(),
-        4,
-        "Left at the bar's edge is not global"
-    );
-    let _ = h.drain_cmds();
-    // Positive control: back on the inventory table, Right is global.
-    h.key(b"\x1b[Z"); // Shift+Tab
-    h.turns(1);
+    // ←/→ with a segment focused: the SCREEN changes.
     h.key(RIGHT);
     h.turns(2);
     assert_eq!(
         h.ui.screen.get_untracked(),
         ui::SCREEN_APPS,
-        "off the tabs bar, Right switches the global tab"
+        "Right switches the screen even from a focused segment"
     );
 }
 
@@ -9257,9 +9247,12 @@ fn arrows_do_not_switch_the_screen_behind_a_modal() {
     h.store.profiles.set(Loadable::Ready(profiles_fixture()));
     h.store.providers.set(Loadable::Ready(providers_fixture()));
     h.turns(2);
-    h.type_text("\x1bOP");
+    h.key(b"\x1bOP");
     let s = h.turns(2);
-    assert!(s.contains("About"), "the About modal is open:\n{s}");
+    assert!(
+        s.contains("reading GET /api/gateway/about"),
+        "the About modal is open:\n{s}"
+    );
     h.key(RIGHT);
     h.turns(2);
     h.key(LEFT);

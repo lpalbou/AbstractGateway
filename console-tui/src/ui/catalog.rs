@@ -2328,6 +2328,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         let g = search_gen.get();
         let hf = with_state(|p| p.filters.hf_mode());
         let ctx_s = ctx_s.clone();
+        let caret_c = ctx_s.ui.caret;
         let el = TextInput::new()
             .value(search)
             .placeholder(if hf {
@@ -2350,6 +2351,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 }
             })
             .element(gcx, &tt);
+        let el = super::w::caret_tracked(gcx, caret_c, el);
         let list_id_esc = list_id_esc.clone();
         let el = el.shortcut(KeyChord::plain(Key::Escape), move |ecx| {
             let target = list_id_esc.get().or_else(|| ecx.current());

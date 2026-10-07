@@ -300,7 +300,8 @@ impl RowActions {
         let n = lines.len() as i32;
         let mut col = Element::new().style(LayoutStyle::column().shrink(0.0));
         for line in lines {
-            let mut row = Element::new().style(LayoutStyle::row().height(Dimension::Cells(1)).shrink(0.0));
+            let mut row =
+                Element::new().style(LayoutStyle::row().height(Dimension::Cells(1)).shrink(0.0));
             for a in line {
                 let id = a.id;
                 let cb = on_action.clone();
@@ -309,7 +310,11 @@ impl RowActions {
                 if label_gap {
                     row = row.child(
                         Element::new()
-                            .style(LayoutStyle::default().width(Dimension::Cells(1)).shrink(0.0))
+                            .style(
+                                LayoutStyle::default()
+                                    .width(Dimension::Cells(1))
+                                    .shrink(0.0),
+                            )
                             .build(),
                     );
                 }

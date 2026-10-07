@@ -215,38 +215,53 @@ fn assert_fits(s: &str, w: i32) {
 
 #[test]
 fn group_line_and_tabs_follow_the_web_sidebar() {
+    // R15 shell: below 120x32 a one-row nav strip (the active screen's group
+    // caption + titles windowed around it); from 120x32 (the harness adds
+    // the rail's 21 cells to wide sizes) the web sidebar as a left rail.
     for (w, hgt) in SIZES {
         let mut h = harness(Size::new(w, hgt));
         h.admin();
         let s = h.goto(ui::SCREEN_USERS);
         assert_fits(&s, w);
-        let group = s.lines().nth(1).unwrap_or_default();
-        assert!(
-            group.contains(
-                "ACCOUNTS 2 · WORK 3-6 · MODELS 7 8 9 0 · SYSTEM H T N · S Setup · I About"
-            ),
-            "{group}"
-        );
-        // MODELS: Providers, OpenAI API, Models, Multimodal — in order.
-        let s = h.goto(ui::SCREEN_OPENAI);
-        let tabs = s.lines().nth(2).unwrap_or_default();
-        let p = tabs.find("7 Providers");
-        let o = tabs.find("8 OpenAI API");
-        assert!(p.is_some() && o.is_some() && p < o, "MODELS order:\n{tabs}");
-        h.shoot("nav-openai");
-        // SYSTEM: Resources, Sandbox, Network; then Setup, About.
-        let s = h.goto(ui::SCREEN_ABOUT);
-        let tabs = s.lines().nth(2).unwrap_or_default();
-        for (a, b) in [
-            ("H Resources", "T Sandbox"),
-            ("T Sandbox", "N Network"),
-            ("S Setup", "I About"),
-        ] {
-            if let (Some(x), Some(y)) = (tabs.find(a), tabs.find(b)) {
-                assert!(x < y, "{a} before {b}:\n{tabs}");
+        let wide = w >= 120 && hgt >= 32;
+        if wide {
+            for caption in [" ACCOUNTS", " WORK", " MODELS", " SYSTEM"] {
+                assert!(
+                    s.lines().any(|l| l.starts_with(caption)),
+                    "rail caption {caption}:\n{s}"
+                );
             }
+            let pos = |name: &str| {
+                s.lines()
+                    .position(|l| l.chars().take(20).collect::<String>().contains(name))
+            };
+            // MODELS: Providers, OpenAI API, Models, Multimodal — in order;
+            // SYSTEM: Resources, Sandbox, Network; then Connection, Setup, About.
+            for (a, b) in [
+                ("Providers", "OpenAI API"),
+                ("OpenAI API", "Models"),
+                ("Resources", "Sandbox"),
+                ("Sandbox", "Network"),
+                ("Network", "Setup"),
+                ("Setup", "About"),
+            ] {
+                assert!(pos(a) < pos(b), "{a} above {b}:\n{s}");
+            }
+        } else {
+            let strip = s.lines().nth(1).unwrap_or_default();
+            assert!(strip.starts_with(" ACCOUNTS"), "strip caption:\n{strip}");
+            let s = h.goto(ui::SCREEN_OPENAI);
+            let strip = s.lines().nth(1).unwrap_or_default();
+            assert!(strip.starts_with(" MODELS"), "strip caption:\n{strip}");
+            let p = strip.find("Providers");
+            let o = strip.find("OpenAI API");
+            assert!(
+                p.is_some() && o.is_some() && p < o,
+                "MODELS order:\n{strip}"
+            );
         }
-        assert!(tabs.contains("I About"), "{tabs}");
+        h.shoot("nav-openai");
+        let s = h.goto(ui::SCREEN_ABOUT);
         // No Engines tab anywhere.
         assert!(
             !s.contains("Engines"),
@@ -277,20 +292,18 @@ fn letter_keys_jump_to_the_system_pages_and_about() {
 
 #[test]
 fn the_key_hint_bar_wraps_instead_of_cutting_the_screen_verbs() {
+    // R15 §2.7: ONE status row; the screen's verbs lead, `? keys` follows
+    // them, the universal keys truncate first; the panel lists them all.
     let mut h = harness(Size::new(80, 24));
     h.admin();
     let s = h.goto(ui::SCREEN_WELCOME);
     let rows: Vec<&str> = s.lines().collect();
     let last = rows[rows.len() - 1];
-    let first = rows[rows.len() - 2];
     assert!(
-        first.starts_with("a Use recommended defaults · D Download all · r refresh"),
+        last.starts_with("a Use recommended defaults · D Download all · r refresh"),
         "{s}"
     );
-    assert!(
-        last.contains("screens"),
-        "second line carries the universal keys:\n{s}"
-    );
+    assert!(last.contains("? keys"), "the keys panel is named:\n{s}");
 }
 
 // ---------------------------------------------------------------------

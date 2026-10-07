@@ -90,6 +90,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 .on_submit(move |_| ctx_u.connect_typed())
                 .layout(LayoutStyle::default().w(46).h(1))
                 .element(gcx, &t);
+            let el = super::w::caret_tracked(gcx, ui.caret, el);
             let el = esc_releases_focus(el, notice);
             field(
                 &t,
@@ -101,14 +102,18 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             t,
             "Admin token",
             esc_releases_focus(
-                TextInput::new()
-                    .value(ui.conn_token)
-                    .masked(true)
-                    .placeholder("paste it, or launch with --token <token>")
-                    .placeholder_while_focused(true)
-                    .on_submit(move |_| ctx_submit_tok.connect_typed())
-                    .layout(LayoutStyle::default().w(46).h(1))
-                    .element(cx, t),
+                super::w::caret_tracked(
+                    cx,
+                    ui.caret,
+                    TextInput::new()
+                        .value(ui.conn_token)
+                        .masked(true)
+                        .placeholder("paste it, or launch with --token <token>")
+                        .placeholder_while_focused(true)
+                        .on_submit(move |_| ctx_submit_tok.connect_typed())
+                        .layout(LayoutStyle::default().w(46).h(1))
+                        .element(cx, t),
+                ),
                 notice,
             )
             .build(),
@@ -187,7 +192,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             line(vec![
                 span("About: ", tt.text_muted),
                 span(
-                    "F1 (or ?) — this console, AbstractFramework, the gateway's versions",
+                    "F1 — this console, AbstractFramework, the gateway's versions (? lists the keys)",
                     tt.text_faint,
                 ),
             ])
@@ -255,6 +260,7 @@ fn recovery_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let tt = *t;
     let rec = store.op.recovery;
     let user = cx.signal("admin".to_string());
+    let caret = ctx.ui.caret;
     let code = cx.signal(String::new());
     let clock = cx.signal(0u64);
     let signed_out = cx.memo(move || {
@@ -410,8 +416,7 @@ fn recovery_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 )]))
                 .child({
                     // Wrapped (never cut): the one time the token is shown.
-                    let w = (crate::ui::page_viewport(rcx).get_untracked().w - 6).max(20)
-                        as usize;
+                    let w = (crate::ui::page_viewport(rcx).get_untracked().w - 6).max(20) as usize;
                     let mut c = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
                     for l in super::util::wrap_text(
                         "Your new token — shown once; your old token no longer works. Copy it now:",
@@ -461,11 +466,15 @@ fn recovery_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     .child(field(
                         &t,
                         "Gateway user",
-                        TextInput::new()
-                            .value(user)
-                            .layout(LayoutStyle::default().w(24).h(1))
-                            .element(rcx, &t)
-                            .build(),
+                        super::w::caret_tracked(
+                            rcx,
+                            caret,
+                            TextInput::new()
+                                .value(user)
+                                .layout(LayoutStyle::default().w(24).h(1))
+                                .element(rcx, &t),
+                        )
+                        .build(),
                     ))
                     .child(field(
                         &t,
@@ -485,8 +494,7 @@ fn recovery_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 let (request, redeem, redeem_enter) =
                     (request.clone(), redeem.clone(), redeem.clone());
                 // The gateway's honest answer, wrapped (never cut).
-                let msg_w =
-                    (crate::ui::page_viewport(rcx).get_untracked().w - 6).max(20) as usize;
+                let msg_w = (crate::ui::page_viewport(rcx).get_untracked().w - 6).max(20) as usize;
                 let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
                 for l in super::util::wrap_text(&a.message, msg_w) {
                     col = col.child(line(vec![span(l, if a.sent { t.ok } else { t.warn })]));
@@ -499,20 +507,18 @@ fn recovery_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 }
                 if a.sent {
                     col = col
-                        .child(super::util::field_w(
-                            &t,
-                            "Code from the email",
-                            20,
-                            TextInput::new()
+                        .child(super::util::field_w(&t, "Code from the email", 20, {
+                            let code_el = TextInput::new()
                                 .value(code)
                                 .placeholder("8 digits")
                                 .placeholder_while_focused(true)
                                 .on_submit(move |_| redeem_enter())
                                 .layout(LayoutStyle::default().w(12).h(1))
-                                .element(rcx, &t)
+                                .element(rcx, &t);
+                            super::w::caret_tracked(rcx, caret, code_el)
                                 .autofocus()
-                                .build(),
-                        ))
+                                .build()
+                        }))
                         .child(error_line(&t))
                         .child(field(
                             &t,

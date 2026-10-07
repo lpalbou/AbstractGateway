@@ -101,7 +101,11 @@ impl Cell {
             Cell::Text(sp) => sp.iter().map(|s| abstracttui::text::width(&s.text)).sum(),
             Cell::Lines(ls) => ls
                 .iter()
-                .map(|l| l.iter().map(|s| abstracttui::text::width(&s.text)).sum::<i32>())
+                .map(|l| {
+                    l.iter()
+                        .map(|s| abstracttui::text::width(&s.text))
+                        .sum::<i32>()
+                })
                 .max()
                 .unwrap_or(0),
             Cell::Toggle { .. } => 2,
@@ -114,7 +118,11 @@ impl Cell {
     fn height(&self, w: i32) -> i32 {
         match self {
             Cell::Text(sp) => wrap_spans(sp, w).len() as i32,
-            Cell::Lines(ls) => ls.iter().map(|l| wrap_spans(l, w).len() as i32).sum::<i32>().max(1),
+            Cell::Lines(ls) => ls
+                .iter()
+                .map(|l| wrap_spans(l, w).len() as i32)
+                .sum::<i32>()
+                .max(1),
             Cell::Badge { label, .. } | Cell::Link { label, .. } => {
                 wrap(label, w).len().max(1) as i32
             }
@@ -287,7 +295,9 @@ impl DataTable {
                 .filter(|i| matches!(cols[*i].w, ColW::Flex { .. }))
                 .collect();
             for (k, i) in flex.iter().enumerate() {
-                let ColW::Flex { weight, .. } = cols[*i].w else { continue };
+                let ColW::Flex { weight, .. } = cols[*i].w else {
+                    continue;
+                };
                 let add = if k + 1 == flex.len() {
                     spare - given
                 } else {
@@ -349,7 +359,10 @@ impl DataTable {
                     return None;
                 }
                 let k = selection.get();
-                Some(k.and_then(|k| keys.iter().position(|x| *x == k)).unwrap_or(0))
+                Some(
+                    k.and_then(|k| keys.iter().position(|x| *x == k))
+                        .unwrap_or(0),
+                )
             }
         };
         let heights: Rc<Vec<i32>> = Rc::new(
@@ -375,7 +388,11 @@ impl DataTable {
         );
 
         let header = header_view(cx, &t, &cols, &widths, sort);
-        let rule = fill_line(LayoutStyle::line(1).shrink(0.0), vec![Ink::new("─".repeat(width.max(1) as usize), t.border)], None);
+        let rule = fill_line(
+            LayoutStyle::line(1).shrink(0.0),
+            vec![Ink::new("─".repeat(width.max(1) as usize), t.border)],
+            None,
+        );
 
         // Keys on the table root (focusable: one tab stop for the table).
         let n = rows.len();
@@ -384,7 +401,12 @@ impl DataTable {
         let act_k = on_activate.clone();
         let space_k = on_space.clone();
         let sel_k = sel_index.clone();
-        let sortable_cols: Vec<usize> = cols.iter().enumerate().filter(|(_, c)| c.sortable).map(|(i, _)| i).collect();
+        let sortable_cols: Vec<usize> = cols
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.sortable)
+            .map(|(i, _)| i)
+            .collect();
         let mut root = Element::new()
             .style(LayoutStyle::column().shrink(0.0))
             .focusable()
@@ -455,7 +477,11 @@ impl DataTable {
         if rows.is_empty() {
             let e = empty.clone();
             return root
-                .child(fill_line(LayoutStyle::line(1).shrink(0.0), vec![Ink::new(e, t.text_muted)], None))
+                .child(fill_line(
+                    LayoutStyle::line(1).shrink(0.0),
+                    vec![Ink::new(e, t.text_muted)],
+                    None,
+                ))
                 .build();
         }
 
@@ -499,7 +525,9 @@ impl DataTable {
                     match m.kind {
                         MouseKind::ScrollDown => {
                             let cur = top.get_untracked();
-                            if fits_from(&heights_s, cur + 1, max_rows) || cur + 1 < total && !fits_from(&heights_s, cur, max_rows) {
+                            if fits_from(&heights_s, cur + 1, max_rows)
+                                || cur + 1 < total && !fits_from(&heights_s, cur, max_rows)
+                            {
                                 top.set((cur + 1).min(total.saturating_sub(1)));
                             }
                             ectx.stop_propagation();
@@ -552,7 +580,12 @@ pub fn actions_lines(a: &[Action], w: i32) -> i32 {
     let mut lines = 1;
     let mut used = 0;
     for x in a {
-        let add = x.width() + if x.display == super::action::Display::Label { 1 } else { 0 };
+        let add = x.width()
+            + if x.display == super::action::Display::Label {
+                1
+            } else {
+                0
+            };
         if used > 0 && used + x.width() > w {
             lines += 1;
             used = 0;
@@ -574,7 +607,11 @@ pub fn wrap_spans(spans: &[Ink], w: i32) -> Vec<Vec<Ink>> {
                 used = 0;
             }
             for (wi, word) in para.split(' ').enumerate() {
-                let piece = if wi > 0 && used > 0 { format!(" {word}") } else { word.to_string() };
+                let piece = if wi > 0 && used > 0 {
+                    format!(" {word}")
+                } else {
+                    word.to_string()
+                };
                 let pw = abstracttui::text::width(&piece);
                 if used > 0 && used + pw > w {
                     lines.push(Vec::new());
@@ -595,7 +632,10 @@ pub fn wrap_spans(spans: &[Ink], w: i32) -> Vec<Vec<Ink>> {
 
 fn push_hard(lines: &mut Vec<Vec<Ink>>, used: &mut i32, piece: &str, pw: i32, w: i32, s: &Ink) {
     if pw <= w - *used {
-        lines.last_mut().expect("line").push(Ink { text: piece.to_string(), ..s.clone() });
+        lines.last_mut().expect("line").push(Ink {
+            text: piece.to_string(),
+            ..s.clone()
+        });
         *used += pw;
         return;
     }
@@ -605,7 +645,10 @@ fn push_hard(lines: &mut Vec<Vec<Ink>>, used: &mut i32, piece: &str, pw: i32, w:
     for ch in piece.chars() {
         let chw = abstracttui::text::width(ch.encode_utf8(&mut [0; 4]));
         if *used + cw + chw > w && (cw > 0 || *used > 0) {
-            lines.last_mut().expect("line").push(Ink { text: std::mem::take(&mut cur), ..s.clone() });
+            lines.last_mut().expect("line").push(Ink {
+                text: std::mem::take(&mut cur),
+                ..s.clone()
+            });
             lines.push(Vec::new());
             *used = 0;
             cw = 0;
@@ -613,11 +656,20 @@ fn push_hard(lines: &mut Vec<Vec<Ink>>, used: &mut i32, piece: &str, pw: i32, w:
         cur.push(ch);
         cw += chw;
     }
-    lines.last_mut().expect("line").push(Ink { text: cur, ..s.clone() });
+    lines.last_mut().expect("line").push(Ink {
+        text: cur,
+        ..s.clone()
+    });
     *used += cw;
 }
 
-fn header_view(cx: Scope, t: &TokenSet, cols: &[Col], widths: &[i32], sort: Option<Signal<(usize, bool)>>) -> View {
+fn header_view(
+    cx: Scope,
+    t: &TokenSet,
+    cols: &[Col],
+    widths: &[i32],
+    sort: Option<Signal<(usize, bool)>>,
+) -> View {
     let t = *t;
     let cols = cols.to_vec();
     let widths = widths.to_vec();
@@ -658,8 +710,12 @@ fn header_view(cx: Scope, t: &TokenSet, cols: &[Col], widths: &[i32], sort: Opti
                 }
             }
             row = row.child(
-                cell.child(fill_line(LayoutStyle::fill(), vec![Ink::new(label, ink).bold()], None))
-                    .build(),
+                cell.child(fill_line(
+                    LayoutStyle::fill(),
+                    vec![Ink::new(label, ink).bold()],
+                    None,
+                ))
+                .build(),
             );
         }
         row.build()
@@ -742,7 +798,12 @@ fn row_view(
                 }
                 lines_view(all, &ink, bg)
             }
-            Cell::Toggle { id, on, refused, tip } => {
+            Cell::Toggle {
+                id,
+                on,
+                refused,
+                tip,
+            } => {
                 let id = *id;
                 let k = key.clone();
                 let cb = on_toggle.clone();
@@ -760,7 +821,12 @@ fn row_view(
                 }
                 tg.view(cx, t)
             }
-            Cell::Badge { label, ink: bink, action, tip } => {
+            Cell::Badge {
+                label,
+                ink: bink,
+                action,
+                tip,
+            } => {
                 let a = Action::label(action.unwrap_or("badge"), label.clone())
                     .tooltip(tip.clone().unwrap_or_default());
                 match action {
@@ -778,7 +844,11 @@ fn row_view(
                     None => {
                         let tipped = Element::new()
                             .style(LayoutStyle::line(1).shrink(0.0))
-                            .child(fill_line(LayoutStyle::fill(), vec![Ink::new(label.clone(), ink(*bink))], Some(bg)));
+                            .child(fill_line(
+                                LayoutStyle::fill(),
+                                vec![Ink::new(label.clone(), ink(*bink))],
+                                Some(bg),
+                            ));
                         super::tip::with_tip(cx, tipped, tip.clone().unwrap_or_default()).build()
                     }
                 }
@@ -787,7 +857,8 @@ fn row_view(
                 let id = *action;
                 let k = key.clone();
                 let cb = on_action.clone();
-                let a = Action::label(id, label.clone()).tooltip(tip.clone().unwrap_or_else(|| label.clone()));
+                let a = Action::label(id, label.clone())
+                    .tooltip(tip.clone().unwrap_or_else(|| label.clone()));
                 link_button(cx, t, &a, selected, move || {
                     selection.set(Some(k.clone()));
                     if let Some(f) = &cb {
@@ -804,7 +875,9 @@ fn row_view(
                         f(&k, id);
                     }
                 });
-                RowActions::new(acts.clone()).view(cx, t, on, selected, w, handler).0
+                RowActions::new(acts.clone())
+                    .view(cx, t, on, selected, w, handler)
+                    .0
             }
         };
         line = line.child(cell_el.child(inner).build());
@@ -848,10 +921,7 @@ fn row_view(
 fn lines_view(lines: Vec<Vec<Ink>>, ink: &dyn Fn(Rgba) -> Rgba, bg: Rgba) -> View {
     let mut col = Element::new().style(LayoutStyle::column().shrink(0.0));
     for l in lines {
-        let spans: Vec<Ink> = l
-            .into_iter()
-            .map(|s| Ink { fg: ink(s.fg), ..s })
-            .collect();
+        let spans: Vec<Ink> = l.into_iter().map(|s| Ink { fg: ink(s.fg), ..s }).collect();
         col = col.child(fill_line(LayoutStyle::line(1).shrink(0.0), spans, Some(bg)));
     }
     col.build()
@@ -859,17 +929,48 @@ fn lines_view(lines: Vec<Vec<Ink>>, ink: &dyn Fn(Rgba) -> Rgba, bg: Rgba) -> Vie
 
 /// A clickable state badge: the label is the STATE only (A3); the action
 /// sentence is in the tooltip.
-fn badge_button(cx: Scope, t: &TokenSet, a: &Action, ink: Rgba, selected: bool, f: impl FnMut() + 'static) -> View {
+fn badge_button(
+    cx: Scope,
+    t: &TokenSet,
+    a: &Action,
+    ink: Rgba,
+    selected: bool,
+    f: impl FnMut() + 'static,
+) -> View {
     let mut tt = *t;
     tt.text = ink;
-    tt.surface_raised = if selected { t.surface } else { t.surface_raised };
-    super::action::button(cx, &tt, a, if selected { On::Selected } else { On::Page }, selected, f)
+    tt.surface_raised = if selected {
+        t.surface
+    } else {
+        t.surface_raised
+    };
+    super::action::button(
+        cx,
+        &tt,
+        a,
+        if selected { On::Selected } else { On::Page },
+        selected,
+        f,
+    )
 }
 
-fn link_button(cx: Scope, t: &TokenSet, a: &Action, selected: bool, f: impl FnMut() + 'static) -> View {
+fn link_button(
+    cx: Scope,
+    t: &TokenSet,
+    a: &Action,
+    selected: bool,
+    f: impl FnMut() + 'static,
+) -> View {
     let mut tt = *t;
     tt.text = t.link;
-    super::action::button(cx, &tt, a, if selected { On::Selected } else { On::Page }, selected, f)
+    super::action::button(
+        cx,
+        &tt,
+        a,
+        if selected { On::Selected } else { On::Page },
+        selected,
+        f,
+    )
 }
 
 #[cfg(test)]
@@ -882,7 +983,10 @@ mod tests {
 
     #[test]
     fn wrap_spans_never_exceeds_width() {
-        let l = wrap_spans(&[ink("alice@example.com · connected and more words here")], 12);
+        let l = wrap_spans(
+            &[ink("alice@example.com · connected and more words here")],
+            12,
+        );
         for line in &l {
             let w: i32 = line.iter().map(|s| abstracttui::text::width(&s.text)).sum();
             assert!(w <= 12, "{w}: {line:?}");
@@ -899,7 +1003,19 @@ mod tests {
             Col::new("Email", ColW::Flex { weight: 1, min: 10 }),
             Col::new("Active", ColW::Cells(6)),
         ];
-        let rows = vec![Row::new("a", vec![Cell::Text(vec![ink("alice")]), Cell::Text(vec![ink("x")]), Cell::Toggle { id: "active", on: true, refused: None, tip: None }])];
+        let rows = vec![Row::new(
+            "a",
+            vec![
+                Cell::Text(vec![ink("alice")]),
+                Cell::Text(vec![ink("x")]),
+                Cell::Toggle {
+                    id: "active",
+                    on: true,
+                    refused: None,
+                    tip: None,
+                },
+            ],
+        )];
         let w = DataTable::solve(&cols, &rows, 60);
         assert_eq!(w[2], 6);
         assert_eq!(w[0], 6);

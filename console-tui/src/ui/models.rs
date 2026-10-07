@@ -12,7 +12,7 @@
 
 use abstracttui::base::Rgba;
 use abstracttui::prelude::*;
-use abstracttui::widgets::{Progress, Table, Tabs, Tone};
+use abstracttui::widgets::{Progress, Table, Tone};
 
 use super::util::{badge, field, field_w, line, span, span_bold, wrap_text};
 use super::widths;
@@ -279,14 +279,12 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 .border(BorderKind::Rounded)
                 // The title must fit INSIDE the border: at 80 columns the
                 // long one ran into the corner (no closing run).
-                .title(
-                    if crate::ui::page_viewport(cx).get_untracked().w >= 110 {
-                        "Resources — Memory & GPU, Models, Session caches \
+                .title(if crate::ui::page_viewport(cx).get_untracked().w >= 110 {
+                    "Resources — Memory & GPU, Models, Session caches \
                          · ~ = estimated size, not measured"
-                    } else {
-                        "Resources — Memory & GPU · Models · Session caches"
-                    },
-                )
+                } else {
+                    "Resources — Memory & GPU · Models · Session caches"
+                })
                 .fill(t.surface)
                 .layout(
                     LayoutStyle::column()
@@ -336,17 +334,16 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         .build()
 }
 
-/// Rows the page chrome takes OUTSIDE this screen's body region: the
-/// title row and its blank, the screen tab bar and its underline (4), the
-/// footer's blank and hint row (2), the Block's own top and bottom border
-/// (2), and the pinned totals footer inside it (1).
+/// Rows the page chrome takes inside the PAGE region (R15: the shell's
+/// header, nav and status rows are already outside `page_viewport`): the
+/// Block's own top and bottom border (2) and the pinned totals footer
+/// inside it (1).
 ///
 /// It is a constant because the engine hands a view its own rect only at
 /// DRAW time and the budget below has to be decided during BUILD. The
-/// 80x24 and 110x34 layout tests pin the outcome, so a chrome change fails
+/// 80x21 and 110x31 layout tests pin the outcome, so a chrome change fails
 /// loudly instead of silently squeezing the Loaded table off screen again.
-// 10 since round 7: the key-hint footer wraps onto a second line.
-const PAGE_CHROME_ROWS: usize = 10;
+const PAGE_CHROME_ROWS: usize = 3;
 
 /// The Ready body: the PINNED head (meters, the accelerator's scoped label
 /// and its note, degradation notes), then the WINDOWED memory itemization,
@@ -486,21 +483,22 @@ fn body(
     Element::new()
         .style(LayoutStyle::column().gap(0))
         .child(strip.build())
-        .child(
-            Tabs::new()
-                .tab(models_tab_title(&models), {
+        .child(super::w::segmented::tabs(
+            cx,
+            t,
+            vec![models_tab_title(&models), "Session caches".to_string()],
+            ui.models_tab,
+            vec![
+                Box::new({
                     let keeper = keeper.clone();
                     move || models_table(cx, &tt, &models, ui.model_sel, &keeper)
-                })
-                .tab("Session caches", {
+                }),
+                Box::new({
                     let keeper = keeper.clone();
                     move || caches_table(cx, &tt, &caches, ui.cache_sel, &keeper)
-                })
-                .active(ui.models_tab)
-                .layout(LayoutStyle::column().grow(1.0))
-                .element(cx, t)
-                .build(),
-        )
+                }),
+            ],
+        ))
         .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
             // The selected row's detail: the toned modality BADGE (a
             // Table cell is a string, so the chip lives here), the

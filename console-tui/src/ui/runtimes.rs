@@ -10,7 +10,7 @@
 //! lazily on first look.
 
 use abstracttui::prelude::*;
-use abstracttui::widgets::{Disclosure, Table, Tabs};
+use abstracttui::widgets::{Disclosure, Table};
 use serde_json::{json, Value};
 
 use super::util::{ellipsize, field, line, loadable_view, span, span_bold};
@@ -545,48 +545,30 @@ fn admin_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                     ),
                                 ]))
                                 .child(
-                                    Tabs::new()
-                                        // Panels receive the PAGE scope
-                                        // (`cx`), not this dyn's
-                                        // generation scope: modals/
-                                        // prompts they open must
-                                        // survive region re-renders
-                                        // (a runs reload while the
-                                        // steer form is open used to
-                                        // orphan the form's signals —
-                                        // typed guidance silently
-                                        // dropped). Widgets inside the
-                                        // panels still mount on their
-                                        // own dyn scopes.
-                                        // Operator 2026-08-19: tab order is
-                                        // Runs | Artifacts | Cache — same
-                                        // words in both consoles.
-                                        .tab("Runs", move || {
-                                            sessions_panel(
-                                                cx,
-                                                &ctx_s,
-                                                &tt,
-                                                &row_s,
-                                                RunsPanelState {
-                                                    root_only,
-                                                    expanded: run_expanded,
-                                                    confirm,
-                                                },
-                                            )
-                                        })
-                                        .tab("Artifacts", move || {
-                                            artifacts_panel(cx, &ctx_a, &tt)
-                                        })
-                                        .tab("Cache", move || {
-                                            data_panel(cx, &ctx_d, &tt, &row_d)
-                                        })
-                                        .tab("Logs", move || {
-                                            logs_panel(cx, &ctx_l, &tt)
-                                        })
-                                        .active(ui.rt_tab)
-                                        .layout(LayoutStyle::column().grow(1.0))
-                                        .element(gcx, &tt)
-                                        .build(),
+                                    super::w::segmented::tabs(
+                                        gcx,
+                                        &tt,
+                                        vec!["Runs".into(), "Artifacts".into(), "Cache".into(), "Logs".into()],
+                                        ui.rt_tab,
+                                        vec![
+                                            Box::new(move || {
+                                                sessions_panel(
+                                                    cx,
+                                                    &ctx_s,
+                                                    &tt,
+                                                    &row_s,
+                                                    RunsPanelState {
+                                                        root_only,
+                                                        expanded: run_expanded,
+                                                        confirm,
+                                                    },
+                                                )
+                                            }),
+                                            Box::new(move || artifacts_panel(cx, &ctx_a, &tt)),
+                                            Box::new(move || data_panel(cx, &ctx_d, &tt, &row_d)),
+                                            Box::new(move || logs_panel(cx, &ctx_l, &tt)),
+                                        ],
+                                    ),
                                 )
                                 .build()
                         }
@@ -2349,10 +2331,8 @@ fn sessions_panel(
                     _ => String::new(),
                 };
                 // Wrapped: the switch and the page position never fall off the edge.
-                let w = (crate::ui::page_viewport(cx).get_untracked().w
-                    - widths::BLOCK_CHROME
-                    - 2)
-                .max(20) as usize;
+                let w = (crate::ui::page_viewport(cx).get_untracked().w - widths::BLOCK_CHROME - 2)
+                    .max(20) as usize;
                 Element::new()
                     .style(LayoutStyle::column().gap(0).shrink(0.0))
                     .children(

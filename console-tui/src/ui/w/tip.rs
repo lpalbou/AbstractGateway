@@ -156,7 +156,11 @@ fn show(anchor: Rect, text: &str) -> Option<LayerHandle> {
         overlays.layer_draw(overlays.top_z() + 1, rect, move |canvas, rect| {
             let st = Style::new().fg(ink).bg(ground);
             canvas.fill_styled(rect, ' ', &st);
-            canvas.print_styled(Point::new(rect.x, rect.y), "▏", &Style::new().fg(border).bg(ground));
+            canvas.print_styled(
+                Point::new(rect.x, rect.y),
+                "▏",
+                &Style::new().fg(border).bg(ground),
+            );
             canvas.print_styled(Point::new(rect.x + 1, rect.y), &label, &st);
         }),
     )

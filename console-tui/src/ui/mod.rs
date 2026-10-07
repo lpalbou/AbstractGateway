@@ -1253,7 +1253,9 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
                 arrow_tab(&ctx_left, if k.key == Key::Left { -1 } else { 1 });
             }
         })
-        .shortcut(KeyChord::new(Mods::CTRL, Key::Char('t')), |_| w::theme::flip())
+        .shortcut(KeyChord::new(Mods::CTRL, Key::Char('t')), |_| {
+            w::theme::flip()
+        })
         .shortcut(KeyChord::plain(Key::Char('r')), move |_| {
             let s = ui.screen.get_untracked();
             if ctx_refresh
@@ -1379,14 +1381,17 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
     install_page_viewport(ui.page_vp);
     {
         let vp = abstracttui::app::use_viewport(cx);
+        // Synchronously first: pages built in this same mount read it.
+        ui.page_vp.set(shell::page_size(vp.get_untracked(), 0));
         let store_b = ctx.store;
         cx.effect(move || {
             let v = vp.get();
             let paused = store_b.conn.with(ConnPhase::is_connected)
-                && store_b
-                    .op
-                    .runner
-                    .with(|r| r.ready().and_then(crate::store::operator::paused_banner_text).is_some());
+                && store_b.op.runner.with(|r| {
+                    r.ready()
+                        .and_then(crate::store::operator::paused_banner_text)
+                        .is_some()
+                });
             let banner = i32::from(paused) + i32::from(store_b.op.lifecycle.with(Option::is_some));
             let want = shell::page_size(v, banner);
             if ui.page_vp.get_untracked() != want {
@@ -1413,15 +1418,24 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         let t = theme.get().tokens;
         let wide = shell::wide(v);
         let c = host_ctx.clone();
-        let page = dyn_view_scoped(LayoutStyle::column().grow(1.0), move |gcx| {
-            let i = c.ui.screen.get();
-            let t = theme.get().tokens;
-            screen_view(gcx, &c, i.min(SCREENS.len() - 1), &t)
-        });
+        // PageHost's page-region style (row direction: the page stretches
+        // to the region's full height).
+        let page = dyn_view_scoped(
+            LayoutStyle::default()
+                .width(Dimension::Percent(1.0))
+                .grow(1.0),
+            move |gcx| {
+                let i = c.ui.screen.get();
+                let t = theme.get().tokens;
+                screen_view(gcx, &c, i.min(SCREENS.len() - 1), &t)
+            },
+        );
         let c2 = host_ctx.clone();
         if wide {
             let rail = dyn_view_scoped(
-                LayoutStyle::column().width(Dimension::Cells(shell::RAIL_W)).shrink(0.0),
+                LayoutStyle::column()
+                    .width(Dimension::Cells(shell::RAIL_W))
+                    .shrink(0.0),
                 move |rcx| {
                     let t = theme.get().tokens;
                     let _ = c2.store.conn.get();
@@ -1434,7 +1448,11 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
                 .child(rail)
                 .child(
                     Element::new()
-                        .style(LayoutStyle::default().width(Dimension::Cells(1)).shrink(0.0))
+                        .style(
+                            LayoutStyle::default()
+                                .width(Dimension::Cells(1))
+                                .shrink(0.0),
+                        )
                         .draw(move |canvas, rect| {
                             for y in rect.y..rect.y + rect.h {
                                 canvas.print_styled(
@@ -1503,7 +1521,11 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
             let vp = abstracttui::app::use_viewport(cx);
             dyn_view_scoped(LayoutStyle::line(1).shrink(0.0), move |hcx| {
                 let t = theme.get().tokens;
-                let _ = (c.ui.wizard.get(), c.store.host_state.with(|_| ()), c.store.host_widget_error.get());
+                let _ = (
+                    c.ui.wizard.get(),
+                    c.store.host_state.with(|_| ()),
+                    c.store.host_widget_error.get(),
+                );
                 shell::header(hcx, &c, &t, vp.get())
             })
         })
@@ -2042,113 +2064,126 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
             // R15 §2.7: ONE status row — the notice / busy lane on the left,
             // the hints that apply on the right.
             let notice_spans: Vec<util::SpanSpec> = (|| {
-            // Busy strip: in-flight ops with elapsed seconds. Reading
-            // tick keeps it live while ops run; idle renders nothing.
-            let t = theme.get().tokens;
-            let _ = store.tick.get();
-            let ops = store.busy.get();
-            // Engine startup notices (adversary round-3): the engine's
-            // zero-collapse diagnostic (0240 #3) and input-path
-            // degradations publish into use_startup_notices — this app
-            // never rendered that signal, so the header crush was being
-            // NAMED in every debug run into a lane nobody read. App
-            // notices win the slot (actionable acks); the engine line
-            // shows whenever the app lane is idle.
-            let notice = store.notice.get();
-            if ops.is_empty() {
-                return match notice {
-                    Some(n) => vec![span(format!(" {n}"), t.text_muted)],
-                    None => {
-                        // Only DIAGNOSTIC engine notices surface here
-                        // (degradations, zero-collapse warnings). The
-                        // capability summary ("caps: truecolor …") is
-                        // ambient INFO the engine always publishes —
-                        // showing it permanently in warn-amber made it
-                        // read as a problem (operator question
-                        // 2026-07-25: "what does caps true color
-                        // mean?"). Idle stays blank.
-                        // Newest notice that HUMANIZES to something
-                        // operator-actionable (caps info + suppressed
-                        // layout diagnostics render empty and are
-                        // skipped — REG-1: layout notices never clear,
-                        // so surfacing them permanently is worse than
-                        // silence for a non-developer).
-                        let shown = engine_notices.with(|v| {
-                            v.iter().rev().find_map(|n| {
-                                if n.trim_start().starts_with("caps") {
-                                    return None;
-                                }
-                                let h = humanize_engine_notice(n);
-                                (!h.trim().is_empty()).then_some(h)
-                            })
-                        });
-                        match shown {
-                            Some(en) => vec![span(format!(" engine: {en}"), t.warn)],
-                            None => vec![span(String::new(), t.text_muted)],
-                        }
-                    }
-                };
-            }
-            let mut parts = Vec::new();
-            // The latest notice leads (it is the ack of what the operator
-            // just did); the busy ops follow it on the same line.
-            if let Some(n) = notice {
-                parts.push(span(format!(" {n}"), t.text_muted));
-                parts.push(span(" ·", t.text_faint));
-            }
-            for (i, op) in ops.iter().enumerate() {
-                if i > 0 {
-                    parts.push(span(" · ", t.text_faint));
-                }
-                let secs = op.started.elapsed().as_secs();
-                let flag = if secs >= 60 {
-                    " (still running — model calls can take a while)"
-                } else {
-                    ""
-                };
-                parts.push(span(format!(" ⟳ {}… {}s{}", op.label, secs, flag), t.info));
-            }
-            parts
-        })();
-                let width = vp_footer.get().w;
-                let wizard = ui.wizard.get();
-                let _ = ui.screen.get();
-                let _ = store.conn.get();
-                let _ = store.acc.tab.get();
-                let owned = screen_hint_pairs(&ctx_hints);
-                let _ = wizard;
-                let mut pairs: Vec<(&str, &str)> = Vec::new();
-                // A FOCUSED control names itself first (A2: the R9 kit rule,
-                // tooltip on keyboard focus — the status bar carries it too).
-                let focus = ui.focus_line.get();
-                if let Some(f) = focus.as_deref() {
-                    pairs.push((f, ""));
-                    pairs.push(("Enter", "press"));
-                    pairs.push(("Tab", "next"));
-                }
-                for (k, v) in &owned {
-                    pairs.push((k.as_str(), v.as_str()));
-                }
-                // The key-hint bar (R7.2): wraps whole pairs onto a second
-                // line instead of cutting the row's tail.
-                // R15 §2.7: ONE status row.
+                // Busy strip: in-flight ops with elapsed seconds. Reading
+                // tick keeps it live while ops run; idle renders nothing.
                 let t = theme.get().tokens;
-                let nw: i32 = notice_spans.iter().map(|s| abstracttui::text::width(&s.0)).sum();
-                let nw = nw.min(width * 55 / 100);
-                let mut row = Element::new().style(LayoutStyle::row().height(Dimension::Cells(1)));
-                if nw > 0 {
-                    row = row.child(util::line_styled(
-                        LayoutStyle::default().width(Dimension::Cells(nw + 1)).height(Dimension::Cells(1)).shrink(0.0),
-                        notice_spans,
-                    ));
+                let _ = store.tick.get();
+                let ops = store.busy.get();
+                // Engine startup notices (adversary round-3): the engine's
+                // zero-collapse diagnostic (0240 #3) and input-path
+                // degradations publish into use_startup_notices — this app
+                // never rendered that signal, so the header crush was being
+                // NAMED in every debug run into a lane nobody read. App
+                // notices win the slot (actionable acks); the engine line
+                // shows whenever the app lane is idle.
+                let notice = store.notice.get();
+                if ops.is_empty() {
+                    return match notice {
+                        Some(n) => vec![span(format!(" {n}"), t.text_muted)],
+                        None => {
+                            // Only DIAGNOSTIC engine notices surface here
+                            // (degradations, zero-collapse warnings). The
+                            // capability summary ("caps: truecolor …") is
+                            // ambient INFO the engine always publishes —
+                            // showing it permanently in warn-amber made it
+                            // read as a problem (operator question
+                            // 2026-07-25: "what does caps true color
+                            // mean?"). Idle stays blank.
+                            // Newest notice that HUMANIZES to something
+                            // operator-actionable (caps info + suppressed
+                            // layout diagnostics render empty and are
+                            // skipped — REG-1: layout notices never clear,
+                            // so surfacing them permanently is worse than
+                            // silence for a non-developer).
+                            let shown = engine_notices.with(|v| {
+                                v.iter().rev().find_map(|n| {
+                                    if n.trim_start().starts_with("caps") {
+                                        return None;
+                                    }
+                                    let h = humanize_engine_notice(n);
+                                    (!h.trim().is_empty()).then_some(h)
+                                })
+                            });
+                            match shown {
+                                Some(en) => vec![span(format!(" engine: {en}"), t.warn)],
+                                None => vec![span(String::new(), t.text_muted)],
+                            }
+                        }
+                    };
                 }
-                row.child(
-                    Element::new()
-                        .style(LayoutStyle::default().grow(1.0).height(Dimension::Cells(1)))
-                        .child(kit::footer_hint_bar(&t, &pairs, (width - nw - 1).max(10), 1))
-                        .build(),
-                )
-                .build()
+                let mut parts = Vec::new();
+                // The latest notice leads (it is the ack of what the operator
+                // just did); the busy ops follow it on the same line.
+                if let Some(n) = notice {
+                    parts.push(span(format!(" {n}"), t.text_muted));
+                    parts.push(span(" ·", t.text_faint));
+                }
+                for (i, op) in ops.iter().enumerate() {
+                    if i > 0 {
+                        parts.push(span(" · ", t.text_faint));
+                    }
+                    let secs = op.started.elapsed().as_secs();
+                    let flag = if secs >= 60 {
+                        " (still running — model calls can take a while)"
+                    } else {
+                        ""
+                    };
+                    parts.push(span(format!(" ⟳ {}… {}s{}", op.label, secs, flag), t.info));
+                }
+                parts
+            })();
+            let width = vp_footer.get().w;
+            let wizard = ui.wizard.get();
+            let _ = ui.screen.get();
+            let _ = store.conn.get();
+            let _ = store.acc.tab.get();
+            let owned = screen_hint_pairs(&ctx_hints);
+            let _ = wizard;
+            let mut pairs: Vec<(&str, &str)> = Vec::new();
+            // A FOCUSED control names itself first (A2: the R9 kit rule,
+            // tooltip on keyboard focus — the status bar carries it too).
+            let focus = ui.focus_line.get();
+            if let Some(f) = focus.as_deref() {
+                pairs.push((f, ""));
+                pairs.push(("Enter", "press"));
+                pairs.push(("Tab", "next"));
+            }
+            for (k, v) in &owned {
+                pairs.push((k.as_str(), v.as_str()));
+            }
+            // The key-hint bar (R7.2): wraps whole pairs onto a second
+            // line instead of cutting the row's tail.
+            // R15 §2.7: ONE status row.
+            let t = theme.get().tokens;
+            let nw: i32 = notice_spans
+                .iter()
+                .map(|s| abstracttui::text::width(&s.0))
+                .sum();
+            // A notice is a sentence: it gets the row (never cut while it
+            // fits); the hints keep what is left.
+            let nw = nw.min(width - 12);
+            let mut row = Element::new().style(LayoutStyle::row().height(Dimension::Cells(1)));
+            if nw > 0 {
+                row = row.child(util::line_styled(
+                    LayoutStyle::default()
+                        .width(Dimension::Cells(nw + 1))
+                        .height(Dimension::Cells(1))
+                        .shrink(0.0),
+                    notice_spans,
+                ));
+            }
+            row.child(
+                Element::new()
+                    .style(LayoutStyle::default().grow(1.0).height(Dimension::Cells(1)))
+                    .child(kit::footer_hint_bar(
+                        &t,
+                        &pairs,
+                        (width - nw - 1).max(10),
+                        1,
+                    ))
+                    .build(),
+            )
+            .build()
         }))
         .build()
 }

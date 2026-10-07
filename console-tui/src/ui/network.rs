@@ -1357,6 +1357,7 @@ fn proxy_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &NetworkData, p: &mut Page,
                 ctx.store.notice,
             ),
         );
+        let input = super::w::caret_tracked(cx, ctx.ui.caret, input);
         let label = if pending && field == "allowed_origins" {
             "Saving..."
         } else {

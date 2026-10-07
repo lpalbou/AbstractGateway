@@ -23,8 +23,12 @@ const WEB_LIGHT: [u32; 8] = [
 ];
 
 fn candidate(id: &str, label: &str, dark: bool) -> ThemeCandidate {
-    let base = theme::registry::get(if dark { "abstract-dark" } else { "abstract-light" })
-        .expect("house palette");
+    let base = theme::registry::get(if dark {
+        "abstract-dark"
+    } else {
+        "abstract-light"
+    })
+    .expect("house palette");
     let mut t = base.tokens;
     let a = if dark { WEB_DARK } else { WEB_LIGHT };
     t.bg = hex(a[0]);
@@ -59,7 +63,10 @@ fn candidate(id: &str, label: &str, dark: bool) -> ThemeCandidate {
 /// the caller, never swallowed.
 pub fn register() -> Vec<String> {
     let mut warnings = Vec::new();
-    for (id, label, dark) in [(DARK, "Gateway dark", true), (LIGHT, "Gateway light", false)] {
+    for (id, label, dark) in [
+        (DARK, "Gateway dark", true),
+        (LIGHT, "Gateway light", false),
+    ] {
         if theme::registry::get(id).is_some() {
             continue;
         }

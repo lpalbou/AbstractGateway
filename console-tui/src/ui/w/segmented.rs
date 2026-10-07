@@ -18,10 +18,17 @@ pub struct Segmented {
     tips: Vec<(usize, String)>,
     vertical: bool,
     on_pick: Option<Rc<dyn Fn(usize)>>,
+    /// Bound mode: the chosen segment is read from this signal INSIDE each
+    /// segment's paint, so a pick never rebuilds the row (focus stays on
+    /// the segment the keyboard is on).
+    bound: Option<Signal<usize>>,
 }
 
 impl Segmented {
-    pub fn new<S: Into<String>>(items: impl IntoIterator<Item = S>, chosen: Option<usize>) -> Segmented {
+    pub fn new<S: Into<String>>(
+        items: impl IntoIterator<Item = S>,
+        chosen: Option<usize>,
+    ) -> Segmented {
         Segmented {
             items: items.into_iter().map(Into::into).collect(),
             chosen,
@@ -29,7 +36,13 @@ impl Segmented {
             tips: Vec::new(),
             vertical: false,
             on_pick: None,
+            bound: None,
         }
+    }
+    /// Bind the chosen index to `sig` (picks write it; see `bound`).
+    pub fn bind(mut self, sig: Signal<usize>) -> Segmented {
+        self.bound = Some(sig);
+        self
     }
     pub fn disable(mut self, i: usize, why: impl Into<String>) -> Segmented {
         self.disabled.push((i, why.into()));
@@ -62,15 +75,34 @@ impl Segmented {
         let style = if self.vertical {
             LayoutStyle::column().shrink(0.0)
         } else {
-            LayoutStyle::row().height(Dimension::Cells(1)).shrink(0.0).gap(1)
+            LayoutStyle::row()
+                .height(Dimension::Cells(1))
+                .shrink(0.0)
+                .gap(1)
         };
         let mut row = Element::new().style(style);
         for (i, label) in self.items.iter().enumerate() {
-            let why = self.disabled.iter().find(|(k, _)| *k == i).map(|(_, w)| w.clone());
-            let tip = self.tips.iter().find(|(k, _)| *k == i).map(|(_, w)| w.clone());
-            let chosen = self.chosen == Some(i);
+            let why = self
+                .disabled
+                .iter()
+                .find(|(k, _)| *k == i)
+                .map(|(_, w)| w.clone());
+            let tip = self
+                .tips
+                .iter()
+                .find(|(k, _)| *k == i)
+                .map(|(_, w)| w.clone());
+            let fixed = self.chosen == Some(i);
+            let bound = self.bound;
+            let chosen: Rc<dyn Fn() -> bool> = match bound {
+                Some(sig) => Rc::new(move || sig.get() == i),
+                None => Rc::new(move || fixed),
+            };
             let pick = self.on_pick.clone();
             row = row.child(segment(cx, t, label.clone(), chosen, why, tip, move || {
+                if let Some(b) = bound {
+                    b.set(i);
+                }
                 if let Some(p) = &pick {
                     p(i);
                 }
@@ -84,7 +116,7 @@ fn segment(
     cx: Scope,
     t: &TokenSet,
     label: String,
-    chosen: bool,
+    chosen: Rc<dyn Fn() -> bool>,
     disabled: Option<String>,
     tip: Option<String>,
     on_pick: impl Fn() + 'static,
@@ -104,12 +136,23 @@ fn segment(
         )
         .role(abstracttui::ui::Role::Button)
         .access_label(label.clone())
-        .access_value(move || if chosen { "chosen".into() } else { String::new() })
+        .access_value({
+            let c = chosen.clone();
+            move || {
+                if c() {
+                    "chosen".into()
+                } else {
+                    String::new()
+                }
+            }
+        })
         .hover_signal(hovered)
         .focus_signal(focused);
     if !off {
         el = el.focusable().on(Phase::Bubble, move |ctx, ev| match ev {
-            UiEvent::Key(k) if (k.key == Key::Enter || k.key == Key::Char(' ')) && k.mods.0 == 0 => {
+            UiEvent::Key(k)
+                if (k.key == Key::Enter || k.key == Key::Char(' ')) && k.mods.0 == 0 =>
+            {
                 if focused.get_untracked() {
                     ctx.stop_propagation();
                     on_pick();
@@ -124,6 +167,7 @@ fn segment(
     }
     let el = el.child(dyn_view(LayoutStyle::fill(), move || {
         let (h, f) = (hovered.get(), focused.get());
+        let chosen = chosen();
         let label = label.clone();
         Element::new()
             .style(LayoutStyle::fill())
@@ -153,4 +197,39 @@ fn segment(
         (None, None) => String::new(),
     };
     super::tip::with_tip(cx, el, tip).build()
+}
+
+/// Tabs on the shared Segmented (A1): a segment row (one Tab stop per
+/// segment, Enter/Space/click picks; ←/→ stay with the shell) over the
+/// active panel — the replacement for the engine `Tabs` bar, whose ←/→
+/// handling fought the shell's screen navigation.
+pub fn tabs(
+    cx: Scope,
+    t: &TokenSet,
+    titles: Vec<String>,
+    active: Signal<usize>,
+    panels: Vec<Box<dyn FnMut() -> View>>,
+) -> View {
+    let tt = *t;
+    let panels = std::rc::Rc::new(std::cell::RefCell::new(panels));
+    let n = titles.len();
+    // Bound: a pick repaints the segments, never rebuilds them.
+    let head = Segmented::new(titles, None).bind(active).view(cx, &tt);
+    // The engine Tabs' panel style: row direction, so the panel stretches
+    // to the region's height (and receives clicks on all of it).
+    let body = dyn_view(LayoutStyle::default().grow(1.0), move || {
+        let cur = active.get().min(n.saturating_sub(1));
+        let mut p = panels.borrow_mut();
+        // Untracked: the panel's own regions are reactive; only the
+        // active index rebuilds the panel (what the engine Tabs did).
+        match p.get_mut(cur) {
+            Some(f) => abstracttui::reactive::untrack(f),
+            None => abstracttui::ui::text(""),
+        }
+    });
+    Element::new()
+        .style(LayoutStyle::column().grow(1.0))
+        .child(head)
+        .child(body)
+        .build()
 }
