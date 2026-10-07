@@ -129,8 +129,9 @@ conversation continues.
 - Sleep is not a hang. Waking a computer can make the clock jump by minutes;
   the watchdog and the backstop both check once more whether the event loop
   is still running before acting, and a live loop only leaves the log line
-  `[WARN] gateway watchdog: the clock jumped …s while the event loop kept
-  running`. To confirm after a sleep/wake, the incident folder stays empty and
+  `[WARN] gateway watchdog: the event loop resumed after …s; not restarted`.
+  On Windows the backstop is still faulthandler's timer, which cannot make
+  that check, so a long sleep can restart the gateway there. To confirm after a sleep/wake, the incident folder stays empty and
   the gateway's process start time is unchanged:
   `ls ~/Library/Application\ Support/AbstractGateway/incidents 2>/dev/null; ps -o lstart= -p "$(pgrep -f 'abstractgateway serve' | head -1)"`
   (use your data folder if it is elsewhere).

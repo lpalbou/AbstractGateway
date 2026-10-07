@@ -308,8 +308,16 @@ except Exception:
     pass
 signal.signal(signal.SIGINT, signal.SIG_IGN)
 
+def gateway_alive():
+    # The gateway is this process's PARENT. A pid number alone is not an identity (it can
+    # be reused), and the pipe may stay open in a forked child after the gateway died, so
+    # the moment the parent changes the backstop has nothing left to watch.
+    return os.getppid() == pid
+
 def beat(timeout):
-    r, _, _ = select.select([fd], [], [], timeout)
+    if not gateway_alive():
+        sys.exit(0)
+    r, _, _ = select.select([fd], [], [], min(timeout, tick))
     if not r:
         return False
     if not os.read(fd, 4096):
@@ -325,12 +333,10 @@ while True:
         continue
     # Past the budget. A clock jump (the machine slept) looks the same, so wait for one
     # more heartbeat: a live loop sends one within a tick.
-    if beat(2 * tick):
+    if beat(tick) or beat(tick):
         last = time.monotonic()
         continue
-    try:
-        os.kill(pid, 0)
-    except OSError:
+    if not gateway_alive():
         sys.exit(0)
     at = datetime.datetime.now(datetime.timezone.utc)
     try:
@@ -338,6 +344,8 @@ while True:
     except OSError:
         sys.exit(0)
     time.sleep(1.0)
+    if not gateway_alive():
+        sys.exit(0)
     if incident_dir:
         try:
             os.makedirs(incident_dir, exist_ok=True)
@@ -353,10 +361,11 @@ while True:
             os.replace(path + ".tmp", path)
         except Exception:
             pass
-    try:
-        os.kill(pid, signal.SIGKILL)
-    except OSError:
-        pass
+    if gateway_alive():
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
     sys.exit(0)
 """
 
@@ -495,8 +504,7 @@ class LoopWatchdog:
             self.resumed.append(age)
             _write(
                 self.stream,
-                f"[WARN] gateway watchdog: the clock jumped {age:.1f}s while the event loop kept running "
-                f"(the machine slept?); not a hang, nothing restarted\n",
+                f"[WARN] gateway watchdog: the event loop resumed after {age:.1f}s; not restarted\n",
             )
             return None
         return self.last_tick_age_s()

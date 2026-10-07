@@ -44,7 +44,7 @@ def test_check_fires_only_when_the_loop_made_no_progress() -> None:
 
     assert wd.check(wait=live_loop_ticks) is None
     assert wd.resumed and wd.resumed[0] > 99
-    assert "[WARN] gateway watchdog: the clock jumped" in stream.getvalue()
+    assert "[WARN] gateway watchdog: the event loop resumed after" in stream.getvalue()
 
     wd._last_tick = time.monotonic() - 100
     age = wd.check(wait=lambda _t: False)  # no tick during the re-check: a hang
@@ -126,7 +126,7 @@ def test_a_simulated_sleep_neither_trips_the_watchdog_nor_the_backstop(tmp_path:
         proc.kill()
         _, err = proc.communicate(timeout=10)
     assert "[FATAL]" not in err and "Timeout (" not in err, err
-    assert "[WARN] gateway watchdog: the clock jumped" in err, err
+    assert "[WARN] gateway watchdog: the event loop resumed after" in err, err
     assert not list((tmp_path / "incidents").glob("watchdog-*.json"))
 
 
@@ -192,3 +192,54 @@ def test_the_backstop_process_dies_with_the_gateway(tmp_path: Path) -> None:
         time.sleep(0.1)
     else:
         pytest.fail("the backstop process outlived the gateway")
+
+
+_FORK_HOLDER = textwrap.dedent(
+    """
+    import asyncio, os, time
+    import abstractgateway.loop_watchdog as m
+
+    async def main():
+        wd = m.LoopWatchdog(1.0, backstop=True)
+        wd.start()
+        holder = os.fork()  # fork without exec (multiprocessing 'fork', a library's os.fork): keeps the pipe open
+        if holder == 0:
+            time.sleep(30)
+            os._exit(0)
+        print("PIDS", wd._backstop_proc.pid, holder, flush=True)
+        await asyncio.sleep(0.5)
+        os._exit(3)  # the gateway crashes; the heartbeat pipe stays open in the holder
+
+    asyncio.run(main())
+    """
+)
+
+
+@posix_only
+def test_the_backstop_leaves_when_the_gateway_dies_even_if_a_fork_holds_the_pipe() -> None:
+    """The backstop knows the gateway as its PARENT, not as a pid number: when the
+    gateway dies while a forked child keeps the heartbeat pipe open (no EOF), the
+    backstop exits within a couple of ticks instead of later signalling a pid that may
+    have been reused."""
+    proc = subprocess.Popen([sys.executable, "-c", _FORK_HOLDER], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    line = proc.stdout.readline()
+    backstop, holder = (int(x) for x in line.split()[1:3])
+    try:
+        assert proc.wait(timeout=10) == 3  # (the holder keeps stdout open: wait, not communicate)
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < 3.0:
+            try:
+                os.kill(backstop, 0)
+            except OSError:
+                break
+            time.sleep(0.05)
+        else:
+            pytest.fail("the backstop outlived its gateway while a fork held the pipe")
+        assert time.monotonic() - t0 < 1.0  # within a few ticks (tick 0.1 s)
+    finally:
+        try:
+            os.kill(holder, signal.SIGKILL)
+        except OSError:
+            pass
+        proc.stdout.close()
+        proc.stderr.close()
