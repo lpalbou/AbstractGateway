@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Per-account client preferences** (`GET`/`PUT /api/gateway/accounts/{me|account}/preferences`): the gateway keeps each account's default workflow per app (`default_workflow` {`abstractcode.agent.v1`, `abstractassistant.agent.v1`}: a workflow, or `null` for the gateway's per-app default, which stays the admin setting `agents.default_workflow.<interface>`). Only declared keys are accepted; a workflow the account may not run is refused with a sentence and nothing is stored. Anyone sets their own; an admin any account's; an entity's by an admin or its creator. Each app row carries `gateway_default_label` ("Gateway default (<name>)"), the account's `state` (default, set, broken with the reason), what a run would start (`effective`) and the `choices`. The Assistant and AbstractCode now read and write it instead of keeping the choice on the device.
 - Console → Accounts: a **Preferences** icon button on every row (tooltip "Default workflows of <name>") opens the account's default workflow per app; "Gateway default (<name>)" first, the account's runnable workflows next, a change applies at once ("Saved." / "Not saved." + the gateway's sentence). Accounts rows carry `actions.preferences`. The Actions column is sized for seven icons (the table still never scrolls sideways from 1024 px).
 
+### Terminal console
+
+- `abstractgateway-console` (unreleased): workspaces on Accounts like the web console (`E` Eligible workspaces,
+  `w` on every row, the kit's words), per-account Preferences (`p`), the memory and compute line in the title bar,
+  the **last restart** row in F3; the parked Workspaces page is gone (`W` opens Accounts). See
+  [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md).
+
 ## [0.13.0] - 2026-10-05
 
 Requires AbstractRuntime 0.9.0, AbstractCore 2.25.0 and AbstractVoice 0.14.0 (installed automatically). The terminal console `abstractgateway-console` 0.15.0 matches this release; see [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md).

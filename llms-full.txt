@@ -6632,8 +6632,8 @@ state line, with an explanation in its tooltip:
 - **Unsandboxed commands allowed (flag)**: the gateway was started with
   `serve --unsandboxed-commands`.
 
-It is a state, not a control. The terminal console shows the same line on its
-**Workspaces** page ([security.md](docs/security.md#command-sandbox)).
+It is a state, not a control. The terminal console shows the same line under
+its Accounts header ([security.md](docs/security.md#command-sandbox)).
 
 | Column | Shows |
 |---|---|
@@ -7185,11 +7185,21 @@ requested after 30 seconds.
 
 The console lists its pages in the web console's sidebar order, each with a
 fixed key. **1** Connection (the terminal's sign-in) comes first, then the
-groups: ACCOUNTS **2** Accounts, **W** Workspaces; WORK **3** Workflows, **4** Skills & MCP,
+groups: ACCOUNTS **2** Accounts; WORK **3** Workflows, **4** Skills & MCP,
 **5** Runtimes, **6** Apps; MODELS **7** Providers, **8** OpenAI API, **9**
 Models, **0** Multimodal; SYSTEM **H** Resources, **T** Sandbox, **N**
 Network; then **S** Setup and **I** About. A line above the tabs names the
 groups and their keys. The local engines live on Providers, as on the web.
+There is no Workspaces page: workspaces are set from Accounts, as on the web,
+and `W` opens Accounts.
+
+Signed in, the title bar shows the web top bar's memory and compute line in
+place of the gateway address: `Mem 18.2 GiB / 64.0 GiB (28%) · GPU 3% · 1
+model` (`Mem 28% · …` on a narrow terminal). It reads the same `GET
+/host/state` snapshot as **H Resources** every 5 seconds (on Resources, that
+page's own refresh updates it); a figure the gateway does not report reads
+`—`, and a failed refresh keeps the last values, dimmed. The address stays on
+Connection, Network and About.
 
 - **Setup guide.** For an admin whose first run is not completed, the console
   opens the setup guide: Connection → Setup → Providers (local engines, then
@@ -7248,7 +7258,8 @@ groups and their keys. The local engines live on Providers, as on the web.
   and a read-only mailbox line; an entity: the entity's own mailbox form), `o`
   OpenAI API (admin, user rows: one switch), `l` logs ("Activity — <id>", `f` /
   `F` change the filter: All, Sign-ins, Runs, Automations, Email; `o` opens a
-  run in Observer), `w` opens **Workspaces**, `t` rotate token,
+  run in Observer), `w` **Workspaces** of that account (below), `p`
+  **Preferences** (below), `t` rotate token,
   `m` manage (entities), `d` archive (asks inline) or unarchive, `g` opens
   **Runtimes** filtered to that account. Also `a` create user, `e`
   edit user, `n` create entity, `c` talk with an entity, `i` inspect, `s` spark
@@ -7256,11 +7267,36 @@ groups and their keys. The local engines live on Providers, as on the web.
   mailbox override. **Email for everyone** (admin) is the page's second tab
   (`Tab`): the three switches **Mailboxes for users**, **Agent email tools for
   users** and **Sign-in by email**, each applied at once. Someone who is not an administrator
-  sees their own row and the entities they created.
-- **W Workspaces** shows one sentence for now: "Workspaces are managed from
-  Accounts in the web console; the terminal console follows in the next
-  update." The page reads and changes nothing; `w` on an Accounts or Runtimes
-  row opens it. Set workspaces in the web console ([Workspaces](#workspaces)).
+  sees their own row and the entities they created. Under the header, every
+  signed-in user sees the command sandbox state line (for example **Commands
+  sandboxed: macOS sandbox-exec**) with its explanation below it.
+- **Workspaces** are the web console's two dialogs ([Workspaces](#workspaces)),
+  with the same words. `E` (admins; the header's **E Eligible workspaces**)
+  opens **Eligible workspaces**: the posture (**Deny everything, allow listed
+  workspaces** or **Allow everything, refuse listed workspaces**), **Everything
+  else** under the second posture, the listed workspaces under **Allowed
+  workspaces** and **Refused workspaces** with their mode (**Read & write**,
+  **Read-only** or **Refused**, the most an account can get there), the
+  gateway's built-in refusals listed as fixed rows, **Add a workspace path**,
+  and the gateway's summary line at the bottom. `w` on any Accounts row (users,
+  entities and your own) opens **Workspaces — <id>**: the line "Gateway: …" on
+  top, **Follow the gateway policy**, then the same posture and rows for that
+  account. A mode above the gateway's limit is marked `×` with the reason under
+  the row ("The gateway allows this workspace read-only"); choosing it sends
+  nothing. Keys: `↑`/`↓` choose a line, `←`/`→` change the posture or a mode,
+  Space switches **Follow the gateway policy**, `Enter` on **Add a workspace
+  path** opens the field (`Enter` adds, `Esc` cancels), `x` removes a row. Each
+  change is saved at once; the line says **Saved**, or the gateway's sentence
+  followed by "Not saved." On **5 Runtimes**, `w` opens **Eligible
+  workspaces** from the default runtime and the owner's workspaces from a user
+  or entity runtime.
+- **Preferences** (`p` on an Accounts row; users and entities) opens
+  **Preferences — <id>**: the workflow each app runs for that account. Each app
+  shows its current choice; `Enter` lists **Gateway default (<name>)** first,
+  then every workflow the gateway offers for that app, and `Enter` picks one
+  and saves it at once ("Saved.", or "Not saved." with the gateway's reason).
+  A gateway older than this route has no Preferences on its rows, and `p` says
+  so.
 - **Your email settings** (`@` on your own row): your **Email address**, your
   **Mailbox** (tabs **IMAP**, the default, **Google** and **Microsoft**; the
   IMAP pane shows the incoming and outgoing servers, filled in as soon as the
@@ -7339,7 +7375,11 @@ groups and their keys. The local engines live on Providers, as on the web.
   the web console and the tray: an AbstractFramework installer install runs the
   installer, see [tray.md](docs/tray.md#restart-and-update)), the tray, and
   **start at login** (`L`,
-  confirmed, then read back). A banner shows on every screen while workflows
+  confirmed, then read back). After a watchdog restart it shows the web
+  Gateway card's **last restart** row, "Gateway restarted at <time> after a
+  hang — <reason>", with the stack dump's path, how long the gateway was
+  blocked and where, and the incident file (admins). The panel scrolls when
+  the terminal is too short. A banner shows on every screen while workflows
   are paused.
 - **I About** (also `F1`, or `?` outside a text field, as an overlay) shows the
   same card as the web console's About: this console's name and version, the
@@ -7355,7 +7395,8 @@ state.
 
 Keys: `Tab` focus, `Enter` activate, `Ctrl+N` / `Ctrl+P` next and previous
 step, `Esc` back (in a text field, the first `Esc` releases it so screen keys
-work again), `1`-`9`, `0`, `W`, `H`, `T`, `N`, `S` and `I` screens, `r` refresh,
+work again), `1`-`9`, `0`, `H`, `T`, `N`, `S` and `I` screens (`W` opens
+Accounts), `r` refresh,
 `q` quit. Each screen lists its own actions in the key-hint bar at the bottom,
 which wraps onto a second line rather than cutting a verb.
 
@@ -10305,6 +10346,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Per-account client preferences** (`GET`/`PUT /api/gateway/accounts/{me|account}/preferences`): the gateway keeps each account's default workflow per app (`default_workflow` {`abstractcode.agent.v1`, `abstractassistant.agent.v1`}: a workflow, or `null` for the gateway's per-app default, which stays the admin setting `agents.default_workflow.<interface>`). Only declared keys are accepted; a workflow the account may not run is refused with a sentence and nothing is stored. Anyone sets their own; an admin any account's; an entity's by an admin or its creator. Each app row carries `gateway_default_label` ("Gateway default (<name>)"), the account's `state` (default, set, broken with the reason), what a run would start (`effective`) and the `choices`. The Assistant and AbstractCode now read and write it instead of keeping the choice on the device.
 - Console → Accounts: a **Preferences** icon button on every row (tooltip "Default workflows of <name>") opens the account's default workflow per app; "Gateway default (<name>)" first, the account's runnable workflows next, a change applies at once ("Saved." / "Not saved." + the gateway's sentence). Accounts rows carry `actions.preferences`. The Actions column is sized for seven icons (the table still never scrolls sideways from 1024 px).
+
+### Terminal console
+
+- `abstractgateway-console` (unreleased): workspaces on Accounts like the web console (`E` Eligible workspaces,
+  `w` on every row, the kit's words), per-account Preferences (`p`), the memory and compute line in the title bar,
+  the **last restart** row in F3; the parked Workspaces page is gone (`W` opens Accounts). See
+  [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md).
 
 ## [0.13.0] - 2026-10-05
 

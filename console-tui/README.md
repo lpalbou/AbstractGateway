@@ -11,13 +11,17 @@ right `Drawer` hosts the entity inspector), talking to the gateway's admin HTTP 
 
 The pages follow the web console's sidebar, in its order and groups, each
 with a fixed key: **1** Connection (the terminal's sign-in), ACCOUNTS **2**
-Accounts, **W** Workspaces, WORK **3** Workflows, **4** Skills & MCP, **5** Runtimes, **6** Apps,
+Accounts, WORK **3** Workflows, **4** Skills & MCP, **5** Runtimes, **6** Apps,
 MODELS **7** Providers, **8** OpenAI API, **9** Models, **0** Multimodal,
 SYSTEM **H** Resources, **T** Sandbox, **N** Network, then **S** Setup and
 **I** About. They are shared by a **setup guide** (the wizard: the web
 console's five first-run steps — welcome, engines, model, apps, done — on
 seven pages, through the same gateway routes) and a **browse mode** (free
-tabs). Every page reads and writes the routes its web page uses.
+tabs). Every page reads and writes the routes its web page uses. There is
+no Workspaces page: workspaces are set from Accounts, as on the web (`W`
+opens Accounts). Signed in, the title bar shows the web top bar's memory and
+compute line (`Mem … · GPU … · N models`, from `GET /host/state` every 5 s)
+in place of the gateway address.
 
 The guide walks Connection → **Setup** (welcome: this computer at a
 glance, from `GET /api/gateway/host/state`, and the recommended models) →
@@ -54,7 +58,12 @@ pages are usable at 80×24.
    row says why it can't). Per row: `@` email (your row: My email; another
    user: their address only and their mailbox status; an entity: its own
    mailbox form), `l` activity (sign-ins, changes, runs, automations, email; `f`
-   filters; `o` opens a run in Observer), `w` opens **Workspaces**, `o` OpenAI API (user rows), `t` rotate, `m` manage (entities), `d`
+   filters; `o` opens a run in Observer), `w` **Workspaces — <id>** (every row:
+   "Gateway: …", **Follow the gateway policy**, the account's posture and
+   rows, a mode above the gateway's limit refused with its reason; `GET/PUT
+   /workspace/policy/{tenant:id | me}`), `p` **Preferences — <id>** (the
+   default workflow per app, **Gateway default (<name>)** first; `GET/PUT
+   /accounts/{id}/preferences`), `o` OpenAI API (user rows), `t` rotate, `m` manage (entities), `d`
    archive / unarchive (asks inline), `g` opens **Runtimes** filtered to the
    account (`GET /admin/runtimes?account=`), `h` show archived; the line under
    the table lists the selected row's actions, Enter shows why any can't apply. Rows wrap instead of cutting text.
@@ -82,10 +91,16 @@ pages are usable at 80×24.
    from selected — saving is admin-only), and **talk** with an entity
    (`c`: open a hosted visit, send turns, close with the reflection
    pass; one visit at a time).
-- **W Workspaces** (ACCOUNTS) — one sentence for now: "Workspaces are
-   managed from Accounts in the web console; the terminal console follows in
-   the next update." The page sends no request (the gateway moved workspaces
-   into Accounts in 0.13.0).
+   Admins: `E` **Eligible workspaces** (`GET/PUT /workspace/policy`: the
+   posture, Everything else, the listed workspaces with their mode, the
+   built-in refusals fixed, Add a workspace path, the summary line). Every
+   change is one PUT; "Saved", or the gateway's sentence + "Not saved." The
+   words are the kit's wording table byte for byte (`src/ui/workspace_chooser.rs`
+   `TABLE`; `cargo test` diffs it against
+   `tests/fixtures/r14w3_kit_workspace_chooser_text.json`, and
+   `python3 scripts/check_workspace_wording.py --kit <abstractuic>/ui-kit/src/workspace_chooser_core.ts`
+   diffs that fixture against the kit). The command sandbox state line sits
+   under the header.
 - **3 Workflows** (WORK) — the web console's Workflows page in three tabs
    (`Tab`): **Workflows** (the "Shared with everyone" and "Mine" groups,
    search `/`, `t` drafts, `o` older versions (each its own row), `h` show
@@ -230,8 +245,8 @@ screen bar is also clickable in browse) · `Ctrl+G` setup guide (browse:
 reopen; guide: go to any step, leave or Skip setup) · `r` refresh · `F1` / `?` About ·
 `F2` docs assistant (signed in; the web top bar's ✦ drawer) · `F3`
 gateway host panel (**Workflows paused** and **Start at login** switches,
-restart, quit, update check/install, tray; a paused banner shows on every
-screen) · `Ctrl+L` repaint · `q`
+restart, quit, update check/install, tray, the **last restart** row after a
+watchdog restart; a paused banner shows on every screen) · `Ctrl+L` repaint · `q`
 (browse) / `Ctrl+C` quit. Per-screen actions sit in the key-hint bar, and a
 refused action always SAYS why (toast + footer) instead of doing
 nothing.

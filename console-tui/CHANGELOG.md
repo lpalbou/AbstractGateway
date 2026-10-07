@@ -1,5 +1,38 @@
 # Changelog — abstractgateway-console
 
+## Unreleased
+
+Needs AbstractGateway 0.13.1 or later for **Preferences** (`/accounts/{id}/preferences`) and the **last restart**
+row (`/host/runner` `last_hang`); against 0.13.0 the rest works, `p` says the gateway has no preferences and the
+row is absent.
+
+### Added
+- **Workspaces on Accounts** (the web console's two dialogs, its words byte for byte): `E` (admins) opens
+  **Eligible workspaces** — the posture (**Deny everything, allow listed workspaces** / **Allow everything, refuse
+  listed workspaces**), **Everything else**, the listed workspaces under **Allowed workspaces** / **Refused
+  workspaces** with their mode (**Read & write**, **Read-only**, **Refused**), the built-in refusals as fixed rows,
+  **Add a workspace path** and the gateway's summary line. `w` on EVERY Accounts row (users, entities, your own as
+  `me`) opens **Workspaces — <id>**: "Gateway: <summary>", **Follow the gateway policy**, the account's posture and
+  rows; a mode above the gateway's limit is marked `×` with its reason ("The gateway allows this workspace
+  read-only") and choosing it sends nothing. One PUT per change; "Saved", or the gateway's sentence + "Not saved.".
+  On Runtimes, `w` opens Eligible workspaces from the default runtime and the owner's workspaces from a one-owner
+  user or entity runtime (the web's Workspace cell).
+- **Preferences** (`p` on an Accounts row): **Preferences — <id>**, the default workflow per app; `Enter` lists
+  **Gateway default (<name>)** first, then the app's workflows; a pick saves at once ("Saved." / "Not saved.
+  <reason>").
+- The **title bar** shows the web top bar's memory and compute line once signed in (`Mem 18.2 GiB / 64.0 GiB (28%) ·
+  GPU 3% · 1 model`, `Mem 28% · …` when narrow), refreshed from `GET /host/state` every 5 s; it replaces the
+  address, which stays on Connection, Network and About.
+- **F3** shows the **last restart** row after a watchdog restart: "Gateway restarted at <time> after a hang —
+  <reason>", the stack dump, how long the gateway was blocked and where, the incident file. The panel scrolls on a
+  short terminal.
+
+### Changed
+- The **Workspaces** page is gone (it only said the terminal would follow); `W` opens Accounts. The command sandbox
+  state line moved under the Accounts header, where the web console shows it.
+- **Apps**: the Assistant's "Installed from a source checkout" sentence shows only for a source checkout, as on the
+  web card.
+
 ## 0.15.0 (2026-10-04)
 
 Needs AbstractGateway 0.13.0 or later (the OpenAI API routes, `POST /models/delete-download`, the network
