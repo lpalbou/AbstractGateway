@@ -110,6 +110,10 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     # the caller) or an entity's creator; every ro/rw row must lie inside the
     # gateway's eligible set at most at its cap (400 workspace_refused).
     ("PUT", "/api/gateway/workspace/policy/{account}"),
+    # Round 14: one account's client preferences (default workflow per app): the caller's own
+    # (me), an admin any account, an entity's creator its entity — gated in the handler
+    # (routes/account_preferences.py, the /workspace/policy/{account} rule).
+    ("PUT", "/api/gateway/accounts/{account}/preferences"),
     # The effective-set DRY RUN (round 11): a READ despite the POST — it stores
     # nothing and answers what a run with this one-off payload would get, for
     # the same targets as the GET (admin, self, an entity's creator).

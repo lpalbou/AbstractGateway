@@ -34,8 +34,9 @@ Spliced into the console script scope with the UI layer (console.py _console_own
 from __future__ import annotations
 
 # The card-list rules, used twice: below ~900 px of viewport, and whenever the table's own
-# width is under its column minimums (3 text columns x 110 px + Active 84 + Actions 308 = 722,
-# e.g. a large font scale).
+# width is under its column minimums (3 text columns x 100 px + Active 84 + Actions 356 = 740,
+# e.g. a large font scale; round 14: 7 actions since Preferences, and 740 still keeps the table
+# at 1024 px where the docked sidebar leaves it 750 px).
 _ACCOUNTS_CARD_RULES = r"""
   .accounts-table, .accounts-table tbody, .accounts-table tr { display: block; width: 100%; }
   .accounts-table thead, .accounts-table colgroup { display: none; }
@@ -67,13 +68,14 @@ ACCOUNTS_CSS = r"""
 .icon-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
 
 /* ---- Accounts table (round 8): Name · Email · Runtime · Active · Actions; table-layout fixed,
-   cells wrap (never truncate). Actions = up to 6 icon buttons on one line (6 x 44 + 5 x 4 + 20). */
+   cells wrap (never truncate). Actions = up to 7 icon buttons on one line (7 x 44 + 6 x 4 + 20 = 352;
+   round 14 added Preferences). */
 .accounts-page .users-table-wrap { overflow: visible; container: accounts / inline-size; }
 .accounts-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
 .accounts-table col.accounts-c-name { width: 24%; }
 .accounts-table col.accounts-c-runtime { width: 18%; }
 .accounts-table col.accounts-c-active { width: 84px; }
-.accounts-table col.accounts-c-actions { width: 308px; }
+.accounts-table col.accounts-c-actions { width: 356px; }
 .accounts-table th { text-align: left; white-space: normal; overflow-wrap: anywhere; }
 .accounts-table th, .accounts-table td { padding-left: 10px; padding-right: 10px; }
 .accounts-table td { vertical-align: middle; padding-top: 8px; padding-bottom: 8px; overflow: hidden; }
@@ -101,7 +103,7 @@ a.accounts-runtime-link:focus-visible { outline: 2px solid var(--info, var(--acc
 """ + _ACCOUNTS_CARD_RULES + r"""
   }
 }
-@container accounts (max-width: 721.98px) {
+@container accounts (max-width: 739.98px) {
 """ + _ACCOUNTS_CARD_RULES + r"""
 }
 
@@ -140,6 +142,8 @@ WORKSPACES_JS = r"""
       archive: svgIcon('<rect x="3" y="4" width="18" height="4.5" rx="1"></rect><path d="M5 8.5V19a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8.5"></path><path d="M10 12.5h4"></path>'),
       unarchive: svgIcon('<rect x="3" y="4" width="18" height="4.5" rx="1"></rect><path d="M5 8.5V19a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8.5"></path><path d="M12 17.5v-6"></path><path d="m9.5 14 2.5-2.5 2.5 2.5"></path>'),
       close: svgIcon('<path d="M6 6l12 12M18 6 6 18"></path>'),
+      // Preferences (round 14): sliders, the kit's settings-per-item glyph.
+      preferences: svgIcon('<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"></path><circle cx="15" cy="6" r="2"></circle><circle cx="9" cy="12" r="2"></circle><circle cx="17" cy="18" r="2"></circle>'),
       remove: svgIcon('<path d="M6 6l12 12M18 6 6 18"></path>'),
     };
     function accountIconButton(icon, tip, aria, danger) {
@@ -160,6 +164,7 @@ WORKSPACES_JS = r"""
       openai_api: (n) => `OpenAI API access for ${n}`,
       logs: (n) => `Activity log of ${n}`,
       workspace: (n) => `Workspaces ${n}'s agents may use`,
+      preferences: (n) => `Default workflows of ${n}`,
       manage: (n) => `Manage ${n} (mind, voice, prompt…)`,
       rotate: (n) => `Rotate ${n}'s sign-in token`,
       archive: (n) => `Archive ${n} (kept, hidden)`,

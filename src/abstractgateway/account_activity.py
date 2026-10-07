@@ -129,6 +129,7 @@ REQUEST_EVENTS: Dict[Tuple[str, str], Tuple[str, str]] = {
     ("POST", f"{API}/automations/{{automation_id}}/commands"): ("automation", "Automation command"),
     ("PATCH", f"{API}/admin/users/{{user_id}}"): ("account", "Account changed"),
     ("PUT", f"{API}/admin/accounts/{{account_id}}/active"): ("account", "Account changed"),
+    ("PUT", f"{API}/accounts/{{account}}/preferences"): ("account", "Preferences changed"),
 }
 
 SIGN_IN_DETAIL: Dict[str, str] = {

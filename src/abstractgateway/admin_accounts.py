@@ -185,6 +185,8 @@ def _user_row(rec: GatewayUserRecord, caller: GatewayPrincipal, records: List[Ga
             "email": _act(not archived, REASON_ARCHIVED),
             "logs": _act(True),
             "workspace": _act(not archived, REASON_ARCHIVED),
+            # Round 14: default workflow per app (GET/PUT /accounts/{id}/preferences).
+            "preferences": _act(not archived, REASON_ARCHIVED),
             "rotate": _act(not archived, REASON_ARCHIVED),
             "manage": _act(False, REASON_USER_MANAGE),
             "archive": archive,
@@ -230,6 +232,8 @@ def _entity_row(
             "email": _act(has_home and not archived, REASON_ARCHIVED if archived else REASON_ENTITY_NO_HOME),
             "logs": _act(True),
             "workspace": _act(not archived, REASON_ARCHIVED),
+            # Round 14: an entity's preferences are set by admins and its creator (like workspaces).
+            "preferences": _act(not archived, REASON_ARCHIVED),
             "rotate": _act(False, REASON_ENTITY_ROTATE),
             "manage": _act(has_home and not archived, REASON_ARCHIVED if archived else REASON_ENTITY_NO_HOME),
             "archive": _act(not archived, REASON_ARCHIVED),

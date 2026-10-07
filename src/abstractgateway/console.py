@@ -3171,6 +3171,17 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       <div id="account-openai-body" class="af-modal__body account-modal-body"></div>
     </div>
   </div>
+  <!-- Preferences (round 14, R14.2): the account's default workflow per app
+       (GET/PUT /api/gateway/accounts/{id}/preferences). Applies on change; no Save. -->
+  <div id="account-preferences-backdrop" class="af-modal-backdrop" hidden>
+    <div class="af-modal" role="dialog" aria-modal="true" aria-labelledby="account-preferences-title">
+      <div class="af-modal__header">
+        <h2 id="account-preferences-title" class="af-modal__title">Preferences</h2>
+        <button id="account-preferences-close" class="af-modal__close" type="button" aria-label="Close" data-af-tip="Close">×</button>
+      </div>
+      <div id="account-preferences-body" class="af-modal__body account-modal-body"></div>
+    </div>
+  </div>
   <!-- Workspaces (round 11, console_workspaces.py): one account's workspaces and the gateway's
        eligible workspaces (admins), both the kit WorkspaceChooser. Every change applies at once; no Save. -->
   <div id="account-workspace-backdrop" class="af-modal-backdrop" hidden>
@@ -12184,7 +12195,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     const ACCOUNT_KIND_LABEL = { admin: "Admin", user: "User", entity: "Entity" };
     const ACCOUNT_ROLE_TITLE = { admin: "Admin — manages this gateway", user: "User — signs in and runs their own agents", entity: "Entity — an AI user with its own memory and mailbox" };
     // The row contract of accounts-api (DESIGN-v3 §2.2): every key present, `delete` gone.
-    const ACCOUNT_ACTIONS = ["openai_api", "email", "logs", "workspace", "rotate", "manage", "archive", "unarchive", "suspend"];
+    const ACCOUNT_ACTIONS = ["openai_api", "email", "logs", "workspace", "preferences", "rotate", "manage", "archive", "unarchive", "suspend"];
     const ACCOUNTS_SHOW_ARCHIVED_KEY = "abstractgateway.console.accounts.show_archived";
     function accountKindClass(a) {
       if (a.kind === "entity") return "entity";
@@ -12445,8 +12456,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         }
         // Actions (round 8, tooltips round 9): icon buttons with the kit tooltip (an explicit
         // sentence each, ACCOUNT_TIPS), only those that apply, in one fixed order — users
-        // Email · OpenAI API · Logs · Workspace · Rotate · Archive; entities Email · Logs ·
-        // Workspace · Manage · Archive; archived rows Logs · Unarchive.
+        // Email · OpenAI API · Logs · Workspace · Preferences · Rotate · Archive; entities Email ·
+        // Logs · Workspace · Preferences · Manage · Archive; archived rows Logs · Unarchive.
         const actions = document.createElement("td");
         actions.className = "actions accounts-actions";
         actions.setAttribute("data-label", "Actions");
@@ -12468,6 +12479,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           add("openai_api", "openai", `OpenAI API for ${a.id} (${a.openai_api ? "on" : "off"})`, () => openAccountOpenAI(a));
           add("logs", "logs", `Activity of ${a.id}`, () => openAccountLogs(a));
           add("workspace", "folder", `Workspaces of ${a.id}`, () => openAccountWorkspace(a));
+          // Round 14: the default workflow per app (users and entities).
+          add("preferences", "preferences", `Preferences of ${a.id}`, () => openAccountPreferences(a));
           if (a.kind === "entity") {
             add("manage", "manage", `Manage ${a.id}`, () => openEntityManage(a.id));
           } else {
@@ -12545,6 +12558,153 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const backdrop = $("account-openai-backdrop");
       backdrop.hidden = false;
       accountsUi.openaiRelease = bindAccountModal(backdrop, closeAccountOpenAI);
+    }
+    // ---- Preferences modal (round 14, R14.2): GET/PUT /api/gateway/accounts/{id}/preferences.
+    // One row per app (the gateway's `apps`): "Gateway default (<name>)" first — selected unless
+    // the account overrides it — then the workflows the account may run, labels verbatim from the
+    // gateway. A change is ONE PUT at once (no Save); a refusal says "Not saved." + the sentence.
+    function accountPreferencesPath(a) {
+      if (accountIsOwn(a)) return "/api/gateway/accounts/me/preferences";
+      const tenant = a.tenant_id && a.tenant_id !== "default" && a.kind !== "entity" ? `${a.tenant_id}:` : "";
+      return `/api/gateway/accounts/${encodeURIComponent(tenant + a.id)}/preferences`;
+    }
+    function closeAccountPreferences() {
+      const backdrop = $("account-preferences-backdrop");
+      if (backdrop.hidden) return;
+      $("account-preferences-body").textContent = "";
+      backdrop.hidden = true;
+      accountsUi.preferencesFor = null;
+      const release = accountsUi.preferencesRelease;
+      accountsUi.preferencesRelease = null;
+      if (release) release();
+    }
+    function accountPreferencesApp(app) {
+      for (const k of ["interface", "label", "gateway_default_label", "state"]) {
+        if (typeof app[k] !== "string" || !app[k]) throw new Error(`GET /accounts/{id}/preferences app row has no ${k} (R14 preferences seam).`);
+      }
+      if (!Array.isArray(app.choices)) throw new Error(`GET /accounts/{id}/preferences app ${app.interface} has no choices (R14 preferences seam).`);
+      return app;
+    }
+    function renderAccountPreferences(a, out, saved) {
+      const body = $("account-preferences-body");
+      body.textContent = "";
+      const lead = document.createElement("p");
+      lead.className = "account-modal-lead";
+      lead.textContent = `The workflow each app runs for ${a.id} unless a conversation picks another. Gateway default follows the admin's Default workflow per app.`;
+      body.append(lead);
+      if (!out || !Array.isArray(out.apps)) throw new Error("GET /accounts/{id}/preferences answered without apps (R14 preferences seam).");
+      const list = document.createElement("div");
+      list.className = "agent-defaults account-preferences";
+      for (const raw of out.apps) {
+        const app = accountPreferencesApp(raw);
+        const iface = app.interface;
+        const sid = `account-pref-${a.tenant_id || "default"}-${a.id}-${iface}`.replace(/[^A-Za-z0-9_-]/g, "-");
+        const row = document.createElement("div");
+        row.className = "agent-default";
+        row.setAttribute("data-account-preference", iface);
+        const head = document.createElement("div");
+        head.className = "agent-default__head";
+        const label = document.createElement("label");
+        label.className = "agent-default__name";
+        label.htmlFor = sid;
+        label.textContent = app.label;
+        head.append(label);
+        if (app.help) head.append(workflowHelpQ(app.label, app.help));
+        const control = document.createElement("div");
+        control.className = "agent-default__control";
+        const sel = document.createElement("select");
+        sel.id = sid;
+        sel.setAttribute("data-account-preference-select", iface);
+        const first = document.createElement("option");
+        first.value = "";
+        first.textContent = app.gateway_default_label;
+        sel.append(first);
+        const current = app.value ? String(app.value) : "";
+        if (current && !app.choices.some((c) => String(c.value) === current)) {
+          const gone = document.createElement("option");
+          gone.value = current;
+          gone.textContent = `${current} (no longer runs)`;
+          sel.append(gone);
+        }
+        for (const c of app.choices) {
+          const o = document.createElement("option");
+          o.value = String(c.value);
+          o.textContent = String(c.label || c.name || c.value);
+          if (c.workflow_id) o.title = String(c.workflow_id);
+          sel.append(o);
+        }
+        sel.value = current;
+        if (out.can_edit === false) sel.disabled = true;
+        const note = document.createElement("span");
+        note.className = "inline-state";
+        note.setAttribute("role", "status");
+        note.setAttribute("aria-live", "polite");
+        note.setAttribute("data-account-preference-saved", iface);
+        if (saved && saved.iface === iface) {
+          note.textContent = saved.text;
+          note.className = `inline-state ${saved.ok ? "ok" : "error"}`;
+        }
+        control.append(sel, note);
+        row.append(head, control);
+        if (app.state === "broken" && app.reason) {
+          const why = document.createElement("p");
+          why.className = "ui-field-msg tone-warn agent-default__state";
+          why.setAttribute("data-account-preference-now", iface);
+          why.textContent = app.reason;
+          row.append(why);
+        } else if (!current && app.gateway_default && app.gateway_default.available === false && app.gateway_default.reason) {
+          const why = document.createElement("p");
+          why.className = "agent-default__state";
+          why.setAttribute("data-account-preference-now", iface);
+          why.textContent = app.gateway_default.reason;
+          row.append(why);
+        }
+        sel.onchange = async () => {
+          const next = sel.value;
+          sel.disabled = true;
+          sel.setAttribute("aria-busy", "true");
+          try {
+            const answer = await api(accountPreferencesPath(a), { method: "PUT", body: JSON.stringify({ default_workflow: { [iface]: next || null } }) });
+            if (accountsUi.preferencesFor !== a) return; // the dialog moved on meanwhile
+            renderAccountPreferences(a, answer, { iface, ok: true, text: "Saved." });
+          } catch (e) {
+            sel.value = current;
+            sel.disabled = out.can_edit === false;
+            sel.removeAttribute("aria-busy");
+            note.textContent = `Not saved. ${emailErrorText(e)}`;
+            note.className = "inline-state error";
+          }
+        };
+        list.append(row);
+      }
+      body.append(list);
+    }
+    async function openAccountPreferences(a) {
+      closeAccountPreferences();
+      $("account-preferences-title").textContent = `Preferences — ${a.id}`;
+      const body = $("account-preferences-body");
+      body.textContent = "";
+      const wait = document.createElement("p");
+      wait.className = "ui-empty";
+      wait.textContent = "Reading the preferences...";
+      body.append(wait);
+      accountsUi.preferencesFor = a;
+      const backdrop = $("account-preferences-backdrop");
+      backdrop.hidden = false;
+      accountsUi.preferencesRelease = bindAccountModal(backdrop, closeAccountPreferences);
+      try {
+        const out = await api(accountPreferencesPath(a));
+        if (accountsUi.preferencesFor !== a) return;
+        renderAccountPreferences(a, out, null);
+      } catch (e) {
+        if (accountsUi.preferencesFor !== a) return;
+        body.textContent = "";
+        const err = document.createElement("div");
+        err.className = "ui-alert tone-err";
+        err.setAttribute("role", "alert");
+        err.textContent = `Could not read the preferences of ${a.id}: ${emailErrorText(e)}`;
+        body.append(err);
+      }
     }
     function closeAccountEmail() {
       const backdrop = $("account-email-backdrop");
@@ -15265,6 +15425,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("accounts-create-entity").onclick = openEntityCreate;
 	    $("account-email-close").onclick = closeAccountEmail;
 	    $("account-openai-close").onclick = closeAccountOpenAI;
+	    $("account-preferences-close").onclick = closeAccountPreferences;
 	    $("account-workspace-close").onclick = closeAccountWorkspace;
 	    $("gateway-workspace-close").onclick = closeGatewayWorkspace;
 	    $("accounts-gw-workspace").onclick = () => openGatewayWorkspace();

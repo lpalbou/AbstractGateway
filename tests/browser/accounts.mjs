@@ -104,11 +104,11 @@ try {
     check(Object.values(rows).every((r) => r.disabled === 0), "no disabled button in any account row", rows);
     check((await page.locator("#users-section .accounts-reasons").count()) === 0, "no reasons paragraph");
     check((await page.locator("#users-table [data-action='delete']").count()) === 0 && !(await page.textContent("#users-table")).includes("Delete"), "no Delete anywhere in the table");
-    check(JSON.stringify(rows.alice.vis) === JSON.stringify(["email", "openai_api", "logs", "workspace", "rotate", "archive"]), "user: Email · OpenAI API · Logs · Workspace · Rotate · Archive", rows.alice);
-    check(JSON.stringify(rows.alice.tips) === JSON.stringify(["Email address and mailbox of alice", "OpenAI API access for alice", "Activity log of alice", "Workspaces alice's agents may use", "Rotate alice's sign-in token", "Archive alice (kept, hidden)"]), "user: explicit tooltip sentences (R9.2)", rows.alice.tips);
-    check(JSON.stringify(rows.castor.vis) === JSON.stringify(["email", "logs", "workspace", "manage", "archive"]), "entity: Email · Logs · Workspace · Manage · Archive (no token)", rows.castor);
-    check(rows.castor.tips[3] === "Manage castor (mind, voice, prompt…)", "entity Manage sentence", rows.castor.tips);
-    check(JSON.stringify(rows.admin.vis) === JSON.stringify(["email", "openai_api", "logs", "workspace", "rotate"]), "own row: no Archive", rows.admin);
+    check(JSON.stringify(rows.alice.vis) === JSON.stringify(["email", "openai_api", "logs", "workspace", "preferences", "rotate", "archive"]), "user: Email · OpenAI API · Logs · Workspace · Preferences · Rotate · Archive", rows.alice);
+    check(JSON.stringify(rows.alice.tips) === JSON.stringify(["Email address and mailbox of alice", "OpenAI API access for alice", "Activity log of alice", "Workspaces alice's agents may use", "Default workflows of alice", "Rotate alice's sign-in token", "Archive alice (kept, hidden)"]), "user: explicit tooltip sentences (R9.2)", rows.alice.tips);
+    check(JSON.stringify(rows.castor.vis) === JSON.stringify(["email", "logs", "workspace", "preferences", "manage", "archive"]), "entity: Email · Logs · Workspace · Preferences · Manage · Archive (no token)", rows.castor);
+    check(rows.castor.tips[4] === "Manage castor (mind, voice, prompt…)", "entity Manage sentence", rows.castor.tips);
+    check(JSON.stringify(rows.admin.vis) === JSON.stringify(["email", "openai_api", "logs", "workspace", "preferences", "rotate"]), "own row: no Archive", rows.admin);
     check(Object.values(rows).every((r) => r.icons && r.menus === 0 && r.size.every((x) => x >= 44)), "icon buttons only: no label, no '⋯' menu, 44 px targets", rows);
     check(!(await page.textContent("#users-table")).includes("⋯"), "no '⋯' anywhere in the table");
     check(rows.alice.email === "alice@fastmail.com · not connected" && rows.bob.email === "No address", "ONE Email column: 'address · state' / 'No address'", [rows.alice.email, rows.bob.email]);
