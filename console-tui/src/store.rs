@@ -2989,6 +2989,9 @@ pub struct Store {
     pub tick: Signal<u64>,
     /// One-line transient notice (also mirrored as a toast).
     pub notice: Signal<Option<String>>,
+    /// R15 §2.6: a verified write's success sentence, shown as a toast by
+    /// the shell (failures stay in `notice`, inline, never a toast).
+    pub toast: Signal<Option<String>>,
     /// The last probe's acknowledgment record (None = never probed).
     pub last_probe: Signal<Option<ProbeReport>>,
 }
@@ -3768,6 +3771,7 @@ impl Store {
             busy: cx.signal(Vec::new()),
             tick: cx.signal(0),
             notice: cx.signal(None),
+            toast: cx.signal(None),
             last_probe: cx.signal(None),
         }
     }
@@ -3797,6 +3801,7 @@ impl Store {
             busy: _,          // transient op bookkeeping
             tick: _,          // clock
             notice: _,        // transient toast
+            toast: _,         // transient toast (R15)
             download: _,      // survives: the job is on the OLD host, and
             // its status line is the only record of it
             download_group: _, // survives: same reason as `download`

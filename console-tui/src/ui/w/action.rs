@@ -15,6 +15,8 @@ use abstracttui::ui::{MouseButton, MouseKind, Phase, UiEvent};
 pub enum Display {
     Glyph,
     Label,
+    /// Underlined text, no padding (a table cell's link).
+    Link,
 }
 
 /// Normal or destructive (hover ink `error`).
@@ -108,7 +110,14 @@ impl Action {
     pub fn face(&self) -> String {
         match self.display {
             Display::Glyph => self.glyph.to_string(),
-            Display::Label => self.label.clone(),
+            Display::Label | Display::Link => self.label.clone(),
+        }
+    }
+    /// A link action (underlined text in `link` ink).
+    pub fn link(id: &'static str, label: impl Into<String>) -> Action {
+        Action {
+            display: Display::Link,
+            ..Action::label(id, label)
         }
     }
     /// Cells the button takes (glyph: 1 + 1 pad; label: label + 2 pads).
@@ -116,6 +125,7 @@ impl Action {
         match self.display {
             Display::Glyph => 2,
             Display::Label => abstracttui::text::width(&self.label) + 2,
+            Display::Link => abstracttui::text::width(&self.label),
         }
     }
 }
@@ -146,13 +156,20 @@ pub fn button(
     let w = a.width();
     let disabled = !a.is_enabled();
     let glyph = a.display == Display::Glyph;
-    let fg = if glyph { t.accent } else { t.text };
+    let link = a.display == Display::Link;
+    let fg = if glyph {
+        t.accent
+    } else if link {
+        t.link
+    } else {
+        t.text
+    };
     let ground = match on {
         On::Page => t.surface_raised,
         On::Raised => t.bg,
         On::Selected => t.surface,
     };
-    let bg = if glyph && on != On::Selected {
+    let bg = if (glyph || link) && on != On::Selected {
         None
     } else {
         Some(ground)
@@ -241,8 +258,11 @@ pub fn button(
                 if bold {
                     st = st.attrs(Attrs::BOLD);
                 }
+                if link {
+                    st = st.attrs(Attrs::UNDERLINE);
+                }
                 let fw = abstracttui::text::width(&face);
-                let x = if glyph {
+                let x = if glyph || link {
                     rect.x
                 } else {
                     rect.x + ((rect.w - fw).max(0)) / 2

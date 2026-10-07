@@ -80,6 +80,22 @@ pub fn with_tip(cx: Scope, el: Element, text: String) -> Element {
             }
         });
     }
+    // A press anywhere on the control hides its tip (the control acts —
+    // a modal it opens must not wear the tip). Capture: the control's own
+    // handler stops the press before it bubbles.
+    let st_press = state.clone();
+    let el = el.on(Phase::Capture, move |_ctx, ev| {
+        let pressed = match ev {
+            UiEvent::Mouse(m) => matches!(m.kind, abstracttui::ui::MouseKind::Down(_)),
+            UiEvent::Key(k) => matches!(k.key, Key::Enter | Key::Char(' ')),
+            _ => false,
+        };
+        if pressed {
+            let mut s = st_press.borrow_mut();
+            s.gen += 1;
+            s.hide();
+        }
+    });
     el.on(Phase::Bubble, move |ctx, ev| match ev {
         UiEvent::MouseEnter => {
             let anchor = ctx.current_rect_screen();

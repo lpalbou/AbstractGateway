@@ -1411,6 +1411,16 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
             ui.focus_line.set(None);
         });
     }
+    // R15 §2.6: success sentences as toasts.
+    {
+        let ctx_t = ctx.clone();
+        cx.effect(move || {
+            if let Some(msg) = ctx_t.store.toast.get() {
+                ctx_t.store.toast.set(None);
+                w::toast(&ctx_t, cx, msg);
+            }
+        });
+    }
     let host_ctx = ctx.clone();
     let vp_host = abstracttui::app::use_viewport(cx);
     let host = dyn_view_scoped(LayoutStyle::row().grow(1.0), move |hcx| {

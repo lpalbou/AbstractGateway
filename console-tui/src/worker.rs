@@ -4058,6 +4058,13 @@ fn finish_write_attention(
             },
             Err(e) => format!("{} — FAILED: {}", entry.action, e),
         };
+        // R15: a verified success also toasts its sentence (the web's).
+        if entry.outcome.is_ok()
+            && entry.attention.is_none()
+            && matches!(entry.verified, Some(Ok(_)) | None)
+        {
+            s.toast.set(Some(entry.action.clone()));
+        }
         s.push_journal(entry);
         s.notice.set(Some(note));
     });

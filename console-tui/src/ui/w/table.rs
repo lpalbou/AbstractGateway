@@ -187,6 +187,7 @@ pub struct DataTable {
     width: i32,
     max_rows: i32,
     top: Option<Signal<usize>>,
+    autofocus: bool,
 }
 
 const GAP: i32 = 2;
@@ -207,6 +208,7 @@ impl DataTable {
             width: 80,
             max_rows: 1000,
             top: None,
+            autofocus: false,
         }
     }
     pub fn sort(mut self, s: Signal<(usize, bool)>) -> DataTable {
@@ -246,6 +248,12 @@ impl DataTable {
     /// Body lines shown before the body windows (scrolls).
     pub fn max_rows(mut self, n: i32) -> DataTable {
         self.max_rows = n.max(1);
+        self
+    }
+    /// Take the keyboard when mounted (the page's main table: its keys work
+    /// from the first frame).
+    pub fn autofocus(mut self) -> DataTable {
+        self.autofocus = true;
         self
     }
     /// A durable scroll position (survives rebuilds of the table).
@@ -344,6 +352,7 @@ impl DataTable {
             width,
             max_rows,
             top,
+            autofocus,
         } = self;
         let widths = Self::solve(&cols, &rows, width);
         let t = *t;
@@ -472,6 +481,9 @@ impl DataTable {
                     keep_visible(top, &heights_k, i, max_rows);
                 }
             });
+        if autofocus {
+            root = root.autofocus();
+        }
         root = root.child(header).child(rule);
 
         if rows.is_empty() {
@@ -857,7 +869,7 @@ fn row_view(
                 let id = *action;
                 let k = key.clone();
                 let cb = on_action.clone();
-                let a = Action::label(id, label.clone())
+                let a = Action::link(id, label.clone())
                     .tooltip(tip.clone().unwrap_or_else(|| label.clone()));
                 link_button(cx, t, &a, selected, move || {
                     selection.set(Some(k.clone()));
