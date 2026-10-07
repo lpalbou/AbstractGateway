@@ -43,6 +43,8 @@ pub mod skills_mcp;
 pub mod switch;
 pub mod users;
 pub mod util;
+/// Round 15: the shared mouse-first widget layer (DESIGN-TUI.md §4).
+pub mod w;
 /// Setup: the first-run guide's welcome step + the first-run lifecycle.
 pub mod welcome;
 pub mod widths;
