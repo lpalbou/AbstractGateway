@@ -182,10 +182,10 @@ try {
       vis: Array.from(tr.querySelectorAll(".accounts-actions__buttons > button")).map((b) => b.dataset.action),
       disabled: tr.querySelectorAll("button[disabled]").length,
     }])));
-    // Round 8: icon actions, no "⋯" menu: users Email · OpenAI API · Logs · Workspace · Rotate · Archive.
-    check(JSON.stringify(acts.castor) === JSON.stringify({ vis: ["email", "logs", "workspace", "manage", "archive"], disabled: 0 }), "entity row: Email · Logs · Workspace · Manage · Archive", acts.castor);
-    check(JSON.stringify(acts.alice) === JSON.stringify({ vis: ["email", "openai_api", "logs", "workspace", "rotate", "archive"], disabled: 0 }), "user row: Email · OpenAI API · Logs · Workspace · Rotate · Archive", acts.alice);
-    check(JSON.stringify(acts.admin) === JSON.stringify({ vis: ["email", "openai_api", "logs", "workspace", "rotate"], disabled: 0 }), "own row: no Archive offered", acts.admin);
+    // Round 8: icon actions, no "⋯" menu: users Email · OpenAI API · Logs · Workspace · Preferences (R14.2) · Rotate · Archive.
+    check(JSON.stringify(acts.castor) === JSON.stringify({ vis: ["email", "logs", "workspace", "preferences", "manage", "archive"], disabled: 0 }), "entity row: Email · Logs · Workspace · Manage · Archive", acts.castor);
+    check(JSON.stringify(acts.alice) === JSON.stringify({ vis: ["email", "openai_api", "logs", "workspace", "preferences", "rotate", "archive"], disabled: 0 }), "user row: Email · OpenAI API · Logs · Workspace · Rotate · Archive", acts.alice);
+    check(JSON.stringify(acts.admin) === JSON.stringify({ vis: ["email", "openai_api", "logs", "workspace", "preferences", "rotate"], disabled: 0 }), "own row: no Archive offered", acts.admin);
     check((await page.locator("#users-section .accounts-reasons").count()) === 0 && !(await page.textContent("#users-section")).includes("don't apply to entities"), "no per-row reasons paragraph");
     // Round-2 polish: no placeholder dashes, actions on ONE row per account at 1440, one card title.
     const polish = await page.evaluate(() => {
