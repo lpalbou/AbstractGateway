@@ -102,12 +102,12 @@ stamp>.json` (when, how long, the innermost frame of the event-loop thread,
 the innermost gateway frame, the requests being served) and
 `watchdog-<stamp>.threads.txt` (every thread's stack). The restarted gateway
 reads the newest one: an admin sees "Gateway restarted at <time> after a hang
-— <reason>" in the console (Resources, Gateway card, "Last restart") and in
-the terminal console (F3), with the path of the stack dump.
+— <reason>" in the console (Resources, Gateway card, "Last restart"), with
+the path of the stack dump.
 
 A Read aloud that was speaking when the gateway restarted cannot resume (the
 audio was being produced by the process that died): press Read aloud again.
-Gateways from before R13.1 left such a reply waiting ("Waiting for an event ›
+Gateways up to 0.13.0 left such a reply waiting ("Waiting for an event ›
 Streaming voice synthesis is running."); the current gateway closes those at
 startup with the sentence "Read aloud was interrupted because the gateway
 restarted; the audio was not finished. Press Read aloud again." and the

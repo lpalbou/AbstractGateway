@@ -419,7 +419,7 @@ Evidence: CLI flag `--no-runner` in `src/abstractgateway/cli.py`, lock lifecycle
 not run for `--watchdog-seconds` (default 30), the gateway writes the blocked
 stacks to its log and to `<data dir>/incidents/`, and exits with code 75; the
 LaunchAgent, the systemd unit or the local supervisor then restarts it. The
-console's Resources page (Gateway card) and the terminal console then show
+console's Resources page (Gateway card) then shows
 "Gateway restarted at <time> after a hang — <reason>". `GET /api/health`
 reports the watchdog's state. See [deployment.md](./deployment.md) and
 [troubleshooting.md](./troubleshooting.md#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75).

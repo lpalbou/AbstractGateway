@@ -211,15 +211,16 @@ browser on this computer from one elsewhere on the network
   stamp>.json` + `.threads.txt`) and exits with code 75, so the LaunchAgent,
   systemd unit or local supervisor restarts it. The next process reads the
   newest incident; the console's Resources page (Gateway card, "Last restart")
-  and the terminal console show "Gateway restarted at <time> after a hang —
+  shows "Gateway restarted at <time> after a hang —
   <reason>". `GET /api/health` reports its state. See
   [deployment.md](./deployment.md).
-- **Nothing blocks the event loop** (R13.1): a request body that arrived
+- **Nothing blocks the event loop**: a request body that arrived
   without a Content-Length (the console's `/apps/<id>/` proxy streams bodies)
   is buffered by the security middleware and replayed through
   `asgi_receive.replay_body_receive`, which suspends after the body (a replay
-  that kept answering "empty body" made every streaming response's disconnect
-  listener a busy loop — the 2026-10-04 watchdog incident). Streamed speech
+  that kept answering "empty body" would make every streaming response's
+  disconnect listener a busy loop; the core endpoint's internal sub-requests use
+  the same helper). Streamed speech
   (`voice_stream.py`) holds one permit of the voice synthesis bound
   (`ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY`) from engine setup until its engine
   thread ends, sets up and pulls the engine on worker threads, and hands

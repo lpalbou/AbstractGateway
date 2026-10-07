@@ -752,8 +752,30 @@ default_mode, private_workspace, tmpdir, allowed: [{path, mode}], refused: [...]
 builtin_refused: <count>}` and the line `Sandbox: macOS sandbox-exec`, or
 `Sandbox: none — commands refused on this host`.
 
+**Nested workspaces** follow the most-specific-row rule on every platform: an
+allowed workspace inside a refused folder is reachable (read & write when it
+says so), the rest of the refused folder is not, and a refused folder inside
+the allowed one refuses its subtree again. On Linux, bubblewrap binds the
+allowed folder after masking its refused parent; Landlock grants the allowed
+folder alone.
+
+### Browser probe
+
+`browser_probe` (the render check for a page an agent wrote) never opens a
+local page as `file://`. The page is served to the headless browser from a
+private loopback origin (`http://<random name>.localhost:<port>`) that answers
+only for files the run may read: the same scope as the commands (private
+workspace, allowed workspaces read-only or read & write, refused workspaces,
+built-in refusals, most specific row first). Relative and root-relative links
+keep working; a file outside the scope answers 403, `file://` URLs are never
+loaded, and the report lists both under "Local files BLOCKED". A local page
+outside the run's workspaces is refused before the browser starts, and on a
+gateway host a probe call that carries no run scope is refused. Remote
+(`http(s)://`) targets are unchanged.
+
 Evidence: `src/abstractgateway/command_sandbox.py`, `src/abstractgateway/cli.py`
 (`--unsandboxed-commands`), AbstractCore `abstractcore/tools/sandbox.py`,
+`abstractcore/tools/browser_tools.py` (`_LocalOrigin`),
 AbstractRuntime `workspace_scoped_tools.py` (`sandbox_stamp`). Tests:
 `tests/test_r12w2_command_sandbox.py`, `tests/test_r12w2_nesting.py`.
 

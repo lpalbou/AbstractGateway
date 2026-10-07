@@ -65,8 +65,8 @@ the apps keep answering. A banner on every tab says so while it is on.
 watchdog restarted the gateway: "Gateway restarted at <time> after a hang —
 <reason>", the reason naming the code the event loop was stuck in and the
 request it was serving, with the path of the file holding every thread's
-stack (`<data dir>/incidents/`). The terminal console shows the same line in
-its host panel (F3). No incident, no row.
+stack (`<data dir>/incidents/`); its tooltip names the frame, the stack dump and
+the incident file. No incident, no row.
 
 Every persistent on/off setting in the console is a switch labelled by the
 feature (highlighted when on). It applies at once, shows the new state, and an

@@ -2575,8 +2575,30 @@ default_mode, private_workspace, tmpdir, allowed: [{path, mode}], refused: [...]
 builtin_refused: <count>}` and the line `Sandbox: macOS sandbox-exec`, or
 `Sandbox: none — commands refused on this host`.
 
+**Nested workspaces** follow the most-specific-row rule on every platform: an
+allowed workspace inside a refused folder is reachable (read & write when it
+says so), the rest of the refused folder is not, and a refused folder inside
+the allowed one refuses its subtree again. On Linux, bubblewrap binds the
+allowed folder after masking its refused parent; Landlock grants the allowed
+folder alone.
+
+### Browser probe
+
+`browser_probe` (the render check for a page an agent wrote) never opens a
+local page as `file://`. The page is served to the headless browser from a
+private loopback origin (`http://<random name>.localhost:<port>`) that answers
+only for files the run may read: the same scope as the commands (private
+workspace, allowed workspaces read-only or read & write, refused workspaces,
+built-in refusals, most specific row first). Relative and root-relative links
+keep working; a file outside the scope answers 403, `file://` URLs are never
+loaded, and the report lists both under "Local files BLOCKED". A local page
+outside the run's workspaces is refused before the browser starts, and on a
+gateway host a probe call that carries no run scope is refused. Remote
+(`http(s)://`) targets are unchanged.
+
 Evidence: `src/abstractgateway/command_sandbox.py`, `src/abstractgateway/cli.py`
 (`--unsandboxed-commands`), AbstractCore `abstractcore/tools/sandbox.py`,
+`abstractcore/tools/browser_tools.py` (`_LocalOrigin`),
 AbstractRuntime `workspace_scoped_tools.py` (`sandbox_stamp`). Tests:
 `tests/test_r12w2_command_sandbox.py`, `tests/test_r12w2_nesting.py`.
 
@@ -5597,7 +5619,7 @@ finish with a Runtime-owned child-run audio artifact. The stream is real streami
 
 Stream lines (JSON Lines): `runtime_start` (`run_id` = the run named in the path, `child_run_id` = the id the outcome will be recorded under, `schema: abstractruntime.tts_stream.start.v2`), engine events (`start`, `audio` with `sequence` and `audio_b64`), then one terminal line: `done` (with `audio_artifact` and `child_run_status`), `cancelled` or `error` (`error` = the sentence; `watchdog_timeout: true` when the engine went silent past `ABSTRACTGATEWAY_VOICE_TTS_TIMEOUT_S`). When the engine is busy (another stream, or the model using the machine) and its setup takes more than a second, the first line is `{"type": "queued", "message": "Waiting for the voice engine: …"}`; speech follows when the engine is free. A request past the voice synthesis bound (`ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY`) waits one second, then gets `503` "Read aloud is busy: N voice syntheses are already running on this gateway …".
 
-Reading aloud never changes the run's state (R13.1): no wait is created while audio streams, and the child run is recorded already completed (`done`, or with `errors[0].code` `cancelled`/`stream_error`) when the stream ends. A stream cut by a gateway restart leaves no run behind; a wait left by a gateway from before R13.1 is closed at startup with `errors[0] = {"code": "interrupted", "message": "Read aloud was interrupted because the gateway restarted; …"}`.
+Reading aloud never changes the run's state: no wait is created while audio streams, and the child run is recorded already completed (`done`, or with `errors[0].code` `cancelled`/`stream_error`) when the stream ends. A stream cut by a gateway restart leaves no run behind; a wait left by a gateway up to 0.13.0 is closed at startup with `errors[0] = {"code": "interrupted", "message": "Read aloud was interrupted because the gateway restarted; …"}`.
 
 The catalog endpoints proxy AbstractCore Server routes when
 `ABSTRACTCORE_SERVER_BASE_URL`
@@ -6562,8 +6584,8 @@ the apps keep answering. A banner on every tab says so while it is on.
 watchdog restarted the gateway: "Gateway restarted at <time> after a hang —
 <reason>", the reason naming the code the event loop was stuck in and the
 request it was serving, with the path of the file holding every thread's
-stack (`<data dir>/incidents/`). The terminal console shows the same line in
-its host panel (F3). No incident, no row.
+stack (`<data dir>/incidents/`); its tooltip names the frame, the stack dump and
+the incident file. No incident, no row.
 
 Every persistent on/off setting in the console is a switch labelled by the
 feature (highlighted when on). It applies at once, shows the new state, and an
@@ -8963,12 +8985,26 @@ servers use the explicit configuration shown on this page: the image sets
 
 **A hung gateway restarts itself.** `serve` runs an event-loop watchdog: when
 the loop has not run for `--watchdog-seconds` (default 30), the gateway dumps
-every thread's stack to its log and exits with code 75. The LaunchAgent
+every thread's stack to its log, writes an incident file and exits with code
+75. The LaunchAgent
 (`KeepAlive` with `SuccessfulExit: false`) and the systemd unit
 (`Restart=on-failure`) restart any non-zero exit; in a container, use a
 restart policy (`restart: unless-stopped`) for the same effect. `GET
 /api/health` reports `watchdog: {enabled, limit_s, last_tick_age_s}`. See
 [troubleshooting.md](docs/troubleshooting.md#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75).
+
+**Incident files.** Before it exits, the watchdog writes
+`<data dir>/incidents/watchdog-<UTC stamp>.json` and
+`watchdog-<stamp>.threads.txt` (every thread's stack). The JSON
+(`schema: abstractgateway.watchdog_incident.v1`) carries `at`, `stamp`, `pid`,
+`limit_s`, `blocked_s`, `exit_code`, `top_frame` and `gateway_frame`
+(`{file, line, function}`), `requests_in_flight` (`[{method, path, age_s}]`),
+`loop_stack`, `reason` (one sentence) and `dump_path`. The next process reads
+the newest file at startup: admins get it as `last_hang` from `GET
+/api/gateway/host/runner`, and the console's Resources page shows it as
+**Last restart** ("Gateway restarted at <time> after a hang — <reason>"). The
+files are small and kept until you delete them; back them up with the data
+folder or remove old ones freely.
 
 ## Behind a reverse proxy (one block, apps included)
 
@@ -9979,12 +10015,12 @@ stamp>.json` (when, how long, the innermost frame of the event-loop thread,
 the innermost gateway frame, the requests being served) and
 `watchdog-<stamp>.threads.txt` (every thread's stack). The restarted gateway
 reads the newest one: an admin sees "Gateway restarted at <time> after a hang
-— <reason>" in the console (Resources, Gateway card, "Last restart") and in
-the terminal console (F3), with the path of the stack dump.
+— <reason>" in the console (Resources, Gateway card, "Last restart"), with
+the path of the stack dump.
 
 A Read aloud that was speaking when the gateway restarted cannot resume (the
 audio was being produced by the process that died): press Read aloud again.
-Gateways from before R13.1 left such a reply waiting ("Waiting for an event ›
+Gateways up to 0.13.0 left such a reply waiting ("Waiting for an event ›
 Streaming voice synthesis is running."); the current gateway closes those at
 startup with the sentence "Read aloud was interrupted because the gateway
 restarted; the audio was not finished. Press Read aloud again." and the
@@ -10369,10 +10405,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Streamed speech never blocks the event loop and is bounded.** `POST /runs/{id}/voice/tts/stream` (`voice_stream.py`): one permit of the voice synthesis bound (`ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY`) per stream, held until its engine thread is done (also after the client left); past the bound a request waits one second, then gets 503 "Read aloud is busy: N voice syntheses are already running on this gateway …". The engine setup and the engine's events run on worker threads; the response body only awaits a bounded queue (it holds no worker thread and yields between chunks; a slow client makes the engine wait). An engine busy for more than a second (another stream, or the model using the machine) is announced with a first line `{"type": "queued", "message": "Waiting for the voice engine: …"}`. The engine's stream is closed on its own thread when the client leaves. Time to first audio is unchanged (one sentence of synthesis).
+- **Read aloud is never a wait of the run, and a restart can no longer leave one.** With AbstractRuntime 0.9.1 the stream records its child run already completed when it ends (no `WAIT_EVENT abstractcore.voice.tts.stream:<uuid>` while audio streams; the apps showed that waiting record as "Waiting for an event › Streaming voice synthesis is running."). The runner closes any such wait left by an older process at startup: the child run completes with "Read aloud was interrupted because the gateway restarted; the audio was not finished. Press Read aloud again." and the conversation goes on.
+- **One replay helper for buffered request bodies.** The security middleware and the core endpoint's internal sub-requests build their replayed `receive` through `asgi_receive.replay_body_receive` (after the body it waits on the connection, or until cancelled for a sub-request). The core endpoint's sub-requests answered "empty body" forever after the body, the same busy loop 0.13.0 fixed in the middleware. A structural test fails if any module builds its own replay.
+
 ### Added
 
 - **Per-account client preferences** (`GET`/`PUT /api/gateway/accounts/{me|account}/preferences`): the gateway keeps each account's default workflow per app (`default_workflow` {`abstractcode.agent.v1`, `abstractassistant.agent.v1`}: a workflow, or `null` for the gateway's per-app default, which stays the admin setting `agents.default_workflow.<interface>`). Only declared keys are accepted; a workflow the account may not run is refused with a sentence and nothing is stored. Anyone sets their own; an admin any account's; an entity's by an admin or its creator. Each app row carries `gateway_default_label` ("Gateway default (<name>)"), the account's `state` (default, set, broken with the reason), what a run would start (`effective`) and the `choices`. The Assistant and AbstractCode now read and write it instead of keeping the choice on the device.
 - Console → Accounts: a **Preferences** icon button on every row (tooltip "Default workflows of <name>") opens the account's default workflow per app; "Gateway default (<name>)" first, the account's runnable workflows next, a change applies at once ("Saved." / "Not saved." + the gateway's sentence). Accounts rows carry `actions.preferences`. The Actions column is sized for seven icons (the table still never scrolls sideways from 1024 px).
+- **Watchdog incident file and "Last restart".** Before exiting with code 75 the event-loop watchdog writes `<data dir>/incidents/watchdog-<UTC stamp>.json` (when, how long, the innermost frame of the event-loop thread, the innermost gateway frame, the requests being served, the loop stack) and `watchdog-<stamp>.threads.txt` (every thread's stack); the log says where. The next process reads the newest at startup: `GET /api/gateway/host/runner` gives admins `last_hang {at, blocked_s, reason, top_frame, dump_path, file, line}`, shown in the console's Resources page (Gateway card, **Last restart**: "Gateway restarted at <time> after a hang — <reason>" with the stack dump's path; the kit tooltip names the frame, the dump and the incident file). The JSON also carries `stamp`; its shape is documented in docs/deployment.md ("Incident files").
+
+### Security
+
+- **Local pages in `browser_probe` stay inside the run's workspaces** (AbstractCore 2.25.1, AbstractRuntime 0.9.1). A local page is served to the headless browser from a private loopback origin limited to the files the run may read, never as `file://`, so a page in an allowed workspace can no longer show a refused folder's files through `<img src="file:///…">`, `../` links or symlinks; refused loads are listed in the report. Docs: security ("Browser probe").
+- **Linux command sandbox: nested workspaces** (AbstractCore 2.25.1). An allowed workspace inside a refused folder is now reachable under bubblewrap too (it failed closed before); see security ("Command sandbox").
 
 ### Terminal console
 
@@ -10400,16 +10448,6 @@ Requires AbstractRuntime 0.9.0, AbstractCore 2.25.0 and AbstractVoice 0.14.0 (in
 - `POST /runs/{run_id}/voice/tts/stream` prepares the stream (run load, durable child run, engine call) off the event loop: the gateway keeps answering `/api/health` and every other request while speech is set up and synthesised.
 - `GET /api/gateway/about` (and every About that reads it) reports the AbstractFramework release the installer recorded (`bootstrap.env` `FRAMEWORK_VERSION`) before the `abstractframework` package metadata, so installer installs show the right AbstractFramework version.
 - Models page: the filters-in-use label no longer overlaps the "N of M models" count on a narrow screen.
-
-### Fixed
-
-- **A Read aloud during a generating turn no longer hangs the gateway** (the 2026-10-04 21:23 watchdog restart). Root cause: a write request without a Content-Length (the console's `/apps/<id>/` proxy streams request bodies, so Code opened from the console sent its Read-aloud this way) was buffered by the security middleware and replayed through a `receive` that, after the body, answered "empty body" forever without ever waiting. A streaming response listens for the client leaving by looping on `receive()`, so the Read-aloud stream turned that loop into a busy loop on the event loop: nothing else ran, health probes failed, and the watchdog restarted the gateway after 30 s. Every replayed body now goes through `asgi_receive.replay_body_receive`, which hands over to the connection after the body (it waits, and reports the client leaving); a test fails if any module builds its own replay again. Every POST streaming endpoint behind a chunked client had the same hole (the OpenAI-compatible chat stream too).
-- **Streamed speech never blocks the event loop and is bounded.** `POST /runs/{id}/voice/tts/stream` (`voice_stream.py`): one permit of the voice synthesis bound (`ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY`) per stream, held until its engine thread is done (also after the client left); past the bound a request waits one second, then gets 503 "Read aloud is busy: N voice syntheses are already running on this gateway …". The engine setup and the engine's events run on worker threads; the response body only awaits a bounded queue (it holds no worker thread and yields between chunks; a slow client makes the engine wait). An engine busy for more than a second (another stream, or the model using the machine) is announced with a first line `{"type": "queued", "message": "Waiting for the voice engine: …"}`. The engine's stream is closed on its own thread when the client leaves. Time to first audio is unchanged (one sentence of synthesis).
-- **Read aloud is never a wait of the run, and a restart can no longer leave one.** With AbstractRuntime 0.9.0 the stream records its child run already completed when it ends (no `WAIT_EVENT abstractcore.voice.tts.stream:<uuid>` while audio streams — that waiting record was what the apps showed as "Waiting for an event › Streaming voice synthesis is running." with "Event routing unavailable"). The runner closes any such wait left by an older process at startup: the child run completes with "Read aloud was interrupted because the gateway restarted; the audio was not finished. Press Read aloud again." and the conversation goes on.
-
-### Added
-
-- **Watchdog incident file and "Last restart".** Before exiting with code 75 the event-loop watchdog writes `<data dir>/incidents/watchdog-<UTC stamp>.json` (when, how long, the innermost frame of the event-loop thread, the innermost gateway frame, the requests being served, the loop stack) and `watchdog-<stamp>.threads.txt` (every thread's stack); the log says where. The next process reads the newest at startup: `GET /api/gateway/host/runner` gives admins `last_hang {at, blocked_s, reason, top_frame, dump_path, file, line}`, shown in the console's Resources page (Gateway card, **Last restart**: "Gateway restarted at <time> after a hang — <reason>" with the stack dump's path) and in the terminal console's host panel (F3), same words.
 
 ### Security
 
@@ -13184,15 +13222,16 @@ browser on this computer from one elsewhere on the network
   stamp>.json` + `.threads.txt`) and exits with code 75, so the LaunchAgent,
   systemd unit or local supervisor restarts it. The next process reads the
   newest incident; the console's Resources page (Gateway card, "Last restart")
-  and the terminal console show "Gateway restarted at <time> after a hang —
+  shows "Gateway restarted at <time> after a hang —
   <reason>". `GET /api/health` reports its state. See
   [deployment.md](docs/deployment.md).
-- **Nothing blocks the event loop** (R13.1): a request body that arrived
+- **Nothing blocks the event loop**: a request body that arrived
   without a Content-Length (the console's `/apps/<id>/` proxy streams bodies)
   is buffered by the security middleware and replayed through
   `asgi_receive.replay_body_receive`, which suspends after the body (a replay
-  that kept answering "empty body" made every streaming response's disconnect
-  listener a busy loop — the 2026-10-04 watchdog incident). Streamed speech
+  that kept answering "empty body" would make every streaming response's
+  disconnect listener a busy loop; the core endpoint's internal sub-requests use
+  the same helper). Streamed speech
   (`voice_stream.py`) holds one permit of the voice synthesis bound
   (`ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY`) from engine setup until its engine
   thread ends, sets up and pulls the engine on worker threads, and hands
@@ -14004,7 +14043,7 @@ Evidence: CLI flag `--no-runner` in `src/abstractgateway/cli.py`, lock lifecycle
 not run for `--watchdog-seconds` (default 30), the gateway writes the blocked
 stacks to its log and to `<data dir>/incidents/`, and exits with code 75; the
 LaunchAgent, the systemd unit or the local supervisor then restarts it. The
-console's Resources page (Gateway card) and the terminal console then show
+console's Resources page (Gateway card) then shows
 "Gateway restarted at <time> after a hang — <reason>". `GET /api/health`
 reports the watchdog's state. See [deployment.md](docs/deployment.md) and
 [troubleshooting.md](docs/troubleshooting.md#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75).

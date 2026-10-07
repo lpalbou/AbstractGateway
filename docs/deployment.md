@@ -209,12 +209,26 @@ servers use the explicit configuration shown on this page: the image sets
 
 **A hung gateway restarts itself.** `serve` runs an event-loop watchdog: when
 the loop has not run for `--watchdog-seconds` (default 30), the gateway dumps
-every thread's stack to its log and exits with code 75. The LaunchAgent
+every thread's stack to its log, writes an incident file and exits with code
+75. The LaunchAgent
 (`KeepAlive` with `SuccessfulExit: false`) and the systemd unit
 (`Restart=on-failure`) restart any non-zero exit; in a container, use a
 restart policy (`restart: unless-stopped`) for the same effect. `GET
 /api/health` reports `watchdog: {enabled, limit_s, last_tick_age_s}`. See
 [troubleshooting.md](./troubleshooting.md#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75).
+
+**Incident files.** Before it exits, the watchdog writes
+`<data dir>/incidents/watchdog-<UTC stamp>.json` and
+`watchdog-<stamp>.threads.txt` (every thread's stack). The JSON
+(`schema: abstractgateway.watchdog_incident.v1`) carries `at`, `stamp`, `pid`,
+`limit_s`, `blocked_s`, `exit_code`, `top_frame` and `gateway_frame`
+(`{file, line, function}`), `requests_in_flight` (`[{method, path, age_s}]`),
+`loop_stack`, `reason` (one sentence) and `dump_path`. The next process reads
+the newest file at startup: admins get it as `last_hang` from `GET
+/api/gateway/host/runner`, and the console's Resources page shows it as
+**Last restart** ("Gateway restarted at <time> after a hang — <reason>"). The
+files are small and kept until you delete them; back them up with the data
+folder or remove old ones freely.
 
 ## Behind a reverse proxy (one block, apps included)
 
