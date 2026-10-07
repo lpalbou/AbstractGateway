@@ -1203,8 +1203,45 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      background: color-mix(in srgb, var(--panel) 92%, transparent);
 	    }
 	    .capability-table td { vertical-align: middle; }
-	    .capability-route { display: grid; gap: 3px; }
-	    .capability-route code { width: fit-content; }
+	    /* ROUTE and CAPABILITY are two cells with their own width (operator
+	       review 2026-10-07: the route pill was painted over the capability
+	       name in every row). The route pill was a grid item with
+	       `width: fit-content` inside an `overflow: hidden` code box, so it
+	       contributed NO minimum width to its column: the table shrank the
+	       column under the pill and the pill overflowed into the next cell.
+	       The pill is now a plain inline box that never shrinks, so the
+	       column is always at least as wide as its longest route; the
+	       capability name is prose and wraps inside its own cell. When the
+	       sum no longer fits, the console's table layer turns the rows into
+	       cards (never a horizontal scroll). */
+	    .capability-table td.capability-route-cell { white-space: nowrap; }
+	    .capability-route { display: inline-block; }
+	    .capability-table td.capability-route-cell code { display: inline-block; max-width: none; overflow: visible; text-overflow: clip; white-space: nowrap; }
+	    .capability-table td.capability-name-cell { white-space: normal; overflow-wrap: break-word; }
+	    /* WEIGHTS: the state pill and ONE short sentence; the probe's full
+	       detail, its instruction and the evidence path are the pill's kit
+	       tooltip (never a ten-line cell). */
+	    .capability-table td.capability-weights-cell { min-width: 8rem; }
+	    .capability-table .weights-pill { cursor: help; }
+	    /* Sized to stay a TABLE at 1280 px and up (the console's table layer
+	       turns it into cards only when it cannot fit): a tighter cell
+	       padding, the model id capped at 16 characters (full id on hover,
+	       click copies), and the actions are icon buttons with kit tooltips. */
+	    .capability-table th, .capability-table td { padding: 8px 5px; }
+	    /* 16 characters at 1440 px and below, then every extra pixel of
+	       viewport goes to the model id, up to the console's 38ch cap. */
+	    .capability-table td .ui-ellip { max-width: clamp(16ch, calc(16ch + 100vw - 1440px), 38ch); }
+	    .capability-table td.capability-name-cell { min-width: 5.5rem; }
+	    .capability-table td.capability-route-cell code { font-size: var(--font-size-sm); }
+	    /* A real table cell (a flex <td> leaves the column grid and its box no
+	       longer matches its column): icons in one row, a read-only note wraps. */
+	    .capability-table td.actions { display: table-cell; white-space: nowrap; }
+	    .capability-table td.actions > * + * { margin-left: 4px; }
+	    .capability-table td.actions > .muted { white-space: normal; display: inline-block; max-width: 9rem; vertical-align: middle; }
+	    /* Source is a provenance note, not a state: muted words that wrap
+	       ("Not configured" on two lines), not a badge that holds the column wide. */
+	    .capability-table .capability-source { color: var(--text-secondary); font-size: var(--font-size-sm); }
+	    .capability-table td.capability-source-cell { white-space: normal; min-width: 5rem; }
 	    /* Task rows are indented under their modality row so the grid reads as
 	       the hierarchy it is: `output.image` is the parent (one value for every
 	       image task), `.text_to_image` and friends override it per task. */
@@ -1581,6 +1618,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .inline-state.error { color: var(--error); font-size: var(--font-size-base); }
 	    span.inline-state { display: inline; min-height: 0; margin-left: 6px; }
 	    .plain-disclosure { border: 0; padding: 0; background: transparent; }
+	    /* R15 D1: no "Advanced" disclosure anywhere; what one used to hide is a
+	       visible section named for its content ("Sign-in app", "Runtime and
+	       tenant", "Visible models", "Optional configuration"). */
+	    .named-section { display: grid; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line-soft); min-width: 0; }
+	    .named-section__title { margin: 0; font-size: var(--font-size-md); font-weight: 650; color: var(--text); }
+	    .entity-advanced.named-section { border: 1px solid var(--line); }
 	    .plain-disclosure > summary {
 	      display: inline-flex; align-items: center; gap: 6px; min-height: 36px;
 	      cursor: pointer; color: var(--muted); font-size: var(--font-size-base); font-weight: 500;
@@ -2773,8 +2816,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
                       </div>
                       <p id="my-email-oauth-start-reason" class="af-form__help" hidden></p>
                       <p id="my-email-oauth-prompt" class="inline-state" role="status" aria-live="polite"></p>
-                      <details id="my-email-oauth-advanced" class="plain-disclosure">
-                        <summary>Advanced</summary>
+                      <!-- R15 D1 (no "Advanced" anywhere): a visible, content-named section. -->
+                      <section id="my-email-oauth-advanced" class="named-section" aria-labelledby="my-email-oauth-app-title">
+                        <h4 id="my-email-oauth-app-title" class="named-section__title">Sign-in app</h4>
                         <div class="af-form">
                           <p class="af-form__help">Your own sign-in client instead of the gateway&#39;s or the built-in one.</p>
                           <div class="af-form__grid-2">
@@ -2786,7 +2830,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
                             <div class="af-form__field"><label class="af-form__label" for="my-email-oauth-flow">Sign-in flow</label><select id="my-email-oauth-flow"><option value="">Code in any browser (default)</option><option value="loopback">Browser on the gateway&#39;s computer</option></select></div>
                           </div>
                         </div>
-                      </details>
+                      </section>
                     </div>
                   </div>
                 </div>
@@ -2805,8 +2849,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
                   <button type="button" role="switch" id="my-email-agent-tools" class="af-switch af-switch--row" aria-checked="false" aria-describedby="my-email-agent-tools-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Agent email tools</span><span class="af-switch__desc" id="my-email-agent-tools-desc">Your agents and workflows may list, search, read, send and reply to your mail. Every send still follows your recipient rules, your limits and the approval gate.</span></span></button><span id="my-email-agent-tools-reason" class="af-switch__reason" hidden></span>
                 </div>
               </section>
-              <details id="my-email-advanced" class="af-card account-card account-advanced">
-                <summary>Advanced</summary>
+              <section id="my-email-advanced" class="af-card account-card" aria-labelledby="my-email-limits-title">
+                <div class="af-card__header"><h3 id="my-email-limits-title" class="af-card__title">Recipients and limits</h3></div>
                 <div class="af-form advanced-sentences">
                   <!-- Mode + Always allowed + Always denied (DESIGN-v3 §4 / §13.3): rendered by renderEmailRecipientRules(policy, apiBase). -->
                   <div id="my-email-recipient-rules" class="recipient-rules">
@@ -2851,7 +2895,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
                   </div>
                   <p id="my-email-folder-help" class="af-form__help">The folder automations watch for new mail.</p>
                 </div>
-              </details>
+              </section>
             </div>
 	            <section id="entities-list-section" class="session-only">
 	              <div class="section-head">
@@ -2999,15 +3043,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          <label class="check-row"><input id="endpoint-enabled" type="checkbox" checked> Enabled</label>
 	        </div>
 	        <div class="model-picker field-span-2">
-	          <details class="advanced-panel">
-	            <summary>Advanced: restrict visible models after testing</summary>
+	          <section class="named-section" aria-labelledby="endpoint-visible-models-title">
+	            <h4 id="endpoint-visible-models-title" class="named-section__title">Visible models</h4>
 	            <div class="advanced-panel__body">
 	              <p class="field-help">Optional. Use Test to preview discovery, then select models only when this provider should expose a fixed allowlist.</p>
 	              <div id="endpoint-model-summary" class="model-summary">Not tested yet.</div>
 	              <select id="endpoint-models" class="model-picker__select" multiple size="7"></select>
 	              <button id="clear-endpoint-models" type="button" class="secondary" title="Serve every model this endpoint exposes (no allowlist)"><span class="button-icon" aria-hidden="true">×</span><span>Clear restriction</span></button>
 	            </div>
-	          </details>
+	          </section>
 	        </div>
 	        <div id="endpoint-message" class="message field-span-2"></div>
 	      </div>
@@ -3462,7 +3506,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           <input id="new-email" type="email" autocomplete="off" spellcheck="false" aria-describedby="new-email-help">
           <p id="new-email-help" class="af-form__help">Where sign-in codes and notifications go. Leave empty if they have none; they can add it later.</p>
         </div>
-        <details class="plain-disclosure"><summary>Advanced</summary>
+        <section id="new-user-runtime-tenant" class="named-section" aria-labelledby="new-user-runtime-tenant-title">
+          <h4 id="new-user-runtime-tenant-title" class="named-section__title">Runtime and tenant</h4>
           <div class="af-form">
             <div class="af-form__field">
               <label class="af-form__label" for="new-runtime">Runtime</label>
@@ -3475,7 +3520,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
               <p id="new-tenant-help" class="af-form__help">Leave &#39;default&#39; unless you run several tenants.</p>
             </div>
           </div>
-        </details>
+        </section>
         <div class="modal-actions">
           <button id="create-user-cancel" class="secondary" type="button">Cancel</button>
           <button id="create-user" type="button">Create user</button>
@@ -3501,9 +3546,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       </div>
       <p id="entity-template-desc" class="section-note"></p>
       <div id="entity-template-values" class="entity-chip-row"></div>
-      <p id="entity-create-admin-note" class="section-note hidden">Advanced configuration (substrate, per-phase capabilities) requires an admin session — entities you create carry the safe framework defaults; an admin can configure them after.</p>
-      <details id="entity-advanced" class="entity-advanced">
-        <summary>Advanced configuration (optional — defaults are safe)</summary>
+      <p id="entity-create-admin-note" class="section-note hidden">Optional configuration (substrate, per-phase capabilities) requires an admin session — entities you create carry the safe framework defaults; an admin can configure them after.</p>
+      <section id="entity-advanced" class="entity-advanced named-section" aria-labelledby="entity-optional-title">
+        <h3 id="entity-optional-title" class="named-section__title">Optional configuration</h3>
+        <p class="section-note">Defaults are safe: leave anything on Gateway default to inherit it.</p>
         <div class="entity-config-block">
           <h3 class="entity-config-title">Substrate <span class="entity-config-hint">the mind: LLM provider &amp; model. Providers &amp; models autopopulate from this gateway; leave on "Gateway default" to inherit.</span></h3>
           <div class="inline">
@@ -3529,7 +3575,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           <h3 class="entity-config-title">Per-phase capabilities <span class="entity-config-hint">which tools each phase may use — visit / work / personal / sleep. Defaults shown; toggle to override.</span></h3>
           <div id="entity-new-matrix" class="entity-matrix"></div>
         </div>
-      </details>
+      </section>
       <div class="modal-actions">
         <button id="entity-create-cancel" class="secondary">Cancel</button>
         <button id="entity-create" title="Dry-run validate the name and configuration, then create"><span class="button-icon" aria-hidden="true">☾</span><span>Validate &amp; create</span></button>
@@ -5247,10 +5293,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        } else if (($("entity-new-thinking")?.value || "").trim()) {
 	          note += " (reasoning effort needs a provider and model chosen — not applied)";
 	        }
-	        // Apply the capability matrix only if the operator opened Advanced AND
-	        // moved a cell off its default (readMatrix returns only changed phases).
+	        // Apply the capability matrix only when the operator moved a cell off
+	        // its default (readMatrix returns only changed phases) and the
+	        // section is shown (admins only).
 	        const adv = $("entity-advanced");
-	        if (adv && adv.open && state.entityMatrixSpec) {
+	        if (adv && Boolean(state.principal && state.principal.admin) && state.entityMatrixSpec) {
 	          const policy = readMatrix($("entity-new-matrix"));
 	          if (Object.keys(policy).length) {
 	            try {
@@ -7144,7 +7191,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const ownClient = Boolean(myEmailVal("my-email-oauth-client-id"));
       const name = tab === "microsoft" ? "Microsoft" : "Google";
       const reason = (prov && prov.available === false && !ownClient)
-        ? (prov.reason || `No ${name} sign-in client on this gateway: add one under Advanced, or ask your admin.`)
+        ? (prov.reason || `No ${name} sign-in client on this gateway: add one under Sign-in app, or ask your admin.`)
         : "";
       btn.disabled = Boolean(reason) || Boolean(myEmailUi.oauth);
       myEmailShow("my-email-oauth-start-reason", reason);
@@ -7207,7 +7254,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // 4. Agent email tools.
       const at = d.agent_tools || {};
       afSwitchSet($("my-email-agent-tools"), { checked: Boolean(at.on), reason: at.available === false ? (at.unavailable_reason || "Connect a mailbox first.") : "" });
-      // 5. Advanced.
+      // 5. Recipients and limits.
       afSwitchSet($("my-email-enabled"), { checked: d.enabled !== false, reason: "" });
       // The recipients lane's ONE renderer, on the API base this UI serves (own or an entity's).
       // A missing field is a seam failure: loud for tests, not developer copy on screen.
@@ -10521,6 +10568,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    function pollDownloadJob(jobId) {
 	      return dlPoll(jobId);
 	    }
+	    // Route-row action icons not in the page-wide registry.
+	    const CAPABILITY_ICONS = {
+	      plus: svgIcon('<path d="M12 5v14M5 12h14"></path>'),
+	      clear: svgIcon('<path d="M6 6l12 12M18 6 6 18"></path>'),
+	      copy: svgIcon('<rect x="8" y="8" width="12" height="12" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path>'),
+	    };
 	    function weightsCellMarkup(row) {
 	      const info = rowAvailability(row);
 	      const job = rowDownloadJob(row);
@@ -10528,9 +10581,33 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (!info || !info.availability || !info.availability.status) return "-";
 	      const availability = info.availability;
 	      const view = weightView(availability);
-	      const title = [availability.detail, availability.location, availability.evidence].filter(Boolean).join(" — ");
-	      const why = availability.status === "unknown" && weightReason(availability) ? `<span class="weights-reason">${esc(weightReason(availability))}</span>` : "";
-	      return `<span class="state-pill ${esc(view.cls)}" title="${esc(title)}">${esc(view.label)}</span>${why}`;
+	      const tip = weightTip(availability);
+	      return `<span class="state-pill weights-pill ${esc(view.cls)}" tabindex="0" data-af-tip="${esc(tip)}" aria-label="${esc(`Weights: ${view.label}. ${tip}`)}">${esc(view.label)}</span>`
+	        + `<span class="weights-reason">${esc(weightSummary(availability))}</span>`;
+	    }
+	    // ONE short sentence under the pill: AbstractCore's `summary` (model
+	    // presence, core 2.25.1+, the same words the console-TUI prints). It is a
+	    // required field of the seam: an availability row without it is a core
+	    // older than this console's floor, said loudly, never papered over with
+	    // the long `detail` (that is what made the ten-line Weights cell).
+	    function weightSummary(availability) {
+	      const text = String((availability && availability.summary) || "").trim();
+	      if (!text) throw new Error(`AbstractGateway console: model presence for ${JSON.stringify((availability && availability.provider) || "")} has no summary (core seam: ModelPresence.summary, abstractcore >= 2.25.1).`);
+	      return text;
+	    }
+	    // The pill's kit tooltip: everything the probe said, one fact per line --
+	    // its detail, what to do, where the weights are and how it looked.
+	    function weightTip(availability) {
+	      const a = availability || {};
+	      const lines = [];
+	      // The probe's words as written: a model id leads many of them, and
+	      // "Large-v3" is not the model's name.
+	      const detail = String(a.detail || "").trim();
+	      if (detail) lines.push(/[.!?]$/.test(detail) ? detail : `${detail}.`);
+	      if (a.instruction) lines.push(`To fix: ${a.instruction}`);
+	      if (a.location) lines.push(`Where: ${a.location}`);
+	      if (a.evidence) lines.push(`Checked by: ${a.evidence}`);
+	      return lines.join("\\n") || weightSummary(a);
 	    }
 	    function defaultSourceLabel(source) {
 	      const value = String(source || "").trim();
@@ -13117,12 +13194,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            ? ` <span class="badge" title="Default reasoning effort for this route (edit via Configure)">reasoning ${esc(defaultReasoningValue(row))}</span>`
 	            : "";
 	        tr.innerHTML = `
-	          <td>${routeCell}</td>
-	          <td>${capabilityCell}</td>
+	          <td class="capability-route-cell">${routeCell}</td>
+	          <td class="capability-name-cell">${capabilityCell}</td>
 	          <td>${row.provider ? esc(state.providerLabels.get(row.provider) || row.provider) : "-"}</td>
 	          <td>${row.model ? `<span class="ui-ellip" title="${esc(row.model)}">${esc(row.model)}</span>` + reasoningBadge : "-"}</td>
-	          <td>${weightsCellMarkup(row)}</td>
-	          <td>${source ? `<span class="badge">${esc(source)}</span>` : "-"}</td>
+	          <td class="capability-weights-cell">${weightsCellMarkup(row)}</td>
+	          <td class="capability-source-cell">${source ? `<span class="capability-source">${esc(source)}</span>` : "-"}</td>
 	          <td><span class="state-pill ${esc(status.cls)}">${esc(status.label)}</span>${defaultRowUnavailableMarkup(row)}${defaultRowRouteUnavailableMarkup(row)}${defaultRowConfigured(row) ? engineMissingMarkup(row) : ""}</td>
 	        `;
 	        const actions = document.createElement("td");
@@ -13136,16 +13213,25 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          note.textContent = defaultRowActionLabel(row);
 	          actions.append(note);
 	        } else {
+	          // Icon buttons with the kit tooltip (the Accounts/Workflows
+	          // pattern): three labelled buttons forced the row 300 px wide and
+	          // the grid into cards on a 1280 px screen.
 	          const configure = document.createElement("button");
-	          configure.className = "secondary";
-	          configure.innerHTML = `<span class="button-icon" aria-hidden="true">${configured ? "✎" : "+"}</span><span>${esc(defaultRowActionLabel(row))}</span>`;
+	          configure.className = "secondary icon-only";
+	          configure.dataset.action = configured ? "edit" : "configure";
+	          configure.innerHTML = `<span class="button-icon" aria-hidden="true">${configured ? ICONS.pencil : CAPABILITY_ICONS.plus}</span>`;
+	          configure.setAttribute("aria-label", `${defaultRowActionLabel(row)} ${key}`);
+	          configure.dataset.afTip = `${defaultRowActionLabel(row)} ${key}`;
 	          configure.onclick = () => openDefaultModal(row);
 	          actions.append(configure);
 	        }
 	        if (configured && !defaultRowReadOnly(row)) {
 	          const clear = document.createElement("button");
-	          clear.className = "secondary";
-	          clear.innerHTML = `<span class="button-icon" aria-hidden="true">×</span><span>Clear</span>`;
+	          clear.className = "secondary icon-only";
+	          clear.dataset.action = "clear";
+	          clear.innerHTML = `<span class="button-icon" aria-hidden="true">${CAPABILITY_ICONS.clear}</span>`;
+	          clear.setAttribute("aria-label", `Clear ${key}`);
+	          clear.dataset.afTip = `Clear ${key}`;
 	          clear.onclick = () => clearDefault(row);
 	          actions.append(clear);
 	        }
@@ -13165,18 +13251,26 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        } else if (availability.status && weightView(availability).canDownload) {
 	          const artifact = rowDownloadArtifact(row);
 	          const download = document.createElement("button");
-	          download.className = "secondary";
-	          download.title = `Download ${artifact} with ${row.provider}`;
-	          download.innerHTML = `<span class="button-icon" aria-hidden="true">⭳</span><span>Download</span>`;
+	          download.className = "secondary icon-only";
+	          download.dataset.action = "download";
+	          download.setAttribute("aria-label", `Download ${artifact} with ${row.provider}`);
+	          download.dataset.afTip = `Download ${artifact} with ${row.provider}`;
+	          download.innerHTML = `<span class="button-icon" aria-hidden="true">${ICONS.download}</span>`;
 	          download.onclick = () => downloadRouteModel(row);
 	          actions.append(download);
 	        } else if (availability.status === "absent" && availability.instruction) {
 	          // No download verb here (no `lms` on PATH, no huggingface_hub):
 	          // the actionable line is the affordance, not a dead button.
-	          const note = document.createElement("span");
-	          note.className = "muted";
-	          note.textContent = availability.instruction;
-	          actions.append(note);
+	          // The command is copied by an icon button whose kit tooltip
+	          // shows it, instead of a command wrapped over three lines.
+	          const copy = document.createElement("button");
+	          copy.className = "secondary icon-only";
+	          copy.dataset.action = "copy-instruction";
+	          copy.innerHTML = `<span class="button-icon" aria-hidden="true">${CAPABILITY_ICONS.copy}</span>`;
+	          copy.setAttribute("aria-label", `Copy the command: ${availability.instruction}`);
+	          copy.dataset.afTip = `Copy: ${availability.instruction}`;
+	          copy.onclick = () => uiCopy(availability.instruction);
+	          actions.append(copy);
 	        }
 	        tr.append(actions);
 	        tbody.append(tr);

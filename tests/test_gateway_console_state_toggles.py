@@ -109,15 +109,15 @@ def test_users_table_and_create_user_follow_design() -> None:
     assert "<details" not in card
     assert card.index('id="email-cap-email"') < card.index('id="email-cap-agent-tools"') < card.index('id="email-cap-recovery"')
     form = _slice(html, '<div id="user-create-form"', '<div id="user-create-done"')
-    # Email address at the top level, before Advanced; Advanced = Runtime + Tenant.
-    assert form.index('for="new-email">Email address</label>') < form.index("<summary>Advanced</summary>")
+    # Email address at the top level; Runtime + Tenant in a VISIBLE section named for them
+    # (R15 D1: no "Advanced" disclosure anywhere).
+    title = '<h4 id="new-user-runtime-tenant-title" class="named-section__title">Runtime and tenant</h4>'
+    assert form.index('for="new-email">Email address</label>') < form.index(title)
     assert "Where sign-in codes and notifications go. Leave empty if they have none; they can add it later." in form
-    # Advanced is collapsed by default (no `open` attribute on the disclosure).
-    assert re.search(r'<details class="plain-disclosure"><summary>Advanced</summary>', form)
-    assert not re.search(r"<details[^>]*\bopen\b[^>]*><summary>Advanced</summary>", form)
-    advanced = _slice(form, "<summary>Advanced</summary>", "</details>")
-    assert 'for="new-runtime">Runtime</label>' in advanced and 'for="new-tenant">Tenant</label>' in advanced
-    assert "new-email" not in advanced
+    assert "<details" not in form and "Advanced" not in form
+    section = _slice(form, '<section id="new-user-runtime-tenant"', "</section>")
+    assert 'for="new-runtime">Runtime</label>' in section and 'for="new-tenant">Tenant</label>' in section
+    assert "new-email" not in section
     assert "Give this token to ${who}. It is shown once." in html
 
 

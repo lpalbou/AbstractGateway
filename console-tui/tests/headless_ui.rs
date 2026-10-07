@@ -371,11 +371,13 @@ fn availability_fixture() -> AvailabilityData {
             {"key": "output.voice", "provider": "supertonic", "model": "supertonic-3",
              "availability": {"provider": "supertonic", "artifact": "supertonic-3",
                               "status": "installed", "downloadable": true,
+                              "summary": "In AbstractVoice's cache.",
                               "location": "/cache/supertonic-3"}},
             {"key": "output.image.text_to_image", "provider": "mlx-gen", "model": "test-flux",
              "availability": {"provider": "mlx-gen", "artifact": "test-flux",
                               "status": "unknown", "downloadable": false,
                               "evidence": "hf cache scan",
+                              "summary": "Could not be checked.",
                               "instruction": "install huggingface_hub"}},
             {"key": "input.sound", "provider": "", "model": "",
              "availability": {"status": "unknown", "evidence": "route not configured"}}
@@ -5598,6 +5600,8 @@ fn w_refuses_with_a_reason_instead_of_guessing() {
     h.key(b"w");
     let s = h.turns(2);
     assert!(s.contains("already installed"), "installed refusal:\n{s}");
+    // R14.7: the web console's sentence under the pill (core `summary`).
+    assert!(s.contains("In AbstractVoice's cache."), "installed summary:\n{s}");
     assert!(
         h.drain_cmds().is_empty(),
         "no download for an installed model"
@@ -5610,6 +5614,7 @@ fn w_refuses_with_a_reason_instead_of_guessing() {
         s.contains("availability is unknown"),
         "unknown is never treated as absent:\n{s}"
     );
+    assert!(s.contains("Could not be checked."), "unknown summary:\n{s}");
     assert!(
         h.drain_cmds().is_empty(),
         "no download on an unknown answer"

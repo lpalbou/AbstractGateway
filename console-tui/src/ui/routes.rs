@@ -1097,13 +1097,21 @@ fn download_selected(ctx: &Ctx) {
     };
     match weights.status.as_str() {
         "installed" => {
+            // The web console's sentence under the pill (core `summary`),
+            // then the probe's own detail when it has one.
+            let said = [weights.summary.as_str(), weights.detail.as_str()]
+                .iter()
+                .filter(|t| !t.is_empty())
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(" ");
             ctx.store.notice.set(Some(format!(
                 "{} is already installed{}",
                 weights.artifact,
-                if weights.detail.is_empty() {
+                if said.is_empty() {
                     String::new()
                 } else {
-                    format!(" ({})", weights.detail)
+                    format!(" ({said})")
                 }
             )));
             return;
@@ -1121,10 +1129,14 @@ fn download_selected(ctx: &Ctx) {
             } else {
                 weights.instruction.clone()
             };
-            ctx.store.notice.set(Some(format!(
-                "{}: availability is unknown — {hint}",
-                row.key
-            )));
+            ctx.store.notice.set(Some(if weights.summary.is_empty() {
+                format!("{}: availability is unknown — {hint}", row.key)
+            } else {
+                format!(
+                    "{}: availability is unknown — {} {hint}",
+                    row.key, weights.summary
+                )
+            }));
             return;
         }
         _ => {}

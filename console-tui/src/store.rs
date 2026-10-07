@@ -738,6 +738,11 @@ pub struct WeightsRow {
     pub detail: String,
     pub instruction: String,
     pub downloadable: bool,
+    /// AbstractCore's ONE short sentence for this answer (`summary`,
+    /// core 2.25.1+): the words the web console prints under its Weights
+    /// pill ("In the Hugging Face cache.", "Not downloaded."). The long
+    /// `detail` stays for the notice's parenthesis.
+    pub summary: String,
 }
 
 impl WeightsRow {
@@ -810,6 +815,7 @@ impl AvailabilityData {
                     detail: s(&a, "detail").unwrap_or_default(),
                     instruction: s(&a, "instruction").unwrap_or_default(),
                     downloadable: b(&a, "downloadable").unwrap_or(false),
+                    summary: s(&a, "summary").unwrap_or_default(),
                 },
             );
         }

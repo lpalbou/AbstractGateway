@@ -310,8 +310,9 @@ try {
     await page.keyboard.press("Escape");
     // Create user modal.
     await page.click("#open-create-user");
-    const adv = await page.evaluate(() => { const d = document.querySelector("#user-create-form details"); const r = document.getElementById("new-runtime"); return { open: d.open, runtimeShown: r.checkVisibility() }; });
-    check(adv.open === false && adv.runtimeShown === false, "Create user Advanced collapsed by default", adv);
+    // R15 D1: no "Advanced" disclosure; Runtime and Tenant sit in a visible section named for them.
+    const adv = await page.evaluate(() => { const r = document.getElementById("new-runtime"); const h = document.getElementById("new-user-runtime-tenant-title"); return { details: document.querySelectorAll("#user-create-form details").length, runtimeShown: r.checkVisibility(), title: h && h.textContent }; });
+    check(adv.details === 0 && adv.runtimeShown === true && adv.title === "Runtime and tenant", "Create user: Runtime and tenant visible, no disclosure", adv);
     await page.evaluate(() => { for (const d of document.querySelectorAll("#user-create-form details")) d.open = true; });
     await labelScale(page, "#user-create-form", "create user modal");
     check(await page.evaluate(() => !document.getElementById("new-email").closest("details")), "Email address at the top level of Create user");
