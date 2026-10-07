@@ -2132,12 +2132,73 @@ pub(crate) fn open_apps_settings_form(cx: Scope, ctx: &Ctx, current: RuntimeConf
     );
 }
 
-/// `w` on the highlighted inventory row: the Workspaces screen (parked
-/// until the terminal follows round 9's Accounts workspace model — it
-/// shows one sentence and sends nothing).
+/// `w` on the highlighted inventory row (the web's Workspace cell, round
+/// 11): the default plane opens "Eligible workspaces"; a user or entity
+/// plane with ONE owner opens that owner's workspaces; anything else has
+/// none (the cell reads "None").
 fn open_user_policy_for_selected(cx: Scope, ctx: &Ctx) {
-    let _ = cx;
-    ctx.ui.screen.set(super::SCREEN_WORKSPACES);
+    let idx = ctx.ui.runtime_sel.get_untracked();
+    let row = ctx
+        .store
+        .runtimes
+        .with_untracked(|d| d.ready().and_then(|rows| rows.get(idx).cloned()));
+    let Some(row) = row else {
+        ctx.store
+            .notice
+            .set(Some("no runtime selected — no workspaces to show".into()));
+        return;
+    };
+    match workspace_target(&row, &ctx.store) {
+        Some(target) => super::workspace_chooser::open(cx, ctx, target),
+        None => ctx.store.notice.set(Some(format!(
+            "{}: no workspaces here (only the default plane and a one-owner user or entity plane have them)",
+            row.runtime_id
+        ))),
+    }
+}
+
+/// The Workspaces target of an inventory row (the web's Workspace cell):
+/// default → the eligible workspaces; one owner → that account's.
+pub fn workspace_target(
+    row: &crate::store::RuntimeRow,
+    store: &crate::store::Store,
+) -> Option<super::workspace_chooser::Target> {
+    use super::workspace_chooser::Target;
+    match row.kind.as_str() {
+        "default" => Some(Target::Gateway),
+        "user" | "entity" if row.owners.len() == 1 => {
+            let id = row.owners[0].clone();
+            let tenant = if row.tenant_id.is_empty() {
+                "default".to_string()
+            } else {
+                row.tenant_id.clone()
+            };
+            let own = store.conn.with_untracked(|c| match c {
+                crate::store::ConnPhase::Connected(me) => {
+                    me.user_id == id && me.tenant_id == tenant
+                }
+                _ => false,
+            });
+            Some(Target::Account {
+                key: if own {
+                    "me".into()
+                } else {
+                    format!("{tenant}:{id}")
+                },
+                id,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// The inventory's Workspaces cell (the web's link text).
+pub fn workspace_cell(row: &crate::store::RuntimeRow) -> &'static str {
+    match row.kind.as_str() {
+        "default" => "w: Eligible workspaces",
+        "user" | "entity" if row.owners.len() == 1 => "w: Workspaces",
+        _ => "None",
+    }
 }
 
 /// The Sessions tab: the chosen plane's top-level runs (spinner while
@@ -3160,15 +3221,8 @@ fn table(
                 _ => "—".into(),
             });
             row.push(size);
-            // The workspace column names the key; `w` opens the Workspaces
-            // screen (parked: managed from Accounts in the web console).
-            row.push(
-                if matches!(r.kind.as_str(), "user" | "default" | "entity") {
-                    "w: Workspaces".to_string()
-                } else {
-                    "—".to_string()
-                },
-            );
+            // The workspace column names the key (the web's Workspace cell).
+            row.push(workspace_cell(r).to_string());
             if wide {
                 row.push(r.note.clone().unwrap_or_else(|| "—".into()));
             }

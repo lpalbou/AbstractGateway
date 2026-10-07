@@ -1,0 +1,7 @@
+{
+ "detail": {
+  "reason": "workspace_refused",
+  "message": "Workspaces entry '/nonexistent/zzz': No directory at this path on the gateway's computer.",
+  "path": "/nonexistent/zzz"
+ }
+}

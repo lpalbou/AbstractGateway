@@ -1,0 +1,146 @@
+[
+ [
+  "title",
+  "Workspaces"
+ ],
+ [
+  "gatewayTitle",
+  "Eligible workspaces"
+ ],
+ [
+  "gatewayHelp",
+  "The workspaces accounts may choose from, and the most each one allows."
+ ],
+ [
+  "accountHelp",
+  "The workspaces this account's agents use, among the eligible ones."
+ ],
+ [
+  "sessionHelp",
+  "The workspaces this conversation uses, among the eligible ones."
+ ],
+ [
+  "runHelp",
+  "The workspaces this run uses, among the eligible ones."
+ ],
+ [
+  "gatewayPrefix",
+  "Gateway:"
+ ],
+ [
+  "postureLabel",
+  "Workspaces agents may use"
+ ],
+ [
+  "postureAllowedOnly",
+  "Deny everything, allow listed workspaces"
+ ],
+ [
+  "postureAllowedOnlyHelp",
+  "Agents may only work in the listed workspaces."
+ ],
+ [
+  "postureAnyExceptDenied",
+  "Allow everything, refuse listed workspaces"
+ ],
+ [
+  "postureAnyExceptDeniedHelp",
+  "Agents may work in any workspace except the refused ones."
+ ],
+ [
+  "accessLabel",
+  "Permission"
+ ],
+ [
+  "accessRead",
+  "Read-only"
+ ],
+ [
+  "accessReadWrite",
+  "Read & write"
+ ],
+ [
+  "accessDenied",
+  "Refused"
+ ],
+ [
+  "capReadOnly",
+  "The gateway allows this workspace read-only"
+ ],
+ [
+  "capRefused",
+  "The gateway refuses this workspace"
+ ],
+ [
+  "everythingElse",
+  "Everything else"
+ ],
+ [
+  "allowedTitle",
+  "Allowed workspaces"
+ ],
+ [
+  "deniedTitle",
+  "Refused workspaces"
+ ],
+ [
+  "builtinRefused",
+  "Always refused: the gateway's own data and credentials"
+ ],
+ [
+  "emptyAllowed",
+  "No workspace is listed: agents only use their private workspace."
+ ],
+ [
+  "privateNote",
+  "The private workspace of each run is always available, read & write."
+ ],
+ [
+  "addPlaceholder",
+  "Add a workspace path"
+ ],
+ [
+  "add",
+  "Add"
+ ],
+ [
+  "choose",
+  "Choose…"
+ ],
+ [
+  "remove",
+  "Remove"
+ ],
+ [
+  "followGateway",
+  "Follow the gateway policy"
+ ],
+ [
+  "followGatewayHelp",
+  "On: this account gets exactly what the gateway allows."
+ ],
+ [
+  "useDefault",
+  "Use my default"
+ ],
+ [
+  "useDefaultHelp",
+  "On: the account's default workspaces apply."
+ ],
+ [
+  "locked",
+  "These workspaces can be seen here but not changed."
+ ],
+ [
+  "loading",
+  "Loading…"
+ ],
+ [
+  "saved",
+  "Saved"
+ ],
+ [
+  "notSaved",
+  "Not saved."
+ ]
+]

@@ -1,0 +1,240 @@
+{
+ "accounts": [
+  {
+   "id": "admin",
+   "tenant_id": "default",
+   "kind": "user",
+   "role": "admin",
+   "own": true,
+   "email_address": null,
+   "mailbox": {
+    "state": "not_connected",
+    "address": null,
+    "provider": null,
+    "reason": null
+   },
+   "runtime_id": "default",
+   "active": true,
+   "entity_state": null,
+   "archived": false,
+   "archived_at": null,
+   "openai_api": true,
+   "actions": {
+    "openai_api": {
+     "available": true,
+     "reason": null
+    },
+    "email": {
+     "available": true,
+     "reason": null
+    },
+    "logs": {
+     "available": true,
+     "reason": null
+    },
+    "workspace": {
+     "available": true,
+     "reason": null
+    },
+    "rotate": {
+     "available": true,
+     "reason": null
+    },
+    "manage": {
+     "available": false,
+     "reason": "Only entities have a management page."
+    },
+    "archive": {
+     "available": false,
+     "reason": "You can't archive your own account."
+    },
+    "unarchive": {
+     "available": false,
+     "reason": "This account isn't archived."
+    },
+    "suspend": {
+     "available": false,
+     "reason": "You can't deactivate your own account."
+    }
+   }
+  },
+  {
+   "id": "alice",
+   "tenant_id": "default",
+   "kind": "user",
+   "role": "user",
+   "own": false,
+   "email_address": null,
+   "mailbox": {
+    "state": "not_connected",
+    "address": null,
+    "provider": null,
+    "reason": null
+   },
+   "runtime_id": "alice",
+   "active": true,
+   "entity_state": null,
+   "archived": false,
+   "archived_at": null,
+   "openai_api": true,
+   "actions": {
+    "openai_api": {
+     "available": true,
+     "reason": null
+    },
+    "email": {
+     "available": true,
+     "reason": null
+    },
+    "logs": {
+     "available": true,
+     "reason": null
+    },
+    "workspace": {
+     "available": true,
+     "reason": null
+    },
+    "rotate": {
+     "available": true,
+     "reason": null
+    },
+    "manage": {
+     "available": false,
+     "reason": "Only entities have a management page."
+    },
+    "archive": {
+     "available": true,
+     "reason": null
+    },
+    "unarchive": {
+     "available": false,
+     "reason": "This account isn't archived."
+    },
+    "suspend": {
+     "available": true,
+     "reason": null
+    }
+   }
+  },
+  {
+   "id": "bob",
+   "tenant_id": "default",
+   "kind": "user",
+   "role": "user",
+   "own": false,
+   "email_address": null,
+   "mailbox": {
+    "state": "not_connected",
+    "address": null,
+    "provider": null,
+    "reason": null
+   },
+   "runtime_id": "bob",
+   "active": true,
+   "entity_state": null,
+   "archived": false,
+   "archived_at": null,
+   "openai_api": true,
+   "actions": {
+    "openai_api": {
+     "available": true,
+     "reason": null
+    },
+    "email": {
+     "available": true,
+     "reason": null
+    },
+    "logs": {
+     "available": true,
+     "reason": null
+    },
+    "workspace": {
+     "available": true,
+     "reason": null
+    },
+    "rotate": {
+     "available": true,
+     "reason": null
+    },
+    "manage": {
+     "available": false,
+     "reason": "Only entities have a management page."
+    },
+    "archive": {
+     "available": true,
+     "reason": null
+    },
+    "unarchive": {
+     "available": false,
+     "reason": "This account isn't archived."
+    },
+    "suspend": {
+     "available": true,
+     "reason": null
+    }
+   }
+  },
+  {
+   "id": "castor",
+   "tenant_id": "default",
+   "kind": "entity",
+   "role": "entity",
+   "own": false,
+   "email_address": null,
+   "mailbox": {
+    "state": "not_connected",
+    "address": null,
+    "provider": null,
+    "reason": null
+   },
+   "runtime_id": "castor",
+   "active": true,
+   "archived": false,
+   "archived_at": null,
+   "entity_state": "asleep",
+   "created_by": {
+    "tenant_id": "default",
+    "user_id": "admin"
+   },
+   "openai_api": false,
+   "actions": {
+    "openai_api": {
+     "available": false,
+     "reason": "Entities have no key, so they never use the OpenAI API."
+    },
+    "email": {
+     "available": true,
+     "reason": null
+    },
+    "logs": {
+     "available": true,
+     "reason": null
+    },
+    "workspace": {
+     "available": true,
+     "reason": null
+    },
+    "rotate": {
+     "available": false,
+     "reason": "An entity has no token to rotate: its credential is discarded when it is created and no one holds it."
+    },
+    "manage": {
+     "available": true,
+     "reason": null
+    },
+    "archive": {
+     "available": true,
+     "reason": null
+    },
+    "unarchive": {
+     "available": false,
+     "reason": "This account isn't archived."
+    },
+    "suspend": {
+     "available": true,
+     "reason": null
+    }
+   }
+  }
+ ]
+}

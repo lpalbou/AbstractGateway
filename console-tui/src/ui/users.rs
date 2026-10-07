@@ -24,7 +24,7 @@ use crate::worker::Cmd;
 /// manage menu).
 /// `d` (archive) is not here: a non-admin archives an entity they created
 /// (the gateway's row says what applies).
-pub const ADMIN_KEYS: &[&str] = &["a", "e", "t", "v", "x"];
+pub const ADMIN_KEYS: &[&str] = &["E", "a", "e", "t", "v", "x"];
 
 pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
@@ -115,6 +115,22 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     action: EmailAction::LoadCaps,
                     form_id: None,
                 }));
+            }
+        });
+    }
+    // The command sandbox state line (R12.1) reads `GET /workspace/policy`
+    // once a principal is here (every signed-in principal sees it).
+    {
+        let ctx_ws = ctx.clone();
+        cx.effect(move || {
+            let connected = store.conn.with(ConnPhase::is_connected);
+            if connected
+                && store
+                    .workspace_policy
+                    .with_untracked(|a| matches!(a, Loadable::NotAsked))
+            {
+                store.workspace_policy.set(Loadable::Loading);
+                ctx_ws.send(Cmd::LoadWorkspacePolicy);
             }
         });
     }
@@ -257,12 +273,13 @@ pub fn hints(ctx: &Ctx) -> Vec<(&'static str, &'static str)> {
         ("@", "Email"),
         ("o", "OpenAI API"),
         ("l", "Logs"),
-        ("w", "Workspace"),
+        ("w", "Workspaces"),
         ("m", "Manage"),
         ("t", "Rotate token"),
         ("d", "Archive/Unarchive"),
         ("g", "Runtime"),
         ("h", "Show archived"),
+        ("E", "Eligible workspaces"),
         ("a", "Create user"),
         ("n", "Create entity"),
         ("e", "edit user"),
@@ -336,6 +353,7 @@ fn handle_key(cx: Scope, ctx: &Ctx, confirm: InlineConfirm, key: Key) -> bool {
             }
         }
         Key::Char('w') => workspace_selected(cx, ctx),
+        Key::Char('E') => eligible_workspaces(cx, ctx),
         Key::Char('g') => runtime_selected(ctx),
         Key::Char('@') => email_selected(cx, ctx),
         Key::Char('l') => open_activity(cx, ctx),
@@ -410,15 +428,44 @@ fn accounts_tab(cx: Scope, ctx: &Ctx, tt: &TokenSet, keeper: &super::util::Focus
     if let Some(note) = scope_note {
         col = col.child(kit::sentence(tt, &note, width, tt.text_muted));
     }
+    // The web's Accounts head: "Eligible workspaces" first (admins), Show
+    // archived, Create user, Create entity.
     let toolbar = if admin {
         format!(
-            "{}   a Create user · n Create entity",
+            "E Eligible workspaces · {}   a Create user · n Create entity",
             super::switch::switch_text("Show archived", show, None, false)
         )
     } else {
         "n Create entity".to_string()
     };
     col = col.child(kit::sentence(tt, &toolbar, width, tt.text));
+    // R12.1: the host's command sandbox, a STATE line under the head (every
+    // signed-in principal), the gateway's line verbatim; its sentence (the
+    // web's tooltip) below it — a terminal has no hover.
+    {
+        let t2 = *tt;
+        col = col.child(dyn_view(
+            LayoutStyle::column().gap(0).shrink(0.0),
+            move || {
+                let (l, sentence, warn) =
+                    super::workspace_chooser::sandbox_line(&store.workspace_policy.get());
+                let mut c = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
+                if l.is_empty() {
+                    return c.build();
+                }
+                c = c.child(kit::sentence(
+                    &t2,
+                    &l,
+                    width,
+                    if warn { t2.warn } else { t2.text_muted },
+                ));
+                if !sentence.is_empty() {
+                    c = c.child(kit::sentence(&t2, &sentence, width, t2.text_faint));
+                }
+                c.build()
+            },
+        ));
+    }
     let data = store.accounts.get();
     match data {
         Loadable::NotAsked | Loadable::Loading => {
@@ -532,6 +579,7 @@ fn account_row(r: &AccountRow, narrow: bool, _own: Option<&(String, String)>) ->
     } else if r.is_entity() {
         &[
             ("email", "Email"),
+            ("workspace", "Workspaces"),
             ("manage", "Manage"),
             ("rotate", "Rotate token"),
             ("archive", "Archive"),
@@ -539,7 +587,7 @@ fn account_row(r: &AccountRow, narrow: bool, _own: Option<&(String, String)>) ->
     } else {
         &[
             ("email", "Email"),
-            ("workspace", "Workspace"),
+            ("workspace", "Workspaces"),
             ("rotate", "Rotate token"),
             ("archive", "Archive"),
         ]
@@ -594,8 +642,8 @@ fn mailbox_detail(r: &AccountRow) -> Option<String> {
 }
 
 /// The row's actions as keys, in the web's icon order (users: Email ·
-/// OpenAI API · Logs · Workspace · Rotate · Archive; entities: Email ·
-/// Logs · Manage · Archive), then Runtime and Active — only the ones that
+/// OpenAI API · Logs · Workspaces · Rotate · Archive; entities: Email ·
+/// Logs · Workspaces · Manage · Archive), then Runtime and Active — only the ones that
 /// apply (why the others don't is in the row's detail, Enter).
 pub fn row_actions(r: &AccountRow) -> Vec<String> {
     let mut keys: Vec<String> = Vec::new();
@@ -621,10 +669,11 @@ pub fn row_actions(r: &AccountRow) -> Vec<String> {
         );
     }
     add(r.refusal("logs").is_none(), "l Logs");
+    // R11.2: every row (humans, entities, the admin's own) has Workspaces.
+    add(r.refusal("workspace").is_none(), "w Workspaces");
     if r.is_entity() {
         add(r.refusal("manage").is_none(), "m Manage");
     } else {
-        add(r.refusal("workspace").is_none(), "w Workspace");
         add(r.refusal("rotate").is_none(), "t Rotate token");
     }
     add(r.refusal("archive").is_none(), "d Archive");
@@ -791,10 +840,40 @@ fn manage_selected_entity(cx: Scope, ctx: &Ctx) {
     }
 }
 
-/// `w`: the Workspaces screen (parked until the terminal follows round
-/// 9's Accounts workspace model: one sentence, no request).
-fn workspace_selected(_cx: Scope, ctx: &Ctx) {
-    ctx.ui.screen.set(super::SCREEN_WORKSPACES);
+/// `w`: the selected account's workspaces (R11.1 account level; every
+/// row the gateway marks `actions.workspace` available — humans, entities
+/// for admins and their creator, your own row as `me`).
+fn workspace_selected(cx: Scope, ctx: &Ctx) {
+    let Some(r) = selected_account(ctx) else {
+        ctx.store
+            .notice
+            .set(Some("no account selected — no workspaces to show".into()));
+        return;
+    };
+    if let Some(why) = r.refusal("workspace") {
+        ctx.store.notice.set(Some(why));
+        return;
+    }
+    super::workspace_chooser::open(cx, ctx, account_workspace_target(&r));
+}
+
+/// The account-level chooser target of a row: `me` for the signed-in
+/// principal's own row, else `tenant:id` (the web's `wsAccountKey`).
+pub fn account_workspace_target(r: &AccountRow) -> super::workspace_chooser::Target {
+    super::workspace_chooser::Target::Account {
+        key: if r.own {
+            "me".into()
+        } else {
+            format!("{}:{}", r.tenant_id, r.id)
+        },
+        id: r.id.clone(),
+    }
+}
+
+/// `E` (admins): "Eligible workspaces" — the gateway level, the web's
+/// button at the top of Accounts.
+fn eligible_workspaces(cx: Scope, ctx: &Ctx) {
+    super::workspace_chooser::open(cx, ctx, super::workspace_chooser::Target::Gateway);
 }
 
 /// `@`: Email. Your row → the full account email view; another user's

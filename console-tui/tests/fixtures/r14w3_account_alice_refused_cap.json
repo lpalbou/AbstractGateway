@@ -1,0 +1,7 @@
+{
+ "detail": {
+  "reason": "workspace_refused",
+  "message": "The gateway allows this workspace read-only: /srv/w3/ws/archive.",
+  "path": "/srv/w3/ws/archive"
+ }
+}

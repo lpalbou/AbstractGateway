@@ -1,0 +1,78 @@
+{
+ "runtimes": [
+  {
+   "kind": "default",
+   "tenant_id": "default",
+   "runtime_id": "default",
+   "label": "Gateway default runtime",
+   "owners": [
+    {
+     "user_id": "admin",
+     "roles": [
+      "admin",
+      "user"
+     ],
+     "enabled": true
+    }
+   ],
+   "data_dir": "/srv/w3/gw/data",
+   "size_bytes": 424389
+  },
+  {
+   "kind": "user",
+   "tenant_id": "default",
+   "runtime_id": "alice",
+   "label": "default/alice",
+   "owners": [
+    {
+     "user_id": "alice",
+     "roles": [
+      "user"
+     ],
+     "enabled": true
+    }
+   ],
+   "data_dir": "/srv/w3/gw/data/users/default/alice",
+   "materialized": true,
+   "size_bytes": 0
+  },
+  {
+   "kind": "user",
+   "tenant_id": "default",
+   "runtime_id": "bob",
+   "label": "default/bob",
+   "owners": [
+    {
+     "user_id": "bob",
+     "roles": [
+      "user"
+     ],
+     "enabled": true
+    }
+   ],
+   "data_dir": "/srv/w3/gw/data/users/default/bob",
+   "materialized": true,
+   "size_bytes": 77824
+  },
+  {
+   "kind": "entity",
+   "tenant_id": "default",
+   "runtime_id": "runtime_castor",
+   "label": "castor",
+   "entity": "castor",
+   "owners": [
+    {
+     "user_id": "castor",
+     "roles": [
+      "entity"
+     ],
+     "enabled": true
+    }
+   ],
+   "state": "asleep",
+   "liveness": "alive",
+   "data_dir": "/srv/w3/gw/data/entities/castor",
+   "size_bytes": 379868
+  }
+ ]
+}

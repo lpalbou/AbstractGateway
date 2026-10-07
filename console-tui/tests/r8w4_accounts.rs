@@ -116,7 +116,7 @@ fn the_highlighted_rows_actions_sit_in_one_line_in_the_web_order() {
         select(&mut h, "alice");
         let s = h.shoot("accounts-actions-alice");
         assert!(
-            flat(&s).contains("alice: @ Email · o OpenAI API (on) · l Logs · w Workspace · t Rotate token · d Archive · g Runtime"),
+            flat(&s).contains("alice: @ Email · o OpenAI API (on) · l Logs · w Workspaces · t Rotate token · d Archive · g Runtime"),
             "{s}"
         );
         // Never split inside an action.
@@ -129,7 +129,9 @@ fn the_highlighted_rows_actions_sit_in_one_line_in_the_web_order() {
         select(&mut h, "castor");
         let s = h.text();
         assert!(
-            flat(&s).contains("castor: @ Email · l Logs · m Manage · d Archive · g Runtime"),
+            flat(&s).contains(
+                "castor: @ Email · l Logs · w Workspaces · m Manage · d Archive · g Runtime"
+            ),
             "{s}"
         );
     }
@@ -158,18 +160,22 @@ fn g_opens_the_runtimes_page_filtered_to_the_account() {
 }
 
 #[test]
-fn w_opens_the_parked_workspaces_page() {
-    // Round 10 (Y1): the Workspaces page is parked (one sentence, no
-    // request) — `w` jumps there from any row, user or entity, and the
-    // jump itself sends nothing.
+fn w_opens_the_rows_workspaces_user_or_entity() {
+    // R14.3: `w` opens the account-level chooser of any row, user or
+    // entity (GET /workspace/policy/{tenant:id}); no screen jump.
     for who in ["bob", "castor"] {
         let mut h = page((80, 24));
         select(&mut h, who);
         h.sent();
         h.key(b"w");
-        assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_WORKSPACES, "{who}");
+        assert_eq!(h.ui.screen.get_untracked(), 0, "{who}: no jump");
         let sent = h.sent();
-        assert!(sent.is_empty(), "{who}: {sent:?}");
+        let want = format!("/workspace/policy/default%3A{who}");
+        assert!(
+            sent.iter().any(|c| matches!(c,
+                Cmd::Json(abstractgateway_console::worker::json::JsonCmd::Get { path, .. }) if *path == want)),
+            "{who}: {sent:?}"
+        );
     }
 }
 
@@ -352,7 +358,6 @@ fn capture_pages(size: (i32, i32)) {
         let mut h = live(size, Mount::Root, &url, &token);
         for (screen, name, wait) in [
             (ui::SCREEN_USERS, "root-accounts", "Name"),
-            (ui::SCREEN_WORKSPACES, "root-workspaces", "Own policy ·"),
             (
                 ui::SCREEN_WORKFLOWS,
                 "root-workflows",

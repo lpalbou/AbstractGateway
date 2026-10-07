@@ -1,0 +1,46 @@
+{
+ "ok": true,
+ "policy": {
+  "posture": "any_except_denied",
+  "default_mode": "rw",
+  "folders": [
+   {
+    "path": "/srv/w3/ws/secret",
+    "mode": "deny"
+   },
+   {
+    "path": "/srv/w3/ws/archive",
+    "mode": "ro"
+   }
+  ],
+  "builtin_refused": [
+   "/srv/w3/gw/home/.ssh",
+   "/srv/w3/gw/home/.aws",
+   "/srv/w3/gw/home/.gnupg",
+   "/srv/w3/gw/home/.config/gcloud",
+   "/srv/w3/gw/home/.kube",
+   "/srv/w3/gw/home/Library/Keychains",
+   "/srv/w3/gw/home/.abstractgateway",
+   "/srv/w3/gw/home/.abstractcode",
+   "/srv/w3/gw/home/.abstractassistant",
+   "/srv/w3/gw/home/.abstractcontinuum",
+   "/srv/w3/gw/home/.abstractcore",
+   "/srv/w3/gw/data"
+  ],
+  "max_attachment_bytes": 26214400,
+  "summary": "Allow everything, refuse listed workspaces (rw) · /srv/w3/ws/secret (refused) · /srv/w3/ws/archive (ro)"
+ },
+ "command_sandbox": {
+  "state": "sandboxed",
+  "kind": "macos-sandbox-exec",
+  "kinds": {
+   "allowed_only": "macos-sandbox-exec",
+   "any_except_denied": "macos-sandbox-exec"
+  },
+  "line": "Commands sandboxed: macOS sandbox-exec",
+  "sentence": "Every command a run starts is confined by the operating system to that run's workspaces.",
+  "unsandboxed_commands_allowed": false,
+  "configured": true,
+  "flag": "--unsandboxed-commands"
+ }
+}

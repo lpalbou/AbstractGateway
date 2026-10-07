@@ -1469,7 +1469,14 @@ impl RuntimeRow {
             owners: v
                 .get("owners")
                 .and_then(Value::as_array)
-                .map(|a| a.iter().filter_map(|o| s(o, "user_id")).collect())
+                // Disabled owners are not owners (the web's Workspace cell
+                // counts `enabled !== false` only).
+                .map(|a| {
+                    a.iter()
+                        .filter(|o| o.get("enabled").and_then(Value::as_bool) != Some(false))
+                        .filter_map(|o| s(o, "user_id"))
+                        .collect()
+                })
                 .unwrap_or_default(),
             data_dir: s(v, "data_dir").unwrap_or_default(),
             size_bytes: v.get("size_bytes").and_then(Value::as_u64),

@@ -1,0 +1,34 @@
+{
+ "ok": true,
+ "policy": {
+  "posture": "allowed_only",
+  "default_mode": "rw",
+  "folders": [
+   {
+    "path": "/srv/w3/ws/proj",
+    "mode": "rw"
+   },
+   {
+    "path": "/srv/w3/ws/archive",
+    "mode": "ro"
+   }
+  ],
+  "builtin_refused": [],
+  "max_attachment_bytes": 26214400,
+  "summary": "Deny everything, allow listed workspaces · /srv/w3/ws/proj (rw) · /srv/w3/ws/archive (ro)",
+  "builtin_refused_hidden": true
+ },
+ "command_sandbox": {
+  "state": "sandboxed",
+  "kind": "macos-sandbox-exec",
+  "kinds": {
+   "allowed_only": "macos-sandbox-exec",
+   "any_except_denied": "macos-sandbox-exec"
+  },
+  "line": "Commands sandboxed: macOS sandbox-exec",
+  "sentence": "Every command a run starts is confined by the operating system to that run's workspaces.",
+  "unsandboxed_commands_allowed": false,
+  "configured": true,
+  "flag": "--unsandboxed-commands"
+ }
+}

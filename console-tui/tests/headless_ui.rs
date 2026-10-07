@@ -555,9 +555,8 @@ fn boots_to_connection_wizard_step() {
     assert!(screen.contains("2 Accounts"), "page bar:\n{screen}");
     assert!(screen.contains("3 Workflows"), "page bar:\n{screen}");
     assert!(
-        screen.contains(
-            "ACCOUNTS 2 W · WORK 3-6 · MODELS 7 8 9 0 · SYSTEM H T N · S Setup · I About"
-        ),
+        screen
+            .contains("ACCOUNTS 2 · WORK 3-6 · MODELS 7 8 9 0 · SYSTEM H T N · S Setup · I About"),
         "group line:\n{screen}"
     );
     assert!(screen.contains("Gateway URL"), "url field:\n{screen}");
@@ -596,8 +595,8 @@ fn pagehost_browse_navigation_digits_and_chords() {
     h.turns(2);
     assert_eq!(
         h.ui.screen.get_untracked(),
-        ui::SCREEN_WORKSPACES,
-        "Ctrl+N advances one step (R8.2: Workspaces follows Accounts)"
+        ui::SCREEN_WORKFLOWS,
+        "Ctrl+N advances one step (R14.3: no Workspaces screen; Workflows follows Accounts)"
     );
     // Ctrl+P walks back one.
     h.key(b"\x10");
@@ -623,7 +622,7 @@ fn pagehost_browse_navigation_digits_and_chords() {
             .notice
             .get_untracked()
             .unwrap_or_default()
-            .contains("screen jumps (1-9,0,W,H,T,N,S,I) work in browse mode"),
+            .contains("screen jumps (1-9,0,H,T,N,S,I) work in browse mode"),
         "wizard digit refusal carries its reason"
     );
 }
@@ -3828,7 +3827,7 @@ fn title_bar_and_separator_survive_content_pressure() {
             // Row 1 separates the title from the tabs: the screen
             // list's group line (DESIGN-v2 §1), never a component.
             assert!(
-                lines[1].contains("ACCOUNTS 2 W · WORK 3-6 · MODELS 7 8 9 0 · SYSTEM H T N"),
+                lines[1].contains("ACCOUNTS 2 · WORK 3-6 · MODELS 7 8 9 0 · SYSTEM H T N"),
                 "group line under the title (wizard={wizard} screen={screen}):\n{scr}"
             );
             // With 8 tabs the bar OVERFLOWS at 110 cols and windows
@@ -6873,8 +6872,8 @@ fn resources_w_works_with_no_model_resident_across_polls() {
     );
 }
 
-/// Runtimes (R8.2): `w` on a user's runtime opens the Workspaces page on
-/// that account (the policy has its own page; no form here).
+/// Runtimes (R14.3, the web's Workspace cell): `w` on the default plane
+/// opens "Eligible workspaces" (GET /workspace/policy), never a screen.
 #[test]
 fn runtimes_w_opens_workspaces_on_the_owner() {
     let mut h = harness();
@@ -6884,9 +6883,17 @@ fn runtimes_w_opens_workspaces_on_the_owner() {
         .runtimes
         .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
     h.turns(2);
+    let _ = h.drain_cmds();
     h.type_text("w");
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_WORKSPACES);
+    assert_eq!(h.ui.screen.get_untracked(), 4, "stays on Runtimes");
+    let sent = h.drain_cmds();
+    assert!(
+        sent.iter().any(|c| matches!(c,
+            abstractgateway_console::worker::Cmd::Json(abstractgateway_console::worker::json::JsonCmd::Get { path, .. })
+                if path == "/workspace/policy")),
+        "{sent:?}"
+    );
 }
 
 /// `u` = danger confirm, defaulting to KEEP; only the explicit danger
@@ -8155,9 +8162,9 @@ fn backlog_settings_rows_and_skills_reseed_in_the_knobs() {
 }
 
 #[test]
-fn users_w_opens_the_parked_workspaces_page() {
-    // Round 10 (Y1): `w` on an Accounts row opens the parked Workspaces
-    // page (one sentence, no request).
+fn users_w_opens_the_accounts_workspaces() {
+    // R14.3: `w` on an Accounts row opens THAT account's workspaces (the
+    // account-level chooser; GET /workspace/policy/{tenant:id | me}).
     let mut h = harness_sized(Size::new(140, 44));
     h.connect_as_admin();
     h.goto_screen(3);
@@ -8167,26 +8174,31 @@ fn users_w_opens_the_parked_workspaces_page() {
     h.store
         .entities
         .set(Loadable::Ready(entities_from_payload(&entities_fixture())));
+    let accounts: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/r14w3_accounts.json"
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    h.store.accounts.set(Loadable::Ready(
+        abstractgateway_console::store::accounts::accounts_from_payload(&accounts).unwrap(),
+    ));
+    h.ui.account_sel.set(1); // alice
     h.turns(2);
     let _ = h.drain_cmds();
     h.type_text("w");
-    h.turns(2);
-    assert_eq!(
-        h.ui.screen.get_untracked(),
-        ui::SCREEN_WORKSPACES,
-        "w opens the Workspaces page"
-    );
     let s = h.turns(2);
-    assert!(
-        s.contains("Workspaces are managed from Accounts in the web console;"),
-        "the Workspaces page:\n{s}"
-    );
-    // Round 12: the one read is the policy (the command sandbox state line).
+    assert_eq!(h.ui.screen.get_untracked(), 3, "stays on Accounts:\n{s}");
+    assert!(!s.contains("follows in the next update"), "{s}");
+    assert!(s.contains("Workspaces — alice"), "{s}");
     let sent = h.drain_cmds();
     assert!(
-        sent.iter()
-            .all(|c| matches!(c, abstractgateway_console::worker::Cmd::LoadWorkspacePolicy)),
-        "the parked page sent {sent:?}"
+        sent.iter().any(|c| matches!(c,
+            abstractgateway_console::worker::Cmd::Json(abstractgateway_console::worker::json::JsonCmd::Get { path, .. })
+                if path == "/workspace/policy/default%3Aalice")),
+        "{sent:?}"
     );
 }
 
@@ -9052,8 +9064,8 @@ fn arrows_switch_the_global_tab_and_wrap() {
     h.turns(2);
     assert_eq!(
         h.ui.screen.get_untracked(),
-        ui::SCREEN_WORKSPACES,
-        "Right → the next screen (R8.2: Workspaces follows Accounts)"
+        ui::SCREEN_WORKFLOWS,
+        "Right → the next screen (R14.3: Workflows follows Accounts)"
     );
     h.key(LEFT);
     h.turns(2);

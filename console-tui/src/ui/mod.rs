@@ -26,7 +26,6 @@ pub mod kit;
 pub mod models;
 /// The caller's own mailbox and notifications (Users screen, `@`).
 pub mod my_email;
-/// The caller's own workspace policy (Users screen, `w`).
 pub mod network;
 /// The OpenAI API page (round 7).
 pub mod openai_api;
@@ -44,9 +43,9 @@ pub mod util;
 pub mod welcome;
 pub mod widths;
 pub mod workflows;
-/// Workspaces (ACCOUNTS, after Accounts): parked until the terminal
-/// follows round 9's Accounts workspace model (one sentence, no request).
-pub mod workspaces;
+/// The workspace chooser (round 14): "Eligible workspaces" and one
+/// account's workspaces, opened from Accounts (`E`, `w`).
+pub mod workspace_chooser;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -63,7 +62,7 @@ use crate::worker::Cmd;
 use abstractcore_console::screens::Remote;
 use util::{line, span, span_bold};
 
-pub const SCREENS: [&str; 17] = [
+pub const SCREENS: [&str; 16] = [
     "Connection",
     // Local engines + remote connections + the available providers
     // (round 7: the Engines screen merged in, the web's Providers page).
@@ -100,8 +99,8 @@ pub const SCREENS: [&str; 17] = [
     "About",
     // Skills agents can load and the MCP tool servers (ui/skills_mcp.rs).
     "Skills & MCP",
-    // Parked: managed from Accounts in the web console (ui/workspaces.rs).
-    "Workspaces",
+    // Round 14: no Workspaces screen — workspaces live on Accounts
+    // (ui/workspace_chooser.rs); the old `W` key opens Accounts.
 ];
 
 /// Screens with semantic weight get NAMES (round-4 P3-2): the bare
@@ -134,8 +133,10 @@ pub const SCREEN_OPENAI: usize = 13;
 pub const SCREEN_ABOUT: usize = 14;
 /// The Skills & MCP page (round 7, R7-W1).
 pub const SCREEN_SKILLS: usize = 15;
-/// The Workspaces page (round 8, R8.2): right after Accounts.
-pub const SCREEN_WORKSPACES: usize = 16;
+/// The key the round-8 Workspaces screen used: since round 14 the
+/// workspaces live on Accounts ("Eligible workspaces", a row's `w`), and
+/// this key opens Accounts (muscle memory keeps working).
+pub const WORKSPACES_KEY: char = 'W';
 /// The screen list in the order it is SHOWN — the web console's sidebar
 /// (console.py `shell_nav`): Connection (the terminal's sign-in) above the
 /// groups, then ACCOUNTS (Accounts), WORK (Workflows, Skills & MCP,
@@ -143,10 +144,9 @@ pub const SCREEN_WORKSPACES: usize = 16;
 /// SYSTEM (Resources, Sandbox, Network), then Setup and About at the
 /// bottom. The `SCREEN_*` indexes stay stable ids (the wizard, tests and
 /// the refresh table key on them); this is only the display/jump order.
-pub const NAV_ORDER: [usize; 16] = [
+pub const NAV_ORDER: [usize; 15] = [
     SCREEN_CONNECTION,
     SCREEN_USERS,
-    SCREEN_WORKSPACES,
     SCREEN_WORKFLOWS,
     SCREEN_SKILLS,
     SCREEN_RUNTIMES,
@@ -169,7 +169,7 @@ pub const SCREEN_RUNTIMES: usize = 4;
 /// its screens in order. Connection sits above them; Setup and About
 /// below them (no group).
 pub const NAV_GROUPS: [(&str, &[usize]); 4] = [
-    ("ACCOUNTS", &[SCREEN_USERS, SCREEN_WORKSPACES]),
+    ("ACCOUNTS", &[SCREEN_USERS]),
     (
         "WORK",
         &[
@@ -205,7 +205,7 @@ pub fn nav_pos(i: usize) -> usize {
 }
 
 /// The keys listed in the footer for the screen jumps.
-pub const SCREEN_KEYS_HINT: &str = "1-9,0,W,H,T,N,S,I";
+pub const SCREEN_KEYS_HINT: &str = "1-9,0,H,T,N,S,I";
 
 /// The first-run wizard, in the web guide's order (`console.py`
 /// `FIRST_RUN_STEPS` = welcome → engines → model → apps → done), mapped
@@ -237,7 +237,6 @@ pub fn screen_key(i: usize) -> Option<char> {
     match i {
         SCREEN_CONNECTION => Some('1'),
         SCREEN_USERS => Some('2'),
-        SCREEN_WORKSPACES => Some('W'),
         SCREEN_WORKFLOWS => Some('3'),
         SCREEN_SKILLS => Some('4'),
         SCREEN_RUNTIMES => Some('5'),
@@ -266,7 +265,7 @@ pub fn screen_title(i: usize) -> String {
 /// Stable PageHost page ids, parallel to `SCREENS`. `ui.screen: usize`
 /// stays the source of truth (the wizard gate reads indexes); a two-way
 /// equality-guarded bridge keeps PageHost's string `active` in lockstep.
-pub const SCREEN_IDS: [&str; 17] = [
+pub const SCREEN_IDS: [&str; 16] = [
     "connection",
     "providers",
     "routes",
@@ -285,7 +284,6 @@ pub const SCREEN_IDS: [&str; 17] = [
     "openai",
     "about",
     "skills",
-    "workspaces",
 ];
 
 /// Durable per-screen UI state (Copy: all signals).
@@ -710,6 +708,11 @@ impl Ctx {
                 // selection effect reloads it when fresh entities land.
                 s.entity_detail.set(Loadable::NotAsked);
                 self.send(Cmd::LoadEntities);
+                // The command sandbox state line under the head (R12.1).
+                if s.conn.with_untracked(crate::store::ConnPhase::is_connected) {
+                    s.workspace_policy.set(Loadable::Loading);
+                    self.send(Cmd::LoadWorkspacePolicy);
+                }
             }
             // The whole Runtimes screen is admin-only (`/admin/runtimes`;
             // the web hides the tab): nothing to load for a non-admin.
@@ -762,7 +765,6 @@ impl Ctx {
             SCREEN_WELCOME => welcome::refresh(self),
             SCREEN_OPENAI => openai_api::refresh(self),
             SCREEN_ABOUT => about::refresh(self),
-            SCREEN_WORKSPACES => workspaces::refresh(self),
             SCREEN_SKILLS => skills_mcp::refresh(self),
             _ => {}
         }
@@ -1315,6 +1317,19 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
             }
         });
     }
+    // R14.3: the old Workspaces key opens Accounts (where workspaces live).
+    {
+        let ctx_w = ctx.clone();
+        root_el = root_el.shortcut(KeyChord::plain(Key::Char(WORKSPACES_KEY)), move |_| {
+            if ctx_w.ui.wizard.get_untracked() {
+                ctx_w.store.notice.set(Some(format!(
+                    "screen jumps ({SCREEN_KEYS_HINT}) work in browse mode — in the guide Ctrl+N walks, Ctrl+G jumps to a step or leaves"
+                )));
+            } else if ctx_w.ui.screen.get_untracked() != SCREEN_USERS {
+                ctx_w.ui.screen.set(SCREEN_USERS);
+            }
+        });
+    }
 
     // §1 bridge: ui.screen (usize, the wizard gate's truth) ⇄ PageHost's
     // string `active`. Both effects are equality-guarded — one hop, no
@@ -1484,7 +1499,6 @@ fn screen_view(gcx: Scope, c: &Ctx, i: usize, t: &TokenSet) -> View {
         SCREEN_OPENAI => openai_api::view(gcx, c, t),
         SCREEN_ABOUT => about::page(gcx, c, t),
         SCREEN_SKILLS => skills_mcp::screen(c, gcx),
-        SCREEN_WORKSPACES => workspaces::view(gcx, c, t),
         _ => unreachable!("screen {i} has no page"),
     }
 }
@@ -2122,7 +2136,6 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                     // footer_hints_stay_in_lockstep_with_screens.
                     SCREEN_WORKFLOWS => pairs.extend(workflows::hints(&ctx_hints)),
                     SCREEN_SKILLS => pairs.extend(skills_mcp::hints(&ctx_hints)),
-                    SCREEN_WORKSPACES => pairs.extend(workspaces::hints(&ctx_hints)),
                     SCREEN_REVIEW => {
                         pairs.push(("Tab→prompt, Enter", "run the test (REAL generation)"));
                         pairs.push(("r", "refresh providers"));
@@ -2273,7 +2286,6 @@ mod nav_tests {
             [
                 "1 Connection",
                 "2 Accounts",
-                "W Workspaces",
                 "3 Workflows",
                 "4 Skills & MCP",
                 "5 Runtimes",
@@ -2301,8 +2313,9 @@ mod nav_tests {
         );
         assert_eq!(screen_key(SCREEN_ENGINES), None);
         assert_eq!(nav_group(SCREEN_USERS), Some("ACCOUNTS"));
-        // R8.2: Workspaces is its own entry right after Accounts.
-        assert_eq!(nav_group(SCREEN_WORKSPACES), Some("ACCOUNTS"));
+        // R14.3: no Workspaces entry (it lives on Accounts); ACCOUNTS is Accounts alone.
+        assert_eq!(NAV_GROUPS[0], ("ACCOUNTS", &[SCREEN_USERS][..]));
+        assert!(!SCREENS.contains(&"Workspaces"));
         assert_eq!(nav_group(SCREEN_APPS), Some("WORK"));
         assert_eq!(nav_group(SCREEN_OPENAI), Some("MODELS"));
         assert_eq!(nav_group(SCREEN_ROUTES), Some("MODELS"));

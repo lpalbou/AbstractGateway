@@ -1,0 +1,7 @@
+{
+ "detail": {
+  "reason": "workspace_refused",
+  "message": "Workspaces entry '/srv/w3/ws/secret/x': No directory at this path on the gateway's computer.",
+  "path": "/srv/w3/ws/secret/x"
+ }
+}
