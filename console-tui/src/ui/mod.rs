@@ -2168,7 +2168,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                         pairs.push(("n/p", "page"));
                         pairs.push(("o", "open row"));
                         pairs.push(("i", "run detail"));
-                        pairs.push(("w", "policy"));
+                        pairs.push(("w", "Workspaces"));
                         pairs.push(("←/→", "inspector tab (when focused)"));
                         pairs.push(("c", "cancel run"));
                         pairs.push(("s", "steer run"));

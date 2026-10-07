@@ -448,6 +448,10 @@ fn a_mode_above_the_cap_is_refused_with_the_kits_sentence_and_nothing_sent() {
         h.key(DOWN);
         h.key(LEFT);
         assert!(puts(&h.sent()).is_empty(), "above the cap: nothing sent");
+        assert_eq!(
+            h.store.notice.get_untracked().as_deref(),
+            Some("Read & write: The gateway allows this workspace read-only")
+        );
         h.turns(2);
         // → = Refused: allowed (a deny never widens).
         h.key(RIGHT);

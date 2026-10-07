@@ -28,7 +28,7 @@ use crate::worker::Cmd;
 /// under the table the second.
 pub const RUNTIME_TITLE: &str =
     "Runtimes — a runtime is a user's own data plane: their runs, flows, sessions and memory";
-pub const RUNTIME_FOOTNOTE: &str = "Each user gets one, named after them, unless an admin bound them to a shared one  ·  w workspaces";
+pub const RUNTIME_FOOTNOTE: &str = "Each user gets one, named after them, unless an admin bound them to a shared one  ·  w Workspaces";
 /// The whole note, wrapped under the table when the terminal is too narrow
 /// for the title to carry its first sentence.
 pub const RUNTIME_NOTE: &str = "A runtime is a user's own data plane: their runs, flows, sessions and memory. Each user gets one, named after them, unless an admin bound them to a shared one. w workspace policy.";

@@ -1426,13 +1426,13 @@ fn handle_key(
                         if let Some(i) = step(MODES.len(), cur, dir) {
                             let want = MODES[i];
                             match r.reason(want) {
-                                // Above the cap: refused with the kit's sentence, nothing sent.
-                                Some(why) => set_note(
-                                    &st,
-                                    &item.key(),
-                                    &format!("{}: {why}", want.label()),
-                                    NoteTone::Error,
-                                ),
+                                // Above the cap: refused with the kit's sentence (the
+                                // line under the row says it; the status line echoes the
+                                // refused press), nothing sent.
+                                Some(why) => ctx
+                                    .store
+                                    .notice
+                                    .set(Some(format!("{}: {why}", want.label()))),
                                 None => put(
                                     ctx,
                                     &st,
