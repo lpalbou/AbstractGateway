@@ -97,7 +97,8 @@ try {
     check(await page.locator("#tab-apps").getByText("Advanced:", { exact: false }).count() === 0, "Apps page: no 'Advanced:' text");
     const gear = page.locator('[data-app-card="continuum"] .ui-card__actions [data-app-action="settings"]');
     check(await gear.count() === 1, "Continuum card: one gear in its action row");
-    check((await gear.getAttribute("title")) === "Settings", "Continuum gear: tooltip Settings");
+    // Since R9.2 every icon button carries the kit tooltip (data-af-tip, a full sentence), never a native title.
+    check((await gear.getAttribute("data-af-tip")) === "Continuum settings" && (await gear.getAttribute("title")) === null, "Continuum gear: kit tooltip 'Continuum settings'", await gear.getAttribute("data-af-tip"));
     check(await page.locator('[data-app-card="flow"] [data-app-action="settings"]').count() === 0, "Flow card: no gear (no settings of its own)");
     // The gear sits beside Open / Install in the same row.
     const same = await page.evaluate(() => {
@@ -138,7 +139,7 @@ try {
     check(await page.locator("#app-settings-backdrop[hidden]").count() === 1, "Escape closes the modal");
     // The toolbar gear: Apps settings.
     const tgear = page.locator('#apps-root .ui-toolbar [data-app-action="apps-settings"]');
-    check(await tgear.count() === 1 && (await tgear.getAttribute("title")) === "Apps settings", "Apps toolbar: gear with tooltip Apps settings");
+    check(await tgear.count() === 1 && (await tgear.getAttribute("data-af-tip")) === "Settings shared by every app (Node.js, ports, registries)" && (await tgear.getAttribute("aria-label")) === "Apps settings", "Apps toolbar: gear with the kit tooltip", await tgear.getAttribute("data-af-tip"));
     await tgear.click();
     await page.waitForSelector("#app-settings-backdrop:not([hidden]) [data-apps-settings]");
     check((await page.textContent("#app-settings-title")).trim() === "Apps settings", "modal title: Apps settings");
@@ -205,8 +206,9 @@ try {
     check((await orch.innerText()).includes("Assistant") && !(await orch.innerText()).includes("abstractassistant.agent.v1"), "alice: Used by shows the app name, not the interface id", await orch.innerText());
     check(await orch.locator('[title="abstractassistant.agent.v1"]').count() === 1, "alice: the interface id is the tooltip");
     // Icon buttons with tooltips, one row.
-    const acts = await mine.locator("td.workflows-actions button").evaluateAll((bs) => bs.map((b) => ({ title: b.title, label: b.getAttribute("aria-label"), text: b.textContent.trim(), top: Math.round(b.getBoundingClientRect().top), w: Math.round(b.getBoundingClientRect().width), h: Math.round(b.getBoundingClientRect().height) })));
-    check(acts.map((a) => a.title).join("|") === "Export|Open in AbstractFlow|Archive", "actions: Export · Open · Archive tooltips", acts.map((a) => a.title));
+    const acts = await mine.locator("td.workflows-actions button").evaluateAll((bs) => bs.map((b) => ({ title: b.title, tip: b.getAttribute("data-af-tip"), label: b.getAttribute("aria-label"), text: b.textContent.trim(), top: Math.round(b.getBoundingClientRect().top), w: Math.round(b.getBoundingClientRect().width), h: Math.round(b.getBoundingClientRect().height) })));
+    const tipsOk = (tips) => tips.length === 3 && /^Export .+ as a \.flow file$/.test(tips[0]) && /^Open .+ in AbstractFlow$/.test(tips[1]) && /^Archive .+ \(kept, hidden\)$/.test(tips[2]);
+    check(tipsOk(acts.map((a) => a.tip || "")) && acts.every((a) => !a.title), "actions: Export · Open · Archive kit tooltips", acts.map((a) => a.tip));
     check(acts.every((a) => a.text === "" && a.label), "actions: icon-only with an aria-label", acts);
     check(new Set(acts.map((a) => a.top)).size === 1, "actions: one row", acts);
     check(acts.every((a) => a.w >= 44 && a.h >= 44), "actions: 44 px targets", acts);
@@ -214,7 +216,7 @@ try {
     const shared = page.locator('#workflows-table tr.workflows-row[data-owner="gateway"]').first();
     check(await shared.locator("td.workflows-what .workflows-desc-edit").count() === 0, "alice: no pencil on a shared workflow");
     const pencil = mine.locator("td.workflows-what .workflows-desc-edit");
-    check(await pencil.count() === 1 && (await pencil.getAttribute("title")) === "Edit description", "alice: pencil on her workflow");
+    check(await pencil.count() === 1 && /^Edit the description of /.test((await pencil.getAttribute("data-af-tip")) || ""), "alice: pencil on her workflow (kit tooltip)", await pencil.getAttribute("data-af-tip"));
     await shot(page, "workflows-alice-1440-light");
     await pencil.click();
     const area = mine.locator("td.workflows-what textarea.workflows-desc-input");
@@ -245,7 +247,7 @@ try {
     await page.waitForSelector('tr.workflows-row--older[data-bundle="r8-alice-wf"]');
     const older = page.locator('tr.workflows-row--older[data-bundle="r8-alice-wf"]');
     check(await older.count() === 1, "Older versions on: one older row for r8-alice-wf");
-    check((await older.locator("td.workflows-actions button").evaluateAll((bs) => bs.map((b) => b.title))).join("|") === "Export|Open in AbstractFlow|Archive", "older row: its own three icon actions");
+    check(tipsOk(await older.locator("td.workflows-actions button").evaluateAll((bs) => bs.map((b) => b.getAttribute("data-af-tip") || ""))), "older row: its own three icon actions");
     await page.click("#workflows-show-older");
     await page.waitForTimeout(200);
     check(await page.locator("tr.workflows-row--older").count() === 0, "Older versions off: no older rows");
