@@ -1037,7 +1037,7 @@ pub fn segmented(options: &[(String, bool)], current: usize) -> String {
 
 fn overlay_body(cx: Scope, ctx: &Ctx, target: &Target, st: St) -> View {
     let t = use_theme(cx).get().tokens;
-    let width = (abstracttui::app::use_viewport(cx).get().w - 8).max(24);
+    let width = (crate::ui::page_viewport(cx).get().w - 8).max(24);
     let level = target.level();
     let slot = ctx.store.json.get(&target.slot());
     let state = match slot {

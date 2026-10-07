@@ -502,7 +502,7 @@ fn workflows_tab(cx: Scope, ctx: &Ctx, keeper: &super::util::FocusKeeper) -> Vie
     let t = use_theme(cx).get().tokens;
     let wf = ctx.store.wf;
     let admin = ctx.store.conn.with(ConnPhase::is_admin);
-    let vw = abstracttui::app::use_viewport(cx).get().w;
+    let vw = crate::ui::page_viewport(cx).get().w;
     let width = (vw - 4).max(20);
     let query = wf.query.get();
     let (drafts, older, archived) = (wf.drafts.get(), wf.older.get(), wf.archived.get());
@@ -637,7 +637,7 @@ fn workflows_tab(cx: Scope, ctx: &Ctx, keeper: &super::util::FocusKeeper) -> Vie
                     // icon buttons): its own reactive line, so a selection
                     // move never rebuilds the table.
                     let c = ctx.clone();
-                    let tall = abstracttui::app::use_viewport(cx).get_untracked().h >= 30;
+                    let tall = crate::ui::page_viewport(cx).get_untracked().h >= 30;
                     let labels = defaults.clone();
                     let iface = d.interface_labels.clone();
                     col = col.child(dyn_view(
@@ -774,7 +774,7 @@ fn shown_defaults(d: &DefaultsData, other_open: bool) -> (Vec<DefaultRow>, usize
 fn defaults_tab(cx: Scope, ctx: &Ctx, keeper: &super::util::FocusKeeper) -> View {
     let t = use_theme(cx).get().tokens;
     let wf = ctx.store.wf;
-    let vw = abstracttui::app::use_viewport(cx).get().w;
+    let vw = crate::ui::page_viewport(cx).get().w;
     let width = (vw - 4).max(20);
     let mut col = Element::new().style(LayoutStyle::column().gap(0).grow(1.0));
     col = col.child(kit::sentence(&t, DEFAULTS_NOTE, width, t.text_muted));
@@ -981,7 +981,7 @@ fn pick_default(cx: Scope, ctx: &Ctx, d: &DefaultsData) {
 fn broken_tab(cx: Scope, ctx: &Ctx, keeper: &super::util::FocusKeeper) -> View {
     let t = use_theme(cx).get().tokens;
     let wf = ctx.store.wf;
-    let vw = abstracttui::app::use_viewport(cx).get().w;
+    let vw = crate::ui::page_viewport(cx).get().w;
     let width = (vw - 4).max(20);
     let mut col = Element::new().style(LayoutStyle::column().gap(0).grow(1.0));
     col = col.child(message(&t, wf.msg.get(), width));

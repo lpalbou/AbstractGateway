@@ -294,7 +294,7 @@ pub fn open(cx: Scope, ctx: &Ctx, which: Which) {
 
 fn overlay_body(cx: Scope, ctx: &Ctx, which: Which, st: St) -> View {
     let t = use_theme(cx).get().tokens;
-    let width = (abstracttui::app::use_viewport(cx).get().w - 8).max(20);
+    let width = (crate::ui::page_viewport(cx).get().w - 8).max(20);
     let d = match ctx.store.runtime_config.get() {
         Loadable::Ready(d) => d,
         Loadable::Failed(e) => {

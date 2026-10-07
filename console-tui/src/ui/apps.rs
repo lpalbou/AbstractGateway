@@ -45,7 +45,7 @@ pub const HINTS: &[(&str, &str)] = &[
 
 /// The text column inside the Apps block (border + padding, both sides).
 fn text_width(cx: Scope) -> usize {
-    (abstracttui::app::use_viewport(cx).get().w - widths::BLOCK_CHROME - 2).max(20) as usize
+    (crate::ui::page_viewport(cx).get().w - widths::BLOCK_CHROME - 2).max(20) as usize
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -486,7 +486,7 @@ fn apps_table(
     job_of: &dyn Fn(&str, Option<&AppJob>) -> Option<AppJob>,
     keeper: &super::util::FocusKeeper,
 ) -> View {
-    let vw = abstracttui::app::use_viewport(cx).get().w;
+    let vw = crate::ui::page_viewport(cx).get().w;
     let on_badge = ctx.store.apps.on_badge.get();
     let sel_id = d.apps.get(ctx.store.apps.sel.get()).map(|a| a.id.clone());
     let rows: Vec<Vec<String>> = d

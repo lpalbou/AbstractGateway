@@ -338,7 +338,7 @@ fn open_for(cx: Scope, ctx: &Ctx, entity: Option<String>) {
     // overlay points them back at the caller's own when it closes.
     ctx.send(Cmd::Operator(OpCmd::EmailSubject(entity.clone())));
     ctx.send(Cmd::Operator(OpCmd::LoadMyEmail));
-    let vw = abstracttui::app::use_viewport(cx).get_untracked().w;
+    let vw = crate::ui::page_viewport(cx).get_untracked().w;
     let ctx2 = ctx.clone();
     let own_id = ctx
         .store
@@ -352,7 +352,7 @@ fn open_for(cx: Scope, ctx: &Ctx, entity: Option<String>) {
     open_form(
         ctx,
         cx,
-        abstracttui::app::use_viewport(cx).get_untracked(),
+        crate::ui::page_viewport(cx).get_untracked(),
         move |mcx, close| {
             if entity.is_some() {
                 let ctx_reset = ctx2.clone();
@@ -1799,7 +1799,7 @@ pub fn open_other(
     open_form(
         ctx,
         cx,
-        abstracttui::app::use_viewport(cx).get_untracked(),
+        crate::ui::page_viewport(cx).get_untracked(),
         move |mcx, close| {
             let theme = use_theme(mcx);
             let t0 = theme.get().tokens;
@@ -1809,7 +1809,7 @@ pub fn open_other(
             let status = mcx.signal(Option::<Result<String, String>>::None);
             let in_flight = mcx.signal(false);
             let form_id = crate::worker::next_form_id();
-            let vw = abstracttui::app::use_viewport(mcx).get_untracked().w;
+            let vw = crate::ui::page_viewport(mcx).get_untracked().w;
             let wrap_w = (vw.min(84) - 6).max(20) as usize;
             mcx.effect(move || {
                 if let Some((fid, outcome)) = ui.write_done.get() {

@@ -9248,7 +9248,7 @@ fn arrows_refuse_with_a_reason_in_the_guide() {
 }
 
 /// An open modal owns the keyboard: the arrows never switch the screen
-/// behind it (About, opened with `?`).
+/// behind it (About, opened with F1 — R15 D5: `?` is the keys panel).
 #[test]
 fn arrows_do_not_switch_the_screen_behind_a_modal() {
     let mut h = harness();
@@ -9257,7 +9257,7 @@ fn arrows_do_not_switch_the_screen_behind_a_modal() {
     h.store.profiles.set(Loadable::Ready(profiles_fixture()));
     h.store.providers.set(Loadable::Ready(providers_fixture()));
     h.turns(2);
-    h.type_text("?");
+    h.type_text("\x1bOP");
     let s = h.turns(2);
     assert!(s.contains("About"), "the About modal is open:\n{s}");
     h.key(RIGHT);

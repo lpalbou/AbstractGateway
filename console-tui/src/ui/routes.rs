@@ -53,7 +53,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
     let ui = ctx.ui;
     let tt = *t;
-    let viewport = abstracttui::app::use_viewport(cx);
+    let viewport = crate::ui::page_viewport(cx);
 
     // The web's second pass: after a non-forced apply that kept routes or
     // left one that cannot run here, offer the forced apply under the
@@ -401,7 +401,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         TranscriptionLevel::Error => t.error,
                     };
                     // Wrapped, never cut: the reason is the point.
-                    let w = (abstracttui::app::use_viewport(lcx).get().w - BLOCK_CHROME - 14)
+                    let w = (crate::ui::page_viewport(lcx).get().w - BLOCK_CHROME - 14)
                         .max(20) as usize;
                     let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
                     for (i, l) in super::util::wrap_text(&text, w).into_iter().enumerate() {
@@ -576,7 +576,7 @@ fn routes_table(
     // column — which is how a 200-cell terminal printed
     // `AbstractFramework/wan2.2-t2v-a14b-diffu…` beside seventy blank
     // cells, with the `t2v`/`i2v` that told the two rows apart cut off.
-    let w = abstracttui::app::use_viewport(cx).get().w;
+    let w = crate::ui::page_viewport(cx).get().w;
     let rows: Vec<Vec<String>> = data
         .rows
         .iter()

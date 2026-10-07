@@ -359,7 +359,7 @@ fn open_state_modal(cx: Scope, ctx: &Ctx, entity: EntityRow) {
     open_form(
         ctx,
         cx,
-        abstracttui::app::use_viewport(cx).get_untracked(),
+        crate::ui::page_viewport(cx).get_untracked(),
         move |mcx, close| {
             let theme = use_theme(mcx);
             let t0 = theme.get().tokens;

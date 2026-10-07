@@ -2365,7 +2365,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         }
     });
 
-    let vp = abstracttui::app::use_viewport(cx);
+    let vp = crate::ui::page_viewport(cx);
 
     // The list (focusable, keys) + its reactive painter.
     let list_focus = cx.signal(false);

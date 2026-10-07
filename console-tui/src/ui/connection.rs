@@ -30,7 +30,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     // block already says (the connected intro, the About hint — F1 is in
     // --help and the footer) step aside. Every row is pinned (`pin`):
     // whatever still does not fit clips at the bottom, never the top.
-    let vp = abstracttui::app::use_viewport(cx);
+    let vp = crate::ui::page_viewport(cx);
     let tight = cx.memo(move || vp.get().h <= TIGHT_ROWS);
     // A memo, so the URL slot below re-mounts only when this FLIPS — not
     // on every probe transition (a remount puts the caret back at 0).
@@ -410,7 +410,7 @@ fn recovery_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 )]))
                 .child({
                     // Wrapped (never cut): the one time the token is shown.
-                    let w = (abstracttui::app::use_viewport(rcx).get_untracked().w - 6).max(20)
+                    let w = (crate::ui::page_viewport(rcx).get_untracked().w - 6).max(20)
                         as usize;
                     let mut c = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
                     for l in super::util::wrap_text(
@@ -486,7 +486,7 @@ fn recovery_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     (request.clone(), redeem.clone(), redeem.clone());
                 // The gateway's honest answer, wrapped (never cut).
                 let msg_w =
-                    (abstracttui::app::use_viewport(rcx).get_untracked().w - 6).max(20) as usize;
+                    (crate::ui::page_viewport(rcx).get_untracked().w - 6).max(20) as usize;
                 let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
                 for l in super::util::wrap_text(&a.message, msg_w) {
                     col = col.child(line(vec![span(l, if a.sent { t.ok } else { t.warn })]));

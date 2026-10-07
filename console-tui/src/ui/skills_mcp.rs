@@ -462,7 +462,7 @@ fn skills_tab(cx: Scope, ctx: &Ctx, keeper: &super::util::FocusKeeper) -> View {
     let t = use_theme(cx).get().tokens;
     let sk = ctx.store.skills;
     let admin = ctx.store.conn.with(ConnPhase::is_admin);
-    let vw = abstracttui::app::use_viewport(cx).get().w;
+    let vw = crate::ui::page_viewport(cx).get().w;
     let width = (vw - 4).max(20);
     let query = sk.query.get();
     let archived_on = sk.skills_archived.get();
@@ -826,7 +826,7 @@ fn mcp_tab(cx: Scope, ctx: &Ctx, keeper: &super::util::FocusKeeper) -> View {
     let t = use_theme(cx).get().tokens;
     let sk = ctx.store.skills;
     let admin = ctx.store.conn.with(ConnPhase::is_admin);
-    let vw = abstracttui::app::use_viewport(cx).get().w;
+    let vw = crate::ui::page_viewport(cx).get().w;
     let width = (vw - 4).max(20);
     let show = sk.mcp_archived.get();
     let data = sk.mcp.get();
@@ -1069,7 +1069,7 @@ pub fn open_skill(cx: Scope, ctx: &Ctx, name: String) {
         move |_mcx, _close, _guard| {
             dyn_view_scoped(LayoutStyle::column().gap(0).grow(1.0), move |gcx| {
                 let t = use_theme(gcx).get().tokens;
-                let width = abstracttui::app::use_viewport(gcx).get_untracked().w - 6;
+                let width = crate::ui::page_viewport(gcx).get_untracked().w - 6;
                 match sk.detail.get() {
                     Loadable::NotAsked | Loadable::Loading => {
                         kit::sentence(&t, &format!("Reading {name}..."), width, t.text_muted)
@@ -1297,7 +1297,7 @@ fn open_mcp_form(cx: Scope, ctx: &Ctx, row: Option<McpRow>) {
         &[("Tab", "next field"), ("Ctrl+T", "Command ⇄ URL")],
         move |mcx, close, _guard| {
             let t = use_theme(mcx).get().tokens;
-            let width = abstracttui::app::use_viewport(mcx).get_untracked().w - 6;
+            let width = crate::ui::page_viewport(mcx).get_untracked().w - 6;
             let field_w = (width - 22).clamp(20, 80);
             let init = row.as_ref().map(McpForm::from_row).unwrap_or(McpForm {
                 stdio: true,

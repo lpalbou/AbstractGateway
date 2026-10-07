@@ -32,19 +32,19 @@ pub fn caret_tracked(cx: Scope, caret: Caret, el: Element) -> Element {
         let alive = alive.clone();
         cx.on_cleanup(move || {
             alive.set(false);
-            if caret.get_untracked() == Some(id) {
+            if caret.is_alive() && caret.get_untracked() == Some(id) {
                 caret.set(None);
             }
         });
     }
     el.on(Phase::Bubble, move |_ctx, ev| match ev {
         UiEvent::FocusIn => {
-            if alive.get() {
+            if alive.get() && caret.is_alive() {
                 caret.set(Some(id));
             }
         }
         UiEvent::FocusOut => {
-            if caret.get_untracked() == Some(id) {
+            if caret.is_alive() && caret.get_untracked() == Some(id) {
                 caret.set(None);
             }
         }

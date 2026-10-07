@@ -86,7 +86,7 @@ pub fn open_summon_form(cx: Scope, ctx: &Ctx) {
     super::open_form_guarded(
         ctx,
         cx,
-        abstracttui::app::use_viewport(cx).get_untracked(),
+        crate::ui::page_viewport(cx).get_untracked(),
         move |mcx, close, guard| {
             let theme = use_theme(mcx);
             let t0 = theme.get().tokens;
@@ -779,7 +779,7 @@ pub fn open_templates_modal(cx: Scope, ctx: &Ctx) {
     super::open_form(
         ctx,
         cx,
-        abstracttui::app::use_viewport(cx).get_untracked(),
+        crate::ui::page_viewport(cx).get_untracked(),
         move |mcx, close| {
             let theme = use_theme(mcx);
             let t0 = theme.get().tokens;
@@ -814,7 +814,7 @@ pub fn open_templates_modal(cx: Scope, ctx: &Ctx) {
             // Wrapped to the dialog as it is ON THIS TERMINAL (the modal
             // clamps to the viewport): wrapping at the nominal width cut
             // every line at 80 columns.
-            let dialog_w = TPL_W.min(abstracttui::app::use_viewport(mcx).get_untracked().w - 2);
+            let dialog_w = TPL_W.min(crate::ui::page_viewport(mcx).get_untracked().w - 2);
             let intro = prose(
             Element::new().style(LayoutStyle::column().gap(0)),
             "A template is a reusable blueprint — every save is a new version; the framework default is the floor and can be seeded but not edited. Editing a template never touches a living entity.",
@@ -836,7 +836,7 @@ pub fn open_templates_modal(cx: Scope, ctx: &Ctx) {
                                 t.text_muted,
                             )]),
                             Loadable::Ready(k) => {
-                                let vw = TPL_W.min(abstracttui::app::use_viewport(gcx).get().w) - 4;
+                                let vw = TPL_W.min(crate::ui::page_viewport(gcx).get().w) - 4;
                                 let mut rows: Vec<Vec<String>> = k
                                     .templates
                                     .iter()
@@ -959,7 +959,7 @@ pub fn open_template_editor(cx: Scope, ctx: &Ctx, tp: TemplateRow, mode: TplMode
     super::open_form_guarded(
         ctx,
         cx,
-        abstracttui::app::use_viewport(cx).get_untracked(),
+        crate::ui::page_viewport(cx).get_untracked(),
         move |mcx, close, guard| {
             let theme = use_theme(mcx);
             let t0 = theme.get().tokens;

@@ -63,7 +63,7 @@ OPTIONS:
                  Neither flag: the guide opens while the gateway's first
                  run is not completed (GET /host/first-run, admins only,
                  like the web console), browse mode otherwise.
-  --theme ID     abstracttui theme id (also $ABSTRACTTUI_THEME)
+  --theme ID     theme id: gateway-dark (default), gateway-light, or any abstracttui id (also $ABSTRACTTUI_THEME)
   -h, --help     this help
   --version      print the version
   --about        print About (this console, AbstractFramework, the
@@ -239,13 +239,17 @@ pub fn run_cli(argv: &[String]) -> i32 {
         return 0;
     }
 
-    if let Some(id) = args
+    // R15 §5: the console's own light/dark pair (the web palettes); the
+    // default is gateway-dark; --theme picks any abstracttui id.
+    for w in crate::ui::w::theme::register() {
+        eprintln!("abstractgateway-console: theme {w}");
+    }
+    let picked = args
         .theme
         .clone()
         .or_else(|| std::env::var("ABSTRACTTUI_THEME").ok())
-    {
-        set_theme_by_id(&id);
-    }
+        .unwrap_or_else(|| crate::ui::w::theme::DARK.to_string());
+    set_theme_by_id(&picked);
 
     // Headless / SSH: never run a URL opener (the link is shown instead).
     // AbstractCore's console owns the rule (one rule for both consoles).

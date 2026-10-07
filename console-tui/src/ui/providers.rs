@@ -476,7 +476,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         move |gcx| {
             let cur = section(&store);
             let t = tt;
-            let width = abstracttui::app::use_viewport(gcx).get().w - widths::BLOCK_CHROME - 2;
+            let width = crate::ui::page_viewport(gcx).get().w - widths::BLOCK_CHROME - 2;
             let mut note = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
             for l in super::util::wrap_text(SECTION_NOTES[cur], width.max(20) as usize) {
                 note = note.child(line(vec![span(l, t.text_faint)]));
@@ -935,7 +935,7 @@ pub fn open_profile_form(cx: Scope, ctx: &Ctx, mode: ProfileFormMode) {
 
     let ctx2 = ctx.clone();
     // Full-width overlay (R7.2: modals are overlays, Esc closes).
-    let vp = abstracttui::app::use_viewport(cx).get_untracked();
+    let vp = crate::ui::page_viewport(cx).get_untracked();
     super::open_form_guarded(ctx, cx, vp, move |mcx, close, guard| {
         let theme = use_theme(mcx);
         // `ex` carries EDIT semantics (static id, stored-key note,

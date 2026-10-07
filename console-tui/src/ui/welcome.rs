@@ -447,7 +447,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
     let ui = ctx.ui;
     let tt = *t;
-    let viewport = abstracttui::app::use_viewport(cx);
+    let viewport = crate::ui::page_viewport(cx);
     // The recommended set reads the routes and the weights' availability
     // (the Multimodal page's reads) once per connection.
     {
@@ -755,7 +755,7 @@ pub fn finish_row(gcx: Scope, screen: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         span("CLI ", t.text_muted),
         span(done_cli_hints(service), t.text_faint),
     ]);
-    let tall = abstracttui::app::use_viewport(gcx).get().h >= 30;
+    let tall = crate::ui::page_viewport(gcx).get().h >= 30;
     let status: View = if ui.first_run_pending.get().is_some() {
         line(vec![span("⟳ recording… (POST + verify via GET)", t.info)])
     } else if let Some(e) = ui.first_run_error.get() {

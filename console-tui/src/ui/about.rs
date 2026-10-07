@@ -132,7 +132,7 @@ pub fn page(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         });
     }
     let theme = use_theme(cx);
-    let vp = abstracttui::app::use_viewport(cx);
+    let vp = crate::ui::page_viewport(cx);
     // The page block's border + padding take 4 cells.
     Block::new()
         .border(BorderKind::Rounded)
@@ -162,7 +162,7 @@ pub fn page(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
 pub fn open(ctx: &Ctx, cx: Scope) {
     load(ctx);
     let store = ctx.store;
-    let vp = abstracttui::app::use_viewport(cx).get_untracked();
+    let vp = crate::ui::page_viewport(cx).get_untracked();
     // The card (12 rows, one wrapped link), the Close row, the dress.
     let size = Size::new(vp.w.clamp(1, 96), 19.min(vp.h - 2).max(1));
     open_form(ctx, cx, size, move |mcx, close| {

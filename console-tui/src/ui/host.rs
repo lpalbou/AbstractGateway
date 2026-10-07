@@ -307,7 +307,7 @@ pub fn open(ctx: &Ctx, cx: Scope) {
         let c_l = ctx2.clone();
         let (k_r, k_q, k_s, k_l) = (close.clone(), close.clone(), close.clone(), close.clone());
 
-        let viewport = abstracttui::app::use_viewport(mcx);
+        let viewport = crate::ui::page_viewport(mcx);
         // The rows scroll (wheel) when the terminal is too short for them
         // (80x24 with a "Last restart" row): never clipped, never cut.
         let scroll_y = mcx.signal(0);

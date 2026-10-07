@@ -476,7 +476,7 @@ fn admin_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     },
                 ))
                 .child({
-                    let vp = abstracttui::app::use_viewport(cx);
+                    let vp = crate::ui::page_viewport(cx);
                     dyn_view(LayoutStyle::column().gap(0).shrink(0.0), move || {
                         let w = vp.get().w;
                         if w >= 100 {
@@ -1110,7 +1110,7 @@ fn toolbar_row(
 
 /// Does the viewport have a row to spare for the visible toolbar?
 fn toolbar_fits(cx: Scope) -> bool {
-    abstracttui::app::use_viewport(cx).get().h >= 28
+    crate::ui::page_viewport(cx).get().h >= 28
 }
 
 /// The pager, as text (the terminal twin of the web console's
@@ -2349,7 +2349,7 @@ fn sessions_panel(
                     _ => String::new(),
                 };
                 // Wrapped: the switch and the page position never fall off the edge.
-                let w = (abstracttui::app::use_viewport(cx).get_untracked().w
+                let w = (crate::ui::page_viewport(cx).get_untracked().w
                     - widths::BLOCK_CHROME
                     - 2)
                 .max(20) as usize;
@@ -2374,7 +2374,7 @@ fn sessions_panel(
                     Loadable::Ready(d) => runs_empty_text(&d.scope, &d.status, &d.query),
                     _ => "No runs yet.".to_string(),
                 };
-                let w = abstracttui::app::use_viewport(gcx).get().w - widths::BLOCK_CHROME - 2;
+                let w = crate::ui::page_viewport(gcx).get().w - widths::BLOCK_CHROME - 2;
                 let body: View = loadable_view(
                     &tt,
                     &store.conn.get(),
@@ -3190,7 +3190,7 @@ fn table(
     keeper: &super::util::FocusKeeper,
     on_choose: impl FnMut(usize) + Clone + 'static,
 ) -> View {
-    let vw = abstracttui::app::use_viewport(cx).get().w;
+    let vw = crate::ui::page_viewport(cx).get().w;
     let wide = vw >= 108;
     let mut rows: Vec<Vec<String>> = data
         .iter()
@@ -3261,7 +3261,7 @@ fn table(
         // runs are clipped below it (R7.2, 120x40 capture).
         .layout(LayoutStyle::default().h(inventory_rows(
             data.len(),
-            abstracttui::app::use_viewport(cx).get_untracked().h,
+            crate::ui::page_viewport(cx).get_untracked().h,
         )));
     // The keeper, not a bare `.autofocus()`: a regeneration hands the
     // keyboard back only to a table that held it (design adversary

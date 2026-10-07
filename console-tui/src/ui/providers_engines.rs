@@ -1205,7 +1205,7 @@ pub fn section(
     let store = ctx.store;
     let tt = *t;
     let host = ctx.screens_transport.host_label();
-    let vp = abstracttui::app::use_viewport(cx);
+    let vp = crate::ui::page_viewport(cx);
     dyn_view_scoped(LayoutStyle::column().gap(0).grow(1.0), move |gcx| {
         let t = tt;
         let width = vp.get().w - super::super::widths::BLOCK_CHROME - 2;

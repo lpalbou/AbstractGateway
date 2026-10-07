@@ -556,7 +556,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     });
 
     let ctx_body = ctx.clone();
-    let vp = abstracttui::app::use_viewport(cx);
+    let vp = crate::ui::page_viewport(cx);
     let ctx_w = ctx.clone();
     let ctx_a = ctx.clone();
     let root = Element::new()

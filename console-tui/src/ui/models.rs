@@ -280,7 +280,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 // The title must fit INSIDE the border: at 80 columns the
                 // long one ran into the corner (no closing run).
                 .title(
-                    if abstracttui::app::use_viewport(cx).get_untracked().w >= 110 {
+                    if crate::ui::page_viewport(cx).get_untracked().w >= 110 {
                         "Resources — Memory & GPU, Models, Session caches \
                          · ~ = estimated size, not measured"
                     } else {
@@ -384,7 +384,7 @@ fn body(
     // The strip wraps the GGUF note to the live viewport (block borders
     // + padding + a safety cell), the review-screen precedent: a note
     // the spec forbids truncating may not meet the terminal's edge.
-    let viewport = abstracttui::app::use_viewport(cx).get();
+    let viewport = crate::ui::page_viewport(cx).get();
     let wrap_w = (viewport.w as usize)
         .saturating_sub(BLOCK_CHROME as usize + 6)
         .max(24);
@@ -817,7 +817,7 @@ fn models_table(
             t.text_muted,
         )]));
     }
-    let w = abstracttui::app::use_viewport(cx).get().w;
+    let w = crate::ui::page_viewport(cx).get().w;
     let mut rows: Vec<Vec<String>> = data.iter().map(model_row_cells).collect();
     // Modality/resident/size/ctx/lock/default print closed vocabularies
     // (head-fit floors sized to their widest word); provider and model
@@ -856,7 +856,7 @@ fn caches_table(
             t.text_muted,
         )]));
     }
-    let w = abstracttui::app::use_viewport(cx).get().w;
+    let w = crate::ui::page_viewport(cx).get().w;
     let mut rows: Vec<Vec<String>> = data.iter().map(cache_row_cells).collect();
     let rules = [
         widths::ColRule::tail("key", 16),

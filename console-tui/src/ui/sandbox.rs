@@ -1392,7 +1392,7 @@ pub fn workspace(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         let t = tt;
                         match ws.mode.get() {
                             SbMode::Text => text_controls(gcx, &ctx2, &t, prov_ix, model_ix),
-                            m => route_line(&t, &store, m, abstracttui::app::use_viewport(gcx).get().w),
+                            m => route_line(&t, &store, m, crate::ui::page_viewport(gcx).get().w),
                         }
                     }
                 }))
@@ -1911,7 +1911,7 @@ pub fn mtp_options(sup: &MtpSupport) -> Vec<SelectOption> {
 /// inline). MTP depths follow `/discovery/models/capabilities`.
 fn open_options(ctx: &Ctx, cx: Scope) {
     let ws = ctx.store.sandbox_ws;
-    let vp = abstracttui::app::use_viewport(cx).get_untracked();
+    let vp = crate::ui::page_viewport(cx).get_untracked();
     let size = Size::new(vp.w.clamp(1, 96), 13);
     super::open_form(ctx, cx, size, move |mcx, close| {
         let t0 = use_theme(mcx).get().tokens;
@@ -2013,7 +2013,7 @@ fn open_attach(ctx: &Ctx, cx: Scope) {
     let store = ctx.store;
     let ws = store.sandbox_ws;
     ws.attach_state.set(Loadable::NotAsked);
-    let vp = abstracttui::app::use_viewport(cx).get_untracked();
+    let vp = crate::ui::page_viewport(cx).get_untracked();
     let size = Size::new(vp.w.clamp(1, 96), 12);
     let ctx_up = ctx.clone();
     let ctx_btn = ctx.clone();
@@ -2523,7 +2523,7 @@ fn text_status(
 /// reasoning block above it), typeset as markdown. Errors stay plain.
 fn text_body_view(gcx: Scope, t: &TokenSet, store: &Store) -> View {
     let ws = store.sandbox_ws;
-    let width = abstracttui::app::use_viewport(gcx).get().w;
+    let width = crate::ui::page_viewport(gcx).get().w;
     let wrap_w = (width as usize).saturating_sub(6).max(20);
     let outcome = store.sandbox.get();
     if let Loadable::Ready(o) = &outcome {

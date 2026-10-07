@@ -279,7 +279,7 @@ pub fn open(cx: Scope, ctx: &Ctx, row: AccountRow) {
 
 fn body(cx: Scope, ctx: &Ctx, slot: &str, wk: &str, path: &str, id: &str, st: St) -> View {
     let t = use_theme(cx).get().tokens;
-    let width = (abstracttui::app::use_viewport(cx).get().w - 8).max(24);
+    let width = (crate::ui::page_viewport(cx).get().w - 8).max(24);
     let prefs = match ctx.store.json.get(slot) {
         Loadable::Ready(v) => parse(&v),
         Loadable::Failed(e) => Err(super::workspace_chooser::error_sentence(&e)),

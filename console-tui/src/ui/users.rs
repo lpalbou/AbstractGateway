@@ -414,7 +414,7 @@ fn accounts_tab(cx: Scope, ctx: &Ctx, tt: &TokenSet, keeper: &super::util::Focus
     let store = ctx.store;
     let ui = ctx.ui;
     let acc = store.acc;
-    let vw = abstracttui::app::use_viewport(cx).get().w;
+    let vw = crate::ui::page_viewport(cx).get().w;
     let width = (vw - 4).max(20);
     let admin = store.conn.with(ConnPhase::is_admin);
     let show = acc.show_archived.get();
@@ -1062,7 +1062,7 @@ fn openai_selected(cx: Scope, ctx: &Ctx) {
         &[("space", "switch")],
         move |mcx, _close, _guard| {
             let t = use_theme(mcx).get().tokens;
-            let width = abstracttui::app::use_viewport(mcx).get_untracked().w - 6;
+            let width = crate::ui::page_viewport(mcx).get_untracked().w - 6;
             let store = c.store;
             let on = mcx.signal(r.openai_api);
             // The shown state is the gateway's: republished from the
@@ -1272,7 +1272,7 @@ fn open_activity(cx: Scope, ctx: &Ctx) {
     super::open_form(
         ctx,
         cx,
-        abstracttui::app::use_viewport(cx).get_untracked(),
+        crate::ui::page_viewport(cx).get_untracked(),
         move |mcx, _close| {
             let theme = use_theme(mcx);
             let store = ctx2.store;
@@ -1363,7 +1363,7 @@ fn open_activity(cx: Scope, ctx: &Ctx) {
                     LayoutStyle::column().grow(1.0).min_h(3),
                     move |gcx| {
                         let t = theme.get().tokens;
-                        let width = abstracttui::app::use_viewport(gcx).get().w - 6;
+                        let width = crate::ui::page_viewport(gcx).get().w - 6;
                         match store.activity.get().map(|(_, _, d)| d) {
                             None | Some(Loadable::NotAsked) | Some(Loadable::Loading) => {
                                 keeper.anchor(line(vec![span("Loading…", t.text_muted)]))
@@ -1386,7 +1386,7 @@ fn open_activity(cx: Scope, ctx: &Ctx) {
                     LayoutStyle::column().gap(0).shrink(0.0),
                     move |gcx| {
                         let t = theme.get().tokens;
-                        let width = abstracttui::app::use_viewport(gcx).get().w - 6;
+                        let width = crate::ui::page_viewport(gcx).get().w - 6;
                         let mut col =
                             Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
                         if let Some((_, _, Loadable::Ready(d))) = store.activity.get() {
@@ -1479,7 +1479,7 @@ fn open_reservations_modal(cx: Scope, ctx: &Ctx) {
     super::open_form(
         ctx,
         cx,
-        abstracttui::app::use_viewport(cx).get_untracked(),
+        crate::ui::page_viewport(cx).get_untracked(),
         move |mcx, close| {
             let theme = use_theme(mcx);
             let ui = ctx2.ui;
@@ -1527,7 +1527,7 @@ fn open_reservations_modal(cx: Scope, ctx: &Ctx) {
                                 // here would clamp the last columns to
                                 // nothing.
                                 let vw = RESV_MODAL_W
-                                    .min(abstracttui::app::use_viewport(gcx).get().w)
+                                    .min(crate::ui::page_viewport(gcx).get().w)
                                     - RESV_MODAL_CHROME;
                                 let mut table_rows: Vec<Vec<String>> = rows
                                     .iter()
@@ -1740,7 +1740,7 @@ fn email_switches(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         // The switch on its row, its description under it (wrapped, never
         // cut: "Sign-in by email" carries a security warning).
         let pad = if indent { 2 } else { 0 };
-        let w = (abstracttui::app::use_viewport(scx).get_untracked().w - 10 - pad).max(20) as usize;
+        let w = (crate::ui::page_viewport(scx).get_untracked().w - 10 - pad).max(20) as usize;
         let mut col = Element::new()
             .style(LayoutStyle::column().gap(0).shrink(0.0))
             .child(
@@ -1855,7 +1855,7 @@ fn open_user_form(cx: Scope, ctx: &Ctx, existing: Option<UserRow>) {
     super::open_form_guarded(
         ctx,
         cx,
-        abstracttui::app::use_viewport(cx).get_untracked(),
+        crate::ui::page_viewport(cx).get_untracked(),
         move |mcx, close, guard| {
             let theme = use_theme(mcx);
             let t0 = theme.get().tokens;
@@ -2144,7 +2144,7 @@ pub fn open_token_modal(cx: Scope, ctx: &Ctx, user: String, token: String) {
     open_form(
         ctx,
         cx,
-        abstracttui::app::use_viewport(cx).get_untracked(),
+        crate::ui::page_viewport(cx).get_untracked(),
         move |mcx, close| {
             let theme = use_theme(mcx);
             let t0 = theme.get().tokens;

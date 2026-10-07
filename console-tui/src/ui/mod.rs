@@ -38,6 +38,8 @@ pub mod review;
 pub mod routes;
 pub mod runtimes;
 pub mod sandbox;
+/// Round 15: the app shell (nav rail / strip, clickable header, keys panel).
+pub mod shell;
 /// Skills & MCP (WORK): the skills shelf and the MCP servers registry.
 pub mod skills_mcp;
 pub mod switch;
@@ -61,7 +63,6 @@ use std::time::Duration;
 use abstracttui::app::{ChoiceOutcome, ChoicePrompt, Modal, Overlays};
 use abstracttui::prelude::*;
 use abstracttui::reactive::IntervalHandle;
-use abstracttui::widgets::PageHost;
 
 use crate::store::{ConnPhase, Loadable, Store};
 use crate::worker::Cmd;
@@ -422,6 +423,21 @@ pub struct UiState {
     /// one open form's write posts here) — same argument as
     /// store.discover. Revisit together if modal stacking changes.
     pub write_done: Signal<Option<(u64, Result<String, String>)>>,
+    /// Round 15: the page-level text field holding the caret (the shell's
+    /// ←/→ go to it instead of switching screens) — `w::caret_tracked`.
+    pub caret: Signal<Option<u64>>,
+    /// Round 15 (A2): the focused control's name + tooltip, which the
+    /// status bar leads with.
+    pub focus_line: Signal<Option<String>>,
+    /// Round 15: the page region's size (viewport minus the nav rail,
+    /// header, strip and status rows) — `page_viewport(cx)`.
+    pub page_vp: Signal<Size>,
+    /// Round 15: Accounts selection by row key + its table window.
+    pub acc_key: Signal<Option<String>>,
+    pub acc_top: Signal<usize>,
+    /// Round 15: Apps selection by app id + its table window.
+    pub apps_key: Signal<Option<String>>,
+    pub apps_top: Signal<usize>,
 }
 
 impl UiState {
@@ -481,6 +497,13 @@ impl UiState {
             modal_epoch: cx.signal(0),
             prompt_open: cx.signal(0),
             write_done: cx.signal(None),
+            caret: cx.signal(None),
+            focus_line: cx.signal(None),
+            page_vp: cx.signal(Size::new(80, 20)),
+            acc_key: cx.signal(None),
+            acc_top: cx.signal(0),
+            apps_key: cx.signal(None),
+            apps_top: cx.signal(0),
         }
     }
 }
@@ -1160,7 +1183,6 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
     let ctx_next2 = ctx.clone();
     let ctx_back2 = ctx.clone();
     let ctx_left = ctx.clone();
-    let ctx_right = ctx.clone();
     let ctx_refresh = ctx.clone();
     let ctx_about = ctx.clone();
     let ctx_about2 = ctx.clone();
@@ -1213,14 +1235,25 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         .shortcut(KeyChord::new(Mods::CTRL, Key::Char('p')), move |_| {
             wizard_back(&ctx_back2);
         })
-        // ←/→: previous/next global tab, only when the focused element
-        // does not use the arrows (see `arrow_tab`).
-        .shortcut(KeyChord::plain(Key::Left), move |_| {
-            arrow_tab(&ctx_left, -1)
+        // ←/→ (R15 §2.2): previous/next screen on EVERY screen, at the
+        // CAPTURE phase of the shell root — before any page widget (the
+        // engine's Scroll swallows Left/Right unconditionally, which is
+        // what killed them on Apps and Network). Exceptions: a page-level
+        // text field holding the caret (`ui.caret`); overlays (modals,
+        // popups, drawers) are their own trees and never reach here.
+        .on(abstracttui::ui::Phase::Capture, move |ectx, ev| {
+            if let abstracttui::ui::UiEvent::Key(k) = ev {
+                if k.mods.0 != 0 || !matches!(k.key, Key::Left | Key::Right) {
+                    return;
+                }
+                if ctx_left.ui.caret.get_untracked().is_some() {
+                    return;
+                }
+                ectx.stop_propagation();
+                arrow_tab(&ctx_left, if k.key == Key::Left { -1 } else { 1 });
+            }
         })
-        .shortcut(KeyChord::plain(Key::Right), move |_| {
-            arrow_tab(&ctx_right, 1)
-        })
+        .shortcut(KeyChord::new(Mods::CTRL, Key::Char('t')), |_| w::theme::flip())
         .shortcut(KeyChord::plain(Key::Char('r')), move |_| {
             let s = ui.screen.get_untracked();
             if ctx_refresh
@@ -1290,8 +1323,9 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         .shortcut(KeyChord::plain(Key::F(1)), move |_| {
             about::open(&ctx_about, cx)
         })
+        // `?` (R15 D5): the keys panel; About stays on F1 and the I page.
         .shortcut(KeyChord::plain(Key::Char('?')), move |_| {
-            about::open(&ctx_about2, cx)
+            shell::open_keys(&ctx_about2, cx)
         })
         // Gateway host panel (pause/resume, restart, quit, update): F3
         // anywhere — a function key survives focused text fields.
@@ -1337,62 +1371,96 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         });
     }
 
-    // §1 bridge: ui.screen (usize, the wizard gate's truth) ⇄ PageHost's
-    // string `active`. Both effects are equality-guarded — one hop, no
-    // oscillation.
-    let active =
-        cx.signal(SCREEN_IDS[ui.screen.get_untracked().min(SCREEN_IDS.len() - 1)].to_string());
-    cx.effect(move || {
-        // Engines has no page since round 7: its local engines are on
-        // Providers. Anything still naming the old screen lands there.
-        if ui.screen.get() == SCREEN_ENGINES {
-            ui.screen.set(SCREEN_PROVIDERS);
-            return;
-        }
-        let id = SCREEN_IDS[ui.screen.get().min(SCREEN_IDS.len() - 1)];
-        if active.with_untracked(|a| a != id) {
-            active.set(id.to_string());
-        }
-    });
-    cx.effect(move || {
-        let pos = active.with(|a| SCREEN_IDS.iter().position(|s| s == a));
-        if let Some(i) = pos {
-            if ui.screen.get_untracked() != i {
-                ui.screen.set(i);
+    // R15 shell (DESIGN-TUI §2.1): our own navigation (rail on wide
+    // terminals, strip otherwise) writing `ui.screen`, and ONE mounted
+    // page in a generation scope (PageHost's semantics: the outgoing
+    // page's scope dies on switch; durable state lives in UiState).
+    w::tip::install(ui.focus_line, ctx.overlays.clone());
+    install_page_viewport(ui.page_vp);
+    {
+        let vp = abstracttui::app::use_viewport(cx);
+        let store_b = ctx.store;
+        cx.effect(move || {
+            let v = vp.get();
+            let paused = store_b.conn.with(ConnPhase::is_connected)
+                && store_b
+                    .op
+                    .runner
+                    .with(|r| r.ready().and_then(crate::store::operator::paused_banner_text).is_some());
+            let banner = i32::from(paused) + i32::from(store_b.op.lifecycle.with(Option::is_some));
+            let want = shell::page_size(v, banner);
+            if ui.page_vp.get_untracked() != want {
+                ui.page_vp.set(want);
             }
-        }
-    });
-
-    // §2/§3: ONE PageHost carries the tab bar + page region — the
-    // hand-rolled bar, its draw-mirroring mouse hit-test and the browse
-    // digit loop are deleted (the drift class PageHost's single-plan
-    // design kills). Free navigation is ARMED in browse and fully
-    // DISARMED in wizard (empty chord sets + number_jump(false)): the
-    // gate logic stays app-side in wizard_next/wizard_back, which keep
-    // writing ui.screen. The host rebuilds when the MODE flips (this
-    // region reads ui.wizard); page state survives in UiState.
+        });
+        // Engines has no page since round 7: anything naming it lands on Providers.
+        cx.effect(move || {
+            if ui.screen.get() == SCREEN_ENGINES {
+                ui.screen.set(SCREEN_PROVIDERS);
+            }
+        });
+        // A screen switch releases any caret claim (the field died with its page).
+        cx.effect(move || {
+            let _ = ui.screen.get();
+            ui.caret.set(None);
+            ui.focus_line.set(None);
+        });
+    }
     let host_ctx = ctx.clone();
-    let host = dyn_view_scoped(LayoutStyle::default().grow(1.0), move |hcx| {
-        let wizard_now = ui.wizard.get();
-        let (prev_chords, next_chords) = if wizard_now {
-            (Vec::new(), Vec::new())
+    let vp_host = abstracttui::app::use_viewport(cx);
+    let host = dyn_view_scoped(LayoutStyle::row().grow(1.0), move |hcx| {
+        let v = vp_host.get();
+        let t = theme.get().tokens;
+        let wide = shell::wide(v);
+        let c = host_ctx.clone();
+        let page = dyn_view_scoped(LayoutStyle::column().grow(1.0), move |gcx| {
+            let i = c.ui.screen.get();
+            let t = theme.get().tokens;
+            screen_view(gcx, &c, i.min(SCREENS.len() - 1), &t)
+        });
+        let c2 = host_ctx.clone();
+        if wide {
+            let rail = dyn_view_scoped(
+                LayoutStyle::column().width(Dimension::Cells(shell::RAIL_W)).shrink(0.0),
+                move |rcx| {
+                    let t = theme.get().tokens;
+                    let _ = c2.store.conn.get();
+                    shell::rail(rcx, &c2, &t, v.h - 2)
+                },
+            );
+            let border = t.border;
+            Element::new()
+                .style(LayoutStyle::row().grow(1.0))
+                .child(rail)
+                .child(
+                    Element::new()
+                        .style(LayoutStyle::default().width(Dimension::Cells(1)).shrink(0.0))
+                        .draw(move |canvas, rect| {
+                            for y in rect.y..rect.y + rect.h {
+                                canvas.print_styled(
+                                    abstracttui::base::Point::new(rect.x, y),
+                                    "│",
+                                    &abstracttui::render::Style::new().fg(border),
+                                );
+                            }
+                        })
+                        .build(),
+                )
+                .child(page)
+                .build()
         } else {
-            (
-                vec![KeyChord::new(Mods::CTRL, Key::Char('p'))],
-                vec![KeyChord::new(Mods::CTRL, Key::Char('n'))],
-            )
-        };
-        let mut host = PageHost::new();
-        for i in NAV_ORDER {
-            let c = host_ctx.clone();
-            host = host.page(SCREEN_IDS[i], screen_title(i), move |gcx| {
-                screen_view(gcx, &c, i, &theme.get().tokens)
+            let strip = dyn_view_scoped(LayoutStyle::line(1).shrink(0.0), move |scx| {
+                let t = theme.get().tokens;
+                let _ = c2.store.conn.get();
+                shell::strip(scx, &c2, &t, v.w)
             });
+            let _ = hcx;
+            Element::new()
+                .style(LayoutStyle::column().grow(1.0))
+                .child(strip)
+                .child(page)
+                .build()
         }
-        host.active(active)
-            .number_jump(false)
-            .chords(&prev_chords, &next_chords)
-            .view(hcx)
     });
 
     // §5 (the drawer opportunity): the entity inspector installs ONCE at
@@ -1430,21 +1498,18 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
     }
 
     root_el
-        .child(header(cx, &ctx, theme))
+        .child({
+            let c = ctx.clone();
+            let vp = abstracttui::app::use_viewport(cx);
+            dyn_view_scoped(LayoutStyle::line(1).shrink(0.0), move |hcx| {
+                let t = theme.get().tokens;
+                let _ = (c.ui.wizard.get(), c.store.host_state.with(|_| ()), c.store.host_widget_error.get());
+                shell::header(hcx, &c, &t, vp.get())
+            })
+        })
         // "Workflows are paused" (web: every tab) + the restart/quit
         // watcher line; zero rows when neither applies.
         .child(host::banner(&ctx, theme))
-        // One blank line between the title bar and the tab bar
-        // (operator ask 2026-07-24: the header must never butt directly
-        // against the components below). Pinned like the header — a
-        // separator that vanishes under pressure separates nothing.
-        // The row is the screen list's GROUP line (DESIGN-v2 §1): the
-        // captions ACCOUNTS / WORK / MODELS / SYSTEM with their keys, the
-        // current screen's group lit — the web sidebar's groups, on the
-        // one row that already separated the header from the tabs.
-        .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
-            group_line(&theme.get().tokens, ui.screen.get())
-        }))
         .child(host)
         // Per-step GOAL line (P1-B, cycle-1 UX): the wizard GATED but
         // never GUIDED. WIZARD MODE ONLY — and TRULY zero-height
@@ -1483,6 +1548,25 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         }))
         .child(footer(cx, &ctx, theme))
         .build()
+}
+
+thread_local! {
+    static PAGE_VP: std::cell::Cell<Option<Signal<Size>>> = const { std::cell::Cell::new(None) };
+}
+
+/// Install the page-size signal (`ui::root` does it once).
+pub fn install_page_viewport(sig: Signal<Size>) {
+    PAGE_VP.with(|p| p.set(Some(sig)));
+}
+
+/// The page region's size (R15): the viewport minus the nav rail or strip,
+/// the header and the status rows. Screens size their content from this,
+/// never from the raw viewport. Falls back to the viewport outside a root.
+pub fn page_viewport(cx: Scope) -> Signal<Size> {
+    PAGE_VP
+        .with(|p| p.get())
+        .filter(|s| s.is_alive())
+        .unwrap_or_else(|| abstracttui::app::use_viewport(cx))
 }
 
 /// The builder of screen `i`'s page (the PageHost pages, in any order).
@@ -1943,101 +2027,9 @@ fn wizard_back(ctx: &Ctx) {
     }
 }
 
-fn header(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Theme>) -> View {
-    let store = ctx.store;
-    let ui = ctx.ui;
-    let vp = abstracttui::app::use_viewport(_cx);
-    // shrink(0.0): the title bar is CHROME — without the pin, a page
-    // whose content minimum over-demands height (users screen with
-    // loaded rosters) makes the root column flex-shrink this fixed row
-    // to ZERO and the tab bar paints at row 0 (operator screenshot
-    // 2026-07-24; engine finding 0240's class at the root level).
-    dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
-        let t = theme.get().tokens;
-        let conn = store.conn.get();
-        let mode = if ui.wizard.get() { "wizard" } else { "browse" };
-        let (dot, dot_ink, label) = match &conn {
-            ConnPhase::NotConnected => ("○", t.text_muted, "not connected".to_string()),
-            ConnPhase::Probing => ("◌", t.info, "probing…".to_string()),
-            ConnPhase::Verifying(id) => (
-                "◌",
-                t.warn,
-                format!("{}@{} — verifying connection…", id.user_id, id.tenant_id),
-            ),
-            ConnPhase::Connected(id) => (
-                "●",
-                t.ok,
-                format!(
-                    "{}@{} ({}){}",
-                    id.user_id,
-                    id.tenant_id,
-                    id.auth_mode,
-                    if id.admin { " admin" } else { "" }
-                ),
-            ),
-            ConnPhase::Unauthorized(_) => ("●", t.error, "unauthorized".to_string()),
-            ConnPhase::Forbidden(_) => ("●", t.error, "forbidden".to_string()),
-            ConnPhase::NotGateway(_, _) => ("●", t.warn, "not a gateway?".to_string()),
-            ConnPhase::Unreachable(_) => ("○", t.error, "unreachable".to_string()),
-        };
-        // Middle-ellipsize long URLs (adversary round-3): the line
-        // truncates LAST-SPAN-FIRST, so a long remote-gateway URL used
-        // to push the connection dot + identity off the right edge —
-        // the least dynamic span was evicting the most important one.
-        let url = {
-            let u = ui.conn_url.get();
-            let max = 42usize;
-            if u.chars().count() > max {
-                let head: String = u.chars().take(max / 2 - 1).collect();
-                let tail: String = {
-                    let cs: Vec<char> = u.chars().collect();
-                    cs[cs.len() - (max / 2 - 1)..].iter().collect()
-                };
-                format!("{head}…{tail}")
-            } else {
-                u
-            }
-        };
-        // R10.3: signed in, the address is REPLACED by the memory/compute
-        // widget (the web top bar); the address stays on Connection,
-        // Network and About.
-        let place = if conn.is_connected() {
-            let data = store.host_state.with(|h| h.ready().cloned());
-            let err = store.host_widget_error.get();
-            let w = resources_widget::view(data.as_ref(), err.as_deref());
-            let short = vp.get().w < 120;
-            (
-                format!("· {} ", w.line(short)),
-                if w.stale { t.text_faint } else { t.text_muted },
-            )
-        } else {
-            (format!("· {url} "), t.text_muted)
-        };
-        line(vec![
-            span_bold(" AbstractGateway Console ", t.accent),
-            span(format!("· {mode} "), t.text_muted),
-            span(place.0, place.1),
-            span(format!("{dot} "), dot_ink),
-            span(label, t.text),
-            // The web's session-only ✦ button, as a hint: last span, so
-            // it is the first thing a narrow terminal truncates.
-            span(
-                if conn.is_connected() {
-                    "  · F2 docs assistant"
-                } else {
-                    ""
-                },
-                t.text_faint,
-            ),
-        ])
-    })
-}
-
 fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Theme>) -> View {
     let store = ctx.store;
     let ui = ctx.ui;
-    let screens_caps = ctx.screens.caps;
-    let screens_access = ctx.screens.store.access;
     let engine_notices = abstracttui::app::use_startup_notices(_cx);
     let vp_footer = abstracttui::app::use_viewport(_cx);
     let ctx_hints = ctx.clone();
@@ -2047,6 +2039,9 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
         // the app's teachable surface with it.
         .style(LayoutStyle::column().shrink(0.0))
         .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
+            // R15 §2.7: ONE status row — the notice / busy lane on the left,
+            // the hints that apply on the right.
+            let notice_spans: Vec<util::SpanSpec> = (|| {
             // Busy strip: in-flight ops with elapsed seconds. Reading
             // tick keeps it live while ops run; idle renders nothing.
             let t = theme.get().tokens;
@@ -2062,7 +2057,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
             let notice = store.notice.get();
             if ops.is_empty() {
                 return match notice {
-                    Some(n) => line(vec![span(format!(" {n}"), t.text_muted)]),
+                    Some(n) => vec![span(format!(" {n}"), t.text_muted)],
                     None => {
                         // Only DIAGNOSTIC engine notices surface here
                         // (degradations, zero-collapse warnings). The
@@ -2088,8 +2083,8 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                             })
                         });
                         match shown {
-                            Some(en) => line(vec![span(format!(" engine: {en}"), t.warn)]),
-                            None => line(vec![span(String::new(), t.text_muted)]),
+                            Some(en) => vec![span(format!(" engine: {en}"), t.warn)],
+                            None => vec![span(String::new(), t.text_muted)],
                         }
                     }
                 };
@@ -2113,165 +2108,212 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                 };
                 parts.push(span(format!(" ⟳ {}… {}s{}", op.label, secs, flag), t.info));
             }
-            line(parts)
-        }))
-        .child(dyn_view(
-            LayoutStyle::column().gap(0).shrink(0.0),
-            move || {
-                let t = theme.get().tokens;
+            parts
+        })();
                 let width = vp_footer.get().w;
                 let wizard = ui.wizard.get();
-                let screen = ui.screen.get();
-                // A principal known NOT to be an admin does not see the admin
-                // verbs (the web hides the same controls); pressing one still
-                // answers with the reason.
-                let non_admin = store.conn.with(ConnPhase::is_known_non_admin);
+                let _ = ui.screen.get();
+                let _ = store.conn.get();
+                let _ = store.acc.tab.get();
+                let owned = screen_hint_pairs(&ctx_hints);
+                let _ = wizard;
                 let mut pairs: Vec<(&str, &str)> = Vec::new();
-                // THE SCREEN'S OWN KEYS LEAD (review 2, 80x24): the row
-                // truncates right-edge-first, and with the universal pairs
-                // first an 80-column footer showed no screen verb at all.
-                // Quit follows them (and the guide's Ctrl+N stays first in
-                // the wizard); the rest of the universal keys come after.
-                let mut globals: Vec<(&str, &str)> = Vec::new();
-                if wizard {
-                    globals.push(("Ctrl+N/]", "next step"));
-                    globals.push(("Ctrl+C", "quit"));
-                    globals.push(("Ctrl+P/Esc", "back"));
-                } else {
-                    globals.push(("q/Ctrl+C", "quit"));
-                    globals.push((SCREEN_KEYS_HINT, "screens"));
-                    globals.push(("←/→ Ctrl+P/N", "prev/next"));
+                // A FOCUSED control names itself first (A2: the R9 kit rule,
+                // tooltip on keyboard focus — the status bar carries it too).
+                let focus = ui.focus_line.get();
+                if let Some(f) = focus.as_deref() {
+                    pairs.push((f, ""));
+                    pairs.push(("Enter", "press"));
+                    pairs.push(("Tab", "next"));
                 }
-                globals.push(("Tab", "focus"));
-                match screen {
-                    SCREEN_PROVIDERS => pairs.extend(providers::hints(&store)),
-                    2 => {
-                        pairs.push(("Enter/e", "edit route"));
-                        pairs.push(("x", "clear route"));
-                        // `d` is "delete" on Connections/Users and
-                        // "download" nowhere: weights are `w`, the whole
-                        // recommended set `D`, each behind a confirm. (The
-                        // plan line on the screen teaches p / D / a too, for
-                        // rows too narrow to reach them here.)
-                        pairs.push(("w", "download weights"));
-                        pairs.push(("a", "apply recommended"));
-                        pairs.push(("D", "download all"));
-                        pairs.push(("C", "cancel download all"));
-                        pairs.push(("p", "recommended plan"));
-                        pairs.push(("r", "refresh"));
-                    }
-                    SCREEN_USERS => pairs.extend(users::hints(&ctx_hints)),
-                    // The whole Runtimes screen is admin-only: no verbs.
-                    4 if non_admin => {}
-                    4 => {
-                        pairs.push(("Enter", "inspect runtime"));
-                        pairs.push(("f", "filter"));
-                        pairs.push(("/", "search"));
-                        pairs.push(("n/p", "page"));
-                        pairs.push(("o", "open row"));
-                        pairs.push(("i", "run detail"));
-                        pairs.push(("w", "Workspaces"));
-                        pairs.push(("←/→", "inspector tab (when focused)"));
-                        pairs.push(("c", "cancel run"));
-                        pairs.push(("s", "steer run"));
-                        pairs.push(("t", "root runs only"));
-                        if store.runtime_filter.get().is_some() {
-                            pairs.push(("x", "every runtime"));
-                        }
-                        pairs.push(("r", "refresh"));
-                    }
-                    // Named arms from here down (the numbered arms above
-                    // predate the constants): the Workflows/Review pair had
-                    // drifted one screen left when Workflows was inserted —
-                    // Review's sandbox hints rendered on the Workflows
-                    // screen and Review showed none. Pinned by
-                    // footer_hints_stay_in_lockstep_with_screens.
-                    SCREEN_WORKFLOWS => pairs.extend(workflows::hints(&ctx_hints)),
-                    SCREEN_SKILLS => pairs.extend(skills_mcp::hints(&ctx_hints)),
-                    SCREEN_REVIEW => {
-                        pairs.push(("Tab→prompt, Enter", "run the test (REAL generation)"));
-                        pairs.push(("r", "refresh providers"));
-                    }
-                    SCREEN_MODELS => {
-                        pairs.push(("u", "unload"));
-                        pairs.push(("k", "lock/unlock"));
-                        pairs.push(("w", "load (warm up)"));
-                        pairs.push(("e", "context estimate"));
-                        pairs.push(("c", "clear session caches"));
-                        // At 80x24 the memory itemization does not fit beside the
-                        // Loaded table, and the table wins the rows — so the verb
-                        // that pages the itemization has to be as visible as the
-                        // rest of them.
-                        pairs.push(("m", "more memory detail"));
-                        pairs.push(("r", "refresh"));
-                    }
-                    // The shared screens publish their own verbs.
-                    SCREEN_CATALOG => pairs.extend(catalog::hints(non_admin)),
-                    SCREEN_ENGINES => {
-                        pairs.extend(abstractcore_console::screens::engines::hints(
-                            screens_caps,
-                            &screens_access.get(),
-                        ));
-                    }
-                    SCREEN_APPS => pairs.extend_from_slice(apps::HINTS),
-                    SCREEN_WELCOME => {
-                        pairs.push(("a", "Use recommended defaults"));
-                        pairs.push(("D", "Download all"));
-                        pairs.push(("r", "refresh"));
-                    }
-                    SCREEN_NETWORK => {
-                        pairs.push(("↑↓ Enter", "who can reach it"));
-                        pairs.push(("c", "copy address"));
-                        pairs.push(("w", "what to know"));
-                        pairs.push(("a", "advanced"));
-                        pairs.push(("x", "remove origin"));
-                        pairs.push(("r", "check again"));
-                    }
-                    SCREEN_OPENAI => pairs.extend(openai_api::hints(non_admin)),
-                    SCREEN_ABOUT => {
-                        pairs.push(("r", "refresh"));
-                    }
-                    _ => {}
+                for (k, v) in &owned {
+                    pairs.push((k.as_str(), v.as_str()));
                 }
-                let admin_keys: &[&str] = match screen {
-                    SCREEN_ROUTES => routes::ADMIN_KEYS,
-                    SCREEN_USERS => users::ADMIN_KEYS,
-                    SCREEN_WORKFLOWS => workflows::ADMIN_KEYS,
-                    SCREEN_SKILLS => skills_mcp::ADMIN_KEYS,
-                    SCREEN_MODELS => models::ADMIN_KEYS,
-                    SCREEN_WELCOME => &["a", "D"],
-                    SCREEN_CATALOG => catalog::ADMIN_KEYS,
-                    _ => &[],
-                };
-                let (screen_pairs, gated) = util::admin_hint_pairs(pairs, admin_keys, non_admin);
-                let mut pairs: Vec<(&str, &str)> = Vec::new();
-                if wizard {
-                    pairs.push(globals.remove(0)); // Ctrl+N: the guide's walk
-                }
-                pairs.extend(screen_pairs);
-                if let Some(keys) = gated.as_deref() {
-                    pairs.push((keys, "admin only"));
-                }
-                pairs.extend(globals);
-                // The setup guide's chord LAST: every screen has it, so it
-                // yields to the screen's own verbs when the row truncates
-                // (the Setup step and the goal line teach it too). The guide
-                // is an admin surface (its writes are admin routes; the web
-                // hides "Setup guide" for a non-admin).
-                if wizard {
-                    pairs.push(("Ctrl+G", "steps/leave guide"));
-                } else if !non_admin {
-                    pairs.push(("Ctrl+G", "setup guide"));
-                }
-                // LAST: the row truncates right-edge-first, so the host panel
-                // key shows wherever the screen's own verbs leave room.
-                pairs.push((host::OPEN_KEY_LABEL, "gateway host"));
                 // The key-hint bar (R7.2): wraps whole pairs onto a second
                 // line instead of cutting the row's tail.
-                kit::footer_hint_bar(&t, &pairs, width, 2)
-            },
-        ))
+                // R15 §2.7: ONE status row.
+                let t = theme.get().tokens;
+                let nw: i32 = notice_spans.iter().map(|s| abstracttui::text::width(&s.0)).sum();
+                let nw = nw.min(width * 55 / 100);
+                let mut row = Element::new().style(LayoutStyle::row().height(Dimension::Cells(1)));
+                if nw > 0 {
+                    row = row.child(util::line_styled(
+                        LayoutStyle::default().width(Dimension::Cells(nw + 1)).height(Dimension::Cells(1)).shrink(0.0),
+                        notice_spans,
+                    ));
+                }
+                row.child(
+                    Element::new()
+                        .style(LayoutStyle::default().grow(1.0).height(Dimension::Cells(1)))
+                        .child(kit::footer_hint_bar(&t, &pairs, (width - nw - 1).max(10), 1))
+                        .build(),
+                )
+                .build()
+        }))
         .build()
+}
+
+/// Every key hint of the current screen + the global keys, in the order
+/// the status bar shows them (the screen's own keys lead). The `?` keys
+/// panel lists all of them; the status bar shows what fits.
+pub fn screen_hint_pairs(ctx: &Ctx) -> Vec<(String, String)> {
+    let store = ctx.store;
+    let ui = ctx.ui;
+    let ctx_hints = ctx.clone();
+    let screens_caps = ctx.screens.caps;
+    let screens_access = ctx.screens.store.access;
+    let wizard = ui.wizard.get();
+    let screen = ui.screen.get();
+    // A principal known NOT to be an admin does not see the admin
+    // verbs (the web hides the same controls); pressing one still
+    // answers with the reason.
+    let non_admin = store.conn.with(ConnPhase::is_known_non_admin);
+    let mut pairs: Vec<(&str, &str)> = Vec::new();
+    // THE SCREEN'S OWN KEYS LEAD (review 2, 80x24): the row
+    // truncates right-edge-first, and with the universal pairs
+    // first an 80-column footer showed no screen verb at all.
+    // Quit follows them (and the guide's Ctrl+N stays first in
+    // the wizard); the rest of the universal keys come after.
+    let mut globals: Vec<(&str, &str)> = Vec::new();
+    if wizard {
+        globals.push(("Ctrl+N/]", "next step"));
+        globals.push(("Ctrl+C", "quit"));
+        globals.push(("Ctrl+P/Esc", "back"));
+    } else {
+        globals.push(("q/Ctrl+C", "quit"));
+        globals.push((SCREEN_KEYS_HINT, "screens"));
+        globals.push(("←/→ Ctrl+P/N", "prev/next"));
+    }
+    globals.push(("Tab", "focus"));
+    match screen {
+        SCREEN_PROVIDERS => pairs.extend(providers::hints(&store)),
+        2 => {
+            pairs.push(("Enter/e", "edit route"));
+            pairs.push(("x", "clear route"));
+            // `d` is "delete" on Connections/Users and
+            // "download" nowhere: weights are `w`, the whole
+            // recommended set `D`, each behind a confirm. (The
+            // plan line on the screen teaches p / D / a too, for
+            // rows too narrow to reach them here.)
+            pairs.push(("w", "download weights"));
+            pairs.push(("a", "apply recommended"));
+            pairs.push(("D", "download all"));
+            pairs.push(("C", "cancel download all"));
+            pairs.push(("p", "recommended plan"));
+            pairs.push(("r", "refresh"));
+        }
+        SCREEN_USERS => pairs.extend(users::hints(&ctx_hints)),
+        // The whole Runtimes screen is admin-only: no verbs.
+        4 if non_admin => {}
+        4 => {
+            pairs.push(("Enter", "inspect runtime"));
+            pairs.push(("f", "filter"));
+            pairs.push(("/", "search"));
+            pairs.push(("n/p", "page"));
+            pairs.push(("o", "open row"));
+            pairs.push(("i", "run detail"));
+            pairs.push(("w", "Workspaces"));
+            pairs.push(("←/→", "inspector tab (when focused)"));
+            pairs.push(("c", "cancel run"));
+            pairs.push(("s", "steer run"));
+            pairs.push(("t", "root runs only"));
+            if store.runtime_filter.get().is_some() {
+                pairs.push(("x", "every runtime"));
+            }
+            pairs.push(("r", "refresh"));
+        }
+        // Named arms from here down (the numbered arms above
+        // predate the constants): the Workflows/Review pair had
+        // drifted one screen left when Workflows was inserted —
+        // Review's sandbox hints rendered on the Workflows
+        // screen and Review showed none. Pinned by
+        // footer_hints_stay_in_lockstep_with_screens.
+        SCREEN_WORKFLOWS => pairs.extend(workflows::hints(&ctx_hints)),
+        SCREEN_SKILLS => pairs.extend(skills_mcp::hints(&ctx_hints)),
+        SCREEN_REVIEW => {
+            pairs.push(("Tab→prompt, Enter", "run the test (REAL generation)"));
+            pairs.push(("r", "refresh providers"));
+        }
+        SCREEN_MODELS => {
+            pairs.push(("u", "unload"));
+            pairs.push(("k", "lock/unlock"));
+            pairs.push(("w", "load (warm up)"));
+            pairs.push(("e", "context estimate"));
+            pairs.push(("c", "clear session caches"));
+            // At 80x24 the memory itemization does not fit beside the
+            // Loaded table, and the table wins the rows — so the verb
+            // that pages the itemization has to be as visible as the
+            // rest of them.
+            pairs.push(("m", "more memory detail"));
+            pairs.push(("r", "refresh"));
+        }
+        // The shared screens publish their own verbs.
+        SCREEN_CATALOG => pairs.extend(catalog::hints(non_admin)),
+        SCREEN_ENGINES => {
+            pairs.extend(abstractcore_console::screens::engines::hints(
+                screens_caps,
+                &screens_access.get(),
+            ));
+        }
+        SCREEN_APPS => pairs.extend_from_slice(apps::HINTS),
+        SCREEN_WELCOME => {
+            pairs.push(("a", "Use recommended defaults"));
+            pairs.push(("D", "Download all"));
+            pairs.push(("r", "refresh"));
+        }
+        SCREEN_NETWORK => {
+            pairs.push(("↑↓ Enter", "who can reach it"));
+            pairs.push(("c", "copy address"));
+            pairs.push(("w", "what to know"));
+            pairs.push(("a", "advanced"));
+            pairs.push(("x", "remove origin"));
+            pairs.push(("r", "check again"));
+        }
+        SCREEN_OPENAI => pairs.extend(openai_api::hints(non_admin)),
+        SCREEN_ABOUT => {
+            pairs.push(("r", "refresh"));
+        }
+        _ => {}
+    }
+    let admin_keys: &[&str] = match screen {
+        SCREEN_ROUTES => routes::ADMIN_KEYS,
+        SCREEN_USERS => users::ADMIN_KEYS,
+        SCREEN_WORKFLOWS => workflows::ADMIN_KEYS,
+        SCREEN_SKILLS => skills_mcp::ADMIN_KEYS,
+        SCREEN_MODELS => models::ADMIN_KEYS,
+        SCREEN_WELCOME => &["a", "D"],
+        SCREEN_CATALOG => catalog::ADMIN_KEYS,
+        _ => &[],
+    };
+    let (screen_pairs, gated) = util::admin_hint_pairs(pairs, admin_keys, non_admin);
+    let mut pairs: Vec<(&str, &str)> = Vec::new();
+    if wizard {
+        pairs.push(globals.remove(0)); // Ctrl+N: the guide's walk
+    }
+    pairs.extend(screen_pairs);
+    if let Some(keys) = gated.as_deref() {
+        pairs.push((keys, "admin only"));
+    }
+    // R15 D5: the keys panel lists everything the status row cannot.
+    pairs.push(("?", "keys"));
+    pairs.extend(globals);
+    // The setup guide's chord LAST: every screen has it, so it
+    // yields to the screen's own verbs when the row truncates
+    // (the Setup step and the goal line teach it too). The guide
+    // is an admin surface (its writes are admin routes; the web
+    // hides "Setup guide" for a non-admin).
+    if wizard {
+        pairs.push(("Ctrl+G", "steps/leave guide"));
+    } else if !non_admin {
+        pairs.push(("Ctrl+G", "setup guide"));
+    }
+    // LAST: the row truncates right-edge-first, so the host panel
+    // key shows wherever the screen's own verbs leave room.
+    pairs.push((host::OPEN_KEY_LABEL, "gateway host"));
+    pairs
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
 }
 
 /// Who may change the gateway host from AbstractCore's Models/Engines

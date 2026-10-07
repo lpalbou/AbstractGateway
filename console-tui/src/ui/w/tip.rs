@@ -35,7 +35,8 @@ pub fn install(focus_line: Signal<Option<String>>, overlays: Overlays) {
 
 /// The current focused-control line (the status bar reads it).
 pub fn focus_line() -> Option<Signal<Option<String>>> {
-    FOCUS_LINE.with(|f| *f.borrow())
+    // A disposed root (a finished test, a remount) leaves a dead handle.
+    FOCUS_LINE.with(|f| *f.borrow()).filter(|s| s.is_alive())
 }
 
 struct TipState {

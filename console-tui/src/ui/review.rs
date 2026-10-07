@@ -80,7 +80,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 .child(dyn_view_scoped(
                     LayoutStyle::default().shrink(0.0),
                     move |gcx| {
-                        let jw = abstracttui::app::use_viewport(gcx).get().w
+                        let jw = crate::ui::page_viewport(gcx).get().w
                             - widths::BLOCK_CHROME;
                         let entries = store.journal.get();
                         if entries.is_empty() {
@@ -153,7 +153,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         // only the oldest; the scroll reaches them.
                         // (2 since round 7: the key-hint footer may
                         // wrap onto a second line.)
-                        let cap = if abstracttui::app::use_viewport(gcx).get().h >= 30 {
+                        let cap = if crate::ui::page_viewport(gcx).get().h >= 30 {
                             10
                         } else {
                             2

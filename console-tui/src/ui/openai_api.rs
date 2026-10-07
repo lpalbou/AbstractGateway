@@ -1602,7 +1602,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let root = confirm.keys(root);
 
     // ---- The overview pane (scrolls when focused)
-    let vp = abstracttui::app::use_viewport(cx);
+    let vp = crate::ui::page_viewport(cx);
     let overview = {
         let tk = token_now.clone();
         scroll_pane(cx, tt, true, 3.0, move || {

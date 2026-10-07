@@ -469,7 +469,7 @@ pub fn open(ctx: &Ctx, cx: Scope) {
         return;
     }
     let d = store.docs;
-    let vp = abstracttui::app::use_viewport(cx).get_untracked();
+    let vp = crate::ui::page_viewport(cx).get_untracked();
     let size = Size::new(vp.w.clamp(1, 100), (vp.h - 2).clamp(1, 40));
     let ctx_ask = ctx.clone();
     let ctx_btn = ctx.clone();
