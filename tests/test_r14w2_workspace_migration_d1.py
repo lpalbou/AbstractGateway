@@ -165,8 +165,11 @@ def test_a_store_migrated_by_0130_is_repaired_once(world) -> None:
     assert rec["restored"] == [{"path": world["proj"], "mode": "rw"}]
     assert rec["restored_accounts"] == expected_accounts
     assert stored["_migrated"]["workspace_policy_v1"]["old"] == old, "the old block stays verbatim"
+    # One audit line per restored row: the gateway row, then each account's refused row.
     audits = [e for e in _audit(world) if e.get("event") == "workspace_policy_changed" and e.get("scope") == "migration_repair"]
-    assert len(audits) == 1 and audits[0]["restored"] == [world["proj"]], audits
+    lines = sorted((e.get("account") or "", e["path"], e["mode"]) for e in audits)
+    expected_lines = sorted([("", world["proj"], "rw")] + [(k, r["path"], r["mode"]) for k, rows in expected_accounts.items() for r in rows])
+    assert lines == expected_lines, audits
     # Once: a second pass changes nothing, even after the admin removes the restored row on purpose.
     from abstractgateway.workspace_policy import write_gateway_policy
 
@@ -175,7 +178,7 @@ def test_a_store_migrated_by_0130_is_repaired_once(world) -> None:
     before = _read(world)
     assert ensure_migrated(world["data"]) is False
     assert _read(world) == before
-    assert len([e for e in _audit(world) if e.get("scope") == "migration_repair"]) == 1
+    assert len([e for e in _audit(world) if e.get("scope") == "migration_repair"]) == len(expected_lines)
 
 
 def test_a_path_the_policy_already_lists_keeps_its_mode(world) -> None:

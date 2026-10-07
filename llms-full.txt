@@ -2487,7 +2487,9 @@ beyond the new ceiling:
   `_migrated.workspace_policy_v1.old` and adds the rows it lost (gateway rows,
   and the accounts' refused rows); a path the policy already lists keeps its
   current mode, other rows are untouched. The restored rows are recorded there
-  and in the audit log (`workspace_policy_changed`, scope `migration_repair`);
+  and in the audit log (one `workspace_policy_changed` line per restored row, scope
+  `migration_repair`, with its path, mode and account); the restored rows are
+  ordinary rows in the console;
   it never runs twice.
 
 Missing folders are dropped and listed in the settings store under

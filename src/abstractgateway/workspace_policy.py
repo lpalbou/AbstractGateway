@@ -732,15 +732,13 @@ def repair_dropped_v1_folders(data_dir: Path) -> bool:
         stored["_last_changed_by"] = "system:workspace_policy_repair"
         stored["_last_changed_at"] = _now()
         rc._write_store(data_dir, stored)
-    changed = bool(restored or restored_accounts)
-    audit_policy_change(
-        "migration_repair",
-        actor="system:workspace_policy_repair",
-        changed=[REPAIR_MARKER],
-        restored=[r["path"] for r in restored],
-        restored_accounts={k: [r["path"] for r in v] for k, v in restored_accounts.items()},
-    )
-    return changed
+    # One audit line per restored row (operator ruling 2026-10-07): which path, which mode, whose layer.
+    for row in restored:
+        audit_policy_change("migration_repair", actor="system:workspace_policy_repair", changed=[REPAIR_MARKER], path=row["path"], mode=row["mode"])
+    for key, rows in restored_accounts.items():
+        for row in rows:
+            audit_policy_change("migration_repair", actor="system:workspace_policy_repair", changed=[REPAIR_MARKER], account=key, path=row["path"], mode=row["mode"])
+    return bool(restored or restored_accounts)
 
 
 # ---------------------------------------------------------------- reads
