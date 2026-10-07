@@ -736,15 +736,14 @@ fn detail_view(
                 0,
             );
         }
-        // R10.5 / R10.6: another Assistant runs; an update left one alone.
-        for note in [
-            &desk.version_reason,
-            &desk.other_running,
-            &desk.restart_note,
-        ]
-        .into_iter()
-        .flatten()
-        .filter(|_| row.installed)
+        // R10.5 / R10.6: the source checkout's version sentence (only for a
+        // source checkout, as the web card); another Assistant runs; an
+        // update left one alone.
+        let version_reason = desk.version_reason.clone().filter(|_| desk.source_checkout);
+        for note in [&version_reason, &desk.other_running, &desk.restart_note]
+            .into_iter()
+            .flatten()
+            .filter(|_| row.installed)
         {
             col = wrapped(col, t, None, note, t.text_muted, false, width, 0);
         }

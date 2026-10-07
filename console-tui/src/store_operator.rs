@@ -251,6 +251,78 @@ pub struct HostRunner {
     pub cap_reason: String,
     pub restart_requested: bool,
     pub shutdown_requested: bool,
+    /// R13.1 (`last_hang`, admins): the previous process's newest
+    /// event-loop watchdog incident (R14-W1's route shape); None = no
+    /// incident, or not an admin.
+    pub last_hang: Option<LastHang>,
+}
+
+/// `GET /host/runner` → `last_hang` (R14-W1 INCIDENT FILE SHAPE): what the
+/// Resources Gateway card's "Last restart" row shows.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LastHang {
+    pub at: String,
+    pub reason: String,
+    pub blocked_s: Option<f64>,
+    /// "<file>:<line> <fn>".
+    pub top_frame: String,
+    pub dump_path: String,
+    /// The incident JSON file.
+    pub file: String,
+}
+
+impl LastHang {
+    fn from_value(v: &Value) -> Option<LastHang> {
+        if !v.is_object() {
+            return None;
+        }
+        Some(LastHang {
+            at: s(v, "at").unwrap_or_default(),
+            reason: s(v, "reason").unwrap_or_default(),
+            blocked_s: v.get("blocked_s").and_then(Value::as_f64),
+            top_frame: s(v, "top_frame").unwrap_or_default(),
+            dump_path: s(v, "dump_path").unwrap_or_default(),
+            file: s(v, "file").unwrap_or_default(),
+        })
+    }
+
+    /// The web row, word for word: "Gateway restarted at <time> after a
+    /// hang — <reason>".
+    pub fn text(&self) -> String {
+        let reason = if self.reason.is_empty() {
+            "unknown"
+        } else {
+            self.reason.as_str()
+        };
+        format!(
+            "Gateway restarted at {} after a hang — {reason}",
+            when_text(&self.at)
+        )
+    }
+
+    /// The web's muted line under it: "Every thread's stack: <dump>".
+    pub fn dump_text(&self) -> Option<String> {
+        (!self.dump_path.is_empty()).then(|| format!("Every thread's stack: {}", self.dump_path))
+    }
+
+    /// The web tooltip's other lines (a terminal has no hover):
+    /// "Blocked <s> s in <frame>", "Incident file: <path>".
+    pub fn detail_lines(&self) -> Vec<String> {
+        let blocked = match self.blocked_s {
+            Some(b) => format!("{b}"),
+            None => "?".into(),
+        };
+        let frame = if self.top_frame.is_empty() {
+            "an unknown frame"
+        } else {
+            self.top_frame.as_str()
+        };
+        let mut out = vec![format!("Blocked {blocked} s in {frame}")];
+        if !self.file.is_empty() {
+            out.push(format!("Incident file: {}", self.file));
+        }
+        out
+    }
 }
 
 impl HostRunner {
@@ -269,6 +341,7 @@ impl HostRunner {
             cap_reason: s(&caps, "reason").unwrap_or_default(),
             restart_requested: flag(&caps, "restart_requested"),
             shutdown_requested: flag(&caps, "shutdown_requested"),
+            last_hang: v.get("last_hang").and_then(LastHang::from_value),
         }
     }
 
@@ -1102,6 +1175,46 @@ mod tests {
             !offers_public_lookup(&d),
             "not when a public address is listed"
         );
+    }
+
+    /// R13.1 / R14-W1: the "Last restart" row from `last_hang`, word for word.
+    #[test]
+    fn last_hang_reads_the_watchdog_incident_row() {
+        let r = HostRunner::from_value(&json!({
+            "paused": false,
+            "last_hang": {
+                "at": "2026-10-04T19:23:57+00:00", "stamp": "20261004T192357Z", "blocked_s": 31.5,
+                "reason": "the event loop was blocked in starlette/responses.py:245 listen_for_disconnect",
+                "top_frame": "starlette/responses.py:245 listen_for_disconnect",
+                "dump_path": "/data/incidents/watchdog-20261004T192357Z.threads.txt",
+                "file": "/data/incidents/watchdog-20261004T192357Z.json",
+                "line": "Gateway restarted at 2026-10-04T19:23:57+00:00 after a hang — x"
+            }
+        }));
+        let h = r.last_hang.expect("last_hang");
+        assert_eq!(
+            h.text(),
+            "Gateway restarted at 2026-10-04 19:23:57 +00:00 after a hang — the event loop was blocked in starlette/responses.py:245 listen_for_disconnect"
+        );
+        assert_eq!(
+            h.dump_text().as_deref(),
+            Some("Every thread's stack: /data/incidents/watchdog-20261004T192357Z.threads.txt")
+        );
+        assert_eq!(
+            h.detail_lines(),
+            vec![
+                "Blocked 31.5 s in starlette/responses.py:245 listen_for_disconnect".to_string(),
+                "Incident file: /data/incidents/watchdog-20261004T192357Z.json".to_string()
+            ]
+        );
+        assert!(
+            HostRunner::from_value(&json!({"paused": false, "last_hang": null}))
+                .last_hang
+                .is_none()
+        );
+        assert!(HostRunner::from_value(&json!({"paused": false}))
+            .last_hang
+            .is_none());
     }
 
     #[test]

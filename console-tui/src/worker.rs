@@ -153,6 +153,10 @@ pub enum Cmd {
     /// chain dies. `first` = show the busy label (poll refreshes are
     /// silent); a failed poll publishes the honest Failed state and
     /// STOPS (recovery is `r` or tab re-entry — never a retry storm).
+    /// R10.3: one quiet `GET /host/state` for the header widget (off the
+    /// Resources page, every few seconds): a success replaces the
+    /// snapshot, a failure keeps it and says why (`host_widget_error`).
+    RefreshHostWidget,
     PollHostState {
         gen: u64,
         first: bool,
@@ -1408,6 +1412,19 @@ fn handle(
             if let Some(fid) = form_id {
                 on_done(fid, combined);
             }
+        }
+
+        Cmd::RefreshHostWidget => {
+            let result = require_client(client).and_then(|c| c.host_state());
+            let s = *store;
+            wake.post(move || match result {
+                Ok(v) => {
+                    s.host_state
+                        .set(Loadable::Ready(crate::store::host_state_from_payload(&v)));
+                    s.host_widget_error.set(None);
+                }
+                Err(e) => s.host_widget_error.set(Some(e.to_string())),
+            });
         }
 
         Cmd::PollHostState { gen, first } => {

@@ -308,7 +308,10 @@ pub fn open(ctx: &Ctx, cx: Scope) {
         let (k_r, k_q, k_s, k_l) = (close.clone(), close.clone(), close.clone(), close.clone());
 
         let viewport = abstracttui::app::use_viewport(mcx);
-        let body = dyn_view(LayoutStyle::column().gap(0).grow(1.0), move || {
+        // The rows scroll (wheel) when the terminal is too short for them
+        // (80x24 with a "Last restart" row): never clipped, never cut.
+        let scroll_y = mcx.signal(0);
+        let body = dyn_view_scoped(LayoutStyle::column().gap(0).grow(1.0), move |bcx| {
             let t = theme.get().tokens;
             let _ = store.tick.get();
             let mut rows: Vec<View> = Vec::new();
@@ -347,6 +350,36 @@ pub fn open(ctx: &Ctx, cx: Scope) {
                         span(format!("{:>14}: ", "process"), t.text_muted),
                         span(ellipsize(&caps, 86), t.text),
                     ]));
+                    // R13.1: the web Gateway card's "Last restart" row
+                    // (admins; absent = no watchdog incident), wrapped,
+                    // never cut; the tooltip's lines below it.
+                    if let Some(hang) = &r.last_hang {
+                        let w = (viewport.get().w.min(104) - 24).max(20) as usize;
+                        for (i, l) in super::util::wrap_text(&hang.text(), w)
+                            .into_iter()
+                            .enumerate()
+                        {
+                            rows.push(line(vec![
+                                span(
+                                    if i == 0 {
+                                        format!("{:>14}: ", "last restart")
+                                    } else {
+                                        format!("{:>14}  ", "")
+                                    },
+                                    t.text_muted,
+                                ),
+                                span(l, t.warn),
+                            ]));
+                        }
+                        for extra in hang.dump_text().into_iter().chain(hang.detail_lines()) {
+                            for l in super::util::wrap_text(&extra, w) {
+                                rows.push(line(vec![span(
+                                    format!("{:>14}  {l}", ""),
+                                    t.text_faint,
+                                )]));
+                            }
+                        }
+                    }
                 }
                 Loadable::Failed(e) => rows.push(line(vec![
                     span(format!("{:>14}: ", "workflows"), t.text_muted),
@@ -419,11 +452,16 @@ pub fn open(ctx: &Ctx, cx: Scope) {
             for l in super::util::wrap_text(keys, wrap_w) {
                 rows.push(line(vec![span(l, t.text_faint)]));
             }
-            let mut col = Element::new().style(LayoutStyle::column().gap(0).grow(1.0));
+            let mut col = Element::new().style(LayoutStyle::column().gap(0));
             for r in rows {
                 col = col.child(r);
             }
-            col.build()
+            Scroll::new(col.build())
+                .axes(false, true)
+                .offset_y(scroll_y)
+                .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))
+                .scrollbar_auto_hide(true)
+                .view(bcx)
         });
 
         let t0 = theme.get().tokens;

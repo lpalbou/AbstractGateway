@@ -30,6 +30,8 @@ pub mod network;
 /// The OpenAI API page (round 7).
 pub mod openai_api;
 pub mod providers;
+/// The header's memory/compute widget (round 14, R10.3 parity).
+pub mod resources_widget;
 pub mod review;
 pub mod routes;
 pub mod runtimes;
@@ -1734,6 +1736,36 @@ fn install_effects(cx: Scope, ctx: &Ctx) {
         });
     }
 
+    // R10.3: the header widget's refresh — every few seconds while signed
+    // in, OFF the Resources page (its own chain refreshes the same
+    // snapshot there). One quiet read per tick; a failure keeps the last
+    // snapshot, marked stale.
+    {
+        let ctx_w = ctx.clone();
+        let ticker: Rc<RefCell<Option<IntervalHandle>>> = Rc::new(RefCell::new(None));
+        cx.effect(move || {
+            let on = store.conn.with(ConnPhase::is_connected) && ui.screen.get() != SCREEN_MODELS;
+            let mut slot = ticker.borrow_mut();
+            match (on, slot.is_some()) {
+                (true, false) => {
+                    ctx_w.send(Cmd::RefreshHostWidget);
+                    let c = ctx_w.clone();
+                    *slot = Some(abstracttui::reactive::interval(
+                        cx,
+                        resources_widget::POLL,
+                        move || c.send(Cmd::RefreshHostWidget),
+                    ));
+                }
+                (false, true) => {
+                    if let Some(h) = slot.take() {
+                        h.cancel();
+                    }
+                }
+                _ => {}
+            }
+        });
+    }
+
     // Busy ticker: exists only while ops are in flight (zero idle cost).
     {
         let ticker: Rc<RefCell<Option<IntervalHandle>>> = Rc::new(RefCell::new(None));
@@ -1910,6 +1942,7 @@ fn wizard_back(ctx: &Ctx) {
 fn header(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Theme>) -> View {
     let store = ctx.store;
     let ui = ctx.ui;
+    let vp = abstracttui::app::use_viewport(_cx);
     // shrink(0.0): the title bar is CHROME — without the pin, a page
     // whose content minimum over-demands height (users screen with
     // loaded rosters) makes the root column flex-shrink this fixed row
@@ -1961,10 +1994,25 @@ fn header(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                 u
             }
         };
+        // R10.3: signed in, the address is REPLACED by the memory/compute
+        // widget (the web top bar); the address stays on Connection,
+        // Network and About.
+        let place = if conn.is_connected() {
+            let data = store.host_state.with(|h| h.ready().cloned());
+            let err = store.host_widget_error.get();
+            let w = resources_widget::view(data.as_ref(), err.as_deref());
+            let short = vp.get().w < 120;
+            (
+                format!("· {} ", w.line(short)),
+                if w.stale { t.text_faint } else { t.text_muted },
+            )
+        } else {
+            (format!("· {url} "), t.text_muted)
+        };
         line(vec![
             span_bold(" AbstractGateway Console ", t.accent),
             span(format!("· {mode} "), t.text_muted),
-            span(format!("· {url} "), t.text_muted),
+            span(place.0, place.1),
             span(format!("{dot} "), dot_ink),
             span(label, t.text),
             // The web's session-only ✦ button, as a hint: last span, so

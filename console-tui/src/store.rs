@@ -2426,6 +2426,10 @@ pub struct HostStateData {
     /// "models", "session_caches") + why. Rendered as muted notes.
     pub degraded: Vec<String>,
     pub reasons: HashMap<String, String>,
+    /// R10.3: `totals.models_resident` (the header widget's "N models").
+    pub models_resident: Option<u64>,
+    /// R10.3: `gpu.source` (the widget's "GPU load … (via <source>)").
+    pub gpu_source: Option<String>,
 }
 
 impl HostStateData {
@@ -2755,6 +2759,10 @@ pub fn host_state_from_payload(v: &Value) -> HostStateData {
         model_cache_bytes: totals
             .and_then(|t| t.get("cache_bytes_models"))
             .and_then(Value::as_u64),
+        models_resident: totals
+            .and_then(|t| t.get("models_resident"))
+            .and_then(Value::as_u64),
+        gpu_source: gpu.and_then(|g| s(g, "source")),
         degraded: str_list(v, "degraded"),
         reasons: v
             .get("reasons")
@@ -2857,6 +2865,10 @@ pub struct Store {
     /// it was spawned under is current — leaving the Models tab (or a
     /// gateway reset, or `r`) bumps it and the old chain dies.
     pub host_poll_gen: Signal<u64>,
+    /// R10.3: the header widget's last refresh failure (the snapshot it
+    /// shows stays the last good one, marked stale) — None when the last
+    /// read answered.
+    pub host_widget_error: Signal<Option<String>>,
     /// (provider, model) of an unload the gateway just refused with
     /// HTTP 409 model_locked — the Models tab's effect offers the
     /// "Force unload?" second confirm and clears the slot.
@@ -3708,6 +3720,7 @@ impl Store {
             welcome: cx.signal(Loadable::default()),
             host_state: cx.signal(Loadable::default()),
             host_poll_gen: cx.signal(0),
+            host_widget_error: cx.signal(None),
             unload_locked: cx.signal(None),
             users: cx.signal(Loadable::default()),
             accounts: cx.signal(Loadable::default()),
@@ -3792,6 +3805,7 @@ impl Store {
             first_run,
             welcome,
             host_poll_gen, // bumped below: live poll chains must die
+            host_widget_error,
             // with the world they were reading
             providers,
             profiles,
@@ -3860,6 +3874,7 @@ impl Store {
         // chain must not keep painting the OLD host under the new
         // header: the generation bump kills any in-flight chain.
         host_state.set(Loadable::NotAsked);
+        host_widget_error.set(None);
         host_poll_gen.update(|g| *g += 1);
         unload_locked.set(None);
         users.set(Loadable::NotAsked);
