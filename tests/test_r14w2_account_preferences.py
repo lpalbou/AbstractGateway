@@ -192,6 +192,13 @@ def test_authz_self_admin_and_entity_creator(gw):
     # The entity: its creator and admins; bob is refused.
     r = c.put("/api/gateway/accounts/aster/preferences", headers=gw["alice"], json={"default_workflow": {ASSIST: "helper:agent"}})
     assert r.status_code == 200, r.text
+    # Its creator picks among the gateway's shared workflows only: never her own private one.
+    aster = _get(c, gw["alice"], "aster")
+    assert aster["account"] == "default:aster" and aster["can_edit"] is True
+    aster_values = {x["value"] for x in _row(aster, CODE)["choices"]}
+    assert "coder-two:agent" in aster_values and "alice-coder:agent" not in aster_values, aster_values
+    r = c.put("/api/gateway/accounts/aster/preferences", headers=gw["alice"], json={"default_workflow": {CODE: "alice-coder:agent"}})
+    assert r.status_code == 400 and "not among the workflows aster may run" in r.json()["detail"]["message"], r.text
     assert _row(_get(c, ADMIN, "aster"), ASSIST)["value"] == "helper:agent"
     r = c.get("/api/gateway/accounts/aster/preferences", headers=gw["bob"])
     assert r.status_code == 403 and r.json()["detail"]["message"] == "Only an admin or aster's creator can change its preferences."
