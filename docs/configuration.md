@@ -831,6 +831,11 @@ Writes are admin-only and audit-logged like every other setting. A write that
 names a setting the gateway does not know is refused as a whole (400) and
 saves nothing; two writers at the same time never lose each other's change.
 
+An account may choose another workflow for itself (Accounts → **Preferences**, the Assistant's
+Settings → Workflow, AbstractCode's *Default for new conversations*). That choice is stored per
+account under `account_preferences` in the same store and never copies this setting: "Gateway
+default (<name>)" there always means the value set here ([api.md](./api.md#account-preferences)).
+
 ### Stream replies by default
 
 `agents.streaming_default` (`on`/`off`, default `off`) decides whether an

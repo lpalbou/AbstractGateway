@@ -24,6 +24,7 @@ serve:
 | `/api/gateway/admin/users`, `/admin/runtime-reservations` | user accounts and retained runtimes (admin) | [security.md](./security.md#tenant-and-user-isolation) |
 | `/api/gateway/admin/accounts`, `/admin/accounts/{id}/active`, `/admin/accounts/{id}/activity`, `/me/accounts`, `/me/accounts/{id}/activity`, `/me/activity` | the Accounts page: users and entities in one list (admin), your own account and your entities (everyone), the Active switch, activity from the audit log | [below](#accounts-and-activity) |
 | `/api/gateway/admin/runtime-config` | runtime settings (admin) | [configuration.md](./configuration.md) |
+| `/api/gateway/accounts/{me\|account}/preferences` | one account's client preferences: the default workflow per app (the account itself, an admin, an entity's creator) | [below](#account-preferences) |
 | `/api/gateway/workspace/policy`, `/workspace/policy/{account}`, `/sessions/{id}/workspaces`, `/workspace/effective/{account}` (GET and dry-run POST), `POST /workspace/path-check` | workspaces, three levels: the gateway policy = the eligible set (read: everyone; write: admin), one account's default subset (admin, the account itself, an entity's creator; `me` = the caller), one conversation's subset (its owner, or an admin), the effective set the gateway enforces, and the path check run before saving a row (`{path}` → `{path, normalized, absolute, exists, is_dir, valid, sentence}`; any signed-in principal) | [below](#workspaces), [security.md](./security.md#workspaces-three-levels) |
 | `/api/gateway/admin/runtimes`, `?account=<id>[&tenant_id=<t>]` | the runtime inventory (admin); `account` keeps only the planes that account owns and echoes `filter` | [console.md](./console.md#runtimes-of-one-account) |
 | `/api/gateway/network`, `/network/restart` | network exposure, addresses, reverse proxy | [configuration.md](./configuration.md#api-gateway_network_v1) |
@@ -2010,7 +2011,7 @@ The Accounts page (admin): users and entities in one list.
 
 | Route | Purpose |
 |---|---|
-| `GET /admin/accounts` | `{accounts: [{id, tenant_id, kind: user \| entity, role: admin \| user \| entity, own, email_address, mailbox{state: connected \| receive_only \| not_connected \| paused \| unavailable, address, provider, reason}, runtime_id, active, entity_state, actions{email, logs, workspace, rotate, manage, delete, suspend: {available, reason}}}]}`, sorted admins, users, entities, then id; `entities_warning` when the entity list could not be read |
+| `GET /admin/accounts` | `{accounts: [{id, tenant_id, kind: user \| entity, role: admin \| user \| entity, own, email_address, mailbox{state: connected \| receive_only \| not_connected \| paused \| unavailable, address, provider, reason}, runtime_id, active, entity_state, actions{email, logs, workspace, preferences, rotate, manage, delete, suspend: {available, reason}}}]}`, sorted admins, users, entities, then id; `entities_warning` when the entity list could not be read |
 | `PUT /admin/accounts/{id}/active` | `{active}` → the updated row. Users: `false` = deactivated (signed out, cannot sign in); 409 `{message}` for your own account ("You can't deactivate your own account.") or the last active admin. Entities: `false` = suspended (entity state `paused`, its door credential off, an open visit closed); `true` = resumed (the state it had before is restored, stored in `<data_dir>/auth/entity_suspended.json`) |
 | `GET /admin/accounts/{id}/activity` | `?limit=100&kind=sign_in,run,…` (admin) |
 | `GET /me/activity` | the same for the signed-in account |
@@ -2068,6 +2069,58 @@ recorded (before this version)" and it has no `run_id` and no `observer_path` (n
 times). A notification event's `detail` is its kind in words: "Approval needed", "Job failed", "Job
 finished", "Automation result", "Automation failed", "Test notification"; any other kind is shown as
 written.
+
+## Account preferences
+
+The gateway keeps each account's client preferences, so every app and every device of that account
+see the same choice and no client keeps it. The gateway defines the defaults; an account may
+override them for itself.
+
+| Route | Purpose |
+|---|---|
+| `GET /api/gateway/accounts/{account}/preferences` | `{ok, account: "tenant:user", can_edit, preferences: {default_workflow: {<interface>: value \| null}}, declared: {default_workflow: {label, help}}, apps: [row]}` |
+| `PUT /api/gateway/accounts/{account}/preferences` | `{"default_workflow": {<interface>: "bundle:flow" \| "catalog:bundle:flow" \| null}}` → the GET answer |
+
+`{account}` is `me` (the caller), `name`, `tenant:name` or an entity's slug. Who: anyone for their
+own; an admin for any account; an entity's preferences by an admin or the entity's creator. Anyone
+else gets 403 with "Only an admin or the account itself can change its preferences." (an entity:
+"Only an admin or <entity>'s creator can change its preferences."). An account that does not exist
+answers 404. A gateway older than 0.13.1 has no such route (404 Not Found); the Assistant and
+AbstractCode then keep their own choice as before.
+
+Only keys the gateway declares are accepted. Today there is one, `default_workflow`: one entry per
+app interface (`abstractcode.agent.v1`, `abstractassistant.agent.v1`). `null` follows the
+gateway's per-app default, which is the admin setting `agents.default_workflow.<interface>`
+(Workflows → *Default workflow per app*, [configuration.md](./configuration.md#default-agent-workflow)); it
+is never copied into the account. A chosen workflow is stored without a version, so it runs its
+latest published version. The PUT replaces the named interfaces and keeps the others. It is
+refused with 400 `{"detail": {"reason": "preference_refused", "message": <sentence>, "key": <key>}}`
+for an unknown key ("Unknown preference 'theme': this gateway declares default_workflow."), an
+interface that is not an app's, or a workflow the account may not run for that app ("…refused:
+'helper@1.0.0:agent' declares abstractassistant.agent.v1, not abstractcode.agent.v1"). A refused PUT
+changes nothing. The change is audited on the target account's activity ("Preferences changed").
+
+Each `apps` row: `{interface, label, app, help, value, state, reason, gateway_default,
+gateway_default_label, effective, choices}`.
+
+| Field | Meaning |
+|---|---|
+| `value` | the account's choice, `null` = the gateway default |
+| `state` | `default` (null), `set` (a choice that runs), `broken` (a choice that no longer runs; `reason` says why and what to do, e.g. "coder-two:agent no longer runs for alice: … Pick another workflow or Gateway default.") |
+| `gateway_default` | `{available, name, value, workflow_id, reason}`: what the admin's per-app default resolves to now |
+| `gateway_default_label` | "Gateway default (<name>)", or "Gateway default (unavailable)"; every client shows it verbatim as the first option |
+| `effective` | what a run of this app starts for this account: `{source: account \| gateway, available, name, value, workflow_id, bundle_id, bundle_version, flow_id, registry_scope, reason}` |
+| `choices` | the workflows the account may run for this app: `[{value, label, name, workflow_id, bundle_id, bundle_version, flow_id, registry_scope}]`, latest versions, never one an admin made unavailable to users or archived; `label` is shown verbatim |
+
+For `me` the choices are the caller's own (shared workflows available to them and their own
+workflows). For another account they are the gateway's shared workflows that account may run:
+an admin is never offered a user's private workflows.
+
+Runs: an app starts the account's choice as an explicit workflow, or `flow_id: "@default"` with
+its `interface` when the value is `null`. `@default` keeps meaning the admin's per-app default.
+
+Accounts rows (`GET /admin/accounts`, `GET /me/accounts`) carry `actions.preferences`
+`{available, reason}` (every user and entity that is not archived).
 
 ## Email
 

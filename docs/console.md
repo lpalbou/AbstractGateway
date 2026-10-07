@@ -290,6 +290,23 @@ with "Not saved." and nothing changes. The API is `GET`/`PUT
 /api/gateway/workspace/policy` (eligible workspaces) and `GET`/`PUT
 /api/gateway/workspace/policy/{account}` (`me` for your own) ([api.md](./api.md)).
 
+### Preferences of an account
+
+**Preferences** on an account's row (the sliders icon, tooltip "Default workflows of <name>")
+opens the workflow each app runs for that account unless a conversation picks another: one row per
+app (AbstractCode — chat agent, Assistant). The first option is **Gateway default (<name>)**,
+selected while the account has no choice of its own; it follows the administrator's **Default
+workflow per app** (Workflows). The other options are the workflows the account may run for that
+app. A change applies at once and says "Saved."; there is no Save button. When the gateway refuses
+a change, its sentence shows with "Not saved." and nothing changes. A choice that no longer runs
+says why under its row.
+
+Everyone opens their own from their own row. An administrator opens any account's (choosing among
+the gateway's shared workflows); an entity's preferences are set by its creator or an
+administrator. The Assistant (Settings → Workflow) and AbstractCode (Workflow → *Default for new
+conversations*) read and write the same choice. The API is `GET`/`PUT
+/api/gateway/accounts/{account}/preferences` ([api.md](./api.md#account-preferences)).
+
 ### Runtimes of one account
 
 The Runtime link on an Accounts row opens **Runtimes** at
