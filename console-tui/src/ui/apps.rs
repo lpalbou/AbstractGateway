@@ -319,8 +319,13 @@ fn apps_head(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         btn_row = btn_row.child(b);
     }
     let title_w = abstracttui::text::width(APPS_SUBTITLE);
+    let side = title_w + bw + 2 <= w;
     let titles = Element::new()
-        .style(LayoutStyle::column().grow(1.0).shrink(1.0))
+        .style(if side {
+            LayoutStyle::column().width(Dimension::Cells(w - bw - 1)).shrink(0.0)
+        } else {
+            LayoutStyle::column().shrink(0.0)
+        })
         .child(super::w::paint::fill_line(
             LayoutStyle::line(1).shrink(0.0),
             vec![super::w::Ink::new("Apps", t.text).bold()],
@@ -328,7 +333,7 @@ fn apps_head(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         ))
         .child(super::w::form::sentence(t, APPS_SUBTITLE, w, t.text_muted))
         .build();
-    if title_w + bw + 2 <= w {
+    if side {
         Element::new()
             .style(LayoutStyle::row().shrink(0.0))
             .child(titles)

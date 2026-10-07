@@ -294,16 +294,21 @@ fn head(_cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             btn_row = btn_row.child(b);
         }
         let btn_row = btn_row.build();
+        let side = title_w + bw + 2 <= w;
         let title_views = Element::new()
-            .style(LayoutStyle::column().shrink(1.0).grow(1.0))
+            .style(if side {
+                LayoutStyle::column().width(Dimension::Cells(w - bw - 1)).shrink(0.0)
+            } else {
+                LayoutStyle::column().shrink(0.0)
+            })
             .child(super::w::paint::fill_line(
                 LayoutStyle::line(1).shrink(0.0),
                 vec![super::w::Ink::new(title, tt.text).bold()],
                 None,
             ))
-            .child(super::w::form::sentence(&tt, subtitle, (w - if title_w + bw + 2 <= w { bw + 2 } else { 0 }).max(20), tt.text_muted))
+            .child(super::w::form::sentence(&tt, subtitle, (w - if side { bw + 2 } else { 0 }).max(20), tt.text_muted))
             .build();
-        if title_w + bw + 2 <= w {
+        if side {
             Element::new()
                 .style(LayoutStyle::row().shrink(0.0))
                 .child(title_views)

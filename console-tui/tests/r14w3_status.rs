@@ -231,7 +231,9 @@ fn the_assistant_rows_sentences_follow_the_web_card() {
         s.contains("Installed from a source checkout: its version is the checkout's."),
         "{s}"
     );
-    assert!(s.contains("Stopped — click to start"), "{s}");
+    // R15 A3: the badge reads the state; "Stopped — click to start" is its
+    // tooltip (pinned on the model: badge_tip).
+    assert!(s.contains("Stopped"), "{s}");
     // Not a source checkout: the sentence is not the card's.
     let a = v["apps"]
         .as_array_mut()

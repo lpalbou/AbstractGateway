@@ -347,7 +347,9 @@ fn apps_settings_live_behind_the_gears_not_on_the_page() {
         s.contains("Apps settings"),
         "a opens the apps overlay:\n{s}"
     );
-    assert!(f.contains("Node.js for apps: system  Saved setting"), "{s}");
+    // R15: a form modal — the field (Enter applies) and its source line.
+    assert!(f.contains("Node.js for apps"), "{s}");
+    assert!(f.contains("Saved setting · now system"), "{s}");
     // The deprecated host shows only while it holds a saved value.
     assert!(!f.contains("Where apps listen"), "{s}");
     h.key(b"\x1b");
@@ -355,19 +357,23 @@ fn apps_settings_live_behind_the_gears_not_on_the_page() {
     std::thread::sleep(std::time::Duration::from_millis(45));
     h.turns(3);
     let s = h.select("continuum");
-    assert!(s.contains("g Settings"), "the card's gear:\n{s}");
+    // The card's gear: a ⊛ button on the Continuum row (key g).
+    let row = s.lines().find(|l| l.contains(" Continuum ")).expect(&s);
+    assert!(row.contains("⊛"), "the card's gear:\n{s}");
     let s = h.key(b"g");
     let f = flat(&s);
     assert!(s.contains("Continuum settings"), "{s}");
-    assert!(
-        f.contains("Backlog folder: /d/backlog  The gateway's own folder"),
-        "{s}"
-    );
+    assert!(f.contains("Backlog folder"), "{s}");
+    assert!(f.contains("The gateway's own folder · now /d/backlog"), "{s}");
+    assert!(f.contains("Use the gateway's own folder"), "{s}");
     assert!(
         f.contains("Not available: the folder does not exist"),
         "{s}"
     );
-    assert!(f.contains("[x] Process manager  Saved setting"), "{s}");
+    assert!(
+        s.lines().any(|l| l.contains("━● Process manager") && l.contains("Saved setting")),
+        "{s}"
+    );
     assert!(
         !f.contains("environment (legacy)") && !f.contains("Environment (legacy)"),
         "{s}"

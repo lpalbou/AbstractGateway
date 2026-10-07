@@ -17,6 +17,8 @@ pub enum Display {
     Label,
     /// Underlined text, no padding (a table cell's link).
     Link,
+    /// Plain text in its own ink, no padding (a clickable state badge).
+    Plain,
 }
 
 /// Normal or destructive (hover ink `error`).
@@ -110,7 +112,14 @@ impl Action {
     pub fn face(&self) -> String {
         match self.display {
             Display::Glyph => self.glyph.to_string(),
-            Display::Label | Display::Link => self.label.clone(),
+            Display::Label | Display::Link | Display::Plain => self.label.clone(),
+        }
+    }
+    /// A plain-text action (a clickable state badge in its own ink).
+    pub fn plain(id: &'static str, label: impl Into<String>) -> Action {
+        Action {
+            display: Display::Plain,
+            ..Action::label(id, label)
         }
     }
     /// A link action (underlined text in `link` ink).
@@ -125,7 +134,7 @@ impl Action {
         match self.display {
             Display::Glyph => 2,
             Display::Label => abstracttui::text::width(&self.label) + 2,
-            Display::Link => abstracttui::text::width(&self.label),
+            Display::Link | Display::Plain => abstracttui::text::width(&self.label),
         }
     }
 }
@@ -157,6 +166,7 @@ pub fn button(
     let disabled = !a.is_enabled();
     let glyph = a.display == Display::Glyph;
     let link = a.display == Display::Link;
+    let plain = a.display == Display::Plain;
     let fg = if glyph {
         t.accent
     } else if link {
@@ -169,7 +179,7 @@ pub fn button(
         On::Raised => t.bg,
         On::Selected => t.surface,
     };
-    let bg = if (glyph || link) && on != On::Selected {
+    let bg = if (glyph || link || plain) && on != On::Selected {
         None
     } else {
         Some(ground)
@@ -284,7 +294,7 @@ pub fn button(
                     st = st.attrs(Attrs::UNDERLINE);
                 }
                 let fw = abstracttui::text::width(&face);
-                let x = if glyph || link {
+                let x = if glyph || link || plain {
                     rect.x
                 } else {
                     rect.x + ((rect.w - fw).max(0)) / 2

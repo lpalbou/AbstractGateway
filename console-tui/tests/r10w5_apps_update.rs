@@ -122,7 +122,8 @@ fn u_on_the_assistant_confirms_with_the_tooltip_then_sends_update() {
     for size in SIZES {
         let mut h = page(size);
         let s = select(&mut h, "assistant");
-        assert!(flat(&s).contains("u Update to 0.14.0"), "{s}");
+        // R15: the row's labelled button (key u).
+        assert!(flat(&s).contains("Update to 0.14.0"), "{s}");
         assert!(flat(&s).contains("Latest 0.14.0"), "{s}");
         let s = h.shoot("apps-assistant-update");
         h.assert_fits();

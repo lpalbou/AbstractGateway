@@ -839,7 +839,7 @@ fn row_view(
                 action,
                 tip,
             } => {
-                let a = Action::label(action.unwrap_or("badge"), label.clone())
+                let a = Action::plain(action.unwrap_or("badge"), label.clone())
                     .tooltip(tip.clone().unwrap_or_default());
                 match action {
                     Some(id) => {
