@@ -12,20 +12,28 @@ How:
 - a tick coroutine on the event loop stamps `time.monotonic()` every
   `tick_s` (at most 1 s);
 - a daemon thread checks the stamp; when it is older than `limit_s` (the
-  `serve --watchdog-seconds` flag, default 30), it writes one ``[FATAL]``
-  line, the stack of the event-loop thread (the code that blocks it) and a
-  faulthandler dump of every thread to stderr — the gateway log — and calls
-  ``os._exit(WATCHDOG_EXIT_CODE)``;
-- a GIL-independent backstop: each tick re-arms
-  ``faulthandler.dump_traceback_later(limit_s + BACKSTOP_GRACE_S, exit=True)``.
-  If native code blocks the loop while HOLDING the GIL, the Python thread
-  above cannot run at all; faulthandler's C thread still dumps every stack
-  and exits (code 1).
+  `serve --watchdog-seconds` flag, default 30) it re-checks one tick later and
+  fires only if the loop made NO progress meanwhile (a tick counter, not a
+  clock delta): a laptop waking from sleep can make the monotonic clock jump
+  by minutes while the loop is perfectly alive, and that jump alone must never
+  restart the gateway (one ``[WARN]`` line says the loop resumed). When it does
+  fire it first stands the backstop down, writes the incident file, then one
+  ``[FATAL]`` line, the stack of the event-loop thread (the code that blocks
+  it) and a faulthandler dump of every thread to stderr — the gateway log —
+  and calls ``os._exit(WATCHDOG_EXIT_CODE)``;
+- a GIL-independent backstop (POSIX): a tiny separate process reads one
+  heartbeat byte per tick from a pipe. If no heartbeat came for
+  ``limit_s + BACKSTOP_GRACE_S`` it re-checks for one more heartbeat (the same
+  clock-jump rule), then asks the gateway's faulthandler to dump every thread
+  (``SIGUSR1``, handled in C, no GIL needed), records a backstop incident and
+  kills the gateway. This covers native code that blocks the loop while
+  HOLDING the GIL, when the Python thread above cannot run at all. It exits
+  when the pipe closes (the gateway stopped, exited, or its own watchdog took
+  over). Platforms without ``fork``/``pass_fds`` keep faulthandler's timer.
 
 Both exits are non-zero, which is what `KeepAlive: {SuccessfulExit: false}`
 (launchd), `Restart=on-failure` (systemd) and the root installer/supervisor
-loops act on. ``time.monotonic()`` does not advance while the machine sleeps
-(macOS and Linux), so a laptop waking up is not a stall.
+loops act on.
 
 The watchdog runs only under `abstractgateway serve` (the CLI configures it
 before the server starts); an app imported elsewhere (tests, `--reload`'s
@@ -48,6 +56,8 @@ import datetime
 import faulthandler
 import json
 import os
+import signal
+import subprocess
 import sys
 import threading
 import time
@@ -84,6 +94,15 @@ def configure(limit_s: Optional[float], *, incident_dir: Optional[Path] = None) 
 
 def configured_limit_s() -> Optional[float]:
     return _configured_limit_s
+
+
+def _dump_file(stream: Any) -> Any:
+    """A real file for faulthandler (it writes to a file descriptor)."""
+    try:
+        stream.fileno()
+        return stream
+    except Exception:
+        return sys.stderr
 
 
 def _write(stream: Any, text: str) -> None:
@@ -252,25 +271,98 @@ class InflightRequests:
 
 
 def _exit_after_stall(watchdog: "LoopWatchdog", age_s: float) -> None:
-    """Default stall action: forensics to the log (and the incident file), then a distinct exit."""
+    """Default stall action: stand the backstop down, write the incident, dump, exit 75.
+
+    Order matters: the backstop is stood down FIRST (two killers racing left an
+    exit 1 and no incident file), and the incident file is written BEFORE the
+    long stack dumps, so it exists even if writing the log is slow."""
+    watchdog.stand_down_backstop()
     stream = watchdog.stream
+    incident_path = write_incident(watchdog, age_s)
     _write(
         stream,
         f"[FATAL] gateway watchdog: the event loop has not run for {age_s:.1f}s (limit {watchdog.limit_s:g}s, "
         f"`serve --watchdog-seconds`); the gateway answers nothing while it is blocked. Dumping stacks and exiting "
         f"with code {WATCHDOG_EXIT_CODE} so the service manager restarts it.\n",
     )
+    if incident_path is not None:
+        _write(stream, f"[FATAL] gateway watchdog: incident written to {incident_path}\n")
     _write(stream, watchdog.format_loop_stack())
     try:
         _write(stream, "[FATAL] gateway watchdog: all threads (faulthandler):\n")
         faulthandler.dump_traceback(file=stream, all_threads=True)
     except Exception:
         pass
-    incident_path = write_incident(watchdog, age_s)
-    if incident_path is not None:
-        _write(stream, f"[FATAL] gateway watchdog: incident written to {incident_path}\n")
     _write(stream, f"[FATAL] gateway watchdog: exiting with code {WATCHDOG_EXIT_CODE}\n")
     os._exit(WATCHDOG_EXIT_CODE)
+
+
+# The backstop process (POSIX). Arguments: parent pid, heartbeat fd, budget s, tick s,
+# incident dir ("" = none). Standard library only; run with -I from "/".
+_BACKSTOP_CHILD = r"""
+import datetime, json, os, select, signal, sys, time
+pid, fd, budget, tick, incident_dir = int(sys.argv[1]), int(sys.argv[2]), float(sys.argv[3]), float(sys.argv[4]), sys.argv[5]
+try:
+    os.setsid()
+except Exception:
+    pass
+signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+def beat(timeout):
+    r, _, _ = select.select([fd], [], [], timeout)
+    if not r:
+        return False
+    if not os.read(fd, 4096):
+        sys.exit(0)  # the gateway closed the pipe: stopped, exited, or its own watchdog took over
+    return True
+
+last = time.monotonic()
+while True:
+    if beat(tick):
+        last = time.monotonic()
+        continue
+    if time.monotonic() - last <= budget:
+        continue
+    # Past the budget. A clock jump (the machine slept) looks the same, so wait for one
+    # more heartbeat: a live loop sends one within a tick.
+    if beat(2 * tick):
+        last = time.monotonic()
+        continue
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        sys.exit(0)
+    at = datetime.datetime.now(datetime.timezone.utc)
+    try:
+        os.kill(pid, signal.SIGUSR1)  # the gateway's faulthandler dumps every thread (C level)
+    except OSError:
+        sys.exit(0)
+    time.sleep(1.0)
+    if incident_dir:
+        try:
+            os.makedirs(incident_dir, exist_ok=True)
+            stamp = at.strftime("%Y%m%dT%H%M%SZ")
+            inc = {"schema": "abstractgateway.watchdog_incident.v1", "at": at.isoformat(timespec="seconds"), "stamp": stamp,
+                   "pid": pid, "limit_s": budget, "blocked_s": round(time.monotonic() - last, 1), "exit_code": -9,
+                   "kind": "backstop", "top_frame": None, "gateway_frame": None, "requests_in_flight": [], "loop_stack": [],
+                   "reason": "the event loop and the watchdog thread were both blocked (native code holding the interpreter lock); every thread's stack is in the gateway log",
+                   "dump_path": None}
+            path = os.path.join(incident_dir, "watchdog-" + stamp + ".json")
+            with open(path + ".tmp", "w") as fh:
+                json.dump(inc, fh, indent=2, sort_keys=True)
+            os.replace(path + ".tmp", path)
+        except Exception:
+            pass
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except OSError:
+        pass
+    sys.exit(0)
+"""
+
+
+def _backstop_process_supported() -> bool:
+    return os.name == "posix" and hasattr(signal, "SIGUSR1") and hasattr(signal, "SIGKILL")
 
 
 class LoopWatchdog:
@@ -288,17 +380,33 @@ class LoopWatchdog:
         self._backstop = bool(backstop)
         self.stream = stream if stream is not None else sys.stderr
         self._last_tick = time.monotonic()
+        # Loop progress: incremented by every tick. A hang is "no new tick", never
+        # "a large clock delta" (a wake from sleep can jump the monotonic clock).
+        self._ticks = 0
         self._loop_thread_id: Optional[int] = None
         self._stop = threading.Event()
         self._task: Optional[asyncio.Task] = None
         self._thread: Optional[threading.Thread] = None
+        self._beat_fd: Optional[int] = None
+        self._backstop_proc: Optional[subprocess.Popen] = None
+        self._faulthandler_timer = False
+        self.resumed: List[float] = []  # ages that turned out to be clock jumps with a live loop
         self.fired = False
 
     # -- event-loop side ------------------------------------------------
     async def _tick(self) -> None:
         while True:
             self._last_tick = time.monotonic()
-            if self._backstop:
+            self._ticks += 1
+            fd = self._beat_fd
+            if fd is not None:
+                try:
+                    os.write(fd, b".")
+                except (BlockingIOError, InterruptedError):
+                    pass  # the pipe is full (the backstop is behind): a beat is a beat
+                except OSError:
+                    self._beat_fd = None  # the backstop is gone
+            if self._faulthandler_timer:
                 try:
                     faulthandler.dump_traceback_later(self.limit_s + BACKSTOP_GRACE_S, exit=True, file=self.stream)
                 except Exception:
@@ -309,28 +417,94 @@ class LoopWatchdog:
         """Start from INSIDE the running event loop (lifespan startup)."""
         self._loop_thread_id = threading.get_ident()
         self._last_tick = time.monotonic()
+        if self._backstop:
+            self._start_backstop()
         self._task = asyncio.get_running_loop().create_task(self._tick(), name="gateway-loop-watchdog-tick")
         self._thread = threading.Thread(target=self._watch, name="gateway-loop-watchdog", daemon=True)
         self._thread.start()
+
+    def _start_backstop(self) -> None:
+        if not _backstop_process_supported():
+            self._faulthandler_timer = True  # no separate process here: faulthandler's own timer
+            return
+        try:
+            faulthandler.register(signal.SIGUSR1, file=_dump_file(self.stream), all_threads=True, chain=False)
+        except Exception:
+            pass
+        r, w = os.pipe()
+        try:
+            os.set_blocking(w, False)
+            self._backstop_proc = subprocess.Popen(
+                [sys.executable, "-I", "-c", _BACKSTOP_CHILD, str(os.getpid()), str(r),
+                 str(self.limit_s + BACKSTOP_GRACE_S), str(self.tick_s), str(_incident_dir or "")],
+                pass_fds=(r,), cwd="/", stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            self._beat_fd = w
+        except Exception as e:
+            os.close(w)
+            self._faulthandler_timer = True
+            _write(self.stream, f"[WARN] gateway watchdog: backstop process unavailable ({type(e).__name__}); using faulthandler's timer\n")
+        finally:
+            os.close(r)
+
+    def stand_down_backstop(self) -> None:
+        """Close the heartbeat pipe (the backstop process exits) and cancel faulthandler's timer."""
+        fd, self._beat_fd = self._beat_fd, None
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        try:
+            faulthandler.cancel_dump_traceback_later()
+        except Exception:
+            pass
+        self._faulthandler_timer = False
 
     def stop(self) -> None:
         self._stop.set()
         if self._task is not None:
             self._task.cancel()
-        if self._backstop:
+        self.stand_down_backstop()
+        proc, self._backstop_proc = self._backstop_proc, None
+        if proc is not None:
             try:
-                faulthandler.cancel_dump_traceback_later()
+                proc.wait(timeout=2)
             except Exception:
-                pass
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
 
     # -- watcher side ---------------------------------------------------
     def last_tick_age_s(self) -> float:
         return max(0.0, time.monotonic() - self._last_tick)
 
+    def check(self, wait: Optional[Callable[[float], bool]] = None) -> Optional[float]:
+        """One watcher decision. Returns the stalled age when the loop is hung, else None.
+
+        Over the limit, the watcher waits one tick and fires only when the loop made
+        no progress meanwhile; a jump of the clock with a live loop is a resume."""
+        age = self.last_tick_age_s()
+        if age <= self.limit_s:
+            return None
+        seen = self._ticks
+        if (wait or self._stop.wait)(self.tick_s):
+            return None  # stopping
+        if self._ticks != seen:
+            self.resumed.append(age)
+            _write(
+                self.stream,
+                f"[WARN] gateway watchdog: the clock jumped {age:.1f}s while the event loop kept running "
+                f"(the machine slept?); not a hang, nothing restarted\n",
+            )
+            return None
+        return self.last_tick_age_s()
+
     def _watch(self) -> None:
         while not self._stop.wait(self.tick_s):
-            age = self.last_tick_age_s()
-            if age > self.limit_s:
+            age = self.check()
+            if age is not None:
                 self.fired = True
                 self._on_stall(self, age)
                 return

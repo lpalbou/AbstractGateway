@@ -210,7 +210,8 @@ servers use the explicit configuration shown on this page: the image sets
 **A hung gateway restarts itself.** `serve` runs an event-loop watchdog: when
 the loop has not run for `--watchdog-seconds` (default 30), the gateway dumps
 every thread's stack to its log, writes an incident file and exits with code
-75. The LaunchAgent
+75. A wake from sleep is not a hang: the clock may jump, but the watchdog
+fires only when the loop made no progress across one more tick. The LaunchAgent
 (`KeepAlive` with `SuccessfulExit: false`) and the systemd unit
 (`Restart=on-failure`) restart any non-zero exit; in a container, use a
 restart policy (`restart: unless-stopped`) for the same effect. `GET

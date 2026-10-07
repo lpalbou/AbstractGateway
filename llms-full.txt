@@ -9013,7 +9013,8 @@ servers use the explicit configuration shown on this page: the image sets
 **A hung gateway restarts itself.** `serve` runs an event-loop watchdog: when
 the loop has not run for `--watchdog-seconds` (default 30), the gateway dumps
 every thread's stack to its log, writes an incident file and exits with code
-75. The LaunchAgent
+75. A wake from sleep is not a hang: the clock may jump, but the watchdog
+fires only when the loop made no progress across one more tick. The LaunchAgent
 (`KeepAlive` with `SuccessfulExit: false`) and the systemd unit
 (`Restart=on-failure`) restart any non-zero exit; in a container, use a
 restart policy (`restart: unless-stopped`) for the same effect. `GET
@@ -10062,8 +10063,18 @@ conversation continues.
   `start-local.sh` supervisor. A gateway started by hand in a terminal, or
   the Windows Run entry, is not restarted.
 - A gateway whose stall comes from native code that keeps the Python lock is
-  stopped by the second, faulthandler-based timer 15 s later (exit code 1,
-  same restart).
+  stopped by the backstop, a small separate process that watches a heartbeat
+  from the event loop: 15 s after the limit it has every thread's stack dumped
+  to the log, writes a backstop incident file and kills the gateway (same
+  restart).
+- Sleep is not a hang. Waking a computer can make the clock jump by minutes;
+  the watchdog and the backstop both check once more whether the event loop
+  is still running before acting, and a live loop only leaves the log line
+  `[WARN] gateway watchdog: the clock jumped …s while the event loop kept
+  running`. To confirm after a sleep/wake, the incident folder stays empty and
+  the gateway's process start time is unchanged:
+  `ls ~/Library/Application\ Support/AbstractGateway/incidents 2>/dev/null; ps -o lstart= -p "$(pgrep -f 'abstractgateway serve' | head -1)"`
+  (use your data folder if it is elsewhere).
 - `GET /api/health` reports `watchdog: {enabled, limit_s, last_tick_age_s}`.
 - `--watchdog-seconds 0` turns the watchdog off (a debugging session paused
   on a breakpoint); it is never active with `--reload`.
@@ -10436,6 +10447,7 @@ Requires AbstractRuntime 0.9.1, AbstractCore 2.25.1 and AbstractAgent 0.3.19 (in
 
 ### Fixed
 
+- **A gateway no longer restarts when the computer wakes from sleep.** A wake can make the monotonic clock jump by minutes while the event loop is alive; the watchdog could read that jump as a hang, and its faulthandler backstop could fire at the same moment (exit code 1, no incident file). The watchdog now fires on loop progress, not on a clock delta: over the limit it waits one more tick and acts only if the loop did not tick (a jump leaves one `[WARN] … the clock jumped …` line). The GIL-independent backstop is now a small separate process fed one heartbeat per tick, with the same re-check; it dumps every thread through faulthandler (`SIGUSR1`), writes a backstop incident file and kills the gateway only when there is no heartbeat at all. When the watchdog fires it stands the backstop down first and writes the incident file before the long stack dumps, then exits 75. A real hang still exits within the limit plus two ticks.
 - **Streamed speech never blocks the event loop and is bounded.** `POST /runs/{id}/voice/tts/stream` (`voice_stream.py`): one permit of the voice synthesis bound (`ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY`) per stream, held until its engine thread is done (also after the client left); past the bound a request waits one second, then gets 503 "Read aloud is busy: N voice syntheses are already running on this gateway …". The engine setup and the engine's events run on worker threads; the response body only awaits a bounded queue (it holds no worker thread and yields between chunks; a slow client makes the engine wait). An engine busy for more than a second (another stream, or the model using the machine) is announced with a first line `{"type": "queued", "message": "Waiting for the voice engine: …"}`. The engine's stream is closed on its own thread when the client leaves. Time to first audio is unchanged (one sentence of synthesis).
 - **Read aloud is never a wait of the run, and a restart can no longer leave one.** With AbstractRuntime 0.9.1 the stream records its child run already completed when it ends (no `WAIT_EVENT abstractcore.voice.tts.stream:<uuid>` while audio streams; the apps showed that waiting record as "Waiting for an event › Streaming voice synthesis is running."). The runner closes any such wait left by an older process at startup: the child run completes with "Read aloud was interrupted because the gateway restarted; the audio was not finished. Press Read aloud again." and the conversation goes on.
 - **One replay helper for buffered request bodies.** The security middleware and the core endpoint's internal sub-requests build their replayed `receive` through `asgi_receive.replay_body_receive` (after the body it waits on the connection, or until cancelled for a sub-request). The core endpoint's sub-requests answered "empty body" forever after the body, the same busy loop 0.13.0 fixed in the middleware. A structural test fails if any module builds its own replay.
