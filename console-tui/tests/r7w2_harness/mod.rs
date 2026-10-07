@@ -88,6 +88,10 @@ pub fn harness(size: Size) -> Harness {
     app.mount(move |cx| {
         let store = Store::create(cx);
         let ui_state = UiState::create(cx, "http://127.0.0.1:18999".to_string(), String::new());
+        // R15: the shell installs these; a page mounted alone needs them for
+        // tooltips, the focused-control line and refused presses.
+        abstractgateway_console::ui::w::tip::install(ui_state.focus_line, overlays.clone());
+        abstractgateway_console::ui::w::tip::install_notice(store.notice);
         *out.borrow_mut() = Some((store, ui_state));
         let transport: Arc<dyn ConsoleTransport> = Arc::new(NoTransport);
         let screens = ScreensCtx::new(

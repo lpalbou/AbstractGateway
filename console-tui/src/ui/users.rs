@@ -178,6 +178,17 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             ui.account_sel.set(i);
         }
     });
+    // …and the legacy index (other screens, keys) moves the keyed one.
+    cx.effect(move || {
+        let i = ui.account_sel.get();
+        let rows = visible_accounts(&store);
+        if let Some(r) = rows.get(i) {
+            let k = row_key(r);
+            if ui.acc_key.with_untracked(|cur| cur.as_deref() != Some(k.as_str())) {
+                ui.acc_key.set(Some(k));
+            }
+        }
+    });
     let keys = ctx.clone();
     let tt = *t;
     Element::new()
@@ -1047,6 +1058,7 @@ fn openai_selected(cx: Scope, ctx: &Ctx) {
                         .child(
                             super::w::Toggle::new(on)
                                 .label("OpenAI API")
+                                .autofocus(true)
                                 .on_change(move |want| {
                                     state.set(super::w::FieldState::Saving);
                                     c.send(Cmd::SetAccountOpenAi {
@@ -1057,7 +1069,6 @@ fn openai_selected(cx: Scope, ctx: &Ctx) {
                                 })
                                 .view(tcx, &t),
                         )
-                        .autofocus()
                         .build()
                 })
             };

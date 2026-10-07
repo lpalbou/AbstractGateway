@@ -98,13 +98,13 @@ fn four_columns_at_every_width_and_nothing_scrolls_sideways() {
         for col in ["Name", "Email", "Runtime", "Active"] {
             assert!(header.contains(col), "{col}:\n{s}");
         }
-        assert!(
-            !s.contains("Mailbox") && !s.contains("Email address"),
-            "{s}"
-        );
+        // One Email column (the card under the table names "Mailboxes for
+        // users"; no Mailbox/Email address column).
+        assert!(!header.contains("Mailbox") && !s.contains("Email address"), "{s}");
         assert!(s.contains("alice@example.test · connected"), "{s}");
         assert!(s.contains("No address"), "{s}");
-        assert!(!s.contains('…'), "a cell was cut:\n{s}");
+        // ("reading…" is the email card's word while it loads, not a cut.)
+        assert!(!s.replace("reading…", "").contains('…'), "a cell was cut:\n{s}");
         h.assert_fits();
     }
 }
@@ -115,25 +115,20 @@ fn the_highlighted_rows_actions_sit_in_one_line_in_the_web_order() {
         let mut h = page(size);
         select(&mut h, "alice");
         let s = h.shoot("accounts-actions-alice");
-        assert!(
-            flat(&s).contains("alice: @ Email · o OpenAI API (on) · l Logs · w Workspaces · t Rotate token · d Archive · g Runtime"),
-            "{s}"
-        );
-        // Never split inside an action.
-        assert!(
-            !s.lines()
-                .any(|l| l.trim_end_matches(['│', ' ']).ends_with(" d")),
-            "{s}"
-        );
+        // R15: each row's actions are glyph buttons in its Actions cell, in
+        // the web's order (users: Email · OpenAI API · Logs · Workspaces ·
+        // Preferences · Rotate · Archive; entities: … · Manage · Archive),
+        // the Runtime a link in its own column.
+        let row = |id: &str| -> String {
+            s.lines()
+                .find(|l| l.trim_start().starts_with(id))
+                .unwrap_or_else(|| panic!("{id}:\n{s}"))
+                .to_string()
+        };
+        assert!(row("alice").contains("@ ⇄ ≣ ◫ ⊜ ↻ ⊟"), "{s}");
+        assert!(row("castor").contains("@ ≣ ◫ ⊜ ⬖ ⊟"), "{s}");
+        assert!(row("alice").contains("alice    ━●"), "runtime link + Active:\n{s}");
         assert!(!s.contains('⋯'), "no menu:\n{s}");
-        select(&mut h, "castor");
-        let s = h.text();
-        assert!(
-            flat(&s).contains(
-                "castor: @ Email · l Logs · w Workspaces · m Manage · d Archive · g Runtime"
-            ),
-            "{s}"
-        );
     }
 }
 
@@ -217,12 +212,12 @@ fn email_for_everyone_shows_its_three_switches_directly() {
             agent_tools: true,
             recovery: false,
         }));
-        let s = h.key(b"\t");
-        h.shoot("accounts-email-for-everyone");
-        assert!(s.contains("[Email for everyone]"), "{s}");
-        assert!(s.contains("[x] Mailboxes for users"), "{s}");
-        assert!(s.contains("[x] Agent email tools for users"), "{s}");
-        assert!(s.contains("[ ] Sign-in by email"), "{s}");
+        // R15: a card under the table (no tab to switch to).
+        let s = h.shoot("accounts-email-for-everyone");
+        assert!(s.contains("Email for everyone"), "{s}");
+        assert!(s.contains("━● Mailboxes for users"), "{s}");
+        assert!(s.contains("━● Agent email tools for users"), "{s}");
+        assert!(s.contains("●─ Sign-in by email"), "{s}");
         assert!(!s.contains("Advanced"), "no Advanced:\n{s}");
         h.assert_fits();
     }

@@ -231,6 +231,28 @@ pub fn button(
         });
     } else {
         el = el.access_value(|| "disabled".into());
+        // A refused action still takes the focus (its reason must be
+        // reachable from the keyboard: the tooltip + status bar show it)
+        // and a press says the reason instead of doing anything.
+        if tab_stop {
+            el = el.focusable();
+        }
+        let why = a.enabled.clone().err().unwrap_or_default();
+        el = el.on(Phase::Bubble, move |ctx, ev| {
+            let pressed = match ev {
+                UiEvent::Key(k) => {
+                    (k.key == Key::Enter || k.key == Key::Char(' '))
+                        && k.mods.0 == 0
+                        && focused.get_untracked()
+                }
+                UiEvent::Mouse(m) => matches!(m.kind, MouseKind::Down(MouseButton::Left)),
+                _ => false,
+            };
+            if pressed {
+                ctx.stop_propagation();
+                super::tip::say(&why);
+            }
+        });
     }
     let el = el.child(dyn_view(LayoutStyle::fill(), move || {
         let (h, f, p) = (hovered.get(), focused.get(), pressed.get());

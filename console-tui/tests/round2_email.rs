@@ -29,14 +29,15 @@ fn other_user_email_is_address_only_with_an_inline_save() {
         s.contains("Where alice's sign-in codes and notifications go."),
         "{s}"
     );
+    // The web's sentence (wrapped inside the modal).
     assert!(
-        s.contains(
-            "Not connected — only alice can connect a mailbox. You never see anyone's mail."
-        ),
+        s.contains("Mailbox: not connected — only alice can connect a mailbox.")
+            && s.contains("anyone's mail."),
         "{s}"
     );
+    let inner = r2email::inside_modal(&s);
     for banned in ["Password", "Incoming mail", " Connect "] {
-        assert!(!s.contains(banned), "{banned:?} (no mailbox form):\n{s}");
+        assert!(!inner.contains(banned), "{banned:?} (no mailbox form):\n{s}");
     }
     let _ = h.sent();
     h.key(b"\x1b[F");

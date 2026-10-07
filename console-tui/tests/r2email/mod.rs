@@ -87,6 +87,10 @@ pub fn harness(size: Size) -> Harness {
     app.mount(move |cx| {
         let store = Store::create(cx);
         let ui_state = UiState::create(cx, "http://127.0.0.1:18999".to_string(), String::new());
+        // R15: the shell installs these; a page mounted alone needs them for
+        // tooltips, the focused-control line and refused presses.
+        abstractgateway_console::ui::w::tip::install(ui_state.focus_line, overlays.clone());
+        abstractgateway_console::ui::w::tip::install_notice(store.notice);
         *out.borrow_mut() = Some((store, ui_state));
         let transport: Arc<dyn ConsoleTransport> = Arc::new(NoTransport);
         let screens = ScreensCtx::new(
@@ -214,4 +218,36 @@ impl Harness {
     pub fn sent(&mut self) -> Vec<Cmd> {
         self._rx.try_iter().collect()
     }
+}
+
+/// R15: a form modal is a centred box over the page — the text inside
+/// the outermost box when one is open (the page shows beside it).
+pub fn inside_modal(s: &str) -> String {
+    let lines: Vec<Vec<char>> = s.lines().map(|l| l.chars().collect()).collect();
+    let mut best: Option<(usize, usize, usize)> = None;
+    for (y, l) in lines.iter().enumerate() {
+        if let (Some(x0), Some(x1)) = (
+            l.iter().position(|c| *c == '╭'),
+            l.iter().rposition(|c| *c == '╮'),
+        ) {
+            let w = x1.saturating_sub(x0);
+            if w > 20
+                && best.map(|(_, a, b)| w > b - a).unwrap_or(true)
+                && l.get(x0 + 1) == Some(&'─')
+            {
+                best = Some((y, x0, x1));
+            }
+        }
+    }
+    let Some((top, x0, x1)) = best else {
+        return s.to_string();
+    };
+    let mut out = Vec::new();
+    for l in lines.iter().skip(top + 1) {
+        if l.get(x0) == Some(&'╰') {
+            break;
+        }
+        out.push(l.iter().skip(x0 + 1).take(x1 - x0 - 1).collect::<String>());
+    }
+    out.join("\n")
 }

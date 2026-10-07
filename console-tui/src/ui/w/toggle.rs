@@ -118,10 +118,11 @@ impl Toggle {
         Some(out)
     }
 
-    /// Cells it takes on one line (the longest the tail can be).
+    /// Cells it takes on one line.
     pub fn width(&self) -> i32 {
         let refused = self.allowed.clone().err();
-        2 + Self::tail(&self.label, &refused, true)
+        // The saving note is not reserved (it is transient; it truncates).
+        2 + Self::tail(&self.label, &refused, false)
             .map(|l| 1 + abstracttui::text::width(&l))
             .unwrap_or(0)
     }
