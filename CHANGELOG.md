@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Local pages in `browser_probe` stay inside the run's workspaces** (AbstractCore 2.25.1, AbstractRuntime 0.9.1). A local page is served to the headless browser from a private loopback origin limited to the files the run may read, never as `file://`, so a page in an allowed workspace can no longer show a refused folder's files through `<img src="file:///…">`, `../` links or symlinks; refused loads are listed in the report. Docs: security ("Browser probe").
 - **Linux command sandbox: nested workspaces** (AbstractCore 2.25.1). An allowed workspace inside a refused folder is now reachable under bubblewrap too (it failed closed before); see security ("Command sandbox").
 
+### Fixed
+
+- **Upgrading from 0.9.x no longer drops a user's allowed folders** (round 14, D1). The 0.13.0 workspace migration filtered the old allowed folders by a guessed root (the folder the gateway was started in, usually your home folder) and then kept no row for it: folders under it vanished from Accounts → Workspaces and the API, without being listed as dropped (access was not lost, since the posture allows everything not refused). The migration no longer uses the guess. A store 0.13.0 already migrated is repaired once at the next start from the old block it kept (`_migrated.workspace_policy_v1.old`): the lost rows come back (a path already listed keeps its mode), recorded under `_migrated.workspace_policy_v1_repair` and in the audit log (scope `migration_repair`).
+
 ### Terminal console
 
 - `abstractgateway-console` (unreleased): workspaces on Accounts like the web console (`E` Eligible workspaces,

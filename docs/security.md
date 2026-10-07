@@ -652,7 +652,20 @@ beyond the new ceiling:
   workspaces and every account's allowed folders become read & write rows; an
   account that did not have a folder another account had gets a refused row for
   it; old refused folders become refused rows (gateway's or the account's);
-  launch folders trusted under the old model are not added.
+  launch folders trusted under the old model are not added. When no root was
+  configured, nothing counts as "already reachable": every old folder becomes a
+  row (the old runtime's guess, the folder the gateway was started in, is never
+  used).
+- Repair of a store migrated by gateway 0.13.0, `_migrated.workspace_policy_v1_repair`:
+  0.13.0 filtered the old folders by that guess (usually your home folder) and
+  then kept no row for it, so folders under it disappeared from the list (access
+  was not lost: the posture allows everything not refused). Once, at serve start
+  or the first read, the gateway recomputes the old migration from
+  `_migrated.workspace_policy_v1.old` and adds the rows it lost (gateway rows,
+  and the accounts' refused rows); a path the policy already lists keeps its
+  current mode, other rows are untouched. The restored rows are recorded there
+  and in the audit log (`workspace_policy_changed`, scope `migration_repair`);
+  it never runs twice.
 
 Missing folders are dropped and listed in the settings store under
 `_migrated.workspace_policy_v1` / `_v2`, next to the old blocks. The old runtime-config

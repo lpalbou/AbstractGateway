@@ -194,10 +194,16 @@ def in_own_plane(path: Path, data_dir: Path, *, tenant_id: str, user_id: str) ->
     return _under(path, plane) and _under_any(path, others) is None
 
 
-def _previous_effective_shared_workspace() -> str:
-    """What a gateway before round 9 used when nothing was stored (the legacy env, else the runtime's
-    repo-root guess). Used ONLY by the pre-round-9 migration (v1)."""
-    return str(_store_mod()._workspace_root_fallback())
+def _configured_root(stored: Dict[str, Any]) -> str:
+    """The old workspace root the migration KEEPS: the stored ``workspace_root``, else the legacy
+    env (ABSTRACTGATEWAY_WORKSPACE_DIR / _ROOT), else "" (none). Never the old runtime's guess (the
+    process cwd / a repo root): 0.13.0 filtered the old folders by that guess and then kept no row
+    for it, so every folder under it vanished (round 14, D1)."""
+    root = str(stored.get("workspace_root") or "").strip() or next(
+        (str(os.getenv(n)).strip() for n in ("ABSTRACTGATEWAY_WORKSPACE_DIR", "ABSTRACTGATEWAY_WORKSPACE_ROOT") if str(os.getenv(n) or "").strip()),
+        "",
+    )
+    return str(_real(Path(root))) if root else ""
 
 
 def _check_folder(raw: Any, *, what: str) -> str:
@@ -392,9 +398,9 @@ def migrate_store(stored: Dict[str, Any], *, accounts: Iterable[str] = ()) -> Di
     dropped: List[str] = []
     old_block = {k: stored[k] for k in LEGACY_STORE_KEYS if k in stored}
 
-    root_payload = rc._workspace_root_payload(stored)
-    shared = str(root_payload.get("value") or "").strip() or _previous_effective_shared_workspace()
-    shared = str(_real(Path(shared)))
+    # The root the migration keeps (it becomes a listed rw row in v2), or "" when none was
+    # configured: then nothing counts as "already reachable" and every old folder becomes a row.
+    shared = _configured_root(stored)
 
     raw_mounts = stored.get("workspace_mounts")
     if isinstance(raw_mounts, list):
@@ -421,7 +427,7 @@ def migrate_store(stored: Dict[str, Any], *, accounts: Iterable[str] = ()) -> Di
     gateway_never = _existing_dirs(_as_list(stored.get("workspace_blocked_paths")), dropped)
     gateway_never_kept: List[str] = []
     for p in gateway_never:
-        if _under(Path(shared), Path(p)):
+        if shared and _under(Path(shared), Path(p)):
             dropped.append(p)  # a deny containing the shared workspace cannot stay (shared always in)
         else:
             gateway_never_kept.append(p)
@@ -430,8 +436,8 @@ def migrate_store(stored: Dict[str, Any], *, accounts: Iterable[str] = ()) -> Di
     def _not_denied(paths: List[str]) -> List[str]:
         kept = []
         for p in paths:
-            if p == shared or _under(Path(p), Path(shared)):
-                continue  # already reachable: the shared workspace
+            if shared and (p == shared or _under(Path(p), Path(shared))):
+                continue  # already reachable: the kept root is a listed rw row
             if _under_any(Path(p), deny_paths) is not None:
                 dropped.append(p)
                 continue
@@ -470,7 +476,7 @@ def migrate_store(stored: Dict[str, Any], *, accounts: Iterable[str] = ()) -> Di
                 narrowed.append(key)
     for key in sorted(per_user_never):
         for p in per_user_never[key]:
-            if p == shared or _under(Path(shared), Path(p)):
+            if shared and (p == shared or _under(Path(shared), Path(p))):
                 dropped.append(p)
                 continue
             if not any(r["path"] == p for r in account_rows.setdefault(key, [])):
@@ -611,7 +617,7 @@ def ensure_migrated(data_dir: Path) -> bool:
     # folder becomes one listed read & write workspace, once; the env is ignored afterwards).
     legacy = POLICY_KEY not in stored and (_legacy_present(stored) or _legacy_root_env())
     if not legacy and not _is_v1_policy(stored):
-        return False
+        return repair_dropped_v1_folders(data_dir)
     with rc.store_lock(data_dir):
         stored = rc._read_store(data_dir, strict=True)
         legacy = POLICY_KEY not in stored and (_legacy_present(stored) or _legacy_root_env())
@@ -619,20 +625,122 @@ def ensure_migrated(data_dir: Path) -> bool:
             return False
         new = stored
         if legacy:
-            root = str(stored.get("workspace_root") or "").strip() or next(
-                (str(os.getenv(n)).strip() for n in ("ABSTRACTGATEWAY_WORKSPACE_DIR", "ABSTRACTGATEWAY_WORKSPACE_ROOT") if str(os.getenv(n) or "").strip()),
-                "",
-            )
+            # The configured old root (stored or env) becomes the listed rw row (v2); nothing
+            # configured = no root at all (never the cwd guess), so every old folder is a row.
             new = migrate_store(new, accounts=_registry_accounts(data_dir))
-            # The configured old root becomes the listed rw row (v2); nothing configured = no
-            # guessed folder becomes a row.
-            new[POLICY_KEY]["shared_workspace"] = str(_real(Path(root))) if root else ""
         new = migrate_store_v2(new)
+        # Migrated by a gateway that no longer drops folders (no guessed root; a round-9 v1 kept its
+        # root as a row): nothing for the 0.13.0 repair to restore, so it never runs on this store.
+        migrated = dict(new.get("_migrated") or {})
+        migrated[REPAIR_MARKER] = {"at": _now(), "restored": [], "restored_accounts": {}, "note": "migrated by a gateway without the guessed-root drop"}
+        new["_migrated"] = migrated
         new["_last_changed_by"] = "system:workspace_policy_migration"
         new["_last_changed_at"] = _now()
         rc._write_store(data_dir, new)
     audit_policy_change("migration", actor="system:workspace_policy_migration", changed=[MIGRATION_MARKER_V2])
     return True
+
+
+# ---------------------------------------------------------------- repair (round 14, D1)
+
+REPAIR_MARKER = "workspace_policy_v1_repair"
+
+
+def dropped_by_guessed_root(stored: Dict[str, Any], *, accounts: Iterable[str] = ()) -> Tuple[List[Dict[str, str]], Dict[str, List[Dict[str, str]]]]:
+    """Pure: the rows a 0.13.0 migration lost to the guessed root, from the store's own records —
+    the fixed v1 migration of ``_migrated.workspace_policy_v1.old`` minus the v1 policy that
+    migration actually produced (``_migrated.workspace_policy_v2.old``), turned into v2 rows
+    (gateway rows keep their mode as the cap; account rows keep ro/deny, the v2 rule). Admin edits
+    made since never matter: both sides come from the records, not from the live policy."""
+    migrated = stored.get("_migrated") if isinstance(stored.get("_migrated"), dict) else {}
+    v1 = migrated.get(MIGRATION_MARKER) if isinstance(migrated.get(MIGRATION_MARKER), dict) else None
+    v2 = migrated.get(MIGRATION_MARKER_V2) if isinstance(migrated.get(MIGRATION_MARKER_V2), dict) else None
+    if not v1 or not v2 or not isinstance(v1.get("old"), dict) or not isinstance(v2.get("old"), dict):
+        return [], {}
+    fixed = migrate_store(dict(v1["old"]), accounts=accounts)
+    produced = v2["old"]
+    had = {r["path"] for r in _rows((produced.get(POLICY_KEY) or {}).get("folders"))}
+    shared = str((produced.get(POLICY_KEY) or {}).get("shared_workspace") or "").strip()
+    shared_real = str(_real(Path(shared))) if shared else ""
+    if shared_real:
+        had.add(shared_real)
+
+    def covered(path: str) -> bool:
+        # A round-9 migration KEPT its root (a listed rw row since v2): what sat under it was not lost.
+        return bool(shared_real) and _under(Path(path), Path(shared_real)) and path != shared_real
+
+    lost = [r for r in _rows(fixed[POLICY_KEY].get("folders")) if r["path"] not in had and not (r["mode"] != "deny" and covered(r["path"])) and Path(r["path"]).is_dir()]
+    produced_accounts = produced.get(ACCOUNTS_KEY) if isinstance(produced.get(ACCOUNTS_KEY), dict) else {}
+    lost_accounts: Dict[str, List[Dict[str, str]]] = {}
+    for key, entry in sorted((fixed.get(ACCOUNTS_KEY) or {}).items()):
+        before = {r["path"] for r in _rows((produced_accounts.get(key) or {}).get("folders"))}
+        rows = [r for r in _rows((entry or {}).get("folders")) if r["mode"] in ("ro", "deny") and r["path"] not in before and Path(r["path"]).is_dir()]
+        if rows:
+            lost_accounts[key] = rows
+    return lost, lost_accounts
+
+
+def repair_dropped_v1_folders(data_dir: Path) -> bool:
+    """ONE-TIME repair of a store migrated by gateway 0.13.0 (round 14, D1): the old folders that
+    sat under the guessed workspace root were dropped from the policy without being recorded.
+    They are restored from ``_migrated.workspace_policy_v1.old`` as listed rows (a path the policy
+    already lists keeps its current mode), the repair is recorded under
+    ``_migrated.workspace_policy_v1_repair`` (so it never runs twice) and audited. True when it
+    restored something."""
+    rc = _store_mod()
+    data_dir = Path(data_dir)
+    stored = rc._read_store(data_dir)
+    migrated = stored.get("_migrated") if isinstance(stored.get("_migrated"), dict) else {}
+    if REPAIR_MARKER in migrated or MIGRATION_MARKER not in migrated or MIGRATION_MARKER_V2 not in migrated:
+        return False
+    with rc.store_lock(data_dir):
+        stored = rc._read_store(data_dir, strict=True)
+        migrated = dict(stored.get("_migrated") or {}) if isinstance(stored.get("_migrated"), dict) else {}
+        if REPAIR_MARKER in migrated or MIGRATION_MARKER not in migrated or MIGRATION_MARKER_V2 not in migrated:
+            return False
+        lost, lost_accounts = dropped_by_guessed_root(stored, accounts=_registry_accounts(data_dir))
+        policy = dict(stored.get(POLICY_KEY) or {}) if isinstance(stored.get(POLICY_KEY), dict) else {}
+        folders = _rows(policy.get("folders"))
+        restored: List[Dict[str, str]] = []
+        for row in lost:
+            if not any(r["path"] == row["path"] for r in folders):
+                folders.append(dict(row))
+                restored.append(dict(row))
+        if restored:
+            policy["folders"] = folders
+            policy.setdefault("posture", "any_except_denied")
+            policy.setdefault("default_mode", "rw")
+            stored[POLICY_KEY] = policy
+        accounts = dict(stored.get(ACCOUNTS_KEY) or {}) if isinstance(stored.get(ACCOUNTS_KEY), dict) else {}
+        restored_accounts: Dict[str, List[Dict[str, str]]] = {}
+        for key, rows in lost_accounts.items():
+            layer = stored_layer(accounts.get(key)) or {
+                "posture": policy.get("posture") or "any_except_denied",
+                "default_mode": policy.get("default_mode") or "rw",
+                "folders": [],
+            }
+            have = _rows(layer.get("folders"))
+            added = [dict(r) for r in rows if not any(h["path"] == r["path"] for h in have)]
+            if added:
+                layer = dict(layer, folders=have + added)
+                accounts[key] = layer
+                restored_accounts[key] = added
+        if restored_accounts:
+            stored[ACCOUNTS_KEY] = accounts
+        migrated[REPAIR_MARKER] = {"at": _now(), "restored": restored, "restored_accounts": restored_accounts}
+        stored["_migrated"] = migrated
+        stored["_last_changed_by"] = "system:workspace_policy_repair"
+        stored["_last_changed_at"] = _now()
+        rc._write_store(data_dir, stored)
+    changed = bool(restored or restored_accounts)
+    audit_policy_change(
+        "migration_repair",
+        actor="system:workspace_policy_repair",
+        changed=[REPAIR_MARKER],
+        restored=[r["path"] for r in restored],
+        restored_accounts={k: [r["path"] for r in v] for k, v in restored_accounts.items()},
+    )
+    return changed
 
 
 # ---------------------------------------------------------------- reads
