@@ -63,10 +63,10 @@ def preference_edit_problem(principal: Any, tenant: str, user: str) -> Optional[
         created_by = gw._entity_creator(user)
         if isinstance(created_by, dict) and same_account(principal, created_by):
             return None
-        return f"Only an admin or {user}'s creator can change its preferences."
+        return f"Only an admin or {user}'s creator can read or change its preferences."
     if tenant == str(principal.tenant_id or "default") and user == str(principal.user_id or ""):
         return None
-    return "Only an admin or the account itself can change its preferences."
+    return "Only an admin or the account itself can read or change its preferences."
 
 
 def _target(request: Request, account: str) -> Tuple[Any, str, str, bool]:

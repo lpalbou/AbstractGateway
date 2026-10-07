@@ -6369,8 +6369,8 @@ override them for itself.
 
 `{account}` is `me` (the caller), `name`, `tenant:name` or an entity's slug. Who: anyone for their
 own; an admin for any account; an entity's preferences by an admin or the entity's creator. Anyone
-else gets 403 with "Only an admin or the account itself can change its preferences." (an entity:
-"Only an admin or <entity>'s creator can change its preferences."). An account that does not exist
+else gets 403 with "Only an admin or the account itself can read or change its preferences." (an entity:
+"Only an admin or <entity>'s creator can read or change its preferences."). An account that does not exist
 answers 404. A gateway older than 0.13.1 has no such route (404 Not Found); the Assistant and
 AbstractCode then keep their own choice as before.
 

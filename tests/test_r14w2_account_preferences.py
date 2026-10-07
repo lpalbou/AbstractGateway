@@ -179,7 +179,7 @@ def test_authz_self_admin_and_entity_creator(gw):
     for method in ("get", "put"):
         r = getattr(c, method)("/api/gateway/accounts/alice/preferences", headers=gw["bob"], **({"json": {"default_workflow": {}}} if method == "put" else {}))
         assert r.status_code == 403, r.text
-        assert r.json()["detail"]["message"] == "Only an admin or the account itself can change its preferences."
+        assert r.json()["detail"]["message"] == "Only an admin or the account itself can read or change its preferences."
     # An admin reads and writes anyone's, among the gateway's shared workflows.
     a = _get(c, ADMIN, "default:alice")
     assert a["account"] == "default:alice" and a["can_edit"] is True
@@ -201,7 +201,7 @@ def test_authz_self_admin_and_entity_creator(gw):
     assert r.status_code == 400 and "not among the workflows aster may run" in r.json()["detail"]["message"], r.text
     assert _row(_get(c, ADMIN, "aster"), ASSIST)["value"] == "helper:agent"
     r = c.get("/api/gateway/accounts/aster/preferences", headers=gw["bob"])
-    assert r.status_code == 403 and r.json()["detail"]["message"] == "Only an admin or aster's creator can change its preferences."
+    assert r.status_code == 403 and r.json()["detail"]["message"] == "Only an admin or aster's creator can read or change its preferences."
     # Unknown account.
     assert c.get("/api/gateway/accounts/nobody/preferences", headers=ADMIN).status_code == 404
     # The admin's own (`me`) works too.
