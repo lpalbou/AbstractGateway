@@ -1171,15 +1171,20 @@ fn chooser_body(cx: Scope, ctx: &Ctx, target: &Target, st: St, width: i32) -> Vi
             let it = Item::Row(r.path.clone());
             // The path, wrapped, with its remove button (editable rows).
             let mut head = Element::new().style(LayoutStyle::row().shrink(0.0));
-            head = head.child(indent(
-                sentence(
-                    &t,
-                    &r.path,
-                    width - 8,
-                    if r.builtin { t.text_muted } else { t.text },
-                ),
-                2,
-            ));
+            head = head.child(
+                Element::new()
+                    .style(LayoutStyle::column().width(Dimension::Cells(width - 6)).shrink(0.0))
+                    .child(indent(
+                        sentence(
+                            &t,
+                            &r.path,
+                            width - 8,
+                            if r.builtin { t.text_muted } else { t.text },
+                        ),
+                        2,
+                    ))
+                    .build(),
+            );
             if r.editable && editable_level && !r.builtin {
                 let c = ctx.clone();
                 let tgt = target.clone();
@@ -1188,9 +1193,7 @@ fn chooser_body(cx: Scope, ctx: &Ctx, target: &Target, st: St, width: i32) -> Vi
                 let a = super::w::Action::glyph("archive", T::REMOVE)
                     .tooltip(format!("{} {}", T::REMOVE, r.path))
                     .danger();
-                head = head
-                    .child(Element::new().style(LayoutStyle::default().grow(1.0)).build())
-                    .child(super::w::action::button(
+                head = head.child(super::w::action::button(
                         cx,
                         &t,
                         &a,

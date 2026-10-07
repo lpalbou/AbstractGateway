@@ -244,6 +244,31 @@ impl Harness {
         let click = format!("\x1b[<0;{};{}M\x1b[<0;{};{}m", x, row + 1, x, row + 1);
         self.key(click.as_bytes())
     }
+    /// Click `needle` on the first line at or below the first line that
+    /// contains `anchor` (a row's control under its label: a path, then its
+    /// "Permission:" segments).
+    pub fn click_after(&mut self, anchor: &str, needle: &str) -> String {
+        let screen = self.turns(1);
+        let lines: Vec<&str> = screen.lines().collect();
+        let start = lines
+            .iter()
+            .position(|l| l.contains(anchor))
+            .unwrap_or_else(|| panic!("{anchor:?} not on screen:\n{screen}"));
+        let (row, col) = lines
+            .iter()
+            .enumerate()
+            .skip(start)
+            .find_map(|(i, l)| l.find(needle).map(|c| (i, l[..c].chars().count())))
+            .unwrap_or_else(|| panic!("{needle:?} not at/below {anchor:?}:\n{screen}"));
+        let click = format!(
+            "\x1b[<0;{};{}M\x1b[<0;{};{}m",
+            col + 2,
+            row + 1,
+            col + 2,
+            row + 1
+        );
+        self.key(click.as_bytes())
+    }
     /// Type text (each char a key press).
     pub fn type_text(&mut self, text: &str) -> String {
         self.term.push_input(text.as_bytes());

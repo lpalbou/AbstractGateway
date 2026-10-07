@@ -249,11 +249,17 @@ pub fn open(cx: Scope, ctx: &Ctx, row: AccountRow) {
             let close2 = close.clone();
             Element::new()
                 .style(LayoutStyle::column().grow(1.0))
-                .child(dyn_view_scoped(
-                    LayoutStyle::column().shrink(0.0),
-                    move |gcx| body(gcx, &c2, &slot2, &wk2, &p2, &id2, st, w),
-                ))
-                .child(Element::new().style(LayoutStyle::default().grow(1.0)).build())
+                // The rows scroll (a short terminal never crushes a Select).
+                .child(
+                    abstracttui::widgets::Scroll::new(dyn_view_scoped(
+                        LayoutStyle::column().shrink(0.0),
+                        move |gcx| body(gcx, &c2, &slot2, &wk2, &p2, &id2, st, w),
+                    ))
+                    .axes(false, true)
+                    .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))
+                    .scrollbar_auto_hide(true)
+                    .view(mcx),
+                )
                 .child(super::w::form::button_row(vec![super::w::action::button(
                     mcx,
                     &t,
@@ -303,7 +309,7 @@ fn body(
         .unwrap_or(10)
         .min(width / 2);
     let mut col = Element::new().style(LayoutStyle::column().shrink(0.0));
-    for app in prefs.apps.iter() {
+    for (ai, app) in prefs.apps.iter().enumerate() {
         let opts = app.options();
         let cur = opts.iter().position(|(v, _)| *v == app.value).unwrap_or(0);
         let chosen = cx.signal(cur);
@@ -312,7 +318,7 @@ fn body(
             let app2 = app.clone();
             let opts2 = opts.clone();
             let (wk, path) = (wk.to_string(), path.to_string());
-            abstracttui::app::select::Select::new(
+            let el = abstracttui::app::select::Select::new(
                 opts.iter()
                     .map(|(_, l)| abstracttui::app::select::SelectOption::new(l.clone()))
                     .collect(),
@@ -338,7 +344,9 @@ fn body(
                     journal: false,
                 }));
             })
-            .view(cx)
+            .element(cx, &t);
+            // The first Select takes the keyboard when the modal opens.
+            if ai == 0 { el.autofocus() } else { el }.build()
         } else {
             sentence(&t, &app.current_label(), width - label_w, t.text)
         };

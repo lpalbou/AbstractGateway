@@ -340,6 +340,10 @@ fn sandbox_state(ctx: &Ctx, t: &TokenSet) -> View {
                     None,
                 ));
             c = c.child(super::w::tip::with_tip(scx, line_el, sentence.clone()).build());
+            // The web's tooltip, also as a muted line: keyboard users read it.
+            if !sentence.is_empty() {
+                c = c.child(super::w::form::sentence(&tt, &sentence, w, tt.text_faint));
+            }
         }
         c.build()
     })
@@ -572,8 +576,15 @@ pub fn row_actions(r: &AccountRow, admin: bool) -> Vec<Action> {
             .refused(r.refusal("workspace")),
     );
     let prefs_why = match &r.preferences_action {
-        None => Some("This gateway does not offer account preferences yet.".to_string()),
-        Some(a) if !a.available => a.reason.clone().or(Some("Not available here.".into())),
+        None => Some(
+            "this gateway does not offer per-account preferences (GET /accounts/{id}/preferences needs a newer gateway)"
+                .to_string(),
+        ),
+        Some(a) if !a.available => Some(
+            a.reason
+                .clone()
+                .unwrap_or_else(|| format!("Preferences are not available for {n}.")),
+        ),
         _ => None,
     };
     out.push(
