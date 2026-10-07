@@ -6,7 +6,7 @@ wrapped the probe's long explanation into a ten-line cell. This test seeds the
 operator's kind of routes (long model ids, a faster-whisper voice input whose
 weights ARE cached, remote-free media routes, one provider nobody knows) on a
 hermetic scratch gateway and asserts, at 1440 / 1280 / 834 px in light and
-dark (tests/browser/r14w7_multimodal.mjs):
+dark, plus 1680 px, the width of the operator's review (tests/browser/r14w7_multimodal.mjs):
 
   * no route pill's box intersects its row's capability text, and the pill
     stays inside its own cell;

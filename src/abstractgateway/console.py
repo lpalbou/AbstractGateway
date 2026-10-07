@@ -1230,14 +1230,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .capability-table th, .capability-table td { padding: 8px 5px; }
 	    /* 16 characters at 1440 px and below, then every extra pixel of
 	       viewport goes to the model id, up to the console's 38ch cap. */
-	    .capability-table td .ui-ellip { max-width: clamp(16ch, calc(16ch + 100vw - 1440px), 38ch); }
+	    .capability-table td .ui-ellip { max-width: clamp(16ch, calc(16ch + (100vw - 1440px) * 0.8), 38ch); }
 	    .capability-table td.capability-name-cell { min-width: 5.5rem; }
 	    .capability-table td.capability-route-cell code { font-size: var(--font-size-sm); }
 	    /* A real table cell (a flex <td> leaves the column grid and its box no
 	       longer matches its column): icons in one row, a read-only note wraps. */
 	    .capability-table td.actions { display: table-cell; white-space: nowrap; }
 	    .capability-table td.actions > * + * { margin-left: 4px; }
-	    .capability-table td.actions > .muted { white-space: normal; display: inline-block; max-width: 9rem; vertical-align: middle; }
+	    .capability-table td.actions > .muted { white-space: normal; display: block; margin: 0 0 4px; }
+	    .capability-table td.actions > .muted + * { margin-left: 0; }
 	    /* Source is a provenance note, not a state: muted words that wrap
 	       ("Not configured" on two lines), not a badge that holds the column wide. */
 	    .capability-table .capability-source { color: var(--text-secondary); font-size: var(--font-size-sm); }

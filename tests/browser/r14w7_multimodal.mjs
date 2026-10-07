@@ -4,7 +4,7 @@
 //
 //   node r14w7_multimodal.mjs <base-url> <admin-token> <playwright-node-modules> [shots-dir]
 //
-// At 1440 / 1280 / 834 px, light and dark:
+// At 1680 (the operator's review width) / 1440 / 1280 / 834 px, light and dark:
 //   - in EVERY row the route pill's box and the capability text's box do not
 //     intersect, and the pill stays inside its own cell (table layout);
 //   - the Weights cell is one pill + one short sentence (<= 3 text lines), its
@@ -88,7 +88,7 @@ function measure() {
 const browser = await chromium.launch({ headless: true });
 try {
   for (const theme of ["light", "dark"]) {
-    for (const width of [1440, 1280, 834]) {
+    for (const width of [1680, 1440, 1280, 834]) {
       const { ctx, page } = await open(browser, theme, width);
       const m = await page.evaluate(measure);
       metrics.push({ theme, width, stacked: m.stacked, rows: m.rows.length, maxWeightsHeight: Math.max(...m.rows.map((x) => x.weightsHeight)) });
@@ -96,6 +96,7 @@ try {
       check(m.rows.length >= 20, `${at} grid rendered every route`, m.rows.length);
       check(!m.hscroll, `${at} no horizontal page scroll`);
       if (width === 834) check(m.stacked, `${at} narrow width shows the card layout`);
+      if (width >= 1280) check(!m.stacked, `${at} wide widths keep the table`);
       for (const row of m.rows) {
         check(!row.overlap, `${at} ${row.route}: route pill does not overlap the capability text`, row.capText);
         check(!row.pillOutside, `${at} ${row.route}: route pill stays inside its cell`);
@@ -120,7 +121,10 @@ try {
         // The kit tooltip actually shows on hover with the detail lines.
         const pill = page.locator("#defaults-table > tr", { has: page.locator("code", { hasText: /^input\.voice$/ }) }).locator(".weights-pill");
         await pill.scrollIntoViewIfNeeded();
+        // Another row's tooltip (shown where the pointer last rested) can sit over this pill:
+        // move away and let it close first (the kit hides it 100 ms after the pointer leaves).
         await page.mouse.move(0, 0);
+        await page.waitForTimeout(400);
         await pill.hover();
         // More than one binder may own a tooltip node (the console's and the React islands'): read the visible one.
         const visibleTip = () => { const t = [...document.querySelectorAll(".af-tooltip")].find((x) => !x.hidden && getComputedStyle(x).visibility !== "hidden" && x.textContent.includes("Where:")); return t ? t.textContent : null; };
