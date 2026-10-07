@@ -57,6 +57,9 @@ struct TipState {
     gen: u64,
     layer: Option<LayerHandle>,
     focused: bool,
+    /// A press just landed here: the focus it brings is the mouse's (the
+    /// tooltip is for keyboard focus and hover, not for a click).
+    pressed: bool,
 }
 
 impl TipState {
@@ -78,6 +81,7 @@ pub fn with_tip(cx: Scope, el: Element, text: String) -> Element {
         gen: 0,
         layer: None,
         focused: false,
+        pressed: false,
     }));
     {
         let state = state.clone();
@@ -108,6 +112,9 @@ pub fn with_tip(cx: Scope, el: Element, text: String) -> Element {
             let mut s = st_press.borrow_mut();
             s.gen += 1;
             s.hide();
+            if matches!(ev, UiEvent::Mouse(_)) {
+                s.pressed = true;
+            }
         }
     });
     el.on(Phase::Bubble, move |ctx, ev| match ev {
@@ -141,7 +148,9 @@ pub fn with_tip(cx: Scope, el: Element, text: String) -> Element {
             s.focused = true;
             s.gen += 1;
             s.hide();
-            s.layer = show(anchor, &text);
+            if !std::mem::take(&mut s.pressed) {
+                s.layer = show(anchor, &text);
+            }
             if let Some(f) = focus_line() {
                 f.set(Some(text.clone()));
             }

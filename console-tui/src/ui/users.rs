@@ -234,7 +234,9 @@ fn page_w(cx: Scope) -> i32 {
 /// (admins: Eligible workspaces · Show archived · Create user · Create
 /// entity; everyone: Create entity). Wraps the buttons under the title
 /// on a narrow page.
-fn head(_cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
+fn head(pcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
+    // Actions open on the PAGE scope (pcx): a region re-render must never
+    // dispose a modal or prompt one of its buttons opened.
     let ctx = ctx.clone();
     let tt = *t;
     dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |hcx| {
@@ -262,7 +264,7 @@ fn head(_cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             let wd = a.width();
             push(
                 button(hcx, &tt, &a, On::Page, true, move || {
-                    eligible_workspaces(hcx, &c)
+                    eligible_workspaces(pcx, &c)
                 }),
                 wd,
                 &mut buttons,
@@ -283,7 +285,7 @@ fn head(_cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             let wd = a.width();
             push(
                 button(hcx, &tt, &a, On::Page, true, move || {
-                    open_user_form(hcx, &c, None)
+                    open_user_form(pcx, &c, None)
                 }),
                 wd,
                 &mut buttons,
@@ -297,7 +299,7 @@ fn head(_cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         push(
             button(hcx, &tt, &a, On::Page, true, move || {
                 if c.store.conn.with_untracked(ConnPhase::is_connected) {
-                    super::entity_create::open_summon_form(hcx, &c);
+                    super::entity_create::open_summon_form(pcx, &c);
                 }
             }),
             wd,
@@ -399,7 +401,8 @@ fn sandbox_state(ctx: &Ctx, t: &TokenSet) -> View {
 fn table_region(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let ctx = ctx.clone();
     let tt = *t;
-    let _ = cx;
+    // Row actions open on the PAGE scope (cx), never this region's: an
+    // accounts reload re-renders the table while a modal it opened is up.
     dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |gcx| {
         let store = ctx.store;
         let ui = ctx.ui;
@@ -430,7 +433,7 @@ fn table_region(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             Col::new("Name", ColW::Fit { min: 8, max: 24 }),
             Col::new("Email", ColW::Flex { weight: 1, min: 14 }),
             Col::new("Runtime", ColW::Fit { min: 7, max: 16 }),
-            Col::new("Active", ColW::Cells(6)),
+            Col::new("Active", ColW::Fit { min: 6, max: 8 }),
             Col::new("Actions", ColW::Fit { min: 6, max: 30 }),
         ];
         let table_rows: Vec<WRow> = rows
@@ -457,16 +460,16 @@ fn table_region(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             .empty("No accounts yet.")
             .autofocus()
             .on_focus(move || {})
-            .on_action(move |key, id| row_action(gcx, &ctx_a, key, id))
+            .on_action(move |key, id| row_action(cx, &ctx_a, key, id))
             .on_toggle(move |key, _id, want| {
                 select_key(&ctx_t, key);
-                switch_active(gcx, &ctx_t, want);
+                switch_active(cx, &ctx_t, want);
             })
-            .on_activate(move |key| row_action(gcx, &ctx_e, key, "email"))
+            .on_activate(move |key| row_action(cx, &ctx_e, key, "email"))
             .on_space(move |key| {
                 select_key(&ctx_s, key);
                 if let Some(r) = selected_account(&ctx_s) {
-                    switch_active(gcx, &ctx_s, !r.active);
+                    switch_active(cx, &ctx_s, !r.active);
                 }
             })
             .view(gcx, &tt)

@@ -237,7 +237,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let ctx_body = ctx.clone();
     root.child(dyn_view_scoped(
         LayoutStyle::column().shrink(0.0),
-        move |hcx| apps_head(hcx, &ctx_head, &tt),
+        move |hcx| apps_head(hcx, cx, &ctx_head, &tt),
     ))
     .child(dyn_view_scoped(
         LayoutStyle::default().grow(1.0),
@@ -254,7 +254,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     .build()
             };
             match &data {
-                Loadable::Ready(d) => ready_view(gcx, &ctx_body, &tt, d, admin),
+                Loadable::Ready(d) => ready_view(gcx, cx, &ctx_body, &tt, d, admin),
                 // The web's "This gateway cannot manage apps right now":
                 // the honest failure kind, never a guessed list.
                 Loadable::Failed(e) => anchor(
@@ -299,7 +299,7 @@ fn check_again(ctx: &Ctx) {
 pub const APPS_SUBTITLE: &str = "Install and open the apps that work with this gateway";
 
 /// Title + subtitle, then [Check again] and the Apps settings gear (admins).
-fn apps_head(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
+fn apps_head(cx: Scope, pcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let admin = ctx.store.conn.with(is_admin);
     let w = (crate::ui::page_viewport(cx).get().w - 2).max(20);
     let c = ctx.clone();
@@ -315,7 +315,7 @@ fn apps_head(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         bw += gear.width() + 1;
         let c = ctx.clone();
         buttons.push(button(cx, t, &gear, On::Page, true, move || {
-            super::app_settings::open(cx, &c, super::app_settings::Which::Apps)
+            super::app_settings::open(pcx, &c, super::app_settings::Which::Apps)
         }));
     }
     let mut btn_row = Element::new().style(
@@ -359,7 +359,16 @@ fn apps_head(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     }
 }
 
-fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &AppsOverview, admin: bool) -> View {
+/// `pcx`: the page scope — actions open their modals/prompts there (this
+/// region re-renders on every selection move and job tick).
+fn ready_view(
+    cx: Scope,
+    pcx: Scope,
+    ctx: &Ctx,
+    t: &TokenSet,
+    d: &AppsOverview,
+    admin: bool,
+) -> View {
     let apps = ctx.store.apps;
     // Tracked: job progress and notes re-render the panel.
     let jobs = apps.jobs.get();
@@ -396,6 +405,7 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &AppsOverview, admin: bool)
     }
     let node = node_view(
         cx,
+        pcx,
         ctx,
         t,
         width,
@@ -420,7 +430,7 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &AppsOverview, admin: bool)
             )
             .build();
     }
-    col = col.child(apps_table(cx, ctx, t, d, admin, &job_of));
+    col = col.child(apps_table(cx, pcx, ctx, t, d, admin, &job_of));
     let mut below = Element::new()
         .style(LayoutStyle::column().gap(0))
         .child(line(vec![span(String::new(), t.text)]));
@@ -568,8 +578,10 @@ pub fn app_actions(
     out
 }
 
+#[allow(clippy::too_many_arguments)]
 fn apps_table(
     cx: Scope,
+    pcx: Scope,
     ctx: &Ctx,
     t: &TokenSet,
     d: &AppsOverview,
@@ -643,10 +655,10 @@ fn apps_table(
     .max_rows((vp.h - 10).clamp(4, 20))
     .top(ctx.ui.apps_top)
     .autofocus()
-    .on_action(move |key, id| app_action(cx, &ctx_a, key, id))
+    .on_action(move |key, id| app_action(pcx, &ctx_a, key, id))
     .on_activate(move |key| {
         select_app(&ctx_e, key);
-        run_key(cx, &ctx_e, None)
+        run_key(pcx, &ctx_e, None)
     })
     .view(cx, t)
 }
@@ -705,6 +717,7 @@ fn card_settings_key(cx: Scope, ctx: &Ctx) {
 #[allow(clippy::too_many_arguments)]
 fn node_view(
     cx: Scope,
+    pcx: Scope,
     ctx: &Ctx,
     t: &TokenSet,
     width: usize,
@@ -768,7 +781,7 @@ fn node_view(
                             bottom: 0,
                         }),
                 )
-                .child(button(cx, t, &a, On::Page, true, move || node_key(cx, &c)))
+                .child(button(cx, t, &a, On::Page, true, move || node_key(pcx, &c)))
                 .build(),
         );
     } else if !n.available {
@@ -817,7 +830,7 @@ fn node_view(
                             bottom: 0,
                         }),
                 )
-                .child(button(cx, t, &a, On::Page, true, move || node_key(cx, &c)))
+                .child(button(cx, t, &a, On::Page, true, move || node_key(pcx, &c)))
                 .build(),
         );
         if let Some(w) = why {
