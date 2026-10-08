@@ -44,7 +44,7 @@ The sidebar groups the tabs in four sections, in this order:
 | Models | **Multimodal** | capability route defaults, the text reasoning effort, the MTP (speculative decoding) default, and model weights per route |
 | System | **Resources** | memory and GPU meters, resident models (warm up, lock, unload), session prompt caches, and the **Gateway** card (pause, update, restart, desktop icon, start at login, last restart after a hang) |
 | System | **Sandbox** | quick chat and media generation against the configured defaults |
-| System | **Network** | who can reach the gateway (localhost only, local network, internet), its addresses (with the Tailscale name when Tailscale runs), *Reached through another address?* (Tailscale, a reverse proxy: detected addresses are accepted automatically), and *Advanced*: manual allowed origins and *Trust proxies on other machines* ([configuration.md](./configuration.md#network-exposure-localhost--local-network--internet)) |
+| System | **Network** | who can reach the gateway (localhost only, local network, internet), its addresses (with the Tailscale name when Tailscale runs), *Reached through another address?* (Tailscale, a reverse proxy: detected addresses are accepted automatically; manual allowed origins and *Trust proxies on other machines* are in the same card) ([configuration.md](./configuration.md#network-exposure-localhost--local-network--internet)) |
 
 Below the groups, at the bottom of the sidebar, **Setup** (administrators)
 runs the setup guide again: engines, default models, apps, network. It keeps
@@ -695,274 +695,391 @@ screen says where it went (or why none was sent); **Use code** gives the console
 a new token, shown once to copy (the old one stops working). A new code can be
 requested after 30 seconds.
 
+### Using the terminal console
+
+The console works with the mouse and with the keyboard alike: everything you
+can click has a key, and everything you can do from the keyboard has a control
+you can click.
+
+- **Navigation.** On a terminal of 120 columns and 32 rows or more, a grouped
+  rail on the left lists the screens in the web console's sidebar order; on a
+  smaller terminal, a one-row tab strip with `‹` `›` takes its place. Click a
+  screen, press its key (below) or use `←` / `→` (previous and next screen,
+  wrapping) from anywhere outside a text field.
+- **Header.** The title shows the mode (browse or wizard). Signed in, the
+  memory and compute line (`Mem 18.2 GiB / 64.0 GiB (28%) · GPU 3% · 1 model`,
+  `Mem 28% · …` when narrow) opens **H Resources**, your identity opens
+  **1 Connection**, **✦ Docs** opens the docs assistant and ☾ / ☼ switches the
+  theme (on terminals narrower than 90 columns, the theme switch sits at the
+  right end of the status bar).
+- **Buttons.** Row actions are buttons in the web console's order: glyph
+  buttons where the web shows icons (for example `@` Email, `⇄` OpenAI API,
+  `≣` Logs, `◫` Workspaces, `⊜` Preferences, `↻` Rotate, `⊟` Archive), labelled
+  buttons where the web shows labels. Hovering a button, or reaching it with
+  `Tab`, shows its tooltip (the web's sentence and its key), and the status
+  bar names the focused control. An action that cannot apply stays visible
+  and faint; clicking it says why.
+- **Tables.** Click a row to select it; `↑` / `↓`, PgUp / PgDn and Home / End
+  move the selection, `Enter` runs the row's first action, and the wheel
+  scrolls a long table. The selected row's buttons are reachable with `Tab`.
+- **Switches** read `━●` on and `●─` off next to their feature's name; a click
+  or Space switches them, and they apply at once. **Choices** are segmented
+  rows of options (one click each, one `Tab` stop per option) or pickers that
+  open a list.
+- **Dialogs** have a title with `✕` and edit several settings at once, with
+  the web console's apply model: rows that apply on their own say "Saving…",
+  "Saved" or the gateway's sentence followed by "Not saved."; forms with a
+  **Save** button save together. Closing a dialog with unsaved edits (Close,
+  `✕` or `Esc`) asks **Discard changes?** with [Discard] [Keep editing].
+- **Confirmations** show the web's question and two buttons named after what
+  they do, for example [Rotate] [Cancel]. A destructive question opens with
+  the focus on Cancel, so `Enter` keeps things as they are; `Esc` and Cancel
+  also keep them. A long question scrolls and its buttons stay on screen.
+- **Results.** A verified change shows a short message in the corner; a
+  refusal stays next to the control, in the gateway's words.
+- **Themes.** `--theme gateway-dark` (default) or `--theme gateway-light`,
+  built from the web console's palettes; ☾ / ☼ or `Ctrl+T` switches between
+  them.
+- **Keys.** `?` lists every key of the current screen, each next to the
+  control it presses. Screens: **1** Connection, **2** Accounts,
+  **3** Workflows, **4** Skills & MCP, **5** Runtimes, **6** Apps,
+  **7** Providers, **8** OpenAI API, **9** Models, **0** Multimodal,
+  **H** Resources, **T** Sandbox, **N** Network, **S** Setup, **I** About
+  (`W` opens Accounts). Also `Tab` / `Shift+Tab` focus, `Enter` press,
+  `Esc` close or back (in a text field, the first `Esc` releases it),
+  `Ctrl+N` / `Ctrl+P` next and previous step, `Ctrl+G` setup guide, `F1`
+  About, `F2` docs assistant, `F3` gateway host panel, `r` refresh, `Ctrl+L`
+  repaint, `q` / `Ctrl+C` quit. In a text field, `←` / `→` move the caret
+  and the screen stays; in the setup guide, `Ctrl+N` walks the steps.
+
 ### Setup guide and browse mode
-
-The console lists its pages in the web console's sidebar order, each with a
-fixed key. **1** Connection (the terminal's sign-in) comes first, then the
-groups: ACCOUNTS **2** Accounts; WORK **3** Workflows, **4** Skills & MCP,
-**5** Runtimes, **6** Apps; MODELS **7** Providers, **8** OpenAI API, **9**
-Models, **0** Multimodal; SYSTEM **H** Resources, **T** Sandbox, **N**
-Network; then **S** Setup and **I** About. A line above the tabs names the
-groups and their keys. The local engines live on Providers, as on the web.
-There is no Workspaces page: workspaces are set from Accounts, as on the web,
-and `W` opens Accounts.
-
-Signed in, the title bar shows the web top bar's memory and compute line in
-place of the gateway address: `Mem 18.2 GiB / 64.0 GiB (28%) · GPU 3% · 1
-model` (`Mem 28% · …` on a narrow terminal). It reads the same `GET
-/host/state` snapshot as **H Resources** every 5 seconds (on Resources, that
-page's own refresh updates it); a figure the gateway does not report reads
-`—`, and a failed refresh keeps the last values, dimmed. The address stays on
-Connection, Network and About.
 
 - **Setup guide.** For an admin whose first run is not completed, the console
   opens the setup guide: Connection → Setup → Providers (local engines, then
   cloud keys) → Multimodal → Models → Apps → Sandbox, the same steps as the web
-  console's first-run guide. Multimodal shows the recommended models for this
-  computer with fit warnings (`a` applies them, `D` downloads all of them as
-  one job, `C` cancels, `p` shows the plan). Sandbox ends with **Finish** or
-  **Skip setup**, recorded on the gateway, and a **Start at login** switch. No
-  step is gated except signing in.
+  console's first-run guide. No step is gated except signing in.
 - **Browse mode** (free tabs) opens otherwise. `--wizard` and `--browse` choose
   the mode at launch.
-- **`Ctrl+G`** reopens the guide from browse mode; inside the guide it opens
-  the guide menu: go to any step, leave for now, or skip setup.
-- **S Setup** shows this computer at a glance (memory, graphics, data folder,
-  sign-in mode, whether the gateway starts at login, the first-run state) and
-  **Recommended for this computer**: each recommended route with its status,
-  the engine and model that run it and any fit or engine warning, the text
-  model in use, `a` **Use recommended defaults** (keeps the routes you chose,
-  then offers **Replace mine too** inline) and `D` **Download all** (asks
-  first). Both are admin-only.
 
 ### Screens and panels
 
-- **Multimodal** flags a route this computer cannot run (for example an MLX image
-  route on Linux) with the reason, and a route whose engine is not installed
-  ("engine missing", with the install command), like the web console. A model
-  that is not on this computer reads "not downloaded — w: download"; `w` asks
-  first, naming the model and its size, and the row updates by itself when the
-  download finishes. The voice picker says why a provider lists no voices (for
-  example "Supertonic is not installed … Install it with: …", or "OpenAI:
-  needs an API key (add it under Providers)"). The transcription row names the
-  route's engine and model, and says "Engine missing" only with the reason.
-- **N Network** shows who can reach the gateway: the **saved** exposure
-  (localhost only, local network, internet) next to what is **running now**,
-  and every address to copy (`c`). `(•)` marks the saved mode; move the cursor
-  and press `Enter` to save another (internet asks for an acknowledgement
-  first). When the saved mode needs a restart that can apply it, the console
-  offers the restart, reconnects when the gateway is back and reads the network
-  again. When a restart cannot apply it, the gateway's reason is shown. The
-  Connection screen keeps a one-line summary.
-- **T Sandbox** holds the session's change journal and the sandbox: every
-  output mode (text, image, voice, music, sound effects, video), file
-  attachments and speak-this-reply.
-- **2 Accounts** is the web console's Accounts page: one table of users and
-  entities with the columns **Name** (and kind: Admin, User or Entity),
-  **Email** (the address and the mailbox state, for example
-  `alice@example.com · connected`, or "No address"), **Runtime** and **Active**
-  (`[x]` on, `[ ]` off, `[-]` when it can't be switched here, "Archived"). Long
-  cells wrap onto more lines; nothing scrolls sideways. The line under the table
-  lists the selected row's actions with their keys, in the web console's order;
-  `Enter` on a row shows the reason of every action that can't apply.
-  **Show archived** (`h`, admin) lists archived accounts with Logs and
-  Unarchive. Keys on the selected row: Space switches Active (deactivating a
-  user or suspending an entity asks first, inline under the table), `@` email
-  (your own row: your email settings, below; another user: their email address
-  and a read-only mailbox line; an entity: the entity's own mailbox form), `o`
-  OpenAI API (admin, user rows: one switch), `l` logs ("Activity — <id>", `f` /
-  `F` change the filter: All, Sign-ins, Runs, Automations, Email; `o` opens a
-  run in Observer), `w` **Workspaces** of that account (below), `p`
-  **Preferences** (below), `t` rotate token,
-  `m` manage (entities), `d` archive (asks inline) or unarchive, `g` opens
-  **Runtimes** filtered to that account. Also `a` create user, `e`
-  edit user, `n` create entity, `c` talk with an entity, `i` inspect, `s` spark
-  templates, `v` retained runtimes (transfer one to a user; data is never deleted) and `x` reset an old per-user
-  mailbox override. **Email for everyone** (admin) is the page's second tab
-  (`Tab`): the three switches **Mailboxes for users**, **Agent email tools for
-  users** and **Sign-in by email**, each applied at once. Someone who is not an administrator
-  sees their own row and the entities they created. Under the header, every
-  signed-in user sees the command sandbox state line (for example **Commands
-  sandboxed: macOS sandbox-exec**) with its explanation below it.
+- **1 Connection** is the terminal's sign-in. Type the **Gateway address** and
+  your **Token**, then press **Sign in** (`Enter`). **Show** / **Hide** reveals
+  the token. Once you are connected, the button reads **Re-probe** (`r`), and
+  **Network** (`N`) beside the one-line network summary opens the Network page.
+  When sign-in fails, the screen says whether no token was sent or the token was
+  rejected. When the gateway offers sign-in by email, the link **Forgot your
+  token? Email me a sign-in code** sends an 8-digit code to the account's email
+  address and says where it went (or why none was sent). Type the code under
+  **Code from the email**: **Use code** stays unavailable until it has 8 digits.
+  **Send a new code** works again after 30 seconds, and **Back to token**
+  returns to the token field. The new token is shown once, with **Copy** and
+  **Done**; the old token stops working.
+
+- **2 Accounts** is the web console's Accounts page. The head has
+  **Eligible workspaces** (`E`, admins), the **Show archived** switch (`h`,
+  admins: archived accounts with ≣ Logs and ⤒ Unarchive), **Create user**
+  (`a`) and **Create entity** (`n`). Under it, every signed-in user sees the
+  command sandbox state line (for example **Commands sandboxed: macOS
+  sandbox-exec**) with its explanation. The table has the columns **Name**
+  (and kind: Admin, User or Entity), **Email** (the address and the mailbox
+  state, for example `alice@example.com · connected`, or "No address"),
+  **Runtime** (a link that opens **5 Runtimes** filtered to that account; `g`),
+  **Active** (a switch; Space: deactivating a user or suspending an entity asks
+  first, and your own row says why it can't) and **Actions**: `@` Email, `⇄`
+  OpenAI API (`o`, admin, user rows), `≣` Logs (`l`), `◫` Workspaces (`w`),
+  `⊜` Preferences (`p`), `⬖` Manage (`m`, entities), `↻` Rotate token (`t`,
+  admin) and `⊟` Archive (`d`) or `⤒` Unarchive. Rotate and Archive ask the
+  web's question ([Rotate] [Cancel], [Archive] [Cancel]). **Logs** opens
+  **Activity — <id>** with the filter [All] [Sign-ins] [Runs] [Automations]
+  [Email] and **Open in Observer** for a run. Also: `e` edit user, `c` talk
+  with an entity, `i` inspect, `s` spark templates, `v` **Retained runtimes**
+  (transfer one to a user; the data is never deleted) and `x` reset an old
+  per-user mailbox override. **Email for everyone** (admin) is a card under
+  the table with the three switches **Mailboxes for users**, **Agent email
+  tools for users** and **Sign-in by email**, each applied at once. Someone who
+  is not an administrator sees their own row and the entities they created.
+- **Email** (`@`): on your own row, **Email — <you>** with your **Email
+  address**, your **Mailbox** ([IMAP] [Google] [Microsoft]; the IMAP pane
+  shows the incoming and outgoing servers, filled in as soon as the address has
+  a domain), once connected the mailbox's **Active** switch, Test and
+  Disconnect, the **Job failed** and **Approval needed** notifications with
+  **Send a test**, the **Agent email tools** switch and **Recipients and
+  limits** (recipient rules, send limits, folder) — see [email.md](./email.md).
+  On another user's row, their **Email address** with **Save** ("Saved:
+  <id>'s codes and notifications go to <address>.") and a read-only mailbox
+  line; on an entity's row, the entity's own mailbox form.
 - **Workspaces** are the web console's two dialogs ([Workspaces](#workspaces)),
-  with the same words. `E` (admins; the header's **E Eligible workspaces**)
-  opens **Eligible workspaces**: the posture (**Deny everything, allow listed
-  workspaces** or **Allow everything, refuse listed workspaces**), **Everything
-  else** under the second posture, the listed workspaces under **Allowed
-  workspaces** and **Refused workspaces** with their mode (**Read & write**,
-  **Read-only** or **Refused**, the most an account can get there), the
-  gateway's built-in refusals listed as fixed rows, **Add a workspace path**,
-  and the gateway's summary line at the bottom. `w` on any Accounts row (users,
-  entities and your own) opens **Workspaces — <id>**: the line "Gateway: …" on
-  top, **Follow the gateway policy**, then the same posture and rows for that
-  account. A mode above the gateway's limit is marked `×` with the reason under
-  the row ("The gateway allows this workspace read-only"); choosing it sends
-  nothing. Keys: `↑`/`↓` choose a line, `←`/`→` change the posture or a mode,
-  Space switches **Follow the gateway policy**, `Enter` on **Add a workspace
-  path** opens the field (`Enter` adds, `Esc` cancels), `x` removes a row. Each
-  change is saved at once; the line says **Saved**, or the gateway's sentence
-  followed by "Not saved." On **5 Runtimes**, `w` opens **Eligible
-  workspaces** from the default runtime and the owner's workspaces from a user
-  or entity runtime.
-- **Preferences** (`p` on an Accounts row; users and entities) opens
-  **Preferences — <id>**: the workflow each app runs for that account. Each app
-  shows its current choice; `Enter` lists **Gateway default (<name>)** first,
-  then every workflow the gateway offers for that app, and `Enter` picks one
-  and saves it at once ("Saved.", or "Not saved." with the gateway's reason).
-  A gateway older than this route has no Preferences on its rows, and `p` says
-  so.
-- **Your email settings** (`@` on your own row): your **Email address**, your
-  **Mailbox** (tabs **IMAP**, the default, **Google** and **Microsoft**; the
-  IMAP pane shows the incoming and outgoing servers, filled in as soon as the
-  address has a domain and replaced by what discovery finds unless you edited
-  them; `Ctrl+O` shows a Login field for providers that use a different login
-  name; with an email address already saved the pane reads "Mailbox account:
-  x@y" and `Ctrl+U` uses a different account; one **Connect**), once connected
-  the mailbox's **Active** switch, Test and Disconnect, the **Job failed** and
-  **Approval needed** notifications with **Send a test** (its answer is a
-  sentence, for example "Not sent: hourly limit reached (100 of 100 this hour)
-  — resets at 14:05."), the **Agent email tools** switch and **Recipients and limits**
-  (recipient rules, send limits, folder) — see [email.md](./email.md).
-- **3 Workflows** is the web console's Workflows page, with three tabs
-  (`Tab`). **Workflows** groups the bundles under **Shared with everyone** and
-  **Mine**: name and id, what it does, version (+N older), source, the apps that
-  use it and, for an admin, **Available to users**. `/` searches, `t` Drafts,
-  `o` Older versions and `h` Show archived switch what is listed; with Older
-  versions on, each older version is its own row with its own actions. The line
-  under the table lists the selected row's actions: `x` exports that version as
-  a `.flow` file on this machine, `f` opens it in AbstractFlow, `d` archives
-  (it asks first; workflows are never deleted) or unarchives, `e` edits the
-  description in place (shown when the gateway lets you: your own workflows,
-  or the gateway's as an admin; `Enter` saves, `Esc` keeps, empty returns to
-  the file's own description), Space switches **Available to users** (admin,
-  shared workflows), and `i` imports `.flow` files from this machine. **Default workflow per app** (admin only) lists each app and
-  what it runs; `Enter` picks a workflow and saves it at once, `o` shows
-  **Other workflow types**, `s` switches **Streamed replies**. **Broken
-  workflows** appears when the gateway could not load some versions, with the
-  reason; `d` archives them.
-- **4 Skills & MCP** is the web console's page of the same name, with two tabs
-  (`Tab`). **Skills**: the shelf (name, what it does, version, trust, source);
-  `/` searches, `h` Show archived, `v` opens a skill (an imported one can be
-  edited and saved, a curated one duplicated to edit), `x` exports it as a
-  `.zip` on this machine, `i` imports a `.zip` or a skill folder from this
-  machine, `d` archives an imported skill or unarchives. One row under the list
-  shows the shelf folder: `f` edits it in place (`Enter` saves, `Esc` keeps,
-  empty = the gateway's own copy) and `u` runs **Refresh curated shelf**.
-  **MCP servers**: each
-  server's transport, status and tools; Space switches **Enabled for agents**
-  (turning it on asks first; it needs a successful test), `a` adds and `e`
-  edits a server (a command or a URL with headers, **Test connection**,
-  **Save**), `t` tests it, `d` archives or unarchives. Writes are admin-only.
-- **5 Runtimes** shows the web console's run table (Run, Workflow, Status,
-  Node, Session, Updated) as wrapping rows: `Enter` opens a run's details in
-  place, `t` switches **Root runs only**, `c` cancels a run (it asks first,
-  inline) and `s` steers it. The data planes, Artifacts, Cache and Logs are
-  wrapping tables with the web page's column names. Opened from an account
-  (`g` on Accounts), the page lists that account's runtimes with the chip
-  `[Account: <id> ×]`; `x` lists every runtime again.
-- **6 Apps** is the web console's Apps tab: open browser apps signed in,
-  install or update them, start and stop them, the desktop Assistant and
-  Node.js. The status badge is the start/stop control as on the web card: the
-  status cell of the selected row is selectable (→ moves onto it and shows
-  `[Running]`, ← back to the row), Enter or Space on it — or `s` anywhere —
-  stops a running app and starts a stopped one (the Assistant: quits the one
-  the gateway opened, opens a stopped one), with no confirmation, like the
-  web's one click. The card's hint line says the web tooltip ("s Running —
-  click to stop"); an app started outside the gateway, or a user who is not an
-  admin, cannot move onto the badge: the hint line and the notice say why
-  ("Started outside the gateway — stop it where it was started", "Only an
-  admin can start or stop apps"). `u` updates the selected app, the Assistant included, with the
-  gateway's label ("Update to 0.14.0") and its tooltip as the confirmation; an
-  app started outside the gateway shows "Latest x.y.z · Started outside the
-  gateway — update it where it was installed" and `u` only says so
-  ([Updates](./apps.md#updates)). `a` opens **Apps settings** (Node.js for apps, ports, npm registry,
-  Node.js download index); `g` on the Continuum card opens its settings
-  (backlog folder, backlog exec runner, process manager). Each row applies on
-  its own and says "Saved" beside it; empty returns to the default (the
-  gateway's own folder for the backlog). Over SSH, or on a machine without a display, **Open** never starts
-  a browser: it shows the one-time link to copy (`y`) and the `ssh -L` port
-  forwards that make it work from your own computer.
-- **F2** opens the docs assistant (questions answered from the gateway's own
-  documentation; signed in).
-- **F3** opens the gateway host panel: the **Workflows paused** switch, restart,
-  quit, check for and install updates (the same answer and the same update as
-  the web console and the tray: an AbstractFramework installer install runs the
-  installer, see [tray.md](./tray.md#restart-and-update)), the tray, and
-  **start at login** (`L`,
-  confirmed, then read back). After a watchdog restart it shows the web
-  Gateway card's **last restart** row, "Gateway restarted at <time> after a
-  hang — <reason>", with the stack dump's path, how long the gateway was
-  blocked and where, and the incident file (admins). The panel scrolls when
-  the terminal is too short. A banner shows on every screen while workflows
-  are paused.
-- **I About** (also `F1`, or `?` outside a text field, as an overlay) shows the
-  same card as the web console's About: this console's name and version, the
-  AbstractFramework and AbstractGateway versions from `GET /api/gateway/about`,
-  the links (Website, Source, Docs, Issues, Feedback, Contact) and the licence
-  line. `abstractgateway-console --about --gateway-url <gateway>` prints the
-  same text without opening the interface.
+  with the same words. **Eligible workspaces** (admins) has the posture
+  (**Deny everything, allow listed workspaces** or **Allow everything, refuse
+  listed workspaces**), **Everything else** under the second posture, the
+  listed workspaces under **Allowed workspaces** and **Refused workspaces**,
+  each with its mode (**Read & write**, **Read-only** or **Refused**) and a
+  ⊟ remove button, the gateway's built-in refusals as fixed rows, **Add a
+  workspace path** with **Add**, and the gateway's summary line. `◫` on any
+  Accounts row opens **Workspaces — <id>**: the line "Gateway: …", the
+  **Follow the gateway policy** switch, then the same posture and rows for that
+  account. A mode above the gateway's limit is unavailable, with the reason
+  under the row ("The gateway allows this workspace read-only"). Each change is
+  saved at once: **Saved**, or the gateway's sentence followed by "Not saved."
+- **Preferences** (`⊜` on an Accounts row) opens **Preferences — <id>**: a
+  picker per app, listing **Gateway default (<name>)** first and then every
+  workflow the gateway offers for that app; a pick saves at once ("Saved.", or
+  "Not saved." with the gateway's reason). A gateway older than this route has
+  no Preferences on its rows, and the button says so.
 
-Every on/off setting is a switch: `[x] Feature` on (highlighted), `[ ] Feature`
-off, `[-] Feature — reason` when it can't be used here. `Space` (or `Enter`)
-switches the focused one; it applies at once and the status line names the new
-state.
+- **3 Workflows** is one page, as on the web. The head has **↻** (`r`, "Reload
+  the workflow list") and **Import .flow** (`i`). Under it are the search field
+  ("Search by name, description or id", `/` says where it is) and the switches
+  **Drafts** (`t`), **Older versions** (`o`) and **Show archived** (`h`). The
+  table groups the bundles under **Shared with everyone** and **Mine**. Its
+  columns are Name, What it does, Version, Source, Used by and, for an admin,
+  **Available to users** (a switch; Space). On a narrow terminal, what it does,
+  the source and the users go on a second line. Each row's glyph buttons, with
+  the web's tooltips, are ⤓ Export (`x`, writes the `.flow` on this machine and
+  says where), ⇗ Open in AbstractFlow (`f`), ⊟ Archive / ⤒ Unarchive (`d`) and
+  ✎ Edit description (`e`). With **Older versions** on, every older version is
+  its own row with its own buttons. Archive asks the web's question with
+  [Archive] [Cancel]; workflows are never deleted. **Description of <name>** is
+  a dialog with **Save** and **Close**: empty returns to the file's own
+  description, and closing with an unsaved edit asks "Discard changes?"
+  ([Discard] [Keep editing]). Below the table, **Default workflow per app**
+  (admin) has a picker for each app that saves at once. Further down are
+  **Other workflow types** and **Settings** with the **Streamed replies**
+  switch. **⚠ Broken workflows** lists versions the gateway could not load,
+  with the reason and an **Archive** button.
 
-Keys: `Tab` focus, `Enter` activate, `Ctrl+N` / `Ctrl+P` next and previous
-step, `Esc` back (in a text field, the first `Esc` releases it so screen keys
-work again), `1`-`9`, `0`, `H`, `T`, `N`, `S` and `I` screens (`W` opens
-Accounts), `r` refresh,
-`q` quit. Each screen lists its own actions in the key-hint bar at the bottom,
-which wraps onto a second line rather than cutting a verb.
+- **4 Skills & MCP** has **[Skills] [MCP servers]** in its head (`[` / `]`
+  switch them).
+  - **Skills:** the search field, **Show archived** (`h`), **Import .zip**
+    (`i`) and **Import folder**, and the **Shelf folder** row. Edit the folder
+    in place: `Enter` saves, `Esc` keeps the saved one, and empty means the
+    gateway's own copy. **Refresh curated shelf** (`u`) is on the same row. The
+    table's columns are Name, What it does, Version, Trust and Source. Each row
+    has **View** (`v`, also `Enter`), **Export** (`x`, a `.zip` on this
+    machine) and, for an imported skill, **Archive** / **Unarchive** (`d`).
+    **Skill — <name>** is a dialog: an imported skill has **Save**, a curated
+    one **Duplicate to edit**, an archived one **Unarchive**, plus **Close**.
+    An unsaved edit asks "Discard changes?".
+  - **MCP servers:** **Show archived** and **Add server** (`a`). Each row shows
+    the transport, the status, the tools and the **Enabled for agents** switch
+    (Space). Turning it on asks "Offer its N tools to your agents? …" with
+    [Turn on] [Cancel], and needs a successful test first. Each row has **Edit**
+    (`e`, also `Enter`), **Test** (`t`) and **Archive** / **Unarchive** (`d`).
+    The server dialog has Name, Description, the Agents switch, **How to reach
+    it** [Command] [URL] (command, working folder and arguments, or the URL with
+    headers, **Add header** / **Remove**), then **Test connection**, **Save**
+    and **Close**, with the same "Discard changes?" guard.
+  - Writes are admin-only.
 
-`←` / `→` switch to the previous and next screen, wrapping from the last screen
-to the first and back, like `Ctrl+P` / `Ctrl+N` in browse mode. The arrows keep
-their own meaning wherever the focused element uses them: a text field moves its
-caret, a choice list (radio buttons) or a tabs bar (the Runtimes inspector, the
-Resources Loaded/Caches tabs) changes its selection, the screen bar moves
-between screens, a focused scrolling text pane scrolls, and an open dialog keeps
-every key. Press `Esc` in a text field, or `Tab` away from the widget, and the
-arrows switch screens again. In the setup guide the arrows do not jump
-screens; `Ctrl+N` walks the guide.
+- **5 Runtimes** (admins) has the head **Retained runtimes** and **↻** (`r`,
+  "Reload the runtime list"), the web's note, and the table Runtime, Kind,
+  Owner, State, Size and Workspace.
+  - **Opening a runtime:** a click on a row opens it (or `↑`/`↓` then
+    `Enter`). The Workspace cell's link (**Eligible workspaces** on the default
+    runtime, **Workspaces** on a one-owner user or entity runtime; `w`) opens
+    the Workspaces dialog. Opened from an account (`g` on Accounts), the head
+    shows **Account: <id> ×** (`x` lists every runtime again).
+  - **The open runtime:** **▷ Runtime <id>** has the segments **Runs** |
+    **Artifacts** | **Cache** | **Logs** and its own **↻**. Nothing below the
+    table loads until you open a runtime, and each tab loads on first look.
+  - **Runs (the default runtime):** the status dropdown (`f`), the search field
+    (`Enter` searches) and the **root runs only** switch (`t`). The columns are
+    Run, Workflow, Status, Node, Session, Updated, with **Inspect** (`i`) and,
+    on a live run, **Steer** (`s`) and **Cancel** (`c`). **‹ Prev** / **Next ›**
+    (`p` / `n`) page through the runs. **Inspect** opens the run's rows in a
+    dialog. **Steer run** takes guidance: [Send guidance] [Cancel], and closing
+    with typed guidance asks "Discard changes?". **Cancel** asks "Cancel run
+    <id>? Any in-flight work stops at the next tick." with [Cancel run]
+    [Cancel]. Any other runtime is a read-only view with the web's note and no
+    buttons.
+  - **Artifacts and Logs:** a dropdown and a search field over their tables.
+    The name opens the preview, or the log tail (`o`). The log dialog has
+    **Show** [last 64 KB | last 256 KB | last 1 MB], **↻** and **Close**.
+  - **Cache:** the disposable caches with **× Purge…** (`P`), plus **Stale
+    registrations** with **× Forget** and **× Forget all stale** (`F`). Purge
+    runs the dry run first, then asks "Purge <name>? This deletes the CONTENTS
+    of <name>: N files, X freed. …" with [Purge] [Cancel]. A count the gateway
+    does not report reads as unknown. A refused dry run purges nothing and says
+    why. Forget asks first, with [Forget] [Cancel]; disk is never touched.
+  - **Retained runtimes** lets you transfer a deleted or reassigned user's
+    runtime to a new owner.
 
-**Admin rules.** Admin-only actions are refused before anything is sent for a
-non-admin sign-in, with the reason, and the footer marks them "admin only".
-The setup guide is admin-only, as on the web. Every write is verified with a
-follow-up read and recorded in the journal.
+- **6 Apps** is the web console's Apps tab. The head has **Check again**
+  (`r`) and the ⊛ **Apps settings** gear (`a`: Node.js for apps, ports, npm
+  registry, Node.js download index; each row applies on its own). The table
+  has the columns **App**, **Status**, **Version** (with "latest ⇡" when an
+  update exists) and **Actions**. The status badge is the start/stop control,
+  as on the web card: its label is the state and its tooltip the action
+  ("Running — click to stop"; `s`). An app started outside the gateway, or a
+  user who is not an admin, sees why it cannot be switched here. The labelled
+  buttons follow the web card: **Install** / **Open** (`o`; Code also has
+  **>_ Open in Terminal**), **Update to x.y.z** (`u`, with the gateway's
+  tooltip as the question), **Show log** (`l`), **Cancel** (`c`) during an
+  install, and Continuum's ⊛ settings (`g`: backlog folder, backlog exec
+  runner, process manager). Installs ask first ([Install] [Not now]); **Install
+  Node.js** sits under the table when the gateway needs it. Over SSH, or on a
+  machine without a display, **Open** never starts a browser: it shows the
+  one-time link to copy (`y`) and the `ssh -L` port forwards that make it work
+  from your own computer.
 
-### Providers, Models and OpenAI API in the terminal console
+- **7 Providers** stacks the web's three sections on one scrolling page.
+  - **Local providers** has a summary line and **Check again** (`k`), then the
+    table Engine, Status, Connection, with the engine card's buttons:
+    **Install** / **Install for all users** (`i`), **Start** (`s`), **Stop**
+    (`x`), **Browse models** (`b`), **Cancel** (`c`), **Set up connection** /
+    **Add connection** (`n`), **Edit** or **Override** (`o`), **Download page**
+    (`w`), **Learn more** (`l`) and **Show details** (`g`). The card's sentences
+    sit under each row. An install asks first with the plan the gateway
+    reports: [Install now] [Not now] for a wheel or script install, the
+    location's sentence for an app install.
+  - **Remote providers** has one row per preset, with **Configure** (`p`).
+  - **Available Providers** has the columns Name, Provider ID, Type, Models,
+    Status, with **Edit** (`e`), **Delete** (`d`) or **Override**, **Models**
+    (`m`) and **Test** (`t`), plus **Add connection** (`a`). Delete asks the
+    web's question with [Delete endpoint] [Cancel].
+  - **Configure <provider>** is the web's endpoint dialog. It has Provider
+    type, **Who can use it?** [Gateway-wide] [Only me], Provider ID, Name,
+    Description, Base URL, API key (blank keeps the stored key), the **Clear
+    stored API key** and **Enabled** switches, and **Visible models** with
+    **Clear restriction**. Its buttons are **Cancel**, **↻ Test** and
+    **✓ Confirm**, and closing with an edit asks "Discard changes?".
+  - **Models — <provider>** lists the models a connection serves.
 
-These three pages read and write the same gateway routes as their web pages,
-with the same wording:
+- **8 OpenAI API** ("Let apps use your models through one OpenAI-compatible
+  address") shows the web's cards in one scrolling region.
+  - **Status:** the state, the Base URL with **Copy** (`b`), the **Endpoint**
+    switch (`e`), **Restart** (`x`) and **Check setup** (`h`), with the check's
+    rows.
+  - **Connect your app:** your API key with **Show** / **Hide** (`v`),
+    **Copy** (`y`) and **New key** (`n`). New key asks "Make a new key? It
+    replaces your gateway token: …" with [New key] [Cancel]. The focus starts
+    on Cancel, so `Enter` keeps your token.
+  - **Access** (admin): **Authentication** [Protected (API key)] [Open (no
+    key)] (`a`), and the pickers **Requests without a key run as** (`u`) and
+    **Who can connect** (`w`), each with its options' sentences. A listener
+    warning comes with **Network**.
+  - **Docs:** the links **OpenAI API compatibility** and **AbstractCore
+    server**, then [curl] [Python] [JavaScript] (`s`) and **Copy example**
+    (`c`).
+  - **Recent requests** is a table: Time, Client, Model, Tokens, Latency,
+    Status, Run. The Time link (`Enter`, `f`) opens the request's record, with
+    **Copy request**, **Copy response**, **Open in Observer** and **Close**.
+    The Run link (`o`) opens Observer.
+  - The Endpoint, Restart, Check setup and Access controls are admin-only.
 
-- **7 Providers** has the web page's three sections; `v` switches between
-  them. **Local providers**: one row per engine on the gateway host with its
-  state, version and models; `Enter` opens its details (address, connection,
-  links), `i` installs it after an inline confirm that shows the plan (and the
-  install location for app engines), `s` / `x` start and stop its server, `b`
-  opens Models filtered to that engine, `c` cancels a running install.
-  **Remote providers**: the cloud and OpenAI-compatible presets; `Enter` or `a`
-  opens the connection form. **Available Providers**: the full table; `e`
-  edits or overrides, `d` deletes, `m` lists models, `t` tests.
-- **9 Models** is one list, like the web page: one header line per model and
-  one row per build (engine, id, quantization, size, status), with the models
-  you downloaded that the catalog does not know listed under **Not in the
-  catalog**. Filters: `/` search, `z` quantization, `p` provider, `t`
-  capability, `s` Downloaded / All, `f` fits this computer, `x` clears; `m`
-  searches Hugging Face. `w` downloads (with progress, `c` cancels), `d`
-  deletes after an inline confirm that states how much it frees ("Files only —
-  nothing in your runs is touched."; a loaded or locked model is refused with
-  the reason), `u` makes a downloaded text model the default.
-- **8 OpenAI API** shows the endpoint's status and base URL, your API key
-  (masked; `v` shows it, `y` copies it, `n` issues a new one, shown once), the
-  examples (`s` picks one, `c` copies it with the key in clear) and the recent
-  requests (`Tab`, then `Enter` opens one with its recorded request and
-  response; `f` shows the full record). Administrators also get the Endpoint
-  switch (`e`), Restart (`x`), Check setup (`h`), Authentication (`a`), Who can
-  connect (`w`) and the Open-mode account (`u`). See
-  [openai-api.md](./openai-api.md).
+- **9 Models** browses the models that fit this computer, downloads them and deletes downloaded ones. The head shows **This computer: …** with **Check again** (`r`), the **Catalog** | **Hugging Face** choice (Hugging Face mode has a search field and **Search**), the search field (`/`), the **Fits this computer** switch (`f`) and four pickers: **Quantization**, **Provider**, **Capability** and **Status**. A count line says how many models and artifacts are shown.
+  One table lists each model under its own heading line (name, capabilities, **Starter** / **Hugging Face**), one row per artifact: **Artifact**, **Provider**, **Quant**, **Size**, **Weights** (Downloaded / Not downloaded), **Fit** and **Actions**. On a narrow terminal, Provider, Quant, Size and Fit move to a second line under the artifact. Downloaded models that no catalog entry knows are listed under **Not in the catalog**.
+  Row buttons: **Download** (`w`; **Try again** after a failure), **Use as default** (`u`, a text model; the current one reads **Default text model**), the trash ⌫ (`d`; tooltip "Delete <artifact> from this computer (files only)") and, while a download runs, **Cancel** (`c`). `Enter` runs the row's first button; `i` shows the row's details.
+  Deleting first asks the gateway what it would free, then asks "Deletes <size> from this computer. Files only — nothing in your runs is touched." **[Delete] [Keep]**; the focus starts on Keep. Cancelling asks "Stop this download?" **[Stop download] [Keep downloading]**.
+  Downloading, deleting and changing the default are admin-only. For anyone else these buttons stay visible but faint, and pressing one says why ("Only an admin can download models"). An artifact this computer cannot run reads **Not available here**, with the reason in its tooltip. "No model matches these filters." comes with **Clear filters** (`x`).
 
-Downloads, deletes, installs and endpoint changes are admin-only; a refusal is
-shown with the gateway's reason.
+- **0 Multimodal** (**Multimodal Capabilities**) shows which provider and model serves each capability route. The head has **Apply recommended** (`a`, admin) and **↻ Refresh** (`r`), then the scope sentence. When a route has no model, a banner names it and offers **⤓ Download missing** (`m`). **Recommended for this computer** (`p`) carries **Download all** (`D`).
+  When the gateway names the AbstractCore store file, a line says so: "AbstractCore store · <file> — shared with AbstractCore — edits here apply to AbstractCore directly" (a read-only store or a runtime overlay says so instead).
+  The table has the columns **Route**, **Capability**, **Provider**, **Model**, **Weights**, **Source**, **Status** and **Actions**. On a narrow terminal it shows Route, Model, Weights and Actions, and Capability, Provider and Status move to the row's second line.
+  The **Weights** pill reads installed, not downloaded, remote or unknown; its tooltip gives the gateway's sentence and "To fix: …". Model ids wrap at `/` or `-`.
+  Row buttons, each with a tooltip: ✎ **Edit** or ⊞ **Configure** (`e`, also `Enter`), ⌀ **Clear** (`x`), ⤓ **Download** (`w`, admin; the tooltip names the artifact and provider) and ⧉ **Copy** (`c`, the install command when there is no download tool). A route that a parent route covers reads "Covered by input.text".
+  **Configure capability default** is one dialog with:
+  - the choice between use default and override;
+  - **Provider**, **Model**, **Base URL (optional)**, **Reasoning** (text route), **Options (JSON, optional)**, **MTP**, and **Voice** on output.voice;
+  - the buttons **[Cancel] [Clear] [Test] [Save]**.
+  Cancel, ✕ and Esc ask "Discard changes?" when you have edited something. A configured model that is not in the provider's discovered list yet stays selected, under the sentence "Configured model "<m>" is not currently in the discovered <scope> catalog for <provider>." with a **Download** button. When discovery fails, the field takes a typed model id and offers **Retry model discovery**. Clear asks first; downloads ask first and name the size.
+
+- **H Resources** shows three cards on one scrolling page. The page follows the focus when it moves off-screen.
+  - **◎ Gateway** (admins) shows the state pill. **Workflows paused** (`p`) and **Start at login** (`L`) are switches. **Version** sits beside **Check now** (`U`), plus **Update** when one is available ("Update now" / "Not now"). It also shows **Desktop icon**, **Last restart** after a watchdog restart (its tooltip names the frame, the stack dump and the incident file), and **Restart gateway…** (`R`: "Restart AbstractGateway? …" **[Restart] [Cancel]**) and **Quit gateway…** (`Q`: **[Quit] [Cancel]**).
+  - **▦ Memory & GPU** shows the meters and the itemization; `m` pages it on a short terminal.
+  - **▣ Models** has the **Show configured / cached** switch (`a`; resident models only by default) and **Load model** (`w`, a dialog with Provider, Model, the **lock in memory** switch and **[Cancel] [Load model]**). Its table has the columns **Modality**, **Provider**, **Model**, **Resident**, **Size**, **Context**, **Flags** and **Actions**. Row buttons: **Estimate** (`e`), **Lock** / **Unlock** (`k`) and **Unload** (`u`).
+    - Unload asks **[Unload] [Cancel]**; a locked model then asks **[Force unload] [Cancel]**.
+    - Unlock asks **[Unlock] [Cancel]**.
+  - **⌸ Session caches** has the columns **Session**, **Model**, **Size**, **Tokens**, **Created** and **Actions**, with **Clear** (`c`; **[Clear] [Cancel]**).
+  Every confirm opens with the focus on Cancel. Everything except Estimate is admin-only; for anyone else these buttons stay faint with the reason.
+
+- **T Sandbox** tries a model directly. **Output** is a choice: **Text**, **Image**, **Voice**, **Music**, **SFX** or **Video**. Each choice's tooltip names the provider and model it uses, or says "not configured". A line says what the next message generates and which route it comes from.
+  **System prompt**, **Reasoning** and **MTP** sit on one row, with the web's help sentences as tooltips. **Length (seconds)** appears for Music and SFX: 0.5 to 600, remembered per mode.
+  Under the message field, the buttons are **Send** (`g`, or `Enter` in the field), **Attach** (`a`), **Speak** (`v`, speaks a text reply through output.voice), **Play audio** (`p`) and **Stop** (`s`) after a clip, and **Clear chat** (`x`).
+  **Attach a file** is a dialog with **[Upload] [Remove all] [Close]**. When Sandbox refuses an action, it says why under the buttons (for example "output.music is not configured — configure it on Multimodal (0) first"). The session's change journal sits below.
+
+- **N Network** shows who can reach the gateway: **Running now: <mode> · port N** above three choices, **Localhost only** / **Local network** / **Internet** (the gateway's labels), each with its sentence. The saved choice is highlighted. A mode that needs accounts reads **Needs accounts**; choosing it shows the reason and how to fix it.
+  Choosing Internet asks "Before you open the gateway to the internet" with the gateway's warnings, **[I understand, use Internet mode] [Keep <saved mode>]**; the focus starts on Keep, and a long list of warnings scrolls. A saved mode that needs a restart says "Restart to apply: …" with **Restart now**.
+  **Addresses** is a table with the columns **Address**, **URL**, **Status** (Works now / Not in this mode / Through your proxy only) and **Actions**. Each address a client can use has **Copy** (`c`, also `Enter`), and each row's note sits under it. Below the table are **Look up my public address** (Internet mode) and **Check again** (`r`).
+  **What to know about <mode>** (`w`) opens the warnings. **Reached through another address?** holds **Allowed origins**, with **Remove** per origin and a field with **Add origin**, and **Client address**, with the **Trust proxies on other machines** switch. Changes apply to the next request. **OpenAI API** (`o`) opens that page.
+  Changes are admin-only; anyone else sees "Only an admin can change who can reach this gateway."
+
+- **S Setup** is the setup guide's welcome step, also shown in browse mode.
+  - **Head:** "Welcome to your gateway" ("Check this computer"). In browse mode
+    the head has **Setup guide** (admins; `Ctrl+G`). Inside the guide it has
+    **Go to a step**, **Skip setup** ("Close the guide and do not open it
+    automatically again") and **Next** (`Ctrl+N`). **↻** (`r`) is always
+    there.
+  - **This computer:** the first-run state and this computer's tiles: computer,
+    memory, graphics, data folder, sign-in mode, and whether the gateway starts
+    at login.
+  - **What this guide sets up:** cards for **Local engines**, **Choose your
+    default model** and **Apps**, each with a **Go to …** button.
+  - **Recommended for this computer:** each recommended route with its status,
+    engine, model and any fit or engine warning, and the text model in use.
+    **Use recommended defaults** (`a`) keeps the routes you chose, then offers
+    **♻ Replace mine too** (or **♻ Clear what cannot run here**) under the
+    head. **Download all** (`D`) starts every missing recommended model as one
+    job. Both are admin-only.
+  - **`Ctrl+G` in the guide** opens **Setup guide**: one button per step (the
+    current one marked "(you are here)"), then **Leave for now** (nothing is
+    recorded; the guide opens again next start), **Skip setup** (recorded) and
+    **Close**.
+  - **The last step** ends with **Finish** (a non-admin sees **Leave the
+    guide**), **Skip setup** and the **Start at login** switch.
+
+- **I About** (and `F1`, the **About AbstractGateway** dialog with **Close**) shows this console's name and version, the AbstractFramework and AbstractGateway versions the gateway reports, the six links and the licence line. **Website** (`w`), **Source** (`s`), **Docs** (`d`), **Issues** (`i`), **Feedback** (`f`) and **Contact** (`c`, a mailto: link) open in your browser; each tooltip is the address. Without a display, the status bar gives the address to open yourself.
+
+- **Docs assistant** (`F2`, or **✦ Docs** in the header, signed in) is a drawer on the right edge. It takes 48% of the width from 120 columns and the full width below. Esc or ✕ closes it, and the conversation is kept.
+  The head has **Past conversations** (`h`) and **New conversation** (`n`, tooltip "Start a new conversation"). The empty drawer reads "Ask anything about AbstractGateway." with three suggestions you can click to ask. Type in **Ask about the gateway…** and press `Enter` or **Send**; while it answers, the button reads **Answering…** and **Stop** ("Stop the answer") ends it with "Stopped. Nothing more will be shown for this question."
+  Past conversations lists the web drawer's conversations and the terminal's together, newest first, with the time and "· N questions". A click on one reopens it and continues in it. The ⊟ Archive button asks "Archive this conversation? It stays in the gateway; it leaves this list." **[Archive] [Cancel]**. The footer reads "Grounded on AbstractGateway's documentation (llms.txt) · docs-qa", and while the drawer is open the status bar lists its keys.
+
+- **F3** opens the gateway host panel: the web's **Gateway** card ("How this
+  gateway is running right now. …").
+  - **Rows:** Workflows (the runner's state and detail), **Last restart** after
+    a watchdog restart (the hang's reason, the stack dump's path, how long the
+    gateway was blocked and where, the incident file), Version with its hint,
+    **Desktop icon** and **Start at login**. The rows scroll when the terminal
+    is short.
+  - **Switches:** **Workflows paused** (`p`) and **Start at login** (`L`). The
+    Start at login switch asks first, then is read back from the gateway.
+  - **Buttons:** **Check now** (`u`), **Update** (`U`, when a check found one),
+    **Restart gateway…** (`R`), **Quit gateway…** (`Q`) and **Close**. Restart
+    and Quit are refused with the gateway's reason when this launch cannot do
+    them.
+  - **Questions:** each opens over the panel, and Cancel returns to the panel.
+    - Restart: "Restart AbstractGateway? Running workflows pause at their next
+      step and continue after the restart. The console is unavailable for a few
+      seconds." with [Restart] [Cancel].
+    - Quit: "Quit AbstractGateway? Workflows stop and this console goes offline
+      until you start AbstractGateway again." with [Quit] [Cancel].
+    - Update: the gateway's own sentence with [Update now] [Cancel].
+    - Restart and Quit open on Cancel, so `Enter` keeps the gateway running.
+  - **Admin-only:** the verbs and the Version row. Anyone else sees the card
+    with "only an admin can pause, restart, quit or update this gateway".
+  - **Paused banner:** shows on every screen while workflows are paused.
+
+- **Manage entity** (⬖ **Manage**, `m`, on an entity's Accounts row; tooltip "Manage <name> (mind, voice, prompt…)") opens **Manage — <name>**, one dialog with the web's six tabs. Each tab's cards hold their own fields:
+  - **Overview**: Right now, Identity with **Verify memory** and **Reload**, and memories from sleep with **Promote (accept)**, **Reject** and **Reload**.
+  - **Talk**: **Open visit**, **Send** and **Close visit**.
+  - **Lifecycle**: **Awake or asleep** (awake / asleep / asleep + dream pass / paused) applies at once. Sleep asks "Put it to sleep? …" **[Sleep] [Cancel]**; paused asks **[Pause] [Cancel]**. **Personal time** is a switch with its schedule, **Grant (timer)** and **Revoke grant**. **Emergency freeze** has **Freeze now**, which asks **[Freeze] [Cancel]**.
+  - **Mind & voice**: Mind (**Save**), Voice (**Hear a sample**, **Play**, **Save**) and **Rebuild index**, which asks **[Rebuild] [Cancel]**.
+  - **Work & tools**: Work order (**Give this task**, **End the work order**) and Tools per phase (**Save**, the **Empty phase means no tools** switch).
+  - **Prompt**: the layers you may rewrite (**Save**).
+  Confirms open over Manage and return to the same tab. With unsaved edits, Close, Esc, ✕ and switching tab ask "Discard changes?" **[Discard] [Keep editing]**. A long tab scrolls. For anyone who is not an admin, the admin-only acts stay visible but faint, with the reason.
+
+- **Create entity** (the Accounts head's **Create entity**, `n`) opens **Summon a new entity**:
+  - **Name** (permanent) and **Template**, with the template's core values;
+  - the always-visible **Optional configuration**: provider, model, reasoning and embedding at birth, each defaulting to the gateway's;
+  - **[Cancel] [Validate & create]**.
+  Validate runs a dry run, then asks before creating **[Summon] [Back to the form]**. Cancel with a name typed asks "Discard changes?".
+  **Spark templates** (`s` on Accounts) lists the templates with **View**, **Edit** (operator templates only; the builtin is refused with the reason), **New from selected** and **Close**. The template editor saves with **Lint and save as a new version** (admin) and asks "Discard changes?" before dropping edits.
+
+**Admin rules.** Admin-only actions stay visible for everyone else, faint, and
+pressing one says why before anything is sent. The setup guide is admin-only,
+as on the web. Every write is verified with a follow-up read and recorded in the
+journal (**T Sandbox**).
 
 The terminal console needs no gateway-side component beyond the admin API. The
 crate version is independent of the Python package version; see
