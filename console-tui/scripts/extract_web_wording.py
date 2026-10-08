@@ -245,6 +245,52 @@ def workflows_words() -> dict:
 SCREEN_FIXTURES["workflows"] = workflows_words
 
 
+def skills_words() -> dict:
+    """R15-A Skills & MCP: tabs, toolbars, row buttons, the agents question, columns."""
+    src = read("console.py")
+    sk = read("console_skills_mcp.py")
+    ui = read("console_ui.py")
+    th = need(src, r'<thead><tr>(<th class="sk-col-name">.*?)</tr></thead>', "skills table head")
+    cols = re.findall(r'<th[^>]*>(?:<span[^>]*>)?([^<]+)<', th)
+    if len(cols) < 5:
+        fail(f"skills table head: expected 5+ columns, found {cols!r}.")
+    def btn(data: str) -> str:
+        return need_first(sk, r'<button type="button" class="secondary" ' + data + r'="\$\{n\}">([^<]*)</button>', data)
+    confirm = need(sk, r'<span>(Offer its \$\{k\} tool\$\{k === 1 \? "" : "s"\} to your agents\?[^<]*)</span>', "agents confirm")
+    return {
+        "tab_skills": need(src, r'<button id="skmcp-tab-skills"[^>]*>([^<]*)</button>', "skills tab"),
+        "tab_mcp": need(src, r'<button id="skmcp-tab-mcp"[^>]*>([^<]*)</button>', "mcp tab"),
+        "search_placeholder": need(src, r'<input id="skills-search"[^>]*placeholder="([^"]*)"', "skills search"),
+        "import_zip": need(src, r'<button id="skills-import-zip"[^>]*>([^<]*)</button>', "import zip"),
+        "import_zip_tip": need(src, r'<button id="skills-import-zip"[^>]*title="([^"]*)"', "import zip tooltip"),
+        "import_folder": need(src, r'<button id="skills-import-folder"[^>]*>([^<]*)</button>', "import folder"),
+        "import_folder_tip": need(src, r'<button id="skills-import-folder"[^>]*title="([^"]*)"', "import folder tooltip"),
+        "add_server": need(src, r'<button id="mcp-add"[^>]*>([^<]*)</button>', "add server"),
+        "refresh_shelf": need(ui, r'\$\{st\.saving \? "Working\.\.\." : "([^"]*)"\}</button>', "refresh curated shelf"),
+        "shelf_label": need(ui, r'<label for="skills-shelf-input">([^<]*)</label>', "shelf label"),
+        "skills_purpose": need(src, r'<p class="section-note skmcp-purpose">(Instructions agents load[^<]*)</p>', "skills purpose"),
+        "mcp_purpose": need(src, r'<p class="section-note skmcp-purpose">(Tool servers over[^<]*)</p>', "mcp purpose"),
+        "agents_label": need_first(sk, r'<span class="af-switch__label">([^<]*)</span>', "agents label"),
+        "skill_view": btn("data-skill-view"),
+        "skill_export": btn("data-skill-export"),
+        "skill_archive": btn("data-skill-archive"),
+        "skill_unarchive": btn("data-skill-unarchive"),
+        "mcp_edit": btn("data-mcp-edit"),
+        "mcp_test": btn("data-mcp-test"),
+        "mcp_archive": btn("data-mcp-archive"),
+        "mcp_unarchive": btn("data-mcp-unarchive"),
+        "agents_confirm": confirm.replace('${k === 1 ? "" : "s"}', "{s}").replace("${k}", "{k}"),
+        "col_name": cols[0],
+        "col_what": cols[1],
+        "col_version": cols[2],
+        "col_trust": cols[3],
+        "col_source": cols[4],
+    }
+
+
+SCREEN_FIXTURES["skills"] = skills_words
+
+
 def screens_main(write: bool) -> int:
     rc = 0
     for name, build_fn in SCREEN_FIXTURES.items():

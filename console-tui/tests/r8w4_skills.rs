@@ -50,11 +50,13 @@ fn the_shelf_is_one_inline_row_under_the_list() {
     for size in SIZES {
         let mut h = page(size, "seeded", "");
         let s = h.shoot("skills-shelf-row");
+        // R15: the folder is a field (empty = the gateway's own copy, its
+        // path the placeholder) with the Refresh curated shelf button.
         assert!(
-            s.contains("Shelf folder: (the gateway's own copy) /data/skills"),
+            s.contains("Shelf folder") && s.contains("/data/skills"),
             "{s}"
         );
-        assert!(s.contains("u Refresh curated shelf"), "{s}");
+        assert!(s.contains("Refresh curated shelf"), "{s}");
         assert!(s.contains("(version 2026.10.04)"), "{s}");
         // No disclosure, no separate panel.
         assert!(
@@ -63,7 +65,7 @@ fn the_shelf_is_one_inline_row_under_the_list() {
         );
         // Below the list.
         let list = s.find("field-guide").unwrap();
-        let row = s.find("Shelf folder:").unwrap();
+        let row = s.rfind("Shelf folder").unwrap();
         assert!(row > list, "the row sits under the list:\n{s}");
         h.assert_fits();
     }
@@ -73,20 +75,20 @@ fn the_shelf_is_one_inline_row_under_the_list() {
 fn a_saved_folder_shows_its_source_words() {
     let mut h = page((120, 40), "stored", "/srv/skills");
     let s = h.text();
-    assert!(
-        s.contains("Shelf folder: /srv/skills · Saved setting"),
-        "{s}"
-    );
+    let row = s
+        .lines()
+        .find(|l| l.contains("▐/srv/skills"))
+        .unwrap_or_else(|| panic!("{s}"));
+    assert!(row.contains("Saved setting"), "{s}");
 }
 
 #[test]
 fn f_edits_in_place_enter_saves_the_setting() {
+    // R15: the folder field is always there — click it, type, Enter saves.
     for size in SIZES {
         let mut h = page(size, "seeded", "");
         h.sent();
-        h.key(b"f");
-        let s = h.shoot("skills-shelf-editing");
-        assert!(s.contains("Enter saves · Esc keeps"), "{s}");
+        h.click_text("/data/skills");
         h.type_text("/srv/new-shelf");
         h.key(b"\r");
         let cmds = h.sent();
@@ -108,11 +110,11 @@ fn f_edits_in_place_enter_saves_the_setting() {
 fn esc_keeps_the_folder_and_sends_nothing() {
     let mut h = page((80, 24), "stored", "/srv/skills");
     h.sent();
-    h.key(b"f");
+    h.click_text("▐/srv/skills");
     h.type_text("zzz");
     let s = h.esc();
-    assert!(!s.contains("Enter saves"), "{s}");
-    assert!(s.contains("Shelf folder: /srv/skills"), "{s}");
+    assert!(!s.contains("zzz"), "Esc drops the typing:\n{s}");
+    assert!(s.contains("/srv/skills"), "{s}");
     assert!(
         !h.sent()
             .iter()
@@ -140,7 +142,10 @@ fn a_non_admin_sees_no_shelf_row() {
     let mut h = page((80, 24), "seeded", "");
     h.identity("alice", false);
     let s = h.text();
-    assert!(!s.contains("Shelf folder:"), "{s}");
+    assert!(
+        !s.contains("Refresh curated shelf") && !s.contains("/data/skills"),
+        "{s}"
+    );
 }
 
 /// Live: save a folder, read it back from the gateway, clear it, refresh.
@@ -154,8 +159,8 @@ fn live_shelf_save_and_refresh() {
     let shelf = std::env::var("R8W4_SHELF_DIR").expect("R8W4_SHELF_DIR (an existing shelf folder)");
     let mut h = live((120, 40), Mount::Page(skills_mcp::screen), &url, &token);
     skills_mcp::refresh_for_tests(&h.store, &h.tx);
-    h.until_text("Shelf folder:");
-    h.key(b"f");
+    h.until_text("Refresh curated shelf");
+    h.click_right_of("Shelf folder", 16);
     h.type_text(&shelf);
     h.key(b"\r");
     h.until_text("Saved");
@@ -164,7 +169,7 @@ fn live_shelf_save_and_refresh() {
     assert_eq!(cfg["skills"]["shelf"]["source"], json!("stored"));
     h.shoot("live-skills-shelf-saved");
     // Clear back to the gateway's own copy.
-    h.key(b"f");
+    h.click_right_of("Shelf folder", 16);
     h.key(b"\x1b[F"); // End: the caret starts at the beginning
     for _ in 0..shelf.chars().count() + 2 {
         h.key(b"\x7f");
@@ -181,7 +186,7 @@ fn live_shelf_save_and_refresh() {
     });
     let cfg = gw("GET", &url, &token, "/admin/runtime-config", None);
     assert_ne!(cfg["skills"]["shelf"]["source"], json!("stored"), "{cfg}");
-    h.key(b"u");
+    h.click_text("Refresh curated shelf");
     let s = h.until_text("Refreshed.");
     assert!(s.contains("Curated shelf"), "{s}");
     h.shoot("live-skills-shelf-refreshed");
