@@ -2296,11 +2296,7 @@ pub fn screen_hint_pairs(ctx: &Ctx) -> Vec<(String, String)> {
             ));
         }
         SCREEN_APPS => pairs.extend_from_slice(apps::HINTS),
-        SCREEN_WELCOME => {
-            pairs.push(("a", "Use recommended defaults"));
-            pairs.push(("D", "Download all"));
-            pairs.push(("r", "refresh"));
-        }
+        SCREEN_WELCOME => pairs.extend(welcome::hints(&ctx_hints)), // R15 arm
         SCREEN_NETWORK => {
             pairs.push(("↑↓ Enter", "who can reach it"));
             pairs.push(("c", "copy address"));
