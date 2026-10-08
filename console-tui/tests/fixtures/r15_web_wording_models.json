@@ -1,0 +1,57 @@
+{
+  "_source": "scripts/extract_web_wording.py (do not edit by hand)",
+  "delete_tip": "Delete {n} from this computer (files only)",
+  "delete_refused": "Only an admin can delete downloaded models",
+  "delete_checking": "Checking what a delete would free",
+  "delete_deleting": "Deleting the downloaded files",
+  "use_default": "Use as default",
+  "use_default_refused": "Only an admin can change the default model",
+  "default_pill": "Default text model",
+  "download": "Download",
+  "try_again": "Try again",
+  "download_refused": "Only an admin can download models",
+  "unavailable": "Not available here",
+  "unavailable_engine": "Its engine does not run on this computer",
+  "unavailable_build": "This build cannot be downloaded from here",
+  "starting": "Starting...",
+  "cancel": "Cancel",
+  "confirm_tail": "Files only — nothing in your runs is touched.",
+  "confirm_no_size": "Deletes this model's files from this computer.",
+  "confirm_keep": "Keep",
+  "confirm_delete": "Delete",
+  "cancel_question": "Stop this download?",
+  "cancel_keep": "Keep downloading",
+  "cancel_confirm": "Stop download",
+  "cancelling": "Cancelling...",
+  "check_again": "Check again",
+  "checking": "Checking...",
+  "modes": [
+    "Catalog",
+    "Hugging Face"
+  ],
+  "hf_search": "Search",
+  "fits": "Fits this computer",
+  "placeholder_catalog": "Search by model, organisation or artifact id",
+  "placeholder_hf": "Search Hugging Face, then press Enter",
+  "groups": [
+    "Quantization",
+    "Provider",
+    "Capability",
+    "Status"
+  ],
+  "quant_chips": [
+    "All",
+    "4-bit",
+    "8-bit",
+    "Other"
+  ],
+  "status_chips": [
+    "All",
+    "Downloaded",
+    "Not downloaded"
+  ],
+  "empty": "No model matches these filters.",
+  "empty_hint": "Change or clear the filters to see the rest of the catalog.",
+  "clear": "Clear filters",
+  "not_in_catalog": "Not in the catalog"
+}

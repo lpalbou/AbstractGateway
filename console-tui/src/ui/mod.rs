@@ -2289,7 +2289,7 @@ pub fn screen_hint_pairs(ctx: &Ctx) -> Vec<(String, String)> {
             pairs.push(("r", "refresh"));
         }
         // The shared screens publish their own verbs.
-        SCREEN_CATALOG => pairs.extend(catalog::hints(non_admin)),
+        SCREEN_CATALOG => pairs.extend(catalog::hints(non_admin)), // R15 arm
         SCREEN_ENGINES => {
             pairs.extend(abstractcore_console::screens::engines::hints(
                 screens_caps,

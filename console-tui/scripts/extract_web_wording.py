@@ -701,10 +701,71 @@ def docs_wording() -> dict:
     return {"name": name, "placeholder": placeholder, "suggestions": sugg, "kit": t}
 
 
+def models_wording() -> dict:
+    """Models: the web Models page's words (console_catalog.py) — the row
+    actions and their refusals/tooltips, the delete confirmation, the
+    head/bar/filter controls, the empty state — and the download cancel
+    question (console_ui.py dlCancelMarkup)."""
+    cat = read_b("console_catalog.py")
+    ui = read_b("console_ui.py")
+
+    def need(src: str, pattern: str, what: str, group: int = 1) -> str:
+        m = re.search(pattern, src, re.S)
+        if not m:
+            fail(f"Models: {what} not found (the anchor moved).")
+        return m.group(group)
+
+    out = {
+        "delete_tip": need(cat, r'const tip = admin \? `(Delete \$\{a\.artifact \|\| "this model"\} from this computer \(files only\))`', "the delete tooltip")
+        .replace('${a.artifact || "this model"}', "{n}"),
+        "delete_refused": need(cat, r'"(Only an admin can delete downloaded models)"', "the delete refusal"),
+        "delete_checking": need(cat, r'aria-label="Checking" data-af-tip="([^"]+)"', "the checking tooltip"),
+        "delete_deleting": need(cat, r'aria-label="Deleting" data-af-tip="([^"]+)"', "the deleting tooltip"),
+        "use_default": need(cat, r'data-mc-action="default" \$\{attrs\}\$\{admin \? "" : \' disabled title="[^"]+"\'\}>([^<]+)</button>', "Use as default"),
+        "use_default_refused": need(cat, r"title=\"(Only an admin can change the default model)\"", "the default refusal"),
+        "default_pill": need(cat, r'uiPill\("(Default text model)", "info"\)', "the default pill"),
+        "download": need(cat, r'job\.status === "failed" \? "(Try again)" : "(Download)"', "Download", 2),
+        "try_again": need(cat, r'job\.status === "failed" \? "(Try again)" : "(Download)"', "Try again", 1),
+        "download_refused": need(cat, r"title=\"(Only an admin can download models)\"", "the download refusal"),
+        "unavailable": need(cat, r'title="\$\{esc\(why\)\}">(Not available here)</span>', "Not available here"),
+        "unavailable_engine": need(cat, r'a\.supported_on_host === false \? "([^"]+)" : "([^"]+)"', "why (engine)", 1),
+        "unavailable_build": need(cat, r'a\.supported_on_host === false \? "([^"]+)" : "([^"]+)"', "why (build)", 2),
+        "starting": need(cat, r'aria-busy="true">(Starting\.\.\.)</button>', "Starting..."),
+        "cancel": need(cat, r'dlCancelMarkup\(jid, "(Cancel)"', "Cancel"),
+        "confirm_tail": need(cat, r'\$\{esc\(size\)\} (Files only — nothing in your runs is touched\.)', "the confirm sentence"),
+        "confirm_no_size": need(cat, r'"(Deletes this model\'s files from this computer\.)"', "the confirm sentence without a size"),
+        "confirm_keep": need(cat, r'data-mc-action="delete-keep" \$\{attrs\}>(\w+)</button>', "Keep"),
+        "confirm_delete": need(cat, r'data-mc-action="delete-confirm" \$\{attrs\}>(\w+)</button>', "Delete"),
+        "cancel_question": need(ui, r'<span class="ui-dl-confirm__q">([^<]+)</span>', "the cancel question"),
+        "cancel_keep": need(ui, r'data-dl-step="keep"\$\{attrs\}>([^<]+)</button>', "Keep downloading"),
+        "cancel_confirm": need(ui, r'data-dl-step="confirm"\$\{attrs\}>([^<]+)</button>', "Stop download"),
+        "cancelling": need(ui, r'ui-dl-cancel" data-dl-cancel="\$\{id\}"\$\{attrs\} disabled>([^<]+)</button>', "Cancelling..."),
+        "check_again": need(cat, r'mcStore\.loading \? "Checking\.\.\." : "(Check again)"', "Check again"),
+        "checking": need(cat, r'mcStore\.loading \? "(Checking\.\.\.)" : "Check again"', "Checking..."),
+        "modes": [
+            need(cat, r'data-mc-mode="catalog" aria-pressed="\$\{[^}]*\}">(\w+)</button>', "Catalog"),
+            need(cat, r'data-mc-mode="hf" aria-pressed="\$\{[^}]*\}">([\w ]+)</button>', "Hugging Face"),
+        ],
+        "hf_search": need(cat, r'data-mc-action="hf-search"[^>]*>(\w+)</button>', "Search"),
+        "fits": need(cat, r'data-mc-fits="1"[^>]*><span>([^<]+)</span>', "Fits this computer"),
+        "placeholder_catalog": need(cat, r'mcHfMode\(f\) \? "([^"]+)" : "([^"]+)"; \}', "placeholder", 2),
+        "placeholder_hf": need(cat, r'mcHfMode\(f\) \? "([^"]+)" : "([^"]+)"; \}', "placeholder (hf)", 1),
+        "groups": [need(cat, rf'group\("({g})", ', g) for g in ("Quantization", "Provider", "Capability", "Status")],
+        "quant_chips": [l for _, l in re.findall(r'\["(\w+)", "([^"]+)"\]', need(cat, r"const MC_QUANT_CHIPS = \[(.*?)\];", "MC_QUANT_CHIPS"))],
+        "status_chips": [l for _, l in re.findall(r'\["(\w+)", "([^"]+)"\]', need(cat, r"const MC_STATUS_CHIPS = \[(.*?)\];", "MC_STATUS_CHIPS"))],
+        "empty": need(cat, r'data-mc-empty="1"><strong>([^<]+)</strong>', "the empty sentence"),
+        "empty_hint": need(cat, r'mcRows\(\)\.length \? "([^"]+)" : "This gateway', "the empty hint"),
+        "clear": need(cat, r'data-mc-action="clear">([^<]+)</button>', "Clear filters"),
+        "not_in_catalog": need(cat, r'<h4 class="mc-extra__title">([^<]+)</h4>', "Not in the catalog"),
+    }
+    return out
+
+
 B_SCREENS = {
     "about": about_wording,
     "network": network_wording,
     "docs": docs_wording,
+    "models": models_wording,
 }
 
 
