@@ -234,7 +234,7 @@ fn the_page_is_one_page_with_the_web_words() {
         "Available to users",
         "Default workflow per app",
         "Gateway default: Basic agent 0.0.5",
-        "Other workflow types (1)",
+        "Other workflow types",
         "Settings",
         "━● Streamed replies",
         "⚠ Broken workflows",

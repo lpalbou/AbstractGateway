@@ -236,7 +236,7 @@ fn defaults_tab_options_state_and_streaming() {
         assert!(s.contains("Broken: gone@1 is not installed"), "{s}");
         // R15 D1: the other types are a visible section, never folded.
         assert!(
-            s.contains("Other workflow types (1)") && s.contains("Batch map-reduce"),
+            s.contains("Other workflow types") && s.contains("Batch map-reduce"),
             "{s}"
         );
         assert!(s.contains("━● Streamed replies"), "{s}");

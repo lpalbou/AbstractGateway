@@ -228,7 +228,7 @@ def workflows_words() -> dict:
         "broken_sentence": need(src, r'<p class="section-note">(These bundle files are on disk[^<]*)</p>', "broken sentence"),
         "streaming_label": need(ui, r'const STREAMING_DEFAULT_LABEL = "([^"]*)";', "streaming label"),
         "streaming_help": need(ui, r'const STREAMING_DEFAULT_DESC = "([^"]*)";', "streaming help"),
-        "other_types": need(ui, r'<summary>(Other workflow types) \(\$\{nOther\}\)</summary>', "other workflow types"),
+        "other_types": need(ui, r'<h3 id="agent-defaults-other-h" class="section-subtitle">([^<]*)</h3>', "other workflow types"),
         "settings": need(ui, r'<h3 class="section-subtitle">([^<]*)</h3>`;\n\s*if \(!r \|\| typeof r !== "object"', "settings subheading", re.S),
         "switch_drafts": switch("workflows-show-drafts"),
         "switch_older": switch("workflows-show-older"),
