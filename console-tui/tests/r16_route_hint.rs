@@ -1,18 +1,17 @@
 //! Round 16 (W5's served hint, assigned to the console-TUI lane): the Multimodal page shows the
-//! `input.voice` row's `route_hint.sentence` verbatim under the Transcription line, with the
-//! web's suffix (console.py `routeHintMarkup`, fixture `r15_web_wording_route_hint.json`) when
-//! the hint names a route; only on a configured row; text only (a click sends nothing).
+//! `input.voice` row's `route_hint.sentence` under the Transcription line, byte for byte with no
+//! client-side suffix (console.py `routeHintMarkup`, fixture `r15_web_wording_route_hint.json`);
+//! only on a configured row; text only (a click sends nothing).
 
 #[path = "round2_shots_workflows.rs"]
 #[allow(dead_code)]
 mod shots;
 
-use abstractgateway_console::store::ROUTE_HINT_HOW;
 use abstractgateway_console::ui::routes::transcription_hint;
 use serde_json::{json, Value};
 use shots::{routes_screen, voice_routes};
 
-const SENTENCE: &str = "This Mac can transcribe on its GPU with mlx-whisper (large-v3), about ten times faster than faster-whisper on the processor.";
+const SENTENCE: &str = "This Mac can transcribe on its GPU with mlx-whisper (large-v3), about ten times faster than faster-whisper on the processor: Apply recommended (Replace mine too) switches it.";
 
 fn hinted(route: bool, configured: bool) -> Value {
     json!({"key": "input.voice", "kind": "input", "modality": "voice", "label": "Voice Input",
@@ -33,19 +32,18 @@ fn fixture() -> Value {
 }
 
 #[test]
-fn the_suffix_is_the_webs() {
-    assert_eq!(
-        fixture()["route_hint_how"].as_str().unwrap(),
-        ROUTE_HINT_HOW
-    );
-    assert_eq!(fixture()["configured_rows_only"], json!(true));
+fn the_web_paints_the_sentence_alone() {
+    let f = fixture();
+    assert_eq!(f["painted"], json!("route_hint.sentence"));
+    assert_eq!(f["client_suffix"], Value::Null);
+    assert_eq!(f["configured_rows_only"], json!(true));
 }
 
 #[test]
 fn the_hint_is_the_served_sentence_plus_the_webs_suffix_on_a_configured_row_only() {
     assert_eq!(
         transcription_hint(&voice_routes(hinted(true, true)).rows).as_deref(),
-        Some(format!("{SENTENCE}{ROUTE_HINT_HOW}").as_str())
+        Some(SENTENCE)
     );
     assert_eq!(
         transcription_hint(&voice_routes(hinted(false, true)).rows).as_deref(),
@@ -80,8 +78,13 @@ fn the_multimodal_page_shows_it_under_the_transcription_line_and_a_click_does_no
         .collect::<Vec<_>>()
         .join(" ");
     assert!(
-        below_flat.contains("Apply recommended switches it."),
-        "{below_flat}"
+        below_flat.contains("(Replace mine too) switches it."),
+        "the served sentence, whole:\n{below_flat}"
+    );
+    assert_eq!(
+        below_flat.matches("Apply recommended").count(),
+        1,
+        "no client-side suffix: {below_flat}"
     );
     h.sent();
     let (y, line) = lines

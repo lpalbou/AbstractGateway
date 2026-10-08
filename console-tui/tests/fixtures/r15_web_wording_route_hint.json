@@ -1,5 +1,6 @@
 {
   "_source": "scripts/extract_web_wording.py (do not edit by hand)",
-  "route_hint_how": " Apply recommended switches it.",
+  "painted": "route_hint.sentence",
+  "client_suffix": null,
   "configured_rows_only": true
 }

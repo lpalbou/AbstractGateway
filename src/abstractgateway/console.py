@@ -10270,13 +10270,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    // AbstractCore `route_hint` {code, sentence, route|null} on a CONFIGURED row (round 16:
 	    // a faster-whisper speech-input route on Apple silicon, which mlx-whisper runs on the
-	    // GPU). The sentence is served verbatim; "Apply recommended" (its "Replace mine too"
-	    // pass) is what switches the route -- no control of its own, nothing computed here.
+	    // GPU). The sentence is served verbatim and already says where to act (Apply
+	    // recommended, here) -- no control of its own, nothing added or computed here.
 	    function routeHintMarkup(row) {
 	      const hint = row && row.route_hint;
 	      if (!hint || typeof hint !== "object" || !String(hint.sentence || "").trim()) return "";
-	      const how = hint.route ? " Apply recommended switches it." : "";
-	      return `<div class="ui-field-msg tone-info capability-route-hint" role="note" data-hint="${esc(hint.code || "")}">${esc(String(hint.sentence).trim())}${esc(how)}</div>`;
+	      return `<div class="ui-field-msg tone-info capability-route-hint" role="note" data-hint="${esc(hint.code || "")}">${esc(String(hint.sentence).trim())}</div>`;
 	    }
 	    // AbstractCore `engine_missing` {engine, name, reason, install[, engine_row]}
 	    // on a capability-default row, an apply-recommended entry or a

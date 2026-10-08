@@ -433,8 +433,8 @@ pub struct RouteRow {
     pub engine_missing: Option<EngineMissing>,
     /// AbstractCore `route_hint` {code, sentence, route|null} on a CONFIGURED
     /// row (round 16: a faster-whisper speech-input route on Apple silicon,
-    /// which mlx-whisper runs on the GPU). Served verbatim; Apply recommended
-    /// (`a`) is what switches the route.
+    /// which mlx-whisper runs on the GPU). Painted byte for byte: the sentence
+    /// itself names where to act (no client-side suffix).
     pub route_hint: Option<RouteHint>,
 }
 
@@ -443,7 +443,7 @@ pub struct RouteRow {
 pub struct RouteHint {
     pub code: String,
     pub sentence: String,
-    /// The route Apply recommended would switch to (present = it can).
+    /// The route it names (present = Apply recommended can switch to it).
     pub has_route: bool,
 }
 
@@ -468,19 +468,11 @@ impl RouteHint {
         })
     }
 
-    /// The web's words (console.py `routeHintMarkup`): the sentence, then
-    /// " Apply recommended switches it." when the hint names a route.
+    /// What is painted: the served sentence alone (console.py `routeHintMarkup`).
     pub fn text(&self) -> String {
-        if self.has_route {
-            format!("{}{}", self.sentence, ROUTE_HINT_HOW)
-        } else {
-            self.sentence.clone()
-        }
+        self.sentence.clone()
     }
 }
-
-/// The web's suffix after a route hint that names a route (console.py `routeHintMarkup`).
-pub const ROUTE_HINT_HOW: &str = " Apply recommended switches it.";
 
 /// AbstractCore's `engine_missing` {engine, name, reason, install[,
 /// engine_row]} — on capability-default rows, apply-recommended entries and

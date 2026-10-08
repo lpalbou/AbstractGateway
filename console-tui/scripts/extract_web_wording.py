@@ -1117,13 +1117,15 @@ B_SCREENS["accounts_roles"] = accounts_roles_wording
 
 
 def route_hint_wording() -> dict:
-    """Round 16 (W5's served hint): console.py `routeHintMarkup` — the suffix after a route hint
-    that names a route, and that it is rendered only on a configured row."""
+    """Round 16 (W5's served hint): console.py `routeHintMarkup` paints `route_hint.sentence` byte
+    for byte (no client-side suffix), on configured rows only."""
     src = read_b("console.py")
-    how = need(src, r'const how = hint\.route \? "([^"]+)" : "";', "routeHintMarkup's suffix")
+    body = need(src, r"function routeHintMarkup\(row\) \{(.*?)\n\t    \}", "routeHintMarkup", re.S)
+    if "${esc(String(hint.sentence).trim())}</div>" not in body or "Apply recommended" in body:
+        fail("routeHintMarkup no longer paints the served sentence alone (console.py moved).")
     if "defaultRowConfigured(row) ? engineMissingMarkup(row) + routeHintMarkup(row)" not in src:
         fail("routeHintMarkup is no longer rendered on configured rows only (console.py moved).")
-    return {"route_hint_how": how, "configured_rows_only": True}
+    return {"painted": "route_hint.sentence", "client_suffix": None, "configured_rows_only": True}
 
 
 B_SCREENS["route_hint"] = route_hint_wording
