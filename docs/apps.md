@@ -120,6 +120,11 @@ in its `details` field (`<data dir>/apps/jobs/<job>.log`).
   seconds). After more than 3 crashes in a minute it stops trying and shows
   "crash_loop" with the app's log.
 - Each app writes its output to `<data dir>/logs/apps/<app>.log`.
+- Apps that publish workflows (the Flow Editor's **Publish**, the Assistant
+  bringing its own workflow up to date when it starts) do not restart anything
+  on the gateway: the new workflow is swapped in place, so the other apps keep
+  their loaded model, their conversations' prompt caches and their running
+  runs ([architecture.md](./architecture.md#publishing-a-workflow)).
 - Apps always listen on `127.0.0.1`: browsers reach them through the gateway
   (next section), never directly. Ports: the app's usual port when it is
   free, else the first free port in 3100-3199. The usual ports are the

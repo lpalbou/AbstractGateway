@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Publishing a workflow no longer rebuilds every service.** Publish (`POST /visualflows/{id}/publish`), upload (`/bundles/upload`, `/admin/workflow-catalog/upload`), promote and the email-tools switch now compile only the bundle files that changed (cached by path, modification time and size) into a new workflow registry and set it on the RUNNING runtime (`registry_swap`): no new runtime, LLM client or provider, so an in-process model is not loaded again and every session's prompt cache survives (the next turn reads `metadata.prompt_cache` exactly as without the publish). Before, each one rebuilt the whole host once per instantiated service: publish up to 24 s and promote up to 99.7 s in the live audit log, prompt caches lost each time. A service's runtime is rebuilt only when its workflows newly need a language model, tool execution or the memory store it was started without (`service_reload`, logged with the reason), and every service only on `POST /bundles/reload?full=true` (`full_rebuild`). A service whose workflows did not change does nothing; writing the shared workflow folder reloads every running service, a user's own folder only theirs. See [docs/architecture.md](docs/architecture.md#publishing-a-workflow).
+- **Runs in flight keep their workflow across a publish.** A run ticks the spec it resolved: a new version is a new workflow id, and a version replaced in place (drafts, `overwrite: true`) or removed pins its RUNNING/WAITING runs to the spec they had until they end. Runs started after the publish get the new one.
+- **One service per data directory under user auth.** A caller without a signed-in principal is given the admin's default-runtime service instead of building a second service (second runtime, model client and runner) over the same directory.
+- The admin catalog upload (`/admin/workflow-catalog/upload`) runs its reload off the event loop like the other publish routes.
+
+### Added
+
+- **Every publish/promote/upload says what it reloaded**: the response carries `reload: {ok, kind: "registry_swap"|"service_reload"|"full_rebuild", services: [{service, kind, duration_ms, ...}], unchanged_services, duration_ms, sentence}` (`PublishVisualFlowResponse.reload`, the upload and catalog responses, `/bundles/reload`), and the request's audit log line records `reload: {kind, duration_ms, services}` next to its `duration_ms`. See [docs/api.md](docs/api.md#what-a-publish-reloads).
+
 ## [0.13.1] - 2026-10-08
 
 Requires AbstractRuntime 0.9.1, AbstractCore 2.25.1 and AbstractAgent 0.3.19 (installed automatically). The terminal console `abstractgateway-console` 0.15.1 matches this release; see [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md).

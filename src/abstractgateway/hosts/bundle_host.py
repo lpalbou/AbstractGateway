@@ -1083,17 +1083,20 @@ class WorkflowBundleGatewayHost:
             raise ValueError("Dynamic VisualFlow missing required 'id'")
 
         spec = compile_visualflow(raw)
+        # Registered AND persisted under the host lock: a concurrent registry swap
+        # (publish) checks the dynamic folder under the same lock, so it either sees
+        # this file and compiles it, or runs before the registration exists.
         with self._lock:
             self.workflow_registry.register(spec)
             self.specs[str(spec.workflow_id)] = spec
 
-        if persist:
-            try:
-                Path(self.dynamic_flows_dir).mkdir(parents=True, exist_ok=True)
-                p = self._dynamic_flow_path(str(spec.workflow_id))
-                p.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
-            except Exception as e:
-                raise RuntimeError(f"Failed to persist dynamic VisualFlow: {e}") from e
+            if persist:
+                try:
+                    Path(self.dynamic_flows_dir).mkdir(parents=True, exist_ok=True)
+                    p = self._dynamic_flow_path(str(spec.workflow_id))
+                    p.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+                except Exception as e:
+                    raise RuntimeError(f"Failed to persist dynamic VisualFlow: {e}") from e
 
         return str(spec.workflow_id)
 
@@ -2461,6 +2464,7 @@ class WorkflowBundleGatewayHost:
                 self.email_tools_listed = compiled.email_tools_listed
             else:
                 pinned = 0
+                self._release_finished_pins()
             defaults_moved = compiled.flow_scanned_llm_defaults != self._flow_scanned_llm_defaults
             self._flow_scanned_llm_defaults = compiled.flow_scanned_llm_defaults
         if defaults_moved and "llm" in (self._runtime_capabilities or frozenset()):
@@ -2477,6 +2481,17 @@ class WorkflowBundleGatewayHost:
             out["pinned_runs"] = pinned
         return out, "registry_swap", ("workflows changed on disk" if changed else "nothing changed on disk")
 
+    def _release_finished_pins(self) -> None:
+        """Forget the pins of runs that ended (also done lazily at their next lookup)."""
+        pins = self._run_spec_pins
+        for rid in list(pins):
+            try:
+                st = self.run_store.load(rid)
+            except Exception:
+                st = None
+            if st is None or _run_is_terminal(st):
+                pins.pop(rid, None)
+
     def _pin_in_flight_runs(self, old_specs: Dict[str, WorkflowSpec], new_specs: Dict[str, WorkflowSpec]) -> int:
         """Keep every run in flight on the spec it already resolved (caller holds `_lock`).
 
@@ -2486,14 +2501,7 @@ class WorkflowBundleGatewayHost:
         (drafts, `overwrite: true`) or a removed one pins the runs still on it.
         """
         pins = self._run_spec_pins
-        # Forget pins of runs that ended.
-        for rid in list(pins):
-            try:
-                st = self.run_store.load(rid)
-            except Exception:
-                st = None
-            if st is None or _run_is_terminal(st):
-                pins.pop(rid, None)
+        self._release_finished_pins()
         changed_ids = {wid for wid, sp in old_specs.items() if new_specs.get(wid) is not sp}
         if not changed_ids:
             return 0
