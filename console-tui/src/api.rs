@@ -835,31 +835,50 @@ impl GatewayClient {
         self.send("POST", &path, &json!({}), false)
     }
 
-    /// Unarchive an account (admin): it comes back inactive.
-    pub fn unarchive_account(&self, id: &str, tenant_id: &str) -> ApiResult<Value> {
-        let path = format!(
-            "/admin/accounts/{}/unarchive?tenant_id={}",
-            urlencode(id),
-            urlencode(tenant_id)
-        );
+    /// Unarchive an account: it comes back inactive. An admin unarchives any
+    /// account (`/admin/accounts/{id}/unarchive`); a non-admin an entity they
+    /// created (`/me/accounts/{id}/unarchive`, R16.5: the creator configures it).
+    pub fn unarchive_account(&self, id: &str, tenant_id: &str, admin: bool) -> ApiResult<Value> {
+        let path = if admin {
+            format!(
+                "/admin/accounts/{}/unarchive?tenant_id={}",
+                urlencode(id),
+                urlencode(tenant_id)
+            )
+        } else {
+            format!("/me/accounts/{}/unarchive", urlencode(id))
+        };
         self.send("POST", &path, &json!({}), false)
     }
 
     /// `GET /me/accounts`: for a NON-admin, your own row plus the entities
     /// you created (same row shape; the gateway's RBAC — an admin reads
-    /// everything on `/admin/accounts`, a non-admin gets 403 there).
+    /// everything on `/admin/accounts`, a non-admin gets 403 there), the
+    /// archived ones included (shown with Show archived; `d` unarchives).
     pub fn my_accounts(&self) -> ApiResult<Value> {
-        self.get("/me/accounts", false)
+        self.get("/me/accounts?include_archived=true", false)
     }
 
     /// Active switch of one account: users → registry `enabled`;
-    /// entities → suspend / resume (the gateway does both halves).
-    pub fn set_account_active(&self, id: &str, tenant_id: &str, active: bool) -> ApiResult<Value> {
-        let path = format!(
-            "/admin/accounts/{}/active?tenant_id={}",
-            urlencode(id),
-            urlencode(tenant_id)
-        );
+    /// entities → suspend / resume (the gateway does both halves). An
+    /// admin switches any account; a non-admin an entity they created
+    /// (`/me/accounts/{id}/active`, R16.5).
+    pub fn set_account_active(
+        &self,
+        id: &str,
+        tenant_id: &str,
+        active: bool,
+        admin: bool,
+    ) -> ApiResult<Value> {
+        let path = if admin {
+            format!(
+                "/admin/accounts/{}/active?tenant_id={}",
+                urlencode(id),
+                urlencode(tenant_id)
+            )
+        } else {
+            format!("/me/accounts/{}/active", urlencode(id))
+        };
         self.send("PUT", &path, &json!({ "active": active }), false)
     }
 
@@ -913,6 +932,12 @@ impl GatewayClient {
     /// pass) | paused. The gateway records reason + principal.
     pub fn entity_state(&self, name: &str, body: &Value) -> ApiResult<Value> {
         self.send("POST", &entity_path(name, "state"), body, true)
+    }
+
+    /// `GET /entities/{name}/access` (R16.5): may the caller change its
+    /// settings, as whom, and the sentence when not.
+    pub fn entity_access(&self, name: &str) -> ApiResult<Value> {
+        self.get(&entity_path(name, "access"), false)
     }
 
     pub fn entity_substrate(&self, name: &str) -> ApiResult<Value> {

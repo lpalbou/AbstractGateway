@@ -210,12 +210,14 @@ pub enum Cmd {
     /// entities you created, into the same `accounts` slot.
     LoadMyAccounts,
     /// The Active switch of one account (users: enabled; entities:
-    /// suspend/resume). `label` is the account id for the status line.
+    /// suspend/resume). `admin` picks the route: an admin any account, the
+    /// creator of an entity that entity (`/me/accounts/{id}/active`, R16.5).
     SetAccountActive {
         id: String,
         tenant_id: String,
         entity: bool,
         active: bool,
+        admin: bool,
     },
     /// `PUT /admin/accounts/{id}/openai-api` `{enabled}` (admin): the
     /// account's key at /v1 (round 5).
@@ -1723,6 +1725,7 @@ fn handle(
             tenant_id,
             entity,
             active,
+            admin,
         } => {
             // The status line names the NEW state (state-toggles rule).
             // The web console's sentences (console.py setAccountActive).
@@ -1734,9 +1737,15 @@ fn handle(
             };
             let (write, verify) = with_busy(store, wake, &format!("switching {id}"), || {
                 let write = require_client(client)
-                    .and_then(|c| c.set_account_active(&id, &tenant_id, active))
+                    .and_then(|c| c.set_account_active(&id, &tenant_id, active, admin))
                     .map_err(api_message);
-                let verify = require_client(client).and_then(|c| c.accounts());
+                let verify = require_client(client).and_then(|c| {
+                    if admin {
+                        c.accounts()
+                    } else {
+                        c.my_accounts()
+                    }
+                });
                 (write, verify)
             });
             let parsed = verify
@@ -1810,7 +1819,7 @@ fn handle(
                 require_client(client)
                     .and_then(|c| {
                         if unarchive {
-                            c.unarchive_account(&id, &tenant_id)
+                            c.unarchive_account(&id, &tenant_id, admin)
                         } else {
                             c.archive_account(&id, &tenant_id, admin)
                         }
@@ -1849,6 +1858,8 @@ fn handle(
             finish_write(store, wake, action, write, verified, None, on_done);
             if admin {
                 refresh_accounts(store, wake, client);
+            } else {
+                refresh_my_accounts(store, wake, client);
             }
         }
 
@@ -3460,13 +3471,20 @@ fn load_entity_detail(
     let voice = c.entity_voice(name).ok();
     let work = c.entity_work_order(name).ok();
     let cog = c.entity_cognition(name).ok();
-    Ok(crate::store::EntityDetail::fold(
+    let mut d = crate::store::EntityDetail::fold(
         name,
         Some(&substrate),
         voice.as_ref(),
         work.as_ref(),
         cog.as_ref(),
-    ))
+    );
+    // R16.5: who may change its settings (an admin or its creator) — read, never derived.
+    d.access = Some(
+        c.entity_access(name)
+            .map_err(|e| e.to_string())
+            .and_then(|v| crate::store::EntityAccess::from_payload(&v)),
+    );
+    Ok(d)
 }
 
 /// Post-write refreshes. DELIBERATELY outside any busy bracket: the
@@ -3585,6 +3603,23 @@ fn api_message(mut e: ApiError) -> ApiError {
 
 /// Re-read `/admin/accounts` after a users-registry write so the Accounts
 /// table shows the write (a failed read lands as the table's error).
+/// The non-admin twin of `refresh_accounts` (`GET /me/accounts`).
+fn refresh_my_accounts(store: &Store, wake: &WakeHandle, client: &Option<GatewayClient>) {
+    let s = *store;
+    let result = require_client(client)
+        .and_then(|c| c.my_accounts())
+        .and_then(|v| {
+            crate::store::accounts::accounts_from_payload(&v)
+                .map_err(|m| ApiError::new(ApiErrorKind::Protocol, m))
+        });
+    wake.post(move || {
+        s.accounts.set(match result {
+            Ok(rows) => Loadable::Ready(rows),
+            Err(e) => Loadable::Failed(e),
+        })
+    });
+}
+
 fn refresh_accounts(store: &Store, wake: &WakeHandle, client: &Option<GatewayClient>) {
     let s = *store;
     let result = require_client(client)

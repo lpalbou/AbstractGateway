@@ -797,12 +797,12 @@ you can click.
   **Done**; the old token stops working.
 
 - **2 Accounts** is the web console's Accounts page. The head has
-  **Eligible workspaces** (`E`, admins), the **Show archived** switch (`h`,
-  admins: archived accounts with ≣ Logs and ⤒ Unarchive), **Create user**
+  **Eligible workspaces** (`E`, admins), the **Show archived** switch (`h`;
+  admins: archived accounts, members: the archived entities they created — with ≣ Logs and ⤒ Unarchive), **Create user**
   (`a`) and **Create entity** (`n`). Under it, every signed-in user sees the
   command sandbox state line (for example **Commands sandboxed: macOS
   sandbox-exec**) with its explanation. The table has the columns **Name**
-  (and kind: Admin, User or Entity), **Email** (the address and the mailbox
+  (and kind: Admin, Member or Entity — the two roles are admin and member), **Email** (the address and the mailbox
   state, for example `alice@example.com · connected`, or "No address"),
   **Runtime** (a link that opens **5 Runtimes** filtered to that account; `g`),
   **Active** (a switch; Space: deactivating a user or suspending an entity asks
@@ -818,7 +818,11 @@ you can click.
   per-user mailbox override. **Email for everyone** (admin) is a card under
   the table with the three switches **Mailboxes for users**, **Agent email
   tools for users** and **Sign-in by email**, each applied at once. Someone who
-  is not an administrator sees their own row and the entities they created.
+  is not an administrator sees their own row and the entities they created,
+  and configures those entities: the Active switch, Archive, Unarchive and, in
+  **Manage**, the mind, voice, tools per phase and instructions (the gateway's
+  `GET /entities/{name}/access` decides; anyone else reads the gateway's
+  sentence "Only an admin or <entity>'s creator can change its settings.").
 - **Email** (`@`): on your own row, **Email — <you>** with your **Email
   address**, your **Mailbox** ([IMAP] [Google] [Microsoft]; the IMAP pane
   shows the incoming and outgoing servers, filled in as soon as the address has

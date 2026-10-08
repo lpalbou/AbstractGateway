@@ -53,17 +53,17 @@ fn accounts_active_and_activity_round_trip() {
         .expect("an admin row");
     assert!(own.refusal("suspend").is_some(), "{own:?}");
     // Deactivate, read back, reactivate.
-    c.set_account_active("r2alice", "default", false)
+    c.set_account_active("r2alice", "default", false, true)
         .expect("PUT active=false");
     let rows = accounts_from_payload(&c.accounts().unwrap()).unwrap();
     assert!(!rows.iter().find(|r| r.id == "r2alice").unwrap().active);
-    c.set_account_active("r2alice", "default", true)
+    c.set_account_active("r2alice", "default", true, true)
         .expect("PUT active=true");
     let rows = accounts_from_payload(&c.accounts().unwrap()).unwrap();
     assert!(rows.iter().find(|r| r.id == "r2alice").unwrap().active);
     // Your own account: 409 with a sentence.
     let e = c
-        .set_account_active(&own.id, &own.tenant_id, false)
+        .set_account_active(&own.id, &own.tenant_id, false, true)
         .expect_err("own account refused");
     let msg = e
         .body

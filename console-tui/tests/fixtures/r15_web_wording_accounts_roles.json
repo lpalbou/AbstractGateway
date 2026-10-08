@@ -1,0 +1,24 @@
+{
+  "_source": "scripts/extract_web_wording.py (do not edit by hand)",
+  "role_options": [
+    "Member — runs workflows on their own runtime",
+    "Admin — manages this gateway"
+  ],
+  "kind_labels": {
+    "admin": "Admin",
+    "user": "Member",
+    "entity": "Entity"
+  },
+  "kind_titles": {
+    "admin": "Admin — manages this gateway",
+    "user": "Member — signs in and runs their own agents",
+    "entity": "Entity — a member that is an AI, with its own memory and mailbox; its creator configures it"
+  },
+  "show_archived_tip_admin": "Archived accounts can't sign in or act; their runs and history are kept.",
+  "show_archived_tip_member": "Archived entities you created can't act; their memory, runs and history are kept, and you can unarchive them.",
+  "legend": [
+    "admin",
+    "member",
+    "entity"
+  ]
+}

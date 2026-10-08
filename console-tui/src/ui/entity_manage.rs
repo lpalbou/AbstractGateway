@@ -41,6 +41,36 @@ pub struct Section {
 /// The web's sentence for Freeze now (the inline confirm).
 pub const FREEZE_QUESTION: &str = "Freeze it now? Its process is killed, an open visit closes without reflection, and it refuses everything until Active is turned back on.";
 
+/// The Manage dialog's lead line. R16.5: a member who created the entity
+/// changes its settings; its lifecycle acts need an admin.
+pub fn manage_lead(
+    state: &str,
+    non_admin: bool,
+    access: Option<&Result<crate::store::EntityAccess, String>>,
+) -> String {
+    if !non_admin {
+        return format!("Currently {state}.");
+    }
+    match access {
+        Some(Ok(a)) if a.can_configure => match &a.admin_only_reason {
+            Some(admin_only) => format!("Currently {state}. {CREATOR_LEAD} {admin_only}"),
+            None => format!("Currently {state}. {CREATOR_LEAD}"),
+        },
+        Some(Ok(a)) => format!(
+            "Currently {state}. {}",
+            a.reason
+                .clone()
+                .unwrap_or_else(|| "You can't change its settings.".into())
+        ),
+        _ => format!("Currently {state}."),
+    }
+}
+
+/// The creator's lead (R16.5): what is theirs; the gateway's `admin_only`
+/// sentence (served) says what stays an admin's.
+pub const CREATOR_LEAD: &str =
+    "You created it: you change its mind, voice, tools and instructions.";
+
 /// Every Manage card in tab order: the web's titles and descriptions,
 /// each with the form whose fields it holds.
 pub fn manage_sections(_non_admin: bool) -> Vec<Section> {
@@ -309,14 +339,10 @@ pub fn open_manage_menu(cx: Scope, ctx: &Ctx, entity: EntityRow) {
         .with_untracked(crate::store::ConnPhase::is_known_non_admin);
     let name = entity.name.clone();
     let ctx2 = ctx.clone();
-    let lead = if non_admin {
-        format!(
-            "Currently {}. You are not an admin: changes to its state, mind, voice, work, tools, prompt and memories need an admin session.",
-            entity.state
-        )
-    } else {
-        format!("Currently {}.", entity.state)
-    };
+    // R16.5: the lead follows the gateway's access answer (read with the
+    // snapshot); until it arrives, the role line of a member.
+    let access = detail_for(&store, &entity.name).and_then(|d| d.access);
+    let lead = manage_lead(&entity.state, non_admin, access.as_ref());
     super::w::FormModal::new(format!("Manage — {name}"))
         .lead(lead)
         .size(100, 60)
@@ -506,6 +532,80 @@ pub fn loop_start_body(tick_s: &str, ticks_day: &str, rest_min: &str) -> Result<
 /// stay open to read, and their save lands the reason in the form.
 fn write_refusal(ctx: &Ctx, what: &str) -> Option<String> {
     ctx.store.conn.with_untracked(|c| c.admin_refusal(what))
+}
+
+/// Why a SETTINGS write (mind, voice, tools per phase, instructions) is
+/// refused before it is sent (None = send it). R16.5 (operator ruling
+/// 2026-10-08, "the creator configures their entity"): an admin or the
+/// entity's creator — the gateway says which (`GET /entities/{name}/access`,
+/// read with the manage snapshot); its sentence when not. An admin always may.
+pub fn settings_refusal(ctx: &Ctx, name: &str) -> Option<String> {
+    if ctx
+        .store
+        .conn
+        .with_untracked(crate::store::ConnPhase::is_admin)
+    {
+        return None;
+    }
+    match detail_for(&ctx.store, name).and_then(|d| d.access) {
+        Some(Ok(a)) => a.settings_refusal(),
+        Some(Err(e)) => Some(format!(
+            "who may change its settings could not be read: {e}"
+        )),
+        None => ctx.store.conn.with_untracked(|c| {
+            c.admin_refusal("changing an entity's settings before its access is read")
+        }),
+    }
+}
+
+/// A creator's tool save that GIVES a tier-2 tool (one the loaded grant of
+/// that phase does not hold): the gateway's sentence (`admin_only_tools`).
+fn admin_only_tool_refusal(
+    ctx: &Ctx,
+    name: &str,
+    d: &crate::store::ToolPolicyData,
+    policy: &serde_json::Map<String, Value>,
+) -> Option<String> {
+    let access = detail_for(&ctx.store, name).and_then(|d| d.access)?.ok()?;
+    admin_only_tool_problem(&access, name, d, policy)
+}
+
+/// The pure half of `admin_only_tool_refusal`: `policy` (the changed phases
+/// a save sends) against the loaded grant `d`.
+pub fn admin_only_tool_problem(
+    access: &crate::store::EntityAccess,
+    name: &str,
+    d: &crate::store::ToolPolicyData,
+    policy: &serde_json::Map<String, Value>,
+) -> Option<String> {
+    if access.admin_only_tools.is_empty() {
+        return None;
+    }
+    for (phase, tools) in policy {
+        let held: &[String] = d
+            .phases
+            .iter()
+            .find(|(p, _, _)| p == phase)
+            .map(|(_, t, _)| t.as_slice())
+            .unwrap_or(&[]);
+        let gives = tools
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .any(|t| {
+                access.admin_only_tools.iter().any(|a| a == t) && !held.iter().any(|h| h == t)
+            });
+        if gives {
+            return Some(
+                access
+                    .admin_only_tools_reason
+                    .clone()
+                    .unwrap_or_else(|| format!("Only an admin can give {name} a tier-2 tool.")),
+            );
+        }
+    }
+    None
 }
 
 /// The selected entity's manage snapshot when it matches `name`.
@@ -934,7 +1034,7 @@ fn substrate_body(mcx: Scope, ctx: &Ctx, name: String, inl: &Inline, w: i32) -> 
                                         ));
                                         return;
                                     }
-                                    if let Some(why) = write_refusal(&ctx_s, "saving the mind substrate") {
+                                    if let Some(why) = settings_refusal(&ctx_s, &n) {
                                         form_error.set(Some(why));
                                         return;
                                     }
@@ -1108,7 +1208,7 @@ fn voice_body(mcx: Scope, ctx: &Ctx, name: String, inl: &Inline, w: i32) -> View
                             }
                             b
                         };
-                        if let Some(why) = write_refusal(&ctx_s, "saving the voice") {
+                        if let Some(why) = settings_refusal(&ctx_s, &n) {
                             form_error.set(Some(why));
                             return;
                         }
@@ -1783,7 +1883,7 @@ fn tools_body(mcx: Scope, ctx: &Ctx, name: String, inl: &Inline, w: i32) -> View
                         if in_flight.get_untracked() {
                             return;
                         }
-                        if let Some(why) = write_refusal(&ctx_s, "saving tool grants") {
+                        if let Some(why) = settings_refusal(&ctx_s, &n) {
                             form_error.set(Some(why));
                             return;
                         }
@@ -1816,6 +1916,13 @@ fn tools_body(mcx: Scope, ctx: &Ctx, name: String, inl: &Inline, w: i32) -> View
                         }
                         if policy.is_empty() {
                             form_error.set(Some("no changes to save".into()));
+                            return;
+                        }
+                        // R16.5: a creator can't GIVE a tier-2 tool (keeping or
+                        // removing one is fine) — the gateway's sentence, before
+                        // the write (the gateway refuses it the same way).
+                        if let Some(why) = admin_only_tool_refusal(&ctx_s, &n, &d, &policy) {
+                            form_error.set(Some(why));
                             return;
                         }
                         if emptied.is_empty() {
@@ -2013,7 +2120,7 @@ fn prompt_body(mcx: Scope, ctx: &Ctx, name: String, inl: &Inline, w: i32) -> Vie
                                             Value::String(states_s[i].text()),
                                         );
                                     }
-                                    if let Some(why) = write_refusal(&ctx_s, "saving the prompt overlay") {
+                                    if let Some(why) = settings_refusal(&ctx_s, &n) {
                                         form_error.set(Some(why));
                                         return;
                                     }

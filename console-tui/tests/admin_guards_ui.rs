@@ -563,10 +563,26 @@ fn entity_manage_refuses_admin_acts_for_a_non_admin() {
     ));
     h.turns(2);
     h.ui.account_sel.set(1);
+    // R16.5: the gateway says ana created Testor (GET /entities/{name}/access).
+    h.store.entity_detail.set(Loadable::Ready(
+        abstractgateway_console::store::EntityDetail {
+            name: "Testor".into(),
+            access: Some(Ok(abstractgateway_console::store::EntityAccess {
+                can_configure: true,
+                as_role: Some("creator".into()),
+                admin_only_reason: Some("Only an admin can put it to sleep or wake it, run its personal time, give it work, review its memories or rebuild its memory index.".into()),
+                ..Default::default()
+            })),
+            ..Default::default()
+        },
+    ));
     h.turns(2);
     h.drain();
     let s = h.key(b"m");
-    assert!(s.contains("You are not an admin"), "{s}");
+    assert!(
+        s.contains("You created it: you change its mind, voice, tools and instructions."),
+        "the creator's lead (R16.5):\n{s}"
+    );
     // R15-B: Manage is one screen; its Lifecycle tab (a click on the tab
     // bar) shows the state read-only — the segments are off and the card
     // says why — and nothing is written.

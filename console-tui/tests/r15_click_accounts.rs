@@ -424,7 +424,9 @@ fn enter_in_a_popup_commits_the_choice_never_the_form() {
     h.key(b"\t");
     let s = h.key(b"\r"); // opens the Role popup
     assert!(
-        s.contains("Read-only — can look"),
+        s.contains("Admin — manages this gateway")
+            && s.contains("Member — runs workflows")
+            && !s.contains("Read-only"),
         "the Role popup is open:\n{s}"
     );
     h.key(b"\r"); // commits the highlighted role
