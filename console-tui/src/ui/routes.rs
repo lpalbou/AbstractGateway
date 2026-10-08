@@ -2583,16 +2583,20 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                         .child(efield(
                                             &t,
                                             "",
-                                            Button::new("Retry model discovery")
-                                                .on_click(move || {
+                                            button(
+                                                g2,
+                                                &t,
+                                                &Action::label("retry_models", "Retry model discovery"),
+                                                On::Raised,
+                                                true,
+                                                move || {
                                                     let n = name_btn.clone();
                                                     ctx_btn.store.models.update(|m| {
                                                         drop(m.insert(n.clone(), Loadable::Loading))
                                                     });
                                                     ctx_btn.send(Cmd::LoadModels { provider: n });
-                                                })
-                                                .element(g2, &t)
-                                                .build(),
+                                                },
+                                            ),
                                         ))
                                         .build()
                                 }
@@ -2699,8 +2703,13 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                         .child(efield(
                                             &t,
                                             "",
-                                            Button::new("Retry voice catalog")
-                                                .on_click(move || {
+                                            button(
+                                                g2,
+                                                &t,
+                                                &Action::label("retry_voices", "Retry voice catalog"),
+                                                On::Raised,
+                                                true,
+                                                move || {
                                                     voices_req.set(Some(pair_btn.clone()));
                                                     ctx_btn
                                                         .store
@@ -2710,9 +2719,8 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                                         provider: pair_btn.0.clone(),
                                                         model: pair_btn.1.clone(),
                                                     });
-                                                })
-                                                .element(g2, &t)
-                                                .build(),
+                                                },
+                                            ),
                                         ))
                                         .child(efield(
                                             &t,

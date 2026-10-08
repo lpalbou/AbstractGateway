@@ -705,3 +705,44 @@ fn model_ids_wrap_at_slash_or_dash_never_mid_word() {
         "{lines:?}"
     );
 }
+
+#[test]
+fn the_editors_retry_buttons_reload_by_mouse() {
+    use abstractgateway_console::api::{ApiError, ApiErrorKind};
+    // Model discovery failed for the route's provider: [Retry model discovery].
+    let mut h = page();
+    click_row(&mut h, "input.text", "✎");
+    h.store.models.update(|m| {
+        m.insert(
+            "lmstudio".into(),
+            Loadable::Failed(ApiError::new(ApiErrorKind::Unreachable, "refused")),
+        );
+    });
+    let s = h.turns(3);
+    assert!(s.contains("discovery failed: refused"), "{s}");
+    h.sent();
+    click_last(&mut h, "Retry model discovery");
+    assert!(
+        h.sent()
+            .iter()
+            .any(|c| matches!(c, Cmd::LoadModels { provider } if provider == "lmstudio")),
+        "Retry model discovery re-reads the models"
+    );
+    // The voice catalog failed: [Retry voice catalog].
+    let mut h = page();
+    click_row(&mut h, "output.voice", "✎");
+    h.store.voices.set(Loadable::Failed(ApiError::new(
+        ApiErrorKind::Unreachable,
+        "no catalog",
+    )));
+    let s = h.turns(3);
+    assert!(s.contains("voice catalog failed: no catalog"), "{s}");
+    h.sent();
+    click_last(&mut h, "Retry voice catalog");
+    assert!(
+        h.sent()
+            .iter()
+            .any(|c| matches!(c, Cmd::LoadVoices { provider, .. } if provider == "supertonic")),
+        "Retry voice catalog re-reads the voices"
+    );
+}
