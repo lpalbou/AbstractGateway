@@ -9402,10 +9402,10 @@ fn my_email_imap_tab_is_first_default_and_shows_prefilled_servers() {
         "IMAP is the default pane:\n{s}"
     );
     // The address is asked ONCE: your email address is set, so the mailbox
-    // signs in as it — one line, and Ctrl+U reveals the field for another
-    // account.
+    // signs in as it — one line, and the web's "Use a different account"
+    // link (Ctrl+U) reveals the field for another account.
     assert!(
-        s.contains("Mailbox account: me@fastmail.test — use a different account (Ctrl+U)"),
+        s.contains("Mailbox account: me@fastmail.test") && s.contains("Use a different account"),
         "{s}"
     );
     assert!(
@@ -9419,6 +9419,27 @@ fn my_email_imap_tab_is_first_default_and_shows_prefilled_servers() {
     h.key(b"\x15");
     let s = h.turns(2);
     assert!(s.contains("Mailbox account: me@fastmail.test"), "{s}");
+    // The link does the same by mouse (R15 FC1: no key-only control).
+    let s = click_on(&mut h, "Use a different account");
+    let s = if s.contains("Mailbox address") {
+        s
+    } else {
+        h.turns(2)
+    };
+    assert!(
+        s.contains("Mailbox address"),
+        "the link reveals the field:\n{s}"
+    );
+    let s = click_on(&mut h, "Use a different account");
+    let s = if s.contains("Mailbox account: me@fastmail.test") {
+        s
+    } else {
+        h.turns(2)
+    };
+    assert!(
+        s.contains("Mailbox account: me@fastmail.test"),
+        "and back:\n{s}"
+    );
     // Every field visible, pre-filled with the standard values.
     assert!(
         s.contains("Incoming mail (IMAP)") && s.contains("Outgoing mail (SMTP)"),
@@ -9445,10 +9466,7 @@ fn my_email_imap_tab_is_first_default_and_shows_prefilled_servers() {
     ] {
         assert!(!s.contains(banned), "{banned:?} is gone:\n{s}");
     }
-    assert!(
-        s.contains("Ctrl+O  My provider uses a different login name"),
-        "{s}"
-    );
+    assert!(s.contains("My provider uses a different login name"), "{s}");
     use abstractgateway_console::worker::operator::OpCmd;
     match h.find_cmd(|c| {
         is_op(c, |o| {
@@ -9584,14 +9602,32 @@ fn my_email_discovery_never_overwrites_an_edit_and_missing_defaults_are_said() {
     assert!(s.contains(&DISCOVERY_NO_DEFAULTS[..60]), "{s}");
 }
 
-/// Ctrl+O reveals ONE Login field (never shown by default); Connect sends
+/// The web's "My provider uses a different login name" link (Ctrl+O)
+/// reveals ONE Login field (never shown by default); Connect sends
 /// `username` only when it was changed there.
 #[test]
-fn my_email_different_login_is_a_key_and_sends_username_only_when_edited() {
+fn my_email_different_login_is_a_link_and_sends_username_only_when_edited() {
     use abstractgateway_console::worker::operator::EmailAction;
     let mut h = harness_sized(Size::new(140, 70));
     let s = open_my_email(&mut h, &my_email_not_connected());
     assert!(!s.contains("Login "), "{s}");
+    // By mouse: the link reveals the field, a second click hides it.
+    let s = click_on(&mut h, "My provider uses a different login name");
+    let s = if s.contains("Login ") { s } else { h.turns(2) };
+    assert!(
+        s.lines().any(|l| l.contains("Login") && l.contains('▐')),
+        "the link reveals Login:\n{s}"
+    );
+    let s = click_on(&mut h, "My provider uses a different login name");
+    let s = if s.lines().any(|l| l.contains("Login") && l.contains('▐')) {
+        h.turns(2)
+    } else {
+        s
+    };
+    assert!(
+        !s.lines().any(|l| l.contains("Login") && l.contains('▐')),
+        "a second click hides it:\n{s}"
+    );
     h.key(b"\x0f"); // Ctrl+O
     let s = h.turns(2);
     let (row, l) = s
@@ -9605,7 +9641,8 @@ fn my_email_different_login_is_a_key_and_sends_username_only_when_edited() {
     h.key(b"\x0f");
     let s = h.turns(2);
     assert!(
-        s.contains("Ctrl+O  My provider uses a different login name"),
+        s.contains("My provider uses a different login name")
+            && !s.lines().any(|l| l.contains("Login") && l.contains('▐')),
         "{s}"
     );
     h.key(b"\x0f");
@@ -10207,4 +10244,25 @@ fn my_email_recipient_rules_add_to_always_denied_sends_both_lists() {
         ),
         other => panic!("PUT /me/email/policy, got {other:?}"),
     }
+}
+
+/// Click the first `text` on screen (R15 FC1 click paths in this suite).
+fn click_on(h: &mut Harness, text: &str) -> String {
+    let screen = h.turns(1);
+    let (row, col) = screen
+        .lines()
+        .enumerate()
+        .find_map(|(i, l)| l.find(text).map(|c| (i, l[..c].chars().count())))
+        .unwrap_or_else(|| panic!("{text:?} not on screen:\n{screen}"));
+    h.key(
+        format!(
+            "\x1b[<0;{};{}M\x1b[<0;{};{}m",
+            col + 2,
+            row + 1,
+            col + 2,
+            row + 1
+        )
+        .as_bytes(),
+    );
+    h.turns(2)
 }

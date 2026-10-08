@@ -404,6 +404,7 @@ pub fn open_keys(ctx: &Ctx, cx: Scope) {
     let pairs = super::screen_hint_pairs(ctx);
     let title = format!("Keys — {}", SCREENS[ctx.ui.screen.get_untracked()]);
     let n = pairs.len() as i32;
+    let ctx2 = ctx.clone();
     super::w::FormModal::new(title)
         .lead("Everything here also works with the mouse: click a button, a toggle or a row.")
         .size(72, (n + 10).min(40))
@@ -429,16 +430,26 @@ pub fn open_keys(ctx: &Ctx, cx: Scope) {
             }
             let close2 = close.clone();
             let a = Action::label("close", "Close");
-            col.child(super::w::form::button_row(vec![action::button(
-                mcx,
-                &t,
-                &a,
-                On::Raised,
-                true,
-                move || close2(),
-            )]))
+            let quit = ctx2.quitter.clone();
+            let q = Action::label("quit", "Quit the console")
+                .tooltip("Quit this console; the gateway keeps running  (Ctrl+C)");
+            col.child(super::w::form::button_row(vec![
+                action::button(mcx, &t, &q, On::Raised, true, move || quit.quit()),
+                action::button(mcx, &t, &a, On::Raised, true, move || close2()),
+            ]))
             .build()
         });
+}
+
+/// The status bar's `?` button: the keys panel by mouse.
+/// `cx` builds the button (a status-bar region); `open_cx` opens the panel
+/// (the root scope: a region re-render must not dispose the dialog).
+pub fn keys_button(cx: Scope, open_cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
+    let mut tt = *t;
+    tt.surface_raised = t.bg;
+    let c = ctx.clone();
+    let a = Action::label("keys", "?").tooltip("Every key of this screen, and Quit  (?)");
+    action::button(cx, &tt, &a, On::Page, false, move || open_keys(&c, open_cx))
 }
 
 /// `Rc` alias used by screens wiring row actions.

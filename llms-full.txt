@@ -7286,8 +7286,9 @@ you can click.
 - **Themes.** `--theme gateway-dark` (default) or `--theme gateway-light`,
   built from the web console's palettes; ☾ / ☼ or `Ctrl+T` switches between
   them.
-- **Keys.** `?` lists every key of the current screen, each next to the
-  control it presses. Screens: **1** Connection, **2** Accounts,
+- **Keys.** `?` (or the **?** button at the right end of the status bar)
+  lists every key of the current screen, each next to the control it
+  presses, with **Quit the console**. Screens: **1** Connection, **2** Accounts,
   **3** Workflows, **4** Skills & MCP, **5** Runtimes, **6** Apps,
   **7** Providers, **8** OpenAI API, **9** Models, **0** Multimodal,
   **H** Resources, **T** Sandbox, **N** Network, **S** Setup, **I** About
@@ -7303,7 +7304,10 @@ you can click.
 - **Setup guide.** For an admin whose first run is not completed, the console
   opens the setup guide: Connection → Setup → Providers (local engines, then
   cloud keys) → Multimodal → Models → Apps → Sandbox, the same steps as the web
-  console's first-run guide. No step is gated except signing in.
+  console's first-run guide. No step is gated except signing in. The guide's
+  row above the status bar names the step and its goal, with **‹ Back**
+  (`Ctrl+P`), **Next ›** (`Ctrl+N`) and **Steps…** (`Ctrl+G`: go to a step,
+  leave for now, or skip setup).
 - **Browse mode** (free tabs) opens otherwise. `--wizard` and `--browse` choose
   the mode at launch.
 
@@ -7348,7 +7352,9 @@ you can click.
 - **Email** (`@`): on your own row, **Email — <you>** with your **Email
   address**, your **Mailbox** ([IMAP] [Google] [Microsoft]; the IMAP pane
   shows the incoming and outgoing servers, filled in as soon as the address has
-  a domain), once connected the mailbox's **Active** switch, Test and
+  a domain; the links **My provider uses a different login name** (`Ctrl+O`)
+  and, when your address is already set, **Use a different account**
+  (`Ctrl+U`) reveal the Login and Mailbox address fields), once connected the mailbox's **Active** switch, Test and
   Disconnect, the **Job failed** and **Approval needed** notifications with
   **Send a test**, the **Agent email tools** switch and **Recipients and
   limits** (recipient rules, send limits, folder) — see [email.md](docs/email.md).

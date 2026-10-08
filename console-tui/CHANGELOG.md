@@ -25,7 +25,11 @@ actions, switches, choices, dialogs — and every control is still reachable fro
 - Every screen follows this model: Connection, Accounts, Workflows, Skills & MCP, Runtimes, Apps, Providers,
   OpenAI API, Models, Multimodal, Resources, Sandbox, Network, Setup, About, the F3 host panel and the F2 docs
   assistant drawer.
-- `?` opens the keys panel (every key of the screen, each with its button); `F1` opens About.
+- `?` — or the **?** button at the right end of the status bar — opens the keys panel (every key of the screen,
+  each with its button, and **Quit the console**); `F1` opens About.
+- The setup guide's row has **‹ Back**, **Next ›** and **Steps…** (`Ctrl+P`, `Ctrl+N`, `Ctrl+G`).
+- Your own Email dialog's **My provider uses a different login name** (`Ctrl+O`) and **Use a different account**
+  (`Ctrl+U`) are links you can click.
 
 ### Added
 - **Light and dark themes** built from the web console's palettes: `--theme gateway-light` / `gateway-dark`

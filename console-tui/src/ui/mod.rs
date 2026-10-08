@@ -1558,17 +1558,14 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         // the row genuinely vanishes.
         .child(dyn_view_scoped(LayoutStyle::default().shrink(0.0), {
             let ui = ctx.ui;
-            move |_| {
+            let ctx_w = ctx.clone();
+            move |wcx| {
                 let t = theme.get().tokens;
                 let screen = ui.screen.get();
-                let goal = if ui.wizard.get() {
-                    wizard_goal(screen)
-                } else {
-                    ""
-                };
-                if goal.is_empty() {
+                if !ui.wizard.get() {
                     return Element::new().style(LayoutStyle::default().h(0)).build();
                 }
+                let goal = wizard_goal(screen);
                 // "Step N of M" (the web guide's kicker) when the screen
                 // is one of the guide's steps.
                 let step = WIZARD_STEPS
@@ -1576,9 +1573,58 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
                     .position(|s| *s == screen)
                     .map(|i| format!(" Step {}/{} ", i + 1, WIZARD_STEPS.len()))
                     .unwrap_or_else(|| " Step goal: ".to_string());
+                // R15 FC1: the guide's keys are buttons too — Back
+                // (Ctrl+P), Next (Ctrl+N), Steps… (Ctrl+G).
+                let back =
+                    w::Action::label("guide_back", "‹ Back").tooltip("The previous step  (Ctrl+P)");
+                let next =
+                    w::Action::label("guide_next", "Next ›").tooltip("The next step  (Ctrl+N)");
+                let steps = w::Action::label("guide_steps", "Steps…")
+                    .tooltip("Go to a step, leave the guide, or skip setup  (Ctrl+G)");
+                let bw = back.width() + next.width() + steps.width() + 2;
+                let vw = abstracttui::app::use_viewport(wcx).get().w;
+                let text_w = (vw - bw - 1).max(8);
+                let (c1, c2, c3) = (ctx_w.clone(), ctx_w.clone(), ctx_w.clone());
+                let mut tt = t;
+                tt.surface_raised = t.bg;
                 Element::new()
-                    .style(LayoutStyle::line(1).shrink(0.0))
-                    .child(line(vec![span(step, t.accent), span(goal, t.text_muted)]))
+                    .style(
+                        LayoutStyle::row()
+                            .height(Dimension::Cells(1))
+                            .shrink(0.0)
+                            .gap(1),
+                    )
+                    .child(w::fill_line(
+                        LayoutStyle::default()
+                            .width(Dimension::Cells(text_w))
+                            .height(Dimension::Cells(1)),
+                        vec![w::Ink::new(step, t.accent), w::Ink::new(goal, t.text_muted)],
+                        None,
+                    ))
+                    .child(w::action::button(
+                        wcx,
+                        &tt,
+                        &back,
+                        w::action::On::Page,
+                        false,
+                        move || wizard_back(&c1),
+                    ))
+                    .child(w::action::button(
+                        wcx,
+                        &tt,
+                        &next,
+                        w::action::On::Page,
+                        false,
+                        move || wizard_next(&c2, cx),
+                    ))
+                    .child(w::action::button(
+                        wcx,
+                        &tt,
+                        &steps,
+                        w::action::On::Page,
+                        false,
+                        move || welcome::guide_key(&c3, cx),
+                    ))
                     .build()
             }
         }))
@@ -2069,6 +2115,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
     let engine_notices = abstracttui::app::use_startup_notices(_cx);
     let vp_footer = abstracttui::app::use_viewport(_cx);
     let ctx_hints = ctx.clone();
+    let ctx_keys_btn = ctx.clone();
     Element::new()
         // Chrome rows: pinned like the header (finding-0240 class) —
         // the hint line disappearing under content pressure would take
@@ -2191,7 +2238,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                 // The header has no room for the ☾/☼ switch under 90 columns:
                 // it sits at the status bar's right end there, one click away.
                 let theme_here = width < 90;
-                let reserve = if theme_here { 4 } else { 0 };
+                let reserve = if theme_here { 8 } else { 4 };
                 row = row.child(
                     Element::new()
                         .style(LayoutStyle::default().grow(1.0).height(Dimension::Cells(1)))
@@ -2203,6 +2250,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                         ))
                         .build(),
                 );
+                row = row.child(shell::keys_button(fcx, _cx, &ctx_keys_btn, &t));
                 if theme_here {
                     row = row.child(shell::theme_button(fcx, &t));
                 }
