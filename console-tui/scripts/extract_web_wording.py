@@ -148,5 +148,72 @@ def main() -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# R15 per-screen fixtures (append-only): each screen worker adds ONE function
+# returning the web words its terminal screen must say, and registers it in
+# SCREEN_FIXTURES under the screen's name. The fixture is
+# tests/fixtures/r15_web_wording_<screen>.json; a missing anchor FAILS.
+# ---------------------------------------------------------------------------
+
+SCREEN_FIXTURES: dict = {}
+
+
+def need(src: str, pattern: str, what: str, flags: int = 0) -> str:
+    """Exactly one match of `pattern` (its group 1, or the whole match)."""
+    m = list(re.finditer(pattern, src, flags))
+    if len(m) != 1:
+        fail(f"{what}: expected exactly one match, found {len(m)} (the anchor moved).")
+    g = m[0].groups()
+    return html.unescape(g[0] if g else m[0].group(0))
+
+
+def need_first(src: str, pattern: str, what: str, flags: int = 0) -> str:
+    """The first match of `pattern` (its group 1); none is a FAILURE."""
+    m = re.search(pattern, src, flags)
+    if not m:
+        fail(f"{what}: no match (the anchor moved).")
+    return html.unescape(m.group(1) if m.groups() else m.group(0))
+
+
+def connection_words() -> dict:
+    """R15-A Connection: the web sign-in card's words (the TUI's sign-in surface)."""
+    src = read("console.py")
+    return {
+        "token_label": need(src, r'<label class="af-gateway-signin__label" for="login-token">([^<]*)</label>', "token label"),
+        "user_label": need(src, r'<label class="af-gateway-signin__label" for="login-user">([^<]*)</label>', "user label"),
+        "show": need(src, r'<button id="toggle-token"[^>]*>([^<]*)</button>', "token reveal"),
+        "show_tip": need(src, r'<button id="toggle-token"[^>]*aria-label="([^"]*)"', "token reveal label"),
+        "hide": need(src, r'\$\("toggle-token"\)\.textContent = visible \? "Show" : "([^"]*)";', "token hide"),
+        "hide_tip": need(src, r'setAttribute\("aria-label", visible \? "Show token" : "([^"]*)"\);', "token hide label"),
+        "sign_in": need(src, r'<button id="login-button"[^>]*>([^<]*)</button>', "sign in button"),
+        "recovery_link": need(src, r'<button id="recovery-link"[^>]*>([^<]*)</button>', "recovery link"),
+        "code_label": need(src, r'<label class="af-gateway-signin__label" for="recovery-code-input">([^<]*)</label>', "code label"),
+        "resend": need(src, r'<button id="recovery-resend"[^>]*>([^<]*)</button>', "resend"),
+        "use_code": need(src, r'<button id="recovery-use"[^>]*>([^<]*)</button>', "use code"),
+        "back": need(src, r'<button id="recovery-back"[^>]*>([^<]*)</button>', "back to token"),
+        "network_tip": need(src, r'<button id="tab-button-network"[^>]*title="([^"]*)"', "network nav tooltip"),
+    }
+
+
+SCREEN_FIXTURES["connection"] = connection_words
+
+
+def screens_main(write: bool) -> int:
+    rc = 0
+    for name, build_fn in SCREEN_FIXTURES.items():
+        path = CRATE / "tests" / "fixtures" / f"r15_web_wording_{name}.json"
+        text = json.dumps({"_source": "scripts/extract_web_wording.py (do not edit by hand)", **build_fn()}, indent=2, ensure_ascii=False) + "\n"
+        if write:
+            path.write_text(text, encoding="utf-8")
+            print(f"wrote {path}")
+        elif not path.is_file() or path.read_text(encoding="utf-8") != text:
+            print(f"{path} differs from the web sources; run with --write, then make the terminal match.")
+            rc = 1
+        else:
+            print(f"r15 web wording ({name}): fixture matches the web sources")
+    return rc
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    _rc = main()
+    raise SystemExit(screens_main("--write" in sys.argv) or _rc)
