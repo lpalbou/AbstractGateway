@@ -103,11 +103,28 @@ def backlog_exec_runner_status() -> Dict[str, Any]:
     return {"alive": bool(alive), "error": (str(last_error) if last_error else "") or None}
 
 
+def _default_runtime_principal() -> Optional[GatewayPrincipal]:
+    """The admin principal that owns the gateway's DEFAULT runtime, when one does."""
+    principal = GatewayPrincipal(user_id="admin", tenant_id="default", roles=("admin",), runtime_id="default", source="gateway")
+    return principal if _principal_uses_default_runtime(principal) else None
+
+
 def get_gateway_service() -> GatewayService:
     global _service
     principal = current_gateway_principal()
     if principal is not None and gateway_multi_user_enabled():
         return get_gateway_service_for_principal(principal)
+    if gateway_multi_user_enabled():
+        # ONE SERVICE PER DATA DIRECTORY (R16.2). Under user auth the admin's
+        # requests already own the default runtime's service
+        # (`default:__gateway_default_runtime__`); a principal-less caller
+        # (background threads, boot steps) used to build a SECOND global
+        # `_service` on the same directory — a second runtime, LLM client and
+        # in-process model, a second runner fighting for the lock, and twice
+        # the work on every promote. It now gets that same service.
+        default_principal = _default_runtime_principal()
+        if default_principal is not None:
+            return get_gateway_service_for_principal(default_principal)
     with _service_lock:
         if _service is None:
             _service = create_default_gateway_service()
@@ -775,26 +792,53 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
     return service
 
 
-def reload_gateway_workflow_bundles() -> Dict[str, Any]:
-    """Reload private and catalog bundles for all instantiated Gateway services."""
+def gateway_service_label(svc: Any) -> str:
+    """`<tenant>:<runtime>` — how a reload names a service (never a filesystem path)."""
+    cfg = getattr(svc, "config", None)
+    tenant = str(getattr(cfg, "tenant_id", "") or "default")
+    runtime = str(getattr(cfg, "runtime_id", "") or getattr(cfg, "user_id", "") or "default")
+    return f"{tenant}:{runtime}"
+
+
+def reload_host_workflows(svc: Any, *, full: bool = False) -> Dict[str, Any]:
+    """One service's reload result (the host's, labelled), never raising."""
+    host = getattr(svc, "host", None)
+    reload_fn = getattr(host, "reload_bundles_from_disk", None)
+    label = gateway_service_label(svc)
+    if not callable(reload_fn):
+        return {"ok": False, "service": label, "error": "bundle reload is not supported on this gateway host"}
+    try:
+        result = dict((reload_fn(full=True) if full else reload_fn()) or {})
+    except Exception as e:
+        return {"ok": False, "service": label, "error": str(e)}
+    result["service"] = label
+    return result
+
+
+def reload_gateway_workflow_bundles(*, full: bool = False) -> Dict[str, Any]:
+    """Serve the bundles on disk on every instantiated Gateway service (R16.2).
+
+    Each service swaps a recompiled workflow registry onto its EXISTING runtime
+    (`registry_swap`); a service whose workflows did not move is left alone. A
+    service's runtime is rebuilt only when its workflows newly need something it
+    was started without (`service_reload`), every one only on request
+    (`full=True`). Returns `workflow_reload.describe_workflow_reload`'s object:
+    `{ok, kind, services, unchanged_services, duration_ms, sentence}`.
+    """
+    import time as _time
+
+    from .workflow_reload import describe_workflow_reload
+
+    started = _time.perf_counter()
     with _service_lock:
-        services = []
+        services: list[GatewayService] = []
         if _service is not None:
             services.append(_service)
-        services.extend(list(_services_by_principal.values()))
-    results: list[Dict[str, Any]] = []
-    for svc in services:
-        host = getattr(svc, "host", None)
-        reload_fn = getattr(host, "reload_bundles_from_disk", None)
-        if not callable(reload_fn):
-            continue
-        try:
-            result = dict(reload_fn() or {})
-            result["data_dir"] = str(getattr(svc.config, "data_dir", ""))
-            results.append(result)
-        except Exception as e:
-            results.append({"ok": False, "data_dir": str(getattr(svc.config, "data_dir", "")), "error": str(e)})
-    return {"ok": all(bool(r.get("ok", True)) for r in results), "services": results}
+        for svc in _services_by_principal.values():
+            if not any(svc is s for s in services):
+                services.append(svc)
+    results = [reload_host_workflows(svc, full=full) for svc in services]
+    return describe_workflow_reload(results, duration_ms=int(round((_time.perf_counter() - started) * 1000.0)))
 
 
 def sync_backlog_exec_runner(*, data_dir: Optional[Path] = None) -> Dict[str, Any]:

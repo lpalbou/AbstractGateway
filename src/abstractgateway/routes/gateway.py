@@ -119,8 +119,10 @@ from ..service import (
     invalidate_gateway_service_for_runtime,
     is_draft_run_lifecycle,
     reload_gateway_workflow_bundles,
+    reload_host_workflows,
     run_summary,
 )
+from ..workflow_reload import describe_workflow_reload
 from ..users import GatewayUserRegistry, gateway_data_dir_from_env, gateway_user_auth_enabled
 from ..workspace_tools import AbstractIgnore, read_file as read_workspace_file, skim_files as skim_workspace_files
 from ..workflow_catalog import (
@@ -1893,7 +1895,8 @@ async def gateway_admin_upload_workflow_catalog_bundle(
             make_default=bool(make_default),
             publisher=_catalog_actor(principal),
         )
-        reload_result = reload_gateway_workflow_bundles()
+        reload_result = await _off_the_event_loop(reload_gateway_workflow_bundles)
+        _audit_reload(request, reload_result)
     except WorkflowCatalogError as e:
         raise _map_catalog_error(e) from e
     except Exception as e:
@@ -1925,6 +1928,7 @@ async def gateway_admin_promote_workflow_catalog_bundle(request: Request, payloa
             publisher=_catalog_actor(principal),
         )
         reload_result = await _off_the_event_loop(reload_gateway_workflow_bundles)
+        _audit_reload(request, reload_result)
     except WorkflowBundleRegistryError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except WorkflowCatalogError as e:
@@ -2653,6 +2657,9 @@ class PublishVisualFlowResponse(BaseModel):
     #: None = unverified (the gateway was not reloaded).
     loaded: Optional[bool] = None
     skipped: Optional[Dict[str, Any]] = None
+    #: What serving it cost (R16.2): `{kind: registry_swap|service_reload|full_rebuild,
+    #: services, duration_ms, sentence, ...}`; None when the gateway was not reloaded.
+    reload: Optional[Dict[str, Any]] = None
 
 
 _VISUALFLOW_ID_RE = re.compile(r"^[a-zA-Z0-9._-]+$")
@@ -4181,6 +4188,39 @@ async def _off_the_event_loop(fn: Any, /, *args: Any, **kwargs: Any) -> Any:
     thread it burns is different. Exceptions (HTTPException included) propagate.
     """
     return await asyncio.to_thread(fn, *args, **kwargs)
+
+
+def _audit_reload(request: Request, reload_obj: Dict[str, Any]) -> None:
+    """Put what a reload did on the request's audit line (kind, duration, services)."""
+    try:
+        detail = dict(getattr(request.state, "audit_detail", None) or {})
+        detail["reload"] = {
+            "kind": reload_obj.get("kind"),
+            "duration_ms": reload_obj.get("duration_ms"),
+            "services": [s.get("service") for s in (reload_obj.get("services") or [])],
+        }
+        request.state.audit_detail = detail
+    except Exception:  # noqa: BLE001 - the audit line is best-effort, never a failure
+        pass
+
+
+async def _reload_after_registry_write(request: Request, svc: Any, host: Any, *, full: bool = False) -> Dict[str, Any]:
+    """Serve what a write to a workflow registry put on disk, off the event loop (R16.2).
+
+    The SHARED registry (`_is_shared_workflow_registry`) is mounted by every service, so
+    every instantiated service reloads — each one swaps its registry in place, and one
+    whose workflows did not move does nothing. A user's own registry concerns only that
+    user's service. Returns `describe_workflow_reload`'s object and records it on the
+    audit line.
+    """
+    if _is_shared_workflow_registry(host):
+        reload_obj = await _off_the_event_loop(reload_gateway_workflow_bundles, full=full)
+    else:
+        started = time.perf_counter()
+        result = await _off_the_event_loop(reload_host_workflows, svc, full=full)
+        reload_obj = describe_workflow_reload([result], duration_ms=int(round((time.perf_counter() - started) * 1000.0)))
+    _audit_reload(request, reload_obj)
+    return reload_obj
 
 
 def _ensure_catalog_selection_loaded(*, svc: Any, selection: WorkflowCatalogStartSelection) -> None:
@@ -7501,17 +7541,15 @@ async def publish_visualflow(request: Request, flow_id: str, req: PublishVisualF
             pass
 
     gateway_reloaded = False
+    reload_obj: Optional[Dict[str, Any]] = None
     if bool(req.reload_gateway):
         reload_fn = getattr(host, "reload_bundles_from_disk", None)
         if not callable(reload_fn):
             raise HTTPException(status_code=503, detail="Bundle reload is not supported on this gateway host")
-        try:
-            await _off_the_event_loop(reload_fn)
-            gateway_reloaded = True
-        except Exception as e:
-            raise HTTPException(status_code=503, detail=f"Failed to reload bundles after publish: {e}")
-    else:
-        gateway_reloaded = False
+        reload_obj = await _reload_after_registry_write(request, svc, host)
+        if not reload_obj.get("ok"):
+            raise HTTPException(status_code=503, detail=f"Failed to reload bundles after publish: {reload_obj.get('sentence')}")
+        gateway_reloaded = True
 
     loaded, skip_reason = _installed_bundle_load_state(host, installed, reloaded=bool(gateway_reloaded))
     return PublishVisualFlowResponse(
@@ -7524,6 +7562,7 @@ async def publish_visualflow(request: Request, flow_id: str, req: PublishVisualF
         gateway_reload_error=None,
         loaded=loaded,
         skipped=skip_reason,
+        reload=reload_obj,
     )
 
 
@@ -8127,8 +8166,17 @@ async def download_bundle(
 
 
 @router.post("/bundles/reload")
-async def reload_bundles(request: Request) -> Dict[str, Any]:
-    """Reload bundle directory (best-effort; intended for local dev)."""
+async def reload_bundles(
+    request: Request,
+    full: bool = Query(
+        default=False,
+        description=(
+            "Rebuild the service's runtime too (models and prompt caches start empty). "
+            "Without it the reload swaps the workflow registry in place."
+        ),
+    ),
+) -> Dict[str, Any]:
+    """Serve the bundle directory as it is on disk now (registry swap; `full=true` rebuilds)."""
     svc = get_gateway_service()
     host = _require_bundle_host(svc)
     _require_workflow_registry_write(request, host)
@@ -8136,12 +8184,22 @@ async def reload_bundles(request: Request) -> Dict[str, Any]:
     reload_fn = getattr(host, "reload_bundles_from_disk", None)
     if not callable(reload_fn):
         raise HTTPException(status_code=400, detail="Bundle reload is not supported on this gateway host")
+    started = time.perf_counter()
     try:
-        return dict(await _off_the_event_loop(reload_fn) or {})
+        raw = await (_off_the_event_loop(reload_fn, full=True) if full else _off_the_event_loop(reload_fn))
+        result = dict(raw or {})
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to reload bundles: {e}")
+    from ..service import gateway_service_label
+
+    result["service"] = gateway_service_label(svc)
+    reload_obj = describe_workflow_reload([result], duration_ms=int(round((time.perf_counter() - started) * 1000.0)))
+    _audit_reload(request, reload_obj)
+    result.pop("service", None)
+    result["reload"] = reload_obj
+    return result
 
 
 @router.post("/bundles/upload")
@@ -8199,16 +8257,17 @@ async def upload_bundle(
 
     gateway_reloaded = False
     gateway_reload_error: Optional[str] = None
+    reload_obj: Optional[Dict[str, Any]] = None
     if bool(reload):
         reload_fn = getattr(host, "reload_bundles_from_disk", None)
         if not callable(reload_fn):
             gateway_reload_error = "Bundle reload is not supported on this gateway host"
         else:
-            try:
-                await _off_the_event_loop(reload_fn)
+            reload_obj = await _reload_after_registry_write(request, svc, host)
+            if reload_obj.get("ok"):
                 gateway_reloaded = True
-            except Exception as e:
-                gateway_reload_error = str(e)
+            else:
+                gateway_reload_error = str(reload_obj.get("sentence") or "reload failed")
 
     man = installed.manifest
     eps: list[Dict[str, Any]] = []
@@ -8244,6 +8303,7 @@ async def upload_bundle(
         "gateway_reload_error": gateway_reload_error,
         "loaded": loaded,
         "skipped": skip_reason,
+        "reload": reload_obj,
     }
 
 

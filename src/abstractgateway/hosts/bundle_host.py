@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence, Tuple
@@ -52,6 +53,15 @@ logger = logging.getLogger(__name__)
 # 2026-09-28 (operator ruling: history replay is the most recent 50k tokens of
 # whole turns, nothing else); recorded as ignored when a client still sends them.
 _RETIRED_SESSION_HISTORY_INPUTS = ("session_history_max_messages", "session_history_max_chars")
+
+# What a runtime can serve, in the words a reload sentence uses.
+_CAPABILITY_WORDS = {"llm": "a language model", "tools": "tool execution", "memory_kg": "the memory store"}
+_TERMINAL_RUN_STATUSES = frozenset({"completed", "failed", "cancelled"})
+
+
+def _run_is_terminal(run: Any) -> bool:
+    status = getattr(run, "status", None)
+    return str(getattr(status, "value", status) or "").lower() in _TERMINAL_RUN_STATUSES
 
 
 @dataclass(frozen=True)
@@ -723,6 +733,245 @@ def _visual_event_listener_workflow_id(*, flow_id: str, node_id: str) -> str:
     return f"visual_event_listener_{_sanitize(flow_id)}_{_sanitize(node_id)}"
 
 
+def _file_signature(p: Path) -> Optional[tuple]:
+    """(path, mtime_ns, size) — what the compile cache keys a bundle file by."""
+    try:
+        st = Path(p).stat()
+    except OSError:
+        return None
+    return (str(p), int(st.st_mtime_ns), int(st.st_size))
+
+
+@dataclass
+class _WorkflowCompileCache:
+    """Compiled workflows kept across reloads, keyed by the bundle file's signature.
+
+    A publish adds or replaces ONE file; every other bundle keeps its compiled spec
+    OBJECTS, which is both why a reload is cheap and how in-flight pinning tells a
+    changed workflow from an untouched one (identity, not content).
+    """
+
+    # path -> (signature, WorkflowBundle | the Exception that refused it)
+    paths: Dict[str, tuple] = field(default_factory=dict)
+    # (host bundle id, version, signature) -> compiled entry (specs, flows, needs, derived)
+    bundles: Dict[tuple, Dict[str, Any]] = field(default_factory=dict)
+    # dynamic flow path -> (signature, WorkflowSpec | None)
+    dynamic: Dict[str, tuple] = field(default_factory=dict)
+    # the packaged automation controller + send-email action specs
+    static_specs: Optional[list] = None
+
+
+@dataclass
+class _CompiledWorkflows:
+    """Everything a host serves that does NOT depend on its runtime."""
+
+    bundles: Dict[str, Dict[str, WorkflowBundle]]
+    bundle_sources: Dict[str, Dict[str, Dict[str, Any]]]
+    skipped_bundles: Dict[str, Dict[str, Dict[str, Any]]]
+    latest_versions: Dict[str, str]
+    default_bundle_id: Optional[str]
+    workflow_registry: WorkflowRegistry
+    specs: Dict[str, WorkflowSpec]
+    event_listener_specs_by_root: Dict[str, list[str]]
+    flows_by_namespaced_id: Dict[str, Dict[str, Any]]
+    # What the runtime must be able to serve: "llm" (llm/agent/model-residency
+    # nodes), "tools", "memory_kg".
+    needs: frozenset
+    flow_scanned_llm_defaults: Optional[Tuple[str, str]]
+    email_tools_listed: bool
+    dynamic_signature: tuple
+
+
+def _tool_defs_from_specs(specs0: list[dict[str, Any]]) -> list[_GatewayToolSpec]:
+    out: list[_GatewayToolSpec] = []
+    for s in specs0:
+        if not isinstance(s, dict):
+            continue
+        name = s.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        desc = s.get("description")
+        params = s.get("parameters")
+        when_to_use = s.get("when_to_use")
+        examples = s.get("examples")
+        tags = s.get("tags")
+        out.append(
+            _GatewayToolSpec(
+                name=name.strip(),
+                description=str(desc or ""),
+                parameters=dict(params) if isinstance(params, dict) else {},
+                when_to_use=str(when_to_use) if when_to_use is not None else None,
+                examples=list(examples) if isinstance(examples, list) else [],
+                tags=list(tags) if isinstance(tags, list) else [],
+            )
+        )
+    return out
+
+
+def _normalize_tool_names(raw_tools: Any) -> list[str]:
+    if not isinstance(raw_tools, list):
+        return []
+    out: list[str] = []
+    for t in raw_tools:
+        if isinstance(t, str) and t.strip():
+            out.append(t.strip())
+    return out
+
+
+def _build_gateway_react_logic(*, email_tools_listed: bool, mcp_registry_dir: Path) -> Any:
+    """The ReAct logic every Visual Agent node's derived workflow runs (its tool registry)."""
+    try:
+        from abstractagent.logic.react import ReActLogic
+    except Exception as e:  # pragma: no cover
+        raise WorkflowBundleError(
+            "Bundle contains Visual Agent nodes, but AbstractAgent is not installed/importable. "
+            "Install `abstractagent` to execute Agent nodes."
+        ) from e
+
+    try:
+        from abstractruntime.integrations.abstractcore.default_tools import list_default_tool_specs
+    except Exception as e:  # pragma: no cover
+        raise WorkflowBundleError(
+            "Visual Agent nodes require AbstractCore tool schemas from the base AbstractRuntime install."
+        ) from e
+
+    all_tool_defs = _tool_defs_from_specs(list_default_tool_specs(email_enabled=email_tools_listed))
+    # Schema-only builtins (executed as runtime effects by AbstractAgent adapters).
+    try:
+        from abstractagent.logic.builtins import (  # type: ignore
+            ASK_USER_TOOL,
+            COMPACT_MEMORY_TOOL,
+            DELEGATE_AGENT_TOOL,
+            INSPECT_VARS_TOOL,
+            READ_SKILL_TOOL,
+            RECALL_MEMORY_TOOL,
+            REMEMBER_TOOL,
+        )
+
+        builtin_defs = [
+            ASK_USER_TOOL,
+            RECALL_MEMORY_TOOL,
+            INSPECT_VARS_TOOL,
+            REMEMBER_TOOL,
+            COMPACT_MEMORY_TOOL,
+            DELEGATE_AGENT_TOOL,
+            # read_skill (card 0087): the agent contract keeps this out
+            # of DEFAULT tool lists, but the allowlist normalizer
+            # prunes names absent from the logic's registry — so the
+            # schema must live here for a skills-carrying run's
+            # allowlist to keep it. Runs without a skills_block that
+            # call it anyway get the executor's honest refusal.
+            READ_SKILL_TOOL,
+        ]
+        seen_names = {t.name for t in all_tool_defs if getattr(t, "name", None)}
+        for t in builtin_defs:
+            if getattr(t, "name", None) and t.name not in seen_names:
+                all_tool_defs.append(t)
+                seen_names.add(t.name)
+    except Exception:
+        pass
+
+    # MCP tools offered to agents join the registry LIVE (mcp_run_tools.py): the logic's
+    # `tools` is read at every agent step, so an admin turning a server on or off needs no
+    # host rebuild; a run still sees only the names in its own tool list.
+    from ..mcp_run_tools import offered_tool_specs
+
+    class _McpAwareReActLogic(ReActLogic):
+        @property
+        def tools(self) -> list[Any]:  # type: ignore[override]
+            static = list(self._tools)
+            taken = {getattr(t, "name", None) for t in static}
+            extra = [t for t in _tool_defs_from_specs(offered_tool_specs(mcp_registry_dir)) if t.name not in taken]
+            return static + extra
+
+    return _McpAwareReActLogic(tools=all_tool_defs)
+
+
+def _derive_bundle_workflows(
+    *,
+    flows: Dict[str, Dict[str, Any]],
+    specs: Dict[str, WorkflowSpec],
+    logic: Any,
+) -> tuple[list[WorkflowSpec], list[tuple[str, WorkflowSpec]]]:
+    """One bundle's derived workflows: (per-Agent-node ReAct specs, [(root flow id, On Event listener spec)]).
+
+    `logic` is a zero-argument callable returning the shared ReAct logic; it is only
+    called when the bundle has an Agent node.
+    """
+    agent_pairs: list[tuple[str, Dict[str, Any]]] = []
+    for flow_id, raw in flows.items():
+        for node_id, cfg in _collect_agent_nodes(raw):
+            agent_pairs.append((flow_id, {"node_id": node_id, "cfg": cfg}))
+
+    agents: list[WorkflowSpec] = []
+    if agent_pairs:
+        try:
+            from abstractagent.adapters.react_runtime import create_react_workflow
+        except Exception as e:  # pragma: no cover
+            raise WorkflowBundleError(
+                "Bundle contains Visual Agent nodes, but AbstractAgent is not installed/importable. "
+                "Install `abstractagent` to execute Agent nodes."
+            ) from e
+        from abstractruntime.visualflow_compiler.visual.agent_ids import visual_react_workflow_id
+
+        shared_logic = logic()
+        for flow_id, meta in agent_pairs:
+            node_id = str(meta.get("node_id") or "").strip()
+            cfg = meta.get("cfg") if isinstance(meta.get("cfg"), dict) else {}
+            cfg2 = dict(cfg) if isinstance(cfg, dict) else {}
+            workflow_id_raw = cfg2.get("_react_workflow_id")
+            react_workflow_id = (
+                workflow_id_raw.strip()
+                if isinstance(workflow_id_raw, str) and workflow_id_raw.strip()
+                else visual_react_workflow_id(flow_id=flow_id, node_id=node_id)
+            )
+            tools_selected = _normalize_tool_names(cfg2.get("tools"))
+            agents.append(
+                create_react_workflow(
+                    logic=shared_logic,
+                    workflow_id=react_workflow_id,
+                    provider=None,
+                    model=None,
+                    allowed_tools=tools_selected,
+                )
+            )
+
+    # Custom event listeners ("On Event" nodes) are compiled into dedicated listener workflows.
+    listeners: list[tuple[str, WorkflowSpec]] = []
+    for flow_id, raw in flows.items():
+        nodes = raw.get("nodes")
+        if not isinstance(nodes, list):
+            continue
+        for n in nodes:
+            if _node_type_from_raw(n) != "on_event":
+                continue
+            if not isinstance(n, dict):
+                continue
+            node_id = str(n.get("id") or "").strip()
+            if not node_id:
+                continue
+            # An event-entry flow already listens in its root run. A
+            # second derived listener would handle the same event twice,
+            # duplicating messages and potentially tool side effects.
+            # Use the compiled entry, including inferred entrypoints;
+            # independent On Event branches still need their own runs.
+            root_spec = specs.get(flow_id)
+            if root_spec is not None and node_id == root_spec.entry_node:
+                continue
+            listener_wid = _visual_event_listener_workflow_id(flow_id=flow_id, node_id=node_id)
+
+            # Derive a listener workflow with entryNode = on_event node.
+            derived: Dict[str, Any] = dict(raw)
+            derived["id"] = listener_wid
+            derived["entryNode"] = node_id
+            try:
+                spec = compile_visualflow(derived)
+            except Exception as e:
+                raise WorkflowBundleError(f"Failed compiling On Event listener '{listener_wid}': {e}") from e
+            listeners.append((flow_id, spec))
+    return agents, listeners
+
+
 @dataclass
 class WorkflowBundleGatewayHost:
     """Gateway host that starts/ticks runs from WorkflowBundles (no AbstractFlow import).
@@ -782,11 +1031,20 @@ class WorkflowBundleGatewayHost:
     email_plane: Any = field(default=None, repr=False, compare=False)
     _lock: Any = field(default_factory=threading.RLock, repr=False, compare=False)
     # Hooks re-applied to every REBUILT runtime before it is published
-    # (reload_bundles_from_disk swaps self.runtime for a brand-new instance;
+    # (a service_reload/full_rebuild swaps self.runtime for a brand-new instance;
     # anything the composition root armed on the old one — entity routing —
     # would silently vanish otherwise: the 2026-07-24 "No effect handler
     # registered for memory_recall after a catalog publish" defect).
     _runtime_rebuild_hooks: Any = field(default_factory=list, repr=False, compare=False)
+    # Compiled workflows kept across reloads (publish recompiles only what changed).
+    _compile_cache: Any = field(default_factory=lambda: _WorkflowCompileCache(), repr=False, compare=False)
+    # What `runtime` was built to serve ("llm", "tools", "memory_kg"); a reload
+    # swaps a new registry onto it while the workflows need nothing outside it.
+    _runtime_capabilities: frozenset = field(default_factory=frozenset, repr=False, compare=False)
+    # run_id -> the spec a run in flight resolved before a swap replaced it (B4).
+    _run_spec_pins: Dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+    # Serializes reloads (concurrent publishes); NOT held by ticks, starts or reads.
+    _reload_lock: Any = field(default_factory=threading.RLock, repr=False, compare=False)
 
     @staticmethod
     def _dynamic_flow_filename(workflow_id: str) -> str:
@@ -825,8 +1083,9 @@ class WorkflowBundleGatewayHost:
             raise ValueError("Dynamic VisualFlow missing required 'id'")
 
         spec = compile_visualflow(raw)
-        self.workflow_registry.register(spec)
-        self.specs[str(spec.workflow_id)] = spec
+        with self._lock:
+            self.workflow_registry.register(spec)
+            self.specs[str(spec.workflow_id)] = spec
 
         if persist:
             try:
@@ -896,8 +1155,9 @@ class WorkflowBundleGatewayHost:
         except Exception:
             return None
         try:
-            self.workflow_registry.register(spec)
-            self.specs[str(spec.workflow_id)] = spec
+            with self._lock:
+                self.workflow_registry.register(spec)
+                self.specs[str(spec.workflow_id)] = spec
         except Exception:
             return None
         return spec
@@ -979,56 +1239,85 @@ class WorkflowBundleGatewayHost:
             )
         return None
 
+    # ---- Workflow compilation (runtime-free) and runtime construction --------
+    #
+    # PUBLISH WITHOUT REBUILD (R16.2): a publish/promote/upload changes WORKFLOWS,
+    # not the services that run them. Loading is therefore two independent steps:
+    #
+    # 1. `_compile_workflows` — bundles on disk -> specs + a WorkflowRegistry.
+    #    Touches no runtime, no LLM client, no provider, no memory store. Every
+    #    compiled bundle is cached by its file signature (path, mtime_ns, size),
+    #    so a recompile after a publish compiles the ONE new bundle and reuses
+    #    the spec OBJECTS of everything else (identity is what B4's in-flight
+    #    pinning compares).
+    # 2. `_build_runtime` — the runtime, its LLM client/provider (an in-process
+    #    model = its weights and its prompt caches), tool executor and memory
+    #    store, sized to what the compiled workflows need.
+    #
+    # `reload_bundles_from_disk` runs step 1 and swaps the new registry onto the
+    # EXISTING runtime. Step 2 runs again only when the workflows now need a
+    # capability the running runtime was built without (`_runtime_capabilities`).
+
     @staticmethod
-    def load_from_dir(
+    def _bundle_paths_from_dir(path: Path) -> list[Path]:
+        if path.is_file():
+            return [path]
+        if path.exists() and path.is_dir():
+            return sorted([p for p in path.glob("*.flow") if p.is_file()])
+        return []
+
+    @staticmethod
+    def _dynamic_dir_signature(dynamic_dir: Path) -> tuple:
+        try:
+            paths = sorted(p for p in Path(dynamic_dir).glob("*.json") if p.is_file())
+        except Exception:
+            return ()
+        return tuple(sig for sig in (_file_signature(p) for p in paths) if sig is not None)
+
+    @staticmethod
+    def _compile_workflows(
         *,
-        bundles_dir: Path,
-        data_dir: Path,
-        framework_bundles_dir: Optional[Path] = None,
-        catalog_bundles_dir: Optional[Path] = None,
-        catalog_root_data_dir: Optional[Path] = None,
-        catalog_tenant_id: str = "default",
-        catalog_user_id: str = "admin",
-        catalog_runtime_id: str = "default",
-        run_store: Any,
-        ledger_store: Any,
-        artifact_store: Any,
-    ) -> "WorkflowBundleGatewayHost":
-        base = Path(bundles_dir).expanduser().resolve()
-        if not base.exists():
-            if str(base.name or "").lower().endswith(".flow"):
-                raise FileNotFoundError(f"bundles_dir file does not exist: {base}")
-            try:
-                base.mkdir(parents=True, exist_ok=True)
-                logger.warning("bundles_dir did not exist; created %s", base)
-            except Exception as e:
-                raise FileNotFoundError(f"bundles_dir does not exist and could not be created: {base} ({e})") from e
+        base: Path,
+        framework_base: Optional[Path],
+        catalog_base: Optional[Path],
+        catalog_root: Path,
+        data_root: Path,
+        catalog_tenant: str,
+        dynamic_dir: Path,
+        email_tools_listed: bool,
+        cache: Optional["_WorkflowCompileCache"] = None,
+    ) -> "_CompiledWorkflows":
+        """Bundles on disk -> specs and a fresh WorkflowRegistry. No runtime is touched.
+
+        `cache` (the host's) is read for bundles whose file did not change and
+        rewritten with exactly the entries this compile used, so it never grows
+        past what is on disk.
+        """
+        old = cache if cache is not None else _WorkflowCompileCache()
+        new_paths: Dict[str, tuple] = {}
+        new_entries: Dict[tuple, Dict[str, Any]] = {}
+        new_dynamic: Dict[str, tuple] = {}
 
         bundles_by_id: Dict[str, Dict[str, WorkflowBundle]] = {}
         bundle_sources: Dict[str, Dict[str, Dict[str, Any]]] = {}
-        data_root = Path(data_dir).expanduser().resolve()
-        catalog_root = Path(catalog_root_data_dir).expanduser().resolve() if catalog_root_data_dir is not None else data_root
-        catalog_tenant = safe_principal_component(catalog_tenant_id, default="default")
-        catalog_runtime = safe_principal_component(catalog_runtime_id, default=catalog_tenant)
-        catalog_user = safe_principal_component(catalog_user_id, default="admin")
-        catalog_policy_secret = load_or_create_workflow_policy_secret(catalog_root)
-        from ..mail.accounts import agent_tools_active
-        from ..mail.runtime_wiring import plane_for_host
+        bundle_sigs: Dict[tuple, Optional[tuple]] = {}
 
-        email_plane = plane_for_host(data_root=data_root, tenant_id=catalog_tenant, user_id=catalog_user, runtime_id=catalog_runtime)
-        # Agent email tools (framework backlog 0992; default OFF): the toolsets carry
-        # them only when the administrator made them available, this user's account is
-        # connected and allowed, and the user's "Agent email tools" toggle is on. Checked again at execution time
-        # by the runtime's credential resolver (runtime_wiring.py), and a toggle
-        # change reloads this host (routes/email.py).
-        email_tools_listed = agent_tools_active(email_plane)
-
-        def _bundle_paths_from_dir(path: Path) -> list[Path]:
-            if path.is_file():
-                return [path]
-            if path.exists() and path.is_dir():
-                return sorted([p for p in path.glob("*.flow") if p.is_file()])
-            return []
+        def _open(p: Path) -> WorkflowBundle:
+            key = str(p)
+            sig = _file_signature(p)
+            hit = old.paths.get(key)
+            if hit is not None and sig is not None and hit[0] == sig:
+                new_paths[key] = hit
+                if isinstance(hit[1], Exception):
+                    raise hit[1]
+                return hit[1]
+            try:
+                b = open_workflow_bundle(p)
+            except Exception as e:
+                new_paths[key] = (sig, e)
+                raise
+            new_paths[key] = (sig, b)
+            return b
 
         def _load_bundle_path(
             p: Path,
@@ -1038,7 +1327,7 @@ class WorkflowBundleGatewayHost:
             source_kind: str = "user",
         ) -> None:
             try:
-                b = open_workflow_bundle(p)
+                b = _open(p)
                 public_bid = str(getattr(getattr(b, "manifest", None), "bundle_id", "") or "").strip()
                 bver = str(getattr(getattr(b, "manifest", None), "bundle_version", "0.0.0") or "0.0.0").strip() or "0.0.0"
                 if not public_bid:
@@ -1053,6 +1342,7 @@ class WorkflowBundleGatewayHost:
                     logger.warning("Duplicate bundle version '%s@%s' at %s; keeping first", bid, bver, p)
                     return
                 versions[bver] = b
+                bundle_sigs[(bid, bver)] = (new_paths.get(str(p)) or (None,))[0]
                 bundle_sources.setdefault(bid, {})[bver] = {
                     "registry_scope": source_scope,
                     "tenant_id": source_tenant_id,
@@ -1066,20 +1356,15 @@ class WorkflowBundleGatewayHost:
                 logger.warning("Failed to load bundle %s: %s", p, e)
 
         private_bundle_ids: set[str] = set()
-        private_paths = _bundle_paths_from_dir(base)
-        for p in private_paths:
+        for p in WorkflowBundleGatewayHost._bundle_paths_from_dir(base):
             before = set(bundles_by_id.keys())
             _load_bundle_path(p, source_scope="private", source_kind="user")
             private_bundle_ids.update(set(bundles_by_id.keys()) - before)
 
-        framework_base = Path(framework_bundles_dir).expanduser().resolve() if framework_bundles_dir is not None else None
         if framework_base is not None and framework_base != base:
-            framework_paths = _bundle_paths_from_dir(framework_base)
-            if framework_paths:
-                for p in framework_paths:
-                    _load_bundle_path(p, source_scope="private", source_kind="framework")
+            for p in WorkflowBundleGatewayHost._bundle_paths_from_dir(framework_base):
+                _load_bundle_path(p, source_scope="private", source_kind="framework")
 
-        catalog_base = Path(catalog_bundles_dir).expanduser().resolve() if catalog_bundles_dir is not None else None
         if catalog_base is not None and catalog_base.exists() and catalog_base.is_dir():
             for p in sorted([p for p in catalog_base.glob("*.flow") if p.is_file()]):
                 _load_bundle_path(
@@ -1098,20 +1383,12 @@ class WorkflowBundleGatewayHost:
         # from bundles_by_id, and a latest pointer at a dropped version
         # would resurrect a bundle the skip declared absent.
 
-        dep_store = WorkflowDeprecationStore(path=data_root / "workflow_deprecations.json")
-        dynamic_dir = data_root / "dynamic_flows"
-        try:
-            dynamic_dir.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            # Best-effort: dynamic workflows are optional.
-            pass
-
-        # Build runtime + registry and register all workflow specs.
         wf_reg: WorkflowRegistry = WorkflowRegistry()
         specs: Dict[str, WorkflowSpec] = {}
         flows_by_namespaced_id: Dict[str, Dict[str, Any]] = {}
-
         skipped_bundles: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        needs: set[str] = set()
+        derived_jobs: list[Dict[str, Any]] = []
 
         def _drop_skipped(bid: str, bver: str, *, reason: str, kind: str) -> None:
             # A skipped bundle must be ABSENT everywhere, not just spec-less
@@ -1150,98 +1427,100 @@ class WorkflowBundleGatewayHost:
             except Exception:
                 pass
 
+        def _compile_one(bid: str, bver: str, b: WorkflowBundle) -> Dict[str, Any]:
+            bundle_ref = _bundle_ref(bid, bver)
+            man = b.manifest
+            # min_runtime ENFORCEMENT (flow c5652): a declared floor the
+            # serving runtime cannot meet refuses THIS bundle loudly —
+            # BEFORE compilation (an old runtime may compile the flows
+            # fine and still run them wrong; the gate exists exactly for
+            # the compiles-but-inverts-signals class).
+            _gap = WorkflowBundleGatewayHost._min_runtime_gap(man)
+            if _gap is not None:
+                return {"skip": ("min_runtime", str(_gap))}
+
+            if declares_native_loop_bundle(man):
+                native_specs, native_error = materialize_native_loop_specs(
+                    manifest=man,
+                    bundle_ref=bundle_ref,
+                    namespace=_namespace,
+                )
+                if native_error is not None:
+                    return {"skip": ("native_loop", str(native_error))}
+                return {"skip": None, "specs": dict(native_specs), "flows": {}, "needs": frozenset(), "derived": {}}
+
+            if not man.flows:
+                raise WorkflowBundleError(f"Bundle '{bid}@{bver}' has no flows (manifest.flows is empty)")
+
+            flow_ids = set(man.flows.keys())
+            id_map = {flow_id: _namespace(bundle_ref, flow_id) for flow_id in flow_ids}
+
+            # BOOT RESILIENCE (flow, 2026-07-24): one un-compilable bundle
+            # must never wedge the whole control plane. Compile a bundle's
+            # flows into a STAGING registry first; on any failure, log a
+            # loud warning and SKIP that bundle entirely (it neither
+            # registers nor half-registers), then keep loading the rest.
+            # The failure is still loud (warning + boot_warnings surface on
+            # /api/health) and the bundle is simply absent until fixed —
+            # the honest degradation the compile-refusal (c5182) needs so a
+            # stale draft using an unknown node type doesn't take the
+            # gateway down. Published good bundles keep serving.
+            staged_specs: Dict[str, WorkflowSpec] = {}
+            staged_flows: Dict[str, Dict[str, Any]] = {}
+            for flow_id, rel in man.flows.items():
+                raw = b.read_json(rel)
+                if not isinstance(raw, dict):
+                    return {"skip": ("compile", f"VisualFlow JSON for '{flow_id}' must be an object")}
+                namespaced_raw = _namespace_visualflow_raw(
+                    raw=raw,
+                    bundle_id=bundle_ref,
+                    flow_id=flow_id,
+                    id_map=id_map,
+                )
+                nsid = str(namespaced_raw.get("id") or _namespace(bundle_ref, flow_id))
+                staged_flows[nsid] = namespaced_raw
+                try:
+                    spec = compile_visualflow(namespaced_raw)
+                except Exception as e:
+                    return {"skip": ("compile", f"flow '{flow_id}' failed to compile: {e}")}
+                staged_specs[str(spec.workflow_id)] = spec
+            bundle_needs: set[str] = set()
+            for raw in staged_flows.values():
+                if _flow_uses_llm(raw) or _flow_uses_model_residency(raw):
+                    bundle_needs.add("llm")
+                if _flow_uses_tools(raw):
+                    bundle_needs.add("tools")
+                if _flow_uses_memory_kg(raw):
+                    bundle_needs.add("memory_kg")
+            return {"skip": None, "specs": staged_specs, "flows": staged_flows, "needs": frozenset(bundle_needs), "derived": {}}
+
         for bid, versions in list(bundles_by_id.items()):
             for bver, b in list(versions.items()):
-                bundle_ref = _bundle_ref(bid, bver)
-                man = b.manifest
-                # min_runtime ENFORCEMENT (flow c5652): a declared floor the
-                # serving runtime cannot meet refuses THIS bundle loudly —
-                # BEFORE compilation (an old runtime may compile the flows
-                # fine and still run them wrong; the gate exists exactly for
-                # the compiles-but-inverts-signals class).
-                _gap = WorkflowBundleGatewayHost._min_runtime_gap(man)
-                if _gap is not None:
-                    logger.warning(
-                        "WorkflowBundleGatewayHost: SKIPPING bundle '%s@%s' — %s",
-                        bid, bver, _gap,
-                    )
-                    _drop_skipped(bid, bver, reason=str(_gap), kind="min_runtime")
-                    continue
-
-                _factory = declares_native_loop_bundle(man)
-                if _factory:
-                    native_specs, native_error = materialize_native_loop_specs(
-                        manifest=man,
-                        bundle_ref=bundle_ref,
-                        namespace=_namespace,
-                    )
-                    if native_error is not None:
-                        logger.warning(
-                            "WorkflowBundleGatewayHost: SKIPPING native-loop bundle '%s@%s' — %s "
-                            "(the bundle is absent until fixed; other bundles keep serving)",
-                            bid,
-                            bver,
-                            native_error,
-                        )
-                        _drop_skipped(bid, bver, reason=str(native_error), kind="native_loop")
-                        continue
-                    for wfid, spec in native_specs.items():
-                        wf_reg.register(spec)
-                        specs[wfid] = spec
-                    continue
-
-                if not man.flows:
-                    raise WorkflowBundleError(f"Bundle '{bid}@{bver}' has no flows (manifest.flows is empty)")
-
-                flow_ids = set(man.flows.keys())
-                id_map = {flow_id: _namespace(bundle_ref, flow_id) for flow_id in flow_ids}
-
-                # BOOT RESILIENCE (flow, 2026-07-24): one un-compilable bundle
-                # must never wedge the whole control plane. Compile a bundle's
-                # flows into a STAGING registry first; on any failure, log a
-                # loud warning and SKIP that bundle entirely (it neither
-                # registers nor half-registers), then keep loading the rest.
-                # The failure is still loud (warning + boot_warnings surface on
-                # /api/health) and the bundle is simply absent until fixed —
-                # the honest degradation the compile-refusal (c5182) needs so a
-                # stale draft using an unknown node type doesn't take the
-                # gateway down. Published good bundles keep serving.
-                staged_specs: Dict[str, WorkflowSpec] = {}
-                staged_flows: Dict[str, Dict[str, Any]] = {}
-                bundle_error: Optional[str] = None
-                for flow_id, rel in man.flows.items():
-                    raw = b.read_json(rel)
-                    if not isinstance(raw, dict):
-                        bundle_error = f"VisualFlow JSON for '{flow_id}' must be an object"
-                        break
-                    namespaced_raw = _namespace_visualflow_raw(
-                        raw=raw,
-                        bundle_id=bundle_ref,
-                        flow_id=flow_id,
-                        id_map=id_map,
-                    )
-                    nsid = str(namespaced_raw.get("id") or _namespace(bundle_ref, flow_id))
-                    staged_flows[nsid] = namespaced_raw
-                    try:
-                        spec = compile_visualflow(namespaced_raw)
-                    except Exception as e:
-                        bundle_error = f"flow '{flow_id}' failed to compile: {e}"
-                        break
-                    staged_specs[str(spec.workflow_id)] = spec
-                if bundle_error is not None:
+                ckey = (bid, bver, bundle_sigs.get((bid, bver)))
+                entry = old.bundles.get(ckey) if ckey[2] is not None else None
+                if entry is None:
+                    entry = _compile_one(bid, bver, b)
+                if ckey[2] is not None:
+                    new_entries[ckey] = entry
+                skip = entry.get("skip")
+                if skip is not None:
+                    kind, reason = skip
                     logger.warning(
                         "WorkflowBundleGatewayHost: SKIPPING bundle '%s@%s' — %s "
                         "(the bundle is absent until fixed; other bundles keep serving)",
-                        bid, bver, bundle_error,
+                        bid, bver, reason,
                     )
                     # absent means absent — listings included
-                    _drop_skipped(bid, bver, reason=str(bundle_error), kind="compile")
+                    _drop_skipped(bid, bver, reason=reason, kind=kind)
                     continue
                 # Bundle compiled whole — commit it.
-                for wfid, spec in staged_specs.items():
+                for wfid, spec in entry["specs"].items():
                     wf_reg.register(spec)
                     specs[wfid] = spec
-                flows_by_namespaced_id.update(staged_flows)
+                flows_by_namespaced_id.update(entry["flows"])
+                needs.update(entry["needs"])
+                if entry["flows"]:
+                    derived_jobs.append(entry)
 
         # Computed after the skip drops (see the note above): only SERVING
         # bundles get latest pointers.
@@ -1249,20 +1528,30 @@ class WorkflowBundleGatewayHost:
 
         # Load dynamic flows persisted in data_dir (e.g. scheduled wrapper flows).
         try:
-            for p in sorted(dynamic_dir.glob("*.json")):
+            for p in sorted(Path(dynamic_dir).glob("*.json")):
                 if not p.is_file():
                     continue
-                try:
-                    raw = json.loads(p.read_text(encoding="utf-8"))
-                except Exception as e:
-                    logger.warning("Failed to read dynamic flow %s: %s", p, e)
-                    continue
-                if not isinstance(raw, dict):
-                    continue
-                try:
-                    spec = compile_visualflow(raw)
-                except Exception as e:
-                    logger.warning("Failed compiling dynamic flow %s: %s", p, e)
+                key = str(p)
+                sig = _file_signature(p)
+                hit = old.dynamic.get(key)
+                if hit is not None and sig is not None and hit[0] == sig:
+                    new_dynamic[key] = hit
+                    spec = hit[1]
+                else:
+                    spec = None
+                    try:
+                        raw = json.loads(p.read_text(encoding="utf-8"))
+                    except Exception as e:
+                        logger.warning("Failed to read dynamic flow %s: %s", p, e)
+                        raw = None
+                    if isinstance(raw, dict):
+                        try:
+                            spec = compile_visualflow(raw)
+                        except Exception as e:
+                            logger.warning("Failed compiling dynamic flow %s: %s", p, e)
+                            spec = None
+                    new_dynamic[key] = (sig, spec)
+                if spec is None:
                     continue
                 try:
                     wf_reg.register(spec)
@@ -1273,11 +1562,111 @@ class WorkflowBundleGatewayHost:
         except Exception:
             pass
 
-        flow_scanned_llm_defaults: Optional[Tuple[str, str]] = None
-        needs_llm = any(_flow_uses_llm(raw) for raw in flows_by_namespaced_id.values())
-        needs_tools = any(_flow_uses_tools(raw) for raw in flows_by_namespaced_id.values())
-        needs_model_residency = any(_flow_uses_model_residency(raw) for raw in flows_by_namespaced_id.values())
-        needs_memory_kg = any(_flow_uses_memory_kg(raw) for raw in flows_by_namespaced_id.values())
+        # Register derived workflows required by VisualFlow semantics:
+        # - per-Agent-node ReAct subworkflows
+        # - per-OnEvent-node listener workflows (Blueprint-style)
+        # Cached on the bundle's entry per `email_tools_listed` (the agents'
+        # tool lists are the only input that moves without the file moving).
+        event_listener_specs_by_root: Dict[str, list[str]] = {}
+        logic_box: list[Any] = []
+
+        def _logic() -> Any:
+            if not logic_box:
+                logic_box.append(
+                    _build_gateway_react_logic(email_tools_listed=email_tools_listed, mcp_registry_dir=Path(catalog_root or data_root))
+                )
+            return logic_box[0]
+
+        derived_agent: list[WorkflowSpec] = []
+        derived_listener: list[tuple[str, WorkflowSpec]] = []
+        for entry in derived_jobs:
+            listed_key = bool(email_tools_listed)
+            got = entry["derived"].get(listed_key)
+            if got is None:
+                got = _derive_bundle_workflows(flows=entry["flows"], specs=entry["specs"], logic=_logic)
+                entry["derived"] = {listed_key: got}
+            agents, listeners = got
+            derived_agent.extend(agents)
+            derived_listener.extend(listeners)
+        for spec in derived_agent:
+            wf_reg.register(spec)
+            specs[str(spec.workflow_id)] = spec
+        for root_flow_id, spec in derived_listener:
+            wf_reg.register(spec)
+            specs[str(spec.workflow_id)] = spec
+            event_listener_specs_by_root.setdefault(root_flow_id, []).append(str(spec.workflow_id))
+
+        # Automations v1 (contracts C5/D): every host serves the shipped
+        # automation controller under its PINNED versioned workflow id
+        # (`abstractframework.automation-controller@1.0.0:controller`), so the
+        # runner ticks controller runs like any run, also after a restart. It
+        # is registered as a workflow, not loaded as a bundle, so it never
+        # shows in bundle listings. A missing or wrong packaged controller
+        # raises here: a gateway without it must not come up half-working.
+        # Per-user email (framework backlog 0992): the send-email action
+        # workflow (no-model automations). Both are packaged, so compiled once
+        # per host and reused across reloads.
+        static_specs = old.static_specs
+        if static_specs is None:
+            from abstractruntime.automations.bundle import register_controller_bundle
+            from abstractruntime.email import register_email_action_workflow
+
+            scratch = WorkflowRegistry()
+            static_specs = [register_controller_bundle(scratch), register_email_action_workflow(scratch)]
+        for spec in static_specs:
+            wf_reg.register(spec)
+            specs[str(spec.workflow_id)] = spec
+
+        flow_scanned_llm_defaults = _scan_flows_for_llm_defaults(flows_by_namespaced_id) if "llm" in needs else None
+
+        if cache is not None:
+            cache.paths = new_paths
+            cache.bundles = new_entries
+            cache.dynamic = new_dynamic
+            cache.static_specs = static_specs
+
+        return _CompiledWorkflows(
+            bundles=bundles_by_id,
+            bundle_sources=bundle_sources,
+            skipped_bundles=skipped_bundles,
+            latest_versions=latest_versions,
+            default_bundle_id=default_bundle_id,
+            workflow_registry=wf_reg,
+            specs=specs,
+            event_listener_specs_by_root=event_listener_specs_by_root,
+            flows_by_namespaced_id=flows_by_namespaced_id,
+            needs=frozenset(needs),
+            flow_scanned_llm_defaults=flow_scanned_llm_defaults,
+            email_tools_listed=bool(email_tools_listed),
+            dynamic_signature=WorkflowBundleGatewayHost._dynamic_dir_signature(dynamic_dir),
+        )
+
+    @staticmethod
+    def _build_runtime(
+        *,
+        needs: frozenset,
+        flow_scanned_llm_defaults: Optional[Tuple[str, str]],
+        wf_reg: WorkflowRegistry,
+        data_root: Path,
+        catalog_root: Path,
+        catalog_tenant: str,
+        catalog_user: str,
+        catalog_runtime: str,
+        email_plane: Any,
+        run_store: Any,
+        ledger_store: Any,
+        artifact_store: Any,
+    ) -> Tuple[Runtime, Optional[Any], Optional[Dict[str, Any]], frozenset]:
+        """Build the runtime the compiled workflows need: (runtime, memory store, its info, capabilities).
+
+        `capabilities` is what this runtime CAN serve ("llm", "tools", "memory_kg"):
+        a later reload swaps a new registry onto it as long as the new workflows
+        need nothing outside that set.
+        """
+        needs_llm = "llm" in needs
+        needs_tools = "tools" in needs
+        needs_memory_kg = "memory_kg" in needs
+        capabilities: set[str] = set()
 
         extra_effect_handlers: Dict[Any, Any] = {}
         memory_store_obj: Optional[Any] = None
@@ -1307,9 +1696,10 @@ class WorkflowBundleGatewayHost:
                 logger.warning("Gateway memory store warning: %s", warning)
 
             extra_effect_handlers = build_memory_kg_effect_handlers(store=memory_store_obj, run_store=run_store, now_iso=utc_now_iso)
+            capabilities.add("memory_kg")
 
         # Optional AbstractCore integration for LLM_CALL + TOOL_CALLS + MODEL_RESIDENCY.
-        if needs_llm or needs_tools or needs_model_residency:
+        if needs_llm or needs_tools:
             try:
                 from abstractruntime.integrations.abstractcore.default_tools import build_default_tool_map
                 from abstractruntime.integrations.abstractcore.tool_executor import (
@@ -1336,8 +1726,8 @@ class WorkflowBundleGatewayHost:
             # (user-authored templates) runs through them with agent tools off, and a later
             # connect needs no host rebuild. Every call resolves the account through this
             # plane's resolver, which refuses an unusable account and, for agent/workflow
-            # calls, "Agent email tools" not active. Agents' tool LISTS (below) carry the
-            # email tools only when agent tools are active.
+            # calls, "Agent email tools" not active. Agents' tool LISTS (the compiled
+            # agent workflows) carry the email tools only when agent tools are active.
             gateway_tool_map = build_default_tool_map(email_enabled=True)
 
             # read_skill execution half (card 0087; agent's progressive-
@@ -1379,7 +1769,7 @@ class WorkflowBundleGatewayHost:
                 except Exception:
                     tool_executor = PassthroughToolExecutor(mode="approval_required")
 
-            if needs_llm or needs_model_residency:
+            if needs_llm:
                 try:
                     from abstractruntime.integrations.abstractcore.factory import create_local_runtime, create_remote_runtime
                 except Exception as e:  # pragma: no cover
@@ -1392,7 +1782,6 @@ class WorkflowBundleGatewayHost:
                 provider: Optional[str] = None
                 model: Optional[str] = None
                 provider_deferred_error: Optional[Exception] = None
-                flow_scanned_llm_defaults = _scan_flows_for_llm_defaults(flows_by_namespaced_id)
                 try:
                     provider, model = resolve_gateway_provider_model(
                         flow_defaults=flow_scanned_llm_defaults,
@@ -1510,6 +1899,7 @@ class WorkflowBundleGatewayHost:
                 setattr(runtime, "_gateway_default_route_error", default_route_error)
                 _attach_provider_endpoint_profile_resolver(runtime=runtime, data_root=data_root, catalog_root=catalog_root)
                 runtime.set_workflow_registry(wf_reg)
+                capabilities.update({"llm", "tools"})
             else:
                 # Tools-only runtime: avoid constructing an LLM client.
                 from abstractruntime.core.models import EffectType
@@ -1563,6 +1953,7 @@ class WorkflowBundleGatewayHost:
                     register_shell_session_teardown(runtime)
                 except Exception:
                     pass
+                capabilities.add("tools")
         else:
             runtime = Runtime(
                 run_store=run_store,
@@ -1600,201 +1991,13 @@ class WorkflowBundleGatewayHost:
         except OSError:
             logger.warning("live delta file sweep failed for %s", data_root, exc_info=True)
 
-        # Register derived workflows required by VisualFlow semantics:
-        # - per-Agent-node ReAct subworkflows
-        # - per-OnEvent-node listener workflows (Blueprint-style)
-        event_listener_specs_by_root: Dict[str, list[str]] = {}
-
-        agent_pairs: list[tuple[str, Dict[str, Any]]] = []
-        for flow_id, raw in flows_by_namespaced_id.items():
-            for node_id, cfg in _collect_agent_nodes(raw):
-                agent_pairs.append((flow_id, {"node_id": node_id, "cfg": cfg}))
-
-        if agent_pairs:
-            try:
-                from abstractagent.adapters.react_runtime import create_react_workflow
-                from abstractagent.logic.react import ReActLogic
-            except Exception as e:  # pragma: no cover
-                raise WorkflowBundleError(
-                    "Bundle contains Visual Agent nodes, but AbstractAgent is not installed/importable. "
-                    "Install `abstractagent` to execute Agent nodes."
-                ) from e
-
-            try:
-                from abstractruntime.integrations.abstractcore.default_tools import list_default_tool_specs
-            except Exception as e:  # pragma: no cover
-                raise WorkflowBundleError(
-                    "Visual Agent nodes require AbstractCore tool schemas from the base AbstractRuntime install."
-                ) from e
-
-            def _tool_defs_from_specs(specs0: list[dict[str, Any]]) -> list[_GatewayToolSpec]:
-                out: list[_GatewayToolSpec] = []
-                for s in specs0:
-                    if not isinstance(s, dict):
-                        continue
-                    name = s.get("name")
-                    if not isinstance(name, str) or not name.strip():
-                        continue
-                    desc = s.get("description")
-                    params = s.get("parameters")
-                    when_to_use = s.get("when_to_use")
-                    examples = s.get("examples")
-                    tags = s.get("tags")
-                    out.append(
-                        _GatewayToolSpec(
-                            name=name.strip(),
-                            description=str(desc or ""),
-                            parameters=dict(params) if isinstance(params, dict) else {},
-                            when_to_use=str(when_to_use) if when_to_use is not None else None,
-                            examples=list(examples) if isinstance(examples, list) else [],
-                            tags=list(tags) if isinstance(tags, list) else [],
-                        )
-                    )
-                return out
-
-            def _normalize_tool_names(raw_tools: Any) -> list[str]:
-                if not isinstance(raw_tools, list):
-                    return []
-                out: list[str] = []
-                for t in raw_tools:
-                    if isinstance(t, str) and t.strip():
-                        out.append(t.strip())
-                return out
-
-            all_tool_defs = _tool_defs_from_specs(list_default_tool_specs(email_enabled=email_tools_listed))
-            # Schema-only builtins (executed as runtime effects by AbstractAgent adapters).
-            try:
-                from abstractagent.logic.builtins import (  # type: ignore
-                    ASK_USER_TOOL,
-                    COMPACT_MEMORY_TOOL,
-                    DELEGATE_AGENT_TOOL,
-                    INSPECT_VARS_TOOL,
-                    READ_SKILL_TOOL,
-                    RECALL_MEMORY_TOOL,
-                    REMEMBER_TOOL,
-                )
-
-                builtin_defs = [
-                    ASK_USER_TOOL,
-                    RECALL_MEMORY_TOOL,
-                    INSPECT_VARS_TOOL,
-                    REMEMBER_TOOL,
-                    COMPACT_MEMORY_TOOL,
-                    DELEGATE_AGENT_TOOL,
-                    # read_skill (card 0087): the agent contract keeps this out
-                    # of DEFAULT tool lists, but the allowlist normalizer
-                    # prunes names absent from the logic's registry — so the
-                    # schema must live here for a skills-carrying run's
-                    # allowlist to keep it. Runs without a skills_block that
-                    # call it anyway get the executor's honest refusal.
-                    READ_SKILL_TOOL,
-                ]
-                seen_names = {t.name for t in all_tool_defs if getattr(t, "name", None)}
-                for t in builtin_defs:
-                    if getattr(t, "name", None) and t.name not in seen_names:
-                        all_tool_defs.append(t)
-                        seen_names.add(t.name)
-            except Exception:
-                pass
-
-            # MCP tools offered to agents join the registry LIVE (mcp_run_tools.py): the logic's
-            # `tools` is read at every agent step, so an admin turning a server on or off needs no
-            # host rebuild; a run still sees only the names in its own tool list.
-            from ..mcp_run_tools import offered_tool_specs
-
-            mcp_registry_dir = Path(catalog_root or data_root)
-
-            class _McpAwareReActLogic(ReActLogic):
-                @property
-                def tools(self) -> list[Any]:  # type: ignore[override]
-                    static = list(self._tools)
-                    taken = {getattr(t, "name", None) for t in static}
-                    extra = [t for t in _tool_defs_from_specs(offered_tool_specs(mcp_registry_dir)) if t.name not in taken]
-                    return static + extra
-
-            logic = _McpAwareReActLogic(tools=all_tool_defs)
-
-            from abstractruntime.visualflow_compiler.visual.agent_ids import visual_react_workflow_id
-
-            for flow_id, meta in agent_pairs:
-                node_id = str(meta.get("node_id") or "").strip()
-                cfg = meta.get("cfg") if isinstance(meta.get("cfg"), dict) else {}
-                cfg2 = dict(cfg) if isinstance(cfg, dict) else {}
-                workflow_id_raw = cfg2.get("_react_workflow_id")
-                react_workflow_id = (
-                    workflow_id_raw.strip()
-                    if isinstance(workflow_id_raw, str) and workflow_id_raw.strip()
-                    else visual_react_workflow_id(flow_id=flow_id, node_id=node_id)
-                )
-                tools_selected = _normalize_tool_names(cfg2.get("tools"))
-                spec = create_react_workflow(
-                    logic=logic,
-                    workflow_id=react_workflow_id,
-                    provider=None,
-                    model=None,
-                    allowed_tools=tools_selected,
-                )
-                wf_reg.register(spec)
-                specs[str(spec.workflow_id)] = spec
-
-        # Custom event listeners ("On Event" nodes) are compiled into dedicated listener workflows.
-        for flow_id, raw in flows_by_namespaced_id.items():
-            nodes = raw.get("nodes")
-            if not isinstance(nodes, list):
-                continue
-            for n in nodes:
-                if _node_type_from_raw(n) != "on_event":
-                    continue
-                if not isinstance(n, dict):
-                    continue
-                node_id = str(n.get("id") or "").strip()
-                if not node_id:
-                    continue
-                # An event-entry flow already listens in its root run. A
-                # second derived listener would handle the same event twice,
-                # duplicating messages and potentially tool side effects.
-                # Use the compiled entry, including inferred entrypoints;
-                # independent On Event branches still need their own runs.
-                root_spec = specs.get(flow_id)
-                if root_spec is not None and node_id == root_spec.entry_node:
-                    continue
-                listener_wid = _visual_event_listener_workflow_id(flow_id=flow_id, node_id=node_id)
-
-                # Derive a listener workflow with entryNode = on_event node.
-                derived: Dict[str, Any] = dict(raw)
-                derived["id"] = listener_wid
-                derived["entryNode"] = node_id
-                try:
-                    spec = compile_visualflow(derived)
-                except Exception as e:
-                    raise WorkflowBundleError(f"Failed compiling On Event listener '{listener_wid}': {e}") from e
-                wf_reg.register(spec)
-                specs[str(spec.workflow_id)] = spec
-                event_listener_specs_by_root.setdefault(flow_id, []).append(str(spec.workflow_id))
-
-        # Automations v1 (contracts C5/D): every host serves the shipped
-        # automation controller under its PINNED versioned workflow id
-        # (`abstractframework.automation-controller@1.0.0:controller`), so the
-        # runner ticks controller runs like any run, also after a restart. It
-        # is registered as a workflow, not loaded as a bundle, so it never
-        # shows in bundle listings. A missing or wrong packaged controller
-        # raises here: a gateway without it must not come up half-working.
-        from abstractruntime.automations.bundle import register_controller_bundle
-
-        controller_spec = register_controller_bundle(wf_reg)
-        specs[str(controller_spec.workflow_id)] = controller_spec
-
-        # Per-user email (framework backlog 0992): the send-email action workflow
-        # (no-model automations) and THIS principal's account on the runtime —
-        # the durable event inbox, the in-memory credential resolver (this
-        # plane's account only) and the occurrence binding. Every host build
-        # re-wires, so a rebuilt runtime is never left without its account.
-        from abstractruntime.email import register_email_action_workflow
-
+        # Per-user email (framework backlog 0992): THIS principal's account on
+        # the runtime — the durable event inbox, the in-memory credential
+        # resolver (this plane's account only) and the occurrence binding.
+        # Every runtime build re-wires, so a rebuilt runtime is never left
+        # without its account.
         from ..mail.runtime_wiring import wire_runtime_email
 
-        email_action_spec = register_email_action_workflow(wf_reg)
-        specs[str(email_action_spec.workflow_id)] = email_action_spec
         wire_runtime_email(runtime, email_plane)
         # Automations that use their owner's default workspaces: resolved at each occurrence's
         # admission for THIS plane's owner (round 13; never a snapshot frozen at save time).
@@ -1807,6 +2010,88 @@ class WorkflowBundleGatewayHost:
             catalog_root_data_dir=catalog_root,
             catalog_tenant_id=catalog_tenant,
             catalog_runtime_id=catalog_runtime,
+        )
+        return runtime, memory_store_obj, memory_store_info, frozenset(capabilities)
+
+    @staticmethod
+    def load_from_dir(
+        *,
+        bundles_dir: Path,
+        data_dir: Path,
+        framework_bundles_dir: Optional[Path] = None,
+        catalog_bundles_dir: Optional[Path] = None,
+        catalog_root_data_dir: Optional[Path] = None,
+        catalog_tenant_id: str = "default",
+        catalog_user_id: str = "admin",
+        catalog_runtime_id: str = "default",
+        run_store: Any,
+        ledger_store: Any,
+        artifact_store: Any,
+        compile_cache: Optional["_WorkflowCompileCache"] = None,
+    ) -> "WorkflowBundleGatewayHost":
+        base = Path(bundles_dir).expanduser().resolve()
+        if not base.exists():
+            if str(base.name or "").lower().endswith(".flow"):
+                raise FileNotFoundError(f"bundles_dir file does not exist: {base}")
+            try:
+                base.mkdir(parents=True, exist_ok=True)
+                logger.warning("bundles_dir did not exist; created %s", base)
+            except Exception as e:
+                raise FileNotFoundError(f"bundles_dir does not exist and could not be created: {base} ({e})") from e
+
+        data_root = Path(data_dir).expanduser().resolve()
+        catalog_root = Path(catalog_root_data_dir).expanduser().resolve() if catalog_root_data_dir is not None else data_root
+        catalog_tenant = safe_principal_component(catalog_tenant_id, default="default")
+        catalog_runtime = safe_principal_component(catalog_runtime_id, default=catalog_tenant)
+        catalog_user = safe_principal_component(catalog_user_id, default="admin")
+        catalog_policy_secret = load_or_create_workflow_policy_secret(catalog_root)
+        from ..mail.accounts import agent_tools_active
+        from ..mail.runtime_wiring import plane_for_host
+
+        email_plane = plane_for_host(data_root=data_root, tenant_id=catalog_tenant, user_id=catalog_user, runtime_id=catalog_runtime)
+        # Agent email tools (framework backlog 0992; default OFF): the toolsets carry
+        # them only when the administrator made them available, this user's account is
+        # connected and allowed, and the user's "Agent email tools" toggle is on. Checked again at execution time
+        # by the runtime's credential resolver (runtime_wiring.py), and a toggle
+        # change swaps in recompiled agent workflows (routes/email.py).
+        email_tools_listed = agent_tools_active(email_plane)
+
+        framework_base = Path(framework_bundles_dir).expanduser().resolve() if framework_bundles_dir is not None else None
+        catalog_base = Path(catalog_bundles_dir).expanduser().resolve() if catalog_bundles_dir is not None else None
+
+        dep_store = WorkflowDeprecationStore(path=data_root / "workflow_deprecations.json")
+        dynamic_dir = data_root / "dynamic_flows"
+        try:
+            dynamic_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            # Best-effort: dynamic workflows are optional.
+            pass
+
+        cache = compile_cache if compile_cache is not None else _WorkflowCompileCache()
+        compiled = WorkflowBundleGatewayHost._compile_workflows(
+            base=base,
+            framework_base=framework_base,
+            catalog_base=catalog_base,
+            catalog_root=catalog_root,
+            data_root=data_root,
+            catalog_tenant=catalog_tenant,
+            dynamic_dir=dynamic_dir,
+            email_tools_listed=bool(email_tools_listed),
+            cache=cache,
+        )
+        runtime, memory_store_obj, memory_store_info, capabilities = WorkflowBundleGatewayHost._build_runtime(
+            needs=compiled.needs,
+            flow_scanned_llm_defaults=compiled.flow_scanned_llm_defaults,
+            wf_reg=compiled.workflow_registry,
+            data_root=data_root,
+            catalog_root=catalog_root,
+            catalog_tenant=catalog_tenant,
+            catalog_user=catalog_user,
+            catalog_runtime=catalog_runtime,
+            email_plane=email_plane,
+            run_store=run_store,
+            ledger_store=ledger_store,
+            artifact_store=artifact_store,
         )
 
         return WorkflowBundleGatewayHost(
@@ -1821,24 +2106,27 @@ class WorkflowBundleGatewayHost:
             catalog_runtime_id=catalog_runtime,
             catalog_policy_secret=catalog_policy_secret,
             deprecation_store=dep_store,
-            bundles=bundles_by_id,
-            bundle_sources=bundle_sources,
-            latest_bundle_versions=latest_versions,
-            skipped_bundles=skipped_bundles,
+            bundles=compiled.bundles,
+            bundle_sources=compiled.bundle_sources,
+            latest_bundle_versions=compiled.latest_versions,
+            skipped_bundles=compiled.skipped_bundles,
             runtime=runtime,
-            workflow_registry=wf_reg,
-            specs=specs,
-            event_listener_specs_by_root=event_listener_specs_by_root,
+            workflow_registry=compiled.workflow_registry,
+            specs=compiled.specs,
+            event_listener_specs_by_root=compiled.event_listener_specs_by_root,
             memory_store=memory_store_obj,
             memory_store_info=memory_store_info,
-            _default_bundle_id=default_bundle_id,
-            _flow_scanned_llm_defaults=flow_scanned_llm_defaults,
+            _default_bundle_id=compiled.default_bundle_id,
+            _flow_scanned_llm_defaults=compiled.flow_scanned_llm_defaults,
             # The store as this host just published it; anything newer on disk
             # is an out-of-band write from the core entry point.
             _capability_defaults_config_signature=_capability_defaults_signature(Path(data_root)),
             email_tools_listed=bool(email_tools_listed),
             email_plane=email_plane,
+            _compile_cache=cache,
+            _runtime_capabilities=capabilities,
         )
+
 
     @property
     def run_store(self) -> Any:
@@ -1856,8 +2144,9 @@ class WorkflowBundleGatewayHost:
         """Register a callable re-applied to every rebuilt Runtime.
 
         The composition root (service factory) arms effect handlers on
-        `host.runtime` AFTER load_from_dir (entity routing today). A reload
-        swaps in a brand-new Runtime, so those arms must be re-applied or the
+        `host.runtime` AFTER load_from_dir (entity routing today). A publish
+        keeps the runtime (registry swap); a service_reload/full_rebuild swaps
+        in a brand-new Runtime, so those arms must be re-applied or the
         reloaded process serves entity runs with no MEMORY_*/DIARY_* handlers.
         Hooks run on the NEW runtime BEFORE it is published (race-free: no
         tick can observe an unarmed runtime)."""
@@ -2045,9 +2334,9 @@ class WorkflowBundleGatewayHost:
         return bool(agent_tools_active(plane)) == bool(getattr(self, "email_tools_listed", False))
 
     def ensure_email_tools_current(self) -> bool:
-        """Rebuild the toolsets when the email rule moved since this host was built (a mailbox
-        connected, paused, disconnected, the user's or an admin's switch). Returns True when a
-        rebuild happened. A failing check never blocks a start: the runtime's credential
+        """Recompile the agents' toolsets when the email rule moved since they were compiled (a
+        mailbox connected, paused, disconnected, the user's or an admin's switch) and swap them
+        in (a registry swap: the runtime and its models stay). Returns True when it happened. A failing check never blocks a start: the runtime's credential
         resolver still refuses an unusable account at execution time."""
 
         try:
@@ -2062,14 +2351,178 @@ class WorkflowBundleGatewayHost:
         self.reload_bundles_from_disk()
         return True
 
-    def reload_bundles_from_disk(self) -> Dict[str, Any]:
-        """Reload bundles/specs from bundles_dir (best-effort, intended for dev).
+    def reload_bundles_from_disk(self, *, full: bool = False) -> Dict[str, Any]:
+        """Serve what is on disk now — without rebuilding what did not change.
 
-        Notes:
-        - This rebuilds the in-memory registry and swaps host internals in-place so the
-          runner can keep using the same host object.
-        - Dynamic flows persisted in `data_dir/dynamic_flows` are reloaded as part of
-          the rebuild.
+        Three outcomes, reported in `out["reload"]` (`kind`, `duration_ms`, `reason`):
+
+        - ``registry_swap`` (the normal case: publish, promote, upload, an
+          email-tools toggle): bundles are recompiled (only the changed files —
+          see `_WorkflowCompileCache`) into a NEW WorkflowRegistry that is set on
+          the EXISTING runtime. No runtime, LLM client, provider, model weights,
+          prompt cache, tool executor or memory store is touched. ``changed`` is
+          False when nothing on disk moved (nothing is swapped).
+        - ``service_reload``: the new workflows need something this service's
+          runtime was built without (`_runtime_capabilities`: the first LLM/Agent
+          workflow on a tools-only or plain runtime, the first tool workflow on a
+          plain one, the first memory_kg workflow). Only then is this service's
+          runtime rebuilt; its in-process models and prompt caches start empty.
+        - ``full_rebuild``: only when explicitly asked (`full=True`,
+          `POST /bundles/reload {"full": true}`), e.g. after changing the memory
+          store configuration on disk.
+
+        Runs already in flight keep the workflow spec they resolved (B4,
+        `_pin_in_flight_runs`); new runs get the new one.
+        """
+        started = time.perf_counter()
+        with self._reload_lock:
+            if full:
+                out = self._rebuild_from_disk(compile_cache=None)
+                kind, reason = "full_rebuild", "requested"
+            else:
+                out, kind, reason = self._swap_or_rebuild()
+        duration_ms = int(round((time.perf_counter() - started) * 1000.0))
+        out["reload"] = {"kind": kind, "duration_ms": duration_ms, "reason": reason, "changed": bool(out.pop("_changed", True))}
+        if kind != "registry_swap":
+            logger.warning(
+                "workflow reload rebuilt this service's runtime (%s, %s ms): %s — its in-process models and prompt caches start empty",
+                kind,
+                duration_ms,
+                reason,
+            )
+        else:
+            logger.info("workflow reload: registry swapped in %s ms (changed=%s)", duration_ms, out["reload"]["changed"])
+        return out
+
+    def _current_email_tools_listed(self) -> bool:
+        plane = getattr(self, "email_plane", None)
+        if plane is None:
+            return bool(getattr(self, "email_tools_listed", False))
+        try:
+            from ..mail.accounts import agent_tools_active
+
+            return bool(agent_tools_active(plane))
+        except Exception:  # noqa: BLE001 - keep the toolsets as built; run start re-checks
+            return bool(getattr(self, "email_tools_listed", False))
+
+    def _compile_now(self) -> "_CompiledWorkflows":
+        return WorkflowBundleGatewayHost._compile_workflows(
+            base=Path(self.bundles_dir),
+            framework_base=Path(self.framework_bundles_dir) if self.framework_bundles_dir is not None else None,
+            catalog_base=Path(self.catalog_bundles_dir) if self.catalog_bundles_dir is not None else None,
+            catalog_root=Path(self.catalog_root_data_dir) if self.catalog_root_data_dir else Path(self.data_dir),
+            data_root=Path(self.data_dir),
+            catalog_tenant=str(self.catalog_tenant_id or "default"),
+            dynamic_dir=Path(self.dynamic_flows_dir),
+            email_tools_listed=self._current_email_tools_listed(),
+            cache=self._compile_cache,
+        )
+
+    def _swap_or_rebuild(self) -> tuple[Dict[str, Any], str, str]:
+        # Compile OUTSIDE the host lock: ticks, run starts and reads keep going
+        # on the current registry while the new one is built.
+        compiled = self._compile_now()
+        missing = sorted(set(compiled.needs) - set(self._runtime_capabilities or frozenset()))
+        if missing:
+            reason = (
+                "the workflows now need " + ", ".join(_CAPABILITY_WORDS.get(m, m) for m in missing)
+                + ", which this service's runtime was started without"
+            )
+            return self._rebuild_from_disk(compile_cache=self._compile_cache), "service_reload", reason
+
+        with self._lock:
+            if compiled.dynamic_signature != WorkflowBundleGatewayHost._dynamic_dir_signature(Path(self.dynamic_flows_dir)):
+                # A dynamic workflow was written while we compiled (scheduled
+                # wrappers persist there): recompile under the lock so the swap
+                # cannot drop it. Cached, so only that file compiles.
+                compiled = self._compile_now()
+            old_specs = dict(self.specs or {})
+            changed = (
+                set(old_specs) != set(compiled.specs)
+                or any(compiled.specs.get(k) is not v for k, v in old_specs.items())
+                or compiled.skipped_bundles != (self.skipped_bundles or {})
+                or compiled.latest_versions != (self.latest_bundle_versions or {})
+                or compiled.email_tools_listed != bool(self.email_tools_listed)
+            )
+            if changed:
+                pinned = self._pin_in_flight_runs(old_specs, compiled.specs)
+                # THE SWAP: one attribute on the live runtime. Everything the
+                # runtime owns — its LLM client, providers (weights + prompt
+                # caches), tool executor, handlers, memory store — stays.
+                self.runtime.set_workflow_registry(compiled.workflow_registry)
+                self.workflow_registry = compiled.workflow_registry
+                self.specs = compiled.specs
+                self.bundles = compiled.bundles
+                self.bundle_sources = compiled.bundle_sources
+                self.latest_bundle_versions = compiled.latest_versions
+                self.skipped_bundles = compiled.skipped_bundles
+                self.event_listener_specs_by_root = compiled.event_listener_specs_by_root
+                self._default_bundle_id = compiled.default_bundle_id
+                self.email_tools_listed = compiled.email_tools_listed
+            else:
+                pinned = 0
+            defaults_moved = compiled.flow_scanned_llm_defaults != self._flow_scanned_llm_defaults
+            self._flow_scanned_llm_defaults = compiled.flow_scanned_llm_defaults
+        if defaults_moved and "llm" in (self._runtime_capabilities or frozenset()):
+            # The flow-scanned bootstrap pair is the LAST fallback of the default
+            # text route (used only when no capability default is configured).
+            # Re-point the live client through the same cascade as load, in place.
+            try:
+                self.refresh_capability_defaults()
+            except Exception as exc:  # noqa: BLE001 - a default refresh must not fail a publish
+                logger.warning("default refresh after a workflow swap failed: %s", exc)
+        out = self._reload_result()
+        out["_changed"] = bool(changed)
+        if pinned:
+            out["pinned_runs"] = pinned
+        return out, "registry_swap", ("workflows changed on disk" if changed else "nothing changed on disk")
+
+    def _pin_in_flight_runs(self, old_specs: Dict[str, WorkflowSpec], new_specs: Dict[str, WorkflowSpec]) -> int:
+        """Keep every run in flight on the spec it already resolved (caller holds `_lock`).
+
+        Only workflows whose spec OBJECT changes or disappears matter — a publish of
+        a new version adds ids and leaves the old version's objects untouched (the
+        compile cache), so the common case queries nothing. An overwritten version
+        (drafts, `overwrite: true`) or a removed one pins the runs still on it.
+        """
+        pins = self._run_spec_pins
+        # Forget pins of runs that ended.
+        for rid in list(pins):
+            try:
+                st = self.run_store.load(rid)
+            except Exception:
+                st = None
+            if st is None or _run_is_terminal(st):
+                pins.pop(rid, None)
+        changed_ids = {wid for wid, sp in old_specs.items() if new_specs.get(wid) is not sp}
+        if not changed_ids:
+            return 0
+        from abstractruntime.core.models import RunStatus
+
+        list_runs = getattr(self.run_store, "list_runs", None)
+        if not callable(list_runs):
+            return 0
+        count = 0
+        for status in (RunStatus.RUNNING, RunStatus.WAITING):
+            try:
+                runs = list(list_runs(status=status, limit=100_000) or [])
+            except Exception:
+                logger.warning("could not list in-flight runs to pin them across a workflow swap", exc_info=True)
+                continue
+            for run in runs:
+                rid = str(getattr(run, "run_id", "") or "")
+                wid = str(getattr(run, "workflow_id", "") or "")
+                if not rid or rid in pins or wid not in changed_ids:
+                    continue
+                pins[rid] = old_specs[wid]
+                count += 1
+        return count
+
+    def _rebuild_from_disk(self, *, compile_cache: Optional["_WorkflowCompileCache"]) -> Dict[str, Any]:
+        """Rebuild this service's runtime (service_reload / full_rebuild) and swap it in.
+
+        `compile_cache` reuses the compiled specs of unchanged bundles (service_reload);
+        None recompiles everything (full_rebuild).
         """
         new_host = WorkflowBundleGatewayHost.load_from_dir(
             bundles_dir=self.bundles_dir,
@@ -2083,6 +2536,7 @@ class WorkflowBundleGatewayHost:
             run_store=self.run_store,
             ledger_store=self.ledger_store,
             artifact_store=self.artifact_store,
+            compile_cache=compile_cache,
         )
         # Re-arm the NEW runtime BEFORE the swap publishes it: the factory's
         # post-load arms (entity routing) live on the OLD runtime object and
@@ -2101,6 +2555,7 @@ class WorkflowBundleGatewayHost:
                 rearm_warnings.append(f"#FALLBACK runtime rebuild hook failed: {type(e).__name__}: {e}")
         with self._lock:
             old_memory_store = getattr(self, "memory_store", None)
+            self._pin_in_flight_runs(dict(self.specs or {}), new_host.specs)
             self.bundles = new_host.bundles
             self.bundle_sources = new_host.bundle_sources
             self.latest_bundle_versions = new_host.latest_bundle_versions
@@ -2127,6 +2582,9 @@ class WorkflowBundleGatewayHost:
             self.catalog_policy_secret = new_host.catalog_policy_secret
             self.email_tools_listed = new_host.email_tools_listed
             self.email_plane = new_host.email_plane
+            self._flow_scanned_llm_defaults = new_host._flow_scanned_llm_defaults
+            self._compile_cache = new_host._compile_cache
+            self._runtime_capabilities = new_host._runtime_capabilities
         try:
             if old_memory_store is not None and old_memory_store is not getattr(self, "memory_store", None):
                 close = getattr(old_memory_store, "close", None)
@@ -2134,18 +2592,22 @@ class WorkflowBundleGatewayHost:
                     close()
         except Exception:
             pass
+        out = self._reload_result()
+        if rearm_warnings:
+            out["warnings"] = rearm_warnings
+        return out
+
+    def _reload_result(self) -> Dict[str, Any]:
         bundle_ids = sorted([str(k) for k in (self.bundles or {}).keys() if isinstance(k, str)])
         out: Dict[str, Any] = {"ok": True, "bundle_ids": bundle_ids, "count": len(bundle_ids)}
         # A reload that silently drops versions is how a workflow stops
         # existing without anyone being told. Report the skips with the
         # reload's own result so every caller — including publish/upload —
-        # can see what did NOT survive the rebuild it just triggered.
+        # can see what did NOT survive the reload it just triggered.
         skipped = self.skipped_bundle_rows()
         if skipped:
             out["skipped"] = skipped
             out["skipped_count"] = len(skipped)
-        if rearm_warnings:
-            out["warnings"] = rearm_warnings
         return out
 
     def skipped_bundle_rows(self) -> list[Dict[str, Any]]:
@@ -2755,6 +3217,12 @@ class WorkflowBundleGatewayHost:
         )
 
         run_id = str(self.runtime.start(workflow=spec, vars=vars0, actor_id=actor_id, session_id=sid))
+        # B4, the start/swap race: a reload that replaced this workflow between the
+        # lookup above and the start would have listed in-flight runs before this one
+        # existed. Checked under the swap's lock, so one of the two always pins it.
+        with self._lock:
+            if self.specs.get(workflow_id) is not spec:
+                self._run_spec_pins[run_id] = spec
 
         # Default session_id to the root run_id for durable session-scoped behavior
         # (matches VisualSessionRunner semantics).
@@ -2847,6 +3315,13 @@ class WorkflowBundleGatewayHost:
         workflow_id = getattr(run, "workflow_id", None)
         if not isinstance(workflow_id, str) or not workflow_id:
             raise ValueError(f"Run '{run_id}' missing workflow_id")
+        # B4: a run that was in flight when a reload replaced its workflow keeps
+        # the spec it resolved (`_pin_in_flight_runs`); new runs get the new one.
+        pinned = self._run_spec_pins.get(str(run_id))
+        if pinned is not None:
+            if not _run_is_terminal(run):
+                return (self.runtime, pinned)
+            self._run_spec_pins.pop(str(run_id), None)
         spec = self.specs.get(workflow_id)
         if spec is None and ":" in workflow_id:
             # Backward compatibility: older runs may store workflow_id as "bundle:flow"
