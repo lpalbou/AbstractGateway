@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "abstractgateway"
-version = "0.13.1"
+version = "0.14.0"
 description = "AbstractGateway: deployable Run Gateway host for AbstractRuntime (commands + ledger)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -36,7 +36,7 @@ dependencies = [
   # archive contract the Accounts/session archive routes rely on.
   # 0.9.1: streamed speech is never a run wait (close_interrupted_voice_stream at boot) and
   # browser_probe local targets carry the run's sandbox stamp.
-  "AbstractRuntime>=0.9.1",
+  "AbstractRuntime>=0.10.0",
   # Floor only (no extras; Runtime chooses them). The gateway relies on
   # AbstractCore 2.16.1 (abstractcore.utils.identity for the About rows,
   # process-wide model residency and eject semantics, host-job download
@@ -59,7 +59,7 @@ dependencies = [
   # unknown provider, per-quant GGUF and repo-scoped cache delete (Models page Delete).
   # 2.25.1: the Linux sandbox reaches an allowed workspace inside a refused folder, and
   # browser_probe serves local pages from a loopback origin scoped to the run's workspaces.
-  "abstractcore>=2.25.1",
+  "abstractcore>=2.26.0",
   # Imported directly (routes/gateway.py voice listings):
   # abstractvoice.engine_runtime (0.13.0) decides which local voice engines
   # are available, and voice_openai_api_key (0.13.0) carries the Providers
@@ -67,7 +67,7 @@ dependencies = [
   # but that is three hops; the direct import gets a direct floor.
   # 0.14.0: streamed speech starts sooner (a short first segment) for the gateway's
   # /voice/tts/stream, and stream metrics report the execution device.
-  "abstractvoice>=0.14.0",
+  "abstractvoice>=0.15.0",
   # 0.3.14: delegated sub-agents inherit the run's _runtime.stream switch.
   # 0.3.15: CodeAct/MemAct crash fix; re-prompt when a reply announces tool
   # calls it never makes. 0.3.17: entity visit react turns send the runtime's

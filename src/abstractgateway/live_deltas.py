@@ -97,7 +97,8 @@ _role_lock = threading.Lock()
 # 0.8.5: Core server composition through the Runtime facade.
 # 0.9.0: automation.unarchive (an archived automation comes back paused with its history).
 # 0.9.1: streamed speech is never a run wait; close_interrupted_voice_stream for legacy waits.
-ABSTRACTRUNTIME_FLOOR = "0.9.1"
+# 0.10.0: schedule@2 calendar rules (daily/weekly/monthly in the owner's time zone) and set_occurrence/registry pins.
+ABSTRACTRUNTIME_FLOOR = "0.10.0"
 
 
 class LiveDeltaError(RuntimeError):
