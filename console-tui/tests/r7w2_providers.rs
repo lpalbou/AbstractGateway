@@ -297,6 +297,18 @@ fn engines_payload() -> Value {
 }
 
 impl Harness {
+    /// Wheel down over the page (the Providers page scrolls its sections).
+    fn wheel_down_over(&mut self, n: usize) -> String {
+        let size = self.term.screen().size();
+        for _ in 0..n {
+            // Over the page's scrollbar strip (a table under the pointer
+            // keeps the wheel for its own rows).
+            let ev = format!("\x1b[<65;{};{}M", size.w - 1, size.h / 2);
+            self.term.push_input(ev.as_bytes());
+        }
+        self.turns(3)
+    }
+
     /// Providers (key 7), the engines read answered with `payload`.
     fn open_local_providers(&mut self, payload: Value) -> String {
         self.key(b"7");
@@ -344,14 +356,15 @@ fn seven_opens_providers_on_its_local_engines_and_is_refused_in_the_wizard() {
         .set("engines", Loadable::Ready(engines_payload()));
     let s = h.settle_until_contains("llama.cpp");
     for needle in [
-        "▸ Local providers",
+        "Local providers",
         "Engines that run models on this computer, and their server connections.",
         "1 of 4 installed · checked 02:25:51 UTC",
         "Not installed",
         "Ready",
         "Not for this computer",
-        "i Install",
-        "b Browse models",
+        // R15: the row's buttons (the web card's).
+        "Install",
+        "Browse models",
     ] {
         assert!(s.contains(needle), "missing {needle:?}:\n{s}");
     }
@@ -387,24 +400,34 @@ fn install_confirm_shows_the_plan_and_the_gateway_host() {
     h.drain_cmds();
     h.key(b"i");
     let s = h.turns(2);
+    let flat = s
+        .lines()
+        .map(|l| l.trim_matches(|c: char| c == '│' || c.is_whitespace()))
+        .collect::<Vec<_>>()
+        .join(" ");
     for needle in [
         "Install llama.cpp on gateway host studio (10.0.0.5:8080)?",
         "Installs llama-cpp-python into the gateway's environment.",
         "pip install · verify import",
         "pip install llama-cpp-python",
-        "y Install now · n Not now",
+        // R15 F1: the web's buttons.
+        "Install now",
+        "Not now",
     ] {
-        assert!(s.contains(needle), "missing {needle:?}:\n{s}");
+        assert!(flat.contains(needle), "missing {needle:?}:\n{s}");
     }
-    // Not now: nothing is sent.
-    h.key(b"n");
-    let s = h.turns(2);
+    // Not now (Esc): nothing is sent.
+    h.term.push_input(&[0x1b]);
+    h.turns(1);
+    std::thread::sleep(std::time::Duration::from_millis(45));
+    let s = h.turns(3);
     assert!(!s.contains("Install llama.cpp on"), "{s}");
     assert!(h.drain_cmds().is_empty(), "Not now sends nothing");
-    // y: the web's install-go, location auto.
+    // Install now (the focused action; Enter does it): the web's
+    // install-go, location auto.
     h.key(b"i");
     h.turns(2);
-    h.key(b"y");
+    h.key(b"\r");
     h.turns(2);
     let (method, body) = h
         .json_send("/engines/llamacpp/install")
@@ -412,7 +435,8 @@ fn install_confirm_shows_the_plan_and_the_gateway_host() {
     assert_eq!(method, "POST");
     assert_eq!(body, json!({"dry_run": false, "location": "auto"}));
     let s = h.turns(1);
-    assert!(s.contains("Starting the install..."), "pending label:\n{s}");
+    let flat = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(flat.contains("Starting"), "pending label:\n{s}");
 }
 
 #[test]
@@ -423,7 +447,9 @@ fn an_app_engine_install_offers_both_locations_from_two_dry_runs() {
     h.open_local_providers(engines_payload());
     h.select_engine_row(2); // Ollama (an app)
     h.drain_cmds();
-    h.key(b"i");
+    // R15: the row offers Install AND Install for all users (`u`); the
+    // two plans are read first, then the chosen one asks.
+    h.key(b"u");
     let s = h.turns(2);
     assert!(
         s.contains("Checking where Ollama can go on this computer..."),
@@ -459,21 +485,53 @@ fn an_app_engine_install_offers_both_locations_from_two_dry_runs() {
             "admin_reason": "Your account cannot write there, so an administrator password is asked first."}}))),
     );
     let s = h.turns(3);
+    let flat = s
+        .lines()
+        .map(|l| l.trim_matches(|c: char| c == '│' || c.is_whitespace()))
+        .collect::<Vec<_>>()
+        .join(" ");
     assert!(
-        s.contains("Install puts it in your own Applications folder"),
+        flat.contains("Install for all users (administrator) puts it in /Applications"),
         "{s}"
     );
-    assert!(s.contains("/Users/me/Applications/Ollama.app"), "{s}");
-    assert!(
-        s.contains("y Install · u Install for all users (administrator) · n Not now"),
-        "{s}"
-    );
-    h.key(b"u");
+    assert!(flat.contains("/Applications/Ollama.app"), "{s}");
+    // The question's action (focused): Enter installs for all users.
+    h.key(b"\r");
     h.turns(2);
     let (_, body) = h
         .json_send("/engines/ollama/install")
         .expect("install POST");
     assert_eq!(body, json!({"dry_run": false, "location": "system"}));
+    // `i` (just for you) asks with the other plan (a fresh page: the
+    // plans are known, the question opens at once).
+    let mut h = harness_sized(Size::new(150, 40));
+    h.browse_connected();
+    h.open_local_providers(engines_payload());
+    h.select_engine_row(2);
+    h.store.json.set_write(
+        "engine.plan.ollama.user",
+        Some(WriteState::Done(
+            json!({"plan": {"target": "/Users/me/Applications/Ollama.app"}}),
+        )),
+    );
+    h.store.json.set_write(
+        "engine.plan.ollama.system",
+        Some(WriteState::Done(
+            json!({"plan": {"target": "/Applications/Ollama.app"}}),
+        )),
+    );
+    h.turns(2);
+    h.key(b"i");
+    let s = h.turns(3);
+    let flat = s
+        .lines()
+        .map(|l| l.trim_matches(|c: char| c == '│' || c.is_whitespace()))
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        flat.contains("Install puts it in your own Applications folder"),
+        "{s}"
+    );
 }
 
 #[test]
@@ -618,7 +676,7 @@ fn remote_presets_open_the_family_form_prefilled() {
     h.store.profiles.set(Loadable::Ready(profiles_fixture()));
     let s = h.turns(3);
     for needle in [
-        "▸ Remote providers",
+        "Remote providers",
         "Cloud accounts and OpenAI-compatible servers. Keys stay on the gateway; only fingerprints are shown.",
         "OpenAI API or an OpenAI-compatible OpenAI deployment.",
         "Custom OpenAI-compatible",
@@ -626,7 +684,7 @@ fn remote_presets_open_the_family_form_prefilled() {
     ] {
         assert!(s.contains(needle), "missing {needle:?}:\n{s}");
     }
-    h.key(b"a"); // the selected preset: OpenAI
+    h.key(b"p"); // Configure the selected preset: OpenAI
     let s = h.turns(3);
     assert!(s.contains("Configure OpenAI"), "{s}");
     assert!(s.contains("openai"), "{s}");
@@ -634,18 +692,19 @@ fn remote_presets_open_the_family_form_prefilled() {
 
 #[test]
 fn v_cycles_the_three_sections() {
-    let mut h = harness_sized(Size::new(120, 40));
+    // R15 (DESIGN-TUI §3.7): the three sections stack on one page, as on
+    // the web — no section switch.
+    let mut h = harness_sized(Size::new(150, 60));
     h.browse_connected();
     h.goto_screen(ui::SCREEN_PROVIDERS);
-    for want in [
-        "▸ Remote providers",
-        "▸ Available Providers",
-        "▸ Local providers",
-    ] {
-        h.key(b"v");
-        let s = h.turns(2);
-        assert!(s.contains(want), "{want}:\n{s}");
-    }
+    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
+    let s = h.turns(3);
+    let (l, r, a) = (
+        s.find("Local providers").expect("local"),
+        s.find("Remote providers").expect("remote"),
+        s.find("Available Providers").expect("available"),
+    );
+    assert!(l < r && r < a, "the web's order:\n{s}");
 }
 
 /// Every section at 80×24 and 120×40: the WUI sentences survive whole (rows
@@ -662,31 +721,39 @@ fn snapshots_per_section_at_both_sizes() {
             "{s}"
         );
         h.shoot("providers-local");
-        h.select_engine_row(2);
-        h.key(b"\r");
-        let s = h.turns(3);
+        // R15: a row's card sentences ride under it (no expansion).
+        let s = h.turns(2);
+        let flat = s.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(
-            s.contains("A local model server with its own model"),
-            "expanded:\n{s}"
+            flat.contains("A local model server with its own model"),
+            "the card's blurb:\n{s}"
         );
-        assert!(s.contains("Connection"), "the local connection:\n{s}");
         h.shoot("providers-engine-expanded");
-        h.key(b"\r");
         h.select_engine_row(1);
         h.key(b"i");
         let s = h.turns(2);
+        let flat = s
+            .lines()
+            .map(|l| l.trim_matches(|c: char| c == '│' || c.is_whitespace()))
+            .collect::<Vec<_>>()
+            .join(" ");
         assert!(
-            s.contains("Install llama.cpp on gateway host studio"),
+            flat.contains("Install llama.cpp on gateway host studio"),
             "{s}"
         );
         h.shoot("providers-install-confirm");
-        h.key(b"n");
-        h.key(b"v");
-        let s = h.turns(2);
-        assert!(s.contains("Anthropic"), "{s}");
+        h.term.push_input(&[0x1b]);
+        h.turns(1);
+        std::thread::sleep(std::time::Duration::from_millis(45));
+        h.turns(3);
+        // The page scrolls to Remote / Available (the wheel).
+        let s = h.wheel_down_over(12);
         h.shoot("providers-remote");
-        h.key(b"v");
-        let s = h.turns(2);
+        let s = if s.contains("endpoint:acme") {
+            s
+        } else {
+            h.wheel_down_over(12)
+        };
         assert!(s.contains("endpoint:acme"), "{s}");
         assert!(
             s.contains("deadbeef") && !s.contains("deadbeef1234"),

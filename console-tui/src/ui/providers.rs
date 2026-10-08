@@ -24,9 +24,11 @@
 use abstracttui::prelude::*;
 use serde_json::{json, Value};
 
-use super::util::{ellipsize, error_panel, error_panel_hint, field, line, span, span_bold};
-use super::widths;
-use super::{open_form, Ctx};
+use super::util::{ellipsize, error_panel, error_panel_hint, line, span, span_bold};
+use super::w::action::{button, On};
+use super::w::form::sentence;
+use super::w::{Action, Cell, Col, ColW, DataTable, Ink, Row as WRow, Segmented};
+use super::Ctx;
 use crate::store::{ConnPhase, Loadable, Profile, ProfilesData, ProvidersData};
 use crate::worker::Cmd;
 
@@ -95,32 +97,24 @@ pub fn set_section(store: &crate::store::Store, i: usize) {
         .set(SLOT_SECTION, Loadable::Ready(json!(i.min(2))));
 }
 
-/// The footer's key hints for the section on screen.
+/// The footer's key hints (R15: the engine row's keys, the provider row's,
+/// the page's).
 pub fn hints(store: &crate::store::Store) -> Vec<(&'static str, &'static str)> {
-    let mut v = vec![("v", "local/remote/available")];
-    match section(store) {
-        0 => v.extend([
-            ("Enter", "details"),
-            ("i", "install"),
-            ("s", "start"),
-            ("x", "stop"),
-            ("b", "browse models"),
-            ("c", "cancel install"),
-            ("a/e", "connection"),
-            ("k", "check again"),
-        ]),
-        1 => v.extend([("Enter", "configure"), ("r", "refresh")]),
-        _ => v.extend([
-            ("Enter", "details"),
-            ("a", "add connection"),
-            ("e", "edit/override"),
-            ("d", "delete"),
-            ("m", "models"),
-            ("t", "test"),
-            ("r", "refresh"),
-        ]),
-    }
-    v
+    let _ = store;
+    vec![
+        ("↑↓", "rows"),
+        ("Tab", "next table"),
+        ("Enter", "first action"),
+        ("i/s/x/b/c", "engine"),
+        ("n/o", "connection"),
+        ("k", "Check again"),
+        ("p", "Configure"),
+        ("a", "Add connection"),
+        ("e/d", "Edit/Delete"),
+        ("m", "Models"),
+        ("t", "Test"),
+        ("r", "refresh"),
+    ]
 }
 
 /// `r` / first look: the profiles + discovery (Remote / Available and the
@@ -309,6 +303,62 @@ fn local_connection_profiles(store: &crate::store::Store, engine: &str) -> Vec<P
     })
 }
 
+// ---------------------------------------------------------------------
+// R15 (DESIGN-TUI.md §3.7): the web's three sections stacked on one
+// scrolling page — Local providers (the engines table: Engine · Status ·
+// Connection · Actions, Check again), Remote providers (one row per preset
+// with Configure), Available Providers (Name · Provider ID · Type ·
+// Models · Status · Actions: Edit / Delete or Override, Models, Test).
+// Every action is a click AND a key; one action list per table
+// (`engines::engine_actions`, `preset_actions`, `profile_actions`) is the
+// single source for the buttons, the keys and the tests.
+// ---------------------------------------------------------------------
+
+/// The web page's title and subtitle.
+pub const TITLE: &str = "Providers";
+pub const SUBTITLE: &str = "Local engines and remote provider connections";
+
+/// A remote preset row's action (the web tile is the button).
+pub fn preset_actions(label: &str) -> Vec<Action> {
+    vec![Action::label("configure", "Configure")
+        .key('p')
+        .tooltip(format!("Configure {label}"))]
+}
+
+/// An Available Providers row's actions (the web's Edit / Delete, or
+/// Override for a row from the environment / core config), then Models and
+/// Test (the terminal's model list and sandbox).
+pub fn profile_actions(p: &Profile) -> Vec<Action> {
+    let mut out = if p.synthetic {
+        vec![Action::label("override", "Override")
+            .key('e')
+            .tooltip(format!(
+                "{} comes from {}: Override makes a managed copy",
+                p.provider_name(),
+                synthetic_origin(p)
+            ))]
+    } else {
+        vec![
+            Action::label("edit", "Edit").key('e'),
+            Action::label("delete", "Delete").key('d').danger(),
+        ]
+    };
+    out.push(
+        Action::label("models", "Models")
+            .key('m')
+            .tooltip(format!("The models {} serves", p.provider_name())),
+    );
+    out.push(
+        Action::label("test", "Test")
+            .key('t')
+            .tooltip(format!("Try {} in the sandbox", p.provider_name())),
+    );
+    out
+}
+
+/// The Available Providers head button.
+pub const ADD_CONNECTION_TIP: &str = "Add a provider connection";
+
 pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
     let ui = ctx.ui;
@@ -322,6 +372,36 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     });
     let eui = engines::EnginesUi::new(cx, ctx.screens.store.engine_sel);
     engines::install_effects(cx, ctx, eui);
+    // The engines' keyed selection follows the legacy index (other paths
+    // and tests set it) and writes it back.
+    cx.effect(move || {
+        let i = eui.sel.get();
+        let key = store.json.get(engines::SLOT_ENGINES).ready().and_then(|d| {
+            engines::ordered_engines(d)
+                .get(i)
+                .and_then(|e| e.get("id").and_then(Value::as_str).map(str::to_string))
+        });
+        if key.is_some() && eui.key_sel.with_untracked(|k| *k != key) {
+            eui.key_sel.set(key);
+        }
+    });
+    cx.effect(move || {
+        let Some(k) = eui.key_sel.get() else { return };
+        let pos = store
+            .json
+            .get_untracked(engines::SLOT_ENGINES)
+            .ready()
+            .and_then(|d| {
+                engines::ordered_engines(d)
+                    .iter()
+                    .position(|e| e.get("id").and_then(Value::as_str) == Some(k.as_str()))
+            });
+        if let Some(p) = pos {
+            if eui.sel.get_untracked() != p {
+                eui.sel.set(p);
+            }
+        }
+    });
     // First look: read the engines once per connection.
     {
         let ctx_load = ctx.clone();
@@ -337,262 +417,233 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             }
         });
     }
-    let preset_sel = cx.signal(0usize);
-    let avail_expanded = cx.signal(Option::<usize>::None);
+    let preset_key = cx.signal(Some(REMOTE_PRESETS[0].0.to_string()));
+    let profile_key = cx.signal(Option::<String>::None);
+    // The Available Providers keyed selection ↔ the legacy index.
+    cx.effect(move || {
+        let i = ui.profile_sel.get();
+        let k = store.profiles.with(|d| {
+            d.ready()
+                .and_then(|d| d.profiles.get(i).map(|p| p.id.clone()))
+        });
+        if k.is_some() && profile_key.with_untracked(|c| *c != k) {
+            profile_key.set(k);
+        }
+    });
+    cx.effect(move || {
+        let Some(k) = profile_key.get() else { return };
+        let pos = store.profiles.with_untracked(|d| {
+            d.ready()
+                .and_then(|d| d.profiles.iter().position(|p| p.id == k))
+        });
+        if let Some(p) = pos {
+            if ui.profile_sel.get_untracked() != p {
+                ui.profile_sel.set(p);
+            }
+        }
+    });
 
-    let ctx_add = ctx.clone();
-    let ctx_edit = ctx.clone();
-    let ctx_del = ctx.clone();
-    let ctx_models = ctx.clone();
-    let ctx_test = ctx.clone();
-    let ctx_keys = ctx.clone();
-    let ctx_enter = ctx.clone();
-
-    let mut page = Element::new()
-        .style(LayoutStyle::column().gap(0).grow(1.0))
-        .shortcut(KeyChord::plain(Key::Char('v')), move |_| {
-            set_section(&store, (section(&store) + 1) % 3);
+    let keys_ctx = ctx.clone();
+    let body_ctx = ctx.clone();
+    Element::new()
+        .style(LayoutStyle::column().gap(0).grow(1.0).padding(Edges {
+            left: 1,
+            right: 1,
+            top: 0,
+            bottom: 0,
+        }))
+        .on(abstracttui::ui::Phase::Bubble, move |ectx, ev| {
+            if let abstracttui::ui::UiEvent::Key(k) = ev {
+                if k.mods.0 != 0 && !matches!(k.key, Key::Char(c) if c.is_ascii_uppercase()) {
+                    return;
+                }
+                if handle_key(cx, &keys_ctx, eui, preset_key, k.key) {
+                    ectx.stop_propagation();
+                }
+            }
         })
-        .shortcut(KeyChord::plain(Key::Char('a')), move |_| {
-            if !store.conn.with_untracked(ConnPhase::is_connected) {
+        .child(dyn_view(LayoutStyle::column().shrink(0.0), move || {
+            let t = tt;
+            let w = (crate::ui::page_viewport(cx).get().w - 2).max(20);
+            super::workflows::page_head(&t, TITLE, SUBTITLE, w, Vec::new())
+        }))
+        .child(dyn_view_scoped(
+            LayoutStyle::column().grow(1.0).basis(Dimension::Cells(0)),
+            move |gcx| {
+                let t = use_theme(gcx).get().tokens;
+                let w = (crate::ui::page_viewport(gcx).get().w - 3).max(20);
+                let col = Element::new()
+                    .style(LayoutStyle::column().gap(0).shrink(0.0))
+                    .child(section_head(&t, 0, w))
+                    .child(engines::section(gcx, &body_ctx, eui, &t, w))
+                    .child(super::w::fill_line(
+                        LayoutStyle::line(1).shrink(0.0),
+                        vec![],
+                        None,
+                    ))
+                    .child(section_head(&t, 1, w))
+                    .child(presets_table(gcx, cx, &body_ctx, &t, preset_key, w))
+                    .child(super::w::fill_line(
+                        LayoutStyle::line(1).shrink(0.0),
+                        vec![],
+                        None,
+                    ))
+                    .child(available_head(gcx, cx, &body_ctx, &t, w))
+                    .child(available_table(gcx, cx, &body_ctx, &t, profile_key, w))
+                    .child(discovery_footer(
+                        &t,
+                        &store.providers.get(),
+                        &store.profiles.get(),
+                        w,
+                    ));
+                Scroll::new(col.build())
+                    .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))
+                    .scrollbar_auto_hide(true)
+                    .view(gcx)
+            },
+        ))
+        .build()
+}
+
+/// A section's heading (the web's title, the glyph only when safe) and
+/// its note.
+fn section_head(t: &TokenSet, i: usize, w: i32) -> View {
+    Element::new()
+        .style(LayoutStyle::column().shrink(0.0))
+        .child(super::w::section(t, SECTIONS[i]))
+        .child(sentence(t, SECTION_NOTES[i], w, t.text_muted))
+        .build()
+}
+
+/// Available Providers: its heading, note and Add connection button.
+fn available_head(cx: Scope, pcx: Scope, ctx: &Ctx, t: &TokenSet, w: i32) -> View {
+    let a = Action::label("add", "Add connection")
+        .key('a')
+        .tooltip(ADD_CONNECTION_TIP);
+    let c = ctx.clone();
+    let aw = a.width();
+    let btn = button(cx, t, &a, On::Page, true, move || {
+        if c.store.conn.with_untracked(ConnPhase::is_connected) {
+            open_profile_form(pcx, &c, ProfileFormMode::Create);
+        }
+    });
+    Element::new()
+        .style(LayoutStyle::column().shrink(0.0))
+        .child(
+            Element::new()
+                .style(LayoutStyle::row().h(1).shrink(0.0))
+                .child(super::w::fill_line(
+                    LayoutStyle::default().w((w - aw).max(10)).h(1).shrink(0.0),
+                    vec![Ink::new(SECTIONS[2], t.text).bold()],
+                    None,
+                ))
+                .child(btn)
+                .build(),
+        )
+        .child(sentence(t, SECTION_NOTES[2], w, t.text_muted))
+        .build()
+}
+
+/// One key of the page. ←/→ never arrive here (the shell owns them).
+fn handle_key(
+    cx: Scope,
+    ctx: &Ctx,
+    eui: engines::EnginesUi,
+    preset_key: Signal<Option<String>>,
+    key: Key,
+) -> bool {
+    let store = ctx.store;
+    let Key::Char(ch) = key else { return false };
+    match ch {
+        'a' => {
+            if store.conn.with_untracked(ConnPhase::is_connected) {
+                open_profile_form(cx, ctx, ProfileFormMode::Create);
+            } else {
                 store.notice.set(Some(
                     "not connected — probe on the Connection screen first".into(),
                 ));
-                return;
-            }
-            match section(&store) {
-                0 => match engines::selected(&store, eui) {
-                    Some(e) => {
-                        let id = e.get("id").and_then(Value::as_str).unwrap_or("").to_string();
-                        open_local_connection(cx, &ctx_add, &id);
-                    }
-                    None => store.notice.set(Some("no engine selected".into())),
-                },
-                1 => {
-                    let i = preset_sel.get_untracked().min(REMOTE_PRESETS.len() - 1);
-                    open_preset(cx, &ctx_add, REMOTE_PRESETS[i].0);
-                }
-                _ => open_profile_form(cx, &ctx_add, ProfileFormMode::Create),
-            }
-        })
-        .shortcut(KeyChord::plain(Key::Char('e')), move |_| {
-            if section(&store) == 0 {
-                let Some(e) = engines::selected(&store, eui) else {
-                    store.notice.set(Some("no engine selected".into()));
-                    return;
-                };
-                let id = e.get("id").and_then(Value::as_str).unwrap_or("").to_string();
-                match local_connection_profiles(&store, &id).into_iter().next() {
-                    Some(p) if p.synthetic => {
-                        open_profile_form(cx, &ctx_edit, ProfileFormMode::Override(p))
-                    }
-                    Some(p) => open_profile_form(cx, &ctx_edit, ProfileFormMode::Edit(p)),
-                    None => store.notice.set(Some(format!(
-                        "{id} has no connection yet — a sets one up"
-                    ))),
-                }
-                return;
-            }
-            edit_selected_profile(cx, &ctx_edit);
-        })
-        .shortcut(KeyChord::plain(Key::Char('d')), move |_| {
-            if section(&store) != 2 {
-                store.notice.set(Some(
-                    "d deletes a connection on Available Providers (v switches)".into(),
-                ));
-                return;
-            }
-            if let Some(p) = selected_profile(&ctx_del) {
-                if p.synthetic {
-                    store.notice.set(Some(format!(
-                        "'{}' comes from {} — only managed profiles delete here; e creates a managed override",
-                        p.id,
-                        synthetic_origin(&p)
-                    )));
-                } else {
-                    confirm_delete(cx, &ctx_del, p);
-                }
-            } else {
-                store
-                    .notice
-                    .set(Some("no provider selected — nothing to delete".into()));
-            }
-        })
-        .shortcut(KeyChord::plain(Key::Char('m')), move |_| {
-            if let Some(p) = selected_profile(&ctx_models) {
-                open_models_modal(cx, &ctx_models, p.provider_name());
-            } else {
-                store
-                    .notice
-                    .set(Some("no provider selected — no models to browse".into()));
-            }
-        })
-        .shortcut(KeyChord::plain(Key::Char('t')), move |_| {
-            if let Some(p) = selected_profile(&ctx_test) {
-                super::review::open_sandbox(&ctx_test, Some(p.provider_name()));
-            } else {
-                store
-                    .notice
-                    .set(Some("no provider selected — nothing to test".into()));
-            }
-        });
-    // The engine verbs (Local providers) + the open install question's
-    // answers. Elsewhere they say where they live.
-    for ch in ['i', 's', 'x', 'b', 'c', 'k', 'A', 'T', 'y', 'u', 'n'] {
-        let ctx_k = ctx_keys.clone();
-        page = page.shortcut(KeyChord::plain(Key::Char(ch)), move |_| {
-            if section(&ctx_k.store) == 0 {
-                engines::key(&ctx_k, eui, ch);
-            } else if matches!(ch, 'i' | 's' | 'x' | 'b' | 'c' | 'k') {
-                ctx_k.store.notice.set(Some(
-                    "engine keys work on Local providers — v switches sections".into(),
-                ));
-            }
-        });
-    }
-    let _ = ctx_enter;
-    page.child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
-        let t = tt;
-        let cur = section(&store);
-        let mut spans = vec![span(" ", t.text_faint)];
-        for (i, name) in SECTIONS.iter().enumerate() {
-            if i > 0 {
-                spans.push(span("  │  ", t.text_faint));
-            }
-            if i == cur {
-                spans.push(span_bold(format!("▸ {name}"), t.accent));
-            } else {
-                spans.push(span(name.to_string(), t.text_muted));
             }
         }
-        spans.push(span("   v switches", t.text_faint));
-        line(spans)
-    }))
-    .child(dyn_view_scoped(LayoutStyle::column().grow(1.0), {
-        let ctx_body = ctx.clone();
-        // ONE keeper for the three sections: switching keeps the keyboard
-        // on the page (the section's table takes it over).
-        let keeper = super::util::FocusKeeper::new();
-        move |gcx| {
-            let cur = section(&store);
-            let t = tt;
-            let width = crate::ui::page_viewport(gcx).get().w - widths::BLOCK_CHROME - 2;
-            let mut note = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
-            for l in super::util::wrap_text(SECTION_NOTES[cur], width.max(20) as usize) {
-                note = note.child(line(vec![span(l, t.text_faint)]));
-            }
-            let body: View = match cur {
-                0 => engines::section(gcx, &ctx_body, eui, &t, keeper.clone()),
-                // Forms open on the PAGE scope (cx): a section region rebuilds
-                // on every read and would dispose an open form with it.
-                1 => presets_section(cx, &ctx_body, &t, preset_sel, keeper.clone()),
-                _ => available_section(gcx, &ctx_body, &t, avail_expanded, keeper.clone()),
+        'p' => {
+            let fam = preset_key
+                .get_untracked()
+                .unwrap_or_else(|| REMOTE_PRESETS[0].0.to_string());
+            open_preset(cx, ctx, &fam);
+        }
+        'e' | 'd' | 'm' | 't' => {
+            let id = match ch {
+                'e' => "edit",
+                'd' => "delete",
+                'm' => "models",
+                _ => "test",
             };
-            Block::new()
-                .border(BorderKind::Rounded)
-                .title(SECTIONS[cur])
-                .fill(t.surface)
-                .layout(
-                    LayoutStyle::column()
-                        .gap(0)
-                        .grow(1.0)
-                        .padding(Edges::hv(1, 0)),
-                )
-                .child(note.build())
-                .child(body)
-                .element(&t)
-                .build()
+            match selected_profile(ctx) {
+                Some(p) => {
+                    let id = if id == "edit" && p.synthetic {
+                        "override"
+                    } else {
+                        id
+                    };
+                    profile_action(cx, ctx, &p.id, id);
+                }
+                None => store
+                    .notice
+                    .set(Some("no provider selected — choose a row first".into())),
+            }
         }
-    }))
-    .build()
+        'i' | 'u' | 's' | 'x' | 'b' | 'c' | 'k' | 'A' | 'T' | 'n' | 'o' | 'l' | 'w' | 'g' => {
+            engines::key(ctx, eui, ch)
+        }
+        _ => return false,
+    }
+    true
 }
 
-/// Remote providers: one row per preset with its connection state; Enter
-/// (or a) opens the connection form for that family.
-fn presets_section(
-    page_cx: Scope,
-    ctx: &Ctx,
-    t: &TokenSet,
-    sel: Signal<usize>,
-    keeper: super::util::FocusKeeper,
-) -> View {
-    let store = ctx.store;
-    let tt = *t;
-    let ctx_open = ctx.clone();
-    dyn_view_scoped(LayoutStyle::column().grow(1.0), move |gcx| {
-        let profiles: Vec<Profile> = store
-            .profiles
-            .get()
-            .ready()
-            .map(|d| d.profiles.clone())
-            .unwrap_or_default();
-        let rows: Vec<super::kit::Row> = REMOTE_PRESETS
-            .iter()
-            .map(|(id, label, _, summary, _)| {
-                super::kit::Row::new(vec![
-                    label.to_string(),
-                    summary.to_string(),
-                    preset_status(id, &profiles),
-                ])
-            })
-            .collect();
-        let rules = vec![
-            widths::ColRule::head("provider", 10),
-            widths::ColRule::head("what it is", 20),
-            widths::ColRule::head("state", 20),
-        ];
-        let ctx_a = ctx_open.clone();
-        keeper.wire(
-            super::kit::WrapTable::new(rules, rows, sel)
-                .on_activate(move |i| {
-                    let i = i.min(REMOTE_PRESETS.len() - 1);
-                    open_preset(page_cx, &ctx_a, REMOTE_PRESETS[i].0);
-                })
-                .element(gcx, &tt),
-        )
-    })
-}
-
-/// Available Providers: the web table's columns (Name, Provider ID, Type,
-/// Models, Status) as wrapping rows; Enter shows a row's description,
-/// endpoint and actions.
-fn available_section(
+/// Remote providers: one row per preset (Provider · What it is · State ·
+/// Configure).
+fn presets_table(
     cx: Scope,
+    pcx: Scope,
     ctx: &Ctx,
     t: &TokenSet,
-    expanded: Signal<Option<usize>>,
-    keeper: super::util::FocusKeeper,
+    sel: Signal<Option<String>>,
+    w: i32,
 ) -> View {
     let store = ctx.store;
-    let ui = ctx.ui;
-    let tt = *t;
-    let _ = cx;
-    Element::new()
-        .style(LayoutStyle::column().gap(0).grow(1.0))
-        .child(dyn_view_scoped(
-            LayoutStyle::default().grow(1.0),
-            move |gcx| {
-                let data = store.profiles.get();
-                super::util::loadable_view_kept(
-                    &keeper,
-                    &tt,
-                    &store.conn.get(),
-                    || store.tick.get(),
-                    &data,
-                    |d: &ProfilesData| d.profiles.is_empty(),
-                    "No available providers configured yet.",
-                    |d| available_table(gcx, &tt, d, ui.profile_sel, expanded, &keeper),
-                )
-            },
-        ))
-        .child(dyn_view(LayoutStyle::column().shrink(0.0), move || {
-            selection_hint(&tt, &store.profiles.get(), ui.profile_sel.get())
-        }))
-        .child(dyn_view_scoped(
-            LayoutStyle::default().shrink(0.0),
-            move |_| discovery_footer(&tt, &store.providers.get(), &store.profiles.get()),
-        ))
-        .build()
+    let profiles: Vec<Profile> = store
+        .profiles
+        .get()
+        .ready()
+        .map(|d| d.profiles.clone())
+        .unwrap_or_default();
+    let narrow = w < 100;
+    let mut cols = vec![Col::new("Provider", ColW::Fit { min: 8, max: 26 })];
+    if !narrow {
+        cols.push(Col::new("What it is", ColW::Flex { weight: 1, min: 16 }));
+    }
+    cols.push(Col::new("State", ColW::Fit { min: 8, max: 26 }));
+    cols.push(Col::new("Actions", ColW::Fit { min: 9, max: 12 }));
+    let rows: Vec<WRow> = REMOTE_PRESETS
+        .iter()
+        .map(|(id, label, _, summary, _)| {
+            let state = preset_status(id, &profiles);
+            let on = state != "Not connected";
+            let mut cells = vec![Cell::Lines(vec![vec![Ink::new(*label, t.text).bold()]])];
+            if !narrow {
+                cells.push(Cell::text(*summary, t.text_muted));
+            }
+            cells.push(Cell::text(state, if on { t.ok } else { t.text_muted }));
+            cells.push(Cell::Actions(preset_actions(label)));
+            WRow::new(*id, cells).note(narrow.then(|| (summary.to_string(), t.text_muted)))
+        })
+        .collect();
+    let (ca, ce) = (ctx.clone(), ctx.clone());
+    DataTable::new(cols, rows, sel)
+        .width(w)
+        .max_rows(20)
+        .on_action(move |key, _id| open_preset(pcx, &ca, key))
+        .on_activate(move |key| open_preset(pcx, &ce, key))
+        .view(cx, t)
 }
 
 /// The family's label as the web table prints it (`endpointFamilyInfo`).
@@ -609,14 +660,9 @@ pub fn family_label(family: &str) -> String {
     .to_string()
 }
 
-/// One Available Providers row: [Name, Provider ID, Type, Models, Status]
-/// + the detail lines (description, endpoint, origin, actions).
-pub fn available_row(p: &Profile) -> super::kit::Row {
-    let endpoint = if !p.base_url.is_empty() {
-        p.base_url.clone()
-    } else {
-        "provider default".into()
-    };
+/// One Available Providers row's cells: [Name, Provider ID, Type, Models,
+/// Status] as text (the web table's words).
+pub fn available_cells(p: &Profile) -> [String; 5] {
     let models = if !p.allowed_models.is_empty() {
         format!("{} restricted", p.allowed_models.len())
     } else {
@@ -628,17 +674,7 @@ pub fn available_row(p: &Profile) -> super::kit::Row {
         if p.enabled { "enabled" } else { "disabled" },
         key_text(p)
     );
-    let desc = if p.description.is_empty() {
-        "No description".to_string()
-    } else {
-        p.description.clone()
-    };
-    let actions = if p.synthetic {
-        format!("{} · e Override · m models · t test", synthetic_origin(p))
-    } else {
-        "e Edit · d Delete · m models · t test".to_string()
-    };
-    super::kit::Row::new(vec![
+    [
         if p.display_name.is_empty() {
             p.id.clone()
         } else {
@@ -648,33 +684,130 @@ pub fn available_row(p: &Profile) -> super::kit::Row {
         family_label(&p.family),
         models,
         status,
-    ])
-    .detail(vec![desc, format!("Endpoint {endpoint}"), actions])
-    .dim(!p.enabled)
+    ]
 }
 
 fn available_table(
     cx: Scope,
+    pcx: Scope,
+    ctx: &Ctx,
     t: &TokenSet,
-    data: &ProfilesData,
-    sel: Signal<usize>,
-    expanded: Signal<Option<usize>>,
-    keeper: &super::util::FocusKeeper,
+    sel: Signal<Option<String>>,
+    w: i32,
 ) -> View {
-    let rows: Vec<super::kit::Row> = data.profiles.iter().map(available_row).collect();
-    let rules = vec![
-        widths::ColRule::head("Name", 10),
-        widths::ColRule::tail("Provider ID", 14),
-        widths::ColRule::head("Type", 8),
-        widths::ColRule::head("Models", 9),
-        widths::ColRule::head("Status", 14),
-    ];
-    keeper.wire(
-        super::kit::WrapTable::new(rules, rows, sel)
-            .expanded(expanded)
-            .empty("No available providers configured yet.")
-            .element(cx, t),
-    )
+    let store = ctx.store;
+    let data = store.profiles.get();
+    let d = match data {
+        Loadable::Ready(d) => d,
+        Loadable::Failed(e) => return error_panel(t, &e),
+        _ if !store.conn.with(ConnPhase::is_connected) => {
+            return sentence(
+                t,
+                "not connected — probe the gateway on 1 Connection first",
+                w,
+                t.text_faint,
+            )
+        }
+        _ => return sentence(t, "⟳ reading the provider connections…", w, t.info),
+    };
+    let narrow = w < 140;
+    let mut cols = vec![Col::new("Name", ColW::Fit { min: 6, max: 18 })];
+    cols.push(Col::new("Provider ID", ColW::Fit { min: 8, max: 24 }));
+    if !narrow {
+        cols.push(Col::new("Type", ColW::Fit { min: 4, max: 24 }));
+        cols.push(Col::new("Models", ColW::Fit { min: 6, max: 14 }));
+    }
+    cols.push(Col::new("Status", ColW::Flex { weight: 1, min: 16 }));
+    cols.push(Col::new("Actions", ColW::Fit { min: 10, max: 34 }));
+    let rows: Vec<WRow> = d
+        .profiles
+        .iter()
+        .map(|p| {
+            let c = available_cells(p);
+            let endpoint = if !p.base_url.is_empty() {
+                p.base_url.clone()
+            } else {
+                "provider default".into()
+            };
+            let desc = if p.description.is_empty() {
+                "No description".to_string()
+            } else {
+                p.description.clone()
+            };
+            let mut cells = vec![
+                Cell::Lines(vec![
+                    vec![Ink::new(c[0].clone(), t.text).bold()],
+                    vec![Ink::new(desc, t.text_muted)],
+                ]),
+                Cell::Lines(vec![
+                    vec![Ink::new(c[1].clone(), t.text)],
+                    vec![Ink::new(endpoint, t.text_muted)],
+                ]),
+            ];
+            if !narrow {
+                cells.push(Cell::text(c[2].clone(), t.text));
+                cells.push(Cell::text(c[3].clone(), t.text_muted));
+            }
+            cells.push(Cell::text(
+                c[4].clone(),
+                if p.enabled { t.ok } else { t.text_muted },
+            ));
+            cells.push(Cell::Actions(profile_actions(p)));
+            WRow::new(p.id.clone(), cells)
+                .dim(!p.enabled)
+                .note(narrow.then(|| (format!("{} · {}", c[2], c[3]), t.text_muted)))
+        })
+        .collect();
+    let (ca, ce) = (ctx.clone(), ctx.clone());
+    DataTable::new(cols, rows, sel)
+        .width(w)
+        .max_rows(40)
+        .empty("No available providers configured yet.")
+        .on_action(move |key, id| profile_action(pcx, &ca, key, id))
+        .on_activate(move |key| {
+            let synthetic = ce.store.profiles.with_untracked(|d| {
+                d.ready()
+                    .and_then(|d| d.profiles.iter().find(|p| p.id == key).map(|p| p.synthetic))
+                    .unwrap_or(false)
+            });
+            profile_action(pcx, &ce, key, if synthetic { "override" } else { "edit" });
+        })
+        .view(cx, t)
+}
+
+/// An Available Providers row action (a click or its key).
+fn profile_action(cx: Scope, ctx: &Ctx, key: &str, id: &str) {
+    let store = ctx.store;
+    let Some(p) = store.profiles.with_untracked(|d| {
+        d.ready()
+            .and_then(|d| d.profiles.iter().find(|p| p.id == key).cloned())
+    }) else {
+        return;
+    };
+    if let Some(pos) = store.profiles.with_untracked(|d| {
+        d.ready()
+            .and_then(|d| d.profiles.iter().position(|x| x.id == key))
+    }) {
+        ctx.ui.profile_sel.set(pos);
+    }
+    match id {
+        "edit" if !p.synthetic => open_profile_form(cx, ctx, ProfileFormMode::Edit(p)),
+        "override" | "edit" => open_profile_form(cx, ctx, ProfileFormMode::Override(p)),
+        "delete" => {
+            if p.synthetic {
+                store.notice.set(Some(format!(
+                    "'{}' comes from {} — only managed profiles delete here; Override creates a managed copy",
+                    p.id,
+                    synthetic_origin(&p)
+                )));
+            } else {
+                confirm_delete(cx, ctx, p);
+            }
+        }
+        "models" => open_models_modal(cx, ctx, p.provider_name()),
+        "test" => super::review::open_sandbox(ctx, Some(p.provider_name())),
+        _ => {}
+    }
 }
 
 /// Where a synthetic row comes from, in operator words.
@@ -704,76 +837,28 @@ fn selected_profile(ctx: &Ctx) -> Option<Profile> {
         .with_untracked(|d| d.ready().and_then(|d| d.profiles.get(idx).cloned()))
 }
 
-/// ONE edit entry — shared verbatim by the `e` key and the table's
-/// activation (Enter / Space / double-click): the managed-Edit vs
-/// synthetic-Override split lives here once and can never drift
-/// between the two gestures.
-fn edit_selected_profile(cx: Scope, ctx: &Ctx) {
-    if let Some(p) = selected_profile(ctx) {
-        if p.synthetic {
-            open_profile_form(cx, ctx, ProfileFormMode::Override(p));
-        } else {
-            open_profile_form(cx, ctx, ProfileFormMode::Edit(p));
-        }
-    } else {
-        ctx.store
-            .notice
-            .set(Some("no provider selected — nothing to edit".into()));
-    }
-}
-
-/// The per-row action line — what THIS row supports and why (the web
-/// shows it as per-row buttons; a TUI says it under the table).
-fn selection_hint(t: &TokenSet, data: &Loadable<ProfilesData>, sel: usize) -> View {
-    let Some(p) = data.ready().and_then(|d| d.profiles.get(sel)) else {
-        return line(vec![span(String::new(), t.text_faint)]);
-    };
-    let text = if p.synthetic {
-        format!(
-            "{} — {} · e override → managed copy · m models · t test",
-            p.provider_name(),
-            synthetic_origin(p)
-        )
-    } else {
-        format!(
-            "{} — managed ({} scope) · e edit · d delete · m models · t test",
-            p.provider_name(),
-            if p.scope.is_empty() { "user" } else { &p.scope }
-        )
-    };
-    let w = (abstracttui::app::current_viewport().w.max(40) - 6) as usize;
-    let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
-    for (i, l) in super::util::wrap_text(&text, w).into_iter().enumerate() {
-        col = col.child(line(vec![if i == 0 {
-            span_bold(l, t.accent)
-        } else {
-            span(l, t.text_muted)
-        }]));
-    }
-    col.build()
-}
-
-/// Discovery facts under the one list: the gateway default pair and
-/// the registered backends with no connection yet (the web shows the
-/// latter only as add-cards; here one honest line replaces the whole
-/// second table this screen used to carry). Degrades independently of
+/// Discovery facts under the one list: the gateway default pair and the
+/// registered backends with no connection yet. Degrades independently of
 /// the main list — a failed discovery read never blanks the providers.
 fn discovery_footer(
     t: &TokenSet,
     providers: &Loadable<ProvidersData>,
     profiles: &Loadable<ProfilesData>,
+    w: i32,
 ) -> View {
-    let mut col = Element::new().style(LayoutStyle::column().gap(0));
+    let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
     match providers {
         Loadable::NotAsked => {}
         Loadable::Loading => {
-            col = col.child(line(vec![span("⟳ provider discovery…", t.info)]));
+            col = col.child(sentence(t, "⟳ provider discovery…", w, t.info));
         }
         Loadable::Failed(e) => {
-            col = col.child(line(vec![span(
-                format!("provider discovery unavailable — {}", e.message),
+            col = col.child(sentence(
+                t,
+                &format!("provider discovery unavailable — {}", e.message),
+                w,
                 t.warn,
-            )]));
+            ));
         }
         Loadable::Ready(d) => {
             let default = match (&d.default_provider, &d.default_model) {
@@ -781,40 +866,44 @@ fn discovery_footer(
                 (Some(p), None) => format!("gateway default provider: {p}"),
                 _ => "gateway default: none reported".to_string(),
             };
-            col = col.child(line(vec![span(default, t.text_muted)]));
+            col = col.child(sentence(t, &default, w, t.text_muted));
             let free = profiles
                 .ready()
                 .map(|pf| crate::store::unconfigured_provider_names(pf, d))
                 .unwrap_or_default();
             if !free.is_empty() {
-                // Affordance FIRST: the line right-truncates on narrow
-                // terminals, and the teaching must survive over tail
-                // names.
-                let w = (abstracttui::app::current_viewport().w.max(40) - 6) as usize;
-                for l in super::util::wrap_text(
-                    &format!("not configured yet (a adds one): {}", free.join(", ")),
+                col = col.child(sentence(
+                    t,
+                    &format!(
+                        "not configured yet (Add connection adds one): {}",
+                        free.join(", ")
+                    ),
                     w,
-                ) {
-                    col = col.child(line(vec![span(l, t.text_faint)]));
-                }
+                    t.text_faint,
+                ));
             }
         }
     }
     col.build()
 }
 
+/// The web's delete question (console.py `deleteEndpointProfile`).
+pub fn delete_question(p: &Profile) -> String {
+    format!(
+        "Delete {}? Existing workflows that select this virtual provider will stop working until they are remapped.",
+        p.provider_name()
+    )
+}
+
 fn confirm_delete(cx: Scope, ctx: &Ctx, p: Profile) {
-    let ctx = ctx.clone();
-    super::confirm_danger(
+    let c = ctx.clone();
+    super::w::confirm(
+        ctx,
         cx,
-        ctx.ui,
-        format!(
-            "Delete provider connection '{}'? Workflows routing through endpoint:{} will stop resolving.",
-            p.id, p.id
-        ),
-        "Delete the profile",
-        "Keep it",
-        move || ctx.send(Cmd::DeleteProfile { id: p.id }),
+        delete_question(&p),
+        "Delete endpoint",
+        "Cancel",
+        move || c.send(Cmd::DeleteProfile { id: p.id }),
     );
 }
 
@@ -833,88 +922,88 @@ pub fn open_models_modal(cx: Scope, ctx: &Ctx, provider: String) {
             provider: provider.clone(),
         });
     }
-    let title_provider = provider.clone();
-    open_form(ctx, cx, Size::new(70, 24), move |mcx, close| {
-        let theme = use_theme(mcx);
-        let p2 = title_provider.clone();
-        Element::new()
-            .style(LayoutStyle::column().gap(1))
-            .child(dyn_view(LayoutStyle::line(1), {
-                let p = p2.clone();
-                move || {
-                    let t = theme.get().tokens;
-                    line(vec![span_bold(format!("Models — {p}"), t.accent)])
-                }
-            }))
-            .child(dyn_view_scoped(LayoutStyle::default().grow(1.0), {
-                let p = p2.clone();
-                move |gcx| {
-                    let t = theme.get().tokens;
-                    let entry = store
-                        .models
-                        .with(|m| m.get(&p).cloned())
-                        .unwrap_or(Loadable::NotAsked);
-                    match entry {
-                        Loadable::NotAsked | Loadable::Loading => {
-                            line(vec![span("⟳ discovering models…", t.info)])
+    let p = provider.clone();
+    super::w::FormModal::new(format!("Models — {provider}"))
+        .size(76, 26)
+        .open(ctx, cx, move |mcx, close, _guard, inner_w| {
+            let t = use_theme(mcx).get().tokens;
+            let p2 = p.clone();
+            let body = dyn_view_scoped(LayoutStyle::column().grow(1.0), move |gcx| {
+                let t = use_theme(gcx).get().tokens;
+                let entry = store
+                    .models
+                    .with(|m| m.get(&p2).cloned())
+                    .unwrap_or(Loadable::NotAsked);
+                match entry {
+                    Loadable::NotAsked | Loadable::Loading => {
+                        sentence(&t, "⟳ discovering models…", inner_w, t.info)
+                    }
+                    Loadable::Failed(e) => error_panel_hint(
+                        &t,
+                        &e,
+                        Some("close and reopen this dialog to retry (opening re-reads)"),
+                    ),
+                    Loadable::Ready(models) if models.is_empty() => sentence(
+                        &t,
+                        "∅ no models reported (endpoint offline, or nothing loaded)",
+                        inner_w,
+                        t.text_muted,
+                    ),
+                    Loadable::Ready(models) => {
+                        let mut list = Element::new().style(LayoutStyle::column().shrink(0.0));
+                        for m in &models {
+                            list = list.child(sentence(&t, m, inner_w - 1, t.text));
                         }
-                        Loadable::Failed(e) => error_panel_hint(
-                            &t,
-                            &e,
-                            Some("close and reopen this dialog to retry (opening re-reads)"),
-                        ),
-                        Loadable::Ready(models) if models.is_empty() => line(vec![span(
-                            "∅ no models reported (endpoint offline, or nothing loaded)",
-                            t.text_muted,
-                        )]),
-                        Loadable::Ready(models) => {
-                            let count = models.len();
-                            Element::new()
-                                .style(LayoutStyle::column())
-                                .child(line(vec![span(format!("{count} models"), t.text_muted)]))
-                                .child(
-                                    Scroll::new(
-                                        Element::new()
-                                            .style(LayoutStyle::column())
-                                            .children(
-                                                models
-                                                    .iter()
-                                                    .map(|m| {
-                                                        line(vec![span(format!("  {m}"), t.text)])
-                                                    })
-                                                    .collect::<Vec<_>>(),
-                                            )
-                                            .build(),
-                                    )
+                        Element::new()
+                            .style(LayoutStyle::column().grow(1.0))
+                            .child(sentence(
+                                &t,
+                                &format!("{} models", models.len()),
+                                inner_w,
+                                t.text_muted,
+                            ))
+                            .child(
+                                Scroll::new(list.build())
+                                    .layout(LayoutStyle::default().grow(1.0).min_h(2))
                                     .view(gcx),
-                                )
-                                .build()
-                        }
+                            )
+                            .build()
                     }
                 }
-            }))
-            .child(dyn_view_scoped(LayoutStyle::default().h(1).shrink(0.0), {
-                move |gcx| {
-                    let t = theme.get().tokens;
-                    let close = close.clone();
-                    Element::new()
-                        .style(LayoutStyle::row().gap(2))
-                        .child(
-                            Button::new("Close (Esc)")
-                                .on_click(move || close())
-                                .element(gcx, &t)
-                                .build(),
-                        )
-                        .build()
-                }
-            }))
-            .build()
-    });
+            });
+            Element::new()
+                .style(LayoutStyle::column().grow(1.0))
+                .child(body)
+                .child(super::w::form::button_row(vec![button(
+                    mcx,
+                    &t,
+                    &Action::label("close", "Close"),
+                    On::Raised,
+                    true,
+                    move || close(),
+                )]))
+                .build()
+        });
 }
 
-/// Create / edit / override form (the web's one endpoint modal).
-/// Edit fixes the id and PUTs; Create posts blank; Override posts a
-/// create PREFILLED from a synthetic row — same id, so the managed
+/// The web endpoint modal's words (console.py `#provider-modal-backdrop`).
+pub const FORM_DESCRIPTION: &str = "Gateway stores endpoint details and keys server-side, then exposes this connection as an available provider.";
+pub const KEY_PLACEHOLDER: &str = "leave blank to keep existing key";
+pub const BASE_URL_PLACEHOLDER: &str = "optional; leave blank for provider default";
+pub const DESCRIPTION_PLACEHOLDER: &str =
+    "What this provider is for, who owns it, and when to use it.";
+pub const VISIBLE_MODELS: &str = "Visible models";
+pub const VISIBLE_MODELS_HELP: &str = "Optional. Use Test to preview discovery, then select models only when this provider should expose a fixed allowlist.";
+pub const CLEAR_RESTRICTION_TIP: &str = "Serve every model this endpoint exposes (no allowlist)";
+pub const TEST_TIP: &str = "Probe the endpoint and list the models it actually serves";
+pub const CONFIRM_TIP: &str = "Store this connection server-side and expose it as a provider";
+pub const SCOPES: [&str; 2] = ["Gateway-wide", "Only me"];
+
+/// Create / edit / override form (the web's one endpoint modal): Provider
+/// type, Who can use it?, Provider ID, Name, Description, Base URL, API
+/// key, Clear stored API key, Enabled, Visible models; [Cancel] [↻ Test]
+/// [✓ Confirm]. Edit fixes the id and PUTs; Create posts blank; Override
+/// posts a create PREFILLED from a synthetic row — same id, so the managed
 /// copy shadows the env/core row in the server's merged list.
 pub fn open_profile_form(cx: Scope, ctx: &Ctx, mode: ProfileFormMode) {
     let store = ctx.store;
@@ -929,556 +1018,476 @@ pub fn open_profile_form(cx: Scope, ctx: &Ctx, mode: ProfileFormMode) {
             .map(|d| d.can_create_gateway_scope)
             .unwrap_or(false)
     });
-
     // Reset the shared discover slot so stale results never show.
     store.discover.set(Loadable::NotAsked);
-
+    let seed = existing.clone().or_else(|| prefill.clone());
+    // The web's title: "Configure <family>" ("Configure provider" blank).
+    let title = match (&preset_title, &seed) {
+        (Some(t), _) => t.clone(),
+        (None, Some(p)) => format!("Configure {}", family_label(&p.family)),
+        (None, None) => "Configure provider".to_string(),
+    };
+    let lead = REMOTE_PRESETS
+        .iter()
+        .find(|f| Some(f.0) == seed.as_ref().map(|p| p.family.as_str()))
+        .map(|f| f.3.to_string())
+        .unwrap_or_else(|| FORM_DESCRIPTION.to_string());
     let ctx2 = ctx.clone();
-    // Full-width overlay (R7.2: modals are overlays, Esc closes).
-    let vp = crate::ui::page_viewport(cx).get_untracked();
-    super::open_form_guarded(ctx, cx, vp, move |mcx, close, guard| {
-        let theme = use_theme(mcx);
-        // `ex` carries EDIT semantics (static id, stored-key note,
-        // clear checkbox, PUT); `seed` only prefills fields — it is
-        // the edited profile in edit mode, the synthetic row in
-        // override mode, nothing on plain create.
-        let ex = existing.clone();
-        let over = prefill.clone();
-        let seed = ex.clone().or_else(|| over.clone());
-
-        // Form state lives in the modal scope — dies on close.
-        // Override seeds the id with the row's PROVIDER id (bare name,
-        // web parity): saving under that exact id is what makes the
-        // managed profile take the synthetic row's place.
-        let id = mcx.signal(
-            seed.as_ref()
-                .map(|p| p.provider_id.clone().unwrap_or_else(|| p.id.clone()))
-                .unwrap_or_default(),
-        );
-        let display = mcx.signal(
-            seed.as_ref()
-                .map(|p| p.display_name.clone())
-                .unwrap_or_default(),
-        );
-        let desc = mcx.signal(
-            seed.as_ref()
-                .map(|p| p.description.clone())
-                .unwrap_or_default(),
-        );
-        let base_url = mcx.signal(
-            seed.as_ref()
-                .map(|p| p.base_url.clone())
-                .unwrap_or_default(),
-        );
-        let api_key = mcx.signal(String::new());
-        let clear_key = mcx.signal(false);
-        let enabled = mcx.signal(seed.as_ref().map(|p| p.enabled).unwrap_or(true));
-        // Model allowlist (parity with the web console): empty = live
-        // discovery; a non-empty list restricts what the profile serves.
-        // The web always sends the array, so save always sends it too —
-        // clearing the field clears a previously saved restriction.
-        let allowed = mcx.signal(
-            seed.as_ref()
-                .map(|p| p.allowed_models.join(", "))
-                .unwrap_or_default(),
-        );
-        // Family select: placeholder at 0 (the fabricated-selection law:
-        // nothing pre-chosen on PLAIN create; edit/override preselect
-        // the row's real family).
-        let mut families: Vec<String> = FAMILIES.iter().map(|f| f.to_string()).collect();
-        if let Some(p) = &seed {
-            if !p.family.is_empty() && !families.iter().any(|f| f == &p.family) {
-                families.push(p.family.clone());
-            }
-        }
-        let family_ix = mcx.signal(match &seed {
-            Some(p) => families
-                .iter()
-                .position(|f| f == &p.family)
-                .map(|i| i + 1)
-                .unwrap_or(0),
-            None => 0,
-        });
-        // Scope: user | gateway (gateway needs admin rights). Editable in
-        // both modes — the web sends scope on update and the gateway moves
-        // the profile between stores.
-        let scope_ix = mcx.signal(match &ex {
-            Some(p) if p.scope == "gateway" => 1usize,
-            Some(_) => 0usize,
-            None => {
-                if can_gateway_scope {
-                    1
-                } else {
-                    0
+    super::w::FormModal::new(title)
+        .lead(lead)
+        .size(100, 40)
+        .open(ctx, cx, move |mcx, close, guard, inner_w| {
+            let t0 = use_theme(mcx).get().tokens;
+            let theme = use_theme(mcx);
+            let ex = existing.clone();
+            let over = prefill.clone();
+            let seed = ex.clone().or_else(|| over.clone());
+            // Override seeds the id with the row's PROVIDER id (bare name,
+            // web parity): saving under that exact id is what makes the
+            // managed profile take the synthetic row's place.
+            let id = mcx.signal(
+                seed.as_ref()
+                    .map(|p| p.provider_id.clone().unwrap_or_else(|| p.id.clone()))
+                    .unwrap_or_default(),
+            );
+            let display = mcx.signal(
+                seed.as_ref()
+                    .map(|p| p.display_name.clone())
+                    .unwrap_or_default(),
+            );
+            let desc = mcx.signal(
+                seed.as_ref()
+                    .map(|p| p.description.clone())
+                    .unwrap_or_default(),
+            );
+            let base_url = mcx.signal(
+                seed.as_ref()
+                    .map(|p| p.base_url.clone())
+                    .unwrap_or_default(),
+            );
+            let api_key = mcx.signal(String::new());
+            let clear_key = mcx.signal(false);
+            let enabled = mcx.signal(seed.as_ref().map(|p| p.enabled).unwrap_or(true));
+            // Model allowlist: empty = live discovery; sent on every save.
+            let allowed = mcx.signal(
+                seed.as_ref()
+                    .map(|p| p.allowed_models.join(", "))
+                    .unwrap_or_default(),
+            );
+            // Provider type: nothing pre-chosen on a blank create.
+            let mut families: Vec<String> = FAMILIES.iter().map(|f| f.to_string()).collect();
+            if let Some(p) = &seed {
+                if !p.family.is_empty() && !families.iter().any(|f| f == &p.family) {
+                    families.push(p.family.clone());
                 }
             }
-        });
-        let form_error = mcx.signal(Option::<String>::None);
-        let in_flight = mcx.signal(false);
-        let esc_armed = mcx.signal(false);
-        let form_id = crate::worker::next_form_id();
-        // Progressive disclosure (P1-C): the happy path to "add a
-        // provider key" is id + family + base URL + API key. The six
-        // less-common fields live behind ▸ More options — folded on
-        // CREATE (first-run adds a key, nothing else), open on EDIT
-        // (the operator is deliberately changing an existing profile,
-        // so show everything). Field STATE lives in modal-scope signals
-        // above, so values survive fold cycles; only the widgets mount
-        // on expansion. Signal semantics: true = FOLDED (Disclosure's
-        // contract), so folded on create and open on edit.
-        let more_folded = mcx.signal(create);
-
-        // Dirty-Esc guard + disarm-on-edit + write_done routing: the ONE
-        // shared contract (super::install_* — F4).
-        {
-            let initial = (
-                id.get_untracked(),
-                display.get_untracked(),
-                desc.get_untracked(),
-                base_url.get_untracked(),
-                enabled.get_untracked(),
-                family_ix.get_untracked(),
-                scope_ix.get_untracked(),
-                allowed.get_untracked(),
-            );
-            super::install_dirty_guard_with(
-                mcx,
-                &guard,
-                move || {
-                    id.get_untracked() != initial.0
-                        || display.get_untracked() != initial.1
-                        || desc.get_untracked() != initial.2
-                        || base_url.get_untracked() != initial.3
-                        || enabled.get_untracked() != initial.4
-                        || family_ix.get_untracked() != initial.5
-                        || scope_ix.get_untracked() != initial.6
-                        || allowed.get_untracked() != initial.7
-                        || !api_key.get_untracked().is_empty()
-                        || clear_key.get_untracked()
-                },
-                move || {
-                    let _ = (
-                        id.get(),
-                        display.get(),
-                        desc.get(),
-                        base_url.get(),
-                        api_key.get(),
-                        clear_key.get(),
-                        enabled.get(),
-                        family_ix.get(),
-                        scope_ix.get(),
-                        allowed.get(),
-                    );
-                },
-                esc_armed,
-                form_error,
-            );
-        }
-        super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
-
-        let fam_options: Vec<SelectOption> = std::iter::once(SelectOption::new("choose a family…"))
-            .chain(families.iter().map(|f| SelectOption::new(f.clone())))
-            .collect();
-        let families2 = families.clone();
-        let families3 = families.clone();
-
-        let title = match (&ex, &over) {
-            _ if preset_title.is_some() => preset_title.clone().unwrap_or_default(),
-            (Some(p), _) => format!("Edit profile '{}'", p.id),
-            (None, Some(p)) => format!(
-                "Override '{}' — create a managed connection",
-                p.provider_id.clone().unwrap_or_else(|| p.id.clone())
-            ),
-            (None, None) => "Add a provider connection".to_string(),
-        };
-        // The web's override banner, one honest line: the provider
-        // already works — this SAVE mints an explicit managed profile
-        // that takes precedence over the env/core row.
-        let override_note: Option<String> =
-            over.as_ref().filter(|_| preset_title.is_none()).map(|p| {
-                format!(
-                    "already usable from {} — saving creates a managed override",
-                    synthetic_origin(p)
-                )
+            let family_ix = mcx.signal(match &seed {
+                Some(p) => families
+                    .iter()
+                    .position(|f| f == &p.family)
+                    .map(|i| i + 1)
+                    .unwrap_or(0),
+                None => 0,
             });
-        let scope_was_gateway = ex.as_ref().map(|p| p.scope == "gateway").unwrap_or(false);
-
-        let key_note: View = {
-            let t = theme.get().tokens;
-            match &ex {
-                Some(p) if p.api_key_set => line(vec![span(
-                    format!(
-                        "a key is stored ({}) — leave blank to keep it; type to replace; check clear to remove",
-                        p.api_key_fingerprint.clone().unwrap_or_else(|| "set".into())
-                    ),
-                    t.text_faint,
-                )]),
-                _ => line(vec![span(
-                    "optional — sent once on save, never shown again",
-                    t.text_faint,
-                )]),
-            }
-        };
-
-        let t0 = theme.get().tokens;
-        let ctx_test = ctx2.clone();
-        let ctx_save = ctx2.clone();
-        let ex_test = ex.clone();
-        let ex_more = ex.clone();
-        let close_cancel = close.clone();
-
-        Element::new()
-            .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold(title, t0.accent)]))
-            .child(match &override_note {
-                Some(n) => line(vec![span(n.clone(), t0.info)]),
-                None => Element::new().style(LayoutStyle::default().h(0)).build(),
-            })
-            .child(field(
-                &t0,
-                "id",
-                if create {
-                    TextInput::new()
-                        .value(id)
-                        .placeholder("lowercase, digits, - _ (e.g. my-endpoint)")
-                        .placeholder_while_focused(true)
-                        .layout(LayoutStyle::default().w(40).h(1))
-                        .element(mcx, &t0)
-                        .autofocus()
-                        .build()
-                } else {
-                    line(vec![span(id.get_untracked(), t0.text_muted)])
-                },
-            ))
-            .child(field(&t0, "family", {
-                let sel = Select::new(fam_options)
-                    .value(family_ix)
-                    .layout(LayoutStyle::default().w(32).h(1).shrink(0.0))
-                    .element(mcx, &t0);
-                // In edit mode the id row is static text, so family is
-                // the first focusable — autofocus it (create autofocuses
-                // id). Modal needs a focus target or keys go dead.
-                if create {
-                    sel.build()
-                } else {
-                    sel.autofocus().build()
+            // Who can use it? Gateway-wide (admins) | Only me.
+            let scope_ix = mcx.signal(match &ex {
+                Some(p) if p.scope == "gateway" => 0usize,
+                Some(_) => 1usize,
+                None => {
+                    if can_gateway_scope {
+                        0
+                    } else {
+                        1
+                    }
                 }
-            }))
-            .child(field(
+            });
+            let form_error = mcx.signal(Option::<String>::None);
+            let in_flight = mcx.signal(false);
+            let esc_armed = mcx.signal(false);
+            let form_id = crate::worker::next_form_id();
+            {
+                let initial = (
+                    id.get_untracked(),
+                    display.get_untracked(),
+                    desc.get_untracked(),
+                    base_url.get_untracked(),
+                    enabled.get_untracked(),
+                    family_ix.get_untracked(),
+                    scope_ix.get_untracked(),
+                    allowed.get_untracked(),
+                );
+                super::install_dirty_guard_with(
+                    mcx,
+                    &guard,
+                    move || {
+                        id.get_untracked() != initial.0
+                            || display.get_untracked() != initial.1
+                            || desc.get_untracked() != initial.2
+                            || base_url.get_untracked() != initial.3
+                            || enabled.get_untracked() != initial.4
+                            || family_ix.get_untracked() != initial.5
+                            || scope_ix.get_untracked() != initial.6
+                            || allowed.get_untracked() != initial.7
+                            || !api_key.get_untracked().is_empty()
+                            || clear_key.get_untracked()
+                    },
+                    || {},
+                    esc_armed,
+                    form_error,
+                );
+            }
+            super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
+
+            let fam_options: Vec<SelectOption> =
+                std::iter::once(SelectOption::new("choose a provider type…"))
+                    .chain(families.iter().map(|f| {
+                        let l = family_label(f);
+                        SelectOption::new(
+                            if l == "Custom OpenAI-compatible" && f != "openai-compatible" {
+                                f.clone()
+                            } else {
+                                l
+                            },
+                        )
+                    }))
+                    .collect();
+            let families2 = families.clone();
+            let families3 = families.clone();
+            let override_note: Option<String> =
+                over.as_ref().filter(|_| preset_title.is_none()).map(|p| {
+                    format!(
+                        "already usable from {} — saving creates a managed override",
+                        synthetic_origin(p)
+                    )
+                });
+            let scope_was_gateway = ex.as_ref().map(|p| p.scope == "gateway").unwrap_or(false);
+            let key_note = match &ex {
+                Some(p) if p.api_key_set => format!(
+                    "A key is stored ({}): leave blank to keep it, type to replace it.",
+                    p.api_key_fingerprint
+                        .clone()
+                        .unwrap_or_else(|| "set".into())
+                ),
+                _ => "Sent once on save, never shown again.".to_string(),
+            };
+            let caret = ctx2.ui.caret;
+            let fw = (inner_w - 18).clamp(20, 70);
+            let input = move |sig: Signal<String>, ph: &str, masked: bool| -> View {
+                super::w::caret_tracked(
+                    mcx,
+                    caret,
+                    TextInput::new()
+                        .value(sig)
+                        .placeholder(ph)
+                        .masked(masked)
+                        .layout(LayoutStyle::default().w(fw).h(1))
+                        .element(mcx, &t0),
+                )
+                .build()
+            };
+            let help = move |text: &str| -> View {
+                Element::new()
+                    .style(LayoutStyle::row().shrink(0.0))
+                    .child(
+                        Element::new()
+                            .style(LayoutStyle::default().w(17).h(1).shrink(0.0))
+                            .build(),
+                    )
+                    .child(sentence(&t0, text, (inner_w - 17).max(10), t0.text_faint))
+                    .build()
+            };
+            let mut col = Element::new().style(LayoutStyle::column().gap(0));
+            if let Some(n) = &override_note {
+                col = col.child(sentence(&t0, n, inner_w, t0.info));
+            }
+            let fam_select = Select::new(fam_options)
+                .value(family_ix)
+                .layout(LayoutStyle::default().w(34).h(1).shrink(0.0))
+                .element(mcx, &t0);
+            col = col.child(super::w::field_row(
                 &t0,
-                "base URL",
-                TextInput::new()
-                    .value(base_url)
-                    .placeholder("https://host/v1 (or http://127.0.0.1:1234/v1)")
-                    .placeholder_while_focused(true)
-                    .layout(LayoutStyle::default().w(48).h(1))
-                    .element(mcx, &t0)
-                    .build(),
-            ))
-            .child(field(
+                "Provider type",
+                17,
+                if create {
+                    fam_select.build()
+                } else {
+                    fam_select.autofocus().build()
+                },
+            ));
+            let mut scope = Segmented::new(SCOPES, None).bind(scope_ix);
+            if !can_gateway_scope && !scope_was_gateway {
+                scope = scope.disable(0, "Gateway-wide needs admin rights.");
+            }
+            col = col.child(super::w::field_row(
+                &t0,
+                "Who can use it?",
+                17,
+                scope.view(mcx, &t0),
+            ));
+            col = col.child(super::w::field_row(
+                &t0,
+                "Provider ID",
+                17,
+                if create {
+                    super::w::caret_tracked(
+                        mcx,
+                        caret,
+                        TextInput::new()
+                            .value(id)
+                            .placeholder("openai")
+                            .layout(LayoutStyle::default().w(fw.min(40)).h(1))
+                            .element(mcx, &t0),
+                    )
+                    .autofocus()
+                    .build()
+                } else {
+                    sentence(&t0, &id.get_untracked(), fw, t0.text_muted)
+                },
+            ));
+            col = col.child(super::w::field_row(
+                &t0,
+                "Name",
+                17,
+                input(display, "OpenAI", false),
+            ));
+            col = col.child(super::w::field_row(
+                &t0,
+                "Description",
+                17,
+                input(desc, DESCRIPTION_PLACEHOLDER, false),
+            ));
+            col = col.child(super::w::field_row(
+                &t0,
+                "Base URL",
+                17,
+                input(base_url, BASE_URL_PLACEHOLDER, false),
+            ));
+            col = col.child(super::w::field_row(
                 &t0,
                 "API key",
-                TextInput::new()
-                    .value(api_key)
-                    .masked(true)
-                    .layout(LayoutStyle::default().w(40).h(1))
-                    .element(mcx, &t0)
-                    .build(),
-            ))
-            .child(field(&t0, "", key_note))
-            // ▸ More options: the six less-common fields (display name,
-            // description, allowed models, scope, enabled, clear-key).
-            // Folded on create; their state lives in modal-scope signals
-            // so values survive fold cycles.
-            .child(
-                abstracttui::widgets::Disclosure::new(
-                    "More options (display name · description · allowed models · scope · enabled)",
-                )
-                .folded(more_folded)
-                .max_body_rows(0)
-                .body(move |bcx| {
-                    let t = use_theme(bcx).get().tokens;
-                    let mut col = Element::new()
-                        .style(LayoutStyle::column().gap(0))
-                        .child(field(
-                            &t,
-                            "display name",
-                            TextInput::new()
-                                .value(display)
-                                .placeholder("optional")
-                                .layout(LayoutStyle::default().w(40).h(1))
-                                .element(bcx, &t)
-                                .build(),
-                        ))
-                        .child(field(
-                            &t,
-                            "description",
-                            TextInput::new()
-                                .value(desc)
-                                .placeholder("optional")
-                                .layout(LayoutStyle::default().w(48).h(1))
-                                .element(bcx, &t)
-                                .build(),
-                        ))
-                        .child(field(
-                            &t,
-                            "allowed models",
+                17,
+                input(api_key, KEY_PLACEHOLDER, true),
+            ));
+            col = col.child(help(&key_note));
+            let mut toggles = Element::new().style(LayoutStyle::row().gap(3).h(1).shrink(0.0));
+            if !create && ex.as_ref().map(|p| p.api_key_set).unwrap_or(false) {
+                toggles = toggles.child(
+                    super::w::Toggle::switch("Clear stored API key", clear_key)
+                        .on_change(move |v| clear_key.set(v))
+                        .view(mcx, &t0),
+                );
+            }
+            toggles = toggles.child(
+                super::w::Toggle::switch("Enabled", enabled)
+                    .on_change(move |v| enabled.set(v))
+                    .view(mcx, &t0),
+            );
+            col = col.child(super::w::field_row(&t0, "", 17, toggles.build()));
+            // Visible models (R15 D1: a named section, never "Advanced").
+            col = col.child(super::w::section(&t0, VISIBLE_MODELS));
+            col = col.child(sentence(&t0, VISIBLE_MODELS_HELP, inner_w, t0.text_faint));
+            let clear =
+                Action::label("clear_models", "Clear restriction").tooltip(CLEAR_RESTRICTION_TIP);
+            col = col.child(
+                Element::new()
+                    .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
+                    .child(
+                        super::w::caret_tracked(
+                            mcx,
+                            caret,
                             TextInput::new()
                                 .value(allowed)
-                                .placeholder("blank = live discovery; or comma-separated model ids")
-                                .placeholder_while_focused(true)
-                                .layout(LayoutStyle::default().w(48).h(1))
-                                .element(bcx, &t)
-                                .build(),
-                        ))
-                        .child(field(
-                            &t,
-                            "scope",
-                            RadioGroup::new(vec![
-                                "user (just this login)".to_string(),
-                                if can_gateway_scope {
-                                    "gateway (everyone on this gateway)".to_string()
-                                } else {
-                                    "gateway (needs admin — unavailable)".to_string()
-                                },
-                            ])
-                            .selection(scope_ix)
-                            .element(bcx, &t)
-                            .build(),
-                        ));
-                    if !create && ex_more.as_ref().map(|p| p.api_key_set).unwrap_or(false) {
-                        col = col.child(field(
-                            &t,
-                            "",
-                            Checkbox::new("clear the stored key on save")
-                                .checked(clear_key)
-                                .element(bcx, &t)
-                                .build(),
-                        ));
-                    }
-                    // The profile's on/off, saved with the form's other
-                    // fields (form-field switch: Space flips it, Save
-                    // writes it with the rest).
-                    col.child(field(
-                        &t,
-                        "",
-                        super::switch::Switch::new("Profile in use", enabled)
-                            .element(bcx, &t)
-                            .build(),
-                    ))
-                    .build()
-                })
-                .element(mcx, &t0)
-                .build(),
-            )
-            // Test connection: discover models on the draft (or the saved
-            // profile when editing with no draft key/url change).
-            .child(field(
-                &t0,
-                "",
-                Button::new("Test connection (discover models)")
-                    .on_click(move || {
-                        let fam_ix = family_ix.get_untracked();
-                        let draft_key = api_key.get_untracked();
-                        let url = base_url.get_untracked();
-                        if fam_ix == 0 {
-                            ctx_test
-                                .store
-                                .notice
-                                .set(Some("choose a family before testing".into()));
-                            return;
-                        }
-                        // Test what the FORM says (family + edited URL),
-                        // exactly like the web modal. profile_id rides
-                        // along in edit mode so the stored key applies
-                        // when no draft key is typed (the gateway merges
-                        // body fields over the saved profile; omitting
-                        // the family here would test the request-model
-                        // default 'openai-compatible', not the profile's).
-                        let mut body = json!({
-                            "provider_family": families2[fam_ix - 1],
-                            "base_url": url.trim(),
-                        });
-                        if let Some(p) = &ex_test {
-                            body["profile_id"] = Value::String(p.id.clone());
-                        }
-                        if !draft_key.trim().is_empty() {
-                            body["api_key"] = Value::String(draft_key.trim().to_string());
-                        }
-                        ctx_test.store.discover.set(Loadable::Loading);
-                        ctx_test.send(Cmd::DiscoverModels { body: body.into() });
-                    })
-                    .element(mcx, &t0)
+                                .placeholder(
+                                    "live discovery (no allowlist); or model ids, comma-separated",
+                                )
+                                .layout(
+                                    LayoutStyle::default()
+                                        .w((inner_w - clear.width() - 2).max(20))
+                                        .h(1),
+                                )
+                                .element(mcx, &t0),
+                        )
+                        .build(),
+                    )
+                    .child(button(mcx, &t0, &clear, On::Raised, true, move || {
+                        allowed.set(String::new())
+                    }))
                     .build(),
-            ))
-            .child(dyn_view_scoped(
-                LayoutStyle::default().h(4).shrink(0.0),
+            );
+            col = col.child(dyn_view_scoped(
+                LayoutStyle::column().shrink(0.0),
                 move |gcx| {
                     let t = theme.get().tokens;
                     let d = store.discover.get();
                     let mut el = Element::new()
                         .style(LayoutStyle::column().gap(0))
                         .child(discover_result(&t, &d));
-                    // Discovery feeds the allowlist, like the web's
-                    // multi-select: one keypress restricts the profile
-                    // to exactly what the endpoint just reported.
+                    // Discovery feeds the allowlist (the web's multi-select).
                     if let Loadable::Ready(o) = &d {
                         if !o.models.is_empty() {
                             let models = o.models.clone();
-                            let n = models.len();
-                            el = el.child(
-                                Button::new(format!("Restrict to these {n} models"))
-                                    .on_click(move || allowed.set(models.join(", ")))
-                                    .element(gcx, &t)
-                                    .build(),
+                            let a = Action::label(
+                                "restrict",
+                                format!("Restrict to these {} models", models.len()),
                             );
+                            el = el.child(button(gcx, &t, &a, On::Raised, true, move || {
+                                allowed.set(models.join(", "))
+                            }));
                         }
                     }
                     el.build()
                 },
-            ))
-            .child(super::message_slot(theme, form_error, in_flight))
-            .child(dyn_view_scoped(
-                LayoutStyle::default().h(1).shrink(0.0),
-                move |bcx| {
-                    let t = theme.get().tokens;
-                    let busy_form = in_flight.get();
-                    let ctx_save = ctx_save.clone();
-                    let close_cancel = close_cancel.clone();
-                    let families3 = families3.clone();
-                    Element::new()
-                        .style(LayoutStyle::row().gap(2))
-                        .child(
-                            Button::new(if create { "Create" } else { "Save" })
-                                .disabled(busy_form)
-                                .on_click(move || {
-                                    // Double-submit guard: a second Save while
-                                    // the first write runs would duplicate it.
-                                    if in_flight.get_untracked() {
-                                        return;
-                                    }
-                                    let idv = id.get_untracked().trim().to_string();
-                                    let fam_ix = family_ix.get_untracked();
-                                    let url = base_url.get_untracked().trim().to_string();
-                                    let key = api_key.get_untracked().trim().to_string();
-                                    let wants_clear = clear_key.get_untracked();
-                                    // Local validation mirrors the obvious
-                                    // gateway rules; everything else surfaces
-                                    // the gateway's own 400 detail verbatim.
-                                    if create
-                                        && (idv.is_empty()
-                                            || !idv.chars().all(|c| {
-                                                c.is_ascii_lowercase()
-                                                    || c.is_ascii_digit()
-                                                    || c == '-'
-                                                    || c == '_'
-                                            }))
-                                    {
-                                        form_error.set(Some(
-                                            "id: lowercase letters, digits, - and _ only".into(),
-                                        ));
-                                        return;
-                                    }
-                                    if fam_ix == 0 {
-                                        form_error.set(Some("choose a provider family".into()));
-                                        return;
-                                    }
-                                    if !key.is_empty() && wants_clear {
-                                        form_error.set(Some(
-                                        "either type a new key or clear the stored one — not both"
-                                            .into(),
-                                    ));
-                                        return;
-                                    }
-                                    if !(url.is_empty()
-                                        || url.starts_with("http://")
-                                        || url.starts_with("https://"))
-                                    {
-                                        form_error.set(Some(
-                                            "base URL must start with http:// or https://".into(),
-                                        ));
-                                        return;
-                                    }
-                                    // Escalating a user profile to gateway
-                                    // scope needs admin; a profile ALREADY
-                                    // at gateway scope resends it harmlessly.
-                                    if scope_ix.get_untracked() == 1
-                                        && !can_gateway_scope
-                                        && !scope_was_gateway
-                                    {
-                                        form_error
-                                            .set(Some("gateway scope needs admin rights".into()));
-                                        return;
-                                    }
-                                    // Allowlist: parsed from the field, sent on
-                                    // EVERY save (web parity) — an emptied field
-                                    // clears a stored restriction; the gateway
-                                    // treats a missing field as keep-existing,
-                                    // which would make clearing impossible.
-                                    let allowed_list: Vec<String> = {
-                                        let mut seen = std::collections::BTreeSet::new();
-                                        allowed
-                                            .get_untracked()
-                                            .split([',', ';', '\n'])
-                                            .map(str::trim)
-                                            .filter(|s| !s.is_empty())
-                                            .filter(|s| seen.insert(s.to_string()))
-                                            .map(str::to_string)
-                                            .collect()
-                                    };
-                                    let mut body = json!({
-                                        "display_name": display.get_untracked().trim(),
-                                        "description": desc.get_untracked().trim(),
-                                        "provider_family": families3[fam_ix - 1],
-                                        "base_url": url,
-                                        "enabled": enabled.get_untracked(),
-                                        "allowed_models": allowed_list,
-                                        // Scope rides every save — the gateway
-                                        // moves the profile between stores when
-                                        // it changes (web sends it too).
-                                        "scope": if scope_ix.get_untracked() == 1 {
-                                            "gateway"
-                                        } else {
-                                            "user"
-                                        },
-                                    });
-                                    if create {
-                                        body["id"] = Value::String(idv.clone());
-                                    }
-                                    if !key.is_empty() {
-                                        body["api_key"] = Value::String(key);
-                                    }
-                                    if wants_clear {
-                                        body["clear_api_key"] = Value::Bool(true);
-                                    }
-                                    form_error.set(None);
-                                    in_flight.set(true);
-                                    ctx_save.send(Cmd::SaveProfile {
-                                        create,
-                                        id: idv,
-                                        body: body.into(),
-                                        form_id: Some(form_id),
-                                    });
-                                })
-                                .element(bcx, &t)
-                                .build(),
-                        )
-                        .child(
-                            Button::new("Cancel (Esc)")
-                                .on_click(move || close_cancel())
-                                .element(bcx, &t)
-                                .build(),
-                        )
-                        .build()
-                },
-            ))
-            .build()
-    });
+            ));
+            col = col.child(super::message_slot(theme, form_error, in_flight));
+            let ctx_test = ctx2.clone();
+            let ex_test = ex.clone();
+            let test = move || {
+                let fam_ix = family_ix.get_untracked();
+                if fam_ix == 0 {
+                    form_error.set(Some("Choose a provider type before testing.".into()));
+                    return;
+                }
+                let mut body = json!({
+                    "provider_family": families2[fam_ix - 1],
+                    "base_url": base_url.get_untracked().trim(),
+                });
+                if let Some(p) = &ex_test {
+                    body["profile_id"] = Value::String(p.id.clone());
+                }
+                let draft_key = api_key.get_untracked();
+                if !draft_key.trim().is_empty() {
+                    body["api_key"] = Value::String(draft_key.trim().to_string());
+                }
+                ctx_test.store.discover.set(Loadable::Loading);
+                ctx_test.send(Cmd::DiscoverModels { body: body.into() });
+            };
+            let ctx_save = ctx2.clone();
+            let save = move || {
+                if in_flight.get_untracked() {
+                    return; // a write is already running
+                }
+                let idv = id.get_untracked().trim().to_string();
+                let fam_ix = family_ix.get_untracked();
+                let url = base_url.get_untracked().trim().to_string();
+                let key = api_key.get_untracked().trim().to_string();
+                let wants_clear = clear_key.get_untracked();
+                if create
+                    && (idv.is_empty()
+                        || !idv.chars().all(|c| {
+                            c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_'
+                        }))
+                {
+                    form_error.set(Some(
+                        "Provider ID: lowercase letters, digits, - and _ only.".into(),
+                    ));
+                    return;
+                }
+                if fam_ix == 0 {
+                    form_error.set(Some("Choose a provider type.".into()));
+                    return;
+                }
+                if !key.is_empty() && wants_clear {
+                    form_error.set(Some(
+                        "Either type a new key or clear the stored one — not both.".into(),
+                    ));
+                    return;
+                }
+                if !(url.is_empty() || url.starts_with("http://") || url.starts_with("https://")) {
+                    form_error.set(Some("Base URL must start with http:// or https://".into()));
+                    return;
+                }
+                if scope_ix.get_untracked() == 0 && !can_gateway_scope && !scope_was_gateway {
+                    form_error.set(Some("Gateway-wide needs admin rights.".into()));
+                    return;
+                }
+                let allowed_list: Vec<String> = {
+                    let mut seen = std::collections::BTreeSet::new();
+                    allowed
+                        .get_untracked()
+                        .split([',', ';', '\n'])
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .filter(|s| seen.insert(s.to_string()))
+                        .map(str::to_string)
+                        .collect()
+                };
+                let mut body = json!({
+                    "display_name": display.get_untracked().trim(),
+                    "description": desc.get_untracked().trim(),
+                    "provider_family": families3[fam_ix - 1],
+                    "base_url": url,
+                    "enabled": enabled.get_untracked(),
+                    "allowed_models": allowed_list,
+                    "scope": if scope_ix.get_untracked() == 0 { "gateway" } else { "user" },
+                });
+                if create {
+                    body["id"] = Value::String(idv.clone());
+                }
+                if !key.is_empty() {
+                    body["api_key"] = Value::String(key);
+                }
+                if wants_clear {
+                    body["clear_api_key"] = Value::Bool(true);
+                }
+                form_error.set(None);
+                in_flight.set(true);
+                ctx_save.send(Cmd::SaveProfile {
+                    create,
+                    id: idv,
+                    body: body.into(),
+                    form_id: Some(form_id),
+                });
+            };
+            let cancel = {
+                let (close, guard) = (close.clone(), guard.clone());
+                move || {
+                    let handled = guard.borrow().as_ref().map(|g| g()).unwrap_or(false);
+                    if !handled {
+                        close();
+                    }
+                }
+            };
+            Element::new()
+                .style(LayoutStyle::column().grow(1.0))
+                .child(
+                    Scroll::new(col.build())
+                        .layout(LayoutStyle::default().grow(1.0).min_h(4))
+                        .element(mcx, &t0)
+                        .build(),
+                )
+                .child(super::w::form::button_row(vec![
+                    button(
+                        mcx,
+                        &t0,
+                        &Action::label("cancel", "Cancel"),
+                        On::Raised,
+                        true,
+                        cancel,
+                    ),
+                    button(
+                        mcx,
+                        &t0,
+                        &Action::label("test", "↻ Test").tooltip(TEST_TIP),
+                        On::Raised,
+                        true,
+                        test,
+                    ),
+                    button(
+                        mcx,
+                        &t0,
+                        &Action::label("confirm", "✓ Confirm").tooltip(CONFIRM_TIP),
+                        On::Raised,
+                        true,
+                        save,
+                    ),
+                ]))
+                .build()
+        });
 }
 
 fn discover_result(t: &TokenSet, d: &Loadable<crate::store::DiscoverOutcome>) -> View {
     match d {
-        Loadable::NotAsked => line(vec![span("test: not run yet", t.text_faint)]),
+        Loadable::NotAsked => line(vec![span("Not tested yet.", t.text_faint)]),
         Loadable::Loading => line(vec![span("⟳ contacting the endpoint…", t.info)]),
         Loadable::Failed(e) => error_panel(t, e),
         Loadable::Ready(o) => {

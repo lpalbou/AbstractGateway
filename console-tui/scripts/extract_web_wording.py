@@ -327,6 +327,44 @@ def openai_words() -> dict:
 SCREEN_FIXTURES["openai"] = openai_words
 
 
+def providers_words() -> dict:
+    """R15-A Providers: the three sections, the endpoint modal, the connection button, the delete question."""
+    src = read("console.py")
+    region = need(src, r'(<div id="tab-providers".*?Multimodal Capabilities)', "providers tab region", re.S)
+    titles = re.findall(r'<h2 class="section-title"><span class="section-icon[^"]*" aria-hidden="true">[^<]*</span><span>([^<]*)</span></h2>\s*<p class="section-note">([^<]*)</p>', region)
+    if len(titles) < 3:
+        fail(f"providers sections: expected 3 titles + notes, found {titles!r}.")
+    def btn_label(word: str) -> str:
+        return need(src, r'innerHTML = `<span class="button-icon" aria-hidden="true">[^<]*</span><span>(' + word + r')</span>`;', f"{word} button")
+    return {
+        "section_local": titles[0][0],
+        "note_local": titles[0][1],
+        "section_remote": titles[1][0],
+        "note_remote": titles[1][1],
+        "section_available": titles[2][0],
+        "note_available": titles[2][1],
+        "form_description": need(src, r'<p id="provider-modal-description">([^<]*)</p>', "modal description"),
+        "key_placeholder": need(src, r'<input id="endpoint-api-key" type="password" placeholder="([^"]*)">', "api key placeholder"),
+        "base_url_placeholder": need(src, r'<input id="endpoint-base-url" placeholder="([^"]*)">', "base url placeholder"),
+        "description_placeholder": need(src, r'<textarea id="endpoint-description" placeholder="([^"]*)">', "description placeholder"),
+        "visible_models": need(src, r'<h4 id="endpoint-visible-models-title" class="named-section__title">([^<]*)</h4>', "visible models"),
+        "visible_models_help": need(src, r'<p class="field-help">(Optional\. Use Test to preview discovery[^<]*)</p>', "visible models help"),
+        "clear_restriction_tip": need(src, r'<button id="clear-endpoint-models"[^>]*title="([^"]*)"', "clear restriction tooltip"),
+        "test_tip": need(src, r'<button id="discover-endpoint-models"[^>]*title="([^"]*)"', "test tooltip"),
+        "confirm_tip": need(src, r'<button id="save-endpoint-profile" title="([^"]*)"', "confirm tooltip"),
+        "scope_gateway": need(src, r'opt\.textContent = value === "gateway" \? "([^"]*)" : "Only me";', "gateway scope"),
+        "scope_user": need(src, r'opt\.textContent = value === "gateway" \? "Gateway-wide" : "([^"]*)";', "user scope"),
+        "connect_tip": need(src, r'data-provider-connect="\$\{esc\(e\.id\)\}" title="([^"]*)"', "connect tooltip"),
+        "delete_confirm": need(src, r'message: `(Delete \$\{profile\.virtual_provider \|\| "endpoint:" \+ profile\.id\}\? Existing workflows[^`]*)`', "delete question").replace('${profile.virtual_provider || "endpoint:" + profile.id}', "{n}"),
+        "edit": btn_label("Edit"),
+        "delete": btn_label("Delete"),
+        "override": btn_label("Override"),
+    }
+
+
+SCREEN_FIXTURES["providers"] = providers_words
+
+
 def screens_main(write: bool) -> int:
     rc = 0
     for name, build_fn in SCREEN_FIXTURES.items():
