@@ -17216,6 +17216,16 @@ def _effective_voice_routes() -> Dict[str, Any]:
         }
         if kind == "tts":
             entry["voice"] = (str(row.get("voice") or "").strip() or None) if provider else None
+        if kind == "stt" and provider:
+            # AbstractCore's served one-line hint for this route (round 16): e.g. a
+            # faster-whisper route on Apple silicon runs on the processor while mlx-whisper
+            # runs the same model on the GPU. Clients show `hint.sentence` next to the
+            # engine line, verbatim; nothing is computed client-side and nothing is applied.
+            from abstractcore.config.recommendations import voice_input_hint
+
+            hint = voice_input_hint({"provider": provider, "model": entry["model"]})
+            if hint:
+                entry["hint"] = hint
         if not provider:
             entry["note"] = (
                 "No gateway default is set for "
@@ -17391,8 +17401,8 @@ def _static_transcription_models_response() -> Dict[str, Any]:
     engine = str(_resolved_voice_engine("stt") or "openai").strip().lower()
     if engine in {"openai", "openai-compatible", "remote"}:
         values.extend(["gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1"])
-    elif engine in {"faster_whisper", "faster-whisper", "whisper", "local"}:
-        values.extend(["tiny", "base", "small", "medium", "large-v2", "large-v3"])
+    elif engine in {"faster_whisper", "faster-whisper", "whisper", "local", "mlx-whisper", "mlx_whisper"}:
+        values.extend(["tiny", "base", "small", "medium", "large-v2", "large-v3", "large-v3-turbo"])
     models = _dedupe_strings(values)
     providers = _dedupe_strings([engine])
     return {

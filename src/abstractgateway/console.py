@@ -10281,6 +10281,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const pair = [info.provider, info.model].filter(Boolean).join(" / ");
 	      return `<div class="ui-field-msg tone-warn capability-route-unavailable" role="note" title="${esc(pair)}">Configured but cannot run on this computer: ${esc(reason)}</div>`;
 	    }
+	    // AbstractCore `route_hint` {code, sentence, route|null} on a CONFIGURED row (round 16:
+	    // a faster-whisper speech-input route on Apple silicon, which mlx-whisper runs on the
+	    // GPU). The sentence is served verbatim and already says where to act (Apply
+	    // recommended, here) -- no control of its own, nothing added or computed here.
+	    function routeHintMarkup(row) {
+	      const hint = row && row.route_hint;
+	      if (!hint || typeof hint !== "object" || !String(hint.sentence || "").trim()) return "";
+	      return `<div class="ui-field-msg tone-info capability-route-hint" role="note" data-hint="${esc(hint.code || "")}">${esc(String(hint.sentence).trim())}</div>`;
+	    }
 	    // AbstractCore `engine_missing` {engine, name, reason, install[, engine_row]}
 	    // on a capability-default row, an apply-recommended entry or a
 	    // recommended-plan row. Never combined with `route_unavailable`.
@@ -13367,7 +13376,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          <td>${row.model ? `<span class="ui-ellip" title="${esc(row.model)}">${esc(row.model)}</span>` + reasoningBadge : "-"}</td>
 	          <td class="capability-weights-cell">${weightsCellMarkup(row)}</td>
 	          <td class="capability-source-cell">${source ? `<span class="capability-source">${esc(source)}</span>` : "-"}</td>
-	          <td><span class="state-pill ${esc(status.cls)}">${esc(status.label)}</span>${defaultRowUnavailableMarkup(row)}${defaultRowRouteUnavailableMarkup(row)}${defaultRowConfigured(row) ? engineMissingMarkup(row) : ""}</td>
+	          <td><span class="state-pill ${esc(status.cls)}">${esc(status.label)}</span>${defaultRowUnavailableMarkup(row)}${defaultRowRouteUnavailableMarkup(row)}${defaultRowConfigured(row) ? engineMissingMarkup(row) + routeHintMarkup(row) : ""}</td>
 	        `;
 	        const actions = document.createElement("td");
 	        actions.className = "actions";

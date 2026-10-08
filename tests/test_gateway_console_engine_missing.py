@@ -64,6 +64,6 @@ def test_needs_gpu_limit_names_the_command_and_its_cost() -> None:
 def test_the_three_surfaces_use_them() -> None:
     html = _html()
     assert 'if (defaultRowConfigured(row) && engineMissingInfo(row)) return { label: "engine missing", cls: "off" };' in html
-    assert '${defaultRowConfigured(row) ? engineMissingMarkup(row) : ""}</td>' in html
+    assert '${defaultRowConfigured(row) ? engineMissingMarkup(row) + routeHintMarkup(row) : ""}</td>' in html
     assert "const missing = rows.filter((r) => engineMissingInfo(r));" in html
     assert 'engineMissingMarkup(r, "ui-alert tone-warn")' in html and "first-run-gpu-limit" in html

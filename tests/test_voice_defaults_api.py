@@ -57,6 +57,11 @@ def _client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, routes: Dict[str, D
 
     monkeypatch.setattr(gateway_routes, "_configured_voice_output_defaults", lambda kind: dict(routes.get(kind) or {}))
     monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_discovery_facade", lambda: (_EngineSaysOpenAI(), None))
+    # The served speech-input hint is AbstractCore's, computed from THIS host; these tests pin
+    # it (the hint tests below set their own).
+    import abstractcore.config.recommendations as core_rec
+
+    monkeypatch.setattr(core_rec, "voice_input_hint", lambda route, host=None: None)
     return TestClient(app), {"Authorization": f"Bearer {token}"}
 
 
@@ -98,3 +103,60 @@ def test_unconfigured_routes_say_so_instead_of_the_engine_fallback(tmp_path: Pat
     assert "active_tts_provider" not in catalog
     assert "active_stt_provider" not in catalog
     assert catalog["gateway_defaults"]["tts"]["configured"] is False
+
+
+# --- round 16: the served speech-input hint -----------------------------------------------
+
+
+def test_voice_defaults_carries_cores_hint_verbatim(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, headers = _client(tmp_path, monkeypatch, ROUTES)
+    import abstractcore.config.recommendations as core_rec
+
+    seen = []
+    hint = {
+        "code": "apple_gpu_engine",
+        "sentence": "Runs on the processor: faster-whisper has no Apple GPU backend. mlx-whisper runs large-v3 ...",
+        "route": {"key": "input.voice", "provider": "mlx-whisper", "model": "large-v3"},
+    }
+
+    def fake(route, host=None):
+        seen.append(dict(route))
+        return hint
+
+    monkeypatch.setattr(core_rec, "voice_input_hint", fake)
+    with client:
+        body = client.get("/api/gateway/voice/defaults", headers=headers).json()
+    assert body["stt"]["hint"] == hint
+    assert {"provider": "faster-whisper", "model": "large-v3"} in seen
+    assert "hint" not in body["tts"]
+    # Nothing is applied: the route is still the stored one.
+    assert (body["stt"]["provider"], body["stt"]["model"]) == ("faster-whisper", "large-v3")
+
+
+def test_the_hint_is_cores_real_answer_on_an_apple_gpu_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import abstractcore.config.recommendations as core_rec
+
+    real = core_rec.voice_input_hint  # before _client pins it
+    client, headers = _client(tmp_path, monkeypatch, ROUTES)
+    import abstractcore.utils.host_profile as hp
+
+    monkeypatch.setattr(
+        hp, "host_profile",
+        lambda **_k: {"os": "darwin", "arch": "arm64", "accelerator": "metal", "engines_installed": {"mlx-whisper": False}},
+    )
+    monkeypatch.setattr(core_rec, "voice_input_hint", real)
+    with client:
+        body = client.get("/api/gateway/voice/defaults", headers=headers).json()
+    assert body["stt"]["hint"]["code"] == "apple_gpu_engine_not_installed"
+    assert body["stt"]["hint"]["route"] is None
+
+
+def test_static_transcription_list_offers_turbo_and_keeps_large_v3(monkeypatch: pytest.MonkeyPatch) -> None:
+    import abstractgateway.routes.gateway as gateway_routes
+
+    for engine in ("faster-whisper", "mlx-whisper"):
+        monkeypatch.setattr(gateway_routes, "_resolved_voice_engine", lambda kind, e=engine: e)
+        for key in ("ABSTRACTGATEWAY_VOICE_STT_MODEL", "ABSTRACTVOICE_STT_MODEL"):
+            monkeypatch.delenv(key, raising=False)
+        models = gateway_routes._static_transcription_models_response()["models"]
+        assert "large-v3" in models and "large-v3-turbo" in models, engine
