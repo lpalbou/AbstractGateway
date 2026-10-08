@@ -294,7 +294,7 @@ fn accounts_and_workflows_live() {
         h.ui.account_sel.set(idx);
         h.turns(3);
         h.key(b" ");
-        h.key(b"\x1b[A");
+        h.key(b"\x1b[Z"); // Shift+Tab to the action button (R15 F1)
         h.key(b"\r");
         h.until("r2alice inactive", |h, _| {
             h.store.accounts.with_untracked(|d| {

@@ -1120,7 +1120,7 @@ fn routes_model_step_shows_the_plan_and_downloads_all() {
         "confirm first:\n{s}"
     );
     // Danger confirm defaults to keep → Up to "Download all".
-    h.key(b"\x1b[A");
+    h.key(b"\x1b[Z"); // Shift+Tab to the action button
     h.turn();
     h.type_text("\r");
     h.turns(2);
@@ -1667,7 +1667,7 @@ fn delete_profile_needs_danger_confirm() {
     // Again, choose the danger option explicitly.
     h.type_text("d");
     h.turns(2);
-    h.key(b"\x1b[A"); // up to "Delete the profile"
+    h.key(b"\x1b[Z"); // Shift+Tab to the action button — up to "Delete the profile"
     h.turn();
     h.type_text("\r");
     h.turns(2);
@@ -2054,7 +2054,7 @@ fn route_editor_task_key_derivation() {
         s.contains("Clear the override on output.image.text_to_image"),
         "confirm:\n{s}"
     );
-    h.key(b"\x1b[A"); // up to the danger option
+    h.key(b"\x1b[Z"); // Shift+Tab to the action button — up to the danger option
     h.turn();
     h.type_text("\r");
     h.turns(2);
@@ -4275,9 +4275,9 @@ use abstractgateway_console::store::{RunScope, RunsData};
 
 /// SGR mouse press+release at 1-based cell (x, y).
 /// Answer a destructive confirmation (`confirm_danger`: the danger option
-/// is first, Cancel/Keep preselected): Up, then Enter.
+/// is first, Cancel/Keep preselected): Shift+Tab to it, then Enter.
 fn answer_danger(h: &mut Harness) {
-    h.key(b"\x1b[A");
+    h.key(b"\x1b[Z"); // Shift+Tab to the action button
     h.turn();
     h.key(b"\r");
     h.turns(2);
@@ -5516,7 +5516,7 @@ fn w_confirms_then_downloads_the_recommended_artifact() {
         "nothing downloads before the operator confirms"
     );
     // Danger confirms default to the SAFE option; move to Download.
-    h.key(b"\x1b[A");
+    h.key(b"\x1b[Z"); // Shift+Tab to the action button
     h.turn();
     h.key(b"\r");
     h.turns(2);
@@ -6925,7 +6925,7 @@ fn models_tab_unload_confirms_then_emits_the_cmd() {
     // Again, choosing the danger option explicitly.
     h.type_text("u");
     h.turns(2);
-    h.key(b"\x1b[A"); // up to "Unload"
+    h.key(b"\x1b[Z"); // Shift+Tab to the action button — up to "Unload"
     h.turn();
     h.type_text("\r");
     h.turns(2);
@@ -6975,7 +6975,7 @@ fn models_tab_locked_refusal_offers_force_unload() {
         s.contains("is locked") && s.contains("Force unload"),
         "the second confirm renders:\n{s}"
     );
-    h.key(b"\x1b[A"); // up to the danger option
+    h.key(b"\x1b[Z"); // Shift+Tab to the action button — up to the danger option
     h.turn();
     h.type_text("\r");
     h.turns(2);
@@ -7927,7 +7927,7 @@ fn restart_and_quit_confirm_first_and_default_to_keep() {
     h.type_text("Q");
     let s = h.turns(2);
     assert!(s.contains("Quit AbstractGateway?"), "quit confirm:\n{s}");
-    h.key(b"\x1b[A");
+    h.key(b"\x1b[Z"); // Shift+Tab to the action button
     h.turn();
     h.type_text("\r");
     h.turns(2);
@@ -8016,7 +8016,7 @@ fn host_panel_start_at_login_toggle_confirms_then_puts() {
     h.turns(2);
     h.type_text("L");
     h.turns(2);
-    h.key(b"\x1b[A");
+    h.key(b"\x1b[Z"); // Shift+Tab to the action button
     h.turn();
     h.type_text("\r");
     h.turns(2);

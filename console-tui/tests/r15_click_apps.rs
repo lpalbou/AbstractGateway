@@ -119,10 +119,33 @@ fn click_row(h: &mut r8w4::Harness, name: &str, needle: &str) -> String {
     h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes())
 }
 
-/// Answer an install/update confirmation (its "go" option is first and
-/// preselected): Enter.
+/// Answer an install/update confirmation BY MOUSE (R15 F1): click its
+/// action button — the button left of "Not now" on the dialog's button row.
 fn confirm(h: &mut r8w4::Harness) {
-    h.key(b"\r");
+    let screen = h.turns(1);
+    let (y, line) = screen
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains(" Not now "))
+        .last()
+        .unwrap_or_else(|| panic!("no confirmation button row:\n{screen}"));
+    let not_now = line.rfind(" Not now ").unwrap();
+    // The action button: the last non-space run before "Not now".
+    let before = line[..not_now].trim_end();
+    let start = before
+        .char_indices()
+        .rev()
+        .find(|(_, c)| *c == '│')
+        .map(|(i, c)| i + c.len_utf8())
+        .unwrap_or(0);
+    let label = before[start..].trim();
+    assert!(
+        !label.is_empty(),
+        "no action button left of Not now:\n{screen}"
+    );
+    let b = before.rfind(label).unwrap();
+    let x = line[..b].chars().count() + 1;
+    h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes());
 }
 
 fn offered() -> BTreeSet<(String, &'static str)> {

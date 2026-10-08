@@ -9,6 +9,7 @@
 
 pub mod action;
 pub mod caret;
+pub mod confirm;
 pub mod form;
 pub mod glyphs;
 pub mod notify;
@@ -21,6 +22,7 @@ pub mod toggle;
 
 pub use action::{Action, Display, RowActions, Tone};
 pub use caret::{caret_tracked, Caret};
+pub use confirm::Confirm;
 pub use form::{field_row, section, state_line, FieldState, FormModal};
 pub use notify::{confirm, toast};
 pub use paint::{fill_line, Ink};

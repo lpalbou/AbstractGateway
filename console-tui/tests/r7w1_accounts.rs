@@ -198,11 +198,11 @@ fn archive_and_deactivate_confirm_in_the_web_words() {
     select(&mut h, "alice");
     h.sent();
     let s = h.key(b"d");
-    let flat = s
-        .replace(['│', '┃'], " ")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    // The dialog's sentence (the page stays visible around it).
+    let flat = abstractgateway_console::ui::w::confirm::asked()
+        .last()
+        .cloned()
+        .unwrap_or_default();
     assert!(flat.contains("Archive alice? They can't sign in any more. Their runtime, runs and history are kept; you can unarchive later."), "{s}");
     assert!(s.contains("Archive") && s.contains("Cancel"), "{s}");
     h.shoot("accounts-archive-confirm");
@@ -223,7 +223,7 @@ fn archive_and_deactivate_confirm_in_the_web_words() {
         flat.contains("Deactivate alice? They are signed out until you turn Active back on."),
         "{s}"
     );
-    h.key(b"\x1b[A");
+    h.key(b"\x1b[Z"); // Shift+Tab to the action button (R15 F1)
     h.key(b"\r");
     assert!(h
         .sent()

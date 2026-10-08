@@ -92,7 +92,10 @@ fn d_archives_an_entity_after_the_confirm_never_deletes() {
     assert!(row.trim_end().ends_with("⬖ ⊟"), "{s}");
     let s = h.key(b"d");
     // The confirm wraps; the sentence itself is DESIGN-v3 §1.3's, word for word.
-    let flat = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let flat = abstractgateway_console::ui::w::confirm::asked()
+        .last()
+        .cloned()
+        .unwrap_or_default();
     assert!(
         flat.contains("Archive castor? It stops acting and never wakes. Its memory, runs and history are kept; you can unarchive later."),
         "{s}"
@@ -102,7 +105,7 @@ fn d_archives_an_entity_after_the_confirm_never_deletes() {
         "confirm:\n{s}"
     );
     assert!(h.sent().is_empty(), "nothing sent before the confirm");
-    h.key(b"\x1b[A");
+    h.key(b"\x1b[Z"); // Shift+Tab to the action button (R15 F1)
     h.key(b"\r");
     let sent = h.sent();
     assert!(
@@ -135,7 +138,7 @@ fn space_suspends_an_entity_after_the_confirm() {
         "{s}"
     );
     assert!(h.sent().is_empty(), "nothing sent before the confirm");
-    h.key(b"\x1b[A");
+    h.key(b"\x1b[Z"); // Shift+Tab to the action button (R15 F1)
     h.key(b"\r");
     let sent = h.sent();
     assert!(

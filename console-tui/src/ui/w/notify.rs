@@ -49,5 +49,5 @@ pub fn confirm(
     keep: &str,
     on_yes: impl FnOnce() + 'static,
 ) {
-    super::super::confirm_danger(cx, ctx.ui, sentence.into(), danger, keep, on_yes);
+    super::confirm::Confirm::danger(sentence, danger, keep).open(cx, ctx.ui, on_yes);
 }

@@ -121,6 +121,21 @@ fn click_row(h: &mut r8w4::Harness, id: &str, needle: &str) -> String {
     h.key(click.as_bytes())
 }
 
+/// Click the `label` button of the open confirmation (its button row is
+/// the line holding both `label` and `other`). The screen after.
+fn click_confirm(h: &mut r8w4::Harness, label: &str, other: &str) -> String {
+    let screen = h.turns(1);
+    let (y, line) = screen
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains(&format!(" {label} ")) && l.contains(&format!(" {other} ")))
+        .last()
+        .unwrap_or_else(|| panic!("no [{label}] [{other}] button row:\n{screen}"));
+    let b = line.rfind(&format!(" {label} ")).unwrap() + 1;
+    let x = line[..b].chars().count() + 1;
+    h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes())
+}
+
 fn opened(s: &str, title: &str) -> bool {
     s.contains(title)
 }
@@ -213,15 +228,13 @@ fn clicks_on_alices_actions_do_what_they_say() {
     let mut h = page();
     let s = click_row(&mut h, "alice", "↻");
     assert!(s.contains("Rotate the token of alice?"), "{s}");
-    h.key(b"\x1b[A");
-    h.key(b"\r");
+    click_confirm(&mut h, "Rotate", "Cancel");
     assert!(h.sent().iter().any(|c| matches!(c, Cmd::PatchUser { user_id, body, .. } if user_id == "alice" && body["rotate_token"] == true)));
     // Archive → the web's confirmation; answered, the archive.
     let mut h = page();
     let s = click_row(&mut h, "alice", "⊟");
     assert!(s.contains("Archive alice?"), "{s}");
-    h.key(b"\x1b[A");
-    h.key(b"\r");
+    click_confirm(&mut h, "Archive", "Cancel");
     assert!(h
         .sent()
         .iter()
@@ -317,8 +330,7 @@ fn the_active_toggle_and_the_runtime_link_are_clickable() {
     let mut h = page();
     let s = click_row(&mut h, "alice", "━●");
     assert!(s.contains("Deactivate alice?"), "{s}");
-    h.key(b"\x1b[A");
-    h.key(b"\r");
+    click_confirm(&mut h, "Deactivate", "Cancel");
     assert!(h
         .sent()
         .iter()
@@ -441,4 +453,55 @@ fn enter_in_a_popup_commits_the_choice_never_the_form() {
         .filter(|c| matches!(c, Cmd::Json(JsonCmd::Send { method, .. }) if method == "PUT"))
         .collect();
     assert_eq!(puts.len(), 1, "one PUT for one commit: {puts:?}");
+}
+
+/// R15 F1: a confirmation is answered by its buttons — [Rotate] does it,
+/// [Cancel], Esc and Enter on the default (Cancel) keep things; the
+/// keyboard reaches the action with Shift+Tab, Enter then does it.
+#[test]
+fn a_confirmation_has_an_action_button_and_cancel_by_mouse_and_keys() {
+    let rotated = |h: &mut r8w4::Harness| {
+        h.sent()
+            .iter()
+            .any(|c| matches!(c, Cmd::PatchUser { body, .. } if body["rotate_token"] == true))
+    };
+    // [Cancel] by mouse: nothing sent, the dialog gone.
+    let mut h = page();
+    click_row(&mut h, "alice", "↻");
+    let s = click_confirm(&mut h, "Cancel", "Rotate");
+    let s = if s.contains("Rotate the token of alice?") {
+        h.turns(2)
+    } else {
+        s
+    };
+    assert!(
+        !s.contains("Rotate the token of alice?"),
+        "Cancel closed it:\n{s}"
+    );
+    assert!(!rotated(&mut h), "Cancel sends nothing");
+    // Enter on the default (Cancel): nothing.
+    let mut h = page();
+    click_row(&mut h, "alice", "↻");
+    h.key(b"\r");
+    assert!(!rotated(&mut h), "Enter on the default keeps");
+    assert!(!h.turns(2).contains("Rotate the token of alice?"), "closed");
+    // Esc: nothing.
+    let mut h = page();
+    click_row(&mut h, "alice", "↻");
+    h.esc();
+    assert!(!rotated(&mut h), "Esc keeps");
+    // Keyboard: Shift+Tab to [Rotate], Enter.
+    let mut h = page();
+    click_row(&mut h, "alice", "↻");
+    h.key(b"\x1b[Z");
+    h.key(b"\r");
+    assert!(rotated(&mut h), "Shift+Tab, Enter rotates");
+    // A click on the sentence does nothing; the dialog stays.
+    let mut h = page();
+    click_row(&mut h, "alice", "↻");
+    let s = h.click_text("Rotate the token of alice?");
+    assert!(
+        s.contains("Rotate the token of alice?") && !rotated(&mut h),
+        "{s}"
+    );
 }

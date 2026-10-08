@@ -1425,27 +1425,15 @@ fn run_key(cx: Scope, ctx: &Ctx, verb: Option<AppVerb>) {
             let c = ctx.clone();
             let r = row.clone();
             let verb = state.verb;
-            open_prompt(
-                cx,
-                ctx.ui,
-                ChoicePrompt::new(what)
-                    .option("go", state.label.clone())
-                    .option("keep", "Not now")
-                    .initial("go"),
-                move |outcome| {
-                    if let ChoiceOutcome::Answered(a) = outcome {
-                        if a.selected.iter().any(|s| s == "go") {
-                            c.send(Cmd::AppAct {
-                                app_id: r.id.clone(),
-                                name: r.name.clone(),
-                                verb,
-                                path: None,
-                                start_first: false,
-                            });
-                        }
-                    }
-                },
-            );
+            super::w::Confirm::plain(what, &state.label, "Not now").open(cx, ctx.ui, move || {
+                c.send(Cmd::AppAct {
+                    app_id: r.id.clone(),
+                    name: r.name.clone(),
+                    verb,
+                    path: None,
+                    start_first: false,
+                });
+            });
         }
     }
 }
@@ -1533,23 +1521,12 @@ fn node_key(cx: Scope, ctx: &Ctx) {
         return;
     }
     let c = ctx.clone();
-    open_prompt(
-        cx,
-        ctx.ui,
-        ChoicePrompt::new(
-            "Install Node.js into the gateway's own folder? About 56 MB, no password, no terminal.",
-        )
-        .option("go", "Install Node.js")
-        .option("keep", "Not now")
-        .initial("go"),
-        move |outcome| {
-            if let ChoiceOutcome::Answered(a) = outcome {
-                if a.selected.iter().any(|s| s == "go") {
-                    c.send(Cmd::InstallAppsNode);
-                }
-            }
-        },
-    );
+    super::w::Confirm::plain(
+        "Install Node.js into the gateway's own folder? About 56 MB, no password, no terminal.",
+        "Install Node.js",
+        "Not now",
+    )
+    .open(cx, ctx.ui, move || c.send(Cmd::InstallAppsNode));
 }
 
 /// `y`: pick one of the app's copyable lines (address, commands, the

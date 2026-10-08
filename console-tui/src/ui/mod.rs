@@ -896,21 +896,8 @@ pub(crate) fn confirm_danger(
     keep_label: &str,
     on_confirm: impl FnOnce() + 'static,
 ) {
-    open_prompt(
-        cx,
-        ui,
-        ChoicePrompt::new(message)
-            .option_with(abstracttui::app::ChoiceOption::new("go", danger_label).danger(true))
-            .option("keep", keep_label)
-            .initial("keep"),
-        move |outcome| {
-            if let ChoiceOutcome::Answered(a) = outcome {
-                if a.selected.iter().any(|s| s == "go") {
-                    on_confirm();
-                }
-            }
-        },
-    );
+    // R15 F1: the one confirm widget — `[danger] [keep]` buttons.
+    w::Confirm::danger(message, danger_label, keep_label).open(cx, ui, on_confirm);
 }
 
 /// Humanize a raw engine startup notice for the operator footer (D3,

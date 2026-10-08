@@ -161,6 +161,30 @@ pub fn button(
     tab_stop: bool,
     on_press: impl FnMut() + 'static,
 ) -> View {
+    button_opts(cx, t, a, on, tab_stop, false, on_press)
+}
+
+/// [`button`] that takes the focus when its tree opens (a dialog's
+/// default button).
+pub fn button_focused(
+    cx: Scope,
+    t: &TokenSet,
+    a: &Action,
+    on: On,
+    on_press: impl FnMut() + 'static,
+) -> View {
+    button_opts(cx, t, a, on, true, true, on_press)
+}
+
+fn button_opts(
+    cx: Scope,
+    t: &TokenSet,
+    a: &Action,
+    on: On,
+    tab_stop: bool,
+    autofocus: bool,
+    on_press: impl FnMut() + 'static,
+) -> View {
     let face = a.face();
     let w = a.width();
     let disabled = !a.is_enabled();
@@ -208,6 +232,9 @@ pub fn button(
     if !disabled {
         if tab_stop {
             el = el.focusable();
+            if autofocus {
+                el = el.autofocus();
+            }
         }
         let p1 = press.clone();
         el = el.on(Phase::Bubble, move |ctx, ev| match ev {

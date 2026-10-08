@@ -457,7 +457,7 @@ fn a_remote_connection_is_added_from_its_preset_and_deleted() {
     h.until("the delete confirm", |_, s| {
         s.contains("Delete provider connection 'custom-endpoint'")
     });
-    h.key(b"\x1b[A");
+    h.key(b"\x1b[Z"); // Shift+Tab to the action button (R15 F1)
     h.turns(1);
     h.key(b"\r");
     h.until("custom-endpoint gone", |h, _| {
