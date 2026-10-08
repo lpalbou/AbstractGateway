@@ -658,9 +658,53 @@ def network_wording() -> dict:
     return {"modes": modes, "kinds": kinds, "pills": pills, "buttons": buttons, "aria": aria, "text": text}
 
 
+def docs_wording() -> dict:
+    """Docs assistant: the console's props (console.py docsAssistantProps:
+    placeholder, suggestions) and the kit's DocsAssistantDrawer words
+    (console_islands.py: title, head buttons + tips, composer, footer,
+    history, archive, stop). `{name}` = the source name (AbstractGateway),
+    `{title}` = a past conversation's title."""
+    con = read_b("console.py")
+    props = req(con, r"function docsAssistantProps\(\) \{(.*?)\n\s*\}\n", "docsAssistantProps")
+    placeholder = req(props, r'placeholder: "([^"]*)"', "the docs placeholder")
+    sugg = re.findall(r'"([^"]+)"', req(props, r"suggestions: \[([^\]]*)\]", "the docs suggestions"))
+    if len(sugg) != 3:
+        fail(f"expected 3 docs suggestions, found {sugg!r}")
+    name = req(con, r'const DOCS_ASSISTANT_SOURCE = \{ app: "gateway", name: "([^"]*)" \};', "DOCS_ASSISTANT_SOURCE")
+    isl = read_b("console_islands.py")
+    t = {
+        "title": req(isl, r'label:"(Docs assistant)",title:', "drawer title"),
+        "history": req(isl, r'"aria-label":"(Past conversations)","data-af-tip":"Past conversations"', "Past conversations button"),
+        "history_tip": req(isl, r'"aria-label":"Past conversations","data-af-tip":"([^"]*)"', "Past conversations tip"),
+        "new": req(isl, r'"aria-label":"(New conversation)","data-af-tip"', "New conversation button"),
+        "new_tip": req(isl, r'"aria-label":"New conversation","data-af-tip":"([^"]*)"', "New conversation tip"),
+        "send": req(isl, r'sendLabel:"([^"]*)",busyLabel:"Answering…"', "Send"),
+        "busy": req(isl, r'sendLabel:"Send",busyLabel:"([^"]*)"', "busy label"),
+        "stop": req(isl, r'"aria-label":"(Stop)","data-af-tip":"Stop the answer"', "Stop"),
+        "stop_tip": req(isl, r'"aria-label":"Stop","data-af-tip":"([^"]*)"', "Stop tip"),
+        "stopped": req(isl, r'content:V\?"([^"]*)":String', "Stopped sentence"),
+        "empty": req(isl, r'children:\["(Ask anything about) ",e\.source\.name,"\."\]', "empty state") + " {name}.",
+        "footer": req(isl, r'children:\["(Grounded on) ",e\.source\.name,"’s documentation \(llms\.txt\) · docs-qa"\]', "footer")
+        + " {name}’s documentation (llms.txt) · docs-qa",
+        # (console_islands.py holds the bundle in a Python literal: \' is a ').
+        "footer_tip": req(isl, r"title:`(Answers come from \$\{e\.source\.name\}\\'s documentation \(llms\.txt\) through the gateway\\'s docs-qa workflow\.)`", "footer tip").replace("${e.source.name}", "{name}").replace("\\'", "'"),
+        "history_loading": req(isl, r'role:"status",children:"(Loading past conversations…)"', "history loading"),
+        "history_error": req(isl, r'e\.error\|\|"(The history could not be read\.)"', "history error"),
+        "history_empty": req(isl, r'children:"(No past conversations yet\.)"', "history empty"),
+        "archive_question": req(isl, r'children:"(Archive this conversation\? It stays in the gateway; it leaves this list\.)"', "archive question"),
+        "archive_go": req(isl, r'pc-docs-history__btn--danger",onClick:\(\)=>\{n\(null\),e\.onArchive\(r\)\},children:"([^"]*)"', "archive button"),
+        "archive_keep": req(isl, r'className:"pc-docs-history__btn",onClick:\(\)=>n\(null\),children:"([^"]*)"', "archive cancel"),
+        "archive_tip": req(isl, r'"data-af-tip":`(Archive "\$\{r\.title\}" \(kept, hidden\))`', "archive tip").replace("${r.title}", "{title}"),
+        "untitled": req(isl, r'title:p\|\|"([^"]*)"', "untitled"),
+        "questions": req(isl, r'r\.runIds\.length>1\?` · \$\{r\.runIds\.length\} (questions)`', "questions count"),
+    }
+    return {"name": name, "placeholder": placeholder, "suggestions": sugg, "kit": t}
+
+
 B_SCREENS = {
     "about": about_wording,
     "network": network_wording,
+    "docs": docs_wording,
 }
 
 

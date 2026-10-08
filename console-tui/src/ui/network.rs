@@ -1265,10 +1265,9 @@ fn ready_view(
         let widths = DataTable::solve(&cols, &rows, w as i32);
         let _ = widths;
         let y = p.y;
-        let refocus = p
-            .nu
-            .focus
-            .with_untracked(|f| f == "addresses" || f == "addresses-first");
+        let refocus =
+            p.nu.focus
+                .with_untracked(|f| f == "addresses" || f == "addresses-first");
         let addrs = d.addresses.clone();
         let store_a = store;
         let addrs2 = d.addresses.clone();

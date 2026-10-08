@@ -588,10 +588,15 @@ fn f2_docs_assistant_asks_and_renders() {
     h.connect();
     h.type_text("\x1bOQ");
     let s = h.turns(3);
-    assert!(s.contains("Docs assistant"), "modal opens:\n{s}");
+    // R15: the kit's right-edge drawer (title, head buttons, footer).
+    assert!(s.contains("Docs assistant"), "drawer opens:\n{s}");
     assert!(
-        s.contains("grounded on the gateway's own documentation"),
-        "note:\n{s}"
+        s.contains("Past conversations") && s.contains("New conversation"),
+        "head buttons:\n{s}"
+    );
+    assert!(
+        s.contains("Grounded on AbstractGateway’s documentation"),
+        "footer:\n{s}"
     );
     h.type_text("how do I add a provider?\r");
     let s = h.turns(3);
@@ -605,13 +610,13 @@ fn f2_docs_assistant_asks_and_renders() {
             // The conversation's own session: the gateway replays its turns.
             assert_eq!(session_id, h.store.docs.session_id.get_untracked());
             assert!(
-                session_id.starts_with("gateway-console-docs-assistant:"),
+                session_id.starts_with("gateway-docs-assistant:"),
                 "{session_id}"
             );
         }
         other => panic!("expected DocsAsk, got {other:?}"),
     }
-    assert!(s.contains("Thinking"), "pending turn renders:\n{s}");
+    assert!(s.contains("Answering…"), "pending turn renders:\n{s}");
     // A second ask while one is in flight is refused.
     h.type_text("again\r");
     h.turns(2);
