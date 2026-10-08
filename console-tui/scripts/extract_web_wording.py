@@ -873,7 +873,28 @@ def entity_wording() -> dict:
         "create_tip": one_in(r'id="entity-create" title="([^"]+)"', "Validate & create tooltip", c),
         "cancel_label": one_in(r'id="entity-create-cancel"[^>]*>([^<]+)</button>', "Cancel label", c),
     }
-    return {"tabs": tabs, "cards": cards, "buttons": buttons, "freeze_question": freeze_q, "create": create, "sub": sub}
+    t0 = src.find('<div id="templates-backdrop"')
+    t1 = src.find('<div id="af-docs-assistant-root">', t0)
+    tpl_src = src[t0:t1]
+    def btn(i: str) -> dict:
+        m = re.search(r'<button id="' + i + r'"([^>]*)>(?:<span[^>]*>[^<]*</span><span>)?([^<]+)<', tpl_src)
+        if not m:
+            fail(f"Spark templates button #{i} is missing in console.py.")
+        tip = re.search(r'title="([^"]*)"', m.group(1))
+        return {"label": html.unescape(m.group(2)), "tip": html.unescape(tip.group(1)) if tip else ""}
+    templates = {
+        "title": one_in(r'<h2 id="templates-title">([^<]+)</h2>', "templates title", tpl_src),
+        "lead": one_in(r'</h2>\s*<p class="section-note">([^<]+)</p>', "templates lead", tpl_src),
+        "picker_tip": one_in(r'<select id="tpl-select" title="([^"]+)"', "template picker tooltip", tpl_src),
+        "view": btn("tpl-view"),
+        "edit": btn("tpl-edit"),
+        "new": btn("tpl-new"),
+        "save": btn("tpl-save"),
+        "cancel": btn("tpl-cancel"),
+        "close": btn("templates-close"),
+        "spark_label": one_in(r'<label>(Spark \(JSON[^<]+)<textarea', "spark label", tpl_src),
+    }
+    return {"tabs": tabs, "cards": cards, "buttons": buttons, "freeze_question": freeze_q, "create": create, "sub": sub, "templates": templates}
 
 
 

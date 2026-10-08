@@ -842,3 +842,167 @@ fn the_sub_form_words_are_the_webs() {
         fx["buttons"]["talk"].as_str().unwrap()
     );
 }
+
+// ---- Spark templates (Accounts `s`) --------------------------------------
+
+use abstractgateway_console::ui::entity_create::{
+    template_actions, template_editor_actions, TplMode,
+};
+
+/// A kit whose FIRST template is an operator one (editable), then the
+/// builtin floor.
+fn tpl_kit(operator_first: bool) -> ent::CreationKit {
+    let op = json!({"id": "researcher", "name": "Researcher", "description": "Reads widely",
+        "source": "operator", "editable": true, "version": 3,
+        "spark": {"name": "", "core_values": ["shared_vulnerability"]}, "core_values": ["shared_vulnerability"]});
+    let builtin = json!({"id": "framework-default", "name": "Framework default",
+        "description": "The framework floor", "source": "builtin", "editable": false, "version": 1,
+        "spark": {"name": "", "core_values": ["shared_vulnerability"]}, "core_values": ["shared_vulnerability"]});
+    let list = if operator_first {
+        vec![op, builtin]
+    } else {
+        vec![builtin]
+    };
+    let (templates, template_warnings) =
+        ent::templates_from_payload(&json!({"templates": list, "warnings": []}));
+    ent::CreationKit {
+        templates,
+        template_warnings,
+        ..Default::default()
+    }
+}
+
+fn open_templates(operator_first: bool) -> r8w4::Harness {
+    let mut h = page();
+    let s = h.key(b"s");
+    assert!(s.contains(entity_create::TPL_TITLE), "{s}");
+    h.store
+        .entity_kit
+        .set(Loadable::Ready(tpl_kit(operator_first)));
+    h.turns(3);
+    h.sent();
+    h
+}
+
+#[test]
+fn every_template_action_has_a_click_test() {
+    let kit = tpl_kit(true);
+    let mut offered: BTreeSet<String> = template_actions(kit.templates.first())
+        .iter()
+        .map(|a| a.id.to_string())
+        .collect();
+    for m in [TplMode::View, TplMode::Edit, TplMode::New] {
+        for a in template_editor_actions(m, None) {
+            offered.insert(format!("editor.{}", a.id));
+        }
+    }
+    let covered: BTreeSet<String> = [
+        "view",
+        "edit",
+        "new",
+        "close",
+        "editor.save",
+        "editor.cancel",
+        "editor.close",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
+    let missing: Vec<_> = offered.difference(&covered).collect();
+    assert!(
+        missing.is_empty(),
+        "template actions without a click test: {missing:?}"
+    );
+}
+
+#[test]
+fn templates_view_and_close_by_mouse() {
+    let mut h = open_templates(true);
+    let s = click(&mut h, " View ");
+    assert!(s.contains("Template 'researcher' — view"), "{s}");
+    let s = click(&mut h, " Close ");
+    assert!(!s.contains("Template 'researcher'"), "{s}");
+    let mut h = open_templates(true);
+    let s = click(&mut h, " Close ");
+    assert!(!s.contains(entity_create::TPL_TITLE), "{s}");
+}
+
+#[test]
+fn templates_edit_saves_a_version_and_cancel_asks() {
+    let mut h = open_templates(true);
+    let s = click(&mut h, " Edit ");
+    assert!(s.contains("Template 'researcher' — edit"), "{s}");
+    click_field(&mut h, "Display name");
+    h.type_text("2");
+    click(&mut h, " Save ");
+    assert!(
+        h.sent().iter().any(|c| matches!(c, Cmd::Entity(EntityCmd::SaveTemplate { id, create: false, body, .. })
+            if id == "researcher" && body.0["name"].as_str().is_some_and(|n| n.contains("Researcher") && n.contains('2')))),
+        "Save writes a new version"
+    );
+    let mut h = open_templates(true);
+    click(&mut h, " Edit ");
+    click_field(&mut h, "Display name");
+    h.type_text("2");
+    let s = click(&mut h, " Cancel ");
+    assert!(s.contains(ui::DISCARD_QUESTION), "{s}");
+}
+
+#[test]
+fn templates_new_from_selected_creates_and_edit_is_refused_on_the_floor() {
+    let mut h = open_templates(true);
+    let s = click(&mut h, " New from selected ");
+    assert!(s.contains("New template — seeded from 'researcher'"), "{s}");
+    click_field(&mut h, "New template id");
+    h.type_text("scout");
+    click(&mut h, " Save ");
+    assert!(h.sent().iter().any(|c| matches!(c, Cmd::Entity(EntityCmd::SaveTemplate { id, create: true, .. }) if id == "scout")));
+    // The builtin floor: Edit says why and opens nothing.
+    let mut h = open_templates(false);
+    let s = click(&mut h, " Edit ");
+    assert!(
+        s.contains(entity_create::TPL_TITLE) && !s.contains("— edit"),
+        "{s}"
+    );
+    assert!(
+        h.store
+            .notice
+            .get_untracked()
+            .unwrap_or_default()
+            .contains("Only operator templates can be edited"),
+        "{:?}",
+        h.store.notice.get_untracked()
+    );
+}
+
+#[test]
+fn the_template_words_are_the_webs() {
+    let fx = fixture();
+    let t = &fx["templates"];
+    assert_eq!(t["title"].as_str(), Some(entity_create::TPL_TITLE));
+    assert_eq!(t["lead"].as_str(), Some(entity_create::TPL_LEAD));
+    assert_eq!(
+        t["picker_tip"].as_str(),
+        Some(entity_create::TPL_PICKER_TIP)
+    );
+    assert_eq!(
+        t["spark_label"].as_str(),
+        Some(entity_create::TPL_SPARK_LABEL)
+    );
+    let kit = tpl_kit(true);
+    let acts = template_actions(kit.templates.first());
+    for id in ["view", "edit", "new", "close"] {
+        let a = acts.iter().find(|a| a.id == id).unwrap();
+        assert_eq!(t[id]["label"].as_str(), Some(a.label.as_str()), "{id}");
+        let tip = t[id]["tip"].as_str().unwrap();
+        if !tip.is_empty() {
+            assert_eq!(a.tooltip.as_deref(), Some(tip), "{id}");
+        }
+    }
+    let ed = template_editor_actions(TplMode::Edit, None);
+    for (id, key) in [("save", "save"), ("cancel", "cancel")] {
+        let a = ed.iter().find(|a| a.id == id).unwrap();
+        assert_eq!(t[key]["label"].as_str(), Some(a.label.as_str()));
+    }
+    assert_eq!(ed[0].tooltip.as_deref(), t["save"]["tip"].as_str());
+}

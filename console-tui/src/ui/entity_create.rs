@@ -12,13 +12,12 @@
 //! every typed value.
 
 use abstracttui::prelude::*;
-use abstracttui::widgets::Table;
 use serde_json::{json, Value};
 
 use super::util::{field, line, span, span_bold, wrap_text};
 use super::w::action::On;
 use super::w::{Action, Confirm};
-use super::{widths, Ctx};
+use super::Ctx;
 use crate::api::entities::{create_body, CreationKit, TemplateRow, ENTITY_THINKING_LEVELS};
 use crate::store::{ConnPhase, Loadable, Store};
 use crate::worker::entities::EntityCmd;
@@ -756,19 +755,82 @@ fn summon(
 
 const TPL_W: i32 = 92;
 
-/// The templates modal (`s` on the Accounts screen).
+/// The web's Spark templates words (console.py `#templates-backdrop`).
+pub const TPL_TITLE: &str = "Spark templates";
+pub const TPL_LEAD: &str = "A template is a reusable blueprint — every save is a new version; the framework default is the floor and can be seeded but not edited. Editing a template never touches a living entity.";
+pub const TPL_PICKER_TIP: &str = "Templates on this gateway (builtin + operator-authored)";
+
+/// The Spark templates actions for the selected template (`None` = no
+/// template yet): View · Edit · New from selected · Close — the single
+/// source for the buttons and the tests. Edit is refused (with why) for
+/// the builtin floor, as the web hides it.
+pub fn template_actions(selected: Option<&TemplateRow>) -> Vec<Action> {
+    let none = selected
+        .is_none()
+        .then(|| "Pick a template first.".to_string());
+    let edit_why = match selected {
+        None => none.clone(),
+        Some(t) if !t.editable => Some(
+            "Only operator templates can be edited (the builtin is the floor — use New from selected)."
+                .to_string(),
+        ),
+        _ => None,
+    };
+    vec![
+        Action::label("view", "View")
+            .key('v')
+            .tooltip("Show this template's spark document")
+            .refused(none.clone()),
+        Action::label("edit", "Edit")
+            .key('e')
+            .tooltip("Edit this template (saves as a new version)")
+            .refused(edit_why),
+        Action::label("new", "New from selected")
+            .key('n')
+            .tooltip("Create a new template seeded from the selected one")
+            .refused(none),
+        Action::label("close", "Close").tooltip("Close"),
+    ]
+}
+
+/// A row that never shrinks away (the spark editor below takes the rest).
+fn fixed(v: View) -> View {
+    Element::new()
+        .style(LayoutStyle::column().shrink(0.0))
+        .child(v)
+        .build()
+}
+
+/// The editor's spark label (the web's).
+pub const TPL_SPARK_LABEL: &str = "Spark (JSON — core values are enforced at save)";
+
+/// The template editor's buttons: Save ("Lint and save as a new
+/// version"; refused for a non-admin) + Cancel, or Close for View.
+pub fn template_editor_actions(mode: TplMode, admin_why: Option<String>) -> Vec<Action> {
+    if mode == TplMode::View {
+        return vec![Action::label("close", "Close").tooltip("Close")];
+    }
+    vec![
+        Action::label("save", "Save")
+            .tooltip("Lint and save as a new version")
+            .refused(admin_why),
+        Action::label("cancel", "Cancel").tooltip("Cancel"),
+    ]
+}
+
+/// The templates modal (`s` on the Accounts screen): the web's Spark
+/// templates dialog — the template picker, its versions, View / Edit /
+/// New from selected (the editor opens as its own form) and Close.
 pub fn open_templates_modal(cx: Scope, ctx: &Ctx) {
     let store = ctx.store;
     reload_kit(ctx);
     let ctx2 = ctx.clone();
     let screen_cx = cx;
-    super::open_form(
-        ctx,
-        cx,
-        crate::ui::page_viewport(cx).get_untracked(),
-        move |mcx, close| {
+    super::w::FormModal::new(TPL_TITLE)
+        .lead(TPL_LEAD)
+        .size(TPL_W, 20)
+        .open(ctx, cx, move |mcx, close, _guard, w| {
             let theme = use_theme(mcx);
-            let t0 = theme.get().tokens;
             let sel = mcx.signal(0usize);
             super::util::clamp_selection(mcx, sel, move || {
                 store
@@ -795,139 +857,150 @@ pub fn open_templates_modal(cx: Scope, ctx: &Ctx) {
                     }
                 });
             }
-            let ctx_b = ctx2.clone();
-            let close_b = close.clone();
-            // Wrapped to the dialog as it is ON THIS TERMINAL (the modal
-            // clamps to the viewport): wrapping at the nominal width cut
-            // every line at 80 columns.
-            let dialog_w = TPL_W.min(crate::ui::page_viewport(mcx).get_untracked().w - 2);
-            let intro = prose(
-            Element::new().style(LayoutStyle::column().gap(0)),
-            "A template is a reusable blueprint — every save is a new version; the framework default is the floor and can be seeded but not edited. Editing a template never touches a living entity.",
-            (dialog_w - 6).max(20) as usize,
-            t0.text_faint,
-        )
-        .build();
-            Element::new()
-                .style(LayoutStyle::column().gap(0))
-                .child(line(vec![span_bold("Spark templates", t0.accent)]))
-                .child(intro)
-                .child(dyn_view_scoped(
-                    LayoutStyle::default().grow(1.0).min_h(3),
-                    move |gcx| {
-                        let t = theme.get().tokens;
-                        match store.entity_kit.get() {
-                            Loadable::Ready(k) if k.templates.is_empty() => line(vec![span(
-                                "no templates served by this gateway",
-                                t.text_muted,
-                            )]),
-                            Loadable::Ready(k) => {
-                                let vw = TPL_W.min(crate::ui::page_viewport(gcx).get().w) - 4;
-                                let mut rows: Vec<Vec<String>> = k
-                                    .templates
-                                    .iter()
-                                    .map(|tp| {
-                                        vec![
-                                            tp.id.clone(),
-                                            tp.name.clone(),
-                                            tp.source.clone(),
-                                            tp.version
-                                                .map(|v| format!("v{v}"))
-                                                .unwrap_or_else(|| "—".into()),
-                                            if tp.editable {
-                                                "yes".into()
-                                            } else {
-                                                "no".into()
-                                            },
-                                        ]
-                                    })
-                                    .collect();
-                                let rules = [
-                                    widths::ColRule::tail("id", 12),
-                                    widths::ColRule::head("name", 12),
-                                    widths::ColRule::head("source", 8),
-                                    widths::ColRule::head("version", 7),
-                                    widths::ColRule::head("editable", 8),
-                                ];
-                                let cols = widths::columns(&rules, &mut rows, vw);
-                                Table::new(cols)
-                                    .rows(rows)
-                                    .selection(sel)
-                                    .layout(LayoutStyle::default().grow(1.0))
+            let picker = dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |gcx| {
+                let t = theme.get().tokens;
+                match store.entity_kit.get() {
+                    Loadable::Ready(k) if k.templates.is_empty() => line(vec![span(
+                        "no templates served by this gateway",
+                        t.text_muted,
+                    )]),
+                    Loadable::Ready(k) => {
+                        let opts: Vec<SelectOption> = k
+                            .templates
+                            .iter()
+                            .map(|tp| {
+                                SelectOption::keyed(
+                                    tp.id.clone(),
+                                    format!(
+                                        "{} · {} · {}",
+                                        tp.name,
+                                        tp.source,
+                                        tp.version
+                                            .map(|v| format!("v{v}"))
+                                            .unwrap_or_else(|| "—".into())
+                                    ),
+                                )
+                            })
+                            .collect();
+                        let sel_el = Element::new()
+                            .style(LayoutStyle::default().w(52).h(1).shrink(0.0))
+                            .child(
+                                Select::new(opts)
+                                    .value(sel)
+                                    .layout(LayoutStyle::default().w(52).h(1).shrink(0.0))
                                     .element(gcx, &t)
                                     .autofocus()
-                                    .build()
-                            }
-                            Loadable::Failed(e) => super::util::error_panel_hint(
-                                &t,
-                                &e,
-                                Some("close and reopen this dialog to retry (opening re-reads)"),
-                            ),
-                            _ => line(vec![span("⟳ loading templates…", t.info)]),
+                                    .build(),
+                            );
+                        field(
+                            &t,
+                            "Template",
+                            super::w::tip::with_tip(gcx, sel_el, TPL_PICKER_TIP.to_string())
+                                .build(),
+                        )
+                    }
+                    Loadable::Failed(e) => super::util::error_panel_hint(
+                        &t,
+                        &e,
+                        Some("close and reopen this dialog to retry (opening re-reads)"),
+                    ),
+                    _ => line(vec![span("⟳ loading templates…", t.info)]),
+                }
+            });
+            let detail = dyn_view(LayoutStyle::column().shrink(0.0), move || {
+                let t = theme.get().tokens;
+                let i = sel.get();
+                let lines = store.entity_kit.with(|k| {
+                    let k = k.ready()?;
+                    let tp = k.templates.get(i)?;
+                    let versions = match &k.versions {
+                        Some((id, Ok(l))) if *id == tp.id => l.clone(),
+                        Some((id, Err(e))) if *id == tp.id => format!("versions unavailable: {e}"),
+                        _ if tp.source == "operator" => "⟳ reading versions…".into(),
+                        _ => format!("{} — view-only (seed a new id from it)", tp.source),
+                    };
+                    Some((tp.description_line(), versions))
+                });
+                let (desc, versions) = lines.unwrap_or_default();
+                let mut col = Element::new().style(LayoutStyle::column().shrink(0.0));
+                for l in super::util::wrap_text(&desc, w.max(20) as usize) {
+                    col = col.child(line(vec![span(l, t.text_muted)]));
+                }
+                col.child(line(vec![span(versions, t.text_faint)])).build()
+            });
+            let act: std::rc::Rc<dyn Fn(&'static str)> = {
+                let (ctx, close) = (ctx2.clone(), close.clone());
+                std::rc::Rc::new(move |id| {
+                    let selected: Option<TemplateRow> = store.entity_kit.with_untracked(|k| {
+                        k.ready()
+                            .and_then(|k| k.templates.get(sel.get_untracked()).cloned())
+                    });
+                    let a = template_actions(selected.as_ref())
+                        .into_iter()
+                        .find(|a| a.id == id);
+                    match a {
+                        Some(a) if !a.is_enabled() => {
+                            ctx.store.notice.set(a.enabled.err());
+                            return;
                         }
-                    },
-                ))
-                .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
+                        None => return,
+                        _ => {}
+                    }
+                    let mode = match id {
+                        "view" => TplMode::View,
+                        "edit" => TplMode::Edit,
+                        "new" => TplMode::New,
+                        _ => {
+                            close();
+                            return;
+                        }
+                    };
+                    let Some(tp) = selected else { return };
+                    close();
+                    open_template_editor(screen_cx, &ctx, tp, mode);
+                })
+            };
+            let buttons = {
+                let act = act.clone();
+                dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |bcx| {
                     let t = theme.get().tokens;
                     let i = sel.get();
-                    let text = store.entity_kit.with(|k| {
-                        let k = k.ready()?;
-                        let tp = k.templates.get(i)?;
-                        match &k.versions {
-                            Some((id, Ok(l))) if *id == tp.id => Some(l.clone()),
-                            Some((id, Err(e))) if *id == tp.id => {
-                                Some(format!("versions unavailable: {e}"))
-                            }
-                            _ if tp.source == "operator" => Some("⟳ reading versions…".into()),
-                            _ => Some(format!("{} — view-only (seed a new id from it)", tp.source)),
+                    let selected: Option<TemplateRow> = store
+                        .entity_kit
+                        .with(|k| k.ready().and_then(|k| k.templates.get(i).cloned()));
+                    let (v, _) = super::w::RowActions::new(template_actions(selected.as_ref()))
+                        .view(bcx, &t, super::w::action::On::Raised, true, w, act.clone());
+                    super::w::form::button_row(vec![v])
+                })
+            };
+            let keys = act.clone();
+            Element::new()
+                .style(LayoutStyle::column().gap(0).grow(1.0))
+                .on(abstracttui::ui::Phase::Bubble, move |ectx, ev| {
+                    if let abstracttui::ui::UiEvent::Key(k) = ev {
+                        let Key::Char(c) = k.key else { return };
+                        if k.mods.0 != 0 {
+                            return;
                         }
-                    });
-                    line(vec![span(text.unwrap_or_default(), t.text_muted)])
-                }))
-                .child(dyn_view_scoped(
-                    LayoutStyle::default().h(1).shrink(0.0),
-                    move |bcx| {
-                        let t = theme.get().tokens;
-                        let i = sel.get();
-                        let selected: Option<TemplateRow> = store
-                            .entity_kit
-                            .with(|k| k.ready().and_then(|k| k.templates.get(i).cloned()));
-                        let editable = selected.as_ref().map(|t| t.editable).unwrap_or(false);
-                        let mk = |label: &str, mode: TplMode, disabled: bool| {
-                            let c = ctx_b.clone();
-                            let cl = close_b.clone();
-                            let sel_tp = selected.clone();
-                            Button::new(label)
-                                .disabled(disabled)
-                                .on_click(move || {
-                                    let Some(tp) = sel_tp.clone() else {
-                                        c.store.notice.set(Some("Pick a template first.".into()));
-                                        return;
-                                    };
-                                    cl();
-                                    open_template_editor(screen_cx, &c, tp, mode);
-                                })
-                                .element(bcx, &t)
-                                .build()
-                        };
-                        let close_c = close_b.clone();
-                        Element::new()
-                            .style(LayoutStyle::row().gap(2))
-                            .child(mk("View", TplMode::View, selected.is_none()))
-                            .child(mk("Edit", TplMode::Edit, !editable))
-                            .child(mk("New from selected", TplMode::New, selected.is_none()))
-                            .child(
-                                Button::new("Close")
-                                    .on_click(move || close_c())
-                                    .element(bcx, &t)
-                                    .build(),
-                            )
-                            .build()
-                    },
-                ))
+                        if let Some(a) = template_actions(None)
+                            .into_iter()
+                            .find(|a| a.key == Some(c))
+                        {
+                            ectx.stop_propagation();
+                            keys(a.id);
+                        }
+                    }
+                })
+                .child(picker)
+                .child(detail)
+                .child(
+                    Element::new()
+                        .style(LayoutStyle::default().grow(1.0))
+                        .build(),
+                )
+                .child(buttons)
                 .build()
-        },
-    );
+        });
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -942,11 +1015,15 @@ pub enum TplMode {
 pub fn open_template_editor(cx: Scope, ctx: &Ctx, tp: TemplateRow, mode: TplMode) {
     let store = ctx.store;
     let ctx2 = ctx.clone();
-    super::open_form_guarded(
+    let title = match mode {
+        TplMode::View => format!("Template '{}' — view", tp.id),
+        TplMode::Edit => format!("Template '{}' — edit (saves as a new version)", tp.id),
+        TplMode::New => format!("New template — seeded from '{}'", tp.id),
+    };
+    super::w::FormModal::new(title).size(TPL_W, 40).open(
         ctx,
         cx,
-        crate::ui::page_viewport(cx).get_untracked(),
-        move |mcx, close, guard| {
+        move |mcx, close, guard, _w| {
             let theme = use_theme(mcx);
             let t0 = theme.get().tokens;
             let spark_text =
@@ -995,24 +1072,19 @@ pub fn open_template_editor(cx: Scope, ctx: &Ctx, tp: TemplateRow, mode: TplMode
                     id: tp.id.clone(),
                 }));
             }
-            let title = match mode {
-                TplMode::View => format!("Template '{}' — view", tp.id),
-                TplMode::Edit => format!("Template '{}' — edit (saves as a new version)", tp.id),
-                TplMode::New => format!("New template — seeded from '{}'", tp.id),
-            };
             let ctx_save = ctx2.clone();
-            let close_c = close.clone();
+            // Cancel asks first on unsaved edits (R15 F2); View just closes.
+            let close_c = super::entity_manage::guarded_close(&close, &guard);
             let tp_save = tp.clone();
             let tp_id = tp.id.clone();
             let mut col = Element::new()
                 .focusable()
                 .autofocus()
-                .style(LayoutStyle::column().gap(0))
-                .child(line(vec![span_bold(title, t0.accent)]));
+                .style(LayoutStyle::column().gap(0).grow(1.0));
             if mode == TplMode::New {
-                col = col.child(field(
+                col = col.child(fixed(field(
                     &t0,
-                    "new template id",
+                    "New template id",
                     TextInput::new()
                         .value(id)
                         .placeholder("lowercase-letters-digits-_- (e.g. researcher)")
@@ -1020,7 +1092,7 @@ pub fn open_template_editor(cx: Scope, ctx: &Ctx, tp: TemplateRow, mode: TplMode
                         .layout(LayoutStyle::default().w(48).h(1))
                         .element(mcx, &t0)
                         .build(),
-                ));
+                )));
             }
             if mode == TplMode::View {
                 col = col
@@ -1041,28 +1113,28 @@ pub fn open_template_editor(cx: Scope, ctx: &Ctx, tp: TemplateRow, mode: TplMode
                 );
             } else {
                 col = col
-                    .child(field(
+                    .child(fixed(field(
                         &t0,
-                        "display name",
+                        "Display name",
                         TextInput::new()
                             .value(tname)
                             .placeholder("e.g. Researcher")
                             .layout(LayoutStyle::default().w(48).h(1))
                             .element(mcx, &t0)
                             .build(),
-                    ))
-                    .child(field(
+                    )))
+                    .child(fixed(field(
                         &t0,
-                        "description",
+                        "Description",
                         TextInput::new()
                             .value(desc)
                             .placeholder("what this blueprint is for")
                             .layout(LayoutStyle::default().w(64).h(1))
                             .element(mcx, &t0)
                             .build(),
-                    ))
+                    )))
                     .child(line(vec![span(
-                        "spark (JSON — core values are enforced at save; Enter inserts a newline)",
+                        TPL_SPARK_LABEL,
                         t0.text_faint,
                     )]))
                     .child(
@@ -1090,21 +1162,15 @@ pub fn open_template_editor(cx: Scope, ctx: &Ctx, tp: TemplateRow, mode: TplMode
                 line(vec![span(text, t.text_muted)])
             }));
             col = col.child(super::message_slot(theme, form_error, in_flight));
-            col.child(dyn_view_scoped(
-            LayoutStyle::default().h(1).shrink(0.0),
-            move |bcx| {
-                let t = theme.get().tokens;
-                let busy = in_flight.get();
-                let admin = is_admin(&store);
-                let ctx_s = ctx_save.clone();
-                let close_x = close_c.clone();
-                let tp_s = tp_save.clone();
-                let mut row = Element::new().style(LayoutStyle::row().gap(2));
-                if mode != TplMode::View {
-                    row = row.child(
-                        Button::new("Save")
-                            .disabled(busy || !admin)
-                            .on_click(move || {
+            let admin_why = (!is_admin(&store)).then(|| {
+                "saving a template is admin-only (it seeds every entity summoned from it)".to_string()
+            });
+            let mut buttons: Vec<View> = Vec::new();
+            for a in template_editor_actions(mode, admin_why) {
+                let v = match a.id {
+                    "save" => {
+                        let (ctx_s, tp_s) = (ctx_save.clone(), tp_save.clone());
+                        super::w::action::button(mcx, &t0, &a, super::w::action::On::Raised, true, move || {
                                 if in_flight.get_untracked() {
                                     return;
                                 }
@@ -1151,25 +1217,15 @@ pub fn open_template_editor(cx: Scope, ctx: &Ctx, tp: TemplateRow, mode: TplMode
                                     form_id: Some(form_id),
                                 }));
                             })
-                            .element(bcx, &t)
-                            .build(),
-                    );
-                }
-                row = row.child(
-                    Button::new(if mode == TplMode::View { "Close" } else { "Cancel" })
-                        .on_click(move || close_x())
-                        .element(bcx, &t)
-                        .build(),
-                );
-                if mode != TplMode::View && !admin {
-                    row = row.child(line(vec![span(
-                        "saving a template is admin-only (it seeds every entity summoned from it)",
-                        t.warn,
-                    )]));
-                }
-                row.build()
-            },
-        ))
+                    }
+                    _ => {
+                        let close_x = close_c.clone();
+                        super::w::action::button(mcx, &t0, &a, super::w::action::On::Raised, true, move || close_x())
+                    }
+                };
+                buttons.push(v);
+            }
+            col.child(super::w::form::button_row(buttons))
         .build()
         },
     );

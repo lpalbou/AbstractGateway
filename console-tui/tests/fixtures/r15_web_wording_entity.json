@@ -51,5 +51,35 @@
     "give_task_label": "Give this task",
     "end_task_label": "End the work order",
     "close_visit_label": "Close visit"
+  },
+  "templates": {
+    "title": "Spark templates",
+    "lead": "A template is a reusable blueprint — every save is a new version; the framework default is the floor and can be seeded but not edited. Editing a template never touches a living entity.",
+    "picker_tip": "Templates on this gateway (builtin + operator-authored)",
+    "view": {
+      "label": "View",
+      "tip": "Show this template's spark document"
+    },
+    "edit": {
+      "label": "Edit",
+      "tip": "Edit this template (saves as a new version)"
+    },
+    "new": {
+      "label": "New from selected",
+      "tip": "Create a new template seeded from the selected one"
+    },
+    "save": {
+      "label": "Save",
+      "tip": "Lint and save as a new version"
+    },
+    "cancel": {
+      "label": "Cancel",
+      "tip": ""
+    },
+    "close": {
+      "label": "Close",
+      "tip": ""
+    },
+    "spark_label": "Spark (JSON — core values are enforced at save)"
   }
 }
