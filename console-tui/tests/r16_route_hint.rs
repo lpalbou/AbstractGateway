@@ -40,7 +40,7 @@ fn the_web_paints_the_sentence_alone() {
 }
 
 #[test]
-fn the_hint_is_the_served_sentence_plus_the_webs_suffix_on_a_configured_row_only() {
+fn the_hint_is_the_served_sentence_alone_on_a_configured_row_only() {
     assert_eq!(
         transcription_hint(&voice_routes(hinted(true, true)).rows).as_deref(),
         Some(SENTENCE)
