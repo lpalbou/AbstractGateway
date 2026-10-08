@@ -95,6 +95,21 @@ fn click_last(h: &mut r8w4::Harness, label: &str) -> String {
     h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes())
 }
 
+/// Click `label` on the dialog row that also holds `other` (a confirm's
+/// buttons — the panel stays open behind it).
+fn click_pair(h: &mut r8w4::Harness, label: &str, other: &str) -> String {
+    let screen = h.turns(1);
+    let (y, line) = screen
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains(&format!(" {label} ")) && l.contains(&format!(" {other} ")))
+        .last()
+        .unwrap_or_else(|| panic!("no [{label}] [{other}]:\n{screen}"));
+    let b = line.rfind(&format!(" {label} ")).unwrap() + 1;
+    let x = line[..b].chars().count() + 1;
+    h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes())
+}
+
 fn ops(h: &mut r8w4::Harness) -> Vec<OpCmd> {
     h.sent()
         .into_iter()
@@ -176,7 +191,7 @@ fn the_switches_by_mouse() {
     let s = h.turns(2);
     assert!(s.contains("Start AbstractGateway at login?"), "{s}");
     // The confirm's action is the gateway's verb (StartAtLogin::verb).
-    click_last(&mut h, "Start at login");
+    click_pair(&mut h, "Start at login", "Leave it");
     let o = ops(&mut h);
     assert!(
         o.iter()
@@ -211,19 +226,19 @@ fn the_buttons_by_mouse() {
         s.contains("Restart AbstractGateway? Running workflows pause"),
         "{s}"
     );
-    click_last(&mut h, "Restart");
+    click_pair(&mut h, "Restart", "Cancel");
     assert!(ops(&mut h).iter().any(|o| matches!(o, OpCmd::Restart)));
     // Quit: Quit / Cancel; Cancel keeps it running.
     let mut h = panel();
     click_last(&mut h, "Quit gateway…");
     let s = h.turns(2);
     assert!(s.contains("Quit AbstractGateway?"), "{s}");
-    click_last(&mut h, "Cancel");
+    click_pair(&mut h, "Cancel", "Quit");
     assert!(!ops(&mut h).iter().any(|o| matches!(o, OpCmd::Shutdown)));
     let mut h = panel();
     click_last(&mut h, "Quit gateway…");
     h.turns(2);
-    click_last(&mut h, "Quit");
+    click_pair(&mut h, "Quit", "Cancel");
     assert!(ops(&mut h).iter().any(|o| matches!(o, OpCmd::Shutdown)));
     // Close.
     let mut h = panel();
@@ -385,4 +400,59 @@ fn the_words_are_the_web_cards() {
         s.contains(&format!(" {} ", w("restart_go"))) && s.contains("Cancel"),
         "{s}"
     );
+}
+
+/// Adversary H1: the confirms open OVER the panel; Cancel (click, Esc or
+/// Enter on the default) returns to it.
+#[test]
+fn cancelling_a_confirm_returns_to_the_panel() {
+    for how in ["click", "esc", "enter"] {
+        let mut h = panel();
+        click_last(&mut h, "Restart gateway…");
+        let s = h.turns(2);
+        assert!(s.contains("Restart AbstractGateway?"), "{s}");
+        match how {
+            "click" => {
+                click_pair(&mut h, "Cancel", "Restart");
+            }
+            "esc" => {
+                h.key(b"\x1b");
+            }
+            _ => {
+                h.key(b"\r");
+            }
+        }
+        let s = h.turns(3);
+        assert!(
+            !s.contains("Restart AbstractGateway?"),
+            "{how}: closed:\n{s}"
+        );
+        assert!(
+            s.contains("How this gateway is running right now.") && s.contains("Quit gateway…"),
+            "{how}: the panel is still open:\n{s}"
+        );
+    }
+}
+
+/// Adversary T1: Enter on a destructive question keeps (the default is
+/// Cancel) — for Restart and for Quit.
+#[test]
+fn enter_on_restart_and_quit_keeps_the_gateway() {
+    for (button, question) in [
+        ("Restart gateway…", "Restart AbstractGateway?"),
+        ("Quit gateway…", "Quit AbstractGateway?"),
+    ] {
+        let mut h = panel();
+        click_last(&mut h, button);
+        let s = h.turns(2);
+        assert!(s.contains(question), "{s}");
+        h.key(b"\r");
+        h.turns(2);
+        let o = ops(&mut h);
+        assert!(
+            !o.iter()
+                .any(|o| matches!(o, OpCmd::Restart | OpCmd::Shutdown)),
+            "{button}: Enter must keep it running: {o:?}"
+        );
+    }
 }

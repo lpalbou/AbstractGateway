@@ -157,7 +157,9 @@ pub fn toggle_start_at_login(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
         )));
         return;
     };
-    close();
+    // R15 (adversary H1): the confirm opens OVER the panel; Cancel returns
+    // to it. `close` stays in the signature for the callers that pass one.
+    let _ = close;
     let c = ctx.clone();
     let enabled = !st.enabled;
     let replace_other = st.state == "other";
@@ -208,7 +210,9 @@ pub(crate) fn restart(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
             return;
         }
     }
-    close();
+    // R15 (adversary H1): the confirm opens OVER the panel; Cancel returns
+    // to it. `close` stays in the signature for the callers that pass one.
+    let _ = close;
     let c = ctx.clone();
     super::w::Confirm::danger(RESTART_QUESTION, "Restart", "Cancel")
         .open(cx, ctx.ui, move || c.send(Cmd::Operator(OpCmd::Restart)));
@@ -238,7 +242,9 @@ pub(crate) fn quit(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
             return;
         }
     }
-    close();
+    // R15 (adversary H1): the confirm opens OVER the panel; Cancel returns
+    // to it. `close` stays in the signature for the callers that pass one.
+    let _ = close;
     let c = ctx.clone();
     super::w::Confirm::danger(QUIT_QUESTION, "Quit", "Cancel")
         .open(cx, ctx.ui, move || c.send(Cmd::Operator(OpCmd::Shutdown)));
@@ -264,7 +270,9 @@ pub(crate) fn start_update(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
         ctx.store.notice.set(Some(why));
         return;
     }
-    close();
+    // R15 (adversary H1): the confirm opens OVER the panel; Cancel returns
+    // to it. `close` stays in the signature for the callers that pass one.
+    let _ = close;
     let c = ctx.clone();
     let installer_sha256 = u.installer_sha256();
     // The web's update question (`startGatewayUpdate`): the gateway's
