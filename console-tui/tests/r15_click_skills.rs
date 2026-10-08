@@ -526,6 +526,15 @@ fn fits_at_80x24() {
             s.contains(if tab == 0 { "field-guide" } else { "calc" }),
             "{s}"
         );
+        // The panel buttons wrap onto their own row rather than leave the page.
+        assert!(
+            s.contains(if tab == 0 {
+                "Import folder"
+            } else {
+                "Add server"
+            }),
+            "{s}"
+        );
         h.assert_fits();
     }
 }
