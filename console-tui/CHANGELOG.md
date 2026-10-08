@@ -32,6 +32,9 @@ actions, switches, choices, dialogs — and every control is still reachable fro
   (`Ctrl+U`) are links you can click.
 
 ### Added
+
+- **The creator configures their entity** (R16.5, gateway 0.14+). Manage's settings saves (mind, voice, tools per phase, instructions) follow the gateway's `GET /entities/{name}/access`: an admin or the entity's creator saves; anyone else gets the gateway's sentence in the card and nothing is sent; an unread answer refuses with the reason (never guessed). A creator can't give a tier-2 tool (the gateway's `admin_only_tools` sentence before the write). Manage's lead says what is the creator's and what stays an admin's (the gateway's `admin_only` sentence). Accounts: the Active toggle, Archive and Unarchive of an entity you created go through `/me/accounts/{id}/…`; **Show archived** (`h`) is offered to members (`/me/accounts?include_archived=true`). Tests: `tests/r16w6_creator.rs` (clicks, meta-test over the creator's rows, wording fixture `r15_web_wording_accounts_roles.json`).
+- **Two roles: admin and member.** The kind chip says **Member** for a human non-admin; Create user offers Member and Admin only (no Read-only).
 - **Light and dark themes** built from the web console's palettes: `--theme gateway-light` / `gateway-dark`
   (default), and the ☾ / ☼ switch in the header (in the status bar on terminals narrower than 90 columns) or
   `Ctrl+T`.
