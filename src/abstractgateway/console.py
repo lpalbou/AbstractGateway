@@ -12331,8 +12331,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     function accountsReadShowArchived() {
       try { return readStringSetting(ACCOUNTS_SHOW_ARCHIVED_KEY, "0") === "1"; } catch { return false; }
     }
-    // "Show archived" (admins): a kit switch in the header row, off by default, remembered
-    // per viewer (localStorage, try/catch inside the setting helpers).
+    // "Show archived": a kit switch in the header row, off by default, remembered per browser
+    // (localStorage, try/catch inside the setting helpers). Admins see every archived account;
+    // anyone else the archived entities they created (R16.5: their creator unarchives them).
     function renderAccountsArchivedSwitch() {
       const slot = $("accounts-archived-slot");
       if (!slot) throw new Error("Accounts markup has no #accounts-archived-slot (DESIGN-v3 §1.1).");
@@ -12350,10 +12351,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           return true;
         }, (e) => usersMessage(emailErrorText(e), "error"));
       }
-      accountsUi.showArchived = admin && accountsReadShowArchived();
+      accountsUi.showArchived = accountsReadShowArchived();
       afSwitchSet(accountsUi.archivedSwitch, { checked: accountsUi.showArchived });
-      slot.hidden = !admin;
-      accountsUi.archivedSwitch.classList.toggle("hidden", !admin);
+      slot.hidden = false;
+      accountsUi.archivedSwitch.classList.remove("hidden");
+      accountsUi.archivedSwitch.title = admin
+        ? "Archived accounts can't sign in or act; their runs and history are kept."
+        : "Archived entities you created can't act; their memory, runs and history are kept, and you can unarchive them.";
     }
     // Round 12 (R12.1): the host's command sandbox state line under the Accounts head (everyone
     // signed in): the gateway's line verbatim, its sentence as the kit tooltip; never a control.

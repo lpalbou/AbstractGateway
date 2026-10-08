@@ -1082,6 +1082,40 @@ B_SCREENS = {
 }
 
 
+def accounts_roles_wording() -> dict:
+    """R16 (operator rulings 2026-10-08): two roles — admin and member — and the creator
+    configures their entity. The create-user role options (exactly two), the kind chips and their
+    titles, the row-tint legend and the two Show archived tooltips (admin / member)."""
+    src = read_b("console.py")
+    select = need(src, r'<select id="new-roles">(.*?)</select>', "the create-user role select", re.S)
+    options = re.findall(r'<option value="([^"]+)"[^>]*>([^<]+)</option>', select)
+    if [v for v, _ in options] != ["user", "admin"]:
+        fail(f"the create-user role select offers {options!r}; expected exactly user + admin.")
+    labels = need(src, r"const ACCOUNT_KIND_LABEL = \{ admin: \"([^\"]+)\", user: \"([^\"]+)\", entity: \"([^\"]+)\" \};", "ACCOUNT_KIND_LABEL")
+    m = re.search(r"const ACCOUNT_KIND_LABEL = \{ admin: \"([^\"]+)\", user: \"([^\"]+)\", entity: \"([^\"]+)\" \};", src)
+    t = re.search(r"const ACCOUNT_ROLE_TITLE = \{ admin: \"([^\"]+)\", user: \"([^\"]+)\", entity: \"([^\"]+)\" \};", src)
+    if not m or not t:
+        fail("ACCOUNT_KIND_LABEL / ACCOUNT_ROLE_TITLE moved in console.py.")
+    tips = re.search(r'archivedSwitch\.title = admin\s*\?\s*"([^"]+)"\s*:\s*"([^"]+)";', src)
+    if not tips:
+        fail("the Show archived tooltips (archivedSwitch.title = admin ? … : …) moved in console.py.")
+    legend = re.findall(r'af-row-legend__swatch--(\w+)" aria-hidden="true"></span>(\w+)</span>', src)
+    if len(legend) != 3:
+        fail(f"the row-tint legend has {len(legend)} items; expected 3.")
+    del labels
+    return {
+        "role_options": [label for _v, label in options],
+        "kind_labels": {"admin": m.group(1), "user": m.group(2), "entity": m.group(3)},
+        "kind_titles": {"admin": t.group(1), "user": t.group(2), "entity": t.group(3)},
+        "show_archived_tip_admin": tips.group(1),
+        "show_archived_tip_member": tips.group(2),
+        "legend": [word for _k, word in legend],
+    }
+
+
+B_SCREENS["accounts_roles"] = accounts_roles_wording
+
+
 def b_fixture(screen: str) -> Path:
     return CRATE / "tests" / "fixtures" / f"r15_web_wording_{screen}.json"
 

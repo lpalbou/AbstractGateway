@@ -43,7 +43,11 @@ pub const FREEZE_QUESTION: &str = "Freeze it now? Its process is killed, an open
 
 /// The Manage dialog's lead line. R16.5: a member who created the entity
 /// changes its settings; its lifecycle acts need an admin.
-pub fn manage_lead(state: &str, non_admin: bool, access: Option<&Result<crate::store::EntityAccess, String>>) -> String {
+pub fn manage_lead(
+    state: &str,
+    non_admin: bool,
+    access: Option<&Result<crate::store::EntityAccess, String>>,
+) -> String {
     if !non_admin {
         return format!("Currently {state}.");
     }
@@ -54,7 +58,9 @@ pub fn manage_lead(state: &str, non_admin: bool, access: Option<&Result<crate::s
         },
         Some(Ok(a)) => format!(
             "Currently {state}. {}",
-            a.reason.clone().unwrap_or_else(|| "You can't change its settings.".into())
+            a.reason
+                .clone()
+                .unwrap_or_else(|| "You can't change its settings.".into())
         ),
         _ => format!("Currently {state}."),
     }
@@ -62,7 +68,8 @@ pub fn manage_lead(state: &str, non_admin: bool, access: Option<&Result<crate::s
 
 /// The creator's lead (R16.5): what is theirs; the gateway's `admin_only`
 /// sentence (served) says what stays an admin's.
-pub const CREATOR_LEAD: &str = "You created it: you change its mind, voice, tools and instructions.";
+pub const CREATOR_LEAD: &str =
+    "You created it: you change its mind, voice, tools and instructions.";
 
 /// Every Manage card in tab order: the web's titles and descriptions,
 /// each with the form whose fields it holds.
@@ -533,16 +540,21 @@ fn write_refusal(ctx: &Ctx, what: &str) -> Option<String> {
 /// entity's creator — the gateway says which (`GET /entities/{name}/access`,
 /// read with the manage snapshot); its sentence when not. An admin always may.
 pub fn settings_refusal(ctx: &Ctx, name: &str) -> Option<String> {
-    if ctx.store.conn.with_untracked(crate::store::ConnPhase::is_admin) {
+    if ctx
+        .store
+        .conn
+        .with_untracked(crate::store::ConnPhase::is_admin)
+    {
         return None;
     }
     match detail_for(&ctx.store, name).and_then(|d| d.access) {
         Some(Ok(a)) => a.settings_refusal(),
-        Some(Err(e)) => Some(format!("who may change its settings could not be read: {e}")),
-        None => ctx
-            .store
-            .conn
-            .with_untracked(|c| c.admin_refusal("changing an entity's settings before its access is read")),
+        Some(Err(e)) => Some(format!(
+            "who may change its settings could not be read: {e}"
+        )),
+        None => ctx.store.conn.with_untracked(|c| {
+            c.admin_refusal("changing an entity's settings before its access is read")
+        }),
     }
 }
 
@@ -581,7 +593,9 @@ pub fn admin_only_tool_problem(
             .into_iter()
             .flatten()
             .filter_map(Value::as_str)
-            .any(|t| access.admin_only_tools.iter().any(|a| a == t) && !held.iter().any(|h| h == t));
+            .any(|t| {
+                access.admin_only_tools.iter().any(|a| a == t) && !held.iter().any(|h| h == t)
+            });
         if gives {
             return Some(
                 access

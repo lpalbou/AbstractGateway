@@ -3687,7 +3687,12 @@ impl EntityAccess {
             admin_only_tools: tools
                 .and_then(|t| t.get("tools"))
                 .and_then(Value::as_array)
-                .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
                 .unwrap_or_default(),
             admin_only_tools_reason: tools
                 .and_then(|t| t.get("reason"))
@@ -3706,11 +3711,9 @@ impl EntityAccess {
         if self.can_configure {
             None
         } else {
-            Some(
-                self.reason
-                    .clone()
-                    .unwrap_or_else(|| "the gateway refused changing its settings without a reason".into()),
-            )
+            Some(self.reason.clone().unwrap_or_else(|| {
+                "the gateway refused changing its settings without a reason".into()
+            }))
         }
     }
 }

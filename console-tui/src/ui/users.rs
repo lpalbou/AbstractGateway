@@ -258,7 +258,8 @@ fn head(pcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         };
         // Show archived (everyone, R16.5): an admin's archived accounts, a member's
         // archived entities (their creator unarchives them). The web's tooltip sentences.
-        let show_archived = |push: &mut dyn FnMut(View, i32, &mut Vec<View>), buttons: &mut Vec<View>| {
+        let show_archived = |push: &mut dyn FnMut(View, i32, &mut Vec<View>),
+                             buttons: &mut Vec<View>| {
             let c = ctx.clone();
             let tip = if admin {
                 format!("{SHOW_ARCHIVED_TIP_ADMIN}  (h)")
