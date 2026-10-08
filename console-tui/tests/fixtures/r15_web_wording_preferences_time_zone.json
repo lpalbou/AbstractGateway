@@ -1,0 +1,8 @@
+{
+  "_source": "scripts/extract_web_wording.py (do not edit by hand)",
+  "saved": "Saved.",
+  "not_saved_prefix": "Not saved. ",
+  "seam": "GET /accounts/{id}/preferences answered without a time_zone block (R16.1 preferences seam).",
+  "gateway_default": "Gateway default ({time_zone})",
+  "search": "Search time zones"
+}

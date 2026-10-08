@@ -308,6 +308,15 @@ app. A change applies at once and says "Saved."; there is no Save button. When t
 a change, its sentence shows with "Not saved." and nothing changes. A choice that no longer runs
 says why under its row.
 
+The last row is the account's **Time zone**: daily, weekly and monthly automations run on this
+clock, and automation times show in it. The first option is **Gateway default (<zone>)**, this
+computer's time zone, selected while the account has none of its own; the other options are the
+time zone names the gateway knows (type to search, e.g. "Europe/Par"). A pick applies at once
+("Saved." / "Not saved." with the gateway's sentence); new automations take the zone in force when
+they are created. The list, its label and its help come from the gateway (the `time_zone` block of
+the answer); the row is the kit's time-zone picker, the same one AbstractCode uses. An answer
+without that block shows an error in the dialog instead of the row.
+
 Everyone opens their own from their own row. An administrator opens any account's (choosing among
 the gateway's shared workflows); an entity's preferences are set by its creator or an
 administrator. The Assistant (Settings → Workflow) and AbstractCode (Workflow → *Default for new
@@ -831,8 +840,12 @@ you can click.
 - **Preferences** (`⊜` on an Accounts row) opens **Preferences — <id>**: a
   picker per app, listing **Gateway default (<name>)** first and then every
   workflow the gateway offers for that app; a pick saves at once ("Saved.", or
-  "Not saved." with the gateway's reason). A gateway older than this route has
-  no Preferences on its rows, and the button says so.
+  "Not saved." with the gateway's reason). The last row is **Time zone**, a
+  searchable list: click it (or `Enter`) for **Gateway default (<zone>)** and
+  the gateway's time zone names, type to filter ("Search time zones"), click a
+  name (or `Enter`) to save at once. Hovering its label shows the gateway's
+  help. A gateway older than this route has no Preferences on its rows, and the
+  button says so.
 
 - **3 Workflows** is one page, as on the web. The head has **↻** (`r`, "Reload
   the workflow list") and **Import .flow** (`i`). Under it are the search field

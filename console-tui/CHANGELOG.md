@@ -41,13 +41,12 @@ actions, switches, choices, dialogs — and every control is still reachable fro
   `Ctrl+T`.
 - The other account's **Email** dialog has the web's inline **Save** next to the address.
 - The **Retained runtimes** dialog is also offered from Runtimes.
-## 0.15.1 (2026-10-07)
-## Unreleased
 - **Preferences: Time zone** (the web console's row, its words): the account's time zone as the last row of
-  **Preferences — <id>**; `Enter` lists **Gateway default (<zone>)** then the gateway's time zone names, typing
-  filters them ("Search time zones"), `Enter` saves at once ("Saved." / "Not saved." with the gateway's
-  reason). Needs the gateway's `time_zone` block (AbstractGateway with R16.1); an answer without it says so.
-  Tests: `tests/r16w2_time_zone.rs`.
+  **Preferences — <id>**, a searchable list like the web's picker. Click it (or Enter): **Gateway default (<zone>)**
+  first, then the time zone names the gateway serves; typing filters them ("Search time zones"); a click or Enter
+  saves at once ("Saved." / "Not saved." with the gateway's reason). The label's tooltip is the gateway's help. Needs
+  the gateway's `time_zone` block (AbstractGateway with R16.1); an answer without it shows the gateway's seam
+  sentence in the row's place. Tests: `tests/r16w2_time_zone.rs`.
 ## 0.15.1 (2026-10-08)
 
 Needs AbstractGateway 0.13.1 or later for **Preferences** (`/accounts/{id}/preferences`) and the **last restart**

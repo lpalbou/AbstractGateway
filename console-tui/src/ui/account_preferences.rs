@@ -11,6 +11,15 @@
 //! <message>" beside the row; a broken choice shows the gateway's `reason`.
 //! Who may change it is the gateway's answer (`can_edit`; the row's
 //! `actions.preferences`).
+//!
+//! Round 16 (R16.1 API — FINAL (4)): + the account's TIME ZONE, the last
+//! row — the web's kit AfTimeZonePicker: label and help from the gateway's
+//! `time_zone` block, a Combobox whose first option is "Gateway default
+//! (<zone>)" (= null), then ONLY the served IANA names (`choices`), typed
+//! to filter ("Search time zones"); a commit is one PUT
+//! `{"time_zone": <zone> | null}` at once, "Saved." / "Not saved. <message>"
+//! under the row. An answer without the block shows the web's seam sentence
+//! in place of the row (never a hidden row).
 
 use abstracttui::prelude::*;
 use serde_json::{json, Value};
@@ -40,6 +49,15 @@ pub fn tip(id: &str) -> String {
 }
 
 pub const SAVED: &str = "Saved.";
+/// The kit's words (ui-kit automation_controls.json `schedule.time_zone_default` /
+/// `schedule.time_zone_search`), byte for byte.
+pub const TZ_DEFAULT: &str = "Gateway default ({time_zone})";
+pub const TZ_SEARCH: &str = "Search time zones";
+/// The note key of the time-zone row (beside the app rows' interfaces).
+pub const TZ_KEY: &str = "time_zone";
+/// The web's seam sentence for an answer without the block.
+pub const TZ_SEAM: &str =
+    "GET /accounts/{id}/preferences answered without a time_zone block (R16.1 preferences seam).";
 pub const READING: &str = "Reading the preferences...";
 
 /// The route of a row (the web's `accountPreferencesPath`): your own row
@@ -114,10 +132,67 @@ impl PrefApp {
     }
 }
 
+/// The answer's `time_zone` block (R16.1): the picker's whole truth, served.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TimeZonePref {
+    /// The account's own zone (None = the gateway default).
+    pub value: Option<String>,
+    pub gateway_default: String,
+    pub label: String,
+    pub help: Option<String>,
+    /// The IANA names the gateway serves, in its order.
+    pub choices: Vec<String>,
+}
+
+impl TimeZonePref {
+    /// "Gateway default (<zone>)".
+    pub fn default_label(&self) -> String {
+        TZ_DEFAULT.replace("{time_zone}", &self.gateway_default)
+    }
+
+    /// Every option: the gateway default (None) first, then ONLY the served names.
+    pub fn options(&self) -> Vec<(Option<String>, String)> {
+        let mut out = vec![(None, self.default_label())];
+        out.extend(self.choices.iter().map(|z| (Some(z.clone()), z.clone())));
+        out
+    }
+
+    pub fn current_label(&self) -> String {
+        self.value.clone().unwrap_or_else(|| self.default_label())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Prefs {
     pub can_edit: bool,
     pub apps: Vec<PrefApp>,
+    /// The time-zone block, or the seam sentence when the answer lacks it.
+    pub time_zone: Result<TimeZonePref, String>,
+}
+
+/// The `time_zone` block, checked like the web: a missing block or field
+/// is the seam sentence (shown loudly in the row's place).
+pub fn parse_time_zone(v: &Value) -> Result<TimeZonePref, String> {
+    let b = v
+        .get("time_zone")
+        .filter(|b| b.is_object())
+        .ok_or(TZ_SEAM)?;
+    let choices = b.get("choices").and_then(Value::as_array).ok_or(TZ_SEAM)?;
+    Ok(TimeZonePref {
+        value: st(b, "value").filter(|z| !z.is_empty()),
+        gateway_default: st(b, "gateway_default").ok_or(TZ_SEAM)?,
+        label: st(b, "label").filter(|l| !l.is_empty()).ok_or(TZ_SEAM)?,
+        help: st(b, "help").filter(|h| !h.is_empty()),
+        choices: choices
+            .iter()
+            .filter_map(|z| z.as_str().map(str::to_string))
+            .collect(),
+    })
+}
+
+/// The PUT body of a time-zone pick (null = the gateway default).
+pub fn put_time_zone(value: Option<&str>) -> Value {
+    json!({ "time_zone": value })
 }
 
 fn st(v: &Value, k: &str) -> Option<String> {
@@ -176,6 +251,7 @@ pub fn parse(v: &Value) -> Result<Prefs, String> {
     Ok(Prefs {
         can_edit: v.get("can_edit").and_then(Value::as_bool) != Some(false),
         apps: out,
+        time_zone: parse_time_zone(v),
     })
 }
 
@@ -427,7 +503,134 @@ fn body(
                 .build(),
         );
     }
-    col.build()
+    tz_row(cx, ctx, wk, path, &prefs, st, width, label_w, col).build()
+}
+
+/// The time-zone row (R16.1): label (+ the gateway's help as a tip), a
+/// Combobox over the served names, the help line and the live state line.
+#[allow(clippy::too_many_arguments)]
+fn tz_row(
+    cx: Scope,
+    ctx: &Ctx,
+    wk: &str,
+    path: &str,
+    prefs: &Prefs,
+    st: St,
+    width: i32,
+    label_w: i32,
+    mut col: Element,
+) -> Element {
+    use super::w::form::sentence;
+    let t = use_theme(cx).get().tokens;
+    let tz = match &prefs.time_zone {
+        Ok(tz) => tz.clone(),
+        // Loud: the seam sentence in the row's place, in the error tone.
+        Err(e) => return col.child(sentence(&t, e, width, t.error)),
+    };
+    let label_w = label_w.max(abstracttui::text::width(&tz.label) + 2);
+    let opts = tz.options();
+    let cur = opts.iter().position(|(v, _)| *v == tz.value).unwrap_or(0);
+    let control = if prefs.can_edit {
+        let chosen = cx.signal(cur);
+        let c = ctx.clone();
+        let (wk, path) = (wk.to_string(), path.to_string());
+        let opts2 = opts.clone();
+        let current = tz.value.clone();
+        let label = tz.label.clone();
+        abstracttui::app::select::Combobox::new(
+            opts.iter()
+                .map(|(_, l)| abstracttui::app::select::SelectOption::new(l.clone()))
+                .collect(),
+        )
+        .value(chosen)
+        .placeholder(TZ_SEARCH)
+        .max_visible(10)
+        .on_change(move |i| {
+            let Some((value, _)) = opts2.get(i) else {
+                return;
+            };
+            if *value == current || st.pending.with_untracked(Option::is_some) {
+                return;
+            }
+            st.pending.set(Some(TZ_KEY.to_string()));
+            st.notes.update(|n| n.retain(|(k, _, _)| k != TZ_KEY));
+            c.store.json.set_write(&wk, Some(WriteState::Pending));
+            let slot = wk.trim_end_matches(".write").to_string();
+            c.send(Cmd::Json(JsonCmd::Send {
+                key: wk.clone(),
+                method: "PUT".into(),
+                path: path.clone(),
+                body: put_time_zone(value.as_deref()),
+                slow: false,
+                label: label.clone(),
+                reload: vec![(slot, path.clone())],
+                journal: false,
+            }));
+        })
+        .element(cx, &t)
+        .build()
+    } else {
+        sentence(&t, &tz.current_label(), width - label_w, t.text)
+    };
+    let label = super::w::tip::with_tip(
+        cx,
+        Element::new()
+            .style(
+                LayoutStyle::default()
+                    .width(Dimension::Cells(label_w))
+                    .height(Dimension::Cells(1))
+                    .shrink(0.0),
+            )
+            .child(super::w::paint::fill_line(
+                LayoutStyle::default()
+                    .width(Dimension::Cells(label_w))
+                    .height(Dimension::Cells(1))
+                    .shrink(0.0),
+                vec![super::w::Ink::new(&tz.label, t.text)],
+                None,
+            )),
+        tz.help.clone().unwrap_or_default(),
+    )
+    .build();
+    col = col.child(
+        Element::new()
+            .style(LayoutStyle::row().height(Dimension::Cells(1)).shrink(0.0))
+            .child(label)
+            .child(
+                Element::new()
+                    .style(
+                        LayoutStyle::default()
+                            .width(Dimension::Cells((width - label_w).min(56)))
+                            .height(Dimension::Cells(1)),
+                    )
+                    .child(control)
+                    .build(),
+            )
+            .build(),
+    );
+    if let Some(h) = &tz.help {
+        col = col.child(sentence(&t, h, width, t.text_faint));
+    }
+    col.child(dyn_view(LayoutStyle::column().shrink(0.0), move || {
+        let t = abstracttui::app::current_theme().tokens;
+        if st.pending.get().as_deref() == Some(TZ_KEY) {
+            return sentence(&t, "Saving…", width, t.text_muted);
+        }
+        let note = st.notes.with(|n| {
+            n.iter()
+                .find(|(k, _, _)| k == TZ_KEY)
+                .map(|(_, t, tone)| (t.clone(), *tone))
+        });
+        match note {
+            Some((text, tone)) => sentence(
+                &t,
+                &text,
+                width,
+                if tone == Tone::Ok { t.ok } else { t.error },
+            ),
+            None => Element::new().style(LayoutStyle::default().h(0)).build(),
+        }
+    }))
 }
 
 #[cfg(test)]
@@ -486,6 +689,37 @@ mod tests {
         assert!(parse(&json!({"ok": true}))
             .unwrap_err()
             .contains("answered without apps"));
+    }
+
+    #[test]
+    fn the_time_zone_block_parses_with_the_gateway_default_first() {
+        let p = parse(&fx("prefs_alice_set")).unwrap();
+        let tz = p.time_zone.unwrap();
+        assert_eq!(tz.label, "Time zone");
+        assert_eq!(tz.value, None);
+        let opts = tz.options();
+        assert_eq!(
+            opts[0],
+            (None, "Gateway default (Europe/Paris)".to_string())
+        );
+        assert_eq!(opts.len(), tz.choices.len() + 1);
+        assert!(opts[1..]
+            .iter()
+            .all(|(v, l)| v.as_deref() == Some(l.as_str())));
+        assert_eq!(put_time_zone(None), json!({"time_zone": null}));
+        assert_eq!(
+            put_time_zone(Some("Asia/Tokyo")),
+            json!({"time_zone": "Asia/Tokyo"})
+        );
+    }
+
+    #[test]
+    fn a_missing_time_zone_block_is_the_seam_sentence_not_a_hidden_row() {
+        let mut v = fx("prefs_alice_set");
+        v.as_object_mut().unwrap().remove("time_zone");
+        let p = parse(&v).unwrap();
+        assert_eq!(p.time_zone.unwrap_err(), TZ_SEAM);
+        assert!(!p.apps.is_empty());
     }
 
     #[test]

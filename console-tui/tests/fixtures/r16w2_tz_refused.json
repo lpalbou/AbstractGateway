@@ -1,0 +1,7 @@
+{
+  "detail": {
+    "reason": "preference_refused",
+    "message": "time_zone = 'Mars/Olympus' refused: use an IANA time zone name such as 'Europe/Paris', or null for the gateway default.",
+    "key": "time_zone"
+  }
+}

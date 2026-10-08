@@ -198,6 +198,23 @@ def connection_words() -> dict:
 SCREEN_FIXTURES["connection"] = connection_words
 
 
+def preferences_time_zone_words() -> dict:
+    """R16-W2 Accounts → Preferences → Time zone: the web modal row's words (console.py) and the kit
+    AfTimeZonePicker's (the vendored islands bundle carries ui-kit automation_controls.json)."""
+    src = read("console.py")
+    isl = read("console_islands.py")
+    return {
+        "saved": need(src, r'renderAccountPreferences\(a, answer, \{ iface: "time_zone", ok: true, text: "([^"]*)" \}\)', "time zone Saved."),
+        "not_saved_prefix": need(src, r'note: \{ ok: false, text: `(Not saved\. )\$\{emailErrorText\(e\)\}` \} \}\)\);\n          \}\n        \},\n      \};\n      accountsUi\.preferencesTz', "time zone Not saved."),
+        "seam": need(src, r'throw new Error\("(GET /accounts/\{id\}/preferences answered without a time_zone block \(R16\.1 preferences seam\)\.)"\);', "time zone seam sentence"),
+        "gateway_default": need(isl, r'(Gateway default \(\{time_zone\}\))', "kit time_zone_default"),
+        "search": need(isl, r'(Search time zones)', "kit time_zone_search"),
+    }
+
+
+SCREEN_FIXTURES["preferences_time_zone"] = preferences_time_zone_words
+
+
 def workflows_words() -> dict:
     """R15-A Workflows: the page's tooltips, sentences, switches and columns ({n} = the workflow)."""
     src = read("console.py")
