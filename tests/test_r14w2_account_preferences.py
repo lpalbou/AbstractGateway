@@ -112,8 +112,8 @@ def _store(gw) -> dict:
 def test_get_me_starts_on_the_gateway_default_per_app(gw):
     a = _get(gw["c"], gw["alice"])
     assert a["account"] == "default:alice" and a["can_edit"] is True
-    assert a["preferences"] == {"default_workflow": {CODE: None, ASSIST: None}}
-    assert set(a["declared"]) == {"default_workflow"}
+    assert a["preferences"] == {"default_workflow": {CODE: None, ASSIST: None}, "time_zone": None}  # R16.1 time_zone key
+    assert set(a["declared"]) == {"default_workflow", "time_zone"}
     code = _row(a, CODE)
     assert code["state"] == "default" and code["value"] is None
     assert code["gateway_default"]["available"] is True
@@ -157,7 +157,7 @@ def test_unknown_keys_interfaces_and_unrunnable_workflows_are_refused_with_a_sen
         assert d["reason"] == "preference_refused"
         return d["message"]
 
-    assert refused({"theme": "dark"}) == "Unknown preference 'theme': this gateway declares default_workflow."
+    assert refused({"theme": "dark"}) == "Unknown preference 'theme': this gateway declares default_workflow, time_zone."
     assert "is not an app this gateway sets a default workflow for" in refused({"default_workflow": {"abstractcode.coding.v1": None}})
     assert refused({"default_workflow": "coder-two:agent"}).startswith("default_workflow is one entry per app")
     msg = refused({"default_workflow": {CODE: "hidden-coder:agent"}})
