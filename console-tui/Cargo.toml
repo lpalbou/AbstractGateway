@@ -2,7 +2,7 @@
 name = "abstractgateway-console"
 version = "0.16.0"
 edition = "2021"
-# MSRV floor comes from the engine (abstracttui 0.3.6 still declares 1.87).
+# MSRV floor comes from the engine (abstracttui 0.3.8 still declares 1.87).
 rust-version = "1.87"
 license = "MIT"
 description = "An intuitive terminal wizard to configure AbstractGateway — connection, providers, multimodal capability routes, users & entities, models and local engines — rendered by AbstractTUI."
@@ -50,12 +50,12 @@ path = "src/main.rs"
 # 0.3.6: Image follows MosaicMode::auto — quadrants (2x2 subpixels per cell)
 # wherever the terminal proves UTF-8 + color, instead of pinned half blocks.
 # The artifact preview is the whole reason this console draws bitmaps.
-abstracttui = "0.3.6"
+abstracttui = "0.3.8"
 # The shared Models (catalog/download/delete) and Engines (detect/install)
 # screens, implemented ONCE in AbstractCore's console crate and mounted
 # here as screens 9 and 0 over an HTTP transport to the gateway's
 # `/api/gateway/models/*` + `/engines/*` mirrors. It builds on the same
-# abstracttui 0.3.6: both crates MUST resolve one abstracttui (one
+# abstracttui 0.3.8: both crates MUST resolve one abstracttui (one
 # reactive runtime, one widget set) — the lockfile pins it.
 # 0.4: `display_available` / `OpenError` (Apps Open on a machine with no
 # display shows the link instead of launching a browser), `engine_missing`
