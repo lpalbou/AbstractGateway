@@ -820,3 +820,69 @@ fn the_store_line_is_the_webs_and_only_when_a_file_is_named() {
         );
     }
 }
+
+#[test]
+fn a_configured_model_not_yet_discovered_is_kept_said_and_downloadable() {
+    // input.text is saved as lmstudio / test-model-a; lmstudio's catalog
+    // does not list it (not downloaded yet).
+    let mut h = page();
+    h.store.models.update(|m| {
+        m.insert(
+            "lmstudio".into(),
+            Loadable::Ready(vec!["other-model".into()]),
+        );
+    });
+    h.turns(2);
+    let s = click_row(&mut h, "input.text", "✎");
+    let s = if s.contains("is not currently") {
+        s
+    } else {
+        h.turns(3)
+    };
+    // The web's sentence (from the wording fixture), never a silent reset.
+    let want = fixture()["undiscovered_model"]
+        .as_str()
+        .unwrap()
+        .replace("{model}", "test-model-a")
+        .replace("{scope}", "text generation")
+        .replace("{provider}", "lmstudio");
+    assert_eq!(
+        routes::undiscovered_sentence("test-model-a", "text generation", "lmstudio"),
+        want
+    );
+    // On screen (wrapped in the field's column): every word in order.
+    let shown: String = s
+        .lines()
+        .filter_map(|l| l.split('│').nth(1))
+        .collect::<Vec<_>>()
+        .join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(shown.contains(&want), "{want:?}:\n{s}");
+    // The picker keeps the configured model (not "choose a model…").
+    assert!(s.contains("test-model-a"), "{s}");
+    assert!(!s.contains("choose a model…"), "{s}");
+    // Download by mouse → the route's download (confirm with its size).
+    click_last(&mut h, "Download");
+    assert!(
+        h.sent()
+            .iter()
+            .any(|c| matches!(c, Cmd::PrepareDownload { provider, artifact }
+            if provider == "lmstudio" && artifact == "qwen/qwen3.5-9b@4bit")),
+        "the editor's Download asks for the route's weights"
+    );
+    // Save keeps the configured model.
+    click_last(&mut h, "Save");
+    match h
+        .sent()
+        .into_iter()
+        .find(|c| matches!(c, Cmd::PutRoute { .. }))
+    {
+        Some(Cmd::PutRoute { key, body, .. }) => {
+            assert_eq!(key, "input.text");
+            assert_eq!(body["model"], "test-model-a");
+        }
+        other => panic!("expected PutRoute, got {other:?}"),
+    }
+}

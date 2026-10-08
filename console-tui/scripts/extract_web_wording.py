@@ -964,7 +964,9 @@ def multimodal_wording() -> dict:
         .replace("${esc(label)}", "{label}").replace("<code>${esc(file)}</code>", "{file}").replace("${esc(claim)}", "{claim}"),
         "title": _one(sa, r"el\.title = `(authority: )\$\{authority\}`;", "line title") + "{authority}",
     }
+    undiscovered = _one(src, r'\$\("default-modal-message"\)\.textContent = `(Configured model "\$\{selected\}" is not currently in the discovered \$\{catalog\.scope\} catalog for \$\{provider\}\.)`;', "the undiscovered-model sentence")
     return {
+        "undiscovered_model": undiscovered.replace("${selected}", "{model}").replace("${catalog.scope}", "{scope}").replace("${provider}", "{provider}"),
         "store_line": store_line,
         "title": head.group(1),
         "subtitle": head.group(2),

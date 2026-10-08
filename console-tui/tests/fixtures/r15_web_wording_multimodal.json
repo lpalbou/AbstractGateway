@@ -1,5 +1,6 @@
 {
   "_source": "scripts/extract_web_wording.py (do not edit by hand)",
+  "undiscovered_model": "Configured model \"{model}\" is not currently in the discovered {scope} catalog for {provider}.",
   "store_line": {
     "label": "AbstractCore store",
     "overlay_label": "This runtime's AbstractCore overlay",

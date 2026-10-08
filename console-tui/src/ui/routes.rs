@@ -1725,17 +1725,22 @@ fn cancel_download_all(cx: Scope, ctx: &Ctx) {
 /// `unknown` answer, where guessing would spend the host's disk on a
 /// model that may already be there.
 fn download_selected(ctx: &Ctx) {
-    // `POST /models/download` spends the shared host's disk: admin-only
-    // on the gateway (security/authorization.py, resource "models").
-    if !super::util::admin_gate(&ctx.store, "downloading model weights") {
-        return;
-    }
     let Some(row) = selected_route(ctx) else {
         ctx.store
             .notice
             .set(Some("no route selected — nothing to download".into()));
         return;
     };
+    download_route(ctx, row);
+}
+
+/// Download `row`'s weights (the table's ⤓ and the editor's [Download]).
+fn download_route(ctx: &Ctx, row: RouteRow) {
+    // `POST /models/download` spends the shared host's disk: admin-only
+    // on the gateway (security/authorization.py, resource "models").
+    if !super::util::admin_gate(&ctx.store, "downloading model weights") {
+        return;
+    }
     let weights = ctx
         .store
         .availability
@@ -1902,6 +1907,63 @@ pub fn voice_test_run_id_for(tenant: &str, user: &str) -> String {
 
 /// The (provider, model) the form currently resolves to — EXACTLY the
 /// Save handler's resolution (placeholder/blank picks → None). Tracked
+/// The route's saved (provider, model), the editor's preselect.
+pub type SavedPair = (Option<String>, String);
+
+/// The model list the editor offers under provider `name`: the discovered
+/// models, plus the route's CONFIGURED model when it is saved under this
+/// provider but not discovered (a recommended model before its download):
+/// the picker keeps it — it never falls back to "choose a model…".
+pub fn model_list(models: &[String], name: &str, saved: &SavedPair) -> Vec<String> {
+    let mut out = models.to_vec();
+    if let Some(extra) = undiscovered(models, name, saved) {
+        out.push(extra);
+    }
+    out
+}
+
+/// The configured model when it is not in `name`'s discovered list.
+pub fn undiscovered(models: &[String], name: &str, saved: &SavedPair) -> Option<String> {
+    let (p, m) = saved;
+    (p.as_deref() == Some(name) && !m.is_empty() && !models.iter().any(|x| x == m))
+        .then(|| m.clone())
+}
+
+/// The web's discovery catalog scope of a route (console.py
+/// defaultCatalogForRow `scope`), for its sentences.
+pub fn catalog_scope(row: &RouteRow) -> &'static str {
+    let task = row.task.as_deref().unwrap_or("");
+    match (row.kind.as_str(), row.modality.as_str()) {
+        ("embedding", "text") => "embedding.text",
+        ("embedding", "image") => "image embeddings",
+        ("output", "image") => match task {
+            "image_to_image" => "image edit",
+            "image_upscale" => "image restore / upscale",
+            _ => "image generation",
+        },
+        ("output", "video") => match task {
+            "image_to_video" => "image to video",
+            _ => "video generation",
+        },
+        ("input", "image") => "image input",
+        ("input", "video") => "video input",
+        ("input", "sound") | ("input", "audio") => "audio input",
+        ("input", "music") => "music input",
+        ("output", "voice") | ("output", "audio") => "voice generation",
+        ("input", "voice") => "speech transcription",
+        ("output", "sound") => "sound effects generation",
+        (_, "scene3d") => "3D scene generation",
+        ("output", "music") => "music generation",
+        _ => "text generation",
+    }
+}
+
+/// The web's sentence for a configured model the provider's catalog does
+/// not list (console.py loadDefaultModels).
+pub fn undiscovered_sentence(model: &str, scope: &str, provider: &str) -> String {
+    format!("Configured model \"{model}\" is not currently in the discovered {scope} catalog for {provider}.")
+}
+
 /// reads: effects using this re-fire on any pick change.
 #[allow(clippy::too_many_arguments)]
 fn picked_pair(
@@ -1912,6 +1974,7 @@ fn picked_pair(
     prov_custom: Signal<String>,
     model_ix: Signal<usize>,
     model_custom: Signal<String>,
+    saved: &SavedPair,
 ) -> Option<(String, String)> {
     let ix = prov_ix.get();
     if ix == 0 {
@@ -1941,7 +2004,11 @@ fn picked_pair(
             store.models.with(|m| {
                 m.get(&prov_options[ix - 1])
                     .and_then(|l| l.ready())
-                    .and_then(|ms| ms.get(mix - 1).cloned())
+                    .and_then(|ms| {
+                        model_list(ms, &prov_options[ix - 1], saved)
+                            .get(mix - 1)
+                            .cloned()
+                    })
             })?
         } else {
             let mc = model_custom.get().trim().to_string();
@@ -2260,6 +2327,9 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
         // ---- model picker (per provider; resets on provider change) ---
         let model_ix = mcx.signal(if explicit { usize::MAX } else { 0usize });
         let model_custom = mcx.signal(row.model.clone().unwrap_or_default());
+        // The route's saved pair (the picker keeps an undiscovered saved model).
+        let saved_sig: Signal<SavedPair> =
+            mcx.signal((row.provider.clone(), row.model.clone().unwrap_or_default()));
         // ---- voice picker (output.voice only; sentinel = resolve the
         // saved options.voice against the list once it arrives) --------
         let voice_ix = mcx.signal(usize::MAX);
@@ -2379,7 +2449,12 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                 match ready {
                     Some(models) if !models.is_empty() => {
                         let pos = if Some(&name) == saved_provider.as_ref() {
-                            models.iter().position(|m| *m == saved_model).map(|i| i + 1)
+                            let list = model_list(
+                                &models,
+                                &name,
+                                &(saved_provider.clone(), saved_model.clone()),
+                            );
+                            list.iter().position(|m| *m == saved_model).map(|i| i + 1)
                         } else {
                             None
                         };
@@ -2411,6 +2486,7 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                     prov_custom,
                     model_ix,
                     model_custom,
+                    &saved_sig.get_untracked(),
                 ) else {
                     return;
                 };
@@ -2489,8 +2565,10 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
             // regions.
             .child({
                 let ctx_retry = ctx2.clone();
+                let dl_row = row2.clone();
                 dyn_view_scoped(LayoutStyle::column().gap(0), move |gcx| {
                     let ctx_retry = ctx_retry.clone();
+                    let dl_row = dl_row.clone();
                     let t = theme.get().tokens;
                     if mode.get() != 1 {
                         return Element::new()
@@ -2543,6 +2621,7 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                         // otherwise.
                         .child(dyn_view_scoped(LayoutStyle::column(), move |g2| {
                             let ctx_retry = ctx_retry.clone();
+                            let dl_row = dl_row.clone();
                             let t = theme.get().tokens;
                             let ix = prov_ix.get();
                             let is_custom = ix == custom_row;
@@ -2573,13 +2652,15 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                 .unwrap_or(Loadable::NotAsked);
                             match entry {
                                 Loadable::Ready(models) if !models.is_empty() => {
+                                    let saved = saved_sig.get_untracked();
+                                    let list = model_list(&models, &chosen_name, &saved);
                                     let opts: Vec<SelectOption> =
                                         std::iter::once(SelectOption::new("choose a model…"))
                                             .chain(
-                                                models.iter().map(|m| SelectOption::new(m.clone())),
+                                                list.iter().map(|m| SelectOption::new(m.clone())),
                                             )
                                             .collect();
-                                    efield(
+                                    let picker = efield(
                                         &t,
                                         "Model",
                                         Combobox::new(opts)
@@ -2588,7 +2669,61 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                             .layout(LayoutStyle::default().w(52).h(1).shrink(0.0))
                                             .element(g2, &t)
                                             .build(),
-                                    )
+                                    );
+                                    // The configured model is not in the
+                                    // discovered catalog (e.g. before its
+                                    // download): the web's sentence, and
+                                    // the route's Download when it has one.
+                                    let Some(m) = undiscovered(&models, &chosen_name, &saved) else {
+                                        return picker;
+                                    };
+                                    let mut col = Element::new()
+                                        .style(LayoutStyle::column())
+                                        .child(picker)
+                                        .child(efield(
+                                            &t,
+                                            "",
+                                            super::w::form::sentence(
+                                                &t,
+                                                &undiscovered_sentence(
+                                                    &m,
+                                                    catalog_scope(&dl_row),
+                                                    &chosen_name,
+                                                ),
+                                                52,
+                                                t.error,
+                                            ),
+                                        ));
+                                    let weights = store.availability.with(|d| {
+                                        d.ready().and_then(|a| a.by_route.get(&dl_row.key).cloned())
+                                    });
+                                    let admin = store.conn.with(ConnPhase::is_admin);
+                                    let downloading = match (store.download.get(), weights.as_ref()) {
+                                        (Some(d), Some(wt)) => {
+                                            d.running()
+                                                && d.provider == wt.provider
+                                                && d.artifact == wt.artifact
+                                        }
+                                        _ => false,
+                                    };
+                                    if let Some(a) = row_actions(&dl_row, weights.as_ref(), downloading, admin)
+                                        .into_iter()
+                                        .find(|a| a.id == "download")
+                                    {
+                                        let a = Action::label("download", "Download")
+                                            .tooltip(a.tooltip.clone().unwrap_or_default())
+                                            .refused(a.enabled.clone().err());
+                                        let c = ctx_retry.clone();
+                                        let r = dl_row.clone();
+                                        col = col.child(efield(
+                                            &t,
+                                            "",
+                                            button(g2, &t, &a, On::Raised, true, move || {
+                                                download_route(&c, r.clone())
+                                            }),
+                                        ));
+                                    }
+                                    col.build()
                                 }
                                 Loadable::Loading | Loadable::NotAsked => efield(
                                     &t,
@@ -2670,6 +2805,7 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                             let Some(pair) = picked_pair(
                                 &store, &prov_vp, custom_row, prov_ix, prov_custom, model_ix,
                                 model_custom,
+                                &saved_sig.get_untracked(),
                             ) else {
                                 return efield(
                                     &t,
@@ -2978,6 +3114,7 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                         prov_custom,
                                         model_ix,
                                         model_custom,
+                                        &saved_sig.get_untracked(),
                                     ) else {
                                         form_error.set(Some(
                                             "choose a provider and model first".into(),
@@ -3034,6 +3171,7 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                         prov_custom,
                                         model_ix,
                                         model_custom,
+                                        &saved_sig.get_untracked(),
                                     ) else {
                                         form_error
                                             .set(Some("pick provider + model first".into()));
