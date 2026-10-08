@@ -136,6 +136,10 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     # body id, and refuses entities: a principal can only connect, test,
     # disconnect, configure or sign in to ITS OWN mailbox; test notifications
     # go to its own registered address through its own account.
+    # --- named API keys for /v1 (round 16): the caller's OWN account only (resolved from the
+    # principal, never from a path or body id); a named key itself is refused here (401).
+    ("POST", "/api/gateway/me/openai-keys"),
+    ("DELETE", "/api/gateway/me/openai-keys/{fingerprint}"),
     ("PUT", "/api/gateway/me/email"),
     ("DELETE", "/api/gateway/me/email"),
     ("POST", "/api/gateway/me/email/test"),
