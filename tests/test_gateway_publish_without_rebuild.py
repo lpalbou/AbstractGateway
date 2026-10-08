@@ -488,3 +488,39 @@ def test_user_auth_has_one_service_for_the_default_runtime(tmp_path: Path, monke
         assert out["unchanged_services"] == 1 and out["services"] == [], out
     finally:
         service_mod.stop_gateway_runner()
+
+
+def test_reload_object_says_what_really_happened(gw) -> None:
+    """`kind` and the sentence follow the hosts' results, never a constant."""
+    client, _ = gw
+    res = client.post("/api/gateway/bundles/reload?full=true", headers=HEADERS)
+    assert res.status_code == 200, res.text
+    reload = res.json()["reload"]
+    assert reload["kind"] == "full_rebuild"
+    assert reload["services"][0]["kind"] == "full_rebuild"
+    assert reload["sentence"].startswith("Full rebuild of 1 service in ")
+
+    res = client.post("/api/gateway/bundles/reload", headers=HEADERS)
+    reload = res.json()["reload"]
+    assert reload["kind"] == "registry_swap" and reload["services"] == [] and reload["unchanged_services"] == 1
+    assert reload["sentence"] == "Nothing changed on disk; no service was touched."
+
+
+def test_describe_workflow_reload_aggregates_per_service_results() -> None:
+    from abstractgateway.workflow_reload import describe_workflow_reload
+
+    swapped = {"ok": True, "service": "default:alice", "count": 3, "reload": {"kind": "registry_swap", "duration_ms": 4, "reason": "workflows changed on disk", "changed": True}}
+    rebuilt = {"ok": True, "service": "default:bob", "count": 2, "reload": {"kind": "service_reload", "duration_ms": 900, "reason": "the workflows now need a language model, which this service's runtime was started without", "changed": True}}
+    idle = {"ok": True, "service": "default:carol", "count": 1, "reload": {"kind": "registry_swap", "duration_ms": 1, "reason": "nothing changed on disk", "changed": False}}
+    broken = {"ok": False, "service": "default:dave", "error": "disk full"}
+
+    out = describe_workflow_reload([swapped, rebuilt, idle], duration_ms=905)
+    assert out["kind"] == "service_reload" and out["ok"] is True
+    assert [s["service"] for s in out["services"]] == ["default:alice", "default:bob"] and out["unchanged_services"] == 1
+    assert out["sentence"] == (
+        "Rebuilt default:bob in 905 ms because the workflows now need a language model, which this service's runtime "
+        "was started without; its loaded models and prompt caches start empty. 1 other service updated in place."
+    )
+    out = describe_workflow_reload([swapped, broken], duration_ms=5)
+    assert out["ok"] is False and out["kind"] == "registry_swap"
+    assert out["sentence"].endswith("1 service could not reload: default:dave: disk full.")
