@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Requires AbstractRuntime with `schedule@2` (the next runtime release).
+
+### Added
+
+- Automations: calendar schedules. The trigger `schedule@2` takes `{kind: "daily", at: "08:00"}`, `{kind: "weekly", days: ["mon", "thu"], at}`, `{kind: "monthly", day: 1..31 | "last", at}`, plus `every` and `once` (a `once` may give a wall time `at`), evaluated in the automation's `config.time_zone` with daylight saving handled. A rule sent without a time zone gets the owner's account time zone; a revision without one keeps the automation's zone. `schedule@1` automations and requests work unchanged. See `docs/automations.md`.
+- Every automation summary (list, read, create answer) carries `next_run_at`, `next_run_local`, `time_zone`, `schedule_rule_text` and `schedule_text`, the one sentence clients show for the schedule ("Every day at 08:00 (Europe/Paris) · next Fri 9 Oct 08:00"). `next_fire_at` stays.
+- `POST /api/gateway/automations/schedule-preview`: what a trigger would do if saved now (normalized trigger, sentences, first run, `first_run_sentence`); nothing is stored.
+- Account preference `time_zone` (`GET/PUT /api/gateway/accounts/{account}/preferences`): an IANA zone or `null` for the gateway default, the time zone of the computer the gateway runs on. The GET adds a `time_zone` block with the default, the effective zone and the list of zone names.
+
 ## [0.13.1] - 2026-10-08
 
 Requires AbstractRuntime 0.9.1, AbstractCore 2.25.1 and AbstractAgent 0.3.19 (installed automatically). The terminal console `abstractgateway-console` 0.15.1 matches this release; see [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md).

@@ -24,7 +24,7 @@ serve:
 | `/api/gateway/admin/users`, `/admin/runtime-reservations` | user accounts and retained runtimes (admin) | [security.md](./security.md#tenant-and-user-isolation) |
 | `/api/gateway/admin/accounts`, `/admin/accounts/{id}/active`, `/admin/accounts/{id}/activity`, `/me/accounts`, `/me/accounts/{id}/activity`, `/me/activity` | the Accounts page: users and entities in one list (admin), your own account and your entities (everyone), the Active switch, activity from the audit log | [below](#accounts-and-activity) |
 | `/api/gateway/admin/runtime-config` | runtime settings (admin) | [configuration.md](./configuration.md) |
-| `/api/gateway/accounts/{me\|account}/preferences` | one account's client preferences: the default workflow per app (the account itself, an admin, an entity's creator) | [below](#account-preferences) |
+| `/api/gateway/accounts/{me\|account}/preferences` | one account's client preferences: the default workflow per app and the time zone (the account itself, an admin, an entity's creator) | [below](#account-preferences) |
 | `/api/gateway/workspace/policy`, `/workspace/policy/{account}`, `/sessions/{id}/workspaces`, `/workspace/effective/{account}` (GET and dry-run POST), `POST /workspace/path-check` | workspaces, three levels: the gateway policy = the eligible set (read: everyone; write: admin), one account's default subset (admin, the account itself, an entity's creator; `me` = the caller), one conversation's subset (its owner, or an admin), the effective set the gateway enforces, and the path check run before saving a row (`{path}` → `{path, normalized, absolute, exists, is_dir, valid, sentence}`; any signed-in principal) | [below](#workspaces), [security.md](./security.md#workspaces-three-levels) |
 | `/api/gateway/admin/runtimes`, `?account=<id>[&tenant_id=<t>]` | the runtime inventory (admin); `account` keeps only the planes that account owns and echoes `filter` | [console.md](./console.md#runtimes-of-one-account) |
 | `/api/gateway/network`, `/network/restart` | network exposure, addresses, reverse proxy | [configuration.md](./configuration.md#api-gateway_network_v1) |
@@ -966,6 +966,7 @@ typed waits, attention and operations, is in [automations.md](./automations.md).
 | Route | Answer |
 |---|---|
 | `GET /api/gateway/trigger-sources` | `{items: [{id, version, label, capabilities, config_schema, event_schema, available, unavailable_reason?}]}` |
+| `POST /api/gateway/automations/schedule-preview` | `{trigger, time_zone, schedule_rule_text, schedule_text, next_run_at, next_run_local, first_run_sentence}` ([automations.md](./automations.md#schedule-preview)) |
 | `POST /api/gateway/automations` | `{request_id, title?, target, trigger?, context?, policy?}` → `{automation_id, revision, summary}` |
 | `GET /api/gateway/automations?status=&archived_only=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, archived_automations}` (older scheduled runs on the last page, `legacy: true`). Archived automations are left out unless `archived_only=true` (only them) or `status` names `archived`; `archived_automations` counts yours |
 | `GET /api/gateway/automations/{automation_id}` | `{definition, active_revision, summary}` |
@@ -2082,8 +2083,8 @@ override them for itself.
 
 | Route | Purpose |
 |---|---|
-| `GET /api/gateway/accounts/{account}/preferences` | `{ok, account: "tenant:user", can_edit, preferences: {default_workflow: {<interface>: value \| null}}, declared: {default_workflow: {label, help}}, apps: [row]}` |
-| `PUT /api/gateway/accounts/{account}/preferences` | `{"default_workflow": {<interface>: "bundle:flow" \| "catalog:bundle:flow" \| null}}` → the GET answer |
+| `GET /api/gateway/accounts/{account}/preferences` | `{ok, account: "tenant:user", can_edit, preferences: {default_workflow: {<interface>: value \| null}, time_zone: value \| null}, declared: {default_workflow: {label, help}, time_zone: {label, help}}, apps: [row], time_zone: {value, gateway_default, effective, label, help, choices}}` |
+| `PUT /api/gateway/accounts/{account}/preferences` | `{"default_workflow": {<interface>: "bundle:flow" \| "catalog:bundle:flow" \| null}, "time_zone": "Europe/Paris" \| null}` (each key optional) → the GET answer |
 
 `{account}` is `me` (the caller), `name`, `tenant:name` or an entity's slug. Who: anyone for their
 own; an admin for any account; an entity's preferences by an admin or the entity's creator. Anyone
@@ -2092,14 +2093,25 @@ else gets 403 with "Only an admin or the account itself can read or change its p
 answers 404. A gateway older than 0.13.1 has no such route (404 Not Found); the Assistant and
 AbstractCode then keep their own choice as before.
 
-Only keys the gateway declares are accepted. Today there is one, `default_workflow`: one entry per
+Only keys the gateway declares are accepted: `default_workflow` and `time_zone`.
+
+`time_zone` is the account's IANA time zone. Daily, weekly and monthly automations are created on it
+([automations.md](./automations.md#trigger-sources)), and automation summaries show times in it.
+`null` follows the gateway default, which is the time zone of the computer the gateway runs on (the
+OS `TZ`, else the zone `/etc/localtime` points to, else `/etc/timezone`, else `UTC`). The GET's
+`time_zone` block gives the stored `value`, the `gateway_default`, the `effective` zone and `choices`,
+every IANA name the gateway knows; clients offer exactly those. An unknown name is refused with 400
+`preference_refused`, key `time_zone`. Changing it never moves an existing automation: each keeps the
+zone it was created with until its trigger is revised.
+
+`default_workflow` is one entry per
 app interface (`abstractcode.agent.v1`, `abstractassistant.agent.v1`). `null` follows the
 gateway's per-app default, which is the admin setting `agents.default_workflow.<interface>`
 (Workflows → *Default workflow per app*, [configuration.md](./configuration.md#default-agent-workflow)); it
 is never copied into the account. A chosen workflow is stored without a version, so it runs its
 latest published version. The PUT replaces the named interfaces and keeps the others. It is
 refused with 400 `{"detail": {"reason": "preference_refused", "message": <sentence>, "key": <key>}}`
-for an unknown key ("Unknown preference 'theme': this gateway declares default_workflow."), an
+for an unknown key ("Unknown preference 'theme': this gateway declares default_workflow, time_zone."), an
 interface that is not an app's, or a workflow the account may not run for that app ("…refused:
 'helper@1.0.0:agent' declares abstractassistant.agent.v1, not abstractcode.agent.v1"). A refused PUT
 changes nothing. The change is audited on the target account's activity ("Preferences changed").

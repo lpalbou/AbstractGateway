@@ -4359,7 +4359,7 @@ serve:
 | `/api/gateway/admin/users`, `/admin/runtime-reservations` | user accounts and retained runtimes (admin) | [security.md](docs/security.md#tenant-and-user-isolation) |
 | `/api/gateway/admin/accounts`, `/admin/accounts/{id}/active`, `/admin/accounts/{id}/activity`, `/me/accounts`, `/me/accounts/{id}/activity`, `/me/activity` | the Accounts page: users and entities in one list (admin), your own account and your entities (everyone), the Active switch, activity from the audit log | [below](#accounts-and-activity) |
 | `/api/gateway/admin/runtime-config` | runtime settings (admin) | [configuration.md](docs/configuration.md) |
-| `/api/gateway/accounts/{me\|account}/preferences` | one account's client preferences: the default workflow per app (the account itself, an admin, an entity's creator) | [below](#account-preferences) |
+| `/api/gateway/accounts/{me\|account}/preferences` | one account's client preferences: the default workflow per app and the time zone (the account itself, an admin, an entity's creator) | [below](#account-preferences) |
 | `/api/gateway/workspace/policy`, `/workspace/policy/{account}`, `/sessions/{id}/workspaces`, `/workspace/effective/{account}` (GET and dry-run POST), `POST /workspace/path-check` | workspaces, three levels: the gateway policy = the eligible set (read: everyone; write: admin), one account's default subset (admin, the account itself, an entity's creator; `me` = the caller), one conversation's subset (its owner, or an admin), the effective set the gateway enforces, and the path check run before saving a row (`{path}` → `{path, normalized, absolute, exists, is_dir, valid, sentence}`; any signed-in principal) | [below](#workspaces), [security.md](docs/security.md#workspaces-three-levels) |
 | `/api/gateway/admin/runtimes`, `?account=<id>[&tenant_id=<t>]` | the runtime inventory (admin); `account` keeps only the planes that account owns and echoes `filter` | [console.md](docs/console.md#runtimes-of-one-account) |
 | `/api/gateway/network`, `/network/restart` | network exposure, addresses, reverse proxy | [configuration.md](docs/configuration.md#api-gateway_network_v1) |
@@ -5301,6 +5301,7 @@ typed waits, attention and operations, is in [automations.md](docs/automations.m
 | Route | Answer |
 |---|---|
 | `GET /api/gateway/trigger-sources` | `{items: [{id, version, label, capabilities, config_schema, event_schema, available, unavailable_reason?}]}` |
+| `POST /api/gateway/automations/schedule-preview` | `{trigger, time_zone, schedule_rule_text, schedule_text, next_run_at, next_run_local, first_run_sentence}` ([automations.md](docs/automations.md#schedule-preview)) |
 | `POST /api/gateway/automations` | `{request_id, title?, target, trigger?, context?, policy?}` → `{automation_id, revision, summary}` |
 | `GET /api/gateway/automations?status=&archived_only=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, archived_automations}` (older scheduled runs on the last page, `legacy: true`). Archived automations are left out unless `archived_only=true` (only them) or `status` names `archived`; `archived_automations` counts yours |
 | `GET /api/gateway/automations/{automation_id}` | `{definition, active_revision, summary}` |
@@ -6417,8 +6418,8 @@ override them for itself.
 
 | Route | Purpose |
 |---|---|
-| `GET /api/gateway/accounts/{account}/preferences` | `{ok, account: "tenant:user", can_edit, preferences: {default_workflow: {<interface>: value \| null}}, declared: {default_workflow: {label, help}}, apps: [row]}` |
-| `PUT /api/gateway/accounts/{account}/preferences` | `{"default_workflow": {<interface>: "bundle:flow" \| "catalog:bundle:flow" \| null}}` → the GET answer |
+| `GET /api/gateway/accounts/{account}/preferences` | `{ok, account: "tenant:user", can_edit, preferences: {default_workflow: {<interface>: value \| null}, time_zone: value \| null}, declared: {default_workflow: {label, help}, time_zone: {label, help}}, apps: [row], time_zone: {value, gateway_default, effective, label, help, choices}}` |
+| `PUT /api/gateway/accounts/{account}/preferences` | `{"default_workflow": {<interface>: "bundle:flow" \| "catalog:bundle:flow" \| null}, "time_zone": "Europe/Paris" \| null}` (each key optional) → the GET answer |
 
 `{account}` is `me` (the caller), `name`, `tenant:name` or an entity's slug. Who: anyone for their
 own; an admin for any account; an entity's preferences by an admin or the entity's creator. Anyone
@@ -6427,14 +6428,25 @@ else gets 403 with "Only an admin or the account itself can read or change its p
 answers 404. A gateway older than 0.13.1 has no such route (404 Not Found); the Assistant and
 AbstractCode then keep their own choice as before.
 
-Only keys the gateway declares are accepted. Today there is one, `default_workflow`: one entry per
+Only keys the gateway declares are accepted: `default_workflow` and `time_zone`.
+
+`time_zone` is the account's IANA time zone. Daily, weekly and monthly automations are created on it
+([automations.md](docs/automations.md#trigger-sources)), and automation summaries show times in it.
+`null` follows the gateway default, which is the time zone of the computer the gateway runs on (the
+OS `TZ`, else the zone `/etc/localtime` points to, else `/etc/timezone`, else `UTC`). The GET's
+`time_zone` block gives the stored `value`, the `gateway_default`, the `effective` zone and `choices`,
+every IANA name the gateway knows; clients offer exactly those. An unknown name is refused with 400
+`preference_refused`, key `time_zone`. Changing it never moves an existing automation: each keeps the
+zone it was created with until its trigger is revised.
+
+`default_workflow` is one entry per
 app interface (`abstractcode.agent.v1`, `abstractassistant.agent.v1`). `null` follows the
 gateway's per-app default, which is the admin setting `agents.default_workflow.<interface>`
 (Workflows → *Default workflow per app*, [configuration.md](docs/configuration.md#default-agent-workflow)); it
 is never copied into the account. A chosen workflow is stored without a version, so it runs its
 latest published version. The PUT replaces the named interfaces and keeps the others. It is
 refused with 400 `{"detail": {"reason": "preference_refused", "message": <sentence>, "key": <key>}}`
-for an unknown key ("Unknown preference 'theme': this gateway declares default_workflow."), an
+for an unknown key ("Unknown preference 'theme': this gateway declares default_workflow, time_zone."), an
 interface that is not an app's, or a workflow the account may not run for that app ("…refused:
 'helper@1.0.0:agent' declares abstractassistant.agent.v1, not abstractcode.agent.v1"). A refused PUT
 changes nothing. The change is audited on the target account's activity ("Preferences changed").
@@ -7752,6 +7764,7 @@ export AUTH="Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstr
 |---|---|
 | `GET /api/gateway/trigger-sources` | what can start an automation ([Trigger sources](#trigger-sources)) |
 | `POST /api/gateway/automations` | create an automation ([Create](#create-an-automation)) |
+| `POST /api/gateway/automations/schedule-preview` | what a trigger would do if saved now: its sentence and first run ([Schedule preview](#schedule-preview)) |
 | `GET /api/gateway/automations` | list your automations, older scheduled runs included ([List and read](#list-and-read)) |
 | `GET /api/gateway/automations/{automation_id}` | one automation: definition and summary |
 | `PATCH /api/gateway/automations/{automation_id}` | revise title, target, trigger, context or policy ([Change](#change-an-automation)) |
@@ -7803,6 +7816,7 @@ Rare transport answers keep the same shape with `not_found` (unknown path),
 {"items": [
   {"id": "schedule", "version": 1, "label": "Schedule", "capabilities": {"kind": "time"},
    "config_schema": {…}, "event_schema": {…}, "available": true},
+  {"id": "schedule", "version": 2, "label": "Schedule", "capabilities": {"kind": "time"}, …, "available": true},
   {"id": "manual", "version": 1, "label": "Manual", "capabilities": {"kind": "manual"}, …, "available": true}
 ]}
 ```
@@ -7815,7 +7829,30 @@ Rare transport answers keep the same shape with `not_found` (unknown path),
   `until` is exclusive and must be after `start_at`; `count` (1 to 1,000,000)
   caps the number of ticks and needs `every` when above 1. Without `every`
   the schedule fires once, at `start_at`. Ticks missed while the gateway was
-  down coalesce into one occurrence.
+  down coalesce into one occurrence. Existing `schedule@1` automations keep
+  working unchanged; new automations use `schedule@2`.
+- **`schedule@2`** adds calendar rules in a time zone. `config.kind` is one of:
+  - `"every"`: `{every, start_at?, until?, count?}`, the fixed UTC interval of
+    `schedule@1`;
+  - `"once"`: `{start_at}`, or `{at: "2026-12-24T18:30"}`, a wall time in the
+    automation's time zone;
+  - `"daily"`: `{at: "08:00"}`;
+  - `"weekly"`: `{days: ["mon", "thu"], at: "08:00"}` (any non-empty set of
+    `mon` … `sun`);
+  - `"monthly"`: `{day: 1..31 | "last", at: "08:00"}`; a day beyond the
+    month's length runs on its last day (day 31 runs on 30 April and on 28 or
+    29 February).
+
+  Calendar rules run on wall time in `config.time_zone`, an IANA name such as
+  `Europe/Paris`. When you leave it out, the gateway fills in **your account's
+  time zone** at creation ([Account preferences](docs/api.md#account-preferences));
+  a revision without one keeps the automation's zone. To change it later, send
+  the trigger again with another `time_zone`. Daylight saving is handled: a
+  daily 08:00 stays at 08:00; a wall time that does not exist on the
+  spring-forward day (02:30) runs at 03:30 that day; a wall time that happens
+  twice on the fall-back day runs once. Missed ticks coalesce and a resume
+  never catches up, as with `schedule@1`. An unknown zone is refused with 422
+  `invalid_definition`, field `trigger.config.time_zone`.
 - **`manual@1`** takes `{}`: the automation runs only when you send
   `automation.run_now`.
 - **`email.received@1`** runs on new mail in your own mailbox
@@ -7984,6 +8021,28 @@ Questions the workflow itself asks (Ask User) wait for a person in both modes.
 A change of `tool_approval` applies from the next occurrence. Discussions
 never inherit the grant: their tools ask as in any chat.
 
+## Schedule preview
+
+`POST /api/gateway/automations/schedule-preview` with `{"trigger": {source_id,
+source_version, config}}` answers what that trigger would do if you saved it
+now. Nothing is stored. The trigger is checked by the same validator as a
+create (same 422 answers) and the time zone is filled in the same way.
+
+```json
+{"trigger": {"source_id": "schedule", "source_version": 2,
+             "config": {"kind": "daily", "at": "08:00", "time_zone": "Europe/Paris", "start_at": "…", "anchor": "…"}},
+ "time_zone": "Europe/Paris",
+ "schedule_rule_text": "Every day at 08:00 (Europe/Paris)",
+ "schedule_text": "Every day at 08:00 (Europe/Paris) · next Fri 9 Oct 08:00",
+ "next_run_at": "2026-10-09T06:00:00+00:00", "next_run_local": "2026-10-09T08:00:00+02:00",
+ "first_run_sentence": "Runs every day at 08:00 (Europe/Paris), first run Fri 9 Oct 08:00."}
+```
+
+`first_run_sentence` is the line a schedule dialog shows under its "When"
+fields, e.g. "Runs every 24 hours (UTC), first run now." or "Runs once at Thu
+24 Dec 18:30 (Europe/Paris).". `next_run_at` and `next_run_local` are `null`
+for a trigger with no clock time (manual, email).
+
 ## List and read
 
 | Route | Answer |
@@ -8010,6 +8069,10 @@ never inherit the grant: their tools ask as in any chat.
  "trigger": {"binding_id": "…", "source_id": "schedule", "source_version": 1, "config": {…}},
  "context_mode": "independent", "workspace_root": "/…/workspaces/session-automation-…",
  "next_fire_at": "…", "occurrence_count": 6,
+ "next_run_at": "2026-10-09T06:00:00+00:00", "next_run_local": "2026-10-09T08:00:00+02:00",
+ "time_zone": "Europe/Paris",
+ "schedule_rule_text": "Every day at 08:00 (Europe/Paris)",
+ "schedule_text": "Every day at 08:00 (Europe/Paris) · next Fri 9 Oct 08:00",
  "current_occurrence": {"index": 7, "run_id": "…", "attempt": 1, "status": "running"},   // or null
  "last_occurrence": {"run_id", "index", "status", "attempts", "fired_at", "finished_at"?, "excerpt", "notify"},
  "attention": {"pending_waits": 0, "unread": false, "unseen_count": 0, "cursor": "att1:3", "items": [], "waits": []},
@@ -8025,6 +8088,20 @@ never inherit the grant: their tools ask as in any chat.
   automation, also while an occurrence is running (a tick missed meanwhile
   runs as soon as the current one ends). It is absent for a manual trigger, a
   finished schedule, and a paused, archived, completed or failed automation.
+- `next_run_at` is the same instant as `next_fire_at` (UTC) and
+  `next_run_local` the same instant with the offset of `time_zone`; both are
+  absent when `next_fire_at` is.
+- `time_zone` is a `schedule@2` automation's zone; for any other trigger it is
+  the owner's account time zone.
+- `schedule_text` is the one sentence every client shows for the schedule,
+  verbatim: the rule (`schedule_rule_text`) and, when a next run exists,
+  " · next <day> <date> <time>" in `time_zone` (the year is added when it is
+  not the current one). Examples: "Every Mon, Wed and Fri at 07:30
+  (Europe/Paris) · next Mon 12 Oct 07:30", "Monthly on day 31 (or the last
+  day) at 08:00 (Europe/Paris)", "Monthly on the last day at 23:00 (UTC)",
+  "Every 24 hours (UTC) · next Fri 9 Oct 21:53", "Once at Thu 24 Dec 18:30
+  (Europe/Paris)", "When an email arrives", "Manual runs only". Clients never
+  compute a next run themselves.
 - `current_occurrence` is the occurrence in progress, `status` `admitted`,
   `running` or `backoff` (waiting to retry), or `null` when none is.
 - `last_occurrence.excerpt` holds the first 280 characters of its answer.
@@ -8360,10 +8437,11 @@ python scripts/accept_automations_v1.py --data-dir /tmp/automation-acceptance
 
 ## Limits in v1
 
-- Schedules are fixed UTC intervals (`s`, `m`, `h`, `d`, at most `366d`):
-  no cron expressions, calendar months, time zones or daylight-saving rules.
-- The trigger sources are `schedule@1` and `manual@1`; there are no external
-  or event triggers.
+- Schedules are fixed UTC intervals (`s`, `m`, `h`, `d`, at most `366d`) or
+  daily, weekly and monthly rules at a wall time in an IANA time zone
+  (`schedule@2`); there are no cron expressions.
+- The trigger sources are `schedule@1`, `schedule@2`, `manual@1` and
+  `email.received@1`; there are no other external triggers.
 - Occurrences run one at a time, missed ticks coalesce, and a failed
   occurrence never stops the automation. These policies cannot be changed.
 - Growing history is the most recent whole turns within the configured token budget (50,000 tokens by default) and is not
@@ -10441,6 +10519,17 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+Requires AbstractRuntime with `schedule@2` (the next runtime release).
+
+### Added
+
+- Automations: calendar schedules. The trigger `schedule@2` takes `{kind: "daily", at: "08:00"}`, `{kind: "weekly", days: ["mon", "thu"], at}`, `{kind: "monthly", day: 1..31 | "last", at}`, plus `every` and `once` (a `once` may give a wall time `at`), evaluated in the automation's `config.time_zone` with daylight saving handled. A rule sent without a time zone gets the owner's account time zone; a revision without one keeps the automation's zone. `schedule@1` automations and requests work unchanged. See `docs/automations.md`.
+- Every automation summary (list, read, create answer) carries `next_run_at`, `next_run_local`, `time_zone`, `schedule_rule_text` and `schedule_text`, the one sentence clients show for the schedule ("Every day at 08:00 (Europe/Paris) · next Fri 9 Oct 08:00"). `next_fire_at` stays.
+- `POST /api/gateway/automations/schedule-preview`: what a trigger would do if saved now (normalized trigger, sentences, first run, `first_run_sentence`); nothing is stored.
+- Account preference `time_zone` (`GET/PUT /api/gateway/accounts/{account}/preferences`): an IANA zone or `null` for the gateway default, the time zone of the computer the gateway runs on. The GET adds a `time_zone` block with the default, the effective zone and the list of zone names.
 
 ## [0.13.1] - 2026-10-08
 

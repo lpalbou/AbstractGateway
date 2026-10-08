@@ -68,6 +68,7 @@ export AUTH="Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstr
 |---|---|
 | `GET /api/gateway/trigger-sources` | what can start an automation ([Trigger sources](#trigger-sources)) |
 | `POST /api/gateway/automations` | create an automation ([Create](#create-an-automation)) |
+| `POST /api/gateway/automations/schedule-preview` | what a trigger would do if saved now: its sentence and first run ([Schedule preview](#schedule-preview)) |
 | `GET /api/gateway/automations` | list your automations, older scheduled runs included ([List and read](#list-and-read)) |
 | `GET /api/gateway/automations/{automation_id}` | one automation: definition and summary |
 | `PATCH /api/gateway/automations/{automation_id}` | revise title, target, trigger, context or policy ([Change](#change-an-automation)) |
@@ -119,6 +120,7 @@ Rare transport answers keep the same shape with `not_found` (unknown path),
 {"items": [
   {"id": "schedule", "version": 1, "label": "Schedule", "capabilities": {"kind": "time"},
    "config_schema": {…}, "event_schema": {…}, "available": true},
+  {"id": "schedule", "version": 2, "label": "Schedule", "capabilities": {"kind": "time"}, …, "available": true},
   {"id": "manual", "version": 1, "label": "Manual", "capabilities": {"kind": "manual"}, …, "available": true}
 ]}
 ```
@@ -131,7 +133,30 @@ Rare transport answers keep the same shape with `not_found` (unknown path),
   `until` is exclusive and must be after `start_at`; `count` (1 to 1,000,000)
   caps the number of ticks and needs `every` when above 1. Without `every`
   the schedule fires once, at `start_at`. Ticks missed while the gateway was
-  down coalesce into one occurrence.
+  down coalesce into one occurrence. Existing `schedule@1` automations keep
+  working unchanged; new automations use `schedule@2`.
+- **`schedule@2`** adds calendar rules in a time zone. `config.kind` is one of:
+  - `"every"`: `{every, start_at?, until?, count?}`, the fixed UTC interval of
+    `schedule@1`;
+  - `"once"`: `{start_at}`, or `{at: "2026-12-24T18:30"}`, a wall time in the
+    automation's time zone;
+  - `"daily"`: `{at: "08:00"}`;
+  - `"weekly"`: `{days: ["mon", "thu"], at: "08:00"}` (any non-empty set of
+    `mon` … `sun`);
+  - `"monthly"`: `{day: 1..31 | "last", at: "08:00"}`; a day beyond the
+    month's length runs on its last day (day 31 runs on 30 April and on 28 or
+    29 February).
+
+  Calendar rules run on wall time in `config.time_zone`, an IANA name such as
+  `Europe/Paris`. When you leave it out, the gateway fills in **your account's
+  time zone** at creation ([Account preferences](./api.md#account-preferences));
+  a revision without one keeps the automation's zone. To change it later, send
+  the trigger again with another `time_zone`. Daylight saving is handled: a
+  daily 08:00 stays at 08:00; a wall time that does not exist on the
+  spring-forward day (02:30) runs at 03:30 that day; a wall time that happens
+  twice on the fall-back day runs once. Missed ticks coalesce and a resume
+  never catches up, as with `schedule@1`. An unknown zone is refused with 422
+  `invalid_definition`, field `trigger.config.time_zone`.
 - **`manual@1`** takes `{}`: the automation runs only when you send
   `automation.run_now`.
 - **`email.received@1`** runs on new mail in your own mailbox
@@ -300,6 +325,28 @@ Questions the workflow itself asks (Ask User) wait for a person in both modes.
 A change of `tool_approval` applies from the next occurrence. Discussions
 never inherit the grant: their tools ask as in any chat.
 
+## Schedule preview
+
+`POST /api/gateway/automations/schedule-preview` with `{"trigger": {source_id,
+source_version, config}}` answers what that trigger would do if you saved it
+now. Nothing is stored. The trigger is checked by the same validator as a
+create (same 422 answers) and the time zone is filled in the same way.
+
+```json
+{"trigger": {"source_id": "schedule", "source_version": 2,
+             "config": {"kind": "daily", "at": "08:00", "time_zone": "Europe/Paris", "start_at": "…", "anchor": "…"}},
+ "time_zone": "Europe/Paris",
+ "schedule_rule_text": "Every day at 08:00 (Europe/Paris)",
+ "schedule_text": "Every day at 08:00 (Europe/Paris) · next Fri 9 Oct 08:00",
+ "next_run_at": "2026-10-09T06:00:00+00:00", "next_run_local": "2026-10-09T08:00:00+02:00",
+ "first_run_sentence": "Runs every day at 08:00 (Europe/Paris), first run Fri 9 Oct 08:00."}
+```
+
+`first_run_sentence` is the line a schedule dialog shows under its "When"
+fields, e.g. "Runs every 24 hours (UTC), first run now." or "Runs once at Thu
+24 Dec 18:30 (Europe/Paris).". `next_run_at` and `next_run_local` are `null`
+for a trigger with no clock time (manual, email).
+
 ## List and read
 
 | Route | Answer |
@@ -326,6 +373,10 @@ never inherit the grant: their tools ask as in any chat.
  "trigger": {"binding_id": "…", "source_id": "schedule", "source_version": 1, "config": {…}},
  "context_mode": "independent", "workspace_root": "/…/workspaces/session-automation-…",
  "next_fire_at": "…", "occurrence_count": 6,
+ "next_run_at": "2026-10-09T06:00:00+00:00", "next_run_local": "2026-10-09T08:00:00+02:00",
+ "time_zone": "Europe/Paris",
+ "schedule_rule_text": "Every day at 08:00 (Europe/Paris)",
+ "schedule_text": "Every day at 08:00 (Europe/Paris) · next Fri 9 Oct 08:00",
  "current_occurrence": {"index": 7, "run_id": "…", "attempt": 1, "status": "running"},   // or null
  "last_occurrence": {"run_id", "index", "status", "attempts", "fired_at", "finished_at"?, "excerpt", "notify"},
  "attention": {"pending_waits": 0, "unread": false, "unseen_count": 0, "cursor": "att1:3", "items": [], "waits": []},
@@ -341,6 +392,20 @@ never inherit the grant: their tools ask as in any chat.
   automation, also while an occurrence is running (a tick missed meanwhile
   runs as soon as the current one ends). It is absent for a manual trigger, a
   finished schedule, and a paused, archived, completed or failed automation.
+- `next_run_at` is the same instant as `next_fire_at` (UTC) and
+  `next_run_local` the same instant with the offset of `time_zone`; both are
+  absent when `next_fire_at` is.
+- `time_zone` is a `schedule@2` automation's zone; for any other trigger it is
+  the owner's account time zone.
+- `schedule_text` is the one sentence every client shows for the schedule,
+  verbatim: the rule (`schedule_rule_text`) and, when a next run exists,
+  " · next <day> <date> <time>" in `time_zone` (the year is added when it is
+  not the current one). Examples: "Every Mon, Wed and Fri at 07:30
+  (Europe/Paris) · next Mon 12 Oct 07:30", "Monthly on day 31 (or the last
+  day) at 08:00 (Europe/Paris)", "Monthly on the last day at 23:00 (UTC)",
+  "Every 24 hours (UTC) · next Fri 9 Oct 21:53", "Once at Thu 24 Dec 18:30
+  (Europe/Paris)", "When an email arrives", "Manual runs only". Clients never
+  compute a next run themselves.
 - `current_occurrence` is the occurrence in progress, `status` `admitted`,
   `running` or `backoff` (waiting to retry), or `null` when none is.
 - `last_occurrence.excerpt` holds the first 280 characters of its answer.
@@ -676,10 +741,11 @@ python scripts/accept_automations_v1.py --data-dir /tmp/automation-acceptance
 
 ## Limits in v1
 
-- Schedules are fixed UTC intervals (`s`, `m`, `h`, `d`, at most `366d`):
-  no cron expressions, calendar months, time zones or daylight-saving rules.
-- The trigger sources are `schedule@1` and `manual@1`; there are no external
-  or event triggers.
+- Schedules are fixed UTC intervals (`s`, `m`, `h`, `d`, at most `366d`) or
+  daily, weekly and monthly rules at a wall time in an IANA time zone
+  (`schedule@2`); there are no cron expressions.
+- The trigger sources are `schedule@1`, `schedule@2`, `manual@1` and
+  `email.received@1`; there are no other external triggers.
 - Occurrences run one at a time, missed ticks coalesce, and a failed
   occurrence never stops the automation. These policies cannot be changed.
 - Growing history is the most recent whole turns within the configured token budget (50,000 tokens by default) and is not
