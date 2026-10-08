@@ -467,8 +467,14 @@ fn ready_view(
 
 /// The web's tooltip of an app action (the card buttons' data-af-tip).
 fn verb_tip(row: &AppRow, v: &VerbState) -> String {
+    // The web card's data-af-tip texts (console_ui.py appCardMarkup).
     let n = &row.name;
+    let first_entity = row.id == "entity" && row.entities_count == Some(0);
+    let entity_title = format!("Open {n} on the form that creates your first entity, signed in");
     match v.verb {
+        AppVerb::Install if row.is_desktop() => {
+            format!("Install the {n} on the gateway's computer (into the gateway's own Python)")
+        }
         AppVerb::Install => format!(
             "Install {n}{}{}",
             if row.install_parts.iter().any(|p| p == "tui") {
@@ -482,26 +488,35 @@ fn verb_tip(row: &AppRow, v: &VerbState) -> String {
                 ""
             }
         ),
-        AppVerb::Open if row.id == "entity" && row.entities_count == Some(0) => {
-            "Create your first entity".to_string()
+        AppVerb::Open if first_entity && row.running => entity_title,
+        AppVerb::Open if first_entity => {
+            let mut t = entity_title;
+            if let Some(c) = t.get_mut(0..1) {
+                c.make_ascii_lowercase();
+            }
+            format!("Start {n}, then {t}")
         }
-        AppVerb::Open if row.installed && !row.running => {
-            format!("Start {n} and open it in a new tab, signed in")
-        }
-        AppVerb::Open => format!("Open {n} in a new tab, signed in"),
-        AppVerb::DesktopOpen if row.running => {
-            "Bring the Assistant to the front on this computer".to_string()
-        }
-        AppVerb::DesktopOpen => "Start the Assistant on this computer".to_string(),
+        AppVerb::Open if row.running => format!("Open {n} in a new tab, signed in"),
+        AppVerb::Open => format!("Start {n} and open it in a new tab, signed in"),
+        AppVerb::DesktopOpen if row.running => format!("Bring the {n} to the front on this computer"),
+        AppVerb::DesktopOpen => format!("Start the {n} on this computer"),
         AppVerb::Update => row.update_tip.clone().unwrap_or_else(|| {
             format!(
                 "Install the newest {n} ({}); a running app restarts on it",
-                row.latest_version.clone().unwrap_or_default()
+                row.latest_version.clone().unwrap_or_else(|| "latest".into())
             )
         }),
         AppVerb::OpenTerminal => {
             format!("The same {n}, in a terminal window on this computer, signed in")
         }
+        AppVerb::InstallTerminal if row.tui.as_ref().is_some_and(|t| t.installed) => {
+            format!("Install the newest {n} terminal app")
+        }
+        AppVerb::InstallTerminal => format!(
+            "Install {n}'s terminal app: a ready-made download from {n}'s release, checked against its published checksums"
+        ),
+        AppVerb::Cancel => format!("Stop installing {n}"),
+        AppVerb::CancelTerminal => format!("Stop installing {n}'s terminal app"),
         _ => v.label.clone(),
     }
 }

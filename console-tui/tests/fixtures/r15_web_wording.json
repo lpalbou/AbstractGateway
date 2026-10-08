@@ -1,0 +1,35 @@
+{
+  "_source": "scripts/extract_web_wording.py (do not edit by hand)",
+  "account_tips": {
+    "email": "Email address and mailbox of {n}",
+    "openai_api": "OpenAI API access for {n}",
+    "logs": "Activity log of {n}",
+    "workspace": "Workspaces {n}'s agents may use",
+    "preferences": "Default workflows of {n}",
+    "manage": "Manage {n} (mind, voice, prompt…)",
+    "rotate": "Rotate {n}'s sign-in token",
+    "archive": "Archive {n} (kept, hidden)",
+    "unarchive": "Unarchive {n} (comes back inactive)"
+  },
+  "app_tips": [
+    "Open {n} on the form that creates your first entity, signed in",
+    "Installing {n} for the terminal",
+    "Stop installing {n}'s terminal app",
+    "The same {n}, in a terminal window on this computer, signed in",
+    "{n}'s terminal app did not install.",
+    "Install the newest {n} terminal app",
+    "Install {n}'s terminal app: a ready-made download from {n}'s release, checked against its published checksums",
+    "Copy the install command for {n}'s terminal app",
+    "Copy the command that opens {n} in a terminal",
+    "Installing {n}",
+    "Stop installing {n}",
+    "Install the {n} on the gateway's computer (into the gateway's own Python)",
+    "Install {n}${withTui ? \" for the browser and the terminal\" : \"\"}${app.needs_node_install ? \" (Node.js is installed for you first: about 56 MB, no password needed)\" : \"\"}",
+    "Bring the {n} to the front on this computer",
+    "Start the {n} on this computer",
+    "Open {n} in a new tab, signed in",
+    "Start {n}, then ${first.title(name).charAt(0).toLowerCase()}${first.title(name).slice(1)}",
+    "Start {n} and open it in a new tab, signed in",
+    "{n} settings"
+  ]
+}

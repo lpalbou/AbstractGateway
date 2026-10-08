@@ -614,10 +614,7 @@ pub fn row_actions(r: &AccountRow, admin: bool) -> Vec<Action> {
         out.push(
             Action::glyph("openai", "OpenAI API")
                 .key('o')
-                .tooltip(format!(
-                    "OpenAI API access for {n} ({})",
-                    if r.openai_api { "on" } else { "off" }
-                ))
+                .tooltip(format!("OpenAI API access for {n}"))
                 .refused(why),
         );
     }
@@ -1940,7 +1937,10 @@ fn open_user_form(cx: Scope, ctx: &Ctx, existing: Option<UserRow>) {
                     MultiSelect::new(vec![
                         SelectOption::keyed("user", "User — runs workflows on their own runtime"),
                         SelectOption::keyed("admin", "Admin — manages this gateway"),
-                        SelectOption::keyed("readonly", "Read-only — can look, cannot change anything"),
+                        SelectOption::keyed(
+                            "readonly",
+                            "Read-only — can look, cannot change anything",
+                        ),
                     ])
                     .values(roles)
                     .placeholder("pick a role…")

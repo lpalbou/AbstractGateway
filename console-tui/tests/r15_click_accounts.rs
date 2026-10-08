@@ -411,7 +411,10 @@ fn enter_in_a_popup_commits_the_choice_never_the_form() {
     h.type_text("bob");
     h.key(b"\t");
     let s = h.key(b"\r"); // opens the Role popup
-    assert!(s.contains("Read-only — can look"), "the Role popup is open:\n{s}");
+    assert!(
+        s.contains("Read-only — can look"),
+        "the Role popup is open:\n{s}"
+    );
     h.key(b"\r"); // commits the highlighted role
     assert!(
         !h.sent().iter().any(|c| matches!(c, Cmd::CreateUser { .. })),
@@ -423,7 +426,9 @@ fn enter_in_a_popup_commits_the_choice_never_the_form() {
     h.sent();
     h.store.json.set(
         "prefs.default.alice",
-        Loadable::Ready(serde_json::from_str(include_str!("fixtures/r14w3_prefs_alice_set.json")).unwrap()),
+        Loadable::Ready(
+            serde_json::from_str(include_str!("fixtures/r14w3_prefs_alice_set.json")).unwrap(),
+        ),
     );
     h.turns(3);
     h.key(b"\r"); // open the first Select
