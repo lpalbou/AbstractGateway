@@ -1,6 +1,7 @@
 //! Network page (key `N`): who can reach the gateway, every address it
-//! answers on, and the Advanced block (allowed origins, proxies on other
-//! machines) — the web console's Network page (console_ui.py
+//! answers on, and — inside "Reached through another address?" — the
+//! allowed origins and proxies on other machines (R15 D1) — the web
+//! console's Network page (console_ui.py
 //! `netViewMarkup`, `netAddressRow`, `netOtherAddressMarkup`,
 //! `netProxyMarkup`) in the terminal, same sentences, same routes.
 //! The Connection screen keeps a one-line summary ([`summary`]).
@@ -12,11 +13,11 @@
 //! validation sentence verbatim), `POST /network/restart`. The gateway
 //! owns every verdict; this page renders them and never guesses.
 //!
-//! Keys: ↑/↓ + Enter choose who can reach the gateway · Tab to the
-//! addresses (↑/↓, Enter shows the note, c copies a working address) ·
-//! w What to know · a Advanced (origins: type + Enter adds, x removes the
-//! selected one; space switches "Trust proxies on other machines") ·
-//! r Check again. The page scrolls to whatever holds the keyboard.
+//! R15: mouse-first, keyboard-complete. The mode choice is a Segmented
+//! (one Tab stop per mode); the addresses a DataTable (↑/↓, Enter or `c`
+//! copies a working address, Tab enters the row's Copy); every page
+//! button comes from `page_actions` (its key in the tooltip); `w` What to
+//! know. The page scrolls to the focused control only when it is off-screen.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -1393,7 +1394,7 @@ fn ready_view(
     }
 
     // ---- Reached through another address? (allowed origins and proxy
-    // trust are shown IN this card — R15 D1, no "Advanced" disclosure) ----
+    // trust are shown IN this card — R15 D1, no disclosure) ----
     p.blank(t);
     let ts_name = raw
         .get("tailscale")

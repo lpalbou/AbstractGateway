@@ -848,7 +848,8 @@ pub fn open(ctx: &Ctx, cx: Scope) {
         ));
         return;
     }
-    let w = abstracttui::app::use_viewport(cx).get_untracked().w;
+    let _ = cx;
+    let w = abstracttui::app::current_viewport().w;
     let handle = DRAWERS.with(|d| {
         d.borrow()
             .as_ref()
@@ -864,6 +865,17 @@ pub fn open(ctx: &Ctx, cx: Scope) {
         None => store.notice.set(Some(
             "the docs assistant drawer is not installed (console defect: ui::root must call docs::install)".into(),
         )),
+    }
+}
+
+/// The drawer's width (cells) on this terminal: 48% from 120 columns,
+/// the full width below (the two installed drawers).
+fn drawer_width() -> i32 {
+    let w = abstracttui::app::current_viewport().w;
+    if w >= 120 {
+        ((w as f32) * 0.48).round() as i32
+    } else {
+        w
     }
 }
 
@@ -1022,9 +1034,7 @@ fn body_view(scx: Scope, ctx: &Ctx) -> View {
     let store = ctx.store;
     let d = store.docs;
     let t = use_theme(scx).get().tokens;
-    let w = (abstracttui::app::use_viewport(scx).get().w as usize)
-        .saturating_sub(4)
-        .max(20);
+    let w = (drawer_width() as usize).saturating_sub(4).max(20);
     if d.history_open.get() {
         return history_view(scx, ctx, &t, w);
     }
