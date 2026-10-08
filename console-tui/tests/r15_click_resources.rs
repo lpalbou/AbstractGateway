@@ -574,3 +574,118 @@ fn destructive_confirms_open_on_cancel() {
         .iter()
         .all(|c| !matches!(c, Cmd::UnloadModel { .. })));
 }
+
+#[test]
+fn the_cards_stack_and_the_gateway_card_is_whole() {
+    // The web's page: ◎ Gateway (whole), ▦ Memory & GPU, ▣ Models, ⌸ Session
+    // caches, one under the other — no section tabs.
+    let mut h = page();
+    let s = h.turns(1);
+    for needle in [
+        "◎ Gateway",
+        "Version",
+        "Desktop icon",
+        "Last restart",
+        "Start at login",
+        "Restart gateway…",
+        "▦ Memory & GPU",
+        "▣ Models (2 resident)",
+        "⌸ Session caches",
+        "sess1",
+    ] {
+        assert!(s.contains(needle), "{needle:?}:\n{s}");
+    }
+    assert!(s.find("▣ Models").unwrap() < s.find("⌸ Session caches").unwrap());
+}
+
+#[test]
+fn show_configured_cached_is_there_with_zero_rows_and_load_model_beside_it() {
+    let mut h = page();
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_from_payload(&json!({
+            "ok": true, "models": [], "session_caches": [], "degraded": [], "reasons": {}
+        }))));
+    let s = h.turns(3);
+    let line = s
+        .lines()
+        .find(|l| l.contains("▣ Models"))
+        .expect("the Models card head");
+    assert!(
+        line.contains("Show configured / cached (0)") && line.contains("Load model"),
+        "{line}"
+    );
+}
+
+#[test]
+fn the_created_column_is_the_webs_and_unknown_stays_empty() {
+    let mut h = page();
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_from_payload(&json!({
+            "ok": true, "models": [],
+            "session_caches": [
+                {"key": "k1", "provider": "mlx", "model": "m", "session_id": "s-known",
+                 "bytes": 1024u64, "token_count": 5u64, "created_at_s": 1760000000.5},
+                {"key": "k2", "provider": "mlx", "model": "m", "session_id": "s-unknown"}
+            ],
+            "degraded": [], "reasons": {}
+        }))));
+    let s = h.turns(3);
+    let head = s
+        .lines()
+        .find(|l| l.contains("Session") && l.contains("Created"))
+        .expect("caches head");
+    assert!(
+        head.contains("Tokens") && head.contains("Actions"),
+        "{head}"
+    );
+    let known = s.lines().find(|l| l.contains("s-known")).expect("row");
+    assert!(known.contains("2025-10-09 08:53:20"), "{known}");
+    let unknown = s.lines().find(|l| l.contains("s-unknown")).expect("row");
+    assert!(
+        !unknown.contains("1970") && !unknown.contains(" 0 "),
+        "{unknown}"
+    );
+    assert_eq!(models::fmt_epoch_s(None), "");
+    assert_eq!(models::fmt_epoch_s(Some(0.0)), "");
+}
+
+#[test]
+fn focus_follows_scroll_at_80x24() {
+    // 80x24: the Models table takes the keyboard and its card comes into
+    // view (the Gateway card scrolls away); Shift+Tab back to the card's
+    // Check now scrolls the page back up to it.
+    // A short page (80x18): the cards cannot all fit.
+    let mut h = harness((80, 18), Mount::Page(page_view));
+    h.admin();
+    let op = h.store.op;
+    op.runner
+        .set(Loadable::Ready(HostRunner::from_value(&runner())));
+    op.update
+        .set(Loadable::Ready(HostUpdate::from_value(&update())));
+    op.start_at_login
+        .set(Loadable::Ready(StartAtLogin::from_value(&login())));
+    op.tray.set(Loadable::Ready("shown (pid 4242)".into()));
+    h.store.host_state.set(Loadable::Ready(host()));
+    let s = h.turns(4);
+    assert!(
+        s.contains("Modality") && s.contains("qwen3-32b  ") && !s.contains("Desktop icon"),
+        "the table's card is in view, the Gateway card scrolled away:\n{s}"
+    );
+    let mut found = false;
+    for _ in 0..12 {
+        h.key(b"\x1b[Z");
+        let fl = h.ui.focus_line.get_untracked().unwrap_or_default();
+        if fl.contains("Check for a newer release") {
+            found = true;
+            break;
+        }
+    }
+    assert!(found, "Shift+Tab reaches Check now");
+    let s = h.turns(2);
+    assert!(
+        s.contains(" Check now "),
+        "the focused control is on screen:\n{s}"
+    );
+}

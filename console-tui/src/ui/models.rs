@@ -576,6 +576,65 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let detail_top = ui.models_detail_top;
     let focus = TableFocus::default();
     let sels = (model_key_sel, cache_key_sel);
+    // The page's scroll and its reveal map (focus follows scroll).
+    let scroll = cx.signal(0i32);
+    let visible = cx.signal(0i32);
+    cx.effect(move || {
+        let vp = crate::ui::page_viewport(cx).get();
+        // The page head (1 line on a short page, else 2) and the totals.
+        let head = if compact(cx) { 1 } else { 2 };
+        visible.set((vp.h - head - 1).max(3));
+    });
+    let reveal = Reveal {
+        scroll,
+        visible,
+        map: std::rc::Rc::new(std::cell::Cell::new([(0, 0); 3])),
+    };
+    // The selected table row follows too (arrow keys past the page's edge).
+    {
+        let rv = reveal.clone();
+        cx.effect(move || {
+            let i = ui.model_sel.get();
+            rv.show_row(1, 4, i);
+        });
+        let rv = reveal.clone();
+        cx.effect(move || {
+            let i = ui.cache_sel.get();
+            rv.show_row(2, 3, i);
+        });
+    }
+    // A focused control's section comes into view when it is off-screen:
+    // the focused control names itself (the status bar's focus line); the
+    // tables report their own focus (`on_focus`).
+    if let Some(fl) = super::w::tip::focus_line() {
+        let rv = reveal.clone();
+        cx.effect(move || {
+            let Some(text) = fl.get() else { return };
+            let gateway = [
+                PAUSE_TIP,
+                CHECK_TIP,
+                UPDATE_TIP,
+                "Restart gateway…",
+                "Quit gateway…",
+                "Start at login",
+            ];
+            let models = [
+                SHOW_CACHED_TIP,
+                LOAD_TIP,
+                "Ask the host how much context",
+                "Lock this model",
+                "Release ",
+                "Unload this model",
+            ];
+            if gateway.iter().any(|g| text.contains(g)) {
+                rv.show(0);
+            } else if models.iter().any(|g| text.contains(g)) {
+                rv.show(1);
+            } else if text.contains("Clear every prompt cache") {
+                rv.show(2);
+            }
+        });
+    }
 
     Element::new()
         .style(LayoutStyle::column().gap(0).grow(1.0).padding(Edges {
@@ -604,10 +663,14 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         .shortcut(KeyChord::plain(Key::Char('m')), move |_| {
             detail_top.update(|n| *n = n.saturating_add(1));
         })
-        .shortcut(KeyChord::plain(Key::Char('a')), move |_| {
-            let v = !show.get_untracked();
-            set_show_cached(v);
-            show.set(v);
+        .shortcut(KeyChord::plain(Key::Char('a')), {
+            let rv = reveal.clone();
+            move |_| {
+                let v = !show.get_untracked();
+                set_show_cached(v);
+                show.set(v);
+                rv.show(1);
+            }
         })
         .shortcut(KeyChord::plain(Key::Char('p')), {
             let c = ctx.clone();
@@ -634,26 +697,41 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             move |_| gateway_action(cx, &c, "quit")
         })
         .child(head(cx, ctx, &tt))
-        .child(gateway_card(cx, ctx, &tt))
-        .child(dyn_view_scoped(LayoutStyle::default().grow(1.0), {
-            let ctx_body = ctx.clone();
-            let keeper = super::util::FocusKeeper::new();
-            move |gcx| {
-                let data = store.host_state.get();
-                let ctx_b = ctx_body.clone();
-                let focus = focus.clone();
-                super::util::loadable_view_kept(
-                    &keeper,
-                    &tt,
-                    &store.conn.get(),
-                    || store.tick.get(),
-                    &data,
-                    |_d: &HostStateData| false, // the strip renders even with zero rows
-                    "",
-                    |d| body(gcx, cx, &ctx_b, &tt, d, show, &focus, sels),
-                )
-            }
-        }))
+        .child({
+            // THE PAGE SCROLLS (DESIGN §3.11: "cards stack, the page
+            // scrolls"): the Gateway card and the stacked cards below it.
+            let content = Element::new()
+                .style(LayoutStyle::column().gap(0).shrink(0.0))
+                .child(gateway_card(cx, ctx, &tt, &reveal))
+                .child(dyn_view_scoped(LayoutStyle::column().shrink(0.0), {
+                    let ctx_body = ctx.clone();
+                    let keeper = super::util::FocusKeeper::new();
+                    let reveal = reveal.clone();
+                    move |gcx| {
+                        let data = store.host_state.get();
+                        let ctx_b = ctx_body.clone();
+                        let focus = focus.clone();
+                        let reveal = reveal.clone();
+                        super::util::loadable_view_kept(
+                            &keeper,
+                            &tt,
+                            &store.conn.get(),
+                            || store.tick.get(),
+                            &data,
+                            |_d: &HostStateData| false, // the strip renders even with zero rows
+                            "",
+                            |d| body(gcx, cx, &ctx_b, &tt, d, show, &focus, sels, &reveal),
+                        )
+                    }
+                }))
+                .build();
+            Scroll::new(content)
+                .axes(false, true)
+                .offset_y(scroll)
+                .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))
+                .scrollbar_auto_hide(true)
+                .view(cx)
+        })
         .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
             // The totals footer — pinned so the tables' growth never
             // squeezes it out.
@@ -739,7 +817,8 @@ fn head(pcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
 /// The ◎ Gateway card. Rebuilt only when its facts change (a memo over the
 /// runner / tray / update / start-at-login answers): the runner poll must
 /// not take the focus off its switches and buttons.
-fn gateway_card(pcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
+fn gateway_card(pcx: Scope, ctx: &Ctx, t: &TokenSet, reveal: &Reveal) -> View {
+    let reveal_c = reveal.clone();
     let ctx = ctx.clone();
     let tt = *t;
     let store = ctx.store;
@@ -763,51 +842,7 @@ fn gateway_card(pcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         let (connected, admin, runner, runner_err, tray, update, login, lifecycle) = facts.get();
         let w = page_w(gcx);
         let mut col = Element::new().style(LayoutStyle::column().shrink(0.0));
-        if compact(gcx) {
-            let head_w = abstracttui::text::width(GATEWAY_TITLE) + 2;
-            let mut row = Element::new()
-                .style(
-                    LayoutStyle::row()
-                        .height(Dimension::Cells(1))
-                        .gap(2)
-                        .shrink(0.0),
-                )
-                .child(super::w::paint::fill_line(
-                    LayoutStyle::default()
-                        .width(Dimension::Cells(head_w))
-                        .height(Dimension::Cells(1))
-                        .shrink(0.0),
-                    vec![
-                        super::w::Ink::new("◎ ", tt.accent),
-                        super::w::Ink::new(GATEWAY_TITLE, tt.text).bold(),
-                    ],
-                    None,
-                ));
-            match (&runner, connected) {
-                (_, false) => {
-                    row = row.child(line(vec![span("not connected", tt.warn)]));
-                }
-                (Some(r), true) => {
-                    let ink = if r.paused { tt.warn } else { tt.ok };
-                    row = row.child(line(vec![span_bold(format!("● {}", r.state_text()), ink)]));
-                    if admin {
-                        let c = ctx.clone();
-                        row = row.child(
-                            super::w::Toggle::new(r.paused)
-                                .label(PAUSE_LABEL)
-                                .tip(format!("{PAUSE_TIP}  (p)"))
-                                .on_change(move |_| gateway_action(pcx, &c, "pause"))
-                                .view(gcx, &tt),
-                        );
-                    }
-                }
-                (None, true) => {
-                    row = row.child(line(vec![span("◌ reading the gateway host…", tt.info)]));
-                }
-            }
-            row = row.child(line(vec![span("F3 more", tt.text_faint)]));
-            return row.build();
-        }
+        reveal_c.set_card(gateway_rows(&store, w, false) as i32);
         col = col.child(section_head(&tt, "◎", GATEWAY_TITLE));
         if w >= 100 {
             col = col.child(super::w::form::sentence(
@@ -835,8 +870,16 @@ fn gateway_card(pcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         match (&runner, &runner_err) {
             (Some(r), _) => {
                 let ink = if r.paused { tt.warn } else { tt.ok };
-                state_row =
-                    state_row.child(line(vec![span_bold(format!("● {}", r.state_text()), ink)]));
+                state_row = state_row.child(super::w::paint::fill_line(
+                    LayoutStyle::default()
+                        .width(Dimension::Cells(
+                            abstracttui::text::width(&r.state_text()) + 2,
+                        ))
+                        .height(Dimension::Cells(1))
+                        .shrink(0.0),
+                    vec![super::w::Ink::new(format!("● {}", r.state_text()), ink).bold()],
+                    None,
+                ));
                 if admin {
                     let c = ctx.clone();
                     let tg = super::w::Toggle::new(r.paused)
@@ -1070,15 +1113,12 @@ fn gateway_action(cx: Scope, ctx: &Ctx, id: &str) {
     }
 }
 
-/// The Ready body: ▦ Memory & GPU (the PINNED head — meters, the
-/// accelerator's scoped label and its note, degradation notes — then the
-/// WINDOWED memory itemization), then the ▣ Models / ⌸ Session caches
-/// sections (one at a time: two segments) and the selected row's detail.
-///
-/// THE 80x24 RULE: when the terminal cannot hold both, the table's rows
-/// are reserved FIRST and the itemization gets what is left — windowed,
-/// with an affordance naming the lines that are off screen and the key
-/// that pages to them (`m`).
+/// The Ready body, STACKED as on the web: ▦ Memory & GPU (the meters,
+/// then the itemization — windowed on a short page, `m` pages it), ▣
+/// Models (its head: the count, "Show configured / cached", [Load model];
+/// the table; the selected row's facts) and ⌸ Session caches (its table).
+/// The page scrolls (the caller's Scroll); a focused control off-screen
+/// brings its section into view (`Reveal`).
 #[allow(clippy::too_many_arguments)]
 fn body(
     cx: Scope,
@@ -1089,58 +1129,28 @@ fn body(
     show: Signal<bool>,
     focus: &TableFocus,
     sels: (Signal<Option<String>>, Signal<Option<String>>),
+    reveal: &Reveal,
 ) -> View {
     let tt = *t;
     let ui = ctx.ui;
     let admin = ctx.store.conn.with(ConnPhase::is_admin);
     let all_models = d.models.clone();
-    let caches = d.caches.clone();
-    let caches_detail = d.caches.clone();
     let viewport = crate::ui::page_viewport(cx).get();
     let wrap_w = (viewport.w as usize)
         .saturating_sub(BLOCK_CHROME as usize + 6)
         .max(24);
-
     let head = head_rows(t, d);
     let detail = detail_rows(t, d, wrap_w);
-
-    // THE BUDGET, in rows, measured from what renders: the page head (1
-    // compact / 2), the Gateway card, the Memory & GPU heading (not
-    // compact), the pinned meters, the section segments, the Models bar,
-    // the selected row's detail and the totals footer are FIXED; the table
-    // (header + rule + up to four rows of two lines) is reserved next; the
-    // itemization takes what is left, windowed (`m` pages it).
-    let small = compact(cx);
-    let card = gateway_rows(&ctx.store, viewport.w - 2, small);
-    let fixed = if small { 2 } else { 3 }
-        + card
-        + head.len()
-        + 1
-        + 1
-        + 1
-        + 1
-        + usize::from(ui.wizard.get());
-    let room = (viewport.h.max(0) as usize).saturating_sub(fixed);
-    let n_vis = visible_models(&d.models, show.get()).len();
-    let table_want = 2 + 2 * n_vis.clamp(1, 4);
     let total = detail.len();
-    // The itemization keeps two lines and its affordance whatever happens
-    // (`m` must have something to page), the table the rest.
-    let detail_min = if total > 0 { total.min(2) + 1 } else { 0 };
-    let detail_cap = room
-        .saturating_sub(table_want)
-        .max(detail_min.min(room.saturating_sub(3)));
-    let win = if detail_cap >= total {
-        total
-    } else {
-        detail_cap.saturating_sub(1)
-    };
+    // A short page windows the itemization (the cards below come first; it
+    // is one `m` away); a tall one shows it whole.
+    let win = if viewport.h < 30 { total.min(3) } else { total };
     let positions = total - win + 1;
-    let shown_detail = win + usize::from(win < total && detail_cap > 0);
-    let table_rows = (room.saturating_sub(shown_detail + 2)).max(1) as i32;
+    let shown_detail = win + usize::from(win < total);
 
     let mut strip = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
     strip = strip.child(section_head(&tt, "▦", MEMORY_TITLE));
+    let head_n = head.len();
     for row in head {
         strip = strip.child(row);
     }
@@ -1158,7 +1168,7 @@ fn body(
             for (text, ink) in detail.iter().skip(top).take(win) {
                 col = col.child(line(vec![span(text.clone(), *ink)]));
             }
-            if win < total && detail_cap > 0 {
+            if win < total {
                 let above = top;
                 let below = total - top - win;
                 let mut bits: Vec<String> = Vec::new();
@@ -1180,95 +1190,87 @@ fn body(
         },
     ));
 
-    let ctx_m = ctx.clone();
-    let ctx_c = ctx.clone();
-    let focus_m = focus.clone();
-    let focus_c = focus.clone();
-    let models_title = format!("▣ {}", models_tab_title(&all_models));
-    let cached_n = all_models
-        .iter()
-        .filter(|r| r.resident != Some(true))
-        .count();
+    // Where each card starts inside the scrolled content (the reveal map):
+    // the Gateway card is above this body.
+    let card = gateway_rows(&ctx.store, viewport.w - 2, false) as i32;
+    let models_y = card + 1 + head_n as i32 + shown_detail as i32;
+    let vis_n = visible_models(&all_models, show.get_untracked()).len() as i32;
+    let models_h = 1 + 2 + 2 * vis_n.max(1) + 1;
+    reveal.set_sections(
+        models_y,
+        models_h,
+        models_y + models_h,
+        3 + d.caches.len().max(1) as i32,
+    );
 
-    let models_detail = all_models.clone();
     Element::new()
-        .style(LayoutStyle::column().gap(0).grow(1.0))
+        .style(LayoutStyle::column().gap(0).shrink(0.0))
         .child(strip.build())
-        .child(super::w::segmented::tabs(
+        .child(models_section(
             cx,
-            t,
-            vec![models_title, format!("⌸ {CACHES_TITLE}")],
-            ui.models_tab,
-            vec![
-                Box::new(move || {
-                    models_section(
-                        cx,
-                        pcx,
-                        &ctx_m,
-                        &tt,
-                        &all_models,
-                        cached_n,
-                        show,
-                        admin,
-                        &focus_m,
-                        sels.0,
-                        table_rows,
-                    )
-                }),
-                Box::new(move || {
-                    caches_section(
-                        cx, pcx, &ctx_c, &tt, &caches, admin, &focus_c, sels.1, table_rows,
-                    )
-                }),
-            ],
+            pcx,
+            ctx,
+            &tt,
+            &all_models,
+            show,
+            admin,
+            focus,
+            sels.0,
+            reveal,
         ))
-        .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
-            // The selected row's detail: the toned modality badge, the full
-            // identifiers, the state facts that earn no column of their own.
-            let t = tt;
-            if ui.models_tab.get() == 0 {
-                let vis = visible_models(&models_detail, show.get());
-                let Some(r) = vis.get(ui.model_sel.get()) else {
-                    return line(vec![span(String::new(), t.text)]);
-                };
-                let (tone, label) = task_tone(r.task.as_deref());
-                let mut bits: Vec<String> = Vec::new();
-                bits.push(format!(
-                    "{} / {}",
-                    r.provider.as_deref().unwrap_or("—"),
-                    r.model.as_deref().unwrap_or("—")
-                ));
-                bits.push(match lock_action(r) {
-                    LockAction::Unlock => "locked".to_string(),
-                    LockAction::Lock { adopt: true } => "lockable (adopts it)".to_string(),
-                    LockAction::Lock { adopt: false } => "lockable".to_string(),
-                    LockAction::Refused(why) => format!("no lock ({why})"),
-                });
-                if let Some(st) = &r.state {
-                    bits.push(st.clone());
-                }
-                if r.pinned == Some(true) {
-                    bits.push("pinned".into());
-                }
-                if let Some(h) = &r.host_name {
-                    bits.push(format!("host {h}"));
-                }
-                if let Some(lu) = &r.last_used_at {
-                    bits.push(format!("last used {lu}"));
-                }
-                Element::new()
-                    .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
-                    .child(badge(&t, label, tone))
-                    .child(line(vec![span(bits.join("  ·  "), t.text_muted)]))
-                    .build()
-            } else {
-                let Some(r) = caches_detail.get(ui.cache_sel.get()) else {
-                    return line(vec![span(String::new(), t.text)]);
-                };
-                line(vec![span_bold(format!(" {} ", r.key), t.accent)])
-            }
-        }))
+        .child(caches_section(
+            cx, pcx, ctx, &tt, &d.caches, admin, focus, sels.1, reveal,
+        ))
         .build()
+}
+
+/// Focus follows scroll (Network's `reveal`): the page scrolls only when the
+/// focused control's section is off-screen — never under a click on a
+/// visible control. Sections: 0 = the Gateway card, 1 = Models, 2 = caches.
+#[derive(Clone)]
+pub struct Reveal {
+    scroll: Signal<i32>,
+    visible: Signal<i32>,
+    map: std::rc::Rc<std::cell::Cell<[(i32, i32); 3]>>,
+}
+
+impl Reveal {
+    fn set_sections(&self, my: i32, mh: i32, cy: i32, ch: i32) {
+        let mut m = self.map.get();
+        m[1] = (my, mh);
+        m[2] = (cy, ch);
+        self.map.set(m);
+    }
+    fn set_card(&self, h: i32) {
+        let mut m = self.map.get();
+        m[0] = (0, h);
+        self.map.set(m);
+    }
+    /// Bring section `i` (its top, and as much of it as fits) into view.
+    pub fn show(&self, i: usize) {
+        let (y, h) = self.map.get()[i];
+        self.show_span(y, h);
+    }
+    /// Bring row `idx` of section `i`'s table into view (rows ≈ 2 lines;
+    /// `head` = the lines above the table body inside the section).
+    pub fn show_row(&self, i: usize, head: i32, idx: usize) {
+        let (y, _) = self.map.get()[i];
+        self.show_span(y + head + 2 * idx as i32, 2);
+    }
+    fn show_span(&self, y: i32, h: i32) {
+        let top = self.scroll.get_untracked();
+        let vis = self.visible.get_untracked().max(3);
+        let want = if y < top {
+            y
+        } else if y + h.min(vis) > top + vis {
+            (y + h.min(vis) - vis).max(0)
+        } else {
+            top
+        };
+        if want != top {
+            self.scroll.set(want);
+        }
+    }
 }
 
 fn tone_ink(t: &TokenSet, tone: Tone) -> Rgba {
@@ -1297,8 +1299,10 @@ pub fn flags_cell(r: &ModelRow) -> String {
     out.join(" ")
 }
 
-/// ▣ Models: the "Show configured / cached (N)" toggle and [Load model] on
-/// one line, then the table (resident rows; the toggle adds the rest).
+/// ▣ Models: the card head — the title with its resident count, the
+/// "Show configured / cached (N)" Toggle (always there, N = 0 too) and
+/// [Load model] — then the table (resident rows; the toggle adds the rest)
+/// and the selected row's facts.
 #[allow(clippy::too_many_arguments)]
 fn models_section(
     cx: Scope,
@@ -1306,27 +1310,43 @@ fn models_section(
     ctx: &Ctx,
     t: &TokenSet,
     all: &[ModelRow],
-    cached_n: usize,
     show: Signal<bool>,
     admin: bool,
     focus: &TableFocus,
     sel: Signal<Option<String>>,
-    max_rows: i32,
+    reveal: &Reveal,
 ) -> View {
     let tt = *t;
+    let ui = ctx.ui;
+    let cached_n = all.iter().filter(|r| r.resident != Some(true)).count();
+    let title = format!("▣ {}", models_tab_title(all));
+    let title_w = abstracttui::text::width(&title);
     let mut bar = Element::new().style(
         LayoutStyle::row()
             .height(Dimension::Cells(1))
             .gap(2)
             .shrink(0.0),
     );
-    if cached_n > 0 {
+    bar = bar.child(super::w::paint::fill_line(
+        LayoutStyle::default()
+            .width(Dimension::Cells(title_w))
+            .height(Dimension::Cells(1))
+            .shrink(0.0),
+        vec![
+            super::w::Ink::new("▣ ", tt.accent),
+            super::w::Ink::new(models_tab_title(all), tt.text).bold(),
+        ],
+        None,
+    ));
+    {
+        let rv = reveal.clone();
         let tg = super::w::Toggle::bound(show)
             .label(format!("Show configured / cached ({cached_n})"))
             .tip(format!("{SHOW_CACHED_TIP}  (a)"))
             .on_change(move |v| {
                 set_show_cached(v);
                 show.set(v);
+                rv.show(1);
             });
         bar = bar.child(tg.view(cx, &tt));
     }
@@ -1339,11 +1359,13 @@ fn models_section(
     // The size column's marker, said where the column is.
     bar = bar.child(line(vec![span(ESTIMATE_MARKER, tt.text_faint)]));
     let rows_src = all.to_vec();
+    let models_detail = all.to_vec();
     let ctx2 = ctx.clone();
     let focus = focus.clone();
-    let table = dyn_view_scoped(LayoutStyle::column().grow(1.0), move |tcx| {
+    let reveal_t = reveal.clone();
+    let table = dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |tcx| {
         let vis = visible_models(&rows_src, show.get());
-        let w = (crate::ui::page_viewport(tcx).get().w - 2).max(20);
+        let w = (crate::ui::page_viewport(tcx).get().w - 4).max(20); // − the page scrollbar
         if vis.is_empty() {
             let text = if rows_src.is_empty() {
                 MODELS_EMPTY.to_string()
@@ -1426,24 +1448,93 @@ fn models_section(
             },
         ));
         let c_a = ctx2.clone();
+        let rv = reveal_t.clone();
         let mut dt = DataTable::new(cols, rows, sel)
             .width(w)
-            .max_rows(max_rows)
+            .on_focus(move || rv.show(1))
             .on_action(move |key, id| model_action(pcx, &c_a, key, id, show.get_untracked()));
         if focus.wants() {
             dt = dt.autofocus();
         }
         focus.wrap(dt.view(tcx, &tt))
     });
+    // The selected row's facts: the toned modality badge, the full
+    // identifiers, the state facts that earn no column of their own.
+    let detail = dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
+        let t = tt;
+        let vis = visible_models(&models_detail, show.get());
+        let Some(r) = vis.get(ui.model_sel.get()) else {
+            return line(vec![span(String::new(), t.text)]);
+        };
+        let (tone, label) = task_tone(r.task.as_deref());
+        let mut bits: Vec<String> = Vec::new();
+        bits.push(format!(
+            "{} / {}",
+            r.provider.as_deref().unwrap_or("—"),
+            r.model.as_deref().unwrap_or("—")
+        ));
+        bits.push(match lock_action(r) {
+            LockAction::Unlock => "locked".to_string(),
+            LockAction::Lock { adopt: true } => "lockable (adopts it)".to_string(),
+            LockAction::Lock { adopt: false } => "lockable".to_string(),
+            LockAction::Refused(why) => format!("no lock ({why})"),
+        });
+        if let Some(st) = &r.state {
+            bits.push(st.clone());
+        }
+        if r.pinned == Some(true) {
+            bits.push("pinned".into());
+        }
+        if let Some(h) = &r.host_name {
+            bits.push(format!("host {h}"));
+        }
+        if let Some(lu) = &r.last_used_at {
+            bits.push(format!("last used {lu}"));
+        }
+        Element::new()
+            .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
+            .child(badge(&t, label, tone))
+            .child(line(vec![span(bits.join("  ·  "), t.text_muted)]))
+            .build()
+    });
     Element::new()
-        .style(LayoutStyle::column().grow(1.0))
+        .style(LayoutStyle::column().shrink(0.0))
         .child(bar.build())
+        // The selected row's facts sit under the card head, so they are on
+        // screen whenever the card is (the table may be taller than the page).
+        .child(detail)
         .child(table)
         .build()
 }
 
-/// ⌸ Session caches: Session · Model · Size · Tokens · Actions (the web's
-/// Created column needs the row's `created_at_s` — not in the store yet).
+/// The web's `_fmtEpochS`: UTC "YYYY-MM-DD HH:MM:SS", empty when unknown
+/// (never a fabricated 0).
+pub fn fmt_epoch_s(s: Option<f64>) -> String {
+    let Some(s) = s.filter(|s| s.is_finite() && *s > 0.0) else {
+        return String::new();
+    };
+    let secs = s.floor() as i64;
+    let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
+    // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!(
+        "{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02}",
+        rem / 3600,
+        (rem % 3600) / 60,
+        rem % 60
+    )
+}
+
+/// ⌸ Session caches: the card head, then Session · Model · Size · Tokens ·
+/// Created · Actions (the web's table; Created empty when unknown).
 #[allow(clippy::too_many_arguments)]
 fn caches_section(
     cx: Scope,
@@ -1454,38 +1545,44 @@ fn caches_section(
     admin: bool,
     focus: &TableFocus,
     sel: Signal<Option<String>>,
-    max_rows: i32,
+    reveal: &Reveal,
 ) -> View {
     let tt = *t;
-    let w = (crate::ui::page_viewport(cx).get().w - 2).max(20);
+    let _ = focus;
+    let w = (crate::ui::page_viewport(cx).get().w - 4).max(20); // − the page scrollbar
+    let mut col = Element::new()
+        .style(LayoutStyle::column().shrink(0.0))
+        .child(section_head(&tt, "⌸", CACHES_TITLE));
     if caches.is_empty() {
-        let mut el = Element::new()
-            .style(LayoutStyle::column().grow(1.0))
-            .focusable();
-        if focus.wants() {
-            el = el.autofocus();
-        }
-        return focus.wrap(
-            el.child(super::w::form::sentence(
+        return col
+            .child(super::w::form::sentence(
                 &tt,
                 CACHES_EMPTY,
                 w,
                 tt.text_muted,
             ))
-            .build(),
-        );
+            .build();
     }
     let rows: Vec<WRow> = caches
         .iter()
         .map(|c| {
-            let cells = cache_row_cells(c);
+            let model = [c.provider.as_str(), c.model.as_str()]
+                .iter()
+                .filter(|x| !x.is_empty())
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("/");
             WRow::new(
                 c.key.clone(),
                 vec![
-                    Cell::text(cells[1].clone(), tt.text),
-                    Cell::text(cells[2].clone(), tt.text),
-                    Cell::text(cells[3].clone(), tt.text),
-                    Cell::text(cells[4].clone(), tt.text),
+                    Cell::text(c.session_id.clone(), tt.text),
+                    Cell::text(model, tt.text),
+                    Cell::text(c.bytes.map(human_bytes).unwrap_or_default(), tt.text),
+                    Cell::text(
+                        c.token_count.map(|n| n.to_string()).unwrap_or_default(),
+                        tt.text,
+                    ),
+                    Cell::text(fmt_epoch_s(c.created_at_s), tt.text_muted),
                     Cell::Actions(cache_actions(c, admin)),
                 ],
             )
@@ -1496,17 +1593,17 @@ fn caches_section(
         Col::new("Model", ColW::Flex { weight: 1, min: 10 }),
         Col::new("Size", ColW::Fit { min: 4, max: 10 }),
         Col::new("Tokens", ColW::Fit { min: 6, max: 9 }),
-        Col::new("Actions", ColW::Fit { min: 7, max: 8 }),
+        Col::new("Created", ColW::Fit { min: 7, max: 19 }),
+        Col::new("Actions", ColW::Fit { min: 8, max: 8 }),
     ];
     let c_a = ctx.clone();
-    let mut dt = DataTable::new(cols, rows, sel)
+    let rv = reveal.clone();
+    let dt = DataTable::new(cols, rows, sel)
         .width(w)
-        .max_rows(max_rows)
+        .on_focus(move || rv.show(2))
         .on_action(move |key, id| cache_action(pcx, &c_a, key, id));
-    if focus.wants() {
-        dt = dt.autofocus();
-    }
-    focus.wrap(dt.view(cx, &tt))
+    col = col.child(dt.view(cx, &tt));
+    col.build()
 }
 
 /// A model row action (a click): the row becomes the selection, the verb
@@ -1551,7 +1648,6 @@ fn cache_action(cx: Scope, ctx: &Ctx, key: &str, id: &str) {
 /// The page's hint pairs (R15: the selected row's actions, then the page's).
 pub fn hints(ctx: &Ctx) -> Vec<(&'static str, &'static str)> {
     let store = ctx.store;
-    let tab = ctx.ui.models_tab.get();
     let _ = (ctx.ui.model_sel.get(), ctx.ui.cache_sel.get());
     let mut out = vec![("↑↓", "rows"), ("Tab", "actions"), ("e", "Estimate")];
     // The residency verbs (admin: folded into "u/k/w/c admin only" for
@@ -1560,9 +1656,7 @@ pub fn hints(ctx: &Ctx) -> Vec<(&'static str, &'static str)> {
     out.push(("k", "Lock/Unlock"));
     out.push(("w", "Load model"));
     out.push(("c", "Clear session caches"));
-    if tab == 0 {
-        out.push(("a", "Show configured / cached"));
-    }
+    out.push(("a", "Show configured / cached"));
     out.push(("m", "more memory detail"));
     if store.conn.with(ConnPhase::is_admin) {
         out.push(("p", "Workflows paused"));
@@ -2372,12 +2466,6 @@ fn estimate_selected(ctx: &Ctx) {
 /// (Caches sub-tab only; danger-confirmed).
 fn clear_caches_selected(cx: Scope, ctx: &Ctx) {
     if !super::util::admin_gate(&ctx.store, "clearing session caches") {
-        return;
-    }
-    if ctx.ui.models_tab.get_untracked() != 1 {
-        ctx.store.notice.set(Some(
-            "switch to Session caches — c clears the selected session's caches there".into(),
-        ));
         return;
     }
     let idx = ctx.ui.cache_sel.get_untracked();

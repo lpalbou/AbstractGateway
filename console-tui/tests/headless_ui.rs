@@ -6568,8 +6568,13 @@ fn models_table_and_its_lock_verb_are_reachable_at_80x24() {
         h.term.push_input(b"\x1b[B");
         h.turn();
     }
-    let s = h.turns(1);
-    assert!(s.contains("RAM"), "the RAM meter is PINNED:\n{s}");
+    // R15: the cards stack and the PAGE scrolls (DESIGN §3.11); the meters
+    // are above the Models card — the wheel brings them back.
+    for _ in 0..12 {
+        h.term.push_input(b"\x1b[<64;10;8M");
+    }
+    let s = h.turns(3);
+    assert!(s.contains("RAM"), "the RAM meter is one wheel away:\n{s}");
     assert!(
         s.contains("128.0 GiB"),
         "the RAM meter keeps its figures, not just its label:\n{s}"
@@ -6583,12 +6588,20 @@ fn models_table_and_its_lock_verb_are_reachable_at_80x24() {
         "the GGUF note is PINNED — it is the caveat that makes the \
          accelerator figure readable:\n{s}"
     );
-    // R15: the table windows to the selected row (the sweep row).
+    // …and the wheel takes the page back down to the model rows.
+    for _ in 0..12 {
+        h.term.push_input(b"\x1b[<65;10;8M");
+    }
+    let s2 = h.turns(3);
     assert!(
-        s.lines()
+        s2.lines()
             .any(|l| l.contains("lmstudio") && l.contains("glm-4.6") && l.contains("yes")),
-        "and the model rows are still there at the tail:\n{s}"
+        "and the model rows are one wheel away below:\n{s2}"
     );
+    for _ in 0..12 {
+        h.term.push_input(b"\x1b[<64;10;8M");
+    }
+    let s = h.turns(3);
 
     // 4. R15: no page border any more; the pinned totals footer closes
     // the page, on screen, below the table.
@@ -6657,6 +6670,9 @@ fn models_tab_resident_null_renders_the_third_state() {
         "the null-resident row waits behind the toggle:\n{s}"
     );
     h.key(b"a");
+    // The page scrolls; selecting the row brings it on screen.
+    h.key(b"\x1b[B");
+    h.key(b"\x1b[B");
     let s = h.turns(2);
     assert!(
         s.contains("mystery-model"),
@@ -6666,9 +6682,11 @@ fn models_tab_resident_null_renders_the_third_state() {
         s.contains("unknown"),
         "null resident renders the distinct third state:\n{s}"
     );
+    // The TABLE row (the selected row's facts line above it reads
+    // "lmstudio / mystery-model · no lock (…)").
     let row = s
         .lines()
-        .find(|l| l.contains("mystery-model"))
+        .find(|l| l.contains("mystery-model") && !l.contains(" / "))
         .expect("mystery-model row");
     assert!(
         row.contains("unknown") && !row.contains(" no "),
