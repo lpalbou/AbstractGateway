@@ -1054,8 +1054,10 @@ fn retained_runtimes_opens_the_reservations_dialog() {
     click_on(&mut h, "Runtimes", "Retained runtimes");
     assert!(h.sent().iter().any(|c| matches!(c, Cmd::LoadReservations)));
     let s = h.turns(2);
+    // The lead's FormModal (title + ✕), opened from Accounts' code.
     assert!(
-        s.contains("Retained runtimes —"),
-        "the Accounts dialog:\n{s}"
+        s.lines()
+            .any(|l| l.contains("│Retained runtimes") && l.contains('✕')),
+        "the Retained runtimes dialog:\n{s}"
     );
 }
