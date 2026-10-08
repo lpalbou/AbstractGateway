@@ -3649,6 +3649,70 @@ pub struct EntityDetail {
     /// personal-grant summary line (None = no grant block reported).
     pub grant: Option<String>,
     pub state: Option<String>,
+    /// Who may change its settings (`GET /entities/{name}/access`, R16.5):
+    /// `Ok` = the gateway's answer, `Err` = why it could not be read (the
+    /// settings writes are then refused with that reason — never guessed).
+    pub access: Option<Result<EntityAccess, String>>,
+}
+
+/// `GET /entities/{name}/access` (R16.5 "the creator configures their
+/// entity"): an admin or the entity's creator changes its settings (mind,
+/// voice, tools per phase, instructions); its lifecycle acts stay an admin's.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EntityAccess {
+    pub can_configure: bool,
+    /// "admin" | "creator" | None.
+    pub as_role: Option<String>,
+    /// The sentence for a caller who may not ("Only an admin or nova's creator can …").
+    pub reason: Option<String>,
+    /// Tools the caller can't GIVE (tier 2, for a creator) and the sentence.
+    pub admin_only_tools: Vec<String>,
+    pub admin_only_tools_reason: Option<String>,
+    /// What stays an admin's (sleep/wake, personal time, work, memories) and the sentence.
+    pub admin_only_reason: Option<String>,
+}
+
+impl EntityAccess {
+    pub fn from_payload(v: &Value) -> Result<EntityAccess, String> {
+        let can = v
+            .get("can_configure")
+            .and_then(Value::as_bool)
+            .ok_or("the gateway's /entities/{name}/access answer has no boolean can_configure")?;
+        let s = |k: &str| v.get(k).and_then(Value::as_str).map(str::to_string);
+        let tools = v.get("admin_only_tools");
+        Ok(EntityAccess {
+            can_configure: can,
+            as_role: s("as"),
+            reason: s("reason"),
+            admin_only_tools: tools
+                .and_then(|t| t.get("tools"))
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                .unwrap_or_default(),
+            admin_only_tools_reason: tools
+                .and_then(|t| t.get("reason"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            admin_only_reason: v
+                .get("admin_only")
+                .and_then(|a| a.get("reason"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        })
+    }
+
+    /// Why a settings write is refused before it is sent (None = send it).
+    pub fn settings_refusal(&self) -> Option<String> {
+        if self.can_configure {
+            None
+        } else {
+            Some(
+                self.reason
+                    .clone()
+                    .unwrap_or_else(|| "the gateway refused changing its settings without a reason".into()),
+            )
+        }
+    }
 }
 
 impl EntityDetail {

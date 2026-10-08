@@ -2692,7 +2692,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              </div>
 	              <p class="af-row-legend accounts-legend" aria-label="Row tint by account kind">Tint:
 	                <span class="af-row-legend__item"><span class="af-row-legend__swatch af-row-legend__swatch--admin" aria-hidden="true"></span>admin</span>
-	                <span class="af-row-legend__item"><span class="af-row-legend__swatch af-row-legend__swatch--user" aria-hidden="true"></span>user</span>
+	                <span class="af-row-legend__item"><span class="af-row-legend__swatch af-row-legend__swatch--user" aria-hidden="true"></span>member</span>
 	                <span class="af-row-legend__item"><span class="af-row-legend__swatch af-row-legend__swatch--entity" aria-hidden="true"></span>entity</span>
 	              </p>
 	              <!-- Email for everyone (round 8): the three switches sit directly in the card
@@ -3499,9 +3499,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         <div class="af-form__field">
           <label class="af-form__label" for="new-roles">Role</label>
           <select id="new-roles">
-            <option value="user" selected>User — runs workflows on their own runtime</option>
+            <option value="user" selected>Member — runs workflows on their own runtime</option>
             <option value="admin">Admin — manages this gateway</option>
-            <option value="readonly">Read-only — can look, cannot change anything</option>
           </select>
           <p id="new-roles-note" class="af-form__help hidden" role="status"></p>
         </div>
@@ -12212,8 +12211,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     function userRoleLabel(u) {
       const roles = (u && Array.isArray(u.roles) ? u.roles : []).map((r) => String(r || "").trim().toLowerCase());
       if (roles.includes("admin")) return "Admin";
-      if (roles.includes("readonly")) return "Read-only";
-      return "User";
+      return "Member";
     }
     function userMailboxNote(acc) {
       // DESIGN §5.1 (same words as the terminal console): a per-user override
@@ -12287,8 +12285,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     // Email · OpenAI API · Logs · Workspace (users) | Manage (entities) · Rotate (users) · Archive;
     // no "⋯" menu, no labels). Nothing unavailable is rendered. Archive, never delete.
     const accountsUi = { rows: [], emailRelease: null, logsRelease: null, emailHome: null, logsFor: null, logsKind: "", showArchived: false, archivedSwitch: null };
-    const ACCOUNT_KIND_LABEL = { admin: "Admin", user: "User", entity: "Entity" };
-    const ACCOUNT_ROLE_TITLE = { admin: "Admin — manages this gateway", user: "User — signs in and runs their own agents", entity: "Entity — an AI user with its own memory and mailbox" };
+    // Two roles (operator ruling 2026-10-08): an admin, or a member — a human account (role
+    // `user` on the wire) or an entity account. No viewer, no read-only, no third role.
+    const ACCOUNT_KIND_LABEL = { admin: "Admin", user: "Member", entity: "Entity" };
+    const ACCOUNT_ROLE_TITLE = { admin: "Admin — manages this gateway", user: "Member — signs in and runs their own agents", entity: "Entity — a member that is an AI, with its own memory and mailbox; its creator configures it" };
     // The row contract of accounts-api (DESIGN-v3 §2.2): every key present, `delete` gone.
     const ACCOUNT_ACTIONS = ["openai_api", "email", "logs", "workspace", "preferences", "rotate", "manage", "archive", "unarchive", "suspend"];
     const ACCOUNTS_SHOW_ARCHIVED_KEY = "abstractgateway.console.accounts.show_archived";
@@ -15076,9 +15076,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       location.reload();
     }
     async function createUser() {
-      // Runs inside the create-user modal. The role is a SELECT over the
-      // accepted vocabulary (admin/user/readonly — entity is door-assigned,
-      // never pickable); the issued token REPLACES the form on success so
+      // Runs inside the create-user modal. The role is a SELECT over the two
+      // roles (admin, or member = `user` on the wire — entity is door-assigned,
+      // never pickable; no viewer / read-only role exists); the issued token REPLACES the form on success so
       // its one showing cannot be lost behind a closed dialog.
       $("user-create-message").textContent = "";
       const payload = {

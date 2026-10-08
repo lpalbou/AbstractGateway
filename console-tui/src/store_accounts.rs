@@ -166,12 +166,14 @@ impl AccountRow {
         }
     }
 
-    /// The kind chip: "Admin" / "User" / "Entity".
+    /// The kind chip: "Admin" / "Member" / "Entity" — the two roles (operator ruling
+    /// 2026-10-08): an admin, or a member (a human account, role `user` on the wire, or an
+    /// entity account). No viewer, no read-only, no third role.
     pub fn kind_label(&self) -> &'static str {
         match (self.kind.as_str(), self.role.as_str()) {
             ("entity", _) => "Entity",
             (_, "admin") => "Admin",
-            _ => "User",
+            _ => "Member",
         }
     }
 
@@ -426,8 +428,8 @@ mod tests {
 pub fn kind_help(kind_label: &str) -> &'static str {
     match kind_label {
         "Admin" => "Admin — manages this gateway",
-        "Entity" => "Entity — an AI user with its own memory and mailbox",
-        _ => "User — signs in and runs their own agents",
+        "Entity" => "Entity — a member that is an AI, with its own memory and mailbox; its creator configures it",
+        _ => "Member — signs in and runs their own agents",
     }
 }
 

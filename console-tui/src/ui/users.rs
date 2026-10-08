@@ -256,6 +256,22 @@ fn head(pcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             bw += width + 1;
             buttons.push(v);
         };
+        // Show archived (everyone, R16.5): an admin's archived accounts, a member's
+        // archived entities (their creator unarchives them). The web's tooltip sentences.
+        let show_archived = |push: &mut dyn FnMut(View, i32, &mut Vec<View>), buttons: &mut Vec<View>| {
+            let c = ctx.clone();
+            let tip = if admin {
+                format!("{SHOW_ARCHIVED_TIP_ADMIN}  (h)")
+            } else {
+                format!("{SHOW_ARCHIVED_TIP_MEMBER}  (h)")
+            };
+            let tg = super::w::Toggle::new(show)
+                .label("Show archived")
+                .tip(tip)
+                .on_change(move |v| c.store.acc.show_archived.set(v));
+            let wd = tg.width();
+            push(tg.view(hcx, &tt), wd, buttons);
+        };
         if admin {
             let a = Action::label("eligible", "Eligible workspaces")
                 .key('E')
@@ -269,15 +285,7 @@ fn head(pcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 wd,
                 &mut buttons,
             );
-            let c = ctx.clone();
-            let tg = super::w::Toggle::new(show)
-                .label("Show archived")
-                .tip(
-                    "Archived accounts can't sign in or act; their runs and history are kept.  (h)",
-                )
-                .on_change(move |v| c.store.acc.show_archived.set(v));
-            let wd = tg.width();
-            push(tg.view(hcx, &tt), wd, &mut buttons);
+            show_archived(&mut push, &mut buttons);
             let a = Action::label("create_user", "Create user")
                 .key('a')
                 .tooltip("Create a gateway user and issue their token (shown once)");
@@ -290,6 +298,9 @@ fn head(pcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 wd,
                 &mut buttons,
             );
+        }
+        if !admin {
+            show_archived(&mut push, &mut buttons);
         }
         let a = Action::label("create_entity", "Create entity")
             .key('n')
@@ -530,9 +541,9 @@ fn account_table_row(
                 r.refusal("suspend")
                     .unwrap_or_else(|| OWN_ACCOUNT_REASON.to_string()),
             )
-        } else if !admin {
-            Some("Only an admin can switch an account's Active state.".to_string())
         } else {
+            // The row's served `suspend` action decides (an admin: any account;
+            // R16.5: the creator of an entity turns it on or off).
             r.refusal("suspend")
         };
         Cell::Toggle {
@@ -743,9 +754,7 @@ pub fn hints(ctx: &Ctx) -> Vec<(&'static str, &'static str)> {
     store.accounts.with(|_| ());
     let _ = ctx.ui.acc_key.get();
     let mut out = vec![("↑↓", "rows"), ("Enter", "Email"), ("Tab", "actions")];
-    if admin {
-        out.push(("Space", "Active"));
-    }
+    out.push(("Space", "Active"));
     let row = selected_account(ctx);
     if let Some(r) = row {
         for a in row_actions(&r, admin) {
@@ -756,9 +765,9 @@ pub fn hints(ctx: &Ctx) -> Vec<(&'static str, &'static str)> {
             }
         }
     }
+    out.push(("h", "Show archived"));
     if admin {
         out.push(("E", "Eligible workspaces"));
-        out.push(("h", "Show archived"));
         out.push(("a", "Create user"));
     }
     out.push(("n", "Create entity"));
@@ -829,11 +838,9 @@ fn handle_key(cx: Scope, ctx: &Ctx, key: Key) -> bool {
             act(if archived { "unarchive" } else { "archive" })
         }
         Key::Char('g') => act("runtime"),
-        Key::Char('h') => {
-            if super::util::admin_gate(&store, "showing archived accounts") {
-                acc.show_archived.update(|v| *v = !*v);
-            }
-        }
+        // Everyone: an admin's archived accounts, a member's archived entities (R16.5:
+        // their creator unarchives them).
+        Key::Char('h') => acc.show_archived.update(|v| *v = !*v),
         Key::Char('n') => {
             if store.conn.with_untracked(ConnPhase::is_connected) {
                 super::entity_create::open_summon_form(cx, ctx);
@@ -991,11 +998,10 @@ fn archive_selected(cx: Scope, ctx: &Ctx) {
 }
 
 /// The Active toggle: turning OFF asks the web's question (Deactivate /
-/// Suspend), turning ON applies at once.
+/// Suspend), turning ON applies at once. Who may switch it is the row's
+/// served `suspend` action (an admin: any account; R16.5: the creator of an
+/// entity, that entity).
 fn switch_active(cx: Scope, ctx: &Ctx, want: bool) {
-    if !super::util::admin_gate(&ctx.store, "switching an account's Active state") {
-        return;
-    }
     let Some(r) = selected_account(ctx) else {
         return;
     };
@@ -1013,6 +1019,7 @@ fn switch_active(cx: Scope, ctx: &Ctx, want: bool) {
     if want == r.active {
         return;
     }
+    let admin = ctx.store.conn.with_untracked(ConnPhase::is_admin);
     let send = {
         let ctx = ctx.clone();
         let r = r.clone();
@@ -1022,6 +1029,7 @@ fn switch_active(cx: Scope, ctx: &Ctx, want: bool) {
                 tenant_id: r.tenant_id.clone(),
                 entity: r.is_entity(),
                 active,
+                admin,
             })
         }
     };
@@ -1259,6 +1267,14 @@ thread_local! {
     /// A Logs "Open in Observer" is waiting for its one-time link.
     static OBSERVER_PENDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
+
+/// The web's "Show archived" tooltips (console.py renderAccountsArchivedSwitch).
+pub const SHOW_ARCHIVED_TIP_ADMIN: &str =
+    "Archived accounts can't sign in or act; their runs and history are kept.";
+pub const SHOW_ARCHIVED_TIP_MEMBER: &str = "Archived entities you created can't act; their memory, runs and history are kept, and you can unarchive them.";
+/// The web's create-user role options (console.py `#new-roles`): exactly two roles.
+pub const ROLE_OPTION_MEMBER: &str = "Member — runs workflows on their own runtime";
+pub const ROLE_OPTION_ADMIN: &str = "Admin — manages this gateway";
 
 pub const NON_ADMIN_TITLE: &str = "Your account";
 pub const NON_ADMIN_SUBTITLE: &str = "Your account and the entities you created.";
@@ -1927,13 +1943,10 @@ fn open_user_form(cx: Scope, ctx: &Ctx, existing: Option<UserRow>) {
                 .child(field(
                     &t0,
                     "Role",
+                    // Two roles (operator ruling 2026-10-08): no viewer / read-only.
                     MultiSelect::new(vec![
-                        SelectOption::keyed("user", "User — runs workflows on their own runtime"),
-                        SelectOption::keyed("admin", "Admin — manages this gateway"),
-                        SelectOption::keyed(
-                            "readonly",
-                            "Read-only — can look, cannot change anything",
-                        ),
+                        SelectOption::keyed("user", ROLE_OPTION_MEMBER),
+                        SelectOption::keyed("admin", ROLE_OPTION_ADMIN),
                     ])
                     .values(roles)
                     .placeholder("pick a role…")

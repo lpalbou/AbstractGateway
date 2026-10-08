@@ -82,7 +82,7 @@ fn the_table_has_the_web_columns_kinds_and_switches() {
         }
         assert!(
             s.contains("alice")
-                && s.contains("User")
+                && s.contains("Member")
                 && s.contains("Admin")
                 && s.contains("Entity"),
             "{s}"
