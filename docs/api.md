@@ -2101,8 +2101,9 @@ Only keys the gateway declares are accepted: `default_workflow` and `time_zone`.
 OS `TZ`, else the zone `/etc/localtime` points to, else `/etc/timezone`, else `UTC`). The GET's
 `time_zone` block gives the stored `value`, the `gateway_default`, the `effective` zone and `choices`,
 every IANA name the gateway knows; clients offer exactly those. An unknown name is refused with 400
-`preference_refused`, key `time_zone`. Changing it never moves an existing automation: each keeps the
-zone it was created with until its trigger is revised.
+`preference_refused`, key `time_zone`. Changing it never moves a `schedule@2` automation: each keeps the
+zone it was created with until its trigger is revised. A `schedule@1`, legacy, email or manual
+automation has no zone of its own, so its summary shows times in the owner's current time zone.
 
 `default_workflow` is one entry per
 app interface (`abstractcode.agent.v1`, `abstractassistant.agent.v1`). `null` follows the

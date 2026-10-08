@@ -545,7 +545,7 @@ def test_scheduled_ticks_are_driven_by_the_ordinary_runner(live: TestClient) -> 
     aid = _create(live, request_id="sched", trigger={"source_id": "schedule", "source_version": 1, "config": {"every": "1s"}})["automation_id"]
     rows = wait_until(lambda: (lambda r: r if len(r) >= 2 and all(o["status"] == "completed" for o in r[:2]) else None)(_occurrences(live, aid)), timeout_s=20)
     assert rows[0]["index"] > rows[1]["index"]                         # newest first
-    assert rows[0]["trigger"]["summary"].startswith("schedule: every second (UTC), tick ")
+    assert rows[0]["trigger"]["summary"].startswith("schedule: Every second (UTC), tick ")
     _command(live, aid, "automation.pause", "pause")
     wait_until(lambda: live.get(f"/api/gateway/automations/{aid}", headers=HEADERS).json()["summary"]["status"] == "paused")
     import time
@@ -667,7 +667,7 @@ def test_d4_old_occurrences_keep_the_cadence_they_ran_under(live: TestClient) ->
     assert r.status_code == 200, r.text
     wait_until(lambda: live.get(f"/api/gateway/automations/{aid}", headers=HEADERS).json()["definition"]["revision"] == 2)
     rows = _occurrences(live, aid)
-    assert rows and all(o["trigger"]["summary"].startswith("schedule: every second (UTC)") for o in rows), [o["trigger"] for o in rows]
+    assert rows and all(o["trigger"]["summary"].startswith("schedule: Every second (UTC)") for o in rows), [o["trigger"] for o in rows]
 
 
 def test_d5_door_refuses_what_the_state_rules_out(live: TestClient) -> None:

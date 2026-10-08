@@ -6436,8 +6436,9 @@ Only keys the gateway declares are accepted: `default_workflow` and `time_zone`.
 OS `TZ`, else the zone `/etc/localtime` points to, else `/etc/timezone`, else `UTC`). The GET's
 `time_zone` block gives the stored `value`, the `gateway_default`, the `effective` zone and `choices`,
 every IANA name the gateway knows; clients offer exactly those. An unknown name is refused with 400
-`preference_refused`, key `time_zone`. Changing it never moves an existing automation: each keeps the
-zone it was created with until its trigger is revised.
+`preference_refused`, key `time_zone`. Changing it never moves a `schedule@2` automation: each keeps the
+zone it was created with until its trigger is revised. A `schedule@1`, legacy, email or manual
+automation has no zone of its own, so its summary shows times in the owner's current time zone.
 
 `default_workflow` is one entry per
 app interface (`abstractcode.agent.v1`, `abstractassistant.agent.v1`). `null` follows the
@@ -8099,8 +8100,10 @@ for a trigger with no clock time (manual, email).
   not the current one). Examples: "Every Mon, Wed and Fri at 07:30
   (Europe/Paris) · next Mon 12 Oct 07:30", "Monthly on day 31 (or the last
   day) at 08:00 (Europe/Paris)", "Monthly on the last day at 23:00 (UTC)",
-  "Every 24 hours (UTC) · next Fri 9 Oct 21:53", "Once at Thu 24 Dec 18:30
-  (Europe/Paris)", "When an email arrives", "Manual runs only". Clients never
+  "Every 24 hours (UTC) · next Fri 9 Oct 21:53 (Europe/Paris)", "Once at Thu 24 Dec 18:30
+  (Europe/Paris)", "When an email arrives", "Manual runs only". Every clock
+  time is in `time_zone`; a fixed UTC interval, whose rule says "(UTC)", names
+  the zone after each time it shows unless that zone is UTC. Clients never
   compute a next run themselves.
 - `current_occurrence` is the occurrence in progress, `status` `admitted`,
   `running` or `backoff` (waiting to retry), or `null` when none is.
@@ -8189,7 +8192,7 @@ attempt):
 ```text
 {"run_id": "…", "index": 7, "attempts": 1, "fired_at": "…", "finished_at": "…",
  "status": "completed",   // admitted | running | waiting | backoff | completed | failed | cancelled
- "trigger": {"source_id": "schedule", "summary": "schedule: every 30 minutes (UTC), tick 5"},
+ "trigger": {"source_id": "schedule", "summary": "schedule: Every 30 minutes (UTC), tick 5"},
  "user_turn": "[Trigger schedule@1 · occurrence 7 · fired …]\nTriage my inbox…",
  "answer": "…", "notify": null,
  "failure": {"reason_code": "occurrence_failed", "message": "…", "attempts": 3},   // failed rows only
@@ -10527,7 +10530,7 @@ Requires AbstractRuntime with `schedule@2` (the next runtime release).
 ### Added
 
 - Automations: calendar schedules. The trigger `schedule@2` takes `{kind: "daily", at: "08:00"}`, `{kind: "weekly", days: ["mon", "thu"], at}`, `{kind: "monthly", day: 1..31 | "last", at}`, plus `every` and `once` (a `once` may give a wall time `at`), evaluated in the automation's `config.time_zone` with daylight saving handled. A rule sent without a time zone gets the owner's account time zone; a revision without one keeps the automation's zone. `schedule@1` automations and requests work unchanged. See `docs/automations.md`.
-- Every automation summary (list, read, create answer) carries `next_run_at`, `next_run_local`, `time_zone`, `schedule_rule_text` and `schedule_text`, the one sentence clients show for the schedule ("Every day at 08:00 (Europe/Paris) · next Fri 9 Oct 08:00"). `next_fire_at` stays.
+- Every automation summary (list, read, create answer) carries `next_run_at`, `next_run_local`, `time_zone`, `schedule_rule_text` and `schedule_text`, the one sentence clients show for the schedule ("Every day at 08:00 (Europe/Paris) · next Fri 9 Oct 08:00"; a fixed UTC interval names the zone of the times it shows: "Every 8 hours (UTC) · next Fri 9 Oct 08:00 (Europe/Paris)"). `next_fire_at` stays. Occurrence rows use the same rule sentence ("schedule: Every 30 minutes (UTC), tick 5").
 - `POST /api/gateway/automations/schedule-preview`: what a trigger would do if saved now (normalized trigger, sentences, first run, `first_run_sentence`); nothing is stored.
 - Account preference `time_zone` (`GET/PUT /api/gateway/accounts/{account}/preferences`): an IANA zone or `null` for the gateway default, the time zone of the computer the gateway runs on. The GET adds a `time_zone` block with the default, the effective zone and the list of zone names.
 

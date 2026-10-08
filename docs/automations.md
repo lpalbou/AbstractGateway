@@ -403,8 +403,10 @@ for a trigger with no clock time (manual, email).
   not the current one). Examples: "Every Mon, Wed and Fri at 07:30
   (Europe/Paris) · next Mon 12 Oct 07:30", "Monthly on day 31 (or the last
   day) at 08:00 (Europe/Paris)", "Monthly on the last day at 23:00 (UTC)",
-  "Every 24 hours (UTC) · next Fri 9 Oct 21:53", "Once at Thu 24 Dec 18:30
-  (Europe/Paris)", "When an email arrives", "Manual runs only". Clients never
+  "Every 24 hours (UTC) · next Fri 9 Oct 21:53 (Europe/Paris)", "Once at Thu 24 Dec 18:30
+  (Europe/Paris)", "When an email arrives", "Manual runs only". Every clock
+  time is in `time_zone`; a fixed UTC interval, whose rule says "(UTC)", names
+  the zone after each time it shows unless that zone is UTC. Clients never
   compute a next run themselves.
 - `current_occurrence` is the occurrence in progress, `status` `admitted`,
   `running` or `backoff` (waiting to retry), or `null` when none is.
@@ -493,7 +495,7 @@ attempt):
 ```text
 {"run_id": "…", "index": 7, "attempts": 1, "fired_at": "…", "finished_at": "…",
  "status": "completed",   // admitted | running | waiting | backoff | completed | failed | cancelled
- "trigger": {"source_id": "schedule", "summary": "schedule: every 30 minutes (UTC), tick 5"},
+ "trigger": {"source_id": "schedule", "summary": "schedule: Every 30 minutes (UTC), tick 5"},
  "user_turn": "[Trigger schedule@1 · occurrence 7 · fired …]\nTriage my inbox…",
  "answer": "…", "notify": null,
  "failure": {"reason_code": "occurrence_failed", "message": "…", "attempts": 3},   // failed rows only

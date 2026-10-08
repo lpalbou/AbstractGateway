@@ -10,6 +10,11 @@ shows these served values verbatim and never computes a next run or rebuilds the
 - ``schedule_rule_text``: the rule in one sentence, e.g. "Every day at 08:00 (Europe/Paris)".
 - ``schedule_text``: the rule + " · next Thu 9 Oct 08:00" when a next run exists.
 
+Every clock time in a sentence is in ``time_zone``. A calendar or ``once`` rule names its zone
+in the rule itself; a fixed UTC interval ("Every 8 hours (UTC)") names the zone after each time
+it shows ("· until Tue 20 Oct 08:00 (Europe/Paris)", "· next Fri 9 Oct 21:53 (Europe/Paris)")
+unless that zone is UTC.
+
 The owner's time zone is the account preference ``time_zone`` (account_preferences.py); its
 default is THIS host's IANA zone (``host_time_zone``), never guessed by a client.
 """
@@ -148,13 +153,27 @@ def _days_text(days: Any) -> str:
     return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
 
 
-def _bounds(config: Mapping[str, Any], zone: str, now: Optional[datetime.datetime]) -> str:
+def _zone_suffix(trigger: Any, zone: str) -> str:
+    """" (Europe/Paris)" after a clock time of a fixed-UTC-interval rule, whose sentence does not
+    otherwise name the zone its times are shown in; "" for every other rule and for UTC."""
+    return f" ({zone})" if _is_interval(trigger) and zone != UTC else ""
+
+
+def _is_interval(trigger: Any) -> bool:
+    if not isinstance(trigger, Mapping) or str(trigger.get("source_id") or "") != "schedule":
+        return False
+    config = trigger.get("config") if isinstance(trigger.get("config"), Mapping) else {}
+    kind = config.get("kind") if trigger.get("source_version") == 2 else None
+    return (kind or ("every" if config.get("every") else "once")) == "every"
+
+
+def _bounds(config: Mapping[str, Any], zone: str, now: Optional[datetime.datetime], suffix: str = "") -> str:
     parts = []
     count = config.get("count")
     if isinstance(count, int) and not isinstance(count, bool):
         parts.append(f"{count} {'run' if count == 1 else 'runs'} max")
     if config.get("until"):
-        parts.append(f"until {local_short(config['until'], zone, now=now)}")
+        parts.append(f"until {local_short(config['until'], zone, now=now)}{suffix}")
     return "".join(f" · {p}" for p in parts)
 
 
@@ -174,7 +193,7 @@ def rule_text(trigger: Any, zone: str, *, now: Optional[datetime.datetime] = Non
     if kind is None:
         kind = "every" if config.get("every") else "once"
     if kind == "every":
-        return f"{_interval_words(config.get('every')).capitalize()} (UTC){_bounds(config, zone, now)}"
+        return f"{_interval_words(config.get('every')).capitalize()} (UTC){_bounds(config, zone, now, _zone_suffix(trigger, zone))}"
     if kind == "once":
         if not config.get("start_at"):
             return "Once, now"
@@ -206,7 +225,7 @@ def schedule_fields(trigger: Any, next_fire_at: Optional[str], owner_zone: str, 
     if next_fire_at:
         out["next_run_at"] = str(next_fire_at)
         out["next_run_local"] = local_iso(next_fire_at, zone)
-        out["schedule_text"] = f"{rule} · next {local_short(next_fire_at, zone, now=now)}"
+        out["schedule_text"] = f"{rule} · next {local_short(next_fire_at, zone, now=now)}{_zone_suffix(trigger, zone)}"
     return out
 
 
@@ -223,7 +242,7 @@ def first_run_sentence(trigger: Any, zone: str, next_run_at: Optional[str], *, n
     nxt = _parse_utc(next_run_at)
     if nxt is None:
         return f"{head}, no run left."
-    when = "now" if nxt <= now + datetime.timedelta(seconds=1) else local_short(next_run_at, zone, now=now)
+    when = "now" if nxt <= now + datetime.timedelta(seconds=1) else local_short(next_run_at, zone, now=now) + _zone_suffix(trigger, zone)
     return f"{head}, first run {when}."
 
 

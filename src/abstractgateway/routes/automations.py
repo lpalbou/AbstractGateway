@@ -220,32 +220,18 @@ def _now_iso() -> str:
 # ---------------------------------------------------------------- summaries
 
 
-def _interval_label(every: Any) -> str:
-    """`8h` -> "every 8 hours" (the Automation panel's wording; fixed UTC intervals)."""
-    words = {"s": ("second", "seconds"), "m": ("minute", "minutes"), "h": ("hour", "hours"), "d": ("day", "days")}
-    text = str(every or "")
-    unit = text[-1:]
-    amount = text[:-1]
-    if unit not in words or not amount.isdigit():
-        return f"every {text}"
-    n = int(amount)
-    return f"every {words[unit][0]}" if n == 1 else f"every {n} {words[unit][1]}"
-
-
 def _trigger_summary(envelope: Dict[str, Any], definition_trigger: Dict[str, Any]) -> str:
     source_id = str(envelope.get("source_id") or "")
     payload = envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
     if source_id == "manual":
         return f"manual: run now ({payload.get('command_id')})"
     if source_id == "schedule":
-        config = definition_trigger.get("config") if isinstance(definition_trigger.get("config"), dict) else {}
-        if is_schedule_v2(definition_trigger):
-            from ..automation_schedule import rule_text
+        # The summary's own rule sentence (one wording, one casing); a schedule@1 binding has no
+        # zone of its own, so its times read in UTC here.
+        from ..automation_schedule import rule_text
 
-            zone = trigger_time_zone(definition_trigger, "UTC")
-            return f"schedule: {rule_text(definition_trigger, zone)}, tick {payload.get('tick')}"
-        cadence = f"{_interval_label(config['every'])} (UTC)" if config.get("every") else "once"
-        return f"schedule: {cadence}, tick {payload.get('tick')}"
+        zone = trigger_time_zone(definition_trigger, "UTC")
+        return f"schedule: {rule_text(definition_trigger, zone)}, tick {payload.get('tick')}"
     return f"{source_id}@{envelope.get('source_version')}"
 
 

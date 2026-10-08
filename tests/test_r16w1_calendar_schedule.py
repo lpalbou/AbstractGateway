@@ -218,7 +218,7 @@ def test_v1_and_manual_rows_use_the_owner_zone(gw):
     v1 = {"source_id": "schedule", "source_version": 1, "config": {"start_at": "2030-06-01T00:00:00Z", "every": "24h"}}
     s = _create(gw, v1, "v1")["summary"]
     assert s["time_zone"] == "Europe/Paris"
-    assert s["schedule_text"] == "Every 24 hours (UTC) · next Sat 1 Jun 2030 02:00"
+    assert s["schedule_text"] == "Every 24 hours (UTC) · next Sat 1 Jun 2030 02:00 (Europe/Paris)"
     s = _create(gw, {"source_id": "manual", "source_version": 1, "config": {}}, "m")["summary"]
     assert s["schedule_text"] == "Manual runs only" and "next_run_at" not in s and s["time_zone"] == "Europe/Paris"
 
@@ -276,6 +276,10 @@ NOW = datetime.datetime(2026, 10, 8, 12, 0, tzinfo=datetime.timezone.utc)
         ({"source_id": "schedule", "source_version": 2, "config": {"kind": "monthly", "day": "last", "at": "23:00"}}, "UTC", "Monthly on the last day at 23:00 (UTC)"),
         ({"source_id": "schedule", "source_version": 2, "config": {"kind": "every", "every": "8h", "count": 3}}, "UTC", "Every 8 hours (UTC) · 3 runs max"),
         ({"source_id": "schedule", "source_version": 1, "config": {"every": "1h"}}, "UTC", "Every hour (UTC)"),
+        # A fixed UTC interval names the zone of any clock time it shows (adversary S1).
+        ({"source_id": "schedule", "source_version": 2, "config": {"kind": "every", "every": "8h", "until": "2026-10-20T06:00:00+00:00"}}, "Europe/Paris", "Every 8 hours (UTC) · until Tue 20 Oct 08:00 (Europe/Paris)"),
+        ({"source_id": "schedule", "source_version": 2, "config": {"kind": "every", "every": "8h", "until": "2026-10-20T06:00:00+00:00"}}, "UTC", "Every 8 hours (UTC) · until Tue 20 Oct 06:00"),
+        ({"source_id": "schedule", "source_version": 2, "config": {"kind": "daily", "at": "08:00", "until": "2026-10-20T06:00:00+00:00"}}, "Europe/Paris", "Every day at 08:00 (Europe/Paris) · until Tue 20 Oct 08:00"),
         ({"source_id": "schedule", "source_version": 1, "config": {"start_at": "2026-10-09T06:00:00+00:00"}}, "Europe/Paris", "Once at Fri 9 Oct 08:00 (Europe/Paris)"),
         ({"source_id": "email.received", "source_version": 1, "config": {}}, "UTC", "When an email arrives"),
         ({"source_id": "manual", "source_version": 1, "config": {}}, "UTC", "Manual runs only"),
@@ -292,3 +296,17 @@ def test_local_short_adds_the_year_only_when_it_differs():
 
     assert local_short("2026-10-09T06:00:00+00:00", "Europe/Paris", now=NOW) == "Fri 9 Oct 08:00"
     assert local_short("2027-01-04T06:00:00+00:00", "Europe/Paris", now=NOW) == "Mon 4 Jan 2027 07:00"
+
+
+def test_interval_next_part_names_its_zone_and_the_occurrence_line_shares_the_casing():
+    from abstractgateway.automation_schedule import first_run_sentence, schedule_fields
+    from abstractgateway.routes.automations import _trigger_summary
+
+    every = {"source_id": "schedule", "source_version": 2, "config": {"kind": "every", "every": "8h", "time_zone": "Europe/Paris"}}
+    f = schedule_fields(every, "2026-10-09T06:00:00+00:00", "Asia/Tokyo", now=NOW)
+    assert f["time_zone"] == "Europe/Paris"
+    assert f["schedule_text"] == "Every 8 hours (UTC) · next Fri 9 Oct 08:00 (Europe/Paris)"
+    assert first_run_sentence(every, "Europe/Paris", "2026-10-09T06:00:00+00:00", now=NOW) == \
+        "Runs every 8 hours (UTC), first run Fri 9 Oct 08:00 (Europe/Paris)."
+    v1 = {"source_id": "schedule", "source_version": 1, "config": {"every": "30m"}}
+    assert _trigger_summary({"source_id": "schedule", "payload": {"tick": 5}}, v1) == "schedule: Every 30 minutes (UTC), tick 5"
