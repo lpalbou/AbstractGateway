@@ -2330,7 +2330,7 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
         let guard_cancel = guard.clone();
 
         Element::new()
-            .style(LayoutStyle::column().gap(0))
+            .style(LayoutStyle::column().gap(0).grow(1.0))
             .child(line(vec![span_bold(
                 format!("Route — {} ({})", row2.label, row2.key),
                 t0.accent,
@@ -2972,7 +2972,11 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                         };
                         views.push(v);
                     }
-                    super::w::form::button_row(views)
+                    // The row spans the dialog (button_row right-aligns).
+                    Element::new()
+                        .style(LayoutStyle::column().grow(1.0))
+                        .child(super::w::form::button_row(views))
+                        .build()
                 },
             ))
             .build()
