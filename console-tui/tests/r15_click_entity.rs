@@ -1006,3 +1006,67 @@ fn the_template_words_are_the_webs() {
     }
     assert_eq!(ed[0].tooltip.as_deref(), t["save"]["tip"].as_str());
 }
+
+/// Headless captures of Manage (each tab) and every sub-form, both console
+/// themes, 80x24 and 120x40 — written only when `R8W4_SHOTS_DIR` is set
+/// (`cargo test --test r15_click_entity capture -- --ignored`).
+#[test]
+#[ignore]
+fn capture_manage_and_sub_forms() {
+    if std::env::var("R8W4_SHOTS_DIR").is_err() {
+        return;
+    }
+    abstractgateway_console::ui::w::theme::register();
+    for theme in ["gateway-dark", "gateway-light"] {
+        for size in [(80, 24), (120, 40)] {
+            let fresh = || {
+                let mut h = harness(size, Mount::Page(page_view));
+                abstracttui::app::set_theme_by_id(theme);
+                h.admin();
+                let mut admin = accounts_fixture::user_row("admin", true, "", "", true, true);
+                admin["own"] = json!(true);
+                let castor = accounts_fixture::entity_row("castor", "awake", true);
+                h.store.accounts.set(Loadable::Ready(
+                    accounts_from_payload(&json!({"accounts": [admin, castor]})).unwrap(),
+                ));
+                h.store.entities.set(Loadable::Ready(entities_from_payload(
+                    &json!({"entities": [{"name": "castor", "state": "awake"}]}),
+                )));
+                h.turns(3);
+                h
+            };
+            let tag = theme.trim_start_matches("gateway-");
+            for (i, tab) in entity_manage::MANAGE_TABS.iter().enumerate() {
+                let mut h = fresh();
+                open_manage(&mut h);
+                if i > 0 {
+                    click(&mut h, &format!(" {tab} "));
+                }
+                h.shoot(&format!("manage-tab{i}-{tag}"));
+            }
+            for (k, name) in [
+                (b"s", "state"),
+                (b"n", "mind"),
+                (b"c", "voice"),
+                (b"w", "work"),
+                (b"o", "owntime"),
+                (b"x", "reembed"),
+                (b"p", "tools"),
+                (b"e", "prompt"),
+                (b"m", "candidates"),
+                (b"i", "card"),
+                (b"t", "talk"),
+            ] {
+                let mut h = fresh();
+                open_manage(&mut h);
+                h.key(k);
+                h.shoot(&format!("sub-{name}-{tag}"));
+            }
+            let mut h = fresh();
+            open_manage(&mut h);
+            click(&mut h, " Lifecycle ");
+            click(&mut h, " Freeze now ");
+            h.shoot(&format!("freeze-confirm-{tag}"));
+        }
+    }
+}
