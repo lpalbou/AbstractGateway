@@ -126,16 +126,17 @@ try {
   await page.click("#account-preferences-close");
   await ctx.close();
 
-  if (SHOTS) {
+  // The width/theme layout checks run every time; screenshots are written only when a shots dir is given.
+  {
     for (const theme of ["light", "dark"]) {
       for (const [w, h] of [[1440, 900], [834, 1112], [390, 844]]) {
         const o = await open(browser, theme, w, h);
         await openModal(o.page);
         await o.page.locator(`${TZ} .af-select-trigger`).scrollIntoViewIfNeeded();
-        await o.page.screenshot({ path: path.join(SHOTS, `web-preferences-${theme}-${w}.png`) });
+        if (SHOTS) await o.page.screenshot({ path: path.join(SHOTS, `web-preferences-${theme}-${w}.png`) });
         await o.page.locator(`${TZ} .af-select-trigger`).click();
         await o.page.waitForSelector(".af-select-popover [role='option']");
-        await o.page.screenshot({ path: path.join(SHOTS, `web-preferences-picker-open-${theme}-${w}.png`) });
+        if (SHOTS) await o.page.screenshot({ path: path.join(SHOTS, `web-preferences-picker-open-${theme}-${w}.png`) });
         const overflow = await o.page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
         check(!overflow, `no horizontal page scroll at ${w} (${theme})`);
         await o.ctx.close();

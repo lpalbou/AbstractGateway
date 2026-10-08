@@ -67,4 +67,5 @@ def test_non_admin_edits_her_own_time_zone_in_the_console(prefs_gateway) -> None
     assert proc.returncode == 0, (proc.stdout[-3000:], proc.stderr[-4000:])
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     assert out["failures"] == [], out["failures"]
-    assert out["checks"] >= 22
+    # 18 behaviour checks + 6 layout checks (3 widths x 2 themes), with or without R16W2_SHOTS.
+    assert out["checks"] >= 24, out["checks"]
