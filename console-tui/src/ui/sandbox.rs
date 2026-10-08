@@ -1130,6 +1130,39 @@ pub fn find_player() -> Option<(PathBuf, &'static [&'static str])> {
 }
 
 thread_local! {
+    /// The page's inline refusal line (R15: refusals sit next to the
+    /// controls, never only in the status bar). None while no page is mounted.
+    static REFUSAL: std::cell::Cell<Option<Signal<Option<String>>>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Say why the Sandbox refused: inline under the action bar when the page
+/// is mounted (a key from elsewhere still reaches the status bar).
+fn refuse(store: &Store, msg: impl Into<String>) {
+    let msg = msg.into();
+    match REFUSAL.with(|r| r.get()).filter(|s| s.is_alive()) {
+        Some(sig) => sig.set(Some(msg)),
+        None => store.notice.set(Some(msg)),
+    }
+}
+
+/// [`refuse`] for the sites that hold an `Option<String>` (a refused
+/// action's reason).
+fn refuse_some(store: &Store, msg: Option<String>) {
+    if let Some(m) = msg {
+        refuse(store, m);
+    }
+}
+
+/// The inline refusal currently shown (tests).
+pub fn refusal_now() -> Option<String> {
+    REFUSAL
+        .with(|r| r.get())
+        .filter(|s| s.is_alive())
+        .and_then(|s| s.get_untracked())
+}
+
+thread_local! {
     static PLAYER: std::cell::RefCell<Option<std::process::Child>> =
         const { std::cell::RefCell::new(None) };
 }
@@ -1191,6 +1224,33 @@ pub fn workspace(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let prov_ix = cx.signal(0usize);
     let model_ix = cx.signal(0usize);
     let mode_ix = cx.signal(ws.mode.get_untracked().index());
+    // The inline refusal line (registered for `refuse`); a new mode or a
+    // run that starts clears it.
+    let refusal: Signal<Option<String>> = cx.signal(None);
+    REFUSAL.with(|r| r.set(Some(refusal)));
+    cx.effect(move || {
+        let _ = ws.mode.get();
+        let _ = store.sandbox.with(|s| matches!(s, Loadable::Loading));
+        let _ = ws.media.with(|m| matches!(m, Loadable::Loading));
+        if refusal.get_untracked().is_some()
+            && (store
+                .sandbox
+                .with_untracked(|s| matches!(s, Loadable::Loading))
+                || ws.media.with_untracked(|m| matches!(m, Loadable::Loading)))
+        {
+            refusal.set(None);
+        }
+    });
+    {
+        let mut last_mode = ws.mode.get_untracked();
+        cx.effect(move || {
+            let m = ws.mode.get();
+            if m != last_mode {
+                last_mode = m;
+                refusal.set(None);
+            }
+        });
+    }
 
     // Provider index ⇄ durable name (see the pre-move review.rs notes:
     // tracked reads, equality guards, a missing saved name clears only
@@ -1550,6 +1610,21 @@ pub fn workspace(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         let (v, _) =
                             RowActions::new(bar_actions(&st)).view(gcx, &t, On::Page, true, w, on);
                         v
+                    }
+                }))
+                // The refusal of the last action, inline (error ink), until
+                // the next action goes through.
+                .child(dyn_view(LayoutStyle::default().shrink(0.0), move || {
+                    let t = tt;
+                    match refusal.get() {
+                        Some(why) => {
+                            let w = (crate::ui::page_viewport(cx).get_untracked().w
+                                - super::widths::BLOCK_CHROME
+                                - 2)
+                            .max(20);
+                            super::w::form::sentence(&t, &why, w, t.error)
+                        }
+                        None => Element::new().style(LayoutStyle::default().h(0)).build(),
                     }
                 }))
                 .child(dyn_view(
@@ -2222,10 +2297,13 @@ fn speak(ctx: &Ctx, reply: &str) {
         }
     }
     let Some((provider, model, voice)) = voice_pair_tracked(&store) else {
-        store.notice.set(Some(format!(
-            "output.voice is not configured — set it on {} to speak replies",
-            multimodal_ref()
-        )));
+        refuse_some(
+            &store,
+            Some(format!(
+                "output.voice is not configured — set it on {} to speak replies",
+                multimodal_ref()
+            )),
+        );
         return;
     };
     let (tenant, user) = principal(&store);
@@ -2508,7 +2586,7 @@ fn bar_action(
     match bar_actions(&st).into_iter().find(|a| a.id == id) {
         Some(a) if a.is_enabled() => {}
         Some(a) => {
-            store.notice.set(a.enabled.err());
+            refuse_some(&store, a.enabled.err());
             return;
         }
         None => return,
@@ -2575,9 +2653,10 @@ fn run(ctx: &Ctx, prov_ix: Signal<usize>, model_ix: Signal<usize>, prompt_state:
     let store = ctx.store;
     let ws = store.sandbox_ws;
     if !store.conn.with_untracked(ConnPhase::is_connected) {
-        store.notice.set(Some(
-            "connect to the gateway first — the sandbox runs real generations".into(),
-        ));
+        refuse_some(
+            &store,
+            Some("connect to the gateway first — the sandbox runs real generations".into()),
+        );
         return;
     }
     if store.sandbox.with_untracked(Loadable::is_loading)
@@ -2596,9 +2675,10 @@ fn run(ctx: &Ctx, prov_ix: Signal<usize>, model_ix: Signal<usize>, prompt_state:
     let names = crate::ui::providers::provider_names(&store);
     let ix = prov_ix.get_untracked();
     if ix == 0 || ix > names.len() {
-        store.notice.set(Some(
-            "pick a provider first — Tab reaches the picker".into(),
-        ));
+        refuse_some(
+            &store,
+            Some("pick a provider first — Tab reaches the picker".into()),
+        );
         return;
     }
     let name = names[ix - 1].clone();
@@ -2636,9 +2716,10 @@ fn run(ctx: &Ctx, prov_ix: Signal<usize>, model_ix: Signal<usize>, prompt_state:
         typed
     };
     if prompt.trim().is_empty() {
-        store.notice.set(Some(
-            "type a prompt — the test sends it to the model".into(),
-        ));
+        refuse_some(
+            &store,
+            Some("type a prompt — the test sends it to the model".into()),
+        );
         return;
     }
     // An explicit MTP depth the gateway did not report for this pair is
@@ -2649,11 +2730,14 @@ fn run(ctx: &Ctx, prov_ix: Signal<usize>, model_ix: Signal<usize>, prompt_state:
             .mtp
             .with_untracked(|m| m.depths().contains(&(mtp_ix as u64)))
     {
-        store.notice.set(Some(format!(
-            "MTP {} is not available for this pair — {}",
-            MTP_CHOICES[mtp_ix],
-            ws.mtp.with_untracked(MtpSupport::reason)
-        )));
+        refuse_some(
+            &store,
+            Some(format!(
+                "MTP {} is not available for this pair — {}",
+                MTP_CHOICES[mtp_ix],
+                ws.mtp.with_untracked(MtpSupport::reason)
+            )),
+        );
         return;
     }
     // Fold the previous answered turn into the history the web sends as
@@ -2700,27 +2784,34 @@ fn run_media(ctx: &Ctx, mode: SbMode, prompt_state: &TextAreaState) {
     let rows = match store.routes.get_untracked() {
         Loadable::Ready(d) => d.rows,
         Loadable::Failed(e) => {
-            store.notice.set(Some(format!(
-                "capability routes unavailable ({}) — press r on {}",
-                e.message,
-                multimodal_ref()
-            )));
+            refuse_some(
+                &store,
+                Some(format!(
+                    "capability routes unavailable ({}) — press r on {}",
+                    e.message,
+                    multimodal_ref()
+                )),
+            );
             return;
         }
         _ => {
-            store.notice.set(Some(
-                "capability routes are still loading — try again in a moment".into(),
-            ));
+            refuse_some(
+                &store,
+                Some("capability routes are still loading — try again in a moment".into()),
+            );
             return;
         }
     };
     let (row, provider, model) = match resolve_mode_route(&rows, mode) {
         None => {
-            store.notice.set(Some(format!(
-                "{} ({}) is not offered by this gateway",
-                mode.label(),
-                mode.route_key()
-            )));
+            refuse_some(
+                &store,
+                Some(format!(
+                    "{} ({}) is not offered by this gateway",
+                    mode.label(),
+                    mode.route_key()
+                )),
+            );
             return;
         }
         Some(ModeRoute::Ready {
@@ -2730,24 +2821,30 @@ fn run_media(ctx: &Ctx, mode: SbMode, prompt_state: &TextAreaState) {
             ..
         }) => (row, provider, model),
         Some(ModeRoute::Incomplete { key }) => {
-            store.notice.set(Some(incomplete_reason(mode, &key)));
+            refuse_some(&store, Some(incomplete_reason(mode, &key)));
             return;
         }
         Some(ModeRoute::NotConfigured) => {
-            store.notice.set(Some(format!(
-                "{} is not configured — configure it on {} first",
-                mode.route_key(),
-                multimodal_ref()
-            )));
+            refuse_some(
+                &store,
+                Some(format!(
+                    "{} is not configured — configure it on {} first",
+                    mode.route_key(),
+                    multimodal_ref()
+                )),
+            );
             return;
         }
     };
     let prompt = ctx.ui.sb_prompt.get_untracked().trim().to_string();
     if prompt.is_empty() {
-        store.notice.set(Some(format!(
-            "type a prompt — {}",
-            mode.placeholder().split(" — ").next().unwrap_or("")
-        )));
+        refuse_some(
+            &store,
+            Some(format!(
+                "type a prompt — {}",
+                mode.placeholder().split(" — ").next().unwrap_or("")
+            )),
+        );
         return;
     }
     let (tenant, user) = store.conn.with_untracked(|c| match c {
@@ -2766,7 +2863,7 @@ fn run_media(ctx: &Ctx, mode: SbMode, prompt_state: &TextAreaState) {
         Some(sig) => match parse_seconds(&sig.get_untracked()) {
             Ok(n) => Some(n),
             Err(why) => {
-                store.notice.set(Some(why));
+                refuse_some(&store, Some(why));
                 return;
             }
         },

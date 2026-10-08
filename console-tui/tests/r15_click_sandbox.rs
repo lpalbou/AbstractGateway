@@ -479,5 +479,9 @@ fn length_seconds_is_shown_for_sfx_and_rides_the_music_body() {
         .sent()
         .iter()
         .any(|c| matches!(c, Cmd::SandboxMedia { .. })));
-    assert_eq!(notice(&h), sandbox::SECONDS_REFUSAL);
+    // R15: inline under the action bar (adversary note c).
+    assert_eq!(
+        sandbox::refusal_now().as_deref(),
+        Some(sandbox::SECONDS_REFUSAL)
+    );
 }

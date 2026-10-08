@@ -367,7 +367,8 @@ fn voice_carries_route_voice_and_unconfigured_modes_refuse() {
     );
     h.type_text("jazz\r");
     h.turns(2);
-    let notice = h.store.notice.get_untracked().unwrap_or_default();
+    // R15: refusals sit inline under the action bar (adversary note c).
+    let notice = abstractgateway_console::ui::sandbox::refusal_now().unwrap_or_default();
     assert!(
         notice.contains("output.music is not configured"),
         "names the refusal: {notice}"
@@ -381,7 +382,7 @@ fn voice_carries_route_voice_and_unconfigured_modes_refuse() {
     h.focus_prompt();
     h.type_text("waves\r");
     h.turns(2);
-    let notice = h.store.notice.get_untracked().unwrap_or_default();
+    let notice = abstractgateway_console::ui::sandbox::refusal_now().unwrap_or_default();
     assert!(
         notice.contains("not offered by this gateway"),
         "absent route refusal: {notice}"
@@ -477,7 +478,8 @@ fn partial_task_row_stops_resolution_and_refuses() {
     );
     h.type_text("\r");
     h.turns(2);
-    let notice = h.store.notice.get_untracked().unwrap_or_default();
+    // R15: refusals sit inline under the action bar (adversary note c).
+    let notice = abstractgateway_console::ui::sandbox::refusal_now().unwrap_or_default();
     assert!(
         notice.contains("has settings but no provider + model"),
         "refusal names the reason: {notice}"
@@ -840,7 +842,8 @@ fn mtp_depths_follow_the_capabilities_probe() {
     h.turns(2);
     h.type_text("\r");
     h.turns(2);
-    let notice = h.store.notice.get_untracked().unwrap_or_default();
+    // R15: refusals sit inline under the action bar (adversary note c).
+    let notice = abstractgateway_console::ui::sandbox::refusal_now().unwrap_or_default();
     assert!(
         notice.contains("MTP depth 3 is not available")
             && notice.contains("depth 2 only on this host"),

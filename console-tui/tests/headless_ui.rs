@@ -3030,12 +3030,14 @@ fn review_sandbox_refusals_name_reasons() {
     h.turns(2);
     click_field(&mut h, "│prompt"); // R15: "System prompt" sits above
     h.type_text("\r");
-    h.turns(2);
-    let notice = h.store.notice.get_untracked().unwrap_or_default();
+    let s = h.turns(2);
+    // R15: the refusal sits inline under the action bar (adversary note c).
+    let notice = abstractgateway_console::ui::sandbox::refusal_now().unwrap_or_default();
     assert!(
         notice.contains("connect to the gateway first"),
         "disconnected run names its refusal: {notice}"
     );
+    assert!(s.contains("connect to the gateway first"), "inline:\n{s}");
     assert!(
         h.find_cmd(|c| matches!(c, Cmd::SandboxTest { .. }))
             .is_none(),
@@ -3047,12 +3049,13 @@ fn review_sandbox_refusals_name_reasons() {
     h.store.notice.set(None);
     h.turns(2);
     h.type_text("\r");
-    h.turns(2);
-    let notice = h.store.notice.get_untracked().unwrap_or_default();
+    let s = h.turns(2);
+    let notice = abstractgateway_console::ui::sandbox::refusal_now().unwrap_or_default();
     assert!(
         notice.contains("pick a provider first"),
         "unpicked run names the missing pick: {notice}"
     );
+    assert!(s.contains("pick a provider first"), "inline:\n{s}");
     assert!(
         h.find_cmd(|c| matches!(c, Cmd::SandboxTest { .. }))
             .is_none(),
