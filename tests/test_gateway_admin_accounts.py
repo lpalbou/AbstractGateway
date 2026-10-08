@@ -117,7 +117,7 @@ def test_accounts_list_users_and_entities_with_reasons(gateway, entity_home) -> 
     assert alice["kind"] == "user" and alice["active"] is True and alice["archived"] is False
     assert all(alice["actions"][k]["available"] for k in ("email", "logs", "workspace", "rotate", "archive", "suspend"))
     assert alice["actions"]["manage"]["available"] is False and alice["actions"]["unarchive"]["available"] is False
-    assert set(alice["actions"]) == {"openai_api", "email", "logs", "workspace", "preferences", "rotate", "manage", "archive", "unarchive", "suspend"}
+    assert set(alice["actions"]) == {"openai_api", "email", "logs", "workspace", "preferences", "rotate", "manage", "configure", "archive", "unarchive", "suspend"}
     ent = rows[3]
     # Round 3: an entity is an AI user with its own mailbox (not connected yet).
     assert ent["kind"] == "entity" and ent["mailbox"]["state"] == "not_connected"

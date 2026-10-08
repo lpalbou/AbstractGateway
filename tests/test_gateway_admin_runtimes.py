@@ -124,7 +124,7 @@ def test_console_runtimes_tab_order_and_creation_modals() -> None:
     # Roles is a dropdown of the accepted vocabulary (entity is door-assigned,
     # deliberately not offered).
     assert '<select id="new-roles"' in html
-    assert 'value="user" selected' in html and 'value="admin"' in html and 'value="readonly"' in html
+    assert 'value="user" selected' in html and 'value="admin"' in html and 'value="readonly"' not in html  # two roles (R16)
     assert 'value="entity"' not in html
 
     # The users table has no Tenant column (demoted to Advanced in the modal). Round 2: entities
