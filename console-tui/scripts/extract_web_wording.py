@@ -291,6 +291,42 @@ def skills_words() -> dict:
 SCREEN_FIXTURES["skills"] = skills_words
 
 
+def openai_words() -> dict:
+    """R15-A OpenAI API: the cards' buttons, tooltips, segments and the New key question."""
+    ui = read("console_ui.py")
+    snips = re.findall(r'\["(\w+)", "([^"]+)"\]', need(ui, r'const OAI_SNIPPETS = (\[.*?\]);', "OAI_SNIPPETS"))
+    if len(snips) != 3:
+        fail(f"OAI_SNIPPETS: expected 3, found {snips!r}.")
+    auth = re.findall(r'\{ id: "(\w+)", label: "([^"]+)", text: "([^"]+)" \}', need(ui, r'const OAI_AUTH = \[(.*?)\];', "OAI_AUTH", re.S))
+    if len(auth) != 2:
+        fail(f"OAI_AUTH: expected 2, found {auth!r}.")
+    out = {
+        "endpoint_tip": need(ui, r'<label class="ui-switch" title="([^"]*)"><input type="checkbox" role="switch" data-oai-enabled', "endpoint tooltip"),
+        "restart_tip": need(ui, r'data-oai-action="restart" title="([^"]*)"', "restart tooltip"),
+        "check_tip": need(ui, r'data-oai-action="check" title="([^"]*)"', "check tooltip"),
+        "show_key_tip": need_first(ui, r'data-af-tip="\$\{oaiStore\.reveal \? "Hide your API key" : "([^"]*)"\}"', "show key tooltip"),
+        "hide_key_tip": need_first(ui, r'data-af-tip="\$\{oaiStore\.reveal \? "([^"]*)" : "Show your API key"\}"', "hide key tooltip"),
+        "not_in_a_run": need_first(ui, r'disabled title="([^"]*)" data-oai-observer', "observer disabled tooltip"),
+        "restart": need(ui, r'oaiStore\.busy === "restart" \? "Restarting\.\.\." : "([^"]*)"\}</button>', "restart label"),
+        "check": need(ui, r'oaiStore\.busy === "check" \? "Checking\.\.\." : "([^"]*)"\}</button>', "check label"),
+        "new_key": need_first(ui, r'data-oai-action="new-key"\$\{oaiStore\.busy \? " disabled" : ""\}>([^<]*)</button>', "new key label"),
+        "copy_example": need(ui, r'data-oai-copy-snippet>([^<]*)</button>', "copy example"),
+        "copy": need(ui, r'aria-label="Copy \$\{esc\(label\)\}">([^<]*)</button>', "copy button"),
+        "doc_openai": need(ui, r'rel="noopener">(OpenAI API compatibility)</a>', "openai docs link"),
+        "doc_core": need(ui, r'rel="noopener">(AbstractCore server)</a>', "abstractcore docs link"),
+        "new_key_confirm": need(ui, r'<p>(Make a new key\?[^<]*)</p>', "new key confirmation"),
+    }
+    for i, (_, label) in enumerate(snips):
+        out[f"snippet_{i}"] = label
+    for i, (_, label, text) in enumerate(auth):
+        out[f"auth_{i}_label"] = label
+        out[f"auth_{i}_text"] = text
+    return out
+
+
+SCREEN_FIXTURES["openai"] = openai_words
+
+
 def screens_main(write: bool) -> int:
     rc = 0
     for name, build_fn in SCREEN_FIXTURES.items():
