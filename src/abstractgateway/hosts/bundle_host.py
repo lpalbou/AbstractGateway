@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import os
@@ -443,7 +444,17 @@ def _install_catalog_subworkflow_guard(
             )
             if err:
                 return EffectOutcome.failed(f"Catalog subworkflow '{wid}' is not allowed: {err}")
-        return original(run, effect, default_next_node)
+        # B4: a run pinned across an in-place overwrite starts its sub-workflows from
+        # the registry it resolved from (`_PinnableWorkflowRegistry`).
+        pins = getattr(runtime, "_gateway_registry_pins", None)
+        pinned_registry = pins.get(str(getattr(run, "run_id", "") or "")) if isinstance(pins, dict) else None
+        if pinned_registry is None:
+            return original(run, effect, default_next_node)
+        token = _PINNED_REGISTRY.set(pinned_registry)
+        try:
+            return original(run, effect, default_next_node)
+        finally:
+            _PINNED_REGISTRY.reset(token)
 
     try:
         runtime._handlers[EffectType.START_SUBWORKFLOW] = _guarded_start_subworkflow  # type: ignore[attr-defined]
@@ -731,6 +742,31 @@ def _visual_event_listener_workflow_id(*, flow_id: str, node_id: str) -> str:
         return s or "unknown"
 
     return f"visual_event_listener_{_sanitize(flow_id)}_{_sanitize(node_id)}"
+
+
+# The registry a run in flight resolved its workflows from, while that run starts a
+# sub-workflow (set by the start-subworkflow guard). See `_PinnableWorkflowRegistry`.
+_PINNED_REGISTRY: contextvars.ContextVar[Optional[Any]] = contextvars.ContextVar("abstractgateway_pinned_registry", default=None)
+
+
+class _PinnableWorkflowRegistry(WorkflowRegistry):
+    """A WorkflowRegistry that answers from a run's PINNED registry first.
+
+    When a version is replaced in place (drafts, `overwrite: true`), a run in flight
+    keeps the registry it started with (B4). The runtime looks sub-workflows up with
+    `registry.get(workflow_id)` and no run context, so the gateway's start-subworkflow
+    guard sets `_PINNED_REGISTRY` to the parent's pinned registry around the call: the
+    child starts on the version its parent runs, not on the overwrite. Ids the old
+    registry does not know (published since) fall through to this one.
+    """
+
+    def get(self, workflow_id: str) -> Optional[WorkflowSpec]:  # type: ignore[override]
+        pinned = _PINNED_REGISTRY.get()
+        if pinned is not None and pinned is not self:
+            spec = pinned.get(workflow_id)
+            if spec is not None:
+                return spec
+        return super().get(workflow_id)
 
 
 def _file_signature(p: Path) -> Optional[tuple]:
@@ -1043,8 +1079,50 @@ class WorkflowBundleGatewayHost:
     _runtime_capabilities: frozenset = field(default_factory=frozenset, repr=False, compare=False)
     # run_id -> the spec a run in flight resolved before a swap replaced it (B4).
     _run_spec_pins: Dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+    # run_id -> the whole registry that run resolved from: its sub-workflows (same
+    # bundle version, overwritten in place) start from it too. Shared with the
+    # runtime's start-subworkflow guard as `runtime._gateway_registry_pins`.
+    _run_registry_pins: Dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
     # Serializes reloads (concurrent publishes); NOT held by ticks, starts or reads.
     _reload_lock: Any = field(default_factory=threading.RLock, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        self._share_pins_with_runtime()
+
+    def _share_pins_with_runtime(self) -> None:
+        runtime = self.runtime
+        try:
+            setattr(runtime, "_gateway_registry_pins", self._run_registry_pins)
+            setattr(runtime, "_gateway_spec_pins", self._run_spec_pins)
+        except Exception:  # pragma: no cover - a runtime without attributes cannot pin sub-workflows
+            return
+        # A pinned run resumed by the runtime itself (an EMIT_EVENT effect resuming
+        # its listeners looks the target's spec up with `registry.get`) resumes on its
+        # pinned spec. Wrapped once per runtime object.
+        if getattr(runtime, "_gateway_resume_pinned", False):
+            return
+        original_resume = getattr(runtime, "resume", None)
+        if not callable(original_resume):
+            return
+
+        def _resume_pinned(*args: Any, **kwargs: Any) -> Any:
+            pins = getattr(runtime, "_gateway_spec_pins", None)
+            rid = kwargs.get("run_id")
+            pinned = pins.get(str(rid)) if isinstance(pins, dict) and rid is not None else None
+            if pinned is not None and "workflow" in kwargs:
+                kwargs["workflow"] = pinned
+            return original_resume(*args, **kwargs)
+
+        try:
+            setattr(runtime, "resume", _resume_pinned)
+            setattr(runtime, "_gateway_resume_pinned", True)
+        except Exception:  # pragma: no cover
+            pass
+
+    def _pin_run(self, run_id: str, spec: Any, registry: Any) -> None:
+        self._run_spec_pins[run_id] = spec
+        if registry is not None:
+            self._run_registry_pins[run_id] = registry
 
     @staticmethod
     def _dynamic_flow_filename(workflow_id: str) -> str:
@@ -1386,7 +1464,7 @@ class WorkflowBundleGatewayHost:
         # from bundles_by_id, and a latest pointer at a dropped version
         # would resurrect a bundle the skip declared absent.
 
-        wf_reg: WorkflowRegistry = WorkflowRegistry()
+        wf_reg: WorkflowRegistry = _PinnableWorkflowRegistry()
         specs: Dict[str, WorkflowSpec] = {}
         flows_by_namespaced_id: Dict[str, Dict[str, Any]] = {}
         skipped_bundles: Dict[str, Dict[str, Dict[str, Any]]] = {}
@@ -2448,7 +2526,7 @@ class WorkflowBundleGatewayHost:
                 or compiled.email_tools_listed != bool(self.email_tools_listed)
             )
             if changed:
-                pinned = self._pin_in_flight_runs(old_specs, compiled.specs)
+                pinned = self._pin_in_flight_runs(old_specs, compiled.specs, self.workflow_registry)
                 # THE SWAP: one attribute on the live runtime. Everything the
                 # runtime owns — its LLM client, providers (weights + prompt
                 # caches), tool executor, handlers, memory store — stays.
@@ -2491,8 +2569,11 @@ class WorkflowBundleGatewayHost:
                 st = None
             if st is None or _run_is_terminal(st):
                 pins.pop(rid, None)
+                self._run_registry_pins.pop(rid, None)
 
-    def _pin_in_flight_runs(self, old_specs: Dict[str, WorkflowSpec], new_specs: Dict[str, WorkflowSpec]) -> int:
+    def _pin_in_flight_runs(
+        self, old_specs: Dict[str, WorkflowSpec], new_specs: Dict[str, WorkflowSpec], old_registry: Any = None
+    ) -> int:
         """Keep every run in flight on the spec it already resolved (caller holds `_lock`).
 
         Only workflows whose spec OBJECT changes or disappears matter — a publish of
@@ -2523,6 +2604,8 @@ class WorkflowBundleGatewayHost:
                 if not rid or rid in pins or wid not in changed_ids:
                     continue
                 pins[rid] = old_specs[wid]
+                if old_registry is not None:
+                    self._run_registry_pins[rid] = old_registry
                 count += 1
         return count
 
@@ -2563,7 +2646,7 @@ class WorkflowBundleGatewayHost:
                 rearm_warnings.append(f"#FALLBACK runtime rebuild hook failed: {type(e).__name__}: {e}")
         with self._lock:
             old_memory_store = getattr(self, "memory_store", None)
-            self._pin_in_flight_runs(dict(self.specs or {}), new_host.specs)
+            self._pin_in_flight_runs(dict(self.specs or {}), new_host.specs, self.workflow_registry)
             self.bundles = new_host.bundles
             self.bundle_sources = new_host.bundle_sources
             self.latest_bundle_versions = new_host.latest_bundle_versions
@@ -2593,6 +2676,7 @@ class WorkflowBundleGatewayHost:
             self._flow_scanned_llm_defaults = new_host._flow_scanned_llm_defaults
             self._compile_cache = new_host._compile_cache
             self._runtime_capabilities = new_host._runtime_capabilities
+            self._share_pins_with_runtime()
         try:
             if old_memory_store is not None and old_memory_store is not getattr(self, "memory_store", None):
                 close = getattr(old_memory_store, "close", None)
@@ -3011,6 +3095,7 @@ class WorkflowBundleGatewayHost:
                     raise WorkflowDeprecatedError(bundle_id=dep_bid, flow_id=dep_flow, record=rec)
 
         spec = self.specs.get(workflow_id)
+        spec_registry = self.workflow_registry
         if spec is None:
             raise KeyError(f"Workflow '{workflow_id}' not found")
         sid = str(session_id).strip() if isinstance(session_id, str) and session_id.strip() else None
@@ -3230,7 +3315,7 @@ class WorkflowBundleGatewayHost:
         # existed. Checked under the swap's lock, so one of the two always pins it.
         with self._lock:
             if self.specs.get(workflow_id) is not spec:
-                self._run_spec_pins[run_id] = spec
+                self._pin_run(run_id, spec, spec_registry)
 
         # Default session_id to the root run_id for durable session-scoped behavior
         # (matches VisualSessionRunner semantics).
@@ -3326,10 +3411,20 @@ class WorkflowBundleGatewayHost:
         # B4: a run that was in flight when a reload replaced its workflow keeps
         # the spec it resolved (`_pin_in_flight_runs`); new runs get the new one.
         pinned = self._run_spec_pins.get(str(run_id))
+        if pinned is None and not _run_is_terminal(run):
+            # A child of a pinned run (a sub-workflow it started) runs from the
+            # parent's registry: the version the parent started on, also when that
+            # version was overwritten in place since.
+            parent_reg = self._run_registry_pins.get(str(getattr(run, "parent_run_id", "") or ""))
+            parent_spec = parent_reg.get(workflow_id) if parent_reg is not None else None
+            if parent_spec is not None:
+                self._pin_run(str(run_id), parent_spec, parent_reg)
+                pinned = parent_spec
         if pinned is not None:
             if not _run_is_terminal(run):
                 return (self.runtime, pinned)
             self._run_spec_pins.pop(str(run_id), None)
+            self._run_registry_pins.pop(str(run_id), None)
         spec = self.specs.get(workflow_id)
         if spec is None and ":" in workflow_id:
             # Backward compatibility: older runs may store workflow_id as "bundle:flow"

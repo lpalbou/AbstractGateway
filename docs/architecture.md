@@ -327,10 +327,16 @@ re-point the running client in place (`refresh_capability_defaults`).
 version is a new workflow id (`bundle@0.0.2:flow`), so runs on `0.0.1` simply
 continue on it while new runs start on `0.0.2`. When a version is replaced in
 place (drafts, `overwrite: true`) or removed, every RUNNING or WAITING run of
-it is pinned to the spec it already had (`_pin_in_flight_runs`); the pin is
+it is pinned to the spec it already had and to the whole registry it resolved
+from (`_pin_in_flight_runs`). Its sub-workflows follow it: a child it starts
+after the overwrite is looked up in that pinned registry (the start-subworkflow
+guard and `_PinnableWorkflowRegistry`), and a child run inherits its parent's
+pin, so the whole run tree finishes on the version it started on. The pin is
 released when the run ends. Automations store their concrete
-`bundle@version:flow`, so a republish never changes them. A sub-workflow that
-an in-flight run starts after an in-place overwrite resolves the new spec.
+`bundle@version:flow`, so a republish never changes them; the automation
+controller's spec never changes, so its later occurrences start on what is
+published then. A pinned run resumed by the runtime itself (an event delivered
+to its listener) resumes on its pinned spec too.
 
 **Where it is reported.** Every publish/promote/upload response carries
 `reload: {kind, services, duration_ms, sentence}` (see

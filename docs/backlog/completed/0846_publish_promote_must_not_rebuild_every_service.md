@@ -122,9 +122,11 @@ Validation:
 
 Residual notes:
 
-- A sub-workflow that an in-flight run starts after its version was overwritten
-  in place resolves the new spec (the runtime's sub-workflow lookup has no run
-  context); new versions are unaffected (their ids differ).
+- Follow-up (adversary SHOULD, same day): sub-workflows started by a pinned run
+  after an in-place overwrite now resolve from the parent's pinned registry (the
+  start-subworkflow guard sets it for the runtime's context-free lookup; a child
+  run inherits its parent's pin; a pinned run resumed by the runtime itself resumes on its pinned spec). Tests: sub-workflow (runner path), inline
+  START_SUBWORKFLOW, plus a runtime-initiated resume (EMIT_EVENT); mutants M15-M18.
 - The supervisor wording (framework 0848) is the root package's; its banner can
   now point at the audit line's `reload` field.
 
