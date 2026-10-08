@@ -848,6 +848,18 @@ def entity_wording() -> dict:
         "reembed": one_in(r'id="entity-reembed"[^>]*>([^<]+)<', "Rebuild index button"),
     }
     freeze_q = one_in(r'aria-label="Confirm freeze"[^>]*>\s*<span>([^<]+)</span>', "freeze confirmation")
+    sub = {
+        "sleep_question": one_in(r'aria-label="Confirm sleep"[^>]*>\s*<span>([^<]+)</span>', "sleep confirmation"),
+        "reembed_question": one_in(r'aria-label="Confirm rebuild"[^>]*>\s*<span>([^<]+)</span>', "rebuild confirmation"),
+        "reason_help": one_in(r'id="entity-state-reason-help" class="af-form__help">([^<]+)<', "Reason help"),
+        "empty_phase_label": one_in(r'<span class="af-switch__label">(Empty phase means no tools)</span>', "Empty phase label"),
+        "empty_phase_desc": one_in(r'id="entity-tools-denyall-desc">([^<]+)<', "Empty phase description"),
+        "schedule_help": one_in(r'<summary id="entity-schedule-summary">[^<]*</summary>\s*<p class="af-form__help">([^<]+)</p>', "Schedule help"),
+        "audition_label": one_in(r'id="entity-voice-audition"[^>]*>([^<]+)<', "Hear a sample button"),
+        "give_task_label": one_in(r'id="entity-workorder-save"[^>]*>([^<]+)<', "Give this task button"),
+        "end_task_label": one_in(r'id="entity-workorder-clear"[^>]*>([^<]+)<', "End the work order button"),
+        "close_visit_label": one_in(r'id="entity-chat-close"[^>]*>([^<]+)<', "Close visit button"),
+    }
     c0 = src.find('<div id="entity-create-backdrop"')
     c1 = src.find('<div id="templates-backdrop"', c0)
     c = src[c0:c1]
@@ -861,7 +873,7 @@ def entity_wording() -> dict:
         "create_tip": one_in(r'id="entity-create" title="([^"]+)"', "Validate & create tooltip", c),
         "cancel_label": one_in(r'id="entity-create-cancel"[^>]*>([^<]+)</button>', "Cancel label", c),
     }
-    return {"tabs": tabs, "cards": cards, "buttons": buttons, "freeze_question": freeze_q, "create": create}
+    return {"tabs": tabs, "cards": cards, "buttons": buttons, "freeze_question": freeze_q, "create": create, "sub": sub}
 
 
 

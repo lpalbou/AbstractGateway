@@ -2273,18 +2273,23 @@ fn entity_manage_menu_state_flow_sends_post() {
     assert!(s.contains("Entity state — Testor"), "state modal:\n{s}");
     assert!(s.contains("dream pass"), "dream option:\n{s}");
 
-    // Testor is asleep (fixture) → radio starts on asleep (ix 1). Move
-    // down one to "asleep + dream pass", walk to Apply, press it.
-    h.key(b"\x1b[B");
-    h.turn();
-    h.key(b"\t"); // → reason
-    h.turn();
+    // R15-B: the Reason first (it rides the next change), then the
+    // "asleep + dream pass" segment by mouse; the web's sleep question
+    // is answered with [Sleep].
+    let s2 = h.turns(1);
+    let row = find_row(&s2, "Reason");
+    let line = s2.lines().nth(row - 1).unwrap();
+    let x = line[..line.find("Reason").unwrap()].chars().count() + 22;
+    click_at(&mut h, x, row);
     h.type_text("nightly consolidation");
     h.turn();
-    h.key(b"\t"); // → Apply
-    h.turn();
-    h.type_text("\r");
-    h.turns(2);
+    click_label(&mut h, " asleep + dream pass ");
+    let s = h.turns(2);
+    assert!(
+        s.contains("Put it to sleep?"),
+        "the web's sleep question:\n{s}"
+    );
+    click_label(&mut h, " Sleep ");
     match h.find_cmd(|c| matches!(c, Cmd::EntityState { .. })) {
         Some(Cmd::EntityState { name, body }) => {
             assert_eq!(name, "Testor");
@@ -2294,9 +2299,13 @@ fn entity_manage_menu_state_flow_sends_post() {
         }
         other => panic!("expected EntityState, got {other:?}"),
     }
-    // The modal closed on Apply (outcome rides toast + journal).
+    // Applied at once (the web's switch): the form stays, its state line
+    // says the write is in flight (the journal's verdict follows).
     let s = h.turns(2);
-    assert!(!s.contains("Entity state — Testor"), "modal closed:\n{s}");
+    assert!(
+        s.contains("Entity state — Testor") && s.contains("Saving…"),
+        "applied in place:\n{s}"
+    );
 }
 
 // ---- entity parity: summon / talk / card / voice audition -------------
@@ -2605,7 +2614,10 @@ fn voice_audition_sends_the_unsaved_selection_and_shows_the_file() {
     h.type_text("c");
     let s = h.turns(3);
     assert!(s.contains("Voice — Testor"), "voice form:\n{s}");
-    assert!(s.contains("Audition"), "audition verb:\n{s}");
+    assert!(
+        s.contains("Hear a sample"),
+        "audition verb (the web's label):\n{s}"
+    );
     h.type_text("openai");
     h.turn();
     h.key(b"\t");
@@ -2643,6 +2655,9 @@ fn voice_audition_sends_the_unsaved_selection_and_shows_the_file() {
             error: None,
             player: None,
         }));
+    // R15: the focused button's tooltip sits over the outcome lines; the
+    // keyboard steps back to the clear switch (no tooltip).
+    h.key(b"\x1b[Z");
     let s = h.turns(2);
     assert!(s.contains("audio saved:"), "file path shown:\n{s}");
     assert!(s.contains("Testor-audition-a1.wav"), "path:\n{s}");
@@ -2675,13 +2690,8 @@ fn own_time_start_with_blank_fields_sends_the_web_body() {
     let s = h.turns(3);
     assert!(s.contains("Own time — Testor"), "own-time form open:\n{s}");
     h.drain_cmds();
-    // tick → ticks → rest → grant hours → Grant → Revoke → Start loop.
-    for _ in 0..6 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r");
-    h.turns(2);
+    // R15-B: the web's Personal time switch applies at once (on = start).
+    click_label(&mut h, "●─ Personal time");
     match h.find_cmd(|c| matches!(c, Cmd::EntityLoop { start: true, .. })) {
         Some(Cmd::EntityLoop { name, body, .. }) => {
             assert_eq!(name, "Testor");
@@ -2733,8 +2743,8 @@ fn entity_tool_policy_editor_saves_changed_phases_only() {
     assert!(s.contains("(custom)"), "provenance shown:\n{s}");
 
     // No changes → Save refuses with the reason.
-    // Focus: visit MultiSelect autofocus is not set; walk to Save.
-    for _ in 0..3 {
+    // Focus: the Empty-phase switch, visit, work, then Save.
+    for _ in 0..4 {
         h.key(b"\t");
         h.turn();
     }

@@ -10,6 +10,7 @@
 
 use abstracttui::prelude::*;
 
+use super::entity_manage::{wb, SubForm};
 use super::util::{line, span, span_bold, wrap_text};
 use super::Ctx;
 use crate::api::entities::{ChatLine, ChatState};
@@ -27,87 +28,75 @@ pub fn open_card_modal(cx: Scope, ctx: &Ctx, name: String) {
     store.entity_card.set(Loadable::Loading);
     ctx.send(Cmd::Entity(EntityCmd::LoadCard { name: name.clone() }));
     let ctx2 = ctx.clone();
-    super::open_form(ctx, cx, Size::new(CARD_W, 22), move |mcx, close| {
-        let theme = use_theme(mcx);
-        let t0 = theme.get().tokens;
-        let n_render = name.clone();
-        let n_reload = name.clone();
-        let ctx_r = ctx2.clone();
-        let close_b = close.clone();
-        Element::new()
-            .focusable()
-            .autofocus()
-            .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold(
-                format!("Identity card — {name}"),
-                t0.accent,
-            )]))
-            .child(dyn_view_scoped(
-                LayoutStyle::default().grow(1.0),
-                move |gcx| {
-                    let t = theme.get().tokens;
-                    match store.entity_card.get() {
-                        Loadable::Ready(c) if c.name == n_render => {
-                            let mut col = Element::new().style(LayoutStyle::column().gap(0));
-                            for (k, v) in &c.rows {
-                                col = col.child(line(vec![
-                                    span_bold(format!("{k:<28}"), t.text_muted),
-                                    span(v.clone(), t.text),
-                                ]));
-                            }
-                            if c.rows.is_empty() {
-                                col = col.child(line(vec![span(
-                                    "the card carries none of the overview fields",
-                                    t.text_muted,
-                                )]));
-                            }
-                            if !c.moments.is_empty() {
-                                col = col.child(line(vec![span_bold(
-                                    "Recent moments".to_string(),
-                                    t.text_muted,
-                                )]));
-                                for (at, what) in &c.moments {
+    super::w::FormModal::new(format!("Identity card — {name}"))
+        .size(CARD_W, 24)
+        .open(ctx, cx, move |mcx, close, _guard, _w| {
+            let theme = use_theme(mcx);
+            let t0 = theme.get().tokens;
+            let n_render = name.clone();
+            let n_reload = name.clone();
+            let ctx_r = ctx2.clone();
+            let close_b = close.clone();
+            Element::new()
+                .focusable()
+                .autofocus()
+                .style(LayoutStyle::column().gap(0))
+                .child(dyn_view_scoped(
+                    LayoutStyle::default().grow(1.0),
+                    move |gcx| {
+                        let t = theme.get().tokens;
+                        match store.entity_card.get() {
+                            Loadable::Ready(c) if c.name == n_render => {
+                                let mut col = Element::new().style(LayoutStyle::column().gap(0));
+                                for (k, v) in &c.rows {
                                     col = col.child(line(vec![
-                                        span(format!("{at:<18}"), t.text_faint),
-                                        span(what.clone(), t.text),
+                                        span_bold(format!("{k:<28}"), t.text_muted),
+                                        span(v.clone(), t.text),
                                     ]));
                                 }
+                                if c.rows.is_empty() {
+                                    col = col.child(line(vec![span(
+                                        "the card carries none of the overview fields",
+                                        t.text_muted,
+                                    )]));
+                                }
+                                if !c.moments.is_empty() {
+                                    col = col.child(line(vec![span_bold(
+                                        "Recent moments".to_string(),
+                                        t.text_muted,
+                                    )]));
+                                    for (at, what) in &c.moments {
+                                        col = col.child(line(vec![
+                                            span(format!("{at:<18}"), t.text_faint),
+                                            span(what.clone(), t.text),
+                                        ]));
+                                    }
+                                }
+                                Scroll::new(col.build()).view(gcx)
                             }
-                            Scroll::new(col.build()).view(gcx)
+                            Loadable::Failed(e) => super::util::error_panel_hint(
+                                &t,
+                                &e,
+                                Some("Reload retries (opening re-reads)"),
+                            ),
+                            _ => line(vec![span(format!("⟳ reading {n_render}'s card…"), t.info)]),
                         }
-                        Loadable::Failed(e) => super::util::error_panel_hint(
-                            &t,
-                            &e,
-                            Some("Reload retries (opening re-reads)"),
-                        ),
-                        _ => line(vec![span(format!("⟳ reading {n_render}'s card…"), t.info)]),
-                    }
-                },
-            ))
-            .child(
-                Element::new()
-                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                    .child(
-                        Button::new("Reload")
-                            .on_click(move || {
-                                ctx_r.store.entity_card.set(Loadable::Loading);
-                                ctx_r.send(Cmd::Entity(EntityCmd::LoadCard {
-                                    name: n_reload.clone(),
-                                }));
-                            })
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .child(
-                        Button::new("Close")
-                            .on_click(move || close_b())
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .build(),
-            )
-            .build()
-    });
+                    },
+                ))
+                .child(
+                    Element::new()
+                        .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                        .child(wb(mcx, &t0, SubForm::Card, "reload", move || {
+                            ctx_r.store.entity_card.set(Loadable::Loading);
+                            ctx_r.send(Cmd::Entity(EntityCmd::LoadCard {
+                                name: n_reload.clone(),
+                            }));
+                        }))
+                        .child(wb(mcx, &t0, SubForm::Card, "close", move || close_b()))
+                        .build(),
+                )
+                .build()
+        });
 }
 
 /// Whether the console may open Talk on `name` now: one live visit at a
@@ -139,7 +128,7 @@ pub fn open_talk_modal(cx: Scope, ctx: &Ctx, name: String) {
         }
     });
     let ctx2 = ctx.clone();
-    super::open_form(ctx, cx, Size::new(TALK_W, 30), move |mcx, close| {
+    super::w::FormModal::new(format!("Talk — {name}")).size(TALK_W, 32).open(ctx, cx, move |mcx, close, _guard, _w| {
         let theme = use_theme(mcx);
         let t0 = theme.get().tokens;
         let input = mcx.signal(String::new());
@@ -180,7 +169,6 @@ pub fn open_talk_modal(cx: Scope, ctx: &Ctx, name: String) {
         let send_btn = send.clone();
         Element::new()
             .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold(format!("Talk — {name}"), t0.accent)]))
             .child(line(vec![span(
                 "a hosted visit: Open (prelude + memory) → say something (Enter sends) → Close runs the reflection pass",
                 t0.text_faint,
@@ -270,8 +258,7 @@ pub fn open_talk_modal(cx: Scope, ctx: &Ctx, name: String) {
                 Element::new()
                     .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
                     .child(
-                        Button::new("Open visit")
-                            .on_click(move || {
+                        wb(mcx, &t0, SubForm::Talk, "open", move || {
                                 let chat = store.entity_chat.get_untracked();
                                 if chat.busy {
                                     return;
@@ -284,19 +271,13 @@ pub fn open_talk_modal(cx: Scope, ctx: &Ctx, name: String) {
                                 }
                                 ctx_o.store.entity_chat.update(|c| c.busy = true);
                                 ctx_o.send(Cmd::Entity(EntityCmd::ChatOpen { name: n_o.clone() }));
-                            })
-                            .element(mcx, &t0)
-                            .build(),
+                            }),
                     )
                     .child(
-                        Button::new("Send")
-                            .on_click(move || send_b())
-                            .element(mcx, &t0)
-                            .build(),
+                        wb(mcx, &t0, SubForm::Talk, "send", move || send_b()),
                     )
                     .child(
-                        Button::new("Close visit (reflect)")
-                            .on_click(move || {
+                        wb(mcx, &t0, SubForm::Talk, "close_visit", move || {
                                 let chat = store.entity_chat.get_untracked();
                                 if chat.busy {
                                     return;
@@ -315,15 +296,10 @@ pub fn open_talk_modal(cx: Scope, ctx: &Ctx, name: String) {
                                     name: n_c.clone(),
                                     chat_id,
                                 }));
-                            })
-                            .element(mcx, &t0)
-                            .build(),
+                            }),
                     )
                     .child(
-                        Button::new("Close panel")
-                            .on_click(move || close_x())
-                            .element(mcx, &t0)
-                            .build(),
+                        wb(mcx, &t0, SubForm::Talk, "close", move || close_x()),
                     )
                     .build()
             })

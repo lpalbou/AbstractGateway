@@ -39,5 +39,17 @@
     "create_label": "Validate & create",
     "create_tip": "Dry-run validate the name and configuration, then create",
     "cancel_label": "Cancel"
+  },
+  "sub": {
+    "sleep_question": "Put it to sleep? An open visit closes and its reflection runs first.",
+    "reembed_question": "Rebuild every memory vector now? The swap is atomic and recorded in its history.",
+    "reason_help": "Optional: recorded in its history with the next change you make on this tab, and given to it when it wakes.",
+    "empty_phase_label": "Empty phase means no tools",
+    "empty_phase_desc": "On: a phase with every box cleared has no tools at all. Off: it goes back to the default tools.",
+    "schedule_help": "Used the next time Personal time is switched on. Blank fields keep the defaults.",
+    "audition_label": "Hear a sample",
+    "give_task_label": "Give this task",
+    "end_task_label": "End the work order",
+    "close_visit_label": "Close visit"
   }
 }

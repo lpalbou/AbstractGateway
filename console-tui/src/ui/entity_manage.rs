@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 
 use super::util::{field, line, span, span_bold};
 use super::w::Action;
-use super::{open_form, Ctx};
+use super::Ctx;
 use crate::store::{EntityDetail, EntityRow, Loadable};
 use crate::worker::Cmd;
 
@@ -287,6 +287,117 @@ pub fn open_manage_menu(cx: Scope, ctx: &Ctx, entity: EntityRow) {
                 )]))
                 .build()
         });
+}
+
+/// The forms Manage opens (each one's buttons come from
+/// [`subform_actions`] — the single source for the forms and the tests).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SubForm {
+    State,
+    Mind,
+    Voice,
+    Work,
+    OwnTime,
+    Reembed,
+    Tools,
+    Prompt,
+    Candidates,
+    Card,
+    Talk,
+}
+
+impl SubForm {
+    pub const ALL: [SubForm; 11] = [
+        SubForm::State,
+        SubForm::Mind,
+        SubForm::Voice,
+        SubForm::Work,
+        SubForm::OwnTime,
+        SubForm::Reembed,
+        SubForm::Tools,
+        SubForm::Prompt,
+        SubForm::Candidates,
+        SubForm::Card,
+        SubForm::Talk,
+    ];
+}
+
+/// The buttons of sub-form `f`, in order (Close last).
+pub fn subform_actions(f: SubForm) -> Vec<Action> {
+    let close = Action::label("close", "Close").tooltip("Close");
+    let save = |tip: &str| Action::label("save", "Save").tooltip(tip.to_string());
+    let mut v = match f {
+        SubForm::State | SubForm::Card => vec![],
+        SubForm::Mind => vec![save("Save the provider and model it thinks with")],
+        SubForm::Voice => vec![
+            Action::label("audition", "Hear a sample")
+                .tooltip("Speak a sample with the selection above (not saved)"),
+            Action::label("play", "Play").tooltip("Play the sample on this computer"),
+            save("Save its voice"),
+        ],
+        SubForm::Work => vec![
+            Action::label("save", "Give this task").tooltip("Give it this task as its work order"),
+            Action::label("end", "End the work order").tooltip("End the current work order"),
+        ],
+        SubForm::OwnTime => vec![
+            Action::label("grant", "Grant (timer)")
+                .tooltip("Allow personal time for the hours typed above"),
+            Action::label("revoke", "Revoke grant").tooltip("Withdraw its personal-time grant"),
+            Action::label("freeze", "Freeze now")
+                .tooltip("Kill its personal-time process now (no reflection)")
+                .danger(),
+        ],
+        SubForm::Reembed => vec![Action::label("rebuild", "Rebuild index")
+            .tooltip("Rebuild every memory vector (repair only)")
+            .danger()],
+        SubForm::Tools => vec![save("Save the changed phases")],
+        SubForm::Prompt => vec![save("Save every layer of the overlay")],
+        SubForm::Candidates => vec![
+            Action::label("promote", "Promote (accept)")
+                .tooltip("Keep it as a long-term memory (two independent records back it up)"),
+            Action::label("reject", "Reject").tooltip("Reject it, with the reason typed above"),
+            Action::label("reload", "Reload").tooltip("Read the candidates again"),
+        ],
+        SubForm::Talk => vec![
+            Action::label("open", "Open visit").tooltip("Open a visit and talk with it"),
+            Action::label("send", "Send").tooltip("Send the message"),
+            Action::label("close_visit", "Close visit")
+                .tooltip("Close the visit: its reflection runs"),
+        ],
+    };
+    if f == SubForm::Card {
+        v.push(Action::label("reload", "Reload").tooltip("Read the card again"));
+    }
+    v.push(close);
+    v
+}
+
+/// The button `id` of sub-form `f` (from [`subform_actions`]; an id the
+/// list does not have is a defect and fails loudly).
+pub(crate) fn wb(
+    cx: Scope,
+    t: &TokenSet,
+    f: SubForm,
+    id: &str,
+    on_press: impl FnMut() + 'static,
+) -> View {
+    let a = subform_actions(f)
+        .into_iter()
+        .find(|a| a.id == id)
+        .unwrap_or_else(|| panic!("{f:?} has no {id} action"));
+    super::w::action::button(cx, t, &a, super::w::action::On::Raised, true, on_press)
+}
+
+/// A Close that asks the form's guard first ("Discard changes?" on
+/// unsaved edits), like Esc and the title ✕ (R15 F2).
+pub(crate) fn guarded_close(close: &super::CloserFn, guard: &super::GuardSlot) -> super::CloserFn {
+    let (close, guard) = (close.clone(), guard.clone());
+    std::rc::Rc::new(move || {
+        let handled = guard.borrow().as_ref().map(|g| g()).unwrap_or(false);
+        if !handled {
+            close();
+        }
+    })
 }
 
 /// One Manage action (a click or its key): a refused one says why; the
@@ -583,105 +694,183 @@ pub fn inspector_view(
 // State: awake / asleep (+dream) / paused
 // ---------------------------------------------------------------------
 
+/// The states the web's Lifecycle tab can ask for, plus the kill switch.
+pub const STATE_CHOICES: [&str; 4] = ["awake", "asleep", "asleep + dream pass", "paused"];
+/// The web's sleep confirmation (Lifecycle → Awake off).
+pub const SLEEP_QUESTION: &str =
+    "Put it to sleep? An open visit closes and its reflection runs first.";
+/// The web's Reason field help (Lifecycle).
+pub const STATE_REASON_HELP: &str = "Optional: recorded in its history with the next change you make on this tab, and given to it when it wakes.";
+
+/// The state write's body for choice `pick` (STATE_CHOICES) and a reason.
+pub fn state_body(pick: usize, reason: &str) -> Value {
+    let state = match pick {
+        1 | 2 => "asleep",
+        3 => "paused",
+        _ => "awake",
+    };
+    let mut body = json!({ "state": state });
+    if pick == 2 {
+        body["dream"] = Value::Bool(true);
+    }
+    let r = reason.trim();
+    if !r.is_empty() {
+        body["reason"] = Value::String(r.to_string());
+    }
+    body
+}
+
+/// Arm a field's state line on the journal: after `arm()` the line says
+/// "Saving…", then the verified outcome of the next journal entry whose
+/// action starts with `prefix` (the worker's write + GET verification).
+fn journal_state(
+    mcx: Scope,
+    store: crate::store::Store,
+    prefix: String,
+    state: Signal<super::w::FieldState>,
+) -> std::rc::Rc<dyn Fn()> {
+    let armed = mcx.signal(Option::<usize>::None);
+    mcx.effect(move || {
+        let Some(from) = armed.get() else { return };
+        let hit = store.journal.with(|j| {
+            j.iter()
+                .skip(from)
+                .find(|e| e.action.starts_with(&prefix))
+                .cloned()
+        });
+        if let Some(e) = hit {
+            armed.set(None);
+            state.set(match (&e.outcome, &e.verified) {
+                (Err(err), _) => super::w::FieldState::Refused(err.clone()),
+                (Ok(_), Some(Err(v))) => super::w::FieldState::Refused(v.clone()),
+                (Ok(_), Some(Ok(v))) => super::w::FieldState::Saved(format!("Saved — {v}")),
+                (Ok(_), None) => super::w::FieldState::Saved("Saved".into()),
+            });
+        }
+    });
+    std::rc::Rc::new(move || {
+        state.set(super::w::FieldState::Saving);
+        armed.set(Some(store.journal.with_untracked(Vec::len)));
+    })
+}
+
+/// Awake or asleep (the web's Lifecycle card): the state applies at once
+/// (a Segmented), sleep asks the web's question, the kill switch asks a
+/// danger confirm; the Reason rides with the next change.
 fn open_state_modal(cx: Scope, ctx: &Ctx, entity: EntityRow) {
     let ctx2 = ctx.clone();
-    open_form(
-        ctx,
-        cx,
-        crate::ui::page_viewport(cx).get_untracked(),
-        move |mcx, close| {
-            let theme = use_theme(mcx);
-            let t0 = theme.get().tokens;
-            let name = entity.name.clone();
-            // 0 awake · 1 asleep · 2 asleep+dream · 3 paused
-            let pick = mcx.signal(match entity.state.as_str() {
+    let name = entity.name.clone();
+    super::w::FormModal::new(format!("Entity state — {name}"))
+        .lead(format!(
+            "Now: {}. State is the operator's intent; the loop and visits settle behind it.",
+            entity.state
+        ))
+        .size(84, 20)
+        .open(ctx, cx, move |mcx, close, _guard, w| {
+            let t0 = use_theme(mcx).get().tokens;
+            let current = match entity.state.as_str() {
                 "asleep" => 1usize,
                 "paused" => 3usize,
                 _ => 0usize,
-            });
+            };
+            let pick = mcx.signal(current);
+            let applied = mcx.signal(current);
             let reason = mcx.signal(String::new());
-            let ctx_apply = ctx2.clone();
-            let close_apply = close.clone();
-            let close_cancel = close.clone();
-            let name_apply = name.clone();
+            let st = mcx.signal(super::w::FieldState::Idle);
+            let arm = journal_state(
+                mcx,
+                ctx2.store,
+                format!("POST entity '{}' state", entity.name),
+                st,
+            );
+            let send = {
+                let (ctx, n, arm) = (ctx2.clone(), entity.name.clone(), arm.clone());
+                std::rc::Rc::new(move |p: usize| {
+                    if let Some(why) = write_refusal(&ctx, "changing an entity's state") {
+                        st.set(super::w::FieldState::Refused(why));
+                        pick.set(applied.get_untracked());
+                        return;
+                    }
+                    applied.set(p);
+                    arm();
+                    ctx.send(Cmd::EntityState {
+                        name: n.clone(),
+                        body: state_body(p, &reason.get_untracked()).into(),
+                    });
+                })
+            };
+            let asking = mcx.signal(Option::<usize>::None);
+            {
+                let (ctx, n, send) = (ctx2.clone(), entity.name.clone(), send.clone());
+                mcx.effect(move || {
+                    let Some(p) = asking.get() else { return };
+                    asking.set(None);
+                    let send = send.clone();
+                    let undo = move || pick.set(applied.get_untracked());
+                    match p {
+                        1 | 2 => super::w::Confirm::plain(SLEEP_QUESTION, "Sleep", "Cancel")
+                            .open_with(mcx, ctx.ui, move || send(p), undo),
+                        _ => super::w::Confirm::danger(
+                            format!("Pause {n}? The kill switch never clears by itself: it stays paused until you change its state here."),
+                            "Pause",
+                            "Cancel",
+                        )
+                        .open_with(mcx, ctx.ui, move || send(p), undo),
+                    }
+                });
+            }
+            let seg = {
+                let send = send.clone();
+                super::w::Segmented::new(STATE_CHOICES, Some(current))
+                    .bind(pick)
+                    .tip(2, "Sleep, then run a dream pass")
+                    .tip(3, "The kill switch: never clears by itself")
+                    .on_pick(move |p| {
+                        if p == applied.get_untracked() {
+                            return;
+                        }
+                        if p == 0 {
+                            send(p);
+                            return;
+                        }
+                        // The question opens on a later turn, never inside
+                        // the key/press that picked: a dialog opened on the
+                        // press would take its release, leaving the press's
+                        // pointer capture on the segment (every later press
+                        // would re-pick it).
+                        abstracttui::reactive::after(std::time::Duration::from_millis(1), move || {
+                            if asking.is_alive() {
+                                asking.set(Some(p));
+                            }
+                        });
+                    })
+                    .view(mcx, &t0)
+            };
+            let close_b = close.clone();
             Element::new()
-                .style(LayoutStyle::column().gap(0))
-                .child(line(vec![span_bold(
-                    format!("Entity state — {name} (now: {})", entity.state),
-                    t0.accent,
-                )]))
-                .child(line(vec![span(
-                    "state is the operator's INTENT; the loop/visit actuality settles behind it",
-                    t0.text_faint,
-                )]))
+                .style(LayoutStyle::column().gap(0).grow(1.0))
+                .child(field(&t0, "State", seg))
+                .child(super::w::state_line(st, w))
                 .child(field(
                     &t0,
-                    "target",
-                    RadioGroup::new(vec![
-                        "awake".to_string(),
-                        "asleep".to_string(),
-                        "asleep + dream pass".to_string(),
-                        "paused (kill switch — never auto-clears)".to_string(),
-                    ])
-                    .selection(pick)
-                    .element(mcx, &t0)
-                    .autofocus()
-                    .build(),
-                ))
-                .child(field(
-                    &t0,
-                    "reason",
+                    "Reason",
                     TextInput::new()
                         .value(reason)
-                        .placeholder("optional — recorded with your principal")
-                        .placeholder_while_focused(true)
                         .layout(LayoutStyle::default().w(52).h(1))
                         .element(mcx, &t0)
                         .build(),
                 ))
-                .child(line(vec![span(String::new(), t0.text)]))
-                .child(
-                    Element::new()
-                        .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                        .child(
-                            Button::new("Apply")
-                                .on_click(move || {
-                                    let p = pick.get_untracked();
-                                    let state = match p {
-                                        1 | 2 => "asleep",
-                                        3 => "paused",
-                                        _ => "awake",
-                                    };
-                                    let mut body = json!({ "state": state });
-                                    if p == 2 {
-                                        body["dream"] = Value::Bool(true);
-                                    }
-                                    let r = reason.get_untracked().trim().to_string();
-                                    if !r.is_empty() {
-                                        body["reason"] = Value::String(r);
-                                    }
-                                    ctx_apply.send(Cmd::EntityState {
-                                        name: name_apply.clone(),
-                                        body: body.into(),
-                                    });
-                                    // Outcome lands as toast + journal entry
-                                    // (write → cognition verify).
-                                    close_apply();
-                                })
-                                .element(mcx, &t0)
-                                .build(),
-                        )
-                        .child(
-                            Button::new("Cancel")
-                                .on_click(move || close_cancel())
-                                .element(mcx, &t0)
-                                .build(),
-                        )
-                        .build(),
-                )
+                .child(super::w::form::sentence(&t0, STATE_REASON_HELP, w, t0.text_muted))
+                .child(Element::new().style(LayoutStyle::default().grow(1.0)).build())
+                .child(super::w::form::button_row(vec![wb(
+                    mcx,
+                    &t0,
+                    SubForm::State,
+                    "close",
+                    move || close_b(),
+                )]))
                 .build()
-        },
-    );
+        });
 }
 
 // ---------------------------------------------------------------------
@@ -691,7 +880,7 @@ fn open_state_modal(cx: Scope, ctx: &Ctx, entity: EntityRow) {
 fn open_substrate_form(cx: Scope, ctx: &Ctx, name: String) {
     let store = ctx.store;
     let ctx2 = ctx.clone();
-    super::open_form_guarded(ctx, cx, Size::new(72, 16), move |mcx, close, guard| {
+    super::w::FormModal::new(format!("Mind substrate — {name}")).size(76, 18).open(ctx, cx, move |mcx, close, guard, _w| {
         let theme = use_theme(mcx);
         let t0 = theme.get().tokens;
         let detail = detail_for(&store, &name);
@@ -716,17 +905,13 @@ fn open_substrate_form(cx: Scope, ctx: &Ctx, name: String) {
 
         let ctx_save = ctx2.clone();
         let name_save = name.clone();
-        let close_cancel = close.clone();
+        let close_cancel = guarded_close(&close, &guard);
         let source = detail
             .as_ref()
             .map(|d| d.substrate_source.clone())
             .unwrap_or_default();
         Element::new()
             .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold(
-                format!("Mind substrate — {name}"),
-                t0.accent,
-            )]))
             .child(line(vec![span(
                 match &detail {
                     Some(_) => format!(
@@ -774,16 +959,13 @@ fn open_substrate_form(cx: Scope, ctx: &Ctx, name: String) {
                 LayoutStyle::default().h(1).shrink(0.0),
                 move |bcx| {
                     let t = theme.get().tokens;
-                    let busy = in_flight.get();
                     let ctx_s = ctx_save.clone();
                     let n = name_save.clone();
                     let close_b = close_cancel.clone();
                     Element::new()
                         .style(LayoutStyle::row().gap(2))
                         .child(
-                            Button::new("Save")
-                                .disabled(busy)
-                                .on_click(move || {
+                            wb(bcx, &t, SubForm::Mind, "save", move || {
                                     if in_flight.get_untracked() {
                                         return;
                                     }
@@ -806,15 +988,10 @@ fn open_substrate_form(cx: Scope, ctx: &Ctx, name: String) {
                                         body: json!({ "provider": p, "model": m }).into(),
                                         form_id: Some(form_id),
                                     });
-                                })
-                                .element(bcx, &t)
-                                .build(),
+                                }),
                         )
                         .child(
-                            Button::new("Cancel")
-                                .on_click(move || close_b())
-                                .element(bcx, &t)
-                                .build(),
+                            wb(bcx, &t, SubForm::Mind, "close", move || close_b()),
                         )
                         .build()
                 },
@@ -832,198 +1009,181 @@ fn open_voice_form(cx: Scope, ctx: &Ctx, name: String) {
     // A previous audition (maybe of another entity) never dresses this form.
     store.entity_audition.set(Loadable::NotAsked);
     let ctx2 = ctx.clone();
-    super::open_form_guarded(ctx, cx, Size::new(84, 24), move |mcx, close, guard| {
-        let theme = use_theme(mcx);
-        let t0 = theme.get().tokens;
-        let detail = detail_for(&store, &name);
-        let (p0, m0, v0) = detail
-            .as_ref()
-            .and_then(|d| d.voice.clone())
-            .unwrap_or_default();
-        let provider = mcx.signal(p0.clone());
-        let model = mcx.signal(m0.clone());
-        let voice = mcx.signal(v0.clone());
-        let clear = mcx.signal(false);
-        let form_error = mcx.signal(Option::<String>::None);
-        let in_flight = mcx.signal(false);
-        let esc_armed = mcx.signal(false);
-        let form_id = crate::worker::next_form_id();
-        super::install_dirty_guard(
-            mcx,
-            &guard,
-            vec![
-                (provider, p0.clone()),
-                (model, m0.clone()),
-                (voice, v0.clone()),
-            ],
-            esc_armed,
-            form_error,
-        );
-        super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
+    super::w::FormModal::new(format!("Voice — {name}"))
+        .size(84, 26)
+        .open(ctx, cx, move |mcx, close, guard, _w| {
+            let theme = use_theme(mcx);
+            let t0 = theme.get().tokens;
+            let detail = detail_for(&store, &name);
+            let (p0, m0, v0) = detail
+                .as_ref()
+                .and_then(|d| d.voice.clone())
+                .unwrap_or_default();
+            let provider = mcx.signal(p0.clone());
+            let model = mcx.signal(m0.clone());
+            let voice = mcx.signal(v0.clone());
+            let clear = mcx.signal(false);
+            let form_error = mcx.signal(Option::<String>::None);
+            let in_flight = mcx.signal(false);
+            let esc_armed = mcx.signal(false);
+            let form_id = crate::worker::next_form_id();
+            super::install_dirty_guard(
+                mcx,
+                &guard,
+                vec![
+                    (provider, p0.clone()),
+                    (model, m0.clone()),
+                    (voice, v0.clone()),
+                ],
+                esc_armed,
+                form_error,
+            );
+            super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
 
-        let effective = detail
-            .as_ref()
-            .and_then(|d| d.voice_effective.clone())
-            .unwrap_or_else(|| "unknown".into());
-        let ctx_save = ctx2.clone();
-        let name_save = name.clone();
-        let name_aud = name.clone();
-        let close_cancel = close.clone();
-        Element::new()
-            .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold(format!("Voice — {name}"), t0.accent)]))
-            .child(line(vec![span(
-                format!("applies now: {effective}"),
-                t0.text_muted,
-            )]))
-            .child(line(vec![span(
-                "the FULL triple is required together — a bare voice id leaks across providers",
-                t0.text_faint,
-            )]))
-            .child(field(
-                &t0,
-                "provider",
-                TextInput::new()
-                    .value(provider)
-                    .placeholder("e.g. supertonic, openai")
-                    .placeholder_while_focused(true)
-                    .layout(LayoutStyle::default().w(40).h(1))
-                    .element(mcx, &t0)
-                    .autofocus()
-                    .build(),
-            ))
-            .child(field(
-                &t0,
-                "model",
-                TextInput::new()
-                    .value(model)
-                    .placeholder("e.g. supertonic-3, gpt-4o-mini-tts")
-                    .placeholder_while_focused(true)
-                    .layout(LayoutStyle::default().w(40).h(1))
-                    .element(mcx, &t0)
-                    .build(),
-            ))
-            .child(field(
-                &t0,
-                "voice",
-                TextInput::new()
-                    .value(voice)
-                    .placeholder("e.g. M3, alloy — pickable in Multimodal → output.voice")
-                    .placeholder_while_focused(true)
-                    .layout(LayoutStyle::default().w(40).h(1))
-                    .element(mcx, &t0)
-                    .build(),
-            ))
-            .child(field(
-                &t0,
-                "",
-                super::w::Toggle::switch(
-                    "clear the set voice (fall back to gateway default)",
-                    clear,
-                )
-                .view(mcx, &t0),
-            ))
-            .child(super::message_slot(theme, form_error, in_flight))
-            .child(audition_view(store, theme, name_aud))
-            .child(dyn_view_scoped(
-                LayoutStyle::default().h(1).shrink(0.0),
-                move |bcx| {
-                    let t = theme.get().tokens;
-                    let busy = in_flight.get();
-                    let ctx_s = ctx_save.clone();
-                    let ctx_a = ctx_save.clone();
-                    let n = name_save.clone();
-                    let n_a = name_save.clone();
-                    let close_b = close_cancel.clone();
-                    Element::new()
-                        .style(LayoutStyle::row().gap(2))
-                        .child(
-                            Button::new("Audition")
-                                .on_click(move || {
-                                    // The UNSAVED selection, spoken as the
-                                    // entity (web parity: Save makes it his).
-                                    // Untracked guard, not a disabled flag: a
-                                    // tracked flag would rebuild this row and
-                                    // drop the keyboard focus mid-form.
-                                    if store.entity_audition.with_untracked(Loadable::is_loading) {
-                                        return;
-                                    }
+            let effective = detail
+                .as_ref()
+                .and_then(|d| d.voice_effective.clone())
+                .unwrap_or_else(|| "unknown".into());
+            let ctx_save = ctx2.clone();
+            let name_save = name.clone();
+            let name_aud = name.clone();
+            let close_cancel = guarded_close(&close, &guard);
+            Element::new()
+                .style(LayoutStyle::column().gap(0))
+                .child(line(vec![span(
+                    format!("applies now: {effective}"),
+                    t0.text_muted,
+                )]))
+                .child(line(vec![span(
+                    "the FULL triple is required together — a bare voice id leaks across providers",
+                    t0.text_faint,
+                )]))
+                .child(field(
+                    &t0,
+                    "provider",
+                    TextInput::new()
+                        .value(provider)
+                        .placeholder("e.g. supertonic, openai")
+                        .placeholder_while_focused(true)
+                        .layout(LayoutStyle::default().w(40).h(1))
+                        .element(mcx, &t0)
+                        .autofocus()
+                        .build(),
+                ))
+                .child(field(
+                    &t0,
+                    "model",
+                    TextInput::new()
+                        .value(model)
+                        .placeholder("e.g. supertonic-3, gpt-4o-mini-tts")
+                        .placeholder_while_focused(true)
+                        .layout(LayoutStyle::default().w(40).h(1))
+                        .element(mcx, &t0)
+                        .build(),
+                ))
+                .child(field(
+                    &t0,
+                    "voice",
+                    TextInput::new()
+                        .value(voice)
+                        .placeholder("e.g. M3, alloy — pickable in Multimodal → output.voice")
+                        .placeholder_while_focused(true)
+                        .layout(LayoutStyle::default().w(40).h(1))
+                        .element(mcx, &t0)
+                        .build(),
+                ))
+                .child(field(
+                    &t0,
+                    "",
+                    super::w::Toggle::switch(
+                        "clear the set voice (fall back to gateway default)",
+                        clear,
+                    )
+                    .view(mcx, &t0),
+                ))
+                .child(super::message_slot(theme, form_error, in_flight))
+                .child(audition_view(store, theme, name_aud))
+                .child(dyn_view_scoped(
+                    LayoutStyle::default().h(1).shrink(0.0),
+                    move |bcx| {
+                        let t = theme.get().tokens;
+                        let ctx_s = ctx_save.clone();
+                        let ctx_a = ctx_save.clone();
+                        let n = name_save.clone();
+                        let n_a = name_save.clone();
+                        let close_b = close_cancel.clone();
+                        Element::new()
+                            .style(LayoutStyle::row().gap(2))
+                            .child(wb(bcx, &t, SubForm::Voice, "audition", move || {
+                                // The UNSAVED selection, spoken as the
+                                // entity (web parity: Save makes it his).
+                                // Untracked guard, not a disabled flag: a
+                                // tracked flag would rebuild this row and
+                                // drop the keyboard focus mid-form.
+                                if store.entity_audition.with_untracked(Loadable::is_loading) {
+                                    return;
+                                }
+                                let p = provider.get_untracked().trim().to_string();
+                                let m = model.get_untracked().trim().to_string();
+                                let v = voice.get_untracked().trim().to_string();
+                                if p.is_empty() || m.is_empty() {
+                                    form_error.set(Some(
+                                        "select at least a provider and model to audition.".into(),
+                                    ));
+                                    return;
+                                }
+                                form_error.set(None);
+                                ctx_a.store.entity_audition.set(Loadable::Loading);
+                                ctx_a.send(Cmd::Entity(
+                                    crate::worker::entities::EntityCmd::VoiceAudition {
+                                        name: n_a.clone(),
+                                        provider: p,
+                                        model: m,
+                                        voice: (!v.is_empty()).then_some(v),
+                                    },
+                                ));
+                            }))
+                            .child(wb(bcx, &t, SubForm::Voice, "save", move || {
+                                if in_flight.get_untracked() {
+                                    return;
+                                }
+                                let body = if clear.get_untracked() {
+                                    json!({ "clear": true })
+                                } else {
                                     let p = provider.get_untracked().trim().to_string();
                                     let m = model.get_untracked().trim().to_string();
                                     let v = voice.get_untracked().trim().to_string();
                                     if p.is_empty() || m.is_empty() {
                                         form_error.set(Some(
-                                            "select at least a provider and model to audition."
+                                            "provider and model are required (or check clear)"
                                                 .into(),
                                         ));
                                         return;
                                     }
-                                    form_error.set(None);
-                                    ctx_a.store.entity_audition.set(Loadable::Loading);
-                                    ctx_a.send(Cmd::Entity(
-                                        crate::worker::entities::EntityCmd::VoiceAudition {
-                                            name: n_a.clone(),
-                                            provider: p,
-                                            model: m,
-                                            voice: (!v.is_empty()).then_some(v),
-                                        },
-                                    ));
-                                })
-                                .element(bcx, &t)
-                                .build(),
-                        )
-                        .child(
-                            Button::new("Save")
-                                .disabled(busy)
-                                .on_click(move || {
-                                    if in_flight.get_untracked() {
-                                        return;
+                                    let mut b = json!({ "provider": p, "model": m });
+                                    if !v.is_empty() {
+                                        b["voice"] = Value::String(v);
                                     }
-                                    let body = if clear.get_untracked() {
-                                        json!({ "clear": true })
-                                    } else {
-                                        let p = provider.get_untracked().trim().to_string();
-                                        let m = model.get_untracked().trim().to_string();
-                                        let v = voice.get_untracked().trim().to_string();
-                                        if p.is_empty() || m.is_empty() {
-                                            form_error.set(Some(
-                                                "provider and model are required (or check clear)"
-                                                    .into(),
-                                            ));
-                                            return;
-                                        }
-                                        let mut b = json!({ "provider": p, "model": m });
-                                        if !v.is_empty() {
-                                            b["voice"] = Value::String(v);
-                                        }
-                                        b
-                                    };
-                                    if let Some(why) = write_refusal(&ctx_s, "saving the voice") {
-                                        form_error.set(Some(why));
-                                        return;
-                                    }
-                                    form_error.set(None);
-                                    in_flight.set(true);
-                                    ctx_s.send(Cmd::SaveEntityVoice {
-                                        name: n.clone(),
-                                        body: body.into(),
-                                        form_id: Some(form_id),
-                                    });
-                                })
-                                .element(bcx, &t)
-                                .build(),
-                        )
-                        .child(
-                            Button::new("Cancel")
-                                .on_click(move || close_b())
-                                .element(bcx, &t)
-                                .build(),
-                        )
-                        .build()
-                },
-            ))
-            .build()
-    });
+                                    b
+                                };
+                                if let Some(why) = write_refusal(&ctx_s, "saving the voice") {
+                                    form_error.set(Some(why));
+                                    return;
+                                }
+                                form_error.set(None);
+                                in_flight.set(true);
+                                ctx_s.send(Cmd::SaveEntityVoice {
+                                    name: n.clone(),
+                                    body: body.into(),
+                                    form_id: Some(form_id),
+                                });
+                            }))
+                            .child(wb(bcx, &t, SubForm::Voice, "close", move || close_b()))
+                            .build()
+                    },
+                ))
+                .build()
+        });
 }
 
 /// The audition's outcome inside the voice form — the terminal's twin
@@ -1065,20 +1225,14 @@ fn audition_view(
                             col = col.child(
                                 Element::new()
                                     .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                                    .child(
-                                        Button::new(format!("Play ({pl})"))
-                                            .on_click(move || {
-                                                let note = match crate::api::entities::spawn_player(
-                                                    &pl, &pa,
-                                                ) {
-                                                    Ok(()) => format!("playing {pa} with {pl}"),
-                                                    Err(e) => format!("{pl} failed to start: {e}"),
-                                                };
-                                                store.notice.set(Some(note));
-                                            })
-                                            .element(acx, &t)
-                                            .build(),
-                                    )
+                                    .child(wb(acx, &t, SubForm::Voice, "play", move || {
+                                        let note =
+                                            match crate::api::entities::spawn_player(&pl, &pa) {
+                                                Ok(()) => format!("playing {pa} with {pl}"),
+                                                Err(e) => format!("{pl} failed to start: {e}"),
+                                            };
+                                        store.notice.set(Some(note));
+                                    }))
                                     .build(),
                             );
                         }
@@ -1103,152 +1257,227 @@ fn audition_view(
 fn open_work_order_form(cx: Scope, ctx: &Ctx, name: String) {
     let store = ctx.store;
     let ctx2 = ctx.clone();
-    super::open_form_guarded(ctx, cx, Size::new(74, 14), move |mcx, close, guard| {
-        let theme = use_theme(mcx);
-        let t0 = theme.get().tokens;
-        let detail = detail_for(&store, &name);
-        let o0 = detail
-            .as_ref()
-            .and_then(|d| d.work_order.clone())
-            .unwrap_or_default();
-        let order = mcx.signal(o0.clone());
-        let clear = mcx.signal(false);
-        let form_error = mcx.signal(Option::<String>::None);
-        let in_flight = mcx.signal(false);
-        let esc_armed = mcx.signal(false);
-        let form_id = crate::worker::next_form_id();
-        super::install_dirty_guard(
-            mcx,
-            &guard,
-            vec![(order, o0.clone())],
-            esc_armed,
-            form_error,
-        );
-        super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
+    super::w::FormModal::new(format!("Work order — {name}"))
+        .size(78, 16)
+        .open(ctx, cx, move |mcx, close, guard, _w| {
+            let theme = use_theme(mcx);
+            let t0 = theme.get().tokens;
+            let detail = detail_for(&store, &name);
+            let o0 = detail
+                .as_ref()
+                .and_then(|d| d.work_order.clone())
+                .unwrap_or_default();
+            let order = mcx.signal(o0.clone());
+            let clear = mcx.signal(false);
+            let form_error = mcx.signal(Option::<String>::None);
+            let in_flight = mcx.signal(false);
+            let esc_armed = mcx.signal(false);
+            let form_id = crate::worker::next_form_id();
+            super::install_dirty_guard(
+                mcx,
+                &guard,
+                vec![(order, o0.clone())],
+                esc_armed,
+                form_error,
+            );
+            super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
 
-        let ctx_save = ctx2.clone();
-        let name_save = name.clone();
-        let close_cancel = close.clone();
-        Element::new()
-            .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold(
-                format!("Work order — {name}"),
-                t0.accent,
-            )]))
-            .child(line(vec![span(
-                "what the entity should work on during its own time",
-                t0.text_faint,
-            )]))
-            .child(field(
-                &t0,
-                "order",
-                TextInput::new()
-                    .value(order)
-                    .placeholder("blank + clear checked = remove the order")
-                    .placeholder_while_focused(true)
-                    .layout(LayoutStyle::default().w(56).h(1))
-                    .element(mcx, &t0)
-                    .autofocus()
-                    .build(),
-            ))
-            .child(field(
-                &t0,
-                "",
-                super::w::Toggle::switch("clear the work order", clear).view(mcx, &t0),
-            ))
-            .child(super::message_slot(theme, form_error, in_flight))
-            .child(dyn_view_scoped(
-                LayoutStyle::default().h(1).shrink(0.0),
-                move |bcx| {
-                    let t = theme.get().tokens;
-                    let busy = in_flight.get();
-                    let ctx_s = ctx_save.clone();
-                    let n = name_save.clone();
-                    let close_b = close_cancel.clone();
-                    Element::new()
-                        .style(LayoutStyle::row().gap(2))
-                        .child(
-                            Button::new("Save")
-                                .disabled(busy)
-                                .on_click(move || {
+            let ctx_save = ctx2.clone();
+            let name_save = name.clone();
+            let close_cancel = guarded_close(&close, &guard);
+            Element::new()
+                .style(LayoutStyle::column().gap(0))
+                .child(line(vec![span(
+                    "what the entity should work on during its own time",
+                    t0.text_faint,
+                )]))
+                .child(field(
+                    &t0,
+                    "order",
+                    TextInput::new()
+                        .value(order)
+                        .placeholder("the task it works on")
+                        .placeholder_while_focused(true)
+                        .layout(LayoutStyle::default().w(56).h(1))
+                        .element(mcx, &t0)
+                        .autofocus()
+                        .build(),
+                ))
+                .child(super::message_slot(theme, form_error, in_flight))
+                .child(dyn_view_scoped(
+                    LayoutStyle::default().h(1).shrink(0.0),
+                    move |bcx| {
+                        let t = theme.get().tokens;
+                        let ctx_s = ctx_save.clone();
+                        let n = name_save.clone();
+                        let close_b = close_cancel.clone();
+                        Element::new()
+                            .style(LayoutStyle::row().gap(2))
+                            .child(wb(bcx, &t, SubForm::Work, "save", move || {
+                                if in_flight.get_untracked() {
+                                    return;
+                                }
+                                let body = if clear.get_untracked() {
+                                    json!({ "clear": true })
+                                } else {
+                                    let o = order.get_untracked().trim().to_string();
+                                    if o.is_empty() {
+                                        form_error.set(Some(
+                                            "type the task first — End the work order removes it"
+                                                .into(),
+                                        ));
+                                        return;
+                                    }
+                                    json!({ "order": o })
+                                };
+                                if let Some(why) = write_refusal(&ctx_s, "saving the work order") {
+                                    form_error.set(Some(why));
+                                    return;
+                                }
+                                form_error.set(None);
+                                in_flight.set(true);
+                                ctx_s.send(Cmd::SaveEntityWorkOrder {
+                                    name: n.clone(),
+                                    body: body.into(),
+                                    form_id: Some(form_id),
+                                });
+                            }))
+                            .child(wb(bcx, &t, SubForm::Work, "end", {
+                                let (ctx_e, n_e) = (ctx_save.clone(), name_save.clone());
+                                move || {
                                     if in_flight.get_untracked() {
                                         return;
                                     }
-                                    let body = if clear.get_untracked() {
-                                        json!({ "clear": true })
-                                    } else {
-                                        let o = order.get_untracked().trim().to_string();
-                                        if o.is_empty() {
-                                            form_error.set(Some(
-                                                "type an order, or check clear to remove it".into(),
-                                            ));
-                                            return;
-                                        }
-                                        json!({ "order": o })
-                                    };
                                     if let Some(why) =
-                                        write_refusal(&ctx_s, "saving the work order")
+                                        write_refusal(&ctx_e, "ending the work order")
                                     {
                                         form_error.set(Some(why));
                                         return;
                                     }
                                     form_error.set(None);
                                     in_flight.set(true);
-                                    ctx_s.send(Cmd::SaveEntityWorkOrder {
-                                        name: n.clone(),
-                                        body: body.into(),
+                                    ctx_e.send(Cmd::SaveEntityWorkOrder {
+                                        name: n_e.clone(),
+                                        body: json!({ "clear": true }).into(),
                                         form_id: Some(form_id),
                                     });
-                                })
-                                .element(bcx, &t)
-                                .build(),
-                        )
-                        .child(
-                            Button::new("Cancel")
-                                .on_click(move || close_b())
-                                .element(bcx, &t)
-                                .build(),
-                        )
-                        .build()
-                },
-            ))
-            .build()
-    });
+                                }
+                            }))
+                            .child(wb(bcx, &t, SubForm::Work, "close", move || close_b()))
+                            .build()
+                    },
+                ))
+                .build()
+        });
 }
 
 // ---------------------------------------------------------------------
 // Own time: personal grant + loop start/stop/freeze
 // ---------------------------------------------------------------------
 
+/// The web's Schedule help (Lifecycle → Personal time).
+pub const SCHEDULE_HELP: &str =
+    "Used the next time Personal time is switched on. Blank fields keep the defaults.";
+
+/// The web's Personal time switch description (Lifecycle).
+pub const PERSONAL_TIME_DESC: &str = "On: it explores on its own schedule and spends tokens without anyone watching. Off: it acts only when visited or given work.";
+
+/// Personal time (the web's Lifecycle card): the switch applies at once
+/// (on = start the loop with the schedule below, off = a graceful stop);
+/// the grant buttons; Freeze now on THE danger confirm.
 fn open_own_time_modal(cx: Scope, ctx: &Ctx, name: String) {
     let store = ctx.store;
     let ctx2 = ctx.clone();
-    let screen_cx = cx;
-    open_form(ctx, cx, Size::new(76, 21), move |mcx, close| {
-        let theme = use_theme(mcx);
-        let t0 = theme.get().tokens;
-        // The web's "grant hours" (entity-grant-hours): blank = the start
-        // itself arms an until-revoked grant; N > 0 = a timed window.
-        let grant_hours = mcx.signal(String::new());
-        // Empty = the gateway's default (the placeholders say which),
-        // as on the web: a blank field is omitted from the start body.
-        let tick_s = mcx.signal(String::new());
-        let ticks_day = mcx.signal(String::new());
-        let rest_min = mcx.signal(String::new());
-        let name2 = name.clone();
-        let ctx3 = ctx2.clone();
-        let close2 = close.clone();
-
-        Element::new()
-            .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold(
-                format!("Own time — {name}"),
-                t0.accent,
-            )]))
-            // Live status from the manage snapshot (grant + loop).
-            .child(dyn_view(LayoutStyle::default().h(2).shrink(0.0), {
+    super::w::FormModal::new(format!("Own time — {name}"))
+        .lead("Personal time is off by default — an unattended loop spends real tokens.")
+        .size(84, 26)
+        .open(ctx, cx, move |mcx, close, _guard, w| {
+            let theme = use_theme(mcx);
+            let t0 = theme.get().tokens;
+            // The web's "grant hours" (entity-grant-hours): blank = the start
+            // itself arms an until-revoked grant; N > 0 = a timed window.
+            let grant_hours = mcx.signal(String::new());
+            // Empty = the gateway's default (the placeholders say which),
+            // as on the web: a blank field is omitted from the start body.
+            let tick_s = mcx.signal(String::new());
+            let ticks_day = mcx.signal(String::new());
+            let rest_min = mcx.signal(String::new());
+            let st = mcx.signal(super::w::FieldState::Idle);
+            let arm = journal_state(mcx, store, format!("POST entity '{name}' loop"), st);
+            let switch = {
+                let (n, ctx, arm) = (name.clone(), ctx2.clone(), arm.clone());
+                dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |scx| {
+                    let t = use_theme(scx).get().tokens;
+                    let on = store.entity_detail.with(|d| match d {
+                        Loadable::Ready(d) if d.name == n => d.loop_running == Some(true),
+                        _ => false,
+                    });
+                    let (n, ctx, arm) = (n.clone(), ctx.clone(), arm.clone());
+                    super::w::Toggle::new(on)
+                        .label("Personal time")
+                        .tip(PERSONAL_TIME_DESC)
+                        .refused(write_refusal(
+                            &ctx,
+                            "starting or stopping an entity's own time",
+                        ))
+                        .on_change(move |want| {
+                            if want {
+                                // Blank fields are omitted (the gateway's
+                                // defaults apply, as on the web); garbage
+                                // is refused with the reason.
+                                let loop_body = match loop_start_body(
+                                    &tick_s.get_untracked(),
+                                    &ticks_day.get_untracked(),
+                                    &rest_min.get_untracked(),
+                                ) {
+                                    Ok(b) => b,
+                                    Err(e) => {
+                                        st.set(super::w::FieldState::Refused(e));
+                                        return;
+                                    }
+                                };
+                                // A timed window is the one case the start
+                                // cannot express: the timer grant goes FIRST
+                                // (the worker lane is serial).
+                                let timer = match timer_grant_body(
+                                    &grant_hours.get_untracked(),
+                                    now_epoch(),
+                                ) {
+                                    Ok(t) => t,
+                                    Err(e) => {
+                                        st.set(super::w::FieldState::Refused(e));
+                                        return;
+                                    }
+                                };
+                                if let Some(body) = timer {
+                                    ctx.send(Cmd::SavePersonalGrant {
+                                        name: n.clone(),
+                                        body: body.into(),
+                                    });
+                                }
+                                arm();
+                                ctx.send(Cmd::EntityLoop {
+                                    name: n.clone(),
+                                    start: true,
+                                    body: loop_body.into(),
+                                });
+                            } else {
+                                arm();
+                                ctx.send(Cmd::EntityLoop {
+                                    name: n.clone(),
+                                    start: false,
+                                    body: json!({ "mode": "graceful",
+                                                  "reason": "operator stop via console-tui" })
+                                    .into(),
+                                });
+                            }
+                        })
+                        .view(scx, &t)
+                })
+            };
+            let status = {
                 let n = name.clone();
-                move || {
+                dyn_view(LayoutStyle::column().shrink(0.0), move || {
                     let t = theme.get().tokens;
                     match store.entity_detail.get() {
                         Loadable::Ready(d) if d.name == n => Element::new()
@@ -1282,342 +1511,221 @@ fn open_own_time_modal(cx: Scope, ctx: &Ctx, name: String) {
                         )]),
                         _ => line(vec![span("⟳ reading own-time status…", t.info)]),
                     }
+                })
+            };
+            let input = |sig: Signal<String>, ph: &str, wd: i32| {
+                TextInput::new()
+                    .value(sig)
+                    .placeholder(ph.to_string())
+                    .placeholder_while_focused(true)
+                    .layout(LayoutStyle::default().w(wd).h(1))
+                    .element(mcx, &t0)
+                    .build()
+            };
+            let grant = {
+                let (n, ctx) = (name.clone(), ctx2.clone());
+                move || {
+                    if !super::util::admin_gate(&ctx.store, "granting own time") {
+                        return;
+                    }
+                    // The gateway refuses a timer without its expiry
+                    // (routes/entities.py): the window is "Hours allowed".
+                    match timer_grant_body(&grant_hours.get_untracked(), now_epoch()) {
+                        Ok(Some(body)) => ctx.send(Cmd::SavePersonalGrant {
+                            name: n.clone(),
+                            body: body.into(),
+                        }),
+                        Ok(None) => ctx.store.notice.set(Some(
+                            "type the hours allowed first — a timer grant needs its window".into(),
+                        )),
+                        Err(e) => ctx.store.notice.set(Some(e)),
+                    }
                 }
-            }))
-            .child(line(vec![span(
-                "OWN TIME IS OFF BY DEFAULT — an unattended loop spends real tokens",
-                t0.warn,
-            )]))
-            .child(field(
-                &t0,
-                "tick seconds",
-                TextInput::new()
-                    .value(tick_s)
-                    .placeholder("20")
-                    .placeholder_while_focused(true)
-                    .layout(LayoutStyle::default().w(10).h(1))
-                    .element(mcx, &t0)
-                    .autofocus()
-                    .build(),
-            ))
-            .child(field(
-                &t0,
-                "ticks per day",
-                TextInput::new()
-                    .value(ticks_day)
-                    .placeholder("8")
-                    .placeholder_while_focused(true)
-                    .layout(LayoutStyle::default().w(10).h(1))
-                    .element(mcx, &t0)
-                    .build(),
-            ))
-            .child(field(
-                &t0,
-                "rest minutes",
-                TextInput::new()
-                    .value(rest_min)
-                    .placeholder("30")
-                    .placeholder_while_focused(true)
-                    .layout(LayoutStyle::default().w(10).h(1))
-                    .element(mcx, &t0)
-                    .build(),
-            ))
-            .child(field(
-                &t0,
-                "grant hours",
-                TextInput::new()
-                    .value(grant_hours)
-                    .placeholder("blank = until revoked")
-                    .placeholder_while_focused(true)
-                    .layout(LayoutStyle::default().w(24).h(1))
-                    .element(mcx, &t0)
-                    .build(),
-            ))
-            .child(line(vec![span(String::new(), t0.text)]))
-            .child(dyn_view_scoped(
-                LayoutStyle::default().h(1).shrink(0.0),
-                move |bcx| {
-                    let t = theme.get().tokens;
-                    let n_grant = name2.clone();
-                    let n_off = name2.clone();
-                    let n_start = name2.clone();
-                    let n_stop = name2.clone();
-                    let ctx_grant = ctx3.clone();
-                    let ctx_off = ctx3.clone();
-                    let ctx_start = ctx3.clone();
-                    let ctx_stop = ctx3.clone();
+            };
+            let revoke = {
+                let (n, ctx) = (name.clone(), ctx2.clone());
+                move || {
+                    if !super::util::admin_gate(&ctx.store, "revoking own time") {
+                        return;
+                    }
+                    ctx.send(Cmd::SavePersonalGrant {
+                        name: n.clone(),
+                        body: json!({ "mode": "disabled" }).into(),
+                    });
+                }
+            };
+            let freeze = {
+                let (n, ctx) = (name.clone(), ctx2.clone());
+                move || {
+                    if !super::util::admin_gate(&ctx.store, "freezing an entity's own time") {
+                        return;
+                    }
+                    let (n, c) = (n.clone(), ctx.clone());
+                    super::w::Confirm::danger(FREEZE_QUESTION, "Freeze", "Cancel").open(
+                        mcx,
+                        ctx.ui,
+                        move || {
+                            c.send(Cmd::EntityLoop {
+                                name: n,
+                                start: false,
+                                body: json!({ "mode": "freeze",
+                                "reason": "operator emergency freeze via console-tui" })
+                                .into(),
+                            });
+                        },
+                    );
+                }
+            };
+            let close_b = close.clone();
+            Element::new()
+                .style(LayoutStyle::column().gap(0).grow(1.0))
+                .child(status)
+                .child(switch)
+                .child(super::w::form::sentence(
+                    &t0,
+                    PERSONAL_TIME_DESC,
+                    w,
+                    t0.text_muted,
+                ))
+                .child(super::w::state_line(st, w))
+                .child(super::w::form::section(&t0, "Schedule"))
+                .child(super::w::form::sentence(
+                    &t0,
+                    SCHEDULE_HELP,
+                    w,
+                    t0.text_muted,
+                ))
+                .child(field(&t0, "Seconds between steps", input(tick_s, "20", 10)))
+                .child(field(&t0, "Steps per day", input(ticks_day, "8", 10)))
+                .child(field(&t0, "Rest minutes", input(rest_min, "30", 10)))
+                .child(field(
+                    &t0,
+                    "Hours allowed",
+                    input(grant_hours, "blank = until revoked", 24),
+                ))
+                .child(
                     Element::new()
-                        .style(LayoutStyle::row().gap(1))
-                        .child(
-                            Button::new("Grant (timer)")
-                                .on_click(move || {
-                                    if !super::util::admin_gate(&ctx_grant.store, "granting own time") {
-                                        return;
-                                    }
-                                    // The gateway refuses a timer without
-                                    // its expiry (routes/entities.py): the
-                                    // window comes from "grant hours".
-                                    match timer_grant_body(&grant_hours.get_untracked(), now_epoch()) {
-                                        Ok(Some(body)) => ctx_grant.send(Cmd::SavePersonalGrant {
-                                            name: n_grant.clone(),
-                                            body: body.into(),
-                                        }),
-                                        Ok(None) => ctx_grant.store.notice.set(Some(
-                                            "type the grant hours first — a timer grant needs its window".into(),
-                                        )),
-                                        Err(e) => ctx_grant.store.notice.set(Some(e)),
-                                    }
-                                })
-                                .element(bcx, &t)
-                                .build(),
-                        )
-                        .child(
-                            Button::new("Revoke grant")
-                                .on_click(move || {
-                                    if !super::util::admin_gate(&ctx_off.store, "revoking own time") {
-                                        return;
-                                    }
-                                    ctx_off.send(Cmd::SavePersonalGrant {
-                                        name: n_off.clone(),
-                                        body: json!({ "mode": "disabled" }).into(),
-                                    });
-                                })
-                                .element(bcx, &t)
-                                .build(),
-                        )
-                        .child(
-                            Button::new("Start loop")
-                                .on_click(move || {
-                                    if !super::util::admin_gate(&ctx_start.store, "starting an entity's own time") {
-                                        return;
-                                    }
-                                    // Blank fields are omitted (the gateway's
-                                    // defaults apply, as on the web); garbage
-                                    // is refused with the reason.
-                                    let loop_body = match loop_start_body(
-                                        &tick_s.get_untracked(),
-                                        &ticks_day.get_untracked(),
-                                        &rest_min.get_untracked(),
-                                    ) {
-                                        Ok(b) => b,
-                                        Err(e) => {
-                                            ctx_start.store.notice.set(Some(e));
-                                            return;
-                                        }
-                                    };
-                                    // A timed window is the one case the
-                                    // start cannot express itself: the web
-                                    // writes the timer grant FIRST (the
-                                    // worker lane is serial, so it lands
-                                    // before the start).
-                                    let timer = match timer_grant_body(&grant_hours.get_untracked(), now_epoch()) {
-                                        Ok(t) => t,
-                                        Err(e) => {
-                                            ctx_start.store.notice.set(Some(e));
-                                            return;
-                                        }
-                                    };
-                                    if let Some(body) = timer {
-                                        ctx_start.send(Cmd::SavePersonalGrant {
-                                            name: n_start.clone(),
-                                            body: body.into(),
-                                        });
-                                    }
-                                    ctx_start.send(Cmd::EntityLoop {
-                                        name: n_start.clone(),
-                                        start: true,
-                                        body: loop_body.into(),
-                                    });
-                                })
-                                .element(bcx, &t)
-                                .build(),
-                        )
-                        .child(
-                            Button::new("Stop (graceful)")
-                                .on_click(move || {
-                                    if !super::util::admin_gate(&ctx_stop.store, "stopping an entity's own time") {
-                                        return;
-                                    }
-                                    ctx_stop.send(Cmd::EntityLoop {
-                                        name: n_stop.clone(),
-                                        start: false,
-                                        body: json!({ "mode": "graceful",
-                                                      "reason": "operator stop via console-tui" }).into(),
-                                    });
-                                })
-                                .element(bcx, &t)
-                                .build(),
-                        )
-                        .build()
-                },
-            ))
-            .child(dyn_view_scoped(
-                LayoutStyle::default().h(1).shrink(0.0),
-                move |bcx| {
-                    let t = theme.get().tokens;
-                    let n_freeze = name.clone();
-                    let ctx_freeze = ctx2.clone();
-                    let close_f = close2.clone();
-                    let close_done = close2.clone();
-                    Element::new()
-                        .style(LayoutStyle::row().gap(2))
-                        .child(
-                            Button::new("Emergency freeze")
-                                .on_click(move || {
-                                    if !super::util::admin_gate(&ctx_freeze.store, "freezing an entity's own time") {
-                                        return;
-                                    }
-                                    // Danger path: close this modal, then
-                                    // confirm on the screen scope (the
-                                    // prompt-over-modal stacking hazard).
-                                    let n = n_freeze.clone();
-                                    let c = ctx_freeze.clone();
-                                    close_f();
-                                    super::confirm_danger(
-                                        screen_cx,
-                                        c.ui,
-                                        format!(
-                                            "FREEZE '{n}'? A hard stop — no reflection pass; the look-back debt rides to the next open."
-                                        ),
-                                        "Freeze now",
-                                        "Keep it running",
-                                        {
-                                            let c2 = c.clone();
-                                            move || {
-                                                c2.send(Cmd::EntityLoop {
-                                                    name: n,
-                                                    start: false,
-                                                    body: json!({ "mode": "freeze",
-                                                        "reason": "operator emergency freeze via console-tui" }).into(),
-                                                });
-                                            }
-                                        },
-                                    );
-                                })
-                                .element(bcx, &t)
-                                .build(),
-                        )
-                        .child(
-                            Button::new("Done")
-                                .on_click(move || close_done())
-                                .element(bcx, &t)
-                                .build(),
-                        )
-                        .build()
-                },
-            ))
-            .build()
-    });
+                        .style(LayoutStyle::default().grow(1.0))
+                        .build(),
+                )
+                .child(super::w::form::button_row(vec![
+                    wb(mcx, &t0, SubForm::OwnTime, "grant", grant),
+                    wb(mcx, &t0, SubForm::OwnTime, "revoke", revoke),
+                    wb(mcx, &t0, SubForm::OwnTime, "freeze", freeze),
+                    wb(mcx, &t0, SubForm::OwnTime, "close", move || close_b()),
+                ]))
+                .build()
+        });
 }
 
 // ---------------------------------------------------------------------
 // Re-embed (operator repair — danger-gated)
 // ---------------------------------------------------------------------
 
+/// The web's rebuild confirmation (Mind & voice → Danger zone).
+pub const REEMBED_QUESTION: &str =
+    "Rebuild every memory vector now? The swap is atomic and recorded in its history.";
+
 fn open_reembed_form(cx: Scope, ctx: &Ctx, name: String) {
     let ctx2 = ctx.clone();
-    let screen_cx = cx;
-    open_form(ctx, cx, Size::new(76, 14), move |mcx, close| {
-        let theme = use_theme(mcx);
-        let t0 = theme.get().tokens;
-        let model = mcx.signal(String::new());
-        let reason = mcx.signal(String::new());
-        let name2 = name.clone();
-        let ctx3 = ctx2.clone();
-        let close2 = close.clone();
-        let close_cancel = close.clone();
-        Element::new()
-            .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold(
-                format!("Re-embed home — {name}"),
-                t0.accent,
-            )]))
-            .child(line(vec![span(
-                "vectors are a derived index over engraved text; re-embedding rewrites it",
-                t0.text_muted,
-            )]))
-            .child(line(vec![span(
+    super::w::FormModal::new(format!("Re-embed home — {name}"))
+        .size(80, 18)
+        .open(ctx, cx, move |mcx, close, guard, _w| {
+            let theme = use_theme(mcx);
+            let t0 = theme.get().tokens;
+            let model = mcx.signal(String::new());
+            let reason = mcx.signal(String::new());
+            let name2 = name.clone();
+            let ctx3 = ctx2.clone();
+            let close2 = close.clone();
+            let esc_armed = mcx.signal(false);
+            let form_error = mcx.signal(Option::<String>::None);
+            super::install_dirty_guard(
+                mcx,
+                &guard,
+                vec![(model, String::new()), (reason, String::new())],
+                esc_armed,
+                form_error,
+            );
+            let close_cancel = guarded_close(&close, &guard);
+            Element::new()
+                .style(LayoutStyle::column().gap(0))
+                .child(line(vec![span(
+                    "vectors are a derived index over engraved text; re-embedding rewrites it",
+                    t0.text_muted,
+                )]))
+                .child(line(vec![span(
                 "all-or-nothing, takes the home lease, shifts semantic neighborhoods — repair only",
                 t0.warn,
             )]))
-            .child(field(
-                &t0,
-                "embedding model",
-                TextInput::new()
-                    .value(model)
-                    .placeholder("e.g. text-embedding-qwen3-embedding-0.6b")
-                    .placeholder_while_focused(true)
-                    .layout(LayoutStyle::default().w(48).h(1))
-                    .element(mcx, &t0)
-                    .autofocus()
-                    .build(),
-            ))
-            .child(field(
-                &t0,
-                "reason",
-                TextInput::new()
-                    .value(reason)
-                    .placeholder("why this repair is needed (journaled)")
-                    .placeholder_while_focused(true)
-                    .layout(LayoutStyle::default().w(48).h(1))
-                    .element(mcx, &t0)
-                    .build(),
-            ))
-            .child(line(vec![span(String::new(), t0.text)]))
-            .child(
-                Element::new()
-                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                    .child(
-                        Button::new("Re-embed…")
-                            .on_click(move || {
-                                let m = model.get_untracked().trim().to_string();
-                                let r = reason.get_untracked().trim().to_string();
-                                if m.is_empty() {
-                                    ctx3.store.notice.set(Some(
-                                        "type the embedding model id first".into(),
-                                    ));
-                                    return;
-                                }
-                                let n = name2.clone();
-                                let c = ctx3.clone();
-                                close2();
-                                super::confirm_danger(
-                                    screen_cx,
-                                    c.ui,
-                                    format!(
-                                        "Re-embed '{n}' with {m}? The whole vector index is rebuilt (slow; the entity's home is leased for the duration)."
-                                    ),
-                                    "Re-embed now",
-                                    "Cancel",
-                                    {
-                                        let c2 = c.clone();
-                                        move || {
-                                            let mut body = json!({ "embedding_model": m });
-                                            if !r.is_empty() {
-                                                body["reason"] = Value::String(r);
-                                            }
-                                            c2.send(Cmd::EntityReembed {
-                                                name: n,
-                                                body: body.into(),
-                                                form_id: None,
-                                            });
+                .child(field(
+                    &t0,
+                    "embedding model",
+                    TextInput::new()
+                        .value(model)
+                        .placeholder("e.g. text-embedding-qwen3-embedding-0.6b")
+                        .placeholder_while_focused(true)
+                        .layout(LayoutStyle::default().w(48).h(1))
+                        .element(mcx, &t0)
+                        .autofocus()
+                        .build(),
+                ))
+                .child(field(
+                    &t0,
+                    "reason",
+                    TextInput::new()
+                        .value(reason)
+                        .placeholder("why this repair is needed (journaled)")
+                        .placeholder_while_focused(true)
+                        .layout(LayoutStyle::default().w(48).h(1))
+                        .element(mcx, &t0)
+                        .build(),
+                ))
+                .child(line(vec![span(String::new(), t0.text)]))
+                .child(
+                    Element::new()
+                        .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                        .child(wb(mcx, &t0, SubForm::Reembed, "rebuild", move || {
+                            let m = model.get_untracked().trim().to_string();
+                            let r = reason.get_untracked().trim().to_string();
+                            if m.is_empty() {
+                                ctx3.store
+                                    .notice
+                                    .set(Some("type the embedding model id first".into()));
+                                return;
+                            }
+                            let n = name2.clone();
+                            let c = ctx3.clone();
+                            let close_done = close2.clone();
+                            // THE confirm widget over the form (the web's
+                            // sentence); the form closes once it is sent.
+                            super::w::Confirm::danger(REEMBED_QUESTION, "Rebuild", "Cancel").open(
+                                mcx,
+                                c.ui,
+                                {
+                                    let c2 = c.clone();
+                                    move || {
+                                        close_done();
+                                        let mut body = json!({ "embedding_model": m });
+                                        if !r.is_empty() {
+                                            body["reason"] = Value::String(r);
                                         }
-                                    },
-                                );
-                            })
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .child(
-                        Button::new("Cancel")
-                            .on_click(move || close_cancel())
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .build(),
-            )
-            .build()
-    });
+                                        c2.send(Cmd::EntityReembed {
+                                            name: n,
+                                            body: body.into(),
+                                            form_id: None,
+                                        });
+                                    }
+                                },
+                            );
+                        }))
+                        .child(wb(mcx, &t0, SubForm::Reembed, "close", move || {
+                            close_cancel()
+                        }))
+                        .build(),
+                )
+                .build()
+        });
 }
 
 // ---------------------------------------------------------------------
@@ -1635,265 +1743,238 @@ fn open_tool_policy_form(cx: Scope, ctx: &Ctx, name: String) {
     ctx.send(Cmd::LoadToolPolicy { name: name.clone() });
 
     let ctx2 = ctx.clone();
-    let screen_cx = cx;
-    open_form(ctx, cx, Size::new(84, 26), move |mcx, close| {
-        let theme = use_theme(mcx);
-        let t0 = theme.get().tokens;
-        let phase_sigs: std::rc::Rc<Vec<Signal<Vec<String>>>> =
-            std::rc::Rc::new((0..PHASE_SLOTS).map(|_| mcx.signal(Vec::new())).collect());
-        let filled = mcx.signal(false);
-        let form_error = mcx.signal(Option::<String>::None);
-        let in_flight = mcx.signal(false);
-        let form_id = crate::worker::next_form_id();
+    super::w::FormModal::new(format!("Tool policy — {name} (per-phase grants)"))
+        .size(88, 30)
+        .open(ctx, cx, move |mcx, close, guard, _w| {
+            let theme = use_theme(mcx);
+            let t0 = theme.get().tokens;
+            let phase_sigs: std::rc::Rc<Vec<Signal<Vec<String>>>> =
+                std::rc::Rc::new((0..PHASE_SLOTS).map(|_| mcx.signal(Vec::new())).collect());
+            let filled = mcx.signal(false);
+            let form_error = mcx.signal(Option::<String>::None);
+            let in_flight = mcx.signal(false);
+            let form_id = crate::worker::next_form_id();
 
-        // One-shot fill: grants land in the slots when the read arrives.
-        {
-            let phase_sigs = phase_sigs.clone();
-            let n = name.clone();
-            mcx.effect(move || {
-                if filled.get() {
-                    return;
-                }
-                if let Loadable::Ready(d) = store.entity_policy.get() {
-                    if d.entity != n {
+            // One-shot fill: grants land in the slots when the read arrives.
+            {
+                let phase_sigs = phase_sigs.clone();
+                let n = name.clone();
+                mcx.effect(move || {
+                    if filled.get() {
                         return;
                     }
-                    for (i, (_, tools, _)) in d.phases.iter().take(PHASE_SLOTS).enumerate() {
-                        phase_sigs[i].set(tools.clone());
+                    if let Loadable::Ready(d) = store.entity_policy.get() {
+                        if d.entity != n {
+                            return;
+                        }
+                        for (i, (_, tools, _)) in d.phases.iter().take(PHASE_SLOTS).enumerate() {
+                            phase_sigs[i].set(tools.clone());
+                        }
+                        filled.set(true);
                     }
-                    filled.set(true);
-                }
-            });
-        }
+                });
+            }
 
-        super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
+            super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
 
-        let ctx_save = ctx2.clone();
-        let name_save = name.clone();
-        let name_title = name.clone();
-        let close_cancel = close.clone();
-        let close_for_prompt = close.clone();
-        let phase_sigs_save = phase_sigs.clone();
-        let phase_sigs_render = phase_sigs.clone();
-
-        // Focusable+autofocus content root (engine 0230): the editors
-        // build their widgets inside regenerating regions where
-        // autofocus is the 0220 panic hazard — without a focus target
-        // in the modal tree, EVERY key but Tab (Esc included) is dead.
-        Element::new()
-            .focusable()
-            .autofocus()
-            .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold(
-                format!("Tool policy — {name_title} (per-phase grants)"),
-                t0.accent,
-            )]))
-            .child(line(vec![span(
-                "an emptied phase asks: reset to the framework default, or an explicit deny-all",
-                t0.text_faint,
-            )]))
-            .child(dyn_view_scoped(LayoutStyle::default().grow(1.0), {
+            let ctx_save = ctx2.clone();
+            let name_save = name.clone();
+            // The web's "Empty phase means no tools" switch: on = a cleared
+            // phase is an explicit deny-all ([]); off = it returns to the
+            // framework default (null).
+            let deny_all = mcx.signal(false);
+            {
+                let sigs = phase_sigs.clone();
                 let n = name.clone();
-                move |gcx| {
-                    let t = theme.get().tokens;
-                    match store.entity_policy.get() {
-                        Loadable::Ready(d) if d.entity == n => {
-                            if !filled.get() {
-                                // The fill effect runs this same frame.
-                                return line(vec![span("⟳ preparing grants…", t.info)]);
-                            }
-                            let opts: Vec<SelectOption> = d
-                                .all_tools
+                let esc_armed = mcx.signal(false);
+                let dirty = move || {
+                    store.entity_policy.with_untracked(|p| {
+                        p.ready().filter(|d| d.entity == n).is_some_and(|d| {
+                            d.phases
                                 .iter()
-                                .map(|tname| SelectOption::keyed(tname.clone(), tname.clone()))
-                                .collect();
-                            let mut col = Element::new().style(LayoutStyle::column().gap(0));
-                            for (i, (phase, _, source)) in
-                                d.phases.iter().take(PHASE_SLOTS).enumerate()
-                            {
-                                col = col.child(field(
-                                    &t,
-                                    phase,
-                                    Element::new()
-                                        .style(LayoutStyle::row().gap(1))
-                                        .child(
-                                            MultiSelect::new(opts.clone())
-                                                .values(phase_sigs_render[i])
-                                                .placeholder("no tools (empty grant on save)")
-                                                .layout(
-                                                    LayoutStyle::default().w(44).h(1).shrink(0.0),
-                                                )
-                                                .element(gcx, &t)
-                                                .build(),
-                                        )
-                                        .child(line(vec![span(
-                                            format!("({source})"),
-                                            t.text_faint,
-                                        )]))
-                                        .build(),
-                                ));
-                            }
-                            if d.phases.len() > PHASE_SLOTS {
-                                col = col.child(line(vec![span(
-                                    format!(
+                                .take(PHASE_SLOTS)
+                                .enumerate()
+                                .any(|(i, (_, orig, _))| sigs[i].get_untracked() != *orig)
+                        })
+                    })
+                };
+                super::install_dirty_guard_with(mcx, &guard, dirty, || {}, esc_armed, form_error);
+            }
+            let close_cancel = guarded_close(&close, &guard);
+            let phase_sigs_save = phase_sigs.clone();
+            let phase_sigs_render = phase_sigs.clone();
+
+            // Focusable+autofocus content root (engine 0230): the editors
+            // build their widgets inside regenerating regions where
+            // autofocus is the 0220 panic hazard — without a focus target
+            // in the modal tree, EVERY key but Tab (Esc included) is dead.
+            Element::new()
+                .focusable()
+                .autofocus()
+                .style(LayoutStyle::column().gap(0))
+                .child(super::w::form::sentence(&t0, TOOLS_DESC, 80, t0.text_muted))
+                .child(
+                    super::w::Toggle::switch(EMPTY_PHASE_LABEL, deny_all)
+                        .tip(EMPTY_PHASE_DESC)
+                        .view(mcx, &t0),
+                )
+                .child(super::w::form::sentence(
+                    &t0,
+                    EMPTY_PHASE_DESC,
+                    80,
+                    t0.text_faint,
+                ))
+                .child(dyn_view_scoped(LayoutStyle::default().grow(1.0), {
+                    let n = name.clone();
+                    move |gcx| {
+                        let t = theme.get().tokens;
+                        match store.entity_policy.get() {
+                            Loadable::Ready(d) if d.entity == n => {
+                                if !filled.get() {
+                                    // The fill effect runs this same frame.
+                                    return line(vec![span("⟳ preparing grants…", t.info)]);
+                                }
+                                let opts: Vec<SelectOption> = d
+                                    .all_tools
+                                    .iter()
+                                    .map(|tname| SelectOption::keyed(tname.clone(), tname.clone()))
+                                    .collect();
+                                let mut col = Element::new().style(LayoutStyle::column().gap(0));
+                                for (i, (phase, _, source)) in
+                                    d.phases.iter().take(PHASE_SLOTS).enumerate()
+                                {
+                                    col = col.child(field(
+                                        &t,
+                                        phase,
+                                        Element::new()
+                                            .style(LayoutStyle::row().gap(1))
+                                            .child(
+                                                MultiSelect::new(opts.clone())
+                                                    .values(phase_sigs_render[i])
+                                                    .placeholder("no tools (empty grant on save)")
+                                                    .layout(
+                                                        LayoutStyle::default()
+                                                            .w(44)
+                                                            .h(1)
+                                                            .shrink(0.0),
+                                                    )
+                                                    .element(gcx, &t)
+                                                    .build(),
+                                            )
+                                            .child(line(vec![span(
+                                                format!("({source})"),
+                                                t.text_faint,
+                                            )]))
+                                            .build(),
+                                    ));
+                                }
+                                if d.phases.len() > PHASE_SLOTS {
+                                    col = col.child(line(vec![span(
+                                        format!(
                                         "{} more phase(s) not editable here — use the web console",
                                         d.phases.len() - PHASE_SLOTS
                                     ),
-                                    t.warn,
-                                )]));
+                                        t.warn,
+                                    )]));
+                                }
+                                col.build()
                             }
-                            col.build()
+                            Loadable::Failed(e) => super::util::error_panel_hint(
+                                &t,
+                                &e,
+                                Some("close and reopen this dialog to retry (opening re-reads)"),
+                            ),
+                            _ => line(vec![span("⟳ loading tool policy…", t.info)]),
                         }
-                        Loadable::Failed(e) => super::util::error_panel_hint(
-                            &t,
-                            &e,
-                            Some("close and reopen this dialog to retry (opening re-reads)"),
-                        ),
-                        _ => line(vec![span("⟳ loading tool policy…", t.info)]),
                     }
-                }
-            }))
-            .child(super::message_slot(theme, form_error, in_flight))
-            .child(dyn_view_scoped(
-                LayoutStyle::default().h(1).shrink(0.0),
-                move |bcx| {
-                    let t = theme.get().tokens;
-                    let busy = in_flight.get() || !filled.get();
-                    let ctx_s = ctx_save.clone();
-                    let n = name_save.clone();
-                    let close_b = close_cancel.clone();
-                    let close_p = close_for_prompt.clone();
-                    let sigs = phase_sigs_save.clone();
-                    Element::new()
-                        .style(LayoutStyle::row().gap(2))
-                        .child(
-                            Button::new("Save grants")
-                                .disabled(busy)
-                                .on_click(move || {
-                                    if in_flight.get_untracked() {
-                                        return;
+                }))
+                .child(super::message_slot(theme, form_error, in_flight))
+                .child(dyn_view_scoped(
+                    LayoutStyle::default().h(1).shrink(0.0),
+                    move |bcx| {
+                        let t = theme.get().tokens;
+                        let ctx_s = ctx_save.clone();
+                        let n = name_save.clone();
+                        let close_b = close_cancel.clone();
+                        let sigs = phase_sigs_save.clone();
+                        Element::new()
+                            .style(LayoutStyle::row().gap(2))
+                            .child(wb(bcx, &t, SubForm::Tools, "save", move || {
+                                if in_flight.get_untracked() {
+                                    return;
+                                }
+                                if let Some(why) = write_refusal(&ctx_s, "saving tool grants") {
+                                    form_error.set(Some(why));
+                                    return;
+                                }
+                                let Some(d) = ctx_s.store.entity_policy.with_untracked(|p| {
+                                    p.ready().filter(|d| d.entity == n).cloned()
+                                }) else {
+                                    form_error.set(Some("policy not loaded yet".into()));
+                                    return;
+                                };
+                                // Only CHANGED phases ride the write
+                                // (web parity: readMatrix sends deltas).
+                                let mut policy = serde_json::Map::new();
+                                let mut emptied: Vec<String> = Vec::new();
+                                for (i, (phase, orig, _)) in
+                                    d.phases.iter().take(PHASE_SLOTS).enumerate()
+                                {
+                                    let now = sigs[i].get_untracked();
+                                    if &now == orig {
+                                        continue;
                                     }
-                                    if let Some(why) = write_refusal(&ctx_s, "saving tool grants") {
-                                        form_error.set(Some(why));
-                                        return;
+                                    if now.is_empty() {
+                                        emptied.push(phase.clone());
                                     }
-                                    let Some(d) = ctx_s.store.entity_policy.with_untracked(|p| {
-                                        p.ready().filter(|d| d.entity == n).cloned()
-                                    }) else {
-                                        form_error.set(Some("policy not loaded yet".into()));
-                                        return;
-                                    };
-                                    // Only CHANGED phases ride the write
-                                    // (web parity: readMatrix sends deltas).
-                                    let mut policy = serde_json::Map::new();
-                                    let mut emptied: Vec<String> = Vec::new();
-                                    for (i, (phase, orig, _)) in
-                                        d.phases.iter().take(PHASE_SLOTS).enumerate()
-                                    {
-                                        let now = sigs[i].get_untracked();
-                                        if &now == orig {
-                                            continue;
-                                        }
-                                        if now.is_empty() {
-                                            emptied.push(phase.clone());
-                                        }
-                                        policy.insert(
-                                            phase.clone(),
-                                            Value::Array(
-                                                now.iter()
-                                                    .map(|s| Value::String(s.clone()))
-                                                    .collect(),
-                                            ),
-                                        );
+                                    policy.insert(
+                                        phase.clone(),
+                                        Value::Array(
+                                            now.iter().map(|s| Value::String(s.clone())).collect(),
+                                        ),
+                                    );
+                                }
+                                if policy.is_empty() {
+                                    form_error.set(Some("no changes to save".into()));
+                                    return;
+                                }
+                                if emptied.is_empty() {
+                                    form_error.set(None);
+                                    in_flight.set(true);
+                                    ctx_s.send(Cmd::SaveToolPolicy {
+                                        name: n.clone(),
+                                        body: json!({ "policy": Value::Object(policy) }).into(),
+                                        form_id: Some(form_id),
+                                    });
+                                    return;
+                                }
+                                // Emptied phases follow the switch.
+                                if !deny_all.get_untracked() {
+                                    for p in &emptied {
+                                        policy.insert(p.clone(), Value::Null);
                                     }
-                                    if policy.is_empty() {
-                                        form_error.set(Some("no changes to save".into()));
-                                        return;
-                                    }
-                                    if emptied.is_empty() {
-                                        form_error.set(None);
-                                        in_flight.set(true);
-                                        ctx_s.send(Cmd::SaveToolPolicy {
-                                            name: n.clone(),
-                                            body: json!({ "policy": Value::Object(policy) }).into(),
-                                            form_id: Some(form_id),
-                                        });
-                                        return;
-                                    }
-                                    // Emptied phases are ambiguous — the
-                                    // operator PICKS the consequence (web
-                                    // parity), on the screen scope (never
-                                    // a prompt over a modal).
-                                    let c = ctx_s.clone();
-                                    let n2 = n.clone();
-                                    close_p();
-                                    confirm_emptied_phases(screen_cx, &c, n2, policy, emptied);
-                                })
-                                .element(bcx, &t)
-                                .build(),
-                        )
-                        .child(
-                            Button::new("Cancel")
-                                .on_click(move || close_b())
-                                .element(bcx, &t)
-                                .build(),
-                        )
-                        .build()
-                },
-            ))
-            .build()
-    });
+                                }
+                                form_error.set(None);
+                                in_flight.set(true);
+                                ctx_s.send(Cmd::SaveToolPolicy {
+                                    name: n.clone(),
+                                    body: json!({ "policy": Value::Object(policy) }).into(),
+                                    form_id: Some(form_id),
+                                });
+                            }))
+                            .child(wb(bcx, &t, SubForm::Tools, "close", move || close_b()))
+                            .build()
+                    },
+                ))
+                .build()
+        });
 }
 
-/// The emptied-phase choice: reset-to-default (null) vs explicit
-/// deny-all ([]) — the web's exact semantics, named consequences.
-fn confirm_emptied_phases(
-    cx: Scope,
-    ctx: &Ctx,
-    name: String,
-    mut policy: serde_json::Map<String, Value>,
-    emptied: Vec<String>,
-) {
-    let ctx2 = ctx.clone();
-    let list = emptied.join(", ");
-    super::open_prompt(
-        cx,
-        ctx.ui,
-        abstracttui::app::ChoicePrompt::new(format!(
-            "Phases with every tool removed ({list}) — what did you mean?"
-        ))
-        .option_detail(
-            "reset",
-            "Reset them to the framework default",
-            "the evolving default grant applies — this does NOT deny tools",
-        )
-        .option_with(
-            abstracttui::app::ChoiceOption::new("deny", "Deny ALL tools in those phases")
-                .danger(true),
-        )
-        .option("keep", "Cancel — keep the current grants")
-        .initial("reset"),
-        move |outcome| {
-            if let abstracttui::app::ChoiceOutcome::Answered(a) = outcome {
-                let pick = a.selected.first().cloned().unwrap_or_default();
-                match pick.as_str() {
-                    "reset" => {
-                        for p in &emptied {
-                            policy.insert(p.clone(), Value::Null);
-                        }
-                    }
-                    "deny" => { /* keep the explicit [] already in the map */ }
-                    _ => return,
-                }
-                ctx2.send(Cmd::SaveToolPolicy {
-                    name: name.clone(),
-                    body: json!({ "policy": Value::Object(policy.clone()) }).into(),
-                    form_id: None,
-                });
-            }
-        },
-    );
-}
+/// The web's "Tools per phase" card words.
+pub const TOOLS_DESC: &str =
+    "Which tools it may use in each phase of its day. Each box saves when you tick it.";
+pub const EMPTY_PHASE_LABEL: &str = "Empty phase means no tools";
+pub const EMPTY_PHASE_DESC: &str = "On: a phase with every box cleared has no tools at all. Off: it goes back to the default tools.";
 
 // ---------------------------------------------------------------------
 // Prompt overlay editor (per-layer TextAreas; Enter inserts newlines)
@@ -1908,8 +1989,7 @@ fn open_prompt_editor(cx: Scope, ctx: &Ctx, name: String) {
     store.entity_prompt.set(Loadable::Loading);
     ctx.send(Cmd::LoadEntityPrompt { name: name.clone() });
     let ctx2 = ctx.clone();
-    let name_title = name.clone();
-    open_form(ctx, cx, Size::new(92, 30), move |mcx, close| {
+    super::w::FormModal::new(format!("Prompt overlay — {name}")).size(94, 34).open(ctx, cx, move |mcx, close, guard, _w| {
         let theme = use_theme(mcx);
         let t0 = theme.get().tokens;
         let states: std::rc::Rc<Vec<TextAreaState>> =
@@ -1944,7 +2024,24 @@ fn open_prompt_editor(cx: Scope, ctx: &Ctx, name: String) {
         let ctx_save = ctx2.clone();
         let name_save = name.clone();
         let n_render = name.clone();
-        let close_b = close.clone();
+        {
+            let states = states.clone();
+            let n = name.clone();
+            let esc_armed = mcx.signal(false);
+            let dirty = move || {
+                store.entity_prompt.with_untracked(|p| {
+                    p.ready().filter(|d| d.entity == n).is_some_and(|d| {
+                        d.layers
+                            .iter()
+                            .take(LAYER_SLOTS)
+                            .enumerate()
+                            .any(|(i, (_, text))| states[i].text() != *text)
+                    })
+                })
+            };
+            super::install_dirty_guard_with(mcx, &guard, dirty, || {}, esc_armed, form_error);
+        }
+        let close_b = guarded_close(&close, &guard);
         let states_render = states.clone();
         let states_save = states.clone();
 
@@ -1954,10 +2051,6 @@ fn open_prompt_editor(cx: Scope, ctx: &Ctx, name: String) {
             .focusable()
             .autofocus()
             .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold(
-                format!("Prompt overlay — {name_title}"),
-                t0.accent,
-            )]))
             .child(line(vec![span(
                 "per-layer overlay text — Enter inserts a newline; Tab moves between layers; Save writes ALL layers",
                 t0.text_faint,
@@ -2016,7 +2109,6 @@ fn open_prompt_editor(cx: Scope, ctx: &Ctx, name: String) {
                 LayoutStyle::default().h(1).shrink(0.0),
                 move |bcx| {
                     let t = theme.get().tokens;
-                    let busy = in_flight.get() || !filled.get();
                     let ctx_s = ctx_save.clone();
                     let n = name_save.clone();
                     let close_c = close_b.clone();
@@ -2024,9 +2116,7 @@ fn open_prompt_editor(cx: Scope, ctx: &Ctx, name: String) {
                     Element::new()
                         .style(LayoutStyle::row().gap(2))
                         .child(
-                            Button::new("Save overlay")
-                                .disabled(busy)
-                                .on_click(move || {
+                            wb(bcx, &t, SubForm::Prompt, "save", move || {
                                     if in_flight.get_untracked() {
                                         return;
                                     }
@@ -2058,15 +2148,10 @@ fn open_prompt_editor(cx: Scope, ctx: &Ctx, name: String) {
                                         body: json!({ "overlay": Value::Object(overlay) }).into(),
                                         form_id: Some(form_id),
                                     });
-                                })
-                                .element(bcx, &t)
-                                .build(),
+                                }),
                         )
                         .child(
-                            Button::new("Cancel")
-                                .on_click(move || close_c())
-                                .element(bcx, &t)
-                                .build(),
+                            wb(bcx, &t, SubForm::Prompt, "close", move || close_c()),
                         )
                         .build()
                 },
@@ -2084,8 +2169,7 @@ fn open_candidates_modal(cx: Scope, ctx: &Ctx, name: String) {
     store.entity_candidates.set(Loadable::Loading);
     ctx.send(Cmd::LoadCandidates { name: name.clone() });
     let ctx2 = ctx.clone();
-    let name_title = name.clone();
-    open_form(ctx, cx, Size::new(90, 24), move |mcx, close| {
+    super::w::FormModal::new(format!("Candidates — {name} (sleep proposes; waking evidence disposes)")).size(92, 28).open(ctx, cx, move |mcx, close, _guard, _w| {
         let theme = use_theme(mcx);
         let t0 = theme.get().tokens;
         let sel = mcx.signal(0usize);
@@ -2107,10 +2191,6 @@ fn open_candidates_modal(cx: Scope, ctx: &Ctx, name: String) {
             .focusable()
             .autofocus()
             .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold(
-                format!("Candidates — {name_title} (sleep proposes; waking evidence disposes)"),
-                t0.accent,
-            )]))
             .child(dyn_view_scoped(LayoutStyle::default().grow(1.0), {
                 let n = n.clone();
                 move |gcx| {
@@ -2249,31 +2329,19 @@ fn open_candidates_modal(cx: Scope, ctx: &Ctx, name: String) {
                     Element::new()
                         .style(LayoutStyle::row().gap(2))
                         .child(
-                            Button::new("Promote (accept)")
-                                .on_click(act(true))
-                                .element(bcx, &t)
-                                .build(),
+                            wb(bcx, &t, SubForm::Candidates, "promote", act(true)),
                         )
                         .child(
-                            Button::new("Reject")
-                                .on_click(act(false))
-                                .element(bcx, &t)
-                                .build(),
+                            wb(bcx, &t, SubForm::Candidates, "reject", act(false)),
                         )
                         .child(
-                            Button::new("Reload")
-                                .on_click(move || {
+                            wb(bcx, &t, SubForm::Candidates, "reload", move || {
                                     ctx_r.store.entity_candidates.set(Loadable::Loading);
                                     ctx_r.send(Cmd::LoadCandidates { name: n_r.clone() });
-                                })
-                                .element(bcx, &t)
-                                .build(),
+                                }),
                         )
                         .child(
-                            Button::new("Close")
-                                .on_click(move || close_c())
-                                .element(bcx, &t)
-                                .build(),
+                            wb(bcx, &t, SubForm::Candidates, "close", move || close_c()),
                         )
                         .build()
                 },
