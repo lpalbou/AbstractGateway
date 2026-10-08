@@ -431,7 +431,56 @@ pub struct RouteRow {
     /// this Python environment (AbstractCore `engine_missing`). Never set
     /// together with `route_unavailable`; separate from "not downloaded".
     pub engine_missing: Option<EngineMissing>,
+    /// AbstractCore `route_hint` {code, sentence, route|null} on a CONFIGURED
+    /// row (round 16: a faster-whisper speech-input route on Apple silicon,
+    /// which mlx-whisper runs on the GPU). Served verbatim; Apply recommended
+    /// (`a`) is what switches the route.
+    pub route_hint: Option<RouteHint>,
 }
+
+/// AbstractCore's `route_hint` on a capability-default row.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RouteHint {
+    pub code: String,
+    pub sentence: String,
+    /// The route Apply recommended would switch to (present = it can).
+    pub has_route: bool,
+}
+
+impl RouteHint {
+    pub fn from_value(v: &Value) -> Option<RouteHint> {
+        let sentence = v
+            .get("sentence")
+            .and_then(Value::as_str)?
+            .trim()
+            .to_string();
+        if sentence.is_empty() {
+            return None;
+        }
+        Some(RouteHint {
+            code: v
+                .get("code")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            sentence,
+            has_route: v.get("route").map(|r| !r.is_null()).unwrap_or(false),
+        })
+    }
+
+    /// The web's words (console.py `routeHintMarkup`): the sentence, then
+    /// " Apply recommended switches it." when the hint names a route.
+    pub fn text(&self) -> String {
+        if self.has_route {
+            format!("{}{}", self.sentence, ROUTE_HINT_HOW)
+        } else {
+            self.sentence.clone()
+        }
+    }
+}
+
+/// The web's suffix after a route hint that names a route (console.py `routeHintMarkup`).
+pub const ROUTE_HINT_HOW: &str = " Apply recommended switches it.";
 
 /// AbstractCore's `engine_missing` {engine, name, reason, install[,
 /// engine_row]} — on capability-default rows, apply-recommended entries and
@@ -559,6 +608,7 @@ impl RouteRow {
                 .get("route_unavailable")
                 .and_then(RecommendationUnavailable::from_value),
             engine_missing: v.get("engine_missing").and_then(EngineMissing::from_value),
+            route_hint: v.get("route_hint").and_then(RouteHint::from_value),
             key,
         })
     }

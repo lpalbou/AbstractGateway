@@ -596,6 +596,15 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     };
                     col = col.child(line(vec![lead, span(l, ink)]));
                 }
+                // Round 16: the gateway's route hint, verbatim, under it (text only).
+                let hint = store
+                    .routes
+                    .with(|d| d.ready().and_then(|d| transcription_hint(&d.rows)));
+                if let Some(h) = hint {
+                    for l in super::util::wrap_text(&h, w) {
+                        col = col.child(line(vec![span(" ".repeat(14), t.text), span(l, t.info)]));
+                    }
+                }
                 col.build()
             },
         ))
@@ -3423,6 +3432,17 @@ pub enum TranscriptionLevel {
     Unset,
     Warn,
     Error,
+}
+
+/// The `input.voice` row's served `route_hint` (round 16), in the web's
+/// words, shown under the transcription line — only on a CONFIGURED row,
+/// like the web (`defaultRowConfigured(row) ? … routeHintMarkup(row)`).
+pub fn transcription_hint(rows: &[RouteRow]) -> Option<String> {
+    let r = rows.iter().find(|r| r.key == "input.voice")?;
+    if !r.configured {
+        return None;
+    }
+    r.route_hint.as_ref().map(|h| h.text())
 }
 
 /// The transcription (speech → text, `input.voice`) line: the engine by

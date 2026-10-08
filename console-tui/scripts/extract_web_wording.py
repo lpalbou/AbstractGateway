@@ -1116,6 +1116,19 @@ def accounts_roles_wording() -> dict:
 B_SCREENS["accounts_roles"] = accounts_roles_wording
 
 
+def route_hint_wording() -> dict:
+    """Round 16 (W5's served hint): console.py `routeHintMarkup` — the suffix after a route hint
+    that names a route, and that it is rendered only on a configured row."""
+    src = read_b("console.py")
+    how = need(src, r'const how = hint\.route \? "([^"]+)" : "";', "routeHintMarkup's suffix")
+    if "defaultRowConfigured(row) ? engineMissingMarkup(row) + routeHintMarkup(row)" not in src:
+        fail("routeHintMarkup is no longer rendered on configured rows only (console.py moved).")
+    return {"route_hint_how": how, "configured_rows_only": True}
+
+
+B_SCREENS["route_hint"] = route_hint_wording
+
+
 def b_fixture(screen: str) -> Path:
     return CRATE / "tests" / "fixtures" / f"r15_web_wording_{screen}.json"
 
