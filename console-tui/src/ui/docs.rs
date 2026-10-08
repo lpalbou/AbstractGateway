@@ -829,6 +829,17 @@ pub fn install(cx: Scope, ctx: &Ctx) {
     DRAWERS.with(|d| *d.borrow_mut() = Some((wide, full)));
 }
 
+/// The drawer's hint pairs (the status bar while it is open).
+pub fn hints() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("Enter", "Send"),
+        ("Tab", "buttons"),
+        ("h", "Past conversations"),
+        ("n", "New conversation"),
+        ("Esc", "close"),
+    ]
+}
+
 /// Is the docs drawer open (tests, the shell)?
 pub fn is_open() -> bool {
     DRAWERS.with(|d| {

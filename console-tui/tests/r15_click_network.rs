@@ -229,6 +229,11 @@ fn the_mode_segments_post_the_mode_and_internet_is_confirmed_by_mouse() {
         "refused_reason": "Internet mode needs your acknowledgement.",
         "warnings": ["Put a TLS proxy in front."]}),
     );
+    // (the worker's journal says the 409 in the status bar; the page
+    // answers with the question, so the bar is cleared — adversary note d)
+    h.store.notice.set(Some(
+        "✗ Who can reach this gateway: internet — needs an explicit acknowledgement".into(),
+    ));
     h.store
         .json
         .set_write("network.mode", Some(WriteState::Failed(e.clone())));
@@ -238,6 +243,11 @@ fn the_mode_segments_post_the_mode_and_internet_is_confirmed_by_mouse() {
         "{s}"
     );
     assert!(s.contains("• Put a TLS proxy in front."), "{s}");
+    assert_eq!(
+        h.store.notice.get_untracked(),
+        None,
+        "no failure in the status bar"
+    );
     // A reload under it (the re-read after the write) keeps it open.
     let s = set_net(&mut h, network("lan", false));
     assert!(

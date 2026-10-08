@@ -612,6 +612,10 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     store.json.set_write(MODE_KEY, None);
                     if e.status() == Some(409) && text("reason_code") == "acknowledgement_required"
                     {
+                        // Not a failure: the gateway asks — the confirmation
+                        // below is the answer, so the status bar does not
+                        // wear the 409 as an error.
+                        store.notice.set(None);
                         let warnings: Vec<String> = body
                             .get("warnings")
                             .and_then(Value::as_array)
