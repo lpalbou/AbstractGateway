@@ -550,6 +550,81 @@ def screens_main(write: bool) -> int:
     return rc
 
 
+
+# ---------------------------------------------------------------------------
+# R15 group B (worker B): one fixture per screen,
+# tests/fixtures/r15_web_wording_<screen>.json, checked (or rewritten with
+# --write) after the reference fixture. Each function reads its anchors from
+# the web sources and FAILS when one is missing.
+# ---------------------------------------------------------------------------
+
+
+def read_b(name: str) -> str:
+    return read(name)
+
+
+def about_wording() -> dict:
+    """About: the kit's About link list (ui-kit AfAbout, bundled in
+    console_islands.py) — label, and which identity field is its tooltip
+    (`title`) — the version rows' labels, and the top bar's dialog label."""
+    isl = read_b("console_islands.py")
+    m = re.search(r"function \w+\(e\)\{let t=\w+\(\);return\[(\{id:\"website\".*?)\]\}", isl)
+    if not m:
+        fail("the kit's About link list (`{id:\"website\",…}`) is missing in console_islands.py.")
+    links = []
+    for e in re.finditer(r'\{id:"(\w+)",label:"([^"]+)",href:[^,]+,title:(?:e|t)\.(\w+)\}', m.group(1)):
+        links.append({"id": e.group(1), "label": e.group(2), "title": e.group(3)})
+    if [l["id"] for l in links] != ["website", "source", "docs", "issues", "feedback", "contact"]:
+        fail(f"the kit's About links changed: {links!r}")
+    rows = re.search(r'return\[\["(AbstractFramework)",.*?\],\["(AbstractGateway)",', isl)
+    if not rows:
+        fail("the kit's About version rows (AbstractFramework / AbstractGateway) are missing.")
+    ui = read_b("console_ui.py")
+    label = re.search(r'label: "(About AbstractGateway)"', ui)
+    if not label:
+        fail("the top bar's About label is missing in console_ui.py.")
+    return {
+        "links": links,
+        "version_rows": [rows.group(1), rows.group(2)],
+        "dialog": label.group(1),
+    }
+
+
+B_SCREENS = {
+    "about": about_wording,
+}
+
+
+def b_fixture(screen: str) -> Path:
+    return CRATE / "tests" / "fixtures" / f"r15_web_wording_{screen}.json"
+
+
+def check_b_screens(write: bool) -> int:
+    rc = 0
+    for screen, fn in B_SCREENS.items():
+        text = json.dumps({"_source": "scripts/extract_web_wording.py (do not edit by hand)", **fn()},
+                          indent=2, ensure_ascii=False) + "\n"
+        path = b_fixture(screen)
+        if write:
+            path.write_text(text, encoding="utf-8")
+            print(f"wrote {path}")
+        elif not path.is_file():
+            fail(f"{path} missing; run with --write.")
+        elif path.read_text(encoding="utf-8") != text:
+            print(f"{path} differs from the web sources; run with --write, then make the terminal match.")
+            rc = 1
+        else:
+            print(f"r15 web wording ({screen}): fixture matches the web sources")
+    return rc
+
+
+_main_before_b = main
+
+
+def main() -> int:  # noqa: F811 - chains the reference check, then group B's
+    rc = _main_before_b()
+    return check_b_screens("--write" in sys.argv[1:]) or rc
+
 if __name__ == "__main__":
     _rc = main()
     raise SystemExit(screens_main("--write" in sys.argv) or _rc)

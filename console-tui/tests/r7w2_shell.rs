@@ -369,13 +369,16 @@ fn about_overlay_opens_anywhere_and_esc_closes_it() {
     h.store.about.set(Loadable::Ready(about_payload()));
     let s = h.turns(3);
     assert!(s.contains("AbstractGateway console"), "the name row:\n{s}");
+    // R15: a FormModal titled as the web's top-bar button, with a Close button.
     assert!(
-        s.contains("Close (Esc)") && s.contains("AbstractGateway   0.13.0"),
+        s.contains("About AbstractGateway")
+            && s.contains(" Close ")
+            && s.contains("AbstractGateway   0.13.0"),
         "{s}"
     );
     h.shoot("about-overlay");
     let s = h.esc();
-    assert!(!s.contains("Close (Esc)"), "Esc closes:\n{s}");
+    assert!(!s.contains("About AbstractGateway"), "Esc closes:\n{s}");
 }
 
 // ---------------------------------------------------------------------
