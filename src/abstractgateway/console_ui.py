@@ -368,13 +368,10 @@ CONSOLE_UI_CSS = r"""
     .ui-addr__copy { min-width: 72px; }
     .ui-warn-list { margin: 8px 0 0; padding-left: 20px; display: grid; gap: 6px; color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.5; }
     .ui-net-confirm { border-color: var(--warning-border, var(--ui-border-2)); background: var(--warning-subtle, var(--ui-surface-1)); }
-    /* ---- Network: Advanced reverse proxy ---- */
-    details.ui-net-proxy { border: 1px solid var(--ui-border-1); border-radius: var(--radius-lg); background: var(--bg-card, var(--bg-secondary)); padding: 0; min-width: 0; }
-    details.ui-net-proxy > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; width: 100%; padding: 14px 16px; font-size: var(--font-size-md); color: var(--text-primary); }
-    details.ui-net-proxy > summary .ui-net-proxy__title { font-weight: 650; }
-    details.ui-net-proxy > summary .ui-net-proxy__sum { color: var(--text-secondary); font-size: var(--font-size-sm); font-weight: 500; }
-    details.ui-net-proxy > summary .ui-pill { margin-left: auto; }
-    .ui-net-proxy__body { display: grid; gap: 14px; padding: 4px 16px 16px; border-top: 1px solid var(--ui-border-1); min-width: 0; }
+    /* ---- Network: origins and proxy trust (inside "Reached through another address?") ---- */
+    .ui-net-proxy { min-width: 0; }
+    .ui-net-proxy__env { margin: 0; }
+    .ui-net-proxy__body { display: grid; gap: 14px; padding: 0; min-width: 0; }
     .ui-net-proxy__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 16px; min-width: 0; }
     .ui-net-proxy__field { display: grid; align-content: start; gap: 10px; min-width: 0; padding-top: 14px; }
     .ui-net-proxy__head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
@@ -1079,13 +1076,15 @@ CONSOLE_UI_JS = r"""
       if (!box || !box.clientWidth) return;  // hidden tab: measured when shown
       const avail = box.clientWidth;
       if (table.classList.contains("ui-stacked")) {
-        const natural = Number(table.dataset.uiNatural || 0);
-        if (natural && natural <= avail) {
-          table.classList.remove("ui-stacked");
-          if (table.scrollWidth > box.clientWidth + 1) {
-            table.dataset.uiNatural = String(table.scrollWidth);
-            table.classList.add("ui-stacked");
-          }
+        // RE-MEASURE, never trust the width recorded when it stacked: that
+        // width can be a transient one (a row rendered before its data, a
+        // long message since gone), and a table judged against it stayed as
+        // cards after the viewport grew back. Unstacking and measuring in the
+        // same task paints nothing in between.
+        table.classList.remove("ui-stacked");
+        if (table.scrollWidth > box.clientWidth + 1) {
+          table.dataset.uiNatural = String(table.scrollWidth);
+          table.classList.add("ui-stacked");
         }
       } else if (table.scrollWidth > avail + 1) {
         table.dataset.uiNatural = String(table.scrollWidth);
@@ -2284,10 +2283,9 @@ CONSOLE_UI_JS = r"""
     };
     const NET_KIND_LABEL = { loopback: "This computer", lan: "Local network", hostname: "Network name", tailscale: "Tailscale", public: "Public address" };
     const netStore = { data: null, error: "", loading: false, views: new Map(), busy: "", confirm: null, refused: null, notice: null, restarting: false, publicLoading: false,
-      // Advanced: reverse proxy: the origin being typed, its
-      // validation message, which field is saving, the last save's result
-      // line, and the disclosure's open state once the user toggled it.
-      proxy: { draft: "", error: "", saving: "", saved: null, open: null } };
+      // Origins and proxy trust: the origin being typed, its
+      // validation message, which field is saving, the last save's result line.
+      proxy: { draft: "", error: "", saving: "", saved: null } };
     // The top bar's "Gateway address": on an https page (behind `tailscale serve`
     // or a reverse proxy) the address the person is using — the network page's
     // plain-http LAN/tailnet address is not a secure context. Otherwise the
@@ -2397,7 +2395,6 @@ CONSOLE_UI_JS = r"""
       }
       out += netOtherAddressMarkup(d);
       out += `<p class="ui-card__note" data-net-openai-pointer>The OpenAI-compatible API has its own page: <button type="button" class="ui-btn is-quiet" data-net-action="goto-openai">OpenAI API</button></p>`;
-      out += netProxyMarkup(d);
       return out;
     }
     // ---- Reached through another address? (Tailscale, a reverse proxy) ----
@@ -2414,9 +2411,11 @@ CONSOLE_UI_JS = r"""
       if (ts && ts.dns_name) {
         out += `<p class="ui-card__note" data-net-tailscale-https>Voice and camera need https: on this computer run <code>tailscale serve --bg http://127.0.0.1:${esc(port)}</code>, then open <code>https://${esc(ts.dns_name)}</code>. <code>tailscale serve reset</code> undoes it.</p>`;
       }
-      return out + `</section>`;
+      // R15 D1: allowed origins and proxy trust are shown IN this card (they
+      // used to sit behind an "Advanced" disclosure below the page).
+      return out + netProxyMarkup(d) + `</section>`;
     }
-    // ---- Advanced: manual origins + proxies on other machines ----
+    // ---- Manual origins + proxies on other machines (inside "Reached through another address?") ----
     // gateway_network_v1 `reverse_proxy`: {allowed_origins: {value[],
     // source: setting|env|default, overridden_by_env, env_name?, env_value?,
     // effective[], builtin[], self_origins[], applies: "live", warnings[],
@@ -2441,14 +2440,10 @@ CONSOLE_UI_JS = r"""
       const conf = d.configured || {};
       const p = netStore.proxy;
       const value = Array.isArray(o.value) ? o.value : [];
-      const auto = conf.mode === "internet" || value.length > 0 || !!t.value || !!o.overridden_by_env || !!t.overridden_by_env;
-      const open = p.open === null ? auto : p.open;
       const busy = !!p.saving || !admin;
-      const sum = [`${value.length ? `${value.length} origin${value.length === 1 ? "" : "s"}` : "no manual origin"}`, t.effective ? "proxies elsewhere trusted" : "local proxy only"];
       const chipWarn = (x) => x === "*" || x.includes("://*.") || /:\*$/.test(x) || (/^http:\/\//.test(x) && !/^http:\/\/(localhost|127\.|\[::1\])/.test(x));
-      let out = `<details class="ui-details ui-net-proxy" data-net-proxy${open ? " open" : ""}>`
-        + `<summary><span class="ui-net-proxy__title">Advanced</span><span class="ui-net-proxy__sum">${esc(sum.join(" · "))}</span>`
-        + (o.overridden_by_env || t.overridden_by_env ? uiPill("Environment override", "warn") : "") + `</summary>`
+      let out = `<div class="ui-net-proxy" data-net-proxy>`
+        + (o.overridden_by_env || t.overridden_by_env ? `<p class="ui-net-proxy__env">${uiPill("Environment override", "warn")}</p>` : "")
         + `<div class="ui-net-proxy__body"><div class="ui-net-proxy__grid">`;
       // Browser origins.
       out += `<section class="ui-net-proxy__field" aria-labelledby="net-origins-h"><div class="ui-net-proxy__head"><h4 id="net-origins-h">Allowed origins</h4>${netProxySourceText(o)}</div>`
@@ -2484,7 +2479,7 @@ CONSOLE_UI_JS = r"""
       if (p.saved) out += `<p class="ui-net-proxy__saved tone-${esc(p.saved.tone)}" role="status" data-net-proxy-saved><b>${esc(p.saved.head)}</b><span>${esc(p.saved.text)}</span></p>`;
       else if (!admin) out += `<p class="ui-net-proxy__saved" role="status"><span>Only an admin can change these.</span></p>`;
       else out += `<p class="ui-net-proxy__saved" role="status"><span>Changes apply to the next request: no restart.</span><span class="ui-advanced ui-sub">CLI: <code>abstractgateway network set --allowed-origins … --trust-proxy on|off</code></span></p>`;
-      out += `</div></details>`;
+      out += `</div></div>`;
       return out;
     }
     async function netProxySave(field, body) {
@@ -2674,10 +2669,6 @@ CONSOLE_UI_JS = r"""
         if (!c || c.disabled) return;
         netProxySave("trust_proxy", { trust_proxy: !!c.checked });
       };
-      el.addEventListener("toggle", (event) => {
-        const dt = event && event.target;
-        if (dt && dt.matches && dt.matches("[data-net-proxy]")) netStore.proxy.open = !!dt.open;
-      }, true);
       // Arrow keys move through the three modes (radio-group convention);
       // Enter/Space choose one (native buttons).
       el.onkeydown = (event) => {
@@ -3352,7 +3343,8 @@ CONSOLE_UI_JS = r"""
         return `<div class="ui-alert tone-err" role="alert"><strong>Could not show the default workflows.</strong><span>${esc(err.message)}</span></div>`;
       }
       let out = `<div class="agent-defaults" data-agent-defaults>${apps}`;
-      if (nOther) out += `<details class="plain-disclosure agent-defaults__other"><summary>Other workflow types (${nOther})</summary>${other}</details>`;
+      // R15 D1: no disclosure; the other workflow types are a visible, named group.
+      if (nOther) out += `<section class="agent-defaults__other" aria-labelledby="agent-defaults-other-h"><h3 id="agent-defaults-other-h" class="section-subtitle">Other workflow types</h3>${other}</section>`;
       if (!admin) out += `<p class="section-note">Only an admin can change these.</p>`;
       return out + `</div>`;
     }
@@ -3380,7 +3372,9 @@ CONSOLE_UI_JS = r"""
       let out = head
         + `<button type="button" role="switch" id="agent-streaming-default" class="af-switch af-switch--row" data-streaming-default aria-checked="${r.value ? "true" : "false"}"${busy ? ` aria-busy="true"` : ""}${why ? ` aria-disabled="true" title="${esc(why)}"` : ""} aria-describedby="agent-streaming-default-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">${esc(STREAMING_DEFAULT_LABEL)}</span><span class="af-switch__desc" id="agent-streaming-default-desc">${esc(STREAMING_DEFAULT_DESC)}</span></span></button>`
         + (why ? `<span class="af-switch__reason">${esc(why)}</span>` : "")
-        + `<span class="ui-advanced ui-sub"><code>abstractgateway config set ${esc(r.key || "agents.streaming_default")} true|false</code></span>`;
+        // R15 D1: the CLI line is a plain sub-line (it was hidden behind the
+        // technical-details switch).
+        + `<span class="ui-sub" data-streaming-default-cli>CLI: <code>abstractgateway config set ${esc(r.key || "agents.streaming_default")} true|false</code></span>`;
       if (st && st.streamSaved) out += `<p class="inline-state${st.streamSaved.tone === "ok" ? " ok" : " error"}" role="status" data-streaming-default-saved>${esc(st.streamSaved.head)}: ${esc(st.streamSaved.text)}</p>`;
       return out + `</div>`;
     }

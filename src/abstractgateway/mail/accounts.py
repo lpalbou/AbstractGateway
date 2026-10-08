@@ -1288,7 +1288,7 @@ def oauth_providers_for_users() -> List[Dict[str, Any]]:
         out.append({
             "id": prov,
             "available": available,
-            "reason": None if available else f"No {label} sign-in client on this gateway: add one under Advanced, or ask your admin.",
+            "reason": None if available else f"No {label} sign-in client on this gateway: add one under Sign-in app, or ask your admin.",
         })
     return out
 

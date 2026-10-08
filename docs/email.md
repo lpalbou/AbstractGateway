@@ -91,7 +91,7 @@ two-step verification is on.
 
 Microsoft 365 / Outlook needs OAuth2. In the **Mailbox** card, pick the **Google** or **Microsoft**
 tab and select **Sign in with Google** / **Sign in with Microsoft** (your own client id and secret go
-under the tab's **Advanced**):
+under the tab's **Sign-in app**):
 
 - **Microsoft** uses a device code by default: open the link shown in any browser, on any machine,
   and enter the code.
@@ -150,7 +150,7 @@ Your agents and workflows — chats, workflow runs and automations, from every c
 Assistant, Observer, the consoles) — get the email tools (list and search mail, read a message,
 list folders, send, reply, download an attachment) only when **all** of these hold:
 
-1. **Agent email tools for users** is on (the administrator's Advanced setting; on by default);
+1. **Agent email tools for users** is on (an administrator's setting; on by default);
 2. your mailbox is connected and in use, and mailboxes are allowed for you;
 3. you switched **Agent email tools** on (your account page in the web console, the terminal
    console, or `PUT /api/gateway/me/email/agent-tools {"enabled": true}`). Your own switch is off
@@ -191,7 +191,7 @@ code — goes through the same checks, in this order:
    Until AbstractCore 2.21 the defaults were 20 and 100 and connecting a mailbox stored them
    unmarked; an upgrade treats exactly that pair as the old defaults, so the mailbox follows the new
    ones. Any other unmarked value is kept (the limits document's `source` is `legacy`; `default`
-   and `user` are the other values). Set new values under Advanced in your email settings to move
+   and `user` are the other values). Set new values under **Recipients and limits** in your email settings to move
    on.
 
 On top of the policy, the approval gate still decides whether an agent's send runs unattended: a

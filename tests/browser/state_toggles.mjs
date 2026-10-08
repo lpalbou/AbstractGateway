@@ -182,10 +182,10 @@ try {
       vis: Array.from(tr.querySelectorAll(".accounts-actions__buttons > button")).map((b) => b.dataset.action),
       disabled: tr.querySelectorAll("button[disabled]").length,
     }])));
-    // Round 8: icon actions, no "⋯" menu: users Email · OpenAI API · Logs · Workspace · Rotate · Archive.
-    check(JSON.stringify(acts.castor) === JSON.stringify({ vis: ["email", "logs", "workspace", "manage", "archive"], disabled: 0 }), "entity row: Email · Logs · Workspace · Manage · Archive", acts.castor);
-    check(JSON.stringify(acts.alice) === JSON.stringify({ vis: ["email", "openai_api", "logs", "workspace", "rotate", "archive"], disabled: 0 }), "user row: Email · OpenAI API · Logs · Workspace · Rotate · Archive", acts.alice);
-    check(JSON.stringify(acts.admin) === JSON.stringify({ vis: ["email", "openai_api", "logs", "workspace", "rotate"], disabled: 0 }), "own row: no Archive offered", acts.admin);
+    // Round 8: icon actions, no "⋯" menu: users Email · OpenAI API · Logs · Workspace · Preferences (R14.2) · Rotate · Archive.
+    check(JSON.stringify(acts.castor) === JSON.stringify({ vis: ["email", "logs", "workspace", "preferences", "manage", "archive"], disabled: 0 }), "entity row: Email · Logs · Workspace · Manage · Archive", acts.castor);
+    check(JSON.stringify(acts.alice) === JSON.stringify({ vis: ["email", "openai_api", "logs", "workspace", "preferences", "rotate", "archive"], disabled: 0 }), "user row: Email · OpenAI API · Logs · Workspace · Rotate · Archive", acts.alice);
+    check(JSON.stringify(acts.admin) === JSON.stringify({ vis: ["email", "openai_api", "logs", "workspace", "preferences", "rotate"], disabled: 0 }), "own row: no Archive offered", acts.admin);
     check((await page.locator("#users-section .accounts-reasons").count()) === 0 && !(await page.textContent("#users-section")).includes("don't apply to entities"), "no per-row reasons paragraph");
     // Round-2 polish: no placeholder dashes, actions on ONE row per account at 1440, one card title.
     const polish = await page.evaluate(() => {
@@ -310,8 +310,9 @@ try {
     await page.keyboard.press("Escape");
     // Create user modal.
     await page.click("#open-create-user");
-    const adv = await page.evaluate(() => { const d = document.querySelector("#user-create-form details"); const r = document.getElementById("new-runtime"); return { open: d.open, runtimeShown: r.checkVisibility() }; });
-    check(adv.open === false && adv.runtimeShown === false, "Create user Advanced collapsed by default", adv);
+    // R15 D1: no "Advanced" disclosure; Runtime and Tenant sit in a visible section named for them.
+    const adv = await page.evaluate(() => { const r = document.getElementById("new-runtime"); const h = document.getElementById("new-user-runtime-tenant-title"); return { details: document.querySelectorAll("#user-create-form details").length, runtimeShown: r.checkVisibility(), title: h && h.textContent }; });
+    check(adv.details === 0 && adv.runtimeShown === true && adv.title === "Runtime and tenant", "Create user: Runtime and tenant visible, no disclosure", adv);
     await page.evaluate(() => { for (const d of document.querySelectorAll("#user-create-form details")) d.open = true; });
     await labelScale(page, "#user-create-form", "create user modal");
     check(await page.evaluate(() => !document.getElementById("new-email").closest("details")), "Email address at the top level of Create user");

@@ -6,6 +6,11 @@ Needs AbstractGateway 0.13.1 or later for **Preferences** (`/accounts/{id}/prefe
 row (`/host/runner` `last_hang`); against 0.13.0 the rest works, `p` says the gateway has no preferences and the
 row is absent.
 
+### Changed
+- **Routes: `w` on a route whose weights are installed or could not be checked says AbstractCore's one short
+  sentence** (`summary`, AbstractCore 2.25.1: "In the Hugging Face cache."), the words the web console prints under its
+  Weights pill. The Weights column itself is unchanged.
+
 ### Added
 - **Workspaces on Accounts** (the web console's two dialogs, its words byte for byte): `E` (admins) opens
   **Eligible workspaces** — the posture (**Deny everything, allow listed workspaces** / **Allow everything, refuse

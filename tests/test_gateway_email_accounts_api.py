@@ -229,7 +229,7 @@ def test_gateway_defaults_and_per_user_overrides_decide_what_is_available(gatewa
     # capabilities.json v3: agent email tools are available by default (each user still opts in).
     assert caps["email"]["default"] is True and caps["email_agent_tools"]["default"] is True and caps["email_recovery"]["default"] is True
     assert caps["email_agent_tools"]["built_in_default"] is True
-    # DESIGN §1/§5.2 words: the admin's one switch, the rest under Advanced.
+    # DESIGN §1/§5.2 words: the admin's one switch, the rest in named sections.
     assert caps["email"]["label"] == "Mailboxes for users" and caps["email"]["advanced"] is False
     assert caps["email_agent_tools"]["label"] == "Agent email tools for users" and caps["email_agent_tools"]["advanced"] is True
     assert caps["email_recovery"]["label"] == "Sign-in by email" and caps["email_recovery"]["advanced"] is True

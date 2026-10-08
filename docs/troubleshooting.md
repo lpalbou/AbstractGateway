@@ -122,8 +122,19 @@ conversation continues.
   `start-local.sh` supervisor. A gateway started by hand in a terminal, or
   the Windows Run entry, is not restarted.
 - A gateway whose stall comes from native code that keeps the Python lock is
-  stopped by the second, faulthandler-based timer 15 s later (exit code 1,
-  same restart).
+  stopped by the backstop, a small separate process that watches a heartbeat
+  from the event loop: 15 s after the limit it has every thread's stack dumped
+  to the log, writes a backstop incident file and kills the gateway (same
+  restart).
+- Sleep is not a hang. Waking a computer can make the clock jump by minutes;
+  the watchdog and the backstop both check once more whether the event loop
+  is still running before acting; a live loop at most leaves the log line
+  `[WARN] gateway watchdog: the event loop resumed after …s; not restarted`.
+  On Windows the backstop is still faulthandler's timer, which cannot make
+  that check, so a long sleep can restart the gateway there. To confirm after a sleep/wake, the incident folder stays empty and
+  the gateway's process start time is unchanged:
+  `ls ~/Library/Application\ Support/AbstractGateway/incidents 2>/dev/null; ps -o lstart= -p "$(pgrep -f 'abstractgateway serve' | head -1)"`
+  (use your data folder if it is elsewhere).
 - `GET /api/health` reports `watchdog: {enabled, limit_s, last_tick_age_s}`.
 - `--watchdog-seconds 0` turns the watchdog off (a debugging session paused
   on a breakpoint); it is never active with `--reload`.

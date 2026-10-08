@@ -350,7 +350,7 @@ last two):
 
 | | Web console | Console TUI | CLI |
 |---|---|---|---|
-| Where | Network → *Advanced* | Connection screen, below the addresses | `abstractgateway network …` |
+| Where | Network → *Reached through another address?* | Connection screen, below the addresses | `abstractgateway network …` |
 | Add/replace origins | type an origin, *Add origin* (Enter); × on a chip removes it | *browser origins* line: comma-separated list, Enter saves, empty clears | `set --allowed-origins https://a,https://b` (`""` clears) |
 | Trust proxy | *Trust proxies on other machines* switch | checkbox (Space) | `set --trust-proxy on\|off` |
 | See values + source | pills: *Saved setting* / *Default* / *Set by the environment* | `[saved setting]` / `[default]` / `[environment override]` + the override line | `network show` (`--json` = the payload) |
@@ -656,7 +656,11 @@ banner speaks only about `gaps` — a recommended model that is absent *and*
 whose route has nothing serving it. Route text generation at a model of your
 own and the starter kit's LM Studio build stops being reported as missing:
 nothing on this host needs it. A route whose *own* model is not downloaded is
-still reported, on that row, in the Weights column. "Apply recommended" is a
+still reported, on that row, in the Weights column: the state (installed, not
+downloaded, remote, not checked) and AbstractCore's one short sentence ("In the
+Hugging Face cache."), with the probe's detail, the fix and the evidence path in
+the pill's tooltip. Every provider a route can name is checked, faster-whisper
+and Stable Audio included. "Apply recommended" is a
 standing action in the section head (`a` on the TUI Routes screen), available
 whether or not the banner has anything to say.
 
@@ -1136,14 +1140,14 @@ Gateway Console and `POST /api/gateway/config/provider-endpoint-profiles` let
 signed-in users define reusable provider connections through a guided setup
 flow for `openai`, `anthropic`, `openrouter`, `portkey`, `lmstudio`, `ollama`,
 or `openai-compatible`. A connection includes a stable id, display name,
-description, optional base URL, optional API key, and optional advanced model
-allowlist. The raw API key is write-only: responses include only `api_key_set`
+description, optional base URL, optional API key, and an optional list of
+visible models. The raw API key is write-only: responses include only `api_key_set`
 and a short fingerprint. AbstractCore owns model capability metadata, so normal
 setup does not ask users to classify models manually.
 
 The console's **Test** action calls the selected provider through
 `POST /api/gateway/config/provider-endpoint-profiles/discover-models` and
-previews model discovery before saving. Leave the advanced model restriction
+previews model discovery before saving. Leave **Visible models**
 empty to keep live discovery active, or select one or more models to store a
 fixed allowlist. The **Multimodal Capabilities** tab shows configured provider
 connections and direct providers that are already usable from scoped
