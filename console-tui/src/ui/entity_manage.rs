@@ -833,16 +833,10 @@ fn open_state_modal(cx: Scope, ctx: &Ctx, entity: EntityRow) {
                             send(p);
                             return;
                         }
-                        // The question opens on a later turn, never inside
-                        // the key/press that picked: a dialog opened on the
-                        // press would take its release, leaving the press's
-                        // pointer capture on the segment (every later press
-                        // would re-pick it).
-                        abstracttui::reactive::after(std::time::Duration::from_millis(1), move || {
-                            if asking.is_alive() {
-                                asking.set(Some(p));
-                            }
-                        });
+                        // The question opens at once: the Segmented releases
+                        // the pointer on the press that picks (shared layer
+                        // 6f84a4d), so the dialog takes the release.
+                        asking.set(Some(p));
                     })
                     .view(mcx, &t0)
             };
