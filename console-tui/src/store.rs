@@ -697,6 +697,10 @@ pub struct RoutesData {
     pub ok: bool,
     pub writable: bool,
     pub authority: String,
+    /// The AbstractCore store file the gateway resolved (`config_file`):
+    /// the web's persistent "AbstractCore store · <file>" provenance line.
+    /// None = not named — then no line (no claim without evidence).
+    pub config_file: Option<String>,
     pub rows: Vec<RouteRow>,
     pub errors: Vec<String>,
 }
@@ -707,6 +711,9 @@ impl RoutesData {
             ok: b(v, "ok").unwrap_or(false),
             writable: b(v, "writable").unwrap_or(false),
             authority: s(v, "authority").unwrap_or_default(),
+            config_file: s(v, "config_file")
+                .map(|f| f.trim().to_string())
+                .filter(|f| !f.is_empty()),
             rows: rows_from(v, &["routes"], RouteRow::from_value),
             errors: v
                 .get("errors")
@@ -5046,5 +5053,29 @@ mod session_cache_row_tests {
         assert_eq!(r.created_at_s, Some(1_760_000_000.5));
         let bare = SessionCacheRow::from_value(&serde_json::json!({"key": "k"})).unwrap();
         assert_eq!(bare.created_at_s, None, "absent stays unknown, never 0");
+    }
+}
+
+#[cfg(test)]
+mod routes_config_file_tests {
+    use super::*;
+
+    #[test]
+    fn routes_read_the_store_file_they_name_and_nothing_else() {
+        let d = RoutesData::from_value(&serde_json::json!({
+            "authority": "abstractcore", "config_file": " /home/u/.abstractcore/config.json "
+        }));
+        assert_eq!(
+            d.config_file.as_deref(),
+            Some("/home/u/.abstractcore/config.json")
+        );
+        assert_eq!(
+            RoutesData::from_value(&serde_json::json!({"config_file": "  "})).config_file,
+            None
+        );
+        assert_eq!(
+            RoutesData::from_value(&serde_json::json!({})).config_file,
+            None
+        );
     }
 }
