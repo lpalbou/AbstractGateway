@@ -321,14 +321,24 @@ CONSOLE_UI_CSS = r"""
     .ui-log.oai-snippet { margin: 0; max-height: none; max-width: 100%; min-width: 0; overflow-x: auto; color: var(--text-primary); }
     .oai-table { min-width: 0; }
     .oai-table table { width: 100%; }
-    .oai-client, .oai-ip { display: block; }
+    .oai-client, .oai-ip, .oai-keyname { display: block; }
+    .oai-keyname { font-size: var(--font-size-xs); color: var(--text-secondary); }
     /* Stacked on a phone: two columns per request, not one cell per line. */
     .oai-table table.ui-stacked:not(#ui-none) > tbody > tr { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; padding: 12px 4px; }
     .oai-ip { font-size: var(--font-size-xs); color: var(--text-muted); }
     .oai-key { font-family: var(--font-mono); letter-spacing: .02em; }
     .oai-key.is-masked { color: var(--text-secondary); letter-spacing: .12em; }
-    .oai-eye { min-width: 44px; min-height: 36px; display: inline-grid; place-items: center; padding: 0 10px; }
-    .oai-eye[aria-pressed="true"] { background: var(--accent-subtle); color: var(--text-primary); }
+    .oai-keys { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; min-width: 0; }
+    .oai-keyrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 12px; border: 1px solid var(--ui-border-2); border-radius: var(--radius-md); min-width: 0; }
+    .oai-keyrow__text { flex: 1 1 240px; display: grid; gap: 2px; min-width: 0; }
+    .oai-keyrow__label { font-weight: 650; color: var(--text-primary); overflow-wrap: anywhere; }
+    .oai-keyrow__text .ui-card__note { overflow-wrap: anywhere; }
+    .oai-keyrow__side { margin-left: auto; }
+    .oai-keyrow__confirm { flex: 1 1 100%; }
+    .oai-keyform { display: grid; gap: 8px; min-width: 0; }
+    .oai-keyform input { width: 100%; max-width: 420px; }
+    .oai-made { display: grid; gap: 8px; min-width: 0; }
+    .oai-made code { overflow-wrap: anywhere; white-space: normal; }
     #oai-open-account { max-width: 100%; min-height: 40px; }
     .oai-toggle { display: inline-flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 6px 0 0; border: 0; background: transparent; color: var(--text-primary); font: inherit; cursor: pointer; box-shadow: none; text-align: left; }
     .oai-toggle:hover:not(:disabled) { filter: none; color: var(--accent); }
@@ -2703,14 +2713,18 @@ CONSOLE_UI_JS = r"""
     // /admin/core-endpoint/restart; POST /admin/core-endpoint/check. Every
     // sentence about access comes from the gateway; the page lays it out.
     //
-    // The API key is the signed-in person's gateway token. No route answers a
-    // stored token: the page shows the copy this browser kept at sign-in
-    // (sessionStorage; localStorage when "Remember this browser" was on),
-    // checked against the gateway's fingerprint (SHA-256, 12 hex) when the
-    // browser can hash. "New key" makes a new token, answered once.
+    // API keys (round 16, backlog 1000): named keys of the signed-in account, valid
+    // at /v1 only. GET /me/openai-keys -> {keys: [{label, fingerprint, created_at,
+    // created_by, last_used_at, last_client}]}; POST /me/openai-keys {label} ->
+    // {key, item} (the only time a key is answered: shown once here, with Copy);
+    // DELETE /me/openai-keys/{fingerprint} revokes at once. The gateway token is
+    // not offered as a key any more (it still works at /v1 for compatibility).
+    // Sign-in still keeps the typed token in this browser (operator ruling 1001
+    // Q5 "Keep as today": sessionStorage; localStorage with "Remember this
+    // browser"); this page no longer shows it.
     const OAI_KEY_STORE = "abstractgateway.console.openai.key";
     const OAI_AUTH = [
-      { id: "token", label: "Protected (API key)", text: "Apps send a gateway token as their API key." },
+      { id: "token", label: "Protected (API key)", text: "Apps send an API key made on this page." },
       { id: "open", label: "Open (no key)", text: "Apps connect without a key. Cloud providers still need one." },
     ];
     const OAI_REACH_TEXT = {
@@ -2724,7 +2738,9 @@ CONSOLE_UI_JS = r"""
     const OAI_MASK = "••••••••••••••••";
     const oaiStore = { data: null, error: "", loading: false, busy: "", notice: null, checks: null, logs: null, logsScope: "", logsError: "",
       snippet: "curl", views: new Map(), confirmKey: false, timer: null, reveal: false, keyCheck: "", keyNotice: null,
-      open: new Set(), details: new Map() };
+      open: new Set(), details: new Map(),
+      // Named API keys: the list, the New key form (label), the key just made (shown once), the revoke being confirmed.
+      keys: null, keysError: "", keyForm: false, keyLabel: "", made: null, confirmRevoke: "" };
     function oaiStorages() {
       const out = [];
       try { if (typeof sessionStorage !== "undefined" && sessionStorage) out.push(sessionStorage); } catch {}
@@ -2743,41 +2759,12 @@ CONSOLE_UI_JS = r"""
       oaiStore.keyCheck = "";
       oaiStore.reveal = false;
     }
-    function oaiKeptRemembered() {
-      try { return !!localStorage.getItem(OAI_KEY_STORE); } catch { return false; }
-    }
-    // The kept token for the signed-in account, or "" (none kept, another account's, or outdated).
-    function oaiKeptToken(d) {
-      const who = String((d && d.key && d.key.user_id) || "");
-      for (const s of oaiStorages()) {
-        let doc = null;
-        try { doc = JSON.parse(s.getItem(OAI_KEY_STORE) || "null"); } catch { doc = null; }
-        if (doc && doc.t && doc.u === who) return oaiStore.keyCheck === "stale" ? "" : String(doc.t);
-      }
-      return "";
-    }
-    async function oaiCheckKept(d) {
-      const fp = d && d.key && d.key.fingerprint;
-      const who = String((d && d.key && d.key.user_id) || "");
-      let token = "";
-      for (const s of oaiStorages()) {
-        try { const doc = JSON.parse(s.getItem(OAI_KEY_STORE) || "null"); if (doc && doc.t && doc.u === who) { token = String(doc.t); break; } } catch {}
-      }
-      if (!token || !fp) { oaiStore.keyCheck = token ? "unknown" : ""; return; }
-      const subtle = (typeof crypto !== "undefined" && crypto && crypto.subtle) ? crypto.subtle : null;
-      if (!subtle || typeof TextEncoder === "undefined") { oaiStore.keyCheck = "unknown"; return; }
-      try {
-        const digest = new Uint8Array(await subtle.digest("SHA-256", new TextEncoder().encode(token)));
-        const hex = Array.from(digest).map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 12);
-        oaiStore.keyCheck = hex === fp ? "match" : "stale";
-      } catch { oaiStore.keyCheck = "unknown"; }
-    }
-    // shown: what the page displays (masked unless revealed); copied: the real text.
+    // shown: what the page displays (the key just made is masked); copied: the real text.
     function oaiSnippet(kind, d, opts) {
       const base = String(d.base_url || "");
-      const kept = oaiKeptToken(d);
-      const open = d.access === "open" && !kept;
-      const key = open ? "not-needed" : (kept ? (opts && opts.clear ? kept : (oaiStore.reveal ? kept : OAI_MASK)) : "YOUR_GATEWAY_TOKEN");
+      const made = oaiStore.made && oaiStore.made.key ? String(oaiStore.made.key) : "";
+      const open = d.access === "open" && !made;
+      const key = open ? "not-needed" : (made ? (opts && opts.clear ? made : OAI_MASK) : "YOUR_API_KEY");
       const model = d.example_model || "provider/model";
       if (kind === "python") {
         return `from openai import OpenAI\n\nclient = OpenAI(base_url="${base}", api_key="${key}")\nreply = client.chat.completions.create(\n    model="${model}",\n    messages=[{"role": "user", "content": "Hello"}],\n)\nprint(reply.choices[0].message.content)`;
@@ -2820,32 +2807,59 @@ CONSOLE_UI_JS = r"""
       }
       return out + `</article>`;
     }
+    function oaiWhen(ts) {
+      if (!ts) return "";
+      try { const t = new Date(ts); return isNaN(t.getTime()) ? String(ts) : t.toLocaleString([], { dateStyle: "medium", timeStyle: "short" }); } catch { return String(ts); }
+    }
     function oaiKeyRow(d) {
       const k = d.key || {};
-      let out = `<li class="ui-addr" data-oai-key><div class="ui-addr__text"><span class="ui-addr__label">API key</span>`;
-      if (!k.own_token) {
-        return out + `<span>The gateway admin token</span><span class="ui-addr__note">The token this gateway was started with.</span></div></li>`;
+      const out = `<li class="ui-addr" data-oai-key><div class="ui-addr__text"><span class="ui-addr__label">API keys</span>`;
+      if (!k.named_keys) {
+        return out + `<span>The gateway admin token</span><span class="ui-addr__note">The token this gateway was started with. Named keys belong to an account: sign in with one to make them.</span></div></li>`;
       }
-      const kept = oaiKeptToken(d);
-      if (kept) {
-        const shown = oaiStore.reveal ? kept : OAI_MASK;
-        out += `<code class="ui-ellip is-block oai-key${oaiStore.reveal ? "" : " is-masked"}" data-oai-key-value aria-label="${oaiStore.reveal ? "Your API key" : "Your API key, hidden"}">${esc(shown)}</code>`
-          + `<span class="ui-addr__note">Your gateway token: apps use it as their API key and act as you.</span></div>`
-          + `<div class="ui-addr__side"><button type="button" class="ui-btn is-ghost oai-eye" data-oai-action="reveal" aria-pressed="${oaiStore.reveal ? "true" : "false"}" aria-label="${oaiStore.reveal ? "Hide key" : "Show key"}" data-af-tip="${oaiStore.reveal ? "Hide your API key" : "Show your API key"}">${oaiEyeIcon(oaiStore.reveal)}</button>`
-          + `<button type="button" class="ui-btn is-ghost ui-addr__copy" data-oai-action="copy-key" aria-label="Copy API key">Copy</button>`
-          + `<button type="button" class="ui-btn is-ghost" data-oai-action="new-key"${oaiStore.busy ? " disabled" : ""}>New key</button></div></li>`;
-        return out;
-      }
-      const why = oaiStore.keyCheck === "stale"
-        ? "Your token changed since you signed in here, so this browser's copy no longer works."
-        : "This browser doesn't have your token: you signed in with a link or an emailed code, or in another browser.";
-      return out + `<span class="oai-key is-masked">${OAI_MASK}</span><span class="ui-addr__note" data-oai-key-missing>${esc(why)} New key makes one; the gateway shows it once.</span></div>`
-        + `<div class="ui-addr__side"><button type="button" class="ui-btn is-ghost" data-oai-action="new-key"${oaiStore.busy ? " disabled" : ""}>New key</button></div></li>`;
+      return out + `<span class="ui-addr__note">One key per app: it works only at this base URL, acts as you, and can be revoked on its own.</span></div>`
+        + `<div class="ui-addr__side"><button type="button" class="ui-btn is-ghost" data-oai-action="new-key"${oaiStore.busy || oaiStore.keyForm ? " disabled" : ""}>New key</button></div></li>`;
     }
-    function oaiEyeIcon(open) {
-      return open
-        ? `<svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.9 10.9 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.2M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7a10.6 10.6 0 0 0 5.4-1.5"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>`
-        : `<svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>`;
+    function oaiKeyFormMarkup() {
+      const busy = oaiStore.busy === "new-key";
+      return `<form class="oai-keyform" data-oai-key-form autocomplete="off"><label class="oai-field__title" for="oai-key-label">Name</label>`
+        + `<input id="oai-key-label" data-oai-key-label maxlength="80" placeholder="For example: laptop Cursor" value="${esc(oaiStore.keyLabel)}" aria-describedby="oai-key-label-help"${busy ? " disabled" : ""}>`
+        + `<p class="ui-card__note" id="oai-key-label-help">Name it after the app that will use it, so the request log shows which app called.</p>`
+        + `<div class="ui-toolbar"><button type="submit" class="ui-btn is-primary" data-oai-key-make${busy ? ' disabled aria-busy="true"' : ""}>${busy ? "Making..." : "Make key"}</button>`
+        + `<button type="button" class="ui-btn is-ghost" data-oai-action="new-key-no"${busy ? " disabled" : ""}>Cancel</button></div></form>`;
+    }
+    function oaiMadeMarkup() {
+      const m = oaiStore.made;
+      return `<div class="ui-alert tone-ok oai-made" role="status" data-oai-made><strong>Key “${esc(m.item.label)}” made. Copy it now: the gateway shows a key only once.</strong>`
+        + `<code class="ui-ellip is-block oai-key" data-oai-made-key>${esc(m.key)}</code>`
+        + `<div class="ui-toolbar"><button type="button" class="ui-btn is-ghost ui-addr__copy" data-oai-action="copy-made" aria-label="Copy the new API key">Copy</button>`
+        + `<button type="button" class="ui-btn is-ghost" data-oai-action="made-done">Done</button></div></div>`;
+    }
+    function oaiKeysMarkup(d) {
+      if (!(d.key || {}).named_keys) return "";
+      let out = "";
+      if (oaiStore.keyForm) out += oaiKeyFormMarkup();
+      if (oaiStore.made) out += oaiMadeMarkup();
+      if (oaiStore.keysError) out += `<div class="ui-alert tone-err" role="alert"><strong>Could not read your API keys.</strong><span>${esc(oaiStore.keysError)}</span></div>`;
+      const keys = Array.isArray(oaiStore.keys) ? oaiStore.keys : null;
+      if (!keys) return out + (oaiStore.keysError ? "" : `<div class="ui-empty">Reading your API keys...</div>`);
+      if (!keys.length) return out + `<div class="ui-empty" data-oai-keys-empty>No API keys yet. Make one for each app with New key; the gateway shows it once.</div>`;
+      out += `<ul class="oai-keys" data-oai-keys aria-label="Your API keys">`;
+      for (const key of keys) {
+        const fp = String(key.fingerprint || "");
+        const used = key.last_used_at ? `Last used ${oaiWhen(key.last_used_at)}${key.last_client ? ` from ${key.last_client}` : ""}` : "Never used";
+        const confirming = oaiStore.confirmRevoke === fp;
+        const busy = oaiStore.busy === `revoke:${fp}`;
+        out += `<li class="oai-keyrow" data-oai-keyrow="${esc(fp)}"><div class="oai-keyrow__text"><span class="oai-keyrow__label">${esc(key.label)}</span>`
+          + `<span class="ui-card__note">Created ${esc(oaiWhen(key.created_at))} · ${esc(used)} · <code title="Fingerprint: the first 12 hex digits of the key's SHA-256">${esc(fp)}</code></span></div>`
+          + `<div class="oai-keyrow__side"><button type="button" class="ui-btn is-ghost" data-oai-revoke="${esc(fp)}" data-af-tip="Revoke this key: apps using it stop working at once"${oaiStore.busy || confirming ? " disabled" : ""}>Revoke</button></div>`;
+        if (confirming) {
+          out += `<div class="ui-confirm oai-keyrow__confirm" role="alertdialog" aria-label="Revoke ${esc(key.label)}"><p>Revoke “${esc(key.label)}”? Apps using it stop working at once. This can't be undone; you can make a new key.</p>`
+            + `<div class="ui-toolbar"><button type="button" class="ui-btn is-danger" data-oai-revoke-yes="${esc(fp)}"${busy ? ' disabled aria-busy="true"' : ""}>${busy ? "Revoking..." : "Revoke"}</button><button type="button" class="ui-btn is-ghost" data-oai-action="revoke-no"${busy ? " disabled" : ""}>Cancel</button></div></div>`;
+        }
+        out += `</li>`;
+      }
+      return out + `</ul>`;
     }
     function oaiConnectCard(d) {
       const k = d.key || {};
@@ -2856,13 +2870,10 @@ CONSOLE_UI_JS = r"""
       }
       out += `<ul class="ui-addr-list"><li class="ui-addr"><div class="ui-addr__text"><span class="ui-addr__label">Base URL</span><code class="ui-ellip is-block" title="${esc(d.base_url)}">${esc(d.base_url)}</code></div>`
         + `<div class="ui-addr__side">${oaiCopyButton(d.base_url, "base URL")}</div></li>${oaiKeyRow(d)}</ul>`;
+      out += oaiKeysMarkup(d);
       if (oaiStore.keyNotice) {
         const n = oaiStore.keyNotice;
         out += `<div class="ui-alert tone-${esc(n.tone)}" role="${n.tone === "err" ? "alert" : "status"}" data-oai-key-notice><strong>${esc(n.text)}</strong></div>`;
-      }
-      if (oaiStore.confirmKey) {
-        out += `<div class="ui-confirm" role="alertdialog" aria-label="Make a new key"><p>Make a new key? It replaces your gateway token: apps, devices and other browsers using the old one stop working. The gateway shows the new key once; this browser keeps it for this page.</p>`
-          + `<div class="ui-toolbar"><button type="button" class="ui-btn is-primary" data-oai-action="new-key-yes"${oaiStore.busy ? " disabled" : ""}>${oaiStore.busy === "new-key" ? "Making..." : "New key"}</button><button type="button" class="ui-btn is-ghost" data-oai-action="new-key-no">Cancel</button></div></div>`;
       }
       if (d.access === "open") out += `<p class="ui-card__note" data-oai-open-note>Open mode: SDKs still ask for a key; any text works, for example <code>not-needed</code>.</p>`;
       return out + `<p class="ui-card__note">Model names are <code>provider/model</code>, as listed at <code>/v1/models</code>.</p></article>`;
@@ -2896,7 +2907,7 @@ CONSOLE_UI_JS = r"""
     function oaiDocsCard(d) {
       const docs = d.docs || {};
       const tabs = OAI_SNIPPETS.map(([id, label]) => `<button type="button" role="tab" class="ui-btn ${oaiStore.snippet === id ? "is-primary" : "is-ghost"}" data-oai-snippet="${id}" aria-selected="${oaiStore.snippet === id ? "true" : "false"}">${label}</button>`).join("");
-      const kept = oaiKeptToken(d);
+      const kept = !!(oaiStore.made && oaiStore.made.key);
       return `<article class="ui-card oai-card" data-oai-card="docs"><div class="ui-card__head"><div class="ui-card__titles"><h3 class="ui-card__title">Docs</h3>`
         + `<p class="ui-card__note">What is supported, and a first request with your base URL${kept ? " and your key" : ""}.</p></div></div>`
         + `<ul class="oai-links"><li><a href="${esc(docs.openai_api || "#")}" target="_blank" rel="noopener">OpenAI API compatibility</a> <span class="ui-card__note">endpoints and parameters this gateway supports</span></li>`
@@ -2905,8 +2916,8 @@ CONSOLE_UI_JS = r"""
         + `<div class="ui-toolbar oai-tabs" role="tablist" aria-label="Example">${tabs}</div>`
         + `<pre class="ui-log oai-snippet" data-oai-code>${esc(oaiSnippet(oaiStore.snippet, d))}</pre>`
         + `<div class="ui-toolbar"><button type="button" class="ui-btn is-ghost" data-oai-copy-snippet>Copy example</button>`
-        + (kept ? `<span class="ui-card__note">The key is hidden here; Copy example includes it.</span>`
-          : (d.access === "open" ? "" : `<span class="ui-card__note">Replace YOUR_GATEWAY_TOKEN with your token.</span>`)) + `</div></article>`;
+        + (kept ? `<span class="ui-card__note">The new key is hidden here; Copy example includes it.</span>`
+          : (d.access === "open" ? "" : `<span class="ui-card__note">Replace YOUR_API_KEY with a key made under Connect your app.</span>`)) + `</div></article>`;
     }
     function oaiSupportMarkup(sp) {
       if (!sp) return "";
@@ -2939,7 +2950,7 @@ CONSOLE_UI_JS = r"""
       else if (det.error) body = `<div class="ui-alert tone-err" role="alert"><strong>Could not read this request.</strong><span>${esc(det.error)}</span></div>`;
       else {
         const row = det.row;
-        const facts = [`${row.method || ""} ${row.path || ""}`.trim(), row.client ? `as ${row.client}` : "", row.ip || "", row.user_agent || ""].filter(Boolean).join(" · ");
+        const facts = [`${row.method || ""} ${row.path || ""}`.trim(), row.client ? `as ${row.client}` : "", row.key_label ? `key “${row.key_label}”` : "", row.ip || "", row.user_agent || ""].filter(Boolean).join(" · ");
         body = `<p class="ui-card__note oai-record__facts">${esc(facts)}. Keys and tokens were removed when this was recorded.</p>`
           + `<div class="oai-records">${oaiSideMarkup("Request", row.request, r.request_id, "request")}${oaiSideMarkup("Response", row.response, r.request_id, "response")}</div>`
           + `<div class="ui-toolbar">${row.observer_path
@@ -2963,7 +2974,7 @@ CONSOLE_UI_JS = r"""
         const open = rid && oaiStore.open.has(rid);
         out += `<tr class="oai-row${open ? " is-open" : ""}"${rid ? ` data-oai-row="${esc(rid)}"` : ""}>`
           + `<td data-label="Time" title="${esc(r.ts || "")}">${rid ? `<button type="button" class="oai-toggle" data-oai-toggle="${esc(rid)}" aria-expanded="${open ? "true" : "false"}" aria-label="${open ? "Hide" : "Show"} the request and response of ${esc(oaiTime(r.ts))}"><span class="oai-toggle__chev" aria-hidden="true"></span>${esc(oaiTime(r.ts))}</button>` : esc(oaiTime(r.ts))}</td>`
-          + `<td data-label="Client"><span class="oai-client">${esc(r.client || "")}</span><span class="oai-ip">${esc(r.ip || "")}</span></td>`
+          + `<td data-label="Client"><span class="oai-client">${esc(r.client || "")}</span>${r.key_label ? `<span class="oai-keyname" data-oai-key-label-cell title="The API key that made this request">${esc(r.key_label)}</span>` : ""}<span class="oai-ip">${esc(r.ip || "")}</span></td>`
           + `<td data-label="Model">${esc(r.model || "—")}</td><td data-label="Tokens">${esc(tokens)}</td><td data-label="Latency">${r.duration_ms == null ? "—" : `${esc(r.duration_ms)} ms`}</td>`
           + `<td data-label="Status">${uiPill(String(r.status || "—"), ok ? "ok" : "err")}</td>`
           + `<td data-label="Run">${r.observer_path ? `<a class="ui-btn is-ghost" href="${esc(r.observer_path)}" target="_blank" rel="noopener" title="Open in Observer">Open</a>` : "—"}</td></tr>`;
@@ -2986,10 +2997,56 @@ CONSOLE_UI_JS = r"""
     }
     async function oaiRefresh() {
       oaiStore.loading = true;
-      try { oaiStore.data = await api("/api/gateway/openai-api"); oaiStore.error = ""; await oaiCheckKept(oaiStore.data); }
+      try { oaiStore.data = await api("/api/gateway/openai-api"); oaiStore.error = ""; }
       catch (err) { oaiStore.error = String((err && err.message) || err); }
       oaiStore.loading = false;
       oaiRender();
+      if (oaiStore.data && oaiStore.data.key && oaiStore.data.key.named_keys) await oaiKeysRefresh();
+    }
+    async function oaiKeysRefresh() {
+      try {
+        const res = await api("/api/gateway/me/openai-keys");
+        if (!res || !Array.isArray(res.keys)) throw new Error("GET /me/openai-keys answered without keys[] (round-16 seam).");
+        oaiStore.keys = res.keys;
+        oaiStore.keysError = "";
+      } catch (err) { oaiStore.keysError = String((err && err.message) || err); }
+      oaiRender();
+    }
+    async function oaiMakeKey() {
+      const label = String(oaiStore.keyLabel || "").trim();
+      if (oaiStore.busy) return;
+      if (!label) { oaiStore.keyNotice = { tone: "err", text: "Give the key a name, for example the app that will use it." }; oaiRender(); return; }
+      oaiStore.busy = "new-key";
+      oaiStore.keyNotice = null;
+      oaiRender();
+      try {
+        const res = await api("/api/gateway/me/openai-keys", { method: "POST", body: JSON.stringify({ label }) });
+        if (!res || !res.key || !res.item) throw new Error("The gateway answered without the new key.");
+        oaiStore.made = { key: String(res.key), item: res.item };
+        oaiStore.keyForm = false;
+        oaiStore.keyLabel = "";
+      } catch (err) {
+        oaiStore.keyNotice = { tone: "err", text: `No new key: ${String((err && err.message) || err)}` };
+      }
+      oaiStore.busy = "";
+      await oaiKeysRefresh();
+    }
+    async function oaiRevokeKey(fp) {
+      if (oaiStore.busy) return;
+      const key = (oaiStore.keys || []).find((k) => k.fingerprint === fp) || { label: fp };
+      oaiStore.busy = `revoke:${fp}`;
+      oaiStore.keyNotice = null;
+      oaiRender();
+      try {
+        await api(`/api/gateway/me/openai-keys/${encodeURIComponent(fp)}`, { method: "DELETE" });
+        oaiStore.keyNotice = { tone: "ok", text: `Revoked “${key.label}”: apps using it are refused from now on.` };
+        if (oaiStore.made && oaiStore.made.item && oaiStore.made.item.fingerprint === fp) oaiStore.made = null;
+      } catch (err) {
+        oaiStore.keyNotice = { tone: "err", text: `Not revoked: ${String((err && err.message) || err)}` };
+      }
+      oaiStore.busy = "";
+      oaiStore.confirmRevoke = "";
+      await oaiKeysRefresh();
     }
     function oaiRedrawLogs() {
       // Only the log card is redrawn: a poll never resets a choice, a revealed key or a confirmation.
@@ -3041,11 +3098,19 @@ CONSOLE_UI_JS = r"""
     async function oaiAction(action) {
       if (action === "goto-network") { setActiveTab("network"); openCoreTab("network"); return; }
       if (action === "refresh") { await oaiRefresh(); return; }
-      if (action === "reveal") { oaiStore.reveal = !oaiStore.reveal; oaiRender(); return; }
-      if (action === "copy-key") { const t = oaiKeptToken(oaiStore.data); if (t) uiCopy(t); return; }
-      if (action === "new-key" || action === "new-key-no") { oaiStore.confirmKey = action === "new-key"; oaiRender(); return; }
+      if (action === "new-key" || action === "new-key-no") {
+        oaiStore.keyForm = action === "new-key";
+        oaiStore.keyLabel = "";
+        oaiStore.keyNotice = null;
+        oaiRender();
+        if (oaiStore.keyForm) { for (const el of oaiStore.views.values()) { const i = el && el.querySelector ? el.querySelector("[data-oai-key-label]") : null; if (i && i.focus) { i.focus(); break; } } }
+        return;
+      }
+      if (action === "copy-made") { if (oaiStore.made) uiCopy(oaiStore.made.key); return; }
+      if (action === "made-done") { oaiStore.made = null; oaiRender(); return; }
+      if (action === "revoke-no") { oaiStore.confirmRevoke = ""; oaiRender(); return; }
       if (oaiStore.busy) return;
-      oaiStore.busy = action === "new-key-yes" ? "new-key" : action;
+      oaiStore.busy = action;
       oaiStore.notice = null;
       oaiStore.keyNotice = null;
       oaiRender();
@@ -3058,23 +3123,11 @@ CONSOLE_UI_JS = r"""
         } else if (action === "check") {
           const res = await api("/api/gateway/admin/core-endpoint/check", { method: "POST", slow: true });
           oaiStore.checks = Array.isArray(res.checks) ? res.checks : [];
-        } else if (action === "new-key-yes") {
-          const res = await api("/api/gateway/me/token/rotate", { method: "POST", body: "{}" });
-          const token = String((res && res.token) || "");
-          if (!token) throw new Error("The gateway answered without the new key.");
-          oaiKeepToken(String((oaiStore.data && oaiStore.data.key && oaiStore.data.key.user_id) || ""), token, oaiKeptRemembered());
-          oaiStore.confirmKey = false;
-          oaiStore.reveal = true;
-          oaiStore.keyNotice = { tone: "ok", text: "New key made: your old one stopped working. Copy it now: the gateway shows a key only once." };
-          oaiStore.data = await api("/api/gateway/openai-api");
-          await oaiCheckKept(oaiStore.data);
         }
       } catch (err) {
         const text = String((err && err.message) || err);
         if (action === "check") oaiStore.checks = [{ id: "error", ok: false, text }];
-        else if (action === "new-key-yes") oaiStore.keyNotice = { tone: "err", text: `No new key: ${text}` };
         else oaiStore.notice = { tone: "err", text: `Not restarted: ${text}` };
-        oaiStore.confirmKey = false;
       }
       oaiStore.busy = "";
       oaiRender();
@@ -3094,6 +3147,10 @@ CONSOLE_UI_JS = r"""
         if (tab) { oaiStore.snippet = tab.dataset.oaiSnippet; oaiRender(); return; }
         const act = t.closest("[data-oai-action]");
         if (act && !act.disabled) { oaiAction(act.dataset.oaiAction); return; }
+        const revoke = t.closest("[data-oai-revoke]");
+        if (revoke && !revoke.disabled) { oaiStore.confirmRevoke = revoke.dataset.oaiRevoke; oaiStore.keyNotice = null; oaiRender(); return; }
+        const revokeYes = t.closest("[data-oai-revoke-yes]");
+        if (revokeYes && !revokeYes.disabled) { oaiRevokeKey(revokeYes.dataset.oaiRevokeYes); return; }
         const access = t.closest("[data-oai-access]");
         if (access && !access.disabled && access.getAttribute("aria-checked") !== "true") { oaiChange("access", access.dataset.oaiAccess); return; }
         const reach = t.closest("[data-oai-reach]");
@@ -3104,6 +3161,19 @@ CONSOLE_UI_JS = r"""
         if (!target || target.disabled || !target.matches) return;
         if (target.matches("[data-oai-enabled]")) oaiChange("enabled", !!target.checked);
         else if (target.matches("[data-oai-open-account]")) oaiChange("open_account", String(target.value || ""));
+      };
+      // The label field keeps what is typed across re-renders (the log poll redraws only its card).
+      el.oninput = (event) => {
+        const target = event && event.target;
+        if (target && target.matches && target.matches("[data-oai-key-label]")) oaiStore.keyLabel = String(target.value || "");
+      };
+      el.onsubmit = (event) => {
+        const form = event && event.target && event.target.closest ? event.target.closest("[data-oai-key-form]") : null;
+        if (!form) return;
+        if (event.preventDefault) event.preventDefault();
+        const input = form.querySelector("[data-oai-key-label]");
+        if (input) oaiStore.keyLabel = String(input.value || "");
+        oaiMakeKey();
       };
     }
     function mountOpenAIPanel(key, el) {
@@ -3124,6 +3194,8 @@ CONSOLE_UI_JS = r"""
       oaiStore.views.delete(key);
       if (!oaiStore.views.size) {
         oaiStore.confirmKey = false; oaiStore.reveal = false; oaiStore.keyNotice = null;
+        // A key made here is never kept: leaving the page forgets it (it was shown once).
+        oaiStore.made = null; oaiStore.keyForm = false; oaiStore.keyLabel = ""; oaiStore.confirmRevoke = "";
         if (oaiStore.timer) { clearInterval(oaiStore.timer); oaiStore.timer = null; }
       }
     }

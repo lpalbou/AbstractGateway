@@ -1896,6 +1896,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    /* An empty status line takes no room at the top of the Email modal (it showed as a blank band). */
 	    .account-modal-body #my-email-message:empty { display: none; }
 	    .account-modal-body .account-page__head { display: none; }
+	    .account-openai-keys { margin-top: 18px; display: grid; gap: 8px; min-width: 0; }
+	    .account-openai-keys__title { margin: 0; font-size: var(--font-size-base); font-weight: 650; }
+	    .account-openai-keys__list { display: grid; gap: 8px; min-width: 0; }
+	    .account-openai-keys__empty { margin: 0; color: var(--text-secondary); }
+	    .account-openai-key { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 10px; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); min-width: 0; }
+	    .account-openai-key__text { flex: 1 1 220px; display: grid; gap: 2px; min-width: 0; }
+	    .account-openai-key__text strong { overflow-wrap: anywhere; }
+	    .account-openai-key__meta { font-size: var(--font-size-sm); color: var(--text-secondary); overflow-wrap: anywhere; }
 	    .account-modal-lead { margin: 0 0 14px; padding: 10px 12px; border-left: 3px solid var(--info, var(--accent)); background: color-mix(in srgb, var(--info, var(--accent)) 8%, transparent); border-radius: var(--radius-sm); font-size: var(--font-size-base); line-height: 1.45; }
 	    .account-other-mailbox { margin-top: 12px; }
 	    /* Entity Manage modal (round 3 §12): the kit's af-modal--wide shell; these rules only lay
@@ -12631,7 +12639,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       $("account-openai-title").textContent = `OpenAI API — ${a.id}`;
       const lead = document.createElement("p");
       lead.className = "account-modal-lead";
-      lead.textContent = `Lets ${a.id} use the OpenAI-compatible API (/v1) with their own gateway token as the key. Off: that key is refused there; signing in to the console is unchanged.`;
+      lead.textContent = `Lets ${a.id} use the OpenAI-compatible API (/v1) with their API keys. Off: every key of ${a.id} is refused there; signing in to the console is unchanged.`;
       const row = document.createElement("div");
       row.className = "account-openai-row";
       const sw = afSwitchCreate({ id: `account-openai-${a.tenant_id || "default"}-${a.id}`.replace(/[^A-Za-z0-9_-]/g, "-"), label: "OpenAI API", ariaLabel: `OpenAI API: ${a.id}`, checked: Boolean(a.openai_api) });
@@ -12641,6 +12649,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       note.setAttribute("role", "status");
       note.setAttribute("aria-live", "polite");
       body.append(lead, row, note);
+      if (a.kind !== "entity") body.append(accountOpenAIKeys(a));
       afSwitchBind(sw.button, async (next) => {
         const out = await api(`/api/gateway/admin/accounts/${encodeURIComponent(a.id)}/openai-api?tenant_id=${encodeURIComponent(a.tenant_id || "default")}`, { method: "PUT", body: JSON.stringify({ enabled: next }) });
         if (!out || out.id !== a.id || typeof out.openai_api !== "boolean") throw new Error("PUT /admin/accounts/{id}/openai-api answered without the updated account (round-5 seam).");
@@ -12653,6 +12662,109 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const backdrop = $("account-openai-backdrop");
       backdrop.hidden = false;
       accountsUi.openaiRelease = bindAccountModal(backdrop, closeAccountOpenAI);
+    }
+    // The account's named API keys (round 16, backlog 1000): GET /admin/accounts/{id}/openai-keys ->
+    // {keys: [{label, fingerprint, created_at, last_used_at, last_client}]}; Revoke asks inline
+    // ([Revoke] [Cancel]) and DELETE /admin/accounts/{id}/openai-keys/{fingerprint} applies at once.
+    // An admin never sees a key: keys are shown only once, to the person who makes them.
+    function accountOpenAIKeys(a) {
+      const box = document.createElement("section");
+      box.className = "account-openai-keys";
+      box.setAttribute("data-account-openai-keys", a.id);
+      const h = document.createElement("h3");
+      h.className = "account-openai-keys__title";
+      h.textContent = "API keys";
+      const list = document.createElement("div");
+      list.className = "account-openai-keys__list";
+      const status = document.createElement("p");
+      status.className = "inline-state";
+      status.setAttribute("role", "status");
+      status.setAttribute("aria-live", "polite");
+      box.append(h, list, status);
+      const base = `/api/gateway/admin/accounts/${encodeURIComponent(a.id)}/openai-keys`;
+      const tenant = `tenant_id=${encodeURIComponent(a.tenant_id || "default")}`;
+      const when = (ts) => { if (!ts) return ""; const t = new Date(ts); return isNaN(t.getTime()) ? String(ts) : t.toLocaleString([], { dateStyle: "medium", timeStyle: "short" }); };
+      const render = (keys) => {
+        list.textContent = "";
+        if (!keys.length) {
+          const empty = document.createElement("p");
+          empty.className = "account-openai-keys__empty";
+          empty.setAttribute("data-account-openai-keys-empty", "");
+          empty.textContent = `${a.id} has no API keys. People make their own on the OpenAI API page.`;
+          list.append(empty);
+          return;
+        }
+        for (const k of keys) {
+          const item = document.createElement("div");
+          item.className = "account-openai-key";
+          item.setAttribute("data-account-openai-key", k.fingerprint);
+          const text = document.createElement("div");
+          text.className = "account-openai-key__text";
+          const name = document.createElement("strong");
+          name.textContent = k.label;
+          const meta = document.createElement("span");
+          meta.className = "account-openai-key__meta";
+          const used = k.last_used_at ? `Last used ${when(k.last_used_at)}${k.last_client ? ` from ${k.last_client}` : ""}` : "Never used";
+          meta.textContent = `Created ${when(k.created_at)} · ${used} · ${k.fingerprint}`;
+          text.append(name, meta);
+          const revoke = document.createElement("button");
+          revoke.type = "button";
+          revoke.className = "secondary";
+          revoke.textContent = "Revoke";
+          revoke.setAttribute("data-account-openai-revoke", k.fingerprint);
+          revoke.setAttribute("aria-label", `Revoke the key ${k.label} of ${a.id}`);
+          revoke.onclick = () => {
+            for (const old of Array.from(list.querySelectorAll(".inline-confirm"))) old.remove();
+            const confirm = document.createElement("div");
+            confirm.className = "inline-confirm";
+            confirm.setAttribute("role", "group");
+            const q = document.createElement("span");
+            q.textContent = `Revoke “${k.label}” of ${a.id}? Apps using it stop working at once.`;
+            const yes = document.createElement("button");
+            yes.type = "button";
+            yes.className = "danger";
+            yes.textContent = "Revoke";
+            const no = document.createElement("button");
+            no.type = "button";
+            no.className = "secondary";
+            no.textContent = "Cancel";
+            no.onclick = () => confirm.remove();
+            yes.onclick = async () => {
+              yes.disabled = true; no.disabled = true;
+              yes.setAttribute("aria-busy", "true");
+              try {
+                await api(`${base}/${encodeURIComponent(k.fingerprint)}?${tenant}`, { method: "DELETE" });
+                status.textContent = `Revoked “${k.label}”: apps using it are refused from now on.`;
+                status.className = "inline-state ok";
+                await load();
+              } catch (e) {
+                status.textContent = `Not revoked: ${emailErrorText(e)}`;
+                status.className = "inline-state error";
+                confirm.remove();
+              }
+            };
+            confirm.append(q, yes, no);
+            item.after(confirm);
+            try { no.focus(); } catch {}
+          };
+          item.append(text, revoke);
+          list.append(item);
+        }
+      };
+      const load = async () => {
+        try {
+          const out = await api(`${base}?${tenant}`);
+          if (!out || !Array.isArray(out.keys)) throw new Error("GET /admin/accounts/{id}/openai-keys answered without keys[] (round-16 seam).");
+          render(out.keys);
+        } catch (e) {
+          list.textContent = "";
+          status.textContent = `Could not read the keys: ${emailErrorText(e)}`;
+          status.className = "inline-state error";
+        }
+      };
+      list.textContent = "Reading the keys...";
+      load();
+      return box;
     }
     // ---- Preferences modal (round 14, R14.2): GET/PUT /api/gateway/accounts/{id}/preferences.
     // One row per app (the gateway's `apps`): "Gateway default (<name>)" first — selected unless
