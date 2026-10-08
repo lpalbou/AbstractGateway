@@ -30,6 +30,8 @@ actions, switches, choices, dialogs — and every control is still reachable fro
 - The setup guide's row has **‹ Back**, **Next ›** and **Steps…** (`Ctrl+P`, `Ctrl+N`, `Ctrl+G`).
 - Your own Email dialog's **My provider uses a different login name** (`Ctrl+O`) and **Use a different account**
   (`Ctrl+U`) are links you can click.
+- Needs **abstracttui 0.3.8**: a click in a text field puts the cursor where it lands (past the end at the end),
+  and `←` / `→` reach the console from inside scroll panes.
 
 ### Added
 - **Light and dark themes** built from the web console's palettes: `--theme gateway-light` / `gateway-dark`

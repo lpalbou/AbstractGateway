@@ -1237,12 +1237,13 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
             wizard_back(&ctx_back2);
         })
         // ←/→ (R15 §2.2): previous/next screen on EVERY screen, at the
-        // CAPTURE phase of the shell root — before any page widget (the
-        // engine's Scroll swallows Left/Right unconditionally, which is
-        // what killed them on Apps and Network). Exceptions: a page-level
-        // text field holding the caret (`ui.caret`); overlays (modals,
-        // popups, drawers) are their own trees and never reach here.
-        .on(abstracttui::ui::Phase::Capture, move |ectx, ev| {
+        // BUBBLE phase of the shell root: a widget that uses the arrows
+        // (a text field, a sideways scroller) consumes them first, and
+        // since abstracttui 0.3.8 a scroller that cannot move sideways
+        // lets them bubble here. A page-level text field holding the
+        // caret (`ui.caret`) keeps them even at its edges; overlays
+        // (modals, popups, drawers) are their own trees.
+        .on(abstracttui::ui::Phase::Bubble, move |ectx, ev| {
             if let abstracttui::ui::UiEvent::Key(k) = ev {
                 if k.mods.0 != 0 || !matches!(k.key, Key::Left | Key::Right) {
                     return;
