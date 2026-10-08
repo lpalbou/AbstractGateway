@@ -2248,12 +2248,22 @@ fn entity_manage_menu_state_flow_sends_post() {
     // m over the selected entity opens the manage menu.
     h.type_text("m");
     let s = h.turns(2);
-    assert!(s.contains("Manage entity 'Testor'"), "manage menu:\n{s}");
-    assert!(s.contains("wake / sleep / pause"), "state option:\n{s}");
-    assert!(s.contains("Re-embed"), "reembed option:\n{s}");
+    // R15-B: the Manage FormModal — the web's tabs; Lifecycle holds
+    // "Awake or asleep", Mind & voice the index rebuild.
+    assert!(s.contains("Manage — Testor"), "manage modal:\n{s}");
+    assert!(
+        s.contains(" Lifecycle ") && s.contains(" Mind & voice "),
+        "tabs:\n{s}"
+    );
+    click_label(&mut h, " Lifecycle ");
+    let s = h.turns(2);
+    assert!(s.contains("Awake or asleep"), "state card:\n{s}");
+    click_label(&mut h, " Mind & voice ");
+    let s = h.turns(2);
+    assert!(s.contains("Rebuild index"), "reembed card:\n{s}");
 
-    // Initial pick = state → Enter opens the state modal.
-    h.type_text("\r");
+    // `s` (Awake or asleep) opens the state modal.
+    h.type_text("s");
     let s = h.turns(3);
     assert!(s.contains("Entity state — Testor"), "state modal:\n{s}");
     assert!(s.contains("dream pass"), "dream option:\n{s}");
@@ -2351,16 +2361,14 @@ fn summon_validates_first_then_confirms_then_creates() {
         "locked core values:\n{s}"
     );
 
-    // Name (autofocused) → Tab to the template → the Advanced toggle →
-    // Validate & create.
+    // Name (autofocused), then the web's [Validate & create] by mouse.
     h.type_text("Castor");
     h.turn();
-    for _ in 0..3 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r");
-    h.turns(2);
+    assert!(
+        s.contains("Optional configuration") || h.turns(1).contains("Optional configuration"),
+        "R15 D1: the named section, never a disclosure"
+    );
+    click_label(&mut h, " Validate & create ");
     let body = match h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::ValidateEntity { .. }))) {
         Some(Cmd::Entity(EntityCmd::ValidateEntity { name, body })) => {
             assert_eq!(name, "Castor");
@@ -2395,12 +2403,8 @@ fn summon_validates_first_then_confirms_then_creates() {
         s.contains("no interests seeded"),
         "dry-run warnings reviewed BEFORE the birth:\n{s}"
     );
-    // The button row is static, so focus is still on Validate: one Tab
-    // reaches Summon (focus never drops when the stage changes).
-    h.key(b"\t");
-    h.turn();
-    h.type_text("\r");
-    h.turns(2);
+    // R15 F1: THE confirm widget — [Summon] [Back to the form], by mouse.
+    click_label(&mut h, " Summon ");
     match h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::CreateEntity { .. }))) {
         Some(Cmd::Entity(EntityCmd::CreateEntity {
             name,
@@ -2435,12 +2439,7 @@ fn summon_refusal_shows_the_web_sentence_and_writes_nothing() {
     h.turns(2);
     h.type_text("Testor");
     h.turn();
-    for _ in 0..3 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r");
-    h.turns(2);
+    click_label(&mut h, " Validate & create ");
     assert!(h
         .find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::ValidateEntity { .. })))
         .is_some());
@@ -2567,12 +2566,8 @@ fn manage_menu_opens_the_identity_card() {
     entity_screen(&mut h);
     h.type_text("m");
     h.turns(2);
-    // state is the initial pick; card sits ten rows below it.
-    for _ in 0..10 {
-        h.key(b"\x1b[B");
-        h.turn();
-    }
-    h.type_text("\r");
+    // R15-B: the Overview tab's Identity card button, by mouse.
+    click_label(&mut h, " Identity card ");
     let s = h.turns(3);
     assert!(s.contains("Identity card — Testor"), "card modal:\n{s}");
     assert!(
@@ -2601,12 +2596,8 @@ fn voice_audition_sends_the_unsaved_selection_and_shows_the_file() {
     h.select_account("testor");
     h.type_text("m");
     h.turns(2);
-    // state → substrate → voice.
-    h.key(b"\x1b[B");
-    h.turn();
-    h.key(b"\x1b[B");
-    h.turn();
-    h.type_text("\r");
+    // R15-B: `c` opens Voice (Mind & voice tab).
+    h.type_text("c");
     let s = h.turns(3);
     assert!(s.contains("Voice — Testor"), "voice form:\n{s}");
     assert!(s.contains("Audition"), "audition verb:\n{s}");
@@ -2674,11 +2665,8 @@ fn own_time_start_with_blank_fields_sends_the_web_body() {
     h.select_account("testor");
     h.type_text("m");
     h.turns(2);
-    for _ in 0..4 {
-        h.key(b"\x1b[B");
-        h.turn();
-    }
-    h.type_text("\r");
+    // R15-B: `o` opens Personal time (Lifecycle tab).
+    h.type_text("o");
     let s = h.turns(3);
     assert!(s.contains("Own time — Testor"), "own-time form open:\n{s}");
     h.drain_cmds();
@@ -2711,15 +2699,11 @@ fn entity_tool_policy_editor_saves_changed_phases_only() {
         .set(Loadable::Ready(entities_from_payload(&entities_fixture())));
     h.turns(2);
 
-    // Open the manage menu, walk down to "Tool policy", Enter.
+    // Open Manage, `p` = Tools per phase (Work & tools tab).
     h.select_account("testor");
     h.type_text("m");
     h.turns(2);
-    for _ in 0..5 {
-        h.key(b"\x1b[B");
-        h.turn();
-    }
-    h.type_text("\r");
+    h.type_text("p");
     h.turns(2);
 
     // The editor opened with a Loading slot; feed the folded policy the
@@ -4153,6 +4137,22 @@ fn double_click_at(h: &mut Harness, x: usize, y: usize) {
     click_at(h, x, y);
 }
 
+/// R15-B: click the LAST on-screen occurrence of `label` (a dialog's
+/// button sits above the page that may repeat the word).
+fn click_label(h: &mut Harness, label: &str) {
+    let s = h.turns(1);
+    let (y, line) = s
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains(label))
+        .last()
+        .unwrap_or_else(|| panic!("{label:?} not on screen:\n{s}"));
+    let b = line.rfind(label).unwrap();
+    let x = line[..b].chars().count() + 2;
+    click_at(h, x, y + 1);
+    h.turns(2);
+}
+
 /// Put the caret in the text field labelled `label` (the field column
 /// starts after the 18-cell label). Page text fields never autofocus
 /// once connected (REVIEW-1 M1/M2): a test types into one the way an
@@ -4606,7 +4606,7 @@ fn double_click_opens_entity_manage_menu() {
     // Manage stays one key (or its ⬖ button) away.
     h.type_text("m");
     let s = h.turns(3);
-    assert!(s.contains("Manage entity 'Testor'"), "m opens Manage:\n{s}");
+    assert!(s.contains("Manage — Testor"), "m opens Manage:\n{s}");
 }
 
 /// COMPLAINT A, providers unified table: Enter on the focused table

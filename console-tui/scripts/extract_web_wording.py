@@ -803,12 +803,70 @@ def sandbox_wording() -> dict:
     return out
 
 
+def entity_wording() -> dict:
+    """Manage entity + Summon a new entity (console.py): the Manage modal's
+    tabs, each card's title and description (switch cards: the switch's
+    label and description; disclosures: their summary and help), the
+    buttons the terminal mirrors, the freeze confirmation; the Summon
+    modal's title, lead, "Optional configuration" (R15 D1) and its button."""
+    src = read_b("console.py")
+    start = src.find('<div id="entity-manage-section"')
+    end = src.find('<div id="entity-create-backdrop"', start)
+    if start < 0 or end < 0:
+        fail("the Manage entity modal (`#entity-manage-section`) is missing in console.py.")
+    m = src[start:end]
+    def one_in(pattern: str, what: str, text: str = m) -> str:
+        found = re.findall(pattern, text, re.S)
+        if len(found) != 1:
+            fail(f"Entity {what}: expected exactly one match, found {len(found)} (the anchor moved).")
+        return html.unescape(found[0])
+    tabs = [html.unescape(t) for t in re.findall(r'id="entity-subtab-\w+"[^>]*>([^<]+)</button>', m)]
+    if len(tabs) != 6:
+        fail(f"the Manage tabs changed: {tabs!r}")
+    cards = {}
+    for title, desc in re.findall(r'class="af-card__title">([^<]+)</h3>\s*<p class="af-card__desc">([^<]+)</p>', m):
+        cards[html.unescape(title)] = html.unescape(desc)
+    cards["Identity"] = one_in(r'<p class="af-form__help">(Verify memory checks[^<]+)</p>', "Identity help")
+    cards["Awake or asleep"] = one_in(r'id="entity-state-awake-desc">([^<]+)<', "Awake description")
+    pt_label = one_in(r'<span class="af-switch__label">(Personal time)</span>', "Personal time label")
+    cards[pt_label] = one_in(r'id="entity-owntime-toggle-desc">([^<]+)<', "Personal time description")
+    cand = one_in(r'<summary>(Memories from sleep waiting for your review) \(', "candidates summary")
+    cards[cand] = one_in(r'<p class="af-form__help">(Sleep proposes[^<]+)</p>', "candidates help")
+    dz = one_in(r'<summary>(Danger zone: rebuild its memory index)</summary>', "danger zone summary")
+    cards[dz] = one_in(r'<p class="af-form__help">(Only when the status below says MISMATCH[^<]+)</p>', "danger zone help")
+    for must in ("Right now", "Visit", "Emergency freeze", "Mind", "Voice", "Work order", "Tools per phase", "Instructions"):
+        if must not in cards:
+            fail(f"the Manage card {must!r} is missing (the anchors moved).")
+    buttons = {
+        "verify": one_in(r'id="entity-verify"[^>]*>([^<]+)<', "Verify memory button"),
+        "talk": one_in(r'id="entity-chat-open"[^>]*>([^<]+)<', "Open visit button"),
+        "freeze": one_in(r'id="entity-loop-freeze"[^>]*>([^<]+)<', "Freeze now button"),
+        "reembed": one_in(r'id="entity-reembed"[^>]*>([^<]+)<', "Rebuild index button"),
+    }
+    freeze_q = one_in(r'aria-label="Confirm freeze"[^>]*>\s*<span>([^<]+)</span>', "freeze confirmation")
+    c0 = src.find('<div id="entity-create-backdrop"')
+    c1 = src.find('<div id="templates-backdrop"', c0)
+    c = src[c0:c1]
+    create = {
+        "title": one_in(r'<h2 id="entity-create-title">([^<]+)</h2>', "Summon title", c),
+        "lead": one_in(r'</h2>\s*<p class="section-note">([^<]+)</p>', "Summon lead", c),
+        "admin_note": one_in(r'id="entity-create-admin-note"[^>]*>([^<]+)</p>', "admin note", c),
+        "optional_title": one_in(r'id="entity-optional-title"[^>]*>([^<]+)</h3>', "Optional configuration title", c),
+        "optional_lead": one_in(r'id="entity-optional-title"[^>]*>[^<]+</h3>\s*<p class="section-note">([^<]+)</p>', "Optional configuration lead", c),
+        "create_label": one_in(r'id="entity-create"[^>]*>.*?<span>([^<]+)</span></button>', "Validate & create label", c),
+        "create_tip": one_in(r'id="entity-create" title="([^"]+)"', "Validate & create tooltip", c),
+        "cancel_label": one_in(r'id="entity-create-cancel"[^>]*>([^<]+)</button>', "Cancel label", c),
+    }
+    return {"tabs": tabs, "cards": cards, "buttons": buttons, "freeze_question": freeze_q, "create": create}
+
+
 B_SCREENS = {
     "about": about_wording,
     "network": network_wording,
     "docs": docs_wording,
     "models": models_wording,
     "sandbox": sandbox_wording,
+    "entity": entity_wording,
 }
 
 

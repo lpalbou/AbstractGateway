@@ -562,13 +562,21 @@ fn entity_manage_refuses_admin_acts_for_a_non_admin() {
     h.drain();
     let s = h.key(b"m");
     assert!(s.contains("You are not an admin"), "{s}");
-    assert!(s.contains("view only (changes are admin-only)"), "{s}");
+    // R15-B: the write forms open to read ("view only" in their
+    // tooltips); the admin acts are refused buttons — `s` (Awake or
+    // asleep) says why and opens nothing.
+    assert!(
+        ui::entity_manage::manage_sections(true)
+            .iter()
+            .flat_map(|sec| sec.actions.iter())
+            .any(|a| a.tip_text().contains("view only (changes are admin-only)")),
+        "view-only tooltips"
+    );
     h.drain();
-    // The menu opens on "state".
-    h.key(b"\r");
+    h.key(b"s");
     assert!(
         h.notice()
-            .contains("changing an entity's state is admin-only"),
+            .contains("Only an admin can change an entity's state."),
         "{}",
         h.notice()
     );

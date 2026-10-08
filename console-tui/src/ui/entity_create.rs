@@ -16,6 +16,8 @@ use abstracttui::widgets::Table;
 use serde_json::{json, Value};
 
 use super::util::{field, line, span, span_bold, wrap_text};
+use super::w::action::On;
+use super::w::{Action, Confirm};
 use super::{widths, Ctx};
 use crate::api::entities::{create_body, CreationKit, TemplateRow, ENTITY_THINKING_LEVELS};
 use crate::store::{ConnPhase, Loadable, Store};
@@ -83,16 +85,18 @@ pub fn open_summon_form(cx: Scope, ctx: &Ctx) {
     reload_kit(ctx);
     store.entity_check.set(Loadable::NotAsked);
     let ctx2 = ctx.clone();
-    super::open_form_guarded(
-        ctx,
-        cx,
-        crate::ui::page_viewport(cx).get_untracked(),
-        move |mcx, close, guard| {
+    super::w::FormModal::new(SUMMON_TITLE)
+        .lead(SUMMON_LEAD)
+        .size(SUMMON_W, 40)
+        .open(ctx, cx, move |mcx, close, guard, _w| {
             let theme = use_theme(mcx);
             let t0 = theme.get().tokens;
             let tpl_ix = mcx.signal(0usize);
             let name = mcx.signal(String::new());
-            let advanced = mcx.signal(false);
+            // R15 D1: "Optional configuration" is a visible named section
+            // (never a disclosure): an admin's summon always carries it —
+            // left on the defaults it sends nothing extra.
+            let advanced = mcx.signal(true);
             let prov_ix = mcx.signal(0usize);
             let model_ix = mcx.signal(0usize);
             let think_ix = mcx.signal(0usize);
@@ -123,6 +127,19 @@ pub fn open_summon_form(cx: Scope, ctx: &Ctx) {
                 form_error,
             );
             super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
+            let ui = ctx2.ui;
+            let summon_now: std::rc::Rc<dyn Fn()> = {
+                let (ctx_s, sigs) = (ctx2.clone(), phase_sigs.clone());
+                std::rc::Rc::new(move || {
+                    if in_flight.get_untracked() || stage.get_untracked() != 2 {
+                        return;
+                    }
+                    summon(
+                        &ctx_s, &sigs, pending, advanced, prov_ix, model_ix, think_ix, form_id,
+                        in_flight, form_error,
+                    );
+                })
+            };
 
             // Mirror the kit's phase + the model cascade into form signals
             // (written only on change).
@@ -168,6 +185,16 @@ pub fn open_summon_form(cx: Scope, ctx: &Ctx) {
                         if c.ok {
                             form_error.set(None);
                             stage.set(2);
+                            // The permanence, named, with the dry-run's
+                            // warnings — THE confirm widget (R15 F1).
+                            let nm = want.clone().unwrap_or_default();
+                            let go = summon_now.clone();
+                            Confirm::plain(summon_question(&nm, &c.warnings), "Summon", "Back to the form")
+                                .open_with(mcx, ui, move || go(), move || {
+                                    if stage.get_untracked() == 2 {
+                                        stage.set(0);
+                                    }
+                                });
                         } else {
                             form_error.set(Some(c.refusal()));
                             stage.set(0);
@@ -191,30 +218,30 @@ pub fn open_summon_form(cx: Scope, ctx: &Ctx) {
             });
 
             let ctx_v = ctx2.clone();
-            let ctx_s = ctx2.clone();
-            let close_c = close.clone();
-            let sigs_btn = phase_sigs.clone();
             let sigs_adv = phase_sigs.clone();
             let ctx_adv = ctx2.clone();
+            // Cancel asks the form's guard first, like Esc and ✕ (an
+            // unsaved name is never dropped silently, R15 F2).
+            let cancel = {
+                let (close, guard) = (close.clone(), guard.clone());
+                move || {
+                    let handled = guard.borrow().as_ref().map(|g| g()).unwrap_or(false);
+                    if !handled {
+                        close();
+                    }
+                }
+            };
 
-            let intro = prose(
-                Element::new().style(LayoutStyle::column().gap(0)),
-                "Pick a spark template and name it. The name is permanent — there is no delete (spark v1-for-life), so it is validated (dry-run) before anything is written.",
-                SUMMON_TEXT_W,
-                t0.text_faint,
-            )
-            .build();
-
-            Element::new()
+            // The fields scroll inside the dialog (80x24: the button row
+            // stays on screen).
+            let fields = Element::new()
                 .style(LayoutStyle::column().gap(0))
-                .child(line(vec![span_bold("Summon a new entity", t0.accent)]))
-                .child(intro)
                 .child(field(
                     &t0,
-                    "name",
+                    "Name",
                     TextInput::new()
                         .value(name)
-                        .placeholder("e.g. Castor — permanent")
+                        .placeholder("e.g. Castor")
                         .placeholder_while_focused(true)
                         .layout(LayoutStyle::default().w(40).h(1))
                         .element(mcx, &t0)
@@ -240,7 +267,7 @@ pub fn open_summon_form(cx: Scope, ctx: &Ctx) {
                                 .collect();
                             field(
                                 &t,
-                                "template",
+                                "Template",
                                 Select::new(opts)
                                     .value(tpl_ix)
                                     .layout(LayoutStyle::default().w(40).h(1).shrink(0.0))
@@ -286,27 +313,23 @@ pub fn open_summon_form(cx: Scope, ctx: &Ctx) {
                     }
                     col.build()
                 }))
-                // Advanced configuration — admin only (the web hides it
-                // for everyone else and says why).
-                .child(dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |gcx| {
+                // "Optional configuration" (R15 D1, the web's named
+                // section) — admins only; everyone else reads why.
+                .child(dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |_gcx| {
                     let t = theme.get().tokens;
                     if !is_admin(&store) {
                         return prose(
                             Element::new().style(LayoutStyle::column().gap(0)),
-                            "Advanced configuration (substrate, per-phase capabilities) requires an admin session — entities you create carry the safe framework defaults; an admin can configure them after.",
+                            OPTIONAL_ADMIN_NOTE,
                             SUMMON_TEXT_W,
                             t.text_faint,
                         )
                         .build();
                     }
-                    field(
-                        &t,
-                        "",
-                        Checkbox::new("Advanced configuration (optional — defaults are safe)")
-                            .checked(advanced)
-                            .element(gcx, &t)
-                            .build(),
-                    )
+                    let col = Element::new()
+                        .style(LayoutStyle::column().gap(0))
+                        .child(super::w::form::section(&t, OPTIONAL_TITLE));
+                    prose(col, OPTIONAL_LEAD, SUMMON_TEXT_W, t.text_muted).build()
                 }))
                 .child(dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |gcx| {
                     let t = theme.get().tokens;
@@ -323,8 +346,6 @@ pub fn open_summon_form(cx: Scope, ctx: &Ctx) {
                     )
                 }))
                 .child(super::message_slot(theme, form_error, in_flight))
-                // The confirm stage: the permanence, named, with the
-                // dry-run's warnings reviewed BEFORE the birth.
                 .child(dyn_view(LayoutStyle::column().shrink(0.0), move || {
                     let t = theme.get().tokens;
                     match stage.get() {
@@ -332,102 +353,67 @@ pub fn open_summon_form(cx: Scope, ctx: &Ctx) {
                             "⟳ validating (dry-run — nothing is written)…",
                             t.info,
                         )]),
-                        2 => {
-                            let nm = pending
-                                .with(|p| p.as_ref().map(|(n, _)| n.clone()))
-                                .unwrap_or_default();
-                            let warnings = store
-                                .entity_check
-                                .with(|c| c.ready().map(|c| c.warnings.clone()))
-                                .unwrap_or_default();
-                            let mut col = Element::new()
-                                .style(LayoutStyle::column().gap(0))
-                                .child(line(vec![span_bold(format!("Summon {nm}?"), t.warn)]));
-                            col = prose(
-                                col,
-                                &format!("This creates a permanent entity named \"{nm}\". There is no delete — the name and its home are for life. Its spark's core values are locked. Substrate and per-phase capabilities can be changed later."),
-                                SUMMON_TEXT_W,
-                                t.text,
-                            );
-                            if !warnings.is_empty() {
-                                col = col.child(line(vec![span(
-                                    "Validation warnings (review before summoning):",
-                                    t.warn,
-                                )]));
-                                for w in &warnings {
-                                    col = prose(col, &format!("• {w}"), SUMMON_TEXT_W, t.warn);
-                                }
-                            }
-                            col = col.child(line(vec![span(
-                                "Summon creates it · Back to the form edits (nothing is written until Summon)",
-                                t.text_faint,
-                            )]));
-                            col.build()
-                        }
                         _ => Element::new().style(LayoutStyle::default().h(0)).build(),
                     }
                 }))
-                // STATIC button row (focus law): each verb guards its own
-                // stage instead of the row being rebuilt per stage.
-                .child(
-                    Element::new()
-                        .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                        .child(
-                            Button::new("Validate & create")
-                                .on_click(move || {
-                                    if in_flight.get_untracked() || stage.get_untracked() == 1 {
-                                        return;
-                                    }
-                                    validate(&ctx_v, tpl_ix, name, emb_ix, stage, pending, form_error)
-                                })
-                                .element(mcx, &t0)
-                                .build(),
-                        )
-                        .child(
-                            Button::new("Summon")
-                                .on_click(move || {
-                                    if in_flight.get_untracked() {
-                                        return;
-                                    }
-                                    if stage.get_untracked() != 2 {
-                                        form_error.set(Some(
-                                            "Validate first — the dry-run must pass before a summon."
-                                                .into(),
-                                        ));
-                                        return;
-                                    }
-                                    summon(
-                                        &ctx_s, &sigs_btn, pending, advanced, prov_ix, model_ix,
-                                        think_ix, form_id, in_flight, form_error,
-                                    );
-                                })
-                                .element(mcx, &t0)
-                                .build(),
-                        )
-                        .child(
-                            Button::new("Back to the form")
-                                .on_click(move || {
-                                    if !in_flight.get_untracked() {
-                                        stage.set(0);
-                                    }
-                                })
-                                .element(mcx, &t0)
-                                .build(),
-                        )
-                        .child(
-                            Button::new("Cancel (Esc)")
-                                .on_click(move || close_c())
-                                .element(mcx, &t0)
-                                .build(),
-                        )
-                        .build(),
-                )
+                .build();
+            let fields = Scroll::new(fields)
+                .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))
+                .scrollbar_auto_hide(true)
+                .view(mcx);
+            Element::new()
+                .style(LayoutStyle::column().grow(1.0))
+                .child(fields)
+                // The web's buttons: [Cancel] [Validate & create].
+                .child(super::w::form::button_row(vec![
+                    super::w::action::button(
+                        mcx,
+                        &t0,
+                        &Action::label("cancel", "Cancel"),
+                        On::Raised,
+                        true,
+                        cancel,
+                    ),
+                    super::w::action::button(
+                        mcx,
+                        &t0,
+                        &Action::label("create", CREATE_LABEL).tooltip(CREATE_TIP),
+                        On::Raised,
+                        true,
+                        move || {
+                            if in_flight.get_untracked() || stage.get_untracked() == 1 {
+                                return;
+                            }
+                            validate(&ctx_v, tpl_ix, name, emb_ix, stage, pending, form_error)
+                        },
+                    ),
+                ]))
                 .build()
-        },
-    );
+        });
 }
 
-/// The Advanced block: substrate (provider → model cascade, reasoning),
+/// The web's Summon modal words (console.py `#entity-create-backdrop`).
+pub const SUMMON_TITLE: &str = "Summon a new entity";
+pub const SUMMON_LEAD: &str = "Pick a spark template and name it. The name is permanent — there is no delete (spark v1-for-life), so it is validated (dry-run) before anything is written.";
+pub const OPTIONAL_TITLE: &str = "Optional configuration";
+pub const OPTIONAL_LEAD: &str =
+    "Defaults are safe: leave anything on Gateway default to inherit it.";
+pub const OPTIONAL_ADMIN_NOTE: &str = "Optional configuration (substrate, per-phase capabilities) requires an admin session — entities you create carry the safe framework defaults; an admin can configure them after.";
+pub const CREATE_LABEL: &str = "Validate & create";
+pub const CREATE_TIP: &str = "Dry-run validate the name and configuration, then create";
+
+/// The summon confirmation: the permanence, named, and the dry-run's
+/// warnings to review BEFORE the birth.
+pub fn summon_question(name: &str, warnings: &[String]) -> String {
+    let mut s = format!("Summon {name}? This creates a permanent entity named \"{name}\". There is no delete — the name and its home are for life. Its spark's core values are locked. Substrate and per-phase capabilities can be changed later.");
+    if !warnings.is_empty() {
+        s.push_str(" Validation warnings (review before summoning): ");
+        s.push_str(&warnings.join(" · "));
+    }
+    s
+}
+
+/// The Optional configuration block: substrate (provider → model cascade, reasoning),
 /// the birth embedder, the per-phase capability grid. The model picker
 /// and the embedder warning live in their own regions, so picking a
 /// provider never rebuilds (and unfocuses) the provider picker.
@@ -651,7 +637,7 @@ fn validate(
         form_error.set(Some("Pick a template.".into()));
         return;
     };
-    // The embedder choice lives under Advanced (admin); a non-admin
+    // The embedder choice lives under Optional configuration (admin); a non-admin
     // form never carries one.
     let emb = if is_admin_untracked(&ctx.store) {
         emb_ix
@@ -931,7 +917,7 @@ pub fn open_templates_modal(cx: Scope, ctx: &Ctx) {
                             .child(mk("Edit", TplMode::Edit, !editable))
                             .child(mk("New from selected", TplMode::New, selected.is_none()))
                             .child(
-                                Button::new("Close (Esc)")
+                                Button::new("Close")
                                     .on_click(move || close_c())
                                     .element(bcx, &t)
                                     .build(),
@@ -1170,7 +1156,7 @@ pub fn open_template_editor(cx: Scope, ctx: &Ctx, tp: TemplateRow, mode: TplMode
                     );
                 }
                 row = row.child(
-                    Button::new(if mode == TplMode::View { "Close (Esc)" } else { "Cancel (Esc)" })
+                    Button::new(if mode == TplMode::View { "Close" } else { "Cancel" })
                         .on_click(move || close_x())
                         .element(bcx, &t)
                         .build(),

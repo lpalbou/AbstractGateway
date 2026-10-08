@@ -13,12 +13,171 @@ use abstracttui::widgets::{ColWidth, Column, SubmitPolicy, Table};
 use serde_json::{json, Value};
 
 use super::util::{field, line, span, span_bold};
+use super::w::Action;
 use super::{open_form, Ctx};
 use crate::store::{EntityDetail, EntityRow, Loadable};
 use crate::worker::Cmd;
 
-/// The action menu for one entity. Fires the detail load first so the
-/// sub-forms open warm (four quick GETs on the worker).
+/// The web Manage modal's tabs (console.py `#entity-manage-section`).
+pub const MANAGE_TABS: [&str; 6] = [
+    "Overview",
+    "Talk",
+    "Lifecycle",
+    "Mind & voice",
+    "Work & tools",
+    "Prompt",
+];
+
+/// One card of a Manage tab: the web card's title and description, and
+/// the actions it offers here.
+#[derive(Clone, Debug)]
+pub struct Section {
+    pub tab: usize,
+    pub title: &'static str,
+    pub desc: &'static str,
+    pub actions: Vec<Action>,
+}
+
+/// The web's sentence for Freeze now (the inline confirm).
+pub const FREEZE_QUESTION: &str = "Freeze it now? Its process is killed, an open visit closes without reflection, and it refuses everything until Active is turned back on.";
+
+/// What a non-admin reads on the write sections (the forms open to read).
+const VIEW_ONLY: &str = " — view only (changes are admin-only)";
+
+/// Every Manage card in tab order: the single source for the modal, its
+/// keys and the click tests. A non-admin keeps every card: the admin-only
+/// acts are refused with the reason, the forms open to read.
+pub fn manage_sections(non_admin: bool) -> Vec<Section> {
+    let ro = |tip: &str| -> String {
+        if non_admin {
+            format!("{tip}{VIEW_ONLY}")
+        } else {
+            tip.to_string()
+        }
+    };
+    let admin =
+        |what: &str| -> Option<String> { non_admin.then(|| format!("Only an admin can {what}.")) };
+    vec![
+        Section {
+            tab: 0,
+            title: "Right now",
+            desc: "What it is doing, read live every few seconds.",
+            actions: vec![],
+        },
+        Section {
+            tab: 0,
+            title: "Identity",
+            desc: "Verify memory checks that its memory history and birth record were never altered. It only reads.",
+            actions: vec![
+                Action::label("verify", "Verify memory")
+                    .key('v')
+                    .tooltip("Check its memory history and birth record (read only)"),
+                Action::label("card", "Identity card")
+                    .key('i')
+                    .tooltip("Its identity card (overview)"),
+            ],
+        },
+        Section {
+            tab: 0,
+            title: "Memories from sleep waiting for your review",
+            desc: "Sleep proposes new long-term memories. Keep one with two independent records that back it up, or reject it with a reason.",
+            actions: vec![Action::label("candidates", "Review memories")
+                .key('m')
+                .tooltip(ro("Memories from sleep waiting for your review"))],
+        },
+        Section {
+            tab: 1,
+            title: "Visit",
+            desc: "Talk with it in a hosted visit: the conversation becomes its memories, and closing the visit runs its reflection. A visit pauses its personal time until you close it.",
+            actions: vec![Action::label("talk", "Open visit")
+                .key('t')
+                .tooltip("Open a visit and talk with it")],
+        },
+        Section {
+            tab: 2,
+            title: "Awake or asleep",
+            desc: "On: it serves visits and work. Off: it sleeps, its memory consolidates, and the next visit wakes it.",
+            actions: vec![Action::label("state", "Awake or asleep")
+                .key('s')
+                .tooltip("Wake it, put it to sleep or pause it")
+                .refused(admin("change an entity's state"))],
+        },
+        Section {
+            tab: 2,
+            title: "Personal time",
+            desc: "On: it explores on its own schedule and spends tokens without anyone watching. Off: it acts only when visited or given work.",
+            actions: vec![Action::label("owntime", "Personal time")
+                .key('o')
+                .tooltip(ro("Personal time: grant, schedule, start and stop"))],
+        },
+        Section {
+            tab: 2,
+            title: "Emergency freeze",
+            desc: "Kills its personal-time process now and stops it: work in progress ends without reflection. For hard failures only; turn Active on in its Accounts row to bring it back.",
+            actions: vec![Action::label("freeze", "Freeze now")
+                .key('f')
+                .tooltip("Kill its personal-time process now (no reflection)")
+                .refused(admin("freeze an entity"))
+                .danger()],
+        },
+        Section {
+            tab: 3,
+            title: "Mind",
+            desc: "The model it thinks with. Changes save by themselves.",
+            actions: vec![Action::label("substrate", "Mind")
+                .key('n')
+                .tooltip(ro("The provider and model it thinks with"))],
+        },
+        Section {
+            tab: 3,
+            title: "Voice",
+            desc: "How it sounds when it speaks. Changes save by themselves.",
+            actions: vec![Action::label("voice", "Voice")
+                .key('c')
+                .tooltip(ro("Its voice provider, model and voice; Hear a sample"))],
+        },
+        Section {
+            tab: 3,
+            title: "Danger zone: rebuild its memory index",
+            desc: "Only when the status below says MISMATCH: re-computes every memory's search vector with the gateway's embedding model. Type that model's name to confirm you mean it.",
+            actions: vec![Action::label("reembed", "Rebuild index")
+                .key('x')
+                .tooltip("Rebuild every memory vector (repair only)")
+                .refused(admin("rebuild an entity's memory index"))
+                .danger()],
+        },
+        Section {
+            tab: 4,
+            title: "Work order",
+            desc: "A task it works on instead of its personal time, from its next day on, with the Work tools below. It says itself when the task is done or blocked.",
+            actions: vec![Action::label("work", "Work order")
+                .key('w')
+                .tooltip(ro("Give it a task, or end the work order"))],
+        },
+        Section {
+            tab: 4,
+            title: "Tools per phase",
+            desc: "Which tools it may use in each phase of its day. Each box saves when you tick it.",
+            actions: vec![Action::label("tools", "Tools per phase")
+                .key('p')
+                .tooltip(ro("Which tools it may use in each phase of its day"))],
+        },
+        Section {
+            tab: 5,
+            title: "Instructions",
+            desc: "Layers you may rewrite in its system prompt; an empty layer uses the built-in text. Its identity is never editable. Each layer saves when you leave it.",
+            actions: vec![Action::label("prompt", "Instructions")
+                .key('e')
+                .tooltip(ro("Edit the layers of its system prompt"))],
+        },
+    ]
+}
+
+/// Manage — <name> (the web's Manage modal): ONE FormModal with the web's
+/// tabs as a Segmented; each tab shows the web's cards (title,
+/// description) and their buttons. Fires the detail load first so the
+/// forms open warm (four quick GETs on the worker). The forms a button
+/// opens replace this modal (one modal at a time).
 pub fn open_manage_menu(cx: Scope, ctx: &Ctx, entity: EntityRow) {
     let store = ctx.store;
     // (Re)load the snapshot for THIS entity unless it is already warm.
@@ -31,98 +190,168 @@ pub fn open_manage_menu(cx: Scope, ctx: &Ctx, entity: EntityRow) {
             name: entity.name.clone(),
         });
     }
-
-    let ctx2 = ctx.clone();
-    let name = entity.name.clone();
-    let state_now = entity.state.clone();
-    // A non-admin sees the same menu the web shows them: the forms open to
-    // READ, their writes are refused with the reason (the gateway's entity
-    // mutation routes are admin-only), and the two pure acts say so here.
     let non_admin = store
         .conn
         .with_untracked(crate::store::ConnPhase::is_known_non_admin);
-    let label = |text: &str, suffix: &str| -> String {
-        if non_admin {
-            format!("{text} — {suffix}")
-        } else {
-            text.to_string()
-        }
-    };
-    let view_only = "view only (changes are admin-only)";
-    let admin_only = "admin only";
-    let title = if non_admin {
+    let name = entity.name.clone();
+    let ctx2 = ctx.clone();
+    let lead = if non_admin {
         format!(
-            "Manage entity '{name}' (currently {state_now}). You are not an admin: \
-             state, substrate, voice, work order, own time, tools, prompt, candidates \
-             and re-embed changes need an admin session."
+            "Currently {}. You are not an admin: changes to its state, mind, voice, work, tools, prompt and memories need an admin session.",
+            entity.state
         )
     } else {
-        format!("Manage entity '{name}' (currently {state_now}).")
+        format!("Currently {}.", entity.state)
     };
-    super::open_prompt(
-        cx,
-        ctx.ui,
-        abstracttui::app::ChoicePrompt::new(title)
-            .option("state", label("State — wake / sleep / pause", admin_only))
-            .option(
-                "substrate",
-                label("Mind substrate (provider / model)", view_only),
-            )
-            .option(
-                "voice",
-                label("Voice (provider / model / voice)", view_only),
-            )
-            .option("work", label("Work order (set / clear)", view_only))
-            .option("owntime", label("Own time (grant + loop)", view_only))
-            .option("tools", label("Tool policy (per-phase grants)", view_only))
-            .option("prompt", label("Prompt overlay (edit layers)", view_only))
-            .option(
-                "candidates",
-                label("Candidates review (sleep consolidation)", view_only),
-            )
-            .option_detail(
-                "reembed",
-                label("Re-embed the home (repair)", admin_only),
-                "vector-index rewrite; takes the home lease — not advised unless repairing",
-            )
-            .option("verify", "Verify chain / spark / manifest")
-            .option("card", "Identity card (overview)")
-            .option(
-                "talk",
-                "Talk — open a visit and chat (also c on the roster)",
-            )
-            .initial("state"),
-        move |outcome| {
-            if let abstracttui::app::ChoiceOutcome::Answered(a) = outcome {
-                let pick = a.selected.first().cloned().unwrap_or_default();
-                match pick.as_str() {
-                    "card" => super::entity_chat::open_card_modal(cx, &ctx2, entity.name.clone()),
-                    "talk" => super::entity_chat::open_talk_modal(cx, &ctx2, entity.name.clone()),
-                    "state" => {
-                        if super::util::admin_gate(&ctx2.store, "changing an entity's state") {
-                            open_state_modal(cx, &ctx2, entity.clone())
+    super::w::FormModal::new(format!("Manage — {name}"))
+        .lead(lead)
+        .size(96, 30)
+        .open(ctx, cx, move |mcx, close, _guard, w| {
+            let tab = mcx.signal(0usize);
+            let t0 = use_theme(mcx).get().tokens;
+            let tabs = super::w::Segmented::new(MANAGE_TABS, Some(0))
+                .bind(tab)
+                .autofocus_chosen(true)
+                .view(mcx, &t0);
+            let act: std::rc::Rc<dyn Fn(&'static str)> = {
+                let (ctx, entity, close) = (ctx2.clone(), entity.clone(), close.clone());
+                std::rc::Rc::new(move |id| manage_action(cx, &ctx, &entity, id, &close))
+            };
+            let keys_act = act.clone();
+            let body = {
+                let ctx = ctx2.clone();
+                dyn_view_scoped(LayoutStyle::column().grow(1.0), move |bcx| {
+                    let t = use_theme(bcx).get().tokens;
+                    let k = tab.get();
+                    let mut col = Element::new().style(LayoutStyle::column().grow(1.0));
+                    for sec in manage_sections(non_admin)
+                        .into_iter()
+                        .filter(|s| s.tab == k)
+                    {
+                        col = col
+                            .child(line(vec![span(String::new(), t.text)]))
+                            .child(super::w::form::section(&t, sec.title))
+                            .child(super::w::form::sentence(&t, sec.desc, w, t.text_muted));
+                        if !sec.actions.is_empty() {
+                            let (v, _) = super::w::RowActions::new(sec.actions).view(
+                                bcx,
+                                &t,
+                                super::w::action::On::Raised,
+                                true,
+                                w,
+                                act.clone(),
+                            );
+                            col = col.child(v);
+                        }
+                        if sec.title == "Right now" {
+                            let theme = use_theme(bcx);
+                            col = col.child(
+                                Element::new()
+                                    .style(LayoutStyle::column().h(9).shrink(0.0))
+                                    .child(inspector_view(bcx, &ctx, theme))
+                                    .build(),
+                            );
                         }
                     }
-                    "substrate" => open_substrate_form(cx, &ctx2, entity.name.clone()),
-                    "voice" => open_voice_form(cx, &ctx2, entity.name.clone()),
-                    "work" => open_work_order_form(cx, &ctx2, entity.name.clone()),
-                    "owntime" => open_own_time_modal(cx, &ctx2, entity.name.clone()),
-                    "tools" => open_tool_policy_form(cx, &ctx2, entity.name.clone()),
-                    "prompt" => open_prompt_editor(cx, &ctx2, entity.name.clone()),
-                    "candidates" => open_candidates_modal(cx, &ctx2, entity.name.clone()),
-                    "reembed" => {
-                        if super::util::admin_gate(&ctx2.store, "re-embedding an entity") {
-                            open_reembed_form(cx, &ctx2, entity.name.clone())
+                    col.build()
+                })
+            };
+            let close_b = close.clone();
+            Element::new()
+                .style(LayoutStyle::column().grow(1.0))
+                .on(abstracttui::ui::Phase::Bubble, move |ectx, ev| {
+                    if let abstracttui::ui::UiEvent::Key(k) = ev {
+                        let Key::Char(c) = k.key else { return };
+                        if k.mods.0 != 0 {
+                            return;
+                        }
+                        let hit = manage_sections(non_admin)
+                            .into_iter()
+                            .flat_map(|s| s.actions)
+                            .find(|a| a.key == Some(c));
+                        if let Some(a) = hit {
+                            ectx.stop_propagation();
+                            keys_act(a.id);
                         }
                     }
-                    "verify" => ctx2.send(Cmd::EntityVerify {
-                        name: entity.name.clone(),
-                    }),
-                    _ => {}
-                }
+                })
+                .child(tabs)
+                .child(body)
+                .child(super::w::form::button_row(vec![super::w::action::button(
+                    mcx,
+                    &t0,
+                    &Action::label("close", "Close"),
+                    super::w::action::On::Raised,
+                    true,
+                    move || close_b(),
+                )]))
+                .build()
+        });
+}
+
+/// One Manage action (a click or its key): a refused one says why; the
+/// forms open on the PAGE scope `cx` (replacing the Manage modal).
+fn manage_action(cx: Scope, ctx: &Ctx, entity: &EntityRow, id: &str, close: &super::CloserFn) {
+    let non_admin = ctx
+        .store
+        .conn
+        .with_untracked(crate::store::ConnPhase::is_known_non_admin);
+    let found = manage_sections(non_admin)
+        .into_iter()
+        .flat_map(|s| s.actions)
+        .find(|a| a.id == id);
+    match found {
+        Some(a) if a.is_enabled() => {}
+        Some(a) => {
+            ctx.store.notice.set(a.enabled.err());
+            return;
+        }
+        None => return,
+    }
+    let name = entity.name.clone();
+    match id {
+        "verify" => ctx.send(Cmd::EntityVerify { name }),
+        "card" => super::entity_chat::open_card_modal(cx, ctx, name),
+        "talk" => super::entity_chat::open_talk_modal(cx, ctx, name),
+        "state" => {
+            if super::util::admin_gate(&ctx.store, "changing an entity's state") {
+                open_state_modal(cx, ctx, entity.clone())
             }
-        },
-    );
+        }
+        "substrate" => open_substrate_form(cx, ctx, name),
+        "voice" => open_voice_form(cx, ctx, name),
+        "work" => open_work_order_form(cx, ctx, name),
+        "owntime" => open_own_time_modal(cx, ctx, name),
+        "tools" => open_tool_policy_form(cx, ctx, name),
+        "prompt" => open_prompt_editor(cx, ctx, name),
+        "candidates" => open_candidates_modal(cx, ctx, name),
+        "reembed" => {
+            if super::util::admin_gate(&ctx.store, "re-embedding an entity") {
+                open_reembed_form(cx, ctx, name)
+            }
+        }
+        "freeze" => {
+            if !super::util::admin_gate(&ctx.store, "freezing an entity's own time") {
+                return;
+            }
+            let c = ctx.clone();
+            close();
+            super::w::Confirm::danger(FREEZE_QUESTION, "Freeze", "Cancel").open(
+                cx,
+                ctx.ui,
+                move || {
+                    c.send(Cmd::EntityLoop {
+                        name,
+                        start: false,
+                        body: json!({ "mode": "freeze",
+                        "reason": "operator emergency freeze via console-tui" })
+                        .into(),
+                    });
+                },
+            );
+        }
+        _ => {}
+    }
 }
 
 /// Seconds since the epoch (the timer grant's clock).
@@ -443,7 +672,7 @@ fn open_state_modal(cx: Scope, ctx: &Ctx, entity: EntityRow) {
                                 .build(),
                         )
                         .child(
-                            Button::new("Cancel (Esc)")
+                            Button::new("Cancel")
                                 .on_click(move || close_cancel())
                                 .element(mcx, &t0)
                                 .build(),
@@ -582,7 +811,7 @@ fn open_substrate_form(cx: Scope, ctx: &Ctx, name: String) {
                                 .build(),
                         )
                         .child(
-                            Button::new("Cancel (Esc)")
+                            Button::new("Cancel")
                                 .on_click(move || close_b())
                                 .element(bcx, &t)
                                 .build(),
@@ -688,10 +917,11 @@ fn open_voice_form(cx: Scope, ctx: &Ctx, name: String) {
             .child(field(
                 &t0,
                 "",
-                Checkbox::new("clear the set voice (fall back to gateway default)")
-                    .checked(clear)
-                    .element(mcx, &t0)
-                    .build(),
+                super::w::Toggle::switch(
+                    "clear the set voice (fall back to gateway default)",
+                    clear,
+                )
+                .view(mcx, &t0),
             ))
             .child(super::message_slot(theme, form_error, in_flight))
             .child(audition_view(store, theme, name_aud))
@@ -784,7 +1014,7 @@ fn open_voice_form(cx: Scope, ctx: &Ctx, name: String) {
                                 .build(),
                         )
                         .child(
-                            Button::new("Cancel (Esc)")
+                            Button::new("Cancel")
                                 .on_click(move || close_b())
                                 .element(bcx, &t)
                                 .build(),
@@ -924,10 +1154,7 @@ fn open_work_order_form(cx: Scope, ctx: &Ctx, name: String) {
             .child(field(
                 &t0,
                 "",
-                Checkbox::new("clear the work order")
-                    .checked(clear)
-                    .element(mcx, &t0)
-                    .build(),
+                super::w::Toggle::switch("clear the work order", clear).view(mcx, &t0),
             ))
             .child(super::message_slot(theme, form_error, in_flight))
             .child(dyn_view_scoped(
@@ -977,7 +1204,7 @@ fn open_work_order_form(cx: Scope, ctx: &Ctx, name: String) {
                                 .build(),
                         )
                         .child(
-                            Button::new("Cancel (Esc)")
+                            Button::new("Cancel")
                                 .on_click(move || close_b())
                                 .element(bcx, &t)
                                 .build(),
@@ -1271,7 +1498,7 @@ fn open_own_time_modal(cx: Scope, ctx: &Ctx, name: String) {
                                 .build(),
                         )
                         .child(
-                            Button::new("Done (Esc)")
+                            Button::new("Done")
                                 .on_click(move || close_done())
                                 .element(bcx, &t)
                                 .build(),
@@ -1382,7 +1609,7 @@ fn open_reembed_form(cx: Scope, ctx: &Ctx, name: String) {
                             .build(),
                     )
                     .child(
-                        Button::new("Cancel (Esc)")
+                        Button::new("Cancel")
                             .on_click(move || close_cancel())
                             .element(mcx, &t0)
                             .build(),
@@ -1606,7 +1833,7 @@ fn open_tool_policy_form(cx: Scope, ctx: &Ctx, name: String) {
                                 .build(),
                         )
                         .child(
-                            Button::new("Cancel (Esc)")
+                            Button::new("Cancel")
                                 .on_click(move || close_b())
                                 .element(bcx, &t)
                                 .build(),
@@ -1836,7 +2063,7 @@ fn open_prompt_editor(cx: Scope, ctx: &Ctx, name: String) {
                                 .build(),
                         )
                         .child(
-                            Button::new("Cancel (Esc)")
+                            Button::new("Cancel")
                                 .on_click(move || close_c())
                                 .element(bcx, &t)
                                 .build(),
@@ -2043,7 +2270,7 @@ fn open_candidates_modal(cx: Scope, ctx: &Ctx, name: String) {
                                 .build(),
                         )
                         .child(
-                            Button::new("Close (Esc)")
+                            Button::new("Close")
                                 .on_click(move || close_c())
                                 .element(bcx, &t)
                                 .build(),

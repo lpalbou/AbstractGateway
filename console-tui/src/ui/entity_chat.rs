@@ -99,7 +99,7 @@ pub fn open_card_modal(cx: Scope, ctx: &Ctx, name: String) {
                             .build(),
                     )
                     .child(
-                        Button::new("Close (Esc)")
+                        Button::new("Close")
                             .on_click(move || close_b())
                             .element(mcx, &t0)
                             .build(),
@@ -320,7 +320,7 @@ pub fn open_talk_modal(cx: Scope, ctx: &Ctx, name: String) {
                             .build(),
                     )
                     .child(
-                        Button::new("Close panel (Esc)")
+                        Button::new("Close panel")
                             .on_click(move || close_x())
                             .element(mcx, &t0)
                             .build(),
