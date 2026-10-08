@@ -501,28 +501,61 @@ fn message_line(t: &TokenSet, msg: Option<(String, MsgTone)>, width: i32) -> Vie
 }
 
 /// A row of panel buttons (+ the leading controls).
-fn button_bar(cx: Scope, pcx: Scope, ctx: &Ctx, t: &TokenSet, tab: usize, lead: Vec<View>) -> View {
+/// The panel's toolbar: the leading controls (`lead_w` cells), then the
+/// panel's buttons on the right — on a row of their own when both do not
+/// fit the page width.
+#[allow(clippy::too_many_arguments)]
+fn button_bar(
+    cx: Scope,
+    pcx: Scope,
+    ctx: &Ctx,
+    t: &TokenSet,
+    tab: usize,
+    lead: Vec<View>,
+    lead_w: i32,
+    width: i32,
+) -> View {
     let admin = ctx.store.conn.with(ConnPhase::is_admin);
-    let mut row = Element::new().style(LayoutStyle::row().gap(2).h(1).shrink(0.0));
+    let acts: Vec<Action> = panel_actions(tab, admin)
+        .into_iter()
+        .filter(|a| a.id != "reseed") // it sits on the shelf row
+        .collect();
+    let buttons_w: i32 = acts.iter().map(|a| a.width() + 2).sum();
+    let mut lead_row = Element::new().style(LayoutStyle::row().gap(2).h(1).shrink(0.0));
     for v in lead {
-        row = row.child(v);
+        lead_row = lead_row.child(v);
     }
-    row = row.child(
+    let mut btn_row = Element::new().style(LayoutStyle::row().gap(2).h(1).shrink(0.0));
+    btn_row = btn_row.child(
         Element::new()
             .style(LayoutStyle::default().grow(1.0))
             .build(),
     );
-    for a in panel_actions(tab, admin) {
-        if a.id == "reseed" {
-            continue; // it sits on the shelf row
-        }
+    for a in acts {
         let c = ctx.clone();
         let id = a.id;
-        row = row.child(button(cx, t, &a, On::Page, true, move || {
+        btn_row = btn_row.child(button(cx, t, &a, On::Page, true, move || {
             panel_action(pcx, &c, id)
         }));
     }
-    row.build()
+    if lead_w + buttons_w + 2 <= width {
+        Element::new()
+            .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+            .child(lead_row.build())
+            .child(
+                Element::new()
+                    .style(LayoutStyle::row().grow(1.0).h(1))
+                    .child(btn_row.build())
+                    .build(),
+            )
+            .build()
+    } else {
+        Element::new()
+            .style(LayoutStyle::column().shrink(0.0))
+            .child(lead_row.build())
+            .child(btn_row.build())
+            .build()
+    }
 }
 
 fn skills_panel(cx: Scope, pcx: Scope, ctx: &Ctx) -> View {
@@ -551,7 +584,16 @@ fn skills_panel(cx: Scope, pcx: Scope, ctx: &Ctx) -> View {
         .tip("Show archived  (h)")
         .on_change(move |v| toggle_archived(&c, 0, Some(v)))
         .view(cx, &t);
-    col = col.child(button_bar(cx, pcx, ctx, &t, 0, vec![search, show]));
+    col = col.child(button_bar(
+        cx,
+        pcx,
+        ctx,
+        &t,
+        0,
+        vec![search, show],
+        32 + 2 + 16,
+        width,
+    ));
     col = col.child(dyn_view(LayoutStyle::column().shrink(0.0), move || {
         let t = abstracttui::app::current_theme().tokens;
         message_line(&t, sk.skills_msg.get(), width)
@@ -972,7 +1014,7 @@ fn mcp_panel(cx: Scope, pcx: Scope, ctx: &Ctx) -> View {
         .tip("Show archived  (h)")
         .on_change(move |v| toggle_archived(&c, 1, Some(v)))
         .view(cx, &t);
-    col = col.child(button_bar(cx, pcx, ctx, &t, 1, vec![show]));
+    col = col.child(button_bar(cx, pcx, ctx, &t, 1, vec![show], 16, width));
     col = col.child(dyn_view(LayoutStyle::column().shrink(0.0), move || {
         let t = abstracttui::app::current_theme().tokens;
         message_line(&t, sk.mcp_msg.get(), width)
