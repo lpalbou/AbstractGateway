@@ -1,20 +1,25 @@
 //! R15 (DESIGN-TUI.md §3.8): a synthesized mouse click for EVERY OpenAI API
 //! control — Copy (base URL), the Endpoint toggle, Restart, Check setup,
-//! Show / Hide / Copy / New key (its [New key] [Cancel] answered by mouse),
+//! New key (its Name form: [Make key] [Cancel]), the key shown once (Copy,
+//! Done), each key's Revoke (its [Revoke] [Cancel] answered by mouse),
 //! the Authentication segments, the Who can connect and Requests without a
 //! key run as pickers, Network, the two docs links, the example segments,
 //! Copy example, and each request row's Time (the recorded request and
 //! response) and Run (Open in Observer) — through the real input pipeline.
 //! The meta-test enumerates `page_actions` / `log_actions` over the
-//! fixture: an action without a click test is RED. The words are the web's
+//! fixture (and `key_actions` over the keys): an action without a click
+//! test is RED. The words are the web's
 //! (`tests/fixtures/r15_web_wording_openai.json`).
 
 mod r8w4;
 
 use std::collections::BTreeSet;
 
+use abstractgateway_console::store::json::WriteState;
 use abstractgateway_console::store::Loadable;
-use abstractgateway_console::ui::openai_api::{self, sha256_hex, KEY_LOGS, KEY_PAGE, MASK};
+use abstractgateway_console::ui::openai_api::{
+    self, sha256_hex, KEY_KEYS, KEY_LOGS, KEY_NEW_KEY, KEY_PAGE, MASK,
+};
 use abstractgateway_console::worker::json::JsonCmd;
 use abstractgateway_console::worker::Cmd;
 use r8w4::{harness, Mount};
@@ -34,7 +39,7 @@ fn admin_page() -> Value {
     json!({
         "schema": "gateway_openai_api_v1", "role": "admin", "writable": true,
         "enabled": true, "running": true, "base_url": "http://127.0.0.1:18999/v1",
-        "key": {"own_token": true, "user_id": "admin", "fingerprint": &sha256_hex(TOKEN.as_bytes())[..12], "allowed": true},
+        "key": {"own_token": true, "user_id": "admin", "named_keys": true, "fingerprint": &sha256_hex(TOKEN.as_bytes())[..12], "allowed": true},
         "docs": {"openai_api": "https://example.test/openai-api.md", "abstractcore": "https://example.test/server.md"},
         "support": {"tested": ["GET /v1/models"], "served": ["POST /v1/responses"], "not_yet": ["n > 1"]},
         "example_model": "lmstudio/fake-model", "access": "open", "reach": "machine",
@@ -54,9 +59,21 @@ fn admin_page() -> Value {
     })
 }
 
+const NEW_KEY: &str = "sk-agw-r15-fresh-named-key-0001";
+
+fn keys() -> Value {
+    json!({"schema": "gateway_openai_api_v1", "account": "admin", "keys": [
+        {"label": "laptop Cursor", "fingerprint": "a1b2c3d4e5f6", "created_at": "2026-10-08T16:00:00+00:00",
+         "created_by": "admin", "last_used_at": "2026-10-08T16:30:00+00:00", "last_client": "192.168.1.20"},
+        {"label": "home assistant", "fingerprint": "0f1e2d3c4b5a", "created_at": "2026-10-08T16:05:00+00:00",
+         "created_by": "admin", "last_used_at": null, "last_client": null}
+    ]})
+}
+
 fn logs() -> Value {
     json!({"schema": "gateway_openai_api_v1", "scope": "all", "rows": [
         {"request_id": "rid-1", "ts": "2026-10-04T02:24:03+00:00", "client": "alice", "ip": "127.0.0.1",
+         "key_label": "laptop Cursor", "key_fingerprint": "a1b2c3d4e5f6",
          "method": "POST", "path": "/v1/chat/completions", "model": "lmstudio/fake-model",
          "prompt_tokens": 12, "completion_tokens": 4, "duration_ms": 10, "status": 200,
          "observer_path": "/observer/runs/run-1"},
@@ -80,6 +97,7 @@ fn page_with(page: Value) -> r8w4::Harness {
     h.admin();
     h.store.json.set(KEY_PAGE, Loadable::Ready(page));
     h.store.json.set(KEY_LOGS, Loadable::Ready(logs()));
+    h.store.json.set(KEY_KEYS, Loadable::Ready(keys()));
     h.turns(3);
     h.sent();
     h
@@ -87,6 +105,16 @@ fn page_with(page: Value) -> r8w4::Harness {
 
 fn page() -> r8w4::Harness {
     page_with(admin_page())
+}
+
+fn methods(h: &mut r8w4::Harness) -> Vec<(String, String)> {
+    h.sent()
+        .into_iter()
+        .filter_map(|c| match c {
+            Cmd::Json(JsonCmd::Send { method, path, .. }) => Some((method, path)),
+            _ => None,
+        })
+        .collect()
 }
 
 fn sends(h: &mut r8w4::Harness) -> Vec<(String, Value)> {
@@ -139,11 +167,14 @@ fn click_pair(h: &mut r8w4::Harness, label: &str, other: &str) -> String {
 
 fn offered() -> BTreeSet<&'static str> {
     let mut out = BTreeSet::new();
-    for kept in [false, true] {
-        for reveal in [false, true] {
-            for a in openai_api::page_actions(&admin_page(), kept, reveal) {
-                out.insert(a.id);
-            }
+    for made in [false, true] {
+        for a in openai_api::page_actions(&admin_page(), made) {
+            out.insert(a.id);
+        }
+    }
+    for k in keys()["keys"].as_array().unwrap() {
+        for a in openai_api::key_actions(k) {
+            out.insert(a.id);
         }
     }
     for r in logs()["rows"].as_array().unwrap() {
@@ -159,9 +190,10 @@ fn covered() -> BTreeSet<&'static str> {
         "copy_base",
         "restart",
         "check",
-        "reveal",
-        "copy_key",
         "new_key",
+        "copy_made",
+        "made_done",
+        "revoke",
         "network",
         "doc_openai",
         "doc_core",
@@ -197,7 +229,14 @@ fn the_cards_have_the_web_words_and_mask_the_key() {
         "Restart",
         "Check setup",
         "Connect your app",
-        MASK,
+        "API keys",
+        "One key per app: it works only at this base URL, acts as you, and can be revoked on its own.",
+        "New key",
+        "Your API keys",
+        "laptop Cursor",
+        "from 192.168.1.20",
+        "a1b2c3d4e5f6",
+        "Never used",
         "Access",
         "Protected (API key)",
         "Open (no key)",
@@ -215,7 +254,8 @@ fn the_cards_have_the_web_words_and_mask_the_key() {
     ] {
         assert!(s.contains(needle), "{needle:?}:\n{s}");
     }
-    assert!(!s.contains(TOKEN), "the key is masked:\n{s}");
+    assert!(!s.contains(TOKEN), "the gateway token is never shown:\n{s}");
+    assert!(!s.contains(MASK), "no token row:\n{s}");
 }
 
 #[test]
@@ -248,25 +288,162 @@ fn status_card_controls() {
 }
 
 #[test]
-fn the_key_row_shows_copies_and_makes_a_new_key() {
+fn new_key_asks_a_name_then_shows_the_key_once() {
     let mut h = page();
-    let s = click_on(&mut h, "API key", "Show");
-    assert!(s.contains(TOKEN), "Show reveals it:\n{s}");
-    let s = click_on(&mut h, "API key", "Hide");
-    assert!(!s.contains(TOKEN), "{s}");
-    click_on(&mut h, "API key", "Copy");
+    let s = click_on(&mut h, "API keys", "New key");
+    assert!(s.contains("Make key"), "the Name form:\n{s}");
+    assert!(s.contains("Name it after the app that will use it"), "{s}");
+    h.type_text("phone app");
+    click_pair(&mut h, "Make key", "Cancel");
+    assert_eq!(
+        sends(&mut h),
+        vec![("/me/openai-keys".to_string(), json!({"label": "phone app"}))]
+    );
+    // The answer: the key, shown once with Copy and Done.
+    h.store.json.set_write(
+        KEY_NEW_KEY,
+        Some(WriteState::Done(
+            json!({"key": NEW_KEY, "item": {"label": "phone app", "fingerprint": "999999999999"}}),
+        )),
+    );
+    let s = h.turns(3);
+    assert!(
+        s.contains("Key “phone app” made. Copy it now: the gateway shows a key only once."),
+        "{s}"
+    );
+    assert!(s.contains(NEW_KEY), "shown once, in clear:\n{s}");
+    // The example masks it, Copy example puts it in clear (the page's
+    // `snippet`, unit-tested in openai_api.rs; the docs card is below the fold).
+    click_pair(&mut h, "Copy", "Done");
     assert_eq!(
         h.store.notice.get_untracked().as_deref(),
         Some("API key copied to the clipboard")
     );
-    let s = click_on(&mut h, "API key", "New key");
+    click_pair(&mut h, "Done", "Copy");
+    let s = h.turns(2);
+    assert!(!s.contains(NEW_KEY), "Done forgets it:\n{s}");
+}
+
+#[test]
+fn new_key_without_a_name_says_the_web_sentence() {
+    let mut h = page();
+    click_on(&mut h, "API keys", "New key");
+    let s = click_pair(&mut h, "Make key", "Cancel");
     assert!(
-        s.contains("Make a new key? It replaces your gateway token"),
+        s.contains("Give the key a name, for example the app that will use it."),
         "{s}"
     );
-    assert!(sends(&mut h).is_empty(), "nothing before [New key]");
-    click_pair(&mut h, "New key", "Cancel");
-    assert!(sends(&mut h).iter().any(|(p, _)| p == "/me/token/rotate"));
+    assert!(sends(&mut h).is_empty(), "nothing sent without a name");
+}
+
+#[test]
+fn new_key_cancel_with_a_typed_name_asks_before_dropping_it() {
+    let mut h = page();
+    click_on(&mut h, "API keys", "New key");
+    h.type_text("draft");
+    let s = click_pair(&mut h, "Cancel", "Make key");
+    assert!(s.contains("Discard changes?"), "{s}");
+    assert!(sends(&mut h).is_empty());
+}
+
+#[test]
+fn revoke_asks_then_deletes_the_key() {
+    let mut h = page();
+    let s = click_on(&mut h, "laptop Cursor", "Revoke");
+    assert!(
+        s.contains("Revoke “laptop Cursor”? Apps using it stop working at once."),
+        "{s}"
+    );
+    assert!(sends(&mut h).is_empty(), "nothing before [Revoke]");
+    click_pair(&mut h, "Revoke", "Cancel");
+    assert_eq!(
+        methods(&mut h),
+        vec![(
+            "DELETE".to_string(),
+            "/me/openai-keys/a1b2c3d4e5f6".to_string()
+        )]
+    );
+    h.store.json.set_write(
+        openai_api::KEY_REVOKE,
+        Some(WriteState::Done(
+            json!({"revoked": {"label": "laptop Cursor", "fingerprint": "a1b2c3d4e5f6"}}),
+        )),
+    );
+    let s = h.turns(3);
+    assert!(
+        s.contains("Revoked “laptop Cursor”: apps using it are refused from now on."),
+        "{s}"
+    );
+}
+
+#[test]
+fn enter_on_the_revoke_question_keeps_the_key() {
+    let mut h = page();
+    let s = click_on(&mut h, "laptop Cursor", "Revoke");
+    assert!(s.contains("Revoke “laptop Cursor”?"), "{s}");
+    h.key(b"\r");
+    h.turns(2);
+    assert!(methods(&mut h).is_empty(), "Enter on Cancel keeps it");
+}
+
+#[test]
+fn no_keys_says_the_web_sentence() {
+    let mut h = page();
+    h.store
+        .json
+        .set(KEY_KEYS, Loadable::Ready(json!({"keys": []})));
+    let s = h.turns(3);
+    assert!(
+        s.contains(
+            "No API keys yet. Make one for each app with New key; the gateway shows it once."
+        ),
+        "{s}"
+    );
+}
+
+#[test]
+fn the_operator_token_has_no_named_keys() {
+    let mut p = admin_page();
+    p["key"] =
+        json!({"own_token": false, "user_id": "admin", "named_keys": false, "allowed": true});
+    let mut h = page_with(p);
+    let s = h.turns(3);
+    assert!(s.contains("The gateway admin token"), "{s}");
+    assert!(
+        s.contains("Named keys belong to an account: sign in with one to make them."),
+        "{s}"
+    );
+    assert!(
+        !s.contains("New key") && !s.contains("Your API keys"),
+        "{s}"
+    );
+}
+
+#[test]
+fn the_keys_are_read_once_the_page_says_so() {
+    let mut h = harness((140, 70), Mount::Page(page_view));
+    h.ui.conn_token.set(TOKEN.into());
+    h.admin();
+    h.store.json.set(KEY_PAGE, Loadable::Ready(admin_page()));
+    h.turns(3);
+    assert!(gets(&mut h).contains(&"/me/openai-keys".to_string()));
+}
+
+#[test]
+fn a_request_row_names_its_key() {
+    let mut h = page();
+    let s = h.turns(2);
+    let rows: Vec<&str> = s.lines().collect();
+    let i = rows
+        .iter()
+        .position(|l| l.contains("lmstudio/fake-model") && l.contains("200"))
+        .unwrap_or_else(|| panic!("{s}"));
+    assert!(
+        rows[i..(i + 2).min(rows.len())]
+            .iter()
+            .any(|l| l.contains("laptop Cursor")),
+        "the key under the client:\n{s}"
+    );
 }
 
 #[test]
@@ -310,7 +487,7 @@ fn access_card_segments_and_pickers() {
     let s = h.turns(1);
     let y = s
         .lines()
-        .position(|l| l.trim() == "Network")
+        .position(|l| l.trim().trim_end_matches(['┃', '│']).trim() == "Network")
         .unwrap_or_else(|| panic!("Network button:\n{s}"));
     let x = s.lines().nth(y).unwrap().find("Network").unwrap() + 2;
     h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes());
@@ -381,8 +558,12 @@ fn hovering_restart_says_the_web_tooltip() {
 #[test]
 fn the_keyboard_reaches_the_controls() {
     let mut h = page();
-    h.key(b"v");
-    assert!(h.turns(1).contains(TOKEN));
+    let s = h.key(b"n");
+    assert!(
+        s.contains("Make key") && s.contains("Name it after the app"),
+        "n = New key:\n{s}"
+    );
+    let mut h = page();
     h.key(b"e");
     assert!(sends(&mut h)
         .iter()
@@ -424,10 +605,8 @@ fn the_words_are_the_webs() {
     assert_eq!(openai_api::ENDPOINT_TIP, w("endpoint_tip"));
     assert_eq!(openai_api::RESTART_TIP, w("restart_tip"));
     assert_eq!(openai_api::CHECK_TIP, w("check_tip"));
-    assert_eq!(openai_api::SHOW_KEY_TIP, w("show_key_tip"));
-    assert_eq!(openai_api::HIDE_KEY_TIP, w("hide_key_tip"));
     assert_eq!(openai_api::NOT_IN_A_RUN, w("not_in_a_run"));
-    let acts = openai_api::page_actions(&admin_page(), true, false);
+    let acts = openai_api::page_actions(&admin_page(), true);
     let label = |id: &str| acts.iter().find(|a| a.id == id).unwrap().label.clone();
     assert_eq!(label("restart"), w("restart"));
     assert_eq!(label("check"), w("check"));
@@ -436,6 +615,59 @@ fn the_words_are_the_webs() {
     assert_eq!(label("copy_base"), w("copy"));
     assert_eq!(label("doc_openai"), w("doc_openai"));
     assert_eq!(label("doc_core"), w("doc_core"));
+    assert_eq!(label("copy_made"), w("copy"));
+    assert_eq!(label("made_done"), w("made_done"));
+    let tip = |id: &str| acts.iter().find(|a| a.id == id).unwrap().tooltip.clone();
+    assert_eq!(tip("new_key").as_deref(), Some(w("keys_note").as_str()));
+    assert_eq!(
+        tip("copy_made").as_deref(),
+        Some(w("copy_made_tip").as_str())
+    );
+    assert_eq!(openai_api::KEYS_NOTE, w("keys_note"));
+    assert_eq!(openai_api::ADMIN_TOKEN_LABEL, w("admin_token_label"));
+    assert_eq!(openai_api::ADMIN_TOKEN_NOTE, w("admin_token_note"));
+    assert_eq!(openai_api::NAME_LABEL, w("name_label"));
+    assert_eq!(openai_api::NAME_PLACEHOLDER, w("name_placeholder"));
+    assert_eq!(openai_api::NAME_HELP, w("name_help"));
+    assert_eq!(openai_api::MAKE_KEY, w("make_key"));
+    assert_eq!(openai_api::NAME_REQUIRED, w("name_required"));
+    assert_eq!(openai_api::KEYS_EMPTY, w("keys_empty"));
+    assert_eq!(openai_api::KEYS_TABLE, w("keys_table"));
+    assert_eq!(openai_api::REVOKE_TIP, w("revoke_tip"));
+    assert_eq!(openai_api::COPY_MADE_TIP, w("copy_made_tip"));
+    assert_eq!(
+        openai_api::made_sentence("X"),
+        w("made_sentence").replace("{label}", "X")
+    );
+    assert_eq!(
+        openai_api::revoke_sentence("X"),
+        w("revoke_confirm").replace("{label}", "X")
+    );
+    assert_eq!(
+        openai_api::revoked_sentence("X"),
+        w("revoked").replace("{label}", "X")
+    );
+    assert_eq!(
+        openai_api::account_lead("bob"),
+        w("account_lead").replace("{id}", "bob")
+    );
+    assert_eq!(
+        openai_api::account_keys_empty("bob"),
+        w("account_keys_empty").replace("{id}", "bob")
+    );
+    assert_eq!(
+        openai_api::account_revoke_sentence("X", "bob"),
+        w("account_revoke_confirm")
+            .replace("{label}", "X")
+            .replace("{id}", "bob")
+    );
+    let k = &keys()["keys"][0];
+    let revoke = openai_api::key_actions(k)
+        .into_iter()
+        .find(|a| a.id == "revoke")
+        .unwrap();
+    assert_eq!(revoke.label, w("revoke"));
+    assert_eq!(revoke.tooltip.as_deref(), Some(w("revoke_tip").as_str()));
     for (i, (_, l)) in openai_api::SNIPPETS.iter().enumerate() {
         assert_eq!(*l, w(&format!("snippet_{i}")));
     }
@@ -443,29 +675,4 @@ fn the_words_are_the_webs() {
         assert_eq!(*l, w(&format!("auth_{i}_label")));
         assert_eq!(*text, w(&format!("auth_{i}_text")));
     }
-    // The New key question: the web's, the browser's words made the console's.
-    assert_eq!(
-        openai_api::NEW_KEY_SENTENCE,
-        w("new_key_confirm").replace(
-            "this browser keeps it for this page",
-            "this console keeps it for this session"
-        )
-    );
-}
-
-/// Adversary T1: the New key question opens on Cancel — Enter keeps the
-/// token; only a deliberate [New key] rotates it.
-#[test]
-fn enter_on_the_new_key_question_keeps_the_token() {
-    let mut h = page();
-    let s = click_on(&mut h, "API key", "New key");
-    assert!(s.contains("Make a new key?"), "{s}");
-    h.key(b"\r");
-    h.turns(2);
-    assert!(
-        !sends(&mut h).iter().any(|(p, _)| p == "/me/token/rotate"),
-        "Enter on the default must keep the token"
-    );
-    let s = h.turns(1);
-    assert!(!s.contains("Make a new key?"), "the question closed:\n{s}");
 }

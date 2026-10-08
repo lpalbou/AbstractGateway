@@ -12,15 +12,17 @@
 //! | Endpoint / Authentication / Who can connect / run as | `POST /admin/core-endpoint {enabled \| access \| reach \| open_account}` |
 //! | Restart | `POST /admin/core-endpoint/restart` |
 //! | Check setup | `POST /admin/core-endpoint/check` |
-//! | New key | `POST /me/token/rotate` |
+//! | API keys | `GET /me/openai-keys` |
+//! | New key | `POST /me/openai-keys {label}` (the key is answered once) |
+//! | Revoke | `DELETE /me/openai-keys/{fingerprint}` |
 //!
-//! The API key is the signed-in person's gateway token. No route answers a
-//! stored token: the page shows the token THIS console signed in with
-//! (the web page shows the copy its browser kept at sign-in), checked
-//! against the gateway's fingerprint (SHA-256, first 12 hex). Masked by
-//! default; `v` reveals it, `y` copies it in clear, the examples embed it
-//! masked on screen and in clear when copied. New key replaces the token
-//! (shown once) and the console reconnects with it.
+//! API keys (round 16, gateway backlog 1000) are NAMED keys of the signed-in
+//! account, valid at `/v1` only. New key asks for a name, shows the key once
+//! with Copy (the example embeds it masked on screen, in clear when copied);
+//! the table lists name · created · last used · fingerprint, never a key;
+//! Revoke asks [Revoke] [Cancel] and applies at once. The gateway token is
+//! not offered as a key (it still works at `/v1` for compatibility); a
+//! console signed in with the gateway's own token (no account) says so.
 //!
 //! Every sentence is the web page's. Layout: the overview (Status,
 //! Connect your app, Access for an admin, Docs) scrolls in the upper
@@ -54,14 +56,19 @@ pub const KEY_LOG_PREFIX: &str = "openai.log.";
 pub const KEY_CHANGE: &str = "openai.change";
 pub const KEY_RESTART: &str = "openai.restart";
 pub const KEY_CHECK: &str = "openai.check";
+/// Make a named key (`POST /me/openai-keys {label}`).
 pub const KEY_NEW_KEY: &str = "openai.newkey";
+/// The account's named keys (`GET /me/openai-keys`).
+pub const KEY_KEYS: &str = "openai.keys";
+/// Revoke one (`DELETE /me/openai-keys/{fingerprint}`).
+pub const KEY_REVOKE: &str = "openai.revoke";
 
 pub const PATH_PAGE: &str = "/openai-api";
 pub const PATH_LOGS: &str = "/openai-api/logs?limit=25";
 pub const PATH_CHANGE: &str = "/admin/core-endpoint";
 pub const PATH_RESTART: &str = "/admin/core-endpoint/restart";
 pub const PATH_CHECK: &str = "/admin/core-endpoint/check";
-pub const PATH_NEW_KEY: &str = "/me/token/rotate";
+pub const PATH_KEYS: &str = "/me/openai-keys";
 
 /// The web page's log cadence (`OAI_LOG_REFRESH_MS`).
 pub const LOG_REFRESH: Duration = Duration::from_secs(5);
@@ -73,7 +80,7 @@ pub const AUTH: [(&str, &str, &str); 2] = [
     (
         "token",
         "Protected (API key)",
-        "Apps send a gateway token as their API key.",
+        "Apps send an API key made on this page.",
     ),
     (
         "open",
@@ -173,34 +180,6 @@ pub fn sha256_hex(data: &[u8]) -> String {
     h.iter().map(|x| format!("{x:08x}")).collect()
 }
 
-/// Whether this console's token is the account's current one.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum KeyCheck {
-    /// The fingerprint matches (or the gateway gave none to compare).
-    Match,
-    /// The gateway's fingerprint differs: the token changed elsewhere.
-    Stale,
-    /// The console holds no token.
-    Missing,
-}
-
-/// The token the page may show as the key: the console's own, unless it
-/// is missing or no longer the account's (the web `oaiKeptToken`).
-pub fn kept_token(d: &Value, token: Option<&str>) -> (Option<String>, KeyCheck) {
-    let Some(t) = token.map(str::trim).filter(|t| !t.is_empty()) else {
-        return (None, KeyCheck::Missing);
-    };
-    let fp = d
-        .pointer("/key/fingerprint")
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    if fp.is_empty() || sha256_hex(t.as_bytes()).starts_with(fp) {
-        (Some(t.to_string()), KeyCheck::Match)
-    } else {
-        (None, KeyCheck::Stale)
-    }
-}
-
 // ---------------------------------------------------------------------
 // Pure folds (unit-tested): the overview lines, the example, the log rows
 // ---------------------------------------------------------------------
@@ -240,9 +219,8 @@ fn lni(text: impl Into<String>, tone: Tone, indent: usize) -> Ln {
 /// The page's own state beside the gateway's document.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct ViewState {
-    /// The token this console holds (effective credentials).
-    pub token: Option<String>,
-    pub reveal: bool,
+    /// The key just made (shown once), if any.
+    pub made: Option<String>,
     /// Index into [`SNIPPETS`].
     pub snippet: usize,
     /// A write in flight: "enabled", "access:open", "reach:network",
@@ -275,21 +253,21 @@ pub fn is_admin(d: &Value) -> bool {
     s(d, "role") == "admin"
 }
 
-/// The example request (`oaiSnippet`): `shown` masks the key unless
-/// revealed; `clear` = what Copy example puts on the clipboard.
-pub fn snippet(kind: &str, d: &Value, kept: Option<&str>, reveal: bool, clear: bool) -> String {
+/// The example request (`oaiSnippet`): `made` = the key just made (masked
+/// on screen); `clear` = what Copy example puts on the clipboard.
+pub fn snippet(kind: &str, d: &Value, made: Option<&str>, clear: bool) -> String {
     let base = s(d, "base_url");
-    let open = s(d, "access") == "open" && kept.is_none();
+    let open = s(d, "access") == "open" && made.is_none();
     let key = if open {
         "not-needed".to_string()
-    } else if let Some(k) = kept {
-        if clear || reveal {
+    } else if let Some(k) = made {
+        if clear {
             k.to_string()
         } else {
             MASK.to_string()
         }
     } else {
-        "YOUR_GATEWAY_TOKEN".to_string()
+        "YOUR_API_KEY".to_string()
     };
     let model = match s(d, "example_model") {
         "" => "provider/model",
@@ -331,6 +309,11 @@ pub fn log_rules() -> Vec<ColRule> {
         ColRule::head("Status", 3),
         ColRule::head("Run", 3),
     ]
+}
+
+/// The API key that made a request (round 16), or "".
+pub fn log_key_label(r: &Value) -> &str {
+    s(r, "key_label")
 }
 
 /// One log row's cells (`oaiLogsCard`).
@@ -540,8 +523,127 @@ pub fn saved_text(field: &str, d: &Value) -> String {
     }
 }
 
-/// The New key confirmation (the web `oaiStore.confirmKey` sentence).
-pub const NEW_KEY_SENTENCE: &str = "Make a new key? It replaces your gateway token: apps, devices and other browsers using the old one stop working. The gateway shows the new key once; this console keeps it for this session.";
+// ---- Named API keys: the web page's words (console_ui.py `oaiKey*`) ----
+
+/// The key row's note (also New key's tooltip).
+pub const KEYS_NOTE: &str =
+    "One key per app: it works only at this base URL, acts as you, and can be revoked on its own.";
+/// A console signed in with the gateway's own token (no account).
+pub const ADMIN_TOKEN_LABEL: &str = "The gateway admin token";
+pub const ADMIN_TOKEN_NOTE: &str = "The token this gateway was started with. Named keys belong to an account: sign in with one to make them.";
+/// New key's name field.
+pub const NAME_LABEL: &str = "Name";
+pub const NAME_PLACEHOLDER: &str = "For example: laptop Cursor";
+pub const NAME_HELP: &str =
+    "Name it after the app that will use it, so the request log shows which app called.";
+pub const MAKE_KEY: &str = "Make key";
+pub const NAME_REQUIRED: &str = "Give the key a name, for example the app that will use it.";
+pub const KEYS_EMPTY: &str =
+    "No API keys yet. Make one for each app with New key; the gateway shows it once.";
+pub const KEYS_READING: &str = "Reading your API keys...";
+pub const KEYS_TABLE: &str = "Your API keys";
+pub const REVOKE_TIP: &str = "Revoke this key: apps using it stop working at once";
+pub const COPY_MADE_TIP: &str = "Copy the new API key";
+
+/// "Key “<label>” made. Copy it now: the gateway shows a key only once."
+pub fn made_sentence(label: &str) -> String {
+    format!("Key “{label}” made. Copy it now: the gateway shows a key only once.")
+}
+
+/// The Revoke question (`w::Confirm` [Revoke] [Cancel]).
+pub fn revoke_sentence(label: &str) -> String {
+    format!("Revoke “{label}”? Apps using it stop working at once. This can't be undone; you can make a new key.")
+}
+
+/// The verified revoke's sentence.
+pub fn revoked_sentence(label: &str) -> String {
+    format!("Revoked “{label}”: apps using it are refused from now on.")
+}
+
+/// `oaiWhen`: a timestamp as local date and time.
+pub fn when(ts: &str) -> String {
+    if ts.is_empty() {
+        return String::new();
+    }
+    let t = local_time(ts);
+    let day = ts.get(..10).unwrap_or("");
+    if day.is_empty() {
+        t
+    } else {
+        format!("{day} {t}")
+    }
+}
+
+/// One key row's cells: name, created, last used (time + "from <addr>" or
+/// "Never used"), fingerprint.
+pub fn key_cells(k: &Value) -> [String; 4] {
+    let used = match s(k, "last_used_at") {
+        "" => "Never used".to_string(),
+        ts => match s(k, "last_client") {
+            "" => format!("Last used {}", when(ts)),
+            addr => format!("Last used {} from {addr}", when(ts)),
+        },
+    };
+    [
+        s(k, "label").to_string(),
+        format!("Created {}", when(s(k, "created_at"))),
+        used,
+        s(k, "fingerprint").to_string(),
+    ]
+}
+
+/// A key row's actions (one list: the cell, the key, the tests).
+pub fn key_actions(_k: &Value) -> Vec<Action> {
+    vec![Action::label("revoke", "Revoke")
+        .key('d')
+        .tooltip(REVOKE_TIP)
+        .danger()]
+}
+
+// ---- Accounts → OpenAI API — <id>: the account's keys (admins) ----
+
+/// The dialog's lead (the web `openAccountOpenAI`).
+pub fn account_lead(id: &str) -> String {
+    format!("Lets {id} use the OpenAI-compatible API (/v1) with their API keys. Off: every key of {id} is refused there; signing in to the console is unchanged.")
+}
+/// The dialog's keys section title.
+pub const ACCOUNT_KEYS_TITLE: &str = "API keys";
+/// No keys yet.
+pub fn account_keys_empty(id: &str) -> String {
+    format!("{id} has no API keys. People make their own on the OpenAI API page.")
+}
+/// The admin's Revoke question.
+pub fn account_revoke_sentence(label: &str, id: &str) -> String {
+    format!("Revoke “{label}” of {id}? Apps using it stop working at once.")
+}
+/// The slot and route of an account's keys.
+pub fn account_keys_slot(id: &str) -> String {
+    format!("openai.account_keys.{id}")
+}
+pub fn account_keys_path(id: &str, tenant: &str) -> String {
+    format!(
+        "/admin/accounts/{}/openai-keys?tenant_id={}",
+        urlencode(id),
+        urlencode(tenant)
+    )
+}
+pub fn account_key_path(id: &str, tenant: &str, fp: &str) -> String {
+    format!(
+        "/admin/accounts/{}/openai-keys/{}?tenant_id={}",
+        urlencode(id),
+        urlencode(fp),
+        urlencode(tenant)
+    )
+}
+/// The write key of an admin revoke.
+pub const KEY_ACCOUNT_REVOKE: &str = "openai.account_revoke";
+
+/// Does this account make named keys (`key.named_keys`)?
+pub fn named_keys(d: &Value) -> bool {
+    d.pointer("/key/named_keys")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
 
 // ---------------------------------------------------------------------
 // The page
@@ -554,9 +656,8 @@ pub fn hints(non_admin: bool) -> Vec<(&'static str, &'static str)> {
         ("Tab", "next control"),
         ("Enter", "press · open request"),
         ("b", "Copy base URL"),
-        ("v", "Show/Hide key"),
-        ("y", "Copy key"),
         ("n", "New key"),
+        ("d", "Revoke key"),
     ];
     if !non_admin {
         v.extend([
@@ -590,6 +691,8 @@ pub fn refresh(ctx: &Ctx) {
     ctx.store.json.set(KEY_PAGE, Loadable::Loading);
     send_get(ctx, KEY_PAGE, PATH_PAGE);
     send_get(ctx, KEY_LOGS, PATH_LOGS);
+    // The keys are read again once the page says this account has them.
+    ctx.store.json.set(KEY_KEYS, Loadable::NotAsked);
 }
 
 /// The admin write `POST /admin/core-endpoint {field: value}`.
@@ -681,7 +784,8 @@ pub fn wrap_lines(lines: &[Ln], w: usize) -> Vec<(String, Tone)> {
 // ---------------------------------------------------------------------
 // R15 (DESIGN-TUI.md §3.8): the web's cards top-down with real controls
 // — Status (Copy, the Endpoint toggle, Restart, Check setup), Connect
-// your app (Copy, Show/Hide, Copy, New key), Access (Authentication
+// your app (Copy, New key → name → shown once with Copy / Done; the keys
+// table with Revoke), Access (Authentication
 // segments, Requests without a key run as / Who can connect pickers),
 // Docs (the two links, curl | Python | JavaScript, Copy example) — then
 // Recent requests as a table (Time opens the recorded request and
@@ -693,13 +797,11 @@ pub fn wrap_lines(lines: &[Ln], w: usize) -> Vec<(String, Tone)> {
 pub const ENDPOINT_TIP: &str = "Answer OpenAI API requests at the base URL";
 pub const RESTART_TIP: &str = "End open requests and keep serving";
 pub const CHECK_TIP: &str = "Check settings, Core and models";
-pub const SHOW_KEY_TIP: &str = "Show your API key";
-pub const HIDE_KEY_TIP: &str = "Hide your API key";
 pub const NOT_IN_A_RUN: &str = "This request was not part of a run";
 
-/// The page's buttons for document `d` (`kept`: the console holds the
-/// account's key; `reveal`: shown in clear), in screen order.
-pub fn page_actions(d: &Value, kept: bool, reveal: bool) -> Vec<Action> {
+/// The page's buttons for document `d` (`made`: a key was just made and
+/// is shown once), in screen order.
+pub fn page_actions(d: &Value, made: bool) -> Vec<Action> {
     let admin = is_admin(d);
     let mut out = vec![Action::label("copy_base", "Copy")
         .key('b')
@@ -717,32 +819,16 @@ pub fn page_actions(d: &Value, kept: bool, reveal: bool) -> Vec<Action> {
                 .tooltip(CHECK_TIP),
         );
     }
-    let own = d
-        .pointer("/key/own_token")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    if own {
-        if kept {
-            out.push(if reveal {
-                Action::label("reveal", "Hide")
-                    .key('v')
-                    .tooltip(HIDE_KEY_TIP)
-            } else {
-                Action::label("reveal", "Show")
-                    .key('v')
-                    .tooltip(SHOW_KEY_TIP)
-            });
-            out.push(
-                Action::label("copy_key", "Copy")
-                    .key('y')
-                    .tooltip("Copy API key"),
-            );
-        }
+    if named_keys(d) {
         out.push(
             Action::label("new_key", "New key")
                 .key('n')
-                .tooltip(NEW_KEY_SENTENCE),
+                .tooltip(KEYS_NOTE),
         );
+        if made {
+            out.push(Action::label("copy_made", "Copy").tooltip(COPY_MADE_TIP));
+            out.push(Action::label("made_done", "Done"));
+        }
     }
     if admin
         && arr(d, "warnings")
@@ -798,7 +884,9 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
     let tt = *t;
     let st = Page {
-        reveal: cx.signal(false),
+        made: cx.signal(None),
+        revoking: cx.signal(String::new()),
+        key_sel: cx.signal(None),
         snippet: cx.signal(0usize),
         busy: cx.signal(None),
         notice: cx.signal(None),
@@ -817,6 +905,22 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             let connected = store.conn.with(ConnPhase::is_connected);
             if connected && store.json.slots.with(|m| !m.contains_key(KEY_PAGE)) {
                 refresh(&ctx_l);
+            }
+        });
+    }
+    // The keys, once the page says this account makes them.
+    {
+        let ctx_k = ctx.clone();
+        cx.effect(move || {
+            let named = store
+                .json
+                .get(KEY_PAGE)
+                .ready()
+                .map(named_keys)
+                .unwrap_or(false);
+            if named && matches!(store.json.get(KEY_KEYS), Loadable::NotAsked) {
+                store.json.set(KEY_KEYS, Loadable::Loading);
+                send_get(&ctx_k, KEY_KEYS, PATH_KEYS);
             }
         });
     }
@@ -868,6 +972,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 cards(gcx, cx, &body_ctx, &t, &st_body)
             },
         ))
+        .child(keys_region(cx, ctx, &tt, &st))
         .child(logs_region(cx, ctx, &tt, &st))
         .build()
 }
@@ -879,7 +984,12 @@ pub const SUBTITLE: &str = "Let apps use your models through one OpenAI-compatib
 /// The page's own state beside the gateway's document.
 #[derive(Clone)]
 struct Page {
-    reveal: Signal<bool>,
+    /// The key just made (key, its label, its fingerprint): shown once.
+    made: Signal<Option<(String, String, String)>>,
+    /// The label of the key being revoked (for the sentence).
+    revoking: Signal<String>,
+    /// The keys table's selection (fingerprint).
+    key_sel: Signal<Option<String>>,
     snippet: Signal<usize>,
     busy: Signal<Option<String>>,
     notice: Signal<Option<(Tone, String)>>,
@@ -962,22 +1072,19 @@ fn install_write_effects(cx: Scope, ctx: &Ctx, st: &Page) {
             if !w.is_pending() {
                 match w {
                     WriteState::Done(v) => {
-                        let token = s(&v, "token").to_string();
-                        if token.is_empty() {
+                        let key = s(&v, "key").to_string();
+                        let item = v.get("item").cloned().unwrap_or(Value::Null);
+                        if key.is_empty() {
                             st.key_notice.set(Some((
                                 Tone::Err,
                                 "No new key: The gateway answered without the new key.".into(),
                             )));
                         } else {
-                            // The console now signs in with the new key
-                            // (the old one stopped working).
-                            ctx_w.ui.conn_token.set(token);
-                            st.reveal.set(true);
-                            st.key_notice.set(Some((
-                                Tone::Ok,
-                                "New key made: your old one stopped working. Copy it now: the gateway shows a key only once.".into(),
+                            st.made.set(Some((
+                                key,
+                                s(&item, "label").to_string(),
+                                s(&item, "fingerprint").to_string(),
                             )));
-                            ctx_w.connect_now();
                         }
                     }
                     WriteState::Failed(e) => st
@@ -987,6 +1094,35 @@ fn install_write_effects(cx: Scope, ctx: &Ctx, st: &Page) {
                 }
                 st.busy.set(None);
                 store.json.set_write(KEY_NEW_KEY, None);
+            }
+        }
+        if let Some(w) = store.json.write(KEY_REVOKE) {
+            if !w.is_pending() {
+                let label = st.revoking.get_untracked();
+                match w {
+                    WriteState::Done(v) => {
+                        let fp = v
+                            .pointer("/revoked/fingerprint")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string();
+                        if st
+                            .made
+                            .with_untracked(|m| m.as_ref().map(|m| m.2 == fp).unwrap_or(false))
+                        {
+                            st.made.set(None);
+                        }
+                        let text = revoked_sentence(&label);
+                        super::w::toast(&ctx_w, cx, text.clone());
+                        st.key_notice.set(Some((Tone::Ok, text)));
+                    }
+                    WriteState::Failed(e) => st
+                        .key_notice
+                        .set(Some((Tone::Err, format!("Not revoked: {}", e.message)))),
+                    WriteState::Pending => {}
+                }
+                st.busy.set(None);
+                store.json.set_write(KEY_REVOKE, None);
             }
         }
     });
@@ -1023,8 +1159,8 @@ fn page_action(cx: Scope, ctx: &Ctx, st: &Page, id: &str) {
         say("Reading the OpenAI API settings...");
         return;
     };
-    let kept = kept_token(&d, ctx.effective_credentials().1.as_deref()).0;
-    if let Some(a) = page_actions(&d, kept.is_some(), st.reveal.get_untracked())
+    let made = st.made.get_untracked().map(|m| m.0);
+    if let Some(a) = page_actions(&d, made.is_some())
         .into_iter()
         .find(|a| a.id == id)
     {
@@ -1058,41 +1194,22 @@ fn page_action(cx: Scope, ctx: &Ctx, st: &Page, id: &str) {
             st.busy.set(Some("check".into()));
             post(ctx, KEY_CHECK, PATH_CHECK, "OpenAI API: check setup", true);
         }
-        "reveal" => st.reveal.update(|r| *r = !*r),
-        "copy_key" => match kept {
-            Some(k) => {
+        "copy_made" => {
+            if let Some(k) = made {
                 copy_to_clipboard(k);
                 say("API key copied to the clipboard");
             }
-            None => say("No key to copy: New key makes one."),
-        },
+        }
+        "made_done" => st.made.set(None),
         "new_key" => {
             if st.busy.get_untracked().is_some() {
                 return;
             }
-            let c2 = ctx.clone();
-            let (busy, key_notice) = (st.busy, st.key_notice);
-            super::w::Confirm::danger(NEW_KEY_SENTENCE, "New key", "Cancel").open(
-                cx,
-                ctx.ui,
-                move || {
-                    busy.set(Some("new-key".into()));
-                    key_notice.set(None);
-                    c2.store
-                        .json
-                        .set_write(KEY_NEW_KEY, Some(WriteState::Pending));
-                    c2.send(Cmd::Json(JsonCmd::Send {
-                        key: KEY_NEW_KEY.into(),
-                        method: "POST".into(),
-                        path: PATH_NEW_KEY.into(),
-                        body: serde_json::json!({}),
-                        slow: false,
-                        label: "OpenAI API: new key".into(),
-                        reload: vec![],
-                        journal: false,
-                    }));
-                },
-            );
+            if !named_keys(&d) {
+                say(ADMIN_TOKEN_NOTE);
+                return;
+            }
+            open_new_key(cx, ctx, st);
         }
         "network" => super::shell::go(ctx, super::SCREEN_NETWORK),
         "doc_openai" | "doc_core" => {
@@ -1108,7 +1225,7 @@ fn page_action(cx: Scope, ctx: &Ctx, st: &Page, id: &str) {
         }
         "copy_example" => {
             let kind = SNIPPETS[st.snippet.get_untracked() % SNIPPETS.len()].0;
-            copy_to_clipboard(snippet(kind, &d, kept.as_deref(), false, true));
+            copy_to_clipboard(snippet(kind, &d, made.as_deref(), true));
             say("example copied to the clipboard");
         }
         _ => {}
@@ -1190,8 +1307,11 @@ fn handle_key(cx: Scope, ctx: &Ctx, st: &Page, key: Key) -> bool {
                 }
             }
         }
-        Key::Char('v') => page_action(cx, ctx, st, "reveal"),
-        Key::Char('y') => page_action(cx, ctx, st, "copy_key"),
+        Key::Char('d') => {
+            if let Some(fp) = st.key_sel.get_untracked() {
+                key_action(cx, ctx, st, &fp, "revoke");
+            }
+        }
         Key::Char('b') => page_action(cx, ctx, st, "copy_base"),
         Key::Char('n') => page_action(cx, ctx, st, "new_key"),
         Key::Char('s') => st.snippet.update(|i| *i = (*i + 1) % SNIPPETS.len()),
@@ -1321,11 +1441,9 @@ fn cards(cx: Scope, pcx: Scope, ctx: &Ctx, t: &TokenSet, st: &Page) -> View {
         }
     };
     let admin = is_admin(&d);
-    let reveal = st.reveal.get();
     let busy = st.busy.get();
-    let token = ctx.effective_credentials().1;
-    let (kept, check) = kept_token(&d, token.as_deref());
-    let acts = page_actions(&d, kept.is_some(), reveal);
+    let made = st.made.get();
+    let acts = page_actions(&d, made.is_some());
     let btnw = |id: &str| -> (View, i32) {
         let a = acts
             .iter()
@@ -1482,58 +1600,41 @@ fn cards(cx: Scope, pcx: Scope, ctx: &Ctx, t: &TokenSet, st: &Page) -> View {
         vec![Ink::new(base.clone(), t.text)],
         vec![btnw("copy_base")],
     ));
-    if !b(&key, "own_token") {
+    if !named_keys(&d) {
         rows.push(addr_row(
             t,
             w,
-            "API key",
-            vec![Ink::new("The gateway admin token", t.text)],
+            "API keys",
+            vec![Ink::new(ADMIN_TOKEN_LABEL, t.text)],
             vec![],
         ));
-        rows.push(sentence(
-            t,
-            "The token this gateway was started with.",
-            w,
-            t.text_muted,
-        ));
+        rows.push(sentence(t, ADMIN_TOKEN_NOTE, w, t.text_muted));
     } else {
-        match &kept {
-            Some(k) => {
-                let shown = if reveal { k.clone() } else { MASK.to_string() };
-                rows.push(addr_row(
-                    t,
-                    w,
-                    "API key",
-                    vec![Ink::new(shown, t.info)],
-                    vec![btnw("reveal"), btnw("copy_key"), btnw("new_key")],
-                ));
-                rows.push(sentence(
-                    t,
-                    "Your gateway token: apps use it as their API key and act as you.",
-                    w,
-                    t.text_muted,
-                ));
-            }
-            None => {
-                let why = if check == KeyCheck::Stale {
-                    "Your token changed since you signed in here, so this console's copy no longer works."
-                } else {
-                    "This console doesn't have your token: it connected without one."
-                };
-                rows.push(addr_row(
-                    t,
-                    w,
-                    "API key",
-                    vec![Ink::new(MASK, t.info)],
-                    vec![btnw("new_key")],
-                ));
-                rows.push(sentence(
-                    t,
-                    &format!("{why} New key makes one; the gateway shows it once."),
-                    w,
-                    t.warn,
-                ));
-            }
+        let mut nk = btnw("new_key");
+        if busy.as_deref() == Some("new-key") {
+            let mut a = acts
+                .iter()
+                .find(|a| a.id == "new_key")
+                .cloned()
+                .expect("new_key");
+            a.label = "Making...".into();
+            nk = (
+                super::w::action::button(cx, t, &a, On::Page, true, || {}),
+                a.width(),
+            );
+        }
+        rows.push(addr_row(t, w, "API keys", vec![], vec![nk]));
+        rows.push(sentence(t, KEYS_NOTE, w, t.text_muted));
+        if let Some((key, label, _)) = &made {
+            rows.push(sentence(t, &made_sentence(label), w, t.ok));
+            rows.push(sentence(t, &format!("  {key}"), w, t.info));
+            rows.push(
+                Element::new()
+                    .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
+                    .child(btn("copy_made"))
+                    .child(btn("made_done"))
+                    .build(),
+            );
         }
     }
     if let Some((tone, text)) = st.key_notice.get() {
@@ -1620,15 +1721,16 @@ fn cards(cx: Scope, pcx: Scope, ctx: &Ctx, t: &TokenSet, st: &Page) -> View {
             .build(),
     );
     let kind = SNIPPETS[st.snippet.get() % SNIPPETS.len()].0;
-    for l in snippet(kind, &d, kept.as_deref(), reveal, false).lines() {
+    let made_key = made.as_ref().map(|m| m.0.clone());
+    for l in snippet(kind, &d, made_key.as_deref(), false).lines() {
         rows.push(sentence(t, &format!("  {l}"), w, t.info));
     }
-    let note = if kept.is_some() {
-        "The key is hidden here; Copy example includes it."
+    let note = if made_key.is_some() {
+        "The new key is hidden here; Copy example includes it."
     } else if s(&d, "access") == "open" {
         ""
     } else {
-        "Replace YOUR_GATEWAY_TOKEN with your token."
+        "Replace YOUR_API_KEY with a key made under Connect your app."
     };
     if !note.is_empty() {
         rows.push(sentence(t, note, w, t.text_muted));
@@ -1638,7 +1740,11 @@ fn cards(cx: Scope, pcx: Scope, ctx: &Ctx, t: &TokenSet, st: &Page) -> View {
         "Docs",
         &format!(
             "What is supported, and a first request with your base URL{}.",
-            if kept.is_some() { " and your key" } else { "" }
+            if made_key.is_some() {
+                " and your key"
+            } else {
+                ""
+            }
         ),
         None,
         w,
@@ -2040,7 +2146,16 @@ fn logs_region(pcx: Scope, ctx: &Ctx, t: &TokenSet, st: &Page) -> View {
                         )),
                     }];
                     if !narrow {
-                        cells.push(Cell::text(c[1].clone(), t.text));
+                        // The API key that made it, under the client (round 16).
+                        let label = log_key_label(r);
+                        cells.push(if label.is_empty() {
+                            Cell::text(c[1].clone(), t.text)
+                        } else {
+                            Cell::Lines(vec![
+                                vec![Ink::new(c[1].clone(), t.text)],
+                                vec![Ink::new(label.to_string(), t.text_muted)],
+                            ])
+                        });
                     }
                     cells.push(Cell::text(c[2].clone(), t.text));
                     if !narrow {
@@ -2085,6 +2200,258 @@ fn logs_region(pcx: Scope, ctx: &Ctx, t: &TokenSet, st: &Page) -> View {
     )
 }
 
+/// New key: a one-field form (the web's inline form) — Name, [Make key]
+/// [Cancel]; the key comes back once and shows in Connect your app.
+fn open_new_key(pcx: Scope, ctx: &Ctx, st: &Page) {
+    let c = ctx.clone();
+    let st = st.clone();
+    super::w::FormModal::new("New key")
+        .lead(NAME_HELP)
+        .size(72, 12)
+        .open(ctx, pcx, move |mcx, close, guard, inner_w| {
+            let t = use_theme(mcx).get().tokens;
+            let name = mcx.signal(String::new());
+            let esc_armed = mcx.signal(false);
+            let form_error = mcx.signal(Option::<String>::None);
+            super::install_dirty_guard(
+                mcx,
+                &guard,
+                vec![(name, String::new())],
+                esc_armed,
+                form_error,
+            );
+            let make = {
+                let c = c.clone();
+                let close = close.clone();
+                let st = st.clone();
+                move || {
+                    let label = name.get_untracked().trim().to_string();
+                    if label.is_empty() {
+                        form_error.set(Some(NAME_REQUIRED.into()));
+                        return;
+                    }
+                    if st.busy.get_untracked().is_some() {
+                        return;
+                    }
+                    st.busy.set(Some("new-key".into()));
+                    st.key_notice.set(None);
+                    st.made.set(None);
+                    c.store
+                        .json
+                        .set_write(KEY_NEW_KEY, Some(WriteState::Pending));
+                    c.send(Cmd::Json(JsonCmd::Send {
+                        key: KEY_NEW_KEY.into(),
+                        method: "POST".into(),
+                        path: PATH_KEYS.into(),
+                        body: serde_json::json!({ "label": label }),
+                        slow: false,
+                        label: "OpenAI API: new key".into(),
+                        reload: vec![(KEY_KEYS.into(), PATH_KEYS.into())],
+                        // The answer carries the key: page-local, never journaled.
+                        journal: false,
+                    }));
+                    close();
+                }
+            };
+            let make_enter = make.clone();
+            let close_x = {
+                let (close, guard) = (close.clone(), guard.clone());
+                move || {
+                    let handled = guard.borrow().as_ref().map(|g| g()).unwrap_or(false);
+                    if !handled {
+                        close();
+                    }
+                }
+            };
+            Element::new()
+                .style(LayoutStyle::column().gap(0))
+                .child(super::w::fill_line(
+                    LayoutStyle::line(1).shrink(0.0),
+                    vec![Ink::new(NAME_LABEL, t.text).bold()],
+                    None,
+                ))
+                .child(
+                    super::w::caret_tracked(
+                        mcx,
+                        c.ui.caret,
+                        TextInput::new()
+                            .value(name)
+                            .placeholder(NAME_PLACEHOLDER)
+                            .on_submit(move |_: &str| make_enter())
+                            .layout(LayoutStyle::default().w(inner_w.max(20)).h(1))
+                            .element(mcx, &t),
+                    )
+                    .autofocus()
+                    .build(),
+                )
+                .child(dyn_view(LayoutStyle::column().shrink(0.0), move || {
+                    let t = abstracttui::app::current_theme().tokens;
+                    match form_error.get() {
+                        Some(e) => sentence(&t, &e, inner_w, t.error),
+                        None => Element::new().style(LayoutStyle::default().h(0)).build(),
+                    }
+                }))
+                .child(super::w::fill_line(
+                    LayoutStyle::line(1).shrink(0.0),
+                    vec![],
+                    None,
+                ))
+                .child(super::w::form::button_row(vec![
+                    super::w::action::button(
+                        mcx,
+                        &t,
+                        &Action::label("make", MAKE_KEY),
+                        On::Raised,
+                        true,
+                        make,
+                    ),
+                    super::w::action::button(
+                        mcx,
+                        &t,
+                        &Action::label("close", "Cancel"),
+                        On::Raised,
+                        true,
+                        close_x,
+                    ),
+                ]))
+                .build()
+        });
+}
+
+/// A key row's action (a click or its key): Revoke asks first.
+fn key_action(pcx: Scope, ctx: &Ctx, st: &Page, fp: &str, id: &str) {
+    if id != "revoke" {
+        return;
+    }
+    let row = ctx
+        .store
+        .json
+        .get_untracked(KEY_KEYS)
+        .ready()
+        .and_then(|v| {
+            v.get("keys")
+                .and_then(Value::as_array)
+                .and_then(|a| a.iter().find(|k| s(k, "fingerprint") == fp).cloned())
+        });
+    let Some(row) = row else {
+        return;
+    };
+    if st.busy.get_untracked().is_some() {
+        return;
+    }
+    st.key_sel.set(Some(fp.to_string()));
+    let label = s(&row, "label").to_string();
+    let (c, st2, fp2) = (ctx.clone(), st.clone(), fp.to_string());
+    super::w::Confirm::danger(revoke_sentence(&label), "Revoke", "Cancel").open(
+        pcx,
+        ctx.ui,
+        move || {
+            st2.busy.set(Some(format!("revoke:{fp2}")));
+            st2.revoking.set(label.clone());
+            st2.key_notice.set(None);
+            c.store
+                .json
+                .set_write(KEY_REVOKE, Some(WriteState::Pending));
+            c.send(Cmd::Json(JsonCmd::Send {
+                key: KEY_REVOKE.into(),
+                method: "DELETE".into(),
+                path: format!("{PATH_KEYS}/{}", urlencode(&fp2)),
+                body: Value::Null,
+                slow: false,
+                label: format!("OpenAI API: revoke {label}"),
+                reload: vec![(KEY_KEYS.into(), PATH_KEYS.into())],
+                journal: false,
+            }));
+        },
+    );
+}
+
+/// "Your API keys": the account's named keys (Name · Created · Last used ·
+/// Fingerprint, Revoke). Nothing for a console without an account.
+fn keys_region(pcx: Scope, ctx: &Ctx, t: &TokenSet, st: &Page) -> View {
+    let ctx = ctx.clone();
+    let tt = *t;
+    let st = st.clone();
+    dyn_view_scoped(LayoutStyle::column().gap(0).shrink(0.0), move |gcx| {
+        let t = tt;
+        let store = ctx.store;
+        let page = store.json.get(KEY_PAGE);
+        let Some(d) = page.ready() else {
+            return Element::new().style(LayoutStyle::default().h(0)).build();
+        };
+        if !named_keys(d) {
+            return Element::new().style(LayoutStyle::default().h(0)).build();
+        }
+        let vp = crate::ui::page_viewport(gcx).get();
+        let w = (vp.w - 2).max(20);
+        let keys = store.json.get(KEY_KEYS);
+        let mut col = Element::new()
+            .style(LayoutStyle::column().gap(0).shrink(0.0))
+            .child(super::w::section(&t, KEYS_TABLE));
+        if let Loadable::Failed(e) = &keys {
+            col = col.child(sentence(
+                &t,
+                &format!("Could not read your API keys. {}", e.message),
+                w,
+                t.error,
+            ));
+        }
+        let list: Option<Vec<Value>> = keys.ready().map(|v| {
+            v.get("keys")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+        });
+        let narrow = w < 90;
+        let mut cols = vec![Col::new("Name", ColW::Flex { weight: 1, min: 10 })];
+        if !narrow {
+            cols.push(Col::new("Created", ColW::Fit { min: 10, max: 20 }));
+        }
+        cols.push(Col::new("Last used", ColW::Flex { weight: 1, min: 10 }));
+        if !narrow {
+            cols.push(Col::new("Fingerprint", ColW::Fit { min: 12, max: 12 }));
+        }
+        cols.push(Col::new("", ColW::Fit { min: 8, max: 10 }));
+        let rows: Vec<WRow> = list
+            .clone()
+            .unwrap_or_default()
+            .iter()
+            .map(|k| {
+                let c = key_cells(k);
+                let mut cells = vec![Cell::text(c[0].clone(), t.text)];
+                if !narrow {
+                    // The column says Created: the cell is the time.
+                    cells.push(Cell::text(when(s(k, "created_at")), t.text_muted));
+                }
+                cells.push(Cell::text(c[2].clone(), t.text_muted));
+                if !narrow {
+                    cells.push(Cell::text(c[3].clone(), t.info));
+                }
+                cells.push(Cell::Actions(key_actions(k)));
+                WRow::new(s(k, "fingerprint").to_string(), cells)
+            })
+            .collect();
+        if st.key_sel.get_untracked().is_none() {
+            if let Some(first) = list.as_ref().and_then(|r| r.first()) {
+                st.key_sel.set(Some(s(first, "fingerprint").to_string()));
+            }
+        }
+        let empty = if list.is_some() {
+            KEYS_EMPTY
+        } else {
+            KEYS_READING
+        };
+        let (ca, sa) = (ctx.clone(), st.clone());
+        let table = DataTable::new(cols, rows, st.key_sel)
+            .width(w)
+            .max_rows((vp.h / 5).max(2))
+            .empty(empty)
+            .on_action(move |k, id| key_action(pcx, &ca, &sa, k, id))
+            .view(gcx, &t);
+        col.child(table).build()
+    })
+}
+
 /// Percent-encode a path segment.
 fn urlencode(raw: &str) -> String {
     let mut out = String::new();
@@ -2117,26 +2484,31 @@ mod tests {
     }
 
     #[test]
-    fn kept_token_checks_the_fingerprint() {
-        let fp = &sha256_hex(b"tok-1")[..12];
-        let d = serde_json::json!({"key": {"fingerprint": fp}});
-        assert_eq!(
-            kept_token(&d, Some("tok-1")),
-            (Some("tok-1".into()), KeyCheck::Match)
-        );
-        assert_eq!(kept_token(&d, Some("tok-2")), (None, KeyCheck::Stale));
-        assert_eq!(kept_token(&d, None), (None, KeyCheck::Missing));
+    fn snippet_masks_unless_copied() {
+        let d = serde_json::json!({"base_url": "http://h:1/v1", "example_model": "m/x", "access": "token"});
+        let shown = snippet("curl", &d, Some("sekret"), false);
+        assert!(shown.contains(MASK) && !shown.contains("sekret"), "{shown}");
+        assert!(snippet("python", &d, Some("sekret"), true).contains("api_key=\"sekret\""));
+        assert!(snippet("js", &d, None, false).contains("YOUR_API_KEY"));
+        let open = serde_json::json!({"base_url": "b", "access": "open"});
+        assert!(snippet("curl", &open, None, true).contains("not-needed"));
     }
 
     #[test]
-    fn snippet_masks_unless_copied() {
-        let d = serde_json::json!({"base_url": "http://h:1/v1", "example_model": "m/x", "access": "token"});
-        let shown = snippet("curl", &d, Some("sekret"), false, false);
-        assert!(shown.contains(MASK) && !shown.contains("sekret"), "{shown}");
-        assert!(snippet("python", &d, Some("sekret"), false, true).contains("api_key=\"sekret\""));
-        assert!(snippet("js", &d, None, false, false).contains("YOUR_GATEWAY_TOKEN"));
-        let open = serde_json::json!({"base_url": "b", "access": "open"});
-        assert!(snippet("curl", &open, None, false, true).contains("not-needed"));
+    fn key_cells_say_when_and_from_where() {
+        let k = serde_json::json!({"label": "laptop", "fingerprint": "abcdef012345",
+            "created_at": "2026-10-08T16:00:00+00:00", "last_used_at": null, "last_client": null});
+        let c = key_cells(&k);
+        assert_eq!(c[0], "laptop");
+        assert!(c[1].starts_with("Created 2026-10-08 "), "{c:?}");
+        assert_eq!(c[2], "Never used");
+        assert_eq!(c[3], "abcdef012345");
+        let used = serde_json::json!({"label": "x", "last_used_at": "2026-10-08T17:00:00+00:00", "last_client": "192.168.1.20"});
+        let c = key_cells(&used);
+        assert!(
+            c[2].starts_with("Last used 2026-10-08 ") && c[2].ends_with(" from 192.168.1.20"),
+            "{c:?}"
+        );
     }
 
     #[test]

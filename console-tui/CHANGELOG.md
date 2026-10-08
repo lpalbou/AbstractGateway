@@ -29,6 +29,13 @@ actions, switches, choices, dialogs — and every control is still reachable fro
 - Your own Email dialog's **My provider uses a different login name** (`Ctrl+O`) and **Use a different account**
   (`Ctrl+U`) are links you can click.
 ### Added
+- **Named API keys on the OpenAI API page** (AbstractGateway's named keys for `/v1`): **New key** asks for a
+  **Name** and shows the key once with **Copy** / **Done**; **Your API keys** lists name, created, last used (time
+  and address, or "Never used") and fingerprint, with **Revoke** → "Revoke “<name>”? Apps using it stop working at
+  once. …" [Revoke] [Cancel]. The page no longer shows, copies or rotates your gateway token (`v` / `y` are gone;
+  `n` makes a named key, `d` revokes the selected one). Recent requests name the key under the client. On Accounts,
+  the **OpenAI API — <id>** dialog lists that account's keys (never a key) with **Revoke**. Needs an AbstractGateway
+  with `/api/gateway/me/openai-keys`.
 - **Light and dark themes** built from the web console's palettes: `--theme gateway-light` / `gateway-dark`
   (default), and the ☾ / ☼ switch in the header (in the status bar on terminals narrower than 90 columns) or
   `Ctrl+T`.

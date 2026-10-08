@@ -7621,10 +7621,15 @@ you can click.
   - **Status:** the state, the Base URL with **Copy** (`b`), the **Endpoint**
     switch (`e`), **Restart** (`x`) and **Check setup** (`h`), with the check's
     rows.
-  - **Connect your app:** your API key with **Show** / **Hide** (`v`),
-    **Copy** (`y`) and **New key** (`n`). New key asks "Make a new key? It
-    replaces your gateway token: …" with [New key] [Cancel]. The focus starts
-    on Cancel, so `Enter` keeps your token.
+  - **Connect your app:** the Base URL and **API keys** with **New key**
+    (`n`). New key asks for a **Name** ([Make key] [Cancel]); the key is then
+    shown once with **Copy** and **Done** ("Key “<name>” made. Copy it now:
+    the gateway shows a key only once."). Under the cards, **Your API keys**
+    lists each key's name, when it was made, when it was last used and from
+    where, and its fingerprint, with **Revoke** (`d`): "Revoke “<name>”? Apps
+    using it stop working at once. …" [Revoke] [Cancel], focus on Cancel.
+    Signed in with the gateway's own token (no account), the row says named
+    keys belong to an account.
   - **Access** (admin): **Authentication** [Protected (API key)] [Open (no
     key)] (`a`), and the pickers **Requests without a key run as** (`u`) and
     **Who can connect** (`w`), each with its options' sentences. A listener
@@ -7632,8 +7637,8 @@ you can click.
   - **Docs:** the links **OpenAI API compatibility** and **AbstractCore
     server**, then [curl] [Python] [JavaScript] (`s`) and **Copy example**
     (`c`).
-  - **Recent requests** is a table: Time, Client, Model, Tokens, Latency,
-    Status, Run. The Time link (`Enter`, `f`) opens the request's record, with
+  - **Recent requests** is a table: Time, Client (with the API key's name
+    under it), Model, Tokens, Latency, Status, Run. The Time link (`Enter`, `f`) opens the request's record, with
     **Copy request**, **Copy response**, **Open in Observer** and **Close**.
     The Run link (`o`) opens Observer.
   - The Endpoint, Restart, Check setup and Access controls are admin-only.
