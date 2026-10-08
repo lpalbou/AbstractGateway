@@ -198,6 +198,53 @@ def connection_words() -> dict:
 SCREEN_FIXTURES["connection"] = connection_words
 
 
+def workflows_words() -> dict:
+    """R15-A Workflows: the page's tooltips, sentences, switches and columns ({n} = the workflow)."""
+    src = read("console.py")
+    ui = read("console_ui.py")
+    def tip(cls: str) -> str:
+        t = need(src, r'workflowIconButton\("' + cls + r'", ICONS\.\w+, `([^`]*)`', f"{cls} tooltip")
+        return t.replace("${label}", "{n}").replace("${row.name}", "{n}")
+    th = need(src, r'<thead><tr>(<th class="workflows-col-name">.*?)</tr></thead>', "workflows table head")
+    cols = re.findall(r'<th[^>]*>(?:<span[^>]*>)?([^<]+)<', th)
+    if len(cols) < 6:
+        fail(f"workflows table head: expected 6+ columns, found {cols!r}.")
+    def switch(id_: str) -> str:
+        return need(src, r'afSwitchCreate\(\{ id: "' + id_ + r'", label: "([^"]*)"', f"{id_} switch")
+    return {
+        "export_tip": tip("workflows-export"),
+        "open_tip": tip("workflows-open-flow"),
+        "unarchive_tip": tip("workflows-unarchive"),
+        "archive_tip": tip("workflows-archive"),
+        "edit_tip": tip("workflows-desc-edit"),
+        "archive_confirm": need(src, r'const text = `(Archive \$\{label\}\? It disappears[^`]*)`', "archive confirm").replace("${label}", "{n}"),
+        "reload_tip": need(src, r'<button id="workflows-refresh"[^>]*data-af-tip="([^"]*)"', "reload tooltip"),
+        "import_label": need(src, r'<button id="workflows-import"[^>]*>([^<]*)</button>', "import label"),
+        "import_tip": need(src, r'<button id="workflows-import"[^>]*title="([^"]*)"', "import tooltip"),
+        "search_placeholder": need(src, r'<input id="workflows-search"[^>]*placeholder="([^"]*)"', "search placeholder"),
+        "broken_archive_tip": need(src, r'`Archive \$\{g\.count\}`;\s*ar\.title = "([^"]*)";', "broken archive tooltip"),
+        "purpose": need(src, r'<p class="section-note workflows-purpose">([^<]*)</p>', "purpose"),
+        "available_help": need(src, r'const WORKFLOW_AVAILABLE_HELP = "([^"]*)";', "available help"),
+        "broken_sentence": need(src, r'<p class="section-note">(These bundle files are on disk[^<]*)</p>', "broken sentence"),
+        "streaming_label": need(ui, r'const STREAMING_DEFAULT_LABEL = "([^"]*)";', "streaming label"),
+        "streaming_help": need(ui, r'const STREAMING_DEFAULT_DESC = "([^"]*)";', "streaming help"),
+        "other_types": need(ui, r'<summary>(Other workflow types) \(\$\{nOther\}\)</summary>', "other workflow types"),
+        "settings": need(ui, r'<h3 class="section-subtitle">([^<]*)</h3>`;\n\s*if \(!r \|\| typeof r !== "object"', "settings subheading", re.S),
+        "switch_drafts": switch("workflows-show-drafts"),
+        "switch_older": switch("workflows-show-older"),
+        "switch_archived": switch("workflows-show-archived"),
+        "col_name": cols[0],
+        "col_what": cols[1],
+        "col_version": cols[2],
+        "col_source": cols[3],
+        "col_usedby": cols[4],
+        "col_available": cols[5],
+    }
+
+
+SCREEN_FIXTURES["workflows"] = workflows_words
+
+
 def screens_main(write: bool) -> int:
     rc = 0
     for name, build_fn in SCREEN_FIXTURES.items():
