@@ -5637,7 +5637,7 @@ Current direct Gateway endpoints:
  "source": "capability_defaults"}
 ```
 
-A route the administrator has not set reads `{"configured": false, "provider": null, "model": null, "note": "No gateway default is set for …"}`. A synthesis or transcription request that names no provider and no model runs exactly these routes, so apps show "Gateway default · supertonic / supertonic-3" from here — never from the voice catalog's engine-side fields. The catalog repeats the answer (`gateway_defaults`; `active_tts_provider` / `active_stt_provider` = the configured routes, absent when unset). `/audio/transcribe` returns the route that ran (`provider`, `model`) and `duration_ms`; a `language` hint skips the engine's language detection (faster-whisper large-v3 on an Apple-Silicon CPU: ~25 s → ~9 s for a 4 s clip).
+A route the administrator has not set reads `{"configured": false, "provider": null, "model": null, "note": "No gateway default is set for …"}`. A synthesis or transcription request that names no provider and no model runs exactly these routes, so apps show "Gateway default · supertonic / supertonic-3" from here — never from the voice catalog's engine-side fields. The catalog repeats the answer (`gateway_defaults`; `active_tts_provider` / `active_stt_provider` = the configured routes, absent when unset). A configured speech-input route can carry AbstractCore's served `hint` `{code, sentence, route}`: on Apple silicon, a `faster-whisper` route runs on the processor, and the hint says that `mlx-whisper` runs the same model on the Apple GPU (`route` is what applying the recommendation writes; nothing changes by itself). Apps show `hint.sentence` verbatim next to the engine line; the console's defaults grid shows the same sentence from the `input.voice` row's `route_hint`. `/audio/transcribe` returns the route that ran (`provider`, `model`) and `duration_ms`; a `language` hint skips the engine's language detection (faster-whisper large-v3 on an Apple-Silicon CPU: ~25 s → ~9 s for a 4 s clip).
 
 `/voice/tts` returns a durable audio artifact after synthesis. `/voice/tts/stream`
 returns JSON Lines stream events for progressive playback when discovery advertises
@@ -10441,6 +10441,13 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+
+- `GET /api/gateway/voice/defaults`: the speech-input entry carries AbstractCore's served `hint` `{code, sentence, route}` when there is one (on Apple silicon, a faster-whisper route runs on the processor while mlx-whisper runs the same model on the GPU). The console's defaults grid shows the `input.voice` row's `route_hint` sentence; "Apply recommended" switches the route.
+- The fallback transcription model list offers `large-v3-turbo` and covers the `mlx-whisper` engine.
 
 ## [0.13.1] - 2026-10-08
 
