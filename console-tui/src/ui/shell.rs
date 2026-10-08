@@ -385,18 +385,18 @@ pub fn header(cx: Scope, ctx: &Ctx, t: &TokenSet, vp: Size) -> View {
             super::docs::open(&c, cx);
         }));
     }
+    row = row.child(theme_button(cx, &tt));
+    row.build()
+}
+
+/// The ☾/☼ appearance switch (header; the status bar under 90 columns).
+pub fn theme_button(cx: Scope, t: &TokenSet) -> View {
+    let mut tt = *t;
+    tt.surface_raised = t.bg;
     let dark = abstracttui::app::current_theme().dark;
     let a = Action::label("theme", if dark { "☾" } else { "☼" })
         .tooltip("Appearance: switch the light / dark theme  (Ctrl+T)");
-    row = row.child(action::button(
-        cx,
-        &tt,
-        &a,
-        On::Page,
-        false,
-        super::w::theme::flip,
-    ));
-    row.build()
+    action::button(cx, &tt, &a, On::Page, false, super::w::theme::flip)
 }
 
 /// The `?` keys panel: every key of the current screen and the globals.

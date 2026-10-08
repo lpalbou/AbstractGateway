@@ -70,13 +70,17 @@ OPTIONS:
                  gateway's versions from GET /api/gateway/about at
                  --gateway-url)
 
+MOUSE: click a tab, a button, a toggle or a row; hover a button for
+      what it does; wheel scrolls lists.
+
 KEYS: Tab focus · Enter activate · Ctrl+N next step · Ctrl+P / Esc back
       (in a text field Esc first releases the caret) ·
+      ← / → previous/next screen (outside text fields) ·
       ] / [ next/back (outside text fields) ·
       1-9,0 N R S screens (browse) ·
       Ctrl+G setup guide (browse: reopen; guide: go to any step, leave,
       or Skip setup) ·
-      r refresh · F1 / ? About · F2 docs assistant (signed in) ·
+      r refresh · F1 About · ? keys · Ctrl+T light/dark · F2 docs assistant (signed in) ·
       F3 gateway host (switches Workflows paused and Start at login;
       restart, quit, update) ·
       Ctrl+L repaint · q / Ctrl+C quit

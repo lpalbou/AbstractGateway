@@ -2071,131 +2071,141 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
         // the hint line disappearing under content pressure would take
         // the app's teachable surface with it.
         .style(LayoutStyle::column().shrink(0.0))
-        .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
-            // R15 §2.7: ONE status row — the notice / busy lane on the left,
-            // the hints that apply on the right.
-            let notice_spans: Vec<util::SpanSpec> = (|| {
-                // Busy strip: in-flight ops with elapsed seconds. Reading
-                // tick keeps it live while ops run; idle renders nothing.
-                let t = theme.get().tokens;
-                let _ = store.tick.get();
-                let ops = store.busy.get();
-                // Engine startup notices (adversary round-3): the engine's
-                // zero-collapse diagnostic (0240 #3) and input-path
-                // degradations publish into use_startup_notices — this app
-                // never rendered that signal, so the header crush was being
-                // NAMED in every debug run into a lane nobody read. App
-                // notices win the slot (actionable acks); the engine line
-                // shows whenever the app lane is idle.
-                let notice = store.notice.get();
-                if ops.is_empty() {
-                    return match notice {
-                        Some(n) => vec![span(format!(" {n}"), t.text_muted)],
-                        None => {
-                            // Only DIAGNOSTIC engine notices surface here
-                            // (degradations, zero-collapse warnings). The
-                            // capability summary ("caps: truecolor …") is
-                            // ambient INFO the engine always publishes —
-                            // showing it permanently in warn-amber made it
-                            // read as a problem (operator question
-                            // 2026-07-25: "what does caps true color
-                            // mean?"). Idle stays blank.
-                            // Newest notice that HUMANIZES to something
-                            // operator-actionable (caps info + suppressed
-                            // layout diagnostics render empty and are
-                            // skipped — REG-1: layout notices never clear,
-                            // so surfacing them permanently is worse than
-                            // silence for a non-developer).
-                            let shown = engine_notices.with(|v| {
-                                v.iter().rev().find_map(|n| {
-                                    if n.trim_start().starts_with("caps") {
-                                        return None;
-                                    }
-                                    let h = humanize_engine_notice(n);
-                                    (!h.trim().is_empty()).then_some(h)
-                                })
-                            });
-                            match shown {
-                                Some(en) => vec![span(format!(" engine: {en}"), t.warn)],
-                                None => vec![span(String::new(), t.text_muted)],
+        .child(dyn_view_scoped(
+            LayoutStyle::line(1).shrink(0.0),
+            move |fcx| {
+                // R15 §2.7: ONE status row — the notice / busy lane on the left,
+                // the hints that apply on the right.
+                let notice_spans: Vec<util::SpanSpec> = (|| {
+                    // Busy strip: in-flight ops with elapsed seconds. Reading
+                    // tick keeps it live while ops run; idle renders nothing.
+                    let t = theme.get().tokens;
+                    let _ = store.tick.get();
+                    let ops = store.busy.get();
+                    // Engine startup notices (adversary round-3): the engine's
+                    // zero-collapse diagnostic (0240 #3) and input-path
+                    // degradations publish into use_startup_notices — this app
+                    // never rendered that signal, so the header crush was being
+                    // NAMED in every debug run into a lane nobody read. App
+                    // notices win the slot (actionable acks); the engine line
+                    // shows whenever the app lane is idle.
+                    let notice = store.notice.get();
+                    if ops.is_empty() {
+                        return match notice {
+                            Some(n) => vec![span(format!(" {n}"), t.text_muted)],
+                            None => {
+                                // Only DIAGNOSTIC engine notices surface here
+                                // (degradations, zero-collapse warnings). The
+                                // capability summary ("caps: truecolor …") is
+                                // ambient INFO the engine always publishes —
+                                // showing it permanently in warn-amber made it
+                                // read as a problem (operator question
+                                // 2026-07-25: "what does caps true color
+                                // mean?"). Idle stays blank.
+                                // Newest notice that HUMANIZES to something
+                                // operator-actionable (caps info + suppressed
+                                // layout diagnostics render empty and are
+                                // skipped — REG-1: layout notices never clear,
+                                // so surfacing them permanently is worse than
+                                // silence for a non-developer).
+                                let shown = engine_notices.with(|v| {
+                                    v.iter().rev().find_map(|n| {
+                                        if n.trim_start().starts_with("caps") {
+                                            return None;
+                                        }
+                                        let h = humanize_engine_notice(n);
+                                        (!h.trim().is_empty()).then_some(h)
+                                    })
+                                });
+                                match shown {
+                                    Some(en) => vec![span(format!(" engine: {en}"), t.warn)],
+                                    None => vec![span(String::new(), t.text_muted)],
+                                }
                             }
-                        }
-                    };
-                }
-                let mut parts = Vec::new();
-                // The latest notice leads (it is the ack of what the operator
-                // just did); the busy ops follow it on the same line.
-                if let Some(n) = notice {
-                    parts.push(span(format!(" {n}"), t.text_muted));
-                    parts.push(span(" ·", t.text_faint));
-                }
-                for (i, op) in ops.iter().enumerate() {
-                    if i > 0 {
-                        parts.push(span(" · ", t.text_faint));
+                        };
                     }
-                    let secs = op.started.elapsed().as_secs();
-                    let flag = if secs >= 60 {
-                        " (still running — model calls can take a while)"
-                    } else {
-                        ""
-                    };
-                    parts.push(span(format!(" ⟳ {}… {}s{}", op.label, secs, flag), t.info));
+                    let mut parts = Vec::new();
+                    // The latest notice leads (it is the ack of what the operator
+                    // just did); the busy ops follow it on the same line.
+                    if let Some(n) = notice {
+                        parts.push(span(format!(" {n}"), t.text_muted));
+                        parts.push(span(" ·", t.text_faint));
+                    }
+                    for (i, op) in ops.iter().enumerate() {
+                        if i > 0 {
+                            parts.push(span(" · ", t.text_faint));
+                        }
+                        let secs = op.started.elapsed().as_secs();
+                        let flag = if secs >= 60 {
+                            " (still running — model calls can take a while)"
+                        } else {
+                            ""
+                        };
+                        parts.push(span(format!(" ⟳ {}… {}s{}", op.label, secs, flag), t.info));
+                    }
+                    parts
+                })();
+                let width = vp_footer.get().w;
+                let wizard = ui.wizard.get();
+                let _ = ui.screen.get();
+                let _ = store.conn.get();
+                let _ = store.acc.tab.get();
+                let owned = screen_hint_pairs(&ctx_hints);
+                let _ = wizard;
+                let mut pairs: Vec<(&str, &str)> = Vec::new();
+                // A FOCUSED control names itself first (A2: the R9 kit rule,
+                // tooltip on keyboard focus — the status bar carries it too).
+                let focus = ui.focus_line.get();
+                if let Some(f) = focus.as_deref() {
+                    pairs.push((f, ""));
+                    pairs.push(("Enter", "press"));
+                    pairs.push(("Tab", "next"));
                 }
-                parts
-            })();
-            let width = vp_footer.get().w;
-            let wizard = ui.wizard.get();
-            let _ = ui.screen.get();
-            let _ = store.conn.get();
-            let _ = store.acc.tab.get();
-            let owned = screen_hint_pairs(&ctx_hints);
-            let _ = wizard;
-            let mut pairs: Vec<(&str, &str)> = Vec::new();
-            // A FOCUSED control names itself first (A2: the R9 kit rule,
-            // tooltip on keyboard focus — the status bar carries it too).
-            let focus = ui.focus_line.get();
-            if let Some(f) = focus.as_deref() {
-                pairs.push((f, ""));
-                pairs.push(("Enter", "press"));
-                pairs.push(("Tab", "next"));
-            }
-            for (k, v) in &owned {
-                pairs.push((k.as_str(), v.as_str()));
-            }
-            // The key-hint bar (R7.2): wraps whole pairs onto a second
-            // line instead of cutting the row's tail.
-            // R15 §2.7: ONE status row.
-            let t = theme.get().tokens;
-            let nw: i32 = notice_spans
-                .iter()
-                .map(|s| abstracttui::text::width(&s.0))
-                .sum();
-            // A notice is a sentence: it gets the row (never cut while it
-            // fits); the hints keep what is left.
-            let nw = nw.min(width - 12);
-            let mut row = Element::new().style(LayoutStyle::row().height(Dimension::Cells(1)));
-            if nw > 0 {
-                row = row.child(util::line_styled(
-                    LayoutStyle::default()
-                        .width(Dimension::Cells(nw + 1))
-                        .height(Dimension::Cells(1))
-                        .shrink(0.0),
-                    notice_spans,
-                ));
-            }
-            row.child(
-                Element::new()
-                    .style(LayoutStyle::default().grow(1.0).height(Dimension::Cells(1)))
-                    .child(kit::footer_hint_bar(
-                        &t,
-                        &pairs,
-                        (width - nw - 1).max(10),
-                        1,
-                    ))
-                    .build(),
-            )
-            .build()
-        }))
+                for (k, v) in &owned {
+                    pairs.push((k.as_str(), v.as_str()));
+                }
+                // The key-hint bar (R7.2): wraps whole pairs onto a second
+                // line instead of cutting the row's tail.
+                // R15 §2.7: ONE status row.
+                let t = theme.get().tokens;
+                let nw: i32 = notice_spans
+                    .iter()
+                    .map(|s| abstracttui::text::width(&s.0))
+                    .sum();
+                // A notice is a sentence: it gets the row (never cut while it
+                // fits); the hints keep what is left.
+                let nw = nw.min(width - 12);
+                let mut row = Element::new().style(LayoutStyle::row().height(Dimension::Cells(1)));
+                if nw > 0 {
+                    row = row.child(util::line_styled(
+                        LayoutStyle::default()
+                            .width(Dimension::Cells(nw + 1))
+                            .height(Dimension::Cells(1))
+                            .shrink(0.0),
+                        notice_spans,
+                    ));
+                }
+                // The header has no room for the ☾/☼ switch under 90 columns:
+                // it sits at the status bar's right end there, one click away.
+                let theme_here = width < 90;
+                let reserve = if theme_here { 4 } else { 0 };
+                row = row.child(
+                    Element::new()
+                        .style(LayoutStyle::default().grow(1.0).height(Dimension::Cells(1)))
+                        .child(kit::footer_hint_bar(
+                            &t,
+                            &pairs,
+                            (width - nw - 1 - reserve).max(10),
+                            1,
+                        ))
+                        .build(),
+                );
+                if theme_here {
+                    row = row.child(shell::theme_button(fcx, &t));
+                }
+                row.build()
+            },
+        ))
         .build()
 }
 

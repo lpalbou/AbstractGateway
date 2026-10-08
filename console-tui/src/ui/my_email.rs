@@ -34,7 +34,7 @@ use abstracttui::widgets::Scroll;
 use serde_json::json;
 
 use super::util::{ellipsize, field, line, span, span_bold, wrap_text};
-use super::{open_form, Ctx};
+use super::Ctx;
 use crate::store::email::{
     address_domain, imap_connect_body, limits_body, policy_body, MyEmail, ServerDefaults,
     ServerSettings, DISCOVERY_NO_DEFAULTS,
@@ -346,11 +346,10 @@ fn open_for(cx: Scope, ctx: &Ctx, entity: Option<String>) {
         })
         .unwrap_or_default();
     let title = format!("Email — {}", entity.clone().unwrap_or(own_id));
-    open_form(
+    super::w::FormModal::new(title.clone()).size(100, 60).open(
         ctx,
         cx,
-        crate::ui::page_viewport(cx).get_untracked(),
-        move |mcx, close| {
+        move |mcx, close, _guard, _inner_w| {
             if entity.is_some() {
                 let ctx_reset = ctx2.clone();
                 mcx.on_cleanup(move || {
@@ -530,7 +529,6 @@ fn open_for(cx: Scope, ctx: &Ctx, entity: Option<String>) {
                         p.other_account.set(show);
                     }
                 })
-                .child(line(vec![span_bold(title.clone(), t0.accent)]))
                 .child(
                     Scroll::new(body)
                         .layout(LayoutStyle::default().grow(1.0).min_h(3))
@@ -557,12 +555,14 @@ fn open_for(cx: Scope, ctx: &Ctx, entity: Option<String>) {
                         )]),
                     }
                 }))
-                .child(
-                    Button::new("Close (Esc)")
-                        .on_click(move || close_cancel())
-                        .element(mcx, &t0)
-                        .build(),
-                )
+                .child(super::w::form::button_row(vec![super::w::action::button(
+                    mcx,
+                    &t0,
+                    &super::w::Action::label("close", "Close"),
+                    super::w::action::On::Raised,
+                    true,
+                    move || close_cancel(),
+                )]))
                 .build()
         },
     );
@@ -1750,11 +1750,11 @@ pub fn open_other(
     mailbox_line: String,
 ) {
     let ctx2 = ctx.clone();
-    open_form(
+    let title = format!("Email \u{2014} {user_id}");
+    super::w::FormModal::new(title).size(84, 20).open(
         ctx,
         cx,
-        crate::ui::page_viewport(cx).get_untracked(),
-        move |mcx, close| {
+        move |mcx, close, _guard, _inner_w| {
             let theme = use_theme(mcx);
             let t0 = theme.get().tokens;
             let ui = ctx2.ui;
@@ -1806,11 +1806,6 @@ pub fn open_other(
             let close_b = close.clone();
             let mut col = Element::new()
                 .style(LayoutStyle::column().gap(0).grow(1.0))
-                .child(line(vec![span_bold(
-                    format!("Email \u{2014} {user_id}"),
-                    t0.accent,
-                )]))
-                .child(gap())
                 .child(field(
                     &t0,
                     "Email address",
@@ -1860,12 +1855,14 @@ pub fn open_other(
                 col = col.child(line(vec![span(l, t0.text_muted)]));
             }
             col.child(gap())
-                .child(
-                    Button::new("Close (Esc)")
-                        .on_click(move || close_b())
-                        .element(mcx, &t0)
-                        .build(),
-                )
+                .child(super::w::form::button_row(vec![super::w::action::button(
+                    mcx,
+                    &t0,
+                    &super::w::Action::label("close", "Close"),
+                    super::w::action::On::Raised,
+                    true,
+                    move || close_b(),
+                )]))
                 .build()
         },
     );
