@@ -15,6 +15,7 @@ use std::rc::Rc;
 use abstracttui::app::{Overlays, MODAL_Z};
 use abstracttui::base::Rect;
 use abstracttui::prelude::*;
+use abstracttui::ui::{Phase, UiEvent};
 
 use super::super::UiState;
 use super::action::{button, button_focused, Action, On};
@@ -71,7 +72,7 @@ impl Confirm {
         let Some(ov) = cx.use_context::<Overlays>() else {
             return;
         };
-        super::tip::hide_all();
+        super::tip::dialog(true);
         LOG.with(|l| {
             let mut l = l.borrow_mut();
             if l.len() > 64 {
@@ -124,6 +125,7 @@ impl Confirm {
                     l.remove();
                 }
                 ui.prompt_open.update(|n| *n = n.saturating_sub(1));
+                super::tip::dialog(false);
                 if go {
                     if let Some(f) = y {
                         f();
@@ -135,19 +137,38 @@ impl Confirm {
             })
         };
         let t = abstracttui::app::current_theme().tokens;
-        let mut col = Element::new().style(LayoutStyle::column().grow(1.0));
+        let mut text_col = Element::new().style(LayoutStyle::column().shrink(0.0));
         for l in &lines {
-            col = col.child(fill_line(
+            text_col = text_col.child(fill_line(
                 LayoutStyle::line(1).shrink(0.0),
                 vec![Ink::new(l.clone(), t.text)],
                 None,
             ));
         }
-        col = col.child(
-            Element::new()
-                .style(LayoutStyle::default().grow(1.0))
-                .build(),
-        );
+        // A sentence taller than the screen scrolls (wheel, ↑/↓, PgUp/
+        // PgDn); the button row stays pinned at the bottom (R15-B ask:
+        // the gateway's Internet acknowledgement lists every warning).
+        let n_lines = lines.len() as i32;
+        let view_h = (size.h - 3).max(1);
+        let tall = n_lines > view_h;
+        let off = scope.signal(0i32);
+        let mut col = Element::new().style(LayoutStyle::column().grow(1.0));
+        if tall {
+            col = col.child(
+                abstracttui::widgets::Scroll::new(text_col.build())
+                    .content_size(longest, n_lines)
+                    .offset_y(off)
+                    .layout(LayoutStyle::default().grow(1.0).min_h(1))
+                    .element(scope, &t)
+                    .build(),
+            );
+        } else {
+            col = col.child(text_col.build()).child(
+                Element::new()
+                    .style(LayoutStyle::default().grow(1.0))
+                    .build(),
+            );
+        }
         let (f_go, f_keep, f_esc) = (finish.clone(), finish.clone(), finish.clone());
         let go_btn = if self.danger {
             button(scope, &t, &go_a, On::Raised, true, move || f_go(true))
@@ -165,6 +186,23 @@ impl Confirm {
             .role(abstracttui::ui::Role::Dialog)
             .focus_trap()
             .shortcut(KeyChord::plain(Key::Escape), move |_| f_esc(false))
+            .on(Phase::Capture, move |ectx, ev| {
+                if !tall {
+                    return;
+                }
+                if let UiEvent::Key(k) = ev {
+                    let max = (n_lines - view_h).max(0);
+                    let d = match k.key {
+                        Key::Up => -1,
+                        Key::Down => 1,
+                        Key::PageUp => -view_h,
+                        Key::PageDown => view_h,
+                        _ => return,
+                    };
+                    ectx.stop_propagation();
+                    off.update(|o| *o = (*o + d).clamp(0, max));
+                }
+            })
             .child(
                 Block::new()
                     .border(BorderKind::Rounded)

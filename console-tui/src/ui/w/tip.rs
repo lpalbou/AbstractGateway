@@ -31,6 +31,9 @@ thread_local! {
     static EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     /// Every tip layer on screen (removal is idempotent).
     static LIVE: RefCell<Vec<LayerHandle>> = const { RefCell::new(Vec::new()) };
+    /// Confirmations open right now: no page tip shows under one (a
+    /// re-render behind the dialog re-focuses a page control).
+    static DIALOGS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
 /// Install the notice lane a refused control writes its reason into.
@@ -84,6 +87,27 @@ pub fn hide_all() {
             h.remove();
         }
     });
+}
+
+/// A confirmation opened (`true`) or closed (`false`).
+pub fn dialog(open: bool) {
+    DIALOGS.with(|d| {
+        d.set(if open {
+            d.get() + 1
+        } else {
+            d.get().saturating_sub(1)
+        })
+    });
+    if open {
+        hide_all();
+    }
+}
+
+/// May a tip show at `anchor` now? Not under an open confirmation, and
+/// not at an anchor read before layout (an empty rect at the origin —
+/// a control focused on mount would paint its tip over the header).
+fn may_show(anchor: Rect) -> bool {
+    DIALOGS.with(|d| d.get()) == 0 && !(anchor.w <= 0 || (anchor.x == 0 && anchor.y == 0))
 }
 
 fn epoch() -> u64 {
@@ -150,7 +174,7 @@ pub fn with_tip(cx: Scope, el: Element, text: String) -> Element {
             let armed = epoch();
             after(HOVER_DELAY, move || {
                 let mut s = state.borrow_mut();
-                if s.gen != gen || s.layer.is_some() || epoch() != armed {
+                if s.gen != gen || s.layer.is_some() || epoch() != armed || !may_show(anchor) {
                     return;
                 }
                 s.layer = show(anchor, &text);
@@ -169,7 +193,7 @@ pub fn with_tip(cx: Scope, el: Element, text: String) -> Element {
             s.focused = true;
             s.gen += 1;
             s.hide();
-            if !std::mem::take(&mut s.pressed) {
+            if !std::mem::take(&mut s.pressed) && may_show(anchor) {
                 s.layer = show(anchor, &text);
             }
             if let Some(f) = focus_line() {
