@@ -7995,6 +7995,13 @@ fn host_panel_start_at_login_toggle_confirms_then_puts() {
     assert!(s.contains("L Start at login"), "key listed:\n{s}");
     h.type_text("L");
     let s = h.turns(2);
+    // A2 (adversary note a): the confirm's focused button is named in the
+    // status bar — the F3 panel closing under it does not take the line.
+    assert_eq!(
+        h.ui.focus_line.get_untracked().as_deref(),
+        Some("Leave it"),
+        "the focused Leave it is named:\n{s}"
+    );
     assert!(
         s.contains("Start AbstractGateway at login? Registers a systemd")
             && s.contains("The gateway running now is not restarted."),

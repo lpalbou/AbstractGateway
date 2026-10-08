@@ -170,6 +170,7 @@ impl Confirm {
             );
         }
         let (f_go, f_keep, f_esc) = (finish.clone(), finish.clone(), finish.clone());
+        super::tip::building_dialog(true);
         let go_btn = if self.danger {
             button(scope, &t, &go_a, On::Raised, true, move || f_go(true))
         } else {
@@ -180,6 +181,7 @@ impl Confirm {
         } else {
             button(scope, &t, &keep_a, On::Raised, true, move || f_keep(false))
         };
+        super::tip::building_dialog(false);
         col = col.child(super::form::button_row(vec![go_btn, keep_btn]));
         let panel = Element::new()
             .style(LayoutStyle::fill())

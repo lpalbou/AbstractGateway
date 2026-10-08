@@ -34,6 +34,8 @@ thread_local! {
     /// Confirmations open right now: no page tip shows under one (a
     /// re-render behind the dialog re-focuses a page control).
     static DIALOGS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    /// A confirmation is building its own controls right now.
+    static BUILDING_DIALOG: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Install the notice lane a refused control writes its reason into.
@@ -110,6 +112,17 @@ fn may_show(anchor: Rect) -> bool {
     DIALOGS.with(|d| d.get()) == 0 && !(anchor.w <= 0 || (anchor.x == 0 && anchor.y == 0))
 }
 
+/// A confirmation builds its controls between `building_dialog(true)`
+/// and `building_dialog(false)`: those tips belong to the dialog and keep
+/// naming themselves while it is open.
+pub fn building_dialog(on: bool) {
+    BUILDING_DIALOG.with(|b| b.set(on));
+}
+
+fn dialog_open() -> bool {
+    DIALOGS.with(|d| d.get()) > 0
+}
+
 fn epoch() -> u64 {
     EPOCH.with(|e| e.get())
 }
@@ -121,6 +134,11 @@ pub fn with_tip(cx: Scope, el: Element, text: String) -> Element {
     if text.is_empty() {
         return el;
     }
+    // A page control (not one of an open dialog's own) neither shows its
+    // tip nor takes the status bar's focus line while a dialog is open: a
+    // page re-focus behind the dialog (a form closing under it) must not
+    // overwrite the name of the dialog's focused button (adversary note a).
+    let in_dialog = BUILDING_DIALOG.with(|b| b.get());
     let state = Rc::new(RefCell::new(TipState {
         gen: 0,
         layer: None,
@@ -187,6 +205,7 @@ pub fn with_tip(cx: Scope, el: Element, text: String) -> Element {
                 s.hide();
             }
         }
+        UiEvent::FocusIn if dialog_open() && !in_dialog => {}
         UiEvent::FocusIn => {
             let anchor = ctx.current_rect_screen();
             let mut s = state.borrow_mut();

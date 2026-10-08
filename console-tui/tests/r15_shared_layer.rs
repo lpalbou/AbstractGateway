@@ -150,3 +150,49 @@ fn a_segment_pick_that_opens_a_dialog_never_keeps_the_pointer() {
         "the segment did not take it"
     );
 }
+
+fn short_confirm_page(ctx: &ui::Ctx, cx: Scope) -> View {
+    let t = use_theme(cx).get().tokens;
+    let ui = ctx.ui;
+    let a = w::Action::label("ask", "Ask");
+    Element::new()
+        .style(LayoutStyle::column().grow(1.0))
+        .child(w::action::button(
+            cx,
+            &t,
+            &a,
+            w::action::On::Page,
+            true,
+            move || {
+                w::Confirm::danger(
+                    "Start AbstractGateway at login?",
+                    "Start at login",
+                    "Leave it",
+                )
+                .open(cx, ui, || {});
+            },
+        ))
+        .build()
+}
+
+/// A2 for confirmations (adversary note a): the status bar's focus line
+/// names the confirmation's focused button, and Tab moves it.
+#[test]
+fn a_confirmations_focused_button_is_named_in_the_status_bar() {
+    let mut h = harness((120, 40), Mount::Page(short_confirm_page));
+    h.turns(2);
+    h.click_text("Ask");
+    h.turns(2);
+    assert_eq!(
+        h.ui.focus_line.get_untracked().as_deref(),
+        Some("Leave it"),
+        "the focused Cancel is named"
+    );
+    h.key(b"\t");
+    h.turns(2);
+    assert_eq!(
+        h.ui.focus_line.get_untracked().as_deref(),
+        Some("Start at login"),
+        "Tab: the action is named"
+    );
+}
