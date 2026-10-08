@@ -159,7 +159,7 @@ pub fn toggle_start_at_login(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
     });
 }
 
-fn toggle_pause(ctx: &Ctx) {
+pub(crate) fn toggle_pause(ctx: &Ctx) {
     if !guard(ctx) {
         return;
     }
@@ -174,7 +174,7 @@ fn toggle_pause(ctx: &Ctx) {
 
 /// Restart: capability-gated, confirmed on the ROOT scope after this
 /// panel closes (a prompt over a modal is the stacking hazard).
-fn restart(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
+pub(crate) fn restart(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
     if !guard(ctx) {
         return;
     }
@@ -212,7 +212,7 @@ fn restart(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
     );
 }
 
-fn quit(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
+pub(crate) fn quit(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
     if !guard(ctx) {
         return;
     }
@@ -250,13 +250,13 @@ fn quit(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
     );
 }
 
-fn check_update(ctx: &Ctx) {
+pub(crate) fn check_update(ctx: &Ctx) {
     if guard(ctx) {
         ctx.send(Cmd::Operator(OpCmd::UpdateCheck));
     }
 }
 
-fn start_update(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
+pub(crate) fn start_update(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
     if !guard(ctx) {
         return;
     }
