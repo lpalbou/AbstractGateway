@@ -1798,6 +1798,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .agent-default__control { display: flex; align-items: center; gap: 8px; min-width: 0; }
 	    .agent-default__control select { flex: 1 1 auto; min-width: 0; max-width: 360px; }
 	    .agent-default__state { margin: 0; color: var(--muted); font-size: var(--font-size-md); }
+	    /* Preferences → Time zone (R16.1): the kit AfTimeZonePicker island reads like the workflow rows. */
+	    .account-preferences-tz .af-tz-picker__label { font-weight: 500; font-size: var(--font-size-base); text-transform: none; letter-spacing: normal; color: var(--text); }
+	    .account-preferences-tz .af-select-trigger { font-weight: 400; }
 	    /* Settings under the per-app defaults (gateway-wide runtime settings). */
 	    .workflows-settings { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
 	    .workflows-settings .af-switch--row { width: 100%; max-width: none; }
@@ -3230,7 +3233,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     </div>
   </div>
   <!-- Preferences (round 14, R14.2): the account's default workflow per app
-       (GET/PUT /api/gateway/accounts/{id}/preferences). Applies on change; no Save. -->
+       (GET/PUT /api/gateway/accounts/{id}/preferences). Applies on change; no Save.
+       Round 16 (R16.1): + the account's time zone (the kit AfTimeZonePicker island). -->
   <div id="account-preferences-backdrop" class="af-modal-backdrop" hidden>
     <div class="af-modal" role="dialog" aria-modal="true" aria-labelledby="account-preferences-title">
       <div class="af-modal__header">
@@ -12775,9 +12779,17 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const tenant = a.tenant_id && a.tenant_id !== "default" && a.kind !== "entity" ? `${a.tenant_id}:` : "";
       return `/api/gateway/accounts/${encodeURIComponent(tenant + a.id)}/preferences`;
     }
+    // The time-zone row is the kit AfTimeZonePicker island (round 16, R16.1): unmounted before
+    // every re-render and when the modal closes.
+    function unmountAccountPreferencesTz() {
+      const handle = accountsUi.preferencesTz;
+      accountsUi.preferencesTz = null;
+      if (handle) handle.unmount();
+    }
     function closeAccountPreferences() {
       const backdrop = $("account-preferences-backdrop");
       if (backdrop.hidden) return;
+      unmountAccountPreferencesTz();
       $("account-preferences-body").textContent = "";
       backdrop.hidden = true;
       accountsUi.preferencesFor = null;
@@ -12794,6 +12806,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     }
     function renderAccountPreferences(a, out, saved) {
       const body = $("account-preferences-body");
+      unmountAccountPreferencesTz();
       body.textContent = "";
       const lead = document.createElement("p");
       lead.className = "account-modal-lead";
@@ -12885,6 +12898,43 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         list.append(row);
       }
       body.append(list);
+      renderAccountPreferencesTz(a, out, saved, body);
+    }
+    // Time zone (R16.1): the gateway serves the whole picker (`time_zone`: value, gateway_default,
+    // label, help, IANA choices); "Gateway default (<zone>)" = null. A change is ONE PUT
+    // {time_zone} at once (no Save), then the modal re-renders from the answer.
+    function renderAccountPreferencesTz(a, out, saved, body) {
+      const tz = out.time_zone;
+      if (!tz || typeof tz !== "object" || !Array.isArray(tz.choices) || typeof tz.gateway_default !== "string") {
+        throw new Error("GET /accounts/{id}/preferences answered without a time_zone block (R16.1 preferences seam).");
+      }
+      const lib = islandsLib();
+      if (!lib || typeof lib.mountTimeZonePicker !== "function") {
+        throw new Error("AbstractGateway console: the islands bundle has no AfTimeZonePicker (mountTimeZonePicker; ui-kit 0.8.7+ required).");
+      }
+      const row = document.createElement("div");
+      row.className = "agent-default account-preferences-tz";
+      row.setAttribute("data-account-preference", "time_zone");
+      body.append(row);
+      const props = {
+        block: tz,
+        id: `account-pref-${a.tenant_id || "default"}-${a.id}-time-zone`.replace(/[^A-Za-z0-9_-]/g, "-"),
+        disabled: out.can_edit === false,
+        note: saved && saved.iface === "time_zone" ? { ok: saved.ok, text: saved.text } : null,
+        onChange: async (next) => {
+          const handle = accountsUi.preferencesTz;
+          if (handle) handle.update(Object.assign({}, props, { disabled: true, note: null }));
+          try {
+            const answer = await api(accountPreferencesPath(a), { method: "PUT", body: JSON.stringify({ time_zone: next === "" ? null : next }) });
+            if (accountsUi.preferencesFor !== a) return; // the dialog moved on meanwhile
+            renderAccountPreferences(a, answer, { iface: "time_zone", ok: true, text: "Saved." });
+          } catch (e) {
+            if (accountsUi.preferencesFor !== a || accountsUi.preferencesTz !== handle || !handle) return;
+            handle.update(Object.assign({}, props, { note: { ok: false, text: `Not saved. ${emailErrorText(e)}` } }));
+          }
+        },
+      };
+      accountsUi.preferencesTz = lib.mountTimeZonePicker(row, props);
     }
     async function openAccountPreferences(a) {
       closeAccountPreferences();
@@ -12905,6 +12955,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         renderAccountPreferences(a, out, null);
       } catch (e) {
         if (accountsUi.preferencesFor !== a) return;
+        unmountAccountPreferencesTz();
         body.textContent = "";
         const err = document.createElement("div");
         err.className = "ui-alert tone-err";

@@ -310,6 +310,14 @@ app. A change applies at once and says "Saved."; there is no Save button. When t
 a change, its sentence shows with "Not saved." and nothing changes. A choice that no longer runs
 says why under its row.
 
+The last row is the account's **Time zone**: daily, weekly and monthly automations run on this
+clock, and automation times show in it. The first option is **Gateway default (<zone>)**, this
+computer's time zone, selected while the account has none of its own; the other options are the
+time zone names the gateway knows (type to search, e.g. "Europe/Par"). A pick applies at once
+("Saved." / "Not saved." with the gateway's sentence); new automations take the zone in force when
+they are created. The list, its label and its help come from the gateway (the `time_zone` block of
+the answer); the row is the kit's time-zone picker, the same one AbstractCode uses.
+
 Everyone opens their own from their own row. An administrator opens any account's (choosing among
 the gateway's shared workflows); an entity's preferences are set by its creator or an
 administrator. The Assistant (Settings → Workflow) and AbstractCode (Workflow → *Default for new
@@ -811,8 +819,10 @@ Connection, Network and About.
   shows its current choice; `Enter` lists **Gateway default (<name>)** first,
   then every workflow the gateway offers for that app, and `Enter` picks one
   and saves it at once ("Saved.", or "Not saved." with the gateway's reason).
-  A gateway older than this route has no Preferences on its rows, and `p` says
-  so.
+  The last row is **Time zone**: `Enter` opens **Gateway default (<zone>)** and
+  the gateway's time zone names, typing filters them ("Search time zones",
+  `Backspace` widens), `Enter` saves at once. A gateway older than this route
+  has no Preferences on its rows, and `p` says so.
 - **Your email settings** (`@` on your own row): your **Email address**, your
   **Mailbox** (tabs **IMAP**, the default, **Google** and **Microsoft**; the
   IMAP pane shows the incoming and outgoing servers, filled in as soon as the
