@@ -86,6 +86,13 @@ fn fixture(name: &str) -> Value {
 fn harness(size: Size) -> H {
     catalog::reset_state();
     abstracttui::app::set_theme_by_id("abstract-dark");
+    // R15 rail: from 120x32 the console shows a 21-cell nav rail; these
+    // suites pin PAGE layouts, so a wide size keeps its page width.
+    let size = if size.w >= 120 && size.h >= 32 {
+        Size::new(size.w + 21, size.h)
+    } else {
+        size
+    };
     let mut app = App::new(size);
     let overlays = app.overlays();
     let quitter = app.quitter();
@@ -277,6 +284,52 @@ impl H {
         self.store.json.set_write(key, Some(w));
         self.turns(3)
     }
+    /// A synthesized left click at screen cell (x, y), 0-based.
+    fn click_at(&mut self, x: usize, y: usize) -> String {
+        let ev = format!("\x1b[<0;{};{}M\x1b[<0;{};{}m", x + 1, y + 1, x + 1, y + 1);
+        self.key(ev.as_bytes())
+    }
+    /// R15: pick `option` in the filter Select labelled `group` BY MOUSE
+    /// (click the Select, then the option in its popup).
+    fn pick(&mut self, group: &str, option: &str) -> String {
+        let s = self.turns(1);
+        let lines: Vec<&str> = s.lines().collect();
+        let (y, x) = lines
+            .iter()
+            .enumerate()
+            .find_map(|(i, l)| {
+                l.find(&format!("{group} ▐"))
+                    .map(|c| (i, l[..c].chars().count() + group.chars().count() + 2))
+            })
+            .unwrap_or_else(|| panic!("no {group} filter:\n{s}"));
+        let s = self.click_at(x, y);
+        let lines: Vec<&str> = s.lines().collect();
+        let (oy, ox) = lines
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != y)
+            .find_map(|(i, l)| {
+                l.find(&format!(" {option}"))
+                    .filter(|c| !l[..*c].contains("▐") || i > y)
+                    .map(|c| (i, l[..c].chars().count() + 1))
+            })
+            .unwrap_or_else(|| panic!("no {option:?} in the {group} popup:\n{s}"));
+        self.click_at(ox, oy)
+    }
+    /// Click the `label` button of the open confirmation (its button row
+    /// holds both `label` and `other`).
+    fn click_confirm(&mut self, label: &str, other: &str) -> String {
+        let s = self.turns(1);
+        let (y, line) = s
+            .lines()
+            .enumerate()
+            .filter(|(_, l)| l.contains(&format!(" {label} ")) && l.contains(&format!(" {other} ")))
+            .last()
+            .unwrap_or_else(|| panic!("no [{label}] [{other}] row:\n{s}"));
+        let b = line.rfind(&format!(" {label} ")).unwrap() + 1;
+        let x = line[..b].chars().count();
+        self.click_at(x, y)
+    }
     fn shoot(&mut self, name: &str) {
         let s = self.turns(1);
         if let Ok(dir) = std::env::var("R7W2_SHOTS") {
@@ -299,22 +352,26 @@ fn refused(status: u16, body: Value) -> ApiError {
 fn one_list_with_model_headers_artifact_rows_and_not_in_the_catalog() {
     let mut h = harness(Size::new(170, 50));
     let s = h.open(true);
-    assert!(s.contains("9 Models"), "tab 9 is Models:\n{s}");
+    assert!(
+        s.contains("Browse, download and delete models that fit this machine"),
+        "tab 9 is Models:\n{s}"
+    );
     for needle in [
         "This computer: Apple M5 Max",
         "4 of 4 models · 16 artifacts shown",
         "Qwen3 0.6B  Qwen · 600M params · apache-2.0  [Text] [Thinking] [Tools]",
         "qwen3:0.6b-q8_0",
-        "Downloaded · Fits",
-        "Not downloaded · Fits",
-        "Not downloaded · Too large",
-        "u Use as default · d Delete",
-        "w Download",
+        "Downloaded",
+        "Not downloaded",
+        "Too large",
+        // R15: labelled row buttons + the trash glyph (the web's icon).
+        "Use as default  ⌫",
+        "  Download",
         "Not in the catalog",
         "my-finetune:7b",
         "mlx-community/my-own-tune-4bit",
-        "z Quantization: [All] 4-bit",
-        "s Status: [All] Downloaded 4 Not downloaded",
+        "Quantization ▐All",
+        "Status ▐All",
         "It fits once macOS lets the GPU use 96 GiB: run sudo sysctl iogpu.wired_limit_mb=98304",
     ] {
         assert!(s.contains(needle), "missing {needle:?}:\n{s}");
@@ -334,7 +391,7 @@ fn one_list_with_model_headers_artifact_rows_and_not_in_the_catalog() {
 fn downloaded_filter_keeps_the_rows_outside_the_catalog() {
     let mut h = harness(Size::new(170, 50));
     h.open(true);
-    let s = h.key(b"s");
+    let s = h.pick("Status", "Downloaded");
     assert!(
         s.contains("1 of 4 models · 4 artifacts shown  · Downloaded"),
         "{s}"
@@ -349,47 +406,44 @@ fn downloaded_filter_keeps_the_rows_outside_the_catalog() {
     );
     h.shoot("downloaded");
     // Not downloaded: the extras go (they are downloaded by definition).
-    let s = h.key(b"s");
-    assert!(s.contains("[Not downloaded"), "{s}");
+    let s = h.pick("Status", "Not downloaded");
+    assert!(s.contains("Status ▐Not downloaded"), "{s}");
     assert!(!s.contains("Not in the catalog"), "{s}");
     // Back to All.
-    let s = h.key(b"s");
-    assert!(s.contains("s Status: [All]"), "{s}");
+    let s = h.pick("Status", "All");
+    assert!(s.contains("Status ▐All"), "{s}");
 }
 
 #[test]
 fn filters_quant_provider_capability_fits_search_and_clear() {
     let mut h = harness(Size::new(170, 50));
     h.open(true);
-    let s = h.key(b"z");
-    assert!(s.contains("[4-bit"), "{s}");
+    let s = h.pick("Quantization", "4-bit");
+    assert!(s.contains("Quantization ▐4-bit"), "{s}");
     assert!(!s.contains("qwen3:0.6b-q8_0"), "8-bit hidden:\n{s}");
-    let s = h.key(b"z");
-    assert!(s.contains("[8-bit") && s.contains("qwen3:0.6b-q8_0"), "{s}");
-    h.key(b"x");
-    // Capability: All → Text → … Embedding.
-    let mut s = String::new();
-    for _ in 0..8 {
-        s = h.key(b"t");
-        if s.contains("[Embedding") {
-            break;
-        }
-    }
+    let s = h.pick("Quantization", "8-bit");
     assert!(
-        s.contains("[Embedding") && s.contains("nomic-embed-text"),
+        s.contains("Quantization ▐8-bit") && s.contains("qwen3:0.6b-q8_0"),
+        "{s}"
+    );
+    h.key(b"x");
+    // Capability: the Select lists the catalog's capabilities.
+    let s = h.pick("Capability", "Embedding");
+    assert!(
+        s.contains("Capability ▐Embedding") && s.contains("nomic-embed-text"),
         "{s}"
     );
     assert!(!s.contains("Qwen3 0.6B"), "{s}");
     h.key(b"x");
     // Fits this computer hides the too-large builds and the outside rows.
     let s = h.key(b"f");
-    assert!(s.contains("[x] Fits this computer"), "{s}");
+    assert!(s.contains("━● Fits this computer"), "{s}");
     assert!(!s.contains("minimax"), "{s}");
     assert!(!s.contains("Not in the catalog"), "{s}");
     h.key(b"f");
-    // Provider steps through the engines (catalog order).
-    let s = h.key(b"p");
-    assert!(s.contains("p Provider: All [Ollama"), "{s}");
+    // Provider: the engines (catalog order).
+    let s = h.pick("Provider", "Ollama");
+    assert!(s.contains("Provider ▐Ollama"), "{s}");
     assert!(!s.contains("mlx-community/Qwen3-0.6B-4bit "), "{s}");
     h.key(b"x");
     // Search: `/` takes the keyboard, the words filter as typed, Esc gives
@@ -428,8 +482,11 @@ fn delete_asks_a_dry_run_confirms_inline_and_deletes() {
         plan.body,
         json!({"provider": "ollama", "artifact": "qwen3:0.6b", "dry_run": true})
     );
-    let s = h.turns(1);
-    assert!(s.contains("Checking..."), "{s}");
+    // The trash waits (faint) while the dry run runs.
+    assert!(catalog::with_state(|p| matches!(
+        p.del.get("ollama/qwen3:0.6b"),
+        Some(catalog::DelPhase::Checking)
+    )));
     let s = h.answer(
         "catalog.delplan:ollama/qwen3:0.6b",
         WriteState::Done(
@@ -442,21 +499,22 @@ fn delete_asks_a_dry_run_confirms_inline_and_deletes() {
         ),
         "{s}"
     );
-    assert!(s.contains("[y] Delete  [n] Keep"), "{s}");
+    // R15 F1: the one confirm widget, [Delete] [Keep].
+    assert!(s.contains(" Delete ") && s.contains(" Keep "), "{s}");
     h.shoot("delete-confirm");
-    // n keeps: nothing sent, the trash verb is back.
-    let s = h.key(b"n");
-    assert!(!s.contains("[y] Delete"), "{s}");
+    // Keep (by mouse): nothing sent, the trash is back.
+    let s = h.click_confirm("Keep", "Delete");
+    assert!(!s.contains("Files only — nothing"), "{s}");
     assert!(h.sent().is_empty(), "Keep sends nothing");
-    assert!(s.contains("d Delete"), "{s}");
-    // Again, and y deletes.
+    assert!(catalog::with_state(|p| p.del.is_empty()), "{s}");
+    // Again, and [Delete] deletes.
     h.key(b"d");
     h.sent();
     h.answer(
         "catalog.delplan:ollama/qwen3:0.6b",
         WriteState::Done(json!({"ok": true, "freed_bytes": 522653767})),
     );
-    h.key(b"y");
+    h.click_confirm("Delete", "Keep");
     let del = h
         .sent()
         .into_iter()
@@ -501,7 +559,7 @@ fn a_refused_delete_says_the_gateways_words() {
         "{s}"
     );
     assert!(
-        !s.contains("[y] Delete"),
+        !s.contains("Files only — nothing"),
         "no confirmation for a refusal:\n{s}"
     );
     h.shoot("delete-refused");
@@ -519,7 +577,7 @@ fn a_row_outside_the_catalog_deletes_with_its_own_notice() {
     );
     let s = h.turns(1);
     assert!(s.contains("Deletes 4.7 GB from this computer."), "{s}");
-    h.key(b"y");
+    h.click_confirm("Delete", "Keep");
     let s = h.answer(
         "catalog.delete:ollama/my-finetune:7b",
         WriteState::Done(json!({"ok": true, "freed_bytes": 4683087332u64})),
@@ -564,7 +622,17 @@ fn use_as_default_puts_exactly_the_chosen_model() {
         s.contains("Default text model: MLX · mlx-community/Qwen3-0.6B-4bit."),
         "{s}"
     );
-    assert!(s.contains("Default text model · d Delete"), "{s}");
+    // The row shows the state; its only action is the trash.
+    let row = s
+        .lines()
+        .find(|l| l.contains("mlx-community/Qwen3-0.6B-4bit "))
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        !row.contains("Use as default") && row.contains('⌫'),
+        "{row}\n{s}"
+    );
+    assert!(s.contains("Default text model"), "{s}");
     h.shoot("use-as-default");
 }
 
@@ -596,23 +664,24 @@ fn download_follows_the_job_and_cancel_is_two_steps() {
         WriteState::Done(json!({"ok": true, "job": job})),
     );
     assert!(s.contains("Downloading · 42% · 349 MB of 832 MB"), "{s}");
-    assert!(s.contains("c Cancel"), "{s}");
+    assert!(s.contains("  Cancel"), "{s}");
     let polls: Vec<String> = h.sent().into_iter().map(|c| c.path).collect();
     assert!(
         polls.contains(&"/models/download/dl_1".to_string()),
         "{polls:?}"
     );
-    // Cancel: c only asks; y stops it.
+    // Cancel: c only asks ([Stop download] [Keep downloading]); the
+    // button stops it.
     let s = h.key(b"c");
     assert!(
-        s.contains("Stop this download?") && s.contains("[y] Stop download"),
+        s.contains("Stop this download?") && s.contains(" Stop download "),
         "{s}"
     );
     assert!(h
         .sent()
         .iter()
         .all(|c| !c.key.starts_with("catalog.cancel")));
-    h.key(b"y");
+    h.click_confirm("Stop download", "Keep downloading");
     let cancel = h
         .sent()
         .into_iter()
@@ -662,8 +731,19 @@ fn a_download_that_fails_to_start_says_why() {
 fn a_non_admin_sees_the_list_but_no_verbs() {
     let mut h = harness(Size::new(170, 50));
     let s = h.open(false);
-    assert!(s.contains("Download (admin only)"), "{s}");
-    assert!(!s.contains("w Download"), "{s}");
+    // R15: the buttons stay, faint, with the web's reason.
+    assert!(s.contains("  Download"), "{s}");
+    let offered = catalog::offered_actions(
+        &fixture("catalog"),
+        &fixture("installed"),
+        &fixture("defaults"),
+        false,
+    );
+    for (k, acts) in &offered {
+        for a in acts {
+            assert!(!a.is_enabled(), "{k}: {} is refused for a non-admin", a.id);
+        }
+    }
     h.select("ollama/qwen3:0.6b-q8_0");
     h.key(b"w");
     assert!(
@@ -680,8 +760,18 @@ fn a_non_admin_sees_the_list_but_no_verbs() {
 fn hugging_face_mode_asks_the_hub_once_per_enter() {
     let mut h = harness(Size::new(170, 50));
     h.open(true);
-    let s = h.key(b"m");
-    assert!(s.contains("m Catalog [Hugging Face]"), "{s}");
+    // The mode is a segmented choice: click "Hugging Face".
+    let s = h.turns(1);
+    let (y, x) = s
+        .lines()
+        .enumerate()
+        .find_map(|(i, l)| {
+            l.find(" Hugging Face ")
+                .map(|c| (i, l[..c].chars().count() + 2))
+        })
+        .expect("the Hugging Face segment");
+    let s = h.click_at(x, y);
+    assert!(s.contains("Search Hugging Face, then press Enter"), "{s}");
     assert!(
         s.contains("Search Hugging Face") && s.contains("Type a model name above and press Enter."),
         "{s}"
@@ -745,11 +835,12 @@ fn the_catalog_error_and_loading_sentences_are_the_webs() {
 }
 
 #[test]
-fn enter_expands_a_row_with_its_facts() {
+fn i_shows_a_rows_facts() {
+    // R15: Enter runs the row's first action; `i` opens the facts.
     let mut h = harness(Size::new(170, 50));
     h.open(true);
     h.select("ollama/qwen3:0.6b");
-    let s = h.key(b"\r");
+    let s = h.key(b"i");
     assert!(s.contains("Artifact: qwen3:0.6b"), "{s}");
     assert!(
         s.contains("Needs about") && s.contains("this computer can give a model"),
@@ -759,10 +850,10 @@ fn enter_expands_a_row_with_its_facts() {
         s.contains("CLI: abstractcore models download ollama qwen3:0.6b"),
         "{s}"
     );
-    let s = h.key(b"\r");
+    let s = h.key(b"i");
     assert!(
         !s.contains("Artifact: qwen3:0.6b"),
-        "Enter folds it again:\n{s}"
+        "i folds it again:\n{s}"
     );
 }
 
@@ -771,16 +862,13 @@ fn usable_at_80x24_and_never_wider_than_the_screen() {
     let mut h = harness(Size::new(80, 24));
     let s = h.open(true);
     assert!(s.contains("Qwen3 0.6B"), "{s}");
-    assert!(
-        s.contains("z Quantization: [All]"),
-        "narrow chips line:\n{s}"
-    );
+    assert!(s.contains("Quantization ▐All"), "narrow filters:\n{s}");
     for l in s.lines() {
         assert!(abstracttui::text::width(l) <= 80, "overflow: {l:?}");
     }
     h.shoot("all");
-    let s = h.key(b"s");
-    assert!(s.contains("Not in the catalog"), "{s}");
+    let s = h.pick("Status", "Downloaded");
+    assert!(s.contains("· Downloaded"), "{s}");
     h.shoot("downloaded");
     // The page message shows at this width too.
     h.select("mlx/mlx-community/Qwen3-0.6B-4bit");
@@ -796,7 +884,7 @@ fn usable_at_80x24_and_never_wider_than_the_screen() {
 fn a_reconnect_reads_the_page_again() {
     let mut h = harness(Size::new(170, 50));
     h.open(true);
-    h.key(b"s");
+    h.pick("Status", "Downloaded");
     h.store.conn.set(ConnPhase::Probing);
     h.store.reset_domains();
     h.turns(3);
@@ -850,19 +938,13 @@ fn helpers_follow_the_web_page() {
         &json!({"provider": "ollama", "artifact": "llama3"}),
         &json!({"provider": "mlx", "artifact": "llama3"})
     ));
-    // Column widths: everything fits the width; the id gets what is left.
-    let rows = vec![vec![
-        "● Hugging Face".to_string(),
-        "unsloth/Qwen3-0.6B-GGUF:Q4_K_M".to_string(),
-        "4-bit".to_string(),
-        "about 375 MB".to_string(),
-        "Not downloaded · Fits".to_string(),
-        "u Use as default · d Delete".to_string(),
-    ]];
-    for w in [76, 116, 200] {
-        let ws = catalog::art_widths(&rows, w);
-        assert!(ws.iter().sum::<i32>() + 2 + 10 <= w.max(42), "{w}: {ws:?}");
-    }
+    // R15 columns: the web's grid at 100+ cells; narrower, Provider /
+    // Quant / Size / Fit move under the artifact (every line fits: see
+    // usable_at_80x24_and_never_wider_than_the_screen).
+    let titles =
+        |w: i32| -> Vec<String> { catalog::columns(w).into_iter().map(|c| c.title).collect() };
+    assert_eq!(titles(140), catalog::COLUMNS.to_vec());
+    assert_eq!(titles(78), vec!["Artifact", "Weights", "Actions"]);
 }
 
 #[test]
@@ -872,10 +954,7 @@ fn browse_models_from_providers_opens_the_engines_builds() {
     // Providers' Browse models sets the shared engine filter, then jumps.
     h.engine_filter.set(Some("ollama".into()));
     let s = h.turns(3);
-    assert!(
-        s.contains("p Provider: All [Ollama") || s.contains("[Ollama"),
-        "{s}"
-    );
+    assert!(s.contains("Provider ▐Ollama"), "{s}");
     assert!(
         !s.contains("mlx-community/Qwen3-0.6B-4bit "),
         "only Ollama builds:\n{s}"

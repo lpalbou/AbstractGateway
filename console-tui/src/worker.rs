@@ -584,6 +584,11 @@ pub enum Cmd {
     PurgeDataHome {
         name: String,
     },
+    /// The dry-run alone: what a purge of `name` would delete, published
+    /// to `store.purge_plan` (the confirm states it, like the web's).
+    PurgeDryRun {
+        name: String,
+    },
     LoadReservations,
     ReservationTransfer {
         runtime_id: String,
@@ -3281,6 +3286,28 @@ fn handle(
             })
         }
 
+        Cmd::PurgeDryRun { name } => {
+            let dry = with_busy(store, wake, &format!("{name}: purge dry-run"), || {
+                require_client(client).and_then(|c| {
+                    c.purge_data_home(&serde_json::json!({ "name": name, "dry_run": true }))
+                })
+            });
+            let result = match dry {
+                Ok(v) if v.get("ok").and_then(Value::as_bool) == Some(false) => Err(v
+                    .get("errors")
+                    .map(|e| e.to_string())
+                    .or_else(|| v.get("error").and_then(Value::as_str).map(str::to_string))
+                    .unwrap_or_else(|| "dry-run answered ok:false".into())),
+                Ok(v) => Ok(crate::store::PurgeCounts::from_value(&v)),
+                Err(e) => Err(e.message.clone()),
+            };
+            let s = *store;
+            let plan = crate::store::PurgePlan {
+                name: name.clone(),
+                result,
+            };
+            wake.post(move || s.purge_plan.set(Some(plan.clone())));
+        }
         Cmd::PurgeDataHome { name } => {
             let action = format!("purge data home '{name}'");
             // Dry-run first — its failure VETOES the purge entirely.
@@ -3978,6 +4005,26 @@ fn export_verify(path: &std::path::Path, want: u64) -> Result<String, String> {
     }
 }
 
+/// What a FORM shows for a write (R15 gate note i): a client error the
+/// gateway explained (4xx with its `detail` sentence) is that sentence
+/// alone, as the web shows it — the form appends "Not saved."; the
+/// journal keeps the full "HTTP 400: …" line. Everything else as is.
+fn form_outcome(
+    write: &ApiResult<Value>,
+    outcome: &Result<String, String>,
+) -> Result<String, String> {
+    match write {
+        Err(ApiError {
+            kind: ApiErrorKind::Http(code),
+            message,
+            ..
+        }) if (400..500).contains(code) && !message.trim().is_empty() => {
+            Err(message.trim().to_string())
+        }
+        _ => outcome.clone(),
+    }
+}
+
 fn finish_write(
     store: &Store,
     wake: &WakeHandle,
@@ -4041,7 +4088,7 @@ fn finish_write_attention(
         verified,
     };
     if let Some(fid) = form_id {
-        on_done(fid, outcome.clone());
+        on_done(fid, form_outcome(&write, &outcome));
     }
     wake.post(move || {
         let note = match &entry.outcome {
@@ -4058,6 +4105,13 @@ fn finish_write_attention(
             },
             Err(e) => format!("{} — FAILED: {}", entry.action, e),
         };
+        // R15: a verified success also toasts its sentence (the web's).
+        if entry.outcome.is_ok()
+            && entry.attention.is_none()
+            && matches!(entry.verified, Some(Ok(_)) | None)
+        {
+            s.toast.set(Some(entry.action.clone()));
+        }
         s.push_journal(entry);
         s.notice.set(Some(note));
     });
@@ -4302,5 +4356,27 @@ mod tests {
         );
         assert_eq!(artifact_ref_label(&json!("art-str")), "art-str");
         assert_eq!(artifact_ref_label(&json!({"other": 1})), "audio artifact");
+    }
+}
+
+#[cfg(test)]
+mod form_outcome_tests {
+    use super::*;
+
+    #[test]
+    fn a_client_error_reaches_the_form_as_the_gateways_sentence() {
+        let w: ApiResult<Value> = Err(ApiError::new(
+            ApiErrorKind::Http(400),
+            "email must be empty or ONE plain email address",
+        ));
+        let full = Err(w.as_ref().unwrap_err().to_string());
+        assert_eq!(
+            form_outcome(&w, &full),
+            Err("email must be empty or ONE plain email address".to_string())
+        );
+        // A server error keeps its status (the operator needs it).
+        let w5: ApiResult<Value> = Err(ApiError::new(ApiErrorKind::Http(502), "backend down"));
+        let full5 = Err(w5.as_ref().unwrap_err().to_string());
+        assert_eq!(form_outcome(&w5, &full5), full5);
     }
 }

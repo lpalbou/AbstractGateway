@@ -138,11 +138,11 @@ pub fn open_overlay(
     if !pairs.iter().any(|(k, _)| k == "esc") {
         pairs.push(("esc".into(), "close".into()));
     }
-    let vp = abstracttui::app::use_viewport(cx).get_untracked();
+    let vp = crate::ui::page_viewport(cx).get_untracked();
     let notice = ctx.store.notice;
     super::open_form_guarded(ctx, cx, vp, move |mcx, close, guard| {
         let t = use_theme(mcx).get().tokens;
-        let vw = abstracttui::app::use_viewport(mcx).get_untracked().w;
+        let vw = crate::ui::page_viewport(mcx).get_untracked().w;
         let refs: Vec<(&str, &str)> = pairs
             .iter()
             .map(|(k, v)| (k.as_str(), v.as_str()))
@@ -913,7 +913,7 @@ impl InlineConfirm {
                 return Element::new().style(LayoutStyle::default().h(0)).build();
             };
             let width = if width < 20 {
-                abstracttui::app::use_viewport(gcx).get().w - 4
+                crate::ui::page_viewport(gcx).get().w - 4
             } else {
                 width
             };

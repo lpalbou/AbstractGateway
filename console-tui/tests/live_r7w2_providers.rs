@@ -77,6 +77,13 @@ struct Harness {
 
 fn harness(size: Size) -> Harness {
     abstracttui::app::set_theme_by_id("abstract-dark");
+    // R15 rail: from 120x32 the console shows a 21-cell nav rail; these
+    // suites pin PAGE layouts, so a wide size keeps its page width.
+    let size = if size.w >= 120 && size.h >= 32 {
+        Size::new(size.w + 21, size.h)
+    } else {
+        size
+    };
     let mut app = App::new(size);
     let overlays = app.overlays();
     let quitter = app.quitter();
@@ -301,12 +308,11 @@ fn local_engines_render_the_scratch_hosts_engines() {
         );
         assert!(s.contains("installed"), "the summary line:\n{s}");
         h.shoot("live-providers-local");
-        // Enter expands the first row (its description / address / links).
-        h.key(b"\r");
+        // R15: each row shows its card's sentences and links (no expansion).
         let s = h.turns(3);
         assert!(
-            s.contains("Learn more") || s.contains("Address"),
-            "expanded:\n{s}"
+            s.contains("Learn more") || s.contains("Browse models"),
+            "the rows' own buttons:\n{s}"
         );
         h.shoot("live-providers-engine-expanded");
     }
@@ -394,17 +400,20 @@ fn a_remote_connection_is_added_from_its_preset_and_deleted() {
     let mut h = live(Size::new(120, 40));
     h.ui.screen.set(ui::SCREEN_PROVIDERS);
     h.turns(3);
-    ui::providers::set_section(&h.store, 1);
     h.until("the presets", |_, s| s.contains("Portkey"));
     h.until("the profiles", |h, _| {
         h.store.profiles.with_untracked(|p| p.ready().is_some())
     });
     h.shoot("live-providers-remote");
-    // Row 5 = Custom OpenAI-compatible; Enter opens its form prefilled.
-    for _ in 0..4 {
-        h.key(b"\x1b[B");
-    }
-    h.key(b"\r");
+    // Custom OpenAI-compatible: its Configure button opens the form prefilled.
+    let s = h.turns(1);
+    let (y, line) = s
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("Custom OpenAI-compatible") && l.contains("Configure"))
+        .unwrap_or_else(|| panic!("the preset row:\n{s}"));
+    let x = line[..line.rfind("Configure").unwrap()].chars().count() + 2;
+    h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes());
     let s = h.until("the form", |_, s| {
         s.contains("Configure Custom OpenAI-compatible")
     });
@@ -414,12 +423,11 @@ fn a_remote_connection_is_added_from_its_preset_and_deleted() {
     );
     let upstream =
         std::env::var("R7W2_UPSTREAM").unwrap_or_else(|_| "http://127.0.0.1:18803/v1".into());
-    // id (autofocus) → family → base URL.
-    h.key(b"\t");
-    h.key(b"\t");
+    // The Base URL field (click it), then ✓ Confirm.
+    h.click_text("optional; leave blank for provider default");
     h.key(upstream.as_bytes());
     h.turns(2);
-    h.click_text("Create");
+    h.click_text("✓ Confirm");
     h.until("custom-endpoint saved", |h, _| {
         h.store.profiles.with_untracked(|p| {
             p.ready()
@@ -430,10 +438,7 @@ fn a_remote_connection_is_added_from_its_preset_and_deleted() {
     // The preset says it is connected now (fresh read).
     let s = h.until("Connected", |_, s| s.contains("Connected · no key"));
     let _ = s;
-    // Available Providers (v, the person's key): select it, d, Delete.
-    h.key(b"v");
-    let s = h.turns(2);
-    assert_eq!(ui::providers::section(&h.store), 2, "{s}");
+    // Available Providers: select it, d, Delete endpoint.
     let idx = h
         .store
         .profiles
@@ -448,9 +453,12 @@ fn a_remote_connection_is_added_from_its_preset_and_deleted() {
     h.shoot("live-providers-available");
     h.key(b"d");
     h.until("the delete confirm", |_, s| {
-        s.contains("Delete provider connection 'custom-endpoint'")
+        s.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .contains("Delete endpoint:custom-endpoint?")
     });
-    h.key(b"\x1b[A");
+    h.key(b"\x1b[Z"); // Shift+Tab to the action button (R15 F1)
     h.turns(1);
     h.key(b"\r");
     h.until("custom-endpoint gone", |h, _| {

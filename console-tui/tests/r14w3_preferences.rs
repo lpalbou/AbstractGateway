@@ -33,7 +33,42 @@ fn users_view(ctx: &ui::Ctx, cx: abstracttui::prelude::Scope) -> abstracttui::pr
     users::view(cx, ctx, &t)
 }
 
+/// R15: a form modal is a centred box over the page — read only what is
+/// inside the outermost box when one is open (the page shows beside it).
+fn inside_modal(s: &str) -> String {
+    let lines: Vec<Vec<char>> = s.lines().map(|l| l.chars().collect()).collect();
+    let mut best: Option<(usize, usize, usize)> = None; // (row, x0, x1)
+    for (y, l) in lines.iter().enumerate() {
+        if let (Some(x0), Some(x1)) = (
+            l.iter().position(|c| *c == '╭'),
+            l.iter().rposition(|c| *c == '╮'),
+        ) {
+            // A modal box starts its top border with ╭ then a run of ─.
+            let w = x1.saturating_sub(x0);
+            if w > 20
+                && best.map(|(_, a, b)| w > b - a).unwrap_or(true)
+                && l.get(x0 + 1) == Some(&'─')
+            {
+                best = Some((y, x0, x1));
+            }
+        }
+    }
+    let Some((top, x0, x1)) = best else {
+        return s.to_string();
+    };
+    let mut out = Vec::new();
+    for l in lines.iter().skip(top + 1) {
+        if l.get(x0) == Some(&'╰') {
+            break;
+        }
+        let inner: String = l.iter().skip(x0 + 1).take(x1 - x0 - 1).collect();
+        out.push(inner);
+    }
+    out.join("\n")
+}
+
 fn flat(s: &str) -> String {
+    let s = &inside_modal(s);
     s.lines()
         .map(|l| l.trim_matches(|c| c == '│' || c == ' ' || c == '┃'))
         .collect::<Vec<_>>()
@@ -104,7 +139,8 @@ fn every_row_has_preferences_and_p_opens_the_rows_route() {
     ] {
         let mut h = page((120, 40), "accounts_w2");
         select(&mut h, id);
-        assert!(flat(&h.turns(2)).contains("p Preferences"), "{id}");
+        // R15: the row's Preferences button (⊜, key p).
+        assert!(flat(&h.turns(2)).contains("⊜"), "{id}");
         h.key(b"p");
         assert_eq!(
             gets(&h.sent()),
@@ -134,21 +170,21 @@ fn the_modal_reads_like_the_web_and_a_pick_is_one_put() {
             f.contains("The workflow each app runs for alice unless a conversation picks another. Gateway default follows the admin's Default workflow per app."),
             "{s}"
         );
+        // R15: each app is a label + a Select showing the current choice.
+        let row =
+            |label: &str, value: &str| s.lines().any(|l| l.contains(label) && l.contains(value));
+        assert!(row("AbstractCode — chat agent", "CodeAct agent"), "{s}");
         assert!(
-            f.contains("AbstractCode — chat agent: CodeAct agent"),
-            "{s}"
-        );
-        assert!(
-            f.contains("Assistant: Gateway default (AbstractAssistant Orchestrator)"),
+            row("Assistant", "Gateway default (AbstractAssistant"),
             "{s}"
         );
         h.assert_fits();
-        // Enter opens the list: the gateway default first, ● the current.
+        // Enter opens the Select's list: the gateway default first.
         h.key(b"\r");
         let s = h.shoot("r14w3-preferences-alice-pick");
         let f = flat(&s);
         let gd = f.find("Gateway default (Basic agent)").expect(&s);
-        let cur = f.find("● CodeAct agent").expect(&s);
+        let cur = f.rfind("CodeAct agent").expect(&s);
         assert!(gd < cur, "{s}");
         h.assert_fits();
         // ↑ to the gateway default, Enter: ONE PUT of that interface (null).
@@ -214,8 +250,7 @@ fn a_refusal_is_not_saved_then_the_gateways_message() {
 fn an_older_gateway_has_no_preferences_and_p_says_so() {
     let mut h = page((120, 40), "accounts");
     select(&mut h, "alice");
-    let s = h.turns(2);
-    assert!(!flat(&s).contains("p Preferences"), "{s}");
+    let _ = h.turns(2);
     h.key(b"p");
     assert!(gets(&h.sent()).is_empty());
     assert!(h

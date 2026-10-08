@@ -360,29 +360,32 @@ fn app_acts(cmds: &[Cmd]) -> Vec<(String, AppVerb, Option<String>, bool)> {
 fn every_web_card_state_renders() {
     let mut h = harness();
     let s = h.on_apps(true);
-    assert!(s.contains("6 Apps"), "tab 6:\n{s}");
+    assert!(
+        s.contains("Install and open the apps that work with this gateway"),
+        "{s}"
+    );
+    // R15: the web card's words in a table — the badge is the state (an
+    // external app's too), the actions are labelled buttons.
     for want in [
         "Observer",
         "Not installed",
-        "o Install",
+        "Install",
         "Flow Editor",
         "Running",
-        "Running (outside)",
         "Stopped unexpectedly",
         "Create your first entity",
         "Assistant",
-        "desktop",
         "Node.js",
         "Ready",
         "24.14.0",
-        "browser + terminal",
-        "this machine only",
+        "machine only.",
+        "Check again",
     ] {
         assert!(s.contains(want), "'{want}' on the Apps screen:\n{s}");
     }
     // Footer: the screen's verbs.
     assert!(
-        s.contains("check again") && s.contains("open/install"),
+        s.contains("Enter Open") && s.contains("s status badge"),
         "{s}"
     );
     // Detail of the external app says why it cannot be stopped.
@@ -493,7 +496,9 @@ fn s_is_the_status_badge_stop_in_one_key() {
     let mut h = harness();
     h.on_apps(true);
     let s = h.select("flow");
-    assert!(s.contains("Running — click to stop"), "{s}");
+    // The badge's label is the state; "Running — click to stop" is its
+    // tooltip (A3) — `s` is its key.
+    assert!(s.contains("Running"), "{s}");
     h.key(b"s");
     assert_eq!(
         app_acts(&h.drain()),

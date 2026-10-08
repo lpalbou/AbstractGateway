@@ -18,6 +18,8 @@ use abstracttui::app::{ChoiceOutcome, ChoicePrompt};
 use abstracttui::prelude::*;
 
 use super::util::{line, span, span_bold, wrap_text};
+use super::w::action::{button, On};
+use super::w::{Action, Cell, Col, ColW, DataTable};
 use super::widths;
 use super::{open_form, open_prompt, Ctx};
 use crate::store::apps::{
@@ -30,10 +32,11 @@ use crate::worker::Cmd;
 
 /// The footer's verbs for this screen (ui/mod.rs footer arm).
 pub const HINTS: &[(&str, &str)] = &[
-    ("Enter/o", "open/install"),
-    ("r", "check again"),
+    ("↑↓", "rows"),
+    ("Enter", "Open"),
+    ("Tab", "actions"),
+    ("s", "status badge"),
     ("i/u", "install/update"),
-    ("s / →+Enter", "the status badge: stop/start"),
     ("l", "log"),
     ("c", "cancel"),
     ("t/T", "terminal"),
@@ -41,11 +44,12 @@ pub const HINTS: &[(&str, &str)] = &[
     ("y", "copy"),
     ("a", "Apps settings"),
     ("g", "app settings (Continuum)"),
+    ("r", "check again"),
 ];
 
 /// The text column inside the Apps block (border + padding, both sides).
 fn text_width(cx: Scope) -> usize {
-    (abstracttui::app::use_viewport(cx).get().w - widths::BLOCK_CHROME - 2).max(20) as usize
+    (crate::ui::page_viewport(cx).get().w - widths::BLOCK_CHROME - 2).max(20) as usize
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -107,14 +111,49 @@ fn selected(ctx: &Ctx) -> Option<AppRow> {
         .with_untracked(|o| o.ready().and_then(|d| d.apps.get(sel).cloned()))
 }
 
+// ---------------------------------------------------------------------
+// R15 Apps (DESIGN-TUI.md §3.2): head (title, subtitle, Check again, the
+// Apps settings gear), ONE table (App · Status badge control · Version ·
+// labelled action buttons), the selected app's details below, Node.js.
+// ---------------------------------------------------------------------
+
+/// The Apps page.
 pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
     let apps = store.apps;
+    let ui = ctx.ui;
     let tt = *t;
 
     super::util::clamp_selection(cx, apps.sel, move || {
         apps.overview
             .with(|o| o.ready().map(|d| d.apps.len()).unwrap_or(0))
+    });
+    // The table's keyed selection ⇄ the store's index (the verbs read it).
+    cx.effect(move || {
+        let key = ui.apps_key.get();
+        let i = apps.overview.with(|o| {
+            o.ready()
+                .and_then(|d| key.and_then(|k| d.apps.iter().position(|a| a.id == k)))
+        });
+        if let Some(i) = i {
+            if apps.sel.get_untracked() != i {
+                apps.sel.set(i);
+            }
+        }
+    });
+    cx.effect(move || {
+        let i = apps.sel.get();
+        let id = apps
+            .overview
+            .with(|o| o.ready().and_then(|d| d.apps.get(i).map(|a| a.id.clone())));
+        if let Some(id) = id {
+            if ui
+                .apps_key
+                .with_untracked(|k| k.as_deref() != Some(id.as_str()))
+            {
+                ui.apps_key.set(Some(id));
+            }
+        }
     });
 
     // A minted sign-in link opens its modal (here, where the operator is:
@@ -131,8 +170,28 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             }
         });
     }
+    // The settings' values come from `GET /admin/runtime-config` (admin).
+    {
+        let c = ctx.clone();
+        cx.effect(move || {
+            let conn = c.store.conn.get();
+            if is_admin(&conn)
+                && c.store
+                    .runtime_config
+                    .with_untracked(|r| matches!(r, Loadable::NotAsked))
+            {
+                c.store.runtime_config.set(Loadable::Loading);
+                c.send(Cmd::LoadRuntimeConfig);
+            }
+        });
+    }
 
-    let mut root = Element::new().style(LayoutStyle::column().gap(0));
+    let mut root = Element::new().style(LayoutStyle::column().grow(1.0).padding(Edges {
+        left: 1,
+        right: 1,
+        top: 0,
+        bottom: 0,
+    }));
     let key = |c: char| KeyChord::plain(Key::Char(c));
     for (ch, verb) in [
         ('o', None),
@@ -160,24 +219,6 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         let c = ctx.clone();
         root = root.shortcut(key('y'), move |_| copy_menu(cx, &c));
     }
-    // The two Advanced blocks (the web shows them under the cards): their
-    // values come from `GET /admin/runtime-config` (admin), read once.
-    {
-        let c = ctx.clone();
-        cx.effect(move || {
-            let conn = c.store.conn.get();
-            if is_admin(&conn)
-                && c.store
-                    .runtime_config
-                    .with_untracked(|r| matches!(r, Loadable::NotAsked))
-            {
-                c.store.runtime_config.set(Loadable::Loading);
-                c.send(Cmd::LoadRuntimeConfig);
-            }
-        });
-    }
-    // R8.1: the gears — `a` the Apps toolbar's "Apps settings", `g` the
-    // selected card's own settings (Continuum's).
     {
         let c = ctx.clone();
         root = root.shortcut(key('a'), move |_| {
@@ -190,78 +231,143 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     }
     {
         let c = ctx.clone();
-        root = root.shortcut(key('r'), move |_| {
-            c.store.apps.notes.set(Vec::new());
-            c.send(Cmd::LoadApps { latest: true });
-        });
+        root = root.shortcut(key('r'), move |_| check_again(&c));
     }
+    let ctx_head = ctx.clone();
     let ctx_body = ctx.clone();
-    // The panel regenerates on every job-progress tick: the keeper
-    // carries the keyboard across (and stays off a widget the user left).
-    let keeper = super::util::FocusKeeper::new();
-    root.child(
-        Block::new()
-            .border(BorderKind::Rounded)
-            .title("Apps — open in your browser, already signed in to this gateway")
-            .fill(t.surface)
-            .layout(
-                LayoutStyle::column()
-                    .gap(0)
-                    .grow(1.0)
-                    .min_h(6)
-                    .padding(Edges::all(1)),
-            )
-            .child(dyn_view_scoped(
-                LayoutStyle::default().grow(1.0),
-                move |gcx| {
-                    let conn = store.conn.get();
-                    let data = apps.overview.get();
-                    let admin = is_admin(&conn);
-                    let waiting = match &data {
-                        Loadable::Ready(d) => {
-                            return ready_view(gcx, &ctx_body, &tt, d, admin, &keeper)
-                        }
-                        // The web's "This gateway cannot manage apps right now":
-                        // the honest failure kind, never a guessed list.
-                        Loadable::Failed(e) => Element::new()
-                            .style(LayoutStyle::column())
-                            .child(line(vec![span_bold(
-                                "This gateway cannot manage apps right now.",
-                                tt.warn,
-                            )]))
-                            .child(super::util::error_panel_conn(
-                                &tt,
-                                e,
-                                &conn,
-                                Some("r checks again"),
-                            ))
-                            .build(),
-                        Loadable::NotAsked => line(vec![span(
-                            "— not loaded yet (connect first, or press r to check)",
-                            tt.text_muted,
-                        )]),
-                        Loadable::Loading => abstracttui::widgets::Spinner::new()
-                            .frame(store.tick.get())
-                            .label("looking for the apps…")
-                            .element(&tt)
-                            .build(),
-                    };
-                    keeper.anchor(waiting)
-                },
-            ))
-            .element(t)
-            .build(),
-    )
+    root.child(dyn_view_scoped(
+        LayoutStyle::column().shrink(0.0),
+        move |hcx| apps_head(hcx, cx, &ctx_head, &tt),
+    ))
+    .child(dyn_view_scoped(
+        LayoutStyle::default().grow(1.0),
+        move |gcx| {
+            let conn = store.conn.get();
+            let data = apps.overview.get();
+            let admin = is_admin(&conn);
+            let anchor = |v: View| -> View {
+                Element::new()
+                    .style(LayoutStyle::column().shrink(0.0))
+                    .focusable()
+                    .autofocus()
+                    .child(v)
+                    .build()
+            };
+            match &data {
+                Loadable::Ready(d) => ready_view(gcx, cx, &ctx_body, &tt, d, admin),
+                // The web's "This gateway cannot manage apps right now":
+                // the honest failure kind, never a guessed list.
+                Loadable::Failed(e) => anchor(
+                    Element::new()
+                        .style(LayoutStyle::column())
+                        .child(line(vec![span_bold(
+                            "This gateway cannot manage apps right now.",
+                            tt.warn,
+                        )]))
+                        .child(super::util::error_panel_conn(
+                            &tt,
+                            e,
+                            &conn,
+                            Some("r checks again"),
+                        ))
+                        .build(),
+                ),
+                Loadable::NotAsked => anchor(line(vec![span(
+                    "— not loaded yet (connect first, or press r to check)",
+                    tt.text_muted,
+                )])),
+                Loadable::Loading => anchor(
+                    abstracttui::widgets::Spinner::new()
+                        .frame(store.tick.get())
+                        .label("looking for the apps…")
+                        .element(&tt)
+                        .build(),
+                ),
+            }
+        },
+    ))
     .build()
 }
 
+/// "Check again" (the web's toolbar button, `r`).
+fn check_again(ctx: &Ctx) {
+    ctx.store.apps.notes.set(Vec::new());
+    ctx.send(Cmd::LoadApps { latest: true });
+}
+
+/// The web subtitle of the Apps page.
+pub const APPS_SUBTITLE: &str = "Install and open the apps that work with this gateway";
+
+/// Title + subtitle, then [Check again] and the Apps settings gear (admins).
+fn apps_head(cx: Scope, pcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
+    let admin = ctx.store.conn.with(is_admin);
+    let w = (crate::ui::page_viewport(cx).get().w - 2).max(20);
+    let c = ctx.clone();
+    let check = Action::label("check", "Check again").key('r');
+    let mut buttons = vec![button(cx, t, &check, On::Page, true, move || {
+        check_again(&c)
+    })];
+    let mut bw = check.width() + 1;
+    if admin {
+        let gear = Action::glyph("settings", "Apps settings")
+            .key('a')
+            .tooltip("Settings shared by every app (Node.js, ports, registries)");
+        bw += gear.width() + 1;
+        let c = ctx.clone();
+        buttons.push(button(cx, t, &gear, On::Page, true, move || {
+            super::app_settings::open(pcx, &c, super::app_settings::Which::Apps)
+        }));
+    }
+    let mut btn_row = Element::new().style(
+        LayoutStyle::row()
+            .height(Dimension::Cells(1))
+            .gap(1)
+            .shrink(0.0),
+    );
+    for b in buttons {
+        btn_row = btn_row.child(b);
+    }
+    let title_w = abstracttui::text::width(APPS_SUBTITLE);
+    let side = title_w + bw + 2 <= w;
+    let titles = Element::new()
+        .style(if side {
+            LayoutStyle::column()
+                .width(Dimension::Cells(w - bw - 1))
+                .shrink(0.0)
+        } else {
+            LayoutStyle::column().shrink(0.0)
+        })
+        .child(super::w::paint::fill_line(
+            LayoutStyle::line(1).shrink(0.0),
+            vec![super::w::Ink::new("Apps", t.text).bold()],
+            None,
+        ))
+        .child(super::w::form::sentence(t, APPS_SUBTITLE, w, t.text_muted))
+        .build();
+    if side {
+        Element::new()
+            .style(LayoutStyle::row().shrink(0.0))
+            .child(titles)
+            .child(btn_row.build())
+            .build()
+    } else {
+        Element::new()
+            .style(LayoutStyle::column().shrink(0.0))
+            .child(titles)
+            .child(btn_row.build())
+            .build()
+    }
+}
+
+/// `pcx`: the page scope — actions open their modals/prompts there (this
+/// region re-renders on every selection move and job tick).
 fn ready_view(
     cx: Scope,
+    pcx: Scope,
     ctx: &Ctx,
     t: &TokenSet,
     d: &AppsOverview,
     admin: bool,
-    keeper: &super::util::FocusKeeper,
 ) -> View {
     let apps = ctx.store.apps;
     // Tracked: job progress and notes re-render the panel.
@@ -276,8 +382,6 @@ fn ready_view(
     };
     let mut col = Element::new().style(LayoutStyle::column().gap(0).grow(1.0));
     let width = text_width(cx);
-    // The web's intro sentence, then where apps listen (the "Where apps
-    // listen" setting below changes it) — one paragraph.
     let mut intro = d.intro();
     if let Some(h) = &d.apps_host {
         if h.starts_with("127.") || h == "localhost" {
@@ -287,17 +391,6 @@ fn ready_view(
         }
     }
     col = wrapped(col, t, None, &intro, t.text_muted, false, width, 0);
-    // Node.js rides in the scroll below the table (a short terminal keeps
-    // the app list on screen).
-    let node = node_view(
-        t,
-        width,
-        d,
-        job_of(NODE_KEY, d.node.active_job.as_ref()),
-        apps.note_for(NODE_KEY),
-        apps.is_pending(NODE_KEY),
-        admin,
-    );
     if d.registry_reachable == Some(false) {
         col = wrapped(
             col,
@@ -310,19 +403,34 @@ fn ready_view(
             0,
         );
     }
+    let node = node_view(
+        cx,
+        pcx,
+        ctx,
+        t,
+        width,
+        d,
+        job_of(NODE_KEY, d.node.active_job.as_ref()),
+        apps.note_for(NODE_KEY),
+        apps.is_pending(NODE_KEY),
+        admin,
+    );
     if d.apps.is_empty() {
-        return keeper.anchor(
-            col.child(node)
-                .child(line(vec![span(
-                    "∅ this gateway lists no apps",
-                    t.text_muted,
-                )]))
-                .build(),
-        );
+        return Element::new()
+            .style(LayoutStyle::column().shrink(0.0))
+            .focusable()
+            .autofocus()
+            .child(
+                col.child(node)
+                    .child(line(vec![span(
+                        "∅ this gateway lists no apps",
+                        t.text_muted,
+                    )]))
+                    .build(),
+            )
+            .build();
     }
-    col = col.child(apps_table(cx, ctx, t, d, admin, &job_of, keeper));
-    // Below the table: the chosen app's card, then the two Advanced
-    // blocks — in a scroll, so nothing is cut off on a short terminal.
+    col = col.child(apps_table(cx, pcx, ctx, t, d, admin, &job_of));
     let mut below = Element::new()
         .style(LayoutStyle::column().gap(0))
         .child(line(vec![span(String::new(), t.text)]));
@@ -343,7 +451,6 @@ fn ready_view(
             apps.note_for(&tui_key(&row.id)),
             apps.is_pending(&app_key(&row.id)) || apps.is_pending(&tui_key(&row.id)),
             admin,
-            apps.on_badge.get(),
         ));
     }
     below = below
@@ -356,6 +463,247 @@ fn ready_view(
             .view(cx),
     )
     .build()
+}
+
+/// The web's tooltip of an app action (the card buttons' data-af-tip).
+fn verb_tip(row: &AppRow, v: &VerbState) -> String {
+    // The web card's data-af-tip texts (console_ui.py appCardMarkup).
+    let n = &row.name;
+    let first_entity = row.id == "entity" && row.entities_count == Some(0);
+    let entity_title = format!("Open {n} on the form that creates your first entity, signed in");
+    match v.verb {
+        AppVerb::Install if row.is_desktop() => {
+            format!("Install the {n} on the gateway's computer (into the gateway's own Python)")
+        }
+        AppVerb::Install => format!(
+            "Install {n}{}{}",
+            if row.install_parts.iter().any(|p| p == "tui") {
+                " for the browser and the terminal"
+            } else {
+                ""
+            },
+            if row.needs_node_install {
+                " (Node.js is installed for you first: about 56 MB, no password needed)"
+            } else {
+                ""
+            }
+        ),
+        AppVerb::Open if first_entity && row.running => entity_title,
+        AppVerb::Open if first_entity => {
+            let mut t = entity_title;
+            if let Some(c) = t.get_mut(0..1) {
+                c.make_ascii_lowercase();
+            }
+            format!("Start {n}, then {t}")
+        }
+        AppVerb::Open if row.running => format!("Open {n} in a new tab, signed in"),
+        AppVerb::Open => format!("Start {n} and open it in a new tab, signed in"),
+        AppVerb::DesktopOpen if row.running => format!("Bring the {n} to the front on this computer"),
+        AppVerb::DesktopOpen => format!("Start the {n} on this computer"),
+        AppVerb::Update => row.update_tip.clone().unwrap_or_else(|| {
+            format!(
+                "Install the newest {n} ({}); a running app restarts on it",
+                row.latest_version.clone().unwrap_or_else(|| "latest".into())
+            )
+        }),
+        AppVerb::OpenTerminal => {
+            format!("The same {n}, in a terminal window on this computer, signed in")
+        }
+        AppVerb::InstallTerminal if row.tui.as_ref().is_some_and(|t| t.installed) => {
+            format!("Install the newest {n} terminal app")
+        }
+        AppVerb::InstallTerminal => format!(
+            "Install {n}'s terminal app: a ready-made download from {n}'s release, checked against its published checksums"
+        ),
+        AppVerb::Cancel => format!("Stop installing {n}"),
+        AppVerb::CancelTerminal => format!("Stop installing {n}'s terminal app"),
+        _ => v.label.clone(),
+    }
+}
+
+/// The verb behind an action id (the table's buttons).
+fn verb_of(id: &str) -> Option<AppVerb> {
+    Some(match id {
+        "open" => AppVerb::Open,
+        "desktop_open" => AppVerb::DesktopOpen,
+        "install" => AppVerb::Install,
+        "update" => AppVerb::Update,
+        "log" => AppVerb::Log,
+        "cancel" => AppVerb::Cancel,
+        "terminal" => AppVerb::OpenTerminal,
+        "install_terminal" => AppVerb::InstallTerminal,
+        "cancel_terminal" => AppVerb::CancelTerminal,
+        _ => return None,
+    })
+}
+
+fn verb_id(v: AppVerb) -> &'static str {
+    match v {
+        AppVerb::Open => "open",
+        AppVerb::DesktopOpen => "desktop_open",
+        AppVerb::Install => "install",
+        AppVerb::Update => "update",
+        AppVerb::Log => "log",
+        AppVerb::Cancel => "cancel",
+        AppVerb::OpenTerminal => "terminal",
+        AppVerb::InstallTerminal => "install_terminal",
+        AppVerb::CancelTerminal => "cancel_terminal",
+        AppVerb::Start | AppVerb::Stop => "badge",
+    }
+}
+
+/// A row's actions: the primary one, the secondary ones (Update, the
+/// terminal version, Show log), the card's gear (Continuum) — labelled
+/// buttons in the web's words; a refused one faint with its reason.
+pub fn app_actions(
+    row: &AppRow,
+    job: Option<&AppJob>,
+    tjob: Option<&AppJob>,
+    admin: bool,
+) -> Vec<Action> {
+    let mut verbs: Vec<VerbState> = Vec::new();
+    if let Some(p) = primary_verb(row, job, admin) {
+        verbs.push(p);
+    }
+    verbs.extend(secondary_verbs(row, job, tjob, admin));
+    let mut out: Vec<Action> = verbs
+        .iter()
+        .map(|v| {
+            let label = match v.verb {
+                AppVerb::OpenTerminal => ">_ Open in Terminal".to_string(),
+                _ => v.label.clone(),
+            };
+            let key = match v.verb {
+                AppVerb::Cancel => 'c',
+                other => other.key().chars().next().unwrap_or('o'),
+            };
+            Action::label(verb_id(v.verb), label)
+                .key(key)
+                .tooltip(verb_tip(row, v))
+                .refused(v.available.clone().err())
+        })
+        .collect();
+    if admin && has_card_settings(&row.id) {
+        out.push(
+            Action::glyph("settings", "Settings")
+                .key('g')
+                .tooltip(format!("{} settings", row.name)),
+        );
+    }
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apps_table(
+    cx: Scope,
+    pcx: Scope,
+    ctx: &Ctx,
+    t: &TokenSet,
+    d: &AppsOverview,
+    admin: bool,
+    job_of: &dyn Fn(&str, Option<&AppJob>) -> Option<AppJob>,
+) -> View {
+    let vp = crate::ui::page_viewport(cx).get();
+    let rows: Vec<super::w::Row> = d
+        .apps
+        .iter()
+        .map(|a| {
+            let job = job_of(&app_key(&a.id), a.active_job.as_ref());
+            let tjob = job_of(
+                &tui_key(&a.id),
+                a.tui.as_ref().and_then(|x| x.active_job.as_ref()),
+            );
+            let active = job.as_ref().map(AppJob::is_active).unwrap_or(false);
+            let (label, tone) = status_label(a, active);
+            // R11.3 / A3: the badge's LABEL is the state only; the action
+            // sentence ("Running — click to stop") is its tooltip.
+            let badge = match badge_verb(a, job.as_ref()) {
+                Some(bv) if bv.available.is_ok() => Cell::Badge {
+                    label: label.clone(),
+                    ink: ink(t, tone),
+                    action: Some("badge"),
+                    tip: Some(format!(
+                        "{}  (s)",
+                        badge_tip(a).unwrap_or_else(|| bv.label.clone())
+                    )),
+                },
+                _ => Cell::Badge {
+                    label,
+                    ink: ink(t, tone),
+                    action: None,
+                    tip: badge_tip(a),
+                },
+            };
+            let mut version = vec![super::w::Ink::new(
+                a.version.clone().unwrap_or_else(|| "—".into()),
+                t.text_muted,
+            )];
+            if a.update_available {
+                if let Some(l) = &a.latest_version {
+                    version.push(super::w::Ink::new(format!(" · {l} ⇡"), t.warn));
+                }
+            }
+            super::w::Row::new(
+                a.id.clone(),
+                vec![
+                    Cell::text(a.name.clone(), t.text),
+                    badge,
+                    Cell::Text(version),
+                    Cell::Actions(app_actions(a, job.as_ref(), tjob.as_ref(), admin)),
+                ],
+            )
+        })
+        .collect();
+    let ctx_a = ctx.clone();
+    let ctx_e = ctx.clone();
+    DataTable::new(
+        vec![
+            Col::new("App", ColW::Fit { min: 6, max: 14 }),
+            Col::new("Status", ColW::Fit { min: 8, max: 22 }),
+            Col::new("Version", ColW::Fit { min: 7, max: 22 }),
+            Col::new("Actions", ColW::Flex { weight: 1, min: 16 }),
+        ],
+        rows,
+        ctx.ui.apps_key,
+    )
+    .width((vp.w - 2).max(20))
+    .max_rows((vp.h - 10).clamp(4, 20))
+    .top(ctx.ui.apps_top)
+    .autofocus()
+    .on_action(move |key, id| app_action(pcx, &ctx_a, key, id))
+    .on_activate(move |key| {
+        select_app(&ctx_e, key);
+        run_key(pcx, &ctx_e, None)
+    })
+    .view(cx, t)
+}
+
+/// Select the app `id` (the verbs read the store's index at once).
+fn select_app(ctx: &Ctx, id: &str) {
+    ctx.ui.apps_key.set(Some(id.to_string()));
+    let i = ctx.store.apps.overview.with_untracked(|o| {
+        o.ready()
+            .and_then(|d| d.apps.iter().position(|a| a.id == id))
+    });
+    if let Some(i) = i {
+        if ctx.store.apps.sel.get_untracked() != i {
+            ctx.store.apps.sel.set(i);
+        }
+    }
+}
+
+/// A row action (a click or its key).
+fn app_action(cx: Scope, ctx: &Ctx, key: &str, id: &str) {
+    select_app(ctx, key);
+    match id {
+        "badge" => run_badge(cx, ctx),
+        "settings" => card_settings_key(cx, ctx),
+        other => {
+            if let Some(v) = verb_of(other) {
+                run_key(cx, ctx, Some(v))
+            }
+        }
+    }
 }
 
 /// Does this app have its own settings (a gear on its card)? Only
@@ -381,7 +729,11 @@ fn card_settings_key(cx: Scope, ctx: &Ctx) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn node_view(
+    cx: Scope,
+    pcx: Scope,
+    ctx: &Ctx,
     t: &TokenSet,
     width: usize,
     d: &AppsOverview,
@@ -426,14 +778,27 @@ fn node_view(
             format!("  ⟳ {}", j.progress_line("Installing Node.js")),
             t.info,
         )]));
-        col = col.child(line(vec![span(
-            if admin {
-                "  n cancels"
-            } else {
-                "  only an admin can cancel"
-            },
-            t.text_faint,
-        )]));
+        let c = ctx.clone();
+        let a = Action::label("node_cancel", "Cancel")
+            .key('n')
+            .tooltip("Cancel the Node.js install")
+            .refused((!admin).then(|| "Only an admin can cancel an install".to_string()));
+        col = col.child(
+            Element::new()
+                .style(
+                    LayoutStyle::row()
+                        .height(Dimension::Cells(1))
+                        .shrink(0.0)
+                        .padding(Edges {
+                            left: 2,
+                            right: 0,
+                            top: 0,
+                            bottom: 0,
+                        }),
+                )
+                .child(button(cx, t, &a, On::Page, true, move || node_key(pcx, &c)))
+                .build(),
+        );
     } else if !n.available {
         col = wrapped(
             col,
@@ -445,149 +810,61 @@ fn node_view(
             width,
             2,
         );
-        let action = if pending {
-            "  starting…".to_string()
+        // The web's [Install Node.js] button (non-admin: disabled, with
+        // the web's tooltip).
+        let why = if pending {
+            Some("starting…".to_string())
         } else if !n.install_available {
-            format!(
-                "  Install is not available here{}",
+            Some(format!(
+                "Install is not available here{}",
                 n.message
                     .as_ref()
                     .map(|m| format!(": {m}"))
                     .unwrap_or_default()
-            )
-        } else if admin {
-            "  n installs Node.js now".to_string()
+            ))
+        } else if !admin {
+            Some("Only an admin can install Node.js".to_string())
         } else {
-            "  Install Node.js: only an admin can install Node.js".to_string()
+            None
         };
-        col = wrapped(
-            col,
-            t,
-            None,
-            action.trim_start(),
-            t.text_faint,
-            false,
-            width,
-            2,
+        let c = ctx.clone();
+        let a = Action::label("node_install", "Install Node.js")
+            .key('n')
+            .tooltip("Install Node.js into the gateway's own folder (about 56 MB, no password, no terminal)")
+            .refused(why.clone());
+        col = col.child(
+            Element::new()
+                .style(
+                    LayoutStyle::row()
+                        .height(Dimension::Cells(1))
+                        .shrink(0.0)
+                        .padding(Edges {
+                            left: 2,
+                            right: 0,
+                            top: 0,
+                            bottom: 0,
+                        }),
+                )
+                .child(button(cx, t, &a, On::Page, true, move || node_key(pcx, &c)))
+                .build(),
         );
+        if let Some(w) = why {
+            col = wrapped(
+                col,
+                t,
+                Some("Install Node.js:"),
+                &w,
+                t.text_faint,
+                false,
+                width,
+                2,
+            );
+        }
     }
     if let Some(note) = note {
         col = note_lines(col, t, &note, 2, width);
     }
     col.build()
-}
-
-fn apps_table(
-    cx: Scope,
-    ctx: &Ctx,
-    t: &TokenSet,
-    d: &AppsOverview,
-    admin: bool,
-    job_of: &dyn Fn(&str, Option<&AppJob>) -> Option<AppJob>,
-    keeper: &super::util::FocusKeeper,
-) -> View {
-    let vw = abstracttui::app::use_viewport(cx).get().w;
-    let on_badge = ctx.store.apps.on_badge.get();
-    let sel_id = d.apps.get(ctx.store.apps.sel.get()).map(|a| a.id.clone());
-    let rows: Vec<Vec<String>> = d
-        .apps
-        .iter()
-        .map(|a| {
-            let job = job_of(&app_key(&a.id), a.active_job.as_ref());
-            let active = job.as_ref().map(AppJob::is_active).unwrap_or(false);
-            let (label, _) = status_label(a, active);
-            let status = if a.is_external() {
-                format!("{label} (outside)")
-            } else {
-                label
-            };
-            // R11.3: the badge cell holding the cursor shows it: [Running].
-            let status = if on_badge && Some(a.id.as_str()) == sel_id.as_deref() {
-                format!("[{status}]")
-            } else {
-                status
-            };
-            let action = match primary_verb(a, job.as_ref(), admin) {
-                Some(v) if v.available.is_ok() => format!(
-                    "{} {}",
-                    if v.verb == AppVerb::Cancel { "c" } else { "o" },
-                    v.label
-                ),
-                Some(v) => format!("({} — unavailable)", v.label),
-                None => "—".into(),
-            };
-            let kind = if a.is_desktop() {
-                "desktop".to_string()
-            } else if a.tui.is_some() {
-                "browser + terminal".to_string()
-            } else {
-                "browser".to_string()
-            };
-            vec![
-                a.name.clone(),
-                kind,
-                status,
-                a.version.clone().unwrap_or_else(|| "—".into()),
-                action,
-            ]
-        })
-        .collect();
-    let rules = vec![
-        widths::ColRule::head("app", 10),
-        widths::ColRule::head("kind", 8),
-        widths::ColRule::head("status", 12),
-        widths::ColRule::head("version", 8),
-        widths::ColRule::head("action", 12),
-    ];
-    // Wrapping rows (R7.2): a long action ("o Create your first entity")
-    // wraps inside its cell instead of being cut. Enter = the row's
-    // primary action (the web card's one button).
-    let rows: Vec<super::kit::Row> = rows.into_iter().map(super::kit::Row::new).collect();
-    // Exactly the lines the rows wrap to at this width (header included),
-    // capped: the card below keeps its room.
-    let inner = vw - widths::BLOCK_CHROME - 2;
-    let visible = (super::kit::wrap_layout(&rules, &rows, inner, None).len() as i32).clamp(2, 14);
-    let ctx_act = ctx.clone();
-    let ctx_cell = ctx.clone();
-    let table = super::kit::WrapTable::new(rules, rows, ctx.store.apps.sel)
-        .on_activate(move |_| run_key(cx, &ctx_act, None))
-        .layout(LayoutStyle::default().h(visible).shrink(0.0))
-        .element(cx, t);
-    // R11.3: the status cell is selectable. → moves onto the badge (only
-    // when it is a live control: an app started outside the gateway, or a
-    // non-admin, gets the reason instead), ← back to the row; on the badge
-    // Enter / Space do its action. ↑/↓ leave it. On a wrapper, in the
-    // capture phase: taken before the table's own Enter (the row's Open).
-    let wrapper = Element::new()
-        .style(LayoutStyle::column().h(visible).shrink(0.0))
-        .on(abstracttui::ui::Phase::Capture, move |ectx, ev| {
-            let abstracttui::ui::UiEvent::Key(k) = ev else {
-                return;
-            };
-            if k.mods.0 != 0 {
-                return;
-            }
-            let apps = ctx_cell.store.apps;
-            match k.key {
-                Key::Right => {
-                    badge_cell_enter(&ctx_cell);
-                    ectx.stop_propagation();
-                }
-                Key::Left if apps.on_badge.get_untracked() => {
-                    apps.on_badge.set(false);
-                    ectx.stop_propagation();
-                }
-                Key::Enter | Key::Char(' ') if apps.on_badge.get_untracked() => {
-                    run_badge(cx, &ctx_cell);
-                    ectx.stop_propagation();
-                }
-                Key::Up | Key::Down | Key::Char('k') | Key::Char('j') => {
-                    apps.on_badge.set(false);
-                }
-                _ => {}
-            }
-        });
-    wrapper.child(keeper.wire(table)).build()
 }
 
 fn note_lines(
@@ -641,7 +918,6 @@ fn detail_view(
     tnote: Option<AppNote>,
     pending: bool,
     admin: bool,
-    on_badge: bool,
 ) -> View {
     let width = text_width(cx);
     let active = job.map(AppJob::is_active).unwrap_or(false);
@@ -810,12 +1086,8 @@ fn detail_view(
     // click to stop" (Enter / Space while the cursor is on the badge cell),
     // or "Running: Started outside the gateway — stop it where it was started".
     if let Some(bv) = badge_verb(row, job) {
-        match &bv.available {
-            Ok(()) => on.push((
-                if on_badge { "Enter/s" } else { "s" },
-                badge_tip(row).unwrap_or_else(|| bv.label.clone()),
-            )),
-            Err(why) => off.push((bv.label.clone(), why.clone())),
+        if let Err(why) = &bv.available {
+            off.push((bv.label.clone(), why.clone()));
         }
     }
     for v in &verbs {
@@ -837,11 +1109,11 @@ fn detail_view(
     if admin && has_card_settings(&row.id) {
         on.push(("g", "Settings".to_string()));
     }
+    // R15: the actions are the row's buttons (the table); here only what
+    // is refused, with its reason (visible, never tooltip-only).
+    let _ = &on;
     if pending {
         col = col.child(line(vec![span("⟳ working…", t.info)]));
-    } else if !on.is_empty() {
-        let pairs: Vec<(&str, &str)> = on.iter().map(|(k, l)| (*k, l.as_str())).collect();
-        col = col.child(super::kit::key_hint_bar(t, &pairs, width as i32));
     }
     for (label, why) in &off {
         col = wrapped(
@@ -1153,60 +1425,15 @@ fn run_key(cx: Scope, ctx: &Ctx, verb: Option<AppVerb>) {
             let c = ctx.clone();
             let r = row.clone();
             let verb = state.verb;
-            open_prompt(
-                cx,
-                ctx.ui,
-                ChoicePrompt::new(what)
-                    .option("go", state.label.clone())
-                    .option("keep", "Not now")
-                    .initial("go"),
-                move |outcome| {
-                    if let ChoiceOutcome::Answered(a) = outcome {
-                        if a.selected.iter().any(|s| s == "go") {
-                            c.send(Cmd::AppAct {
-                                app_id: r.id.clone(),
-                                name: r.name.clone(),
-                                verb,
-                                path: None,
-                                start_first: false,
-                            });
-                        }
-                    }
-                },
-            );
-        }
-    }
-}
-
-/// R11.3: → on the table: the cursor moves onto the selected row's status
-/// badge when it is a live control; otherwise the notice says why (the
-/// gateway's tip: "Started outside the gateway — stop it where it was
-/// started", "Only an admin can start or stop apps").
-fn badge_cell_enter(ctx: &Ctx) {
-    let store = ctx.store;
-    let Some(row) = selected(ctx) else {
-        return;
-    };
-    let job = store
-        .apps
-        .job_for(&app_key(&row.id), row.active_job.as_ref());
-    match badge_verb(&row, job.as_ref()) {
-        Some(v) if v.available.is_ok() => store.apps.on_badge.set(true),
-        Some(v) => {
-            store.apps.on_badge.set(false);
-            let why = v.available.err().unwrap_or_default();
-            store
-                .notice
-                .set(Some(format!("{} — {}: {why}", row.name, v.label)));
-        }
-        None => {
-            store.apps.on_badge.set(false);
-            let (label, _) =
-                status_label(&row, job.as_ref().map(AppJob::is_active).unwrap_or(false));
-            store.notice.set(Some(format!(
-                "{} — {label}: nothing to start or stop now",
-                row.name
-            )));
+            super::w::Confirm::plain(what, &state.label, "Not now").open(cx, ctx.ui, move || {
+                c.send(Cmd::AppAct {
+                    app_id: r.id.clone(),
+                    name: r.name.clone(),
+                    verb,
+                    path: None,
+                    start_first: false,
+                });
+            });
         }
     }
 }
@@ -1294,23 +1521,12 @@ fn node_key(cx: Scope, ctx: &Ctx) {
         return;
     }
     let c = ctx.clone();
-    open_prompt(
-        cx,
-        ctx.ui,
-        ChoicePrompt::new(
-            "Install Node.js into the gateway's own folder? About 56 MB, no password, no terminal.",
-        )
-        .option("go", "Install Node.js")
-        .option("keep", "Not now")
-        .initial("go"),
-        move |outcome| {
-            if let ChoiceOutcome::Answered(a) = outcome {
-                if a.selected.iter().any(|s| s == "go") {
-                    c.send(Cmd::InstallAppsNode);
-                }
-            }
-        },
-    );
+    super::w::Confirm::plain(
+        "Install Node.js into the gateway's own folder? About 56 MB, no password, no terminal.",
+        "Install Node.js",
+        "Not now",
+    )
+    .open(cx, ctx.ui, move || c.send(Cmd::InstallAppsNode));
 }
 
 /// `y`: pick one of the app's copyable lines (address, commands, the

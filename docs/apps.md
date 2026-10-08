@@ -61,8 +61,8 @@ than the installed one (semantic versions, prereleases before their release).
   checkout — update it there".
 - The button's label and tooltip come from the gateway (`update_label`,
   `update_tip` on the row), so the web console and the terminal console show
-  the same words; in the terminal console `u` updates the selected app, with
-  the tooltip as its confirmation.
+  the same words; in the terminal console **Update to x.y.z** (`u`) asks with
+  the tooltip as its question.
 - When the installer upgrades the framework with no gateway running, it leaves
   the apps' versions in `<data dir>/apps-upgrade.pending` and the gateway
   brings each installed app UP to that version at its next start; an app you
@@ -409,7 +409,7 @@ listen*) is **deprecated**: apps always listen on `127.0.0.1` and open
 through the gateway. It accepts only a loopback address; an older saved
 `0.0.0.0` (or `ABSTRACTGATEWAY_APPS_HOST`) is ignored with one warning in the
 gateway's log, and clearing it removes the warning. Change them from the Apps page (the toolbar gear, *Apps settings*), the
-terminal console (Runtimes → *Runtime knobs* → *Edit apps settings*) or the
+terminal console (Apps → the ⊛ *Apps settings* gear) or the
 CLI:
 
 ```bash

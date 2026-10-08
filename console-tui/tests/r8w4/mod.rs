@@ -84,6 +84,13 @@ pub struct Harness {
 pub fn harness(size: (i32, i32), mount: Mount) -> Harness {
     let size = Size::new(size.0, size.1);
     abstracttui::app::set_theme_by_id("abstract-dark");
+    // R15 rail: from 120x32 the console shows a 21-cell nav rail; these
+    // suites pin PAGE layouts, so a wide size keeps its page width.
+    let size = if size.w >= 120 && size.h >= 32 {
+        Size::new(size.w + 21, size.h)
+    } else {
+        size
+    };
     let mut app = App::new(size);
     let overlays = app.overlays();
     let quitter = app.quitter();
@@ -94,6 +101,10 @@ pub fn harness(size: (i32, i32), mount: Mount) -> Harness {
     app.mount(move |cx| {
         let store = Store::create(cx);
         let ui_state = UiState::create(cx, "http://127.0.0.1:18999".to_string(), String::new());
+        // R15: the shell installs these; a page mounted alone needs them for
+        // tooltips, the focused-control line and refused presses.
+        abstractgateway_console::ui::w::tip::install(ui_state.focus_line, overlays.clone());
+        abstractgateway_console::ui::w::tip::install_notice(store.notice);
         *out.borrow_mut() = Some((store, ui_state));
         let transport: Arc<dyn ConsoleTransport> = Arc::new(NoTransport);
         let screens = ScreensCtx::new(
@@ -235,6 +246,31 @@ impl Harness {
             .unwrap_or_else(|| panic!("{text:?} not on screen:\n{screen}"));
         let x = col + dx + 1;
         let click = format!("\x1b[<0;{};{}M\x1b[<0;{};{}m", x, row + 1, x, row + 1);
+        self.key(click.as_bytes())
+    }
+    /// Click `needle` on the first line at or below the first line that
+    /// contains `anchor` (a row's control under its label: a path, then its
+    /// "Permission:" segments).
+    pub fn click_after(&mut self, anchor: &str, needle: &str) -> String {
+        let screen = self.turns(1);
+        let lines: Vec<&str> = screen.lines().collect();
+        let start = lines
+            .iter()
+            .position(|l| l.contains(anchor))
+            .unwrap_or_else(|| panic!("{anchor:?} not on screen:\n{screen}"));
+        let (row, col) = lines
+            .iter()
+            .enumerate()
+            .skip(start)
+            .find_map(|(i, l)| l.find(needle).map(|c| (i, l[..c].chars().count())))
+            .unwrap_or_else(|| panic!("{needle:?} not at/below {anchor:?}:\n{screen}"));
+        let click = format!(
+            "\x1b[<0;{};{}M\x1b[<0;{};{}m",
+            col + 2,
+            row + 1,
+            col + 2,
+            row + 1
+        );
         self.key(click.as_bytes())
     }
     /// Type text (each char a key press).

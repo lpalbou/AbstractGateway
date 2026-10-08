@@ -1,210 +1,49 @@
 # abstractgateway-console
 
-A keyboard-first terminal wizard to configure AbstractGateway — the TUI
-sibling of the served web console (`GET /console`), so the
-`abstractgateway` package serves both the web UI and the CLI for
-configuring a gateway. Rendered by
-[AbstractTUI](https://crates.io/crates/abstracttui) (`abstracttui`
-0.3.6 — the engine's `PageHost` owns the tab bar/navigation and a
-right `Drawer` hosts the entity inspector), talking to the gateway's admin HTTP API
-(`/api/gateway/...`).
+The terminal console for AbstractGateway: the same pages, words and gateway
+routes as the web console (`GET /console`), in a terminal — over SSH on a
+headless server, too, where it also runs the first-run setup guide. It is
+rendered by [AbstractTUI](https://crates.io/crates/abstracttui) and talks to
+the gateway's admin HTTP API (`/api/gateway/...`).
 
-The pages follow the web console's sidebar, in its order and groups, each
-with a fixed key: **1** Connection (the terminal's sign-in), ACCOUNTS **2**
-Accounts, WORK **3** Workflows, **4** Skills & MCP, **5** Runtimes, **6** Apps,
-MODELS **7** Providers, **8** OpenAI API, **9** Models, **0** Multimodal,
-SYSTEM **H** Resources, **T** Sandbox, **N** Network, then **S** Setup and
-**I** About. They are shared by a **setup guide** (the wizard: the web
-console's five first-run steps — welcome, engines, model, apps, done — on
-seven pages, through the same gateway routes) and a **browse mode** (free
-tabs). Every page reads and writes the routes its web page uses. There is
-no Workspaces page: workspaces are set from Accounts, as on the web (`W`
-opens Accounts). Signed in, the title bar shows the web top bar's memory and
-compute line (`Mem … · GPU … · N models`, from `GET /host/state` every 5 s)
-in place of the gateway address.
+It works with the mouse and with the keyboard alike: every button, switch,
+row and tab can be clicked, and every one of them has a key.
 
-The guide walks Connection → **Setup** (welcome: this computer at a
-glance, from `GET /api/gateway/host/state`, and the recommended models) →
-Providers (local engines, then cloud keys) → Multimodal (the default model:
-the recommended plan for this computer with AbstractCore's fit warnings, `a`
-applies it, `D` downloads all of it in one parent job, `C` cancels, `p` shows
-every word) → Models → Apps → Sandbox (**Finish** or **Skip setup**: `POST
-/api/gateway/host/first-run`, verified by a GET and journaled). Like the web
-guide, no step is gated except signing in. Without `--wizard`/`--browse`, the
-console reads `GET /api/gateway/host/first-run` at connect and keeps the guide
-open only for an admin whose first run is not completed; browse mode
-otherwise. `Ctrl+G` reopens the guide from browse; in the guide it opens the
-guide menu, like the web guide's step list: go to any step directly, leave
-(not recorded, it opens again next start) or skip (recorded).
+## What you see
 
-Conventions on every page: dialogs are full-width overlays that `Esc` closes;
-on/off settings are switches labelled by their feature (`[x]` on, `[ ]` off,
-`[-] reason` when unavailable); tables wrap their cells instead of cutting
-them and `Enter` opens a row's details; destructive actions confirm inline
-(`y` / `n`); the key-hint bar at the bottom lists the page's keys first. The
-pages are usable at 80×24.
+- **Screens** in the web console's sidebar order and groups, each with a fixed
+  key: **1** Connection (the terminal's sign-in); ACCOUNTS **2** Accounts;
+  WORK **3** Workflows, **4** Skills & MCP, **5** Runtimes, **6** Apps;
+  MODELS **7** Providers, **8** OpenAI API, **9** Models, **0** Multimodal;
+  SYSTEM **H** Resources, **T** Sandbox, **N** Network; then **S** Setup and
+  **I** About. A grouped rail lists them on terminals of 120×32 and larger, a
+  one-row tab strip below that; click one, press its key, or use `←` / `→`.
+- **Header**: the mode, the memory and compute line once signed in (it opens
+  Resources), your identity (it opens Connection), **✦ Docs** (the docs
+  assistant, also `F2`) and the ☾ / ☼ theme switch (also `Ctrl+T`).
+- **Row actions as buttons** in the web's order and words — glyph buttons
+  where the web shows icons, labelled buttons where it shows labels — with the
+  web's tooltip on hover or keyboard focus. An action that cannot apply stays
+  visible, faint, and a click says why.
+- **Switches** (`━●` on, `●─` off), **choices** (segmented options or
+  pickers) and **dialogs** that edit several settings at once with the web's
+  apply model. Closing a dialog with unsaved edits asks **Discard changes?**.
+- **Confirmations** with the web's question and buttons named after what they
+  do, for example [Rotate] [Cancel]; a destructive one opens on Cancel.
+- **`?`** lists every key of the current screen; **`F1`** About; **`F3`** the
+  gateway host panel (Workflows paused, Start at login, restart, quit,
+  update).
 
-- **1 Connection** — base URL + token (masked; or launch with
-   `--token <token>`), probe via `/ping` +
-   `/me`, honest states: unreachable ≠ sign-in needed (no token sent) ≠
-   token rejected ≠ connected — both 401s name where the admin token
-   lives, `<data dir>/auth/bootstrap-admin-token` on the gateway host —
-   with identity badges
-   (admin, auth mode, routing mode), and the network panel (including
-   the web console's "Look up my public address").
-- **2 Accounts** (ACCOUNTS) — one table of users and entities
-   (`GET /admin/accounts`): Name (and kind), Email (address and mailbox
-   state in one column), Runtime and the **Active** switch (Space: deactivate a user, suspend an entity; your own
-   row says why it can't). Per row: `@` email (your row: My email; another
-   user: their address only and their mailbox status; an entity: its own
-   mailbox form), `l` activity (sign-ins, changes, runs, automations, email; `f`
-   filters; `o` opens a run in Observer), `w` **Workspaces — <id>** (every row:
-   "Gateway: …", **Follow the gateway policy**, the account's posture and
-   rows, a mode above the gateway's limit refused with its reason; `GET/PUT
-   /workspace/policy/{tenant:id | me}`), `p` **Preferences — <id>** (the
-   default workflow per app, **Gateway default (<name>)** first; `GET/PUT
-   /accounts/{id}/preferences`), `o` OpenAI API (user rows), `t` rotate, `m` manage (entities), `d`
-   archive / unarchive (asks inline), `g` opens **Runtimes** filtered to the
-   account (`GET /admin/runtimes?account=`), `h` show archived; the line under
-   the table lists the selected row's actions, Enter shows why any can't apply. Rows wrap instead of cutting text.
-   Also create and edit users (create shows the token
-   exactly once, with clipboard copy; the email address at the top level,
-   runtime and tenant under Advanced; user/admin/readonly roles; the
-   **Active** switch on the table, Space), **Email for everyone** (`Tab`:
-   **Mailboxes for users**, **Agent email tools for users**, **Sign-in by
-   email**), **My email** (`@`: email address, mailbox, two notification
-   switches, agent email tools), token rotation, runtime reservations
-   (`v`: transfer a retained runtime to a user; data is never deleted), and the
-   entity roster with a per-entity **manage menu** (`m`): state
-   wake/sleep(+dream)/pause, mind substrate, voice triple, work order,
-   own-time grant + loop start/stop/freeze, tool policy (per-phase
-   grants from the live capability matrix; emptied phases ask
-   reset-vs-deny-all), prompt overlay (per-layer multi-line editing),
-   candidates review (promote/reject with journaled reasons), re-embed
-   (danger-gated), verify chain, identity card, and a voice
-   **audition** (the unsaved triple spoken as the entity; the audio is
-   saved to a file and played only when a local player exists). As in
-   the web console you can also **summon** a new entity (`n`: template +
-   name → dry-run validate → a confirm naming the permanence → create,
-   with admin-only substrate / birth embedder / per-phase capabilities),
-   manage **spark templates** (`s`: view, edit as a new version, new
-   from selected — saving is admin-only), and **talk** with an entity
-   (`c`: open a hosted visit, send turns, close with the reflection
-   pass; one visit at a time).
-   Admins: `E` **Eligible workspaces** (`GET/PUT /workspace/policy`: the
-   posture, Everything else, the listed workspaces with their mode, the
-   built-in refusals fixed, Add a workspace path, the summary line). Every
-   change is one PUT; "Saved", or the gateway's sentence + "Not saved." The
-   words are the kit's wording table byte for byte (`src/ui/workspace_chooser.rs`
-   `TABLE`; `cargo test` diffs it against
-   `tests/fixtures/r14w3_kit_workspace_chooser_text.json`, and
-   `python3 scripts/check_workspace_wording.py --kit <abstractuic>/ui-kit/src/workspace_chooser_core.ts`
-   diffs that fixture against the kit). The command sandbox state line sits
-   under the header.
-- **3 Workflows** (WORK) — the web console's Workflows page in three tabs
-   (`Tab`): **Workflows** (the "Shared with everyone" and "Mine" groups,
-   search `/`, `t` drafts, `o` older versions (each its own row), `h` show
-   archived; rows never expand, the selected row's actions sit on one line:
-   `x` export `.flow`, `f` open in AbstractFlow, `d` archive / unarchive, `e`
-   edit the description in place (`PATCH /bundles/{id}`, when
-   `actions.can_edit_description`), Space **Available to users**; `i` import
-   `.flow`), **Default workflow per app**
-   (Enter picks, saved at once; `s` Streamed replies) and **Broken
-   workflows** (`d` archives). Same routes as the web page.
-- **4 Skills & MCP** (WORK) — the skills shelf (search, show archived, view /
-   save / duplicate, import a `.zip` or folder, export `.zip`, archive) and
-   the MCP servers (add / edit, test, **Enabled for agents**, archive); one
-   row under the skills shows the shelf folder (`f` edits it in place, `u`
-   **Refresh curated shelf**).
-- **5 Runtimes** (WORK) — the web console's run table (Run, Workflow,
-   Status, Node, Session, Updated) as wrapping rows, `Enter` opens a run's
-   details in place, `t` **Root runs only**; the data-plane inventory
-   (default / per-user / per-entity) with owners, sizes, liveness;
-   Artifacts, Cache and Logs as wrapping tables; the runtime-knobs
-   surface (per-knob value + provenance; API-writable, no UI edits
-   yet) with the Continuum backlog settings editor and the curated
-   skills-shelf reseed (admin), **cancel** (`c`, asks inline) and **steer** (`s`)
-   via durable gateway commands, and the data-homes browser (`h`)
-   with dry-run-gated purge.
-- **6 Apps** (WORK) — the web console's Apps tab: browser apps (Flow, Code,
-  Observer…), the desktop Assistant and Node.js. `Enter`/`o` opens an
-  app signed in (a one-time link), `i`/`u` install/update (`u` also updates
-  the Assistant; its confirmation is the web button's tooltip; an app started
-  outside the gateway shows "Latest x.y.z" and where to update it), `s`/`x`
-  start/stop, `l` log, `c` cancel, `t`/`T` terminal apps, `n` Node.js,
-  `y` copy, `r` check again, `a` **Apps settings**, `g` the Continuum card's
-  settings (backlog folder, exec runner, process manager; each row applies
-  on its own) (admin-only writes).
-- **7 Providers** (MODELS) — the web console's Providers page in three
-   sections (`v` switches): **Local providers**, one row per engine on the
-   gateway host (`GET /engines`) with state, version and models — `Enter`
-   details, `i` install after an inline confirm showing the plan (and the
-   location for app engines), `s`/`x` start/stop its server, `b` browse its
-   models on the Models page, `c` cancel an install; **Remote providers**,
-   the cloud and OpenAI-compatible presets (`Enter`/`a` opens the connection
-   form); **Available Providers**, the endpoint profiles table
-   (create/edit/delete, write-only API keys with fingerprint display, model
-   allowlists, `t` test).
-- **8 OpenAI API** (MODELS) — the OpenAI-compatible API at `/v1`: status and
-   base URL, your API key (the token this console signed in with; masked, `v`
-   shows, `y` copies, `n` new key shown once), examples with the real base URL
-   (`s` picks, `c` copies), recent requests (`Enter` opens the recorded request
-   and response, `f` the full record, `o` copies the Observer link); for an
-   admin the Endpoint switch, Restart, Check setup, Authentication, Who can
-   connect and the Open-mode account.
-- **9 Models** (MODELS) — the web console's Models page: one list with a
-   header line per model and a row per build (engine, id, quantization,
-   size, status), including the downloaded models the catalog does not know
-   (**Not in the catalog**); filters (`/` search, `z` quantization, `p`
-   provider, `t` capability, `s` Downloaded/All, `f` fits, `x` clear, `m`
-   Hugging Face); `w` download with progress (`c` cancels), `d` delete after
-   an inline confirm sized by a dry run (`POST /models/delete-download`), `u`
-   use a downloaded text model as the default.
-- **0 Multimodal** (MODELS) — the multimodal capability table (`input.text`,
-   `output.voice`, …) with explicit default-vs-override editing:
-   placeholder pickers, "Applies now:" resolution lines, model pickers
-   that reset on provider switch — never a fabricated pair. The
-   `output.voice` editor carries a per-pair voice picker (live
-   `/voice/voices` catalog) that writes into the options JSON, and
-   every editor has a **Test** verb — a real generation through the
-   production lane (voice → `/runs/{…}/voice/tts`, everything else →
-   `/sandbox/generate` with the route's own capability key).
-- **H Resources** (SYSTEM) — live host residency: RAM/device/GPU gauges with
-   degradation notes, the resident-model table (modality, tri-state
-   residency, lock marker, context facts with calibration), and
-   session prompt caches on sub-tabs, polled from
-   `GET /api/gateway/host/state` every 4s while the screen is active.
-   `w` warms up a model (provider + model form, optional
-   lock-after-load), `k` locks/unlocks, `u` unloads (a locked model
-   answers HTTP 409 and the screen offers a force unload), `e` asks
-   for a context estimate, `c` clears the selected session's prompt
-   caches.
-- **T Sandbox** (SYSTEM) — the web console's sandbox workspace: every
-   output mode (text, image, voice, music, SFX, video), file attachments,
-   speak-this-reply; the session's change journal (every write + its
-   verify-via-GET result) and the guide's Finish / Skip setup.
-- **N Network** (SYSTEM) — who can reach the gateway (Localhost only, Local
-  network, Internet) with the web page's words, every address the gateway
-  detects (this computer, local network, the Bonjour name, the Tailscale
-  name) with Works now / Not in this mode and copy, "Reached through another
-  address?", and **Advanced**: allowed origins (add / remove, the gateway's
-  validation sentence verbatim) and the **Trust proxies on other machines**
-  switch (`gateway_network_v1`).
-- **S Setup** (also `Ctrl+G`) — the guide's welcome step: computer, memory,
-  graphics, data folder (and why), sign-in mode, whether the gateway starts
-  at login, the first-run state, and **Recommended for this computer** (`a`
-  Use recommended defaults, then Replace mine too inline; `D` Download all).
-- **I About** (also `F1` / `?` as an overlay) — the shared About card: this
-  console's name and version, the AbstractFramework and AbstractGateway
-  versions from `GET /api/gateway/about`, the links and the licence line.
+The **setup guide** (an admin's first run: Connection → Setup → Providers →
+Multimodal → Models → Apps → Sandbox, with **Finish** or **Skip setup**
+recorded on the gateway) and **browse mode** (free tabs) share the same
+screens; `--wizard` / `--browse` choose at launch and `Ctrl+G` reopens the
+guide. Every write is verified with a follow-up read and journaled; refusals
+show the gateway's own sentence. The pages are usable at 80×24, in a light or
+a dark theme (`--theme gateway-light` / `gateway-dark`).
 
-Parity contract with the web console: every write targets the SAME
-endpoint with the same body shape — changing a parameter here or in
-the web UI has the same target and the same effect.
-
-Every write is three-phase in the worker: write → **verify via GET** →
-journal. Failures surface the gateway's `detail` text verbatim; `ok:false`
-inside a 200 renders as failure (body over transport).
+The screen-by-screen guide — every table, button, dialog and confirmation —
+is in [docs/console.md](https://github.com/lpalbou/abstractgateway/blob/main/docs/console.md#terminal-console-abstractgateway-console).
 
 ## Install
 
@@ -234,22 +73,8 @@ cargo run -- --gateway-url http://127.0.0.1:8090 --token <token>
 cargo run < /dev/null   # headless: prints a skip line, exits 0
 ```
 
-Keys: `Tab` focus · `Enter` activate · `Ctrl+N` next step / `Ctrl+P`
-back (always work — `]`/`[` are alternates that text fields swallow) ·
-`←` / `→` previous / next screen, wrapping (browse; a focused text field,
-radio list, tabs bar or scrolling pane keeps the arrows for itself) ·
-`Esc` back / close modal (in a screen's text field, the first `Esc`
-releases the caret so screen keys work again; page text fields never
-take the caret by themselves once connected) · `1-9`, `0`, `H` (Resources), `T` (Sandbox), `N` (Network), `S` (Setup), `I` (About) screens (browse; the
-screen bar is also clickable in browse) · `Ctrl+G` setup guide (browse:
-reopen; guide: go to any step, leave or Skip setup) · `r` refresh · `F1` / `?` About ·
-`F2` docs assistant (signed in; the web top bar's ✦ drawer) · `F3`
-gateway host panel (**Workflows paused** and **Start at login** switches,
-restart, quit, update check/install, tray, the **last restart** row after a
-watchdog restart; a paused banner shows on every screen) · `Ctrl+L` repaint · `q`
-(browse) / `Ctrl+C` quit. Per-screen actions sit in the key-hint bar, and a
-refused action always SAYS why (toast + footer) instead of doing
-nothing.
+Run `abstractgateway-console --help` for the full list of flags, screens and
+keys; inside the console, `?` lists the keys of the current screen.
 
 Start a dev gateway (loopback host + a ≥15-char token — serve fail-fasts
 on weak tokens when binding non-loopback; port 8080 is often the
@@ -299,15 +124,19 @@ tests plus the live API E2E (writes + verify + cleanup).
 - `src/api_json.rs`, `src/store_json.rs`, `src/worker_json.rs` — the plain
   JSON lane the parity pages (OpenAI API, Models, Providers' local engines,
   Network) use: a web-console route in, its JSON body out, keyed slots.
-- `src/ui/` — root shell (wizard/browse) + one module per screen; shared
-  widgets in `ui/kit.rs` (overlay, wrapping table, inline confirm, key-hint
-  bar), `ui/switch.rs` and `ui/util.rs`.
-- `tests/headless_ui.rs` — the CaptureTerm suite; `tests/r7w2_*.rs` — the
-  web-parity pages (snapshots per state at 80×24 and 120×40, the route and
-  body of every action), with their live drives in `tests/live_r7w2_*.rs`;
-  `tests/http_transport.rs` — `HttpTransport`
-  against a local fake gateway; `tests/live_e2e.rs` — the ignored live
-  tests; `scripts/pty_smoke.py` — the pty proof.
+- `src/ui/` — the shell (`ui/mod.rs` root + `ui/shell.rs`: header, rail or
+  tab strip, status bar, `?` keys panel) and one module per screen.
+  `src/ui/w/` is the shared widget layer every screen uses: actions and row
+  buttons with tooltips, switches, segmented choices, the data table, form
+  dialogs, the confirmation dialog, toasts and the two themes.
+- `tests/headless_ui.rs` — the CaptureTerm suite; `tests/r15_click_*.rs` — a
+  synthesized mouse click for every action of every screen, each with a test
+  that fails when an offered action has no click test; `tests/r15_wording.rs`
+  and the per-screen wording fixtures — the web console's sentences, checked
+  byte for byte against `scripts/extract_web_wording.py`; `tests/r7w2_*.rs` —
+  the web-parity pages; `tests/http_transport.rs` — `HttpTransport` against a
+  local fake gateway; `tests/live_*.rs` — the ignored live tests;
+  `scripts/pty_smoke.py` — the pty proof.
 
 This is the second **validator app** for the AbstractTUI engine (epic:
 `abstracttui/docs/backlog/planned/ports/0215_gateway_config_wizard_app.md`).

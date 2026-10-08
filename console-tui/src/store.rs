@@ -697,6 +697,10 @@ pub struct RoutesData {
     pub ok: bool,
     pub writable: bool,
     pub authority: String,
+    /// The AbstractCore store file the gateway resolved (`config_file`):
+    /// the web's persistent "AbstractCore store · <file>" provenance line.
+    /// None = not named — then no line (no claim without evidence).
+    pub config_file: Option<String>,
     pub rows: Vec<RouteRow>,
     pub errors: Vec<String>,
 }
@@ -707,6 +711,9 @@ impl RoutesData {
             ok: b(v, "ok").unwrap_or(false),
             writable: b(v, "writable").unwrap_or(false),
             authority: s(v, "authority").unwrap_or_default(),
+            config_file: s(v, "config_file")
+                .map(|f| f.trim().to_string())
+                .filter(|f| !f.is_empty()),
             rows: rows_from(v, &["routes"], RouteRow::from_value),
             errors: v
                 .get("errors")
@@ -2394,6 +2401,9 @@ pub struct SessionCacheRow {
     pub session_id: String,
     pub bytes: Option<u64>,
     pub token_count: Option<u64>,
+    /// When the cache was created (epoch seconds; the web's "Created"
+    /// column, `_fmtEpochS(c.created_at_s)`). None = not reported.
+    pub created_at_s: Option<f64>,
 }
 
 impl SessionCacheRow {
@@ -2405,6 +2415,7 @@ impl SessionCacheRow {
             session_id: s(v, "session_id").unwrap_or_default(),
             bytes: v.get("bytes").and_then(Value::as_u64),
             token_count: v.get("token_count").and_then(Value::as_u64),
+            created_at_s: v.get("created_at_s").and_then(Value::as_f64),
         })
     }
 }
@@ -2966,6 +2977,9 @@ pub struct Store {
     /// screen's selection; scope rides with the rows).
     pub runs: Signal<Loadable<RunsData>>,
     pub data_homes: Signal<Loadable<Vec<DataHomeRow>>>,
+    /// The last purge dry-run (`Cmd::PurgeDryRun`): what a purge of that
+    /// data home would delete — the web's confirm sentence states it.
+    pub purge_plan: Signal<Option<PurgePlan>>,
     /// Artifact metadata (deliverables — never caches), one page at a time.
     pub artifacts: Signal<Loadable<ArtifactsData>>,
     /// Log FILES across this gateway's registered log homes.
@@ -2995,6 +3009,9 @@ pub struct Store {
     pub tick: Signal<u64>,
     /// One-line transient notice (also mirrored as a toast).
     pub notice: Signal<Option<String>>,
+    /// R15 §2.6: a verified write's success sentence, shown as a toast by
+    /// the shell (failures stay in `notice`, inline, never a toast).
+    pub toast: Signal<Option<String>>,
     /// The last probe's acknowledgment record (None = never probed).
     pub last_probe: Signal<Option<ProbeReport>>,
 }
@@ -3763,6 +3780,7 @@ impl Store {
             entity_audition: cx.signal(Loadable::default()),
             runs: cx.signal(Loadable::default()),
             data_homes: cx.signal(Loadable::default()),
+            purge_plan: cx.signal(None),
             artifacts: cx.signal(Loadable::default()),
             logs: cx.signal(Loadable::default()),
             artifact_text: cx.signal(None),
@@ -3774,6 +3792,7 @@ impl Store {
             busy: cx.signal(Vec::new()),
             tick: cx.signal(0),
             notice: cx.signal(None),
+            toast: cx.signal(None),
             last_probe: cx.signal(None),
         }
     }
@@ -3803,6 +3822,7 @@ impl Store {
             busy: _,          // transient op bookkeeping
             tick: _,          // clock
             notice: _,        // transient toast
+            toast: _,         // transient toast (R15)
             download: _,      // survives: the job is on the OLD host, and
             // its status line is the only record of it
             download_group: _, // survives: same reason as `download`
@@ -3854,6 +3874,7 @@ impl Store {
             entity_audition,
             runs,
             data_homes,
+            purge_plan,
             artifacts,
             logs,
             artifact_text,
@@ -3920,6 +3941,7 @@ impl Store {
         entity_audition.set(Loadable::NotAsked);
         runs.set(Loadable::NotAsked);
         data_homes.set(Loadable::NotAsked);
+        purge_plan.set(None);
         artifacts.set(Loadable::NotAsked);
         logs.set(Loadable::NotAsked);
         artifact_text.set(None);
@@ -5021,5 +5043,83 @@ mod tests {
             candidate_act_body(false, &ids, "no"),
             json!({"reason": "no"})
         );
+    }
+}
+
+#[cfg(test)]
+mod session_cache_row_tests {
+    use super::*;
+
+    #[test]
+    fn a_cache_row_reads_its_creation_time() {
+        let r = SessionCacheRow::from_value(&serde_json::json!({
+            "key": "k", "created_at_s": 1_760_000_000.5
+        }))
+        .unwrap();
+        assert_eq!(r.created_at_s, Some(1_760_000_000.5));
+        let bare = SessionCacheRow::from_value(&serde_json::json!({"key": "k"})).unwrap();
+        assert_eq!(bare.created_at_s, None, "absent stays unknown, never 0");
+    }
+}
+
+#[cfg(test)]
+mod routes_config_file_tests {
+    use super::*;
+
+    #[test]
+    fn routes_read_the_store_file_they_name_and_nothing_else() {
+        let d = RoutesData::from_value(&serde_json::json!({
+            "authority": "abstractcore", "config_file": " /home/u/.abstractcore/config.json "
+        }));
+        assert_eq!(
+            d.config_file.as_deref(),
+            Some("/home/u/.abstractcore/config.json")
+        );
+        assert_eq!(
+            RoutesData::from_value(&serde_json::json!({"config_file": "  "})).config_file,
+            None
+        );
+        assert_eq!(
+            RoutesData::from_value(&serde_json::json!({})).config_file,
+            None
+        );
+    }
+}
+
+/// A purge dry-run's answer (`POST /admin/data-homes/purge {dry_run}`):
+/// `files_deleted` / `bytes_freed` as the gateway counted them (None = not
+/// reported — never a fabricated 0), or the refusal sentence.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PurgePlan {
+    pub name: String,
+    pub result: Result<PurgeCounts, String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PurgeCounts {
+    pub files_deleted: Option<u64>,
+    pub bytes_freed: Option<u64>,
+}
+
+impl PurgeCounts {
+    pub fn from_value(v: &Value) -> PurgeCounts {
+        PurgeCounts {
+            files_deleted: v.get("files_deleted").and_then(Value::as_u64),
+            bytes_freed: v.get("bytes_freed").and_then(Value::as_u64),
+        }
+    }
+}
+
+#[cfg(test)]
+mod purge_plan_tests {
+    use super::*;
+
+    #[test]
+    fn a_dry_run_reads_the_counts_and_never_invents_them() {
+        let c =
+            PurgeCounts::from_value(&serde_json::json!({"files_deleted": 12, "bytes_freed": 4096}));
+        assert_eq!((c.files_deleted, c.bytes_freed), (Some(12), Some(4096)));
+        let none = PurgeCounts::from_value(&serde_json::json!({"ok": true}));
+        assert_eq!((none.files_deleted, none.bytes_freed), (None, None));
     }
 }

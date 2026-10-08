@@ -13,12 +13,22 @@
 //!   verified by the follow-up GET and journaled; the guide closes only
 //!   on a verified write. Leaving with Ctrl+G WITHOUT recording is the
 //!   web guide's Escape: it opens again next start.
+//!
+//! R15: the page is the web guide's welcome step with real controls —
+//! the head's Setup guide / Go to a step / Skip setup / Next / ↻, the six
+//! tiles, the three "Go to …" cards, the recommended set's Use
+//! recommended defaults / Download all (and the second pass, Replace mine
+//! too). The guide menu (Ctrl+G) is a dialog of buttons (the web
+//! stepper); the finish row's Finish / Skip setup / Start at login are
+//! buttons and a Toggle.
 
-use abstracttui::app::{ChoiceOutcome, ChoicePrompt};
 use abstracttui::prelude::*;
+use abstracttui::ui::{Phase, UiEvent};
 
 use super::util::{line, span, span_bold, wrap_text};
-use super::widths::BLOCK_CHROME;
+use super::w::action::{button, On};
+use super::w::form::sentence;
+use super::w::{Action, Toggle};
 use super::{Ctx, WIZARD_STEPS};
 use crate::api::firstrun::{
     can_download_all, first_run_auto_wizard, route_title, route_what, PlanRow, WelcomeSummary,
@@ -190,86 +200,234 @@ pub fn record_outcome(ctx: &Ctx, outcome: &str) {
     });
 }
 
+// ------------------------------------------------------------ the web's words
+
+/// The step's title, hint and admin lede (`FIRST_RUN_STEP_COPY.welcome`).
+pub const TITLE: &str = "Welcome to your gateway";
+pub const HINT: &str = "Check this computer";
+pub const ADMIN_LEDE: &str = "Your gateway is running on this computer and you are signed in as its admin. The next steps get you to a working model. Every step is optional.";
+/// The footer's Skip setup tooltip (the web's).
+pub const SKIP_TIP: &str = "Close the guide and do not open it automatically again";
+/// The browse-mode "Setup guide" button (the nav's sentence).
+pub const GUIDE_TIP: &str = "Run the setup guide again: engines, default models, apps, network. Keeps your current choices unless you replace them.";
+pub const SETS_UP: &str = "What this guide sets up";
+pub const SETS_UP_SUB: &str = "Each step takes a minute; skip any of them.";
+pub const APPLY: &str = "Use recommended defaults";
+pub const DOWNLOAD_ALL: &str = "Download all";
+/// The guide's three middle steps as the welcome cards show them:
+/// (TUI screen, card title, lede, "Go to …" label).
+pub fn step_cards() -> [(usize, &'static str, &'static str, &'static str); 3] {
+    [
+        (
+            super::SCREEN_PROVIDERS,
+            "Local engines",
+            "Engines run AI models on this computer. Install one if you want local models; cloud providers only need an API key (Providers tab).",
+            "Go to local engines",
+        ),
+        (
+            super::SCREEN_ROUTES,
+            "Choose your default model",
+            "The recommended set is sized for this computer: set it up in one click, or pick any model that fits.",
+            "Go to default model",
+        ),
+        (
+            super::SCREEN_APPS,
+            "Apps",
+            "Apps that work with this gateway: build workflows, code with an agent, watch runs, talk to your entities.",
+            "Go to apps",
+        ),
+    ]
+}
+
+/// The page head's buttons: browse = Setup guide (admins); the guide =
+/// Go to a step, Skip setup, Next; ↻ always.
+pub fn head_actions(wizard: bool, admin: bool) -> Vec<Action> {
+    let mut out = Vec::new();
+    if wizard {
+        out.push(
+            Action::label("steps", "Go to a step")
+                .tooltip("Go to a step, leave the guide, or skip setup  (Ctrl+G)"),
+        );
+        if admin {
+            out.push(Action::label("skip", "Skip setup").tooltip(SKIP_TIP));
+        }
+        out.push(Action::label("next", "Next").tooltip("The next step  (Ctrl+N)"));
+    } else if admin {
+        out.push(Action::label("guide", "Setup guide").tooltip(format!("{GUIDE_TIP}  (Ctrl+G)")));
+    }
+    out.push(
+        Action::label("reload", "↻")
+            .key('r')
+            .tooltip("Read this computer and the recommended set again"),
+    );
+    out
+}
+
+/// The recommended set's buttons (admins; Download all while a model
+/// of the set is absent and no Download all runs).
+pub fn recommended_actions(admin: bool, can_download: bool) -> Vec<Action> {
+    if !admin {
+        return Vec::new();
+    }
+    let mut out = vec![Action::label("apply", APPLY).key('a').tooltip(
+        "Set the recommended models for every capability this computer can run; choices you made are kept",
+    )];
+    if can_download {
+        out.push(
+            Action::label("download_all", DOWNLOAD_ALL)
+                .key('D')
+                .tooltip("Download every recommended model this computer does not have yet"),
+        );
+    }
+    out
+}
+
+/// The footer's verbs on the Setup page.
+pub fn hints(ctx: &Ctx) -> Vec<(&'static str, &'static str)> {
+    let admin = ctx.store.conn.with(|c| match c {
+        ConnPhase::Connected(id) => id.admin,
+        _ => false,
+    });
+    let can = ctx.store.availability.with(|a| {
+        a.ready()
+            .map(|a| can_download_all(&a.plan, ctx.store.download_group.get().as_ref()))
+            .unwrap_or(false)
+    });
+    let mut out: Vec<(&'static str, &'static str)> = Vec::new();
+    for a in recommended_actions(admin, can) {
+        if let Some(k) = a.key {
+            out.push((
+                if k == 'a' { "a" } else { "D" },
+                if k == 'a' { APPLY } else { DOWNLOAD_ALL },
+            ));
+        }
+    }
+    out.push(("r", "refresh"));
+    out
+}
+
 /// Ctrl+G, anywhere: browse → reopen the guide at its welcome step (the
-/// web "Setup guide" button); wizard → leave it, for now (the web
-/// Escape) or for good (Skip setup, recorded).
+/// web "Setup guide" button); the guide → the stepper dialog: every step
+/// is a button, then Leave for now / Skip setup.
 pub fn guide_key(ctx: &Ctx, cx: Scope) {
     let ui = ctx.ui;
     if !ui.wizard.get_untracked() {
-        // The guide is an admin surface (its writes — downloads, routes,
-        // the first-run record — are admin routes); the web hides its
-        // "Setup guide" button for a non-admin.
-        if ctx.store.conn.with_untracked(ConnPhase::is_known_non_admin) {
-            super::util::admin_gate(&ctx.store, "the setup guide");
-            return;
-        }
-        ui.first_run_decided.set(true);
-        ui.wizard.set(true);
-        ui.screen.set(super::SCREEN_WELCOME);
-        ctx.store.notice.set(Some(
-            "setup guide — Ctrl+N walks it, Ctrl+G jumps to a step, leaves or skips it".into(),
-        ));
+        open_guide(ctx);
         return;
     }
-    let admin = admin_now(ctx);
-    // The web guide's stepper: every step is a button, any step can be
-    // opened directly (console.py renderFirstRunSteps → firstRunGoto).
-    // Here the same list heads the guide menu.
-    let current = ui.screen.get_untracked();
-    // Stay / leave / skip first (the prompt opens on "stay", at the top),
-    // then the steps.
-    let mut prompt = ChoicePrompt::new("Setup guide — go to a step, or leave")
-        .option("stay", "Stay here")
-        .option_detail(
-            "leave",
-            "Leave for now",
-            "nothing is recorded: the guide opens again at the next start",
-        );
+    open_steps(ctx, cx);
+}
+
+/// Browse → the guide, at its welcome step (admins: the web hides the
+/// "Setup guide" button for a non-admin).
+fn open_guide(ctx: &Ctx) {
+    let ui = ctx.ui;
+    if ctx.store.conn.with_untracked(ConnPhase::is_known_non_admin) {
+        super::util::admin_gate(&ctx.store, "the setup guide");
+        return;
+    }
+    ui.first_run_decided.set(true);
+    ui.wizard.set(true);
+    ui.screen.set(super::SCREEN_WELCOME);
+    ctx.store.notice.set(Some(
+        "setup guide — Ctrl+N walks it, Ctrl+G jumps to a step, leaves or skips it".into(),
+    ));
+}
+
+/// Leave the guide without recording anything (the web guide's Escape).
+fn leave_guide(ctx: &Ctx) {
+    ctx.ui.first_run_decided.set(true);
+    ctx.ui.wizard.set(false);
+    ctx.store.notice.set(Some(
+        "left the setup guide (not recorded) — Ctrl+G reopens it".into(),
+    ));
+}
+
+/// The stepper dialog's buttons (the web's sidebar steps + footer).
+pub fn steps_actions(current: usize, admin: bool) -> Vec<Action> {
+    let mut out: Vec<Action> = WIZARD_STEPS
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let here = if *s == current {
+                "  (you are here)"
+            } else {
+                ""
+            };
+            Action::label(
+                STEP_IDS[i.min(STEP_IDS.len() - 1)],
+                format!("{}. {}{here}", i + 1, step_copy(*s).0),
+            )
+        })
+        .collect();
+    out.push(
+        Action::label("leave", "Leave for now")
+            .tooltip("Nothing is recorded: the guide opens again at the next start"),
+    );
     if admin {
-        prompt = prompt.option_detail(
-            "skip",
-            "Skip setup",
-            "records it on the gateway (POST /host/first-run): the guide stops opening by itself",
-        );
+        out.push(Action::label("skip", "Skip setup").tooltip(SKIP_TIP));
     }
-    for (i, step) in WIZARD_STEPS.iter().enumerate() {
-        let title = step_copy(*step).0;
-        let here = if *step == current {
-            " (you are here)"
-        } else {
-            ""
-        };
-        prompt = prompt.option(
-            format!("step:{i}"),
-            format!("Go to {}. {title}{here}", i + 1),
-        );
-    }
-    let prompt = prompt.initial("stay");
-    let ctx2 = ctx.clone();
-    super::open_prompt(cx, ui, prompt, move |outcome| {
-        if let ChoiceOutcome::Answered(a) = outcome {
-            match a.selected.first().map(String::as_str) {
-                Some("leave") => {
-                    ctx2.ui.first_run_decided.set(true);
-                    ctx2.ui.wizard.set(false);
-                    ctx2.store.notice.set(Some(
-                        "left the setup guide (not recorded) — Ctrl+G reopens it".into(),
-                    ));
-                }
-                Some("skip") => record_outcome(&ctx2, "skipped"),
-                Some(id) => {
-                    if let Some(step) = id
-                        .strip_prefix("step:")
-                        .and_then(|i| i.parse::<usize>().ok())
-                        .and_then(|i| WIZARD_STEPS.get(i).copied())
-                    {
-                        goto_step(&ctx2, step);
+    out
+}
+
+const STEP_IDS: [&str; 8] = [
+    "step0", "step1", "step2", "step3", "step4", "step5", "step6", "step7",
+];
+
+/// The guide's stepper as a dialog of buttons.
+fn open_steps(ctx: &Ctx, cx: Scope) {
+    let admin = admin_now(ctx);
+    let current = ctx.ui.screen.get_untracked();
+    let c = ctx.clone();
+    super::w::FormModal::new("Setup guide")
+        .lead("Go to a step, or leave the guide.")
+        .size(64, 8 + WIZARD_STEPS.len() as i32 + 3)
+        .open(ctx, cx, move |mcx, close, _guard, _inner_w| {
+            let t = use_theme(mcx).get().tokens;
+            let mut col = Element::new().style(LayoutStyle::column().gap(0));
+            let mut foot = Vec::new();
+            for (i, a) in steps_actions(current, admin).into_iter().enumerate() {
+                let (c2, close2) = (c.clone(), close.clone());
+                let id = a.id;
+                let b = button(mcx, &t, &a, On::Raised, true, move || {
+                    close2();
+                    match id {
+                        "leave" => leave_guide(&c2),
+                        "skip" => record_outcome(&c2, "skipped"),
+                        _ => {
+                            if let Some(step) = WIZARD_STEPS.get(i).copied() {
+                                goto_step(&c2, step);
+                            }
+                        }
                     }
+                });
+                if i < WIZARD_STEPS.len() {
+                    col = col.child(
+                        Element::new()
+                            .style(LayoutStyle::row().h(1).shrink(0.0))
+                            .child(b)
+                            .build(),
+                    );
+                } else {
+                    foot.push(b);
                 }
-                None => {}
             }
-        }
-    });
+            foot.push(button(
+                mcx,
+                &t,
+                &Action::label("close", "Close"),
+                On::Raised,
+                true,
+                move || close(),
+            ));
+            col.child(super::w::fill_line(
+                LayoutStyle::line(1).shrink(0.0),
+                vec![],
+                None,
+            ))
+            .child(super::w::form::button_row(foot))
+            .build()
+        });
 }
 
 /// Open guide step `step` directly (the web stepper's `firstRunGoto`).
@@ -367,29 +525,64 @@ pub fn plan_card_lines(r: &PlanRow) -> Vec<(bool, String, &'static str)> {
     out
 }
 
-/// The Setup page's "Recommended for this computer" block (the web
-/// guide's model step): every recommended route, the current text model,
-/// and the two actions.
-fn recommended_rows(
-    t: &TokenSet,
-    store: &crate::store::Store,
-    width: usize,
-    admin: bool,
-) -> Vec<View> {
-    let mut rows: Vec<View> = Vec::new();
-    let routes = store.routes.get();
-    rows.push(line(vec![span_bold(
-        "Recommended for this computer",
-        t.text,
-    )]));
-    for l in wrap_text(&text_model_now(routes.ready()), width) {
-        rows.push(line(vec![span(l, t.text_muted)]));
+/// The page width the content lays out in.
+fn page_w(cx: Scope) -> i32 {
+    (crate::ui::page_viewport(cx).get().w - 2).max(20)
+}
+
+/// Use recommended defaults: the web button applies at once (never over
+/// a route you configured); the second pass is offered after.
+fn apply_recommended(ctx: &Ctx) {
+    if !super::util::admin_gate(&ctx.store, "applying the recommended defaults") {
+        return;
     }
+    ctx.send(Cmd::ApplyRecommendedRoutes { force: false });
+}
+
+/// Download all: one parent job for the whole recommended set (the web
+/// starts it at once).
+fn download_all(ctx: &Ctx) {
+    if !super::util::admin_gate(&ctx.store, "downloading the recommended models") {
+        return;
+    }
+    let plan = ctx
+        .store
+        .availability
+        .with_untracked(|a| a.ready().map(|a| a.plan.clone()))
+        .unwrap_or_default();
+    let group = ctx.store.download_group.get_untracked();
+    if !can_download_all(&plan, group.as_ref()) {
+        super::w::tip::say(
+            "nothing to download — no recommended model is reported absent on this host",
+        );
+        return;
+    }
+    ctx.send(Cmd::DownloadRecommended);
+}
+
+/// The "Recommended for this computer" block (the web guide's model
+/// step): every recommended route, the current text model, the buttons,
+/// and the second pass when the first kept something.
+fn recommended(cx: Scope, ctx: &Ctx, t: &TokenSet, width: i32) -> View {
+    let store = ctx.store;
+    let admin = admin_now(ctx);
+    let mut col = Element::new().style(LayoutStyle::column().shrink(0.0));
+    col = col.child(super::w::section(t, "Recommended for this computer"));
+    col = col.child(sentence(
+        t,
+        &text_model_now(store.routes.get().ready()),
+        width,
+        t.text_muted,
+    ));
     match store.availability.get() {
-        Loadable::Ready(a) if a.plan.is_empty() => rows.push(line(vec![span(
-            "This gateway reported no recommended downloads.",
-            t.text_muted,
-        )])),
+        Loadable::Ready(a) if a.plan.is_empty() => {
+            col = col.child(sentence(
+                t,
+                "This gateway reported no recommended downloads.",
+                width,
+                t.text_muted,
+            ));
+        }
         Loadable::Ready(a) => {
             for r in &a.plan {
                 for (indent, text, tone) in plan_card_lines(r) {
@@ -400,54 +593,93 @@ fn recommended_rows(
                         "muted" => t.text_muted,
                         _ => t.text,
                     };
-                    let pad = if indent { "  " } else { "" };
-                    for l in wrap_text(&text, width.saturating_sub(pad.len()).max(10)) {
-                        rows.push(if indent {
-                            line(vec![span(format!("{pad}{l}"), ink)])
-                        } else {
-                            line(vec![span_bold(l, ink)])
-                        });
+                    if indent {
+                        for l in wrap_text(&text, (width - 2).max(10) as usize) {
+                            col = col.child(line(vec![span(format!("  {l}"), ink)]));
+                        }
+                    } else {
+                        for l in wrap_text(&text, width.max(10) as usize) {
+                            col = col.child(line(vec![span_bold(l, ink)]));
+                        }
                     }
                 }
             }
             let group = store.download_group.get();
             if let Some(g) = group.as_ref() {
-                rows.push(line(vec![span(g.message.clone(), t.info)]));
+                col = col.child(sentence(t, &g.message, width, t.info));
             }
-            let mut keys = vec![("a", "Use recommended defaults")];
-            if can_download_all(&a.plan, group.as_ref()) {
-                keys.push(("D", "Download all"));
+            let mut buttons = Vec::new();
+            for a in recommended_actions(admin, can_download_all(&a.plan, group.as_ref())) {
+                let c = ctx.clone();
+                let id = a.id;
+                buttons.push(button(cx, t, &a, On::Page, true, move || match id {
+                    "apply" => apply_recommended(&c),
+                    _ => download_all(&c),
+                }));
             }
-            if !admin {
-                keys.clear();
+            if !buttons.is_empty() {
+                col = col.child(super::w::form::button_row(buttons));
             }
-            if !keys.is_empty() {
-                rows.push(super::kit::key_hint_bar(t, &keys, width as i32));
-            }
-            for l in wrap_text(RECOMMENDED_NOTE, width) {
-                rows.push(line(vec![span(l, t.text_muted)]));
-            }
+            col = col.child(sentence(t, RECOMMENDED_NOTE, width, t.text_muted));
         }
-        Loadable::Loading | Loadable::NotAsked => rows.push(line(vec![span(
-            "Checking the recommended starter models...",
-            t.info,
-        )])),
-        Loadable::Failed(e) => rows.push(line(vec![span(
-            format!("The recommended models could not be read: {e}"),
-            t.warn,
-        )])),
+        Loadable::Loading | Loadable::NotAsked => {
+            col = col.child(sentence(
+                t,
+                "Checking the recommended starter models...",
+                width,
+                t.info,
+            ));
+        }
+        Loadable::Failed(e) => {
+            col = col.child(sentence(
+                t,
+                &format!("The recommended models could not be read: {e}"),
+                width,
+                t.warn,
+            ));
+        }
     }
-    rows
+    col.build()
 }
 
-/// The welcome block's padding, each side (the wrap width subtracts it).
-const WELCOME_PAD: i32 = 1;
+/// The second pass after Use recommended defaults (the web's button under
+/// the outcome): pinned under the head so it is seen without scrolling.
+fn followup_view(
+    cx: Scope,
+    ctx: &Ctx,
+    t: &TokenSet,
+    width: i32,
+    followup: Signal<Option<String>>,
+) -> View {
+    let mut col = Element::new().style(LayoutStyle::column().shrink(0.0));
+    if let Some(label) = followup.get() {
+        let what = if label == "Replace mine too" {
+            "The recommended routes were applied; routes you configured were kept."
+        } else {
+            "The recommended routes were applied; a configured route this computer cannot run was left in place."
+        };
+        col = col.child(sentence(t, what, width, t.text_muted));
+        let c = ctx.clone();
+        let a = Action::label("again", format!("♻ {label}"));
+        col = col.child(super::w::form::button_row(vec![button(
+            cx,
+            t,
+            &a,
+            On::Page,
+            true,
+            move || {
+                followup.set(None);
+                c.send(Cmd::ApplyRecommendedRoutes { force: true });
+            },
+        )]));
+    }
+    col.build()
+}
 
 pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
     let ui = ctx.ui;
     let tt = *t;
-    let viewport = abstracttui::app::use_viewport(cx);
     // The recommended set reads the routes and the weights' availability
     // (the Multimodal page's reads) once per connection.
     {
@@ -472,205 +704,180 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             }
         });
     }
-    let confirm = super::kit::InlineConfirm::new(cx);
-    // The web's second pass after "Use recommended defaults": offer the
-    // forced apply under its own label, inline.
-    {
-        let ctx_f = ctx.clone();
-        cx.effect(move || {
-            let Some(label) = store.apply_followup.get() else {
-                return;
-            };
-            if ui.screen.get_untracked() != super::SCREEN_WELCOME {
-                return;
-            }
-            store.apply_followup.set(None);
-            let title = if label == "Replace mine too" {
-                "The recommended routes were applied; routes you configured were kept."
-            } else {
-                "The recommended routes were applied; a configured route this computer cannot run was left in place."
-            };
-            let ctx_go = ctx_f.clone();
-            confirm.ask(title, label, move || {
-                ctx_go.send(Cmd::ApplyRecommendedRoutes { force: true })
-            });
-        });
-    }
-    let ctx_a = ctx.clone();
-    let ctx_d = ctx.clone();
-    let page = Element::new()
-        .style(LayoutStyle::column().gap(0).grow(1.0))
+    // The web's second pass after "Use recommended defaults": the forced
+    // apply under its own label, as a button under the outcome.
+    let followup = cx.signal(Option::<String>::None);
+    cx.effect(move || {
+        let Some(label) = store.apply_followup.get() else {
+            return;
+        };
+        if ui.screen.get_untracked() != super::SCREEN_WELCOME {
+            return;
+        }
+        store.apply_followup.set(None);
+        followup.set(Some(label));
+    });
+    let keys_ctx = ctx.clone();
+    let head_ctx = ctx.clone();
+    let body_ctx = ctx.clone();
+    Element::new()
+        .style(LayoutStyle::column().gap(0).grow(1.0).padding(Edges {
+            left: 1,
+            right: 1,
+            top: 0,
+            bottom: 0,
+        }))
         .focusable()
         .autofocus()
-        // `a` Use recommended defaults: the web button applies at once
-        // (never over a route you configured); the second pass is offered
-        // inline after.
-        .shortcut(KeyChord::plain(Key::Char('a')), move |_| {
-            if !super::util::admin_gate(&ctx_a.store, "applying the recommended defaults") {
+        .on(Phase::Bubble, move |ectx, ev| {
+            let UiEvent::Key(k) = ev else { return };
+            if k.mods.0 != 0 && !matches!(k.key, Key::Char('D')) {
                 return;
             }
-            ctx_a.send(Cmd::ApplyRecommendedRoutes { force: false });
+            match k.key {
+                Key::Char('a') => apply_recommended(&keys_ctx),
+                Key::Char('D') => download_all(&keys_ctx),
+                _ => return,
+            }
+            ectx.stop_propagation();
         })
-        // `D` Download all: one parent job for the whole recommended set.
-        .shortcut(KeyChord::plain(Key::Char('D')), move |_| {
-            if !super::util::admin_gate(&ctx_d.store, "downloading the recommended models") {
-                return;
-            }
-            let plan = ctx_d
-                .store
-                .availability
-                .with_untracked(|a| a.ready().map(|a| a.plan.clone()))
-                .unwrap_or_default();
-            let group = ctx_d.store.download_group.get_untracked();
-            if !can_download_all(&plan, group.as_ref()) {
-                ctx_d.store.notice.set(Some(
-                    "nothing to download — no recommended model is reported absent on this host"
-                        .into(),
-                ));
-                return;
-            }
-            let list = plan
-                .iter()
-                .filter(|r| r.status == "absent")
-                .map(|r| format!("{} {}", r.provider, r.artifact))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let ctx_go = ctx_d.clone();
-            confirm.ask(
-                format!("Download the recommended models on the gateway host: {list}?"),
-                "Download all",
-                move || ctx_go.send(Cmd::DownloadRecommended),
-            );
-        });
-    let page = confirm.keys(page);
-    page
-        .child(
-            Block::new()
-                .border(BorderKind::Rounded)
-                .title("Setup — welcome to your gateway")
-                .fill(t.surface)
-                .layout(
-                    LayoutStyle::column()
-                        .gap(0)
-                        .grow(1.0)
-                        .padding(Edges::all(WELCOME_PAD)),
-                )
-                .child(dyn_view_scoped(
-                    LayoutStyle::default().grow(1.0),
-                    move |gcx| {
-                        let t = tt;
-                        // The text column: the block's border AND its
-                        // padding (1 a side), and the Scroll's bar column
-                        // (it shows on a short terminal). Wrapping at the
-                        // border alone cut the last word ("Eve…").
-                        let width = (viewport.get().w - BLOCK_CHROME - 2 * WELCOME_PAD - 1).max(20)
-                            as usize;
-                        let mut rows: Vec<View> = Vec::new();
-                        let who = store.conn.with(|c| match c {
-                            ConnPhase::Connected(id) => Some((id.user_id.clone(), id.admin)),
-                            _ => None,
-                        });
-                        let lede = match &who {
-                            Some((_, true)) => {
-                                "Your gateway is running and you are signed in as its admin. \
-                             The next steps get you to a working model. Every step is optional."
-                                    .to_string()
+        .child(dyn_view_scoped(
+            LayoutStyle::column().shrink(0.0),
+            move |hcx| {
+                let t = tt;
+                let w = page_w(hcx);
+                let wizard = ui.wizard.get();
+                let admin = head_ctx.store.conn.with(|c| match c {
+                    ConnPhase::Connected(id) => id.admin,
+                    _ => false,
+                });
+                let mut buttons = Vec::new();
+                for a in head_actions(wizard, admin) {
+                    let c = head_ctx.clone();
+                    let wd = a.width();
+                    let id = a.id;
+                    buttons.push((
+                        button(hcx, &t, &a, On::Page, true, move || match id {
+                            "guide" => open_guide(&c),
+                            "steps" => open_steps(&c, cx),
+                            "skip" => record_outcome(&c, "skipped"),
+                            "next" => {
+                                if let Some(s) = super::wizard_step_after(super::SCREEN_WELCOME) {
+                                    goto_step(&c, s);
+                                }
                             }
-                            Some((user, false)) => format!(
-                                "Signed in as {user}, not an admin: the guide's writes (engines, \
-                             downloads, routes, the first-run record) are admin-only."
-                            ),
-                            None => "Not connected — the summary below needs a live gateway \
-                                 (Connection screen)."
-                                .to_string(),
-                        };
-                        for l in wrap_text(&lede, width) {
-                            rows.push(line(vec![span(l, t.text)]));
-                        }
-                        let fr = match store.first_run.get() {
-                            Loadable::Ready(st) => {
-                                (st.line(), if st.completed { t.ok } else { t.warn })
-                            }
-                            Loadable::Loading => ("reading…".to_string(), t.info),
-                            Loadable::Failed(e) => (format!("unreadable: {e}"), t.error),
-                            Loadable::NotAsked => ("not read yet".to_string(), t.text_muted),
-                        };
-                        for (i, l) in wrap_text(&format!("First run: {}", fr.0), width)
-                            .into_iter()
-                            .enumerate()
-                        {
-                            if i == 0 && l.len() >= 11 {
-                                rows.push(line(vec![
-                                    span_bold("First run: ", t.text_muted),
-                                    span(l[11..].to_string(), fr.1),
-                                ]));
-                            } else {
-                                rows.push(line(vec![span(l, fr.1)]));
-                            }
-                        }
-                        rows.push(line(vec![span(String::new(), t.text)]));
-                        match store.welcome.get() {
-                            Loadable::Ready(w) => rows.extend(summary_rows(&t, &w, width)),
-                            Loadable::Loading => {
-                                rows.push(line(vec![span("Looking at this computer…", t.info)]))
-                            }
-                            Loadable::Failed(e) => {
-                                rows.push(line(vec![span_bold(
-                                    "This computer's summary is not available right now.",
-                                    t.warn,
-                                )]));
-                                rows.push(line(vec![span(e.to_string(), t.text_muted)]));
-                            }
-                            Loadable::NotAsked => rows.push(line(vec![span(
-                                "— not loaded yet (connect first, or press r to refresh)",
-                                t.text_muted,
-                            )])),
-                        }
-                        rows.push(line(vec![span(String::new(), t.text)]));
-                        let admin = store.conn.with(|c| match c {
-                            ConnPhase::Connected(id) => id.admin,
-                            _ => false,
-                        });
-                        rows.extend(recommended_rows(&t, &store, width, admin));
-                        rows.push(confirm.view(&t, width as i32));
-                        rows.push(line(vec![span(String::new(), t.text)]));
+                            _ => refresh(&c),
+                        }),
+                        wd,
+                    ));
+                }
+                super::workflows::page_head(&t, TITLE, HINT, w, buttons)
+            },
+        ))
+        .child({
+            let fctx = ctx.clone();
+            dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |fcx| {
+                followup_view(fcx, &fctx, &tt, page_w(fcx), followup)
+            })
+        })
+        .child(dyn_view_scoped(
+            LayoutStyle::default().grow(1.0),
+            move |gcx| {
+                let t = tt;
+                let store = body_ctx.store;
+                let width = page_w(gcx) - 1;
+                let mut rows: Vec<View> = Vec::new();
+                let who = store.conn.with(|c| match c {
+                    ConnPhase::Connected(id) => Some((id.user_id.clone(), id.admin)),
+                    _ => None,
+                });
+                let lede = match &who {
+                    Some((_, true)) => ADMIN_LEDE.to_string(),
+                    Some((user, false)) => format!(
+                        "Signed in as {user}, not an admin: the guide's writes (engines, \
+                         downloads, routes, the first-run record) are admin-only."
+                    ),
+                    None => "Not connected — the summary below needs a live gateway \
+                             (Connection screen)."
+                        .to_string(),
+                };
+                rows.push(sentence(&t, &lede, width, t.text));
+                let fr = match store.first_run.get() {
+                    Loadable::Ready(st) => (st.line(), if st.completed { t.ok } else { t.warn }),
+                    Loadable::Loading => ("reading…".to_string(), t.info),
+                    Loadable::Failed(e) => (format!("unreadable: {e}"), t.error),
+                    Loadable::NotAsked => ("not read yet".to_string(), t.text_muted),
+                };
+                rows.push(line(vec![
+                    span_bold("First run: ", t.text_muted),
+                    span(fr.0, fr.1),
+                ]));
+                rows.push(line(vec![span(String::new(), t.text)]));
+                match store.welcome.get() {
+                    Loadable::Ready(w) => rows.extend(summary_rows(&t, &w, width as usize)),
+                    Loadable::Loading => {
+                        rows.push(sentence(&t, "Looking at this computer...", width, t.info))
+                    }
+                    Loadable::Failed(e) => {
                         rows.push(line(vec![span_bold(
-                            "What this guide sets up — each step is optional:",
-                            t.text_muted,
+                            "This computer's summary is not available right now.",
+                            t.warn,
                         )]));
-                        let steps = WIZARD_STEPS
-                            .iter()
-                            .enumerate()
-                            .map(|(i, s)| format!("{} {}", i + 1, step_copy(*s).0))
-                            .collect::<Vec<_>>()
-                            .join(" · ");
-                        for l in wrap_text(&steps, width) {
-                            rows.push(line(vec![span(l, t.text)]));
-                        }
-                        let keys = if ui.wizard.get() {
-                            "Ctrl+N next step · Ctrl+G go to a step, leave or skip setup · r refresh"
-                        } else {
-                            "Ctrl+G opens the setup guide (engines, default models, apps, network; keeps your current choices unless you replace them) · r refresh"
-                        };
-                        for l in wrap_text(keys, width) {
-                            rows.push(line(vec![span(l, t.text_faint)]));
-                        }
-                        Scroll::new(
-                            Element::new()
-                                .style(LayoutStyle::column())
-                                .children(rows)
-                                .build(),
-                        )
-                        .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))
-                        .scrollbar_auto_hide(true)
-                        .view(gcx)
-                    },
-                ))
-                .element(t)
-                .build(),
-        )
+                        rows.push(sentence(&t, &e.to_string(), width, t.text_muted));
+                    }
+                    Loadable::NotAsked => rows.push(sentence(
+                        &t,
+                        "— not loaded yet (connect first, or press r to refresh)",
+                        width,
+                        t.text_muted,
+                    )),
+                }
+                rows.push(line(vec![span(String::new(), t.text)]));
+                // What this guide sets up: the web's three cards.
+                rows.push(super::w::section(&t, SETS_UP));
+                rows.push(sentence(&t, SETS_UP_SUB, width, t.text_muted));
+                for (i, (screen, title, lede, go)) in step_cards().into_iter().enumerate() {
+                    let n = WIZARD_STEPS
+                        .iter()
+                        .position(|s| *s == screen)
+                        .map(|p| p + 1)
+                        .unwrap_or(i + 3);
+                    rows.push(line(vec![span_bold(format!("{n}  {title}"), t.text)]));
+                    rows.push(sentence(&t, &format!("   {lede}"), width, t.text_muted));
+                    let c = body_ctx.clone();
+                    let a = Action::label(GO_IDS[i], go).tooltip(format!("{title}: {lede}"));
+                    rows.push(
+                        Element::new()
+                            .style(LayoutStyle::row().h(1).shrink(0.0).padding(Edges {
+                                left: 3,
+                                right: 0,
+                                top: 0,
+                                bottom: 0,
+                            }))
+                            .child(button(gcx, &t, &a, On::Page, true, move || {
+                                goto_step(&c, screen)
+                            }))
+                            .build(),
+                    );
+                }
+                rows.push(line(vec![span(String::new(), t.text)]));
+                rows.push(recommended(gcx, &body_ctx, &t, width));
+                Scroll::new(
+                    Element::new()
+                        .style(LayoutStyle::column())
+                        .children(rows)
+                        .build(),
+                )
+                .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))
+                .scrollbar_auto_hide(true)
+                .view(gcx)
+            },
+        ))
         .build()
 }
+
+/// The three cards' "Go to …" button ids (engines, model, apps).
+pub const GO_IDS: [&str; 3] = ["go_engines", "go_model", "go_apps"];
 
 fn summary_rows(t: &TokenSet, w: &WelcomeSummary, width: usize) -> Vec<View> {
     // label (16) · value (bold) · note — the note WRAPS under the value
@@ -704,10 +911,26 @@ fn summary_rows(t: &TokenSet, w: &WelcomeSummary, width: usize) -> Vec<View> {
     out
 }
 
+/// The finish row's controls: Finish (or Leave the guide for a
+/// non-admin) and Skip setup (admins).
+pub fn finish_actions(admin: bool) -> Vec<Action> {
+    let mut out = vec![if admin {
+        Action::label("finish", "Finish")
+            .tooltip("Record that setup is done and switch to browse mode")
+    } else {
+        Action::label("finish", "Leave the guide")
+            .tooltip("Close the guide (recording the first-run outcome is admin-only)")
+    }];
+    if admin {
+        out.push(Action::label("skip", "Skip setup").tooltip(SKIP_TIP));
+    }
+    out
+}
+
 /// The finish row on the last step (Review), wizard mode: the web
-/// guide's "done" facts in one line, then Finish / Skip setup.
-/// `screen` is the Review screen's scope (stable while this row rebuilds):
-/// the start-at-login confirm opens there.
+/// guide's "done" facts, then Finish / Skip setup and the Start at login
+/// switch. `screen` is the Review screen's scope (stable while this row
+/// rebuilds): the start-at-login confirm opens there.
 pub fn finish_row(gcx: Scope, screen: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
     let ui = ctx.ui;
@@ -726,7 +949,7 @@ pub fn finish_row(gcx: Scope, screen: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         })
     });
     // Start at login: the gateway's own verdict (GET /host/start-at-login),
-    // with the toggle below — read once when this step shows.
+    // with the switch below — read once when this step shows.
     if admin
         && store
             .op
@@ -755,7 +978,7 @@ pub fn finish_row(gcx: Scope, screen: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         span("CLI ", t.text_muted),
         span(done_cli_hints(service), t.text_faint),
     ]);
-    let tall = abstracttui::app::use_viewport(gcx).get().h >= 30;
+    let tall = crate::ui::page_viewport(gcx).get().h >= 30;
     let status: View = if ui.first_run_pending.get().is_some() {
         line(vec![span("⟳ recording… (POST + verify via GET)", t.info)])
     } else if let Some(e) = ui.first_run_error.get() {
@@ -766,9 +989,8 @@ pub fn finish_row(gcx: Scope, screen: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             t.text_faint,
         )])
     } else if !tall {
-        // Under 30 rows the Review step's arithmetic has ONE row for the
-        // finish controls: the "done" facts ride it (the footer already
-        // teaches Ctrl+G), instead of vanishing (REVIEW-1 minor).
+        // Under 30 rows the Review step has ONE row for the finish
+        // controls: the "done" facts ride it.
         line(vec![
             span("text model ", t.text_muted),
             span(model, t.text),
@@ -782,52 +1004,44 @@ pub fn finish_row(gcx: Scope, screen: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             t.text_faint,
         )])
     };
-    let c_finish = ctx.clone();
-    let c_skip = ctx.clone();
-    let mut buttons = Element::new().style(LayoutStyle::row().gap(2).h(1)).child(
-        Button::new(if admin { "Finish" } else { "Leave the guide" })
-            .on_click(move || record_outcome(&c_finish, "finished"))
-            .element(gcx, t)
-            .build(),
-    );
+    let mut buttons = Element::new().style(LayoutStyle::row().gap(2).h(1));
+    for a in finish_actions(admin) {
+        let c = ctx.clone();
+        let id = a.id;
+        buttons = buttons.child(button(gcx, t, &a, On::Page, true, move || {
+            record_outcome(&c, if id == "skip" { "skipped" } else { "finished" })
+        }));
+    }
     if admin {
-        buttons = buttons.child(
-            Button::new("Skip setup")
-                .on_click(move || record_outcome(&c_skip, "skipped"))
-                .element(gcx, t)
-                .build(),
-        );
         // The "Start at login" switch (a persistent state, confirmed then
         // verified), plus a one-shot repair when the registration is broken.
         if let Some(st) = login_state.ready() {
             let c_login = ctx.clone();
-            let on = gcx.signal(st.enabled);
             buttons = buttons.child(
-                super::switch::Switch::new("Start at login", on)
-                    .unavailable(st.switch_unavailable())
-                    .notice(store.notice)
-                    .on_request(move |_| {
+                Toggle::new(st.enabled)
+                    .label("Start at login")
+                    .tip("Start the gateway when you log in to this computer")
+                    .refused(st.switch_unavailable())
+                    .on_change(move |_| {
                         super::host::toggle_start_at_login(screen, &c_login, &|| {})
                     })
-                    .element(gcx, t)
-                    .build(),
+                    .view(gcx, t),
             );
             if let Some(label) = st.repair_label() {
                 let c_fix = ctx.clone();
-                buttons = buttons.child(
-                    Button::new(label)
-                        .on_click(move || {
-                            super::host::toggle_start_at_login(screen, &c_fix, &|| {})
-                        })
-                        .element(gcx, t)
-                        .build(),
-                );
+                buttons = buttons.child(button(
+                    gcx,
+                    t,
+                    &Action::label("repair", label),
+                    On::Page,
+                    true,
+                    move || super::host::toggle_start_at_login(screen, &c_fix, &|| {}),
+                ));
             }
         }
     }
     // 30+ rows: the facts and the web's command-line block get their own
-    // lines above the controls. Below that the facts ride the controls'
-    // status slot (above) and the commands wait for a taller terminal.
+    // lines above the controls.
     let mut col = Element::new().style(LayoutStyle::column().shrink(0.0));
     if tall {
         col = col.child(facts).child(cli);

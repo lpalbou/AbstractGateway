@@ -1,0 +1,56 @@
+{
+  "_source": "scripts/extract_web_wording.py (do not edit by hand)",
+  "account_tips": {
+    "email": "Email address and mailbox of {n}",
+    "openai_api": "OpenAI API access for {n}",
+    "logs": "Activity log of {n}",
+    "workspace": "Workspaces {n}'s agents may use",
+    "preferences": "Default workflows of {n}",
+    "manage": "Manage {n} (mind, voice, prompt…)",
+    "rotate": "Rotate {n}'s sign-in token",
+    "archive": "Archive {n} (kept, hidden)",
+    "unarchive": "Unarchive {n} (comes back inactive)"
+  },
+  "app_tips": [
+    "Open {n} on the form that creates your first entity, signed in",
+    "Installing {n} for the terminal",
+    "Stop installing {n}'s terminal app",
+    "The same {n}, in a terminal window on this computer, signed in",
+    "{n}'s terminal app did not install.",
+    "Install the newest {n} terminal app",
+    "Install {n}'s terminal app: a ready-made download from {n}'s release, checked against its published checksums",
+    "Copy the install command for {n}'s terminal app",
+    "Copy the command that opens {n} in a terminal",
+    "Installing {n}",
+    "Stop installing {n}",
+    "Install the {n} on the gateway's computer (into the gateway's own Python)",
+    "Install {n}${withTui ? \" for the browser and the terminal\" : \"\"}${app.needs_node_install ? \" (Node.js is installed for you first: about 56 MB, no password needed)\" : \"\"}",
+    "Bring the {n} to the front on this computer",
+    "Start the {n} on this computer",
+    "Open {n} in a new tab, signed in",
+    "Start {n}, then ${first.title(name).charAt(0).toLowerCase()}${first.title(name).slice(1)}",
+    "Start {n} and open it in a new tab, signed in",
+    "{n} settings"
+  ],
+  "account_confirms": {
+    "archive_user": "Archive {n}? They can't sign in any more. Their runtime, runs and history are kept; you can unarchive later.",
+    "archive_entity": "Archive {n}? It stops acting and never wakes. Its memory, runs and history are kept; you can unarchive later.",
+    "suspend": "Suspend {n}? It stops acting until you turn Active back on.",
+    "deactivate": "Deactivate {n}? They are signed out until you turn Active back on.",
+    "rotate": "Rotate the token of {n}? The current token stops working now; the new one is shown once."
+  },
+  "email_switches": [
+    {
+      "label": "Mailboxes for users",
+      "desc": "Users may connect their own mailbox for their agents, automations and notifications. You never see anyone's mail."
+    },
+    {
+      "label": "Agent email tools for users",
+      "desc": "Users may let their agents and workflows use their mailbox. Each user still switches the tools on for themselves."
+    },
+    {
+      "label": "Sign-in by email",
+      "desc": "Shows 'Forgot your token?' on the sign-in page. Whoever controls a user's mailbox can then sign in as that user."
+    }
+  ]
+}

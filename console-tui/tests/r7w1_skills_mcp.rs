@@ -56,15 +56,37 @@ fn page(size: (i32, i32)) -> r7w1::Harness {
     h
 }
 
+/// Click the `label` button of an open dialog (its button row holds
+/// `label` and `other`).
+fn click_pair(h: &mut r7w1::Harness, label: &str, other: &str) -> String {
+    let screen = h.turns(1);
+    let (y, line) = screen
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains(&format!(" {label} ")) && l.contains(&format!(" {other} ")))
+        .last()
+        .unwrap_or_else(|| panic!("no [{label}] [{other}] button row:\n{screen}"));
+    let b = line.rfind(&format!(" {label} ")).unwrap() + 1;
+    let x = line[..b].chars().count() + 1;
+    h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes())
+}
+
+/// The MCP servers segment (the head row's last "MCP servers").
+fn to_mcp(h: &mut r7w1::Harness) -> String {
+    h.store.skills.tab.set(1);
+    h.turns(3)
+}
+
 #[test]
 fn skills_tab_shows_the_shelf_with_the_web_words() {
     for size in SIZES {
         let mut h = page(size);
         let s = h.shoot("skills");
         assert!(s.contains("Skills & MCP"), "{s}");
-        assert!(s.contains("[Skills]"), "{s}");
+        // R15: the tabs are a Segmented in the head.
+        assert!(s.contains("Skills   MCP servers"), "{s}");
         assert!(s.contains("curated ones ship with the"), "{s}");
-        assert!(s.contains("[ ] Show archived"), "{s}");
+        assert!(s.contains("●─ Show archived"), "{s}");
         assert!(s.contains("field-guide") && s.contains("Unverified"), "{s}");
         assert!(s.contains("First party"), "{s}");
         assert!(
@@ -86,11 +108,25 @@ fn skills_tab_shows_the_shelf_with_the_web_words() {
 
 #[test]
 fn enter_expands_a_skill_row_with_its_actions() {
+    // R15: no unfolding — the row's actions are its buttons; Enter = View.
     let mut h = page((80, 24));
     h.key(b"\x1b[B"); // field-notes
+    let s = h.turns(2);
+    let row = s
+        .lines()
+        .find(|l| l.contains("field-notes"))
+        .unwrap_or_else(|| panic!("{s}"));
+    assert!(
+        row.contains("View") && row.contains("Export") && row.contains("Archive"),
+        "{s}"
+    );
+    assert!(
+        s.contains("1.4.0 · Imported"),
+        "version · source ride under the name:\n{s}"
+    );
+    h.sent();
     let s = h.key(b"\r");
-    assert!(s.contains("Version: 1.4.0 · Source: Imported"), "{s}");
-    assert!(s.contains("Actions: v View · x Export · d Archive"), "{s}");
+    assert!(s.contains("Skill — field-notes"), "{s}");
     h.shoot("skills-expanded");
 }
 
@@ -110,16 +146,12 @@ fn search_filters_and_says_no_match() {
 
 #[test]
 fn archive_asks_inline_then_sends_the_web_route() {
+    // R15: as on the web, Archive applies at once (Show archived +
+    // Unarchive bring the skill back) — no question.
     let mut h = page((80, 24));
     h.sent();
     h.key(b"\x1b[B"); // field-notes (imported)
-    let s = h.key(b"d");
-    assert!(
-        s.contains("Archive field-notes?") && s.contains("[y] Archive") && s.contains("[n] Keep"),
-        "{s}"
-    );
-    assert!(h.sent().is_empty(), "nothing before y");
-    h.key(b"y");
+    h.key(b"d");
     let sent = h.sent();
     assert!(
         sent.iter().any(|c| matches!(c, Cmd::Skills(SkCmd::SetSkillArchived { name, archive: true, .. }) if name == "field-notes")),
@@ -143,13 +175,17 @@ fn a_curated_skill_cannot_be_archived_and_says_why() {
 fn mcp_tab_shows_servers_status_and_the_agents_switch() {
     for size in SIZES {
         let mut h = page(size);
-        h.key(b"\t");
-        let s = h.shoot("mcp");
-        assert!(s.contains("[MCP servers]"), "{s}");
+        let s = to_mcp(&mut h);
+        h.shoot("mcp");
         assert!(s.contains("No server is offered to agents yet"), "{s}");
         assert!(s.contains("Test runs the real handshake"), "{s}");
         assert!(s.contains("calc") && s.contains("OK · 2 tools"), "{s}");
-        assert!(s.contains("[ ] Enabled for agents"), "{s}");
+        // R15: the switch is a Toggle cell ("Enabled for agents" heads the
+        // column on a wide page).
+        assert!(s.contains("●─"), "{s}");
+        if size.0 >= 100 {
+            assert!(s.contains("Enabled for agents"), "{s}");
+        }
         assert!(s.contains("Not tested"), "{s}");
         assert!(!s.contains("legacy-docs"), "archived hidden:\n{s}");
         h.key(b"h");
@@ -163,17 +199,17 @@ fn mcp_tab_shows_servers_status_and_the_agents_switch() {
 #[test]
 fn turning_agents_on_asks_first_and_a_blocked_switch_says_why() {
     let mut h = page((120, 40));
-    h.key(b"\t");
+    to_mcp(&mut h);
     h.sent();
     let s = h.key(b" ");
     assert!(
-        s.contains("Offer its 2 tools to your agents?") && s.contains("[y] Turn on"),
+        s.contains("Offer its 2 tools to your agents?") && s.contains("Turn on"),
         "{s}"
     );
-    h.key(b"n");
-    assert!(h.sent().is_empty(), "Keep sends nothing");
+    click_pair(&mut h, "Cancel", "Turn on");
+    assert!(h.sent().is_empty(), "Cancel sends nothing");
     h.key(b" ");
-    h.key(b"y");
+    click_pair(&mut h, "Turn on", "Cancel");
     assert!(h.sent().iter().any(
         |c| matches!(c, Cmd::Skills(SkCmd::SetMcpAgents { name, enabled: true }) if name == "calc")
     ));
@@ -192,19 +228,14 @@ fn turning_agents_on_asks_first_and_a_blocked_switch_says_why() {
 fn add_server_overlay_has_the_web_fields_and_esc_closes_it() {
     for size in SIZES {
         let mut h = page(size);
-        h.key(b"\t");
+        to_mcp(&mut h);
         let s = h.key(b"a");
         assert!(s.contains("Add MCP server"), "{s}");
         assert!(s.contains("A short name for this server"), "{s}");
-        assert!(s.contains("[Command]") && s.contains("URL"), "{s}");
+        assert!(s.contains("Command") && s.contains("URL"), "{s}");
         assert!(s.contains("Save and test the server first"), "{s}");
-        h.shoot("mcp-add");
-        let s = h.key(b"\x1b");
-        assert!(!s.contains("Add MCP server"), "Esc closes:\n{s}");
-        h.key(b"a");
-        let s = h.wheel_down(10);
         assert!(s.contains("Test connection") && s.contains("Save"), "{s}");
-        h.shoot("mcp-add-scrolled");
+        h.shoot("mcp-add");
         let s = h.key(b"\x1b");
         assert!(!s.contains("Add MCP server"), "Esc closes:\n{s}");
     }
@@ -234,6 +265,18 @@ fn the_skill_overlay_shows_read_only_reason_and_duplicate() {
 }
 
 // ---------------------------------------------------------------- live
+
+/// Wait until `needle` is on screen or was said as a toast (R15: verified
+/// successes are toasts).
+fn until_said(h: &mut r7w1::Harness, needle: &str) {
+    let n = needle.to_string();
+    h.until(needle, move |_, s| {
+        s.contains(&n)
+            || abstractgateway_console::ui::w::notify::toasts()
+                .iter()
+                .any(|t| t.contains(&n))
+    });
+}
 
 fn select_skill(h: &mut r7w1::Harness, name: &str) {
     let idx = h.store.skills.skills.with_untracked(|d| {
@@ -274,7 +317,7 @@ fn live_skills_archive_unarchive_export_import() {
     h.until_text("old-notes");
     select_skill(&mut h, "old-notes");
     h.key(b"d");
-    h.until_text("Unarchived old-notes: it is back on the shelf.");
+    until_said(&mut h, "Unarchived old-notes: it is back on the shelf.");
     select_skill(&mut h, "old-notes");
     let v = gw("GET", &url, &token, "/skills", None);
     assert!(
@@ -286,9 +329,7 @@ fn live_skills_archive_unarchive_export_import() {
         "{v}"
     );
     h.key(b"d");
-    h.until_text("Archive old-notes?");
-    h.key(b"y");
-    h.until_text("Archived old-notes: runs no longer see it.");
+    until_said(&mut h, "Archived old-notes: runs no longer see it.");
     let v = gw("GET", &url, &token, "/skills", None);
     assert!(
         !v["skills"]
@@ -305,7 +346,7 @@ fn live_skills_archive_unarchive_export_import() {
         dir: dir.clone(),
     }))
     .unwrap();
-    h.until_text("Exported field-notes to");
+    until_said(&mut h, "Exported field-notes to");
     let zip = dir.join("field-notes.zip");
     assert!(std::fs::metadata(&zip).unwrap().len() > 0);
     h.tx.send(Cmd::Skills(SkCmd::ImportSkill {
@@ -331,14 +372,14 @@ fn live_mcp_test_enable_disable_archive() {
         Some(json!({"enabled": false})),
     );
     skills_mcp::refresh_for_tests(&h.store, &h.tx);
-    h.key(b"\t");
+    h.store.skills.tab.set(1);
     h.until_text("calc");
     h.key(b"t");
-    h.until_text("calc: Connected to fake-stdio 0.3 · 2 tools.");
+    until_said(&mut h, "calc: Connected to fake-stdio 0.3 · 2 tools.");
     h.key(b" ");
     h.until_text("Offer its 2 tools to your agents?");
-    h.key(b"y");
-    h.until_text("calc: Offered to agents");
+    click_pair(&mut h, "Turn on", "Cancel");
+    until_said(&mut h, "calc: Offered to agents");
     let v = gw("GET", &url, &token, "/mcp/servers", None);
     let calc = v["servers"]
         .as_array()
@@ -350,7 +391,7 @@ fn live_mcp_test_enable_disable_archive() {
     assert_eq!(calc["enabled_for_agents"], true, "{calc}");
     h.shoot("live-mcp-enabled");
     h.key(b" ");
-    h.until_text("calc: Not offered to agents");
+    until_said(&mut h, "calc: Not offered to agents");
     let v = gw("GET", &url, &token, "/mcp/servers", None);
     let calc = v["servers"]
         .as_array()
@@ -369,7 +410,7 @@ fn live_capture_80x24() {
         return;
     };
     h.shoot("live-skills");
-    h.key(b"\t");
+    h.store.skills.tab.set(1);
     h.until_text("calc");
     h.shoot("live-mcp");
 }

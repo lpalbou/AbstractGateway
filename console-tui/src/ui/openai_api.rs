@@ -27,21 +27,18 @@
 //! pane; Recent requests is a wrapping table below (Enter opens a row:
 //! the recorded request and response). Tab moves between the two.
 
-use std::cell::Cell;
-use std::rc::Rc;
 use std::time::Duration;
 
-use abstracttui::app::{ChoiceOutcome, ChoicePrompt};
-use abstracttui::base::Point;
 use abstracttui::prelude::*;
-use abstracttui::render::{Attrs, Style};
 use abstracttui::ui::{Phase, UiEvent};
 use serde_json::Value;
 
-use super::kit::{InlineConfirm, Row, WrapTable};
-use super::util::{line, span, span_bold, wrap_text};
+use super::util::wrap_text;
+use super::w::action::On;
+use super::w::form::sentence;
+use super::w::{Action, Cell, Col, ColW, DataTable, Ink, Row as WRow, Segmented, Toggle};
 use super::widths::ColRule;
-use super::{open_prompt, Ctx};
+use super::Ctx;
 use crate::store::json::WriteState;
 use crate::store::{ConnPhase, Loadable};
 use crate::worker::json::JsonCmd;
@@ -231,14 +228,7 @@ pub struct Ln {
     pub indent: usize,
 }
 
-fn ln(text: impl Into<String>, tone: Tone) -> Ln {
-    Ln {
-        text: text.into(),
-        tone,
-        indent: 0,
-    }
-}
-
+#[cfg(test)]
 fn lni(text: impl Into<String>, tone: Tone, indent: usize) -> Ln {
     Ln {
         text: text.into(),
@@ -316,326 +306,6 @@ pub fn snippet(kind: &str, d: &Value, kept: Option<&str>, reveal: bool, clear: b
             "curl {base}/chat/completions \\\n  -H \"Authorization: Bearer {key}\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{{\"model\": \"{model}\", \"messages\": [{{\"role\": \"user\", \"content\": \"Hello\"}}]}}'"
         ),
     }
-}
-
-/// `(•)` / `( )` for a segmented option.
-fn seg_mark(on: bool) -> &'static str {
-    if on {
-        "(•)"
-    } else {
-        "( )"
-    }
-}
-
-/// The overview (`oaiStatusCard` + `oaiConnectCard` + `oaiAccessCard`
-/// for an admin + `oaiDocsCard`), every sentence the web page's.
-pub fn overview_lines(d: &Value, st: &ViewState) -> Vec<Ln> {
-    let admin = is_admin(d);
-    let busy = st.busy.as_deref();
-    let running = b(d, "running");
-    let base = s(d, "base_url");
-    let mut out: Vec<Ln> = Vec::new();
-
-    // ---- Status
-    out.push(ln(
-        format!(
-            "Status  {}",
-            if running {
-                "● Running"
-            } else {
-                "○ Stopped"
-            }
-        ),
-        Tone::Title,
-    ));
-    out.push(ln(
-        "One address for every OpenAI-compatible app.",
-        Tone::Muted,
-    ));
-    out.push(lni(format!("Base URL  {base}"), Tone::Text, 10));
-    if !admin {
-        out.push(ln(
-            format!(
-                "{} Only an admin can start or stop it.",
-                if running {
-                    "Apps can connect now."
-                } else {
-                    "Stopped: apps can't connect."
-                }
-            ),
-            Tone::Muted,
-        ));
-    } else {
-        let label = if busy == Some("enabled") {
-            "Saving..."
-        } else {
-            "Endpoint"
-        };
-        out.push(ln(
-            format!(
-                "{} {label}    x {}    h {}",
-                super::switch::marker(b(d, "enabled"), false),
-                if busy == Some("restart") {
-                    "Restarting..."
-                } else {
-                    "Restart"
-                },
-                if busy == Some("check") {
-                    "Checking..."
-                } else {
-                    "Check setup"
-                }
-            ),
-            Tone::Accent,
-        ));
-        out.push(ln(
-            "Endpoint: answers apps at this address. Restart ends open requests.",
-            Tone::Muted,
-        ));
-        if let Some(checks) = &st.checks {
-            for c in checks {
-                let ok = c.get("ok").and_then(Value::as_bool);
-                let (pill, tone) = match ok {
-                    Some(true) => ("OK", Tone::Ok),
-                    Some(false) => ("Fix", Tone::Err),
-                    None => ("Note", Tone::Warn),
-                };
-                out.push(lni(format!("{pill:<5}{}", s(c, "text")), tone, 5));
-            }
-        }
-    }
-    out.push(ln("", Tone::Text));
-
-    // ---- Connect your app
-    out.push(ln("Connect your app", Tone::Title));
-    out.push(ln(
-        "Paste these two values into any OpenAI SDK or app.",
-        Tone::Muted,
-    ));
-    let key = d.get("key").cloned().unwrap_or(Value::Null);
-    if key.get("allowed").and_then(Value::as_bool) == Some(false) {
-        out.push(ln(
-            "The OpenAI API is off for your account. An admin can turn it on in Accounts.",
-            Tone::Warn,
-        ));
-    }
-    out.push(lni(format!("Base URL  {base}"), Tone::Text, 10));
-    if !b(&key, "own_token") {
-        out.push(ln("API key   The gateway admin token", Tone::Text));
-        out.push(lni(
-            "          The token this gateway was started with.",
-            Tone::Muted,
-            10,
-        ));
-    } else {
-        let (kept, check) = kept_token(d, st.token.as_deref());
-        match kept {
-            Some(k) => {
-                let shown = if st.reveal { k } else { MASK.to_string() };
-                out.push(lni(format!("API key   {shown}"), Tone::Code, 10));
-                out.push(lni(
-                    "          Your gateway token: apps use it as their API key and act as you.",
-                    Tone::Muted,
-                    10,
-                ));
-            }
-            None => {
-                let why = if check == KeyCheck::Stale {
-                    "Your token changed since you signed in here, so this console's copy no longer works."
-                } else {
-                    "This console doesn't have your token: it connected without one."
-                };
-                out.push(lni(format!("API key   {MASK}"), Tone::Code, 10));
-                out.push(lni(
-                    format!("          {why} New key makes one; the gateway shows it once."),
-                    Tone::Warn,
-                    10,
-                ));
-            }
-        }
-    }
-    if let Some((tone, text)) = &st.key_notice {
-        out.push(ln(text.clone(), *tone));
-    }
-    if s(d, "access") == "open" {
-        out.push(ln(
-            "Open mode: SDKs still ask for a key; any text works, for example not-needed.",
-            Tone::Muted,
-        ));
-    }
-    out.push(ln(
-        "Model names are provider/model, as listed at /v1/models.",
-        Tone::Muted,
-    ));
-    out.push(ln("", Tone::Text));
-
-    // ---- Access (admin)
-    if admin {
-        out.push(ln("Access", Tone::Title));
-        out.push(ln(
-            "Changes apply immediately. Who may use the API with their own key: the OpenAI API switch of each account, in Accounts.",
-            Tone::Muted,
-        ));
-        out.push(ln("Authentication  (a switches)", Tone::Text));
-        let access = s(d, "access");
-        for (id, label, text) in AUTH {
-            let shown = if busy == Some(&format!("access:{id}")) {
-                "Saving..."
-            } else {
-                label
-            };
-            out.push(lni(
-                format!("  {} {shown} — {text}", seg_mark(access == id)),
-                if access == id {
-                    Tone::Accent
-                } else {
-                    Tone::Text
-                },
-                6,
-            ));
-        }
-        if access == "open" {
-            let current = arr(d, "open_account_options")
-                .into_iter()
-                .find(|o| b(o, "selected"))
-                .map(|o| s(o, "label").to_string())
-                .unwrap_or_else(|| s(d, "open_account").to_string());
-            let current = if busy == Some("open_account") {
-                "Saving...".to_string()
-            } else {
-                current
-            };
-            out.push(lni(
-                format!("Requests without a key run as  {current}  (u change)"),
-                Tone::Text,
-                2,
-            ));
-            out.push(lni(
-                "  Guest may use the models (chat, embeddings, speech, images) with no tools, files or attachments. An account brings its own models and providers, and its requests show in its log. Never an admin.",
-                Tone::Muted,
-                2,
-            ));
-        }
-        out.push(ln("Who can connect  (w changes)", Tone::Text));
-        let reach = s(d, "reach");
-        for o in arr(d, "reach_options") {
-            if o.get("shown").and_then(Value::as_bool) == Some(false) {
-                continue;
-            }
-            let id = s(o, "id");
-            let locked = o.get("available").and_then(Value::as_bool) == Some(false);
-            let text = if locked && !s(o, "reason").is_empty() {
-                s(o, "reason").to_string()
-            } else {
-                reach_text(id).to_string()
-            };
-            let label = if busy == Some(&format!("reach:{id}")) {
-                "Saving...".to_string()
-            } else {
-                s(o, "label").to_string()
-            };
-            let tone = if reach == id {
-                Tone::Accent
-            } else if locked {
-                Tone::Faint
-            } else {
-                Tone::Text
-            };
-            out.push(lni(
-                format!("  {} {label} — {text}", seg_mark(reach == id)),
-                tone,
-                6,
-            ));
-        }
-        for w in arr(d, "warnings") {
-            let tone = if s(w, "tone") == "warn" {
-                Tone::Warn
-            } else {
-                Tone::Muted
-            };
-            let extra = if s(w, "id") == "listener" {
-                "  (N opens Network)"
-            } else {
-                ""
-            };
-            out.push(ln(format!("{}{extra}", s(w, "text")), tone));
-        }
-        if let Some((tone, text)) = &st.notice {
-            out.push(ln(text.clone(), *tone));
-        }
-        out.push(ln("", Tone::Text));
-    }
-
-    // ---- Docs
-    let kept = kept_token(d, st.token.as_deref()).0;
-    out.push(ln("Docs", Tone::Title));
-    out.push(ln(
-        format!(
-            "What is supported, and a first request with your base URL{}.",
-            if kept.is_some() { " and your key" } else { "" }
-        ),
-        Tone::Muted,
-    ));
-    out.push(lni(
-        format!(
-            "OpenAI API compatibility  {} — endpoints and parameters this gateway supports",
-            d.pointer("/docs/openai_api")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-        ),
-        Tone::Text,
-        2,
-    ));
-    out.push(lni(
-        format!(
-            "AbstractCore server  {} — the engine behind it",
-            d.pointer("/docs/abstractcore")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-        ),
-        Tone::Text,
-        2,
-    ));
-    if let Some(sp) = d.get("support") {
-        for (label, k, tone) in [
-            ("Supported:", "tested", Tone::Ok),
-            ("Also served, with an engine set up:", "served", Tone::Text),
-            ("Not yet:", "not_yet", Tone::Faint),
-        ] {
-            let items: Vec<&str> = arr(sp, k).into_iter().filter_map(Value::as_str).collect();
-            if !items.is_empty() {
-                out.push(lni(format!("{label} {}", items.join(" · ")), tone, 2));
-            }
-        }
-    }
-    let tabs: Vec<String> = SNIPPETS
-        .iter()
-        .enumerate()
-        .map(|(i, (_, label))| {
-            if i == st.snippet {
-                format!("[{label}]")
-            } else {
-                label.to_string()
-            }
-        })
-        .collect();
-    out.push(ln(
-        format!("Example  {}  (s next)", tabs.join("  ")),
-        Tone::Text,
-    ));
-    let kind = SNIPPETS[st.snippet.min(SNIPPETS.len() - 1)].0;
-    for l in snippet(kind, d, kept.as_deref(), st.reveal, false).lines() {
-        out.push(lni(format!("  {l}"), Tone::Code, 4));
-    }
-    let note = if kept.is_some() {
-        "  The key is hidden here; Copy example includes it."
-    } else if s(d, "access") == "open" {
-        ""
-    } else {
-        "  Replace YOUR_GATEWAY_TOKEN with your token."
-    };
-    out.push(ln(format!("c Copy example{note}"), Tone::Muted));
-    out
 }
 
 /// `HH:MM:SS` of an ISO timestamp in local time (the web's
@@ -881,28 +551,28 @@ pub const NEW_KEY_SENTENCE: &str = "Make a new key? It replaces your gateway tok
 /// (the web page hides their controls).
 pub fn hints(non_admin: bool) -> Vec<(&'static str, &'static str)> {
     let mut v = vec![
-        ("Tab", "overview ⇄ requests"),
-        ("Enter", "open request"),
-        ("b", "copy base URL"),
-        ("v", "show/hide key"),
-        ("y", "copy key"),
-        ("n", "new key"),
+        ("Tab", "next control"),
+        ("Enter", "press · open request"),
+        ("b", "Copy base URL"),
+        ("v", "Show/Hide key"),
+        ("y", "Copy key"),
+        ("n", "New key"),
     ];
     if !non_admin {
         v.extend([
-            ("e", "endpoint"),
-            ("x", "restart"),
-            ("h", "check setup"),
-            ("a", "authentication"),
-            ("w", "who can connect"),
+            ("e", "Endpoint"),
+            ("x", "Restart"),
+            ("h", "Check setup"),
+            ("a", "Authentication"),
+            ("w", "Who can connect"),
             ("u", "run as"),
         ]);
     }
     v.extend([
         ("s", "example"),
-        ("c", "copy example"),
+        ("c", "Copy example"),
         ("f", "full record"),
-        ("o", "copy Observer link"),
+        ("o", "Open in Observer"),
         ("r", "refresh"),
     ]);
     v
@@ -1008,110 +678,137 @@ pub fn wrap_lines(lines: &[Ln], w: usize) -> Vec<(String, Tone)> {
     out
 }
 
-/// A focusable pane of wrapped lines that scrolls (↑/↓, PgUp/PgDn,
-/// Home/End) when it holds the keyboard; a ▼/▲ mark says there is more.
-fn scroll_pane(
-    cx: Scope,
-    tt: TokenSet,
-    autofocus: bool,
-    grow: f32,
-    lines: impl Fn() -> Vec<Ln> + 'static,
-) -> View {
-    let focus = cx.signal(false);
-    let top = Rc::new(Cell::new(0i32));
-    let page = Rc::new(Cell::new(1i32));
-    let tick = cx.signal(0u64);
-    let (top_ev, page_ev) = (top.clone(), page.clone());
-    let el = Element::new()
-        .style(LayoutStyle::default().grow(grow).min_h(3))
-        .focusable()
-        .focus_signal(focus)
-        .on(Phase::Bubble, move |ectx, ev| {
-            if let UiEvent::Key(k) = ev {
-                if k.mods.0 != 0 {
-                    return;
-                }
-                let pg = page_ev.get().max(1);
-                let cur = top_ev.get();
-                let next = match k.key {
-                    Key::Up => cur - 1,
-                    Key::Down => cur + 1,
-                    Key::PageUp => cur - pg,
-                    Key::PageDown => cur + pg,
-                    Key::Home => 0,
-                    Key::End => i32::MAX / 2,
-                    _ => return,
-                };
-                top_ev.set(next.max(0));
-                tick.update(|t| *t += 1);
-                ectx.stop_propagation();
-            }
-        });
-    let el = if autofocus { el.autofocus() } else { el };
-    el.child(dyn_view(
-        LayoutStyle::default().grow(1.0).min_h(1),
-        move || {
-            let _ = tick.get();
-            let lines = lines();
-            let focused = focus.get();
-            let (top, page) = (top.clone(), page.clone());
-            Element::new()
-                .style(LayoutStyle::default().grow(1.0).min_h(1))
-                .draw(move |canvas, rect| {
-                    if rect.is_empty() {
-                        return;
-                    }
-                    let t = tt;
-                    canvas.fill_styled(rect, ' ', &Style::new().fg(t.text).bg(t.surface));
-                    // One cell on the right for the scroll mark.
-                    let w = (rect.w - 1).max(10) as usize;
-                    let all = wrap_lines(&lines, w);
-                    let n = all.len() as i32;
-                    let tp = top.get().clamp(0, (n - rect.h).max(0));
-                    top.set(tp);
-                    page.set(rect.h);
-                    for (i, (text, tone)) in all
-                        .iter()
-                        .skip(tp as usize)
-                        .take(rect.h as usize)
-                        .enumerate()
-                    {
-                        let mut st = Style::new().fg(tone_ink(&t, *tone)).bg(t.surface);
-                        if *tone == Tone::Title {
-                            st = st.attrs(Attrs::BOLD);
-                        }
-                        canvas.print_styled(Point::new(rect.x, rect.y + i as i32), text, &st);
-                    }
-                    if n > rect.h {
-                        let mark = if tp + rect.h >= n { "▲" } else { "▼" };
-                        let ink = if focused { t.accent } else { t.text_faint };
-                        canvas.print_styled(
-                            Point::new(rect.x + rect.w - 1, rect.y + rect.h - 1),
-                            mark,
-                            &Style::new().fg(ink).bg(t.surface),
-                        );
-                    }
-                })
-                .build()
-        },
-    ))
-    .build()
+// ---------------------------------------------------------------------
+// R15 (DESIGN-TUI.md §3.8): the web's cards top-down with real controls
+// — Status (Copy, the Endpoint toggle, Restart, Check setup), Connect
+// your app (Copy, Show/Hide, Copy, New key), Access (Authentication
+// segments, Requests without a key run as / Who can connect pickers),
+// Docs (the two links, curl | Python | JavaScript, Copy example) — then
+// Recent requests as a table (Time opens the recorded request and
+// response; Run opens Observer). One action list (`page_actions`,
+// `log_actions`) is the single source for the buttons, keys and tests.
+// ---------------------------------------------------------------------
+
+/// The web's words of the controls (console_ui.py `oai*`).
+pub const ENDPOINT_TIP: &str = "Answer OpenAI API requests at the base URL";
+pub const RESTART_TIP: &str = "End open requests and keep serving";
+pub const CHECK_TIP: &str = "Check settings, Core and models";
+pub const SHOW_KEY_TIP: &str = "Show your API key";
+pub const HIDE_KEY_TIP: &str = "Hide your API key";
+pub const NOT_IN_A_RUN: &str = "This request was not part of a run";
+
+/// The page's buttons for document `d` (`kept`: the console holds the
+/// account's key; `reveal`: shown in clear), in screen order.
+pub fn page_actions(d: &Value, kept: bool, reveal: bool) -> Vec<Action> {
+    let admin = is_admin(d);
+    let mut out = vec![Action::label("copy_base", "Copy")
+        .key('b')
+        .tooltip("Copy base URL")];
+    if admin {
+        out.push(
+            Action::label("restart", "Restart")
+                .key('x')
+                .tooltip(RESTART_TIP)
+                .refused((!b(d, "enabled")).then(|| "Restart needs the endpoint on.".to_string())),
+        );
+        out.push(
+            Action::label("check", "Check setup")
+                .key('h')
+                .tooltip(CHECK_TIP),
+        );
+    }
+    let own = d
+        .pointer("/key/own_token")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if own {
+        if kept {
+            out.push(if reveal {
+                Action::label("reveal", "Hide")
+                    .key('v')
+                    .tooltip(HIDE_KEY_TIP)
+            } else {
+                Action::label("reveal", "Show")
+                    .key('v')
+                    .tooltip(SHOW_KEY_TIP)
+            });
+            out.push(
+                Action::label("copy_key", "Copy")
+                    .key('y')
+                    .tooltip("Copy API key"),
+            );
+        }
+        out.push(
+            Action::label("new_key", "New key")
+                .key('n')
+                .tooltip(NEW_KEY_SENTENCE),
+        );
+    }
+    if admin
+        && arr(d, "warnings")
+            .into_iter()
+            .any(|w| s(w, "id") == "listener")
+    {
+        out.push(Action::label("network", "Network").key('N').tooltip(
+            "Who can reach this gateway (this computer, local network, internet) and its addresses",
+        ));
+    }
+    out.push(
+        Action::link("doc_openai", "OpenAI API compatibility")
+            .tooltip("endpoints and parameters this gateway supports"),
+    );
+    out.push(Action::link("doc_core", "AbstractCore server").tooltip("the engine behind it"));
+    out.push(Action::label("copy_example", "Copy example").key('c'));
+    out
+}
+
+/// A request row's actions: open the recorded request and response (the
+/// web's Time toggle), and Open in Observer (runs only).
+pub fn log_actions(r: &Value) -> Vec<Action> {
+    vec![
+        Action::link("details", local_time(s(r, "ts"))).tooltip(format!(
+            "Show the request and response of {}",
+            local_time(s(r, "ts"))
+        )),
+        Action::label("observer", "Open")
+            .key('o')
+            .tooltip("Open in Observer")
+            .refused(
+                s(r, "observer_path")
+                    .is_empty()
+                    .then(|| NOT_IN_A_RUN.to_string()),
+            ),
+    ]
+}
+
+/// Open `url` in a browser here, or (no display / no opener) copy it and
+/// say so.
+pub(crate) fn open_or_copy(ctx: &Ctx, url: &str) {
+    if ctx.no_display.is_none() && ctx.screens.open_url(url).is_ok() {
+        return;
+    }
+    copy_to_clipboard(url.to_string());
+    ctx.store
+        .notice
+        .set(Some(format!("copied {url} — open it in your browser")));
 }
 
 /// The page.
 pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
     let tt = *t;
-    let st_reveal = cx.signal(false);
-    let st_snippet = cx.signal(0usize);
-    let busy: Signal<Option<String>> = cx.signal(None);
-    let notice: Signal<Option<(Tone, String)>> = cx.signal(None);
-    let key_notice: Signal<Option<(Tone, String)>> = cx.signal(None);
-    let checks: Signal<Option<Vec<Value>>> = cx.signal(None);
-    let log_sel = cx.signal(0usize);
-    let log_open: Signal<Option<usize>> = cx.signal(None);
-    let confirm = InlineConfirm::new(cx);
-    let last_field: Signal<String> = cx.signal(String::new());
+    let st = Page {
+        reveal: cx.signal(false),
+        snippet: cx.signal(0usize),
+        busy: cx.signal(None),
+        notice: cx.signal(None),
+        key_notice: cx.signal(None),
+        checks: cx.signal(None),
+        last_field: cx.signal(String::new()),
+        log_key: cx.signal(None),
+        reach_pick: abstracttui::app::select::SelectHandle::new(),
+        account_pick: abstracttui::app::select::SelectHandle::new(),
+    };
 
     // First look once connected; a reconnect (new key) reads again.
     {
@@ -1133,562 +830,1234 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             }
         });
     }
-    // Opening a row reads its record once.
-    {
-        let ctx_d = ctx.clone();
-        cx.effect(move || {
-            let Some(i) = log_open.get() else { return };
-            let rid = store.json.get_untracked(KEY_LOGS).ready().and_then(|v| {
-                v.get("rows")
-                    .and_then(Value::as_array)
-                    .and_then(|r| r.get(i))
-                    .map(|r| s(r, "request_id").to_string())
-            });
-            if let Some(rid) = rid.filter(|r| !r.is_empty()) {
-                let key = format!("{KEY_LOG_PREFIX}{rid}");
-                if !matches!(store.json.get_untracked(&key), Loadable::Ready(_)) {
-                    store.json.set(&key, Loadable::Loading);
-                    send_get(
-                        &ctx_d,
-                        &key,
-                        &format!("/openai-api/logs/{}", urlencode(&rid)),
-                    );
-                }
-            }
-        });
-    }
-    // The result lines also go to the footer's notice lane: the card that
-    // carries them may be scrolled out of the overview pane.
-    cx.effect(move || {
-        if let Some((_, text)) = notice.get() {
-            store.notice.set(Some(text));
-        }
-    });
-    cx.effect(move || {
-        if let Some((_, text)) = key_notice.get() {
-            store.notice.set(Some(text));
-        }
-    });
-    // Write outcomes → the web page's sentences.
-    {
-        let ctx_w = ctx.clone();
-        cx.effect(move || {
-            if let Some(w) = store.json.write(KEY_CHANGE) {
-                if !w.is_pending() {
-                    let field = last_field.get_untracked();
-                    match w {
-                        WriteState::Done(v) => {
-                            notice.set(Some((Tone::Ok, saved_text(&field, &v))))
-                        }
-                        WriteState::Failed(e) => {
-                            notice.set(Some((Tone::Err, format!("Not saved: {}", e.message))))
-                        }
-                        WriteState::Pending => {}
-                    }
-                    busy.set(None);
-                    store.json.set_write(KEY_CHANGE, None);
-                }
-            }
-            if let Some(w) = store.json.write(KEY_RESTART) {
-                if !w.is_pending() {
-                    match w {
-                        WriteState::Done(v) => {
-                            let n = v.get("ended_requests").and_then(Value::as_i64).unwrap_or(0);
-                            let what = if n > 0 {
-                                format!("{n} open request{} ended", if n == 1 { "" } else { "s" })
-                            } else {
-                                "no request was open".into()
-                            };
-                            notice.set(Some((Tone::Ok, format!("Restarted: {what}."))));
-                        }
-                        WriteState::Failed(e) => notice
-                            .set(Some((Tone::Err, format!("Not restarted: {}", e.message)))),
-                        WriteState::Pending => {}
-                    }
-                    busy.set(None);
-                    store.json.set_write(KEY_RESTART, None);
-                }
-            }
-            if let Some(w) = store.json.write(KEY_CHECK) {
-                if !w.is_pending() {
-                    match w {
-                        WriteState::Done(v) => checks.set(Some(
-                            v.get("checks")
-                                .and_then(Value::as_array)
-                                .cloned()
-                                .unwrap_or_default(),
-                        )),
-                        WriteState::Failed(e) => checks.set(Some(vec![serde_json::json!({
-                            "id": "error", "ok": false, "text": e.message
-                        })])),
-                        WriteState::Pending => {}
-                    }
-                    busy.set(None);
-                    store.json.set_write(KEY_CHECK, None);
-                }
-            }
-            if let Some(w) = store.json.write(KEY_NEW_KEY) {
-                if !w.is_pending() {
-                    match w {
-                        WriteState::Done(v) => {
-                            let token = s(&v, "token").to_string();
-                            if token.is_empty() {
-                                key_notice.set(Some((
-                                    Tone::Err,
-                                    "No new key: The gateway answered without the new key."
-                                        .into(),
-                                )));
-                            } else {
-                                // The console now signs in with the new key
-                                // (the old one stopped working).
-                                ctx_w.ui.conn_token.set(token);
-                                st_reveal.set(true);
-                                key_notice.set(Some((
-                                    Tone::Ok,
-                                    "New key made: your old one stopped working. Copy it now: the gateway shows a key only once.".into(),
-                                )));
-                                ctx_w.connect_now();
-                            }
-                        }
-                        WriteState::Failed(e) => key_notice
-                            .set(Some((Tone::Err, format!("No new key: {}", e.message)))),
-                        WriteState::Pending => {}
-                    }
-                    busy.set(None);
-                    store.json.set_write(KEY_NEW_KEY, None);
-                }
-            }
-        });
-    }
+    install_write_effects(cx, ctx, &st);
 
-    let doc = move || store.json.get_untracked(KEY_PAGE).ready().cloned();
-    let token_now = {
-        let ctx_t = ctx.clone();
-        move || ctx_t.effective_credentials().1
-    };
-
-    // ---- Keys
-    let mut root = Element::new().style(LayoutStyle::column().gap(0).grow(1.0));
-    let say = move |m: &str| store.notice.set(Some(m.to_string()));
-    let admin_only = move |what: &str| -> bool {
-        match doc() {
-            Some(d) if is_admin(&d) => true,
-            Some(_) => {
-                store.notice.set(Some(format!("Only an admin can {what}.")));
-                false
+    let keys_ctx = ctx.clone();
+    let st_keys = st.clone();
+    let st_body = st.clone();
+    let body_ctx = ctx.clone();
+    Element::new()
+        .style(LayoutStyle::column().gap(0).grow(1.0).padding(Edges {
+            left: 1,
+            right: 1,
+            top: 0,
+            bottom: 0,
+        }))
+        .on(Phase::Bubble, move |ectx, ev| {
+            if let UiEvent::Key(k) = ev {
+                if k.mods.0 != 0 && !matches!(k.key, Key::Char('N')) {
+                    return;
+                }
+                if handle_key(cx, &keys_ctx, &st_keys, k.key) {
+                    ectx.stop_propagation();
+                }
             }
-            None => {
-                store
-                    .notice
-                    .set(Some("Reading the OpenAI API settings...".into()));
-                false
+        })
+        .child(dyn_view(LayoutStyle::column().shrink(0.0), move || {
+            let t = tt;
+            let w = (crate::ui::page_viewport(cx).get().w - 2).max(20);
+            super::workflows::page_head(&t, TITLE, SUBTITLE, w, Vec::new())
+        }))
+        .child(dyn_view_scoped(
+            LayoutStyle::column()
+                .gap(0)
+                .grow(3.0)
+                .basis(Dimension::Cells(0)),
+            move |gcx| {
+                let t = use_theme(gcx).get().tokens;
+                cards(gcx, cx, &body_ctx, &t, &st_body)
+            },
+        ))
+        .child(logs_region(cx, ctx, &tt, &st))
+        .build()
+}
+
+/// The web page's title and subtitle.
+pub const TITLE: &str = "OpenAI API";
+pub const SUBTITLE: &str = "Let apps use your models through one OpenAI-compatible address";
+
+/// The page's own state beside the gateway's document.
+#[derive(Clone)]
+struct Page {
+    reveal: Signal<bool>,
+    snippet: Signal<usize>,
+    busy: Signal<Option<String>>,
+    notice: Signal<Option<(Tone, String)>>,
+    key_notice: Signal<Option<(Tone, String)>>,
+    checks: Signal<Option<Vec<Value>>>,
+    last_field: Signal<String>,
+    /// The request row the keyboard is on (its request id).
+    log_key: Signal<Option<String>>,
+    reach_pick: abstracttui::app::select::SelectHandle,
+    account_pick: abstracttui::app::select::SelectHandle,
+}
+
+/// Write outcomes → the web page's sentences (success toasts; refusals
+/// inline in their card).
+fn install_write_effects(cx: Scope, ctx: &Ctx, st: &Page) {
+    let store = ctx.store;
+    let st = st.clone();
+    let ctx_w = ctx.clone();
+    cx.effect(move || {
+        if let Some(w) = store.json.write(KEY_CHANGE) {
+            if !w.is_pending() {
+                let field = st.last_field.get_untracked();
+                match w {
+                    WriteState::Done(v) => {
+                        let text = saved_text(&field, &v);
+                        super::w::toast(&ctx_w, cx, text.clone());
+                        st.notice.set(Some((Tone::Ok, text)));
+                    }
+                    WriteState::Failed(e) => st
+                        .notice
+                        .set(Some((Tone::Err, format!("Not saved: {}", e.message)))),
+                    WriteState::Pending => {}
+                }
+                st.busy.set(None);
+                store.json.set_write(KEY_CHANGE, None);
             }
         }
-    };
-    {
-        let c = ctx.clone();
-        root = root.shortcut(KeyChord::plain(Key::Char('e')), move |_| {
-            if admin_only("start or stop it") {
-                let on = doc().map(|d| b(&d, "enabled")).unwrap_or(false);
-                last_field.set("enabled".into());
-                notice.set(None);
-                change(&c, busy, "enabled", Value::Bool(!on));
-            }
-        });
-    }
-    {
-        let c = ctx.clone();
-        root = root.shortcut(KeyChord::plain(Key::Char('x')), move |_| {
-            if !admin_only("start or stop it") || busy.get_untracked().is_some() {
-                return;
-            }
-            if !doc().map(|d| b(&d, "enabled")).unwrap_or(false) {
-                say("Restart needs the endpoint on (e).");
-                return;
-            }
-            busy.set(Some("restart".into()));
-            notice.set(None);
-            post(&c, KEY_RESTART, PATH_RESTART, "OpenAI API: restart", false);
-        });
-    }
-    {
-        let c = ctx.clone();
-        root = root.shortcut(KeyChord::plain(Key::Char('h')), move |_| {
-            if !admin_only("check the setup") || busy.get_untracked().is_some() {
-                return;
-            }
-            busy.set(Some("check".into()));
-            post(&c, KEY_CHECK, PATH_CHECK, "OpenAI API: check setup", true);
-        });
-    }
-    {
-        let c = ctx.clone();
-        root = root.shortcut(KeyChord::plain(Key::Char('a')), move |_| {
-            if !admin_only("change the authentication") {
-                return;
-            }
-            let next = if doc().map(|d| s(&d, "access") == "open").unwrap_or(false) {
-                "token"
-            } else {
-                "open"
-            };
-            last_field.set("access".into());
-            notice.set(None);
-            change(&c, busy, "access", Value::String(next.into()));
-        });
-    }
-    {
-        let c = ctx.clone();
-        root = root.shortcut(KeyChord::plain(Key::Char('w')), move |_| {
-            if !admin_only("change who can connect") || busy.get_untracked().is_some() {
-                return;
-            }
-            let Some(d) = doc() else { return };
-            let mut prompt = ChoicePrompt::new("Who can connect");
-            let mut initial = String::new();
-            for o in arr(&d, "reach_options") {
-                if o.get("shown").and_then(Value::as_bool) == Some(false) {
-                    continue;
+        if let Some(w) = store.json.write(KEY_RESTART) {
+            if !w.is_pending() {
+                match w {
+                    WriteState::Done(v) => {
+                        let n = v.get("ended_requests").and_then(Value::as_i64).unwrap_or(0);
+                        let what = if n > 0 {
+                            format!("{n} open request{} ended", if n == 1 { "" } else { "s" })
+                        } else {
+                            "no request was open".into()
+                        };
+                        let text = format!("Restarted: {what}.");
+                        super::w::toast(&ctx_w, cx, text.clone());
+                        st.notice.set(Some((Tone::Ok, text)));
+                    }
+                    WriteState::Failed(e) => st
+                        .notice
+                        .set(Some((Tone::Err, format!("Not restarted: {}", e.message)))),
+                    WriteState::Pending => {}
                 }
-                let id = s(o, "id").to_string();
-                let locked = o.get("available").and_then(Value::as_bool) == Some(false);
-                let text = if locked && !s(o, "reason").is_empty() {
-                    s(o, "reason").to_string()
-                } else {
-                    reach_text(&id).to_string()
-                };
-                if b(o, "selected") {
-                    initial = id.clone();
+                st.busy.set(None);
+                store.json.set_write(KEY_RESTART, None);
+            }
+        }
+        if let Some(w) = store.json.write(KEY_CHECK) {
+            if !w.is_pending() {
+                match w {
+                    WriteState::Done(v) => st.checks.set(Some(
+                        v.get("checks")
+                            .and_then(Value::as_array)
+                            .cloned()
+                            .unwrap_or_default(),
+                    )),
+                    WriteState::Failed(e) => st.checks.set(Some(vec![serde_json::json!({
+                        "id": "error", "ok": false, "text": e.message
+                    })])),
+                    WriteState::Pending => {}
                 }
-                prompt = prompt.option_detail(id, s(o, "label").to_string(), text);
+                st.busy.set(None);
+                store.json.set_write(KEY_CHECK, None);
             }
-            if !initial.is_empty() {
-                prompt = prompt.initial(initial.clone());
-            }
-            let c2 = c.clone();
-            let d2 = d.clone();
-            open_prompt(cx, c.ui, prompt, move |out| {
-                let ChoiceOutcome::Answered(a) = out else {
-                    return;
-                };
-                let Some(id) = a.selected.first().cloned() else {
-                    return;
-                };
-                if id == initial {
-                    return;
-                }
-                let locked = arr(&d2, "reach_options")
-                    .into_iter()
-                    .find(|o| s(o, "id") == id)
-                    .filter(|o| o.get("available").and_then(Value::as_bool) == Some(false))
-                    .map(|o| s(o, "reason").to_string());
-                if let Some(reason) = locked {
-                    notice.set(Some((Tone::Warn, reason)));
-                    return;
-                }
-                last_field.set("reach".into());
-                notice.set(None);
-                change(&c2, busy, "reach", Value::String(id));
-            });
-        });
-    }
-    {
-        let c = ctx.clone();
-        root = root.shortcut(KeyChord::plain(Key::Char('u')), move |_| {
-            if !admin_only("choose who requests without a key run as")
-                || busy.get_untracked().is_some()
-            {
-                return;
-            }
-            let Some(d) = doc() else { return };
-            if s(&d, "access") != "open" {
-                say("Requests without a key exist in Open mode only (a switches).");
-                return;
-            }
-            let mut prompt = ChoicePrompt::new("Requests without a key run as");
-            let mut initial = String::new();
-            for o in arr(&d, "open_account_options") {
-                let id = s(o, "id").to_string();
-                let label = if o.get("available").and_then(Value::as_bool) == Some(false) {
-                    format!(
-                        "{} — {}",
-                        s(o, "label"),
-                        match s(o, "reason") {
-                            "" => "unavailable",
-                            r => r,
+        }
+        if let Some(w) = store.json.write(KEY_NEW_KEY) {
+            if !w.is_pending() {
+                match w {
+                    WriteState::Done(v) => {
+                        let token = s(&v, "token").to_string();
+                        if token.is_empty() {
+                            st.key_notice.set(Some((
+                                Tone::Err,
+                                "No new key: The gateway answered without the new key.".into(),
+                            )));
+                        } else {
+                            // The console now signs in with the new key
+                            // (the old one stopped working).
+                            ctx_w.ui.conn_token.set(token);
+                            st.reveal.set(true);
+                            st.key_notice.set(Some((
+                                Tone::Ok,
+                                "New key made: your old one stopped working. Copy it now: the gateway shows a key only once.".into(),
+                            )));
+                            ctx_w.connect_now();
                         }
-                    )
-                } else {
-                    s(o, "label").to_string()
-                };
-                if b(o, "selected") {
-                    initial = id.clone();
+                    }
+                    WriteState::Failed(e) => st
+                        .key_notice
+                        .set(Some((Tone::Err, format!("No new key: {}", e.message)))),
+                    WriteState::Pending => {}
                 }
-                prompt = prompt.option(id, label);
+                st.busy.set(None);
+                store.json.set_write(KEY_NEW_KEY, None);
             }
-            if !initial.is_empty() {
-                prompt = prompt.initial(initial.clone());
-            }
-            let c2 = c.clone();
-            let d2 = d.clone();
-            open_prompt(cx, c.ui, prompt, move |out| {
-                let ChoiceOutcome::Answered(a) = out else {
-                    return;
-                };
-                let Some(id) = a.selected.first().cloned() else {
-                    return;
-                };
-                if id == initial {
-                    return;
-                }
-                let locked = arr(&d2, "open_account_options")
-                    .into_iter()
-                    .find(|o| s(o, "id") == id)
-                    .filter(|o| o.get("available").and_then(Value::as_bool) == Some(false))
-                    .map(|o| s(o, "reason").to_string());
-                if let Some(reason) = locked {
-                    notice.set(Some((Tone::Warn, reason)));
-                    return;
-                }
-                last_field.set("open_account".into());
-                notice.set(None);
-                change(&c2, busy, "open_account", Value::String(id));
-            });
-        });
-    }
-    root = root.shortcut(KeyChord::plain(Key::Char('v')), move |_| {
-        st_reveal.update(|r| *r = !*r);
+        }
     });
-    {
-        let tk = token_now.clone();
-        root = root.shortcut(KeyChord::plain(Key::Char('y')), move |_| {
-            let Some(d) = doc() else { return };
-            match kept_token(&d, tk().as_deref()).0 {
-                Some(k) => {
-                    copy_to_clipboard(k);
-                    say("API key copied to the clipboard");
-                }
-                None => say("No key to copy: New key (n) makes one."),
-            }
-        });
+}
+
+fn doc(ctx: &Ctx) -> Option<Value> {
+    ctx.store.json.get_untracked(KEY_PAGE).ready().cloned()
+}
+
+/// Admin-only verbs: the reason for anyone else.
+fn admin_only(ctx: &Ctx, what: &str) -> bool {
+    match doc(ctx) {
+        Some(d) if is_admin(&d) => true,
+        Some(_) => {
+            ctx.store
+                .notice
+                .set(Some(format!("Only an admin can {what}.")));
+            false
+        }
+        None => {
+            ctx.store
+                .notice
+                .set(Some("Reading the OpenAI API settings...".into()));
+            false
+        }
     }
-    root = root.shortcut(KeyChord::plain(Key::Char('b')), move |_| {
-        if let Some(d) = doc() {
+}
+
+/// A page action (a click or its key).
+fn page_action(cx: Scope, ctx: &Ctx, st: &Page, id: &str) {
+    let store = ctx.store;
+    let say = |m: &str| store.notice.set(Some(m.to_string()));
+    let Some(d) = doc(ctx) else {
+        say("Reading the OpenAI API settings...");
+        return;
+    };
+    let kept = kept_token(&d, ctx.effective_credentials().1.as_deref()).0;
+    if let Some(a) = page_actions(&d, kept.is_some(), st.reveal.get_untracked())
+        .into_iter()
+        .find(|a| a.id == id)
+    {
+        if let Err(why) = a.enabled {
+            say(&why);
+            return;
+        }
+    }
+    match id {
+        "copy_base" => {
             let u = s(&d, "base_url").to_string();
             copy_to_clipboard(u.clone());
             say(&format!("copied {u}"));
         }
-    });
-    {
-        let c = ctx.clone();
-        root = root.shortcut(KeyChord::plain(Key::Char('n')), move |_| {
-            if confirm.is_open() || busy.get_untracked().is_some() {
+        "restart" => {
+            if !admin_only(ctx, "start or stop it") || st.busy.get_untracked().is_some() {
                 return;
             }
-            let c2 = c.clone();
-            confirm.ask(NEW_KEY_SENTENCE, "New key", move || {
-                busy.set(Some("new-key".into()));
-                key_notice.set(None);
-                c2.store
-                    .json
-                    .set_write(KEY_NEW_KEY, Some(WriteState::Pending));
-                c2.send(Cmd::Json(JsonCmd::Send {
-                    key: KEY_NEW_KEY.into(),
-                    method: "POST".into(),
-                    path: PATH_NEW_KEY.into(),
-                    body: serde_json::json!({}),
-                    slow: false,
-                    label: "OpenAI API: new key".into(),
-                    reload: vec![],
-                    journal: false,
-                }));
-            });
-        });
-    }
-    root = root.shortcut(KeyChord::plain(Key::Char('s')), move |_| {
-        st_snippet.update(|i| *i = (*i + 1) % SNIPPETS.len());
-    });
-    {
-        let tk = token_now.clone();
-        root = root.shortcut(KeyChord::plain(Key::Char('c')), move |_| {
-            let Some(d) = doc() else { return };
-            let kept = kept_token(&d, tk().as_deref()).0;
-            let kind = SNIPPETS[st_snippet.get_untracked() % SNIPPETS.len()].0;
-            copy_to_clipboard(snippet(kind, &d, kept.as_deref(), false, true));
-            say("example copied to the clipboard");
-        });
-    }
-    root = root.shortcut(KeyChord::plain(Key::Char('o')), move |_| {
-        let rows = store.json.get_untracked(KEY_LOGS);
-        let path = rows.ready().and_then(|v| {
-            v.get("rows")
-                .and_then(Value::as_array)
-                .and_then(|r| r.get(log_sel.get_untracked()))
-                .map(|r| s(r, "observer_path").to_string())
-        });
-        match path.filter(|p| !p.is_empty()) {
-            Some(p) => {
-                let url = observer_url(doc().as_ref(), &p);
-                copy_to_clipboard(url.clone());
-                say(&format!("copied {url}"));
+            if !b(&d, "enabled") {
+                say("Restart needs the endpoint on.");
+                return;
             }
-            None => say("Not part of a run: Observer shows the requests that a run made."),
+            st.busy.set(Some("restart".into()));
+            st.notice.set(None);
+            post(ctx, KEY_RESTART, PATH_RESTART, "OpenAI API: restart", false);
         }
-    });
-    // `f`: the selected request's full record in an overlay that scrolls
-    // (a long JSON body does not fit the table's opened row).
-    {
-        let c = ctx.clone();
-        root = root.shortcut(KeyChord::plain(Key::Char('f')), move |_| {
-            let row = store.json.get_untracked(KEY_LOGS).ready().and_then(|v| {
-                v.get("rows")
-                    .and_then(Value::as_array)
-                    .and_then(|r| r.get(log_sel.get_untracked()))
-                    .cloned()
-            });
-            let Some(row) = row else {
-                say("No requests yet.");
+        "check" => {
+            if !admin_only(ctx, "check the setup") || st.busy.get_untracked().is_some() {
                 return;
-            };
-            let rid = s(&row, "request_id").to_string();
-            let key = format!("{KEY_LOG_PREFIX}{rid}");
-            if !matches!(store.json.get_untracked(&key), Loadable::Ready(_)) {
-                store.json.set(&key, Loadable::Loading);
-                send_get(&c, &key, &format!("/openai-api/logs/{}", urlencode(&rid)));
             }
-            let title = format!(
-                "Request {} · {}",
-                local_time(s(&row, "ts")),
-                log_cells(&row)[1]
-            );
-            super::kit::open_overlay(
-                &c,
+            st.busy.set(Some("check".into()));
+            post(ctx, KEY_CHECK, PATH_CHECK, "OpenAI API: check setup", true);
+        }
+        "reveal" => st.reveal.update(|r| *r = !*r),
+        "copy_key" => match kept {
+            Some(k) => {
+                copy_to_clipboard(k);
+                say("API key copied to the clipboard");
+            }
+            None => say("No key to copy: New key makes one."),
+        },
+        "new_key" => {
+            if st.busy.get_untracked().is_some() {
+                return;
+            }
+            let c2 = ctx.clone();
+            let (busy, key_notice) = (st.busy, st.key_notice);
+            super::w::Confirm::danger(NEW_KEY_SENTENCE, "New key", "Cancel").open(
                 cx,
-                title,
-                &[
-                    ("↑↓ PgUp/PgDn", "scroll"),
-                    ("i", "copy request"),
-                    ("p", "copy response"),
-                ],
-                move |mcx, _close, _guard| {
-                    let key2 = key.clone();
-                    let copy = move |which: &'static str| {
-                        let det = store.json.get_untracked(&key2);
-                        if let Some(v) = det.ready() {
-                            copy_to_clipboard(side_text(v.pointer(&format!("/row/{which}"))));
-                            store
-                                .notice
-                                .set(Some(format!("{which} copied to the clipboard")));
-                        }
-                    };
-                    let copy2 = copy.clone();
-                    let pane = scroll_pane(mcx, tt, true, 1.0, move || {
-                        let d = store.json.get_untracked(KEY_PAGE).ready().cloned();
-                        detail_lines(&store.json.get(&key), d.as_ref())
-                            .into_iter()
-                            .map(|l| ln(l, Tone::Text))
-                            .collect()
-                    });
-                    Element::new()
-                        .style(LayoutStyle::column().grow(1.0))
-                        .shortcut(KeyChord::plain(Key::Char('i')), move |_| copy("request"))
-                        .shortcut(KeyChord::plain(Key::Char('p')), move |_| copy2("response"))
-                        .child(pane)
-                        .build()
+                ctx.ui,
+                move || {
+                    busy.set(Some("new-key".into()));
+                    key_notice.set(None);
+                    c2.store
+                        .json
+                        .set_write(KEY_NEW_KEY, Some(WriteState::Pending));
+                    c2.send(Cmd::Json(JsonCmd::Send {
+                        key: KEY_NEW_KEY.into(),
+                        method: "POST".into(),
+                        path: PATH_NEW_KEY.into(),
+                        body: serde_json::json!({}),
+                        slow: false,
+                        label: "OpenAI API: new key".into(),
+                        reload: vec![],
+                        journal: false,
+                    }));
                 },
             );
-        });
-    }
-    let root = confirm.keys(root);
-
-    // ---- The overview pane (scrolls when focused)
-    let vp = abstracttui::app::use_viewport(cx);
-    let overview = {
-        let tk = token_now.clone();
-        scroll_pane(cx, tt, true, 3.0, move || {
-            let page_doc = store.json.get(KEY_PAGE);
-            let st = ViewState {
-                token: tk(),
-                reveal: st_reveal.get(),
-                snippet: st_snippet.get(),
-                busy: busy.get(),
-                notice: notice.get(),
-                key_notice: key_notice.get(),
-                checks: checks.get(),
+        }
+        "network" => super::shell::go(ctx, super::SCREEN_NETWORK),
+        "doc_openai" | "doc_core" => {
+            let ptr = if id == "doc_openai" {
+                "/docs/openai_api"
+            } else {
+                "/docs/abstractcore"
             };
-            if !store.conn.with(ConnPhase::is_connected) {
-                return vec![ln(
-                    "not connected — probe the gateway on 1 Connection first",
-                    Tone::Faint,
-                )];
+            match d.pointer(ptr).and_then(Value::as_str) {
+                Some(u) if !u.is_empty() => open_or_copy(ctx, u),
+                _ => say("This gateway did not give that link."),
             }
-            match &page_doc {
-                Loadable::Ready(d) => overview_lines(d, &st),
-                Loadable::Failed(e) => vec![
-                    ln("Could not read the OpenAI API settings.", Tone::Err),
-                    ln(e.message.clone(), Tone::Err),
-                    ln("r Try again", Tone::Muted),
-                ],
-                _ => vec![ln("Reading the OpenAI API settings...", Tone::Muted)],
+        }
+        "copy_example" => {
+            let kind = SNIPPETS[st.snippet.get_untracked() % SNIPPETS.len()].0;
+            copy_to_clipboard(snippet(kind, &d, kept.as_deref(), false, true));
+            say("example copied to the clipboard");
+        }
+        _ => {}
+    }
+}
+
+/// The Endpoint toggle (admins).
+fn switch_endpoint(ctx: &Ctx, st: &Page) {
+    if admin_only(ctx, "start or stop it") {
+        let on = doc(ctx).map(|d| b(&d, "enabled")).unwrap_or(false);
+        st.last_field.set("enabled".into());
+        st.notice.set(None);
+        change(ctx, st.busy, "enabled", Value::Bool(!on));
+    }
+}
+
+/// Authentication: Protected (API key) | Open (no key).
+fn set_access(ctx: &Ctx, st: &Page, id: &str) {
+    if !admin_only(ctx, "change the authentication") {
+        return;
+    }
+    if doc(ctx).map(|d| s(&d, "access") == id).unwrap_or(false) {
+        return;
+    }
+    st.last_field.set("access".into());
+    st.notice.set(None);
+    change(ctx, st.busy, "access", Value::String(id.into()));
+}
+
+/// Who can connect / run as: a picked option (a locked one says why).
+fn pick_option(ctx: &Ctx, st: &Page, field: &str, list: &str, id: &str) {
+    let Some(d) = doc(ctx) else { return };
+    let opt = arr(&d, list)
+        .into_iter()
+        .find(|o| s(o, "id") == id)
+        .cloned();
+    let Some(o) = opt else { return };
+    if b(&o, "selected") {
+        return;
+    }
+    if o.get("available").and_then(Value::as_bool) == Some(false) {
+        st.notice
+            .set(Some((Tone::Warn, s(&o, "reason").to_string())));
+        return;
+    }
+    st.last_field.set(field.into());
+    st.notice.set(None);
+    change(ctx, st.busy, field, Value::String(id.into()));
+}
+
+fn handle_key(cx: Scope, ctx: &Ctx, st: &Page, key: Key) -> bool {
+    match key {
+        Key::Char('e') => switch_endpoint(ctx, st),
+        Key::Char('x') => page_action(cx, ctx, st, "restart"),
+        Key::Char('h') => page_action(cx, ctx, st, "check"),
+        Key::Char('a') => {
+            let next = if doc(ctx).map(|d| s(&d, "access") == "open").unwrap_or(false) {
+                "token"
+            } else {
+                "open"
+            };
+            set_access(ctx, st, next);
+        }
+        Key::Char('w') => {
+            if admin_only(ctx, "change who can connect") && !st.reach_pick.open() {
+                ctx.store
+                    .notice
+                    .set(Some("Who can connect: scroll to the Access card.".into()));
+            }
+        }
+        Key::Char('u') => {
+            if admin_only(ctx, "choose who requests without a key run as") {
+                if doc(ctx).map(|d| s(&d, "access") != "open").unwrap_or(true) {
+                    ctx.store.notice.set(Some(
+                        "Requests without a key exist in Open mode only.".into(),
+                    ));
+                } else {
+                    st.account_pick.open();
+                }
+            }
+        }
+        Key::Char('v') => page_action(cx, ctx, st, "reveal"),
+        Key::Char('y') => page_action(cx, ctx, st, "copy_key"),
+        Key::Char('b') => page_action(cx, ctx, st, "copy_base"),
+        Key::Char('n') => page_action(cx, ctx, st, "new_key"),
+        Key::Char('s') => st.snippet.update(|i| *i = (*i + 1) % SNIPPETS.len()),
+        Key::Char('c') => page_action(cx, ctx, st, "copy_example"),
+        Key::Char('o') => log_action(cx, ctx, st, None, "observer"),
+        Key::Char('f') => log_action(cx, ctx, st, None, "details"),
+        _ => return false,
+    }
+    true
+}
+
+/// A titled card: the title (bold), its note, then its rows.
+fn card(
+    t: &TokenSet,
+    title: &str,
+    note: &str,
+    right: Option<(View, i32)>,
+    w: i32,
+    rows: Vec<View>,
+) -> View {
+    let tw = abstracttui::text::width(title);
+    let mut head = Element::new()
+        .style(LayoutStyle::row().h(1).shrink(0.0))
+        .child(super::w::fill_line(
+            LayoutStyle::default().w(tw).h(1).shrink(0.0),
+            vec![Ink::new(title, t.text).bold()],
+            None,
+        ));
+    if let Some((r, rw)) = right {
+        head = head
+            .child(
+                Element::new()
+                    .style(
+                        LayoutStyle::default()
+                            .w((w - tw - rw).max(1))
+                            .h(1)
+                            .shrink(1.0),
+                    )
+                    .build(),
+            )
+            .child(r);
+    }
+    let mut col = Element::new()
+        .style(LayoutStyle::column().gap(0).shrink(0.0))
+        .child(head.build());
+    if !note.is_empty() {
+        col = col.child(sentence(t, note, w, t.text_muted));
+    }
+    for r in rows {
+        col = col.child(r);
+    }
+    col.child(super::w::fill_line(
+        LayoutStyle::line(1).shrink(0.0),
+        vec![],
+        None,
+    ))
+    .build()
+}
+
+/// `label  value  [buttons…]` (an address row) in `w` cells; the buttons
+/// are `(view, width)`.
+fn addr_row(t: &TokenSet, w: i32, label: &str, value: Vec<Ink>, buttons: Vec<(View, i32)>) -> View {
+    let bw: i32 = buttons.iter().map(|(_, x)| x + 1).sum();
+    let vw = (w - 11 - bw).max(8);
+    let mut row = Element::new()
+        .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
+        .child(super::w::fill_line(
+            LayoutStyle::default().w(10).h(1).shrink(0.0),
+            vec![Ink::new(label, t.text_muted)],
+            None,
+        ))
+        .child(super::w::fill_line(
+            LayoutStyle::default().w(vw).h(1).shrink(0.0),
+            value,
+            None,
+        ));
+    for (b, _) in buttons {
+        row = row.child(b);
+    }
+    row.build()
+}
+
+fn cards(cx: Scope, pcx: Scope, ctx: &Ctx, t: &TokenSet, st: &Page) -> View {
+    let store = ctx.store;
+    let w = (crate::ui::page_viewport(cx).get().w - 3).max(20);
+    let page_doc = store.json.get(KEY_PAGE);
+    let anchor = |v: View| -> View {
+        Element::new()
+            .style(LayoutStyle::column().shrink(0.0))
+            .focusable()
+            .autofocus()
+            .child(v)
+            .build()
+    };
+    if !store.conn.with(ConnPhase::is_connected) {
+        return anchor(sentence(
+            t,
+            "not connected — probe the gateway on 1 Connection first",
+            w,
+            t.text_faint,
+        ));
+    }
+    let d = match &page_doc {
+        Loadable::Ready(d) => d.clone(),
+        Loadable::Failed(e) => {
+            return anchor(
+                Element::new()
+                    .style(LayoutStyle::column().shrink(0.0))
+                    .child(sentence(
+                        t,
+                        "Could not read the OpenAI API settings.",
+                        w,
+                        t.error,
+                    ))
+                    .child(sentence(t, &e.message, w, t.error))
+                    .child(sentence(t, "r Try again", w, t.text_muted))
+                    .build(),
+            )
+        }
+        _ => {
+            return anchor(sentence(
+                t,
+                "Reading the OpenAI API settings...",
+                w,
+                t.text_muted,
+            ))
+        }
+    };
+    let admin = is_admin(&d);
+    let reveal = st.reveal.get();
+    let busy = st.busy.get();
+    let token = ctx.effective_credentials().1;
+    let (kept, check) = kept_token(&d, token.as_deref());
+    let acts = page_actions(&d, kept.is_some(), reveal);
+    let btnw = |id: &str| -> (View, i32) {
+        let a = acts
+            .iter()
+            .find(|a| a.id == id)
+            .cloned()
+            .unwrap_or_else(|| Action::label("none", ""));
+        let c = ctx.clone();
+        let st2 = st.clone();
+        let aid = a.id;
+        let wd = a.width();
+        (
+            super::w::action::button(cx, t, &a, On::Page, true, move || {
+                page_action(pcx, &c, &st2, aid)
+            }),
+            wd,
+        )
+    };
+    let btn = |id: &str| -> View { btnw(id).0 };
+    let base = s(&d, "base_url").to_string();
+    let running = b(&d, "running");
+    let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
+
+    // ---- Status
+    let pill = super::w::fill_line(
+        LayoutStyle::default().w(10).h(1).shrink(0.0),
+        vec![if running {
+            Ink::new("● Running", t.ok)
+        } else {
+            Ink::new("○ Stopped", t.text_muted)
+        }],
+        None,
+    );
+    let mut rows = vec![addr_row(
+        t,
+        w,
+        "Base URL",
+        vec![Ink::new(base.clone(), t.text)],
+        vec![btnw("copy_base")],
+    )];
+    if !admin {
+        rows.push(sentence(
+            t,
+            &format!(
+                "{} Only an admin can start or stop it.",
+                if running {
+                    "Apps can connect now."
+                } else {
+                    "Stopped: apps can't connect."
+                }
+            ),
+            w,
+            t.text_muted,
+        ));
+    } else {
+        let c = ctx.clone();
+        let st2 = st.clone();
+        let label = if busy.as_deref() == Some("enabled") {
+            "Saving..."
+        } else {
+            "Endpoint"
+        };
+        let mut restart = acts
+            .iter()
+            .find(|a| a.id == "restart")
+            .cloned()
+            .expect("restart");
+        if busy.as_deref() == Some("restart") {
+            restart.label = "Restarting...".into();
+        }
+        let mut check_a = acts
+            .iter()
+            .find(|a| a.id == "check")
+            .cloned()
+            .expect("check");
+        if busy.as_deref() == Some("check") {
+            check_a.label = "Checking...".into();
+        }
+        let (c1, s1, c2, s2) = (ctx.clone(), st.clone(), ctx.clone(), st.clone());
+        rows.push(
+            Element::new()
+                .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                .child(
+                    Toggle::new(b(&d, "enabled"))
+                        .label(label)
+                        .tip(format!("{ENDPOINT_TIP}  (e)"))
+                        .on_change(move |_| switch_endpoint(&c, &st2))
+                        .view(cx, t),
+                )
+                .child(super::w::action::button(
+                    cx,
+                    t,
+                    &restart,
+                    On::Page,
+                    true,
+                    move || page_action(pcx, &c1, &s1, "restart"),
+                ))
+                .child(super::w::action::button(
+                    cx,
+                    t,
+                    &check_a,
+                    On::Page,
+                    true,
+                    move || page_action(pcx, &c2, &s2, "check"),
+                ))
+                .build(),
+        );
+        rows.push(sentence(
+            t,
+            "Endpoint: answers apps at this address. Restart ends open requests.",
+            w,
+            t.text_muted,
+        ));
+        if let Some(checks) = st.checks.get() {
+            for c in checks {
+                let (pill, ink) = match c.get("ok").and_then(Value::as_bool) {
+                    Some(true) => ("OK", t.ok),
+                    Some(false) => ("Fix", t.error),
+                    None => ("Note", t.warn),
+                };
+                rows.push(sentence(t, &format!("{pill:<5}{}", s(&c, "text")), w, ink));
+            }
+        }
+        if let Some((tone, text)) = st.notice.get() {
+            if matches!(text.as_str(), x if x.starts_with("Restarted") || x.starts_with("Not restarted"))
+            {
+                rows.push(sentence(t, &text, w, tone_ink(t, tone)));
+            }
+        }
+    }
+    col = col.child(card(
+        t,
+        "Status",
+        "One address for every OpenAI-compatible app.",
+        Some((pill, 10)),
+        w,
+        rows,
+    ));
+
+    // ---- Connect your app
+    let key = d.get("key").cloned().unwrap_or(Value::Null);
+    let mut rows = Vec::new();
+    if key.get("allowed").and_then(Value::as_bool) == Some(false) {
+        rows.push(sentence(
+            t,
+            "The OpenAI API is off for your account. An admin can turn it on in Accounts.",
+            w,
+            t.warn,
+        ));
+    }
+    rows.push(addr_row(
+        t,
+        w,
+        "Base URL",
+        vec![Ink::new(base.clone(), t.text)],
+        vec![btnw("copy_base")],
+    ));
+    if !b(&key, "own_token") {
+        rows.push(addr_row(
+            t,
+            w,
+            "API key",
+            vec![Ink::new("The gateway admin token", t.text)],
+            vec![],
+        ));
+        rows.push(sentence(
+            t,
+            "The token this gateway was started with.",
+            w,
+            t.text_muted,
+        ));
+    } else {
+        match &kept {
+            Some(k) => {
+                let shown = if reveal { k.clone() } else { MASK.to_string() };
+                rows.push(addr_row(
+                    t,
+                    w,
+                    "API key",
+                    vec![Ink::new(shown, t.info)],
+                    vec![btnw("reveal"), btnw("copy_key"), btnw("new_key")],
+                ));
+                rows.push(sentence(
+                    t,
+                    "Your gateway token: apps use it as their API key and act as you.",
+                    w,
+                    t.text_muted,
+                ));
+            }
+            None => {
+                let why = if check == KeyCheck::Stale {
+                    "Your token changed since you signed in here, so this console's copy no longer works."
+                } else {
+                    "This console doesn't have your token: it connected without one."
+                };
+                rows.push(addr_row(
+                    t,
+                    w,
+                    "API key",
+                    vec![Ink::new(MASK, t.info)],
+                    vec![btnw("new_key")],
+                ));
+                rows.push(sentence(
+                    t,
+                    &format!("{why} New key makes one; the gateway shows it once."),
+                    w,
+                    t.warn,
+                ));
+            }
+        }
+    }
+    if let Some((tone, text)) = st.key_notice.get() {
+        rows.push(sentence(t, &text, w, tone_ink(t, tone)));
+    }
+    if s(&d, "access") == "open" {
+        rows.push(sentence(
+            t,
+            "Open mode: SDKs still ask for a key; any text works, for example not-needed.",
+            w,
+            t.text_muted,
+        ));
+    }
+    rows.push(sentence(
+        t,
+        "Model names are provider/model, as listed at /v1/models.",
+        w,
+        t.text_muted,
+    ));
+    col = col.child(card(
+        t,
+        "Connect your app",
+        "Paste these two values into any OpenAI SDK or app.",
+        None,
+        w,
+        rows,
+    ));
+
+    // ---- Access (admins)
+    if admin {
+        col = col.child(access_card(cx, ctx, t, st, &d, w));
+    }
+
+    // ---- Docs
+    let mut rows = vec![
+        Element::new()
+            .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
+            .child(btn("doc_openai"))
+            .child(super::w::fill_line(
+                LayoutStyle::default().grow(1.0).h(1),
+                vec![Ink::new(
+                    "endpoints and parameters this gateway supports",
+                    t.text_muted,
+                )],
+                None,
+            ))
+            .build(),
+        Element::new()
+            .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
+            .child(btn("doc_core"))
+            .child(super::w::fill_line(
+                LayoutStyle::default().grow(1.0).h(1),
+                vec![Ink::new("the engine behind it", t.text_muted)],
+                None,
+            ))
+            .build(),
+    ];
+    if let Some(sp) = d.get("support") {
+        for (label, k, ink) in [
+            ("Supported:", "tested", t.ok),
+            ("Also served, with an engine set up:", "served", t.text),
+            ("Not yet:", "not_yet", t.text_faint),
+        ] {
+            let items: Vec<&str> = arr(sp, k).into_iter().filter_map(Value::as_str).collect();
+            if !items.is_empty() {
+                rows.push(sentence(
+                    t,
+                    &format!("{label} {}", items.join(" · ")),
+                    w,
+                    ink,
+                ));
+            }
+        }
+    }
+    rows.push(
+        Element::new()
+            .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+            .child(
+                Segmented::new(SNIPPETS.iter().map(|(_, l)| *l), None)
+                    .bind(st.snippet)
+                    .view(cx, t),
+            )
+            .child(btn("copy_example"))
+            .build(),
+    );
+    let kind = SNIPPETS[st.snippet.get() % SNIPPETS.len()].0;
+    for l in snippet(kind, &d, kept.as_deref(), reveal, false).lines() {
+        rows.push(sentence(t, &format!("  {l}"), w, t.info));
+    }
+    let note = if kept.is_some() {
+        "The key is hidden here; Copy example includes it."
+    } else if s(&d, "access") == "open" {
+        ""
+    } else {
+        "Replace YOUR_GATEWAY_TOKEN with your token."
+    };
+    if !note.is_empty() {
+        rows.push(sentence(t, note, w, t.text_muted));
+    }
+    col = col.child(card(
+        t,
+        "Docs",
+        &format!(
+            "What is supported, and a first request with your base URL{}.",
+            if kept.is_some() { " and your key" } else { "" }
+        ),
+        None,
+        w,
+        rows,
+    ));
+    Scroll::new(col.build())
+        .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))
+        .scrollbar_auto_hide(true)
+        .view(cx)
+}
+
+fn access_card(cx: Scope, ctx: &Ctx, t: &TokenSet, st: &Page, d: &Value, w: i32) -> View {
+    let busy = st.busy.get();
+    let access = s(d, "access").to_string();
+    let mut rows = Vec::new();
+    // Authentication: two segments (one Tab stop each, A1).
+    let chosen = AUTH.iter().position(|(id, _, _)| *id == access);
+    let mut seg = Segmented::new(
+        AUTH.iter().map(|(id, label, _)| {
+            if busy.as_deref() == Some(&format!("access:{id}")) {
+                "Saving...".to_string()
+            } else {
+                label.to_string()
+            }
+        }),
+        chosen,
+    );
+    for (i, (_, _, text)) in AUTH.iter().enumerate() {
+        seg = seg.tip(i, *text);
+    }
+    let (c, st2) = (ctx.clone(), st.clone());
+    seg = seg.on_pick(move |i| set_access(&c, &st2, AUTH[i].0));
+    rows.push(super::w::field_row(
+        t,
+        "Authentication",
+        18,
+        seg.view(cx, t),
+    ));
+    if let Some((_, _, text)) = AUTH.iter().find(|(id, _, _)| *id == access) {
+        rows.push(indent(t, text, w, t.text_muted));
+    }
+    // Requests without a key run as (Open mode).
+    if access == "open" {
+        let opts = arr(d, "open_account_options");
+        let ids: Vec<String> = opts.iter().map(|o| s(o, "id").to_string()).collect();
+        let cur = opts.iter().position(|o| b(o, "selected")).unwrap_or(0);
+        let chosen = cx.signal(cur);
+        let (c, st2) = (ctx.clone(), st.clone());
+        let ids2 = ids.clone();
+        let select = abstracttui::app::select::Select::new(
+            opts.iter()
+                .map(|o| {
+                    let locked = o.get("available").and_then(Value::as_bool) == Some(false);
+                    let label = if locked {
+                        format!(
+                            "{} — {}",
+                            s(o, "label"),
+                            match s(o, "reason") {
+                                "" => "unavailable",
+                                r => r,
+                            }
+                        )
+                    } else {
+                        s(o, "label").to_string()
+                    };
+                    abstracttui::app::select::SelectOption::new(label)
+                        .disabled(locked && !b(o, "selected"))
+                })
+                .collect(),
+        )
+        .value(chosen)
+        .handle(&st.account_pick)
+        .disabled(busy.is_some())
+        .layout(
+            LayoutStyle::default()
+                .w((w - 34).clamp(20, 60))
+                .h(1)
+                .shrink(0.0),
+        )
+        .on_change(move |i| {
+            if let Some(id) = ids2.get(i) {
+                pick_option(&c, &st2, "open_account", "open_account_options", id);
             }
         })
-    };
+        .element(cx, t)
+        .build();
+        rows.push(super::w::field_row(
+            t,
+            "Requests without a key run as",
+            31,
+            select,
+        ));
+        rows.push(indent(
+            t,
+            "Guest may use the models (chat, embeddings, speech, images) with no tools, files or attachments. An account brings its own models and providers, and its requests show in its log. Never an admin.",
+            w,
+            t.text_muted,
+        ));
+    }
+    // Who can connect.
+    let reach: Vec<&Value> = arr(d, "reach_options")
+        .into_iter()
+        .filter(|o| o.get("shown").and_then(Value::as_bool) != Some(false))
+        .collect();
+    let ids: Vec<String> = reach.iter().map(|o| s(o, "id").to_string()).collect();
+    let cur = reach.iter().position(|o| b(o, "selected")).unwrap_or(0);
+    let chosen = cx.signal(cur);
+    let (c, st2) = (ctx.clone(), st.clone());
+    let ids2 = ids.clone();
+    let select = abstracttui::app::select::Select::new(
+        reach
+            .iter()
+            .map(|o| {
+                let id = s(o, "id");
+                let locked = o.get("available").and_then(Value::as_bool) == Some(false);
+                let text = if locked && !s(o, "reason").is_empty() {
+                    s(o, "reason").to_string()
+                } else {
+                    reach_text(id).to_string()
+                };
+                abstracttui::app::select::SelectOption::new(s(o, "label").to_string())
+                    .hint(text)
+                    .disabled(locked && !b(o, "selected"))
+            })
+            .collect(),
+    )
+    .value(chosen)
+    .handle(&st.reach_pick)
+    .disabled(busy.is_some())
+    .layout(
+        LayoutStyle::default()
+            .w((w - 20).clamp(20, 60))
+            .h(1)
+            .shrink(0.0),
+    )
+    .on_change(move |i| {
+        if let Some(id) = ids2.get(i) {
+            pick_option(&c, &st2, "reach", "reach_options", id);
+        }
+    })
+    .element(cx, t)
+    .build();
+    rows.push(super::w::field_row(t, "Who can connect", 18, select));
+    if let Some(o) = reach.get(cur) {
+        rows.push(indent(t, reach_text(s(o, "id")), w, t.text_muted));
+    }
+    for wn in arr(d, "warnings") {
+        let ink = if s(wn, "tone") == "warn" {
+            t.warn
+        } else {
+            t.text_muted
+        };
+        rows.push(sentence(t, s(wn, "text"), w, ink));
+        if s(wn, "id") == "listener" {
+            let a = Action::label("network", "Network").tooltip("Who can reach this gateway (this computer, local network, internet) and its addresses");
+            let c = ctx.clone();
+            rows.push(super::w::action::button(
+                cx,
+                t,
+                &a,
+                On::Page,
+                true,
+                move || super::shell::go(&c, super::SCREEN_NETWORK),
+            ));
+        }
+    }
+    if let Some((tone, text)) = st.notice.get() {
+        if !(text.starts_with("Restarted") || text.starts_with("Not restarted")) {
+            rows.push(sentence(t, &text, w, tone_ink(t, tone)));
+        }
+    }
+    card(
+        t,
+        "Access",
+        "Changes apply immediately. Who may use the API with their own key: the OpenAI API switch of each account, in Accounts.",
+        None,
+        w,
+        rows,
+    )
+}
 
-    // ---- Recent requests
-    let logs_held = Rc::new(Cell::new(false));
-    let logs_head = dyn_view(LayoutStyle::column().gap(0).shrink(0.0), move || {
-        let t = tt;
-        let w = (vp.get().w - 4).max(20) as usize;
-        let logs = store.json.get(KEY_LOGS);
-        let scope = logs
-            .ready()
-            .map(|v| s(v, "scope").to_string())
-            .unwrap_or_default();
-        let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
-        col = col.child(line(vec![span_bold("Recent requests", t.text)]));
-        for l in wrap_text(&logs_note(&scope), w) {
-            col = col.child(line(vec![span(l, t.text_muted)]));
-        }
-        if let Loadable::Failed(e) = &logs {
-            col = col.child(line(vec![span(
-                format!("Could not read the request log. {}", e.message),
-                t.error,
-            )]));
-        }
-        col.build()
-    });
-    let logs_table = {
-        let held = logs_held.clone();
-        dyn_view(LayoutStyle::default().grow(2.0).min_h(3), move || {
-            let t = tt;
-            let logs = store.json.get(KEY_LOGS);
-            let page_doc = store.json.get(KEY_PAGE).ready().cloned();
-            let rows_v: Option<Vec<Value>> = match &logs {
-                Loadable::Ready(v) => Some(
-                    v.get("rows")
-                        .and_then(Value::as_array)
-                        .cloned()
-                        .unwrap_or_default(),
-                ),
-                _ => None,
+/// A sentence indented under a field row's control.
+fn indent(t: &TokenSet, text: &str, w: i32, ink: Rgba) -> View {
+    Element::new()
+        .style(LayoutStyle::row().shrink(0.0))
+        .child(
+            Element::new()
+                .style(LayoutStyle::default().w(18).h(1).shrink(0.0))
+                .build(),
+        )
+        .child(sentence(t, text, (w - 18).max(10), ink))
+        .build()
+}
+
+fn log_rows(ctx: &Ctx) -> Vec<Value> {
+    ctx.store
+        .json
+        .get_untracked(KEY_LOGS)
+        .ready()
+        .and_then(|v| v.get("rows").and_then(Value::as_array).cloned())
+        .unwrap_or_default()
+}
+
+/// A request action: the full record (a modal) or Open in Observer. `rid`
+/// None = the row the keyboard is on.
+fn log_action(cx: Scope, ctx: &Ctx, st: &Page, rid: Option<&str>, id: &str) {
+    let store = ctx.store;
+    let rows = log_rows(ctx);
+    let want = rid
+        .map(str::to_string)
+        .or_else(|| st.log_key.get_untracked());
+    let row = match &want {
+        Some(k) => rows.iter().find(|r| s(r, "request_id") == k).cloned(),
+        None => rows.first().cloned(),
+    };
+    let Some(row) = row else {
+        store.notice.set(Some("No requests yet.".into()));
+        return;
+    };
+    st.log_key.set(Some(s(&row, "request_id").to_string()));
+    match id {
+        "observer" => match row.get("observer_path").and_then(Value::as_str) {
+            Some(p) if !p.is_empty() => {
+                let url = observer_url(doc(ctx).as_ref(), p);
+                open_or_copy(ctx, &url);
+            }
+            _ => store.notice.set(Some(
+                "Not part of a run: Observer shows the requests that a run made.".into(),
+            )),
+        },
+        _ => open_record(cx, ctx, row),
+    }
+}
+
+/// The recorded request and response of `row` in a form modal that
+/// scrolls; Copy request / Copy response / Open in Observer / Close.
+fn open_record(cx: Scope, ctx: &Ctx, row: Value) {
+    let store = ctx.store;
+    let rid = s(&row, "request_id").to_string();
+    let key = format!("{KEY_LOG_PREFIX}{rid}");
+    if !matches!(store.json.get_untracked(&key), Loadable::Ready(_)) {
+        store.json.set(&key, Loadable::Loading);
+        send_get(ctx, &key, &format!("/openai-api/logs/{}", urlencode(&rid)));
+    }
+    let title = format!(
+        "Request {} · {}",
+        local_time(s(&row, "ts")),
+        log_cells(&row)[1]
+    );
+    let c = ctx.clone();
+    super::w::FormModal::new(title).size(110, 34).open(
+        ctx,
+        cx,
+        move |mcx, close, _guard, inner_w| {
+            let t = use_theme(mcx).get().tokens;
+            let key2 = key.clone();
+            let copy = move |which: &'static str| {
+                let det = store.json.get_untracked(&key2);
+                if let Some(v) = det.ready() {
+                    copy_to_clipboard(side_text(v.pointer(&format!("/row/{which}"))));
+                    store
+                        .notice
+                        .set(Some(format!("{which} copied to the clipboard")));
+                }
             };
-            let open = log_open.get();
-            let rows: Vec<Row> = rows_v
+            let copy2 = copy.clone();
+            let key3 = key.clone();
+            let body = dyn_view(LayoutStyle::column().shrink(0.0), move || {
+                let t = abstracttui::app::current_theme().tokens;
+                let d = store.json.get(KEY_PAGE).ready().cloned();
+                let mut col = Element::new().style(LayoutStyle::column().shrink(0.0));
+                for l in detail_lines(&store.json.get(&key3), d.as_ref()) {
+                    col = col.child(sentence(&t, &l, inner_w - 1, t.text));
+                }
+                col.build()
+            });
+            let observer = log_actions(&row)
+                .into_iter()
+                .find(|a| a.id == "observer")
+                .map(|mut a| {
+                    a.label = "Open in Observer".into();
+                    a
+                })
+                .expect("observer");
+            let (c1, row1) = (c.clone(), row.clone());
+            Element::new()
+                .style(LayoutStyle::column().grow(1.0))
+                .child(
+                    Scroll::new(body)
+                        .layout(LayoutStyle::default().grow(1.0).min_h(4))
+                        .element(mcx, &t)
+                        .build(),
+                )
+                .child(super::w::form::button_row(vec![
+                    super::w::action::button(
+                        mcx,
+                        &t,
+                        &Action::label("copy_request", "Copy request"),
+                        On::Raised,
+                        true,
+                        move || copy("request"),
+                    ),
+                    super::w::action::button(
+                        mcx,
+                        &t,
+                        &Action::label("copy_response", "Copy response"),
+                        On::Raised,
+                        true,
+                        move || copy2("response"),
+                    ),
+                    super::w::action::button(mcx, &t, &observer, On::Raised, true, move || {
+                        match row1.get("observer_path").and_then(Value::as_str) {
+                            Some(p) if !p.is_empty() => {
+                                let url = observer_url(doc(&c1).as_ref(), p);
+                                open_or_copy(&c1, &url);
+                            }
+                            _ => {}
+                        }
+                    }),
+                    super::w::action::button(
+                        mcx,
+                        &t,
+                        &Action::label("close", "Close"),
+                        On::Raised,
+                        true,
+                        move || close(),
+                    ),
+                ]))
+                .build()
+        },
+    );
+}
+
+/// "Recent requests": the note and the table (Time opens the record, Run
+/// opens Observer).
+fn logs_region(pcx: Scope, ctx: &Ctx, t: &TokenSet, st: &Page) -> View {
+    let ctx = ctx.clone();
+    let tt = *t;
+    let st = st.clone();
+    dyn_view_scoped(
+        LayoutStyle::column()
+            .gap(0)
+            .grow(2.0)
+            .basis(Dimension::Cells(0)),
+        move |gcx| {
+            let t = tt;
+            let store = ctx.store;
+            let vp = crate::ui::page_viewport(gcx).get();
+            let w = (vp.w - 2).max(20);
+            let logs = store.json.get(KEY_LOGS);
+            let scope = logs
+                .ready()
+                .map(|v| s(v, "scope").to_string())
+                .unwrap_or_default();
+            let mut col = Element::new()
+                .style(LayoutStyle::column().gap(0).grow(1.0))
+                .child(super::w::section(&t, "Recent requests"))
+                .child(sentence(&t, &logs_note(&scope), w, t.text_muted));
+            if let Loadable::Failed(e) = &logs {
+                col = col.child(sentence(
+                    &t,
+                    &format!("Could not read the request log. {}", e.message),
+                    w,
+                    t.error,
+                ));
+            }
+            let rows_v: Option<Vec<Value>> = logs.ready().map(|v| {
+                v.get("rows")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default()
+            });
+            let narrow = w < 100;
+            let mut cols = vec![Col::new("Time", ColW::Fit { min: 8, max: 10 })];
+            if !narrow {
+                cols.push(Col::new("Client", ColW::Fit { min: 6, max: 24 }));
+            }
+            cols.push(Col::new("Model", ColW::Flex { weight: 1, min: 8 }));
+            if !narrow {
+                cols.push(Col::new("Tokens", ColW::Fit { min: 6, max: 18 }));
+                cols.push(Col::new("Latency", ColW::Fit { min: 7, max: 10 }));
+            }
+            cols.push(Col::new("Status", ColW::Fit { min: 6, max: 6 }));
+            cols.push(Col::new("Run", ColW::Fit { min: 4, max: 6 }));
+            let rows: Vec<WRow> = rows_v
                 .clone()
                 .unwrap_or_default()
                 .iter()
-                .enumerate()
-                .map(|(i, r)| {
-                    let detail = if open == Some(i) {
-                        let key = format!("{KEY_LOG_PREFIX}{}", s(r, "request_id"));
-                        detail_lines(&store.json.get(&key), page_doc.as_ref())
-                    } else {
-                        vec!["Reading the request...".into()]
-                    };
+                .map(|r| {
+                    let c = log_cells(r);
                     let status = r.get("status").and_then(Value::as_i64).unwrap_or(0);
-                    Row::new(log_cells(r))
-                        .detail(detail)
-                        .dim(!(200..300).contains(&status))
+                    let ok = (200..300).contains(&status);
+                    let mut cells = vec![Cell::Link {
+                        label: c[0].clone(),
+                        action: "details",
+                        tip: Some(format!(
+                            "Show the request and response of {}  (Enter)",
+                            c[0]
+                        )),
+                    }];
+                    if !narrow {
+                        cells.push(Cell::text(c[1].clone(), t.text));
+                    }
+                    cells.push(Cell::text(c[2].clone(), t.text));
+                    if !narrow {
+                        cells.push(Cell::text(c[3].clone(), t.text));
+                        cells.push(Cell::text(c[4].clone(), t.text));
+                    }
+                    cells.push(Cell::text(c[5].clone(), if ok { t.ok } else { t.error }));
+                    cells.push(if s(r, "observer_path").is_empty() {
+                        Cell::text("—", t.text_faint)
+                    } else {
+                        Cell::Link {
+                            label: "Open".into(),
+                            action: "observer",
+                            tip: Some("Open in Observer  (o)".into()),
+                        }
+                    });
+                    WRow::new(s(r, "request_id").to_string(), cells).dim(!ok)
                 })
                 .collect();
             let empty = if rows_v.is_some() {
@@ -1696,50 +2065,24 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             } else {
                 "Reading the log..."
             };
-            let el = WrapTable::new(log_rules(), rows, log_sel)
-                .expanded(log_open)
-                .empty(empty)
-                .layout(LayoutStyle::default().grow(1.0).min_h(2))
-                .element(cx, &t);
-            let (h1, h2) = (held.clone(), held.clone());
-            let want = held.get();
-            let el = el.on(Phase::Bubble, move |_c, ev| match ev {
-                UiEvent::FocusIn => h1.set(true),
-                UiEvent::FocusOut => h2.set(false),
-                _ => {}
-            });
-            if want {
-                el.autofocus().build()
-            } else {
-                el.build()
+            if st.log_key.get_untracked().is_none() {
+                if let Some(first) = rows_v.as_ref().and_then(|r| r.first()) {
+                    st.log_key.set(Some(s(first, "request_id").to_string()));
+                }
             }
-        })
-    };
-
-    let page_body = root
-        .child(overview)
-        .child(dyn_view(
-            LayoutStyle::column().gap(0).shrink(0.0),
-            move || confirm.view(&tt, vp.get().w - 4),
-        ))
-        .child(logs_head)
-        .child(logs_table)
-        .build();
-
-    Block::new()
-        .border(BorderKind::Rounded)
-        .title("OpenAI API — one address for every OpenAI-compatible app")
-        .fill(t.surface)
-        .layout(
-            LayoutStyle::column()
-                .gap(0)
-                .grow(1.0)
-                .padding(Edges::hv(1, 0))
-                .clip(),
-        )
-        .child(page_body)
-        .element(t)
-        .build()
+            let (ca, sa, ce, se) = (ctx.clone(), st.clone(), ctx.clone(), st.clone());
+            let table = DataTable::new(cols, rows, st.log_key)
+                .width(w)
+                .max_rows((vp.h / 3).max(3))
+                .empty(empty)
+                // The page's keys work from the first frame.
+                .autofocus()
+                .on_action(move |k, id| log_action(pcx, &ca, &sa, Some(k), id))
+                .on_activate(move |k| log_action(pcx, &ce, &se, Some(k), "details"))
+                .view(gcx, &t);
+            col.child(table).build()
+        },
+    )
 }
 
 /// Percent-encode a path segment.

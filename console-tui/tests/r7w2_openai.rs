@@ -78,6 +78,13 @@ struct H {
 
 fn harness(size: Size, token: &str) -> H {
     abstracttui::app::set_theme_by_id("abstract-dark");
+    // R15 rail: from 120x32 the console shows a 21-cell nav rail; these
+    // suites pin PAGE layouts, so a wide size keeps its page width.
+    let size = if size.w >= 120 && size.h >= 32 {
+        Size::new(size.w + 21, size.h)
+    } else {
+        size
+    };
     let mut app = App::new(size);
     let overlays = app.overlays();
     let quitter = app.quitter();
@@ -154,6 +161,15 @@ impl H {
     }
     fn key(&mut self, bytes: &[u8]) -> String {
         self.term.push_input(bytes);
+        self.turns(3)
+    }
+    /// Wheel down over the middle of the screen (scrolls an overlay body).
+    fn wheel_down(&mut self, n: usize) -> String {
+        let size = self.term.screen().size();
+        for _ in 0..n {
+            let ev = format!("\x1b[<65;{};{}M", size.w / 2, size.h / 2);
+            self.term.push_input(ev.as_bytes());
+        }
         self.turns(3)
     }
     fn connect(&mut self, admin: bool) {
@@ -288,9 +304,11 @@ fn admin_overview_has_every_card_and_masks_the_key() {
         h.connect(true);
         h.open_page();
         let s = h.seed(admin_page(), logs("all"));
-        assert!(s.contains("Status  ● Running"), "{s}");
-        assert!(s.contains("Base URL  http://127.0.0.1:18781/v1"), "{s}");
-        assert!(s.contains("[x] Endpoint"), "{s}");
+        // R15: the Status card — its pill, the address with Copy, the
+        // Endpoint toggle beside Restart / Check setup.
+        assert!(s.contains("Status") && s.contains("● Running"), "{s}");
+        assert!(s.contains("Base URL   http://127.0.0.1:18781/v1"), "{s}");
+        assert!(s.contains("━● Endpoint"), "{s}");
         assert!(s.contains("Recent requests"), "{s}");
         assert!(s.contains("Every account's requests, newest first."), "{s}");
         assert!(!s.contains(ADMIN_TOKEN), "key masked:\n{s}");
@@ -303,14 +321,17 @@ fn admin_overview_has_every_card_and_masks_the_key() {
     for needle in [
         "Connect your app",
         "Paste these two values into any OpenAI SDK or app.",
-        &format!("API key   {MASK}"),
+        &format!("API key    {MASK}"),
         "Your gateway token: apps use it as their API key and act as you.",
         "Access",
-        "(•) Protected (API key) — Apps send a gateway token as their API key.",
-        "( ) Open (no key) — Apps connect without a key. Cloud providers still need one.",
-        "(•) This machine only — Apps on this computer.",
-        "( ) Tailnet — Also your devices on Tailscale.",
-        "( ) Anywhere — Anywhere needs Internet on the Network page first",
+        // R15: Authentication = two segments, the chosen one's sentence under.
+        "Protected (API key)",
+        "Open (no key)",
+        "Apps send a gateway token as their API key.",
+        // Who can connect = a picker showing the chosen option + its sentence
+        // (the other options are in its popup: who_can_connect_… below).
+        "This machine only",
+        "Apps on this computer.",
     ] {
         assert!(s.contains(needle), "missing {needle:?}:\n{s}");
     }
@@ -323,7 +344,7 @@ fn reveal_shows_the_consoles_own_token() {
     h.open_page();
     h.seed(admin_page(), logs("all"));
     let s = h.key(b"v");
-    assert!(s.contains(&format!("API key   {ADMIN_TOKEN}")), "{s}");
+    assert!(s.contains(ADMIN_TOKEN), "{s}");
     let s = h.key(b"v");
     assert!(!s.contains(ADMIN_TOKEN), "hidden again:\n{s}");
 }
@@ -409,8 +430,8 @@ fn endpoint_switch_posts_core_endpoint_and_says_the_web_sentence() {
         .set_write(KEY_CHANGE, Some(WriteState::Done(after.clone())));
     h.store.json.set(KEY_PAGE, Loadable::Ready(after));
     let s = h.turns(3);
-    assert!(s.contains("[ ] Endpoint"), "{s}");
-    assert!(s.contains("Status  ○ Stopped"), "{s}");
+    assert!(s.contains("●─ Endpoint"), "{s}");
+    assert!(s.contains("○ Stopped"), "{s}");
 }
 
 #[test]
@@ -438,7 +459,7 @@ fn authentication_toggle_and_refusal_sentence() {
     let s = h.turns(3);
     assert!(s.contains("Saved: Open (no key). Applies now."), "{s}");
     assert!(
-        s.contains("Requests without a key run as  Guest (models only)"),
+        s.contains("Requests without a key run as") && s.contains("Guest (models only)"),
         "{s}"
     );
     assert!(s.contains("Open mode: SDKs still ask for a key"), "{s}");
@@ -483,16 +504,23 @@ fn restart_check_and_new_key_use_the_web_routes() {
     let s = h.turns(3);
     assert!(s.contains("OK   AbstractCore answers."), "{s}");
     assert!(s.contains("Fix  No model is configured."), "{s}");
-    // New key: an inline confirm first; nothing is sent before y.
+    // New key: the web's question first; nothing is sent before [New key].
     let s = h.key(b"n");
     assert!(
         s.contains("Make a new key? It replaces your gateway token"),
         "{s}"
     );
-    assert!(s.contains("[y] New key"), "{s}");
     let mut sent: Vec<_> = sends(&h.json_cmds());
     assert!(!sent.iter().any(|(_, p, _)| p == "/me/token/rotate"));
-    h.key(b"y");
+    // R15 F1: answered by its [New key] button (focus starts on Cancel).
+    let (y, line) = s
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains(" New key ") && l.contains(" Cancel "))
+        .last()
+        .unwrap_or_else(|| panic!("[New key] [Cancel]:\n{s}"));
+    let x = line[..line.rfind(" New key ").unwrap() + 1].chars().count() + 1;
+    h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes());
     sent.extend(sends(&h.json_cmds()));
     assert!(
         sent.contains(&("POST".into(), "/me/token/rotate".into(), json!({}))),
@@ -557,7 +585,7 @@ fn a_log_row_opens_to_the_recorded_request_and_response() {
     assert!(s.contains("12 in · 4 out"), "{s}");
     assert!(s.contains("403"), "{s}");
     h.cmds();
-    h.key(b"\t");
+    // R15: Enter on the request table opens the record (a modal).
     let s = h.key(b"\r");
     let gets: Vec<String> = h
         .json_cmds()
@@ -587,16 +615,26 @@ fn a_log_row_opens_to_the_recorded_request_and_response() {
         s.contains("Open in Observer  http://127.0.0.1:18781/observer/runs/run-1"),
         "{s}"
     );
-    // `f`: the full record in an overlay (the response is there too).
-    let s = h.key(b"f");
     assert!(s.contains("Request 0"), "{s}");
+    // The response is in the same record (it scrolls).
     let s = h.key(b"\x1b[F");
+    let s = if s.contains("Hello there.") {
+        s
+    } else {
+        h.wheel_down(10)
+    };
     assert!(s.contains("\"content\": \"Hello there.\""), "{s}");
     h.term.push_input(&[0x1b]);
     h.turns(1);
     std::thread::sleep(std::time::Duration::from_millis(45));
     let s = h.turns(3);
-    assert!(!s.contains("copy response"), "Esc closes the overlay:\n{s}");
+    assert!(!s.contains("Copy response"), "Esc closes the record:\n{s}");
+    // `f` opens it again.
+    let s = h.key(b"f");
+    assert!(
+        s.contains("Request 0") && s.contains("Copy response"),
+        "{s}"
+    );
 }
 
 #[test]

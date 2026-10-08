@@ -13,11 +13,8 @@
 //! /admin/runtime-config` with only that row's key (the web's).
 
 use abstracttui::prelude::*;
-use abstracttui::ui::{Phase, UiEvent};
 use serde_json::{json, Value};
 
-use super::kit;
-use super::util::{line, span, span_bold};
 use super::Ctx;
 use crate::store::skills::Tone;
 use crate::store::{Loadable, RuntimeConfigData};
@@ -153,57 +150,10 @@ pub fn rows(which: Which, d: &RuntimeConfigData) -> Vec<SRow> {
     }
 }
 
-/// The POST body for one text row (empty = back to the default; the
-/// backlog folder sends null = the gateway's own folder).
-pub fn text_body(row: &SRow, typed: &str) -> Value {
-    let now = typed.trim();
-    if row.key == "triage_repo_root" {
-        if now.is_empty() {
-            return json!({ "triage_repo_root": Value::Null });
-        }
-        return json!({ "triage_repo_root": now });
-    }
-    json!({ row.key.clone(): now })
-}
-
-/// The overlay's state (lives with the overlay's scope).
-#[derive(Clone, Copy)]
-struct St {
-    sel: Signal<usize>,
-    editing: Signal<Option<String>>,
-    draft: Signal<String>,
-    /// (key, text, tone) beside each row.
-    notes: Signal<Vec<(String, String, Tone)>>,
-    /// (form id, key) of writes in flight.
-    pending: Signal<Vec<(u64, String)>>,
-}
-
-fn note_of(st: &St, key: &str) -> Option<(String, Tone)> {
-    st.notes.with_untracked(|n| {
-        n.iter()
-            .find(|(k, _, _)| k == key)
-            .map(|(_, t, tone)| (t.clone(), *tone))
-    })
-}
-
-fn set_note(st: &St, key: &str, text: &str, tone: Tone) {
-    st.notes.update(|n| {
-        n.retain(|(k, _, _)| k != key);
-        n.push((key.to_string(), text.to_string(), tone));
-    });
-}
-
-fn send(ctx: &Ctx, st: &St, key: &str, body: Value) {
-    let fid = crate::worker::next_form_id();
-    st.pending.update(|p| p.push((fid, key.to_string())));
-    set_note(st, key, "Saving...", Tone::Plain);
-    ctx.send(Cmd::SaveRuntimeConfig {
-        body: body.into(),
-        form_id: Some(fid),
-    });
-}
-
-/// Open the overlay (admin; the config is read first when it never was).
+/// Open the modal (admin; the config is read first when it never was).
+/// R15: ONE form modal — every row visible: a text field (Enter applies
+/// it; empty = the default / the gateway's own folder) or a Toggle
+/// (applies at once), "Saved" / "Not saved: …" under each row. No Save.
 pub fn open(cx: Scope, ctx: &Ctx, which: Which) {
     if !super::util::admin_gate(&ctx.store, "changing the apps settings") {
         return;
@@ -232,18 +182,14 @@ pub fn open(cx: Scope, ctx: &Ctx, which: Which) {
         }
     }
     let c = ctx.clone();
-    kit::open_overlay(
+    super::w::FormModal::new(which.title()).size(100, 34).open(
         ctx,
         cx,
-        which.title(),
-        &[("↑/↓", "choose"), ("Enter", "edit"), ("space", "switch")],
-        move |mcx, _close, guard| {
+        move |mcx, close, _guard, w| {
             let st = St {
-                sel: mcx.signal(0),
-                editing: mcx.signal(None),
-                draft: mcx.signal(String::new()),
                 notes: mcx.signal(Vec::new()),
                 pending: mcx.signal(Vec::new()),
+                last: mcx.signal(None),
             };
             // Each write's outcome beside its row.
             {
@@ -257,12 +203,7 @@ pub fn open(cx: Scope, ctx: &Ctx, which: Which) {
                             ui.write_done.set(None);
                             st.pending.update(|p| p.retain(|(f, _)| *f != fid));
                             match out {
-                                Ok(_) => {
-                                    set_note(&st, &key, "Saved", Tone::Ok);
-                                    if st.editing.get_untracked().as_deref() == Some(key.as_str()) {
-                                        st.editing.set(None);
-                                    }
-                                }
+                                Ok(_) => set_note(&st, &key, "Saved", Tone::Ok),
                                 Err(e) => {
                                     set_note(&st, &key, &format!("Not saved: {e}"), Tone::Error)
                                 }
@@ -271,34 +212,41 @@ pub fn open(cx: Scope, ctx: &Ctx, which: Which) {
                     }
                 });
             }
-            // Esc first closes an open edit (the overlay stays).
-            *guard.borrow_mut() = Some(Box::new(move || {
-                if st.editing.get_untracked().is_some() {
-                    st.editing.set(None);
-                    return true;
-                }
-                false
-            }));
             let body = c.clone();
+            let t = use_theme(mcx).get().tokens;
+            let close2 = close.clone();
             Element::new()
-                .focusable()
-                .style(LayoutStyle::column().gap(0).grow(1.0))
-                .child(dyn_view_scoped(
-                    LayoutStyle::column().gap(0).grow(1.0),
-                    move |gcx| overlay_body(gcx, &body, which, st),
-                ))
+                .style(LayoutStyle::column().grow(1.0))
+                .child(
+                    Scroll::new(dyn_view_scoped(
+                        LayoutStyle::column().shrink(0.0),
+                        move |gcx| modal_body(gcx, &body, which, st, w),
+                    ))
+                    .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))
+                    .scrollbar_auto_hide(true)
+                    .view(mcx),
+                )
+                .child(super::w::form::button_row(vec![super::w::action::button(
+                    mcx,
+                    &t,
+                    &super::w::Action::label("close", "Close"),
+                    super::w::action::On::Raised,
+                    true,
+                    move || close2(),
+                )]))
                 .build()
         },
     );
 }
 
-fn overlay_body(cx: Scope, ctx: &Ctx, which: Which, st: St) -> View {
+fn modal_body(cx: Scope, ctx: &Ctx, which: Which, st: St, width: i32) -> View {
+    use super::w::form::sentence;
+    use super::w::paint::{fill_line, Ink};
     let t = use_theme(cx).get().tokens;
-    let width = (abstracttui::app::use_viewport(cx).get().w - 8).max(20);
     let d = match ctx.store.runtime_config.get() {
         Loadable::Ready(d) => d,
         Loadable::Failed(e) => {
-            return kit::sentence(
+            return sentence(
                 &t,
                 &format!("Could not read the {}. {e}", which.title().to_lowercase()),
                 width,
@@ -306,7 +254,7 @@ fn overlay_body(cx: Scope, ctx: &Ctx, which: Which, st: St) -> View {
             )
         }
         _ => {
-            return kit::sentence(
+            return sentence(
                 &t,
                 &format!("Reading the {}...", which.title().to_lowercase()),
                 width,
@@ -315,11 +263,10 @@ fn overlay_body(cx: Scope, ctx: &Ctx, which: Which, st: St) -> View {
         }
     };
     let list = rows(which, &d);
-    let at = st.sel.get().min(list.len().saturating_sub(1));
-    let editing = st.editing.get();
-    let mut col = Element::new().style(LayoutStyle::column().gap(0));
+    let last = st.last.get_untracked();
+    let mut col = Element::new().style(LayoutStyle::column().shrink(0.0));
     if list.is_empty() {
-        col = col.child(kit::sentence(
+        col = col.child(sentence(
             &t,
             "This gateway reports no settings here.",
             width,
@@ -327,87 +274,173 @@ fn overlay_body(cx: Scope, ctx: &Ctx, which: Which, st: St) -> View {
         ));
     }
     if !d.writable {
-        col = col.child(kit::sentence(
+        col = col.child(sentence(
             &t,
             "Only an admin can change these.",
             width,
             t.warn,
         ));
     }
-    for (i, r) in list.iter().enumerate() {
-        let selected = i == at;
-        let ink = if selected { t.accent } else { t.text };
-        let mark = if selected { "▸ " } else { "  " };
+    let label_w = list
+        .iter()
+        .map(|r| abstracttui::text::width(&r.label) + 2)
+        .max()
+        .unwrap_or(10)
+        .min(width / 3);
+    let busy = move || st.pending.with_untracked(|p| !p.is_empty());
+    // The first control takes the keyboard on open; after a re-read, the
+    // one last changed.
+    let mut first = last.is_none() && d.writable;
+    for r in list.iter() {
+        let is_last = last.as_deref() == Some(r.key.as_str())
+            || (std::mem::take(&mut first) && r.locked.is_none());
         match r.switch {
             Some(on) => {
-                let spans = vec![
-                    span(mark, ink),
-                    span_bold(
-                        super::switch::switch_text(&r.label, on, None, r.locked.is_some()),
-                        ink,
-                    ),
-                    span(format!("  {}", r.source), t.text_faint),
-                ];
-                col = col.child(line(spans));
-            }
-            None if editing.as_deref() == Some(r.key.as_str()) => {
                 let c = ctx.clone();
-                let row = r.clone();
-                col = col.child(kit::inline_input(
-                    cx,
-                    &t,
-                    &format!("  {}:", r.label),
-                    st.draft,
-                    r.placeholder.clone(),
-                    move |typed| {
-                        if typed.trim() == row.saved.trim() {
-                            st.editing.set(None);
-                            return;
+                let key = r.key.clone();
+                let refused = if !d.writable {
+                    Some("Only an admin can change these.".to_string())
+                } else {
+                    r.locked.clone()
+                };
+                let pend_key = r.key.clone();
+                let tg = super::w::Toggle::new(on)
+                    .label(r.label.clone())
+                    .refused(refused)
+                    .busy_when(move || st.pending.with(|p| p.iter().any(|(_, k)| *k == pend_key)))
+                    .autofocus(is_last)
+                    .on_change(move |want| {
+                        if !busy() {
+                            send(&c, &st, &key, json!({ key.clone(): want }));
                         }
-                        send(&c, &st, &row.key, text_body(&row, &typed));
-                    },
-                    move || st.editing.set(None),
-                ));
+                    });
+                col = col.child(
+                    Element::new()
+                        .style(
+                            LayoutStyle::row()
+                                .height(Dimension::Cells(1))
+                                .shrink(0.0)
+                                .gap(2),
+                        )
+                        .child(tg.view(cx, &t))
+                        .child(fill_line(
+                            LayoutStyle::default().grow(1.0).height(Dimension::Cells(1)),
+                            vec![Ink::new(r.source.clone(), t.text_faint)],
+                            None,
+                        ))
+                        .build(),
+                );
             }
             None => {
-                let spans = vec![
-                    span(mark, ink),
-                    span_bold(format!("{}: ", r.label), ink),
-                    span(r.now.clone(), t.text),
-                    span(format!("  {}", r.source), t.text_faint),
-                ];
-                col = col.child(line(spans));
+                let draft = cx.signal(r.saved.clone());
+                let c = ctx.clone();
+                let row = r.clone();
+                let apply = std::rc::Rc::new(move |typed: String| {
+                    if typed.trim() == row.saved.trim() {
+                        return;
+                    }
+                    send(&c, &st, &row.key, text_body(&row, &typed));
+                });
+                let ap = apply.clone();
+                // The field's width: what the label and the row's button leave.
+                let btn_w = if r.key == "triage_repo_root" && d.writable {
+                    abstracttui::text::width("Use the gateway's own folder") + 3
+                } else {
+                    0
+                };
+                let field_w = (width - label_w - btn_w - 1).max(12);
+                let input: View = if d.writable && r.locked.is_none() {
+                    let el = TextInput::new()
+                        .value(draft)
+                        .placeholder(r.placeholder.clone())
+                        .on_submit(move |v| {
+                            if !busy() {
+                                ap(v.to_string())
+                            }
+                        })
+                        .layout(LayoutStyle::default().w(field_w).h(1).shrink(0.0))
+                        .element(cx, &t);
+                    if is_last { el.autofocus() } else { el }.build()
+                } else {
+                    fill_line(
+                        LayoutStyle::line(1),
+                        vec![Ink::new(r.now.clone(), t.text)],
+                        None,
+                    )
+                };
+                let mut line_el = Element::new()
+                    .style(
+                        LayoutStyle::row()
+                            .height(Dimension::Cells(1))
+                            .shrink(0.0)
+                            .gap(1),
+                    )
+                    .child(fill_line(
+                        LayoutStyle::default()
+                            .width(Dimension::Cells(label_w))
+                            .height(Dimension::Cells(1))
+                            .shrink(0.0),
+                        vec![Ink::new(r.label.clone(), t.text)],
+                        None,
+                    ))
+                    .child(input);
+                // The backlog folder's own button (the web's).
+                if r.key == "triage_repo_root" && d.writable {
+                    let c = ctx.clone();
+                    let row = r.clone();
+                    let a = super::w::Action::label("own_folder", "Use the gateway's own folder");
+                    line_el = line_el.child(super::w::action::button(
+                        cx,
+                        &t,
+                        &a,
+                        super::w::action::On::Raised,
+                        true,
+                        move || {
+                            if !busy() {
+                                send(&c, &st, &row.key, text_body(&row, ""));
+                            }
+                        },
+                    ));
+                }
+                col = col.child(line_el.build());
+                col = col.child(fill_line(
+                    LayoutStyle::line(1).shrink(0.0),
+                    vec![Ink::new(
+                        format!("{} · now {}", r.source, r.now),
+                        t.text_faint,
+                    )],
+                    None,
+                ));
             }
         }
-        // "Saved" / "Not saved: …" under the row: its own reactive line,
-        // so an outcome never rebuilds an open input (its caret would reset).
+        // "Saved" / "Not saved: …" under the row: its own reactive line.
         {
             let key = r.key.clone();
-            col = col.child(dyn_view(
-                LayoutStyle::column().gap(0).shrink(0.0),
-                move || {
-                    let t = use_theme(cx).get().tokens;
-                    let _ = st.notes.get();
-                    match note_of(&st, &key) {
-                        Some((text, tone)) => {
-                            kit::sentence_indent(&t, &text, width, 4, tone_ink(&t, tone))
-                        }
-                        None => Element::new().style(LayoutStyle::default().h(0)).build(),
-                    }
-                },
-            ));
+            col = col.child(dyn_view(LayoutStyle::column().shrink(0.0), move || {
+                let t = abstracttui::app::current_theme().tokens;
+                let _ = st.notes.get();
+                match note_of(&st, &key) {
+                    Some((text, tone)) => sentence(&t, &text, width, tone_ink(&t, tone)),
+                    None => Element::new().style(LayoutStyle::default().h(0)).build(),
+                }
+            }));
         }
         if !r.help.is_empty() {
-            col = col.child(kit::sentence_indent(&t, &r.help, width, 4, t.text_faint));
+            col = col.child(sentence(&t, &r.help, width, t.text_muted));
         }
         if let Some(why) = &r.locked {
-            col = col.child(kit::sentence_indent(&t, why, width, 4, t.text_muted));
+            col = col.child(sentence(&t, why, width, t.text_muted));
         }
-        if let Some(w) = &r.warn {
-            col = col.child(kit::sentence_indent(&t, w, width, 4, t.warn));
+        if let Some(wn) = &r.warn {
+            col = col.child(sentence(&t, wn, width, t.warn));
         }
+        col = col.child(
+            Element::new()
+                .style(LayoutStyle::line(1).shrink(0.0))
+                .build(),
+        );
     }
-    col = col.child(kit::sentence(
+    col = col.child(sentence(
         &t,
         match which {
             Which::Apps => "Empty = the default (or the value this gateway's environment gives). Applies at the next app start or download.",
@@ -416,59 +449,58 @@ fn overlay_body(cx: Scope, ctx: &Ctx, which: Which, st: St) -> View {
         width,
         t.text_faint,
     ));
-    if editing.is_none() {
-        col = col.focusable().autofocus();
-    }
-    let keys_ctx = ctx.clone();
-    let writable = d.writable;
-    let col = col.on(Phase::Bubble, move |ectx, ev| {
-        if let UiEvent::Key(k) = ev {
-            if k.mods.0 != 0 || st.editing.get_untracked().is_some() {
-                return;
-            }
-            let n = list.len();
-            let at = st.sel.get_untracked().min(n.saturating_sub(1));
-            let handled = match k.key {
-                Key::Up => {
-                    st.sel.set(at.saturating_sub(1));
-                    true
-                }
-                Key::Down => {
-                    st.sel.set((at + 1).min(n.saturating_sub(1)));
-                    true
-                }
-                // One write at a time: a press while one is in flight
-                // would act on the value shown before it landed.
-                Key::Enter | Key::Char(' ') if st.pending.with_untracked(|p| !p.is_empty()) => true,
-                Key::Enter | Key::Char(' ') => {
-                    if let Some(r) = list.get(at) {
-                        if !writable {
-                            keys_ctx
-                                .store
-                                .notice
-                                .set(Some("Only an admin can change these.".into()));
-                        } else if let Some(why) = &r.locked {
-                            set_note(&st, &r.key, why, Tone::Error);
-                        } else if let Some(on) = r.switch {
-                            send(&keys_ctx, &st, &r.key, json!({ r.key.clone(): !on }));
-                        } else if k.key == Key::Enter {
-                            st.draft.set(r.saved.clone());
-                            st.editing.set(Some(r.key.clone()));
-                        }
-                    }
-                    true
-                }
-                _ => false,
-            };
-            if handled {
-                ectx.stop_propagation();
-            }
+    col.build()
+}
+
+/// The POST body for one text row (empty = back to the default; the
+/// backlog folder sends null = the gateway's own folder).
+pub fn text_body(row: &SRow, typed: &str) -> Value {
+    let now = typed.trim();
+    if row.key == "triage_repo_root" {
+        if now.is_empty() {
+            return json!({ "triage_repo_root": Value::Null });
         }
+        return json!({ "triage_repo_root": now });
+    }
+    json!({ row.key.clone(): now })
+}
+
+/// The modal's state (lives with the modal's scope).
+#[derive(Clone, Copy)]
+struct St {
+    /// (key, text, tone) beside each row.
+    notes: Signal<Vec<(String, String, Tone)>>,
+    /// (form id, key) of writes in flight.
+    pending: Signal<Vec<(u64, String)>>,
+    /// The row last changed: its control takes the keyboard back after the
+    /// config re-read rebuilds the body.
+    last: Signal<Option<String>>,
+}
+
+fn note_of(st: &St, key: &str) -> Option<(String, Tone)> {
+    st.notes.with_untracked(|n| {
+        n.iter()
+            .find(|(k, _, _)| k == key)
+            .map(|(_, t, tone)| (t.clone(), *tone))
+    })
+}
+
+fn set_note(st: &St, key: &str, text: &str, tone: Tone) {
+    st.notes.update(|n| {
+        n.retain(|(k, _, _)| k != key);
+        n.push((key.to_string(), text.to_string(), tone));
     });
-    Scroll::new(col.build())
-        .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))
-        .scrollbar_auto_hide(true)
-        .view(cx)
+}
+
+fn send(ctx: &Ctx, st: &St, key: &str, body: Value) {
+    st.last.set(Some(key.to_string()));
+    let fid = crate::worker::next_form_id();
+    st.pending.update(|p| p.push((fid, key.to_string())));
+    set_note(st, key, "Saving...", Tone::Plain);
+    ctx.send(Cmd::SaveRuntimeConfig {
+        body: body.into(),
+        form_id: Some(fid),
+    });
 }
 
 fn tone_ink(t: &TokenSet, tone: Tone) -> abstracttui::base::Rgba {

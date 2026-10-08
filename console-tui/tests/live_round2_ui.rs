@@ -71,6 +71,13 @@ struct Harness {
 
 fn harness(size: Size) -> Harness {
     abstracttui::app::set_theme_by_id("abstract-dark");
+    // R15 rail: from 120x32 the console shows a 21-cell nav rail; these
+    // suites pin PAGE layouts, so a wide size keeps its page width.
+    let size = if size.w >= 120 && size.h >= 32 {
+        Size::new(size.w + 21, size.h)
+    } else {
+        size
+    };
     let mut app = App::new(size);
     let overlays = app.overlays();
     let quitter = app.quitter();
@@ -287,7 +294,7 @@ fn accounts_and_workflows_live() {
         h.ui.account_sel.set(idx);
         h.turns(3);
         h.key(b" ");
-        h.key(b"\x1b[A");
+        h.key(b"\x1b[Z"); // Shift+Tab to the action button (R15 F1)
         h.key(b"\r");
         h.until("r2alice inactive", |h, _| {
             h.store.accounts.with_untracked(|d| {

@@ -1,0 +1,36 @@
+{
+  "_source": "scripts/extract_web_wording.py (do not edit by hand)",
+  "output_label": "Output",
+  "context": "What the next message generates, with its route from Multimodal.",
+  "system_label": "System prompt",
+  "system_placeholder": "None",
+  "system_help": "Instructions sent before your message.",
+  "reasoning_label": "Reasoning",
+  "reasoning_help": "Effort for reasoning models; default sends none.",
+  "mtp_label": "MTP",
+  "mtp_help": "Per-request speculative decoding; inherit uses the Core default.",
+  "reasoning_options": [
+    "default",
+    "none",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh"
+  ],
+  "mtp_options": [
+    "inherit",
+    "off",
+    "depth 2",
+    "depth 3",
+    "depth 4",
+    "depth 5"
+  ],
+  "mode_unconfigured": "not configured",
+  "send_label": "Send",
+  "seconds_label": "Length (seconds)",
+  "seconds_help": "How long the generated clip is.",
+  "seconds_refusal": "Length must be a positive number of seconds.",
+  "clear_tip": "Clear the chat",
+  "attach_tip": "Attach files to your question"
+}

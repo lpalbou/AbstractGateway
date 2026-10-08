@@ -547,22 +547,20 @@ fn boots_to_connection_wizard_step() {
     let mut h = harness();
     let screen = h.turn();
     assert!(
-        screen.contains("AbstractGateway Console"),
+        screen.contains("AbstractGateway · wizard"),
         "header:\n{screen}"
     );
-    // PageHost bar: numbered titles, engine-drawn active underline.
-    assert!(screen.contains("1 Connection"), "page bar:\n{screen}");
-    // DESIGN-v2 §1: the shown order is the web sidebar's groups —
-    // Accounts second, then the WORK screens.
-    assert!(screen.contains("2 Accounts"), "page bar:\n{screen}");
-    assert!(screen.contains("3 Workflows"), "page bar:\n{screen}");
-    assert!(
-        screen
-            .contains("ACCOUNTS 2 · WORK 3-6 · MODELS 7 8 9 0 · SYSTEM H T N · S Setup · I About"),
-        "group line:\n{screen}"
+    // R15 nav strip (110 cols): clickable titles in the web sidebar's
+    // order — Connection, then Accounts, then the WORK screens.
+    let strip = screen.lines().nth(1).unwrap_or_default();
+    let (c, a, w) = (
+        strip.find("Connection"),
+        strip.find("Accounts"),
+        strip.find("Workflows"),
     );
-    assert!(screen.contains("Gateway URL"), "url field:\n{screen}");
-    assert!(screen.contains("Admin token"), "token field:\n{screen}");
+    assert!(c.is_some() && c < a && a < w, "nav strip order:\n{screen}");
+    assert!(screen.contains("Gateway address"), "url field:\n{screen}");
+    assert!(screen.contains("Token "), "token field:\n{screen}");
     assert!(
         screen.contains("not connected"),
         "honest initial state:\n{screen}"
@@ -996,13 +994,8 @@ fn ctrl_g_reopens_and_skips_the_guide() {
         s.contains("Skip setup") && s.contains("Leave for now"),
         "{s}"
     );
-    // Options: stay (initial), leave, skip, then the steps → Down ×2 = skip.
-    for _ in 0..2 {
-        h.key(b"\x1b[B");
-        h.turn();
-    }
-    h.type_text("\r");
-    h.turns(2);
+    // R15: the stepper dialog's buttons — click Skip setup.
+    click_last_text(&mut h, "Skip setup");
     match h.find_cmd(|c| matches!(c, Cmd::CompleteFirstRun { .. })) {
         Some(Cmd::CompleteFirstRun { outcome, .. }) => assert_eq!(outcome, "skipped"),
         other => panic!("expected a skipped CompleteFirstRun, got {other:?}"),
@@ -1021,22 +1014,17 @@ fn ctrl_g_in_the_guide_jumps_to_any_step() {
     h.turns(2);
     h.key(b"\x07");
     let s = h.turns(2);
-    assert!(s.contains("go to a step"), "the guide menu opens:\n{s}");
     assert!(
-        s.contains("Go to 2. Welcome (you are here)"),
+        s.contains("Go to a step, or leave the guide."),
+        "the guide menu opens:\n{s}"
+    );
+    assert!(
+        s.contains("2. Welcome  (you are here)"),
         "current step marked:\n{s}"
     );
-    assert!(
-        s.contains("Go to 1. Connection"),
-        "the steps are listed:\n{s}"
-    );
-    // Options: stay (initial), leave, skip, steps 1..7 → Down ×8 = step 6 (Apps).
-    for _ in 0..8 {
-        h.key(b"\x1b[B");
-        h.turn();
-    }
-    h.type_text("\r");
-    h.turns(2);
+    assert!(s.contains("1. Connection"), "the steps are listed:\n{s}");
+    // R15: every step is a button (the web stepper) — click Apps.
+    click_last_text(&mut h, "6. Apps");
     assert_eq!(
         h.ui.screen.get_untracked(),
         ui::SCREEN_APPS,
@@ -1057,13 +1045,8 @@ fn guide_step_jump_needs_a_sign_in() {
     h.turns(2);
     h.key(b"\x07");
     h.turns(2);
-    // Not signed in: no Skip option → stay, leave, steps → Down ×8 = step 7.
-    for _ in 0..8 {
-        h.key(b"\x1b[B");
-        h.turn();
-    }
-    h.type_text("\r");
-    h.turns(2);
+    // Not signed in: no Skip setup; click the last step.
+    click_last_text(&mut h, "7. Done");
     assert_eq!(
         h.ui.screen.get_untracked(),
         ui::SCREEN_CONNECTION,
@@ -1123,9 +1106,7 @@ fn routes_model_step_shows_the_plan_and_downloads_all() {
         s.contains("Download the recommended set"),
         "confirm first:\n{s}"
     );
-    // Danger confirm defaults to keep → Up to "Download all".
-    h.key(b"\x1b[A");
-    h.turn();
+    // R15: a download confirm is a plain one — focus on [Download all].
     h.type_text("\r");
     h.turns(2);
     let cmds = h.drain_cmds();
@@ -1214,7 +1195,9 @@ fn routes_show_the_unavailable_reason_and_the_plan_lists_it() {
         .set(Loadable::Ready(availability_with_plan()));
     h.ui.route_sel.set(1);
     let s = h.turns(3);
-    assert!(s.contains("unavailable here"), "state column:\n{s}");
+    // R15: the web's status pill says "not configured"; the reason rides
+    // the selected-row line.
+    assert!(s.contains("not configured"), "state column:\n{s}");
     assert!(
         s.contains("the recommended mlx-gen · AbstractFramework/flux.2-klein-4b-8bit cannot run on this computer: MLX-Gen image generation needs MLX"),
         "selected-row reason:\n{s}"
@@ -1269,19 +1252,47 @@ fn applied_recommended_summary_counts_unavailable_rows() {
 // Providers step
 // =======================================================================
 
+/// R15 Providers: a page tall enough for its three stacked sections (the
+/// page scrolls; these tests read the Available Providers rows).
+fn providers_harness() -> Harness {
+    let mut h = harness_sized(Size::new(150, 90));
+    h.connect_as_admin();
+    h.goto_available_providers();
+    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
+    h.store.providers.set(Loadable::Ready(providers_fixture()));
+    h.turns(3);
+    h
+}
+
+/// Click `needle` on the first line at or below the line holding `anchor`
+/// that contains it (searched right of the anchor on that line).
+fn click_after(h: &mut Harness, anchor: &str, needle: &str) {
+    let s = h.turns(1);
+    let lines: Vec<&str> = s.lines().collect();
+    let start = lines
+        .iter()
+        .position(|l| l.contains(anchor))
+        .unwrap_or_else(|| panic!("{anchor:?} not on screen:\n{s}"));
+    let (y, l) = lines
+        .iter()
+        .enumerate()
+        .skip(start)
+        .find(|(_, l)| l.contains(needle))
+        .unwrap_or_else(|| panic!("{needle:?} at/below {anchor:?}:\n{s}"));
+    let x = l[..l.rfind(needle).unwrap()].chars().count() + 2;
+    click_at(h, x, y + 1);
+    h.turns(2);
+}
+
 /// The ONE unified list (operator ruling 2026-07-25: no second table).
 /// Rows come from the profiles payload alone — managed AND synthetic —
 /// under the join-law provider names; discovery demotes to the default
 /// line + the not-configured-yet line. Nothing double-lists.
 #[test]
 fn profiles_table_renders_without_secrets() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_available_providers();
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
-    h.store.providers.set(Loadable::Ready(providers_fixture()));
+    let mut h = providers_harness();
     let s = h.turns(2);
-    // Join-law provider names in the first column: managed rows show
+    // Join-law provider names in the Provider ID column: managed rows show
     // their virtual endpoint:<id>; synthetic rows their bare id.
     assert!(s.contains("endpoint:acme"), "managed provider name:\n{s}");
     assert!(s.contains("openai"), "synthetic provider name:\n{s}");
@@ -1317,12 +1328,13 @@ fn profiles_table_renders_without_secrets() {
         s.contains("gateway default: lmstudio / test-model-a"),
         "default line:\n{s}"
     );
-    // The selected row (acme, managed) names its own verbs — the
-    // web's per-row buttons as a TUI action line.
-    assert!(
-        s.contains("managed (gateway scope) · e edit · d delete"),
-        "selection action line:\n{s}"
-    );
+    // R15: each row's own buttons — the web's Edit / Delete for a managed
+    // row, Override for a synthetic one (then Models, Test).
+    let acme = s
+        .lines()
+        .find(|l| l.contains("endpoint:acme"))
+        .expect("acme row");
+    assert!(acme.contains("Edit") && acme.contains("Delete"), "{acme}");
 }
 
 /// The join law drives the row ACTIONS (live-verified 2026-07-25:
@@ -1331,14 +1343,9 @@ fn profiles_table_renders_without_secrets() {
 /// for the BARE name, on a managed row for endpoint:<id>.
 #[test]
 fn models_drilldown_uses_join_law_provider_names() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_available_providers();
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
-    h.turns(2);
-    // Row 0 = acme (managed).
-    h.type_text("m");
-    h.turns(2);
+    let mut h = providers_harness();
+    // Row 0 = acme (managed): its Models button.
+    click_after(&mut h, "endpoint:acme", "Models");
     assert!(
         matches!(
             h.find_cmd(|c| matches!(c, Cmd::LoadModels { .. })),
@@ -1348,12 +1355,20 @@ fn models_drilldown_uses_join_law_provider_names() {
     );
     h.press_escape();
     h.turns(2);
-    // Row 1 = openai (synthetic, provider_id "openai"). Selection set
-    // directly — focus restoration after a modal close is not what
-    // this test pins.
-    h.ui.profile_sel.set(1);
-    h.turns(2);
-    h.type_text("m");
+    // openai (synthetic, provider_id "openai"): its row's Models button.
+    let s = h.turns(1);
+    let from = s
+        .lines()
+        .position(|l| l.contains("Available Providers"))
+        .unwrap();
+    let (y, l) = s
+        .lines()
+        .enumerate()
+        .skip(from)
+        .find(|(_, l)| l.contains(" openai ") && l.contains("Models"))
+        .unwrap_or_else(|| panic!("openai row:\n{s}"));
+    let x = l[..l.rfind("Models").unwrap()].chars().count() + 2;
+    click_at(&mut h, x, y + 1);
     h.turns(2);
     assert!(
         matches!(
@@ -1366,31 +1381,23 @@ fn models_drilldown_uses_join_law_provider_names() {
 
 #[test]
 fn add_profile_form_validates_and_sends_create() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_available_providers();
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
-    h.turns(2);
-
+    let mut h = providers_harness();
     h.type_text("a");
     let s = h.turns(2);
-    assert!(s.contains("Add a provider connection"), "form open:\n{s}");
-    assert!(s.contains("choose a family…"), "placeholder family:\n{s}");
-
-    // The id input is autofocused: type an id, then walk to Save and
-    // press it with the family still on the placeholder.
+    // R15: the web's endpoint modal ("Configure provider" when blank).
+    assert!(s.contains("Configure provider"), "form open:\n{s}");
+    assert!(
+        s.contains("choose a provider type…"),
+        "placeholder type:\n{s}"
+    );
+    // The Provider ID input is autofocused: type an id, ✓ Confirm with
+    // the type still on the placeholder.
     h.type_text("acme2");
-    h.turn();
-    // Happy path (P1-C disclosure): id → family → base URL → API key →
-    // More-options header → Test → Save (advanced fields folded away).
-    for _ in 0..6 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r");
+    h.turns(2);
+    click_after(&mut h, "↻ Test", "✓ Confirm");
     let s = h.turns(2);
     assert!(
-        s.contains("choose a provider family"),
+        s.contains("Choose a provider type."),
         "validation error inline, modal stays:\n{s}"
     );
     assert!(
@@ -1398,38 +1405,19 @@ fn add_profile_form_validates_and_sends_create() {
             .is_none(),
         "no write leaves the app on a validation failure"
     );
-
-    // Fix the family: Shift+Tab from Save back to the Select (family is
-    // index 1, Save index 6 in the folded happy path → 5 stops).
-    for _ in 0..5 {
-        h.key(b"\x1b[Z");
-        h.turn();
-    }
-    h.type_text("\r"); // open the popup
-    h.turns(2);
-    h.key(b"\x1b[B"); // down to "openai-compatible"
-    h.turn();
-    h.type_text("\r"); // commit
-    h.turns(2);
-
-    // Base URL, then API key.
-    h.key(b"\t");
-    h.turn();
+    // Fix the type: click the picker, ↓ to the first family, Enter.
+    click_after(&mut h, "Provider type", "choose a provider type…");
+    // The popup lists the types: click one (a mouse pick commits it).
+    click_after(&mut h, "Provider type", "Custom OpenAI-compatible");
+    h.turns(3);
+    // Base URL, then API key (click each field).
+    click_after(&mut h, "Base URL", "optional; leave blank");
     h.type_text("http://127.0.0.1:1234/v1");
-    h.turn();
-    h.key(b"\t");
-    h.turn();
-    h.type_text("sk-testkey");
-    h.turn();
-    // API key → More-options header → Test → Save (advanced fields are
-    // folded; scope defaults to gateway for admin, allowed stays []).
-    for _ in 0..3 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r");
     h.turns(2);
-
+    click_after(&mut h, "API key", "leave blank to keep");
+    h.type_text("sk-testkey");
+    h.turns(2);
+    click_after(&mut h, "↻ Test", "✓ Confirm");
     let cmd = h.find_cmd(|c| matches!(c, Cmd::SaveProfile { .. }));
     match cmd {
         Some(Cmd::SaveProfile {
@@ -1451,41 +1439,22 @@ fn add_profile_form_validates_and_sends_create() {
 
 #[test]
 fn edit_profile_never_echoes_stored_key_and_closes_on_success() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_available_providers();
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
-    h.turns(2);
-
+    let mut h = providers_harness();
     // Row 0 = acme (managed, key stored). Open edit.
     h.type_text("e");
     let s = h.turns(2);
-    assert!(s.contains("Edit profile 'acme'"), "edit form:\n{s}");
     assert!(
-        s.contains("a key is stored (deadbeef1234)"),
+        s.contains("Configure Custom OpenAI-compatible"),
+        "edit form:\n{s}"
+    );
+    assert!(
+        s.contains("A key is stored (deadbeef1234)"),
         "stored-key note:\n{s}"
     );
-    assert!(
-        s.contains("clear the stored key on save"),
-        "clear affordance:\n{s}"
-    );
-    // The form must NOT prefill any secret — the API never returns one,
-    // and the field starts empty (bullets would render if it did).
+    assert!(s.contains("Clear stored API key"), "clear affordance:\n{s}");
+    // The form must NOT prefill any secret.
     assert!(!s.contains("sk-"), "no secret text anywhere:\n{s}");
-
-    // Simulate the worker completing the write for this form: the modal
-    // closes on success. (form_id is 1-based per process; fetch it from
-    // the command the form sends.)
-    // Edit mode: id is static, family autofocuses, the disclosure is
-    // OPEN. family → base URL → API key → More-options header →
-    // display → description → allowed → scope → clear-key → enabled →
-    // Test → Save (11 tabs from family).
-    for _ in 0..11 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r");
-    h.turns(2);
+    click_after(&mut h, "↻ Test", "✓ Confirm");
     let cmd = h.find_cmd(|c| matches!(c, Cmd::SaveProfile { .. }));
     let form_id = match cmd {
         Some(Cmd::SaveProfile {
@@ -1500,8 +1469,6 @@ fn edit_profile_never_echoes_stored_key_and_closes_on_success() {
                 body.get("api_key").is_none(),
                 "blank key field must OMIT api_key (keep stored): {body:?}"
             );
-            // Scope now rides edits too (web parity: the gateway moves
-            // the profile between stores when scope changes).
             assert_eq!(body["scope"], "gateway", "unchanged scope resent as-is");
             form_id.expect("edit form correlates its write")
         }
@@ -1510,19 +1477,13 @@ fn edit_profile_never_echoes_stored_key_and_closes_on_success() {
     h.ui.write_done.set(Some((form_id, Ok("applied".into()))));
     let s = h.turns(3);
     assert!(
-        !s.contains("Edit profile 'acme'"),
+        !s.contains("Configure Custom OpenAI-compatible"),
         "modal closed on success:\n{s}"
     );
-
-    // And on failure the modal stays with the verbatim error.
+    // And on failure the modal stays with the gateway's sentence.
     h.type_text("e");
     h.turns(2);
-    for _ in 0..11 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r");
-    h.turns(2);
+    click_after(&mut h, "↻ Test", "✓ Confirm");
     let form_id = match h.find_cmd(|c| matches!(c, Cmd::SaveProfile { .. })) {
         Some(Cmd::SaveProfile { form_id, .. }) => form_id.unwrap(),
         other => panic!("expected SaveProfile, got {other:?}"),
@@ -1533,7 +1494,7 @@ fn edit_profile_never_echoes_stored_key_and_closes_on_success() {
     )));
     let s = h.turns(3);
     assert!(
-        s.contains("Edit profile 'acme'"),
+        s.contains("Configure Custom OpenAI-compatible"),
         "modal stays on failure:\n{s}"
     );
     assert!(
@@ -1548,18 +1509,12 @@ fn edit_profile_never_echoes_stored_key_and_closes_on_success() {
 /// the teach-the-override reason.
 #[test]
 fn synthetic_row_override_opens_prefilled_create() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_available_providers();
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
-    h.turns(2);
-    // Move selection to row 1 (openai, synthetic).
-    h.key(b"\x1b[B");
-    h.turns(2);
-    h.type_text("e");
+    let mut h = providers_harness();
+    // openai (synthetic): its Override button.
+    click_after(&mut h, "Available Providers", "Override");
     let s = h.turns(2);
     assert!(
-        s.contains("Override 'openai' — create a managed connection"),
+        s.contains("Configure OpenAI"),
         "override form (not a refusal, not Edit):\n{s}"
     );
     assert!(
@@ -1570,9 +1525,11 @@ fn synthetic_row_override_opens_prefilled_create() {
     h.press_escape();
     let s = h.turns(2);
     assert!(
-        !s.contains("Override 'openai'"),
+        !s.contains("already usable from environment config"),
         "untouched override form closes on one Esc:\n{s}"
     );
+    h.ui.profile_sel.set(1);
+    h.turns(2);
     h.type_text("d");
     let s = h.turns(2);
     assert!(
@@ -1591,23 +1548,10 @@ fn synthetic_row_override_opens_prefilled_create() {
 /// the exact name that shadows the env/core row.
 #[test]
 fn override_save_posts_create_with_prefilled_identity() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_available_providers();
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
+    let mut h = providers_harness();
+    click_after(&mut h, "Available Providers", "Override");
     h.turns(2);
-    h.key(b"\x1b[B");
-    h.turns(2);
-    h.type_text("e");
-    h.turns(2);
-    // Create-mode fold: id (autofocused) → family → base URL →
-    // API key → More-options header → Test → Save.
-    for _ in 0..6 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r");
-    h.turns(2);
+    click_after(&mut h, "↻ Test", "✓ Confirm");
     match h.find_cmd(|c| matches!(c, Cmd::SaveProfile { .. })) {
         Some(Cmd::SaveProfile {
             create, id, body, ..
@@ -1626,18 +1570,14 @@ fn override_save_posts_create_with_prefilled_identity() {
 
 #[test]
 fn escape_closes_form_modal() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_available_providers();
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
-    h.turns(2);
+    let mut h = providers_harness();
     h.type_text("a");
     let s = h.turns(2);
-    assert!(s.contains("Add a provider connection"), "form open:\n{s}");
+    assert!(s.contains("Configure provider"), "form open:\n{s}");
     h.press_escape();
     let s = h.turns(2);
     assert!(
-        !s.contains("Add a provider connection"),
+        !s.contains("Configure provider"),
         "Esc closes the form:\n{s}"
     );
     assert!(
@@ -1649,18 +1589,15 @@ fn escape_closes_form_modal() {
 
 #[test]
 fn delete_profile_needs_danger_confirm() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_available_providers();
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
-    h.turns(2);
+    let mut h = providers_harness();
     h.type_text("d");
     let s = h.turns(2);
+    let flat = s.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
-        s.contains("Delete provider connection 'acme'"),
-        "confirm:\n{s}"
+        flat.contains("Delete endpoint:acme? Existing workflows"),
+        "the web's question:\n{s}"
     );
-    // Initial highlight is "keep" — Enter must NOT delete.
+    // Initial focus is Cancel — Enter must NOT delete.
     h.type_text("\r");
     h.turns(2);
     assert!(
@@ -1668,10 +1605,10 @@ fn delete_profile_needs_danger_confirm() {
             .is_none(),
         "keep does not delete"
     );
-    // Again, choose the danger option explicitly.
+    // Again, choose the action explicitly (Shift+Tab to it, Enter).
     h.type_text("d");
     h.turns(2);
-    h.key(b"\x1b[A"); // up to "Delete the profile"
+    h.key(b"\x1b[Z");
     h.turn();
     h.type_text("\r");
     h.turns(2);
@@ -1702,7 +1639,12 @@ fn routes_table_renders_states_distinctly() {
         "an unconfigured row says so — 'default' read as 'a default is \
          set' on a screen literally about defaults:\n{s}"
     );
-    assert!(s.contains("writable"), "authority banner:\n{s}");
+    // R15: a writable store makes no claim (the web's store line needs the
+    // payload's config_file); only a read-only store is said.
+    assert!(
+        !s.lines().any(|l| l.trim() == "writable") && !s.contains("read-only"),
+        "no bare authority word:\n{s}"
+    );
     assert!(s.contains("supertonic-3"), "route model cell:\n{s}");
     // No double-width emoji in a table cell: the padlock measures 2
     // cells and terminals draw it at their own advance, sliding every
@@ -1782,8 +1724,11 @@ fn route_editor_override_flow_sends_put_with_picked_pair() {
     h.type_text("\r");
     h.turns(2);
 
-    // Mode radio has focus first: Down switches to override.
-    h.key(b"\x1b[B");
+    // R15: the mode is a Segmented (one Tab stop per segment): the chosen
+    // "use default" segment has the focus; Tab reaches "override", Enter picks.
+    h.key(b"\t");
+    h.turn();
+    h.key(b"\r");
     let s = h.turns(2);
     assert!(
         s.contains("choose a provider…"),
@@ -1832,8 +1777,8 @@ fn route_editor_override_flow_sends_put_with_picked_pair() {
     h.type_text("\r");
     h.turns(2);
 
-    // Tab past base URL + options to Save.
-    for _ in 0..3 {
+    // Tab past base URL + options and the web's [Cancel] [Clear] [Test] to [Save].
+    for _ in 0..6 {
         h.key(b"\t");
         h.turn();
     }
@@ -1912,7 +1857,8 @@ fn text_route_editor_carries_reasoning_and_sends_only_what_changed() {
     }
     h.type_text("http://127.0.0.1:1234/v1");
     h.turn();
-    for _ in 0..4 {
+    // R15: reasoning → options → MTP → [Cancel] [Clear] [Test] → [Save].
+    for _ in 0..7 {
         h.key(b"\t");
         h.turn();
     }
@@ -1992,8 +1938,9 @@ fn text_route_audition_uses_the_mtp_control_and_preserves_explicit_off() {
             screen.contains("MTP default"),
             "MTP policy control must be visible: {screen}"
         );
-        // mode -> provider -> model -> URL -> reasoning -> options -> MTP -> Save -> Test
-        for _ in 0..8 {
+        // mode -> provider -> model -> URL -> reasoning -> options -> MTP ->
+        // [Cancel] -> [Clear] -> [Test] (R15: the web's button order)
+        for _ in 0..9 {
             h.key(b"\t");
             h.turn();
         }
@@ -2058,7 +2005,7 @@ fn route_editor_task_key_derivation() {
         s.contains("Clear the override on output.image.text_to_image"),
         "confirm:\n{s}"
     );
-    h.key(b"\x1b[A"); // up to the danger option
+    h.key(b"\x1b[Z"); // Shift+Tab to the action button — up to the danger option
     h.turn();
     h.type_text("\r");
     h.turns(2);
@@ -2147,7 +2094,6 @@ fn users_and_entities_render_with_admin_gate() {
         !s.contains("castorp") && !s.contains("hypnosp"),
         "no registry entity principal as a user row:\n{s}"
     );
-    assert!(s.contains("kind:"), "kind legend:\n{s}");
     // Selecting the entity row keeps its manage snapshot warm; `i`
     // toggles the inspector drawer.
     h.select_account("testor");
@@ -2157,7 +2103,8 @@ fn users_and_entities_render_with_admin_gate() {
             .is_some(),
         "selection-driven detail load fired"
     );
-    assert!(s.contains("m Manage"), "the entity row's keys:\n{s}");
+    // R15: the entity row carries the Manage button (⬖, key m).
+    assert!(s.contains("⬖"), "the entity row's Manage button:\n{s}");
     h.type_text("i");
     let s = h.turns(3);
     assert!(s.contains("Entity inspector"), "drawer open:\n{s}");
@@ -2216,8 +2163,8 @@ fn create_user_flow_and_token_shown_once() {
 
     h.type_text("bob");
     h.turn();
-    // User ID → Role → Email address → Advanced ▸ → Create user
-    for _ in 0..4 {
+    // User ID → Role → Email address → Runtime → Tenant → Create user
+    for _ in 0..5 {
         h.key(b"\t");
         h.turn();
     }
@@ -2273,12 +2220,10 @@ fn rotate_token_asks_inline_first() {
     h.turns(2);
     h.type_text("t");
     let s = h.turns(2);
-    assert!(
-        s.contains("Rotate the token of admin? The current token stops working now;"),
-        "confirm:\n{s}"
-    );
-    assert!(s.contains("[y] Rotate"), "{s}");
-    h.type_text("n");
+    // R15: a must-choose prompt with the web's sentence (Cancel first).
+    assert!(s.contains("Rotate the token of admin?"), "confirm:\n{s}");
+    assert!(s.contains("Rotate") && s.contains("Cancel"), "{s}");
+    h.type_text("\r"); // Cancel is preselected
     h.turns(2);
     assert!(
         h.find_cmd(|c| matches!(c, Cmd::PatchUser { .. })).is_none(),
@@ -2286,8 +2231,7 @@ fn rotate_token_asks_inline_first() {
     );
     h.type_text("t");
     h.turns(2);
-    h.type_text("y");
-    h.turns(2);
+    answer_danger(&mut h);
     match h.find_cmd(|c| matches!(c, Cmd::PatchUser { .. })) {
         Some(Cmd::PatchUser { user_id, body, .. }) => {
             assert_eq!(user_id, "admin");
@@ -2314,28 +2258,48 @@ fn entity_manage_menu_state_flow_sends_post() {
     // m over the selected entity opens the manage menu.
     h.type_text("m");
     let s = h.turns(2);
-    assert!(s.contains("Manage entity 'Testor'"), "manage menu:\n{s}");
-    assert!(s.contains("wake / sleep / pause"), "state option:\n{s}");
-    assert!(s.contains("Re-embed"), "reembed option:\n{s}");
+    // R15-B: the Manage FormModal — the web's tabs; Lifecycle holds
+    // "Awake or asleep", Mind & voice the index rebuild.
+    assert!(s.contains("Manage — Testor"), "manage modal:\n{s}");
+    assert!(
+        s.contains(" Lifecycle ") && s.contains(" Mind & voice "),
+        "tabs:\n{s}"
+    );
+    click_label(&mut h, " Lifecycle ");
+    let s = h.turns(2);
+    assert!(s.contains("Awake or asleep"), "state card:\n{s}");
+    click_label(&mut h, " Mind & voice ");
+    let s = h.turns(2);
+    assert!(
+        s.contains("How it sounds"),
+        "the Mind & voice cards (the body scrolls to the rebuild card):\n{s}"
+    );
 
-    // Initial pick = state → Enter opens the state modal.
-    h.type_text("\r");
+    // R15-B: the state lives inline in the Lifecycle tab.
+    click_label(&mut h, " Lifecycle ");
     let s = h.turns(3);
-    assert!(s.contains("Entity state — Testor"), "state modal:\n{s}");
-    assert!(s.contains("dream pass"), "dream option:\n{s}");
+    assert!(
+        s.contains("Awake or asleep") && s.contains("dream pass"),
+        "state card:\n{s}"
+    );
 
-    // Testor is asleep (fixture) → radio starts on asleep (ix 1). Move
-    // down one to "asleep + dream pass", walk to Apply, press it.
-    h.key(b"\x1b[B");
-    h.turn();
-    h.key(b"\t"); // → reason
-    h.turn();
+    // R15-B: the Reason first (it rides the next change), then the
+    // "asleep + dream pass" segment by mouse; the web's sleep question
+    // is answered with [Sleep].
+    let s2 = h.turns(1);
+    let row = find_row(&s2, "Reason");
+    let line = s2.lines().nth(row - 1).unwrap();
+    let x = line[..line.find("Reason").unwrap()].chars().count() + 22;
+    click_at(&mut h, x, row);
     h.type_text("nightly consolidation");
     h.turn();
-    h.key(b"\t"); // → Apply
-    h.turn();
-    h.type_text("\r");
-    h.turns(2);
+    click_label(&mut h, " asleep + dream pass ");
+    let s = h.turns(2);
+    assert!(
+        s.contains("Put it to sleep?"),
+        "the web's sleep question:\n{s}"
+    );
+    click_label(&mut h, " Sleep ");
     match h.find_cmd(|c| matches!(c, Cmd::EntityState { .. })) {
         Some(Cmd::EntityState { name, body }) => {
             assert_eq!(name, "Testor");
@@ -2345,9 +2309,13 @@ fn entity_manage_menu_state_flow_sends_post() {
         }
         other => panic!("expected EntityState, got {other:?}"),
     }
-    // The modal closed on Apply (outcome rides toast + journal).
+    // Applied at once (the web's switch): the form stays, its state line
+    // says the write is in flight (the journal's verdict follows).
     let s = h.turns(2);
-    assert!(!s.contains("Entity state — Testor"), "modal closed:\n{s}");
+    assert!(
+        s.contains("Manage — Testor") && s.contains("Saving…"),
+        "applied in place:\n{s}"
+    );
 }
 
 // ---- entity parity: summon / talk / card / voice audition -------------
@@ -2417,16 +2385,14 @@ fn summon_validates_first_then_confirms_then_creates() {
         "locked core values:\n{s}"
     );
 
-    // Name (autofocused) → Tab to the template → the Advanced toggle →
-    // Validate & create.
+    // Name (autofocused), then the web's [Validate & create] by mouse.
     h.type_text("Castor");
     h.turn();
-    for _ in 0..3 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r");
-    h.turns(2);
+    assert!(
+        s.contains("Optional configuration") || h.turns(1).contains("Optional configuration"),
+        "R15 D1: the named section, never a disclosure"
+    );
+    click_label(&mut h, " Validate & create ");
     let body = match h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::ValidateEntity { .. }))) {
         Some(Cmd::Entity(EntityCmd::ValidateEntity { name, body })) => {
             assert_eq!(name, "Castor");
@@ -2461,12 +2427,8 @@ fn summon_validates_first_then_confirms_then_creates() {
         s.contains("no interests seeded"),
         "dry-run warnings reviewed BEFORE the birth:\n{s}"
     );
-    // The button row is static, so focus is still on Validate: one Tab
-    // reaches Summon (focus never drops when the stage changes).
-    h.key(b"\t");
-    h.turn();
-    h.type_text("\r");
-    h.turns(2);
+    // R15 F1: THE confirm widget — [Summon] [Back to the form], by mouse.
+    click_label(&mut h, " Summon ");
     match h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::CreateEntity { .. }))) {
         Some(Cmd::Entity(EntityCmd::CreateEntity {
             name,
@@ -2501,12 +2463,7 @@ fn summon_refusal_shows_the_web_sentence_and_writes_nothing() {
     h.turns(2);
     h.type_text("Testor");
     h.turn();
-    for _ in 0..3 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r");
-    h.turns(2);
+    click_label(&mut h, " Validate & create ");
     assert!(h
         .find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::ValidateEntity { .. })))
         .is_some());
@@ -2594,7 +2551,10 @@ fn talk_opens_a_visit_sends_turns_and_renders_replies() {
     h.press_escape();
     let s = h.turns(2);
     assert!(!s.contains("Talk — Testor"), "Esc hides the panel:\n{s}");
-    assert!(s.contains("Accounts — people"), "still on Accounts:\n{s}");
+    assert!(
+        s.contains("People who use this gateway"),
+        "still on Accounts:\n{s}"
+    );
     assert_eq!(
         h.store.entity_chat.get_untracked().chat_id.as_deref(),
         Some("chat_42"),
@@ -2630,14 +2590,12 @@ fn manage_menu_opens_the_identity_card() {
     entity_screen(&mut h);
     h.type_text("m");
     h.turns(2);
-    // state is the initial pick; card sits ten rows below it.
-    for _ in 0..10 {
-        h.key(b"\x1b[B");
-        h.turn();
-    }
-    h.type_text("\r");
+    // R15-B: the identity card is inline in Manage's Overview tab.
     let s = h.turns(3);
-    assert!(s.contains("Identity card — Testor"), "card modal:\n{s}");
+    assert!(
+        s.contains("Manage — Testor") && s.contains("Identity"),
+        "card inline:\n{s}"
+    );
     assert!(
         h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::LoadCard { name }) if name == "Testor"))
             .is_some(),
@@ -2664,28 +2622,20 @@ fn voice_audition_sends_the_unsaved_selection_and_shows_the_file() {
     h.select_account("testor");
     h.type_text("m");
     h.turns(2);
-    // state → substrate → voice.
-    h.key(b"\x1b[B");
-    h.turn();
-    h.key(b"\x1b[B");
-    h.turn();
-    h.type_text("\r");
+    // R15-B: Voice lives inline in the Mind & voice tab.
+    click_label(&mut h, " Mind & voice ");
     let s = h.turns(3);
-    assert!(s.contains("Voice — Testor"), "voice form:\n{s}");
-    assert!(s.contains("Audition"), "audition verb:\n{s}");
+    assert!(
+        s.contains("How it sounds") && s.contains("Hear a sample"),
+        "the voice card (the web's label):\n{s}"
+    );
+    click_label(&mut h, "e.g. supertonic, openai");
     h.type_text("openai");
     h.turn();
-    h.key(b"\t");
-    h.turn();
+    click_label(&mut h, "e.g. supertonic-3");
     h.type_text("gpt-4o-mini-tts");
     h.turn();
-    // voice → clear checkbox → Audition.
-    for _ in 0..3 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r");
-    h.turns(2);
+    click_label(&mut h, " Hear a sample ");
     match h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::VoiceAudition { .. }))) {
         Some(Cmd::Entity(EntityCmd::VoiceAudition {
             name,
@@ -2710,6 +2660,9 @@ fn voice_audition_sends_the_unsaved_selection_and_shows_the_file() {
             error: None,
             player: None,
         }));
+    // R15: the focused button's tooltip sits over the outcome lines; the
+    // keyboard steps back to the clear switch (no tooltip).
+    h.key(b"\x1b[Z");
     let s = h.turns(2);
     assert!(s.contains("audio saved:"), "file path shown:\n{s}");
     assert!(s.contains("Testor-audition-a1.wav"), "path:\n{s}");
@@ -2737,21 +2690,13 @@ fn own_time_start_with_blank_fields_sends_the_web_body() {
     h.select_account("testor");
     h.type_text("m");
     h.turns(2);
-    for _ in 0..4 {
-        h.key(b"\x1b[B");
-        h.turn();
-    }
-    h.type_text("\r");
+    // R15-B: Personal time lives inline in the Lifecycle tab.
+    click_label(&mut h, " Lifecycle ");
     let s = h.turns(3);
-    assert!(s.contains("Own time — Testor"), "own-time form open:\n{s}");
+    assert!(s.contains("Personal time"), "own-time card:\n{s}");
     h.drain_cmds();
-    // tick → ticks → rest → grant hours → Grant → Revoke → Start loop.
-    for _ in 0..6 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r");
-    h.turns(2);
+    // R15-B: the web's Personal time switch applies at once (on = start).
+    click_label(&mut h, "●─ Personal time");
     match h.find_cmd(|c| matches!(c, Cmd::EntityLoop { start: true, .. })) {
         Some(Cmd::EntityLoop { name, body, .. }) => {
             assert_eq!(name, "Testor");
@@ -2774,15 +2719,12 @@ fn entity_tool_policy_editor_saves_changed_phases_only() {
         .set(Loadable::Ready(entities_from_payload(&entities_fixture())));
     h.turns(2);
 
-    // Open the manage menu, walk down to "Tool policy", Enter.
+    // Open Manage, `p` = Tools per phase (Work & tools tab).
     h.select_account("testor");
     h.type_text("m");
     h.turns(2);
-    for _ in 0..5 {
-        h.key(b"\x1b[B");
-        h.turn();
-    }
-    h.type_text("\r");
+    // R15-B: Tools per phase lives inline in the Work & tools tab.
+    click_label(&mut h, " Work & tools ");
     h.turns(2);
 
     // The editor opened with a Loading slot; feed the folded policy the
@@ -2802,17 +2744,12 @@ fn entity_tool_policy_editor_saves_changed_phases_only() {
         },
     ));
     let s = h.turns(3);
-    assert!(s.contains("Tool policy — Testor"), "editor open:\n{s}");
+    assert!(s.contains("Tools per phase"), "the tools card:\n{s}");
     assert!(s.contains("visit"), "phase rows:\n{s}");
     assert!(s.contains("(custom)"), "provenance shown:\n{s}");
 
     // No changes → Save refuses with the reason.
-    // Focus: visit MultiSelect autofocus is not set; walk to Save.
-    for _ in 0..3 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r");
+    click_label(&mut h, " Save ");
     let s = h.turns(2);
     assert!(
         s.contains("no changes to save"),
@@ -2839,13 +2776,7 @@ fn entity_tool_policy_editor_saves_changed_phases_only() {
     h.turn();
     h.type_text("\r"); // Enter COMMITS the set (Esc would discard it)
     h.turns(2);
-    // Focus stays on the visit trigger: work → Save.
-    for _ in 0..2 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r"); // Save grants
-    h.turns(2);
+    click_label(&mut h, " Save ");
     match h.find_cmd(|c| matches!(c, Cmd::SaveToolPolicy { .. })) {
         Some(Cmd::SaveToolPolicy { name, body, .. }) => {
             assert_eq!(name, "Testor");
@@ -2876,12 +2807,16 @@ fn runtimes_table_renders_sizes_and_states() {
         .runtimes
         .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
     let s = h.turns(2);
+    // R15: the web's columns — Runtime · Kind · Owner · State · Size · Workspace.
     assert!(
-        s.contains("Gateway default run"),
-        "default row (label cell may ellipsize):\n{s}"
+        s.contains("default") && s.contains("Eligible workspaces"),
+        "default row:\n{s}"
     );
     assert!(s.contains("7.8 GiB"), "humanized size:\n{s}");
-    assert!(s.contains("asleep (alive)"), "entity state cell:\n{s}");
+    assert!(
+        s.contains("asleep"),
+        "entity state cell (the web's word):\n{s}"
+    );
 }
 
 /// A write that applied but left something the operator must see (an
@@ -3010,7 +2945,7 @@ fn review_inline_sandbox_runs_and_renders_full_result() {
     h.turns(3);
     // Enter in the prompt runs the test with the picks (the prompt is
     // focused by the operator, never autofocused — REVIEW-1 M1).
-    click_field(&mut h, "prompt");
+    click_field(&mut h, "│prompt"); // R15: "System prompt" sits above
     h.type_text("\r");
     h.turns(2);
     match h.find_cmd(|c| matches!(c, Cmd::SandboxTest { .. })) {
@@ -3083,14 +3018,16 @@ fn review_sandbox_refusals_name_reasons() {
     // Not connected: refuse with the connect teaching.
     h.goto_screen(6);
     h.turns(2);
-    click_field(&mut h, "prompt");
+    click_field(&mut h, "│prompt"); // R15: "System prompt" sits above
     h.type_text("\r");
-    h.turns(2);
-    let notice = h.store.notice.get_untracked().unwrap_or_default();
+    let s = h.turns(2);
+    // R15: the refusal sits inline under the action bar (adversary note c).
+    let notice = abstractgateway_console::ui::sandbox::refusal_now().unwrap_or_default();
     assert!(
         notice.contains("connect to the gateway first"),
         "disconnected run names its refusal: {notice}"
     );
+    assert!(s.contains("connect to the gateway first"), "inline:\n{s}");
     assert!(
         h.find_cmd(|c| matches!(c, Cmd::SandboxTest { .. }))
             .is_none(),
@@ -3102,12 +3039,13 @@ fn review_sandbox_refusals_name_reasons() {
     h.store.notice.set(None);
     h.turns(2);
     h.type_text("\r");
-    h.turns(2);
-    let notice = h.store.notice.get_untracked().unwrap_or_default();
+    let s = h.turns(2);
+    let notice = abstractgateway_console::ui::sandbox::refusal_now().unwrap_or_default();
     assert!(
         notice.contains("pick a provider first"),
         "unpicked run names the missing pick: {notice}"
     );
+    assert!(s.contains("pick a provider first"), "inline:\n{s}");
     assert!(
         h.find_cmd(|c| matches!(c, Cmd::SandboxTest { .. }))
             .is_none(),
@@ -3175,8 +3113,8 @@ fn review_screen_renders_whole_at_both_sizes() {
                 "[{label}] teaching line:\n{s}"
             );
             assert!(
-                s.contains("Generate (Enter)"),
-                "[{label}] Generate button:\n{s}"
+                s.contains(" Send ") && s.contains(" Clear chat "),
+                "[{label}] R15 action bar (Send):\n{s}"
             );
             assert!(
                 s.contains(" Finish ") && s.contains("Skip setup"),
@@ -3199,7 +3137,7 @@ fn review_screen_renders_whole_at_both_sizes() {
                         "[{label}] failed outcome renders verbatim:\n{s}"
                     );
                     assert!(
-                        s.contains("press g / Generate to retry"),
+                        s.contains("press g / Send to retry"),
                         "[{label}] retry teaching survives:\n{s}"
                     );
                 }
@@ -3233,12 +3171,7 @@ fn review_screen_renders_whole_at_both_sizes() {
 /// the Review screen with the provider pinned BY NAME (no modal).
 #[test]
 fn providers_t_jumps_to_inline_sandbox_prefilled() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_available_providers();
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
-    h.store.providers.set(Loadable::Ready(providers_fixture()));
-    h.turns(3);
+    let mut h = providers_harness();
     h.type_text("t");
     let s = h.turns(3);
     assert_eq!(
@@ -3251,9 +3184,6 @@ fn providers_t_jumps_to_inline_sandbox_prefilled() {
         pinned.starts_with("endpoint:"),
         "the selected profile's provider is pinned by name: {pinned:?}"
     );
-    // The visible acknowledgment is the pinned pick itself: the picker
-    // renders the provider name (notices are screen-scoped and would
-    // be retired on arrival — the state change is the evidence).
     assert!(
         s.contains(&pinned),
         "the landing screen shows the pinned provider:\n{s}"
@@ -3334,7 +3264,7 @@ fn reprobe_resets_cached_domains() {
     h.goto_screen(0);
     h.ui.wizard.set(true);
     h.turns(2);
-    click_field(&mut h, "Gateway URL");
+    click_field(&mut h, "Gateway address");
     h.type_text("\r");
     h.turns(2);
     assert!(
@@ -3577,158 +3507,62 @@ fn token_waits_for_open_prompt() {
     );
 }
 
-/// Cycle-2 pin: Esc on a DIRTY form warns first (typed work must not
-/// die on one keypress); the second Esc discards. Clean forms still
-/// close on one Esc (pinned by escape_closes_form_modal).
+/// R15 F2 ruling (was the cycle-2 two-Esc pin): Esc on a DIRTY form asks
+/// "Discard changes?" — typed work never dies on one keypress. [Keep
+/// editing] (or Esc on the question) returns to the form with the edit;
+/// [Discard] closes it. Clean forms still close on one Esc (pinned by
+/// escape_closes_form_modal).
 #[test]
-fn escape_on_dirty_form_warns_then_discards() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_available_providers();
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
-    h.turns(2);
+fn escape_on_dirty_form_asks_discard_then_discards() {
+    let mut h = providers_harness();
     h.type_text("a");
     let s = h.turns(2);
-    assert!(s.contains("Add a provider connection"), "form open:\n{s}");
+    assert!(s.contains("Configure provider"), "form open:\n{s}");
     // Type into the autofocused id field → dirty.
     h.type_text("acme3");
     h.turns(2);
     h.press_escape();
     let s = h.turns(2);
     assert!(
-        s.contains("Add a provider connection"),
-        "dirty form survives the first Esc:\n{s}"
+        s.contains("Configure provider") && s.contains("Discard changes?"),
+        "dirty form asks first:\n{s}"
     );
-    assert!(
-        s.contains("unsaved changes — press Esc again to discard"),
-        "the warning names the second-Esc contract:\n{s}"
-    );
+    assert!(s.contains("Discard") && s.contains("Keep editing"), "{s}");
+    // Esc on the question = Keep editing: the form and the edit stay.
     h.press_escape();
     let s = h.turns(2);
     assert!(
-        !s.contains("Add a provider connection"),
-        "second Esc discards:\n{s}"
+        s.contains("Configure provider") && s.contains("acme3") && !s.contains("Discard changes?"),
+        "kept editing:\n{s}"
+    );
+    // Ask again; Discard (Shift+Tab to it, Enter) closes the form.
+    h.press_escape();
+    h.turns(2);
+    h.key(b"\x1b[Z");
+    h.turn();
+    h.key(b"\r");
+    let s = h.turns(2);
+    assert!(
+        !s.contains("Configure provider") && !s.contains("Discard changes?"),
+        "Discard closed the form:\n{s}"
     );
 }
 
-/// The dirty-guard's THIRD clause (round-2 P2-4): an edit after the
-/// warning DISARMS it — the warning clears, and the next Esc must warn
-/// anew instead of discarding (a warning shown minutes ago must never
-/// make a later Esc silently destructive).
+/// The question's default is the safe answer: Enter on it keeps editing.
 #[test]
-fn dirty_guard_disarms_on_edit_after_warning() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_available_providers();
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
-    h.turns(2);
+fn discard_question_defaults_to_keep_editing() {
+    let mut h = providers_harness();
     h.type_text("a");
     h.turns(2);
     h.type_text("acme3");
     h.turns(2);
     h.press_escape();
-    let s = h.turns(2);
-    assert!(
-        s.contains("unsaved changes — press Esc again to discard"),
-        "first Esc warns:\n{s}"
-    );
-    // Edit after the warning → disarm + clear the warning text.
-    h.type_text("x");
-    let s = h.turns(2);
-    assert!(
-        !s.contains("unsaved changes — press Esc again to discard"),
-        "edit clears the warning:\n{s}"
-    );
-    // The next Esc warns AGAIN (does not discard).
-    h.press_escape();
-    let s = h.turns(2);
-    assert!(
-        s.contains("Add a provider connection"),
-        "form survives the post-edit Esc:\n{s}"
-    );
-    assert!(
-        s.contains("unsaved changes — press Esc again to discard"),
-        "post-edit Esc re-warns:\n{s}"
-    );
-    h.press_escape();
-    let s = h.turns(2);
-    assert!(
-        !s.contains("Add a provider connection"),
-        "second Esc after re-arm discards:\n{s}"
-    );
-}
-
-/// Web-console parity: the Runtimes screen renders the runtime-config
-/// knob surface with per-knob PROVENANCE (value + which layer set it).
-#[test]
-fn runtime_knobs_render_with_provenance() {
-    // Three rows taller than the default harness: the knobs gained a second
-    // button row (backlog settings + skills reseed) and the key-hint bar
-    // wraps onto a second line (R7.2).
-    let mut h = harness_sized(Size::new(110, 37));
-    h.connect_as_admin();
-    h.goto_screen(4);
-    h.store
-        .runtimes
-        .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
-    // Knobs live behind a collapsed disclosure — the load fires on first
-    // expand, never eagerly (2026-07-26 lazy law). Discoverability comes
-    // from the folded header's wording and the `w` hint instead.
     h.turns(2);
-    let _ = h.drain_cmds();
-    h.ui.rt_knobs_folded.set(false);
-    h.turns(2);
-    assert!(
-        h.find_cmd(|c| matches!(c, Cmd::LoadRuntimeConfig))
-            .is_some(),
-        "expanding the knobs disclosure triggers the lazy load"
-    );
-    h.store.runtime_config.set(Loadable::Ready(
-        abstractgateway_console::store::RuntimeConfigData::from_value(&json!({
-            "writable": true,
-            "workspace_policy": {"endpoint": "/api/gateway/workspace/policy"},
-            "process_manager": {"value": false, "source": "default"},
-            "executor": {"value": "codex", "source": "stored"},
-            "operator_email": {"value": null, "source": "default"},
-            "executors": [
-                {"id": "codex", "display": "Codex CLI", "available": true, "default": true},
-                {"id": "claude", "display": "Claude Code", "available": false, "default": false}
-            ]
-        })),
-    ));
+    h.key(b"\r");
     let s = h.turns(2);
-    assert!(s.contains("Runtime knobs"), "knob block:\n{s}");
     assert!(
-        s.contains("executor: codex  (stored)"),
-        "a knob with its source:\n{s}"
-    );
-    // Round 10 (Y1): the round-9 gateway serves no workspace knobs (the
-    // policy lives under Accounts): no workspace row, no editor, and the
-    // `workspace_policy` pointer is not rendered as a knob.
-    for gone in [
-        "default_workspace",
-        "launch_folder_trust",
-        "scope_overrides",
-        "Edit workspace access policy",
-        "workspace_policy",
-    ] {
-        assert!(!s.contains(gone), "{gone:?} still rendered:\n{s}");
-    }
-    assert!(
-        s.contains("executor: codex  (stored)"),
-        "knob value + provenance:\n{s}"
-    );
-    assert!(
-        s.contains("process_manager: off  (default)"),
-        "bool knob rendered:\n{s}"
-    );
-    assert!(
-        s.contains("operator_email: —  (default)"),
-        "null renders as an honest dash:\n{s}"
-    );
-    assert!(
-        s.contains("Codex CLI (default)") && s.contains("Claude Code — unavailable"),
-        "executors availability-honest:\n{s}"
+        s.contains("Configure provider") && !s.contains("Discard changes?"),
+        "Enter kept editing:\n{s}"
     );
 }
 
@@ -3816,30 +3650,17 @@ fn title_bar_and_separator_survive_content_pressure() {
         for screen in ui::NAV_ORDER {
             h.ui.screen.set(screen);
             let scr = h.turns(3);
-            // The Setup step has no jump key: its tab is titled bare.
-            let want = match ui::screen_key(screen) {
-                Some(k) => format!("{k} {}", ui::SCREENS[screen]),
-                None => ui::SCREENS[screen].to_string(),
-            };
+            let want = ui::SCREENS[screen];
             let lines: Vec<&str> = scr.lines().collect();
             assert!(
-                lines[0].contains("AbstractGateway Console"),
+                lines[0].contains("AbstractGateway ·"),
                 "title bar at row 0 (wizard={wizard} screen={screen}):\n{scr}"
             );
-            // Row 1 separates the title from the tabs: the screen
-            // list's group line (DESIGN-v2 §1), never a component.
+            // R15: row 1 is the nav strip (110 cols), windowed around the
+            // ACTIVE screen — its title is always on it.
             assert!(
-                lines[1].contains("ACCOUNTS 2 · WORK 3-6 · MODELS 7 8 9 0 · SYSTEM H T N"),
-                "group line under the title (wizard={wizard} screen={screen}):\n{scr}"
-            );
-            // With 8 tabs the bar OVERFLOWS at 110 cols and windows
-            // (sticky around the active tab) — so the chrome check is
-            // "the ACTIVE tab's title sits on row 2", which holds at
-            // every screen; "1 Connection" is honestly behind ‹ when
-            // the window has slid right.
-            assert!(
-                lines[2].contains(&want),
-                "tab bar at row 2 shows '{want}' (wizard={wizard} screen={screen}):\n{scr}"
+                lines[1].contains(want),
+                "nav strip at row 1 shows '{want}' (wizard={wizard} screen={screen}):\n{scr}"
             );
         }
     }
@@ -3853,19 +3674,20 @@ fn footer_leads_with_the_screen_keys_at_80x24() {
     h.connect_as_admin();
     h.ui.wizard.set(false);
     for (screen, lead) in [
-        (1usize, "v local/remote/available"),
-        (2, "Enter/e edit route"),
-        (3, "Tab tab"),
-        (4, "Enter inspect runtime"),
-        (5, "Tab tab · space Available to users"),
-        (7, "u unload"),
+        (1usize, "↑↓ rows · Tab next table"),
+        (2, "↑↓ rows · Enter Configure"),
+        (3, "↑↓ rows · Enter Email"),
+        (4, "↑↓ Enter open runtime"),
+        (5, "↑↓ rows · Enter Export"),
+        (7, "↑↓ rows · Tab actions · e Estimate"),
     ] {
         h.ui.screen.set(screen);
         let s = h.turns(3);
         // The key-hint bar wraps onto two lines (R7.2): its FIRST line
         // leads with the screen's own verb.
+        // R15 §2.7: ONE status row (the last), leading with the screen's keys.
         let rows: Vec<&str> = s.lines().filter(|l| !l.trim().is_empty()).collect();
-        let first = rows[rows.len() - 2];
+        let first = rows[rows.len() - 1];
         assert!(
             first.trim_start().starts_with(lead),
             "screen {screen} footer leads with '{lead}':\n{s}"
@@ -4079,7 +3901,10 @@ fn select_popup_inside_modal_opens_adjacent_to_its_field() {
     }
     h.type_text("\r");
     h.turns(2);
-    h.key(b"\x1b[B");
+    // R15: the mode Segmented — Tab to "override", Enter picks it.
+    h.key(b"\t");
+    h.turn();
+    h.key(b"\r");
     h.turns(2);
     h.key(b"\t");
     h.turn();
@@ -4127,8 +3952,8 @@ fn first_run_screens_survive_tight_height() {
     h.goto_screen(3);
     let s = h.turns(3);
     assert!(
-        s.contains("alice") && s.contains("kind:"),
-        "the accounts table and its legend render (not crushed):\n{s}"
+        s.contains("alice") && s.contains("Actions"),
+        "the accounts table renders (not crushed):\n{s}"
     );
 
     // Review with one journal entry (the operator who did the wizard
@@ -4149,8 +3974,8 @@ fn first_run_screens_survive_tight_height() {
         "live-test teaching line survives beside a journal entry:\n{s}"
     );
     assert!(
-        s.contains("Generate (Enter)"),
-        "the Generate button renders inside its block:\n{s}"
+        s.contains(" Send "),
+        "the R15 Send button renders inside its block:\n{s}"
     );
 }
 
@@ -4217,32 +4042,33 @@ fn wizard_steps_carry_a_goal_line() {
 /// (the operator is deliberately changing an existing profile).
 #[test]
 fn profile_form_folds_advanced_fields_on_create() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_available_providers();
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
-    h.turns(2);
+    // R15 D1: no disclosure ("More options" / "Advanced") — every field of
+    // the web's endpoint modal is visible, create and edit alike, with the
+    // model allowlist under its content-named section "Visible models".
+    let mut h = providers_harness();
     h.type_text("a");
     let s = h.turns(2);
-    // Happy path visible.
-    assert!(s.contains("family"), "family in happy path:\n{s}");
-    assert!(s.contains("API key"), "API key in happy path:\n{s}");
-    // The disclosure header is present…
-    assert!(s.contains("More options"), "disclosure header:\n{s}");
-    // …and the advanced fields are folded away (scope radio hidden).
-    assert!(
-        !s.contains("just this login"),
-        "scope folded on create:\n{s}"
-    );
+    for needle in [
+        "Provider type",
+        "Who can use it?",
+        "Provider ID",
+        "Name",
+        "Description",
+        "Base URL",
+        "API key",
+        "Enabled",
+        "Visible models",
+    ] {
+        assert!(s.contains(needle), "{needle:?} on create:\n{s}");
+    }
+    assert!(!s.contains("More options"), "no disclosure:\n{s}");
     h.press_escape();
     h.turns(2);
-
-    // Edit mode opens the disclosure: scope is visible immediately.
     h.type_text("e");
     let s = h.turns(2);
     assert!(
-        s.contains("just this login"),
-        "edit mode opens the advanced fields:\n{s}"
+        s.contains("Who can use it?") && s.contains("Clear stored API key"),
+        "edit shows them too:\n{s}"
     );
 }
 
@@ -4262,7 +4088,7 @@ fn connection_screen_fits_at_macos_default_80x24() {
     let s = h.turns(3);
     let lines: Vec<&str> = s.lines().collect();
     assert!(
-        lines[0].contains("AbstractGateway Console"),
+        lines[0].contains("AbstractGateway ·"),
         "title survives:\n{s}"
     );
     // The connected identity badge (admin@default) must render — it was
@@ -4290,9 +4116,32 @@ fn connection_screen_fits_at_macos_default_80x24() {
 use abstractgateway_console::store::{RunScope, RunsData};
 
 /// SGR mouse press+release at 1-based cell (x, y).
+/// Answer a destructive confirmation (`confirm_danger`: the danger option
+/// is first, Cancel/Keep preselected): Shift+Tab to it, then Enter.
+fn answer_danger(h: &mut Harness) {
+    h.key(b"\x1b[Z"); // Shift+Tab to the action button
+    h.turn();
+    h.key(b"\r");
+    h.turns(2);
+}
+
 fn click_at(h: &mut Harness, x: usize, y: usize) {
     h.key(format!("\x1b[<0;{x};{y}M").as_bytes());
     h.key(format!("\x1b[<0;{x};{y}m").as_bytes());
+}
+
+/// Click the last on-screen occurrence of `label` (a dialog's button).
+fn click_last_text(h: &mut Harness, label: &str) {
+    let s = h.turns(1);
+    let (y, line) = s
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains(label))
+        .last()
+        .unwrap_or_else(|| panic!("'{label}' not on screen:\n{s}"));
+    let x = line[..line.rfind(label).unwrap()].chars().count() + 2;
+    click_at(h, x, y + 1);
+    h.turns(2);
 }
 
 /// Both presses of a double-click in one input batch: the engine's
@@ -4302,6 +4151,22 @@ fn click_at(h: &mut Harness, x: usize, y: usize) {
 fn double_click_at(h: &mut Harness, x: usize, y: usize) {
     click_at(h, x, y);
     click_at(h, x, y);
+}
+
+/// R15-B: click the LAST on-screen occurrence of `label` (a dialog's
+/// button sits above the page that may repeat the word).
+fn click_label(h: &mut Harness, label: &str) {
+    let s = h.turns(1);
+    let (y, line) = s
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains(label))
+        .last()
+        .unwrap_or_else(|| panic!("{label:?} not on screen:\n{s}"));
+    let b = line.rfind(label).unwrap();
+    let x = line[..b].chars().count() + 2;
+    click_at(h, x, y + 1);
+    h.turns(2);
 }
 
 /// Put the caret in the text field labelled `label` (the field column
@@ -4363,7 +4228,7 @@ fn runtimes_screen_loads_nothing_eagerly() {
         "NOTHING below the inventory loads before a choice: {sent:?}"
     );
     assert!(
-        s.contains("select a runtime above"),
+        s.contains("Select a runtime above"),
         "the detail region teaches the gesture:\n{s}"
     );
     assert!(
@@ -4421,7 +4286,7 @@ fn runs_panel_follows_runtime_selection() {
         "the inspector tabs render once a runtime is chosen:\n{s}"
     );
     assert!(
-        s.contains("loading this runtime's runs…"),
+        s.contains("Loading runs…"),
         "the load names itself while in flight:\n{s}"
     );
 
@@ -4449,8 +4314,8 @@ fn runs_panel_follows_runtime_selection() {
         "empty state names the plane AND the why:\n{s}"
     );
     assert!(
-        s.contains("entity plane: Testor"),
-        "scope line names the plane:\n{s}"
+        s.contains("▷ Runtime runtime_testor"),
+        "the inspector names the plane:\n{s}"
     );
 }
 
@@ -4577,15 +4442,14 @@ fn data_tab_lazy_load_and_attribution() {
         !s.contains("gateway-root-store") && !s.contains("abstractcore-blocs"),
         "root + shared stores stay off a nested plane's tab:\n{s}"
     );
-    assert!(
-        s.contains("data dir: /tmp/runtime/entities/testor"),
-        "the plane's dir fact renders:\n{s}"
-    );
 
     // The default plane sees its own PURGEABLE stores AND the shared
     // caches; durable stores (safe_to_purge=false) are NOT caches and
     // never render on the Cache tab (operator 2026-08-19).
     h.key(b"\x1b[A");
+    h.turns(2);
+    // Choosing lands on Runs (the web's); back to the Cache tab.
+    h.ui.rt_tab.set(2);
     let s = h.turns(3);
     assert!(
         s.contains("abstractcore-blocs"),
@@ -4594,10 +4458,6 @@ fn data_tab_lazy_load_and_attribution() {
     assert!(
         !s.contains("gateway-root-store"),
         "durable stores are not caches — kept off the Cache tab:\n{s}"
-    );
-    assert!(
-        s.contains("shared (outside planes)"),
-        "shared rows carry the label:\n{s}"
     );
     assert!(
         !s.contains("testor-artifacts"),
@@ -4648,7 +4508,7 @@ fn foreign_plane_cancel_and_steer_refused() {
     );
     let notice = h.store.notice.get_untracked().unwrap_or_default();
     assert!(
-        notice.contains("ticked by that plane's own runtime"),
+        notice.contains("through the default runtime's command lane"),
         "refusal names the mechanism: {notice}"
     );
 
@@ -4693,9 +4553,11 @@ fn run_double_click_opens_steer_form() {
     h.key(b"\r");
     let s = h.turns(3);
     assert!(
-        s.contains("Run      run-0000-aaaaaaaa"),
-        "Enter expands the run's Inspect rows:\n{s}"
+        s.contains("Run run-0000-aaa"),
+        "Enter opens the run's Inspect dialog (the web's):\n{s}"
     );
+    h.press_escape();
+    h.turns(2);
     h.type_text("s");
     let s = h.turns(3);
     assert!(
@@ -4722,9 +4584,10 @@ fn double_click_opens_user_editor() {
     let y = find_row(&s, "alice");
     double_click_at(&mut h, 4, y);
     let s = h.turns(3);
+    // R15 §2.3: double-click = Enter = the row's FIRST action (Email).
     assert!(
-        s.contains("Edit user 'alice'"),
-        "double-click selects then opens the editor:\n{s}"
+        s.contains("Email — alice"),
+        "double-click selects then runs the first action:\n{s}"
     );
     assert_eq!(
         h.ui.account_sel.get_untracked(),
@@ -4752,9 +4615,14 @@ fn double_click_opens_entity_manage_menu() {
     double_click_at(&mut h, 4, y);
     let s = h.turns(3);
     assert!(
-        s.contains("Manage entity 'Testor'"),
-        "double-click opens the manage menu:\n{s}"
+        s.contains("Email — testor"),
+        "double-click runs the entity row's first action (Email):\n{s}"
     );
+    h.press_escape();
+    // Manage stays one key (or its ⬖ button) away.
+    h.type_text("m");
+    let s = h.turns(3);
+    assert!(s.contains("Manage — Testor"), "m opens Manage:\n{s}");
 }
 
 /// COMPLAINT A, providers unified table: Enter on the focused table
@@ -4762,25 +4630,15 @@ fn double_click_opens_entity_manage_menu() {
 /// Enter now that an activation is bound — same body as `e`).
 #[test]
 fn enter_activates_profile_editor() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_available_providers();
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
-    h.store.providers.set(Loadable::Ready(providers_fixture()));
-    h.turns(2);
-    // R7.2: Enter expands the row (description, endpoint, its actions);
-    // e opens the editor (the web row's Edit button).
+    let mut h = providers_harness();
+    // R15: a click selects a row of the Available Providers table (and
+    // gives it the keyboard); Enter = the row's first action (Edit).
+    click_after(&mut h, "Available Providers", "test endpoint");
     h.type_text("\r");
     let s = h.turns(3);
     assert!(
-        s.contains("test endpoint") && s.contains("e Edit · d Delete"),
-        "Enter expands the selected profile:\n{s}"
-    );
-    h.type_text("e");
-    let s = h.turns(3);
-    assert!(
-        s.contains("Edit profile 'acme'"),
-        "e opens the selected profile in its editor:\n{s}"
+        s.contains("Configure Custom OpenAI-compatible"),
+        "Enter opens the selected profile in its editor:\n{s}"
     );
 }
 
@@ -4922,7 +4780,7 @@ fn gateway_reset_forgets_the_chosen_runtime() {
     h.goto_screen(0);
     h.ui.wizard.set(true);
     h.turns(2);
-    click_field(&mut h, "Gateway URL");
+    click_field(&mut h, "Gateway address");
     h.type_text("\r");
     h.turns(2);
     assert!(
@@ -4945,7 +4803,7 @@ fn gateway_reset_forgets_the_chosen_runtime() {
     );
     let s = h.turns(1);
     assert!(
-        s.contains("select a runtime above"),
+        s.contains("Select a runtime above"),
         "teaching line back after the reset:\n{s}"
     );
 }
@@ -4956,7 +4814,7 @@ fn gateway_reset_forgets_the_chosen_runtime() {
 /// re-mount the table's `.autofocus()` and yank focus off the tabs
 /// bar — turning the next arrow key into a plane switch (which LOADS).
 #[test]
-fn busy_tick_does_not_steal_focus_from_the_tabs_bar() {
+fn busy_tick_does_not_steal_focus_from_the_inspector_segments() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(4);
@@ -4980,34 +4838,28 @@ fn busy_tick_does_not_steal_focus_from_the_tabs_bar() {
         },
         rows: vec![],
     }));
-    h.turns(2);
-
-    // Reach the tabs bar with the keyboard and prove it owns ←/→.
-    h.key(b"\t");
+    let s = h.turns(2);
+    // Focus the Runs segment by mouse, then Tab to Artifacts.
+    let y = find_row(&s, "▷ Runtime");
+    let line = s.lines().nth(y - 1).unwrap();
+    let x = line[..line.find(" Runs ").unwrap()].chars().count() + 2;
+    click_at(&mut h, x, y);
     h.turns(1);
-    h.key(b"\x1b[C"); // Right → Data & cache
-    h.turns(2);
-    assert_eq!(
-        h.ui.rt_tab.get_untracked(),
-        1,
-        "tabs bar reachable via Tab; Right switches"
-    );
-    h.key(b"\x1b[D"); // Left → Sessions
-    h.turns(2);
-    assert_eq!(h.ui.rt_tab.get_untracked(), 0);
+    h.key(b"\t"); // Artifacts segment
+    h.turns(1);
+    h.ui.rt_tab.set(0);
+    h.turns(1);
     let _ = h.drain_cmds();
-
     // The busy heartbeat ticks while some op runs elsewhere.
     h.store.tick.update(|t| *t += 1);
     h.turns(2);
-
-    // Focus must still be on the tabs bar: Right switches tabs…
-    h.key(b"\x1b[C");
+    // Focus must still be on the Artifacts segment: Enter picks it…
+    h.key(b"\r");
     h.turns(2);
     assert_eq!(
         h.ui.rt_tab.get_untracked(),
         1,
-        "focus stays on the tabs bar across busy ticks"
+        "focus stays on the segment across busy ticks"
     );
     // …and an arrow key must NOT move the inventory selection (a moved
     // selection is a CHOOSE — it loads another plane nobody picked).
@@ -5021,9 +4873,6 @@ fn busy_tick_does_not_steal_focus_from_the_tabs_bar() {
     );
 }
 
-/// Layout pin: the redesigned screen must FIT at the macOS default
-/// 80x24 — inventory header, inspector tabs, and the footer hints all
-/// visible with a runtime chosen (the 0240 shrink class).
 #[test]
 fn runtimes_inspector_fits_at_80x24() {
     let mut h = harness_sized(Size::new(80, 24));
@@ -5034,7 +4883,7 @@ fn runtimes_inspector_fits_at_80x24() {
         .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
     let s = h.turns(2);
     assert!(
-        s.contains("select a runtime above"),
+        s.contains("Select a runtime above"),
         "teaching line visible at 80x24:\n{s}"
     );
     h.type_text("\r"); // choose the default plane
@@ -5058,15 +4907,15 @@ fn runtimes_inspector_fits_at_80x24() {
         "at least one run row visible at 80x24:\n{s}"
     );
     assert!(
-        s.contains("kind") && s.contains("runtime"),
+        s.contains("Kind") && s.contains("Runtime"),
         "inventory table header survives at 80x24:\n{s}"
     );
     assert!(
-        s.contains("Runtime knobs"),
-        "knobs disclosure header survives at 80x24:\n{s}"
+        !s.contains("Runtime knobs"),
+        "the knobs live on the pages that own them (DESIGN D3):\n{s}"
     );
     assert!(
-        s.contains("inspect runtime"),
+        s.contains("open runtime"),
         "the screen's own keys lead the footer at 80x24:\n{s}"
     );
 }
@@ -5096,8 +4945,8 @@ fn unmaterialized_plane_data_dir_renders_a_dash() {
     h.store.data_homes.set(Loadable::Ready(vec![]));
     let s = h.turns(3);
     assert!(
-        s.contains("data dir: —"),
-        "an unmaterialized plane's dir renders an honest dash:\n{s}"
+        s.contains("(not materialized yet)"),
+        "an unmaterialized plane says so (the web's Owner cell):\n{s}"
     );
 }
 
@@ -5143,11 +4992,10 @@ fn home_plane_index_duplicate_dirs_first_wins() {
     assert_eq!(home_plane_index(&planes2, "/tmp/runtime/x"), Some(1));
 }
 
-/// Gesture-gap probe (engine Table policy): a single click on the
-/// ALREADY-selected row fires neither on_select (no change) nor
-/// on_activate (click_count 1) — so the very first click most
-/// operators make (row 0 is pre-highlighted) cannot be the ONLY
-/// taught gesture. The teaching line must name the working gestures.
+/// Gesture-gap pin: the very first click most operators make lands on
+/// the PRE-highlighted row 0. On the engine Table that click was dead
+/// (no selection change, click count 1); the R15 inventory (DataTable)
+/// chooses on that click — the web's "click a runtime to open it".
 #[test]
 fn teaching_line_names_working_gestures_for_the_highlighted_row() {
     let mut h = harness();
@@ -5157,27 +5005,16 @@ fn teaching_line_names_working_gestures_for_the_highlighted_row() {
         .runtimes
         .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
     let s = h.turns(2);
-    // The dead gesture, demonstrated: one click on the pre-selected row
-    // (the label column ellipsizes, so match the un-truncated head).
-    let y = find_row(&s, "Gateway default");
+    assert!(
+        s.contains("Select a runtime above — click a row — to load its runs and cache."),
+        "the web's teaching line:\n{s}"
+    );
+    let y = find_row(&s, "Eligible workspaces");
     click_at(&mut h, 6, y);
     h.turns(3);
     assert!(
-        h.ui.rt_detail.get_untracked().is_none(),
-        "engine fact this test documents: a single click on the selected row is DEAD"
-    );
-    // Therefore the teaching must offer Enter/double-click explicitly.
-    let s = h.turns(1);
-    assert!(
-        s.contains("select a runtime above") && s.contains("double-click the highlighted"),
-        "teaching line names a gesture that works on the highlighted row:\n{s}"
-    );
-    // And the taught gesture must actually work: double-click chooses.
-    double_click_at(&mut h, 6, y);
-    h.turns(3);
-    assert!(
         h.ui.rt_detail.get_untracked().is_some(),
-        "double-click on the highlighted row chooses it"
+        "one click on the highlighted row chooses it"
     );
 }
 
@@ -5333,10 +5170,11 @@ fn routes_screen_shows_weight_availability_and_no_banner_when_every_route_is_ans
         s.contains("installed"),
         "present weights read plainly:\n{s}"
     );
-    assert!(s.contains("weights"), "the column is labelled:\n{s}");
+    assert!(s.contains("Weights"), "the column is labelled:\n{s}");
+    // R15: the absent, downloadable row carries the web's Download button.
     assert!(
-        s.contains("download weights"),
-        "the hint row offers the verb on THIS screen:\n{s}"
+        s.contains('\u{2913}'),
+        "the row offers the Download button on THIS screen:\n{s}"
     );
 }
 
@@ -5346,7 +5184,8 @@ fn routes_screen_shows_weight_availability_and_no_banner_when_every_route_is_ans
 /// store), and keeps the actionable verb.
 #[test]
 fn routes_screen_banners_only_the_routes_with_no_model_at_all() {
-    let mut h = harness_sized(Size::new(150, 44));
+    // R15: 171 wide = the old 150-cell page beside the nav rail.
+    let mut h = harness_sized(Size::new(171, 44));
     h.connect_as_admin();
     h.goto_screen(2);
     h.store.routes.set(Loadable::Ready(routes_fixture()));
@@ -5355,7 +5194,7 @@ fn routes_screen_banners_only_the_routes_with_no_model_at_all() {
         .set(Loadable::Ready(availability_fixture_fresh_install()));
     let s = h.turns(2);
     assert!(
-        s.contains("1 route with no model yet"),
+        s.contains("One route has no model yet (input.text)."),
         "the banner counts ROUTES that need one, not catalog entries:\n{s}"
     );
     assert!(
@@ -5367,8 +5206,8 @@ fn routes_screen_banners_only_the_routes_with_no_model_at_all() {
         "the banner names the ARTIFACT, not the served id:\n{s}"
     );
     assert!(
-        s.contains("w downloads"),
-        "the actionable verb survives the elastic list:\n{s}"
+        s.contains("Download missing"),
+        "the actionable button is there (the web's Download missing):\n{s}"
     );
 }
 
@@ -5383,9 +5222,10 @@ fn a_applies_the_recommended_routes() {
     h.goto_screen(2);
     h.store.routes.set(Loadable::Ready(routes_fixture()));
     let s = h.turns(2);
+    // R15: the web's head button (its key is `a`).
     assert!(
-        s.contains("a applies the recommended routes"),
-        "the banner names the verb:\n{s}"
+        s.contains(" Apply recommended "),
+        "the head names the verb:\n{s}"
     );
     h.drain_cmds();
 
@@ -5396,7 +5236,7 @@ fn a_applies_the_recommended_routes() {
         "the prompt asks first:\n{s}"
     );
     assert!(h.drain_cmds().is_empty(), "nothing before the answer");
-    // The DEFAULT answer keeps the operator's routes.
+    // The answer (the focused [Apply recommended]) keeps the operator's routes.
     h.key(b"\r");
     h.turns(2);
     let dbg = format!("{:?}", h.drain_cmds());
@@ -5430,7 +5270,7 @@ fn a_applies_the_recommended_routes() {
     h.store.apply_followup.set(Some("Replace mine too".into()));
     let s = h.turns(3);
     assert!(s.contains("Leave them as they are"), "offered again:\n{s}");
-    h.key(b"\x1b[A");
+    h.key(b"\x1b[Z"); // Shift+Tab: from [Leave them as they are] to the action
     h.turn();
     h.key(b"\r");
     h.turns(2);
@@ -5494,9 +5334,9 @@ fn w_confirms_then_downloads_the_recommended_artifact() {
         .availability
         .set(Loadable::Ready(availability_fixture()));
     let s = h.turns(2);
-    // The verb rides in the row of an absent, downloadable model.
+    // R15: the web's pill, and the row's Download button (key w).
     assert!(
-        s.contains("not downloaded — w: download"),
+        s.contains("not downloaded") && s.contains('\u{2913}'),
         "weights cell:\n{s}"
     );
     h.drain_cmds();
@@ -5530,9 +5370,7 @@ fn w_confirms_then_downloads_the_recommended_artifact() {
         h.drain_cmds().is_empty(),
         "nothing downloads before the operator confirms"
     );
-    // Danger confirms default to the SAFE option; move to Download.
-    h.key(b"\x1b[A");
-    h.turn();
+    // R15: a download is a plain confirm — the focus is on [Download].
     h.key(b"\r");
     h.turns(2);
     let dbg = format!("{:?}", h.drain_cmds());
@@ -5706,8 +5544,14 @@ fn grid_rows(screen: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut inside = false;
     for l in screen.lines() {
+        // R15: drop the nav rail (20 cells + its │) when the frame has one.
+        let l: String = if l.chars().nth(20) == Some('│') {
+            l.chars().skip(21).collect()
+        } else {
+            l.to_string()
+        };
         let body = l.trim_matches(|c| c == '│' || c == ' ');
-        if body.starts_with("route ") {
+        if body.starts_with("route ") || body.starts_with("Route ") {
             inside = true;
             continue;
         }
@@ -5740,7 +5584,8 @@ fn routes_grid_prints_whole_names_when_the_terminal_has_room() {
     for whole in [
         "AbstractFramework/wan2.2-t2v-a14b-diffusers-8bit",
         "AbstractFramework/wan2.2-i2v-a14b-diffusers-8bit",
-        "abstractcore.gateway_runtime",
+        // R15: the web's source label for abstractcore.gateway_runtime.
+        "Gateway baseline",
         "endpoint:airelay",
         "covered by input.text",
     ] {
@@ -5774,22 +5619,41 @@ fn narrow_routes_grid_keeps_the_discriminating_tail() {
     // Read the model cell across its wrap: the line holding the tag plus
     // the continuation line under it, at the same column.
     let lines: Vec<&str> = s.lines().collect();
-    for (tag, whole) in [
+    // R15: the narrow grid stacks the provider under the model (Cell::Lines),
+    // so the model's wrap is read until that line.
+    let starts: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.contains("AbstractFramework"))
+        .map(|(i, _)| i)
+        .collect();
+    for (n, (tag, whole)) in [
         ("t2v", "AbstractFramework/wan2.2-t2v-a14b-diffusers-8bit"),
         ("i2v", "AbstractFramework/wan2.2-i2v-a14b-diffusers-8bit"),
-    ] {
-        let i = lines.iter().position(|l| l.contains(tag)).expect("row");
-        let col = lines[i].find("AbstractFramework").expect("model cell");
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let i = *starts.get(n).expect("row");
+        // A CELL column (chars, not bytes: the second line carries "·").
+        let byte = lines[i].find("AbstractFramework").expect("model cell");
+        let col = lines[i][..byte].chars().count();
         let take = |l: &str| -> String {
-            l.get(col..)
-                .unwrap_or("")
+            l.chars()
+                .skip(col)
+                .collect::<String>()
                 .split("  ")
                 .next()
                 .unwrap_or("")
                 .trim()
                 .to_string()
         };
-        let joined = format!("{}{}", take(lines[i]), take(lines[i + 1]));
+        let mut joined = take(lines[i]);
+        let mut k = i + 1;
+        while joined.len() < whole.len() && k < lines.len() {
+            joined.push_str(&take(lines[k]));
+            k += 1;
+        }
         assert_eq!(joined, whole, "{tag} cell whole across its wrap:\n{s}");
     }
     // The closed vocabulary keeps its whole word at every width.
@@ -5834,17 +5698,24 @@ fn runtime_tabs_show_toolbar_state_and_gestures() {
         rows: runs_fixture_rows(3, "running"),
     }));
     let s = h.turns(2);
+    // R15: the state is the toolbar's own controls (the web's dropdown
+    // and search box) and the web's pager.
+    let bar = s
+        .lines()
+        .find(|l| l.contains("root runs only"))
+        .unwrap_or_else(|| panic!("toolbar:\n{s}"));
     assert!(
-        s.contains("status=running"),
-        "status filter on the line:\n{s}"
+        bar.contains("running"),
+        "status filter in the dropdown:\n{s}"
     );
-    assert!(s.contains("q=\"coder\""), "query on the line:\n{s}");
-    assert!(s.contains("101–103"), "page position on the line:\n{s}");
-    // Gestures are taught once, in the footer hint bar (repeating them on
-    // every panel line truncated the state at 108 columns).
+    assert!(bar.contains("coder"), "query in the search box:\n{s}");
     assert!(
-        s.contains("f filter") && s.contains("search") && s.contains("n/p"),
-        "the footer teaches the toolbar gestures:\n{s}"
+        s.contains("101–103 · more"),
+        "page position in the pager:\n{s}"
+    );
+    assert!(
+        s.contains("f status") && s.contains("n/p page"),
+        "the footer teaches the toolbar keys:\n{s}"
     );
 
     // --- Artifacts tab: same shape, with the real total ---
@@ -5871,7 +5742,11 @@ fn runtime_tabs_show_toolbar_state_and_gestures() {
     }));
     let s = h.turns(2);
     assert!(s.contains("hero.png"), "artifact row renders:\n{s}");
-    assert!(s.contains("type=image"), "type filter named:\n{s}");
+    assert!(
+        s.lines()
+            .any(|l| l.contains("▐image") && l.contains("Search artifacts")),
+        "type filter in the dropdown:\n{s}"
+    );
     assert!(
         s.contains("of 79147"),
         "the real total, never a 'newest N' cap:\n{s}"
@@ -5887,7 +5762,7 @@ fn runtime_tabs_show_toolbar_state_and_gestures() {
     }]));
     let s = h.turns(2);
     assert!(
-        s.contains("abstractgateway.log") && s.contains("Enter tail"),
+        s.contains("abstractgateway.log") && s.contains("o tail"),
         "log FILES list with the tail gesture:\n{s}"
     );
 }
@@ -5933,7 +5808,8 @@ fn cache_tab_lists_caches_and_stale_rows_only() {
         "durable stores are not caches:\n{s}"
     );
     assert!(
-        s.contains("gateway-artifacts-dead") && s.contains("stale row"),
+        s.contains("gateway-artifacts-dead")
+            && s.contains("Stale registrations (1, whole machine registry)"),
         "stale registrations surface HERE with an honest marker:\n{s}"
     );
 }
@@ -5986,7 +5862,7 @@ fn list_tabs_have_own_selection_and_a_visible_toolbar() {
         "the filter DROPDOWN is visible:\n{s}"
     );
     assert!(
-        s.contains("search log files"),
+        s.contains("Search log files"),
         "the SEARCH box is visible:\n{s}"
     );
 
@@ -6036,7 +5912,7 @@ fn list_tabs_have_own_selection_and_a_visible_toolbar() {
         "artifacts filter dropdown visible:\n{s}"
     );
     assert!(
-        s.contains("search artifacts"),
+        s.contains("Search artifacts"),
         "artifacts search box visible:\n{s}"
     );
     h.ui.rt_art_sel.set(4);
@@ -6186,18 +6062,18 @@ fn log_tail_scrolls_through_its_content() {
 
     // THE MOUSE WHEEL SCROLLS TOO (operator 2026-08-19). SGR wheel-down
     // over the viewer: `CSI < 65 ; col ; row M`, three lines per notch.
-    h.key(b"\x1b[<65;60;12M");
+    h.key(b"\x1b[<65;60;16M");
     let s = h.turns(3);
     assert!(
         s.contains("line 4/60"),
         "one wheel notch scrolls three lines:\n{s}"
     );
-    h.key(b"\x1b[<65;60;12M");
-    h.key(b"\x1b[<65;60;12M");
+    h.key(b"\x1b[<65;60;16M");
+    h.key(b"\x1b[<65;60;16M");
     let s = h.turns(3);
     assert!(s.contains("line 10/60"), "the wheel keeps scrolling:\n{s}");
     // And back up.
-    h.key(b"\x1b[<64;60;12M");
+    h.key(b"\x1b[<64;60;16M");
     let s = h.turns(3);
     assert!(s.contains("line 7/60"), "wheel-up scrolls back:\n{s}");
 }
@@ -6268,8 +6144,8 @@ fn a_filetype_glob_filters_the_cache_tab() {
     );
 }
 
-/// The search modal states the rule ONCE, above the field — the glob half
-/// is undiscoverable otherwise, and the box is where a user meets it.
+/// R15: the search box is ON the page (the web's toolbar), so `/` says
+/// where it is instead of opening a modal.
 #[test]
 fn the_search_modal_teaches_the_glob_half() {
     let mut h = harness();
@@ -6279,21 +6155,20 @@ fn the_search_modal_teaches_the_glob_half() {
         .runtimes
         .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
     h.turns(2);
-    h.key(b"\x1b[B"); // choose a plane — `/` refuses without one
+    h.key(b"\x1b[B");
     h.turns(2);
     h.ui.rt_tab.set(1);
-    h.turns(2);
-    // `/` opens the active tab's search box.
-    h.key(b"/");
     let s = h.turns(2);
-    assert!(s.contains("Search artifacts"), "the modal opened:\n{s}");
     assert!(
-        s.contains("*.jpg"),
-        "the modal names the glob half by example:\n{s}"
+        s.contains("Search artifacts — name, kind, tags"),
+        "the box:\n{s}"
     );
+    h.key(b"/");
+    h.turns(2);
+    let notice = h.store.notice.get_untracked().unwrap_or_default();
     assert!(
-        s.contains("substring"),
-        "and names the half a plain query still gets:\n{s}"
+        notice.contains("search field is in the toolbar"),
+        "{notice}"
     );
 }
 
@@ -6633,7 +6508,9 @@ fn models_tab_renders_gauges_and_table_from_fixture() {
 /// them. Nothing was removed and nothing was reordered.
 #[test]
 fn models_table_and_its_lock_verb_are_reachable_at_80x24() {
-    let mut h = harness_sized(Size::new(80, 24));
+    // R15: the shell chrome shrank by 3 rows; 80x21 keeps the 80x24 page area
+    // this test was written against (the overflow guard below needs it).
+    let mut h = harness_sized(Size::new(80, 21));
     h.connect_as_admin();
     h.goto_screen(7);
     h.store
@@ -6642,13 +6519,15 @@ fn models_table_and_its_lock_verb_are_reachable_at_80x24() {
     let s = h.turns(2);
 
     // 1. THE TABLE IS THERE AT REST, with the columns the operator came for.
+    // R15: the web's columns (Modality · Provider · Model · Resident · Size ·
+    // Context · Flags · Actions); the KV cache column joins from 100 cells.
     let header = s
         .lines()
-        .find(|l| l.contains("modality") && l.contains("provider"))
+        .find(|l| l.contains("Modality") && l.contains("Provider"))
         .unwrap_or_else(|| panic!("the Loaded table header renders at 80x24:\n{s}"));
     assert!(
-        header.contains("size") && header.contains("cache") && header.contains("lock"),
-        "the size/cache/lock columns are visible, not scrolled off:\n{s}"
+        header.contains("Size") && header.contains("Flags") && header.contains("Actions"),
+        "the size/flags/actions columns are visible, not scrolled off:\n{s}"
     );
     let row = s
         .lines()
@@ -6660,9 +6539,9 @@ fn models_table_and_its_lock_verb_are_reachable_at_80x24() {
     );
 
     // 2. THE LOCK AFFORDANCE IS REACHABLE FOR A ROW — per row, and it names
-    // the verb it will actually perform.
+    // the verb it will actually perform (R15: the row's own button).
     assert!(
-        s.contains("k unlocks"),
+        s.contains("Unlock"),
         "the selected row's lock verb renders at 80x24:\n{s}"
     );
     h.term.push_input(b"\x1b[B");
@@ -6670,7 +6549,7 @@ fn models_table_and_its_lock_verb_are_reachable_at_80x24() {
     h.term.push_input(b"\x1b[B");
     let s = h.turns(2);
     assert!(
-        s.contains("k locks (adopts it)"),
+        s.contains("lockable (adopts it)") && s.contains(" Lock"),
         "moving to the sweep row carries ITS lock verb — the table is not \
          merely visible, it is navigable:\n{s}"
     );
@@ -6682,8 +6561,13 @@ fn models_table_and_its_lock_verb_are_reachable_at_80x24() {
         h.term.push_input(b"\x1b[B");
         h.turn();
     }
-    let s = h.turns(1);
-    assert!(s.contains("RAM"), "the RAM meter is PINNED:\n{s}");
+    // R15: the cards stack and the PAGE scrolls (DESIGN §3.11); the meters
+    // are above the Models card — the wheel brings them back.
+    for _ in 0..12 {
+        h.term.push_input(b"\x1b[<64;10;8M");
+    }
+    let s = h.turns(3);
+    assert!(s.contains("RAM"), "the RAM meter is one wheel away:\n{s}");
     assert!(
         s.contains("128.0 GiB"),
         "the RAM meter keeps its figures, not just its label:\n{s}"
@@ -6697,29 +6581,26 @@ fn models_table_and_its_lock_verb_are_reachable_at_80x24() {
         "the GGUF note is PINNED — it is the caveat that makes the \
          accelerator figure readable:\n{s}"
     );
+    // …and the wheel takes the page back down to the model rows.
+    for _ in 0..12 {
+        h.term.push_input(b"\x1b[<65;10;8M");
+    }
+    let s2 = h.turns(3);
     assert!(
-        s.lines()
-            .any(|l| l.contains("qwen3-32b") && l.contains("yes")),
-        "and the model rows are still there at the tail:\n{s}"
+        s2.lines()
+            .any(|l| l.contains("lmstudio") && l.contains("glm-4.6") && l.contains("yes")),
+        "and the model rows are one wheel away below:\n{s2}"
     );
+    for _ in 0..12 {
+        h.term.push_input(b"\x1b[<64;10;8M");
+    }
+    let s = h.turns(3);
 
-    // 4. THE BOTTOM BORDER IS INTACT — one unbroken `╰───╯` run, not a
-    // clipped detail line wearing the frame's row.
-    let bottom = s
-        .lines()
-        .rev()
-        .find(|l| l.trim_start().starts_with('\u{2570}'))
-        .unwrap_or_else(|| panic!("the block's bottom border renders at 80x24:\n{s}"));
+    // 4. R15: no page border any more; the pinned totals footer closes
+    // the page, on screen, below the table.
     assert!(
-        bottom.trim_end().ends_with('\u{256F}'),
-        "the bottom border closes with its corner:\n{s}"
-    );
-    assert!(
-        bottom
-            .trim()
-            .chars()
-            .all(|c| matches!(c, '\u{2570}' | '\u{2500}' | '\u{256F}')),
-        "nothing is painted ON the bottom border:\n{s}"
+        s.lines().any(|l| l.contains("totals: 2 resident")),
+        "the totals footer renders at 80x24:\n{s}"
     );
 
     // GUARD, before the paging claims below: this fixture must genuinely
@@ -6774,6 +6655,18 @@ fn models_tab_resident_null_renders_the_third_state() {
         .host_state
         .set(Loadable::Ready(host_state_fixture()));
     let s = h.turns(2);
+    // R15 (web parity): the default view is the RESIDENT rows; a configured
+    // / cached row (resident false or unknown) sits behind "Show configured /
+    // cached" — `a` (or a click) shows it.
+    assert!(
+        !s.contains("mystery-model") && s.contains("Show configured / cached (1)"),
+        "the null-resident row waits behind the toggle:\n{s}"
+    );
+    h.key(b"a");
+    // The page scrolls; selecting the row brings it on screen.
+    h.key(b"\x1b[B");
+    h.key(b"\x1b[B");
+    let s = h.turns(2);
     assert!(
         s.contains("mystery-model"),
         "the null-resident row renders:\n{s}"
@@ -6782,9 +6675,11 @@ fn models_tab_resident_null_renders_the_third_state() {
         s.contains("unknown"),
         "null resident renders the distinct third state:\n{s}"
     );
+    // The TABLE row (the selected row's facts line above it reads
+    // "lmstudio / mystery-model · no lock (…)").
     let row = s
         .lines()
-        .find(|l| l.contains("mystery-model"))
+        .find(|l| l.contains("mystery-model") && !l.contains(" / "))
         .expect("mystery-model row");
     assert!(
         row.contains("unknown") && !row.contains(" no "),
@@ -6798,6 +6693,8 @@ fn models_tab_resident_null_renders_the_third_state() {
 fn models_tab_locked_row_shows_the_lock_marker() {
     let mut h = harness();
     h.connect_as_admin();
+    // R15: the unknown-residency row is behind "Show configured / cached".
+    ui::models::set_show_cached(true);
     h.goto_screen(7);
     h.store
         .host_state
@@ -6875,7 +6772,7 @@ fn resources_w_works_with_no_model_resident_across_polls() {
     h.type_text("w");
     let s = h.turns(3);
     assert!(
-        s.contains("Load (warm up) a model"),
+        s.contains("Load (warm up) this model on the host now"),
         "w opens the warm-up form:\n{s}"
     );
 }
@@ -6938,7 +6835,7 @@ fn models_tab_unload_confirms_then_emits_the_cmd() {
     // Again, choosing the danger option explicitly.
     h.type_text("u");
     h.turns(2);
-    h.key(b"\x1b[A"); // up to "Unload"
+    h.key(b"\x1b[Z"); // Shift+Tab to the action button — up to "Unload"
     h.turn();
     h.type_text("\r");
     h.turns(2);
@@ -6988,7 +6885,7 @@ fn models_tab_locked_refusal_offers_force_unload() {
         s.contains("is locked") && s.contains("Force unload"),
         "the second confirm renders:\n{s}"
     );
-    h.key(b"\x1b[A"); // up to the danger option
+    h.key(b"\x1b[Z"); // Shift+Tab to the action button — up to the danger option
     h.turn();
     h.type_text("\r");
     h.turns(2);
@@ -7083,7 +6980,9 @@ fn models_tab_breaks_down_what_is_consuming_memory() {
         "an unknown residency is not an attribution:\n{strip}"
     );
     assert!(line_of("model KV caches").contains("2.0 GiB"));
-    assert!(line_of("session caches").contains("4.0 KiB"));
+    // R15: the page subtitle names "session caches" too — the item is the
+    // indented line of the itemization.
+    assert!(line_of("  session caches ").contains("4.0 KiB"));
     assert!(line_of("gateway process RSS").contains("1.0 GiB"));
     // The references live behind their rule, and are NOT summable with
     // the items above them.
@@ -7149,7 +7048,10 @@ fn models_tab_states_the_gateway_process_rss_exactly_once() {
 /// the strip explains it in the spec's words, wrapped, never truncated.
 #[test]
 fn models_tab_names_the_gguf_case_when_weights_exceed_the_accelerator_heap() {
-    let mut h = harness();
+    // R15: the Resources page also carries the Gateway card and the Models
+    // section; a tall terminal shows the itemization whole (shorter ones
+    // window it — `m` pages, pinned by the 80x24 test).
+    let mut h = harness_sized(Size::new(110, 60));
     h.connect_as_admin();
     h.goto_screen(7);
     let mut d = host_state_fixture();
@@ -7190,12 +7092,13 @@ fn models_tab_locks_an_externally_loaded_sweep_row() {
         .host_state
         .set(Loadable::Ready(host_state_fixture()));
     h.turns(2);
-    // Down twice: qwen3-32b → mystery-model → glm-4.6-gguf (the sweep).
-    h.key(b"\x1b[B");
+    // R15: the resident rows lead (qwen3-32b, glm-4.6-gguf); Down once
+    // reaches the sweep row, whose detail line and Lock button offer the
+    // adoption.
     h.key(b"\x1b[B");
     let s = h.turns(2);
     assert!(
-        s.contains("k locks (adopts it)"),
+        s.contains("lockable (adopts it)") && s.contains(" Lock"),
         "the row's own hint offers the adoption:\n{s}"
     );
     h.type_text("k");
@@ -7221,6 +7124,8 @@ fn models_tab_locks_an_externally_loaded_sweep_row() {
 fn models_tab_refuses_lock_and_unload_on_a_non_resident_row() {
     let mut h = harness();
     h.connect_as_admin();
+    // R15: non-resident rows are behind "Show configured / cached".
+    ui::models::set_show_cached(true);
     h.goto_screen(7);
     let mut d = host_state_fixture();
     d.models.push(abstractgateway_console::store::ModelRow {
@@ -7280,9 +7185,13 @@ fn models_tab_warmup_form_picks_provider_and_model_from_the_catalogs() {
     h.turns(2);
     h.type_text("w");
     let s = h.turns(2);
-    assert!(s.contains("Load (warm up) a model"), "{s}");
+    // R15: the web's words — "Load model", "lock in memory" (a Toggle).
     assert!(
-        s.contains("lock after load"),
+        s.contains("Load model") && s.contains("Load (warm up) this model on the host now"),
+        "{s}"
+    );
+    assert!(
+        s.contains("lock in memory"),
         "the lock-after-load option survives the rework:\n{s}"
     );
     // The highlighted row prefilled the provider picker, and picking it
@@ -7312,9 +7221,9 @@ fn models_tab_warmup_form_picks_provider_and_model_from_the_catalogs() {
                     .is_some_and(|head| head.trim_end().ends_with(label))
         })
     };
-    let prov = field_row("provider").expect("the provider field is a picker");
+    let prov = field_row("Provider").expect("the provider field is a picker");
     assert!(prov.contains("mlx"), "{prov}");
-    let model = field_row("model").expect("the model field is a picker over the catalog");
+    let model = field_row("Model").expect("the model field is a picker over the catalog");
     assert!(model.contains("qwen3-32b"), "{model}");
     assert!(
         !s.contains("model id for that provider"),
@@ -7377,16 +7286,16 @@ fn footer_hints_stay_in_lockstep_with_screens() {
     h.connect_as_admin();
     h.ui.wizard.set(false);
     for (screen, needle) in [
-        (1usize, "local/remote/available"),
-        (2, "edit route"),
-        (3, "l Logs"),
-        (4, "inspect runtime"),
-        (5, "drafts"),
-        (6, "run the test"),
-        (7, "context estimate"),
+        (1usize, "Add connection"),
+        (2, "Enter Configure"),
+        (3, "Enter Email"),
+        (4, "open runtime"),
+        (5, "Drafts"),
+        (6, "Send (in the message)"), // R15: the Sandbox bar
+        (7, "e Estimate"),
         // The Models page (catalog.rs).
         (8, "use as default"),
-        (ui::SCREEN_NETWORK, "copy address"),
+        (ui::SCREEN_NETWORK, "c Copy"),
     ] {
         h.ui.screen.set(screen);
         let s = h.turns(2);
@@ -7400,7 +7309,7 @@ fn footer_hints_stay_in_lockstep_with_screens() {
     h.ui.screen.set(5);
     let s = h.turns(2);
     assert!(
-        !s.contains("run the test"),
+        !s.contains("Send (in the message)"),
         "workflows screen never wears Review's sandbox hints:\n{s}"
     );
 }
@@ -7725,7 +7634,8 @@ fn set_network(h: &mut Harness, v: Value) -> String {
 /// one line (saved vs running) that points there.
 #[test]
 fn n_jumps_to_the_network_screen_and_connection_keeps_one_line() {
-    let mut h = harness_sized(Size::new(120, 40));
+    // R15: 141 wide = a 120-cell page beside the nav rail.
+    let mut h = harness_sized(Size::new(141, 40));
     h.connect_as_admin();
     h.ui.wizard.set(false);
     h.ui.screen.set(0);
@@ -7772,9 +7682,9 @@ fn network_c_in_the_url_field_still_types() {
     h.store.notice.set(None);
     h.ui.conn_url.set(String::new());
     h.turn();
-    // Connected, the URL field no longer holds the caret (M2): Tab past
-    // the tab bar into it.
-    for _ in 0..2 {
+    // Connected, the URL field no longer holds the caret (M2): one Tab
+    // reaches it (R15: the nav is a mouse target, not a Tab stop).
+    for _ in 0..1 {
         h.key(b"\t");
         h.turn();
     }
@@ -7849,10 +7759,14 @@ fn paused_banner_shows_on_every_screen_and_f2_panel_resumes() {
     let _ = h.drain_cmds();
     h.key(b"\x1bOR"); // F3
     let s = h.turns(2);
-    assert!(s.contains("Gateway host"), "F3 opens the host panel:\n{s}");
+    // R15: the panel is the web's Gateway card (title, note, Toggle).
+    assert!(
+        s.contains("How this gateway is running right now."),
+        "F3 opens the host panel:\n{s}"
+    );
     assert!(s.contains("Paused — still running"), "state pill:\n{s}");
     assert!(
-        s.contains("[x] Workflows paused"),
+        s.contains("━● Workflows paused"),
         "a switch labelled by the state:\n{s}"
     );
     assert!(!s.contains("Resume workflows"), "never the verb:\n{s}");
@@ -7938,7 +7852,7 @@ fn restart_and_quit_confirm_first_and_default_to_keep() {
     h.type_text("Q");
     let s = h.turns(2);
     assert!(s.contains("Quit AbstractGateway?"), "quit confirm:\n{s}");
-    h.key(b"\x1b[A");
+    h.key(b"\x1b[Z"); // Shift+Tab to the action button
     h.turn();
     h.type_text("\r");
     h.turns(2);
@@ -7998,18 +7912,25 @@ fn host_panel_start_at_login_toggle_confirms_then_puts() {
         .start_at_login
         .set(Loadable::Ready(start_at_login("off", false, true)));
     let s = h.turns(2);
+    let row = s
+        .lines()
+        .find(|l| l.contains("off — Off — nothing starts the gateway at login"))
+        .unwrap_or_else(|| panic!("{s}"));
+    assert!(row.contains("Start at login"), "the card's row:\n{s}");
     assert!(
-        s.contains("start at login: off — Off — nothing starts the gateway at login"),
-        "{s}"
-    );
-    assert!(
-        s.contains("[ ] Start at login"),
+        s.contains("●─ Start at login"),
         "a switch labelled by the feature:\n{s}"
     );
     assert!(!s.contains("Turn on"), "never the verb:\n{s}");
-    assert!(s.contains("L Start at login"), "key listed:\n{s}");
     h.type_text("L");
     let s = h.turns(2);
+    // A2 (adversary note a): the confirm's focused button is named in the
+    // status bar — the F3 panel closing under it does not take the line.
+    assert_eq!(
+        h.ui.focus_line.get_untracked().as_deref(),
+        Some("Leave it"),
+        "the focused Leave it is named:\n{s}"
+    );
     assert!(
         s.contains("Start AbstractGateway at login? Registers a systemd")
             && s.contains("The gateway running now is not restarted."),
@@ -8027,7 +7948,7 @@ fn host_panel_start_at_login_toggle_confirms_then_puts() {
     h.turns(2);
     h.type_text("L");
     h.turns(2);
-    h.key(b"\x1b[A");
+    h.key(b"\x1b[Z"); // Shift+Tab to the action button
     h.turn();
     h.type_text("\r");
     h.turns(2);
@@ -8054,8 +7975,8 @@ fn host_panel_start_at_login_toggle_confirms_then_puts() {
         "{s}"
     );
     assert!(
-        s.contains("[-] Start at login — no systemd user manager"),
-        "unavailable with the reason:\n{s}"
+        s.contains("●─ Start at login"),
+        "the switch stays (refused, its reason on press):\n{s}"
     );
     h.type_text("L");
     h.turns(2);
@@ -8074,7 +7995,8 @@ fn host_panel_start_at_login_toggle_confirms_then_puts() {
 #[test]
 fn finish_step_offers_start_at_login() {
     use abstractgateway_console::worker::operator::OpCmd;
-    let mut h = harness_sized(Size::new(150, 44));
+    // R15: 171 wide = a 150-cell page beside the nav rail.
+    let mut h = harness_sized(Size::new(171, 44));
     h.connect_as_admin();
     h.ui.wizard.set(true);
     h.ui.screen.set(ui::SCREEN_REVIEW);
@@ -8093,80 +8015,8 @@ fn finish_step_offers_start_at_login() {
         s.contains("starts at login on — On — a systemd user unit starts the gateway at login"),
         "{s}"
     );
-    assert!(s.contains("[x] Start at login"), "{s}");
+    assert!(s.contains("━● Start at login"), "{s}");
     assert!(!s.contains("Turn off"), "{s}");
-}
-
-/// `e` shows the destination (the console's downloads folder, never the
-/// working directory) and exports only after Enter (review 2 N3).
-#[test]
-fn backlog_settings_rows_and_skills_reseed_in_the_knobs() {
-    use abstractgateway_console::worker::operator::OpCmd;
-    let mut h = harness_sized(Size::new(160, 70));
-    h.connect_as_admin();
-    h.goto_screen(4);
-    h.store
-        .runtimes
-        .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
-    h.turns(2);
-    h.ui.rt_knobs_folded.set(false);
-    h.turns(2);
-    h.store.runtime_config.set(Loadable::Ready(
-        abstractgateway_console::store::RuntimeConfigData::from_value(&json!({
-            "writable": true,
-            "triage_repo_root": {"source": "default", "value": "/d/backlog", "default_path": "/d/backlog",
-                                 "available": true, "label": "Backlog folder"},
-            "backlog_exec_runner": {"value": false, "source": "default", "label": "Backlog exec runner"},
-            "process_manager": {"value": true, "source": "stored", "label": "Process manager"},
-            "skills": {"shelf": {"value": null, "source": "seeded", "resolved": "/d/skills/registry",
-                                 "available": true, "default_path": "/d/skills/registry", "bundled_version": "2026.09.25"}}
-        })),
-    ));
-    let s = h.turns(2);
-    assert!(
-        s.contains("triage_repo_root: /d/backlog  (default)"),
-        "folder row:\n{s}"
-    );
-    assert!(
-        s.contains("backlog_exec_runner: off  (default)"),
-        "runner row:\n{s}"
-    );
-    assert!(
-        s.contains("process_manager: on  (saved setting)"),
-        "pm row:\n{s}"
-    );
-    assert!(
-        s.contains("Edit backlog settings"),
-        "editor entry point:\n{s}"
-    );
-    assert!(
-        s.contains("Refresh the curated skills shelf"),
-        "reseed entry point:\n{s}"
-    );
-    let _ = h.drain_cmds();
-    // Click the reseed button: find it on screen and press it by mouse.
-    let (row, col) = s
-        .lines()
-        .enumerate()
-        .find_map(|(i, l)| {
-            l.find("Refresh the curated skills shelf")
-                .map(|c| (i, l[..c].chars().count()))
-        })
-        .expect("button on screen");
-    let click = format!(
-        "\x1b[<0;{};{}M\x1b[<0;{};{}m",
-        col + 3,
-        row + 1,
-        col + 3,
-        row + 1
-    );
-    h.key(click.as_bytes());
-    h.turns(2);
-    assert!(
-        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::ReseedSkills)))
-            .is_some(),
-        "the button posts the reseed"
-    );
 }
 
 #[test]
@@ -8268,33 +8118,6 @@ fn apps_runtime_config() -> Value {
 }
 
 #[test]
-fn apps_settings_render_in_runtime_knobs_with_their_source() {
-    let mut h = harness_sized(Size::new(120, 70));
-    h.connect_as_admin();
-    h.goto_screen(4);
-    h.store
-        .runtimes
-        .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
-    h.turns(2);
-    h.ui.rt_knobs_folded.set(false);
-    h.turns(2);
-    h.store.runtime_config.set(Loadable::Ready(
-        abstractgateway_console::store::RuntimeConfigData::from_value(&apps_runtime_config()),
-    ));
-    let s = h.turns(2);
-    assert!(s.contains("apps.host: 0.0.0.0  (stored)"), "host row:\n{s}");
-    assert!(
-        s.contains("apps.node: system  (env)"),
-        "env-sourced row:\n{s}"
-    );
-    assert!(s.contains("apps.ports: —  (default)"), "default row:\n{s}");
-    assert!(s.contains("Edit apps settings"), "editor entry point:\n{s}");
-    if let Ok(dir) = std::env::var("MISSION_Z_RENDER_DIR") {
-        std::fs::write(format!("{dir}/tui_runtime_knobs_apps.txt"), &s).expect("write render");
-    }
-}
-
-#[test]
 fn apps_settings_body_sends_only_changed_keys_and_clears_with_empty() {
     use abstractgateway_console::ui::runtimes::apps_settings_body;
 
@@ -8379,31 +8202,6 @@ fn agent_defaults_parse_render_and_body() {
         agent_defaults_body(&d.agent_defaults, &typed),
         json!({"agents": {"default_workflow": {"abstractcode.agent.v1": ""}}})
     );
-
-    // Render: one knob row per interface with what it runs or why not.
-    let mut h = harness_sized(Size::new(140, 70));
-    h.connect_as_admin();
-    h.goto_screen(4);
-    h.store
-        .runtimes
-        .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
-    h.turns(2);
-    h.ui.rt_knobs_folded.set(false);
-    h.turns(2);
-    h.store.runtime_config.set(Loadable::Ready(d));
-    let s = h.turns(2);
-    assert!(
-        s.contains("abstractcode.agent.v1 → coder@1.1.0:code (Coder)  (stored)"),
-        "code row:\n{s}"
-    );
-    assert!(
-        s.contains("abstractassistant.agent.v1 → unavailable: no host workflow"),
-        "assistant row:\n{s}"
-    );
-    assert!(
-        s.contains("Edit default agent workflows"),
-        "editor entry point:\n{s}"
-    );
 }
 
 #[test]
@@ -8427,23 +8225,6 @@ fn skills_shelf_parse_render_and_body() {
         ..Default::default()
     };
     assert_eq!(skills_shelf_body(&stored, ""), json!({"skills.shelf": ""}));
-
-    let mut h = harness_sized(Size::new(140, 70));
-    h.connect_as_admin();
-    h.goto_screen(4);
-    h.store
-        .runtimes
-        .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
-    h.turns(2);
-    h.ui.rt_knobs_folded.set(false);
-    h.turns(2);
-    h.store.runtime_config.set(Loadable::Ready(d));
-    let s = h.turns(2);
-    assert!(
-        s.contains("skills.shelf: /d/skills/registry (curated 2026.09.25)  (seeded)"),
-        "shelf row:\n{s}"
-    );
-    assert!(s.contains("Edit skills shelf"), "editor entry point:\n{s}");
 }
 
 // ---------------------------------------------------------------------
@@ -8542,16 +8323,24 @@ fn about_is_on_the_connection_screen_and_question_mark() {
     h.goto_screen(0);
     let s = h.turns(2);
     assert!(
-        s.contains("About: F1 (or ?)"),
+        s.contains("About: F1 — this console"),
         "Connection screen names the About key:\n{s}"
     );
     h.connect_as_admin();
     h.goto_screen(3);
-    h.key(b"?");
+    // R15 D5: F1 opens About, `?` the keys panel.
+    h.key(b"\x1bOP");
     let s = h.turns(2);
     assert!(
         s.contains("Contact           contact@abstractframework.ai"),
-        "? opens About:\n{s}"
+        "F1 opens About:\n{s}"
+    );
+    h.press_escape();
+    h.key(b"?");
+    let s = h.turns(2);
+    assert!(
+        s.contains("Keys — Accounts"),
+        "? opens the keys panel:\n{s}"
     );
 }
 
@@ -8599,46 +8388,6 @@ fn streaming_default_knob_reads_edits_and_never_hides() {
         &json!({"agents": {"streaming_default": {"value": "yes", "source": "stored"}}})
     )
     .is_none());
-
-    for (payload, want, button) in [
-        (
-            on.clone(),
-            "stream replies: on — interactive replies stream live  (stored)",
-            true,
-        ),
-        (
-            json!({"writable": true, "agents": {"streaming_default": {"value": false, "source": "default"}}}),
-            "stream replies: off — replies arrive whole  (default)",
-            true,
-        ),
-        (
-            json!({"writable": true, "agents": {"default_workflow": {}}}),
-            "stream replies: not available on this gateway",
-            false,
-        ),
-    ] {
-        // A real read always carries the workspace knobs beside it.
-        let mut payload = payload;
-        payload["workspace_root"] = json!({"value": "/w", "source": "stored"});
-        let d = abstractgateway_console::store::RuntimeConfigData::from_value(&payload);
-        let mut h = harness_sized(Size::new(160, 70));
-        h.connect_as_admin();
-        h.goto_screen(4);
-        h.store
-            .runtimes
-            .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
-        h.turns(2);
-        h.ui.rt_knobs_folded.set(false);
-        h.turns(2);
-        h.store.runtime_config.set(Loadable::Ready(d));
-        let s = h.turns(2);
-        assert!(s.contains(want), "row {want:?}:\n{s}");
-        assert_eq!(
-            s.contains("Edit stream replies"),
-            button,
-            "edit entry point:\n{s}"
-        );
-    }
 }
 
 /// 80x24 (review 2 e): the Resources title fits inside its border, the
@@ -8654,19 +8403,20 @@ fn eighty_by_twenty_four_nothing_is_clipped() {
         .host_state
         .set(Loadable::Ready(host_state_fixture()));
     let s = h.turns(3);
+    // R15: no page border; the head line (title, subtitle, Refresh) fits.
     let title = s
         .lines()
-        .find(|l| l.contains("╭ Resources"))
+        .find(|l| l.starts_with(" Resources"))
         .expect("title row");
     assert!(
-        title.trim_end().ends_with("─╮"),
-        "the title closes inside the border:\n{title}"
+        title.contains("↻ Refresh") && abstracttui::text::width(title) <= 80,
+        "the head fits the width:\n{title}"
     );
 
     h.store.op.runner.set(Loadable::Ready(paused_runner()));
     h.key(b"\x1bOR");
     let s = h.turns(3);
-    for needle in ["Install update…", "Quit…", "Esc close"] {
+    for needle in ["Check now", "Quit gateway…", "Close"] {
         let row = s
             .lines()
             .find(|l| l.contains(needle))
@@ -8700,9 +8450,10 @@ fn eighty_by_twenty_four_nothing_is_clipped() {
         "no ellipsis on the intro:\n{s}"
     );
 }
-/// A choice dialog does not show the screen through (review 2 e): an
-/// opaque backdrop covers the screen while the prompt is open, and it is
-/// gone once the prompt resolves.
+/// A choice dialog does not show the screen through (review 2 e). R15 F1:
+/// Multimodal's Apply recommended asks with THE confirm widget (w::Confirm)
+/// — its sentence and [Apply recommended] [Cancel] on an opaque panel; the
+/// page stays visible AROUND it; Esc keeps things as they are.
 #[test]
 fn a_choice_dialog_covers_the_screen_while_open() {
     let mut h = harness_sized(Size::new(80, 24));
@@ -8710,23 +8461,25 @@ fn a_choice_dialog_covers_the_screen_while_open() {
     h.goto_screen(2);
     h.store.routes.set(Loadable::Ready(routes_fixture()));
     let s = h.turns(3);
-    assert!(s.contains("Multimodal — which provider"), "{s}");
+    assert!(s.contains("Multimodal Capabilities"), "{s}");
     h.key(b"a");
     let s = h.turns(3);
     assert!(
-        s.contains("Apply — keep routes I configured"),
+        s.contains("Apply the framework's recommended routes")
+            && s.contains(" Apply recommended ")
+            && s.contains(" Cancel "),
         "the dialog:\n{s}"
-    );
-    assert!(
-        !s.contains("Multimodal — which provider") && !s.contains("input.video"),
-        "the screen does not show around/through the dialog:\n{s}"
     );
     h.press_escape();
     let s = h.turns(3);
     assert!(
-        s.contains("Multimodal — which provider"),
+        s.contains("Multimodal Capabilities") && !s.contains(" Cancel "),
         "the screen is back:\n{s}"
     );
+    assert!(h
+        .drain_cmds()
+        .iter()
+        .all(|c| !matches!(c, Cmd::ApplyRecommendedRoutes { .. })));
 }
 
 /// 80x24: the export dialog's path field stays inside the dialog.
@@ -8747,7 +8500,7 @@ fn the_current_screen_key_keeps_the_screen_keys_live() {
     h.type_text("w");
     let s = h.turns(3);
     assert!(
-        s.contains("Load (warm up) a model"),
+        s.contains("Load (warm up) this model on the host now"),
         "w still reaches the screen:\n{s}"
     );
 }
@@ -8857,8 +8610,9 @@ fn routes_and_plan_show_engine_missing_and_the_gpu_limit() {
         s.contains("engine missing: MLX (mlx-lm) is not installed in this Python environment"),
         "selected-row line:\n{s}"
     );
+    // R15: the plan has its own button ("Recommended for this computer").
     assert!(
-        s.contains("1 engine missing (p says what to install)"),
+        s.contains("1 engine missing") && s.contains("Recommended for this computer"),
         "plan banner:\n{s}"
     );
     h.type_text("p");
@@ -9003,17 +8757,11 @@ fn a_url_the_person_typed_never_follows_the_pointer() {
             // Typing in the Gateway URL field (it has the caret while
             // disconnected) makes the address the person's.
             "edit" => h.type_text("3"),
-            // Probe gateway: the person confirms the address shown.
+            // Sign in: the person confirms the address shown.
             _ => {
                 let s = h.turns(1);
-                let row = find_row(&s, "Probe gateway");
-                let col = s
-                    .lines()
-                    .nth(row - 1)
-                    .unwrap()
-                    .find("Probe gateway")
-                    .unwrap()
-                    + 3;
+                let row = find_row(&s, " Sign in ");
+                let col = s.lines().nth(row - 1).unwrap().find(" Sign in ").unwrap() + 3;
                 click_at(&mut h, col, row);
             }
         }
@@ -9134,6 +8882,85 @@ fn right_walks_every_screen_in_order() {
     }
 }
 
+/// R15 §2.2 / §6.3 — THE OPERATOR'S BUG: ←/→ died on Apps and Network
+/// once their data loaded (the engine's Scroll swallowed the arrows; the
+/// Apps table ate Right). The walk now runs with REAL data on every screen
+/// and with the focus INSIDE the page (two Tabs into its controls) before
+/// each arrow — both directions, wrapping at both ends.
+#[test]
+fn r15_arrows_switch_screens_with_real_data_and_focus_inside_the_page() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.ui.wizard.set(false);
+    let apps: Value = serde_json::from_str(include_str!("fixtures/r14w3_apps.json")).unwrap();
+    h.store.apps.overview.set(Loadable::Ready(
+        abstractgateway_console::store::apps::AppsOverview::from_value(&apps),
+    ));
+    h.store.network.set(Loadable::Ready(
+        abstractgateway_console::store::NetworkData::from_value(&network_fixture(
+            "lan", "0.0.0.0", false, true,
+        )),
+    ));
+    h.store
+        .users
+        .set(Loadable::Ready(users_from_payload(&users_fixture())));
+    h.store
+        .entities
+        .set(Loadable::Ready(entities_from_payload(&entities_fixture())));
+    h.store.routes.set(Loadable::Ready(routes_fixture()));
+    h.store
+        .runtimes
+        .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
+    let order = ui::NAV_ORDER;
+    for dir in [RIGHT, LEFT] {
+        for i in 0..order.len() {
+            let from = order[i];
+            h.ui.screen.set(from);
+            h.turns(3);
+            // Focus into the page's controls (never into a page text field:
+            // the caret keeps its arrows by design — tested below).
+            for _ in 0..2 {
+                h.key(b"\t");
+                h.turns(1);
+            }
+            if h.ui.caret.get_untracked().is_some() {
+                // A page text field holds the caret: the arrow is the
+                // caret's, the screen stays; Esc hands the keyboard back.
+                h.key(dir);
+                h.turns(2);
+                assert_eq!(
+                    h.ui.screen.get_untracked(),
+                    from,
+                    "the caret keeps its arrows"
+                );
+                h.press_escape();
+                h.turns(2);
+                assert!(
+                    h.ui.caret.get_untracked().is_none(),
+                    "Esc released the caret"
+                );
+            }
+            h.key(dir);
+            h.turns(3);
+            let want = if dir == RIGHT {
+                order[(i + 1) % order.len()]
+            } else {
+                order[(i + order.len() - 1) % order.len()]
+            };
+            assert_eq!(
+                h.ui.screen.get_untracked(),
+                want,
+                "{} from {} (focus inside the page, data loaded)",
+                if dir == RIGHT { "Right" } else { "Left" },
+                ui::SCREENS[from]
+            );
+        }
+    }
+}
+
 /// A focused text field keeps Left/Right for its caret; once the field
 /// lets go of the caret (Esc), the same key switches the tab.
 #[test]
@@ -9175,8 +9002,11 @@ fn arrows_move_the_caret_in_a_focused_text_field() {
 /// A widget that uses Left/Right keeps them: the Runtimes inspector's
 /// tabs bar switches its own tabs (and clamps at its edge) instead of
 /// the global tab. Off the bar, the same key is global again.
+/// R15 A1: the inspector's Runs | Artifacts | Cache | Logs choice is a
+/// Segmented — ONE Tab stop per segment, Enter/Space picks — and ←/→ stay
+/// the SCREEN keys even with a segment focused (no third exception).
 #[test]
-fn arrows_stay_with_a_focused_tabs_bar() {
+fn inspector_segments_take_tab_and_enter_and_arrows_stay_global() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(4);
@@ -9201,36 +9031,34 @@ fn arrows_stay_with_a_focused_tabs_bar() {
         rows: vec![],
     }));
     h.turns(2);
-    h.key(b"\t"); // focus the inspector's tabs bar
+    h.key(b"\t"); // the chosen row's Workspaces link (a tab stop on the selected row)
     h.turns(1);
-    h.key(RIGHT);
+    h.key(b"\t"); // the "Runs" segment
+    h.turns(1);
+    h.key(b"\t"); // the "Artifacts" segment
+    h.turns(1);
+    h.key(b"\r");
+    h.turns(2);
+    assert_eq!(h.ui.rt_tab.get_untracked(), 1, "Enter picked Artifacts");
+    assert_eq!(h.ui.screen.get_untracked(), 4);
+    // Focus stayed on the segment: Space picks it again (no-op), Shift+Tab
+    // goes back to Runs and Enter picks it.
+    h.key(b"\x1b[Z");
+    h.turns(1);
+    h.key(b"\r");
     h.turns(2);
     assert_eq!(
         h.ui.rt_tab.get_untracked(),
-        1,
-        "Right switched the inner tab"
+        0,
+        "Shift+Tab + Enter picked Runs"
     );
-    assert_eq!(h.ui.screen.get_untracked(), 4, "…not the global tab");
-    h.key(LEFT);
-    h.turns(2);
-    h.key(LEFT); // the bar's first tab: clamps, still the bar's key
-    h.turns(2);
-    assert_eq!(h.ui.rt_tab.get_untracked(), 0);
-    assert_eq!(
-        h.ui.screen.get_untracked(),
-        4,
-        "Left at the bar's edge is not global"
-    );
-    let _ = h.drain_cmds();
-    // Positive control: back on the inventory table, Right is global.
-    h.key(b"\x1b[Z"); // Shift+Tab
-    h.turns(1);
+    // ←/→ with a segment focused: the SCREEN changes.
     h.key(RIGHT);
     h.turns(2);
     assert_eq!(
         h.ui.screen.get_untracked(),
         ui::SCREEN_APPS,
-        "off the tabs bar, Right switches the global tab"
+        "Right switches the screen even from a focused segment"
     );
 }
 
@@ -9256,7 +9084,7 @@ fn arrows_refuse_with_a_reason_in_the_guide() {
 }
 
 /// An open modal owns the keyboard: the arrows never switch the screen
-/// behind it (About, opened with `?`).
+/// behind it (About, opened with F1 — R15 D5: `?` is the keys panel).
 #[test]
 fn arrows_do_not_switch_the_screen_behind_a_modal() {
     let mut h = harness();
@@ -9265,9 +9093,12 @@ fn arrows_do_not_switch_the_screen_behind_a_modal() {
     h.store.profiles.set(Loadable::Ready(profiles_fixture()));
     h.store.providers.set(Loadable::Ready(providers_fixture()));
     h.turns(2);
-    h.type_text("?");
+    h.key(b"\x1bOP");
     let s = h.turns(2);
-    assert!(s.contains("About"), "the About modal is open:\n{s}");
+    assert!(
+        s.contains("reading GET /api/gateway/about"),
+        "the About modal is open:\n{s}"
+    );
     h.key(RIGHT);
     h.turns(2);
     h.key(LEFT);
@@ -9395,8 +9226,11 @@ fn my_email_page_reads_in_the_design_order_with_the_design_words() {
     // Email address → Mailbox → Notifications → Agent email tools → Advanced.
     assert!(at("│Email address") < at("│Mailbox"), "{s}");
     assert!(at("│Mailbox") < at("│Notifications"), "{s}");
-    assert!(at("│Notifications") < at("[ ] Agent email tools"), "{s}");
-    assert!(at("[ ] Agent email tools") < at("│ Advanced ▸  who"), "{s}");
+    assert!(at("│Notifications") < at("●─ Agent email tools"), "{s}");
+    assert!(
+        at("●─ Agent email tools") < at("│Recipients and limits"),
+        "{s}"
+    );
     assert!(
         s.contains("Where sign-in codes and notifications go"),
         "{s}"
@@ -9406,9 +9240,9 @@ fn my_email_page_reads_in_the_design_order_with_the_design_words() {
         "the connected status line:\n{s}"
     );
     assert!(s.contains("Test") && s.contains("Disconnect"), "{s}");
-    // The switches: on = [x], off = [ ].
-    assert!(s.contains("[x] Job failed"), "{s}");
-    assert!(s.contains("[ ] Approval needed"), "{s}");
+    // The switches (R15 Toggle): on = ━●, off = ●─.
+    assert!(s.contains("━● Job failed"), "{s}");
+    assert!(s.contains("●─ Approval needed"), "{s}");
     // Never the old verbs, never a Save for a switch.
     for banned in [
         "Save and test",
@@ -9461,7 +9295,7 @@ fn my_email_switches_apply_at_once_and_say_the_new_state() {
     }
     assert!(s.contains("Approval needed · saving…"), "busy:\n{s}");
     // The shown state stays the gateway's until the write is verified.
-    assert!(s.contains("[ ] Approval needed"), "{s}");
+    assert!(s.contains("●─ Approval needed"), "{s}");
     click_text(&mut h, &s, "Agent email tools");
     h.turns(2);
     assert!(
@@ -9475,11 +9309,11 @@ fn my_email_unavailable_switches_say_why_and_send_nothing() {
     let mut h = harness_sized(Size::new(140, 60));
     let s = open_my_email(&mut h, &my_email_not_connected());
     assert!(
-        s.contains("[-] Job failed — Connect a mailbox first."),
+        s.contains("━● Job failed — Connect a mailbox first."),
         "{s}"
     );
     assert!(
-        s.contains("[-] Agent email tools — Connect a mailbox first."),
+        s.contains("●─ Agent email tools — Connect a mailbox first."),
         "{s}"
     );
     let _ = h.drain_cmds();
@@ -9503,7 +9337,7 @@ fn my_email_agent_tools_reason_follows_the_admin() {
     v["agent_tools"] = json!({"on": false, "available": false, "unavailable_reason": "Your admin turned agent email tools off.", "active": false});
     let s = open_my_email(&mut h, &v);
     assert!(
-        s.contains("[-] Agent email tools — Your admin turned agent email tools off."),
+        s.contains("●─ Agent email tools — Your admin turned agent email tools off."),
         "{s}"
     );
     // A gateway older than the contract (no unavailable_reason, no
@@ -9568,10 +9402,10 @@ fn my_email_imap_tab_is_first_default_and_shows_prefilled_servers() {
         "IMAP is the default pane:\n{s}"
     );
     // The address is asked ONCE: your email address is set, so the mailbox
-    // signs in as it — one line, and Ctrl+U reveals the field for another
-    // account.
+    // signs in as it — one line, and the web's "Use a different account"
+    // link (Ctrl+U) reveals the field for another account.
     assert!(
-        s.contains("Mailbox account: me@fastmail.test — use a different account (Ctrl+U)"),
+        s.contains("Mailbox account: me@fastmail.test") && s.contains("Use a different account"),
         "{s}"
     );
     assert!(
@@ -9585,6 +9419,27 @@ fn my_email_imap_tab_is_first_default_and_shows_prefilled_servers() {
     h.key(b"\x15");
     let s = h.turns(2);
     assert!(s.contains("Mailbox account: me@fastmail.test"), "{s}");
+    // The link does the same by mouse (R15 FC1: no key-only control).
+    let s = click_on(&mut h, "Use a different account");
+    let s = if s.contains("Mailbox address") {
+        s
+    } else {
+        h.turns(2)
+    };
+    assert!(
+        s.contains("Mailbox address"),
+        "the link reveals the field:\n{s}"
+    );
+    let s = click_on(&mut h, "Use a different account");
+    let s = if s.contains("Mailbox account: me@fastmail.test") {
+        s
+    } else {
+        h.turns(2)
+    };
+    assert!(
+        s.contains("Mailbox account: me@fastmail.test"),
+        "and back:\n{s}"
+    );
     // Every field visible, pre-filled with the standard values.
     assert!(
         s.contains("Incoming mail (IMAP)") && s.contains("Outgoing mail (SMTP)"),
@@ -9611,10 +9466,7 @@ fn my_email_imap_tab_is_first_default_and_shows_prefilled_servers() {
     ] {
         assert!(!s.contains(banned), "{banned:?} is gone:\n{s}");
     }
-    assert!(
-        s.contains("Ctrl+O  My provider uses a different login name"),
-        "{s}"
-    );
+    assert!(s.contains("My provider uses a different login name"), "{s}");
     use abstractgateway_console::worker::operator::OpCmd;
     match h.find_cmd(|c| {
         is_op(c, |o| {
@@ -9750,14 +9602,32 @@ fn my_email_discovery_never_overwrites_an_edit_and_missing_defaults_are_said() {
     assert!(s.contains(&DISCOVERY_NO_DEFAULTS[..60]), "{s}");
 }
 
-/// Ctrl+O reveals ONE Login field (never shown by default); Connect sends
+/// The web's "My provider uses a different login name" link (Ctrl+O)
+/// reveals ONE Login field (never shown by default); Connect sends
 /// `username` only when it was changed there.
 #[test]
-fn my_email_different_login_is_a_key_and_sends_username_only_when_edited() {
+fn my_email_different_login_is_a_link_and_sends_username_only_when_edited() {
     use abstractgateway_console::worker::operator::EmailAction;
     let mut h = harness_sized(Size::new(140, 70));
     let s = open_my_email(&mut h, &my_email_not_connected());
     assert!(!s.contains("Login "), "{s}");
+    // By mouse: the link reveals the field, a second click hides it.
+    let s = click_on(&mut h, "My provider uses a different login name");
+    let s = if s.contains("Login ") { s } else { h.turns(2) };
+    assert!(
+        s.lines().any(|l| l.contains("Login") && l.contains('▐')),
+        "the link reveals Login:\n{s}"
+    );
+    let s = click_on(&mut h, "My provider uses a different login name");
+    let s = if s.lines().any(|l| l.contains("Login") && l.contains('▐')) {
+        h.turns(2)
+    } else {
+        s
+    };
+    assert!(
+        !s.lines().any(|l| l.contains("Login") && l.contains('▐')),
+        "a second click hides it:\n{s}"
+    );
     h.key(b"\x0f"); // Ctrl+O
     let s = h.turns(2);
     let (row, l) = s
@@ -9771,7 +9641,8 @@ fn my_email_different_login_is_a_key_and_sends_username_only_when_edited() {
     h.key(b"\x0f");
     let s = h.turns(2);
     assert!(
-        s.contains("Ctrl+O  My provider uses a different login name"),
+        s.contains("My provider uses a different login name")
+            && !s.lines().any(|l| l.contains("Login") && l.contains('▐')),
         "{s}"
     );
     h.key(b"\x0f");
@@ -9833,8 +9704,8 @@ fn my_email_active_in_the_mailbox_card_and_test_says_the_api_sentence() {
         s.contains("Your mailbox is a different account: me@example.test."),
         "{s}"
     );
-    assert!(at("│Mailbox") < at("[x] Active"), "{s}");
-    assert!(at("[x] Active") < at("│Notifications"), "{s}");
+    assert!(at("│Mailbox") < at("━● Active"), "{s}");
+    assert!(at("━● Active") < at("│Notifications"), "{s}");
     assert!(
         s.contains("Off pauses watching, sending and notifications"),
         "{s}"
@@ -9869,10 +9740,10 @@ fn my_email_active_in_the_mailbox_card_and_test_says_the_api_sentence() {
     );
     assert!(!s.contains("rate_limited") && !s.contains("queued"), "{s}");
     // Advanced: compact sentences, no Use this mailbox, no test button.
-    click_text(&mut h, &s, "│ Advanced ▸  who");
+    // R15 D1: "Recipients and limits" is a visible section (no fold).
     let s = h.turns(3);
     assert!(
-        s.contains("Your agents may send to: only the Allowed list"),
+        s.contains("Your agents may send to:") && s.contains("only the Allowed list"),
         "{s}"
     );
     // Recipient rules (round 3): the two lists and the precedence sentence.
@@ -9918,15 +9789,9 @@ fn accounts_table_has_the_design_columns_and_the_active_switch() {
     );
     assert!(!s.contains("enabled"), "no State/enabled column:\n{s}");
     assert!(s.contains("a@x.io · connected"), "{s}");
-    // The own row's switch is unavailable; Enter shows the reason.
-    assert!(s.contains("[-]"), "own row unavailable:\n{s}");
-    h.key(b"\r");
-    let s = h.turns(2);
-    assert!(
-        s.contains("Active: You can't deactivate your own account."),
-        "own row unavailable, with the reason:\n{s}"
-    );
-    h.key(b"\r");
+    // R15: the Active column is a Toggle (━● on / ●─ off); the own row's
+    // is refused (faint, the reason in its tooltip and on a press).
+    assert!(s.contains("━●"), "Active toggles:\n{s}");
     // Own row (admin, selected first): space says why, sends nothing.
     let _ = h.drain_cmds();
     h.type_text(" ");
@@ -9964,12 +9829,12 @@ fn accounts_table_has_the_design_columns_and_the_active_switch() {
     assert!(h
         .find_cmd(|c| matches!(c, Cmd::SetAccountActive { .. }))
         .is_none());
+    // R15: a must-choose prompt (danger option first, Cancel preselected).
     assert!(
-        s.contains("[y] Deactivate") && s.contains("[n] Keep"),
-        "inline confirm:\n{s}"
+        s.contains("Deactivate") && s.contains("Cancel"),
+        "confirm prompt:\n{s}"
     );
-    h.type_text("y");
-    h.turns(2);
+    answer_danger(&mut h);
     match h.find_cmd(|c| matches!(c, Cmd::SetAccountActive { .. })) {
         Some(Cmd::SetAccountActive {
             id, entity, active, ..
@@ -10013,12 +9878,12 @@ fn users_admin_switch_mailboxes_for_users_applies_at_once() {
     // "Email for everyone" is the page's second tab.
     h.key(b"\t");
     let s = h.turns(3);
-    assert!(s.contains("[x] Mailboxes for users"), "{s}");
+    assert!(s.contains("━● Mailboxes for users"), "{s}");
     assert!(s.contains("You never see anyone's mail."), "{s}");
     // R8.1: the three switches sit directly in the card — no Advanced.
     assert!(!s.contains("Advanced"), "no Advanced disclosure:\n{s}");
-    assert!(s.contains("[x] Agent email tools for users"), "{s}");
-    assert!(s.contains("[ ] Sign-in by email"), "{s}");
+    assert!(s.contains("━● Agent email tools for users"), "{s}");
+    assert!(s.contains("●─ Sign-in by email"), "{s}");
     assert!(!s.contains("Save"), "no Save for a switch:\n{s}");
     let _ = h.drain_cmds();
     click_text(&mut h, &s, "Mailboxes for users");
@@ -10055,16 +9920,14 @@ fn create_user_asks_the_email_address_at_the_top_level() {
             && s.contains("they have none; they can add it later."),
         "{s}"
     );
-    assert!(
-        !s.contains("The data plane their runs") && !s.contains("Tenant"),
-        "Advanced folded:\n{s}"
-    );
+    // R15 D1: no "Advanced" — the bindings sit in a visible section
+    // named by its content.
+    assert!(!s.contains("Advanced"), "no Advanced:\n{s}");
+    assert!(s.contains("Runtime and tenant"), "{s}");
     assert!(
         !s.contains("optional") && !s.contains("never used for auth"),
         "{s}"
     );
-    click_text(&mut h, &s, "Advanced ▸  runtime");
-    let s = h.turns(2);
     assert!(
         s.contains("The data plane their runs, flows and sessions live in.")
             && s.contains("Empty = their own, named after them."),
@@ -10272,23 +10135,23 @@ fn switch_ink_on_screen_marks_on_off_and_unavailable() {
             .enumerate()
             .find_map(|(i, l)| l.find(needle).map(|c| (i, l[..c].chars().count())))
             .unwrap_or_else(|| panic!("{needle:?} not on screen:\n{s}"));
-        // The label's first letter (after "[x] ").
+        // The label's first letter (after "━● ").
         h.term
             .screen()
-            .cell(col as i32 + 4, row as i32)
+            .cell(col as i32 + 3, row as i32)
             .map(|c| c.paint)
             .expect("cell")
     };
     let mut h = harness_sized(Size::new(140, 60));
     open_my_email(&mut h, &my_email_fixture());
-    let on = paint_at(&h, "[x] Job failed");
-    let off = paint_at(&h, "[ ] Approval needed");
+    let on = paint_at(&h, "━● Job failed");
+    let off = paint_at(&h, "●─ Approval needed");
     assert!(on.attrs.contains(BOLD), "ON is bold: {on:?}");
     assert!(!off.attrs.contains(BOLD), "OFF is plain: {off:?}");
     assert_ne!(on.fg, off.fg, "ON has the accent ink");
     let mut h = harness_sized(Size::new(140, 60));
     open_my_email(&mut h, &my_email_not_connected());
-    let na = paint_at(&h, "[-] Job failed");
+    let na = paint_at(&h, "━● Job failed");
     assert!(!na.attrs.contains(BOLD), "unavailable is not bold");
     assert_ne!(na.fg, off.fg, "unavailable is faint, not the plain ink");
 }
@@ -10297,9 +10160,8 @@ fn switch_ink_on_screen_marks_on_off_and_unavailable() {
 fn my_email_advanced_folder_saves_on_enter_and_is_unavailable_without_a_mailbox() {
     use abstractgateway_console::worker::operator::EmailAction;
     let mut h = harness_sized(Size::new(140, 90));
-    let s = open_my_email(&mut h, &my_email_fixture());
-    click_text(&mut h, &s, "│ Advanced ▸  who");
-    h.turns(2);
+    let _ = open_my_email(&mut h, &my_email_fixture());
+    // R15 D1: "Recipients and limits" is a visible section (no fold).
     for _ in 0..30 {
         h.key(b"\x1b[<65;70;30M");
     }
@@ -10329,9 +10191,8 @@ fn my_email_advanced_folder_saves_on_enter_and_is_unavailable_without_a_mailbox(
         other => panic!("PUT /me/email/folder, got {other:?}"),
     }
     let mut h = harness_sized(Size::new(140, 90));
-    let s = open_my_email(&mut h, &my_email_not_connected());
-    click_text(&mut h, &s, "│ Advanced ▸  who");
-    h.turns(2);
+    let _ = open_my_email(&mut h, &my_email_not_connected());
+    // R15 D1: "Recipients and limits" is a visible section (no fold).
     for _ in 0..30 {
         h.key(b"\x1b[<65;70;30M");
     }
@@ -10345,8 +10206,8 @@ fn my_email_recipient_rules_add_to_always_denied_sends_both_lists() {
     // list sends the mode with BOTH lists (an older {mode, entries} policy reads as Allowed).
     use abstractgateway_console::worker::operator::EmailAction;
     let mut h = harness_sized(Size::new(140, 90));
-    let s = open_my_email(&mut h, &my_email_fixture());
-    click_text(&mut h, &s, "│ Advanced ▸  who");
+    let _ = open_my_email(&mut h, &my_email_fixture());
+    // R15 D1: "Recipients and limits" is a visible section (no fold).
     let s = h.turns(3);
     let adds: Vec<(usize, String)> = s
         .lines()
@@ -10383,4 +10244,25 @@ fn my_email_recipient_rules_add_to_always_denied_sends_both_lists() {
         ),
         other => panic!("PUT /me/email/policy, got {other:?}"),
     }
+}
+
+/// Click the first `text` on screen (R15 FC1 click paths in this suite).
+fn click_on(h: &mut Harness, text: &str) -> String {
+    let screen = h.turns(1);
+    let (row, col) = screen
+        .lines()
+        .enumerate()
+        .find_map(|(i, l)| l.find(text).map(|c| (i, l[..c].chars().count())))
+        .unwrap_or_else(|| panic!("{text:?} not on screen:\n{screen}"));
+    h.key(
+        format!(
+            "\x1b[<0;{};{}M\x1b[<0;{};{}m",
+            col + 2,
+            row + 1,
+            col + 2,
+            row + 1
+        )
+        .as_bytes(),
+    );
+    h.turns(2)
 }

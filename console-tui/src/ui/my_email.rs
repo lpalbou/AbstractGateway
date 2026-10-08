@@ -30,12 +30,11 @@
 //! administrator's gateway-wide email switches live on the Users screen.
 
 use abstracttui::prelude::*;
-use abstracttui::widgets::{Scroll, Tabs};
+use abstracttui::widgets::Scroll;
 use serde_json::json;
 
-use super::switch::Switch;
 use super::util::{ellipsize, field, line, span, span_bold, wrap_text};
-use super::{open_form, Ctx};
+use super::Ctx;
 use crate::store::email::{
     address_domain, imap_connect_body, limits_body, policy_body, MyEmail, ServerDefaults,
     ServerSettings, DISCOVERY_NO_DEFAULTS,
@@ -60,18 +59,53 @@ pub const ADMIN_SENTENCE: &str = "You are also a user of this gateway: this addr
 pub const DIFFERENT_LOGIN: &str = "My provider uses a different login name";
 pub const LOGIN_HELP: &str =
     "The name your provider signs you in with, when it is not your address.";
-/// The key that reveals / hides the Login field (the only way: no button).
+/// The accelerator of the "My provider uses a different login name" link.
 pub const LOGIN_KEY_LABEL: &str = "Ctrl+O";
-/// The key that reveals the Mailbox address field when your email address
-/// is already set (the address is asked ONCE).
+/// The accelerator of the "Use a different account" link (the Mailbox
+/// address field when your email address is already set).
 pub const OTHER_ACCOUNT_KEY_LABEL: &str = "Ctrl+U";
+/// The web's link beside the mailbox account line.
+pub const USE_DIFFERENT_ACCOUNT: &str = "Use a different account";
 
 /// The IMAP pane's line when your email address is set: the mailbox signs
-/// in as that address unless you choose another account.
+/// in as that address unless you choose another account (the web's words).
 pub fn mailbox_account_line(address: &str) -> String {
-    format!(
-        "Mailbox account: {address} \u{2014} use a different account ({OTHER_ACCOUNT_KEY_LABEL})"
-    )
+    format!("Mailbox account: {address}")
+}
+
+/// Show / hide the Login field (the link, or Ctrl+O). Returns whether it
+/// was hidden by this call (`None`: not applicable here).
+fn toggle_login(store: crate::store::Store, p: Page) -> Option<bool> {
+    let connectable = store
+        .op
+        .my_email
+        .with_untracked(|e| e.ready().map(|e| !e.configured).unwrap_or(false));
+    if connectable && p.tab.get_untracked() == TAB_IMAP {
+        let hide = p.login_shown.get_untracked();
+        p.login_shown.set(!hide);
+        return Some(hide);
+    }
+    None
+}
+
+/// Show / hide the Mailbox address field for another account (the link,
+/// or Ctrl+U) — only when your email address is set.
+fn toggle_other_account(store: crate::store::Store, p: Page) {
+    let saved = store.op.my_email.with_untracked(|e| {
+        e.ready()
+            .filter(|e| !e.configured)
+            .map(|e| e.email_address().trim().to_string())
+            .unwrap_or_default()
+    });
+    if !saved.is_empty() && p.tab.get_untracked() == TAB_IMAP {
+        let show = !p.other_account.get_untracked();
+        if !show {
+            // Back to your email address: the hidden field must not keep a
+            // different account it no longer shows.
+            p.other_address.set(saved);
+        }
+        p.other_account.set(show);
+    }
 }
 pub const ACTIVE_HELP: &str =
     "Off pauses watching, sending and notifications; your settings are kept.";
@@ -111,13 +145,11 @@ struct Page {
     /// The last "Send a test" sentence, shown under the button.
     test_result: Signal<Option<Result<String, String>>>,
     confirm_disconnect: Signal<bool>,
-    advanced: Signal<bool>,
     new_entry: Signal<String>,
     new_deny_entry: Signal<String>,
     per_hour: Signal<String>,
     per_day: Signal<String>,
     folder: Signal<String>,
-    oauth_advanced: Signal<bool>,
     client_id: Signal<String>,
     client_secret: Signal<String>,
     tenant: Signal<String>,
@@ -338,7 +370,7 @@ fn open_for(cx: Scope, ctx: &Ctx, entity: Option<String>) {
     // overlay points them back at the caller's own when it closes.
     ctx.send(Cmd::Operator(OpCmd::EmailSubject(entity.clone())));
     ctx.send(Cmd::Operator(OpCmd::LoadMyEmail));
-    let vw = abstracttui::app::use_viewport(cx).get_untracked().w;
+    let vw = crate::ui::page_viewport(cx).get_untracked().w;
     let ctx2 = ctx.clone();
     let own_id = ctx
         .store
@@ -349,11 +381,10 @@ fn open_for(cx: Scope, ctx: &Ctx, entity: Option<String>) {
         })
         .unwrap_or_default();
     let title = format!("Email — {}", entity.clone().unwrap_or(own_id));
-    open_form(
+    super::w::FormModal::new(title.clone()).size(100, 60).open(
         ctx,
         cx,
-        abstracttui::app::use_viewport(cx).get_untracked(),
-        move |mcx, close| {
+        move |mcx, close, _guard, _inner_w| {
             if entity.is_some() {
                 let ctx_reset = ctx2.clone();
                 mcx.on_cleanup(move || {
@@ -380,13 +411,11 @@ fn open_for(cx: Scope, ctx: &Ctx, entity: Option<String>) {
                 addr_gen: mcx.signal(0),
                 test_result: mcx.signal(None),
                 confirm_disconnect: mcx.signal(false),
-                advanced: mcx.signal(false),
                 new_entry: mcx.signal(String::new()),
                 new_deny_entry: mcx.signal(String::new()),
                 per_hour: mcx.signal(String::new()),
                 per_day: mcx.signal(String::new()),
                 folder: mcx.signal(String::new()),
-                oauth_advanced: mcx.signal(false),
                 client_id: mcx.signal(String::new()),
                 client_secret: mcx.signal(String::new()),
                 tenant: mcx.signal(String::new()),
@@ -496,46 +525,24 @@ fn open_for(cx: Scope, ctx: &Ctx, entity: Option<String>) {
                         page_id_c.set(ectx.current());
                     }
                 })
-                // "My provider uses a different login name": a key, never a
-                // button (DESIGN-v2 §3) — only on the IMAP pane of a mailbox
-                // not connected yet.
+                // "My provider uses a different login name": the link on the
+                // IMAP pane of a mailbox not connected yet; Ctrl+O is its
+                // accelerator.
                 .shortcut(KeyChord::new(Mods::CTRL, Key::Char('o')), move |ectx| {
-                    let connectable = store
-                        .op
-                        .my_email
-                        .with_untracked(|e| e.ready().map(|e| !e.configured).unwrap_or(false));
-                    if connectable && p.tab.get_untracked() == TAB_IMAP {
-                        let hide = p.login_shown.get_untracked();
-                        p.login_shown.set(!hide);
-                        // Hiding disposes the focused Login field: anchor the
-                        // focus on the page so the keys (Ctrl+O again) stay live.
-                        if hide {
-                            if let Some(id) = page_id.get() {
-                                ectx.request_focus(id);
-                            }
+                    // Hiding disposes the focused Login field: anchor the
+                    // focus on the page so the keys (Ctrl+O again) stay live.
+                    if toggle_login(store, p) == Some(true) {
+                        if let Some(id) = page_id.get() {
+                            ectx.request_focus(id);
                         }
                     }
                 })
-                // "Use a different account": the Mailbox address field, only
-                // when your email address is set (else it is the one field).
+                // "Use a different account": the link beside the mailbox
+                // account line (only when your email address is set); Ctrl+U
+                // is its accelerator.
                 .shortcut(KeyChord::new(Mods::CTRL, Key::Char('u')), move |_| {
-                    let saved = store.op.my_email.with_untracked(|e| {
-                        e.ready()
-                            .filter(|e| !e.configured)
-                            .map(|e| e.email_address().trim().to_string())
-                            .unwrap_or_default()
-                    });
-                    if !saved.is_empty() && p.tab.get_untracked() == TAB_IMAP {
-                        let show = !p.other_account.get_untracked();
-                        if !show {
-                            // Back to your email address: the hidden field must
-                            // not keep a different account it no longer shows.
-                            p.other_address.set(saved);
-                        }
-                        p.other_account.set(show);
-                    }
+                    toggle_other_account(store, p)
                 })
-                .child(line(vec![span_bold(title.clone(), t0.accent)]))
                 .child(
                     Scroll::new(body)
                         .layout(LayoutStyle::default().grow(1.0).min_h(3))
@@ -562,12 +569,14 @@ fn open_for(cx: Scope, ctx: &Ctx, entity: Option<String>) {
                         )]),
                     }
                 }))
-                .child(
-                    Button::new("Close (Esc)")
-                        .on_click(move || close_cancel())
-                        .element(mcx, &t0)
-                        .build(),
-                )
+                .child(super::w::form::button_row(vec![super::w::action::button(
+                    mcx,
+                    &t0,
+                    &super::w::Action::label("close", "Close"),
+                    super::w::action::On::Raised,
+                    true,
+                    move || close_cancel(),
+                )]))
                 .build()
         },
     );
@@ -649,39 +658,42 @@ fn cycle_w(
     value: Signal<String>,
     options: &'static [(&'static str, &'static str)],
     w: i32,
-    mut on_pick: impl FnMut(String) + 'static,
+    on_pick: impl FnMut(String) + 'static,
 ) -> View {
-    let t0 = *t;
+    // R15: a labelled Segmented (one Tab stop per option; Enter/Space or a
+    // click picks) bound to an index kept in step with `value`.
+    let idx = cx.signal(
+        options
+            .iter()
+            .position(|(k, _)| *k == value.get_untracked())
+            .unwrap_or(0),
+    );
+    cx.effect(move || {
+        let v = value.get();
+        if let Some(i) = options.iter().position(|(k, _)| *k == v) {
+            if idx.get_untracked() != i {
+                idx.set(i);
+            }
+        }
+    });
+    let on_pick = std::rc::Rc::new(std::cell::RefCell::new(on_pick));
+    let lw = (abstracttui::text::width(label) + 2).min(w);
     Element::new()
-        .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
-        .child(dyn_view(LayoutStyle::line(1).w(w), move || {
-            let cur = value.get();
-            let shown = options
-                .iter()
-                .find(|(k, _)| *k == cur)
-                .map(|(_, v)| *v)
-                .unwrap_or("?");
-            line(vec![
-                span(format!("{label}: "), t0.text_muted),
-                span(shown, t0.text),
-            ])
-        }))
+        .style(LayoutStyle::row().h(1).shrink(0.0))
+        .child(super::w::paint::fill_line(
+            LayoutStyle::default().w(lw).h(1).shrink(0.0),
+            vec![super::w::Ink::new(format!("{label}: "), t.text_muted)],
+            None,
+        ))
         .child(
-            Button::new("change")
-                .on_click(move || {
-                    let mut next = String::new();
-                    value.update(|v| {
-                        let i = options
-                            .iter()
-                            .position(|(k, _)| *k == v.as_str())
-                            .unwrap_or(0);
-                        *v = options[(i + 1) % options.len()].0.to_string();
-                        next = v.clone();
-                    });
-                    on_pick(next);
+            super::w::Segmented::new(options.iter().map(|(_, v)| v.to_string()), None)
+                .bind(idx)
+                .on_pick(move |i| {
+                    let next = options[i].0.to_string();
+                    value.set(next.clone());
+                    (on_pick.borrow_mut())(next);
                 })
-                .element(cx, &t0)
-                .build(),
+                .view(cx, t),
         )
         .build()
 }
@@ -840,30 +852,20 @@ fn mailbox_card(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> Vie
     if e.configured {
         return col.child(connected_view(cx, ctx, &t0, e, p)).build();
     }
-    col = col.child(
-        Tabs::new()
-            .tab(TABS[0], || {
-                Element::new().style(LayoutStyle::default().h(0)).build()
-            })
-            .tab(TABS[1], || {
-                Element::new().style(LayoutStyle::default().h(0)).build()
-            })
-            .tab(TABS[2], || {
-                Element::new().style(LayoutStyle::default().h(0)).build()
-            })
-            .active(p.tab)
-            .on_change({
-                let ctx = ctx.clone();
-                move |i| {
+    // IMAP | Google | Microsoft: a Segmented (one Tab stop per segment).
+    {
+        let ctx = ctx.clone();
+        col = col.child(
+            super::w::Segmented::new(TABS.iter().map(|s| s.to_string()), None)
+                .bind(p.tab)
+                .on_pick(move |i| {
                     if i == TAB_IMAP {
                         discover(&ctx, &p.other_address.get_untracked());
                     }
-                }
-            })
-            .layout(LayoutStyle::column().h(2).shrink(0.0))
-            .element(cx, &t0)
-            .build(),
-    );
+                })
+                .view(cx, &t0),
+        );
+    }
     let ctx_tab = ctx.clone();
     let e_tab = e.clone();
     col.child(dyn_view_scoped(
@@ -909,11 +911,9 @@ fn connected_view(_cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> 
     let ctx_use = ctx.clone();
     col = col
         .child(
-            Switch::new("Active", p.sw_use)
-                .fill()
+            super::w::Toggle::switch("Active", p.sw_use)
                 .busy_when(move || p.busy.get() == Some("enabled"))
-                .notice(ctx.store.notice)
-                .on_request(move |want| {
+                .on_change(move |want| {
                     send(
                         &ctx_use,
                         p,
@@ -926,8 +926,7 @@ fn connected_view(_cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> 
                         },
                     )
                 })
-                .element(_cx, &t0)
-                .build(),
+                .view(_cx, &t0),
         )
         .child(helper(&t0, &format!("    {ACTIVE_HELP}"), p.wrap_w));
     let (c_test, c_disc) = (ctx.clone(), ctx.clone());
@@ -1009,6 +1008,7 @@ fn imap_tab(cx: Scope, ctx: &Ctx, t: &TokenSet, p: Page) -> View {
             .map(|e| e.email_address().trim().to_string())
             .unwrap_or_default()
     });
+    let has_saved = !saved.is_empty();
     Element::new()
         .style(LayoutStyle::column().gap(0).shrink(0.0))
         .child(dyn_view_scoped(
@@ -1037,6 +1037,23 @@ fn imap_tab(cx: Scope, ctx: &Ctx, t: &TokenSet, p: Page) -> View {
                     .build()
             },
         ))
+        // The web's "Use a different account" link: stable (outside the
+        // region above), so the focus stays on it while it toggles.
+        .child(if !has_saved {
+            Element::new().style(LayoutStyle::default().h(0)).build()
+        } else {
+            let store_u = ctx.store;
+            super::w::action::button(
+                cx,
+                &t0,
+                &super::w::Action::link("other_account", USE_DIFFERENT_ACCOUNT).tooltip(format!(
+                    "{USE_DIFFERENT_ACCOUNT}  ({OTHER_ACCOUNT_KEY_LABEL})"
+                )),
+                super::w::action::On::Page,
+                true,
+                move || toggle_other_account(store_u, p),
+            )
+        })
         .child(field(
             &t0,
             "Password",
@@ -1092,16 +1109,28 @@ fn imap_tab(cx: Scope, ctx: &Ctx, t: &TokenSet, p: Page) -> View {
                 }
             },
         ))
-        // The different login: one line, a key (Ctrl+O) reveals the field.
+        // The different login: the web's link (Ctrl+O), stable so the
+        // focus stays on it; it reveals or hides the Login field below.
+        .child({
+            let store_o = ctx.store;
+            super::w::action::button(
+                cx,
+                &t0,
+                &super::w::Action::link("different_login", DIFFERENT_LOGIN)
+                    .tooltip(format!("{DIFFERENT_LOGIN}  ({LOGIN_KEY_LABEL})")),
+                super::w::action::On::Page,
+                true,
+                move || {
+                    toggle_login(store_o, p);
+                },
+            )
+        })
         .child(dyn_view_scoped(
             LayoutStyle::column().gap(0).shrink(0.0),
             move |lcx| {
                 let t = t0;
                 if !p.login_shown.get() {
-                    return line(vec![
-                        span(format!("{LOGIN_KEY_LABEL}  "), t.accent),
-                        span(DIFFERENT_LOGIN, t.text_faint),
-                    ]);
+                    return Element::new().style(LayoutStyle::default().h(0)).build();
                 }
                 if p.servers.login.with_untracked(String::is_empty) {
                     p.servers
@@ -1119,11 +1148,7 @@ fn imap_tab(cx: Scope, ctx: &Ctx, t: &TokenSet, p: Page) -> View {
                             .autofocus()
                             .build(),
                     ))
-                    .child(helper(
-                        &t,
-                        &format!("{LOGIN_HELP} {LOGIN_KEY_LABEL} hides it."),
-                        p.wrap_w,
-                    ))
+                    .child(helper(&t, LOGIN_HELP, p.wrap_w))
                     .build()
             },
         ))
@@ -1339,16 +1364,10 @@ fn oauth_tab(
         LayoutStyle::column().gap(0).shrink(0.0),
         move |acx| {
             let t = t0;
-            let open = p.oauth_advanced.get();
             let mut c = Element::new()
                 .style(LayoutStyle::column().gap(0).shrink(0.0))
-                .child(
-                    Button::new(if open { "Advanced ▾" } else { "Advanced ▸" })
-                        .on_click(move || p.oauth_advanced.update(|v| *v = !*v))
-                        .element(acx, &t)
-                        .build(),
-                );
-            if open {
+                .child(heading(&t, SIGN_IN_APP_SECTION));
+            {
                 c = c
                     .child(helper(
                         &t,
@@ -1395,12 +1414,10 @@ fn notifications_card(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) 
         Element::new()
             .style(LayoutStyle::column().gap(0).shrink(0.0))
             .child(
-                Switch::new(label, sig)
-                    .fill()
-                    .unavailable(reason.clone())
+                super::w::Toggle::switch(label, sig)
+                    .refused(reason.clone())
                     .busy_when(move || p.busy.get() == Some(key))
-                    .notice(ctx.store.notice)
-                    .on_request(move |want| {
+                    .on_change(move |want| {
                         send(
                             &ctx,
                             p,
@@ -1415,8 +1432,7 @@ fn notifications_card(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) 
                             ),
                         )
                     })
-                    .element(cx, &t0)
-                    .build(),
+                    .view(cx, &t0),
             )
             .child(helper(&t0, &format!("    {help}"), p.wrap_w))
             .build()
@@ -1488,12 +1504,10 @@ fn agent_tools_card(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) ->
         .style(LayoutStyle::column().gap(0).shrink(0.0))
         .child(heading(&t0, "Agent email tools"))
         .child(
-            Switch::new("Agent email tools", sig)
-                .fill()
-                .unavailable(e.agent_tools_unavailable())
+            super::w::Toggle::switch("Agent email tools", sig)
+                .refused(e.agent_tools_unavailable())
                 .busy_when(move || p.busy.get() == Some("agent_tools"))
-                .notice(ctx.store.notice)
-                .on_request(move |want| {
+                .on_change(move |want| {
                     send(
                         &ctx2,
                         p,
@@ -1506,8 +1520,7 @@ fn agent_tools_card(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) ->
                         },
                     )
                 })
-                .element(cx, &t0)
-                .build(),
+                .view(cx, &t0),
         )
         .child(helper(&t0, &format!("    {AGENT_TOOLS_HELP}"), p.wrap_w))
         .build()
@@ -1515,38 +1528,19 @@ fn agent_tools_card(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) ->
 
 // ---------------------------------------------------------------- 5
 
-fn advanced_card(_cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> View {
-    let t0 = *t;
-    let e2 = e.clone();
-    let ctx2 = ctx.clone();
+fn advanced_card(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> View {
+    // R15 D1: no "Advanced" — a visible section named by its content (the
+    // name the web uses too, COORD "R15 SECTION NAMES").
     Element::new()
         .style(LayoutStyle::column().gap(0).shrink(0.0))
-        .child(dyn_view_scoped(
-            LayoutStyle::row().h(1).shrink(0.0),
-            move |bcx| {
-                let t = t0;
-                let open = p.advanced.get();
-                Button::new(if open {
-                    "Advanced ▾"
-                } else {
-                    "Advanced ▸  who your agents may send to, limits, folder"
-                })
-                .on_click(move || p.advanced.update(|v| *v = !*v))
-                .element(bcx, &t)
-                .build()
-            },
-        ))
-        .child(dyn_view_scoped(
-            LayoutStyle::column().gap(0).shrink(0.0),
-            move |acx| {
-                if !p.advanced.get() {
-                    return Element::new().style(LayoutStyle::default().h(0)).build();
-                }
-                advanced_body(acx, &ctx2, &t0, &e2, p)
-            },
-        ))
+        .child(heading(t, RECIPIENTS_SECTION))
+        .child(advanced_body(cx, ctx, t, e, p))
         .build()
 }
+
+/// R15 D1 section names (shared with the web console).
+pub const RECIPIENTS_SECTION: &str = "Recipients and limits";
+pub const SIGN_IN_APP_SECTION: &str = "Sign-in app";
 
 const MODES: &[(&str, &str)] = &[
     ("allowlist", "only the Allowed list"),
@@ -1777,7 +1771,7 @@ pub fn other_address_help(user_id: &str) -> String {
 /// show: only that user can connect a mailbox (round-1 rule).
 pub fn other_not_connected(user_id: &str) -> String {
     format!(
-        "Not connected \u{2014} only {user_id} can connect a mailbox. You never see anyone's mail."
+        "Mailbox: not connected \u{2014} only {user_id} can connect a mailbox. You never see anyone's mail."
     )
 }
 
@@ -1796,11 +1790,11 @@ pub fn open_other(
     mailbox_line: String,
 ) {
     let ctx2 = ctx.clone();
-    open_form(
+    let title = format!("Email \u{2014} {user_id}");
+    super::w::FormModal::new(title).size(84, 20).open(
         ctx,
         cx,
-        abstracttui::app::use_viewport(cx).get_untracked(),
-        move |mcx, close| {
+        move |mcx, close, guard, _inner_w| {
             let theme = use_theme(mcx);
             let t0 = theme.get().tokens;
             let ui = ctx2.ui;
@@ -1809,7 +1803,8 @@ pub fn open_other(
             let status = mcx.signal(Option::<Result<String, String>>::None);
             let in_flight = mcx.signal(false);
             let form_id = crate::worker::next_form_id();
-            let vw = abstracttui::app::use_viewport(mcx).get_untracked().w;
+            let uid_saved = user_id.clone();
+            let vw = crate::ui::page_viewport(mcx).get_untracked().w;
             let wrap_w = (vw.min(84) - 6).max(20) as usize;
             mcx.effect(move || {
                 if let Some((fid, outcome)) = ui.write_done.get() {
@@ -1818,8 +1813,10 @@ pub fn open_other(
                         in_flight.set(false);
                         match outcome {
                             Ok(_) => {
-                                saved.set(value.get_untracked().trim().to_string());
-                                status.set(Some(Ok("Saved".into())));
+                                let addr = value.get_untracked().trim().to_string();
+                                saved.set(addr.clone());
+                                // The web card's inline state, word for word.
+                                status.set(Some(Ok(other_saved_sentence(&uid_saved, &addr))));
                             }
                             Err(e) => status.set(Some(Err(e))),
                         }
@@ -1849,14 +1846,35 @@ pub fn open_other(
             } else {
                 mailbox_line.clone()
             };
-            let close_b = close.clone();
+            // R15 F2: an unsaved edit is never dropped silently — Close,
+            // ✕ and Esc ask "Discard changes?" first.
+            let dirty = move || value.get_untracked().trim() != saved.get_untracked().trim();
+            let ask_close: std::rc::Rc<dyn Fn() -> bool> = {
+                let close = close.clone();
+                std::rc::Rc::new(move || {
+                    if !dirty() {
+                        return false;
+                    }
+                    let close = close.clone();
+                    super::w::Confirm::danger(super::DISCARD_QUESTION, "Discard", "Keep editing")
+                        .open(mcx, ui, move || close());
+                    true
+                })
+            };
+            {
+                let ask = ask_close.clone();
+                *guard.borrow_mut() = Some(Box::new(move || ask()));
+            }
+            let close_b = {
+                let (ask, close) = (ask_close.clone(), close.clone());
+                move || {
+                    if !ask() {
+                        close();
+                    }
+                }
+            };
             let mut col = Element::new()
                 .style(LayoutStyle::column().gap(0).grow(1.0))
-                .child(line(vec![span_bold(
-                    format!("Email \u{2014} {user_id}"),
-                    t0.accent,
-                )]))
-                .child(gap())
                 .child(field(
                     &t0,
                     "Email address",
@@ -1877,18 +1895,16 @@ pub fn open_other(
                                 if in_flight.get() {
                                     return line(vec![span("saving…", t.info)]);
                                 }
-                                if value.get().trim() == saved.get().trim() {
-                                    return match status.get() {
-                                        Some(Ok(_)) => line(vec![span("Saved", t.ok)]),
-                                        _ => Element::new()
-                                            .style(LayoutStyle::default().h(1))
-                                            .build(),
-                                    };
-                                }
-                                Button::new("Save")
-                                    .on_click(save.clone())
-                                    .element(scx, &t)
-                                    .build()
+                                // The web's inline Save, always there.
+                                let save = save.clone();
+                                super::w::action::button(
+                                    scx,
+                                    &t,
+                                    &super::w::Action::label("save", "Save"),
+                                    super::w::action::On::Raised,
+                                    true,
+                                    save,
+                                )
                             },
                         ))
                         .build(),
@@ -1897,23 +1913,38 @@ pub fn open_other(
                 .child(dyn_view(LayoutStyle::default().shrink(0.0), move || {
                     let t = theme.get().tokens;
                     match status.get() {
-                        Some(Err(e)) => line(vec![span(format!("✗ {e}"), t.error)]),
-                        _ => Element::new().style(LayoutStyle::default().h(0)).build(),
+                        // The gateway's sentence + "Not saved." (§2.5).
+                        Some(Err(e)) => {
+                            line(vec![span(super::w::FieldState::Refused(e).text(), t.error)])
+                        }
+                        Some(Ok(m)) => line(vec![span(m, t.ok)]),
+                        None => Element::new().style(LayoutStyle::default().h(0)).build(),
                     }
                 }))
-                .child(gap())
-                .child(heading(&t0, "Mailbox"));
+                .child(gap());
             for l in wrap_text(&mailbox, wrap_w) {
                 col = col.child(line(vec![span(l, t0.text_muted)]));
             }
             col.child(gap())
-                .child(
-                    Button::new("Close (Esc)")
-                        .on_click(move || close_b())
-                        .element(mcx, &t0)
-                        .build(),
-                )
+                .child(super::w::form::button_row(vec![super::w::action::button(
+                    mcx,
+                    &t0,
+                    &super::w::Action::label("close", "Close"),
+                    super::w::action::On::Raised,
+                    true,
+                    close_b,
+                )]))
                 .build()
         },
     );
+}
+
+/// The web card's state after saving another account's address
+/// (console.py accountOtherEmailCard).
+pub fn other_saved_sentence(user_id: &str, address: &str) -> String {
+    if address.is_empty() {
+        format!("Saved: {user_id} has no email address.")
+    } else {
+        format!("Saved: {user_id}'s codes and notifications go to {address}.")
+    }
 }

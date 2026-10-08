@@ -62,7 +62,7 @@ fn one_table_lists_users_and_entities_with_kind_and_active() {
     let mut h = accounts((120, 40));
     let s = h.turns(2);
     for want in [
-        "Accounts — people who use this gateway",
+        "People who use this gateway and the entities that act on it",
         "Name",
         "Email",
         "Runtime",
@@ -71,8 +71,8 @@ fn one_table_lists_users_and_entities_with_kind_and_active() {
         "not connected",
         "castor",
         "Entity",
-        "[-]",
-        "kind:",
+        "━●",
+        "@ ≣ ◫ ⊜ ⬖ ⊟",
     ] {
         assert!(s.contains(want), "{want:?}:\n{s}");
     }
@@ -87,21 +87,26 @@ fn d_archives_an_entity_after_the_confirm_never_deletes() {
     select(&mut h, "castor");
     let s = h.turns(2);
     assert!(!s.contains("Delete"), "no Delete anywhere on the row:\n{s}");
-    let s = h.key(b"\r"); // the row's detail names its actions
-    assert!(s.contains("d Archive"), "{s}");
+    // R15: the entity row's Actions cell ends with its Archive button (⊟).
+    let row = s.lines().find(|l| l.contains(" castor ")).expect(&s);
+    assert!(row.trim_end().ends_with("⬖ ⊟"), "{s}");
     let s = h.key(b"d");
     // The confirm wraps; the sentence itself is DESIGN-v3 §1.3's, word for word.
-    let flat = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let flat = abstractgateway_console::ui::w::confirm::asked()
+        .last()
+        .cloned()
+        .unwrap_or_default();
     assert!(
         flat.contains("Archive castor? It stops acting and never wakes. Its memory, runs and history are kept; you can unarchive later."),
         "{s}"
     );
     assert!(
-        s.contains("[y] Archive") && s.contains("[n] Keep"),
-        "inline confirm:\n{s}"
+        s.contains("Archive") && s.contains("Cancel"),
+        "confirm:\n{s}"
     );
     assert!(h.sent().is_empty(), "nothing sent before the confirm");
-    h.key(b"y");
+    h.key(b"\x1b[Z"); // Shift+Tab to the action button (R15 F1)
+    h.key(b"\r");
     let sent = h.sent();
     assert!(
         sent.iter().any(|c| matches!(c,
@@ -127,12 +132,14 @@ fn space_suspends_an_entity_after_the_confirm() {
     let mut h = accounts((120, 40));
     select(&mut h, "castor");
     let s = h.key(b" ");
+    let flat = s.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
-        s.contains("Suspend castor? It stops acting until you turn") && s.contains("[y] Suspend"),
+        flat.contains("Suspend castor? It stops acting until you turn") && s.contains("Suspend"),
         "{s}"
     );
     assert!(h.sent().is_empty(), "nothing sent before the confirm");
-    h.key(b"y");
+    h.key(b"\x1b[Z"); // Shift+Tab to the action button (R15 F1)
+    h.key(b"\r");
     let sent = h.sent();
     assert!(
         sent.iter().any(|c| matches!(c,
@@ -162,8 +169,10 @@ fn email_on_another_user_opens_the_address_only_view() {
         s.contains("Where alice's sign-in codes and notifications go."),
         "{s}"
     );
+    // The web sentence (wrapped inside the modal).
     assert!(
-        s.contains("only alice can connect a mailbox. You never see anyone's mail."),
+        s.contains("Mailbox: not connected — only alice can connect a mailbox.")
+            && s.contains("anyone's mail."),
         "{s}"
     );
 }
@@ -201,17 +210,16 @@ fn logs_read_the_accounts_activity_and_filter() {
     assert!(s.contains(&when), "{when:?}:\n{s}");
     for want in [
         "Activity — alice",
-        "[All]",
+        "All",
+        "Sign-ins",
         "Run started",
         "From the gateway's audit log",
-        "o Open in Observer",
+        "Open in Observer",
     ] {
         assert!(s.contains(want), "{want:?}:\n{s}");
     }
-    // The run rides in the row's detail (Enter), with its Observer verb.
-    let s = h.key(b"\r");
-    assert!(s.contains("Run run-42 — o Open in Observer"), "{s}");
-    h.key(b"f");
+    // R15: the filter chips are a Segmented — a click on "Sign-ins".
+    h.click_text("Sign-ins");
     let sent = h.sent();
     assert!(
         sent.iter().any(|c| matches!(c,

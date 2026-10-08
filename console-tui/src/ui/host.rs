@@ -17,13 +17,23 @@
 //! A panel, not a numbered screen: the digit row is full (1-9, 0) and
 //! host control is a verb set every screen may need (the web shows the
 //! paused banner on every tab). The lead settles final placement.
+//!
+//! R15: the panel IS the web's ◎ Gateway card — its title and note, the
+//! Workflows paused and Start at login switches (Toggles), the Version /
+//! Desktop icon / Last restart / Start at login rows, and its buttons
+//! (Check now, Update, Restart gateway…, Quit gateway…) with the web's
+//! questions; `host_actions` is the single source.
 
 use std::rc::Rc;
 
 use abstracttui::prelude::*;
+use abstracttui::ui::{Phase, UiEvent};
 
-use super::util::{ellipsize, line, span, span_bold};
-use super::{open_form, Ctx};
+use super::util::{line, span, span_bold};
+use super::w::action::{button, On};
+use super::w::form::sentence;
+use super::w::{Action, Toggle};
+use super::Ctx;
 use crate::store::operator::{paused_banner_text, HostRunner, StartAtLogin};
 use crate::store::{ConnPhase, Loadable};
 use crate::worker::operator::OpCmd;
@@ -147,7 +157,9 @@ pub fn toggle_start_at_login(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
         )));
         return;
     };
-    close();
+    // R15 (adversary H1): the confirm opens OVER the panel; Cancel returns
+    // to it. `close` stays in the signature for the callers that pass one.
+    let _ = close;
     let c = ctx.clone();
     let enabled = !st.enabled;
     let replace_other = st.state == "other";
@@ -159,7 +171,7 @@ pub fn toggle_start_at_login(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
     });
 }
 
-fn toggle_pause(ctx: &Ctx) {
+pub(crate) fn toggle_pause(ctx: &Ctx) {
     if !guard(ctx) {
         return;
     }
@@ -174,7 +186,7 @@ fn toggle_pause(ctx: &Ctx) {
 
 /// Restart: capability-gated, confirmed on the ROOT scope after this
 /// panel closes (a prompt over a modal is the stacking hazard).
-fn restart(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
+pub(crate) fn restart(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
     if !guard(ctx) {
         return;
     }
@@ -198,21 +210,15 @@ fn restart(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
             return;
         }
     }
-    close();
+    // R15 (adversary H1): the confirm opens OVER the panel; Cancel returns
+    // to it. `close` stays in the signature for the callers that pass one.
+    let _ = close;
     let c = ctx.clone();
-    super::confirm_danger(
-        cx,
-        ctx.ui,
-        "Restart AbstractGateway? Running workflows pause at their next step and continue after the \
-         restart. The console is unavailable for a few seconds and reconnects by itself."
-            .to_string(),
-        "Restart",
-        "Keep it running",
-        move || c.send(Cmd::Operator(OpCmd::Restart)),
-    );
+    super::w::Confirm::danger(RESTART_QUESTION, "Restart", "Cancel")
+        .open(cx, ctx.ui, move || c.send(Cmd::Operator(OpCmd::Restart)));
 }
 
-fn quit(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
+pub(crate) fn quit(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
     if !guard(ctx) {
         return;
     }
@@ -236,49 +242,44 @@ fn quit(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
             return;
         }
     }
-    close();
+    // R15 (adversary H1): the confirm opens OVER the panel; Cancel returns
+    // to it. `close` stays in the signature for the callers that pass one.
+    let _ = close;
     let c = ctx.clone();
-    super::confirm_danger(
-        cx,
-        ctx.ui,
-        "Quit AbstractGateway? Workflows stop and this console goes offline until you start \
-         AbstractGateway again."
-            .to_string(),
-        "Quit the gateway",
-        "Keep it running",
-        move || c.send(Cmd::Operator(OpCmd::Shutdown)),
-    );
+    super::w::Confirm::danger(QUIT_QUESTION, "Quit", "Cancel")
+        .open(cx, ctx.ui, move || c.send(Cmd::Operator(OpCmd::Shutdown)));
 }
 
-fn check_update(ctx: &Ctx) {
+pub(crate) fn check_update(ctx: &Ctx) {
     if guard(ctx) {
         ctx.send(Cmd::Operator(OpCmd::UpdateCheck));
     }
 }
 
-fn start_update(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
+pub(crate) fn start_update(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
     if !guard(ctx) {
         return;
     }
     let Some(u) = ctx.store.op.update.with_untracked(|u| u.ready().cloned()) else {
         ctx.store
             .notice
-            .set(Some("check for an update first (u)".into()));
+            .set(Some("check for an update first (Check now)".into()));
         return;
     };
     if let Some(why) = u.start_refusal() {
         ctx.store.notice.set(Some(why));
         return;
     }
-    close();
+    // R15 (adversary H1): the confirm opens OVER the panel; Cancel returns
+    // to it. `close` stays in the signature for the callers that pass one.
+    let _ = close;
     let c = ctx.clone();
     let installer_sha256 = u.installer_sha256();
-    super::confirm_danger(
+    // The web's update question (`startGatewayUpdate`): the gateway's
+    // own sentence, Update now / Cancel.
+    super::w::Confirm::plain(u.confirm_text(), "Update now", "Cancel").open(
         cx,
         ctx.ui,
-        u.confirm_text(),
-        "Update now",
-        "Not now",
         move || {
             c.send(Cmd::Operator(OpCmd::UpdateStart {
                 installer_sha256: installer_sha256.clone(),
@@ -287,332 +288,317 @@ fn start_update(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
     );
 }
 
+// ---- R15: the panel is the web's ◎ Gateway card ----------------------
+
+pub const TITLE: &str = "Gateway";
+pub const NOTE: &str = "How this gateway is running right now. Pausing stops new workflow steps; the console and connected apps keep answering.";
+pub const PAUSE_LABEL: &str = "Workflows paused";
+pub const PAUSE_TIP: &str = "On: no new workflow step starts until you switch it off; work already inside a call finishes first";
+pub const CHECK_TIP: &str = "Check for a newer release: an AbstractFramework installer install compares with the newest AbstractFramework release, any other install with the newest AbstractGateway on PyPI (needs internet)";
+pub const UPDATE_TIP: &str = "Install it in the background (an installer install runs the AbstractFramework installer); restart to finish";
+pub const RESTART_QUESTION: &str = "Restart AbstractGateway? Running workflows pause at their next step and continue after the restart. The console is unavailable for a few seconds.";
+pub const QUIT_QUESTION: &str = "Quit AbstractGateway? Workflows stop and this console goes offline until you start AbstractGateway again.";
+const NON_ADMIN: &str = "only an admin can pause, restart, quit or update this gateway";
+
+/// The card's buttons (admins; the web hides them otherwise): Check now,
+/// Update (when the check found one), Restart gateway…, Quit gateway…
+/// (refused with the gateway's reason when this launch cannot).
+pub fn host_actions(
+    r: Option<&HostRunner>,
+    u: Option<&crate::store::operator::HostUpdate>,
+    is_admin: bool,
+) -> Vec<Action> {
+    if !is_admin {
+        return Vec::new();
+    }
+    let mut out = vec![Action::label("check", "Check now")
+        .key('u')
+        .tooltip(CHECK_TIP)];
+    if let Some(u) = u.filter(|u| u.update_available) {
+        out.push(
+            Action::label("update", "Update")
+                .key('U')
+                .tooltip(UPDATE_TIP)
+                .refused(u.start_refusal()),
+        );
+    }
+    let cap_why = |ok: bool| -> Option<String> {
+        match r {
+            None => Some("the runner state is not loaded yet".into()),
+            Some(_) if ok => None,
+            Some(r) => Some(if r.cap_reason.is_empty() {
+                "not available for this launch".to_string()
+            } else {
+                r.cap_reason.clone()
+            }),
+        }
+    };
+    out.push(
+        Action::label("restart", "Restart gateway…")
+            .key('R')
+            .refused(cap_why(r.is_some_and(|r| r.cap_restart))),
+    );
+    out.push(
+        Action::label("quit", "Quit gateway…")
+            .key('Q')
+            .refused(cap_why(r.is_some_and(|r| r.cap_shutdown)))
+            .danger(),
+    );
+    out
+}
+
+/// One label · value row of the card (the value wraps under itself).
+fn kv(t: &TokenSet, label: &str, value: &str, ink: Rgba, w: i32) -> Vec<View> {
+    let body_w = (w - 17).max(16) as usize;
+    super::util::wrap_text(value, body_w)
+        .into_iter()
+        .enumerate()
+        .map(|(i, l)| {
+            line(vec![
+                span(
+                    if i == 0 {
+                        format!("{label:<16} ")
+                    } else {
+                        " ".repeat(17)
+                    },
+                    t.text_muted,
+                ),
+                span(l, ink),
+            ])
+        })
+        .collect()
+}
+
 /// Open the panel (F3). `cx` is the ROOT scope: confirms open there.
 pub fn open(ctx: &Ctx, cx: Scope) {
     refresh(ctx);
-    let ctx2 = ctx.clone();
-    open_form(ctx, cx, Size::new(104, 20), move |mcx, close| {
-        let theme = use_theme(mcx);
-        let store = ctx2.store;
-        let op = store.op;
-        let op_notice = store.notice;
-        let is_admin = admin(&ctx2);
-
-        let c_p = ctx2.clone();
-        let c_r = ctx2.clone();
-        let c_q = ctx2.clone();
-        let c_u = ctx2.clone();
-        let c_s = ctx2.clone();
-        let c_ref = ctx2.clone();
-        let c_l = ctx2.clone();
-        let (k_r, k_q, k_s, k_l) = (close.clone(), close.clone(), close.clone(), close.clone());
-
-        let viewport = abstracttui::app::use_viewport(mcx);
-        // The rows scroll (wheel) when the terminal is too short for them
-        // (80x24 with a "Last restart" row): never clipped, never cut.
-        let scroll_y = mcx.signal(0);
-        let body = dyn_view_scoped(LayoutStyle::column().gap(0).grow(1.0), move |bcx| {
-            let t = theme.get().tokens;
-            let _ = store.tick.get();
-            let mut rows: Vec<View> = Vec::new();
-            let conn = store.conn.get();
-            if !conn.is_connected() {
-                rows.push(line(vec![span(
-                    "not connected — the host state needs a live gateway",
-                    t.warn,
-                )]));
-            }
-            match op.runner.get() {
-                Loadable::Ready(r) => {
-                    let ink = if r.paused { t.warn } else { t.ok };
-                    rows.push(line(vec![
-                        span(format!("{:>14}: ", "workflows"), t.text_muted),
-                        span_bold(r.state_text(), ink),
-                    ]));
-                    let detail = r.detail_text();
-                    if !detail.is_empty() {
-                        rows.push(line(vec![span(
-                            format!("{:>14}  {}", "", ellipsize(&detail, 86)),
-                            t.text_faint,
-                        )]));
-                    }
-                    let caps = match (r.cap_restart, r.cap_shutdown) {
-                        (true, true) => "restart and quit available".to_string(),
-                        (false, true) => {
-                            format!("quit available · restart unavailable: {}", r.cap_reason)
+    let c = ctx.clone();
+    super::w::FormModal::new(TITLE)
+        .lead(NOTE)
+        .size(104, 26)
+        .open(ctx, cx, move |mcx, close, _guard, inner_w| {
+            let store = c.store;
+            let op = store.op;
+            let is_admin = admin(&c);
+            // The rows scroll (wheel) when the terminal is too short for
+            // them (80x24 with a "Last restart" row): never clipped.
+            let scroll_y = mcx.signal(0);
+            let body = dyn_view_scoped(LayoutStyle::column().gap(0).grow(1.0), move |bcx| {
+                let t = abstracttui::app::current_theme().tokens;
+                let _ = store.tick.get();
+                let w = inner_w;
+                let mut rows: Vec<View> = Vec::new();
+                if !store.conn.get().is_connected() {
+                    rows.push(sentence(
+                        &t,
+                        "not connected — the host state needs a live gateway",
+                        w,
+                        t.warn,
+                    ));
+                }
+                match op.runner.get() {
+                    Loadable::Ready(r) => {
+                        let ink = if r.paused { t.warn } else { t.ok };
+                        rows.extend(kv(&t, "Workflows", &r.state_text(), ink, w));
+                        let detail = r.detail_text();
+                        if !detail.is_empty() {
+                            rows.extend(kv(&t, "", &detail, t.text_faint, w));
                         }
-                        (true, false) => {
-                            format!("restart available · quit unavailable: {}", r.cap_reason)
-                        }
-                        (false, false) => format!("restart/quit unavailable: {}", r.cap_reason),
-                    };
-                    rows.push(line(vec![
-                        span(format!("{:>14}: ", "process"), t.text_muted),
-                        span(ellipsize(&caps, 86), t.text),
-                    ]));
-                    // R13.1: the web Gateway card's "Last restart" row
-                    // (admins; absent = no watchdog incident), wrapped,
-                    // never cut; the tooltip's lines below it.
-                    if let Some(hang) = &r.last_hang {
-                        let w = (viewport.get().w.min(104) - 24).max(20) as usize;
-                        for (i, l) in super::util::wrap_text(&hang.text(), w)
-                            .into_iter()
-                            .enumerate()
-                        {
-                            rows.push(line(vec![
-                                span(
-                                    if i == 0 {
-                                        format!("{:>14}: ", "last restart")
-                                    } else {
-                                        format!("{:>14}  ", "")
-                                    },
-                                    t.text_muted,
-                                ),
-                                span(l, t.warn),
-                            ]));
-                        }
-                        for extra in hang.dump_text().into_iter().chain(hang.detail_lines()) {
-                            for l in super::util::wrap_text(&extra, w) {
-                                rows.push(line(vec![span(
-                                    format!("{:>14}  {l}", ""),
-                                    t.text_faint,
-                                )]));
+                        // R13.1: the "Last restart" row (admins; absent =
+                        // no watchdog incident), wrapped, never cut.
+                        if let Some(hang) = &r.last_hang {
+                            rows.extend(kv(&t, "Last restart", &hang.text(), t.warn, w));
+                            for extra in hang.dump_text().into_iter().chain(hang.detail_lines()) {
+                                rows.extend(kv(&t, "", &extra, t.text_faint, w));
                             }
                         }
                     }
-                }
-                Loadable::Failed(e) => rows.push(line(vec![
-                    span(format!("{:>14}: ", "workflows"), t.text_muted),
-                    span(format!("gateway state unavailable: {e}"), t.error),
-                ])),
-                Loadable::Loading => {
-                    rows.push(line(vec![span("◌ reading the gateway host…", t.info)]))
-                }
-                Loadable::NotAsked => {
-                    rows.push(line(vec![span("— not read yet (r)", t.text_muted)]))
-                }
-            }
-            match op.tray.get() {
-                Loadable::Ready(note) => rows.push(line(vec![
-                    span(format!("{:>14}: ", "desktop tray"), t.text_muted),
-                    span(ellipsize(&note, 86), t.text),
-                ])),
-                Loadable::Failed(e) => rows.push(line(vec![
-                    span(format!("{:>14}: ", "desktop tray"), t.text_muted),
-                    span(format!("unavailable: {e}"), t.warn),
-                ])),
-                _ => {}
-            }
-            rows.push(line(vec![
-                span(format!("{:>14}: ", "start at login"), t.text_muted),
-                span(
-                    ellipsize(&start_at_login_text(&op.start_at_login.get(), is_admin), 86),
-                    t.text,
-                ),
-            ]));
-            if is_admin {
-                match op.update.get() {
-                    Loadable::Ready(u) => {
-                        rows.push(line(vec![
-                            span(format!("{:>14}: ", "version"), t.text_muted),
-                            span(
-                                ellipsize(&u.version_text(), 86),
-                                if u.update_available { t.accent } else { t.text },
-                            ),
-                        ]));
-                        let hint = u.hint_text();
-                        if !hint.is_empty() {
-                            rows.push(line(vec![span(
-                                format!("{:>14}  {}", "", ellipsize(&hint, 86)),
-                                t.text_faint,
-                            )]));
-                        }
-                    }
-                    Loadable::Failed(e) => rows.push(line(vec![
-                        span(format!("{:>14}: ", "version"), t.text_muted),
-                        span(format!("update state unavailable: {e}"), t.warn),
-                    ])),
+                    Loadable::Failed(e) => rows.extend(kv(
+                        &t,
+                        "Workflows",
+                        &format!("gateway state unavailable: {e}"),
+                        t.error,
+                        w,
+                    )),
                     Loadable::Loading => {
-                        rows.push(line(vec![span("◌ reading the update state…", t.info)]))
+                        rows.push(sentence(&t, "◌ reading the gateway host…", w, t.info))
                     }
-                    Loadable::NotAsked => {}
+                    Loadable::NotAsked => {
+                        rows.push(sentence(&t, "— not read yet (r)", w, t.text_muted))
+                    }
                 }
-            }
-            if let Some(l) = op.lifecycle.get() {
-                rows.push(line(vec![span(ellipsize(&l, 100), t.info)]));
-            }
-            // Wrapped to the panel (never cut): at 80 columns the one-line
-            // key list lost "r reload · Esc close".
-            let keys = if is_admin {
-                "space switch · p Workflows paused · L Start at login · R restart · Q quit · u check for update · U install update · r reload · Esc close"
-            } else {
-                "only an admin can pause, restart, quit or update this gateway · r reload · Esc close"
-            };
-            let wrap_w = (viewport.get().w.min(104) - 8).max(20) as usize;
-            for l in super::util::wrap_text(keys, wrap_w) {
-                rows.push(line(vec![span(l, t.text_faint)]));
-            }
-            let mut col = Element::new().style(LayoutStyle::column().gap(0));
-            for r in rows {
-                col = col.child(r);
-            }
-            Scroll::new(col.build())
-                .axes(false, true)
-                .offset_y(scroll_y)
-                .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))
-                .scrollbar_auto_hide(true)
-                .view(bcx)
-        });
+                if is_admin {
+                    match op.update.get() {
+                        Loadable::Ready(u) => {
+                            let ink = if u.update_available { t.accent } else { t.text };
+                            rows.extend(kv(&t, "Version", &u.version_text(), ink, w));
+                            let hint = u.hint_text();
+                            if !hint.is_empty() {
+                                rows.extend(kv(&t, "", &hint, t.text_faint, w));
+                            }
+                        }
+                        Loadable::Failed(e) => rows.extend(kv(
+                            &t,
+                            "Version",
+                            &format!("update state unavailable: {e}"),
+                            t.warn,
+                            w,
+                        )),
+                        Loadable::Loading => rows.extend(kv(&t, "Version", "reading…", t.info, w)),
+                        Loadable::NotAsked => {}
+                    }
+                }
+                match op.tray.get() {
+                    Loadable::Ready(note) => rows.extend(kv(&t, "Desktop icon", &note, t.text, w)),
+                    Loadable::Failed(e) => rows.extend(kv(
+                        &t,
+                        "Desktop icon",
+                        &format!("unavailable: {e}"),
+                        t.warn,
+                        w,
+                    )),
+                    _ => {}
+                }
+                rows.extend(kv(
+                    &t,
+                    "Start at login",
+                    &start_at_login_text(&op.start_at_login.get(), is_admin),
+                    t.text,
+                    w,
+                ));
+                if let Some(l) = op.lifecycle.get() {
+                    rows.push(sentence(&t, &l, w, t.info));
+                }
+                if !is_admin {
+                    rows.push(sentence(&t, NON_ADMIN, w, t.text_faint));
+                }
+                let mut col = Element::new().style(LayoutStyle::column().gap(0));
+                for r in rows {
+                    col = col.child(r);
+                }
+                Scroll::new(col.build())
+                    .axes(false, true)
+                    .offset_y(scroll_y)
+                    .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))
+                    .scrollbar_auto_hide(true)
+                    .view(bcx)
+            });
 
-        let t0 = theme.get().tokens;
-        let buttons: View = if is_admin {
-            let (b_p, b_r, b_q, b_u, b_s) = (
-                c_p.clone(),
-                c_r.clone(),
-                c_q.clone(),
-                c_u.clone(),
-                c_s.clone(),
-            );
-            let b_l = c_l.clone();
-            let (kb_r, kb_q, kb_s) = (k_r.clone(), k_q.clone(), k_s.clone());
-            let kb_l = k_l.clone();
-            // Rebuilt when the runner / start-at-login answers change.
-            // THREE rows: the two switches (persistent states), the
-            // process verbs, the update verbs (one row ran past the panel
-            // border at 80 columns).
-            dyn_view_scoped(LayoutStyle::column().h(3).shrink(0.0), move |bcx| {
-                let t = theme.get().tokens;
+            // The switches and the buttons: rebuilt when the runner, the
+            // update check or the start-at-login answer changes.
+            let cc = c.clone();
+            let close_c = close.clone();
+            let controls = dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |bcx| {
+                let t = abstracttui::app::current_theme().tokens;
                 let runner = op.runner.get();
-                let paused = cx.signal(matches!(&runner, Loadable::Ready(r) if r.paused));
-                let paused_na = match &runner {
-                    Loadable::Ready(_) => None,
-                    Loadable::Failed(e) => Some(format!("unavailable: {e}")),
-                    _ => Some("reading…".to_string()),
-                };
-                let (b_p, b_r, b_q, b_u, b_s) = (
-                    b_p.clone(),
-                    b_r.clone(),
-                    b_q.clone(),
-                    b_u.clone(),
-                    b_s.clone(),
-                );
-                let (kb_r, kb_q, kb_s) = (kb_r.clone(), kb_q.clone(), kb_s.clone());
+                let update = op.update.get();
                 let login = op.start_at_login.get();
-                let login_on = cx.signal(matches!(&login, Loadable::Ready(st) if st.enabled));
-                let login_na = match &login {
-                    Loadable::Ready(st) => st.switch_unavailable(),
-                    Loadable::Failed(e) => Some(format!("unavailable: {e}")),
-                    _ => Some("reading…".to_string()),
-                };
-                let repair = login.ready().and_then(|st| st.repair_label());
-                let mut switches = Element::new()
-                    .style(LayoutStyle::row().gap(3).h(1).shrink(0.0))
-                    .child(
-                        super::switch::Switch::new("Workflows paused", paused)
-                            .unavailable(paused_na)
-                            .notice(op_notice)
-                            .on_request(move |_| toggle_pause(&b_p))
-                            .element(bcx, &t)
-                            .build(),
-                    );
-                {
-                    let (b_l, kb_l) = (b_l.clone(), kb_l.clone());
-                    switches = switches.child(
-                        super::switch::Switch::new("Start at login", login_on)
-                            .unavailable(login_na)
-                            .notice(op_notice)
-                            .on_request(move |_| toggle_start_at_login(cx, &b_l, &*kb_l))
-                            .element(bcx, &t)
-                            .build(),
-                    );
+                let mut col = Element::new().style(LayoutStyle::column().shrink(0.0));
+                if is_admin {
+                    let paused_na = match &runner {
+                        Loadable::Ready(_) => None,
+                        Loadable::Failed(e) => Some(format!("unavailable: {e}")),
+                        _ => Some("reading…".to_string()),
+                    };
+                    let login_na = match &login {
+                        Loadable::Ready(st) => st.switch_unavailable(),
+                        Loadable::Failed(e) => Some(format!("unavailable: {e}")),
+                        _ => Some("reading…".to_string()),
+                    };
+                    let (c1, c2) = (cc.clone(), cc.clone());
+                    let k2 = close_c.clone();
+                    let mut switches = Element::new()
+                        .style(LayoutStyle::row().gap(3).h(1).shrink(0.0))
+                        .child(
+                            Toggle::new(matches!(&runner, Loadable::Ready(r) if r.paused))
+                                .label(PAUSE_LABEL)
+                                .tip(format!("{PAUSE_TIP}  (p)"))
+                                .refused(paused_na)
+                                .on_change(move |_| toggle_pause(&c1))
+                                .view(bcx, &t),
+                        )
+                        .child(
+                            Toggle::new(matches!(&login, Loadable::Ready(st) if st.enabled))
+                                .label("Start at login")
+                                .tip("Start the gateway when you log in to this computer  (L)")
+                                .refused(login_na)
+                                .on_change(move |_| toggle_start_at_login(cx, &c2, &*k2))
+                                .view(bcx, &t),
+                        );
+                    if let Some(label) = login.ready().and_then(|st| st.repair_label()) {
+                        let (c3, k3) = (cc.clone(), close_c.clone());
+                        switches = switches.child(button(
+                            bcx,
+                            &t,
+                            &Action::label("repair", label),
+                            On::Raised,
+                            true,
+                            move || toggle_start_at_login(cx, &c3, &*k3),
+                        ));
+                    }
+                    col = col.child(switches.build());
                 }
-                if let Some(label) = repair {
-                    let (b_l, kb_l) = (b_l.clone(), kb_l.clone());
-                    switches = switches.child(
-                        Button::new(label)
-                            .on_click(move || toggle_start_at_login(cx, &b_l, &*kb_l))
-                            .element(bcx, &t)
-                            .build(),
-                    );
+                let mut buttons = Vec::new();
+                for a in host_actions(runner.ready(), update.ready(), is_admin) {
+                    let (c4, k4) = (cc.clone(), close_c.clone());
+                    let id = a.id;
+                    buttons.push(button(bcx, &t, &a, On::Raised, true, move || {
+                        host_action(cx, &c4, &*k4, id)
+                    }));
                 }
-                let process = Element::new()
-                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                    .child(
-                        Button::new("Restart…")
-                            .on_click(move || restart(cx, &b_r, &*kb_r))
-                            .element(bcx, &t)
-                            .build(),
-                    )
-                    .child(
-                        Button::new("Quit…")
-                            .on_click(move || quit(cx, &b_q, &*kb_q))
-                            .element(bcx, &t)
-                            .build(),
-                    )
-                    .build();
-                let update = Element::new()
-                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                    .child(
-                        Button::new("Check for update")
-                            .on_click(move || check_update(&b_u))
-                            .element(bcx, &t)
-                            .build(),
-                    )
-                    .child(
-                        Button::new("Install update…")
-                            .on_click(move || start_update(cx, &b_s, &*kb_s))
-                            .element(bcx, &t)
-                            .build(),
-                    );
-                let update = update.build();
-                Element::new()
-                    .style(LayoutStyle::column().gap(0).h(3).shrink(0.0))
-                    .child(switches.build())
-                    .child(process)
-                    .child(update)
-                    .build()
-            })
-        } else {
-            Element::new().style(LayoutStyle::default().h(0)).build()
-        };
+                let k5 = close_c.clone();
+                buttons.push(button(
+                    bcx,
+                    &t,
+                    &Action::label("close", "Close"),
+                    On::Raised,
+                    true,
+                    move || k5(),
+                ));
+                col.child(super::w::form::button_row(buttons)).build()
+            });
 
-        let close_esc: Rc<dyn Fn()> = close.clone();
-        Element::new()
-            .focusable()
-            .autofocus()
-            .style(LayoutStyle::column().gap(0))
-            .shortcut(KeyChord::plain(Key::Char('p')), move |_| toggle_pause(&c_p))
-            .shortcut(KeyChord::plain(Key::Char('R')), move |_| {
-                restart(cx, &c_r, &*k_r)
-            })
-            .shortcut(KeyChord::plain(Key::Char('Q')), move |_| {
-                quit(cx, &c_q, &*k_q)
-            })
-            .shortcut(KeyChord::plain(Key::Char('u')), move |_| check_update(&c_u))
-            .shortcut(KeyChord::plain(Key::Char('U')), move |_| {
-                start_update(cx, &c_s, &*k_s)
-            })
-            .shortcut(KeyChord::plain(Key::Char('L')), move |_| {
-                toggle_start_at_login(cx, &c_l, &*k_l)
-            })
-            .shortcut(KeyChord::plain(Key::Char('r')), move |_| refresh(&c_ref))
-            .child(line(vec![
-                span_bold("Gateway host", t0.accent),
-                span(
-                    "  — this gateway process (the web's Gateway card)",
-                    t0.text_faint,
-                ),
-            ]))
-            .child(body)
-            .child(buttons)
-            .child(
-                Button::new("Close (Esc)")
-                    .on_click(move || close_esc())
-                    .element(mcx, &t0)
-                    .build(),
-            )
-            .build()
-    });
+            let (ck, kk) = (c.clone(), close.clone());
+            Element::new()
+                .style(LayoutStyle::column().gap(0).grow(1.0))
+                .focusable()
+                .autofocus()
+                .on(Phase::Bubble, move |ectx, ev| {
+                    let UiEvent::Key(k) = ev else { return };
+                    if k.mods.0 != 0 && !matches!(k.key, Key::Char(ch) if ch.is_ascii_uppercase()) {
+                        return;
+                    }
+                    let id = match k.key {
+                        Key::Char('p') => "pause",
+                        Key::Char('L') => "login",
+                        Key::Char('R') => "restart",
+                        Key::Char('Q') => "quit",
+                        Key::Char('u') => "check",
+                        Key::Char('U') => "update",
+                        Key::Char('r') => "reload",
+                        _ => return,
+                    };
+                    ectx.stop_propagation();
+                    host_action(cx, &ck, &*kk, id);
+                })
+                .child(body)
+                .child(controls)
+                .build()
+        });
+}
+
+/// One verb of the panel (a button, a switch or its key).
+fn host_action(cx: Scope, ctx: &Ctx, close: &dyn Fn(), id: &str) {
+    match id {
+        "pause" => toggle_pause(ctx),
+        "login" => toggle_start_at_login(cx, ctx, close),
+        "restart" => restart(cx, ctx, close),
+        "quit" => quit(cx, ctx, close),
+        "check" => check_update(ctx),
+        "update" => start_update(cx, ctx, close),
+        "reload" => refresh(ctx),
+        _ => {}
+    }
 }
 
 /// The chrome banner: the paused sentence (web: every tab), and the

@@ -27,9 +27,6 @@ use r8w4::{harness, Mount, SIZES};
 use serde_json::{json, Value};
 
 const UP: &[u8] = b"\x1b[A";
-const DOWN: &[u8] = b"\x1b[B";
-const RIGHT: &[u8] = b"\x1b[C";
-const LEFT: &[u8] = b"\x1b[D";
 
 fn fx(name: &str) -> Value {
     let path = format!(
@@ -50,7 +47,42 @@ fn runtimes_view(ctx: &ui::Ctx, cx: abstracttui::prelude::Scope) -> abstracttui:
 }
 
 /// The text with borders and line breaks folded away.
+/// R15: a form modal is a centred box over the page — read only what is
+/// inside the outermost box when one is open (the page shows beside it).
+fn inside_modal(s: &str) -> String {
+    let lines: Vec<Vec<char>> = s.lines().map(|l| l.chars().collect()).collect();
+    let mut best: Option<(usize, usize, usize)> = None; // (row, x0, x1)
+    for (y, l) in lines.iter().enumerate() {
+        if let (Some(x0), Some(x1)) = (
+            l.iter().position(|c| *c == '╭'),
+            l.iter().rposition(|c| *c == '╮'),
+        ) {
+            // A modal box starts its top border with ╭ then a run of ─.
+            let w = x1.saturating_sub(x0);
+            if w > 20
+                && best.map(|(_, a, b)| w > b - a).unwrap_or(true)
+                && l.get(x0 + 1) == Some(&'─')
+            {
+                best = Some((y, x0, x1));
+            }
+        }
+    }
+    let Some((top, x0, x1)) = best else {
+        return s.to_string();
+    };
+    let mut out = Vec::new();
+    for l in lines.iter().skip(top + 1) {
+        if l.get(x0) == Some(&'╰') {
+            break;
+        }
+        let inner: String = l.iter().skip(x0 + 1).take(x1 - x0 - 1).collect();
+        out.push(inner);
+    }
+    out.join("\n")
+}
+
 fn flat(s: &str) -> String {
+    let s = &inside_modal(s);
     s.lines()
         .map(|l| l.trim_matches(|c| c == '│' || c == ' ' || c == '┃'))
         .collect::<Vec<_>>()
@@ -145,7 +177,7 @@ fn the_accounts_head_has_eligible_workspaces_and_the_sandbox_state_line() {
         let mut h = page(size, true);
         let s = h.shoot("r14w3-accounts-admin");
         let f = flat(&s);
-        assert!(f.contains("E Eligible workspaces"), "{s}");
+        assert!(f.contains("Eligible workspaces"), "{s}");
         assert!(f.contains("Commands sandboxed: macOS sandbox-exec"), "{s}");
         assert!(
             f.contains("Every command a run starts is confined by the operating system to that run's workspaces."),
@@ -170,20 +202,21 @@ fn the_accounts_head_has_eligible_workspaces_and_the_sandbox_state_line() {
 #[test]
 fn every_row_humans_and_entities_has_the_workspaces_action() {
     let mut h = page((120, 40), true);
-    for id in ["admin", "alice", "bob", "castor"] {
-        select(&mut h, id);
-        let s = h.turns(2);
-        assert!(
-            flat(&s).contains(&format!("{id}:")) && flat(&s).contains("w Workspaces"),
-            "{id}:\n{s}"
-        );
-    }
-    select(&mut h, "castor");
+    // R15: every row carries the Workspaces button (◫) in its Actions
+    // cell, in the web's order.
     let s = h.turns(2);
-    assert!(
-        flat(&s).contains("castor: @ Email · l Logs · w Workspaces · m Manage · d Archive"),
-        "{s}"
-    );
+    for id in ["admin", "alice", "bob", "castor"] {
+        let row = s
+            .lines()
+            .find(|l| l.trim_start().starts_with(id))
+            .unwrap_or_else(|| panic!("{id} row:\n{s}"));
+        assert!(row.contains("◫"), "{id}:\n{s}");
+    }
+    let castor = s
+        .lines()
+        .find(|l| l.trim_start().starts_with("castor"))
+        .unwrap();
+    assert!(castor.contains("@ ≣ ◫ ⊜ ⬖ ⊟"), "{s}");
 }
 
 #[test]
@@ -208,7 +241,7 @@ fn w_on_an_entity_opens_its_workspaces_following_the_gateway() {
             f.contains("Gateway: Deny everything, allow listed workspaces · /srv/w3/ws/proj (rw) · /srv/w3/ws/archive (ro)"),
             "{s2}"
         );
-        assert!(f.contains("[x] Follow the gateway policy"), "{s2}");
+        assert!(f.contains("━● Follow the gateway policy"), "{s2}");
         assert!(
             f.contains("On: this account gets exactly what the gateway allows."),
             "{s2}"
@@ -245,12 +278,13 @@ fn eligible_workspaces_shows_posture_caps_builtins_and_the_ceiling_line() {
             "{s}"
         );
         assert!(f.contains("Workspaces agents may use"), "{s}");
+        // R15: the posture is a Segmented (both choices are buttons).
         assert!(
-            f.contains("(•) Deny everything, allow listed workspaces"),
+            f.contains("Deny everything, allow listed workspaces"),
             "{s}"
         );
         assert!(
-            f.contains("( ) Allow everything, refuse listed workspaces"),
+            f.contains("Allow everything, refuse listed workspaces"),
             "{s}"
         );
         assert!(
@@ -259,7 +293,7 @@ fn eligible_workspaces_shows_posture_caps_builtins_and_the_ceiling_line() {
         );
         assert!(f.contains("Allowed workspaces"), "{s}");
         assert!(
-            f.contains("Permission: [Read & write] Read-only Refused"),
+            f.contains("Permission: Read & write Read-only Refused"),
             "{s}"
         );
         assert!(
@@ -267,14 +301,12 @@ fn eligible_workspaces_shows_posture_caps_builtins_and_the_ceiling_line() {
             "no gateway line at the gateway level:\n{s}"
         );
         h.assert_fits();
-        // Down to the add row: the view scrolls with the selection; the
-        // built-in refusals are listed, fixed, and the ceiling line closes.
-        for _ in 0..4 {
-            h.key(DOWN);
-        }
+        // Down to the add row (the wheel scrolls the modal): the built-in
+        // refusals are listed, fixed, and the ceiling line closes.
+        h.wheel_down(30);
         let s = h.shoot("r14w3-eligible-bottom");
         let f = flat(&s);
-        assert!(f.contains("+ Add a workspace path"), "{s}");
+        assert!(f.contains("Add a workspace path"), "{s}");
         assert!(
             f.contains("Deny everything, allow listed workspaces · /srv/w3/ws/proj (rw) · /srv/w3/ws/archive (ro)"),
             "{s}"
@@ -296,8 +328,8 @@ fn eligible_workspaces_shows_posture_caps_builtins_and_the_ceiling_line() {
 fn every_change_is_one_put_of_the_whole_level() {
     let mut h = page((120, 40), true);
     open_gateway(&mut h, "policy_allowed");
-    // The posture: → = "Allow everything, refuse listed workspaces".
-    h.key(RIGHT);
+    // The posture: a click on "Allow everything, refuse listed workspaces".
+    h.click_text("Allow everything, refuse listed workspaces");
     let w = puts(&h.sent());
     assert_eq!(
         w,
@@ -309,7 +341,7 @@ fn every_change_is_one_put_of_the_whole_level() {
         )]
     );
     // While the write is in flight, nothing else is sent.
-    h.key(RIGHT);
+    h.click_text("Deny everything, allow listed workspaces");
     assert!(puts(&h.sent()).is_empty());
     // The answer lands: "Saved" beside the posture.
     h.store.json.set_write(
@@ -323,20 +355,11 @@ fn every_change_is_one_put_of_the_whole_level() {
     let f = flat(&s);
     assert!(f.contains("Saved"), "{s}");
     assert!(
-        f.contains("(•) Allow everything, refuse listed workspaces"),
-        "{s}"
-    );
-    assert!(
         f.contains("Agents may work in any workspace except the refused ones."),
         "{s}"
     );
-    // A row: ↓↓ to the refused row (archive is listed first, under
-    // Allowed), → nothing past Refused; ← = Read-only.
-    h.key(DOWN);
-    h.key(DOWN);
-    h.key(RIGHT);
-    assert!(puts(&h.sent()).is_empty(), "Refused is the last option");
-    h.key(LEFT);
+    // A row: the secret row's "Read-only" segment.
+    h.click_after("/srv/w3/ws/secret", "Read-only");
     let w = puts(&h.sent());
     assert_eq!(w.len(), 1);
     assert_eq!(
@@ -347,8 +370,8 @@ fn every_change_is_one_put_of_the_whole_level() {
         .json
         .set_write("ws.gateway.write", Some(WriteState::Done(fx("policy_any"))));
     h.turns(2);
-    // x removes the selected row.
-    h.key(b"x");
+    // The row's remove button (⊟ on its path line).
+    h.click_after("/srv/w3/ws/secret", "⊟");
     let w = puts(&h.sent());
     assert_eq!(
         w[0].2["folders"],
@@ -358,26 +381,21 @@ fn every_change_is_one_put_of_the_whole_level() {
         .json
         .set_write("ws.gateway.write", Some(WriteState::Done(fx("policy_any"))));
     h.turns(2);
-    // Everything else (below the 12 built-in refusals: the view scrolls
-    // with the selection): ← is Read & write (current), → Read-only.
-    h.key(DOWN);
+    // Everything else (below the 12 built-in refusals: the wheel scrolls).
+    h.wheel_down(30);
     let s = h.shoot("r14w3-eligible-everything-else");
-    assert!(flat(&s).contains("▸ Everything else"), "{s}");
-    assert!(
-        flat(&s).contains("Permission: [Read & write] Read-only"),
-        "{s}"
-    );
-    h.key(RIGHT);
+    assert!(flat(&s).contains("Everything else"), "{s}");
+    h.click_after("Everything else", "Read-only");
     let w = puts(&h.sent());
     assert_eq!(w[0].2["default_mode"], "ro");
     h.store
         .json
         .set_write("ws.gateway.write", Some(WriteState::Done(fx("policy_any"))));
     h.turns(2);
-    // The add row: Enter, type, Enter → the path appended, refused under
-    // posture b = a refused row.
-    h.key(DOWN);
-    h.key(b"\r");
+    // The add row: click the field, type, Enter → the path appended,
+    // refused under posture b = a refused row.
+    h.wheel_down(30);
+    h.click_text("Add a workspace path");
     h.type_text("/srv/w3/ws/new");
     h.key(b"\r");
     let w = puts(&h.sent());
@@ -393,10 +411,8 @@ fn a_refusal_shows_the_gateways_sentence_and_not_saved() {
     for size in SIZES {
         let mut h = page(size, true);
         open_gateway(&mut h, "policy_allowed");
-        for _ in 0..3 {
-            h.key(DOWN);
-        }
-        h.key(b"\r");
+        h.wheel_down(30);
+        h.click_text("Add a workspace path");
         h.type_text("/nonexistent/zzz");
         h.key(b"\r");
         assert_eq!(puts(&h.sent()).len(), 1);
@@ -432,7 +448,7 @@ fn a_mode_above_the_cap_is_refused_with_the_kits_sentence_and_nothing_sent() {
         );
         let s = h.shoot("r14w3-account-alice-configured");
         let f = flat(&s);
-        assert!(f.contains("[ ] Follow the gateway policy"), "{s}");
+        assert!(f.contains("●─ Follow the gateway policy"), "{s}");
         assert!(
             f.contains("Gateway: Deny everything, allow listed workspaces"),
             "{s}"
@@ -443,18 +459,13 @@ fn a_mode_above_the_cap_is_refused_with_the_kits_sentence_and_nothing_sent() {
             f.contains("Read & write: The gateway allows this workspace read-only"),
             "{s}"
         );
-        // ↓ Follow → Posture → the archive row; ← = Read & write: refused.
-        h.key(DOWN);
-        h.key(DOWN);
-        h.key(LEFT);
+        // The archive row's "Read & write" is disabled (above the cap): a
+        // click sends nothing.
+        h.click_after("/srv/w3/ws/archive", "Read & write");
         assert!(puts(&h.sent()).is_empty(), "above the cap: nothing sent");
-        assert_eq!(
-            h.store.notice.get_untracked().as_deref(),
-            Some("Read & write: The gateway allows this workspace read-only")
-        );
         h.turns(2);
-        // → = Refused: allowed (a deny never widens).
-        h.key(RIGHT);
+        // Refused: allowed (a deny never widens).
+        h.click_after("/srv/w3/ws/archive", "Refused");
         let w = puts(&h.sent());
         assert_eq!(w.len(), 1);
         assert_eq!(w[0].1, "/workspace/policy/default%3Aalice");
@@ -477,7 +488,7 @@ fn the_follow_switch_is_one_put() {
         "/workspace/policy/default%3Aalice",
         "account_alice_configured",
     );
-    h.key(b" ");
+    h.click_text("Follow the gateway policy");
     let w = puts(&h.sent());
     assert_eq!(
         w,
@@ -496,8 +507,9 @@ fn the_follow_switch_is_one_put() {
         Loadable::Ready(fx("account_alice_follow")),
     );
     let s = h.turns(3);
-    assert!(flat(&s).contains("[x] Follow the gateway policy"), "{s}");
+    assert!(flat(&s).contains("━● Follow the gateway policy"), "{s}");
     // OFF again: the effective answer, verbatim, as the account's rows.
+    // (The toggle kept the keyboard across the re-read: Space presses it.)
     h.key(b" ");
     let w = puts(&h.sent());
     assert_eq!(w[0].2["configured"], true);
@@ -578,7 +590,8 @@ fn runtimes_w_opens_the_planes_workspaces() {
         .set(Loadable::Ready(runtimes_from_payload(&fx("runtimes"))));
     h.turns(3);
     let s = h.shoot("r14w3-runtimes");
-    assert!(flat(&s).contains("w: Eligible workspaces"), "{s}");
+    // R15: the web's Workspace link (its key, w, is in the footer and the tooltip).
+    assert!(flat(&s).contains("Eligible workspaces"), "{s}");
     h.sent();
     h.ui.runtime_sel.set(0);
     h.turns(2);

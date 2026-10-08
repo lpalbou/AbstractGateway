@@ -7,9 +7,106 @@
 use abstracttui::prelude::*;
 
 use super::util::{badge, esc_releases_focus, field, line, span, span_bold};
+use super::w::action::On;
+use super::w::Action;
 use super::Ctx;
 use crate::store::ConnPhase;
 use abstracttui::widgets::Tone;
+
+// ---------------------------------------------------------------------------
+// R15 Connection (DESIGN-TUI.md §3.3): the TUI's sign-in surface (the web
+// has a sign-in card, not a page). Every control is a real button — Sign
+// in / Re-probe, Show / Hide on the token, Network — and the sign-in by
+// email steps are the web card's words and buttons. One action list
+// (`page_actions`) is the single source for the buttons, the hints and
+// the click tests.
+// ---------------------------------------------------------------------------
+
+/// The field labels (the web sign-in card says "Token").
+pub const URL_LABEL: &str = "Gateway address";
+pub const TOKEN_LABEL: &str = "Token";
+/// The web sign-in card's button.
+pub const SIGN_IN: &str = "Sign in";
+pub const RE_PROBE: &str = "Re-probe";
+
+/// The page's actions in screen order: Sign in (Re-probe once connected),
+/// Show/Hide on the token, Network (once connected).
+pub fn page_actions(connected: bool, revealed: bool) -> Vec<Action> {
+    let mut out = vec![
+        if connected {
+            Action::label("probe", RE_PROBE)
+                .key('r')
+                .tooltip("Check the connection again with the address and token above")
+        } else {
+            Action::label("probe", SIGN_IN)
+                .key('r')
+                .tooltip("Sign in to the gateway at this address with this token")
+        },
+        if revealed {
+            Action::label("reveal", "Hide").tooltip("Hide token")
+        } else {
+            Action::label("reveal", "Show").tooltip("Show token")
+        },
+    ];
+    if connected {
+        out.push(Action::label("network", "Network").key('N').tooltip(
+            "Who can reach this gateway (this computer, local network, internet) and its addresses",
+        ));
+    }
+    out
+}
+
+/// The sign-in-by-email actions for a recovery step (`sent`: a code went
+/// out; `can_resend`: a new one may be asked for; `wait`: cooldown s).
+pub fn recovery_actions(step: &str, ready: bool, wait: u64, can_resend: bool) -> Vec<Action> {
+    match step {
+        "idle" => vec![Action::link("recover", RECOVERY_LINK)],
+        "code" => {
+            let mut v = vec![Action::label("use_code", "Use code")
+                .refused((!ready).then(|| "Type the 8 digits from the email first.".to_string()))];
+            if can_resend {
+                v.push(
+                    Action::link(
+                        "resend",
+                        if wait > 0 {
+                            format!("Send a new code (in {wait} s)")
+                        } else {
+                            "Send a new code".to_string()
+                        },
+                    )
+                    .refused((wait > 0).then(|| format!("A new code can be sent in {wait} s."))),
+                );
+            }
+            v.push(Action::link("back", "Back to token"));
+            v
+        }
+        "token" => vec![
+            Action::label("copy", "Copy").tooltip("Copy the new token to the clipboard"),
+            Action::label("done", "Done").tooltip("Hide the new token; it is not shown again"),
+        ],
+        _ => Vec::new(),
+    }
+}
+
+/// The footer verbs of this page (R15: only what applies). The lead wires
+/// it into `screen_hint_pairs` (COORD "R15-A HINTS").
+pub fn hints(ctx: &Ctx) -> Vec<(&'static str, &'static str)> {
+    let connected = ctx.store.conn.with(ConnPhase::is_connected);
+    let mut out = vec![
+        ("Tab", "next"),
+        ("Enter", if connected { RE_PROBE } else { SIGN_IN }),
+    ];
+    if connected {
+        out.push(("r", RE_PROBE));
+        out.push(("N", "Network"));
+    }
+    out
+}
+
+/// A button for `a` on the Connection block's ground.
+fn btn(cx: Scope, t: &TokenSet, a: &Action, on_press: impl FnMut() + 'static) -> View {
+    super::w::action::button(cx, t, a, On::Page, true, on_press)
+}
 
 pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let ui = ctx.ui;
@@ -19,9 +116,12 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let ctx_probe = ctx.clone();
     let ctx_submit_url = ctx.clone();
     let ctx_submit_tok = ctx.clone();
+    let ctx_net = ctx.clone();
 
     let env_set = ctx.env_token_set;
     let notice = store.notice;
+    // Show / Hide on the token (the web card's reveal button).
+    let revealed = cx.signal(false);
 
     // ≤ TIGHT_ROWS terminal rows (REVIEW-1 M3): the roomy layout (gap 1,
     // padding 1) needs ~32 rows once connected; below that the column
@@ -30,7 +130,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     // block already says (the connected intro, the About hint — F1 is in
     // --help and the footer) step aside. Every row is pinned (`pin`):
     // whatever still does not fit clips at the bottom, never the top.
-    let vp = abstracttui::app::use_viewport(cx);
+    let vp = crate::ui::page_viewport(cx);
     let tight = cx.memo(move || vp.get().h <= TIGHT_ROWS);
     // A memo, so the URL slot below re-mounts only when this FLIPS — not
     // on every probe transition (a remount puts the caret back at 0).
@@ -43,6 +143,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 .conn
                 .with(|c| matches!(c, ConnPhase::Connected(_) | ConnPhase::Verifying(_)))
     });
+    let connected = cx.memo(move || store.conn.with(ConnPhase::is_connected));
 
     Block::new()
         .border(BorderKind::Rounded)
@@ -64,7 +165,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 )])
             } else {
                 line(vec![span(
-                    "Point the console at a running AbstractGateway and probe it.",
+                    "Point the console at a running AbstractGateway and sign in.",
                     t.text_muted,
                 )])
             }
@@ -90,28 +191,52 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 .on_submit(move |_| ctx_u.connect_typed())
                 .layout(LayoutStyle::default().w(46).h(1))
                 .element(gcx, &t);
+            let el = super::w::caret_tracked(gcx, ui.caret, el);
             let el = esc_releases_focus(el, notice);
             field(
                 &t,
-                "Gateway URL",
+                URL_LABEL,
                 if live { el.build() } else { el.autofocus().build() },
             )
         }))
-        .child(pin(field(
-            t,
-            "Admin token",
-            esc_releases_focus(
-                TextInput::new()
-                    .value(ui.conn_token)
-                    .masked(true)
-                    .placeholder("paste it, or launch with --token <token>")
-                    .placeholder_while_focused(true)
-                    .on_submit(move |_| ctx_submit_tok.connect_typed())
-                    .layout(LayoutStyle::default().w(46).h(1))
-                    .element(cx, t),
-                notice,
-            )
-            .build(),
+        // The token field + its Show/Hide button (re-mounted on reveal:
+        // the engine's mask is a build-time property).
+        .child(pin(dyn_view_scoped(
+            LayoutStyle::default().h(1).shrink(0.0),
+            move |kcx| {
+                let t = tt;
+                let shown = revealed.get();
+                let ctx_tok = ctx_submit_tok.clone();
+                let input = esc_releases_focus(
+                    super::w::caret_tracked(
+                        kcx,
+                        ui.caret,
+                        TextInput::new()
+                            .value(ui.conn_token)
+                            .masked(!shown)
+                            .placeholder("paste it, or launch with --token <token>")
+                            .placeholder_while_focused(true)
+                            .on_submit(move |_| ctx_tok.connect_typed())
+                            .layout(LayoutStyle::default().w(46).h(1))
+                            .element(kcx, &t),
+                    ),
+                    notice,
+                )
+                .build();
+                let a = page_actions(false, shown)
+                    .into_iter()
+                    .find(|a| a.id == "reveal")
+                    .expect("reveal action");
+                field(
+                    &t,
+                    TOKEN_LABEL,
+                    Element::new()
+                        .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
+                        .child(input)
+                        .child(btn(kcx, &t, &a, move || revealed.update(|r| *r = !*r)))
+                        .build(),
+                )
+            },
         )))
         .child(pin(field(
             t,
@@ -146,21 +271,13 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 let t = tt;
                 // The button label answers "what will this do" BEFORE
                 // it is pressed — a connected re-probe is a re-check,
-                // not a login.
-                let label = if store.conn.get().is_connected() {
-                    "Re-probe (connected ✓)"
-                } else {
-                    "Probe gateway"
-                };
+                // not a sign-in.
+                let a = page_actions(connected.get(), false)
+                    .into_iter()
+                    .find(|a| a.id == "probe")
+                    .expect("probe action");
                 let ctx_b = ctx_probe.clone();
-                field(
-                    &t,
-                    "",
-                    Button::new(label)
-                        .on_click(move || ctx_b.connect_typed())
-                        .element(gcx, &t)
-                        .build(),
-                )
+                field(&t, "", btn(gcx, &t, &a, move || ctx_b.connect_typed()))
             },
         ))
         .child(dyn_view(LayoutStyle::column().gap(0).shrink(0.0), move || {
@@ -187,7 +304,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             line(vec![
                 span("About: ", tt.text_muted),
                 span(
-                    "F1 (or ?) — this console, AbstractFramework, the gateway's versions",
+                    "F1 — this console, AbstractFramework, the gateway's versions (? lists the keys)",
                     tt.text_faint,
                 ),
             ])
@@ -213,9 +330,39 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 None => line(vec![span("no probe has run yet", t.text_faint)]),
             }
         }))
-        // Who can reach this gateway: one line (saved vs running); the
-        // Network screen (N) changes it and lists the addresses.
-        .child(super::network::summary(cx, ctx, t))
+        // Who can reach this gateway: one line (saved vs running) and the
+        // Network button (the Network screen changes it and lists the
+        // addresses).
+        .child(
+            Element::new()
+                .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
+                .child(
+                    Element::new()
+                        .style(LayoutStyle::row().grow(1.0).shrink(1.0).h(1))
+                        .child(super::network::summary(cx, ctx, t))
+                        .build(),
+                )
+                .child(dyn_view_scoped(
+                    LayoutStyle::row().h(1).shrink(0.0),
+                    move |ncx| {
+                        let t = tt;
+                        let Some(a) = page_actions(connected.get(), false)
+                            .into_iter()
+                            .find(|a| a.id == "network")
+                        else {
+                            return Element::new().style(LayoutStyle::default().w(0).h(1)).build();
+                        };
+                        let c = ctx_net.clone();
+                        Element::new()
+                            .style(LayoutStyle::row().h(1).w(a.width()).shrink(0.0))
+                            .child(btn(ncx, &t, &a, move || {
+                                super::shell::go(&c, super::SCREEN_NETWORK)
+                            }))
+                            .build()
+                    },
+                ))
+                .build(),
+        )
         .element(t)
         .style_signal(move || roomy_or_tight(tight.get()))
         .build()
@@ -225,14 +372,6 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
 pub const RECOVERY_LINK: &str = "Forgot your token? Email me a sign-in code";
 /// A wrong, expired or used code (the gateway's words when it has none).
 pub const CODE_REFUSED: &str = "That code is wrong, expired or already used. Send a new one.";
-
-fn quiet_link() -> abstracttui::widgets::ButtonStyle {
-    abstracttui::widgets::ButtonStyle {
-        fg: abstracttui::theme::TokenId::Accent,
-        bg: abstracttui::theme::TokenId::Surface,
-        ..abstracttui::widgets::ButtonStyle::default()
-    }
-}
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
@@ -255,6 +394,7 @@ fn recovery_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let tt = *t;
     let rec = store.op.recovery;
     let user = cx.signal("admin".to_string());
+    let caret = ctx.ui.caret;
     let code = cx.signal(String::new());
     let clock = cx.signal(0u64);
     let signed_out = cx.memo(move || {
@@ -410,8 +550,7 @@ fn recovery_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 )]))
                 .child({
                     // Wrapped (never cut): the one time the token is shown.
-                    let w = (abstracttui::app::use_viewport(rcx).get_untracked().w - 6).max(20)
-                        as usize;
+                    let w = (crate::ui::page_viewport(rcx).get_untracked().w - 6).max(20) as usize;
                     let mut c = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
                     for l in super::util::wrap_text(
                         "Your new token — shown once; your old token no longer works. Copy it now:",
@@ -422,28 +561,23 @@ fn recovery_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     c.build()
                 })
                 .child(line(vec![span_bold(tok, t.text)]))
-                .child(
-                    Element::new()
-                        .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                        .child(
-                            Button::new("Copy")
-                                .on_click(move || {
-                                    copy_to_clipboard(tok_copy.clone());
-                                    store
-                                        .notice
-                                        .set(Some("token copied to the clipboard".into()));
-                                })
-                                .element(rcx, &t)
-                                .build(),
-                        )
-                        .child(
-                            Button::new("Done")
-                                .on_click(move || rec.update(|r| r.new_token = None))
-                                .element(rcx, &t)
-                                .build(),
-                        )
-                        .build(),
-                )
+                .child({
+                    let acts = recovery_actions("token", false, 0, false);
+                    let mut row = Element::new().style(LayoutStyle::row().gap(1).h(1).shrink(0.0));
+                    for a in acts {
+                        let tok_copy = tok_copy.clone();
+                        row = row.child(btn(rcx, &t, &a, move || match a.id {
+                            "copy" => {
+                                copy_to_clipboard(tok_copy.clone());
+                                store
+                                    .notice
+                                    .set(Some("token copied to the clipboard".into()));
+                            }
+                            _ => rec.update(|r| r.new_token = None),
+                        }));
+                    }
+                    row.build()
+                })
                 .build();
         }
         if !signed_out.get() || r.available != Some(true) {
@@ -461,21 +595,24 @@ fn recovery_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     .child(field(
                         &t,
                         "Gateway user",
-                        TextInput::new()
-                            .value(user)
-                            .layout(LayoutStyle::default().w(24).h(1))
-                            .element(rcx, &t)
-                            .build(),
+                        super::w::caret_tracked(
+                            rcx,
+                            caret,
+                            TextInput::new()
+                                .value(user)
+                                .layout(LayoutStyle::default().w(24).h(1))
+                                .element(rcx, &t),
+                        )
+                        .build(),
                     ))
-                    .child(field(
-                        &t,
-                        "",
-                        Button::new(RECOVERY_LINK)
-                            .style(quiet_link())
-                            .on_click(request)
-                            .element(rcx, &t)
-                            .build(),
-                    ))
+                    .child(field(&t, "", {
+                        let a = recovery_actions("idle", false, 0, false).remove(0);
+                        let request = request;
+                        Element::new()
+                            .style(LayoutStyle::row().h(1).w(a.width()).shrink(0.0))
+                            .child(btn(rcx, &t, &a, request))
+                            .build()
+                    }))
                     .child(error_line(&t))
                     .build()
             }
@@ -485,8 +622,7 @@ fn recovery_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 let (request, redeem, redeem_enter) =
                     (request.clone(), redeem.clone(), redeem.clone());
                 // The gateway's honest answer, wrapped (never cut).
-                let msg_w =
-                    (abstracttui::app::use_viewport(rcx).get_untracked().w - 6).max(20) as usize;
+                let msg_w = (crate::ui::page_viewport(rcx).get_untracked().w - 6).max(20) as usize;
                 let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
                 for l in super::util::wrap_text(&a.message, msg_w) {
                     col = col.child(line(vec![span(l, if a.sent { t.ok } else { t.warn })]));
@@ -499,20 +635,18 @@ fn recovery_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 }
                 if a.sent {
                     col = col
-                        .child(super::util::field_w(
-                            &t,
-                            "Code from the email",
-                            20,
-                            TextInput::new()
+                        .child(super::util::field_w(&t, "Code from the email", 20, {
+                            let code_el = TextInput::new()
                                 .value(code)
                                 .placeholder("8 digits")
                                 .placeholder_while_focused(true)
                                 .on_submit(move |_| redeem_enter())
                                 .layout(LayoutStyle::default().w(12).h(1))
-                                .element(rcx, &t)
+                                .element(rcx, &t);
+                            super::w::caret_tracked(rcx, caret, code_el)
                                 .autofocus()
-                                .build(),
-                        ))
+                                .build()
+                        }))
                         .child(error_line(&t))
                         .child(field(
                             &t,
@@ -524,15 +658,11 @@ fn recovery_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                 move |bcx| {
                                     let ready = code_complete(&code.get());
                                     let redeem = redeem.clone();
-                                    Button::new(if checking {
-                                        "Checking the code…"
-                                    } else {
-                                        "Use code"
-                                    })
-                                    .disabled(!ready || checking)
-                                    .on_click(redeem)
-                                    .element(bcx, &t)
-                                    .build()
+                                    if checking {
+                                        return line(vec![span("Checking the code…", t.info)]);
+                                    }
+                                    let a = recovery_actions("code", ready, 0, false).remove(0);
+                                    btn(bcx, &t, &a, redeem)
                                 },
                             ),
                         ));
@@ -560,34 +690,39 @@ fn recovery_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                         .build();
                                 }
                                 let _ = clock.get();
-                                let wait = a_clock.resend_wait_s(now_ms());
-                                let label = if wait > 0 {
-                                    format!("Send a new code (in {wait} s)")
+                                let wait = if checking {
+                                    1
                                 } else {
-                                    "Send a new code".to_string()
+                                    a_clock.resend_wait_s(now_ms())
+                                };
+                                let Some(a) = recovery_actions("code", false, wait, true)
+                                    .into_iter()
+                                    .find(|a| a.id == "resend")
+                                else {
+                                    return Element::new()
+                                        .style(LayoutStyle::default().w(0).h(1))
+                                        .build();
                                 };
                                 let request = request.clone();
-                                Button::new(label)
-                                    .style(quiet_link())
-                                    .disabled(wait > 0 || checking)
-                                    .on_click(request)
-                                    .element(kcx, &t)
+                                Element::new()
+                                    .style(LayoutStyle::row().h(1).w(a.width()).shrink(0.0))
+                                    .child(btn(kcx, &t, &a, request))
                                     .build()
                             },
                         ))
-                        .child(
-                            Button::new("Back to token")
-                                .style(quiet_link())
-                                .on_click(move || {
-                                    code.set(String::new());
-                                    rec.update(|r| {
-                                        r.step = RecoveryStep::Idle;
-                                        r.error = None;
-                                    });
-                                })
-                                .element(rcx, &t)
-                                .build(),
-                        )
+                        .child({
+                            let a = recovery_actions("code", false, 0, false)
+                                .into_iter()
+                                .find(|a| a.id == "back")
+                                .expect("back action");
+                            btn(rcx, &t, &a, move || {
+                                code.set(String::new());
+                                rec.update(|r| {
+                                    r.step = RecoveryStep::Idle;
+                                    r.error = None;
+                                });
+                            })
+                        })
                         .build(),
                 ))
                 .build()
@@ -678,7 +813,7 @@ fn status_view(t: &TokenSet, conn: &ConnPhase, token_source: Option<String>) -> 
                     t.warn,
                 )]))
                 .child(line(vec![span(
-                    "  paste it in Admin token, or launch with --token <token>",
+                    "  paste it in Token, or launch with --token <token>",
                     t.text_muted,
                 )]))
                 .build()

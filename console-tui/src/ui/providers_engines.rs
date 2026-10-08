@@ -19,9 +19,9 @@ use std::rc::Rc;
 use abstracttui::prelude::*;
 use serde_json::{json, Value};
 
-use super::super::kit::{Row, WrapTable};
-use super::super::util::{line, span, span_bold, wrap_text};
-use super::super::widths::ColRule;
+use super::super::w::action::{button, On};
+use super::super::w::form::sentence;
+use super::super::w::{Action, Cell, Col, ColW, DataTable, Ink, Row as WRow};
 use super::super::Ctx;
 use crate::store::json::WriteState;
 use crate::store::{ConnPhase, Loadable, Store};
@@ -312,10 +312,14 @@ pub struct Notice {
 /// The page-local state of the Local providers section (Copy: signals).
 #[derive(Clone, Copy)]
 pub struct EnginesUi {
+    /// The page scope (confirmations and forms open there).
+    pub pcx: Scope,
     pub sel: Signal<usize>,
-    pub expanded: Signal<Option<usize>>,
-    /// The engine whose install confirmation is open.
-    pub confirm: Signal<Option<String>>,
+    /// The table's keyed selection (the engine id), synced with `sel`.
+    pub key_sel: Signal<Option<String>>,
+    /// An install waiting for its location plans: (engine id, location)
+    /// — the confirmation opens when the two dry runs answer.
+    pub confirm: Signal<Option<(String, String)>>,
     /// engine id → (action, its "Starting..." label): what the page sent.
     pub sent: Signal<HashMap<String, (String, String)>>,
     pub notices: Signal<HashMap<String, Notice>>,
@@ -326,8 +330,9 @@ impl EnginesUi {
     /// switches; the old Engines tab's selection, kept).
     pub fn new(cx: Scope, sel: Signal<usize>) -> EnginesUi {
         EnginesUi {
+            pcx: cx,
             sel,
-            expanded: cx.signal(None),
+            key_sel: cx.signal(None),
             confirm: cx.signal(None),
             sent: cx.signal(HashMap::new()),
             notices: cx.signal(HashMap::new()),
@@ -462,8 +467,9 @@ pub fn run_action(ctx: &Ctx, ui: EnginesUi, id: &str, act: &str) {
     }
     let e = engine_by_id(&store, id).unwrap_or_else(|| json!({"id": id, "name": id}));
     let enc = crate::api::urlencode(id);
-    if act == "install" {
-        ui.confirm.set(Some(id.to_string()));
+    if act == "install" || act == "install-system" {
+        // The web's install question: a wheel/script install asks at once;
+        // an app asks once its two location plans are known (dry runs).
         ui.notices.update(|m| {
             m.remove(id);
         });
@@ -471,30 +477,17 @@ pub fn run_action(ctx: &Ctx, ui: EnginesUi, id: &str, act: &str) {
             .get("install")
             .map(|i| s(i, "method") == "app")
             .unwrap_or(false);
-        if app {
-            // engineLoadPlans: the two real plans (dry runs run nothing).
-            for loc in ["user", "system"] {
-                let k = plan_key(id, loc);
-                if store
-                    .json
-                    .write_untracked(&k)
-                    .is_some_and(|w| matches!(w, WriteState::Done(_) | WriteState::Pending))
-                {
-                    continue;
-                }
-                store.json.set_write(&k, Some(WriteState::Pending));
-                ctx.send(Cmd::Json(JsonCmd::Send {
-                    key: k,
-                    method: "POST".into(),
-                    path: format!("/engines/{enc}/install"),
-                    body: json!({"dry_run": true, "location": loc}),
-                    slow: true,
-                    label: format!("Check where {} can go", name_of(&e)),
-                    reload: Vec::new(),
-                    journal: false,
-                }));
-            }
+        let loc = if act == "install-system" {
+            "system"
+        } else {
+            "user"
+        };
+        if !app {
+            ask_install(ctx, ui, id, "auto");
+            return;
         }
+        ui.confirm.set(Some((id.to_string(), loc.to_string())));
+        load_plans(ctx, &e, id);
         return;
     }
     if act == "install-cancel" {
@@ -577,6 +570,21 @@ fn body_details(body: Option<&Value>) -> String {
 /// jobs once a second while this page is mounted.
 pub fn install_effects(cx: Scope, ctx: &Ctx, ui: EnginesUi) {
     let store = ctx.store;
+    // An app install waits for its two location plans; once they answer,
+    // its question opens (w::Confirm, the web's sentence).
+    {
+        let ctx = ctx.clone();
+        cx.effect(move || {
+            let _ = store.json.writes.get();
+            let Some((id, loc)) = ui.confirm.get() else {
+                return;
+            };
+            if plans_of(&store, &id).is_some() {
+                ui.confirm.set(None);
+                ask_install(&ctx, ui, &id, &loc);
+            }
+        });
+    }
     // Writes → notices / jobs.
     {
         let ctx = ctx.clone();
@@ -1194,217 +1202,656 @@ pub fn connection_rows(engine: &str, profiles: &[crate::store::Profile]) -> Vec<
         .collect()
 }
 
-/// The Local providers section.
-pub fn section(
-    cx: Scope,
-    ctx: &Ctx,
-    ui: EnginesUi,
-    t: &TokenSet,
-    keeper: super::super::util::FocusKeeper,
-) -> View {
-    let store = ctx.store;
-    let tt = *t;
-    let host = ctx.screens_transport.host_label();
-    let vp = abstracttui::app::use_viewport(cx);
-    dyn_view_scoped(LayoutStyle::column().gap(0).grow(1.0), move |gcx| {
-        let t = tt;
-        let width = vp.get().w - super::super::widths::BLOCK_CHROME - 2;
-        let conn = store.conn.get();
-        if !conn.is_connected() {
-            return line(vec![span(
-                "not connected — probe the gateway on 1 Connection first",
-                t.text_faint,
-            )]);
-        }
-        let admin = conn.is_admin();
-        let data = store.json.get(SLOT_ENGINES);
-        let _ = store.json.writes.get();
-        let notices = ui.notices.get();
-        let sent = ui.sent.get();
-        let confirm = ui.confirm.get();
-        let profiles: Vec<crate::store::Profile> = store
-            .profiles
-            .get()
-            .ready()
-            .map(|d| d.profiles.clone())
-            .unwrap_or_default();
-        let mut col = Element::new().style(LayoutStyle::column().gap(0).grow(1.0));
-        let data = match data {
-            Loadable::Ready(d) => d,
-            Loadable::Failed(e) => {
-                col = col.child(line(vec![span_bold(
-                    "This gateway cannot list its engines right now.",
-                    t.warn,
-                )]));
-                for l in wrap_text(&e.message, width.max(20) as usize) {
-                    col = col.child(line(vec![span(l, t.text_muted)]));
-                }
-                for (_, name, url) in ENGINE_DOWNLOAD_LINKS {
-                    col = col.child(line(vec![span(format!("Download {name}  {url}"), t.text)]));
-                }
-                return keeper.anchor(col.build());
-            }
-            _ => {
-                col = col.child(line(vec![span(
-                    "Looking at this computer's engines...",
-                    t.info,
-                )]));
-                return keeper.anchor(col.build());
-            }
-        };
-        let engines = ordered_engines(&data);
-        col = col.child(line(vec![
-            span(summary_line(&data), t.text_muted),
-            span("  · k Check again", t.text_faint),
-        ]));
-        if data.get("install_allowed").and_then(Value::as_bool) == Some(false) {
-            col = col.child(line(vec![span_bold(
-                "Installing engines is turned off on this gateway.",
-                t.info,
-            )]));
-            for l in wrap_text("An admin can allow it in the gateway settings (allow engine install). You can still install an engine yourself and check again.", width.max(20) as usize) {
-                col = col.child(line(vec![span(l, t.text_muted)]));
-            }
-        }
-        if engines.is_empty() {
-            col = col.child(line(vec![span(
-                "No engines reported by this gateway.",
-                t.text_faint,
-            )]));
-            return keeper.anchor(col.build());
-        }
-        let rows: Vec<Row> = engines
-            .iter()
-            .map(|e| {
-                let id = s(e, "id");
-                let job = job_of(&store, e);
-                let (_, pill) = engine_state(e, job.as_ref());
-                let mut facts: Vec<String> = Vec::new();
-                if !s(e, "version").is_empty() {
-                    facts.push(format!("Version {}", s(e, "version")));
-                }
-                if let Some(n) = e.get("models_count").and_then(Value::as_u64) {
-                    facts.push(format!("{n} model{}", if n == 1 { "" } else { "s" }));
-                }
-                let pend = sent.get(id).map(|(_, l)| l.clone());
-                let acts = row_actions(e, job.as_ref(), admin, confirm.as_deref() == Some(id));
-                let keys = match pend {
-                    Some(l) => l,
-                    None => acts
-                        .iter()
-                        .map(|(a, l)| format!("{} {l}", action_char(a)))
-                        .collect::<Vec<_>>()
-                        .join(" · "),
-                };
-                let mut status = pill.to_string();
-                if job_active(job.as_ref())
-                    && s(job.as_ref().unwrap(), "state") != "needs_admin"
-                    && s(job.as_ref().unwrap(), "state") != "needs_tools"
-                {
-                    status = progress_line(job.as_ref().unwrap(), "Installing");
-                }
-                let n = notices.get(id);
-                if let Some(n) = n {
-                    status = format!("{status} · {}", n.text);
-                }
-                let conns = connection_rows(id, &profiles);
-                Row::new(vec![name_of(e), status, facts.join(" · "), keys])
-                    .detail(detail_lines(e, job.as_ref(), admin, n, &conns))
-                    .dim(e.get("supported").and_then(Value::as_bool) == Some(false))
-            })
-            .collect();
-        let rules = vec![
-            ColRule::head("engine", 10),
-            ColRule::head("status", 12),
-            ColRule::head("facts", 10),
-            ColRule::head("actions", 14),
-        ];
-        col = col.child(
-            keeper.wire(
-                WrapTable::new(rules, rows, ui.sel)
-                    .expanded(ui.expanded)
-                    .empty("No engines reported by this gateway.")
-                    .element(gcx, &t),
-            ),
-        );
-        if let Some(cid) = confirm {
-            if let Some(e) = engines.iter().find(|e| s(e, "id") == cid) {
-                let writes = store.json.writes.get_untracked();
-                let lines = confirm_lines(
-                    e,
-                    &host,
-                    (
-                        writes.get(&plan_key(&cid, "user")),
-                        writes.get(&plan_key(&cid, "system")),
-                    ),
-                );
-                let last = lines.len().saturating_sub(1);
-                for (i, l) in lines.into_iter().enumerate() {
-                    let ink = if i == 0 {
-                        t.warn
-                    } else if i == last {
-                        t.accent
-                    } else {
-                        t.text_muted
-                    };
-                    for w in wrap_text(&l, width.max(20) as usize) {
-                        col = col.child(line(vec![if i == 0 {
-                            span_bold(w, ink)
-                        } else {
-                            span(w, ink)
-                        }]));
-                    }
-                }
-            }
-        }
-        col.build()
-    })
+/// The web's tooltip of "Set up connection" / "Add connection".
+pub const CONNECT_TIP: &str =
+    "The address workflows use to reach this server; add one for a server on another computer.";
+
+/// The two location plans of an app engine, once both dry runs answered
+/// (Ok = the plans, Err = why they could not be read).
+pub fn plans_of(store: &Store, id: &str) -> Option<Result<(Value, Value), String>> {
+    let w = store.json.writes.get_untracked();
+    let plan = |loc: &str| match w.get(&plan_key(id, loc)) {
+        Some(WriteState::Done(v)) => v.get("plan").cloned().filter(|p| p.is_object()).map(Ok),
+        Some(WriteState::Failed(e)) => Some(Err(e.message.clone())),
+        _ => None,
+    };
+    match (plan("user"), plan("system")) {
+        (Some(Err(e)), _) | (_, Some(Err(e))) => Some(Err(e)),
+        (Some(Ok(u)), Some(Ok(sys))) => Some(Ok((u, sys))),
+        _ => None,
+    }
 }
 
-/// The selected engine row (by the section's selection).
+/// Ask the gateway for the two location plans (dry runs run nothing).
+fn load_plans(ctx: &Ctx, e: &Value, id: &str) {
+    let store = ctx.store;
+    let enc = crate::api::urlencode(id);
+    for loc in ["user", "system"] {
+        let k = plan_key(id, loc);
+        if store
+            .json
+            .write_untracked(&k)
+            .is_some_and(|w| matches!(w, WriteState::Done(_) | WriteState::Pending))
+        {
+            continue;
+        }
+        store.json.set_write(&k, Some(WriteState::Pending));
+        ctx.send(Cmd::Json(JsonCmd::Send {
+            key: k,
+            method: "POST".into(),
+            path: format!("/engines/{enc}/install"),
+            body: json!({"dry_run": true, "location": loc}),
+            slow: true,
+            label: format!("Check where {} can go", name_of(e)),
+            reload: Vec::new(),
+            journal: false,
+        }));
+    }
+}
+
+/// The install question (the web's `.ui-confirm` of an engine card) for
+/// location `loc` ("auto" for a wheel/script install or when the plans
+/// could not be read): its sentence and its action label.
+pub fn install_question(
+    e: &Value,
+    host: &str,
+    loc: &str,
+    plans: Option<&Result<(Value, Value), String>>,
+) -> (String, String) {
+    let name = name_of(e);
+    let install = e.get("install").cloned().unwrap_or(json!({}));
+    let needs_admin = install.get("needs_admin").and_then(Value::as_bool) == Some(true);
+    let head = format!("Install {name} on {host}?");
+    match (loc, plans) {
+        ("auto", Some(Err(err))) => (
+            format!("{head} Could not check the install locations. {err} Install still works: the gateway picks /Applications when your account can write it, else your own Applications folder."),
+            "Install".into(),
+        ),
+        ("user", Some(Ok((user, _)))) => {
+            let mut t = format!("{head} Install puts it in your own Applications folder: only your account sees it, no password needed.");
+            if !s(user, "target").is_empty() {
+                t.push_str(&format!(" {}", s(user, "target")));
+            }
+            (t, "Install".into())
+        }
+        ("system", Some(Ok((_, sys)))) => {
+            let sys_admin = sys.get("needs_admin").and_then(Value::as_bool) == Some(true);
+            let all = if sys_admin {
+                "Install for all users (administrator)"
+            } else {
+                "Install for all users"
+            };
+            let mut t = format!("{head} {all} puts it in /Applications for every account on this computer.");
+            if sys_admin {
+                let r = s(sys, "admin_reason");
+                t.push(' ');
+                t.push_str(if r.is_empty() {
+                    "Your account cannot write there, so an administrator password is asked first."
+                } else {
+                    r
+                });
+            }
+            if !s(sys, "target").is_empty() {
+                t.push_str(&format!(" {}", s(sys, "target")));
+            }
+            (t, all.into())
+        }
+        _ => {
+            // A wheel / script install: notes, steps, the admin step, the
+            // commands (the web's confirm block, one sentence each).
+            let mut lines = vec![head];
+            if !s(&install, "notes").is_empty() {
+                lines.push(s(&install, "notes").to_string());
+            }
+            let steps: Vec<&str> = install
+                .get("steps")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(Value::as_str).collect())
+                .unwrap_or_default();
+            if !steps.is_empty() {
+                lines.push(steps.join(" · "));
+            }
+            if needs_admin {
+                let r = s(&install, "admin_reason");
+                lines.push(
+                    if r.is_empty() {
+                        "One step needs an administrator password; you will be asked first."
+                    } else {
+                        r
+                    }
+                    .to_string(),
+                );
+            }
+            let preview: Vec<&str> = install
+                .get("command_preview")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(Value::as_str).collect())
+                .unwrap_or_default();
+            lines.extend(preview.iter().map(|c| c.to_string()));
+            (
+                lines.join(" "),
+                if needs_admin {
+                    "Install (administrator)".into()
+                } else {
+                    "Install now".into()
+                },
+            )
+        }
+    }
+}
+
+/// Open the install question for `id` at `loc` (w::Confirm, the action
+/// focused: an install is not destructive).
+fn ask_install(ctx: &Ctx, ui: EnginesUi, id: &str, loc: &str) {
+    let store = ctx.store;
+    let Some(e) = engine_by_id(&store, id) else {
+        return;
+    };
+    let host = ctx.screens_transport.host_label();
+    let plans = plans_of(&store, id);
+    let loc = match (&plans, loc) {
+        (Some(Err(_)), _) => "auto",
+        (_, l) => l,
+    };
+    let (sentence, go) = install_question(&e, &host, loc, plans.as_ref());
+    let c = ctx.clone();
+    let id = id.to_string();
+    let target = if loc == "auto" {
+        "auto".to_string()
+    } else {
+        loc.to_string()
+    };
+    super::super::w::Confirm::plain(sentence, &go, "Not now").open(ui.pcx, ctx.ui, move || {
+        run_action(&c, ui, &id, &format!("install-go:{target}"))
+    });
+}
+
+/// A row's actions (the web card's buttons and links, in its order), the
+/// single source for the cells, the keys and the tests. `profiles`: the
+/// connection profiles (Set up / Edit / Override / Add connection).
+pub fn engine_actions(
+    store: &Store,
+    e: &Value,
+    job: Option<&Value>,
+    admin: bool,
+    profiles: &[crate::store::Profile],
+) -> Vec<Action> {
+    let name = name_of(e);
+    let id = s(e, "id");
+    let install = e.get("install").cloned().unwrap_or(json!({}));
+    let app = s(&install, "method") == "app";
+    let mut out = Vec::new();
+    for (a, label) in row_actions(e, job, admin, false) {
+        let key = action_char(&a);
+        let act = match a.as_str() {
+            "install" => {
+                Action::label("install", label).tooltip(format!("Install {name} on this computer"))
+            }
+            "start" => {
+                let r = action(e, "start").map(|x| s(x, "reason")).unwrap_or("");
+                Action::label("start", label).tooltip(if r.is_empty() {
+                    format!("Start {name}")
+                } else {
+                    r.to_string()
+                })
+            }
+            "stop" => {
+                let r = action(e, "stop").map(|x| s(x, "reason")).unwrap_or("");
+                Action::label("stop", label).tooltip(if r.is_empty() {
+                    format!("Stop {name}")
+                } else {
+                    r.to_string()
+                })
+            }
+            "models" => Action::label("models", label),
+            "cancel" => Action::label("cancel", label).danger(),
+            "continue:approve_admin" => Action::label("approve", label),
+            "continue:install_tools" => Action::label("tools", label),
+            "continue:recheck" => Action::label("recheck", label),
+            "refresh" => Action::label("refresh", label),
+            _ => continue,
+        };
+        let is_install = act.id == "install";
+        out.push(act.key(key));
+        if is_install && app {
+            let sys_admin = match plans_of(store, id) {
+                Some(Ok((_, sys))) => sys.get("needs_admin").and_then(Value::as_bool) == Some(true),
+                _ => false,
+            };
+            out.push(
+                Action::label(
+                    "install_system",
+                    if sys_admin {
+                        "Install for all users (administrator)"
+                    } else {
+                        "Install for all users"
+                    },
+                )
+                .key('u')
+                .tooltip("Puts it in /Applications for every account on this computer"),
+            );
+        }
+    }
+    if let Some((family, fixed, _, _)) = local_connection(id) {
+        let mine: Vec<&crate::store::Profile> = profiles
+            .iter()
+            .filter(|p| match fixed {
+                Some(fid) => p.id == fid,
+                None => p.family == family,
+            })
+            .collect();
+        match mine.first() {
+            None => out.push(
+                Action::label("connect", "Set up connection")
+                    .key('n')
+                    .tooltip(CONNECT_TIP),
+            ),
+            Some(p) => {
+                out.push(
+                    Action::label("connection", if p.synthetic { "Override" } else { "Edit" })
+                        .key('o')
+                        .tooltip(format!("The connection {}", p.provider_name())),
+                );
+                if fixed.is_none() {
+                    out.push(
+                        Action::label("connect", "Add connection")
+                            .key('n')
+                            .tooltip(CONNECT_TIP),
+                    );
+                }
+            }
+        }
+    }
+    if let Some(page) = action(e, "open_page") {
+        let inst_enabled = admin && action(e, "install").is_some_and(enabled);
+        if !s(page, "url").is_empty() && !inst_enabled {
+            out.push(
+                Action::link("download", "Download page")
+                    .key('w')
+                    .tooltip(s(page, "url").to_string()),
+            );
+        }
+    }
+    if let Some(d) = action(e, "docs") {
+        if !s(d, "url").is_empty() {
+            out.push(
+                Action::link("learn", "Learn more")
+                    .key('l')
+                    .tooltip(s(d, "url").to_string()),
+            );
+        }
+    }
+    out
+}
+
+/// The details a card folds under "Show details" (a notice's or the job's
+/// log), if any.
+fn details_of(e: &Value, job: Option<&Value>, notice: Option<&Notice>) -> String {
+    let _ = e;
+    if let Some(n) = notice.filter(|n| !n.details.is_empty()) {
+        return n.details.clone();
+    }
+    job.map(|j| match j.get("details").and_then(Value::as_str) {
+        Some(d) if !d.is_empty() => d.to_string(),
+        _ => j
+            .get("log_tail")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default(),
+    })
+    .unwrap_or_default()
+}
+
+/// A row action (a click or its key) on engine `id`.
+pub fn engine_action(ctx: &Ctx, ui: EnginesUi, id: &str, act: &str) {
+    let store = ctx.store;
+    let Some(e) = engine_by_id(&store, id) else {
+        return;
+    };
+    ui.key_sel.set(Some(id.to_string()));
+    match act {
+        "install" => run_action(ctx, ui, id, "install"),
+        "install_system" => run_action(ctx, ui, id, "install-system"),
+        "start" | "stop" | "models" | "cancel" | "refresh" => run_action(ctx, ui, id, act),
+        "approve" => run_action(ctx, ui, id, "continue:approve_admin"),
+        "tools" => run_action(ctx, ui, id, "continue:install_tools"),
+        "recheck" => run_action(ctx, ui, id, "continue:recheck"),
+        "connect" => super::open_local_connection(ui.pcx, ctx, id),
+        "connection" => match super::local_connection_profiles(&store, id)
+            .into_iter()
+            .next()
+        {
+            Some(p) if p.synthetic => {
+                super::open_profile_form(ui.pcx, ctx, super::ProfileFormMode::Override(p))
+            }
+            Some(p) => super::open_profile_form(ui.pcx, ctx, super::ProfileFormMode::Edit(p)),
+            None => store.notice.set(Some(format!(
+                "{id} has no connection yet — Set up connection makes one"
+            ))),
+        },
+        "download" | "learn" => {
+            let a = action(&e, if act == "learn" { "docs" } else { "open_page" });
+            if let Some(u) = a.map(|a| s(a, "url")).filter(|u| !u.is_empty()) {
+                super::super::openai_api::open_or_copy(ctx, u);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The Local providers section: the summary + Check again, the turned-off
+/// note, then one table row per engine (Engine · Status · Connection ·
+/// Actions) with the card's sentences under it.
+pub fn section(cx: Scope, ctx: &Ctx, ui: EnginesUi, t: &TokenSet, width: i32) -> View {
+    let store = ctx.store;
+    let t = *t;
+    // With no table to take the keyboard, a focus anchor keeps the page's
+    // keys alive (Add connection, Configure, Check again).
+    let anchor = |v: View| -> View {
+        Element::new()
+            .style(LayoutStyle::column().shrink(0.0))
+            .focusable()
+            .autofocus()
+            .child(v)
+            .build()
+    };
+    let conn = store.conn.get();
+    if !conn.is_connected() {
+        return anchor(sentence(
+            &t,
+            "not connected — probe the gateway on 1 Connection first",
+            width,
+            t.text_faint,
+        ));
+    }
+    let admin = conn.is_admin();
+    let data = store.json.get(SLOT_ENGINES);
+    let _ = store.json.writes.get();
+    let notices = ui.notices.get();
+    let sent = ui.sent.get();
+    let pending = ui.confirm.get();
+    let profiles: Vec<crate::store::Profile> = store
+        .profiles
+        .get()
+        .ready()
+        .map(|d| d.profiles.clone())
+        .unwrap_or_default();
+    let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
+    let check = Action::label("check", "Check again")
+        .key('k')
+        .tooltip("Read the engines again");
+    let c = ctx.clone();
+    let check_btn = button(cx, &t, &check, On::Page, true, move || {
+        run_action(&c, ui, "", "refresh")
+    });
+    let data = match data {
+        Loadable::Ready(d) => d,
+        Loadable::Failed(e) => {
+            col = col.child(sentence(
+                &t,
+                "This gateway cannot list its engines right now.",
+                width,
+                t.warn,
+            ));
+            col = col.child(sentence(&t, &e.message, width, t.text_muted));
+            for (_, name, url) in ENGINE_DOWNLOAD_LINKS {
+                col = col.child(sentence(
+                    &t,
+                    &format!("Download {name}  {url}"),
+                    width,
+                    t.text,
+                ));
+            }
+            return anchor(col.child(check_btn).build());
+        }
+        _ => {
+            return anchor(
+                col.child(sentence(
+                    &t,
+                    "Looking at this computer's engines...",
+                    width,
+                    t.info,
+                ))
+                .build(),
+            );
+        }
+    };
+    let engines = ordered_engines(&data);
+    col = col.child(
+        Element::new()
+            .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+            .child(super::super::w::fill_line(
+                LayoutStyle::default()
+                    .w((width - check.width() - 2).max(10))
+                    .h(1)
+                    .shrink(0.0),
+                vec![Ink::new(summary_line(&data), t.text_muted)],
+                None,
+            ))
+            .child(check_btn)
+            .build(),
+    );
+    if data.get("install_allowed").and_then(Value::as_bool) == Some(false) {
+        col = col.child(sentence(
+            &t,
+            "Installing engines is turned off on this gateway.",
+            width,
+            t.info,
+        ));
+        col = col.child(sentence(&t, "An admin can allow it in the gateway settings (allow engine install). You can still install an engine yourself and check again.", width, t.text_muted));
+    }
+    if engines.is_empty() {
+        return anchor(
+            col.child(sentence(
+                &t,
+                "No engines reported by this gateway.",
+                width,
+                t.text_faint,
+            ))
+            .build(),
+        );
+    }
+    let narrow = width < 100;
+    let mut cols = vec![
+        Col::new("Engine", ColW::Fit { min: 8, max: 20 }),
+        Col::new("Status", ColW::Fit { min: 8, max: 26 }),
+    ];
+    if !narrow {
+        cols.push(Col::new("Connection", ColW::Flex { weight: 1, min: 12 }));
+    }
+    cols.push(Col::new("Actions", ColW::Flex { weight: 2, min: 14 }));
+    let rows: Vec<WRow> = engines
+        .iter()
+        .map(|e| {
+            let id = s(e, "id");
+            let job = job_of(&store, e);
+            let (key, pill) = engine_state(e, job.as_ref());
+            let mut facts: Vec<String> = Vec::new();
+            if !s(e, "version").is_empty() {
+                facts.push(format!("Version {}", s(e, "version")));
+            }
+            if let Some(n) = e.get("models_count").and_then(Value::as_u64) {
+                facts.push(format!("{n} model{}", if n == 1 { "" } else { "s" }));
+            }
+            let mut status = pill.to_string();
+            if job_active(job.as_ref())
+                && s(job.as_ref().unwrap(), "state") != "needs_admin"
+                && s(job.as_ref().unwrap(), "state") != "needs_tools"
+            {
+                status = progress_line(job.as_ref().unwrap(), "Installing");
+            }
+            if let Some((_, l)) = sent.get(id) {
+                status = format!("{status} · {l}");
+            }
+            let ink = match key {
+                "running" | "ready" => t.ok,
+                "installing" | "waiting" => t.info,
+                "unsupported" => t.text_faint,
+                _ => t.text_muted,
+            };
+            let mut name = vec![vec![Ink::new(name_of(e), t.text).bold()]];
+            if !facts.is_empty() {
+                name.push(vec![Ink::new(facts.join(" · "), t.text_muted)]);
+            }
+            let conns = connection_rows(id, &profiles)
+                .into_iter()
+                .map(|c| c.split(" (e ").next().unwrap_or("").to_string())
+                .collect::<Vec<_>>();
+            let mut cells = vec![Cell::Lines(name), Cell::text(status, ink)];
+            if !narrow {
+                cells.push(if conns.is_empty() {
+                    Cell::text(
+                        if local_connection(id).is_some() {
+                            "none"
+                        } else {
+                            "—"
+                        },
+                        t.text_faint,
+                    )
+                } else {
+                    Cell::Lines(
+                        conns
+                            .iter()
+                            .map(|c| vec![Ink::new(c.clone(), t.text)])
+                            .collect(),
+                    )
+                });
+            }
+            let n = notices.get(id);
+            let mut acts = engine_actions(&store, e, job.as_ref(), admin, &profiles);
+            if !details_of(e, job.as_ref(), n).is_empty() {
+                acts.push(Action::label("details", "Show details").key('g'));
+            }
+            cells.push(Cell::Actions(acts));
+            // The card's sentences under the row: the notice, the state's
+            // sentence, the location check while it runs.
+            let mut note: Vec<String> = Vec::new();
+            if !s(e, "description").is_empty() {
+                note.push(s(e, "description").to_string());
+            }
+            if let Some(n) = n {
+                note.push(n.text.clone());
+                if !n.hint.is_empty() {
+                    note.push(n.hint.clone());
+                }
+            }
+            note.extend(state_sentences(e, job.as_ref(), admin));
+            if narrow && !conns.is_empty() {
+                note.push(format!("Connection: {}", conns.join("; ")));
+            }
+            if pending.as_ref().is_some_and(|(pid, _)| pid == id) && plans_of(&store, id).is_none()
+            {
+                note.push(format!(
+                    "Checking where {} can go on this computer...",
+                    name_of(e)
+                ));
+            }
+            let tone = match n.map(|n| n.tone) {
+                Some("err") => t.error,
+                Some("warn") => t.warn,
+                Some("ok") => t.ok,
+                _ => t.text_muted,
+            };
+            WRow::new(id.to_string(), cells)
+                .dim(e.get("supported").and_then(Value::as_bool) == Some(false))
+                .note((!note.is_empty()).then(|| (note.join(" "), tone)))
+        })
+        .collect();
+    let (ca, ce) = (ctx.clone(), ctx.clone());
+    col.child(
+        DataTable::new(cols, rows, ui.key_sel)
+            .width(width)
+            .max_rows(40)
+            .autofocus()
+            .on_action(move |key, id| {
+                if id == "details" {
+                    open_details(&ca, ui, key);
+                } else {
+                    engine_action(&ca, ui, key, id)
+                }
+            })
+            .on_activate(move |key| {
+                // Enter = the row's first action.
+                let store = ce.store;
+                let admin = store.conn.with_untracked(ConnPhase::is_admin);
+                let profiles: Vec<crate::store::Profile> = store
+                    .profiles
+                    .with_untracked(|d| d.ready().map(|d| d.profiles.clone()).unwrap_or_default());
+                if let Some(e) = engine_by_id(&store, key) {
+                    let job = job_of(&store, &e);
+                    if let Some(a) =
+                        engine_actions(&store, &e, job.as_ref(), admin, &profiles).first()
+                    {
+                        engine_action(&ce, ui, key, a.id);
+                    }
+                }
+            })
+            .view(cx, &t),
+    )
+    .build()
+}
+
+/// "Show details": the notice's or the job's log, in a form modal.
+fn open_details(ctx: &Ctx, ui: EnginesUi, id: &str) {
+    let store = ctx.store;
+    let Some(e) = engine_by_id(&store, id) else {
+        return;
+    };
+    let job = job_of(&store, &e);
+    let notices = ui.notices.get_untracked();
+    let text = details_of(&e, job.as_ref(), notices.get(id));
+    let name = name_of(&e);
+    super::super::w::FormModal::new(format!("{name} — details"))
+        .size(100, 30)
+        .open(ctx, ui.pcx, move |mcx, close, _guard, inner_w| {
+            let t = use_theme(mcx).get().tokens;
+            let mut body = Element::new().style(LayoutStyle::column().shrink(0.0));
+            for l in text.lines() {
+                body = body.child(sentence(&t, l, inner_w - 1, t.text));
+            }
+            Element::new()
+                .style(LayoutStyle::column().grow(1.0))
+                .child(
+                    Scroll::new(body.build())
+                        .layout(LayoutStyle::default().grow(1.0).min_h(3))
+                        .element(mcx, &t)
+                        .build(),
+                )
+                .child(super::super::w::form::button_row(vec![button(
+                    mcx,
+                    &t,
+                    &Action::label("close", "Close"),
+                    On::Raised,
+                    true,
+                    move || close(),
+                )]))
+                .build()
+        });
+}
+
+/// The selected engine row (the table's keyed selection, else the legacy
+/// index the screens store keeps).
 pub fn selected(store: &Store, ui: EnginesUi) -> Option<Value> {
     let d = store.json.get_untracked(SLOT_ENGINES);
     let d = d.ready()?;
-    ordered_engines(d).into_iter().nth(ui.sel.get_untracked())
+    let all = ordered_engines(d);
+    if let Some(k) = ui.key_sel.get_untracked() {
+        if let Some(e) = all.iter().find(|e| s(e, "id") == k) {
+            return Some(e.clone());
+        }
+    }
+    all.into_iter().nth(ui.sel.get_untracked())
 }
 
-/// A key pressed in the section: the selected engine's matching action
+/// A key pressed on the page: the selected engine's matching action
 /// (refused with the reason when the row does not offer it).
 pub fn key(ctx: &Ctx, ui: EnginesUi, ch: char) {
     let store = ctx.store;
-    // An open install confirmation takes y / u / n first.
-    if let Some(cid) = ui.confirm.get_untracked() {
-        let e = engine_by_id(&store, &cid);
-        let app = e
-            .as_ref()
-            .and_then(|e| e.get("install"))
-            .map(|i| s(i, "method") == "app")
-            .unwrap_or(false);
-        match ch {
-            'y' => {
-                let plans_failed = [plan_key(&cid, "user"), plan_key(&cid, "system")]
-                    .iter()
-                    .any(|k| matches!(store.json.write_untracked(k), Some(WriteState::Failed(_))));
-                let ready = [plan_key(&cid, "user"), plan_key(&cid, "system")]
-                    .iter()
-                    .all(|k| matches!(store.json.write_untracked(k), Some(WriteState::Done(_))));
-                if app && !plans_failed && !ready {
-                    store.notice.set(Some(
-                        "still checking the install locations — one moment".into(),
-                    ));
-                    return;
-                }
-                let loc = if !app || plans_failed { "auto" } else { "user" };
-                run_action(ctx, ui, &cid, &format!("install-go:{loc}"));
-            }
-            'u' if app => run_action(ctx, ui, &cid, "install-go:system"),
-            'n' => run_action(ctx, ui, &cid, "install-cancel"),
-            _ => store.notice.set(Some(
-                "answer the install question first — y installs, n keeps".into(),
-            )),
-        }
-        return;
-    }
     if ch == 'k' {
         // "Check again" (and the row's "I installed it, check again").
         run_action(ctx, ui, "", "refresh");
@@ -1416,9 +1863,16 @@ pub fn key(ctx: &Ctx, ui: EnginesUi, ch: char) {
     };
     let admin = store.conn.with_untracked(ConnPhase::is_admin);
     let job = job_of(&store, &e);
-    let acts = row_actions(&e, job.as_ref(), admin, false);
-    match acts.iter().find(|(a, _)| action_char(a) == ch) {
-        Some((a, _)) => run_action(ctx, ui, s(&e, "id"), a),
+    let profiles: Vec<crate::store::Profile> = store
+        .profiles
+        .with_untracked(|d| d.ready().map(|d| d.profiles.clone()).unwrap_or_default());
+    let acts = engine_actions(&store, &e, job.as_ref(), admin, &profiles);
+    if ch == 'g' {
+        open_details(ctx, ui, s(&e, "id"));
+        return;
+    }
+    match acts.iter().find(|a| a.key == Some(ch)) {
+        Some(a) => engine_action(ctx, ui, s(&e, "id"), a.id),
         None => {
             let name = name_of(&e);
             let what = match ch {

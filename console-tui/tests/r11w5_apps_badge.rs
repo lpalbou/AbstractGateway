@@ -106,7 +106,6 @@ fn select(h: &mut r8w4::Harness, id: &str) -> String {
         .with_untracked(|o| o.ready().unwrap().apps.iter().position(|a| a.id == id))
         .unwrap();
     h.store.apps.sel.set(i);
-    h.store.apps.on_badge.set(false);
     h.turns(3)
 }
 
@@ -132,9 +131,6 @@ fn flat(s: &str) -> String {
 fn notice(h: &r8w4::Harness) -> String {
     h.store.notice.get_untracked().unwrap_or_default()
 }
-
-const RIGHT: &[u8] = b"\x1b[C";
-const LEFT: &[u8] = b"\x1b[D";
 
 #[test]
 fn badge_verb_follows_the_gateways_status_control() {
@@ -172,43 +168,42 @@ fn badge_verb_follows_the_gateways_status_control() {
 }
 
 #[test]
-fn running_badge_cell_stops_with_enter() {
+fn running_badge_is_a_button_that_stops() {
+    // R15: the badge is a real button in the Status cell — a click (or Tab
+    // onto it + Enter, or `s`) does its action; its LABEL is the state, the
+    // gateway's sentence is its tooltip / focused-control line (A3).
     for size in SIZES {
         let mut h = page(size, true, false);
         let s = select(&mut h, "flow");
+        assert!(s.contains("Running"), "{s}");
         assert!(
-            flat(&s).contains(&format!("s {RUN_TIP}")),
-            "the hint line says the tooltip:\n{s}"
+            !s.contains("click to stop") || flat(&s).contains("Running"),
+            "{s}"
         );
-        let s = h.key(RIGHT);
-        assert!(
-            h.store.apps.on_badge.get_untracked(),
-            "→ moves onto the badge"
+        h.key(b"\t"); // the selected row's first control: its badge
+        assert_eq!(
+            h.ui.focus_line.get_untracked().as_deref(),
+            Some(format!("{RUN_TIP}  (s)").as_str())
         );
-        assert!(
-            s.contains("[Running]"),
-            "the badge cell shows the cursor:\n{s}"
-        );
-        assert!(flat(&s).contains(&format!("Enter/s {RUN_TIP}")), "{s}");
         let _ = h.shoot("apps-badge-running");
         h.assert_fits();
         h.key(b"\r");
+        assert_eq!(acts(h.sent()), vec![("flow".to_string(), AppVerb::Stop)]);
+        // …and a click on another row's badge.
+        let mut h = page(size, true, false);
+        h.click_after("Flow Editor", "Running");
         assert_eq!(acts(h.sent()), vec![("flow".to_string(), AppVerb::Stop)]);
     }
 }
 
 #[test]
-fn stopped_badge_cell_starts_with_space_and_left_leaves_it() {
+fn stopped_badge_starts_with_a_click_and_enter_on_the_row_opens() {
     let mut h = page((120, 40), true, false);
-    let s = select(&mut h, "code");
-    assert!(flat(&s).contains(&format!("s {START_TIP}")), "{s}");
-    h.key(RIGHT);
+    h.click_after("Code", "Stopped");
     let _ = h.shoot("apps-badge-stopped");
-    h.key(b" ");
     assert_eq!(acts(h.sent()), vec![("code".to_string(), AppVerb::Start)]);
-    h.key(LEFT);
-    assert!(!h.store.apps.on_badge.get_untracked(), "← back to the row");
-    // Enter on the row (not the badge) is the row's primary action: Open.
+    // Enter on the table is the row's primary action: Open.
+    select(&mut h, "code");
     h.key(b"\r");
     let sent = acts(h.sent());
     assert_eq!(sent, vec![("code".to_string(), AppVerb::Open)]);
@@ -228,22 +223,20 @@ fn s_anywhere_is_the_badge() {
 }
 
 #[test]
-fn external_badge_is_not_selectable_and_says_why() {
+fn external_badge_is_not_a_control_and_says_why() {
     for size in SIZES {
         let mut h = page(size, true, false);
         let s = select(&mut h, "observer");
         assert!(
             flat(&s).contains(&format!("Running: {EXTERNAL_TIP}")),
-            "the hint line:\n{s}"
+            "the details line:\n{s}"
         );
-        let s = h.key(RIGHT);
-        assert!(!h.store.apps.on_badge.get_untracked(), "never selectable");
-        assert!(!s.contains("[Running"), "{s}");
-        assert!(notice(&h).contains(EXTERNAL_TIP), "{}", notice(&h));
+        // A click on its badge does nothing (a plain pill, its tooltip says why).
+        h.click_after("Observer", "Running");
         let _ = h.shoot("apps-badge-external");
         h.assert_fits();
         h.key(b"s");
-        h.key(b" ");
+        assert!(notice(&h).contains(EXTERNAL_TIP), "{}", notice(&h));
         assert!(
             acts(h.sent()).is_empty(),
             "nothing is sent for an external app"
@@ -256,10 +249,9 @@ fn non_admin_badge_is_off_with_the_sentence() {
     let mut h = page((120, 40), false, false);
     let s = select(&mut h, "flow");
     assert!(flat(&s).contains(&format!("Running: {ADMIN_TIP}")), "{s}");
-    h.key(RIGHT);
-    assert!(!h.store.apps.on_badge.get_untracked());
-    assert!(notice(&h).contains(ADMIN_TIP), "{}", notice(&h));
+    h.click_after("Flow Editor", "Running");
     h.key(b"s");
+    assert!(notice(&h).contains(ADMIN_TIP), "{}", notice(&h));
     assert!(acts(h.sent()).is_empty());
     let _ = h.shoot("apps-badge-non-admin");
 }
@@ -267,11 +259,9 @@ fn non_admin_badge_is_off_with_the_sentence() {
 #[test]
 fn assistant_badge_quits_or_opens() {
     let mut h = page((120, 40), true, true);
-    let s = select(&mut h, "assistant");
-    assert!(flat(&s).contains(&format!("s {QUIT_TIP}")), "{s}");
-    h.key(RIGHT);
+    select(&mut h, "assistant");
+    h.click_after("Assistant", "Running");
     let _ = h.shoot("apps-badge-assistant-running");
-    h.key(b"\r");
     assert_eq!(
         acts(h.sent()),
         vec![("assistant".to_string(), AppVerb::Stop)]

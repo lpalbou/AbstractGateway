@@ -1,14 +1,46 @@
 # Changelog — abstractgateway-console
 
-## Unreleased
-
+## 0.16.0 (unreleased)
+The console is mouse-first and keyboard-complete. Every screen works with clicks alone — tabs, buttons, row
+actions, switches, choices, dialogs — and every control is still reachable from the keyboard.
+### Changed
+- **Navigation.** A grouped left rail like the web sidebar on terminals of 120×32 and larger, a one-row tab strip
+  with `‹` `›` below that; click a screen, or use `←` / `→` and the screen keys from anywhere outside a text field.
+  The header's memory line opens Resources, the identity opens Connection, **✦ Docs** opens the docs assistant.
+- **Row actions are buttons** in the web console's order and words: glyph buttons where the web has icons (`@`
+  Email, `⇄` OpenAI API, `≣` Logs, `◫` Workspaces, `⊜` Preferences, `↻` Rotate, `⊟` Archive …), labelled buttons
+  where the web has labels. Hovering a button, or giving it the keyboard focus, shows its web tooltip; the status
+  bar names the focused control. An action that cannot apply stays visible, faint, and a click says why.
+- **Switches** are drawn `━●` on / `●─` off with their feature label, and apply on a click or Space.
+- **Dialogs edit several settings at once** (title with `✕`, the web's apply model: on-change rows say
+  "Saving… / Saved", one-Save forms end with their buttons). Closing a dialog with unsaved edits asks
+  **Discard changes?** [Discard] [Keep editing].
+- **Confirmations** show the web's sentence and two buttons named after what they do, for example
+  [Rotate] [Cancel]. A destructive question opens with the focus on Cancel; Esc keeps things as they are. A long
+  sentence scrolls and the buttons stay on screen.
+- **Successes** show a short toast; refusals stay inline next to the control, with the gateway's sentence and
+  "Not saved.".
+- Every screen follows this model: Connection, Accounts, Workflows, Skills & MCP, Runtimes, Apps, Providers,
+  OpenAI API, Models, Multimodal, Resources, Sandbox, Network, Setup, About, the F3 host panel and the F2 docs
+  assistant drawer.
+- `?` — or the **?** button at the right end of the status bar — opens the keys panel (every key of the screen,
+  each with its button, and **Quit the console**); `F1` opens About.
+- The setup guide's row has **‹ Back**, **Next ›** and **Steps…** (`Ctrl+P`, `Ctrl+N`, `Ctrl+G`).
+- Your own Email dialog's **My provider uses a different login name** (`Ctrl+O`) and **Use a different account**
+  (`Ctrl+U`) are links you can click.
 ### Added
+- **Light and dark themes** built from the web console's palettes: `--theme gateway-light` / `gateway-dark`
+  (default), and the ☾ / ☼ switch in the header (in the status bar on terminals narrower than 90 columns) or
+  `Ctrl+T`.
+- The other account's **Email** dialog has the web's inline **Save** next to the address.
+- The **Retained runtimes** dialog is also offered from Runtimes.
+## 0.15.1 (2026-10-07)
+## Unreleased
 - **Preferences: Time zone** (the web console's row, its words): the account's time zone as the last row of
   **Preferences — <id>**; `Enter` lists **Gateway default (<zone>)** then the gateway's time zone names, typing
   filters them ("Search time zones"), `Enter` saves at once ("Saved." / "Not saved." with the gateway's
   reason). Needs the gateway's `time_zone` block (AbstractGateway with R16.1); an answer without it says so.
   Tests: `tests/r16w2_time_zone.rs`.
-
 ## 0.15.1 (2026-10-08)
 
 Needs AbstractGateway 0.13.1 or later for **Preferences** (`/accounts/{id}/preferences`) and the **last restart**

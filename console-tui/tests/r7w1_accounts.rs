@@ -66,15 +66,20 @@ fn the_table_has_the_web_columns_kinds_and_switches() {
     for size in SIZES {
         let mut h = page(size);
         let s = h.shoot("accounts");
-        assert!(s.contains("Accounts — people who use this gateway"), "{s}");
+        // R15: the web title + subtitle, the head buttons, one table.
         assert!(
-            s.contains("[Accounts]") && s.contains("Email for everyone"),
+            s.contains("Accounts") && s.contains("People who use this gateway"),
             "{s}"
         );
         assert!(
-            s.contains("[ ] Show archived") && s.contains("a Create user · n Create entity"),
+            s.contains("●─ Show archived")
+                && s.contains("Create user")
+                && s.contains("Create entity"),
             "{s}"
         );
+        for col in ["Name", "Email", "Runtime", "Active", "Actions"] {
+            assert!(s.contains(col), "column {col}:\n{s}");
+        }
         assert!(
             s.contains("alice")
                 && s.contains("User")
@@ -86,8 +91,10 @@ fn the_table_has_the_web_columns_kinds_and_switches() {
         assert!(s.contains("receive only"), "{s}");
         assert!(s.contains("No address"), "{s}");
         assert!(!s.contains("carol"), "archived hidden:\n{s}");
-        assert!(s.contains("[-]") && s.contains("[x]"), "{s}");
-        assert!(!s.contains('…'), "cut:\n{s}");
+        assert!(s.contains("━●"), "Active toggles:\n{s}");
+        // Glyph actions in the web's order (users / entities).
+        assert!(s.contains("@ ⇄ ≣ ◫ ⊜ ↻ ⊟"), "{s}");
+        assert!(s.contains("@ ≣ ◫ ⊜ ⬖ ⊟"), "{s}");
         h.assert_fits();
     }
 }
@@ -106,30 +113,51 @@ fn select(h: &mut r7w1::Harness, id: &str) {
 }
 
 #[test]
-fn enter_shows_the_row_actions_and_reasons() {
+fn row_actions_name_themselves_on_focus_and_refused_ones_say_why() {
+    // R15 A2: Tab from the table enters the selected row's actions; a
+    // focused button names itself (tooltip + the focused-control line); a
+    // refused one is faint, still focusable, and a press says the reason.
     let mut h = page((80, 24));
-    let s = h.key(b"\r");
-    assert!(s.contains("Admin — manages this gateway"), "{s}");
-    assert!(
-        s.contains("Active: You can't deactivate your own account."),
-        "{s}"
+    // Tab walks the selected row's controls left to right: the Runtime
+    // link, the Active toggle (refused on the own row), then the actions.
+    h.key(b"\t");
+    assert_eq!(
+        h.ui.focus_line.get_untracked().as_deref(),
+        Some("Runtimes of admin: admin  (g)")
     );
-    assert!(
-        s.contains("Archive: You can't archive your own account."),
-        "{s}"
+    h.key(b"\t");
+    assert_eq!(
+        h.ui.focus_line.get_untracked().as_deref(),
+        Some("Active  (Space) — You can't deactivate your own account.")
     );
-    h.shoot("accounts-expanded-own");
+    h.key(b"\t"); // the first action: Email
+    assert_eq!(
+        h.ui.focus_line.get_untracked().as_deref(),
+        Some("Email address and mailbox of admin  (@)")
+    );
+    for _ in 0..6 {
+        h.key(b"\t");
+    }
+    assert_eq!(
+        h.ui.focus_line.get_untracked().as_deref(),
+        Some("Archive admin (kept, hidden)  (d) — You can't archive your own account.")
+    );
+    h.shoot("accounts-own-archive-focused");
+    h.sent();
     h.key(b"\r");
-    select(&mut h, "alice");
-    let s = h.key(b"\r");
-    assert!(
-        s.contains("alice: @ Email · o OpenAI API (on) · l Logs · w Workspace"),
-        "{s}"
+    assert_eq!(
+        h.store.notice.get_untracked().as_deref(),
+        Some("You can't archive your own account.")
     );
+    assert!(
+        !h.sent()
+            .iter()
+            .any(|c| matches!(c, Cmd::ArchiveAccount { .. })),
+        "a refused action sends nothing"
+    );
+    // bob: the receive-only reason sits under the row (wrapped).
     select(&mut h, "bob");
-    let s = h.key(b"\r");
-    // R8.2: the receive-only reason sits in the Email cell, under the
-    // address (wrapped).
+    let s = h.text();
     assert!(
         s.contains("receive only") && s.contains("No outgoing"),
         "{s}"
@@ -142,12 +170,16 @@ fn show_archived_lists_them_with_unarchive_only() {
     h.key(b"h");
     let s = h.text();
     assert!(
-        s.contains("[x] Show archived") && s.contains("carol") && s.contains("Archived"),
+        s.contains("━● Show archived") && s.contains("carol") && s.contains("Archived"),
         "{s}"
     );
+    // An archived row offers Logs and Unarchive only.
+    let carol = s
+        .lines()
+        .find(|l| l.trim_start().starts_with("carol"))
+        .expect(&s);
+    assert!(carol.trim_end().ends_with("≣ ⤒"), "{s}");
     select(&mut h, "carol");
-    let s = h.key(b"\r");
-    assert!(s.contains("carol: l Logs · d Unarchive"), "{s}");
     h.shoot("accounts-archived");
     h.sent();
     h.key(b"d");
@@ -160,25 +192,26 @@ fn show_archived_lists_them_with_unarchive_only() {
 }
 
 #[test]
-fn archive_and_deactivate_confirm_inline_in_the_web_words() {
+fn archive_and_deactivate_confirm_in_the_web_words() {
+    // R15: a must-choose prompt (danger first, Cancel preselected).
     let mut h = page((80, 24));
     select(&mut h, "alice");
     h.sent();
     let s = h.key(b"d");
-    let flat = s
-        .replace(['│', '┃'], " ")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    // The dialog's sentence (the page stays visible around it).
+    let flat = abstractgateway_console::ui::w::confirm::asked()
+        .last()
+        .cloned()
+        .unwrap_or_default();
     assert!(flat.contains("Archive alice? They can't sign in any more. Their runtime, runs and history are kept; you can unarchive later."), "{s}");
-    assert!(s.contains("[y] Archive") && s.contains("[n] Keep"), "{s}");
+    assert!(s.contains("Archive") && s.contains("Cancel"), "{s}");
     h.shoot("accounts-archive-confirm");
-    h.key(b"n");
+    h.key(b"\r"); // Cancel
     assert!(
         !h.sent()
             .iter()
             .any(|c| matches!(c, Cmd::ArchiveAccount { .. })),
-        "Keep sends nothing"
+        "Cancel sends nothing"
     );
     let s = h.key(b" ");
     let flat = s
@@ -190,7 +223,8 @@ fn archive_and_deactivate_confirm_inline_in_the_web_words() {
         flat.contains("Deactivate alice? They are signed out until you turn Active back on."),
         "{s}"
     );
-    h.key(b"y");
+    h.key(b"\x1b[Z"); // Shift+Tab to the action button (R15 F1)
+    h.key(b"\r");
     assert!(h
         .sent()
         .iter()
@@ -207,7 +241,7 @@ fn openai_api_overlay_has_one_switch_and_esc_closes() {
         s.contains("Lets alice use the OpenAI-compatible API (/v1)"),
         "{s}"
     );
-    assert!(s.contains("[x] OpenAI API"), "{s}");
+    assert!(s.contains("━● OpenAI API"), "{s}");
     h.shoot("accounts-openai");
     h.sent();
     h.key(b" ");
@@ -247,10 +281,10 @@ fn an_entity_email_opens_its_own_mailbox_form() {
 }
 
 #[test]
-fn email_for_everyone_is_the_second_tab() {
+fn email_for_everyone_is_a_card_under_the_table() {
     let mut h = page((80, 24));
-    let s = h.key(b"\t");
-    assert!(s.contains("[Email for everyone]"), "{s}");
+    let s = h.text();
+    assert!(s.contains("Email for everyone"), "{s}");
     assert!(s.contains("Mailboxes for users"), "{s}");
     h.shoot("accounts-email-for-everyone");
 }

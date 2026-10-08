@@ -26,12 +26,13 @@ fn fx(name: &str) -> Value {
 /// The F3 panel's text alone (the page around the modal folded away):
 /// each line's cells between the panel's left border and its right edge.
 fn panel_text(s: &str) -> String {
+    // R15: the panel's title row is the web card's "Gateway" (and ✕).
     let title = s
         .lines()
-        .find(|l| l.contains("Gateway host"))
+        .find(|l| l.contains("│Gateway ") && l.contains('✕'))
         .expect("the F3 panel");
     let chars: Vec<char> = title.chars().collect();
-    let at = title.find("Gateway host").unwrap();
+    let at = title.find("│Gateway ").unwrap() + '│'.len_utf8();
     let left = title[..at].chars().count() - 1;
     assert_eq!(chars[left], '│');
     let mut out = Vec::new();
@@ -145,7 +146,7 @@ fn f3_shows_the_last_watchdog_restart_word_for_word() {
         let s = h.shoot("r14w3-f3-last-restart");
         let flat = panel_text(&s);
         assert!(
-            flat.contains("last restart: Gateway restarted at 2026-10-04 19:23:57 +00:00 after a hang — the event loop was blocked in starlette/responses.py:245 listen_for_disconnect"),
+            flat.contains("Last restart Gateway restarted at 2026-10-04 19:23:57 +00:00 after a hang — the event loop was blocked in starlette/responses.py:245 listen_for_disconnect"),
             "{s}"
         );
         assert!(
@@ -175,7 +176,7 @@ fn f3_shows_the_last_watchdog_restart_word_for_word() {
     )));
     h.turns(2);
     h.key(b"\x1bOR");
-    assert!(!h.turns(2).contains("last restart"));
+    assert!(!h.turns(2).contains("Last restart"));
 }
 
 fn apps_view(ctx: &ui::Ctx, cx: abstracttui::prelude::Scope) -> abstracttui::prelude::View {
@@ -231,7 +232,9 @@ fn the_assistant_rows_sentences_follow_the_web_card() {
         s.contains("Installed from a source checkout: its version is the checkout's."),
         "{s}"
     );
-    assert!(s.contains("Stopped — click to start"), "{s}");
+    // R15 A3: the badge reads the state; "Stopped — click to start" is its
+    // tooltip (pinned on the model: badge_tip).
+    assert!(s.contains("Stopped"), "{s}");
     // Not a source checkout: the sentence is not the card's.
     let a = v["apps"]
         .as_array_mut()

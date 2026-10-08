@@ -215,38 +215,53 @@ fn assert_fits(s: &str, w: i32) {
 
 #[test]
 fn group_line_and_tabs_follow_the_web_sidebar() {
+    // R15 shell: below 120x32 a one-row nav strip (the active screen's group
+    // caption + titles windowed around it); from 120x32 (the harness adds
+    // the rail's 21 cells to wide sizes) the web sidebar as a left rail.
     for (w, hgt) in SIZES {
         let mut h = harness(Size::new(w, hgt));
         h.admin();
         let s = h.goto(ui::SCREEN_USERS);
         assert_fits(&s, w);
-        let group = s.lines().nth(1).unwrap_or_default();
-        assert!(
-            group.contains(
-                "ACCOUNTS 2 · WORK 3-6 · MODELS 7 8 9 0 · SYSTEM H T N · S Setup · I About"
-            ),
-            "{group}"
-        );
-        // MODELS: Providers, OpenAI API, Models, Multimodal — in order.
-        let s = h.goto(ui::SCREEN_OPENAI);
-        let tabs = s.lines().nth(2).unwrap_or_default();
-        let p = tabs.find("7 Providers");
-        let o = tabs.find("8 OpenAI API");
-        assert!(p.is_some() && o.is_some() && p < o, "MODELS order:\n{tabs}");
-        h.shoot("nav-openai");
-        // SYSTEM: Resources, Sandbox, Network; then Setup, About.
-        let s = h.goto(ui::SCREEN_ABOUT);
-        let tabs = s.lines().nth(2).unwrap_or_default();
-        for (a, b) in [
-            ("H Resources", "T Sandbox"),
-            ("T Sandbox", "N Network"),
-            ("S Setup", "I About"),
-        ] {
-            if let (Some(x), Some(y)) = (tabs.find(a), tabs.find(b)) {
-                assert!(x < y, "{a} before {b}:\n{tabs}");
+        let wide = w >= 120 && hgt >= 32;
+        if wide {
+            for caption in [" ACCOUNTS", " WORK", " MODELS", " SYSTEM"] {
+                assert!(
+                    s.lines().any(|l| l.starts_with(caption)),
+                    "rail caption {caption}:\n{s}"
+                );
             }
+            let pos = |name: &str| {
+                s.lines()
+                    .position(|l| l.chars().take(20).collect::<String>().contains(name))
+            };
+            // MODELS: Providers, OpenAI API, Models, Multimodal — in order;
+            // SYSTEM: Resources, Sandbox, Network; then Connection, Setup, About.
+            for (a, b) in [
+                ("Providers", "OpenAI API"),
+                ("OpenAI API", "Models"),
+                ("Resources", "Sandbox"),
+                ("Sandbox", "Network"),
+                ("Network", "Setup"),
+                ("Setup", "About"),
+            ] {
+                assert!(pos(a) < pos(b), "{a} above {b}:\n{s}");
+            }
+        } else {
+            let strip = s.lines().nth(1).unwrap_or_default();
+            assert!(strip.starts_with(" ACCOUNTS"), "strip caption:\n{strip}");
+            let s = h.goto(ui::SCREEN_OPENAI);
+            let strip = s.lines().nth(1).unwrap_or_default();
+            assert!(strip.starts_with(" MODELS"), "strip caption:\n{strip}");
+            let p = strip.find("Providers");
+            let o = strip.find("OpenAI API");
+            assert!(
+                p.is_some() && o.is_some() && p < o,
+                "MODELS order:\n{strip}"
+            );
         }
-        assert!(tabs.contains("I About"), "{tabs}");
+        h.shoot("nav-openai");
+        let s = h.goto(ui::SCREEN_ABOUT);
         // No Engines tab anywhere.
         assert!(
             !s.contains("Engines"),
@@ -277,20 +292,19 @@ fn letter_keys_jump_to_the_system_pages_and_about() {
 
 #[test]
 fn the_key_hint_bar_wraps_instead_of_cutting_the_screen_verbs() {
+    // R15 §2.7: ONE status row; the screen's verbs lead, `? keys` follows
+    // them, the universal keys truncate first; the panel lists them all.
     let mut h = harness(Size::new(80, 24));
     h.admin();
     let s = h.goto(ui::SCREEN_WELCOME);
     let rows: Vec<&str> = s.lines().collect();
     let last = rows[rows.len() - 1];
-    let first = rows[rows.len() - 2];
     assert!(
-        first.starts_with("a Use recommended defaults · D Download all · r refresh"),
+        // D Download all joins once the recommended set has an absent model.
+        last.starts_with("a Use recommended defaults · r refresh"),
         "{s}"
     );
-    assert!(
-        last.contains("screens"),
-        "second line carries the universal keys:\n{s}"
-    );
+    assert!(last.contains("? keys"), "the keys panel is named:\n{s}");
 }
 
 // ---------------------------------------------------------------------
@@ -355,13 +369,16 @@ fn about_overlay_opens_anywhere_and_esc_closes_it() {
     h.store.about.set(Loadable::Ready(about_payload()));
     let s = h.turns(3);
     assert!(s.contains("AbstractGateway console"), "the name row:\n{s}");
+    // R15: a FormModal titled as the web's top-bar button, with a Close button.
     assert!(
-        s.contains("Close (Esc)") && s.contains("AbstractGateway   0.13.0"),
+        s.contains("About AbstractGateway")
+            && s.contains(" Close ")
+            && s.contains("AbstractGateway   0.13.0"),
         "{s}"
     );
     h.shoot("about-overlay");
     let s = h.esc();
-    assert!(!s.contains("Close (Esc)"), "Esc closes:\n{s}");
+    assert!(!s.contains("About AbstractGateway"), "Esc closes:\n{s}");
 }
 
 // ---------------------------------------------------------------------
@@ -483,46 +500,42 @@ fn setup_a_applies_the_recommended_defaults_and_offers_the_second_pass_inline() 
             .any(|c| matches!(c, Cmd::ApplyRecommendedRoutes { force: false })),
         "a applies without overwriting your routes: {cmds:?}"
     );
-    // The worker offers the forced pass: inline, never a dialog.
+    // The worker offers the forced pass: the web's button under the
+    // outcome sentence ("♻ Replace mine too"), never a dialog.
     h.store.apply_followup.set(Some("Replace mine too".into()));
     let s = h.turns(3);
     assert!(
-        s.contains("routes you configured were kept")
-            && s.contains("[y] Replace mine too")
-            && s.contains("[n] Keep"),
+        s.contains("routes you configured were kept") && s.contains("♻ Replace mine too"),
         "{s}"
     );
     h.shoot("setup-replace-mine-too");
-    h.key(b"y");
+    let (y, line) = s
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("♻ Replace mine too"))
+        .unwrap();
+    let x = line[..line.find("♻").unwrap()].chars().count() + 1;
+    h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes());
+    h.turns(2);
     let cmds = h.drain();
     assert!(
         cmds.iter()
             .any(|c| matches!(c, Cmd::ApplyRecommendedRoutes { force: true })),
-        "y runs the forced pass: {cmds:?}"
+        "the button runs the forced pass: {cmds:?}"
     );
 }
 
 #[test]
 fn setup_d_confirms_inline_then_downloads_all() {
+    // R15: the web's Download all starts at once (no question).
     let mut h = harness(Size::new(120, 40));
     h.admin();
     h.goto(ui::SCREEN_WELCOME);
     h.store.availability.set(Loadable::Ready(plan()));
     h.turns(2);
     h.drain();
-    let s = h.key(b"D");
-    let flat = s.split_whitespace().collect::<Vec<_>>().join(" ");
-    assert!(
-        flat.contains("Download the recommended models on the gateway host: supertonic supertonic-3, huggingface"),
-        "{s}"
-    );
-    assert!(flat.contains("Systran/faster-whisper-large-v3?"), "{s}");
-    assert!(s.contains("[y] Download all  [n] Keep"), "{s}");
-    assert!(h.drain().is_empty(), "nothing sent before y");
-    h.key(b"n");
-    assert!(h.drain().is_empty(), "n keeps");
     h.key(b"D");
-    h.key(b"y");
+    h.turns(2);
     assert!(h
         .drain()
         .iter()

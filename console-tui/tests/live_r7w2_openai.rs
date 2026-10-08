@@ -81,6 +81,13 @@ fn live(token: &str) -> H {
     );
     abstracttui::app::set_theme_by_id("abstract-dark");
     let size = Size::new(120, 60);
+    // R15 rail: from 120x32 the console shows a 21-cell nav rail; these
+    // suites pin PAGE layouts, so a wide size keeps its page width.
+    let size = if size.w >= 120 && size.h >= 32 {
+        Size::new(size.w + 21, size.h)
+    } else {
+        size
+    };
     let mut app = App::new(size);
     let overlays = app.overlays();
     let quitter = app.quitter();
@@ -170,7 +177,9 @@ fn live(token: &str) -> H {
         h.store.conn.with_untracked(ConnPhase::is_connected)
     });
     h.ui.screen.set(ui::SCREEN_OPENAI);
-    h.until("the page", |_, s| s.contains("Status  "));
+    h.until("the page", |_, s| {
+        s.contains("One address for every OpenAI-compatible app.")
+    });
     h
 }
 
@@ -222,7 +231,11 @@ fn get(path: &str, token: &str) -> Result<Value, u16> {
 /// The page said the web page's saved sentence (the write landed and the
 /// page is idle again).
 fn saved(h: &H, sentence: &str) -> bool {
+    // R15: a verified success is a toast (the card keeps the sentence too).
     h.store.notice.get_untracked().as_deref() == Some(sentence)
+        || abstractgateway_console::ui::w::notify::toasts()
+            .last()
+            .is_some_and(|t| t == sentence)
 }
 
 /// In an open choice prompt (initial = the gateway's selected option),
@@ -340,12 +353,7 @@ fn admin_actions_change_the_gateway_like_the_web_page() {
         s.contains("OK   ") || s.contains("Fix  ") || s.contains("Note ")
     });
     h.key(b"x");
-    h.until("restarted", |h, _| {
-        h.store
-            .notice
-            .get_untracked()
-            .is_some_and(|n| n.starts_with("Restarted: "))
-    });
+    h.until("restarted", |_, s| s.contains("Restarted: "));
     assert_eq!(state("running"), json!(true));
 
     // A log row opens to its recorded request (the same record route).
@@ -354,14 +362,17 @@ fn admin_actions_change_the_gateway_like_the_web_page() {
         .cloned()
         .unwrap();
     assert!(!rows.is_empty(), "seeded requests");
-    h.key(b"\t");
+    // R15: Enter on the request table opens the record (a modal).
     h.key(b"\r");
     h.until("the record", |_, s| {
         s.contains("Keys and tokens were removed")
     });
-    // Reveal shows the admin token this console signed in with
-    // (Shift+Tab back to the overview).
-    h.key(b"\x1b[Z");
+    // Reveal shows the admin token this console signed in with (Esc
+    // closes the record first).
+    h.term.push_input(&[0x1b]);
+    h.turns(1);
+    std::thread::sleep(Duration::from_millis(45));
+    h.turns(3);
     let s = h.key(b"v");
     assert!(s.contains(&admin()), "revealed key:\n{s}");
 }
@@ -379,8 +390,16 @@ fn a_user_sees_own_requests_and_new_key_replaces_the_token() {
     // New key: confirm, then the old token stops working, the new one is
     // the console's, and the page reads again with it.
     h.key(b"n");
-    h.until("the confirm", |_, s| s.contains("Make a new key?"));
-    h.key(b"y");
+    let s = h.until("the confirm", |_, s| s.contains("Make a new key?"));
+    // R15 F1: answered by its [New key] button.
+    let (y, line) = s
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains(" New key ") && l.contains(" Cancel "))
+        .last()
+        .unwrap_or_else(|| panic!("[New key] [Cancel]:\n{s}"));
+    let x = line[..line.rfind(" New key ").unwrap() + 1].chars().count() + 1;
+    h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes());
     h.until("the new key", |h, _| {
         h.ui.conn_token.get_untracked() != alice
     });
