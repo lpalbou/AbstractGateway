@@ -1,43 +1,285 @@
-//! Runtimes: the data-plane inventory (default, per-user, per-entity)
-//! with owners, sizes, entity liveness — plus, for the runtime the
-//! operator CHOOSES, a tabbed inspector (Runs | Cache) and
-//! the operational actions the web console carries: run cancel/steer
-//! and data-home purge.
+//! Runtimes (R15, DESIGN-TUI §3.6 / web §8.4): the data-plane inventory
+//! as a table whose row click CHOOSES the runtime, and under it the
+//! chosen runtime's inspector — "▷ Runtime <id>" with the web's tabs
+//! Runs | Artifacts | Cache | Logs, each a toolbar (the web's filter
+//! dropdown + search field) over a table with the web's labelled row
+//! buttons (Inspect / Steer / Cancel; Purge… / Forget). Inspect, Steer,
+//! an artifact and a log tail are dialogs; Cancel, Purge and Forget ask
+//! the web's question first.
 //!
 //! NOTHING below the inventory loads eagerly (operator directive
-//! 2026-07-26): the detail region shows a teaching line until a
-//! runtime is chosen (click / Enter), and each tab loads its own data
-//! lazily on first look.
+//! 2026-07-26): the inspector shows the web's teaching line until a
+//! runtime is chosen, and each tab loads its own data on first look.
+//! The runtime knobs that used to fold under this page live on the
+//! pages that own them on the web (DESIGN D3): App settings, Skills'
+//! shelf row, Workflows' defaults — their request bodies stay here.
 
+use std::rc::Rc;
+
+use abstracttui::app::select::{Select, SelectHandle};
+use abstracttui::app::SelectOption;
 use abstracttui::prelude::*;
-use abstracttui::widgets::{Disclosure, Table};
+use abstracttui::ui::{Phase, UiEvent};
 use serde_json::{json, Value};
 
-use super::util::{ellipsize, field, line, loadable_view, span, span_bold};
-use super::widths;
-use super::{open_form, Ctx};
+use super::util::{line, span};
+use super::w::action::{button, On};
+use super::w::form::sentence;
+use super::w::{Action, Cell, Col, ColW, DataTable, Ink, Row as WRow, Segmented, Toggle};
+use super::Ctx;
 use crate::query::Needle;
 use crate::store::{
-    home_plane_index, human_bytes, ConnPhase, DataHomeRow, Loadable, RunRow, RunScope, RunsData,
-    RuntimeConfigData, RuntimeRow,
+    home_plane_index, human_bytes, ConnPhase, DataHomeRow, Loadable, RunRow, RunScope, RuntimeRow,
 };
 use crate::worker::Cmd;
 
-/// The page note (DESIGN §7): what a runtime is, in the words every
-/// surface uses — the block title carries the first sentence, the line
-/// under the table the second.
-pub const RUNTIME_TITLE: &str =
-    "Runtimes — a runtime is a user's own data plane: their runs, flows, sessions and memory";
-pub const RUNTIME_FOOTNOTE: &str = "Each user gets one, named after them, unless an admin bound them to a shared one  ·  w Workspaces";
-/// The whole note, wrapped under the table when the terminal is too narrow
-/// for the title to carry its first sentence.
-pub const RUNTIME_NOTE: &str = "A runtime is a user's own data plane: their runs, flows, sessions and memory. Each user gets one, named after them, unless an admin bound them to a shared one. w workspace policy.";
+// ------------------------------------------------------------ the web's words
+
+pub const TITLE: &str = "Runtimes";
+pub const SUBTITLE: &str = "Each user's own data plane: runs, flows, sessions and memory";
+/// The web section note (what a runtime is, and how to open one).
+pub const NOTE: &str = "A runtime is a user's own data plane: their runs, flows, sessions and memory. Each user gets one, named after them, unless an admin bound them to a shared one. Entities have their own too. Click a runtime to open its runs and cache below; the default runtime's cache also lists every machine-wide store.";
+pub const RELOAD_TIP: &str = "Reload the runtime list";
+pub const DETAIL_RELOAD_TIP: &str = "Reload this runtime's details";
+pub const TEACH: &str = "Select a runtime above — click a row — to load its runs and cache.";
+pub const TABS: [&str; 4] = ["Runs", "Artifacts", "Cache", "Logs"];
+pub const NO_RUNTIMES: &str = "No runtimes found.";
+pub const STATUS_TIP: &str = "Filter runs by their durable status";
+pub const RUNS_SEARCH: &str = "Search runs — run id, workflow, session…";
+pub const ROOT_ONLY: &str = "root runs only";
+pub const ROOT_ONLY_TIP: &str = "Hide child runs — one row per top-level run";
+pub const READONLY_NOTE: &str = "Read-only view — newest runs on this plane. Inspect/steer/cancel run through the default runtime's command lane and are not available here.";
+pub const STEER_TITLE: &str = "Steer run";
+pub const STEER_PLACEHOLDER: &str = "e.g. focus on the failing test first; prefer minimal diffs";
+pub const MODALITY_TIP: &str = "Filter artifacts by type";
+pub const ARTIFACTS_SEARCH: &str = "Search artifacts — name, kind, tags, date (YYYY-MM-DD)…";
+pub const ARTIFACTS_NOTE: &str =
+    "Artifacts are indexed on the gateway store this console session reads (all planes).";
+pub const CACHE_KIND_TIP: &str = "Filter caches by kind";
+pub const CACHES_SEARCH: &str = "Search caches — name, kind, path…";
+pub const CACHES_NOTE: &str = "Disposable caches only — purging one just costs recomputation (re-download for model weights, re-encode for prompt KV). Durable stores are never listed here: deliverables live in the Artifacts tab, logs in the Logs tab.";
+pub const PURGE_TIP: &str =
+    "Delete the CONTENTS of this cache; a dry-run accounting is shown first";
+pub const FORGET_TIP: &str = "Remove this stale registry row (disk untouched)";
+pub const FORGET_ALL_TIP: &str = "Remove every stale registry row in one go (disk untouched)";
+pub const LOGS_HOME_TIP: &str = "Filter by log home";
+pub const LOGS_SEARCH: &str = "Search log files — file name…";
+pub const LOG_REFRESH_TIP: &str = "Read the latest lines of this log again";
+pub const TAIL_SIZES: [(&str, u32); 3] = [
+    ("last 64 KB", 64 * 1024),
+    ("last 256 KB", 256 * 1024),
+    ("last 1 MB", 1024 * 1024),
+];
+pub const STATUSES: [(&str, &str); 6] = [
+    ("", "all statuses"),
+    ("running", "running"),
+    ("waiting", "waiting"),
+    ("completed", "completed"),
+    ("failed", "failed"),
+    ("cancelled", "cancelled"),
+];
+
+/// The web's Cancel question (`cancelRun`).
+pub fn cancel_question(run_id: &str) -> String {
+    format!("Cancel run {run_id}? Any in-flight work stops at the next tick.")
+}
+
+/// The web's Steer sentence (`steerRun`).
+pub fn steer_lead(run_id: &str) -> String {
+    format!(
+        "Guidance folds into {run_id}'s next reasoning cycle (durable inbox — delivered at the loop boundary, never lost)."
+    )
+}
+
+/// The web's Purge question (`purgeDataHome`). The web states the
+/// dry-run's file count and bytes here; this console's worker runs the
+/// dry-run itself (a refused dry-run vetoes the purge) — the sentence
+/// keeps the rest of the web's words.
+pub fn purge_question(name: &str) -> String {
+    format!(
+        "Purge {name}? This deletes the CONTENTS of {name}. The directory itself and its registration survive. This cannot be undone."
+    )
+}
+
+/// The web's Forget question (`forgetDataHomes`): one row or all stale.
+pub fn forget_question(name: Option<&str>) -> String {
+    let label = match name {
+        Some(n) => format!("the stale row {n}"),
+        None => "every stale registration".to_string(),
+    };
+    format!(
+        "This removes {label} from the data-home registry. Disk is never touched — the rows point at paths that no longer exist."
+    )
+}
+
+/// The account chip's × tooltip (round 8).
+pub fn chip_clear_tip(account: &str) -> String {
+    format!("Show every runtime, not only {account}'s")
+}
+
+/// The inspector's sub-line under "▷ Runtime <id>" (the web's
+/// `selectRuntime` bits).
+pub fn detail_sentence(r: &RuntimeRow) -> String {
+    let mut bits = vec![match r.kind.as_str() {
+        "entity" => format!(
+            "{} — the entity's own plane (visits, workflows, reflections run here)",
+            if r.label.is_empty() {
+                &r.runtime_id
+            } else {
+                &r.label
+            }
+        ),
+        "user" => format!(
+            "{} — this user's plane (their runs and flows live here)",
+            r.label
+        ),
+        _ => "The gateway default runtime (admin plane)".to_string(),
+    }];
+    if r.kind == "entity" {
+        bits.push(entity_state(r));
+    }
+    if let Some(n) = r.size_bytes {
+        bits.push(human_bytes(n));
+    }
+    if r.data_dir.is_empty() {
+        bits.push("not materialized yet".into());
+    }
+    format!("{}.", bits.join(" · "))
+}
+
+/// The State cell: entities carry state + liveness; other planes "—".
+fn entity_state(r: &RuntimeRow) -> String {
+    if r.liveness.as_deref() == Some("stopped") {
+        return "STOPPED".into();
+    }
+    match r.state.as_deref() {
+        None | Some("awake") | Some("") => "resting".into(),
+        Some(s) => s.to_string(),
+    }
+}
+
+/// The inventory's stable row key.
+pub fn runtime_key(r: &RuntimeRow) -> String {
+    format!("{}|{}|{}", r.kind, r.tenant_id, r.runtime_id)
+}
+
+// ------------------------------------------------------------ action sources
+
+/// The page head's buttons: the account chip (when the page is filtered
+/// to one account) and ↻.
+pub fn head_actions(filter: Option<&crate::store::RuntimeFilter>) -> Vec<Action> {
+    let mut out = Vec::new();
+    if let Some(f) = filter {
+        out.push(
+            Action::label("account", format!("{} ×", f.chip()))
+                .key('x')
+                .tooltip(chip_clear_tip(&f.account)),
+        );
+    }
+    out.push(Action::label("reload", "↻").key('r').tooltip(RELOAD_TIP));
+    out
+}
+
+/// One inventory row's Workspace link (the web's Workspace cell), if any.
+pub fn inventory_actions(r: &RuntimeRow) -> Vec<Action> {
+    match r.kind.as_str() {
+        "default" => vec![Action::link("workspaces", "Eligible workspaces")
+            .key('w')
+            .tooltip("Eligible workspaces of this gateway")],
+        "user" | "entity" if r.owners.len() == 1 => vec![Action::link("workspaces", "Workspaces")
+            .key('w')
+            .tooltip(format!("Workspaces {}'s agents may use", r.owners[0]))],
+        _ => Vec::new(),
+    }
+}
+
+/// A run's buttons (the web's `loadRuns`): Inspect always; Steer and
+/// Cancel while the run is live. A read-only plane (any runtime but the
+/// default) offers none — its runs are ticked by that plane's own runtime.
+pub fn run_actions(r: &RunRow, actionable: bool) -> Vec<Action> {
+    if !actionable {
+        return Vec::new();
+    }
+    let mut out = vec![Action::label("inspect", "Inspect")
+        .key('i')
+        .tooltip(format!("Show run {}", r.run_id))];
+    if !matches!(r.status.as_str(), "completed" | "failed" | "cancelled") {
+        out.push(
+            Action::label("steer", "Steer")
+                .key('s')
+                .tooltip(format!("Send guidance to run {}", r.run_id)),
+        );
+        out.push(
+            Action::label("cancel", "Cancel")
+                .key('c')
+                .tooltip(format!("Cancel run {}", r.run_id))
+                .danger(),
+        );
+    }
+    out
+}
+
+/// A cache row's button: Purge… on a live cache, Forget on a stale row.
+pub fn cache_actions(stale: bool) -> Vec<Action> {
+    if stale {
+        vec![Action::label("forget", "× Forget").tooltip(FORGET_TIP)]
+    } else {
+        vec![Action::label("purge", "× Purge…")
+            .key('P')
+            .tooltip(PURGE_TIP)
+            .danger()]
+    }
+}
+
+/// The Cache tab's bulk button (the web shows it for two or more stale rows).
+pub fn forget_all_action(n: usize) -> Action {
+    Action::label("forget_all", format!("× Forget all stale ({n})"))
+        .key('F')
+        .tooltip(FORGET_ALL_TIP)
+}
+
+/// The inspector head's ↻.
+pub fn detail_actions() -> Vec<Action> {
+    vec![Action::label("reload_detail", "↻").tooltip(DETAIL_RELOAD_TIP)]
+}
+
+/// The footer's verbs.
+pub fn hints(ctx: &Ctx) -> Vec<(&'static str, &'static str)> {
+    let store = ctx.store;
+    if store.conn.with(ConnPhase::is_known_non_admin) {
+        return Vec::new();
+    }
+    let mut out = vec![("↑↓ Enter", "open runtime"), ("w", "Workspaces")];
+    if store.runtime_filter.with(Option::is_some) {
+        out.push(("x", "every runtime"));
+    }
+    if ctx.ui.rt_detail.with(Option::is_some) {
+        match ctx.ui.rt_tab.get() {
+            0 => out.extend_from_slice(&[
+                ("i", "Inspect"),
+                ("s", "Steer"),
+                ("c", "Cancel"),
+                ("t", ROOT_ONLY),
+                ("f", "status"),
+                ("n/p", "page"),
+            ]),
+            1 => out.extend_from_slice(&[("o", "open"), ("f", "type"), ("n/p", "page")]),
+            2 => {
+                out.extend_from_slice(&[("P", "Purge…"), ("F", "Forget all stale"), ("f", "kind")])
+            }
+            _ => out.extend_from_slice(&[("o", "tail"), ("f", "log home")]),
+        }
+    }
+    out.push(("r", "refresh"));
+    out
+}
+
+// ------------------------------------------------------------ the page
 
 /// The Runtimes screen is admin-only end to end: every read and write it
 /// makes is an `/admin/*` route, and the web console hides the whole tab
-/// for a non-admin (console.py renderAccount). A principal known NOT to
-/// be an admin gets the reason instead of a screen of 403 panels; the
-/// screen rebuilds when the principal changes.
+/// for a non-admin. A principal known NOT to be an admin gets the reason
+/// instead of a screen of 403 panels.
 pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
     let non_admin = cx.memo(move || store.conn.with(ConnPhase::is_known_non_admin));
@@ -45,7 +287,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let tt = *t;
     dyn_view_scoped(LayoutStyle::default().grow(1.0), move |scx| {
         if non_admin.get() {
-            admin_only_view(&tt, &ctx)
+            admin_only_view(scx, &tt, &ctx)
         } else {
             admin_view(scx, &ctx, &tt)
         }
@@ -53,8 +295,8 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
 }
 
 /// The Accounts Runtime jump (R8.2): the Runtimes page filtered to ONE
-/// account — the web's `#runtimes?account=<id>` (same route, `GET
-/// /admin/runtimes?account=`). The caller switches the screen.
+/// account — the web's `#runtimes?account=<id>`. The caller switches the
+/// screen.
 pub fn show_account(ctx: &Ctx, account: &str, tenant_id: &str) {
     let store = ctx.store;
     let filter = crate::store::RuntimeFilter {
@@ -62,14 +304,13 @@ pub fn show_account(ctx: &Ctx, account: &str, tenant_id: &str) {
         tenant_id: tenant_id.to_string(),
     };
     store.runtime_filter.set(Some(filter.clone()));
-    // A chosen plane of another account would mislead under the filter.
     ctx.ui.rt_detail.set(None);
     ctx.ui.runtime_sel.set(0);
     store.runtimes.set(Loadable::Loading);
     ctx.send(Cmd::LoadRuntimesFor { filter });
 }
 
-/// `x`: every runtime again (the chip's ×).
+/// The chip's ×: every runtime again.
 fn clear_account_filter(ctx: &Ctx) {
     let store = ctx.store;
     if store.runtime_filter.get_untracked().is_none() {
@@ -82,45 +323,112 @@ fn clear_account_filter(ctx: &Ctx) {
     ctx.send(Cmd::LoadRuntimes);
 }
 
-fn admin_only_view(t: &TokenSet, ctx: &Ctx) -> View {
+fn admin_only_view(cx: Scope, t: &TokenSet, ctx: &Ctx) -> View {
     let why = ctx
         .store
         .conn
         .with_untracked(|c| c.admin_refusal("the Runtimes screen"))
         .unwrap_or_default();
-    Block::new()
-        .border(BorderKind::Rounded)
-        .title("Runtimes")
-        .fill(t.surface)
-        .layout(LayoutStyle::column().grow(1.0).padding(Edges::all(1)))
-        .child(line(vec![span(why, t.text_muted)]))
-        .child(line(vec![span(
-            "data planes, runs, caches and the gateway knobs are admin surfaces — \
-             sign in with an admin token to see them",
-            t.text_faint,
-        )]))
-        .element(t)
+    let w = page_w(cx);
+    Element::new()
+        .style(LayoutStyle::column().grow(1.0).padding(Edges {
+            left: 1,
+            right: 1,
+            top: 0,
+            bottom: 0,
+        }))
+        .child(super::workflows::page_head(
+            t,
+            TITLE,
+            SUBTITLE,
+            w,
+            Vec::new(),
+        ))
+        .child(sentence(t, &why, w, t.text_muted))
         .build()
 }
 
+/// The page width the content lays out in.
+fn page_w(cx: Scope) -> i32 {
+    (crate::ui::page_viewport(cx).get().w - 2).max(20)
+}
+
+/// Page-scoped state: the tables' keyed selections, the toolbar's
+/// switch and the dropdowns' handles (f opens the active tab's).
+#[derive(Clone)]
+struct Pg {
+    inv_key: Signal<Option<String>>,
+    run_key: Signal<Option<String>>,
+    art_key: Signal<Option<String>>,
+    cache_key: Signal<Option<String>>,
+    log_key: Signal<Option<String>>,
+    root_only: Signal<bool>,
+    picks: Rc<[SelectHandle; 4]>,
+}
+
 fn admin_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
+    let tt = *t;
+    let pg = Pg {
+        inv_key: cx.signal(None),
+        run_key: cx.signal(None),
+        art_key: cx.signal(None),
+        cache_key: cx.signal(None),
+        log_key: cx.signal(None),
+        root_only: cx.signal(true),
+        picks: Rc::new([
+            SelectHandle::new(),
+            SelectHandle::new(),
+            SelectHandle::new(),
+            SelectHandle::new(),
+        ]),
+    };
+    install_effects(cx, ctx, &pg);
+
+    let keys_ctx = ctx.clone();
+    let keys_pg = pg.clone();
+    Element::new()
+        .style(LayoutStyle::column().gap(0).grow(1.0).padding(Edges {
+            left: 1,
+            right: 1,
+            top: 0,
+            bottom: 0,
+        }))
+        .on(Phase::Bubble, move |ectx, ev| {
+            if let UiEvent::Key(k) = ev {
+                if k.mods.0 != 0 && !matches!(k.key, Key::Char(c) if c.is_ascii_uppercase()) {
+                    return;
+                }
+                if handle_key(cx, &keys_ctx, &keys_pg, k.key) {
+                    ectx.stop_propagation();
+                }
+            }
+        })
+        .child(head(cx, ctx, &tt))
+        .child(dyn_view(LayoutStyle::column().shrink(0.0), move || {
+            // The web's note; a short terminal keeps its rows for the tables.
+            let vp = crate::ui::page_viewport(cx).get();
+            if vp.h < 30 {
+                return Element::new().style(LayoutStyle::default().h(0)).build();
+            }
+            sentence(&tt, NOTE, (vp.w - 2).max(20), tt.text_muted)
+        }))
+        .child(inventory(cx, ctx, &tt, &pg))
+        .child(inspector(cx, ctx, &tt, &pg))
+        .build()
+}
+
+/// Loads (lazy, per chosen runtime and tab), the self-heal of the chosen
+/// row, the table selections' sync with the legacy indices, and the
+/// one-runtime account filter opening at once.
+fn install_effects(cx: Scope, ctx: &Ctx, pg: &Pg) {
     let store = ctx.store;
     let ui = ctx.ui;
-    let tt = *t;
-
-    super::util::clamp_selection(cx, ui.runtime_sel, move || {
-        store
-            .runtimes
-            .with(|d| d.ready().map(Vec::len).unwrap_or(0))
-    });
+    // Each list clamps against ITS OWN row count.
     super::util::clamp_selection(cx, ui.run_sel, move || {
         store
             .runs
             .with(|d| d.ready().map(|d| d.rows.len()).unwrap_or(0))
     });
-    // Each list tab clamps against ITS OWN row count. Sharing home_sel
-    // (whose clamp is the cache row count) capped Artifacts and Logs at
-    // the number of caches — the operator hit a hard stop on line 3.
     super::util::clamp_selection(cx, ui.rt_art_sel, move || {
         store
             .artifacts
@@ -135,72 +443,31 @@ fn admin_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 .unwrap_or(0)
         })
     });
-    // F8-class for the Data tab, installed ONCE at page scope: purge
-    // shrinks the displayed set — clamp the index. (It used to install
-    // inside data_panel with the inspector's scope: every entry into
-    // the Data tab re-ran the builder and stacked one more identical
-    // effect for the inspector's lifetime.)
-    super::util::clamp_selection(cx, ui.home_sel, move || {
-        let Some(row) = ui.rt_detail.get() else {
-            return 0;
-        };
-        store
-            .data_homes
-            .with(|d| {
-                d.ready().map(|homes| {
-                    store
-                        .runtimes
-                        .with(|rt| {
-                            filter_homes(
-                                displayed_homes(rt.ready().map_or(&[], |v| v), homes, &row),
-                                &ui.rt_cache_kind.get(),
-                                &ui.rt_cache_query.get(),
-                            )
-                        })
-                        .len()
-                })
-            })
-            .unwrap_or(0)
-    });
+    {
+        let ctx = ctx.clone();
+        super::util::clamp_selection(cx, ui.home_sel, move || cache_rows(&ctx).0.len());
+    }
 
-    // Sessions follow the CHOSEN runtime (ui.rt_detail — set only by a
-    // click/Enter on the inventory, never by mere highlight): runs
-    // live in per-plane stores, so following = switching endpoints
-    // (RunScope). Warm-keeper shape (the users screen's entity_detail
-    // effect): Loading holds (no send storm — the tracked slot re-runs
-    // this effect when a stale result lands and corrects to the
-    // CURRENT choice); Failed holds only for the scope we last asked
-    // (no retry loop against a persistently failing plane; recovery
-    // stays r); Ready holds only when its scope matches the choice.
-    // The web Runs toolbar's "root runs only" (checked by default) and
-    // the run whose Inspect rows are open (Enter), both page-scoped; the
-    // inline confirm for Cancel (the WUI's confirm, in place).
-    let root_only = cx.signal(true);
-    let run_expanded = cx.signal(Option::<usize>::None);
-    let confirm = super::kit::InlineConfirm::new(cx);
+    // The chosen runtime's runs (per-plane stores: following = switching
+    // endpoints). Loading holds; Failed holds only for the scope last
+    // asked (no retry loop); Ready holds when it answers this request.
     {
         let ctx_runs = ctx.clone();
+        let root_only = pg.root_only;
         let last_requested = cx.signal(Option::<RunScope>::None);
         cx.effect(move || {
             if !store.conn.with(ConnPhase::is_connected) {
                 return;
             }
             let Some(row) = ui.rt_detail.get() else {
-                return; // nothing chosen — nothing loads
+                return;
             };
-            // Self-heal against a reloaded inventory: if the chosen
-            // plane vanished (gateway switch, deleted user), fall back
-            // to the teaching line instead of loading a dead plane; if
-            // it still exists but its facts changed (size after r),
-            // adopt the fresh row so the Data tab stays honest.
+            // Self-heal against a reloaded inventory: a vanished plane
+            // falls back to the teaching line; changed facts are adopted.
             let fresh = store.runtimes.with(|d| {
                 d.ready().map(|rows| {
                     rows.iter()
-                        .find(|r| {
-                            r.kind == row.kind
-                                && r.tenant_id == row.tenant_id
-                                && r.runtime_id == row.runtime_id
-                        })
+                        .find(|r| runtime_key(r) == runtime_key(&row))
                         .cloned()
                 })
             });
@@ -211,14 +478,11 @@ fn admin_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 }
                 Some(Some(f)) if f != row => {
                     ui.rt_detail.set(Some(f));
-                    return; // re-runs with the fresh row
+                    return;
                 }
                 _ => {}
             }
             let wanted = RunScope::of_runtime(&row);
-            // The REQUEST is (plane, status, query, offset) — comparing the
-            // plane alone left the toolbar dead: a filter change never
-            // invalidated held data (design adversary Q4).
             let status = ui.rt_runs_status.get();
             let query = ui.rt_runs_query.get();
             let offset = ui.rt_runs_offset.get();
@@ -238,12 +502,9 @@ fn admin_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 Loadable::NotAsked => false,
             });
             if !held {
-                // A different plane is a new context — the old row
-                // index would silently target a different run.
                 if ui.run_sel.get_untracked() != 0 {
                     ui.run_sel.set(0);
                 }
-                run_expanded.set(None);
                 last_requested.set(Some(wanted.clone()));
                 store.runs.set(Loadable::Loading);
                 ctx_runs.send(Cmd::LoadRuns {
@@ -256,9 +517,7 @@ fn admin_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             }
         });
     }
-
-    // Artifacts tab (index 1): deliverables metadata — load lazily on the
-    // first look, reuse across planes (one gateway-wide index).
+    // Artifacts (tab 1): one gateway-wide index, loaded on first look.
     {
         let ctx_art = ctx.clone();
         cx.effect(move || {
@@ -288,10 +547,8 @@ fn admin_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             }
         });
     }
-
-    // Cache tab (index 2) and Logs tab (index 3) both read the data-homes
-    // registry — ONE global list (attributed to planes client-side); load
-    // it lazily on the first look at either, then reuse across planes.
+    // Cache (tab 2) and Logs (tab 3) read the data-homes registry — one
+    // list, attributed to planes here; loaded on the first look.
     {
         let ctx_homes = ctx.clone();
         cx.effect(move || {
@@ -311,313 +568,1810 @@ fn admin_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             }
             if matches!(store.data_homes.get(), Loadable::NotAsked) {
                 store.data_homes.set(Loadable::Loading);
-                // TWO-PHASE (web parity): the fast no-walk listing paints
-                // first; the sized pass follows. A sized first call blocks
-                // this SERIAL worker — cancels, steers and refreshes queue
-                // behind a 30s tree walk.
+                // TWO-PHASE (web parity): the fast listing paints first;
+                // the sized pass follows.
                 ctx_homes.send(Cmd::LoadDataHomes { sizes: false });
                 ctx_homes.send(Cmd::LoadDataHomes { sizes: true });
             }
         });
     }
-
-    // Runtime knobs (gateway-wide config): collapsed by default, load
-    // on first expand.
-    {
-        let ctx_knobs = ctx.clone();
-        cx.effect(move || {
-            // Lazy stays LAW (2026-07-26 directive, pinned by
-            // runtimes_screen_loads_nothing_eagerly): entering the screen
-            // loads only the inventory. Discoverability comes from the
-            // folded header's wording + the `w` hint instead — and `w`
-            // itself self-heals by firing this load on first press.
-            if !store.conn.with(ConnPhase::is_connected) || ui.rt_knobs_folded.get() {
-                return;
-            }
-            if matches!(store.runtime_config.get(), Loadable::NotAsked) {
-                store.runtime_config.set(Loadable::Loading);
-                ctx_knobs.send(Cmd::LoadRuntimeConfig);
-            }
-        });
-    }
-
-    // R8.2: an account's filter that leaves exactly one runtime opens it
-    // at once (the web's).
+    // R8.2: an account's filter that leaves exactly one runtime opens it.
     {
         let ctx_one = ctx.clone();
         cx.effect(move || {
             if store.runtime_filter.with(Option::is_none) || ui.rt_detail.with(Option::is_some) {
                 return;
             }
-            let one = store
-                .runtimes
-                .with(|d| d.ready().map(|rows| rows.len() == 1).unwrap_or(false));
-            if one {
-                choose(&ctx_one, 0);
+            let one = store.runtimes.with(|d| {
+                d.ready()
+                    .and_then(|rows| (rows.len() == 1).then(|| runtime_key(&rows[0])))
+            });
+            if let Some(k) = one {
+                choose(&ctx_one, &k);
             }
         });
     }
-    let ctx_cancel = ctx.clone();
-    let ctx_steer = ctx.clone();
-    let ctx_table = ctx.clone();
-    let ctx_knobs = ctx.clone();
-    let ctx_wsp = ctx.clone();
-    let ctx_filter = ctx.clone();
-    let ctx_search = ctx.clone();
-    let ctx_next = ctx.clone();
-    let ctx_prev = ctx.clone();
-    let ctx_inspect = ctx.clone();
-    let ctx_forget = ctx.clone();
-    let ctx_open_row = ctx.clone();
-    let ctx_clear = ctx.clone();
-    // The inventory region regenerates when data lands (the runtimes
-    // read, the lazy runtime-config read behind `w`): the keeper carries
-    // the keyboard from one table instance to the next.
-    let keeper = super::util::FocusKeeper::new();
-
-    let page = Element::new()
-        // gap 0: the bordered blocks separate themselves; at 80x24 the
-        // two gap rows were exactly what starved the inventory table
-        // (0240 class — see the min_h notes below).
-        .style(LayoutStyle::column().gap(0))
-        .shortcut(KeyChord::plain(Key::Char('c')), move |_| {
-            cancel_selected(cx, &ctx_cancel, confirm);
-        })
-        // `t`: the web toolbar's "root runs only" (own plane, Runs tab).
-        .shortcut(KeyChord::plain(Key::Char('t')), move |_| {
-            if ui.rt_tab.get_untracked() == 0 && ui.rt_detail.with_untracked(|d| d.is_some()) {
-                ui.rt_runs_offset.set(0);
-                root_only.update(|v| *v = !*v);
+    // The inventory's highlighted row follows the chosen runtime (and a
+    // click / Enter on a row chooses it).
+    {
+        let inv_key = pg.inv_key;
+        cx.effect(move || {
+            let want = ui.rt_detail.with(|d| d.as_ref().map(runtime_key));
+            if inv_key.with_untracked(|k| *k != want) {
+                inv_key.set(want);
             }
+        });
+        let ctx_c = ctx.clone();
+        cx.effect(move || {
+            if let Some(k) = inv_key.get() {
+                let cur = ui.rt_detail.with_untracked(|d| d.as_ref().map(runtime_key));
+                if cur.as_deref() != Some(k.as_str()) {
+                    choose(&ctx_c, &k);
+                }
+            }
+        });
+    }
+    // The tab tables' keys ↔ the legacy indices (kept: the clamps, the
+    // keys and the tests read them).
+    bridge(cx, pg.run_key, ui.run_sel, move || {
+        store.runs.with(|d| {
+            d.ready()
+                .map(|d| d.rows.iter().map(|r| r.run_id.clone()).collect())
+                .unwrap_or_default()
         })
-        .shortcut(KeyChord::plain(Key::Char('s')), move |_| {
-            steer_selected(cx, &ctx_steer);
+    });
+    bridge(cx, pg.art_key, ui.rt_art_sel, move || {
+        store.artifacts.with(|d| {
+            d.ready()
+                .map(|a| (0..a.rows.len()).map(|i| i.to_string()).collect())
+                .unwrap_or_default()
         })
-        .shortcut(KeyChord::plain(Key::Char('w')), move |_| {
-            open_user_policy_for_selected(cx, &ctx_wsp);
+    });
+    bridge(cx, pg.log_key, ui.rt_logs_sel, move || {
+        let home_f = ui.rt_logs_home.get();
+        let query_f = ui.rt_logs_query.get();
+        store.logs.with(|d| {
+            d.ready()
+                .map(|rows| {
+                    filter_log_files(rows, &home_f, &query_f)
+                        .iter()
+                        .map(log_key)
+                        .collect()
+                })
+                .unwrap_or_default()
         })
-        .shortcut(KeyChord::plain(Key::Char('f')), move |_| {
-            open_tab_filter(cx, &ctx_filter);
-        })
-        .shortcut(KeyChord::plain(Key::Char('/')), move |_| {
-            open_tab_search(cx, &ctx_search);
-        })
-        .shortcut(KeyChord::plain(Key::Char('n')), move |_| {
-            page_tab(&ctx_next, 1);
-        })
-        .shortcut(KeyChord::plain(Key::Char('p')), move |_| {
-            page_tab(&ctx_prev, -1);
-        })
-        .shortcut(KeyChord::plain(Key::Char('i')), move |_| {
-            inspect_selected_run(cx, &ctx_inspect);
-        })
-        // `o` opens the highlighted row of the ACTIVE tab. Enter does the
-        // same when the table itself holds focus; the letter works from
-        // anywhere on the screen (the tables are not always the focus).
-        .shortcut(KeyChord::plain(Key::Char('o')), move |_| {
-            open_selected_row(cx, &ctx_open_row);
-        })
-        // R8.2: `x` removes the account filter (the chip's ×).
-        .shortcut(KeyChord::plain(Key::Char('x')), move |_| {
-            clear_account_filter(&ctx_clear);
-        })
-        .shortcut(KeyChord::plain(Key::Char('F')), move |_| {
-            forget_stale_homes(cx, &ctx_forget);
-        })
-        .child(
-            Block::new()
-                .border(BorderKind::Rounded)
-                // What a runtime is (DESIGN §7): the title says the first
-                // sentence, the line under the table the second — no row
-                // taken from the table.
-                .title(RUNTIME_TITLE)
-                .fill(t.surface)
-                // min_h: the inventory is the screen's PRIMARY surface
-                // (choosing happens here) — without a floor, the
-                // inspector's own min crushed the whole table to ZERO
-                // rows at 80x24 (border+padding+hint survived, every
-                // runtime row gone; Enter then chose an invisible
-                // row). 6 = border 2 + padding 2 + header 1 + ≥1 row.
-                .layout(
-                    LayoutStyle::column()
-                        .gap(0)
-                        .shrink(1.0)
-                        .min_h(6)
-                        .padding(Edges::hv(1, 0)),
+    });
+    {
+        let ctx_b = ctx.clone();
+        bridge(cx, pg.cache_key, ui.home_sel, move || {
+            let (live, stale) = cache_rows(&ctx_b);
+            live.iter()
+                .map(|(h, _)| format!("live:{}", h.name))
+                .chain(stale.iter().map(|h| format!("stale:{}", h.name)))
+                .collect()
+        });
+    }
+}
+
+/// Two-way sync of a table's keyed selection with an index signal.
+fn bridge(
+    cx: Scope,
+    key: Signal<Option<String>>,
+    idx: Signal<usize>,
+    keys: impl Fn() -> Vec<String> + Clone + 'static,
+) {
+    let keys1 = keys.clone();
+    cx.effect(move || {
+        let i = idx.get();
+        let ks = keys1();
+        let want = ks.get(i).cloned();
+        if want.is_some() && key.with_untracked(|k| *k != want) {
+            key.set(want);
+        }
+    });
+    cx.effect(move || {
+        if let Some(k) = key.get() {
+            let ks = abstracttui::reactive::untrack(&keys);
+            if let Some(p) = ks.iter().position(|x| *x == k) {
+                if idx.get_untracked() != p {
+                    idx.set(p);
+                }
+            }
+        }
+    });
+}
+
+/// Choose a runtime to inspect (click / Enter on the inventory). Choosing
+/// lands on Runs, like the web.
+fn choose(ctx: &Ctx, key: &str) {
+    let row = ctx.store.runtimes.with_untracked(|d| {
+        d.ready()
+            .and_then(|rows| rows.iter().find(|r| runtime_key(r) == key).cloned())
+    });
+    let Some(row) = row else { return };
+    if let Some(i) = ctx.store.runtimes.with_untracked(|d| {
+        d.ready()
+            .and_then(|rows| rows.iter().position(|r| runtime_key(r) == key))
+    }) {
+        ctx.ui.runtime_sel.set(i);
+    }
+    ctx.ui.run_sel.set(0);
+    ctx.ui.home_sel.set(0);
+    ctx.ui.rt_tab.set(0);
+    ctx.ui.rt_detail.set(Some(row));
+}
+
+/// The page keys (the footer lists them; every one is also a button).
+fn handle_key(cx: Scope, ctx: &Ctx, pg: &Pg, key: Key) -> bool {
+    let ui = ctx.ui;
+    let chosen = ui.rt_detail.with_untracked(Option::is_some);
+    let tab = ui.rt_tab.get_untracked();
+    match key {
+        Key::Char('x') => clear_account_filter(ctx),
+        Key::Char('w') => open_workspaces(cx, ctx),
+        Key::Char('/') => ctx.store.notice.set(Some(
+            "the search field is in the toolbar — Tab reaches it, or click it".into(),
+        )),
+        _ if !chosen => return false,
+        Key::Char('f') => {
+            pg.picks[tab.min(3)].open();
+        }
+        Key::Char('n') => page_tab(ctx, 1),
+        Key::Char('p') => page_tab(ctx, -1),
+        Key::Char('t') if tab == 0 => {
+            if selected_scope(ctx).is_some_and(|s| s.actionable()) {
+                ui.rt_runs_offset.set(0);
+                pg.root_only.update(|v| *v = !*v);
+            }
+        }
+        Key::Char(c @ ('i' | 's' | 'c')) if tab == 0 => {
+            let id = match c {
+                'i' => "inspect",
+                's' => "steer",
+                _ => "cancel",
+            };
+            match selected_run(ctx) {
+                Some((r, scope)) => match run_actions(&r, scope.actionable())
+                    .into_iter()
+                    .find(|a| a.id == id)
+                {
+                    Some(_) => run_action(cx, ctx, &r, id),
+                    None if !scope.actionable() => super::w::tip::say(READONLY_NOTE),
+                    None => super::w::tip::say(&format!(
+                        "run {} is {} — nothing to {}",
+                        r.run_id,
+                        r.status,
+                        if id == "steer" { "steer" } else { "cancel" }
+                    )),
+                },
+                None => ctx.store.notice.set(Some("no run selected".into())),
+            }
+        }
+        Key::Char('o') if tab == 1 => open_selected_artifact(cx, ctx),
+        Key::Char('o') if tab == 3 => open_selected_log(cx, ctx),
+        Key::Char('P') if tab == 2 => {
+            let (live, _) = cache_rows(ctx);
+            let key = pg.cache_key.get_untracked();
+            let target = live
+                .iter()
+                .find(|(h, _)| key.as_deref() == Some(&format!("live:{}", h.name)))
+                .or_else(|| live.first())
+                .map(|(h, _)| h.clone());
+            match target {
+                Some(h) => confirm_purge(cx, ctx, h.name),
+                None => ctx.store.notice.set(Some("no cache to purge".into())),
+            }
+        }
+        Key::Char('F') if tab == 2 => {
+            let (_, stale) = cache_rows(ctx);
+            if stale.is_empty() {
+                ctx.store.notice.set(Some("no stale registrations".into()));
+            } else {
+                confirm_forget(cx, ctx, None);
+            }
+        }
+        _ => return false,
+    }
+    true
+}
+
+/// `n` / `p` and the pager's buttons — server-paged tabs only (Cache
+/// and Logs list everything at once, like the web).
+fn page_tab(ctx: &Ctx, dir: i32) {
+    let ui = ctx.ui;
+    let (offset, has_more) = match ui.rt_tab.get_untracked() {
+        0 => (
+            ui.rt_runs_offset,
+            ctx.store
+                .runs
+                .with_untracked(|d| d.ready().map(|r| r.has_more).unwrap_or(false)),
+        ),
+        1 => (
+            ui.rt_art_offset,
+            ctx.store
+                .artifacts
+                .with_untracked(|d| d.ready().map(|a| a.has_more).unwrap_or(false)),
+        ),
+        _ => {
+            ctx.store
+                .notice
+                .set(Some("this tab lists everything at once — no pages".into()));
+            return;
+        }
+    };
+    let cur = offset.get_untracked();
+    if dir > 0 {
+        if !has_more {
+            ctx.store.notice.set(Some("last page".into()));
+            return;
+        }
+        offset.set(cur + 100);
+    } else {
+        if cur == 0 {
+            ctx.store.notice.set(Some("first page".into()));
+            return;
+        }
+        offset.set(cur.saturating_sub(100));
+    }
+}
+
+/// Title + subtitle; the account chip and ↻ on the right.
+fn head(pcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
+    let ctx = ctx.clone();
+    let tt = *t;
+    dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |hcx| {
+        let w = page_w(hcx);
+        let filter = ctx.store.runtime_filter.get();
+        let mut buttons = Vec::new();
+        for a in head_actions(filter.as_ref()) {
+            let c = ctx.clone();
+            let wd = a.width();
+            let id = a.id;
+            buttons.push((
+                button(hcx, &tt, &a, On::Page, true, move || match id {
+                    "account" => clear_account_filter(&c),
+                    _ => c.refresh_screen(super::SCREEN_RUNTIMES),
+                }),
+                wd,
+            ));
+        }
+        let _ = pcx;
+        super::workflows::page_head(&tt, TITLE, SUBTITLE, w, buttons)
+    })
+}
+
+/// The inventory table: Runtime · Kind · Owner · State · Size ·
+/// Workspace (a link to the Workspaces dialog). A click on a row chooses
+/// the runtime (its runs and cache load below).
+fn inventory(pcx: Scope, ctx: &Ctx, t: &TokenSet, pg: &Pg) -> View {
+    let ctx = ctx.clone();
+    let tt = *t;
+    let inv_key = pg.inv_key;
+    dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |gcx| {
+        let t = tt;
+        let store = ctx.store;
+        let vp = crate::ui::page_viewport(gcx).get();
+        let w = (vp.w - 2).max(20);
+        let data = store.runtimes.get();
+        let rows_v: Vec<RuntimeRow> = data.ready().cloned().unwrap_or_default();
+        let empty = match &data {
+            Loadable::Loading | Loadable::NotAsked => "Scanning execution planes…".to_string(),
+            Loadable::Failed(e) => format!("Runtime inventory unavailable: {}", e.message),
+            Loadable::Ready(_) => match store.runtime_filter.get() {
+                Some(f) => format!("{} owns no runtime yet.", f.account),
+                None => NO_RUNTIMES.to_string(),
+            },
+        };
+        let cols = vec![
+            Col::new("Runtime", ColW::Fit { min: 8, max: 24 }),
+            Col::new("Kind", ColW::Fit { min: 4, max: 8 }),
+            Col::new("Owner", ColW::Flex { weight: 1, min: 8 }),
+            Col::new("State", ColW::Fit { min: 5, max: 10 }),
+            Col::new("Size", ColW::Fit { min: 4, max: 10 }),
+            Col::new("Workspace", ColW::Fit { min: 9, max: 19 }),
+        ];
+        let rows: Vec<WRow> = rows_v
+            .iter()
+            .map(|r| {
+                let mut owner = if r.owners.is_empty() {
+                    if r.data_dir.is_empty() {
+                        "(not materialized yet)".to_string()
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    r.owners.join(", ")
+                };
+                if let Some(n) = r.note.as_deref().filter(|n| !n.is_empty()) {
+                    owner.push_str(&format!(" · {n}"));
+                }
+                let size = match r.size_bytes {
+                    Some(n) if r.size_note.is_some() => format!("≥ {}", human_bytes(n)),
+                    Some(n) => human_bytes(n),
+                    None => String::new(),
+                };
+                let state = if r.kind == "entity" {
+                    entity_state(r)
+                } else {
+                    "—".into()
+                };
+                let ws = match inventory_actions(r).into_iter().next() {
+                    Some(a) => Cell::Link {
+                        label: a.label.clone(),
+                        action: a.id,
+                        tip: a.tooltip.clone().map(|tp| format!("{tp}  (w)")),
+                    },
+                    None => Cell::text("None", t.text_faint),
+                };
+                WRow::new(
+                    runtime_key(r),
+                    vec![
+                        Cell::text(r.runtime_id.clone(), t.text),
+                        Cell::text(r.kind.clone(), t.text_muted),
+                        Cell::text(owner, t.text_muted),
+                        Cell::text(state, t.text_muted),
+                        Cell::text(size, t.text_muted),
+                        ws,
+                    ],
                 )
-                // R8.2: the account filter chip (the Accounts Runtime
-                // jump); zero rows when every runtime is listed.
+            })
+            .collect();
+        let max_rows = inventory_rows(rows.len(), vp.h) - 1;
+        let (ca, ce, cs) = (ctx.clone(), ctx.clone(), ctx.clone());
+        DataTable::new(cols, rows, inv_key)
+            .width(w)
+            .max_rows(max_rows.max(1))
+            .empty(empty)
+            .autofocus()
+            .on_action(move |k, _id| {
+                choose(&ca, k);
+                open_workspaces(pcx, &ca);
+            })
+            .on_activate(move |k| choose(&ce, k))
+            .on_space(move |k| choose(&cs, k))
+            .view(gcx, &t)
+    })
+}
+
+/// The inventory table's height: header + rows, at least 2 and at most
+/// 40% of the terminal's height.
+pub fn inventory_rows(n: usize, term_h: i32) -> i32 {
+    let want = n as i32 + 1;
+    want.clamp(2, (term_h * 2 / 5).max(2))
+}
+
+/// The chosen runtime's inspector: the teaching line, or "▷ Runtime
+/// <id>" with the four tabs and ↻, the web's sub-line, and the active
+/// tab's panel.
+fn inspector(pcx: Scope, ctx: &Ctx, t: &TokenSet, pg: &Pg) -> View {
+    let ctx = ctx.clone();
+    let tt = *t;
+    let pg = pg.clone();
+    let ui = ctx.ui;
+    dyn_view_scoped(LayoutStyle::column().gap(0).grow(1.0), move |icx| {
+        let t = tt;
+        let w = page_w(icx);
+        let rule = super::w::fill_line(
+            LayoutStyle::line(1).shrink(0.0),
+            vec![Ink::new("─".repeat(w.max(1) as usize), t.border)],
+            None,
+        );
+        let Some(row) = ui.rt_detail.get() else {
+            return Element::new()
+                .style(LayoutStyle::column().shrink(0.0))
+                .child(rule)
+                .child(sentence(&t, TEACH, w, t.text_muted))
+                .build();
+        };
+        let title = format!("▷ Runtime {}", row.runtime_id);
+        let seg = Segmented::new(TABS, None)
+            .bind(ui.rt_tab)
+            .tip(0, "Runs")
+            .tip(1, "Artifacts")
+            .tip(2, "Cache")
+            .tip(3, "Logs");
+        let seg_w = seg.width();
+        let mut reload = Vec::new();
+        for a in detail_actions() {
+            let c = ctx.clone();
+            reload.push(button(icx, &t, &a, On::Page, true, move || {
+                reload_detail(&c)
+            }));
+        }
+        let head = Element::new()
+            .style(
+                LayoutStyle::row()
+                    .gap(2)
+                    .height(Dimension::Cells(1))
+                    .shrink(0.0),
+            )
+            .child(super::w::fill_line(
+                LayoutStyle::default()
+                    .width(Dimension::Cells(abstracttui::text::width(&title)))
+                    .height(Dimension::Cells(1)),
+                vec![Ink::new(title.clone(), t.accent).bold()],
+                None,
+            ))
+            .child(
+                Element::new()
+                    .style(LayoutStyle::default().width(Dimension::Cells(seg_w)).h(1))
+                    .child(seg.view(icx, &t))
+                    .build(),
+            )
+            .children(reload)
+            .build();
+        let vp = crate::ui::page_viewport(icx).get();
+        let sub = if vp.h >= 30 {
+            sentence(&t, &detail_sentence(&row), w, t.text_muted)
+        } else {
+            Element::new().style(LayoutStyle::default().h(0)).build()
+        };
+        let ctx_p = ctx.clone();
+        let pg_p = pg.clone();
+        let row_p = row.clone();
+        let panel = dyn_view_scoped(LayoutStyle::column().gap(0).grow(1.0), move |tcx| match ui
+            .rt_tab
+            .get()
+        {
+            0 => runs_panel(pcx, tcx, &ctx_p, &tt, &pg_p, &row_p),
+            1 => artifacts_panel(pcx, tcx, &ctx_p, &tt, &pg_p),
+            2 => cache_panel(pcx, tcx, &ctx_p, &tt, &pg_p),
+            _ => logs_panel(pcx, tcx, &ctx_p, &tt, &pg_p),
+        });
+        Element::new()
+            .style(LayoutStyle::column().gap(0).grow(1.0))
+            .child(rule)
+            .child(head)
+            .child(sub)
+            .child(panel)
+            .build()
+    })
+}
+
+/// The inspector's ↻: every tab's data reads again (each tab reloads on
+/// its own next look).
+fn reload_detail(ctx: &Ctx) {
+    let s = ctx.store;
+    s.runs.set(Loadable::NotAsked);
+    s.artifacts.set(Loadable::NotAsked);
+    s.data_homes.set(Loadable::NotAsked);
+    s.logs.set(Loadable::NotAsked);
+}
+
+/// A toolbar: the tab's dropdown (with its web tooltip), its search field
+/// and, on Runs, the root-runs switch. Two rows when the page is narrow.
+#[allow(clippy::too_many_arguments)]
+fn toolbar(
+    cx: Scope,
+    ctx: &Ctx,
+    t: &TokenSet,
+    handle: &SelectHandle,
+    options: Vec<(String, String)>,
+    current: Signal<String>,
+    select_tip: &str,
+    query: Signal<String>,
+    placeholder: &str,
+    live: bool,
+    extra: Option<View>,
+    on_change: impl Fn() + Clone + 'static,
+) -> View {
+    let w = page_w(cx);
+    let values: Vec<String> = options.iter().map(|(v, _)| v.clone()).collect();
+    let cur_ix = options
+        .iter()
+        .position(|(v, _)| *v == current.get_untracked())
+        .unwrap_or(0);
+    let ix = cx.signal(cur_ix);
+    // The dropdown follows its filter when something else sets it (a
+    // gateway reset clears the filters).
+    {
+        let vals = values.clone();
+        cx.effect(move || {
+            let cur = current.get();
+            let want = vals.iter().position(|v| *v == cur).unwrap_or(0);
+            if ix.get_untracked() != want {
+                ix.set(want);
+            }
+        });
+    }
+    let on_sel = on_change.clone();
+    let select = Select::new(
+        options
+            .iter()
+            .map(|(_, l)| SelectOption::new(l.clone()))
+            .collect(),
+    )
+    .value(ix)
+    .handle(handle)
+    .on_change(move |i| {
+        if let Some(v) = values.get(i) {
+            if current.get_untracked() != *v {
+                current.set(v.clone());
+                on_sel();
+            }
+        }
+    })
+    .layout(LayoutStyle::default().w(18).h(1).shrink(0.0))
+    .element(cx, t);
+    let select = super::w::tip::with_tip(cx, select, format!("{select_tip}  (f)")).build();
+    let draft = cx.signal(query.get_untracked());
+    cx.effect(move || {
+        let q = query.get();
+        if draft.with_untracked(|d| d.trim() != q) {
+            draft.set(q);
+        }
+    });
+    // The field takes what the dropdown and the switch leave (one row
+    // down to 80 columns; the switch wraps under it below that).
+    let extra_w = if extra.is_some() { 20 } else { 0 };
+    let field_w = (w - 20 - extra_w).clamp(16, 44);
+    let mut input = TextInput::new()
+        .value(draft)
+        .placeholder(placeholder.to_string())
+        .layout(LayoutStyle::default().w(field_w).h(1).shrink(0.0));
+    if live {
+        input = input.on_change(move |s: &str| {
+            let next = s.trim().to_string();
+            if query.get_untracked() != next {
+                query.set(next);
+            }
+        });
+    } else {
+        // ENTER COMMITS: the worker is one serial lane — a request per
+        // keystroke would stampede it.
+        input = input.on_submit(move |_| {
+            let next = draft.get_untracked().trim().to_string();
+            if query.get_untracked() != next {
+                query.set(next);
+                on_change();
+            }
+        });
+    }
+    let search = super::w::caret_tracked(cx, ctx.ui.caret, input.element(cx, t));
+    let search = super::util::esc_releases_focus(search, ctx.store.notice).build();
+    let narrow = extra.is_some() && 20 + field_w + extra_w > w;
+    let mut row1 = Element::new()
+        .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+        .child(select)
+        .child(search);
+    if narrow {
+        let mut col = Element::new()
+            .style(LayoutStyle::column().shrink(0.0))
+            .child(row1.build());
+        if let Some(x) = extra {
+            col = col.child(x);
+        }
+        return col.build();
+    }
+    if let Some(x) = extra {
+        row1 = row1.child(x);
+    }
+    row1.build()
+}
+
+fn opts(list: &[(&str, &str)]) -> Vec<(String, String)> {
+    list.iter()
+        .map(|(v, l)| ((*v).to_string(), (*l).to_string()))
+        .collect()
+}
+
+/// The web's pager: ‹ Prev · "1–100 · more" · Next › (nothing when one
+/// page holds everything).
+fn pager(
+    cx: Scope,
+    ctx: &Ctx,
+    t: &TokenSet,
+    offset: u32,
+    shown: usize,
+    has_more: bool,
+    total: Option<u64>,
+) -> View {
+    if offset == 0 && !has_more {
+        return Element::new().style(LayoutStyle::default().h(0)).build();
+    }
+    let (c1, c2) = (ctx.clone(), ctx.clone());
+    let prev = Action::label("prev", "‹ Prev")
+        .key('p')
+        .refused((offset == 0).then(|| "first page".to_string()));
+    let next = Action::label("next", "Next ›")
+        .key('n')
+        .refused((!has_more).then(|| "last page".to_string()));
+    Element::new()
+        .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+        .child(button(cx, t, &prev, On::Page, true, move || {
+            page_tab(&c1, -1)
+        }))
+        .child(line(vec![span(
+            page_label(offset, shown, has_more, total),
+            t.text_faint,
+        )]))
+        .child(button(cx, t, &next, On::Page, true, move || {
+            page_tab(&c2, 1)
+        }))
+        .build()
+}
+
+/// The pager's position text (the web's `renderPager`).
+fn page_label(offset: u32, shown: usize, has_more: bool, total: Option<u64>) -> String {
+    let from = if shown > 0 {
+        offset as usize + 1
+    } else {
+        offset as usize
+    };
+    let to = offset as usize + shown;
+    match total {
+        Some(t) if t as usize >= to => format!("{from}–{to} of {t}"),
+        _ => format!("{from}–{to}{}", if has_more { " · more" } else { "" }),
+    }
+}
+
+/// Lines `text` wraps to at the page width.
+fn lines_of(text: &str, w: i32) -> i32 {
+    super::util::wrap_text(text, w.max(10) as usize).len() as i32
+}
+
+/// How many table rows the active tab may use: the page height minus
+/// what sits above the panel (head, note, inventory, inspector head and
+/// sub-line) and the panel's own `chrome` (toolbar, table header,
+/// pager / notes).
+fn panel_rows(cx: Scope, ctx: &Ctx, chrome: i32) -> i32 {
+    let vp = crate::ui::page_viewport(cx).get();
+    let w = (vp.w - 2).max(20);
+    let tall = vp.h >= 30;
+    let n = ctx
+        .store
+        .runtimes
+        .with(|d| d.ready().map(Vec::len).unwrap_or(0));
+    let head = 1 + lines_of(SUBTITLE, w - 8);
+    let note = if tall { lines_of(NOTE, w) } else { 0 };
+    let inv = 2 + (inventory_rows(n, vp.h) - 1).max(1);
+    let sub = if tall {
+        ctx.ui
+            .rt_detail
+            .with(|d| d.as_ref().map(|r| lines_of(&detail_sentence(r), w)))
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    // One spare row: a status line under the page (and rounding in the
+    // wrapped sentences) must never push the last control off screen.
+    (vp.h - head - note - inv - 2 - sub - chrome - 1).max(2)
+}
+
+// ------------------------------------------------------------ Runs
+
+fn runs_panel(pcx: Scope, cx: Scope, ctx: &Ctx, t: &TokenSet, pg: &Pg, row: &RuntimeRow) -> View {
+    let store = ctx.store;
+    let ui = ctx.ui;
+    let tt = *t;
+    let w = page_w(cx);
+    let actionable = RunScope::of_runtime(row).actionable();
+    let mut col = Element::new().style(LayoutStyle::column().gap(0).grow(1.0));
+    if actionable {
+        let root_only = pg.root_only;
+        let toggle = Toggle::bound(root_only)
+            .label(ROOT_ONLY)
+            .tip(format!("{ROOT_ONLY_TIP}  (t)"))
+            .on_change(move |v| {
+                ui.rt_runs_offset.set(0);
+                root_only.set(v);
+            })
+            .view(cx, &tt);
+        col = col.child(toolbar(
+            cx,
+            ctx,
+            &tt,
+            &pg.picks[0],
+            opts(&STATUSES),
+            ui.rt_runs_status,
+            STATUS_TIP,
+            ui.rt_runs_query,
+            RUNS_SEARCH,
+            false,
+            Some(toggle),
+            move || ui.rt_runs_offset.set(0),
+        ));
+    } else {
+        col = col.child(sentence(&tt, READONLY_NOTE, w, tt.text_muted));
+    }
+    let ctx_t = ctx.clone();
+    let pg_t = pg.clone();
+    col.child(dyn_view_scoped(
+        LayoutStyle::column().gap(0).grow(1.0),
+        move |gcx| {
+            let data = store.runs.get();
+            let t = tt;
+            let w = page_w(gcx);
+            let narrow = w < 100;
+            let (rows_v, actionable_now, empty) = match &data {
+                Loadable::Ready(d) => (
+                    d.rows.clone(),
+                    d.scope.actionable(),
+                    runs_empty_text(&d.scope, &d.status, &d.query),
+                ),
+                Loadable::Failed(e) => (Vec::new(), false, e.message.clone()),
+                _ => (Vec::new(), actionable, "Loading runs…".to_string()),
+            };
+            let mut cols = vec![
+                Col::new("Run", ColW::Fit { min: 8, max: 36 }),
+                Col::new("Workflow", ColW::Flex { weight: 1, min: 8 }),
+                Col::new("Status", ColW::Fit { min: 6, max: 18 }),
+            ];
+            if !narrow && actionable_now {
+                cols.push(Col::new("Node", ColW::Fit { min: 4, max: 14 }));
+            }
+            if !narrow {
+                cols.push(Col::new("Session", ColW::Fit { min: 7, max: 14 }));
+            }
+            cols.push(Col::new("Updated", ColW::Fit { min: 7, max: 19 }));
+            if actionable_now {
+                cols.push(Col::new("Actions", ColW::Fit { min: 8, max: 26 }));
+            }
+            let rows: Vec<WRow> = rows_v
+                .iter()
+                .map(|r| {
+                    let status = if r.paused {
+                        format!("{} (paused)", r.status)
+                    } else {
+                        r.status.clone()
+                    };
+                    let ink = match r.status.as_str() {
+                        "failed" => t.error,
+                        "running" => t.ok,
+                        _ => t.text_muted,
+                    };
+                    let mut cells = vec![
+                        Cell::text(r.run_id.clone(), t.text),
+                        Cell::text(r.workflow_id.clone(), t.text),
+                        Cell::text(status, ink),
+                    ];
+                    if !narrow && actionable_now {
+                        cells.push(Cell::text(r.current_node.clone(), t.text_muted));
+                    }
+                    if !narrow {
+                        cells.push(Cell::text(r.session_id.clone(), t.text_muted));
+                    }
+                    // Narrow: "MM-DD HH:MM" (the year and seconds go first).
+                    let updated: String = if narrow {
+                        r.updated_at
+                            .chars()
+                            .skip(5)
+                            .take(11)
+                            .collect::<String>()
+                            .replace('T', " ")
+                    } else {
+                        r.updated_at.chars().take(19).collect()
+                    };
+                    cells.push(Cell::text(updated, t.text_muted));
+                    if actionable_now {
+                        cells.push(Cell::Actions(run_actions(r, true)));
+                    }
+                    WRow::new(r.run_id.clone(), cells)
+                })
+                .collect();
+            let (ca, ce) = (ctx_t.clone(), ctx_t.clone());
+            let table = DataTable::new(cols, rows, pg_t.run_key)
+                .width(w)
+                .max_rows(panel_rows(gcx, &ctx_t, {
+                    let bar = if actionable_now {
+                        if w < 78 {
+                            2
+                        } else {
+                            1
+                        }
+                    } else {
+                        lines_of(READONLY_NOTE, w)
+                    };
+                    let paged = matches!(&data, Loadable::Ready(d) if d.offset > 0 || d.has_more);
+                    bar + 2 + i32::from(paged)
+                }))
+                .empty(empty)
+                .on_action(move |k, id| {
+                    if let Some(r) = run_by_id(&ca, k) {
+                        run_action(pcx, &ca, &r, id);
+                    }
+                })
+                .on_activate(move |k| {
+                    if let Some(r) = run_by_id(&ce, k) {
+                        if actionable_now {
+                            run_action(pcx, &ce, &r, "inspect");
+                        }
+                    }
+                })
+                .view(gcx, &t);
+            let mut col = Element::new()
+                .style(LayoutStyle::column().gap(0).grow(1.0))
+                .child(table);
+            if let Loadable::Ready(d) = &data {
+                col = col.child(pager(
+                    gcx,
+                    &ctx_t,
+                    &t,
+                    d.offset,
+                    d.rows.len(),
+                    d.has_more,
+                    None,
+                ));
+            }
+            col.build()
+        },
+    ))
+    .build()
+}
+
+fn run_by_id(ctx: &Ctx, id: &str) -> Option<RunRow> {
+    ctx.store.runs.with_untracked(|d| {
+        d.ready()
+            .and_then(|d| d.rows.iter().find(|r| r.run_id == id).cloned())
+    })
+}
+
+/// The selected run + the scope its rows were loaded under (actions gate
+/// on what is DISPLAYED).
+fn selected_run(ctx: &Ctx) -> Option<(RunRow, RunScope)> {
+    let idx = ctx.ui.run_sel.get_untracked();
+    ctx.store.runs.with_untracked(|d| {
+        d.ready()
+            .and_then(|d| d.rows.get(idx).cloned().map(|r| (r, d.scope.clone())))
+    })
+}
+
+fn selected_scope(ctx: &Ctx) -> Option<RunScope> {
+    ctx.ui
+        .rt_detail
+        .with_untracked(|d| d.as_ref().map(RunScope::of_runtime))
+}
+
+/// One run button (or its key).
+fn run_action(cx: Scope, ctx: &Ctx, r: &RunRow, id: &str) {
+    match id {
+        "inspect" => open_run(cx, ctx, r.clone()),
+        "steer" => open_steer(cx, ctx, r.clone()),
+        "cancel" => {
+            let c = ctx.clone();
+            let run_id = r.run_id.clone();
+            super::w::Confirm::danger(cancel_question(&r.run_id), "Cancel run", "Cancel").open(
+                cx,
+                ctx.ui,
+                move || c.send(Cmd::CancelRun { run_id }),
+            );
+        }
+        _ => {}
+    }
+}
+
+/// Inspect: the web's run dialog (its rows; Close).
+fn open_run(cx: Scope, ctx: &Ctx, r: RunRow) {
+    let short: String = r.run_id.chars().take(12).collect();
+    let lead = [r.workflow_id.as_str(), r.status.as_str()]
+        .iter()
+        .filter(|s| !s.is_empty())
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" · ");
+    let mut m = super::w::FormModal::new(format!("Run {short}")).size(96, 22);
+    if !lead.is_empty() {
+        m = m.lead(lead);
+    }
+    m.open(ctx, cx, move |mcx, close, _guard, inner_w| {
+        let t = use_theme(mcx).get().tokens;
+        let mut body = Element::new().style(LayoutStyle::column().shrink(0.0));
+        for (k, v) in run_detail_rows(&r) {
+            let lines = super::util::wrap_text(&v, (inner_w - 12).max(10) as usize);
+            for (i, l) in lines.into_iter().enumerate() {
+                let label = if i == 0 {
+                    format!("{k:<10}  ")
+                } else {
+                    " ".repeat(12)
+                };
+                body = body.child(line(vec![span(label, t.text_muted), span(l, t.text)]));
+            }
+        }
+        Element::new()
+            .style(LayoutStyle::column().grow(1.0))
+            .child(
+                Scroll::new(body.build())
+                    .layout(LayoutStyle::default().grow(1.0).min_h(3))
+                    .element(mcx, &t)
+                    .build(),
+            )
+            .child(super::w::form::button_row(vec![button(
+                mcx,
+                &t,
+                &Action::label("close", "Close"),
+                On::Raised,
+                true,
+                move || close(),
+            )]))
+            .build()
+    });
+}
+
+/// Steer: the web's guidance dialog — Send guidance / Cancel, and
+/// "Discard changes?" when typed guidance would be dropped.
+fn open_steer(cx: Scope, ctx: &Ctx, r: RunRow) {
+    let c = ctx.clone();
+    super::w::FormModal::new(STEER_TITLE)
+        .lead(steer_lead(&r.run_id))
+        .size(84, 12)
+        .open(ctx, cx, move |mcx, close, guard, inner_w| {
+            let t = use_theme(mcx).get().tokens;
+            let guidance = mcx.signal(String::new());
+            let esc_armed = mcx.signal(false);
+            let form_error = mcx.signal(Option::<String>::None);
+            super::install_dirty_guard(
+                mcx,
+                &guard,
+                vec![(guidance, String::new())],
+                esc_armed,
+                form_error,
+            );
+            let send = {
+                let c = c.clone();
+                let close = close.clone();
+                let run_id = r.run_id.clone();
+                move || {
+                    let g = guidance.get_untracked().trim().to_string();
+                    if g.is_empty() {
+                        form_error.set(Some("Type the guidance first.".into()));
+                        return;
+                    }
+                    c.send(Cmd::SteerRun {
+                        run_id: run_id.clone(),
+                        guidance: g,
+                    });
+                    close();
+                }
+            };
+            let send_enter = send.clone();
+            let close_x = {
+                let (close, guard) = (close.clone(), guard.clone());
+                move || {
+                    let handled = guard.borrow().as_ref().map(|g| g()).unwrap_or(false);
+                    if !handled {
+                        close();
+                    }
+                }
+            };
+            Element::new()
+                .style(LayoutStyle::column().gap(0))
+                .child(
+                    super::w::caret_tracked(
+                        mcx,
+                        c.ui.caret,
+                        TextInput::new()
+                            .value(guidance)
+                            .placeholder(STEER_PLACEHOLDER)
+                            .on_submit(move |_: &str| send_enter())
+                            .layout(LayoutStyle::default().w(inner_w.max(20)).h(1))
+                            .element(mcx, &t),
+                    )
+                    .autofocus()
+                    .build(),
+                )
                 .child(dyn_view(LayoutStyle::column().shrink(0.0), move || {
-                    match store.runtime_filter.get() {
-                        Some(f) => line(vec![
-                            span_bold(format!("[{} ×]", f.chip()), tt.accent),
-                            span("  x shows every runtime", tt.text_faint),
-                        ]),
+                    let t = abstracttui::app::current_theme().tokens;
+                    match form_error.get() {
+                        Some(e) => sentence(&t, &e, inner_w, t.error),
                         None => Element::new().style(LayoutStyle::default().h(0)).build(),
                     }
                 }))
-                .child(dyn_view_scoped(
-                    LayoutStyle::default().shrink(1.0),
-                    move |gcx| {
-                        let data = store.runtimes.get();
-                        let ctx_choose = ctx_table.clone();
-                        super::util::loadable_view_kept(
-                            &keeper,
-                            &tt,
-                            &store.conn.get(),
-                            || store.tick.get(),
-                            &data,
-                            |d: &Vec<RuntimeRow>| d.is_empty(),
-                            "no runtimes reported",
-                            |d| {
-                                table(gcx, &tt, d, ui.runtime_sel, &keeper, move |idx| choose(&ctx_choose, idx))
-                            },
-                        )
-                    },
+                .child(super::w::fill_line(
+                    LayoutStyle::line(1).shrink(0.0),
+                    vec![],
+                    None,
                 ))
-                .child({
-                    let vp = crate::ui::page_viewport(cx);
-                    dyn_view(LayoutStyle::column().gap(0).shrink(0.0), move || {
-                        let w = vp.get().w;
-                        if w >= 100 {
-                            return line(vec![span(RUNTIME_FOOTNOTE, tt.text_faint)]);
-                        }
-                        // A short terminal keeps its rows for the runtimes
-                        // themselves (the footer teaches `w`; About and the
-                        // docs carry the sentence).
-                        if vp.get().h < 30 {
-                            return Element::new().style(LayoutStyle::default().h(0)).build();
-                        }
-                        let mut col =
-                            Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
-                        for l in super::util::wrap_text(RUNTIME_NOTE, (w - 6).max(20) as usize) {
-                            col = col.child(line(vec![span(l, tt.text_faint)]));
-                        }
-                        col.build()
-                    })
-                })
-                .element(t)
-                .build(),
-        )
-        .child(
-            Block::new()
-                .border(BorderKind::Rounded)
-                .title("Inspect — runs, artifacts, cache & logs of the chosen runtime")
-                .fill(t.surface)
-                // min_h: the sibling table's flex pressure must never
-                // crush the inspector below a useful height (0240
-                // class — the teaching line/tabs silently vanished).
-                // 10, not 12: border 2 + padding 2 + label 1 + tabs 2 +
-                // status 1 + runs header 1 + one run row — the exact
-                // budget that still leaves the INVENTORY its own floor
-                // at 80x24 (6 + 10 + knobs 1 = 17 ≤ the 18-row page).
-                .layout(
-                    LayoutStyle::column()
-                        .gap(0)
-                        .grow(1.0)
-                        .min_h(10)
-                        .padding(Edges::hv(1, 0)),
-                )
-                .child(dyn_view_scoped(LayoutStyle::default().grow(1.0), {
-                    let ctx_tabs = ctx.clone();
-                    move |gcx| match ui.rt_detail.get() {
-                        None => line(vec![span(
-                            "select a runtime above — click a row, or Enter / double-click the highlighted one — to load its sessions and data",
-                            tt.text_muted,
-                        )]),
-                        Some(row) => {
-                            let ctx_s = ctx_tabs.clone();
-                            let ctx_d = ctx_tabs.clone();
-                            let ctx_a = ctx_tabs.clone();
-                            let ctx_l = ctx_tabs.clone();
-                            let row_s = row.clone();
-                            let row_d = row.clone();
-                            Element::new()
-                                .style(LayoutStyle::column().gap(0))
-                                .child(line(vec![
-                                    span_bold(row.label.clone(), tt.accent),
-                                    span(
-                                        format!(
-                                            "  {} plane · {}/{}",
-                                            row.kind, row.tenant_id, row.runtime_id
-                                        ),
-                                        tt.text_faint,
-                                    ),
-                                ]))
-                                .child(
-                                    super::w::segmented::tabs(
-                                        gcx,
-                                        &tt,
-                                        vec!["Runs".into(), "Artifacts".into(), "Cache".into(), "Logs".into()],
-                                        ui.rt_tab,
-                                        vec![
-                                            Box::new(move || {
-                                                sessions_panel(
-                                                    cx,
-                                                    &ctx_s,
-                                                    &tt,
-                                                    &row_s,
-                                                    RunsPanelState {
-                                                        root_only,
-                                                        expanded: run_expanded,
-                                                        confirm,
-                                                    },
-                                                )
-                                            }),
-                                            Box::new(move || artifacts_panel(cx, &ctx_a, &tt)),
-                                            Box::new(move || data_panel(cx, &ctx_d, &tt, &row_d)),
-                                            Box::new(move || logs_panel(cx, &ctx_l, &tt)),
-                                        ],
-                                    ),
-                                )
-                                .build()
+                .child(super::w::form::button_row(vec![
+                    button(
+                        mcx,
+                        &t,
+                        &Action::label("send", "Send guidance"),
+                        On::Raised,
+                        true,
+                        send,
+                    ),
+                    button(
+                        mcx,
+                        &t,
+                        &Action::label("close", "Cancel"),
+                        On::Raised,
+                        true,
+                        close_x,
+                    ),
+                ]))
+                .build()
+        });
+}
+
+/// The web Runs table's empty sentence (`loadRuns`), or the read-only
+/// plane's (`No runs on this runtime yet.`).
+pub fn runs_empty_text(scope: &RunScope, status: &str, query: &str) -> String {
+    if let RunScope::Plane { kind, .. } = scope {
+        // The web's read-only plane sentence; an ENTITY plane also says
+        // why empty is normal (operator 2026-07-26).
+        return if kind == "entity" {
+            "No runs on this runtime yet. Entity chats and life days don't create runtime runs; durable visits and summoned workflows land here.".to_string()
+        } else {
+            "No runs on this runtime yet.".to_string()
+        };
+    }
+    match (status.is_empty(), query.is_empty()) {
+        (_, false) if !status.is_empty() => format!("No {status} runs match \"{query}\"."),
+        (_, false) => format!("No runs match \"{query}\"."),
+        (false, true) => format!("No {status} runs."),
+        (true, true) => "No runs yet.".to_string(),
+    }
+}
+
+/// The web Inspect modal's rows for one run (`inspectRun`), in its
+/// labels; empty values are left out.
+pub fn run_detail_rows(r: &RunRow) -> Vec<(&'static str, String)> {
+    [
+        ("Run", r.run_id.clone()),
+        ("Workflow", r.workflow_id.clone()),
+        ("Status", r.status.clone()),
+        ("Node", r.current_node.clone()),
+        ("Session", r.session_id.clone()),
+        ("Actor", r.actor_id.clone()),
+        ("Waiting", r.waiting.clone()),
+        ("Error", r.error.clone()),
+        ("Created", r.created_at.chars().take(19).collect()),
+        ("Updated", r.updated_at.chars().take(19).collect()),
+        ("Parent", r.parent_run_id.clone().unwrap_or_default()),
+    ]
+    .into_iter()
+    .filter(|(_, v)| !v.is_empty())
+    .collect()
+}
+
+// ------------------------------------------------------------ Artifacts
+
+fn artifacts_panel(pcx: Scope, cx: Scope, ctx: &Ctx, t: &TokenSet, pg: &Pg) -> View {
+    let store = ctx.store;
+    let ui = ctx.ui;
+    let tt = *t;
+    let ctx_t = ctx.clone();
+    let pg_t = pg.clone();
+    Element::new()
+        .style(LayoutStyle::column().gap(0).grow(1.0))
+        .child(toolbar(
+            cx,
+            ctx,
+            &tt,
+            &pg.picks[1],
+            opts(&ARTIFACT_TYPES),
+            ui.rt_art_modality,
+            MODALITY_TIP,
+            ui.rt_art_query,
+            ARTIFACTS_SEARCH,
+            false,
+            None,
+            move || ui.rt_art_offset.set(0),
+        ))
+        .child(dyn_view_scoped(
+            LayoutStyle::column().gap(0).grow(1.0),
+            move |gcx| {
+                let t = tt;
+                let w = page_w(gcx);
+                let narrow = w < 100;
+                let data = store.artifacts.get();
+                let empty = match &data {
+                    Loadable::Ready(d) => {
+                        let label = modality_label(&d.modality);
+                        match (d.query.is_empty(), d.modality.is_empty()) {
+                            (false, false) => format!("No {label} artifacts match \"{}\".", d.query),
+                            (false, true) => format!("No artifacts match \"{}\".", d.query),
+                            (true, false) => format!("No {label} artifacts yet."),
+                            (true, true) => "No artifacts yet — runs that produce files, images, audio, or video will list them here.".to_string(),
                         }
                     }
-                }))
-                .element(t)
-                .build(),
-        )
-        .child(dyn_view_scoped(
-            LayoutStyle::column().shrink(0.0),
-            move |dcx| {
-                // The folded header carries the live posture summary so the
-                // config surface is discoverable WITHOUT expanding (operator
-                // 2026-08-19: a bare folded title read as "no config here").
-                let knobs_title = "Runtime knobs (gateway-wide) — executors, apps, agent defaults".to_string();
-                Disclosure::new(knobs_title)
-                    .folded(ui.rt_knobs_folded)
-                    .max_body_rows(0)
-                    .body({
-                        let ctx_knobs = ctx_knobs.clone();
-                        move |_bcx| {
-                            let ctx_knobs = ctx_knobs.clone();
-                        dyn_view(LayoutStyle::column().gap(0), move || {
-                            let data = store.runtime_config.get();
-                            loadable_view(
-                                &tt,
-                                &store.conn.get(),
-                                || store.tick.get(),
-                                &data,
-                                |d: &RuntimeConfigData| {
-                                    d.knobs.is_empty()
-                                        && d.executors.is_empty()
-                                        && d.apps.is_empty()
-                                        && d.agent_defaults.is_empty()
-                                        && d.skills_shelf.is_none()
-                                        && d.streaming_default.is_none()
-                                        && d.backlog.is_empty()
-                                },
-                                "the gateway reported no runtime knobs",
-                                |d| knobs_view(cx, &ctx_knobs, &tt, d),
-                            )
-                        })
-                    }})
-                    .element(dcx, &tt)
-                    .build()
+                    Loadable::Failed(e) => format!("Artifacts unavailable: {}", e.message),
+                    _ => "Loading artifacts…".to_string(),
+                };
+                let mut cols = vec![
+                    Col::new("Artifact", ColW::Flex { weight: 2, min: 10 }),
+                    Col::new("Type", ColW::Fit { min: 4, max: 8 }),
+                    Col::new("Size", ColW::Fit { min: 4, max: 9 }),
+                ];
+                if !narrow {
+                    cols.push(Col::new("Workflow", ColW::Flex { weight: 1, min: 8 }));
+                    cols.push(Col::new("Run", ColW::Fit { min: 3, max: 12 }));
+                }
+                cols.push(Col::new("Created", ColW::Fit { min: 7, max: 19 }));
+                let rows_v = data.ready().map(|d| d.rows.clone()).unwrap_or_default();
+                let rows: Vec<WRow> = rows_v
+                    .iter()
+                    .enumerate()
+                    .map(|(i, a)| {
+                        let dash = |s: &str| if s.is_empty() { "—".to_string() } else { s.to_string() };
+                        let mut cells = vec![
+                            Cell::Link {
+                                label: a.name.clone(),
+                                action: "open",
+                                tip: Some(format!("Click to preview {}  (o)", a.name)),
+                            },
+                            Cell::text(a.kind.clone(), t.text_muted),
+                            Cell::text(a.size_bytes.map(human_bytes).unwrap_or_else(|| "—".into()), t.text_muted),
+                        ];
+                        if !narrow {
+                            cells.push(Cell::text(dash(&a.workflow_id), t.text_muted));
+                            cells.push(Cell::text(dash(&a.run_id.chars().take(12).collect::<String>()), t.text_muted));
+                        }
+                        cells.push(Cell::text(
+                            a.created_at.replace('T', " ").chars().take(19).collect::<String>(),
+                            t.text_muted,
+                        ));
+                        WRow::new(i.to_string(), cells)
+                    })
+                    .collect();
+                let (ca, ce) = (ctx_t.clone(), ctx_t.clone());
+                let (ra, re) = (rows_v.clone(), rows_v.clone());
+                let table = DataTable::new(cols, rows, pg_t.art_key)
+                    .width(w)
+                    .max_rows(panel_rows(gcx, &ctx_t, {
+                        let paged = matches!(&data, Loadable::Ready(d) if d.offset > 0 || d.has_more);
+                        1 + 2 + i32::from(paged) + lines_of(ARTIFACTS_NOTE, w)
+                    }))
+                    .empty(empty)
+                    .on_action(move |k, _| {
+                        if let Some(a) = k.parse::<usize>().ok().and_then(|i| ra.get(i)) {
+                            open_artifact(pcx, &ca, a.clone());
+                        }
+                    })
+                    .on_activate(move |k| {
+                        if let Some(a) = k.parse::<usize>().ok().and_then(|i| re.get(i)) {
+                            open_artifact(pcx, &ce, a.clone());
+                        }
+                    })
+                    .view(gcx, &t);
+                let mut col = Element::new()
+                    .style(LayoutStyle::column().gap(0).grow(1.0))
+                    .child(table);
+                if let Loadable::Ready(d) = &data {
+                    col = col.child(pager(gcx, &ctx_t, &t, d.offset, d.rows.len(), d.has_more, Some(d.total)));
+                    col = col.child(sentence(&t, ARTIFACTS_NOTE, w, t.text_faint));
+                }
+                col.build()
             },
         ))
-        ;
-    confirm.keys(page).build()
+        .build()
+}
+
+fn open_selected_artifact(cx: Scope, ctx: &Ctx) {
+    let idx = ctx.ui.rt_art_sel.get_untracked();
+    let row = ctx
+        .store
+        .artifacts
+        .with_untracked(|d| d.ready().and_then(|a| a.rows.get(idx).cloned()));
+    match row {
+        Some(a) => open_artifact(cx, ctx, a),
+        None => ctx.store.notice.set(Some("no artifact selected".into())),
+    }
+}
+
+/// One artifact: its facts, and a preview — an image as a cell mosaic,
+/// text in a scrolling pane; other kinds say plainly why not.
+fn open_artifact(cx: Scope, ctx: &Ctx, a: crate::store::ArtifactRow) {
+    // A previous preview must never paint under this artifact's header;
+    // stamping the target lets the worker drop a late result.
+    ctx.store.artifact_text.set(None);
+    ctx.store.artifact_image.set(None);
+    ctx.store
+        .preview_target
+        .set(crate::store::artifact_preview_key(
+            &a.run_id,
+            &a.artifact_id,
+        ));
+    let c = ctx.clone();
+    let lead = format!(
+        "{} · {} · {} · {}",
+        a.kind,
+        if a.content_type.is_empty() {
+            "—"
+        } else {
+            &a.content_type
+        },
+        a.size_bytes.map(human_bytes).unwrap_or_else(|| "—".into()),
+        a.created_at
+            .replace('T', " ")
+            .chars()
+            .take(19)
+            .collect::<String>()
+    );
+    // Two thirds of each axis (the previews scale with the terminal).
+    let ps = super::preview_size(cx);
+    super::w::FormModal::new(a.name.clone())
+        .lead(lead)
+        .size(ps.w, ps.h)
+        .open(ctx, cx, move |mcx, close, _guard, inner_w| {
+            let t = use_theme(mcx).get().tokens;
+            let store = c.store;
+            let preview = mcx.signal(String::new());
+            let top = mcx.signal(0i32);
+            {
+                let a2 = a.clone();
+                let c2 = c.clone();
+                mcx.effect(move || {
+                    if !preview.get_untracked().is_empty() {
+                        return;
+                    }
+                    let textish = matches!(
+                        a2.kind.as_str(),
+                        "text" | "markdown" | "json" | "code" | "html"
+                    );
+                    let msg = if a2.run_id.is_empty() || a2.artifact_id.is_empty() {
+                        "No run-scoped content route for this artifact (no run id) — metadata only.".to_string()
+                    } else if a2.kind == "image" {
+                        preview.set("decoding image…".to_string());
+                        c2.send(Cmd::LoadArtifactImage {
+                            run_id: a2.run_id.clone(),
+                            artifact_id: a2.artifact_id.clone(),
+                        });
+                        return;
+                    } else if !textish {
+                        format!(
+                            "{} artifacts do not render in a terminal — open this one in the web console's Artifacts tab.",
+                            a2.kind
+                        )
+                    } else if a2.size_bytes.unwrap_or(0) > 256 * 1024 {
+                        format!(
+                            "Too large for a terminal preview ({}) — open it in the web console.",
+                            a2.size_bytes.map(human_bytes).unwrap_or_default()
+                        )
+                    } else {
+                        preview.set("loading preview…".to_string());
+                        c2.send(Cmd::LoadArtifactText {
+                            run_id: a2.run_id.clone(),
+                            artifact_id: a2.artifact_id.clone(),
+                        });
+                        return;
+                    };
+                    preview.set(msg);
+                });
+            }
+            mcx.effect(move || {
+                if let Some(text) = store.artifact_text.get() {
+                    preview.set(text);
+                }
+            });
+            let dash = |s: &str| if s.is_empty() { "—".to_string() } else { s.to_string() };
+            let facts = format!(
+                "workflow: {} · run: {} · session: {}",
+                dash(&a.workflow_id),
+                dash(&a.run_id),
+                dash(&a.session_id)
+            );
+            let path = format!(
+                "path: {}",
+                if a.content_path.is_empty() {
+                    "— (served to admins only)".to_string()
+                } else {
+                    a.content_path.clone()
+                }
+            );
+            Element::new()
+                .style(LayoutStyle::column().grow(1.0))
+                .child(sentence(&t, &facts, inner_w, t.text_muted))
+                .child(sentence(&t, &path, inner_w, t.text_muted))
+                .child(dyn_view_scoped(
+                    LayoutStyle::default().grow(1.0).min_h(3),
+                    move |pcx| {
+                        if let Some(bmp) = store.artifact_image.get() {
+                            return Image::from_bitmap(bmp)
+                                .fit(abstracttui::widgets::ImageFit::Contain)
+                                .layout(LayoutStyle::default().grow(1.0))
+                                .view(pcx);
+                        }
+                        let t = abstracttui::app::current_theme().tokens;
+                        scroll_text_view(pcx, &t, preview.get(), top, None)
+                    },
+                ))
+                .child(super::w::form::button_row(vec![button(
+                    mcx,
+                    &t,
+                    &Action::label("close", "Close"),
+                    On::Raised,
+                    true,
+                    move || close(),
+                )]))
+                .build()
+        });
+}
+
+// ------------------------------------------------------------ Cache
+
+/// The Cache tab's rows for the chosen plane: (live caches after the
+/// tab's filters, stale registrations). Stale rows are the whole
+/// machine registry on the default plane (the web's).
+fn cache_rows(ctx: &Ctx) -> (Vec<(DataHomeRow, bool)>, Vec<DataHomeRow>) {
+    let ui = ctx.ui;
+    let Some(row) = ui.rt_detail.get() else {
+        return (Vec::new(), Vec::new());
+    };
+    let kind = ui.rt_cache_kind.get();
+    let query = ui.rt_cache_query.get();
+    let store = ctx.store;
+    store.data_homes.with(|d| {
+        let Some(homes) = d.ready() else {
+            return (Vec::new(), Vec::new());
+        };
+        store.runtimes.with(|rt| {
+            let planes = rt.ready().map_or(&[][..], |v| v.as_slice());
+            let mine = displayed_homes(planes, homes, &row);
+            let stale: Vec<DataHomeRow> = if row.kind == "default" {
+                homes.iter().filter(|h| !h.exists).cloned().collect()
+            } else {
+                mine.iter()
+                    .filter(|(h, _)| !h.exists)
+                    .map(|(h, _)| h.clone())
+                    .collect()
+            };
+            let live: Vec<(DataHomeRow, bool)> =
+                mine.into_iter().filter(|(h, _)| h.exists).collect();
+            (filter_homes(live, &kind, &query), stale)
+        })
+    })
+}
+
+fn cache_panel(pcx: Scope, cx: Scope, ctx: &Ctx, t: &TokenSet, pg: &Pg) -> View {
+    let store = ctx.store;
+    let ui = ctx.ui;
+    let tt = *t;
+    let mut kinds: Vec<String> = store.data_homes.with_untracked(|d| {
+        d.ready()
+            .map(|rows| {
+                rows.iter()
+                    .filter(|h| h.safe_to_purge && h.kind != "logs" && h.exists)
+                    .map(|h| h.kind.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    });
+    kinds.sort();
+    kinds.dedup();
+    let mut options = vec![(String::new(), "all kinds".to_string())];
+    options.extend(kinds.into_iter().map(|k| (k.clone(), k)));
+    let ctx_t = ctx.clone();
+    let pg_t = pg.clone();
+    let w = page_w(cx);
+    Element::new()
+        .style(LayoutStyle::column().gap(0).grow(1.0))
+        .child(toolbar(
+            cx,
+            ctx,
+            &tt,
+            &pg.picks[2],
+            options,
+            ui.rt_cache_kind,
+            CACHE_KIND_TIP,
+            ui.rt_cache_query,
+            CACHES_SEARCH,
+            true,
+            None,
+            move || ui.home_sel.set(0),
+        ))
+        .child(dyn_view(LayoutStyle::column().shrink(0.0), move || {
+            let vp = crate::ui::page_viewport(cx).get();
+            if vp.h < 30 {
+                return Element::new().style(LayoutStyle::default().h(0)).build();
+            }
+            sentence(&tt, CACHES_NOTE, w, tt.text_faint)
+        }))
+        .child(dyn_view_scoped(
+            LayoutStyle::column().gap(0).grow(1.0),
+            move |gcx| {
+                let t = tt;
+                let w = page_w(gcx);
+                let narrow = w < 100;
+                let data = store.data_homes.get();
+                let sizing = matches!(&data, Loadable::Ready(rows) if rows.iter().any(|h| h.exists && h.size_bytes.is_none()));
+                let (live, stale) = cache_rows(&ctx_t);
+                let kind = ui.rt_cache_kind.get();
+                let query = ui.rt_cache_query.get();
+                let empty = match &data {
+                    Loadable::Ready(_) if !kind.is_empty() || !query.is_empty() => {
+                        let mut bits = Vec::new();
+                        if !kind.is_empty() {
+                            bits.push(format!("kind \"{kind}\""));
+                        }
+                        if !query.is_empty() {
+                            bits.push(format!("\"{query}\""));
+                        }
+                        format!("No caches match {}.", bits.join(" + "))
+                    }
+                    Loadable::Ready(_) => "No caches on this plane.".to_string(),
+                    Loadable::Failed(e) => format!("Data homes unavailable: {}", e.message),
+                    _ => "Loading caches…".to_string(),
+                };
+                let mut cols = vec![
+                    Col::new("Cache", ColW::Flex { weight: 2, min: 12 }),
+                    Col::new("Kind", ColW::Fit { min: 4, max: 12 }),
+                    Col::new("Size", ColW::Fit { min: 4, max: 9 }),
+                ];
+                if !narrow {
+                    cols.push(Col::new("Path", ColW::Flex { weight: 2, min: 12 }));
+                }
+                cols.push(Col::new("Actions", ColW::Fit { min: 8, max: 12 }));
+                let mut rows: Vec<WRow> = Vec::new();
+                for (h, _shared) in &live {
+                    let size = match h.size_bytes {
+                        Some(n) => human_bytes(n),
+                        None if sizing => "…".into(),
+                        None => "—".into(),
+                    };
+                    let mut cells = vec![
+                        Cell::Lines(vec![
+                            vec![Ink::new(h.name.clone(), t.text)],
+                            vec![Ink::new(h.description.clone(), t.text_faint)],
+                        ]),
+                        Cell::text(h.kind.clone(), t.text_muted),
+                        Cell::text(size, t.text_muted),
+                    ];
+                    if !narrow {
+                        cells.push(Cell::text(h.path.clone(), t.text_muted));
+                    }
+                    cells.push(Cell::Actions(cache_actions(false)));
+                    let mut r = WRow::new(format!("live:{}", h.name), cells);
+                    if narrow {
+                        r = r.note(Some((h.path.clone(), t.text_faint)));
+                    }
+                    rows.push(r);
+                }
+                let stale_head = format!(
+                    "Stale registrations ({}, whole machine registry)",
+                    stale.len()
+                );
+                for (i, h) in stale.iter().enumerate() {
+                    let mut cells = vec![
+                        Cell::text(h.name.clone(), t.text_muted),
+                        Cell::text(h.kind.clone(), t.text_muted),
+                        Cell::text("missing", t.text_muted),
+                    ];
+                    if !narrow {
+                        cells.push(Cell::text(h.path.clone(), t.text_muted));
+                    }
+                    cells.push(Cell::Actions(cache_actions(true)));
+                    let mut r = WRow::new(format!("stale:{}", h.name), cells).dim(true);
+                    if i == 0 {
+                        r = r.group(stale_head.clone());
+                    }
+                    rows.push(r);
+                }
+                let ca = ctx_t.clone();
+                let table = DataTable::new(cols, rows, pg_t.cache_key)
+                    .width(w)
+                    .max_rows(panel_rows(gcx, &ctx_t, {
+                        let note = if crate::ui::page_viewport(gcx).get_untracked().h >= 30 { lines_of(CACHES_NOTE, w) } else { 0 };
+                        1 + note + 2 + 1 + i32::from(stale.len() > 1)
+                    }))
+                    .empty(empty)
+                    .on_action(move |k, id| {
+                        let name = k.split_once(':').map(|(_, n)| n.to_string()).unwrap_or_default();
+                        match id {
+                            "purge" => confirm_purge(pcx, &ca, name),
+                            "forget" => confirm_forget(pcx, &ca, Some(name)),
+                            _ => {}
+                        }
+                    })
+                    .view(gcx, &t);
+                let mut notes = Vec::new();
+                if !sizing && !live.is_empty() {
+                    let total: u64 = live.iter().filter_map(|(h, _)| h.size_bytes).sum();
+                    notes.push(format!(
+                        "{} cache{} · {} on disk.",
+                        live.len(),
+                        if live.len() == 1 { "" } else { "s" },
+                        human_bytes(total)
+                    ));
+                }
+                if sizing {
+                    notes.push("measuring sizes — the list is complete, numbers are filling in…".into());
+                }
+                let mut col = Element::new()
+                    .style(LayoutStyle::column().gap(0).grow(1.0))
+                    .child(table);
+                if !notes.is_empty() {
+                    col = col.child(sentence(&t, &notes.join(" "), w, t.text_faint));
+                }
+                if stale.len() > 1 {
+                    let c = ctx_t.clone();
+                    col = col.child(super::w::form::button_row(vec![button(
+                        gcx,
+                        &t,
+                        &forget_all_action(stale.len()),
+                        On::Page,
+                        true,
+                        move || confirm_forget(pcx, &c, None),
+                    )]));
+                }
+                col.build()
+            },
+        ))
+        .build()
+}
+
+fn confirm_purge(cx: Scope, ctx: &Ctx, name: String) {
+    let c = ctx.clone();
+    super::w::Confirm::danger(purge_question(&name), "Purge", "Cancel").open(
+        cx,
+        ctx.ui,
+        move || c.send(Cmd::PurgeDataHome { name }),
+    );
+}
+
+fn confirm_forget(cx: Scope, ctx: &Ctx, name: Option<String>) {
+    let c = ctx.clone();
+    super::w::Confirm::plain(forget_question(name.as_deref()), "Forget", "Cancel").open(
+        cx,
+        ctx.ui,
+        move || match name {
+            Some(n) => c.send(Cmd::ForgetDataHomes {
+                body: json!({ "name": n }).into(),
+                all_stale: false,
+            }),
+            None => c.send(Cmd::ForgetDataHomes {
+                body: json!({ "all_stale": true }).into(),
+                all_stale: true,
+            }),
+        },
+    );
+}
+
+// ------------------------------------------------------------ Logs
+
+fn log_key(f: &crate::store::LogFileRow) -> String {
+    format!("{}/{}", f.home, f.name)
+}
+
+fn logs_panel(pcx: Scope, cx: Scope, ctx: &Ctx, t: &TokenSet, pg: &Pg) -> View {
+    let store = ctx.store;
+    let ui = ctx.ui;
+    let tt = *t;
+    let mut homes: Vec<String> = store.logs.with_untracked(|d| {
+        d.ready()
+            .map(|rows| rows.iter().map(|f| f.home.clone()).collect())
+            .unwrap_or_default()
+    });
+    homes.sort();
+    homes.dedup();
+    let mut options = vec![(String::new(), "all log homes".to_string())];
+    options.extend(homes.into_iter().map(|h| (h.clone(), h)));
+    let ctx_t = ctx.clone();
+    let pg_t = pg.clone();
+    Element::new()
+        .style(LayoutStyle::column().gap(0).grow(1.0))
+        .child(toolbar(
+            cx,
+            ctx,
+            &tt,
+            &pg.picks[3],
+            options,
+            ui.rt_logs_home,
+            LOGS_HOME_TIP,
+            ui.rt_logs_query,
+            LOGS_SEARCH,
+            true,
+            None,
+            move || ui.rt_logs_sel.set(0),
+        ))
+        .child(dyn_view_scoped(
+            LayoutStyle::column().gap(0).grow(1.0),
+            move |gcx| {
+                let t = tt;
+                let w = page_w(gcx);
+                let data = store.logs.get();
+                let home_f = ui.rt_logs_home.get();
+                let query_f = ui.rt_logs_query.get();
+                let all = data.ready().cloned().unwrap_or_default();
+                let shown = filter_log_files(&all, &home_f, &query_f);
+                let wants_default = ui
+                    .rt_detail
+                    .with(|d| d.as_ref().is_some_and(|r| r.kind == "default"));
+                let empty = match &data {
+                    Loadable::Ready(_) if !home_f.is_empty() || !query_f.is_empty() => {
+                        let mut bits = Vec::new();
+                        if !home_f.is_empty() {
+                            bits.push(format!("home \"{home_f}\""));
+                        }
+                        if !query_f.is_empty() {
+                            bits.push(format!("\"{query_f}\""));
+                        }
+                        format!("No log files match {}.", bits.join(" + "))
+                    }
+                    Loadable::Ready(_) if wants_default => "No log files yet.".to_string(),
+                    Loadable::Ready(_) => "No log homes on this plane — serving logs live on the gateway default plane.".to_string(),
+                    Loadable::Failed(e) => format!("Logs unavailable: {}", e.message),
+                    _ => "Listing log files…".to_string(),
+                };
+                let cols = vec![
+                    Col::new("File", ColW::Flex { weight: 2, min: 10 }),
+                    Col::new("Log home", ColW::Flex { weight: 1, min: 8 }),
+                    Col::new("Size", ColW::Fit { min: 4, max: 9 }),
+                    Col::new("Modified", ColW::Fit { min: 8, max: 19 }),
+                ];
+                let rows: Vec<WRow> = shown
+                    .iter()
+                    .map(|f| {
+                        WRow::new(
+                            log_key(f),
+                            vec![
+                                Cell::Link {
+                                    label: f.name.clone(),
+                                    action: "tail",
+                                    tip: Some(format!("Click to tail {}  (o)", f.name)),
+                                },
+                                Cell::text(f.home.clone(), t.text_muted),
+                                Cell::text(f.size_bytes.map(human_bytes).unwrap_or_else(|| "—".into()), t.text_muted),
+                                Cell::text(
+                                    f.modified_at.replace('T', " ").chars().take(19).collect::<String>(),
+                                    t.text_muted,
+                                ),
+                            ],
+                        )
+                    })
+                    .collect();
+                let (ca, ce) = (ctx_t.clone(), ctx_t.clone());
+                let (sa, se) = (shown.clone(), shown.clone());
+                let table = DataTable::new(cols, rows, pg_t.log_key)
+                    .width(w)
+                    .max_rows(panel_rows(gcx, &ctx_t, {
+                        let notes = if shown.is_empty() { 0 } else { 2 };
+                        1 + 2 + notes
+                    }))
+                    .empty(empty)
+                    .on_action(move |k, _| {
+                        if let Some(f) = sa.iter().find(|f| log_key(f) == k) {
+                            open_log(pcx, &ca, f.home.clone(), f.name.clone());
+                        }
+                    })
+                    .on_activate(move |k| {
+                        if let Some(f) = se.iter().find(|f| log_key(f) == k) {
+                            open_log(pcx, &ce, f.home.clone(), f.name.clone());
+                        }
+                    })
+                    .view(gcx, &t);
+                let mut notes = Vec::new();
+                if shown.len() < all.len() {
+                    let n = all.len() - shown.len();
+                    notes.push(format!("{n} file{} hidden by the filter.", if n == 1 { "" } else { "s" }));
+                }
+                if !shown.is_empty() {
+                    notes.push("Serving and launcher logs — regenerable text. Purge a log home from the CLI (abstractgateway data purge) if it grows too large.".to_string());
+                }
+                let mut col = Element::new()
+                    .style(LayoutStyle::column().gap(0).grow(1.0))
+                    .child(table);
+                if !notes.is_empty() {
+                    col = col.child(sentence(&t, &notes.join(" "), w, t.text_faint));
+                }
+                col.build()
+            },
+        ))
+        .build()
+}
+
+fn open_selected_log(cx: Scope, ctx: &Ctx) {
+    let idx = ctx.ui.rt_logs_sel.get_untracked();
+    let home_f = ctx.ui.rt_logs_home.get_untracked();
+    let query_f = ctx.ui.rt_logs_query.get_untracked();
+    let row = ctx.store.logs.with_untracked(|d| {
+        d.ready()
+            .and_then(|rows| filter_log_files(rows, &home_f, &query_f).get(idx).cloned())
+    });
+    match row {
+        Some(f) => open_log(cx, ctx, f.home, f.name),
+        None => ctx.store.notice.set(Some("no log file selected".into())),
+    }
+}
+
+/// Tail one log file: the web's log dialog — Show [last 64 KB | last
+/// 256 KB | last 1 MB], ↻, the text, Close.
+fn open_log(cx: Scope, ctx: &Ctx, home: String, file: String) {
+    let read = {
+        let c = ctx.clone();
+        let (home, file) = (home.clone(), file.clone());
+        move |max_bytes: u32| {
+            c.store.log_text.set(None);
+            c.store
+                .preview_target
+                .set(crate::store::log_preview_key(&home, &file));
+            c.send(Cmd::LoadLogText {
+                home: home.clone(),
+                file: file.clone(),
+                max_bytes,
+            });
+        }
+    };
+    read(TAIL_SIZES[0].1);
+    let c = ctx.clone();
+    // Two thirds of each axis (the previews scale with the terminal).
+    let ps = super::preview_size(cx);
+    super::w::FormModal::new(file.clone())
+        .lead(format!("from {home} — newest lines at the bottom"))
+        .size(ps.w, ps.h)
+        .open(ctx, cx, move |mcx, close, _guard, _inner_w| {
+            let t = use_theme(mcx).get().tokens;
+            let store = c.store;
+            let size = mcx.signal(0usize);
+            let top = mcx.signal(0i32);
+            let read_pick = read.clone();
+            let seg = Segmented::new(TAIL_SIZES.iter().map(|(l, _)| *l), None)
+                .bind(size)
+                .on_pick(move |i| read_pick(TAIL_SIZES[i.min(2)].1));
+            let read_again = read.clone();
+            let again = button(
+                mcx,
+                &t,
+                &Action::label("reread", "↻").tooltip(LOG_REFRESH_TIP),
+                On::Raised,
+                true,
+                move || read_again(TAIL_SIZES[size.get_untracked().min(2)].1),
+            );
+            Element::new()
+                .style(LayoutStyle::column().grow(1.0))
+                .child(
+                    Element::new()
+                        .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                        .child(line(vec![span("Show", t.text_muted)]))
+                        .child(seg.view(mcx, &t))
+                        .child(again)
+                        .build(),
+                )
+                .child(dyn_view_scoped(
+                    LayoutStyle::default().grow(1.0).min_h(3),
+                    move |pcx| {
+                        let t = abstracttui::app::current_theme().tokens;
+                        let text = store
+                            .log_text
+                            .get()
+                            .unwrap_or_else(|| "Reading tail…".to_string());
+                        scroll_text_view(pcx, &t, text, top, None)
+                    },
+                ))
+                .child(super::w::form::button_row(vec![button(
+                    mcx,
+                    &t,
+                    &Action::label("close", "Close"),
+                    On::Raised,
+                    true,
+                    move || close(),
+                )]))
+                .build()
+        });
+}
+
+// ------------------------------------------------------------ Workspaces
+
+/// The highlighted runtime's Workspaces dialog (the inventory's link).
+fn open_workspaces(cx: Scope, ctx: &Ctx) {
+    let row = ctx.ui.rt_detail.get_untracked().or_else(|| {
+        let idx = ctx.ui.runtime_sel.get_untracked();
+        ctx.store
+            .runtimes
+            .with_untracked(|d| d.ready().and_then(|rows| rows.get(idx).cloned()))
+    });
+    let Some(row) = row else {
+        ctx.store
+            .notice
+            .set(Some("no runtime selected — no workspaces to show".into()));
+        return;
+    };
+    match workspace_target(&row, &ctx.store) {
+        Some(target) => super::workspace_chooser::open(cx, ctx, target),
+        None => super::w::tip::say(&format!(
+            "{}: no workspaces here (only the default plane and a one-owner user or entity plane have them)",
+            row.runtime_id
+        )),
+    }
+}
+
+/// The inventory's Workspace cell (the web's link text).
+pub fn workspace_cell(row: &crate::store::RuntimeRow) -> &'static str {
+    match row.kind.as_str() {
+        "default" => "Eligible workspaces",
+        "user" | "entity" if row.owners.len() == 1 => "Workspaces",
+        _ => "None",
+    }
 }
 
 /// A scrollable read-only text pane. `CodeView` windows its own draw but
@@ -702,888 +2456,6 @@ fn scroll_text_view(
         .build()
 }
 
-/// `o` / Enter — open the highlighted row of the active tab: an artifact
-/// detail (with a real image preview) or a log tail.
-fn open_selected_row(cx: Scope, ctx: &Ctx) {
-    match ctx.ui.rt_tab.get_untracked() {
-        1 => {
-            let idx = ctx.ui.rt_art_sel.get_untracked();
-            let row = ctx
-                .store
-                .artifacts
-                .with_untracked(|d| d.ready().and_then(|a| a.rows.get(idx).cloned()));
-            match row {
-                Some(a) => open_artifact_detail(cx, ctx, a),
-                None => ctx.store.notice.set(Some("no artifact selected".into())),
-            }
-        }
-        3 => {
-            let idx = ctx.ui.rt_logs_sel.get_untracked();
-            let home_f = ctx.ui.rt_logs_home.get_untracked();
-            let query_f = ctx.ui.rt_logs_query.get_untracked();
-            let row = ctx.store.logs.with_untracked(|d| {
-                d.ready()
-                    .and_then(|rows| filter_log_files(rows, &home_f, &query_f).get(idx).cloned())
-            });
-            match row {
-                Some(f) => open_log_tail(cx, ctx, f.home, f.name),
-                None => ctx.store.notice.set(Some("no log file selected".into())),
-            }
-        }
-        _ => ctx.store.notice.set(Some(
-            "nothing to open on this tab (i inspects a run)".into(),
-        )),
-    }
-}
-
-/// `f` — the active tab's filter dropdown (a ChoicePrompt: zero rows).
-fn open_tab_filter(cx: Scope, ctx: &Ctx) {
-    let ui = ctx.ui;
-    if ui.rt_detail.with_untracked(|d| d.is_none()) {
-        ctx.store.notice.set(Some("choose a runtime first".into()));
-        return;
-    }
-    match ui.rt_tab.get_untracked() {
-        0 => {
-            let opts = [
-                ("", "all statuses"),
-                ("running", "running"),
-                ("waiting", "waiting"),
-                ("completed", "completed"),
-                ("failed", "failed"),
-                ("cancelled", "cancelled"),
-            ];
-            open_filter_prompt(
-                cx,
-                ctx,
-                "Runs — status",
-                &opts,
-                ui.rt_runs_status,
-                move || {
-                    ui.rt_runs_offset.set(0);
-                },
-            );
-        }
-        1 => {
-            let opts: Vec<(&str, &str)> = ARTIFACT_TYPES.to_vec();
-            open_filter_prompt(
-                cx,
-                ctx,
-                "Artifacts — type",
-                &opts,
-                ui.rt_art_modality,
-                move || {
-                    ui.rt_art_offset.set(0);
-                },
-            );
-        }
-        2 => {
-            // Derived from the RENDERED rows, like the web console.
-            let mut kinds: Vec<String> = ctx.store.data_homes.with_untracked(|d| {
-                d.ready()
-                    .map(|rows| {
-                        rows.iter()
-                            .filter(|h| h.safe_to_purge && h.kind != "logs")
-                            .map(|h| h.kind.clone())
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default()
-            });
-            kinds.sort();
-            kinds.dedup();
-            let mut opts: Vec<(String, String)> = vec![(String::new(), "all kinds".into())];
-            opts.extend(kinds.into_iter().map(|k| (k.clone(), k)));
-            let borrowed: Vec<(&str, &str)> =
-                opts.iter().map(|(v, l)| (v.as_str(), l.as_str())).collect();
-            open_filter_prompt(cx, ctx, "Cache — kind", &borrowed, ui.rt_cache_kind, || {});
-        }
-        _ => {
-            let mut homes: Vec<String> = ctx.store.logs.with_untracked(|d| {
-                d.ready()
-                    .map(|rows| rows.iter().map(|f| f.home.clone()).collect::<Vec<_>>())
-                    .unwrap_or_default()
-            });
-            homes.sort();
-            homes.dedup();
-            let mut opts: Vec<(String, String)> = vec![(String::new(), "all log homes".into())];
-            opts.extend(homes.into_iter().map(|h| (h.clone(), h)));
-            let borrowed: Vec<(&str, &str)> =
-                opts.iter().map(|(v, l)| (v.as_str(), l.as_str())).collect();
-            open_filter_prompt(cx, ctx, "Logs — home", &borrowed, ui.rt_logs_home, || {});
-        }
-    }
-}
-
-/// `/` — the active tab's search, as a small modal. ENTER COMMITS (this
-/// worker is a single serial lane; a keystroke-per-request search would
-/// stampede it, and the web console's debounce+sequence dance exists only
-/// because a browser can afford it).
-fn open_tab_search(cx: Scope, ctx: &Ctx) {
-    let ui = ctx.ui;
-    if ui.rt_detail.with_untracked(|d| d.is_none()) {
-        ctx.store.notice.set(Some("choose a runtime first".into()));
-        return;
-    }
-    let tab = ui.rt_tab.get_untracked();
-    let (title, target, offset): (&str, Signal<String>, Option<Signal<u32>>) = match tab {
-        0 => (
-            "Search runs — run id, workflow, session",
-            ui.rt_runs_query,
-            Some(ui.rt_runs_offset),
-        ),
-        1 => (
-            "Search artifacts — name, kind, tags",
-            ui.rt_art_query,
-            Some(ui.rt_art_offset),
-        ),
-        2 => ("Search caches — name, kind, path", ui.rt_cache_query, None),
-        _ => ("Search log files — file name", ui.rt_logs_query, None),
-    };
-    let ctx2 = ctx.clone();
-    open_form(ctx, cx, Size::new(74, 9), move |mcx, close| {
-        let theme = use_theme(mcx);
-        let t0 = theme.get().tokens;
-        let draft = mcx.signal(target.get_untracked());
-        let close_ok = close.clone();
-        let close_cancel = close.clone();
-        let _ = &ctx2;
-        Element::new()
-            .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold(title.to_string(), t0.accent)]))
-            .child(line(vec![span(
-                "Enter applies · empty clears · Esc cancels",
-                t0.text_faint,
-            )]))
-            // The glob half is stated ONCE, here, rather than crammed into
-            // each tab's title: the rule is the same on all four.
-            .child(line(vec![
-                span("a ", t0.text_faint),
-                span("*", t0.accent),
-                span(" or ", t0.text_faint),
-                span("?", t0.accent),
-                span(" globs the whole value (", t0.text_faint),
-                span("*.jpg", t0.accent),
-                span("); plain text is a substring", t0.text_faint),
-            ]))
-            .child(field(
-                &t0,
-                "search",
-                TextInput::new()
-                    .value(draft)
-                    .placeholder("type, then Enter")
-                    .on_submit(move |_| {
-                        target.set(draft.get_untracked().trim().to_string());
-                        if let Some(off) = offset {
-                            off.set(0);
-                        }
-                        close_ok();
-                    })
-                    .layout(LayoutStyle::default().basis(Dimension::Cells(0)).grow(1.0))
-                    .element(mcx, &t0)
-                    .autofocus()
-                    .build(),
-            ))
-            .child(
-                Button::new("Cancel (Esc)")
-                    .on_click(move || close_cancel())
-                    .element(mcx, &t0)
-                    .build(),
-            )
-            .build()
-    });
-}
-
-/// `n` / `p` — page the active tab (server-paged tabs only; Cache and
-/// Logs load whole, exactly like the web console, which shows no pager
-/// there either).
-fn page_tab(ctx: &Ctx, dir: i32) {
-    let ui = ctx.ui;
-    let (offset, has_more) = match ui.rt_tab.get_untracked() {
-        0 => (
-            ui.rt_runs_offset,
-            ctx.store
-                .runs
-                .with_untracked(|d| d.ready().map(|r| r.has_more).unwrap_or(false)),
-        ),
-        1 => (
-            ui.rt_art_offset,
-            ctx.store
-                .artifacts
-                .with_untracked(|d| d.ready().map(|a| a.has_more).unwrap_or(false)),
-        ),
-        _ => {
-            ctx.store
-                .notice
-                .set(Some("this tab lists everything at once — no pages".into()));
-            return;
-        }
-    };
-    let cur = offset.get_untracked();
-    if dir > 0 {
-        if !has_more {
-            ctx.store.notice.set(Some("last page".into()));
-            return;
-        }
-        offset.set(cur + 100);
-    } else {
-        if cur == 0 {
-            ctx.store.notice.set(Some("first page".into()));
-            return;
-        }
-        offset.set(cur.saturating_sub(100));
-    }
-}
-
-/// `i` — inspect the highlighted run (the web console's run modal).
-fn inspect_selected_run(cx: Scope, ctx: &Ctx) {
-    let Some((row, _scope)) = selected_run(ctx) else {
-        ctx.store.notice.set(Some("no run selected".into()));
-        return;
-    };
-    let ctx2 = ctx.clone();
-    let run_id = row.run_id.clone();
-    open_form(ctx, cx, Size::new(92, 20), move |mcx, close| {
-        let theme = use_theme(mcx);
-        let t0 = theme.get().tokens;
-        let close_btn = close.clone();
-        let _ = &ctx2;
-        let mut rows: Vec<View> = Vec::new();
-        let short: String = run_id.chars().take(12).collect();
-        rows.push(line(vec![span_bold(format!("Run {short}"), t0.accent)]));
-        // The web Inspect modal's rows (`inspectRun`), values wrapped.
-        for (k, v) in run_detail_rows(&row) {
-            for (i, l) in super::util::wrap_text(&v, 72).into_iter().enumerate() {
-                let label = if i == 0 {
-                    format!("{k:>10}: ")
-                } else {
-                    " ".repeat(12)
-                };
-                rows.push(line(vec![span(label, t0.text_muted), span(l, t0.text)]));
-            }
-        }
-        Element::new()
-            .focusable()
-            .autofocus()
-            .style(LayoutStyle::column().gap(0))
-            .children(rows)
-            .child(
-                Button::new("Close (Esc)")
-                    .on_click(move || close_btn())
-                    .element(mcx, &t0)
-                    .build(),
-            )
-            .build()
-    });
-}
-
-/// `F` — forget every stale registry row (the web console's bulk
-/// action). Disk is never touched; the gateway refuses live paths and
-/// that refusal renders verbatim.
-fn forget_stale_homes(cx: Scope, ctx: &Ctx) {
-    if ctx.ui.rt_tab.get_untracked() != 2 {
-        return;
-    }
-    let stale = ctx.store.data_homes.with_untracked(|d| {
-        d.ready()
-            .map(|rows| rows.iter().filter(|h| !h.exists).count())
-            .unwrap_or(0)
-    });
-    if stale == 0 {
-        ctx.store.notice.set(Some("no stale registrations".into()));
-        return;
-    }
-    let ctx2 = ctx.clone();
-    super::confirm_danger(
-        cx,
-        ctx.ui,
-        format!(
-            "Forget {stale} stale registration(s)? Rows point at paths that no longer exist; disk is never touched."
-        ),
-        "Forget",
-        "Keep",
-        move || {
-            ctx2.send(Cmd::ForgetDataHomes {
-                body: json!({ "all_stale": true }).into(),
-                all_stale: true,
-            });
-        },
-    );
-}
-
-/// The VISIBLE toolbar row — a filter dropdown and a search box, the same
-/// shape the web console wears. It costs one row, so it renders only when
-/// the viewport can spare it (at 80x24 the inspector's own minimum already
-/// owns every line — there the state rides the panel's status line and the
-/// `f` / `/` gestures still work). Built on the PAGE scope: a Select's
-/// popup dies with the scope that built it, and background store writes
-/// regenerate the panel scopes constantly.
-#[allow(clippy::too_many_arguments)]
-fn toolbar_row(
-    cx: Scope,
-    ctx: &Ctx,
-    t: &TokenSet,
-    options: Vec<(String, String)>,
-    current: Signal<String>,
-    query: Signal<String>,
-    placeholder: &'static str,
-    on_change: impl Fn() + Clone + 'static,
-) -> View {
-    let t0 = *t;
-    let ui = ctx.ui;
-    let _ = ui;
-    let values: Vec<String> = options.iter().map(|(v, _)| v.clone()).collect();
-    let cur_ix = options
-        .iter()
-        .position(|(v, _)| *v == current.get_untracked())
-        .unwrap_or(0);
-    let ix = cx.signal(cur_ix);
-    let sel_opts: Vec<abstracttui::app::SelectOption> = options
-        .iter()
-        .map(|(_, label)| abstracttui::app::SelectOption::new(label.clone()))
-        .collect();
-    let on_change_sel = on_change.clone();
-    let values_sel = values.clone();
-    let draft = cx.signal(query.get_untracked());
-    Element::new()
-        .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-        .child(
-            Select::new(sel_opts)
-                .value(ix)
-                .on_change(move |i| {
-                    if let Some(v) = values_sel.get(i) {
-                        if current.get_untracked() != *v {
-                            current.set(v.clone());
-                            on_change_sel();
-                        }
-                    }
-                })
-                .layout(LayoutStyle::default().w(26).h(1).shrink(0.0))
-                .element(cx, &t0)
-                .build(),
-        )
-        .child(
-            // Esc hands the keyboard back to the panel (REVIEW-1 M2).
-            super::util::esc_releases_focus(
-                TextInput::new()
-                    .value(draft)
-                    .placeholder(placeholder)
-                    // ENTER COMMITS: this worker is one serial lane, so a
-                    // request per keystroke would stampede it.
-                    .on_submit(move |_| {
-                        let next = draft.get_untracked().trim().to_string();
-                        if query.get_untracked() != next {
-                            query.set(next);
-                            on_change();
-                        }
-                    })
-                    .layout(
-                        LayoutStyle::default()
-                            .basis(Dimension::Cells(0))
-                            .grow(1.0)
-                            .h(1),
-                    )
-                    .element(cx, &t0),
-                ctx.store.notice,
-            )
-            .build(),
-        )
-        .build()
-}
-
-/// Does the viewport have a row to spare for the visible toolbar?
-fn toolbar_fits(cx: Scope) -> bool {
-    crate::ui::page_viewport(cx).get().h >= 28
-}
-
-/// The pager, as text (the terminal twin of the web console's
-/// Prev/“X–Y of Z”/Next widget). `total` is None where the server has no
-/// cheap count — then the line says "· more" instead of inventing one,
-/// exactly like renderPager does.
-fn page_label(offset: u32, shown: usize, has_more: bool, total: Option<u64>) -> String {
-    if shown == 0 {
-        return if offset == 0 {
-            "0 rows".into()
-        } else {
-            format!("nothing at offset {offset}")
-        };
-    }
-    let from = offset as usize + 1;
-    let to = offset as usize + shown;
-    match total {
-        Some(t) if t as usize >= to => format!("{from}–{to} of {t}"),
-        _ => format!("{from}–{to}{}", if has_more { " · more" } else { "" }),
-    }
-}
-
-/// A filter dropdown, as a ChoicePrompt (zero rows — an inline Select
-/// would cost the one spare row the 80x24 page has, and this app's
-/// idiom is a bare letter opening a prompt).
-fn open_filter_prompt(
-    cx: Scope,
-    ctx: &Ctx,
-    title: &str,
-    options: &[(&str, &str)],
-    current: Signal<String>,
-    on_pick: impl Fn() + 'static,
-) {
-    let mut prompt = abstracttui::app::ChoicePrompt::new(title.to_string());
-    let cur = current.get_untracked();
-    for (value, label) in options {
-        prompt = prompt.option(*value, *label);
-    }
-    if options.iter().any(|(v, _)| *v == cur) {
-        prompt = prompt.initial(cur.as_str());
-    }
-    let values: Vec<String> = options.iter().map(|(v, _)| v.to_string()).collect();
-    super::open_prompt(cx, ctx.ui, prompt, move |outcome| {
-        if let abstracttui::app::ChoiceOutcome::Answered(a) = outcome {
-            if let Some(sel) = a.selected.first() {
-                if values.iter().any(|v| v == sel) {
-                    current.set(sel.clone());
-                    on_pick();
-                }
-            }
-        }
-    });
-}
-
-/// Choose a runtime to inspect (click / Enter on the inventory). The
-/// ONLY writer of `ui.rt_detail` besides the self-heal — nothing loads
-/// before this runs.
-fn choose(ctx: &Ctx, idx: usize) {
-    let row = ctx
-        .store
-        .runtimes
-        .with_untracked(|d| d.ready().and_then(|rows| rows.get(idx).cloned()));
-    let Some(row) = row else { return };
-    ctx.ui.run_sel.set(0);
-    ctx.ui.home_sel.set(0);
-    ctx.ui.rt_detail.set(Some(row));
-}
-
-/// Per-knob value + PROVENANCE (which layer set it: stored/env/default) —
-/// the same honesty the web console's knob surface carries.
-fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View {
-    let mut rows: Vec<View> = Vec::new();
-    if !d.writable {
-        rows.push(line(vec![
-            span("writes: ", t.text_muted),
-            span_bold("read-only (backend refuses writes)", t.warn),
-        ]));
-    }
-    for (key, value, source) in &d.knobs {
-        rows.push(line(vec![
-            span(format!("{key:>20}: "), t.text_muted),
-            span(ellipsize(value, 48), t.text),
-            span(format!("  ({source})"), t.text_faint),
-        ]));
-    }
-    if !d.executors.is_empty() {
-        rows.push(line(vec![
-            span(format!("{:>20}: ", "executors"), t.text_muted),
-            span(d.executors.join(" · "), t.text),
-        ]));
-    }
-    // Browser apps (mission Z): the apps.* settings with their source.
-    for a in &d.apps {
-        rows.push(line(vec![
-            span(format!("{:>20}: ", a.key), t.text_muted),
-            span(
-                ellipsize(
-                    if a.value.is_empty() {
-                        "—"
-                    } else {
-                        a.value.as_str()
-                    },
-                    48,
-                ),
-                t.text,
-            ),
-            span(format!("  ({})", a.source), t.text_faint),
-            span(format!("  {}", a.label), t.text_faint),
-        ]));
-        if !a.invalid.is_empty() {
-            rows.push(line(vec![span(
-                format!("{:>20}  ⚠ set aside: {}", "", a.invalid),
-                t.warn,
-            )]));
-        }
-    }
-    // Default agent workflow per interface (agents.default_workflow): what
-    // a client choosing "Gateway default" runs, or why it cannot.
-    for a in &d.agent_defaults {
-        let (now, tone) = if a.available {
-            (format!("{} ({})", a.workflow_id, a.name), t.text)
-        } else {
-            (format!("unavailable: {}", a.reason), t.warn)
-        };
-        rows.push(line(vec![
-            span(format!("{:>20}: ", "agent default"), t.text_muted),
-            span(format!("{} → ", a.interface), t.text),
-            span(ellipsize(&now, 72), tone),
-            span(format!("  ({})", a.source), t.text_faint),
-        ]));
-    }
-    // Stream replies by default (agents.streaming_default): on/off and its
-    // source; a gateway whose read lacks the key says so (never hidden).
-    match &d.streaming_default {
-        Some(sd) => rows.push(line(vec![
-            span(format!("{:>20}: ", "stream replies"), t.text_muted),
-            span(
-                if sd.value {
-                    "on — interactive replies stream live"
-                } else {
-                    "off — replies arrive whole"
-                },
-                t.text,
-            ),
-            span(format!("  ({})", sd.source), t.text_faint),
-        ])),
-        None => rows.push(line(vec![
-            span(format!("{:>20}: ", "stream replies"), t.text_muted),
-            span(
-                "not available on this gateway (its settings read has no agents.streaming_default)",
-                t.warn,
-            ),
-        ])),
-    }
-    // The skills shelf (skills.shelf): which folder, from which source.
-    if let Some(sh) = &d.skills_shelf {
-        let (now, tone) = if sh.available {
-            let v = if sh.bundled_version.is_empty() {
-                String::new()
-            } else {
-                format!(" (curated {})", sh.bundled_version)
-            };
-            (format!("{}{v}", sh.resolved), t.text)
-        } else {
-            (format!("unavailable: {}", sh.reason), t.warn)
-        };
-        rows.push(line(vec![
-            span(format!("{:>20}: ", "skills.shelf"), t.text_muted),
-            span(ellipsize(&now, 80), tone),
-            span(format!("  ({})", sh.source), t.text_faint),
-        ]));
-        for w in &sh.warnings {
-            rows.push(line(vec![span(
-                format!("{:>20}  ⚠ {}", "", ellipsize(w, 96)),
-                t.warn,
-            )]));
-        }
-    }
-    // Backlog settings (Continuum): folder, exec runner, process manager —
-    // value + where it comes from (web: "Advanced: backlog settings").
-    for b in &d.backlog {
-        let now = if b.redacted {
-            "(hidden — admin only)".to_string()
-        } else if b.value.is_empty() {
-            "—".to_string()
-        } else {
-            b.value.clone()
-        };
-        rows.push(line(vec![
-            span(format!("{:>20}: ", b.key), t.text_muted),
-            span(ellipsize(&now, 72), t.text),
-            span(
-                format!(
-                    "  ({})",
-                    crate::store::operator::backlog_source_word(&b.source)
-                ),
-                t.text_faint,
-            ),
-        ]));
-        if b.available == Some(false) {
-            rows.push(line(vec![span(
-                format!("{:>20}  ⚠ not available: {}", "", ellipsize(&b.reason, 90)),
-                t.warn,
-            )]));
-        }
-    }
-    // The skills-shelf / backlog verbs get their OWN button row under the
-    // first one (that row already overflows 160 columns; a row at the
-    // bottom of the knobs falls off shorter terminals).
-    let tail_row: View = if d.writable && (!d.backlog.is_empty() || d.skills_shelf.is_some()) {
-        let ctx7 = ctx.clone();
-        let current_backlog = d.clone();
-        let ctx8 = ctx.clone();
-        Element::new()
-            .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-            .child(if current_backlog.backlog.is_empty() {
-                Element::new().style(LayoutStyle::default().h(0)).build()
-            } else {
-                // Web: "Advanced: backlog settings" (Continuum).
-                Button::new("Edit backlog settings")
-                    .on_click(move || {
-                        open_backlog_settings_form(cx, &ctx7, current_backlog.clone())
-                    })
-                    .element(cx, t)
-                    .build()
-            })
-            .child(if d.skills_shelf.is_none() {
-                Element::new().style(LayoutStyle::default().h(0)).build()
-            } else {
-                // Web: "Refresh the curated shelf" beside the shelf field.
-                Button::new("Refresh the curated skills shelf")
-                    .on_click(move || {
-                        ctx8.send(Cmd::Operator(crate::worker::operator::OpCmd::ReseedSkills))
-                    })
-                    .element(cx, t)
-                    .build()
-            })
-            .build()
-    } else {
-        Element::new().style(LayoutStyle::default().h(0)).build()
-    };
-    Element::new()
-        .style(LayoutStyle::column())
-        .child(if d.writable {
-            let ctx5 = ctx.clone();
-            let current_shelf = d.clone();
-            let ctx3 = ctx.clone();
-            let current_apps = d.clone();
-            let ctx4 = ctx.clone();
-            let current_agents = d.clone();
-            let ctx6 = ctx.clone();
-            let current_stream = d.clone();
-
-            let row1 = Element::new()
-                .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                .child(if current_apps.apps.is_empty() {
-                    Element::new().style(LayoutStyle::default().h(0)).build()
-                } else {
-                    Button::new("Edit apps settings")
-                        .on_click(move || open_apps_settings_form(cx, &ctx3, current_apps.clone()))
-                        .element(cx, t)
-                        .build()
-                })
-                .child(if current_shelf.skills_shelf.is_none() {
-                    Element::new().style(LayoutStyle::default().h(0)).build()
-                } else {
-                    Button::new("Edit skills shelf")
-                        .on_click(move || open_skills_shelf_form(cx, &ctx5, current_shelf.clone()))
-                        .element(cx, t)
-                        .build()
-                })
-                .build();
-            // Second row: one row of five buttons ran past 80 columns.
-            let row2 = Element::new()
-                .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                .child(if current_agents.agent_defaults.is_empty() {
-                    Element::new().style(LayoutStyle::default().h(0)).build()
-                } else {
-                    Button::new("Edit default agent workflows")
-                        .on_click(move || {
-                            open_agent_defaults_form(cx, &ctx4, current_agents.clone())
-                        })
-                        .element(cx, t)
-                        .build()
-                })
-                .child(if current_stream.streaming_default.is_none() {
-                    Element::new().style(LayoutStyle::default().h(0)).build()
-                } else {
-                    Button::new("Edit stream replies")
-                        .on_click(move || {
-                            open_streaming_default_form(cx, &ctx6, current_stream.clone())
-                        })
-                        .element(cx, t)
-                        .build()
-                })
-                .build();
-            Element::new()
-                .style(LayoutStyle::column().gap(0).shrink(0.0))
-                .child(row1)
-                .child(row2)
-                .build()
-        } else {
-            Element::new().style(LayoutStyle::default().h(0)).build()
-        })
-        .child(tail_row)
-        .children(rows)
-        .build()
-}
-
-/// Backlog settings form (web "Advanced: backlog settings"): the folder
-/// (prefilled with the SAVED value only — a default written back would
-/// silently become a saved one), and two switches with a third "not
-/// saved" state. Save sends only what changed; the gateway validates and
-/// its sentence is shown on refusal. "Use the gateway's own folder"
-/// fills the folder with the default path.
-pub(crate) fn open_backlog_settings_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
-    use crate::store::operator::{backlog_settings_body, backlog_source_word};
-    if !current.writable {
-        ctx.store
-            .notice
-            .set(Some("this needs an admin token".into()));
-        return;
-    }
-    let ctx2 = ctx.clone();
-    open_form(ctx, cx, Size::new(110, 22), move |mcx, close| {
-        let theme = use_theme(mcx);
-        let t0 = theme.get().tokens;
-        let form_error = mcx.signal(Option::<String>::None);
-        let in_flight = mcx.signal(false);
-        let form_id = crate::worker::next_form_id();
-        super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
-        let rows = current.backlog.clone();
-        let fields: Vec<(String, Signal<String>)> = rows
-            .iter()
-            .map(|b| (b.key.clone(), mcx.signal(b.saved.clone())))
-            .collect();
-        let mut col = Element::new()
-            .focusable()
-            .autofocus()
-            .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold("Backlog settings (Continuum)", t0.accent)]))
-            .child(line(vec![span(
-                "empty / not saved = the launch flag, else the default (the gateway's own folder; switches off) · applies at once",
-                t0.text_faint,
-            )]));
-        for (b, (_, sig)) in rows.iter().zip(fields.iter()) {
-            let sig = *sig;
-            col = col.child(line(vec![
-                span_bold(b.label.clone(), t0.text),
-                span(
-                    format!("  ({})", backlog_source_word(&b.source)),
-                    t0.text_faint,
-                ),
-                span(
-                    if b.flag.is_empty() {
-                        String::new()
-                    } else {
-                        format!("  · launch flag: serve {}", b.flag)
-                    },
-                    t0.text_faint,
-                ),
-            ]));
-            if b.is_folder() {
-                col = col.child(field(
-                    &t0,
-                    "folder",
-                    TextInput::new()
-                        .value(sig)
-                        .placeholder(if b.value.is_empty() {
-                            b.default_path.clone()
-                        } else {
-                            b.value.clone()
-                        })
-                        .layout(LayoutStyle::default().w(80).h(1))
-                        .element(mcx, &t0)
-                        .build(),
-                ));
-                col = col.child(line(vec![span(
-                    ellipsize(
-                        &format!(
-                            "in use: {}",
-                            if b.value.is_empty() {
-                                "(hidden)"
-                            } else {
-                                b.value.as_str()
-                            }
-                        ),
-                        104,
-                    ),
-                    t0.text_faint,
-                )]));
-                if b.available == Some(false) {
-                    col = col.child(line(vec![span(
-                        ellipsize(&format!("⚠ not available: {}", b.reason), 104),
-                        t0.warn,
-                    )]));
-                }
-                if !b.default_path.is_empty() && b.value != b.default_path {
-                    let def = b.default_path.clone();
-                    let ctx_def = ctx2.clone();
-                    col = col.child(
-                        // Web parity: this button SAVES at once.
-                        Button::new("Use the gateway's own folder")
-                            .on_click(move || {
-                                if in_flight.get_untracked() {
-                                    return;
-                                }
-                                form_error.set(None);
-                                in_flight.set(true);
-                                ctx_def.send(Cmd::SaveRuntimeConfig {
-                                    body: json!({ "triage_repo_root": def.clone() }).into(),
-                                    form_id: Some(form_id),
-                                });
-                            })
-                            .element(mcx, &t0)
-                            .build(),
-                    );
-                }
-            } else {
-                let now = b.value.clone();
-                col = col.child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
-                    let label = match sig.get().as_str() {
-                        "on" => "On".to_string(),
-                        "off" => "Off".to_string(),
-                        _ => format!("Not saved (now {now})"),
-                    };
-                    line(vec![
-                        span(format!("{:>18} ", "saved:"), t0.text_muted),
-                        span(label, t0.text),
-                    ])
-                }));
-                col = col.child(
-                    Button::new(format!("change {}", b.label.to_lowercase()))
-                        .on_click(move || {
-                            sig.update(|v| {
-                                *v = match v.as_str() {
-                                    "" => "on".to_string(),
-                                    "on" => "off".to_string(),
-                                    _ => String::new(),
-                                }
-                            })
-                        })
-                        .element(mcx, &t0)
-                        .build(),
-                );
-            }
-            col = col.child(line(vec![span(ellipsize(&b.help, 106), t0.text_faint)]));
-        }
-        let ctx_save = ctx2.clone();
-        let close_cancel = close.clone();
-        col.child(super::message_slot(theme, form_error, in_flight))
-            .child(
-                Element::new()
-                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                    .child(
-                        Button::new("Save backlog settings")
-                            .on_click(move || {
-                                if in_flight.get_untracked() {
-                                    return;
-                                }
-                                let typed: Vec<(String, String)> = fields
-                                    .iter()
-                                    .map(|(k, sig)| (k.clone(), sig.get_untracked()))
-                                    .collect();
-                                let body = backlog_settings_body(&rows, &typed);
-                                if body.as_object().map(|m| m.is_empty()).unwrap_or(true) {
-                                    form_error.set(Some("nothing changed".into()));
-                                    return;
-                                }
-                                form_error.set(None);
-                                in_flight.set(true);
-                                ctx_save.send(Cmd::SaveRuntimeConfig {
-                                    body: body.into(),
-                                    form_id: Some(form_id),
-                                });
-                            })
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .child(
-                        Button::new("Cancel (Esc)")
-                            .on_click(move || close_cancel())
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .build(),
-            )
-            .build()
-    });
-}
-
 /// The body the apps form sends: only the settings whose text changed,
 /// as flat `apps.<name>` keys; an emptied field sends "" (= clear back to
 /// env/default), exactly like `abstractgateway apps config set <name> ""`.
@@ -1647,247 +2519,6 @@ pub fn streaming_default_body(current: &crate::store::StreamingDefault, on: bool
     serde_json::json!({ "agents": { "streaming_default": on } })
 }
 
-/// "Stream replies by default" dialog: one switch (agents.streaming_default),
-/// applied at once.
-fn open_streaming_default_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
-    if !current.writable {
-        ctx.store
-            .notice
-            .set(Some("this needs an admin token".into()));
-        return;
-    }
-    let Some(sd) = current.streaming_default.clone() else {
-        return;
-    };
-    let ctx2 = ctx.clone();
-    open_form(ctx, cx, Size::new(100, 12), move |mcx, close| {
-        let theme = use_theme(mcx);
-        let t0 = theme.get().tokens;
-        let form_error = mcx.signal(Option::<String>::None);
-        let in_flight = mcx.signal(false);
-        let form_id = crate::worker::next_form_id();
-        // A switch applies at once (no Save); the dialog stays open and
-        // says the new state, a refusal reverts it with the reason.
-        let on = mcx.signal(sd.value);
-        let ok_note = mcx.signal(Option::<String>::None);
-        let wanted = mcx.signal(sd.value);
-        {
-            let ui = ctx2.ui;
-            mcx.effect(move || {
-                if let Some((fid, outcome)) = ui.write_done.get() {
-                    if fid == form_id {
-                        ui.write_done.set(None);
-                        in_flight.set(false);
-                        match outcome {
-                            Ok(_) => {
-                                let w = wanted.get_untracked();
-                                on.set(w);
-                                form_error.set(None);
-                                ok_note.set(Some(format!(
-                                    "Stream replies is {}.",
-                                    if w { "on" } else { "off" }
-                                )));
-                            }
-                            Err(e) => {
-                                ok_note.set(None);
-                                form_error.set(Some(e));
-                            }
-                        }
-                    }
-                }
-            });
-        }
-        let ctx_save = ctx2.clone();
-        let close_cancel = close.clone();
-        let sd_now = sd.clone();
-        Element::new()
-            .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold(sd.label.clone(), t0.accent)]))
-            .child(line(vec![span(ellipsize(&sd.help, 96), t0.text_faint)]))
-            .child(
-                super::switch::Switch::new("Stream replies", on)
-                    .busy_when(move || in_flight.get())
-                    .on_request(move |want| {
-                        if in_flight.get_untracked() {
-                            return;
-                        }
-                        let current = crate::store::StreamingDefault {
-                            value: on.get_untracked(),
-                            ..sd_now.clone()
-                        };
-                        let body = streaming_default_body(&current, want);
-                        if body.as_object().map(|m| m.is_empty()).unwrap_or(true) {
-                            return;
-                        }
-                        wanted.set(want);
-                        form_error.set(None);
-                        ok_note.set(None);
-                        in_flight.set(true);
-                        ctx_save.send(Cmd::SaveRuntimeConfig {
-                            body: body.into(),
-                            form_id: Some(form_id),
-                        });
-                    })
-                    .element(mcx, &t0)
-                    .autofocus()
-                    .build(),
-            )
-            .child(line(vec![span(
-                "    interactive runs that do not ask either way stream their replies live",
-                t0.text_faint,
-            )]))
-            .child(line(vec![span(
-                format!("source before this dialog: {}", sd.source),
-                t0.text_faint,
-            )]))
-            .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
-                let t = theme.get().tokens;
-                match ok_note.get() {
-                    Some(v) => line(vec![span(format!("✓ {v}"), t.ok)]),
-                    None => line(vec![span("space switch · Esc close", t.text_faint)]),
-                }
-            }))
-            .child(super::message_slot(theme, form_error, in_flight))
-            .child(
-                Button::new("Close (Esc)")
-                    .on_click(move || close_cancel())
-                    .element(mcx, &t0)
-                    .build(),
-            )
-            .build()
-    });
-}
-
-/// Default agent workflow form: one line per agent interface, prefilled
-/// with the SAVED value only (the built-in default is shown, never written
-/// back); the choices on this gateway are listed under each line; the
-/// gateway validates (the workflow must declare the interface) and its
-/// sentence is shown on refusal.
-fn open_agent_defaults_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
-    if !current.writable {
-        ctx.store
-            .notice
-            .set(Some("this needs an admin token".into()));
-        return;
-    }
-    let ctx2 = ctx.clone();
-    let height = 12 + 3 * current.agent_defaults.len() as i32;
-    open_form(ctx, cx, Size::new(110, height), move |mcx, close| {
-        let theme = use_theme(mcx);
-        let t0 = theme.get().tokens;
-        let form_error = mcx.signal(Option::<String>::None);
-        let in_flight = mcx.signal(false);
-        let form_id = crate::worker::next_form_id();
-        super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
-        let fields: Vec<(String, Signal<String>)> = current
-            .agent_defaults
-            .iter()
-            .map(|a| {
-                (
-                    a.interface.clone(),
-                    mcx.signal(if a.source == "stored" {
-                        a.value.clone()
-                    } else {
-                        String::new()
-                    }),
-                )
-            })
-            .collect();
-        let mut col = Element::new()
-            .focusable()
-            .autofocus()
-            .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold("Default agent workflow", t0.accent)]))
-            .child(line(vec![span(
-                "[catalog:]bundle[@version]:flow — no version = the latest published; empty = the built-in default",
-                t0.text_faint,
-            )]));
-        for (a, (_, sig)) in current.agent_defaults.iter().zip(fields.iter()) {
-            let builtin = if a.builtin.is_empty() {
-                "none".to_string()
-            } else {
-                a.builtin.clone()
-            };
-            col = col
-                .child(field(
-                    &t0,
-                    &a.interface,
-                    TextInput::new()
-                        .value(*sig)
-                        .placeholder(format!(
-                            "built-in: {builtin} · now: {}",
-                            if a.available {
-                                a.workflow_id.as_str()
-                            } else {
-                                "unavailable"
-                            }
-                        ))
-                        .layout(LayoutStyle::default().w(64).h(1))
-                        .element(mcx, &t0)
-                        .build(),
-                ))
-                .child(line(vec![span(
-                    ellipsize(
-                        &if a.eligible.is_empty() {
-                            "no workflow on this gateway declares this interface".to_string()
-                        } else {
-                            format!("choices: {}", a.eligible.join(" · "))
-                        },
-                        106,
-                    ),
-                    t0.text_faint,
-                )]));
-            if !a.available {
-                col = col.child(line(vec![span(
-                    ellipsize(&format!("⚠ {}", a.reason), 106),
-                    t0.warn,
-                )]));
-            }
-        }
-        let ctx_save = ctx2.clone();
-        let close_cancel = close.clone();
-        let agents_now = current.agent_defaults.clone();
-        col.child(super::message_slot(theme, form_error, in_flight))
-            .child(
-                Element::new()
-                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                    .child(
-                        Button::new("Save")
-                            .on_click(move || {
-                                if in_flight.get_untracked() {
-                                    return;
-                                }
-                                let typed: Vec<(String, String)> = fields
-                                    .iter()
-                                    .map(|(n, sig)| (n.clone(), sig.get_untracked()))
-                                    .collect();
-                                let body = agent_defaults_body(&agents_now, &typed);
-                                if body.as_object().map(|m| m.is_empty()).unwrap_or(true) {
-                                    form_error.set(Some("nothing changed".into()));
-                                    return;
-                                }
-                                form_error.set(None);
-                                in_flight.set(true);
-                                ctx_save.send(Cmd::SaveRuntimeConfig {
-                                    body: body.into(),
-                                    form_id: Some(form_id),
-                                });
-                            })
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .child(
-                        Button::new("Cancel (Esc)")
-                            .on_click(move || close_cancel())
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .build(),
-            )
-            .build()
-    });
-}
-
 /// The body the skills shelf form sends: `{"skills.shelf": text}` when it
 /// differs from the SAVED value ("" = back to the gateway's own copy); `{}`
 /// when nothing changed.
@@ -1902,241 +2533,6 @@ pub fn skills_shelf_body(current: &crate::store::SkillsShelf, typed: &str) -> Va
         return Value::Object(serde_json::Map::new());
     }
     serde_json::json!({ "skills.shelf": now })
-}
-
-fn open_skills_shelf_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
-    if !current.writable {
-        ctx.store
-            .notice
-            .set(Some("this needs an admin token".into()));
-        return;
-    }
-    let Some(shelf) = current.skills_shelf.clone() else {
-        return;
-    };
-    let ctx2 = ctx.clone();
-    open_form(ctx, cx, Size::new(110, 14), move |mcx, close| {
-        let theme = use_theme(mcx);
-        let t0 = theme.get().tokens;
-        let form_error = mcx.signal(Option::<String>::None);
-        let in_flight = mcx.signal(false);
-        let form_id = crate::worker::next_form_id();
-        super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
-        let sig = mcx.signal(if shelf.source == "stored" {
-            shelf.value.clone()
-        } else {
-            String::new()
-        });
-        let ctx_save = ctx2.clone();
-        let close_cancel = close.clone();
-        let shelf_now = shelf.clone();
-        Element::new()
-            .focusable()
-            .autofocus()
-            .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold("Skills shelf", t0.accent)]))
-            .child(line(vec![span(
-                "a folder holding skills/<name>/SKILL.md; empty = the gateway's own copy of the curated shelf",
-                t0.text_faint,
-            )]))
-            .child(field(
-                &t0,
-                "folder",
-                TextInput::new()
-                    .value(sig)
-                    .placeholder(format!("{} (now: {} · {})", shelf.default_path, if shelf.available { shelf.resolved.as_str() } else { "unavailable" }, shelf.source))
-                    .layout(LayoutStyle::default().w(80).h(1))
-                    .element(mcx, &t0)
-                    .build(),
-            ))
-            .child(super::message_slot(theme, form_error, in_flight))
-            .child(
-                Element::new()
-                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                    .child(
-                        Button::new("Save")
-                            .on_click(move || {
-                                if in_flight.get_untracked() {
-                                    return;
-                                }
-                                let body = skills_shelf_body(&shelf_now, &sig.get_untracked());
-                                if body.as_object().map(|m| m.is_empty()).unwrap_or(true) {
-                                    form_error.set(Some("nothing changed".into()));
-                                    return;
-                                }
-                                form_error.set(None);
-                                in_flight.set(true);
-                                ctx_save.send(Cmd::SaveRuntimeConfig {
-                                    body: body.into(),
-                                    form_id: Some(form_id),
-                                });
-                            })
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .child(
-                        Button::new("Cancel (Esc)")
-                            .on_click(move || close_cancel())
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .build(),
-            )
-            .build()
-    });
-}
-
-/// Browser-apps settings form (mission Z): one line per `apps.*` setting,
-/// prefilled with the STORED value only (a resolved env/default value
-/// written back would silently become a stored one); the gateway
-/// validates and its sentence is shown on refusal.
-pub(crate) fn open_apps_settings_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
-    if !current.writable {
-        ctx.store
-            .notice
-            .set(Some("this needs an admin token".into()));
-        return;
-    }
-    let ctx2 = ctx.clone();
-    open_form(
-        ctx,
-        cx,
-        Size::new(
-            96,
-            11 + current
-                .apps
-                .iter()
-                .map(|a| 1 + super::util::wrap_text(&a.help, 92).len().max(1) as i32)
-                .sum::<i32>(),
-        ),
-        move |mcx, close| {
-            let theme = use_theme(mcx);
-            let t0 = theme.get().tokens;
-            let form_error = mcx.signal(Option::<String>::None);
-            let in_flight = mcx.signal(false);
-            let form_id = crate::worker::next_form_id();
-            super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
-            let fields: Vec<(String, Signal<String>)> = current
-                .apps
-                .iter()
-                .map(|a| {
-                    (
-                        a.name.clone(),
-                        mcx.signal(if a.source == "stored" {
-                            a.value.clone()
-                        } else {
-                            String::new()
-                        }),
-                    )
-                })
-                .collect();
-            let mut col = Element::new()
-            .focusable()
-            .autofocus()
-            .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold("Browser apps settings", t0.accent)]))
-            .children(
-                super::util::wrap_text(
-                    "Empty = the default (or the value this gateway's environment gives). Applies at the next app start or download.",
-                    92,
-                )
-                .into_iter()
-                .map(|l| line(vec![span(l, t0.text_faint)]))
-                .collect::<Vec<_>>(),
-            );
-            for (a, (_, sig)) in current.apps.iter().zip(fields.iter()) {
-                col = col.child(field(
-                    &t0,
-                    &a.label,
-                    TextInput::new()
-                        .value(*sig)
-                        .placeholder(format!(
-                            "{} (now: {} · {})",
-                            a.placeholder,
-                            if a.value.is_empty() {
-                                "—"
-                            } else {
-                                a.value.as_str()
-                            },
-                            a.source
-                        ))
-                        .layout(LayoutStyle::default().w(60).h(1))
-                        .element(mcx, &t0)
-                        .build(),
-                ));
-                // The whole help sentence, wrapped (never cut).
-                for l in super::util::wrap_text(&a.help, 92) {
-                    col = col.child(line(vec![span(l, t0.text_faint)]));
-                }
-            }
-            let ctx_save = ctx2.clone();
-            let close_cancel = close.clone();
-            let apps_now = current.apps.clone();
-            col.child(super::message_slot(theme, form_error, in_flight))
-                .child(
-                    Element::new()
-                        .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                        .child(
-                            Button::new("Save")
-                                .on_click(move || {
-                                    if in_flight.get_untracked() {
-                                        return;
-                                    }
-                                    let typed: Vec<(String, String)> = fields
-                                        .iter()
-                                        .map(|(n, sig)| (n.clone(), sig.get_untracked()))
-                                        .collect();
-                                    let body = apps_settings_body(&apps_now, &typed);
-                                    if body.as_object().map(|m| m.is_empty()).unwrap_or(true) {
-                                        form_error.set(Some("nothing changed".into()));
-                                        return;
-                                    }
-                                    form_error.set(None);
-                                    in_flight.set(true);
-                                    ctx_save.send(Cmd::SaveRuntimeConfig {
-                                        body: body.into(),
-                                        form_id: Some(form_id),
-                                    });
-                                })
-                                .element(mcx, &t0)
-                                .build(),
-                        )
-                        .child(
-                            Button::new("Cancel (Esc)")
-                                .on_click(move || close_cancel())
-                                .element(mcx, &t0)
-                                .build(),
-                        )
-                        .build(),
-                )
-                .build()
-        },
-    );
-}
-
-/// `w` on the highlighted inventory row (the web's Workspace cell, round
-/// 11): the default plane opens "Eligible workspaces"; a user or entity
-/// plane with ONE owner opens that owner's workspaces; anything else has
-/// none (the cell reads "None").
-fn open_user_policy_for_selected(cx: Scope, ctx: &Ctx) {
-    let idx = ctx.ui.runtime_sel.get_untracked();
-    let row = ctx
-        .store
-        .runtimes
-        .with_untracked(|d| d.ready().and_then(|rows| rows.get(idx).cloned()));
-    let Some(row) = row else {
-        ctx.store
-            .notice
-            .set(Some("no runtime selected — no workspaces to show".into()));
-        return;
-    };
-    match workspace_target(&row, &ctx.store) {
-        Some(target) => super::workspace_chooser::open(cx, ctx, target),
-        None => ctx.store.notice.set(Some(format!(
-            "{}: no workspaces here (only the default plane and a one-owner user or entity plane have them)",
-            row.runtime_id
-        ))),
-    }
 }
 
 /// The Workspaces target of an inventory row (the web's Workspace cell):
@@ -2174,333 +2570,6 @@ pub fn workspace_target(
     }
 }
 
-/// The inventory's Workspaces cell (the web's link text).
-pub fn workspace_cell(row: &crate::store::RuntimeRow) -> &'static str {
-    match row.kind.as_str() {
-        "default" => "w: Eligible workspaces",
-        "user" | "entity" if row.owners.len() == 1 => "w: Workspaces",
-        _ => "None",
-    }
-}
-
-/// The Sessions tab: the chosen plane's top-level runs (spinner while
-/// the per-plane load runs; entity planes explain why empty is normal).
-/// `cx` is the PAGE scope — the steer modal opens on it so a runs
-/// reload landing mid-form cannot dispose the form's signals.
-/// The inventory table's height: header + rows, at least 2 and at most
-/// 40% of the terminal's height.
-pub fn inventory_rows(n: usize, term_h: i32) -> i32 {
-    let want = n as i32 + 1;
-    want.clamp(2, (term_h * 2 / 5).max(2))
-}
-
-/// The Runs tab's page-scoped state (survives the panel's re-renders).
-#[derive(Clone, Copy)]
-struct RunsPanelState {
-    root_only: Signal<bool>,
-    expanded: Signal<Option<usize>>,
-    confirm: super::kit::InlineConfirm,
-}
-
-/// The web Runs table's empty sentence (`loadRuns`), or the read-only
-/// plane's (`No runs on this runtime yet.`).
-pub fn runs_empty_text(scope: &RunScope, status: &str, query: &str) -> String {
-    if let RunScope::Plane { kind, .. } = scope {
-        // The web's read-only plane sentence; an ENTITY plane also says
-        // why empty is normal (operator 2026-07-26).
-        return if kind == "entity" {
-            "No runs on this runtime yet. Entity chats and life days don't create runtime runs; durable visits and summoned workflows land here.".to_string()
-        } else {
-            "No runs on this runtime yet.".to_string()
-        };
-    }
-    match (status.is_empty(), query.is_empty()) {
-        (_, false) if !status.is_empty() => format!("No {status} runs match \"{query}\"."),
-        (_, false) => format!("No runs match \"{query}\"."),
-        (false, true) => format!("No {status} runs."),
-        (true, true) => "No runs yet.".to_string(),
-    }
-}
-
-/// The web Inspect modal's rows for one run (`inspectRun`), in its
-/// labels; empty values are left out.
-pub fn run_detail_rows(r: &RunRow) -> Vec<(&'static str, String)> {
-    [
-        ("Run", r.run_id.clone()),
-        ("Workflow", r.workflow_id.clone()),
-        ("Status", r.status.clone()),
-        ("Node", r.current_node.clone()),
-        ("Session", r.session_id.clone()),
-        ("Actor", r.actor_id.clone()),
-        ("Waiting", r.waiting.clone()),
-        ("Error", r.error.clone()),
-        ("Created", r.created_at.chars().take(19).collect()),
-        ("Updated", r.updated_at.chars().take(19).collect()),
-        ("Parent", r.parent_run_id.clone().unwrap_or_default()),
-    ]
-    .into_iter()
-    .filter(|(_, v)| !v.is_empty())
-    .collect()
-}
-
-fn sessions_panel(
-    cx: Scope,
-    ctx: &Ctx,
-    t: &TokenSet,
-    row: &RuntimeRow,
-    st: RunsPanelState,
-) -> View {
-    let store = ctx.store;
-    let ui = ctx.ui;
-    let ctx_bar = ctx.clone();
-    let tt = *t;
-    let scope = RunScope::of_runtime(row);
-    let scope_hint = scope.actionable();
-    Element::new()
-        .style(LayoutStyle::column().gap(0))
-        .child(dyn_view_scoped(
-            LayoutStyle::line(1).shrink(0.0),
-            move |bcx| {
-                let _ = bcx;
-                if !toolbar_fits(cx) {
-                    return line(vec![]);
-                }
-                let opts: Vec<(String, String)> = [
-                    ("", "all statuses"),
-                    ("running", "running"),
-                    ("waiting", "waiting"),
-                    ("completed", "completed"),
-                    ("failed", "failed"),
-                    ("cancelled", "cancelled"),
-                ]
-                .iter()
-                .map(|(v, l)| ((*v).to_string(), (*l).to_string()))
-                .collect();
-                toolbar_row(
-                    cx,
-                    &ctx_bar,
-                    &tt,
-                    opts,
-                    ui.rt_runs_status,
-                    ui.rt_runs_query,
-                    "search runs — run id, workflow, session · *glob* (Enter)",
-                    move || ui.rt_runs_offset.set(0),
-                )
-            },
-        ))
-        .child(dyn_view(
-            LayoutStyle::column().gap(0).shrink(0.0),
-            move || {
-                // State line (also the WHOLE toolbar on short terminals — the
-                // documented 0240 starvation class): filter + query + page
-                // position + the gestures that change them.
-                // Hidden while the Cancel confirm holds the panel.
-                if st.confirm.pending.with(Option::is_some) {
-                    return Element::new().style(LayoutStyle::default().h(0)).build();
-                }
-                let text = match store.runs.get() {
-                    Loadable::Loading => "loading this runtime's runs…".to_string(),
-                    Loadable::Ready(d) => {
-                        let mut bits: Vec<String> = Vec::new();
-                        bits.push(format!("showing: {}", d.scope.describe()));
-                        if d.scope.actionable() {
-                            bits.push(format!(
-                                "{} (t)",
-                                super::switch::switch_text(
-                                    "Root runs only",
-                                    st.root_only.get(),
-                                    None,
-                                    false
-                                )
-                            ));
-                        } else if !d.root_only {
-                            bits.push("incl. children (plane view)".to_string());
-                        }
-                        if !d.status.is_empty() {
-                            bits.push(format!("status={}", d.status));
-                        }
-                        if !d.query.is_empty() {
-                            bits.push(query_bit(&d.query));
-                        }
-                        bits.push(page_label(d.offset, d.rows.len(), d.has_more, None));
-                        if !scope_hint {
-                            bits.push("read-only plane".to_string());
-                        }
-                        bits.join(" · ")
-                    }
-                    _ => String::new(),
-                };
-                // Wrapped: the switch and the page position never fall off the edge.
-                let w = (crate::ui::page_viewport(cx).get_untracked().w - widths::BLOCK_CHROME - 2)
-                    .max(20) as usize;
-                Element::new()
-                    .style(LayoutStyle::column().gap(0).shrink(0.0))
-                    .children(
-                        super::util::wrap_text(&text, w)
-                            .into_iter()
-                            .map(|l| line(vec![span(l, tt.text_faint)]))
-                            .collect::<Vec<_>>(),
-                    )
-                    .build()
-            },
-        ))
-        .child(dyn_view_scoped(
-            LayoutStyle::default().grow(1.0).min_h(1),
-            move |gcx| {
-                let data = store.runs.get();
-                // The web's empty sentences (filters named; the read-only
-                // plane's own sentence).
-                let empty = match &data {
-                    Loadable::Ready(d) => runs_empty_text(&d.scope, &d.status, &d.query),
-                    _ => "No runs yet.".to_string(),
-                };
-                let w = crate::ui::page_viewport(gcx).get().w - widths::BLOCK_CHROME - 2;
-                let body: View = loadable_view(
-                    &tt,
-                    &store.conn.get(),
-                    || store.tick.get(),
-                    &data,
-                    |d: &RunsData| d.rows.is_empty(),
-                    &empty,
-                    |d| runs_table(gcx, &tt, &d.rows, ui.run_sel, st.expanded),
-                );
-                // While the Cancel confirm is open it takes the table's
-                // place (it names the run): the panel never overflows.
-                if st.confirm.pending.with(Option::is_some) {
-                    return st.confirm.view(&tt, w);
-                }
-                body
-            },
-        ))
-        .build()
-}
-
-/// The Data & cache tab: the chosen plane's on-disk facts plus the
-/// registered data-home stores attributed to it (longest data_dir
-/// prefix — see `home_plane_index`). The default plane additionally
-/// lists SHARED stores (outside every plane: ~/.abstractcore caches),
-/// since the default plane is the gateway process's own home. Purge
-/// stays here (dry-run gated, worker-enforced).
-/// `cx` is the PAGE scope (the purge confirm opens on it — same
-/// survival rule as the steer modal); the home_sel clamp is installed
-/// once in `view`, never here (per-tab-entry effects accumulate).
-/// The Artifacts tab: deliverables metadata — images, video, audio, text
-/// runs produced (operator 2026-08-19: never conflated with caches). One
-/// gateway-wide index, most recent first; a terminal LISTS — opening the
-/// bytes is the web console's Artifacts tab.
-fn artifacts_panel(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
-    let store = ctx.store;
-    let ui = ctx.ui;
-    let tt = *t;
-    let ctx_open = ctx.clone();
-    let ctx_bar = ctx.clone();
-    Element::new()
-        .style(LayoutStyle::column().gap(0))
-        .child(dyn_view_scoped(LayoutStyle::line(1).shrink(0.0), move |bcx| {
-            let _ = bcx;
-            if !toolbar_fits(cx) {
-                return line(vec![]);
-            }
-            let opts: Vec<(String, String)> = ARTIFACT_TYPES
-                .iter()
-                .map(|(v, l)| ((*v).to_string(), (*l).to_string()))
-                .collect();
-            toolbar_row(
-                cx,
-                &ctx_bar,
-                &tt,
-                opts,
-                ui.rt_art_modality,
-                ui.rt_art_query,
-                "search artifacts — name, kind, tags, 2026-06-13, *.jpg (Enter)",
-                move || ui.rt_art_offset.set(0),
-            )
-        }))
-        .child(dyn_view_scoped(
-            LayoutStyle::default().grow(1.0).min_h(1),
-            move |gcx| {
-                let data = store.artifacts.get();
-                let ctx_row = ctx_open.clone();
-                loadable_view(
-                    &tt,
-                    &store.conn.get(),
-                    || store.tick.get(),
-                    &data,
-                    |d: &crate::store::ArtifactsData| d.rows.is_empty(),
-                    "no artifacts match — runs that produce files, images, audio, or video list them here",
-                    |d| {
-                        let rows_for_open = d.rows.clone();
-                        // The web Artifacts table's columns, as wrapping
-                        // rows (R7.2: an id or a workflow is never cut).
-                        let body: Vec<super::kit::Row> = d
-                            .rows
-                            .iter()
-                            .map(|a| {
-                                super::kit::Row::new(vec![
-                                    a.name.clone(),
-                                    a.kind.clone(),
-                                    a.size_bytes.map(human_bytes).unwrap_or_else(|| "—".into()),
-                                    if a.workflow_id.is_empty() { "—".into() } else { a.workflow_id.clone() },
-                                    if a.run_id.is_empty() { "—".into() } else { a.run_id.clone() },
-                                    a.created_at.replace('T', " ").chars().take(19).collect(),
-                                ])
-                            })
-                            .collect();
-                        let rules = vec![
-                            widths::ColRule::tail("Artifact", 12),
-                            widths::ColRule::head("Type", 4),
-                            widths::ColRule::head("Size", 8),
-                            widths::ColRule::tail("Workflow", 10),
-                            widths::ColRule::tail("Run", 8),
-                            widths::ColRule::head("Created", 19),
-                        ];
-                        // Enter opens the artifact (never on mere highlight:
-                        // a preview per arrow key would fetch bytes).
-                        super::kit::WrapTable::new(rules, body, ui.rt_art_sel)
-                            .on_activate(move |idx| {
-                                if let Some(a) = rows_for_open.get(idx) {
-                                    open_artifact_detail(cx, &ctx_row, a.clone());
-                                }
-                            })
-                            .layout(LayoutStyle::default().grow(1.0).min_h(2))
-                            .element(gcx, &tt)
-                            .build()
-                    },
-                )
-            },
-        ))
-        .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
-            let text = match store.artifacts.get() {
-                Loadable::Loading => "loading artifacts…".to_string(),
-                Loadable::Ready(d) => {
-                    let mut bits: Vec<String> = Vec::new();
-                    if !d.modality.is_empty() {
-                        bits.push(format!("type={}", modality_label(&d.modality)));
-                    }
-                    if !d.query.is_empty() {
-                        bits.push(query_bit(&d.query));
-                    }
-                    bits.push(page_label(d.offset, d.rows.len(), d.has_more, Some(d.total)));
-                    format!("{} · Enter opens", bits.join(" · "))
-                }
-                _ => String::new(),
-            };
-            line(vec![span(text, tt.text_faint)])
-        }))
-        .build()
-}
-
-/// The `q="…"` bit of a tab's note line. A glob SAYS so: `*.jpg` and
-/// `photo.jpg` are read by different halves of the query language, and a
-/// zero-row answer is only diagnosable if the note names the half.
-fn query_bit(query: &str) -> String {
-    if Needle::new(query).is_glob() {
-        format!("q=\"{query}\" (glob)")
-    } else {
-        format!("q=\"{query}\"")
-    }
-}
-
 /// The type filter's options — the SAME comma modality lists the web
 /// console sends (bare `audio` misses voice/music on the server's fast
 /// path; a comma list forces the expanding post-filter).
@@ -2521,282 +2590,6 @@ fn modality_label(value: &str) -> String {
         .unwrap_or_else(|| value.to_string())
 }
 
-/// One artifact's detail: metadata always, a TEXT preview when the kind
-/// and size allow it. A terminal cannot render image/video/audio — that
-/// is said plainly instead of pretending (web-console parity means the
-/// same FACTS, not the same pixels).
-fn open_artifact_detail(cx: Scope, ctx: &Ctx, a: crate::store::ArtifactRow) {
-    let ctx2 = ctx.clone();
-    // A previous preview must never paint under this artifact's header.
-    // Clearing the slots is not enough on its own: the worker is one
-    // serial lane, so a result for the artifact opened a moment ago
-    // arrives AFTER this open and lands in the same slot. Stamping the
-    // target is what lets the worker drop it.
-    ctx.store.artifact_text.set(None);
-    ctx.store.artifact_image.set(None);
-    ctx.store
-        .preview_target
-        .set(crate::store::artifact_preview_key(
-            &a.run_id,
-            &a.artifact_id,
-        ));
-    let store_img = ctx.store;
-    // Two thirds of the terminal, not a fixed 96x26 — see `preview_size`.
-    // The image mosaic and the text window both scale with the space;
-    // the metadata header does not.
-    let size = super::preview_size(cx);
-    open_form(ctx, cx, size, move |mcx, close| {
-        let theme = use_theme(mcx);
-        let t0 = theme.get().tokens;
-        let preview = mcx.signal(String::new());
-        let art_top = mcx.signal(0i32);
-        let close_btn = close.clone();
-        // Text-ish kinds fetch a capped window; everything else states why not.
-        {
-            let a2 = a.clone();
-            let ctx_fetch = ctx2.clone();
-            mcx.effect(move || {
-                if !preview.get_untracked().is_empty() {
-                    return;
-                }
-                let textish = matches!(
-                    a2.kind.as_str(),
-                    "text" | "markdown" | "json" | "code" | "html"
-                );
-                let msg = if a2.run_id.is_empty() || a2.artifact_id.is_empty() {
-                    "no run-scoped content route for this artifact (no run id) — metadata only".to_string()
-                } else if a2.kind == "image" {
-                    // abstracttui decodes PNG/JPEG and renders bitmaps as
-                    // cell mosaics (pixel protocols where the terminal
-                    // supports them) — so images preview HERE.
-                    preview.set("decoding image…".to_string());
-                    ctx_fetch.send(Cmd::LoadArtifactImage {
-                        run_id: a2.run_id.clone(),
-                        artifact_id: a2.artifact_id.clone(),
-                    });
-                    return;
-                } else if !textish {
-                    format!(
-                        "{} artifacts do not render in a terminal — open this one in the web console's Artifacts tab",
-                        a2.kind
-                    )
-                } else if a2.size_bytes.unwrap_or(0) > 256 * 1024 {
-                    format!(
-                        "too large for a terminal preview ({}) — open it in the web console",
-                        a2.size_bytes.map(human_bytes).unwrap_or_default()
-                    )
-                } else {
-                    preview.set("loading preview…".to_string());
-                    ctx_fetch.send(Cmd::LoadArtifactText {
-                        run_id: a2.run_id.clone(),
-                        artifact_id: a2.artifact_id.clone(),
-                    });
-                    return;
-                };
-                preview.set(msg);
-            });
-        }
-        // The worker publishes the fetched text into the store slot.
-        {
-            let store = ctx2.store;
-            mcx.effect(move || {
-                if let Some(text) = store.artifact_text.get() {
-                    preview.set(text);
-                }
-            });
-        }
-        Element::new()
-            .focusable()
-            .autofocus()
-            .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold(a.name.clone(), t0.accent)]))
-            .child(line(vec![span(
-                format!(
-                    "{} · {} · {} · {}",
-                    a.kind,
-                    if a.content_type.is_empty() {
-                        "—"
-                    } else {
-                        &a.content_type
-                    },
-                    a.size_bytes.map(human_bytes).unwrap_or_else(|| "—".into()),
-                    a.created_at
-                        .replace('T', " ")
-                        .chars()
-                        .take(19)
-                        .collect::<String>()
-                ),
-                t0.text_faint,
-            )]))
-            .child(line(vec![span(
-                format!(
-                    "workflow: {} · run: {} · session: {}",
-                    if a.workflow_id.is_empty() {
-                        "—"
-                    } else {
-                        &a.workflow_id
-                    },
-                    if a.run_id.is_empty() {
-                        "—"
-                    } else {
-                        &a.run_id
-                    },
-                    if a.session_id.is_empty() {
-                        "—"
-                    } else {
-                        &a.session_id
-                    },
-                ),
-                t0.text_muted,
-            )]))
-            .child(line(vec![
-                span("path: ", t0.text_muted),
-                span(
-                    if a.content_path.is_empty() {
-                        "— (served to admins only)".to_string()
-                    } else {
-                        a.content_path.clone()
-                    },
-                    t0.text,
-                ),
-            ]))
-            .child(dyn_view_scoped(
-                LayoutStyle::default().grow(1.0).min_h(3),
-                move |pcx| {
-                    if let Some(bmp) = store_img.artifact_image.get() {
-                        return Image::from_bitmap(bmp)
-                            .fit(abstracttui::widgets::ImageFit::Contain)
-                            .layout(LayoutStyle::default().grow(1.0))
-                            .view(pcx);
-                    }
-                    scroll_text_view(pcx, &t0, preview.get(), art_top, None)
-                },
-            ))
-            .child(
-                Button::new("Close (Esc)")
-                    .on_click(move || close_btn())
-                    .element(mcx, &t0)
-                    .build(),
-            )
-            .build()
-    });
-}
-
-/// The Logs tab: the FILES of this gateway's registered log homes
-/// (web-console parity — stale/missing homes are hygiene and live on the
-/// Cache tab, never here). Enter tails one file in a modal.
-fn logs_panel(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
-    let store = ctx.store;
-    let ui = ctx.ui;
-    let tt = *t;
-    let ctx_open = ctx.clone();
-    let ctx_bar = ctx.clone();
-    Element::new()
-        .style(LayoutStyle::column().gap(0))
-        .child(dyn_view_scoped(
-            LayoutStyle::line(1).shrink(0.0),
-            move |bcx| {
-                let _ = bcx;
-                if !toolbar_fits(cx) {
-                    return line(vec![]);
-                }
-                let mut homes: Vec<String> = store
-                    .logs
-                    .get()
-                    .ready()
-                    .map(|rows| rows.iter().map(|f| f.home.clone()).collect())
-                    .unwrap_or_default();
-                homes.sort();
-                homes.dedup();
-                let mut opts: Vec<(String, String)> =
-                    vec![(String::new(), "all log homes".to_string())];
-                opts.extend(homes.into_iter().map(|h| (h.clone(), h)));
-                toolbar_row(
-                    cx,
-                    &ctx_bar,
-                    &tt,
-                    opts,
-                    ui.rt_logs_home,
-                    ui.rt_logs_query,
-                    "search log files — file name, e.g. *.log (Enter)",
-                    move || ui.rt_logs_sel.set(0),
-                )
-            },
-        ))
-        .child(dyn_view_scoped(
-            LayoutStyle::default().grow(1.0).min_h(1),
-            move |gcx| {
-                let data = store.logs.get();
-                let home_f = ui.rt_logs_home.get();
-                let query_f = ui.rt_logs_query.get();
-                let ctx_row = ctx_open.clone();
-                loadable_view(
-                    &tt,
-                    &store.conn.get(),
-                    || store.tick.get(),
-                    &data,
-                    |rows: &Vec<crate::store::LogFileRow>| {
-                        filter_log_files(rows, &home_f, &query_f).is_empty()
-                    },
-                    "no log files match — serving logs live on the gateway default plane",
-                    |rows| {
-                        let shown = filter_log_files(rows, &home_f, &query_f);
-                        let for_open = shown.clone();
-                        // The web Logs table's columns, wrapping.
-                        let body: Vec<super::kit::Row> = shown
-                            .iter()
-                            .map(|f| {
-                                super::kit::Row::new(vec![
-                                    f.name.clone(),
-                                    f.home.clone(),
-                                    f.size_bytes.map(human_bytes).unwrap_or_else(|| "—".into()),
-                                    f.modified_at.replace('T', " ").chars().take(19).collect(),
-                                ])
-                            })
-                            .collect();
-                        let rules = vec![
-                            widths::ColRule::tail("File", 12),
-                            widths::ColRule::tail("Log home", 10),
-                            widths::ColRule::head("Size", 8),
-                            widths::ColRule::head("Modified", 19),
-                        ];
-                        super::kit::WrapTable::new(rules, body, ui.rt_logs_sel)
-                            .on_activate(move |idx| {
-                                if let Some(f) = for_open.get(idx) {
-                                    open_log_tail(cx, &ctx_row, f.home.clone(), f.name.clone());
-                                }
-                            })
-                            .layout(LayoutStyle::default().grow(1.0).min_h(2))
-                            .element(gcx, &tt)
-                            .build()
-                    },
-                )
-            },
-        ))
-        .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
-            let text = match store.logs.get() {
-                Loadable::Loading => "listing log files…".to_string(),
-                Loadable::Ready(rows) => {
-                    let home_f = ui.rt_logs_home.get();
-                    let query_f = ui.rt_logs_query.get();
-                    let shown = filter_log_files(&rows, &home_f, &query_f);
-                    let mut bits: Vec<String> = Vec::new();
-                    if !home_f.is_empty() {
-                        bits.push(format!("home={home_f}"));
-                    }
-                    if !query_f.is_empty() {
-                        bits.push(query_bit(&query_f));
-                    }
-                    bits.push(format!("{} of {} files", shown.len(), rows.len()));
-                    format!("{} · Enter tails", bits.join(" · "))
-                }
-                _ => String::new(),
-            };
-            line(vec![span(text, tt.text_faint)])
-        }))
-        .build()
-}
-
 /// `query` is what the user TYPED — folding and wildcard classification
 /// belong to [`Needle`], which does both once per call rather than once
 /// per row.
@@ -2811,228 +2604,6 @@ fn filter_log_files(
         .filter(|f| needle.matches(&f.name))
         .cloned()
         .collect()
-}
-
-/// Tail ONE log file in a modal. Terminal windows are deliberately small
-/// (64/256 KB): the payload is JSON-parsed, cloned into the store, then
-/// split into lines by the viewer — the web console reads the big ones.
-fn open_log_tail(cx: Scope, ctx: &Ctx, home: String, file: String) {
-    let ctx2 = ctx.clone();
-    ctx.store.log_text.set(None);
-    ctx.store
-        .preview_target
-        .set(crate::store::log_preview_key(&home, &file));
-    ctx.send(Cmd::LoadLogText {
-        home: home.clone(),
-        file: file.clone(),
-        max_bytes: 64 * 1024,
-    });
-    // Log lines are long and logs are tall: this one earns its share of
-    // the terminal more than any other panel in the app.
-    let size = super::preview_size(cx);
-    open_form(ctx, cx, size, move |mcx, close| {
-        let theme = use_theme(mcx);
-        let t0 = theme.get().tokens;
-        let store = ctx2.store;
-        let log_top = mcx.signal(0i32);
-        let big = mcx.signal(false);
-        let close_btn = close.clone();
-        let ctx_more = ctx2.clone();
-        let home_more = home.clone();
-        let file_more = file.clone();
-        Element::new()
-            .focusable()
-            .autofocus()
-            .style(LayoutStyle::column().gap(0))
-            .child(line(vec![
-                span_bold(file.clone(), t0.accent),
-                span(format!("  from {home}"), t0.text_faint),
-            ]))
-            .child(dyn_view_scoped(
-                LayoutStyle::default().grow(1.0).min_h(3),
-                move |pcx| {
-                    let text = store
-                        .log_text
-                        .get()
-                        .unwrap_or_else(|| "reading tail…".to_string());
-                    scroll_text_view(pcx, &t0, text, log_top, None)
-                },
-            ))
-            .child(
-                Element::new()
-                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                    .child(
-                        Button::new("Read 256 KB")
-                            .on_click(move || {
-                                if big.get_untracked() {
-                                    return;
-                                }
-                                big.set(true);
-                                ctx_more.store.log_text.set(None);
-                                ctx_more.send(Cmd::LoadLogText {
-                                    home: home_more.clone(),
-                                    file: file_more.clone(),
-                                    max_bytes: 256 * 1024,
-                                });
-                            })
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .child(
-                        Button::new("Close (Esc)")
-                            .on_click(move || close_btn())
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .build(),
-            )
-            .build()
-    });
-}
-
-fn data_panel(cx: Scope, ctx: &Ctx, t: &TokenSet, row: &RuntimeRow) -> View {
-    let ctx_bar = ctx.clone();
-    let store = ctx.store;
-    let ui = ctx.ui;
-    let tt = *t;
-    let row_facts = row.clone();
-    let row_tbl = row.clone();
-    let row_purge = row.clone();
-    let ctx_purge = ctx.clone();
-
-    let size = match row.size_bytes {
-        Some(n) if row.size_note.is_some() => format!("≥ {}", human_bytes(n)),
-        Some(n) => human_bytes(n),
-        None => "—".into(),
-    };
-    // An unmaterialized plane (a binding never used) serves
-    // data_dir: null — an honest dash, never a blank after the label.
-    let dir_text = if row_facts.data_dir.is_empty() {
-        "— (no data dir yet: this plane has never materialized)".to_string()
-    } else {
-        ellipsize(&row_facts.data_dir, 64)
-    };
-    Element::new()
-        .style(LayoutStyle::column().gap(0))
-        .child(line(vec![
-            span("data dir: ", tt.text_muted),
-            span(dir_text, tt.text),
-            span(format!("  ·  size on disk: {size}"), tt.text_muted),
-        ]))
-        .child(dyn_view_scoped(
-            LayoutStyle::line(1).shrink(0.0),
-            move |bcx| {
-                let _ = bcx;
-                if !toolbar_fits(cx) {
-                    return line(vec![]);
-                }
-                let mut kinds: Vec<String> = store
-                    .data_homes
-                    .get()
-                    .ready()
-                    .map(|rows| {
-                        rows.iter()
-                            .filter(|h| h.safe_to_purge && h.kind != "logs")
-                            .map(|h| h.kind.clone())
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                kinds.sort();
-                kinds.dedup();
-                let mut opts: Vec<(String, String)> =
-                    vec![(String::new(), "all kinds".to_string())];
-                opts.extend(kinds.into_iter().map(|k| (k.clone(), k)));
-                toolbar_row(
-                    cx,
-                    &ctx_bar,
-                    &tt,
-                    opts,
-                    ui.rt_cache_kind,
-                    ui.rt_cache_query,
-                    "search caches — name, kind, path · *glob* (Enter)",
-                    move || ui.home_sel.set(0),
-                )
-            },
-        ))
-        .child(dyn_view_scoped(
-            LayoutStyle::default().grow(1.0).min_h(3),
-            move |gcx| {
-                let data = store.data_homes.get();
-                let row_t = row_tbl.clone();
-                let kind_f = ui.rt_cache_kind.get();
-                let query_f = ui.rt_cache_query.get();
-                loadable_view(
-                    &tt,
-                    &store.conn.get(),
-                    || store.tick.get(),
-                    &data,
-                    |homes: &Vec<DataHomeRow>| {
-                        store
-                            .runtimes
-                            .with(|rt| {
-                                filter_homes(
-                                    displayed_homes(rt.ready().map_or(&[], |v| v), homes, &row_t),
-                                    &kind_f,
-                                    &query_f,
-                                )
-                            })
-                            .is_empty()
-                    },
-                    "no caches match on this plane (the plane's data dir is listed above)",
-                    |homes| {
-                        let rows = store.runtimes.with(|rt| {
-                            filter_homes(
-                                displayed_homes(rt.ready().map_or(&[], |v| v), homes, &row_t),
-                                &kind_f,
-                                &query_f,
-                            )
-                        });
-                        homes_table(gcx, &tt, &rows, ui.home_sel)
-                    },
-                )
-            },
-        ))
-        .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
-            let idx = ui.home_sel.get();
-            let desc = store.data_homes.with(|d| {
-                d.ready()
-                    .map(|homes| {
-                        store.runtimes.with(|rt| {
-                            filter_homes(
-                                displayed_homes(rt.ready().map_or(&[], |v| v), homes, &row_purge),
-                                &ui.rt_cache_kind.get(),
-                                &ui.rt_cache_query.get(),
-                            )
-                        })
-                    })
-                    .and_then(|rows| rows.get(idx).map(|(h, _)| h.description.clone()))
-                    .unwrap_or_default()
-            });
-            line(vec![span(ellipsize(&desc, 90), tt.text_faint)])
-        }))
-        .child(dyn_view_scoped(
-            LayoutStyle::default().h(1).shrink(0.0),
-            move |bcx| {
-                let ctx_p = ctx_purge.clone();
-                let row_p = ctx_p.ui.rt_detail.get_untracked();
-                Element::new()
-                    .style(LayoutStyle::row().gap(2))
-                    .child(
-                        Button::new("Purge selected…")
-                            .on_click(move || {
-                                let Some(row) = row_p.clone() else { return };
-                                // Page scope (`cx`), not this button
-                                // region's — the confirm prompt must
-                                // survive any inspector re-render.
-                                purge_selected(cx, &ctx_p, &row);
-                            })
-                            .element(bcx, &tt)
-                            .build(),
-                    )
-                    .build()
-            },
-        ))
-        .build()
 }
 
 /// The rows the Data tab displays for a plane: (home, shared) pairs —
@@ -3082,398 +2653,6 @@ fn displayed_homes(
     // Plane-owned first, shared caches after — stable within groups.
     out.sort_by_key(|(_, shared)| *shared);
     out
-}
-
-fn homes_table(cx: Scope, t: &TokenSet, rows: &[(DataHomeRow, bool)], sel: Signal<usize>) -> View {
-    // The web Cache table's columns (Cache, Kind, Size, Path, Actions) +
-    // where the store lives, as wrapping rows: the FULL path, never cut
-    // (two data homes differ in their last segment).
-    let body: Vec<super::kit::Row> = rows
-        .iter()
-        .map(|(h, shared)| {
-            super::kit::Row::new(vec![
-                h.name.clone(),
-                h.kind.clone(),
-                if !h.exists {
-                    "missing".into()
-                } else {
-                    // "…" while the sized pass is still walking (two-phase).
-                    h.size_bytes.map(human_bytes).unwrap_or_else(|| "…".into())
-                },
-                if *shared {
-                    "shared (outside planes)".into()
-                } else {
-                    "this plane".into()
-                },
-                if !h.exists {
-                    "stale row".into()
-                } else {
-                    "purgeable".into()
-                },
-                h.path.clone(),
-            ])
-        })
-        .collect();
-    let rules = vec![
-        widths::ColRule::tail("Cache", 10),
-        widths::ColRule::head("Kind", 6),
-        widths::ColRule::head("Size", 8),
-        widths::ColRule::head("Where", 10),
-        widths::ColRule::head("Actions", 9),
-        widths::ColRule::tail("Path", 16),
-    ];
-    super::kit::WrapTable::new(rules, body, sel)
-        .layout(LayoutStyle::default().grow(1.0).min_h(2))
-        .element(cx, t)
-        .build()
-}
-
-/// Purge the Data tab's selected store: same refusal ladder the old
-/// modal had (nothing selected / protected), then the dry-run-gated
-/// danger confirm.
-fn purge_selected(cx: Scope, ctx: &Ctx, row: &RuntimeRow) {
-    let idx = ctx.ui.home_sel.get_untracked();
-    let target = ctx.store.data_homes.with_untracked(|d| {
-        d.ready().and_then(|homes| {
-            ctx.store
-                .runtimes
-                .with_untracked(|rt| {
-                    filter_homes(
-                        displayed_homes(rt.ready().map_or(&[], |v| v), homes, row),
-                        &ctx.ui.rt_cache_kind.get_untracked(),
-                        &ctx.ui.rt_cache_query.get_untracked(),
-                    )
-                })
-                .get(idx)
-                .map(|(h, _)| h.clone())
-        })
-    });
-    let Some(home) = target else {
-        ctx.store.notice.set(Some("no data store selected".into()));
-        return;
-    };
-    if !home.safe_to_purge {
-        ctx.store.notice.set(Some(format!(
-            "'{}' is protected — the gateway refuses to purge it",
-            home.name
-        )));
-        return;
-    }
-    confirm_purge_home(cx, ctx, home);
-}
-
-fn table(
-    cx: Scope,
-    t: &TokenSet,
-    data: &[RuntimeRow],
-    sel: Signal<usize>,
-    keeper: &super::util::FocusKeeper,
-    on_choose: impl FnMut(usize) + Clone + 'static,
-) -> View {
-    let vw = crate::ui::page_viewport(cx).get().w;
-    let wide = vw >= 108;
-    let mut rows: Vec<Vec<String>> = data
-        .iter()
-        .map(|r| {
-            let size = match r.size_bytes {
-                // The gateway labels capped walks (#TRUNCATION … floor):
-                // an approximate size renders as a floor, never a fact.
-                Some(n) if r.size_note.is_some() => format!("≥ {}", human_bytes(n)),
-                Some(n) => human_bytes(n),
-                None => "—".into(),
-            };
-            let mut row = vec![
-                r.kind.clone(),
-                format!("{}/{}", r.tenant_id, r.runtime_id),
-                // Uncapped: `ui::widths` sizes this to the row budget.
-                r.label.clone(),
-            ];
-            if wide {
-                row.push(if r.owners.is_empty() {
-                    "—".into()
-                } else {
-                    r.owners.join(", ")
-                });
-            }
-            row.push(match (&r.state, &r.liveness) {
-                (Some(s), Some(l)) => format!("{s} ({l})"),
-                (Some(s), None) => s.clone(),
-                _ => "—".into(),
-            });
-            row.push(size);
-            // The workspace column names the key (the web's Workspace cell).
-            row.push(workspace_cell(r).to_string());
-            if wide {
-                row.push(r.note.clone().unwrap_or_else(|| "—".into()));
-            }
-            row
-        })
-        .collect();
-    // `tenant/runtime` and owner lists discriminate on their TAIL; the
-    // label and the note are prose and read from the left.
-    let mut rules = vec![
-        widths::ColRule::head("kind", 8),
-        widths::ColRule::tail("runtime", 16),
-    ];
-    rules.push(widths::ColRule::head("label", 14));
-    if wide {
-        rules.push(widths::ColRule::tail("owners", 10));
-    }
-    rules.push(widths::ColRule::head("entity state", 12));
-    rules.push(widths::ColRule::head("size", 9));
-    rules.push(widths::ColRule::head("workspaces", 15));
-    if wide {
-        rules.push(widths::ColRule::head("note", 16));
-    }
-    let cols = widths::columns(&rules, &mut rows, vw - widths::BLOCK_CHROME);
-    let el = Table::new(cols)
-        .rows(rows)
-        .selection(sel)
-        // Choosing = clicking a row (selection change) or Enter /
-        // Space / double-click on the highlighted one. BOTH gestures
-        // choose — a keyboard-only operator and a mouse operator get
-        // the same contract; nothing loads before one of them fires.
-        .on_select(on_choose.clone())
-        .on_activate(on_choose)
-        // Sized to its rows (header + one per runtime), capped at 40% of
-        // the terminal: a two-runtime gateway no longer hands the
-        // inventory half the screen of blank rows while the inspector's
-        // runs are clipped below it (R7.2, 120x40 capture).
-        .layout(LayoutStyle::default().h(inventory_rows(
-            data.len(),
-            crate::ui::page_viewport(cx).get_untracked().h,
-        )));
-    // The keeper, not a bare `.autofocus()`: a regeneration hands the
-    // keyboard back only to a table that held it (design adversary
-    // BLOCKER-1: never drag focus back from where the user moved it).
-    keeper.wire(el.element(cx, t))
-}
-
-/// The selected run + the scope its rows were loaded under (actions
-/// must gate on what is DISPLAYED, not on the runtime selection, which
-/// may already have moved while the load is in flight).
-fn selected_run(ctx: &Ctx) -> Option<(RunRow, RunScope)> {
-    let idx = ctx.ui.run_sel.get_untracked();
-    ctx.store.runs.with_untracked(|d| {
-        d.ready()
-            .and_then(|d| d.rows.get(idx).cloned().map(|r| (r, d.scope.clone())))
-    })
-}
-
-/// ONE cancel entry (key `c`). Refusals name their reason (F2), and a
-/// foreign plane refuses BEFORE the confirm: this console's durable
-/// commands land in its own principal's inbox — a cancel aimed at
-/// another plane's run would be accepted server-side and then sit
-/// unconsumed forever (the dishonest "accepted" shape).
-fn cancel_selected(cx: Scope, ctx: &Ctx, confirm: super::kit::InlineConfirm) {
-    let Some((r, scope)) = selected_run(ctx) else {
-        ctx.store
-            .notice
-            .set(Some("no run selected — nothing to cancel".into()));
-        return;
-    };
-    if !scope.actionable() {
-        ctx.store.notice.set(Some(format!(
-            "runs in {} are ticked by that plane's own runtime — cancel/steer from this console cannot reach them",
-            scope.short()
-        )));
-        return;
-    }
-    confirm_cancel(cx, ctx, r, confirm);
-}
-
-/// ONE steer entry — shared verbatim by the `s` key and the runs
-/// table's activation (Enter / Space / double-click), so the two paths
-/// can never drift.
-fn steer_selected(cx: Scope, ctx: &Ctx) {
-    let Some((r, scope)) = selected_run(ctx) else {
-        ctx.store
-            .notice
-            .set(Some("no run selected — nothing to steer".into()));
-        return;
-    };
-    if !scope.actionable() {
-        ctx.store.notice.set(Some(format!(
-            "runs in {} are ticked by that plane's own runtime — cancel/steer from this console cannot reach them",
-            scope.short()
-        )));
-        return;
-    }
-    open_steer_form(cx, ctx, r);
-}
-
-fn runs_table(
-    cx: Scope,
-    t: &TokenSet,
-    data: &[RunRow],
-    sel: Signal<usize>,
-    expanded: Signal<Option<usize>>,
-) -> View {
-    // The web Runs table's columns (Run, Workflow, Status, Node, Session,
-    // Updated); cells WRAP — a run id is never cut. Enter opens the row's
-    // Inspect rows in place; `s` steers, `c` cancels, `i` reads the run.
-    let rows: Vec<super::kit::Row> = data
-        .iter()
-        .map(|r| {
-            super::kit::Row::new(vec![
-                r.run_id.clone(),
-                r.workflow_id.clone(),
-                if r.paused {
-                    format!("{} (paused)", r.status)
-                } else {
-                    r.status.clone()
-                },
-                r.current_node.clone(),
-                r.session_id.clone(),
-                r.updated_at.chars().take(19).collect(),
-            ])
-            .detail(
-                run_detail_rows(r)
-                    .into_iter()
-                    .map(|(k, v)| format!("{k:<9}{v}"))
-                    .collect(),
-            )
-        })
-        .collect();
-    let rules = vec![
-        widths::ColRule::tail("Run", 12),
-        widths::ColRule::tail("Workflow", 12),
-        widths::ColRule::head("Status", 7),
-        widths::ColRule::head("Node", 4),
-        widths::ColRule::tail("Session", 8),
-        widths::ColRule::head("Updated", 19),
-    ];
-    super::kit::WrapTable::new(rules, rows, sel)
-        .expanded(expanded)
-        .layout(LayoutStyle::default().grow(1.0).min_h(2))
-        .element(cx, t)
-        .build()
-}
-
-fn confirm_cancel(_cx: Scope, ctx: &Ctx, r: RunRow, confirm: super::kit::InlineConfirm) {
-    // Cancel only makes sense on a live run (the web shows no Cancel on a
-    // terminal run) — refuse with the reason instead of a no-op command.
-    if matches!(r.status.as_str(), "completed" | "failed" | "cancelled") {
-        ctx.store.notice.set(Some(format!(
-            "run {} is already {} — nothing to cancel",
-            r.run_id, r.status
-        )));
-        return;
-    }
-    let ctx2 = ctx.clone();
-    // The web's confirm, word for word (`cancelRun`), in place.
-    confirm.ask(
-        format!(
-            "Cancel run {}? Any in-flight work stops at the next tick.",
-            r.run_id
-        ),
-        "Cancel run",
-        move || {
-            ctx2.send(Cmd::CancelRun {
-                run_id: r.run_id.clone(),
-            })
-        },
-    );
-}
-
-/// Steer: inject guidance into a live run (folds at its next loop
-/// boundary). One small form — the guidance text is the whole payload.
-fn open_steer_form(cx: Scope, ctx: &Ctx, r: RunRow) {
-    if !matches!(r.status.as_str(), "running" | "waiting") {
-        ctx.store.notice.set(Some(format!(
-            "run {} is {} — only live runs can be steered",
-            r.run_id.chars().take(8).collect::<String>(),
-            r.status
-        )));
-        return;
-    }
-    let ctx2 = ctx.clone();
-    open_form(ctx, cx, Size::new(74, 14), move |mcx, close| {
-        let theme = use_theme(mcx);
-        let t0 = theme.get().tokens;
-        let guidance = mcx.signal(String::new());
-        let rid = r.run_id.clone();
-        let rid_short: String = rid.chars().take(12).collect();
-        let ctx3 = ctx2.clone();
-        let close2 = close.clone();
-        let close_cancel = close.clone();
-        Element::new()
-            .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold(
-                format!("Steer run {rid_short} ({})", r.workflow_id),
-                t0.accent,
-            )]))
-            .children(
-                super::util::wrap_text(
-                    &format!(
-                        "Guidance folds into {rid_short}'s next reasoning cycle (durable inbox — delivered at the loop boundary, never lost)."
-                    ),
-                    68,
-                )
-                .into_iter()
-                .map(|l| line(vec![span(l, t0.text_faint)]))
-                .collect::<Vec<_>>(),
-            )
-            .child(field(
-                &t0,
-                "guidance",
-                TextInput::new()
-                    .value(guidance)
-                    .placeholder("e.g. stop exploring, finish with what you have")
-                    .placeholder_while_focused(true)
-                    .layout(LayoutStyle::default().w(56).h(1))
-                    .element(mcx, &t0)
-                    .autofocus()
-                    .build(),
-            ))
-            .child(line(vec![span(String::new(), t0.text)]))
-            .child(
-                Element::new()
-                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                    .child(
-                        Button::new("Send guidance")
-                            .on_click(move || {
-                                let g = guidance.get_untracked().trim().to_string();
-                                if g.is_empty() {
-                                    ctx3.store
-                                        .notice
-                                        .set(Some("type the guidance first".into()));
-                                    return;
-                                }
-                                ctx3.send(Cmd::SteerRun {
-                                    run_id: rid.clone(),
-                                    guidance: g,
-                                });
-                                close2();
-                            })
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .child(
-                        Button::new("Cancel (Esc)")
-                            .on_click(move || close_cancel())
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .build(),
-            )
-            .build()
-    });
-}
-
-fn confirm_purge_home(cx: Scope, ctx: &Ctx, home: crate::store::DataHomeRow) {
-    let ctx2 = ctx.clone();
-    super::confirm_danger(
-        cx,
-        ctx.ui,
-        format!(
-            "Purge data home '{}' ({} — {})? A dry-run gates the real purge; contents under {} are deleted.",
-            home.name, home.kind, home.owner, home.path
-        ),
-        "Purge it (dry-run first)",
-        "Keep it",
-        move || ctx2.send(Cmd::PurgeDataHome { name: home.name }),
-    );
 }
 
 #[cfg(test)]
@@ -3566,12 +2745,5 @@ mod tests {
         assert_eq!(got("", "hub"), ["hf-cache"]);
         // The kind dropdown still ANDs with the query.
         assert!(got("models", "runs").is_empty());
-        assert_eq!(got("", "").len(), 2);
-    }
-
-    #[test]
-    fn the_note_line_names_the_half_that_answered() {
-        assert_eq!(query_bit("*.jpg"), "q=\"*.jpg\" (glob)");
-        assert_eq!(query_bit("photo"), "q=\"photo\"");
     }
 }

@@ -590,7 +590,8 @@ fn runtimes_w_opens_the_planes_workspaces() {
         .set(Loadable::Ready(runtimes_from_payload(&fx("runtimes"))));
     h.turns(3);
     let s = h.shoot("r14w3-runtimes");
-    assert!(flat(&s).contains("w: Eligible workspaces"), "{s}");
+    // R15: the web's Workspace link (its key, w, is in the footer and the tooltip).
+    assert!(flat(&s).contains("Eligible workspaces"), "{s}");
     h.sent();
     h.ui.runtime_sel.set(0);
     h.turns(2);
