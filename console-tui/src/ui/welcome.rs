@@ -845,7 +845,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     rows.push(line(vec![span_bold(format!("{n}  {title}"), t.text)]));
                     rows.push(sentence(&t, &format!("   {lede}"), width, t.text_muted));
                     let c = body_ctx.clone();
-                    let a = Action::label(GO_IDS[i], go);
+                    let a = Action::label(GO_IDS[i], go).tooltip(format!("{title}: {lede}"));
                     rows.push(
                         Element::new()
                             .style(LayoutStyle::row().h(1).shrink(0.0).padding(Edges {

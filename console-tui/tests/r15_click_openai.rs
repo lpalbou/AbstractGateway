@@ -452,3 +452,20 @@ fn the_words_are_the_webs() {
         )
     );
 }
+
+/// Adversary T1: the New key question opens on Cancel — Enter keeps the
+/// token; only a deliberate [New key] rotates it.
+#[test]
+fn enter_on_the_new_key_question_keeps_the_token() {
+    let mut h = page();
+    let s = click_on(&mut h, "API key", "New key");
+    assert!(s.contains("Make a new key?"), "{s}");
+    h.key(b"\r");
+    h.turns(2);
+    assert!(
+        !sends(&mut h).iter().any(|(p, _)| p == "/me/token/rotate"),
+        "Enter on the default must keep the token"
+    );
+    let s = h.turns(1);
+    assert!(!s.contains("Make a new key?"), "the question closed:\n{s}");
+}

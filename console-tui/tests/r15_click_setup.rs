@@ -525,3 +525,18 @@ fn the_stepper_dialog_survives_the_reloads_under_it() {
         "{s}"
     );
 }
+
+#[test]
+fn hovering_a_go_to_card_button_names_the_step() {
+    let mut h = guide();
+    let s = h.turns(1);
+    let (row, col) = s
+        .lines()
+        .enumerate()
+        .find_map(|(i, l)| l.find("Go to apps").map(|c| (i, l[..c].chars().count())))
+        .expect("Go to apps");
+    h.key(format!("\x1b[<35;{};{}M", col + 2, row + 1).as_bytes());
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    let s = h.turns(3);
+    assert!(s.contains("Apps: Apps that work with this gateway"), "{s}");
+}
