@@ -279,7 +279,10 @@ def test_no_route_answers_a_stored_token_in_clear(gw, monkeypatch):
     _set(gw, enabled=True)
     assert gw.admin.post("/v1/chat/completions", headers=ALICE, json=CHAT).status_code == 200
     internal = ce.read_settings(gw.data).token
-    secrets = {USER_TOKEN, BOB_TOKEN, ADMIN["Authorization"].split(" ", 1)[1], internal}
+    # A named API key (round 16) is a stored secret too: answered once by its POST, never again.
+    named = gw.admin.post("/api/gateway/me/openai-keys", headers=ALICE, json={"label": "app"}).json()["key"]
+    assert gw.admin.get("/v1/models", headers={"Authorization": f"Bearer {named}"}).status_code == 200
+    secrets = {USER_TOKEN, BOB_TOKEN, ADMIN["Authorization"].split(" ", 1)[1], internal, named}
     page_doors = ("/api/gateway/openai-api", "/api/gateway/admin/core-endpoint")
     makes_a_key = {"/api/gateway/admin/core-endpoint/token/rotate"}
     checked = 0
@@ -289,7 +292,8 @@ def test_no_route_answers_a_stored_token_in_clear(gw, monkeypatch):
         on_page = path.startswith(page_doors)
         if method != "GET" and not on_page:
             continue
-        url = path.replace("{request_id}", "nope").replace("{account_id}", "alice").replace("{user_id}", "alice")
+        url = (path.replace("{request_id}", "nope").replace("{account_id}", "alice").replace("{user_id}", "alice")
+               .replace("{fingerprint}", "nope"))
         if "{" in url:
             url = url.split("{", 1)[0].rstrip("/") or "/"
         for headers in (ADMIN, ALICE):

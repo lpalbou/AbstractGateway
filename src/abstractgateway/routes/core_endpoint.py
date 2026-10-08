@@ -9,10 +9,16 @@
     GET  /gateway/admin/core-endpoint           admin: the same status (0.12.0 door)
     POST /gateway/admin/core-endpoint/token/rotate   admin: a new internal endpoint key (deprecated)
 
-A caller's API key is their own gateway token; the semantics live in
-`abstractgateway.core_endpoint`. No route answers a stored token: the console
-shows the signed-in person's own token from what that browser kept at sign-in,
-and a new key is answered once, when it is made.
+    GET    /gateway/me/openai-keys                       my named API keys (label, created, last used, fingerprint)
+    POST   /gateway/me/openai-keys {label}               a new named key, answered once
+    DELETE /gateway/me/openai-keys/{fingerprint}         revoke one (immediate)
+    GET    /gateway/admin/accounts/{id}/openai-keys      admin: an account's keys
+    DELETE /gateway/admin/accounts/{id}/openai-keys/{fp} admin: revoke one
+
+A caller's API key is one of their named API keys (round 16, `abstractgateway.openai_keys`:
+valid at /v1 only); their gateway token is still accepted at /v1 for compatibility. The
+semantics live in `abstractgateway.core_endpoint`. No route answers a stored key or token: a
+new key is answered once, by the request that makes it.
 """
 from __future__ import annotations
 
@@ -90,14 +96,16 @@ def _warnings(settings: ce.EndpointSettings, network: Dict[str, Any]) -> List[Di
 
 
 def _key(principal) -> Dict[str, Any]:
-    """The caller's API key, described (never the token): their gateway token. `fingerprint` is the
-    first 12 hex digits of its SHA-256, so the page can tell whether the copy this browser kept at
-    sign-in is still the current one."""
+    """The caller's keys, described (never a key): `named_keys` true = this account makes named API
+    keys (GET/POST /me/openai-keys), which is what the page offers; false = the operator's own
+    token, not an account. `fingerprint` is the first 12 hex digits of the SHA-256 of the gateway
+    token (still accepted at /v1 for compatibility)."""
     from ..users import GatewayUserRegistry
 
     own = principal.source == "user-registry"
     rec = GatewayUserRegistry().get_user(str(principal.user_id), tenant_id=str(principal.tenant_id or "default")) if own else None
     return {"own_token": own, "user_id": principal.user_id,
+            "named_keys": bool(own and rec is not None and rec.principal_kind != "entity"),
             "fingerprint": (rec.token_fingerprint if rec is not None else principal.token_fingerprint) or None,
             # May this account call /v1 at all (its Accounts switch)?
             "allowed": bool(rec.openai_api_allowed()) if rec is not None else True}
@@ -261,3 +269,109 @@ async def rotate(request: Request):
     settings = await asyncio.to_thread(ce.change_settings, data_dir, rotate=True)
     request.state.audit_detail = {"core_endpoint_token_action": "rotate"}
     return _response({"token": settings.token, **(await asyncio.to_thread(_status, request, settings, data_dir, admin=True))})
+
+
+# ---- Named API keys for /v1 (round 16, backlog 1000; semantics in `abstractgateway.openai_keys`) ----
+
+keys_router = APIRouter(prefix="/gateway", tags=["openai-api"])
+
+
+class OpenAIKeyCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    label: str = Field(..., max_length=200, description="The key's name, e.g. the app that will use it.")
+
+
+def _key_error(exc) -> HTTPException:
+    return HTTPException(status_code=int(exc.status), detail={"reason_code": exc.code, "message": str(exc)})
+
+
+def _own_account(request: Request):
+    """The signed-in person's registry account, or 409: named keys belong to an account."""
+    from ..openai_keys import NO_ACCOUNT
+    from ..users import GatewayUserRegistry
+
+    principal = _principal_from_request(request)
+    rec = GatewayUserRegistry().get_user(str(principal.user_id), tenant_id=str(principal.tenant_id or "default"))
+    if rec is None or principal.source != "user-registry":
+        raise HTTPException(status_code=409, detail={"reason_code": "no_account", "message": NO_ACCOUNT})
+    return principal, rec
+
+
+def _note_key_change(request: Request, *, action: str, user_id: str, tenant_id: str, item: Dict[str, Any]) -> None:
+    """The audit line says which key was made or revoked (name and fingerprint, never the key)."""
+    detail = getattr(request.state, "audit_detail", None)
+    detail = dict(detail) if isinstance(detail, dict) else {}
+    detail["openai_key_change"] = {"action": action, "user_id": user_id, "tenant_id": tenant_id,
+                                   "label": item.get("label"), "fingerprint": item.get("fingerprint")}
+    request.state.audit_detail = detail
+
+
+@keys_router.get("/me/openai-keys", summary="My named API keys for the OpenAI API")
+async def my_openai_keys(request: Request):
+    from .. import openai_keys as ok
+
+    _principal, rec = await asyncio.to_thread(_own_account, request)
+    keys = await asyncio.to_thread(ok.list_keys, rec.user_id, rec.tenant_id)
+    return _response({"schema": SCHEMA, "account": rec.user_id, "keys": keys or []})
+
+
+@keys_router.post("/me/openai-keys", summary="Make a named API key (answered once)",
+                  description="`{label}` -> `{key, item}`. The key works at `/v1/*` only and is answered only here; "
+                              "the gateway keeps its hash and fingerprint.")
+async def my_openai_key_create(request: Request, body: OpenAIKeyCreate):
+    from .. import openai_keys as ok
+    from ..users import OpenAIKeyError
+
+    principal, rec = await asyncio.to_thread(_own_account, request)
+    try:
+        out = await asyncio.to_thread(ok.create_key, rec.user_id, rec.tenant_id, body.label,
+                                      created_by=str(principal.user_id))
+    except OpenAIKeyError as exc:
+        raise _key_error(exc) from None
+    _note_key_change(request, action="create", user_id=rec.user_id, tenant_id=rec.tenant_id, item=out["item"])
+    return _response({"schema": SCHEMA, **out})
+
+
+@keys_router.delete("/me/openai-keys/{fingerprint}", summary="Revoke one of my named API keys (immediate)")
+async def my_openai_key_revoke(request: Request, fingerprint: str):
+    from .. import openai_keys as ok
+    from ..users import OpenAIKeyError
+
+    _principal, rec = await asyncio.to_thread(_own_account, request)
+    try:
+        gone = await asyncio.to_thread(ok.revoke_key, rec.user_id, rec.tenant_id, fingerprint)
+    except OpenAIKeyError as exc:
+        raise _key_error(exc) from None
+    _note_key_change(request, action="revoke", user_id=rec.user_id, tenant_id=rec.tenant_id, item=gone)
+    return _response({"schema": SCHEMA, "revoked": gone})
+
+
+@keys_router.get("/admin/accounts/{account_id}/openai-keys", summary="An account's named API keys (admin)")
+async def account_openai_keys(request: Request, account_id: str, tenant_id: str = Query(default="default")):
+    from .. import openai_keys as ok
+
+    _require_admin_principal(request)
+    keys = await asyncio.to_thread(ok.list_keys, account_id, tenant_id)
+    if keys is None:
+        raise HTTPException(status_code=404, detail={"reason_code": "account_not_found",
+                                                     "message": f"There is no account named {account_id!r} on this gateway."})
+    return _response({"schema": SCHEMA, "account": account_id, "keys": keys})
+
+
+@keys_router.delete("/admin/accounts/{account_id}/openai-keys/{fingerprint}",
+                    summary="Revoke an account's named API key (admin, immediate)")
+async def account_openai_key_revoke(request: Request, account_id: str, fingerprint: str,
+                                    tenant_id: str = Query(default="default")):
+    from .. import openai_keys as ok
+    from ..users import OpenAIKeyError
+    from .gateway import _audit_account_change
+
+    _require_admin_principal(request)
+    try:
+        gone = await asyncio.to_thread(ok.revoke_key, account_id, tenant_id, fingerprint)
+    except OpenAIKeyError as exc:
+        raise _key_error(exc) from None
+    _note_key_change(request, action="revoke", user_id=account_id, tenant_id=tenant_id, item=gone)
+    _audit_account_change(request, user_id=account_id, tenant_id=tenant_id,
+                          changes={"openai_key_revoked": gone.get("label")})
+    return _response({"schema": SCHEMA, "revoked": gone})

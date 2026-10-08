@@ -784,8 +784,21 @@ class GatewaySecurityMiddleware:
         request_id = (self._header(scope, "x-request-id") or "").strip() or uuid.uuid4().hex
         auth = self._header(scope, "authorization") or ""
         token = auth.split(" ", 1)[1].strip() if auth.lower().startswith("bearer ") else ""
-        principal = self._authenticate_token(token, peer_ip=self._socket_peer_ip(scope)) if token else None
-        if token and principal is None:
+        # A named API key (backlog 1000) first: found by its fingerprint, so a key never pays the
+        # registry's per-account PBKDF2 scan that a gateway token needs.
+        named = self._openai_key_owner(token) if token else None
+        key_item = None
+        principal = None
+        if named is not None:
+            rec, key_item = named
+            if rec.enabled and not rec.archived:
+                import dataclasses
+
+                principal = dataclasses.replace(rec.to_principal(token_fingerprint_value=key_item.fingerprint),
+                                                source="openai-key")
+        elif token:
+            principal = self._authenticate_token(token, peer_ip=self._socket_peer_ip(scope))
+        if token and principal is None and named is None:
             wait = self._lockouts.check_locked(ip)
             if wait:
                 await self._send_json(send, status=429, payload={"error": {
@@ -796,6 +809,8 @@ class GatewaySecurityMiddleware:
         state = scope.setdefault("state", {})
         if isinstance(state, dict):
             state["gateway_principal"] = principal
+            if key_item is not None:
+                state["openai_key"] = {"label": key_item.label, "fingerprint": key_item.fingerprint}
         capture = UsageCapture()
         capture.request_start(self._header(scope, "content-type") or "")
         status = {"code": 0}
@@ -821,13 +836,26 @@ class GatewaySecurityMiddleware:
         try:
             await self._app(scope, _receive, _send)
         finally:
-            if token and principal is None and status["code"] == 401:
+            if token and principal is None and named is None and status["code"] == 401:
                 self._lockouts.record_failure(ip)
             elif principal is not None:
                 self._lockouts.record_success(ip)
+            if key_item is not None:
+                # Which app called: the key's name in this request's log line, and its last use.
+                api_key_note = {"key_label": key_item.label, "key_fingerprint": key_item.fingerprint}
+                if principal is not None:
+                    try:
+                        from ..openai_keys import record_use
+
+                        await asyncio.to_thread(record_use, key_item.fingerprint, str(ip))
+                    except Exception:  # noqa: BLE001 - last-used is best effort, never breaks a request
+                        pass
+            else:
+                api_key_note = {}
             note = state.get("openai_api") if isinstance(state, dict) else None
             note = note if isinstance(note, dict) else {}
             api: Dict[str, Any] = {"client": note.get("client") or ("refused" if status["code"] in (401, 403) else "unknown")}
+            api.update(api_key_note)
             api.update(capture.summary())
             # A stream without stream_options.include_usage hides usage from the
             # client; the boundary still noted it for this log.
@@ -878,6 +906,35 @@ class GatewaySecurityMiddleware:
             if ua:
                 entry["user_agent"] = str(ua)[:300]
             self._audit_append(entry)
+
+    def _openai_key_owner(self, token: str):
+        """(account record, named key) when `token` is a named API key of this gateway (any
+        account state), else None. Successful lookups are cached like tokens: keyed on the key's
+        SHA-256 and invalidated the instant the registry file changes, so a revoke applies at the
+        next request."""
+        if not token:
+            return None
+        registry_id = self._registry_file_identity()
+        if registry_id == ("absent",):
+            return None
+        cache_key = hashlib.sha256(str(token).encode("utf-8", errors="ignore")).hexdigest()
+        cache = getattr(self, "_key_cache", None)
+        if cache is None:
+            cache = {}
+            self._key_cache = cache
+        hit = cache.get(cache_key)
+        if hit is not None and hit[0] == registry_id:
+            return hit[1]
+        try:
+            found = GatewayUserRegistry().openai_key_owner(token)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Gateway named-key lookup failed: %s", e)
+            return None
+        if found is not None:
+            if len(cache) >= self._AUTH_CACHE_MAX:
+                cache.clear()
+            cache[cache_key] = (registry_id, found)
+        return found
 
     def _token_valid(self, token: str) -> bool:
         # Constant-time compare against any configured token.
@@ -1270,6 +1327,17 @@ class GatewaySecurityMiddleware:
                     if session_auth is not None:
                         principal, session_id = session_auth
                         session_authenticated = True
+                if principal is None and token and self._openai_key_owner(token) is not None:
+                    from ..openai_keys import ENDPOINT_ONLY
+
+                    error = "openai_api_key_outside_v1"
+                    await self._send_json(
+                        _send_wrapped,
+                        status=401,
+                        payload={"detail": ENDPOINT_ONLY, "reason_code": "openai_api_key"},
+                        headers=[(b"www-authenticate", b"Bearer")],
+                    )
+                    return
                 if principal is None:
                     presented_credential = bool(token) or bool(
                         self._header(scope, gateway_session_header_name())

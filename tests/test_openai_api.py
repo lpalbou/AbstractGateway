@@ -84,7 +84,7 @@ def gw(tmp_path, monkeypatch):
     stub = CoreStub()
     monkeypatch.setattr(server_facade.importlib, "import_module", lambda name: SimpleNamespace(app=stub.app))
     from abstractgateway.routes import gateway_router
-    from abstractgateway.routes.core_endpoint import router, user_router
+    from abstractgateway.routes.core_endpoint import keys_router, router, user_router
     from abstractgateway.routes.network import router as network_router
     from abstractgateway.security import GatewaySecurityMiddleware, load_gateway_auth_policy_from_env
 
@@ -94,6 +94,7 @@ def gw(tmp_path, monkeypatch):
     app.include_router(gateway_router, prefix="/api")
     app.include_router(router, prefix="/api")
     app.include_router(user_router, prefix="/api")
+    app.include_router(keys_router, prefix="/api")
     app.mount("/v1", ce.CoreEndpoint())
     app.mount("/core", ce.LegacyCoreRedirect())
     admin = TestClient(app, client=("127.0.0.1", 50000))
