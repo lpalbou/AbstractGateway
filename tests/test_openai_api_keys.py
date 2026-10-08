@@ -131,6 +131,8 @@ def test_a_named_key_is_refused_everywhere_under_api_gateway_with_the_sentence(g
     # A refused named key is not a guess: no lockout builds up from it.
     for _ in range(15):
         gw.admin.get("/api/gateway/runs", headers=_bearer(key))
+    # (15 counted failures would lock this address: a wrong token would then answer 429.)
+    assert gw.admin.get("/api/gateway/runs", headers={"Authorization": "Bearer a-wrong-token"}).status_code == 401
     assert gw.admin.get("/api/gateway/openai-api", headers=ALICE).status_code == 200
     # The account's own token still drives the console API.
     assert gw.admin.get("/api/gateway/me/openai-keys", headers=ALICE).status_code == 200
