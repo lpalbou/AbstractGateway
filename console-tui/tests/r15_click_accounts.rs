@@ -505,3 +505,138 @@ fn a_confirmation_has_an_action_button_and_cancel_by_mouse_and_keys() {
         "{s}"
     );
 }
+
+/// R15 F2 (the web's accountOtherEmailCard): another account's address
+/// field has the web's inline Save button; a click on it sends the PATCH. Closing with an unsaved edit
+/// asks "Discard changes?" — [Discard] closes and sends nothing, [Keep
+/// editing] returns to the field with the edit.
+#[test]
+fn another_accounts_email_has_save_and_close_asks_before_dropping_an_edit() {
+    let patched = |h: &mut r8w4::Harness| {
+        h.sent().into_iter().find_map(|c| match c {
+            Cmd::PatchUser { user_id, body, .. } if user_id == "alice" => {
+                body["email"].as_str().map(str::to_string)
+            }
+            _ => None,
+        })
+    };
+    // Type, click Save → the PATCH with the new address.
+    let mut h = page();
+    let s = click_row(&mut h, "alice", "@ ⇄");
+    assert!(s.contains("Email — alice"), "{s}");
+    h.sent();
+    assert!(s.contains(" Save "), "the web's inline Save is there:\n{s}");
+    h.click_text("▐alice@example.test");
+    h.key(b"\x1b[F"); // End
+    h.type_text(".uk");
+    h.click_text(" Save ");
+    assert_eq!(patched(&mut h).as_deref(), Some("alice@example.test.uk"));
+
+    // Type, click Close → the discard question; Keep editing keeps the edit.
+    let mut h = page();
+    click_row(&mut h, "alice", "@ ⇄");
+    h.sent();
+    h.type_text(".uk");
+    let s = click_confirm_any(&mut h, "Close");
+    assert!(s.contains("Discard changes?"), "Close asks first:\n{s}");
+    let s = click_confirm(&mut h, "Keep editing", "Discard");
+    let s = if s.contains("Discard changes?") {
+        h.turns(2)
+    } else {
+        s
+    };
+    assert!(
+        s.contains("Email — alice") && s.contains(".uk"),
+        "back to the edit:\n{s}"
+    );
+    // Esc asks too; Discard closes, nothing sent.
+    h.esc();
+    let s = h.turns(2);
+    assert!(s.contains("Discard changes?"), "Esc asks first:\n{s}");
+    let s = click_confirm(&mut h, "Discard", "Keep editing");
+    let s = if s.contains("Email — alice") {
+        h.turns(2)
+    } else {
+        s
+    };
+    assert!(!s.contains("Email — alice"), "Discard closed it:\n{s}");
+    assert_eq!(patched(&mut h), None, "nothing saved");
+
+    // The title ✕ asks too.
+    let mut h = page();
+    click_row(&mut h, "alice", "@ ⇄");
+    h.type_text(".uk");
+    let s = click_confirm_any(&mut h, "✕");
+    let s = if s.contains("Discard changes?") {
+        s
+    } else {
+        h.turns(2)
+    };
+    assert!(s.contains("Discard changes?"), "✕ asks first:\n{s}");
+
+    // Untouched: Close closes at once.
+    let mut h = page();
+    click_row(&mut h, "alice", "@ ⇄");
+    let s = click_confirm_any(&mut h, "Close");
+    let s = if s.contains("Email — alice") {
+        h.turns(2)
+    } else {
+        s
+    };
+    assert!(
+        !s.contains("Email — alice") && !s.contains("Discard changes?"),
+        "{s}"
+    );
+}
+
+/// Click the last ` label ` on screen (a dialog's bottom button).
+fn click_confirm_any(h: &mut r8w4::Harness, label: &str) -> String {
+    let screen = h.turns(1);
+    let needle = format!(" {label} ");
+    let (y, line) = screen
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains(&needle))
+        .last()
+        .unwrap_or_else(|| panic!("no {label:?} button:\n{screen}"));
+    let b = line.rfind(&needle).unwrap() + 1;
+    let x = line[..b].chars().count() + 1;
+    h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes())
+}
+
+/// R15 gate (c) + F2 ruling: Create user is a FormModal (title ✕), and
+/// its ✕ / Esc with typed work ask "Discard changes?".
+#[test]
+fn create_user_has_a_title_close_that_asks_before_dropping_typed_work() {
+    let mut h = page();
+    let s = h.click_text("Create user");
+    let s = if s.contains("User ID") { s } else { h.turns(2) };
+    assert!(s.contains("User ID"), "{s}");
+    // Clean: ✕ closes at once.
+    let s = click_confirm_any(&mut h, "✕");
+    let s = if s.contains("User ID") { h.turns(2) } else { s };
+    assert!(!s.contains("User ID"), "clean ✕ closes:\n{s}");
+    // Typed: ✕ asks; Discard closes.
+    h.click_text("Create user");
+    h.turns(2);
+    h.type_text("zed");
+    let s = click_confirm_any(&mut h, "✕");
+    let s = if s.contains("Discard changes?") {
+        s
+    } else {
+        h.turns(2)
+    };
+    assert!(s.contains("Discard changes?"), "typed ✕ asks:\n{s}");
+    let s = click_confirm(&mut h, "Discard", "Keep editing");
+    let s = if s.contains("User ID") { h.turns(2) } else { s };
+    assert!(
+        !s.contains("User ID") && !s.contains("Discard changes?"),
+        "{s}"
+    );
+    assert!(
+        h.sent()
+            .iter()
+            .all(|c| !matches!(c, Cmd::CreateUser { .. })),
+        "nothing created"
+    );
+}

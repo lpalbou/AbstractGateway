@@ -1754,7 +1754,7 @@ pub fn open_other(
     super::w::FormModal::new(title).size(84, 20).open(
         ctx,
         cx,
-        move |mcx, close, _guard, _inner_w| {
+        move |mcx, close, guard, _inner_w| {
             let theme = use_theme(mcx);
             let t0 = theme.get().tokens;
             let ui = ctx2.ui;
@@ -1763,6 +1763,7 @@ pub fn open_other(
             let status = mcx.signal(Option::<Result<String, String>>::None);
             let in_flight = mcx.signal(false);
             let form_id = crate::worker::next_form_id();
+            let uid_saved = user_id.clone();
             let vw = crate::ui::page_viewport(mcx).get_untracked().w;
             let wrap_w = (vw.min(84) - 6).max(20) as usize;
             mcx.effect(move || {
@@ -1772,8 +1773,10 @@ pub fn open_other(
                         in_flight.set(false);
                         match outcome {
                             Ok(_) => {
-                                saved.set(value.get_untracked().trim().to_string());
-                                status.set(Some(Ok("Saved".into())));
+                                let addr = value.get_untracked().trim().to_string();
+                                saved.set(addr.clone());
+                                // The web card's inline state, word for word.
+                                status.set(Some(Ok(other_saved_sentence(&uid_saved, &addr))));
                             }
                             Err(e) => status.set(Some(Err(e))),
                         }
@@ -1803,7 +1806,33 @@ pub fn open_other(
             } else {
                 mailbox_line.clone()
             };
-            let close_b = close.clone();
+            // R15 F2: an unsaved edit is never dropped silently — Close,
+            // ✕ and Esc ask "Discard changes?" first.
+            let dirty = move || value.get_untracked().trim() != saved.get_untracked().trim();
+            let ask_close: std::rc::Rc<dyn Fn() -> bool> = {
+                let close = close.clone();
+                std::rc::Rc::new(move || {
+                    if !dirty() {
+                        return false;
+                    }
+                    let close = close.clone();
+                    super::w::Confirm::danger(super::DISCARD_QUESTION, "Discard", "Keep editing")
+                        .open(mcx, ui, move || close());
+                    true
+                })
+            };
+            {
+                let ask = ask_close.clone();
+                *guard.borrow_mut() = Some(Box::new(move || ask()));
+            }
+            let close_b = {
+                let (ask, close) = (ask_close.clone(), close.clone());
+                move || {
+                    if !ask() {
+                        close();
+                    }
+                }
+            };
             let mut col = Element::new()
                 .style(LayoutStyle::column().gap(0).grow(1.0))
                 .child(field(
@@ -1826,18 +1855,16 @@ pub fn open_other(
                                 if in_flight.get() {
                                     return line(vec![span("saving…", t.info)]);
                                 }
-                                if value.get().trim() == saved.get().trim() {
-                                    return match status.get() {
-                                        Some(Ok(_)) => line(vec![span("Saved", t.ok)]),
-                                        _ => Element::new()
-                                            .style(LayoutStyle::default().h(1))
-                                            .build(),
-                                    };
-                                }
-                                Button::new("Save")
-                                    .on_click(save.clone())
-                                    .element(scx, &t)
-                                    .build()
+                                // The web's inline Save, always there.
+                                let save = save.clone();
+                                super::w::action::button(
+                                    scx,
+                                    &t,
+                                    &super::w::Action::label("save", "Save"),
+                                    super::w::action::On::Raised,
+                                    true,
+                                    save,
+                                )
                             },
                         ))
                         .build(),
@@ -1847,7 +1874,8 @@ pub fn open_other(
                     let t = theme.get().tokens;
                     match status.get() {
                         Some(Err(e)) => line(vec![span(format!("✗ {e}"), t.error)]),
-                        _ => Element::new().style(LayoutStyle::default().h(0)).build(),
+                        Some(Ok(m)) => line(vec![span(m, t.ok)]),
+                        None => Element::new().style(LayoutStyle::default().h(0)).build(),
                     }
                 }))
                 .child(gap());
@@ -1861,9 +1889,19 @@ pub fn open_other(
                     &super::w::Action::label("close", "Close"),
                     super::w::action::On::Raised,
                     true,
-                    move || close_b(),
+                    close_b,
                 )]))
                 .build()
         },
     );
+}
+
+/// The web card's state after saving another account's address
+/// (console.py accountOtherEmailCard).
+pub fn other_saved_sentence(user_id: &str, address: &str) -> String {
+    if address.is_empty() {
+        format!("Saved: {user_id} has no email address.")
+    } else {
+        format!("Saved: {user_id}'s codes and notifications go to {address}.")
+    }
 }

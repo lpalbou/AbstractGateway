@@ -1834,11 +1834,18 @@ fn own_key(store: &crate::store::Store) -> Option<(String, String)> {
 fn open_user_form(cx: Scope, ctx: &Ctx, existing: Option<UserRow>) {
     let create = existing.is_none();
     let ctx2 = ctx.clone();
-    super::open_form_guarded(
+    let modal_title = if create {
+        "Create user".to_string()
+    } else {
+        format!(
+            "Edit user '{}'",
+            existing.as_ref().map(|u| u.user_id.as_str()).unwrap_or("")
+        )
+    };
+    super::w::FormModal::new(modal_title).size(96, 40).open(
         ctx,
         cx,
-        crate::ui::page_viewport(cx).get_untracked(),
-        move |mcx, close, guard| {
+        move |mcx, close, guard, _inner_w| {
             let theme = use_theme(mcx);
             let t0 = theme.get().tokens;
             let ex = existing.clone();
@@ -1895,21 +1902,12 @@ fn open_user_form(cx: Scope, ctx: &Ctx, existing: Option<UserRow>) {
             }
             super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
 
-            let title = if create {
-                "Create user".to_string()
-            } else {
-                format!(
-                    "Edit user '{}'",
-                    ex.as_ref().map(|u| u.user_id.as_str()).unwrap_or("")
-                )
-            };
             let ctx_save = ctx2.clone();
             let ex_save = ex.clone();
             let close_cancel = close.clone();
 
             Element::new()
                 .style(LayoutStyle::column().gap(0))
-                .child(line(vec![span_bold(title, t0.accent)]))
                 .child(field(
                     &t0,
                     "User ID",

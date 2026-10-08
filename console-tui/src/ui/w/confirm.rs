@@ -71,6 +71,7 @@ impl Confirm {
         let Some(ov) = cx.use_context::<Overlays>() else {
             return;
         };
+        super::tip::hide_all();
         LOG.with(|l| {
             let mut l = l.borrow_mut();
             if l.len() > 64 {

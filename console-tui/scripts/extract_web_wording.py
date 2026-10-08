@@ -13,6 +13,8 @@ What it reads (each anchor is required; a missing file or anchor is a FAILURE, n
 
 - `src/abstractgateway/console_workspaces.py`: the `ACCOUNT_TIPS` table (the Accounts row
   actions' tooltips), as {key: template} with `{n}` for the account.
+- `src/abstractgateway/console.py`: the Accounts confirmation sentences (archive user/entity,
+  suspend, deactivate, rotate) and the "Email for everyone" switches (label + description).
 - `src/abstractgateway/console_ui.py`: every template literal holding `${name}` inside the app
   card (from `const APP_FIRST_RUN` to the card's settings gear), with `${name}` written `{n}`.
   Any other `${...}` expression stays as written; the test reads it as "any text".
@@ -20,6 +22,7 @@ What it reads (each anchor is required; a missing file or anchor is a FAILURE, n
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import re
 import sys
@@ -80,11 +83,49 @@ def app_tips() -> list[str]:
     return found
 
 
+def one(src: str, pattern: str, what: str) -> str:
+    m = re.findall(pattern, src)
+    if len(m) != 1:
+        fail(f"{what}: expected exactly one match in console.py, found {len(m)} (the anchor moved).")
+    return m[0]
+
+
+def account_confirms() -> dict[str, str]:
+    """The Accounts confirmation sentences ({n} = the account id)."""
+    src = read("console.py")
+    out = {
+        "archive_user": one(src, r"user: \(id\) => `(Archive \$\{id\}\? They can't[^`]*)`", "archive (user)"),
+        "archive_entity": one(src, r"entity: \(id\) => `(Archive \$\{id\}\? It stops acting[^`]*)`", "archive (entity)"),
+        "suspend": one(src, r"`(Suspend \$\{a\.id\}\?[^`]*)`", "suspend"),
+        "deactivate": one(src, r"`(Deactivate \$\{a\.id\}\?[^`]*)`", "deactivate"),
+        "rotate": one(src, r"userConfirmRow\(tr, `(Rotate the token of \$\{a\.id\}\?[^`]*)`", "rotate"),
+    }
+    return {k: v.replace("${id}", "{n}").replace("${a.id}", "{n}") for k, v in out.items()}
+
+
+def email_switches() -> list[dict[str, str]]:
+    """The "Email for everyone" card's switches: label + description."""
+    src = read("console.py")
+    out = []
+    for cap in ("email", "agent-tools", "recovery"):
+        m = re.search(
+            rf'id="email-cap-{cap}".*?<span class="af-switch__label">([^<]*)</span>'
+            rf'<span class="af-switch__desc" id="email-cap-{cap}-desc">([^<]*)</span>',
+            src,
+        )
+        if not m:
+            fail(f"the email-cap-{cap} switch markup moved in console.py.")
+        out.append({"label": html.unescape(m.group(1)), "desc": html.unescape(m.group(2))})
+    return out
+
+
 def build() -> dict:
     return {
         "_source": "scripts/extract_web_wording.py (do not edit by hand)",
         "account_tips": account_tips(),
         "app_tips": app_tips(),
+        "account_confirms": account_confirms(),
+        "email_switches": email_switches(),
     }
 
 

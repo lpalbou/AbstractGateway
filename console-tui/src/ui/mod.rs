@@ -856,6 +856,7 @@ pub fn open_prompt(
     resolve: impl FnOnce(ChoiceOutcome) + 'static,
 ) {
     ui.prompt_open.update(|n| *n += 1);
+    w::tip::hide_all();
     // THE SCREEN DOES NOT SHOW THROUGH A DIALOG (review 2, 80x24): the
     // engine's choice dialog is frameless on a translucent scrim, so the
     // screen around and under it read as part of the dialog. An opaque
@@ -945,23 +946,31 @@ pub(crate) fn install_dirty_guard_with(
     esc_armed: Signal<bool>,
     form_error: Signal<Option<String>>,
 ) {
+    // R15 F2 ruling: closing a form with unsaved edits (Esc, ✕, Close)
+    // asks "Discard changes?" — [Discard] closes, [Keep editing] (and Esc)
+    // return to the form. The form being built is the one that asks.
+    let _ = (track, esc_armed, form_error);
+    let Some((close, ui)) = FORM_BUILDING.with(|f| f.borrow().clone()) else {
+        return;
+    };
     *guard.borrow_mut() = Some(Box::new(move || {
-        if !dirty() || esc_armed.get_untracked() {
+        if !dirty() {
             return false;
         }
-        esc_armed.set(true);
-        form_error.set(Some(ESC_WARNING.into()));
+        let close = close.clone();
+        w::Confirm::danger(DISCARD_QUESTION, "Discard", "Keep editing")
+            .open(mcx, ui, move || close());
         true
     }));
-    mcx.effect(move || {
-        track();
-        if esc_armed.get_untracked() {
-            esc_armed.set(false);
-            if form_error.with_untracked(|e| e.as_deref() == Some(ESC_WARNING)) {
-                form_error.set(None);
-            }
-        }
-    });
+}
+
+/// The question a form with unsaved edits asks before it closes.
+pub const DISCARD_QUESTION: &str = "Discard changes?";
+
+thread_local! {
+    /// The form `open_form_guarded` is building (its closer and the UI
+    /// state): the dirty guard installed during the build closes it.
+    static FORM_BUILDING: RefCell<Option<(CloserFn, UiState)>> = const { RefCell::new(None) };
 }
 
 /// String-pairs convenience over [`install_dirty_guard_with`] for forms
@@ -1057,6 +1066,7 @@ pub fn open_form_guarded(
     build: impl FnOnce(Scope, CloserFn, GuardSlot) -> View,
 ) {
     ctx.close_modal();
+    w::tip::hide_all();
     let viewport = abstracttui::app::use_viewport(cx).get_untracked();
     let slot = ctx.modal.clone();
     let epoch = ctx.ui.modal_epoch;
@@ -1069,7 +1079,9 @@ pub fn open_form_guarded(
     let guard: GuardSlot = Rc::new(RefCell::new(None));
     let guard_esc = guard.clone();
     let c_esc = closer.clone();
+    let building = (closer.clone(), ctx.ui);
     let modal = Modal::open(&ctx.overlays, cx, viewport, size, move |mcx| {
+        FORM_BUILDING.with(|f| *f.borrow_mut() = Some(building));
         // THE DIALOG DRESS (operator screenshot 2026-07-25, tui wave13
         // modal-bg-diagnosis): the engine's Modal panel ground is
         // translucent (overlay rgba .45) and borderless BY DESIGN — over
@@ -1080,12 +1092,14 @@ pub fn open_form_guarded(
         // lacked; the translucent panel ground survives only as the
         // 1-cell margin around this block (the Modal's own padding).
         let t = use_theme(mcx).get().tokens;
+        let body = build(mcx, closer.clone(), guard.clone());
+        FORM_BUILDING.with(|f| *f.borrow_mut() = None);
         Element::new()
             .style(LayoutStyle::fill())
             .shortcut(KeyChord::plain(Key::Escape), move |_| {
                 if let Some(g) = guard_esc.borrow().as_ref() {
                     if g() {
-                        return; // the form warned and armed itself
+                        return; // the form asked "Discard changes?"
                     }
                 }
                 c_esc()
@@ -1095,7 +1109,7 @@ pub fn open_form_guarded(
                     .border(BorderKind::Rounded)
                     .fill(t.surface_raised)
                     .layout(LayoutStyle::column().grow(1.0).padding(Edges::all(1)))
-                    .child(build(mcx, closer.clone(), guard.clone()))
+                    .child(body)
                     .element(&t)
                     .build(),
             )

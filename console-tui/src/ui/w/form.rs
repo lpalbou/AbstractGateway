@@ -90,7 +90,17 @@ impl FormModal {
         let lead = self.lead;
         open_form_guarded(ctx, cx, size, move |mcx, close, guard| {
             let t = use_theme(mcx).get().tokens;
-            let close_x = close.clone();
+            // ✕ asks the form's guard first, like Esc (an unsaved edit
+            // is never dropped silently, R15 F2).
+            let close_x = {
+                let (close, guard) = (close.clone(), guard.clone());
+                move || {
+                    let handled = guard.borrow().as_ref().map(|g| g()).unwrap_or(false);
+                    if !handled {
+                        close();
+                    }
+                }
+            };
             let x = super::action::Action::label("close", "✕").tooltip("Close");
             let title_w = abstracttui::text::width(&title);
             let mut col = Element::new().style(LayoutStyle::column().grow(1.0));
@@ -115,7 +125,7 @@ impl FormModal {
                         &x,
                         super::action::On::Raised,
                         false,
-                        move || close_x(),
+                        close_x,
                     ))
                     .build(),
             );

@@ -3573,11 +3573,13 @@ fn token_waits_for_open_prompt() {
     );
 }
 
-/// Cycle-2 pin: Esc on a DIRTY form warns first (typed work must not
-/// die on one keypress); the second Esc discards. Clean forms still
-/// close on one Esc (pinned by escape_closes_form_modal).
+/// R15 F2 ruling (was the cycle-2 two-Esc pin): Esc on a DIRTY form asks
+/// "Discard changes?" — typed work never dies on one keypress. [Keep
+/// editing] (or Esc on the question) returns to the form with the edit;
+/// [Discard] closes it. Clean forms still close on one Esc (pinned by
+/// escape_closes_form_modal).
 #[test]
-fn escape_on_dirty_form_warns_then_discards() {
+fn escape_on_dirty_form_asks_discard_then_discards() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_available_providers();
@@ -3592,27 +3594,35 @@ fn escape_on_dirty_form_warns_then_discards() {
     h.press_escape();
     let s = h.turns(2);
     assert!(
-        s.contains("Add a provider connection"),
-        "dirty form survives the first Esc:\n{s}"
+        s.contains("Add a provider connection") && s.contains("Discard changes?"),
+        "dirty form asks first:\n{s}"
     );
-    assert!(
-        s.contains("unsaved changes — press Esc again to discard"),
-        "the warning names the second-Esc contract:\n{s}"
-    );
+    assert!(s.contains("Discard") && s.contains("Keep editing"), "{s}");
+    // Esc on the question = Keep editing: the form and the edit stay.
     h.press_escape();
     let s = h.turns(2);
     assert!(
-        !s.contains("Add a provider connection"),
-        "second Esc discards:\n{s}"
+        s.contains("Add a provider connection")
+            && s.contains("acme3")
+            && !s.contains("Discard changes?"),
+        "kept editing:\n{s}"
+    );
+    // Ask again; Discard (Shift+Tab to it, Enter) closes the form.
+    h.press_escape();
+    h.turns(2);
+    h.key(b"\x1b[Z");
+    h.turn();
+    h.key(b"\r");
+    let s = h.turns(2);
+    assert!(
+        !s.contains("Add a provider connection") && !s.contains("Discard changes?"),
+        "Discard closed the form:\n{s}"
     );
 }
 
-/// The dirty-guard's THIRD clause (round-2 P2-4): an edit after the
-/// warning DISARMS it — the warning clears, and the next Esc must warn
-/// anew instead of discarding (a warning shown minutes ago must never
-/// make a later Esc silently destructive).
+/// The question's default is the safe answer: Enter on it keeps editing.
 #[test]
-fn dirty_guard_disarms_on_edit_after_warning() {
+fn discard_question_defaults_to_keep_editing() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_available_providers();
@@ -3623,34 +3633,12 @@ fn dirty_guard_disarms_on_edit_after_warning() {
     h.type_text("acme3");
     h.turns(2);
     h.press_escape();
+    h.turns(2);
+    h.key(b"\r");
     let s = h.turns(2);
     assert!(
-        s.contains("unsaved changes — press Esc again to discard"),
-        "first Esc warns:\n{s}"
-    );
-    // Edit after the warning → disarm + clear the warning text.
-    h.type_text("x");
-    let s = h.turns(2);
-    assert!(
-        !s.contains("unsaved changes — press Esc again to discard"),
-        "edit clears the warning:\n{s}"
-    );
-    // The next Esc warns AGAIN (does not discard).
-    h.press_escape();
-    let s = h.turns(2);
-    assert!(
-        s.contains("Add a provider connection"),
-        "form survives the post-edit Esc:\n{s}"
-    );
-    assert!(
-        s.contains("unsaved changes — press Esc again to discard"),
-        "post-edit Esc re-warns:\n{s}"
-    );
-    h.press_escape();
-    let s = h.turns(2);
-    assert!(
-        !s.contains("Add a provider connection"),
-        "second Esc after re-arm discards:\n{s}"
+        s.contains("Add a provider connection") && !s.contains("Discard changes?"),
+        "Enter kept editing:\n{s}"
     );
 }
 

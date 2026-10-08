@@ -26,6 +26,11 @@ thread_local! {
     static OVERLAYS: RefCell<Option<Overlays>> = const { RefCell::new(None) };
     /// The status bar's notice lane (refused presses say their reason).
     static NOTICE: RefCell<Option<Signal<Option<String>>>> = const { RefCell::new(None) };
+    /// Bumped by [`hide_all`]: a tip armed before a dialog opened never
+    /// shows after it (its delayed show and its focus both predate it).
+    static EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Every tip layer on screen (removal is idempotent).
+    static LIVE: RefCell<Vec<LayerHandle>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Install the notice lane a refused control writes its reason into.
@@ -68,6 +73,21 @@ impl TipState {
             l.remove();
         }
     }
+}
+
+/// A dialog opens: every tip on screen goes, and none armed before it
+/// shows later (R15 gate (a): a toggle's tip drawn over the confirm).
+pub fn hide_all() {
+    EPOCH.with(|e| e.set(e.get() + 1));
+    LIVE.with(|l| {
+        for h in l.borrow_mut().drain(..) {
+            h.remove();
+        }
+    });
+}
+
+fn epoch() -> u64 {
+    EPOCH.with(|e| e.get())
 }
 
 /// Attach a tooltip `text` to `el` (shown on hover after [`HOVER_DELAY`],
@@ -127,9 +147,10 @@ pub fn with_tip(cx: Scope, el: Element, text: String) -> Element {
             };
             let state = state.clone();
             let text = text.clone();
+            let armed = epoch();
             after(HOVER_DELAY, move || {
                 let mut s = state.borrow_mut();
-                if s.gen != gen || s.layer.is_some() {
+                if s.gen != gen || s.layer.is_some() || epoch() != armed {
                     return;
                 }
                 s.layer = show(anchor, &text);
@@ -191,7 +212,7 @@ fn show(anchor: Rect, text: &str) -> Option<LayerHandle> {
     let ground = t.surface_raised;
     let border = t.border_focus;
     let label = super::paint::fit(text, w - 2);
-    Some(
+    let handle = Some(
         overlays.layer_draw(overlays.top_z() + 1, rect, move |canvas, rect| {
             let st = Style::new().fg(ink).bg(ground);
             canvas.fill_styled(rect, ' ', &st);
@@ -202,5 +223,15 @@ fn show(anchor: Rect, text: &str) -> Option<LayerHandle> {
             );
             canvas.print_styled(Point::new(rect.x + 1, rect.y), &label, &st);
         }),
-    )
+    );
+    if let Some(h) = &handle {
+        LIVE.with(|l| {
+            let mut l = l.borrow_mut();
+            if l.len() > 32 {
+                l.remove(0);
+            }
+            l.push(h.clone());
+        });
+    }
+    handle
 }

@@ -8,11 +8,14 @@
 //!   `data-af-tip` templates (`{n}` = the app's name; a `${c ? "A" : "B"}`
 //!   expression = exactly "A" or "B"; any other `${…}` = any text), or is
 //!   the gateway's own sentence carried on the row (`update_tip`), or is
-//!   "Show log" (the web's Show log button has no tooltip). Refused
+//!   "Show log" (the web's Show log button has no tooltip).
+//! - Accounts confirmations: the sentence each one asks == the web's.
+//! - "Email for everyone": each switch's label and description == the web's. Refused
 //!   actions carry their reason instead and are not card tips.
 
 #[path = "accounts_fixture/mod.rs"]
 mod accounts_fixture;
+mod r8w4;
 
 use abstractgateway_console::store::accounts::accounts_from_payload;
 use abstractgateway_console::store::apps::{AppJob, AppRow};
@@ -331,4 +334,103 @@ fn the_template_matcher_is_exact() {
         &parse("{n} settings", "Continuum"),
         "Continuum settings (g)"
     ));
+}
+
+// ---- Accounts confirmations and the email switches -------------------------
+
+fn page_view(
+    ctx: &abstractgateway_console::ui::Ctx,
+    cx: abstracttui::prelude::Scope,
+) -> abstracttui::prelude::View {
+    let t = abstracttui::prelude::use_theme(cx).get().tokens;
+    users::view(cx, ctx, &t)
+}
+
+fn accounts_page() -> r8w4::Harness {
+    let mut alice = accounts_fixture::user_row("alice", false, "", "", true, false);
+    alice["actions"]["openai_api"] = json!({"available": true, "reason": null});
+    let castor = accounts_fixture::entity_row("castor", "awake", true);
+    let admin = {
+        let mut a = accounts_fixture::user_row("admin", true, "", "", true, true);
+        a["own"] = json!(true);
+        a
+    };
+    let mut h = r8w4::harness((120, 40), r8w4::Mount::Page(page_view));
+    h.admin();
+    h.store
+        .accounts
+        .set(abstractgateway_console::store::Loadable::Ready(
+            accounts_from_payload(&json!({"accounts": [admin, alice, castor]})).unwrap(),
+        ));
+    h.store
+        .users
+        .set(abstractgateway_console::store::Loadable::Ready(
+            abstractgateway_console::store::users_from_payload(&json!({"users": [
+                {"user_id": "admin", "tenant_id": "default", "roles": ["admin"], "enabled": true},
+                {"user_id": "alice", "tenant_id": "default", "roles": ["user"], "enabled": true}
+            ]})),
+        ));
+    h.store
+        .entities
+        .set(abstractgateway_console::store::Loadable::Ready(
+            abstractgateway_console::store::entities_from_payload(
+                &json!({"entities": [{"name": "castor", "state": "awake"}]}),
+            ),
+        ));
+    h.turns(3);
+    h.sent();
+    h
+}
+
+#[test]
+fn account_confirmations_ask_the_web_sentences() {
+    let fx = fixture();
+    let want = |k: &str, n: &str| {
+        fx["account_confirms"][k]
+            .as_str()
+            .unwrap_or_else(|| panic!("web confirm {k:?} missing"))
+            .replace("{n}", n)
+    };
+    let asked = || {
+        abstractgateway_console::ui::w::confirm::asked()
+            .last()
+            .cloned()
+            .unwrap_or_default()
+    };
+    for (who, key, web) in [
+        ("alice", "t", "rotate"),
+        ("alice", "d", "archive_user"),
+        ("alice", " ", "deactivate"),
+        ("castor", "d", "archive_entity"),
+        ("castor", " ", "suspend"),
+    ] {
+        let mut h = accounts_page();
+        h.ui.acc_key.set(Some(format!("default/{who}")));
+        h.turns(2);
+        h.key(key.as_bytes());
+        h.turns(2);
+        assert_eq!(asked(), want(web, who), "{who} · {web}");
+    }
+}
+
+#[test]
+fn email_for_everyone_switches_are_the_web_labels_and_descriptions() {
+    let fx = fixture();
+    let web = fx["email_switches"].as_array().expect("email_switches");
+    let tui = [
+        (users::MAILBOXES_LABEL, users::MAILBOXES_HELP),
+        (users::AGENT_TOOLS_LABEL, users::AGENT_TOOLS_HELP),
+        (users::RECOVERY_LABEL, users::RECOVERY_HELP),
+    ];
+    assert_eq!(web.len(), tui.len());
+    for (w, (label, desc)) in web.iter().zip(tui) {
+        assert_eq!(w["label"].as_str(), Some(label));
+        assert_eq!(w["desc"].as_str(), Some(desc));
+    }
+    // And the card shows them.
+    let mut h = accounts_page();
+    let s = h.turns(2);
+    for (label, _) in tui {
+        assert!(s.contains(label), "{label:?} on the card:\n{s}");
+    }
 }
