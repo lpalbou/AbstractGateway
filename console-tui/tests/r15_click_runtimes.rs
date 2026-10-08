@@ -16,7 +16,8 @@ use std::collections::BTreeSet;
 
 use abstractgateway_console::store::{
     data_homes_from_payload, log_files_from_payload, runs_from_payload, runtimes_from_payload,
-    ArtifactRow, ArtifactsData, Loadable, RunScope, RunsData, RuntimeFilter,
+    ArtifactRow, ArtifactsData, Loadable, PurgeCounts, PurgePlan, RunScope, RunsData,
+    RuntimeFilter,
 };
 use abstractgateway_console::ui::{self, runtimes};
 use abstractgateway_console::worker::Cmd;
@@ -207,6 +208,18 @@ fn click_tab(h: &mut r8w4::Harness, tab: &str) -> String {
     click_on(h, "▷ Runtime", tab)
 }
 
+/// The worker's dry-run answer for `name`.
+fn dry_run_answers(h: &mut r8w4::Harness, name: &str, files: Option<u64>, bytes: Option<u64>) {
+    h.store.purge_plan.set(Some(PurgePlan {
+        name: name.into(),
+        result: Ok(PurgeCounts {
+            files_deleted: files,
+            bytes_freed: bytes,
+        }),
+    }));
+    h.turns(2);
+}
+
 fn sent_matching(h: &mut r8w4::Harness, f: impl Fn(&Cmd) -> bool) -> Vec<Cmd> {
     h.sent().into_iter().filter(|c| f(c)).collect()
 }
@@ -249,6 +262,7 @@ fn covered() -> BTreeSet<(String, &'static str)> {
         ("runtime_testor", "workspaces"),
         ("head", "account"),
         ("head", "reload"),
+        ("head", "retained"),
         ("detail", "reload_detail"),
         ("run-live-1", "inspect"),
         ("run-live-1", "steer"),
@@ -600,9 +614,19 @@ fn purge_and_forget_ask_the_webs_questions() {
         "{s}"
     );
     click_row(&mut h, "prompt-kv", "Purge…");
-    let s = h.turns(2);
+    // The dry-run goes first; its accounting is the question.
+    let d = sent_matching(&mut h, |c| matches!(c, Cmd::PurgeDryRun { .. }));
     assert!(
-        s.contains("Purge prompt-kv? This deletes the CONTENTS of prompt-kv."),
+        matches!(&d[..], [Cmd::PurgeDryRun { name }] if name == "prompt-kv"),
+        "{d:?}"
+    );
+    dry_run_answers(&mut h, "prompt-kv", Some(12), Some(4096));
+    let s = h.turns(2);
+    let flat = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        flat.contains(
+            "Purge prompt-kv? This deletes the CONTENTS of prompt-kv: 12 files, 4.0 KiB freed."
+        ),
         "{s}"
     );
     click_confirm(&mut h, "Purge", "Cancel");
@@ -611,6 +635,35 @@ fn purge_and_forget_ask_the_webs_questions() {
         matches!(&p[..], [Cmd::PurgeDataHome { name }] if name == "prompt-kv"),
         "{p:?}"
     );
+    // A count the gateway did not report is unknown, never 0; a refused
+    // dry-run purges nothing and says why.
+    let mut h = on_tab("Cache");
+    click_row(&mut h, "prompt-kv", "Purge…");
+    dry_run_answers(&mut h, "prompt-kv", None, None);
+    let s = h.turns(2);
+    let flat = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        flat.contains("an unknown number of files, an") && flat.contains("unknown amount freed"),
+        "{s}"
+    );
+    let mut h = on_tab("Cache");
+    click_row(&mut h, "prompt-kv", "Purge…");
+    h.store.purge_plan.set(Some(PurgePlan {
+        name: "prompt-kv".into(),
+        result: Err("the path is live".into()),
+    }));
+    let s = h.turns(2);
+    assert!(!s.contains("Purge prompt-kv?"), "{s}");
+    assert!(
+        h.store
+            .notice
+            .get_untracked()
+            .unwrap_or_default()
+            .contains("Nothing purged: the path is live"),
+        "{:?}",
+        h.store.notice.get_untracked()
+    );
+    assert!(sent_matching(&mut h, |c| matches!(c, Cmd::PurgeDataHome { .. })).is_empty());
     // One stale row.
     let mut h = on_tab("Cache");
     click_row(&mut h, "old-scratch", "Forget");
@@ -783,7 +836,9 @@ fn the_keyboard_reaches_every_control() {
     assert!(s.contains("Eligible workspaces") && s.contains("✕"), "{s}");
     // P / F on the Cache tab.
     let mut h = on_tab("Cache");
-    let s = h.key(b"P");
+    h.key(b"P");
+    dry_run_answers(&mut h, "prompt-kv", Some(1), Some(1));
+    let s = h.turns(2);
     let s = if s.contains("Purge prompt-kv?") {
         s
     } else {
@@ -903,7 +958,22 @@ fn the_words_are_the_webs() {
     assert_eq!(runtimes::CACHES_SEARCH, w("caches_search"));
     assert_eq!(runtimes::CACHES_NOTE, w("caches_note"));
     assert_eq!(runtimes::PURGE_TIP, w("purge_tip"));
-    assert!(runtimes::purge_question("N").starts_with(&w("purge_title").replace("{n}", "N")));
+    let counts = PurgeCounts {
+        files_deleted: Some(3),
+        bytes_freed: Some(2048),
+    };
+    assert_eq!(
+        runtimes::purge_question("N", &counts),
+        format!(
+            "{} {}",
+            w("purge_title").replace("{n}", "N"),
+            w("purge_confirm")
+                .replace("{n}", "N")
+                .replace("{files}", "3")
+                .replace("{bytes}", "2.0 KiB")
+        )
+    );
+    assert_eq!(runtimes::RETAINED_TIP, w("retained_note"));
     assert_eq!(runtimes::FORGET_TIP, w("forget_tip"));
     assert_eq!(runtimes::FORGET_ALL_TIP, w("forget_all_tip"));
     assert_eq!(
@@ -976,4 +1046,16 @@ fn the_words_are_the_webs() {
     h.store.runs.set(Loadable::Ready(runs(0, true)));
     let s = h.turns(2);
     assert!(s.contains(&w("prev")) && s.contains(&w("next")), "{s}");
+}
+
+#[test]
+fn retained_runtimes_opens_the_reservations_dialog() {
+    let mut h = page();
+    click_on(&mut h, "Runtimes", "Retained runtimes");
+    assert!(h.sent().iter().any(|c| matches!(c, Cmd::LoadReservations)));
+    let s = h.turns(2);
+    assert!(
+        s.contains("Retained runtimes —"),
+        "the Accounts dialog:\n{s}"
+    );
 }

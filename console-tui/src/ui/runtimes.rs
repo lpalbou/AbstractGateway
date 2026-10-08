@@ -91,15 +91,24 @@ pub fn steer_lead(run_id: &str) -> String {
     )
 }
 
-/// The web's Purge question (`purgeDataHome`). The web states the
-/// dry-run's file count and bytes here; this console's worker runs the
-/// dry-run itself (a refused dry-run vetoes the purge) — the sentence
-/// keeps the rest of the web's words.
-pub fn purge_question(name: &str) -> String {
+/// The web's Purge question (`purgeDataHome`): the dry-run's accounting
+/// (a count the gateway did not report is said to be unknown, never 0).
+pub fn purge_question(name: &str, counts: &crate::store::PurgeCounts) -> String {
+    let files = match counts.files_deleted {
+        Some(n) => format!("{n} files"),
+        None => "an unknown number of files".to_string(),
+    };
+    let bytes = match counts.bytes_freed {
+        Some(b) => human_bytes(b),
+        None => "an unknown amount".to_string(),
+    };
     format!(
-        "Purge {name}? This deletes the CONTENTS of {name}. The directory itself and its registration survive. This cannot be undone."
+        "Purge {name}? This deletes the CONTENTS of {name}: {files}, {bytes} freed. The directory itself and its registration survive. This cannot be undone."
     )
 }
+
+/// The Retained runtimes section's note (the web's), the head button's tooltip.
+pub const RETAINED_TIP: &str = "Deleted or reassigned users leave their runtime data retained here — transfer it to a new owner or purge it permanently.";
 
 /// The web's Forget question (`forgetDataHomes`): one row or all stale.
 pub fn forget_question(name: Option<&str>) -> String {
@@ -176,6 +185,7 @@ pub fn head_actions(filter: Option<&crate::store::RuntimeFilter>) -> Vec<Action>
                 .tooltip(chip_clear_tip(&f.account)),
         );
     }
+    out.push(Action::label("retained", "Retained runtimes").tooltip(RETAINED_TIP));
     out.push(Action::label("reload", "↻").key('r').tooltip(RELOAD_TIP));
     out
 }
@@ -575,6 +585,35 @@ fn install_effects(cx: Scope, ctx: &Ctx, pg: &Pg) {
             }
         });
     }
+    // The purge dry-run's answer: the web's question with its counts, or
+    // the refusal (a refused dry-run vetoes the purge).
+    {
+        let ctx_p = ctx.clone();
+        cx.effect(move || {
+            let Some(plan) = store.purge_plan.get() else {
+                return;
+            };
+            let mine = PURGE_PENDING.with(|p| p.borrow().as_deref() == Some(plan.name.as_str()));
+            if !mine {
+                return;
+            }
+            PURGE_PENDING.with(|p| *p.borrow_mut() = None);
+            store.purge_plan.set(None);
+            match plan.result {
+                Ok(counts) => {
+                    let c = ctx_p.clone();
+                    let name = plan.name.clone();
+                    super::w::Confirm::danger(
+                        purge_question(&plan.name, &counts),
+                        "Purge",
+                        "Cancel",
+                    )
+                    .open(cx, ctx_p.ui, move || c.send(Cmd::PurgeDataHome { name }));
+                }
+                Err(why) => super::w::tip::say(&format!("Nothing purged: {why}")),
+            }
+        });
+    }
     // R8.2: an account's filter that leaves exactly one runtime opens it.
     {
         let ctx_one = ctx.clone();
@@ -830,12 +869,12 @@ fn head(pcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             buttons.push((
                 button(hcx, &tt, &a, On::Page, true, move || match id {
                     "account" => clear_account_filter(&c),
+                    "retained" => super::users::open_reservations_modal(pcx, &c),
                     _ => c.refresh_screen(super::SCREEN_RUNTIMES),
                 }),
                 wd,
             ));
         }
-        let _ = pcx;
         super::workflows::page_head(&tt, TITLE, SUBTITLE, w, buttons)
     })
 }
@@ -2090,13 +2129,18 @@ fn cache_panel(pcx: Scope, cx: Scope, ctx: &Ctx, t: &TokenSet, pg: &Pg) -> View 
         .build()
 }
 
-fn confirm_purge(cx: Scope, ctx: &Ctx, name: String) {
-    let c = ctx.clone();
-    super::w::Confirm::danger(purge_question(&name), "Purge", "Cancel").open(
-        cx,
-        ctx.ui,
-        move || c.send(Cmd::PurgeDataHome { name }),
-    );
+/// Purge…: the dry-run first (its accounting is the question), then the
+/// web's confirm; the answer arrives in `store.purge_plan` (see
+/// `install_effects`).
+fn confirm_purge(_cx: Scope, ctx: &Ctx, name: String) {
+    ctx.store.purge_plan.set(None);
+    PURGE_PENDING.with(|p| *p.borrow_mut() = Some(name.clone()));
+    ctx.send(Cmd::PurgeDryRun { name });
+}
+
+thread_local! {
+    /// The cache whose purge dry-run is awaited.
+    static PURGE_PENDING: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
 fn confirm_forget(cx: Scope, ctx: &Ctx, name: Option<String>) {
