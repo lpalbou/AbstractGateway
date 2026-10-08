@@ -1513,9 +1513,10 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
                 entity_manage::inspector_view(dcx, &drawer_ctx, theme)
             });
         *ctx.entity_drawer.borrow_mut() = Some(handle);
-        docs::install(cx, &ctx); // R15 seam: docs drawer (DESIGN §3.16)
-                                 // Leaving the Users screen closes the inspector — a stale panel
-                                 // over an unrelated page would be a lying surface.
+        // R15 seam: docs drawer (DESIGN §3.16)
+        docs::install(cx, &ctx);
+        // Leaving the Users screen closes the inspector — a stale panel
+        // over an unrelated page would be a lying surface.
         let drawer_slot = ctx.entity_drawer.clone();
         cx.effect(move || {
             if ui.screen.get() != SCREEN_USERS {

@@ -1042,7 +1042,12 @@ fn gateway_rows(store: &crate::store::Store, w: i32, compact: bool) -> usize {
     n
 }
 
-/// A Gateway card action (a click, a switch or its key).
+/// A Gateway card action (a click, a switch or its key). Pause, Start at
+/// login and Check now are the host panel's own verbs (ui/host.rs, F3).
+/// Restart, Quit and Update stay here: this card says the WEB's sentences
+/// and buttons (console.py restartGateway / quitGateway: "Restart" /
+/// "Quit" + Cancel) and an update is a plain confirm (an install: the focus
+/// on the action), where the F3 panel words them its own way.
 fn gateway_action(cx: Scope, ctx: &Ctx, id: &str) {
     use crate::worker::operator::OpCmd;
     let connected = ctx.store.conn.with_untracked(ConnPhase::is_connected);
@@ -1053,14 +1058,10 @@ fn gateway_action(cx: Scope, ctx: &Ctx, id: &str) {
     }
     let runner = ctx.store.op.runner.with_untracked(|r| r.ready().cloned());
     match id {
-        "pause" => match runner {
-            Some(r) => ctx.send(Cmd::Operator(OpCmd::SetPaused { pause: !r.paused })),
-            None => ctx.store.notice.set(Some(
-                "the runner state is not loaded yet — r reloads it".into(),
-            )),
-        },
+        // The host panel's own verbs (one implementation, F3 and here).
+        "pause" => super::host::toggle_pause(ctx),
         "login" => super::host::toggle_start_at_login(cx, ctx, &|| {}),
-        "check" => ctx.send(Cmd::Operator(OpCmd::UpdateCheck)),
+        "check" => super::host::check_update(ctx),
         "update" => {
             let Some(u) = ctx.store.op.update.with_untracked(|u| u.ready().cloned()) else {
                 ctx.store
