@@ -3978,6 +3978,26 @@ fn export_verify(path: &std::path::Path, want: u64) -> Result<String, String> {
     }
 }
 
+/// What a FORM shows for a write (R15 gate note i): a client error the
+/// gateway explained (4xx with its `detail` sentence) is that sentence
+/// alone, as the web shows it — the form appends "Not saved."; the
+/// journal keeps the full "HTTP 400: …" line. Everything else as is.
+fn form_outcome(
+    write: &ApiResult<Value>,
+    outcome: &Result<String, String>,
+) -> Result<String, String> {
+    match write {
+        Err(ApiError {
+            kind: ApiErrorKind::Http(code),
+            message,
+            ..
+        }) if (400..500).contains(code) && !message.trim().is_empty() => {
+            Err(message.trim().to_string())
+        }
+        _ => outcome.clone(),
+    }
+}
+
 fn finish_write(
     store: &Store,
     wake: &WakeHandle,
@@ -4041,7 +4061,7 @@ fn finish_write_attention(
         verified,
     };
     if let Some(fid) = form_id {
-        on_done(fid, outcome.clone());
+        on_done(fid, form_outcome(&write, &outcome));
     }
     wake.post(move || {
         let note = match &entry.outcome {
@@ -4309,5 +4329,27 @@ mod tests {
         );
         assert_eq!(artifact_ref_label(&json!("art-str")), "art-str");
         assert_eq!(artifact_ref_label(&json!({"other": 1})), "audio artifact");
+    }
+}
+
+#[cfg(test)]
+mod form_outcome_tests {
+    use super::*;
+
+    #[test]
+    fn a_client_error_reaches_the_form_as_the_gateways_sentence() {
+        let w: ApiResult<Value> = Err(ApiError::new(
+            ApiErrorKind::Http(400),
+            "email must be empty or ONE plain email address",
+        ));
+        let full = Err(w.as_ref().unwrap_err().to_string());
+        assert_eq!(
+            form_outcome(&w, &full),
+            Err("email must be empty or ONE plain email address".to_string())
+        );
+        // A server error keeps its status (the operator needs it).
+        let w5: ApiResult<Value> = Err(ApiError::new(ApiErrorKind::Http(502), "backend down"));
+        let full5 = Err(w5.as_ref().unwrap_err().to_string());
+        assert_eq!(form_outcome(&w5, &full5), full5);
     }
 }

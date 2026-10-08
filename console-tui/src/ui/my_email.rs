@@ -1873,7 +1873,10 @@ pub fn open_other(
                 .child(dyn_view(LayoutStyle::default().shrink(0.0), move || {
                     let t = theme.get().tokens;
                     match status.get() {
-                        Some(Err(e)) => line(vec![span(format!("✗ {e}"), t.error)]),
+                        // The gateway's sentence + "Not saved." (§2.5).
+                        Some(Err(e)) => {
+                            line(vec![span(super::w::FieldState::Refused(e).text(), t.error)])
+                        }
                         Some(Ok(m)) => line(vec![span(m, t.ok)]),
                         None => Element::new().style(LayoutStyle::default().h(0)).build(),
                     }
