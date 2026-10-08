@@ -994,13 +994,8 @@ fn ctrl_g_reopens_and_skips_the_guide() {
         s.contains("Skip setup") && s.contains("Leave for now"),
         "{s}"
     );
-    // Options: stay (initial), leave, skip, then the steps → Down ×2 = skip.
-    for _ in 0..2 {
-        h.key(b"\x1b[B");
-        h.turn();
-    }
-    h.type_text("\r");
-    h.turns(2);
+    // R15: the stepper dialog's buttons — click Skip setup.
+    click_last_text(&mut h, "Skip setup");
     match h.find_cmd(|c| matches!(c, Cmd::CompleteFirstRun { .. })) {
         Some(Cmd::CompleteFirstRun { outcome, .. }) => assert_eq!(outcome, "skipped"),
         other => panic!("expected a skipped CompleteFirstRun, got {other:?}"),
@@ -1019,22 +1014,17 @@ fn ctrl_g_in_the_guide_jumps_to_any_step() {
     h.turns(2);
     h.key(b"\x07");
     let s = h.turns(2);
-    assert!(s.contains("go to a step"), "the guide menu opens:\n{s}");
     assert!(
-        s.contains("Go to 2. Welcome (you are here)"),
+        s.contains("Go to a step, or leave the guide."),
+        "the guide menu opens:\n{s}"
+    );
+    assert!(
+        s.contains("2. Welcome  (you are here)"),
         "current step marked:\n{s}"
     );
-    assert!(
-        s.contains("Go to 1. Connection"),
-        "the steps are listed:\n{s}"
-    );
-    // Options: stay (initial), leave, skip, steps 1..7 → Down ×8 = step 6 (Apps).
-    for _ in 0..8 {
-        h.key(b"\x1b[B");
-        h.turn();
-    }
-    h.type_text("\r");
-    h.turns(2);
+    assert!(s.contains("1. Connection"), "the steps are listed:\n{s}");
+    // R15: every step is a button (the web stepper) — click Apps.
+    click_last_text(&mut h, "6. Apps");
     assert_eq!(
         h.ui.screen.get_untracked(),
         ui::SCREEN_APPS,
@@ -1055,13 +1045,8 @@ fn guide_step_jump_needs_a_sign_in() {
     h.turns(2);
     h.key(b"\x07");
     h.turns(2);
-    // Not signed in: no Skip option → stay, leave, steps → Down ×8 = step 7.
-    for _ in 0..8 {
-        h.key(b"\x1b[B");
-        h.turn();
-    }
-    h.type_text("\r");
-    h.turns(2);
+    // Not signed in: no Skip setup; click the last step.
+    click_last_text(&mut h, "7. Done");
     assert_eq!(
         h.ui.screen.get_untracked(),
         ui::SCREEN_CONNECTION,
@@ -4143,6 +4128,20 @@ fn answer_danger(h: &mut Harness) {
 fn click_at(h: &mut Harness, x: usize, y: usize) {
     h.key(format!("\x1b[<0;{x};{y}M").as_bytes());
     h.key(format!("\x1b[<0;{x};{y}m").as_bytes());
+}
+
+/// Click the last on-screen occurrence of `label` (a dialog's button).
+fn click_last_text(h: &mut Harness, label: &str) {
+    let s = h.turns(1);
+    let (y, line) = s
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains(label))
+        .last()
+        .unwrap_or_else(|| panic!("'{label}' not on screen:\n{s}"));
+    let x = line[..line.rfind(label).unwrap()].chars().count() + 2;
+    click_at(h, x, y + 1);
+    h.turns(2);
 }
 
 /// Both presses of a double-click in one input batch: the engine's
@@ -7945,7 +7944,7 @@ fn finish_step_offers_start_at_login() {
         s.contains("starts at login on — On — a systemd user unit starts the gateway at login"),
         "{s}"
     );
-    assert!(s.contains("[x] Start at login"), "{s}");
+    assert!(s.contains("━● Start at login"), "{s}");
     assert!(!s.contains("Turn off"), "{s}");
 }
 

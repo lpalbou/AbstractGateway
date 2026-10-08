@@ -300,7 +300,8 @@ fn the_key_hint_bar_wraps_instead_of_cutting_the_screen_verbs() {
     let rows: Vec<&str> = s.lines().collect();
     let last = rows[rows.len() - 1];
     assert!(
-        last.starts_with("a Use recommended defaults · D Download all · r refresh"),
+        // D Download all joins once the recommended set has an absent model.
+        last.starts_with("a Use recommended defaults · r refresh"),
         "{s}"
     );
     assert!(last.contains("? keys"), "the keys panel is named:\n{s}");
@@ -496,46 +497,42 @@ fn setup_a_applies_the_recommended_defaults_and_offers_the_second_pass_inline() 
             .any(|c| matches!(c, Cmd::ApplyRecommendedRoutes { force: false })),
         "a applies without overwriting your routes: {cmds:?}"
     );
-    // The worker offers the forced pass: inline, never a dialog.
+    // The worker offers the forced pass: the web's button under the
+    // outcome sentence ("♻ Replace mine too"), never a dialog.
     h.store.apply_followup.set(Some("Replace mine too".into()));
     let s = h.turns(3);
     assert!(
-        s.contains("routes you configured were kept")
-            && s.contains("[y] Replace mine too")
-            && s.contains("[n] Keep"),
+        s.contains("routes you configured were kept") && s.contains("♻ Replace mine too"),
         "{s}"
     );
     h.shoot("setup-replace-mine-too");
-    h.key(b"y");
+    let (y, line) = s
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("♻ Replace mine too"))
+        .unwrap();
+    let x = line[..line.find("♻").unwrap()].chars().count() + 1;
+    h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes());
+    h.turns(2);
     let cmds = h.drain();
     assert!(
         cmds.iter()
             .any(|c| matches!(c, Cmd::ApplyRecommendedRoutes { force: true })),
-        "y runs the forced pass: {cmds:?}"
+        "the button runs the forced pass: {cmds:?}"
     );
 }
 
 #[test]
 fn setup_d_confirms_inline_then_downloads_all() {
+    // R15: the web's Download all starts at once (no question).
     let mut h = harness(Size::new(120, 40));
     h.admin();
     h.goto(ui::SCREEN_WELCOME);
     h.store.availability.set(Loadable::Ready(plan()));
     h.turns(2);
     h.drain();
-    let s = h.key(b"D");
-    let flat = s.split_whitespace().collect::<Vec<_>>().join(" ");
-    assert!(
-        flat.contains("Download the recommended models on the gateway host: supertonic supertonic-3, huggingface"),
-        "{s}"
-    );
-    assert!(flat.contains("Systran/faster-whisper-large-v3?"), "{s}");
-    assert!(s.contains("[y] Download all  [n] Keep"), "{s}");
-    assert!(h.drain().is_empty(), "nothing sent before y");
-    h.key(b"n");
-    assert!(h.drain().is_empty(), "n keeps");
     h.key(b"D");
-    h.key(b"y");
+    h.turns(2);
     assert!(h
         .drain()
         .iter()

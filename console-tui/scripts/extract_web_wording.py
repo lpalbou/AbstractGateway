@@ -458,6 +458,48 @@ def runtimes_words() -> dict:
 SCREEN_FIXTURES["runtimes"] = runtimes_words
 
 
+def setup_words() -> dict:
+    """R15-A Setup: the guide's welcome step — titles, lede, tiles' section, the three cards, the recommended set's buttons, the footer's Skip setup."""
+    src = read("console.py")
+    copy = need(src, r"const FIRST_RUN_STEP_COPY = \{(.*?)\n\s*\};", "FIRST_RUN_STEP_COPY", re.S)
+    titles = need(src, r"const FIRST_RUN_STEP_TITLES = \{(.*?)\};", "FIRST_RUN_STEP_TITLES", re.S)
+    def field(step: str, key: str) -> str:
+        return need(copy, step + r': \{[^}]*?' + key + r': "([^"]*)"', f"{step}.{key}")
+    def title(step: str) -> str:
+        return need(titles, step + r': "([^"]*)"', f"title {step}")
+    out = {
+        "title": field("welcome", "title"),
+        "hint": field("welcome", "hint"),
+        "admin_lede": field("welcome", "lede"),
+        "skip": need(src, r'<button id="first-run-skip"[^>]*>([^<]*)</button>', "Skip setup"),
+        "skip_tip": need(src, r'<button id="first-run-skip" class="secondary" title="([^"]*)"', "Skip setup tooltip"),
+        "finish": need(src, r'<button id="first-run-finish"[^>]*>([^<]*)</button>', "Finish"),
+        "next": need(src, r'<button id="first-run-next">([^<]*)</button>', "Next"),
+        "guide_tip": need(src, r'<button id="open-setup"[^>]*title="([^"]*)"', "Setup tooltip"),
+        "sets_up": need(src, r'<h3>(What this guide sets up)</h3>', "what this guide sets up"),
+        "sets_up_sub": need(src, r'<h3>What this guide sets up</h3><span class="ui-sub">([^<]*)</span>', "sets up sub"),
+        "looking": need(src, r'<div class="ui-empty">(Looking at this computer\.\.\.)</div>', "looking"),
+        "checking": need(src, r'<p class="subtle">(Checking the recommended starter models\.\.\.)</p>', "checking"),
+        "recommended": need(src, r'<h3>(Recommended for this computer)</h3>', "recommended heading"),
+        "no_text_model": need(src, r'"(No text model is set yet\.)"', "no text model"),
+        "no_downloads": need(src, r'<div class="ui-empty">(This gateway reported no recommended downloads\.)</div>', "no downloads"),
+        "apply": need(src, r'<button id="first-run-apply-recommended" class="ui-btn is-primary">([^<]*)</button>', "apply"),
+        "download_all": need(src, r'<button id="first-run-download-all" class="ui-btn is-ghost">([^<]*)</button>', "download all"),
+        "recommended_note": need(src, r'<span>(Sets the recommended models for text, voice[^<]*)</span>', "recommended note"),
+        "replace": need(src, r'kept\.length \? "([^"]*)" : "Clear what cannot run here"', "replace mine too"),
+        "clear_broken": need(src, r'kept\.length \? "Replace mine too" : "([^"]*)"', "clear what cannot run"),
+        "not_available": need(src, r'<strong>(This computer\'s summary is not available right now\.)</strong>', "summary unavailable"),
+    }
+    for i, step in enumerate(["engines", "model", "apps"]):
+        out[f"card_{i}_title"] = field(step, "title")
+        out[f"card_{i}_lede"] = field(step, "lede")
+        out[f"card_{i}_go"] = "Go to " + title(step).lower()
+    return out
+
+
+SCREEN_FIXTURES["setup"] = setup_words
+
+
 def screens_main(write: bool) -> int:
     rc = 0
     for name, build_fn in SCREEN_FIXTURES.items():
