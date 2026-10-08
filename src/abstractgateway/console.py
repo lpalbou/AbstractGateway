@@ -1798,6 +1798,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .agent-default__control { display: flex; align-items: center; gap: 8px; min-width: 0; }
 	    .agent-default__control select { flex: 1 1 auto; min-width: 0; max-width: 360px; }
 	    .agent-default__state { margin: 0; color: var(--muted); font-size: var(--font-size-md); }
+	    /* Preferences → Time zone (R16.1): the kit AfTimeZonePicker island reads like the workflow rows. */
+	    .account-preferences-tz .af-tz-picker__label { font-weight: 500; font-size: var(--font-size-base); text-transform: none; letter-spacing: normal; color: var(--text); }
+	    .account-preferences-tz .af-select-trigger { font-weight: 400; }
 	    /* Settings under the per-app defaults (gateway-wide runtime settings). */
 	    .workflows-settings { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
 	    .workflows-settings .af-switch--row { width: 100%; max-width: none; }

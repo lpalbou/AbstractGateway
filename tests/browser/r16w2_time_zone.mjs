@@ -73,15 +73,15 @@ try {
   // Open, search the served names, pick.
   await trigger.click();
   await page.waitForSelector(".af-select-popover .af-select-search-input");
-  const first = (await page.textContent(".af-select-popover [role='option']")).trim();
+  const first = (await page.textContent(".af-select-popover [role='option'] .af-select-option-label")).trim();
   check(first === def, "first option = Gateway default (<zone>)", first);
   const total = await page.locator(".af-select-popover [role='option']").count();
   check(total === block.choices.length + 1, "the options are exactly the served choices + the default", { total, served: block.choices.length });
   await page.fill(".af-select-popover .af-select-search-input", "Europe/Par");
-  const filtered = await page.$$eval(".af-select-popover [role='option']", (els) => els.map((e) => e.textContent.trim()));
+  const filtered = await page.$$eval(".af-select-popover [role='option'] .af-select-option-label", (els) => els.map((e) => e.textContent.trim()));
   check(filtered.includes("Europe/Paris") && filtered.every((t) => t.includes("Europe/Par")), "search filters the served names", filtered.slice(0, 5));
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "web-picker-open-search-light-1280.png") });
-  await page.locator(".af-select-popover [role='option']", { hasText: /^Europe\/Paris$/ }).click();
+  await page.locator(".af-select-popover [role='option']", { has: page.locator(".af-select-option-label", { hasText: /^Europe\/Paris$/ }) }).click();
   await page.waitForSelector(`${TZ} .af-tz-picker__note.is-ok`, { timeout: 15000 });
   check((await page.textContent(`${TZ} .af-tz-picker__note`)).trim() === "Saved.", "Saved.");
   const after = await prefs(page);
@@ -101,7 +101,7 @@ try {
   });
   await page.locator(`${TZ} .af-select-trigger`).click();
   await page.fill(".af-select-popover .af-select-search-input", "Asia/Tokyo");
-  await page.locator(".af-select-popover [role='option']", { hasText: /^Asia\/Tokyo$/ }).click();
+  await page.locator(".af-select-popover [role='option']", { has: page.locator(".af-select-option-label", { hasText: /^Asia\/Tokyo$/ }) }).click();
   await page.waitForSelector(`${TZ} .af-tz-picker__note.is-error`, { timeout: 15000 });
   const refused = (await page.textContent(`${TZ} .af-tz-picker__note`)).trim();
   check(refused.startsWith("Not saved. ") && refused.includes("refused"), "Not saved. <sentence>", refused);
