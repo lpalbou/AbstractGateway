@@ -77,7 +77,7 @@ KEYS: Tab focus · Enter activate · Ctrl+N next step · Ctrl+P / Esc back
       (in a text field Esc first releases the caret) ·
       ← / → previous/next screen (outside text fields) ·
       ] / [ next/back (outside text fields) ·
-      1-9,0 N R S screens (browse) ·
+      1-9, 0, H T N S I screens (browse) ·
       Ctrl+G setup guide (browse: reopen; guide: go to any step, leave,
       or Skip setup) ·
       r refresh · F1 About · ? keys · Ctrl+T light/dark · F2 docs assistant (signed in) ·
@@ -85,33 +85,27 @@ KEYS: Tab focus · Enter activate · Ctrl+N next step · Ctrl+P / Esc back
       restart, quit, update) ·
       Ctrl+L repaint · q / Ctrl+C quit
 
-SCREENS: 1 Connection (sign in to the gateway)
+SCREENS (click one in the rail or the tab strip, or press its key):
+  1 Connection (sign in to the gateway)
   ACCOUNTS  2 Accounts (users and entities in one table)
-  WORK      3 Workflows · 4 Runtimes · 5 Apps (browser apps, the
-            desktop Assistant, Node.js)
-  MODELS    6 Providers · 7 Models (browse, download, delete models on
-            the gateway host) · 8 Engines (detect and install Ollama,
-            LM Studio, MLX, llama.cpp) · 9 Multimodal (which model
-            serves which modality)
-  SYSTEM    0 Resources · N Network (who can reach the gateway) ·
-            R Review & Test
-  S Setup (runs the setup guide again: this computer at a glance)
+  WORK      3 Workflows · 4 Skills & MCP · 5 Runtimes · 6 Apps (browser
+            apps, the desktop Assistant, Node.js)
+  MODELS    7 Providers (local engines and remote providers) ·
+            8 OpenAI API · 9 Models (browse, download, delete models on
+            the gateway host) · 0 Multimodal (which model serves which
+            modality)
+  SYSTEM    H Resources · T Sandbox · N Network (who can reach the
+            gateway)
+  S Setup (runs the setup guide again) · I About
 
-SCREEN KEYS (the footer lists each screen's keys):
-  Multimodal a apply recommended · D download all · C cancel it · p plan
-  Accounts   space Active · @ email · l activity · m manage entity ·
-             n summon entity · w my workspace policy
-  Workflows  i import .flow · L reload from disk
-  Apps       Enter/o open · i/u install/update · s/x start/stop · l log ·
-             c cancel · t/T terminal · n Node.js · y copy
-  Network    ↑↓ Enter saves the mode · c copies an address
+Each screen's own keys: press ? on it (the status bar shows the first
+ones; every key also has a button).
 
-SETUP GUIDE (the web console's first-run guide — its five steps,
-welcome · engines · model · apps · done, on eight screens here, through
-the same gateway routes; the terminal signs in first):
-  Connection → Setup → Engines → Providers → Routes (default model:
-  recommended plan, a apply, D download all) → Models → Apps → Review
-  (Finish or Skip setup: POST /host/first-run, verified by a GET)
+SETUP GUIDE (the web console's first-run guide on seven screens here,
+through the same gateway routes; the terminal signs in first):
+  Connection → Setup → Providers (engines) → Multimodal (recommended
+  plan: apply, download all) → Models → Apps → Sandbox (Finish or Skip
+  setup: POST /host/first-run, verified by a GET)
 ";
 
 struct Args {
@@ -582,5 +576,27 @@ mod first_run_args {
         assert_eq!(a.wizard, Some(false));
         let a = parse_args(&args(&["--wizard"])).unwrap().unwrap();
         assert_eq!(a.wizard, Some(true));
+    }
+}
+
+#[cfg(test)]
+mod help_screen_keys_tests {
+    use super::HELP;
+    use crate::ui::{screen_key, NAV_ORDER, SCREENS};
+
+    /// `--help` names every navigable screen with the shell's real key
+    /// ("<k> <Screen>"), from the table — never a stale number.
+    #[test]
+    fn help_names_every_screen_with_its_real_key() {
+        let flat = HELP.split_whitespace().collect::<Vec<_>>().join(" ");
+        for &i in NAV_ORDER.iter() {
+            let label = SCREENS[i];
+            let key = screen_key(i).unwrap_or_else(|| panic!("{label} has no key"));
+            assert!(
+                flat.contains(&format!("{key} {label}")),
+                "--help lacks `{key} {label}`"
+            );
+        }
+        assert!(flat.contains("1-9, 0, H T N S I screens"), "the KEYS line");
     }
 }
