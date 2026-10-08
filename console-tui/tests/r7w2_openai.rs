@@ -216,7 +216,7 @@ fn admin_page() -> Value {
     json!({
         "schema": "gateway_openai_api_v1", "role": "admin", "writable": true,
         "enabled": true, "running": true, "base_url": "http://127.0.0.1:18781/v1",
-        "key": {"own_token": true, "user_id": "admin", "fingerprint": &sha256_hex(ADMIN_TOKEN.as_bytes())[..12], "allowed": true},
+        "key": {"own_token": true, "user_id": "admin", "named_keys": true, "fingerprint": &sha256_hex(ADMIN_TOKEN.as_bytes())[..12], "allowed": true},
         "docs": {"openai_api": "https://github.com/lpalbou/abstractgateway/blob/main/docs/openai-api.md",
                  "abstractcore": "https://github.com/lpalbou/AbstractCore/blob/main/docs/server.md"},
         "support": {"tested": ["GET /v1/models"], "served": ["POST /v1/responses"], "not_yet": ["n > 1"]},
@@ -321,13 +321,13 @@ fn admin_overview_has_every_card_and_masks_the_key() {
     for needle in [
         "Connect your app",
         "Paste these two values into any OpenAI SDK or app.",
-        &format!("API key    {MASK}"),
-        "Your gateway token: apps use it as their API key and act as you.",
+        "API keys",
+        openai_api::KEYS_NOTE,
         "Access",
         // R15: Authentication = two segments, the chosen one's sentence under.
         "Protected (API key)",
         "Open (no key)",
-        "Apps send a gateway token as their API key.",
+        "Apps send an API key made on this page.",
         // Who can connect = a picker showing the chosen option + its sentence
         // (the other options are in its popup: who_can_connect_… below).
         "This machine only",
@@ -338,29 +338,25 @@ fn admin_overview_has_every_card_and_masks_the_key() {
 }
 
 #[test]
-fn reveal_shows_the_consoles_own_token() {
+fn the_gateway_token_is_never_offered_as_the_key() {
+    // Round 16: no Show / Copy of the console's token; `v` does nothing.
     let mut h = harness(Size::new(120, 60), ADMIN_TOKEN);
     h.connect(true);
     h.open_page();
-    h.seed(admin_page(), logs("all"));
+    let s = h.seed(admin_page(), logs("all"));
+    assert!(!s.contains(MASK) && !s.contains(ADMIN_TOKEN), "{s}");
     let s = h.key(b"v");
-    assert!(s.contains(ADMIN_TOKEN), "{s}");
-    let s = h.key(b"v");
-    assert!(!s.contains(ADMIN_TOKEN), "hidden again:\n{s}");
+    assert!(!s.contains(ADMIN_TOKEN), "{s}");
 }
 
 #[test]
-fn a_stale_token_is_said_and_never_shown() {
+fn another_consoles_token_is_never_shown_either() {
     let mut h = harness(Size::new(120, 60), "agw_some-other-token");
     h.connect(true);
     h.open_page();
     let s = h.seed(admin_page(), logs("all"));
-    assert!(
-        s.contains("Your token changed since you signed in here"),
-        "{s}"
-    );
-    let s = h.key(b"v");
     assert!(!s.contains("agw_some-other-token"), "{s}");
+    assert!(s.contains("API keys"), "{s}");
 }
 
 #[test]
@@ -504,46 +500,44 @@ fn restart_check_and_new_key_use_the_web_routes() {
     let s = h.turns(3);
     assert!(s.contains("OK   AbstractCore answers."), "{s}");
     assert!(s.contains("Fix  No model is configured."), "{s}");
-    // New key: the web's question first; nothing is sent before [New key].
+    // New key: a Name form (the web's inline form); Enter makes the key.
     let s = h.key(b"n");
     assert!(
-        s.contains("Make a new key? It replaces your gateway token"),
+        s.contains("Make key") && s.contains("Name it after the app"),
         "{s}"
     );
     let mut sent: Vec<_> = sends(&h.json_cmds());
-    assert!(!sent.iter().any(|(_, p, _)| p == "/me/token/rotate"));
-    // R15 F1: answered by its [New key] button (focus starts on Cancel).
-    let (y, line) = s
-        .lines()
-        .enumerate()
-        .filter(|(_, l)| l.contains(" New key ") && l.contains(" Cancel "))
-        .last()
-        .unwrap_or_else(|| panic!("[New key] [Cancel]:\n{s}"));
-    let x = line[..line.rfind(" New key ").unwrap() + 1].chars().count() + 1;
-    h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes());
+    h.key(b"laptop Cursor");
+    h.key(b"\r");
     sent.extend(sends(&h.json_cmds()));
     assert!(
-        sent.contains(&("POST".into(), "/me/token/rotate".into(), json!({}))),
+        sent.contains(&(
+            "POST".into(),
+            "/me/openai-keys".into(),
+            json!({"label": "laptop Cursor"})
+        )),
         "{sent:?}"
     );
+    assert!(!sent.iter().any(|(_, p, _)| p == "/me/token/rotate"));
     assert!(sent
         .iter()
         .any(|(_, p, _)| p == "/admin/core-endpoint/restart"));
     assert!(sent
         .iter()
         .any(|(_, p, _)| p == "/admin/core-endpoint/check"));
-    // The new key replaces the console's token and is shown (once).
+    // The key is shown once; the console keeps its own token.
     h.store.json.set_write(
         KEY_NEW_KEY,
-        Some(WriteState::Done(json!({"token": "agw_fresh-new-key"}))),
+        Some(WriteState::Done(json!({"key": "sk-agw-fresh-named", "item": {"label": "laptop Cursor", "fingerprint": "aaaaaaaaaaaa"}}))),
     );
     let s = h.turns(3);
-    assert_eq!(h.ui.conn_token.get_untracked(), "agw_fresh-new-key");
+    assert!(s.contains("sk-agw-fresh-named"), "{s}");
+    assert!(s.contains("Key “laptop Cursor” made."), "{s}");
+    assert_eq!(h.ui.conn_token.get_untracked(), ADMIN_TOKEN);
     assert!(
-        h.cmds().iter().any(|c| matches!(c, Cmd::Connect { .. })),
-        "reconnects with the new key"
+        !h.cmds().iter().any(|c| matches!(c, Cmd::Connect { .. })),
+        "a named key never replaces the console's sign-in"
     );
-    let _ = s;
 }
 
 #[test]

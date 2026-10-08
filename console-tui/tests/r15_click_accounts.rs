@@ -680,3 +680,87 @@ fn retained_runtimes_is_a_form_modal_with_a_title_close() {
     };
     assert!(!s.contains("Retained runtimes"), "✕ closed it:\n{s}");
 }
+
+/// Round 16: the OpenAI API dialog lists the account's named keys (never a
+/// key) — the web's lead, Revoke → [Revoke] [Cancel] by mouse → DELETE.
+#[test]
+fn the_openai_dialog_lists_and_revokes_the_accounts_keys() {
+    use abstractgateway_console::store::json::WriteState;
+    use abstractgateway_console::ui::openai_api as oa;
+    let mut h = page();
+    let s = click_row(&mut h, "alice", "⇄");
+    assert!(
+        s.contains("Lets alice use the OpenAI-compatible API (/v1) with their API keys."),
+        "{s}"
+    );
+    let gets: Vec<String> = h
+        .sent()
+        .into_iter()
+        .filter_map(|c| match c {
+            Cmd::Json(JsonCmd::Get { path, .. }) => Some(path),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        gets.contains(&"/admin/accounts/alice/openai-keys?tenant_id=default".to_string()),
+        "{gets:?}"
+    );
+    h.store.json.set(
+        &oa::account_keys_slot("alice"),
+        Loadable::Ready(json!({"account": "alice", "keys": [
+            {"label": "home assistant", "fingerprint": "0f1e2d3c4b5a", "created_at": "2026-10-08T16:05:00+00:00",
+             "last_used_at": null, "last_client": null}
+        ]})),
+    );
+    let s = h.turns(3);
+    assert!(
+        s.contains("API keys") && s.contains("home assistant") && s.contains("0f1e2d3c4b5a"),
+        "{s}"
+    );
+    // Click Revoke on the key's row.
+    let (y, line) = s
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("home assistant") && l.contains("Revoke"))
+        .unwrap_or_else(|| panic!("key row:\n{s}"));
+    let b = line.find("Revoke").unwrap();
+    let x = line[..b].chars().count() + 2;
+    let s = h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes());
+    assert!(
+        s.contains("Revoke “home assistant” of alice? Apps using it stop working at once."),
+        "{s}"
+    );
+    click_confirm(&mut h, "Revoke", "Cancel");
+    let sent: Vec<(String, String)> = h
+        .sent()
+        .into_iter()
+        .filter_map(|c| match c {
+            Cmd::Json(JsonCmd::Send { method, path, .. }) => Some((method, path)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        sent,
+        vec![(
+            "DELETE".to_string(),
+            "/admin/accounts/alice/openai-keys/0f1e2d3c4b5a?tenant_id=default".to_string()
+        )]
+    );
+    h.store.json.set_write(
+        oa::KEY_ACCOUNT_REVOKE,
+        Some(WriteState::Done(json!({"revoked": {}}))),
+    );
+    h.store.json.set(
+        &oa::account_keys_slot("alice"),
+        Loadable::Ready(json!({"account": "alice", "keys": []})),
+    );
+    let s = h.turns(3);
+    assert!(
+        s.contains("Revoked “home assistant”: apps using it are refused from now on."),
+        "{s}"
+    );
+    assert!(
+        s.contains("alice has no API keys. People make their own on the OpenAI API page."),
+        "{s}"
+    );
+}

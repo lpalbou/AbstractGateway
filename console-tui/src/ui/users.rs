@@ -1077,10 +1077,8 @@ fn openai_selected(cx: Scope, ctx: &Ctx) {
     let id = r.id.clone();
     let c = ctx.clone();
     super::w::FormModal::new(format!("OpenAI API — {id}"))
-        .lead(format!(
-            "Lets {id} use the OpenAI-compatible API (/v1) with their own gateway token as the key. Off: that key is refused there; signing in to the console is unchanged."
-        ))
-        .size(76, 12)
+        .lead(super::openai_api::account_lead(&id))
+        .size(84, 22)
         .open(ctx, cx, move |mcx, close, _guard, w| {
             let store = c.store;
             let state = mcx.signal(super::w::FieldState::Idle);
@@ -1135,11 +1133,17 @@ fn openai_selected(cx: Scope, ctx: &Ctx) {
             };
             let t = use_theme(mcx).get().tokens;
             let close2 = close.clone();
+            let keys = account_openai_keys(mcx, cx, &c, &r, w);
             Element::new()
                 .style(LayoutStyle::column().grow(1.0))
                 .child(toggle_region)
                 .child(super::w::state_line(state, w))
-                .child(Element::new().style(LayoutStyle::default().grow(1.0)).build())
+                .child(keys)
+                .child(
+                    Element::new()
+                        .style(LayoutStyle::default().grow(1.0))
+                        .build(),
+                )
                 .child(super::w::form::button_row(vec![button(
                     mcx,
                     &t,
@@ -1150,6 +1154,194 @@ fn openai_selected(cx: Scope, ctx: &Ctx) {
                 )]))
                 .build()
         });
+}
+
+/// The OpenAI API dialog's "API keys" (round 16): the account's named keys
+/// (name · created · last used · fingerprint; never a key), each with
+/// Revoke → `w::Confirm` [Revoke] [Cancel] → applies at once.
+fn account_openai_keys(mcx: Scope, pcx: Scope, ctx: &Ctx, r: &AccountRow, w: i32) -> View {
+    use super::openai_api as oa;
+    use crate::store::json::WriteState;
+    use crate::worker::json::JsonCmd;
+    let store = ctx.store;
+    let id = r.id.clone();
+    let tenant = r.tenant_id.clone();
+    let slot = oa::account_keys_slot(&id);
+    let path = oa::account_keys_path(&id, &tenant);
+    store.json.set(&slot, Loadable::Loading);
+    ctx.send(Cmd::Json(JsonCmd::get(&slot, path.clone())));
+    let status = mcx.signal(Option::<(bool, String)>::None);
+    let revoking = mcx.signal(String::new());
+    let sel = mcx.signal(Option::<String>::None);
+    {
+        mcx.effect(move || {
+            if let Some(wr) = store.json.write(oa::KEY_ACCOUNT_REVOKE) {
+                if !wr.is_pending() {
+                    let label = revoking.get_untracked();
+                    match wr {
+                        WriteState::Done(_) => {
+                            status.set(Some((true, oa::revoked_sentence(&label))))
+                        }
+                        WriteState::Failed(e) => {
+                            status.set(Some((false, format!("Not revoked: {}", e.message))))
+                        }
+                        WriteState::Pending => {}
+                    }
+                    store.json.set_write(oa::KEY_ACCOUNT_REVOKE, None);
+                }
+            }
+        });
+    }
+    let c = ctx.clone();
+    dyn_view_scoped(LayoutStyle::column().gap(0).shrink(0.0), move |kcx| {
+        let t = use_theme(kcx).get().tokens;
+        let mut col = Element::new()
+            .style(LayoutStyle::column().gap(0).shrink(0.0))
+            .child(super::w::fill_line(
+                LayoutStyle::line(1).shrink(0.0),
+                vec![],
+                None,
+            ))
+            .child(super::w::fill_line(
+                LayoutStyle::line(1).shrink(0.0),
+                vec![super::w::Ink::new(oa::ACCOUNT_KEYS_TITLE, t.text).bold()],
+                None,
+            ));
+        let keys = store.json.get(&slot);
+        match &keys {
+            Loadable::Failed(e) => {
+                col = col.child(super::w::form::sentence(
+                    &t,
+                    &format!("Could not read the keys: {}", e.message),
+                    w,
+                    t.error,
+                ));
+            }
+            Loadable::Ready(v) => {
+                let list: Vec<Value> = v
+                    .get("keys")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                if list.is_empty() {
+                    col = col.child(super::w::form::sentence(
+                        &t,
+                        &oa::account_keys_empty(&id),
+                        w,
+                        t.text_muted,
+                    ));
+                } else {
+                    let rows: Vec<WRow> = list
+                        .iter()
+                        .map(|k| {
+                            let cells = oa::key_cells(k);
+                            WRow::new(
+                                k.get("fingerprint")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("")
+                                    .to_string(),
+                                vec![
+                                    Cell::text(cells[0].clone(), t.text),
+                                    Cell::Lines(vec![
+                                        vec![super::w::Ink::new(cells[1].clone(), t.text_muted)],
+                                        vec![super::w::Ink::new(cells[2].clone(), t.text_muted)],
+                                    ]),
+                                    Cell::text(cells[3].clone(), t.info),
+                                    Cell::Actions(oa::key_actions(k)),
+                                ],
+                            )
+                        })
+                        .collect();
+                    let (c2, id2, tenant2, slot2, path2) = (
+                        c.clone(),
+                        id.clone(),
+                        tenant.clone(),
+                        slot.clone(),
+                        path.clone(),
+                    );
+                    let list2 = list.clone();
+                    col = col.child(
+                        DataTable::new(
+                            vec![
+                                Col::new("Name", ColW::Flex { weight: 1, min: 10 }),
+                                Col::new("Created · Last used", ColW::Flex { weight: 2, min: 14 }),
+                                Col::new("Fingerprint", ColW::Fit { min: 12, max: 12 }),
+                                Col::new("", ColW::Fit { min: 8, max: 10 }),
+                            ],
+                            rows,
+                            sel,
+                        )
+                        .width(w)
+                        .max_rows(8)
+                        .on_action(move |fp, aid| {
+                            if aid != "revoke" {
+                                return;
+                            }
+                            let Some(k) = list2
+                                .iter()
+                                .find(|k| k.get("fingerprint").and_then(Value::as_str) == Some(fp))
+                            else {
+                                return;
+                            };
+                            let label = k
+                                .get("label")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_string();
+                            let (c3, id3, tenant3, slot3, path3, fp3) = (
+                                c2.clone(),
+                                id2.clone(),
+                                tenant2.clone(),
+                                slot2.clone(),
+                                path2.clone(),
+                                fp.to_string(),
+                            );
+                            super::w::Confirm::danger(
+                                oa::account_revoke_sentence(&label, &id2),
+                                "Revoke",
+                                "Cancel",
+                            )
+                            .open(pcx, c2.ui, move || {
+                                revoking.set(label.clone());
+                                status.set(None);
+                                c3.store
+                                    .json
+                                    .set_write(oa::KEY_ACCOUNT_REVOKE, Some(WriteState::Pending));
+                                c3.send(Cmd::Json(JsonCmd::Send {
+                                    key: oa::KEY_ACCOUNT_REVOKE.into(),
+                                    method: "DELETE".into(),
+                                    path: oa::account_key_path(&id3, &tenant3, &fp3),
+                                    body: Value::Null,
+                                    slow: false,
+                                    label: format!("Accounts: revoke {label} of {id3}"),
+                                    reload: vec![(slot3, path3)],
+                                    journal: false,
+                                }));
+                            });
+                        })
+                        .view(kcx, &t),
+                    );
+                }
+            }
+            _ => {
+                col = col.child(super::w::form::sentence(
+                    &t,
+                    "Reading the keys...",
+                    w,
+                    t.text_muted,
+                ));
+            }
+        }
+        if let Some((ok, text)) = status.get() {
+            col = col.child(super::w::form::sentence(
+                &t,
+                &text,
+                w,
+                if ok { t.ok } else { t.error },
+            ));
+        }
+        col.build()
+    })
 }
 
 /// Short terminals get the compact card (one line per switch).

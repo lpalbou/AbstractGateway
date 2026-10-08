@@ -367,19 +367,31 @@ fn admin_actions_change_the_gateway_like_the_web_page() {
     h.until("the record", |_, s| {
         s.contains("Keys and tokens were removed")
     });
-    // Reveal shows the admin token this console signed in with (Esc
+    // Round 16: the page never offers the console's token as a key (Esc
     // closes the record first).
     h.term.push_input(&[0x1b]);
     h.turns(1);
     std::thread::sleep(Duration::from_millis(45));
     h.turns(3);
     let s = h.key(b"v");
-    assert!(s.contains(&admin()), "revealed key:\n{s}");
+    assert!(!s.contains(&admin()), "the token is never shown:\n{s}");
+}
+
+fn v1_status(path: &str, key: &str) -> u16 {
+    let url = std::env::var("ABSTRACTGATEWAY_URL").unwrap();
+    match ureq::get(&format!("{url}{path}"))
+        .set("Authorization", &format!("Bearer {key}"))
+        .call()
+    {
+        Ok(r) => r.status(),
+        Err(ureq::Error::Status(code, _)) => code,
+        Err(e) => panic!("{e}"),
+    }
 }
 
 #[test]
 #[ignore = "talks to a live gateway; run with --ignored"]
-fn a_user_sees_own_requests_and_new_key_replaces_the_token() {
+fn a_user_sees_own_requests_and_makes_and_revokes_a_named_key() {
     let alice = std::env::var("R7W2_ALICE_TOKEN").expect("R7W2_ALICE_TOKEN");
     let mut h = live(&alice);
     let s = h.until("own requests", |_, s| {
@@ -387,36 +399,45 @@ fn a_user_sees_own_requests_and_new_key_replaces_the_token() {
     });
     assert!(s.contains("Only an admin can start or stop it."), "{s}");
     assert!(!s.contains("bob "), "only alice's rows:\n{s}");
-    // New key: confirm, then the old token stops working, the new one is
-    // the console's, and the page reads again with it.
+    // New key: a name, Enter; the key is shown once and works at /v1 only.
     h.key(b"n");
-    let s = h.until("the confirm", |_, s| s.contains("Make a new key?"));
-    // R15 F1: answered by its [New key] button.
+    h.until("the Name form", |_, s| s.contains("Make key"));
+    h.key(b"live tui key");
+    h.key(b"\r");
+    let s = h.until("the key, shown once", |_, s| {
+        s.contains("Key “live tui key” made.")
+    });
+    let key = s
+        .lines()
+        .find_map(|l| {
+            l.split_whitespace()
+                .find(|w| w.starts_with("sk-agw-"))
+                .map(str::to_string)
+        })
+        .expect("the key on screen");
+    assert_eq!(v1_status("/v1/models", &key), 200, "the key serves /v1");
+    assert_eq!(
+        get("/openai-api", &key).unwrap_err(),
+        401,
+        "never the console API"
+    );
+    assert_eq!(
+        h.ui.conn_token.get_untracked(),
+        alice,
+        "the sign-in is unchanged"
+    );
+    // Revoke it: d on the keys table, [Revoke] by mouse.
+    h.until("listed", |_, s| s.contains("live tui key"));
+    h.key(b"d");
+    let s = h.until("the question", |_, s| s.contains("Revoke “live tui key”?"));
     let (y, line) = s
         .lines()
         .enumerate()
-        .filter(|(_, l)| l.contains(" New key ") && l.contains(" Cancel "))
+        .filter(|(_, l)| l.contains(" Revoke ") && l.contains(" Cancel "))
         .last()
-        .unwrap_or_else(|| panic!("[New key] [Cancel]:\n{s}"));
-    let x = line[..line.rfind(" New key ").unwrap() + 1].chars().count() + 1;
+        .unwrap_or_else(|| panic!("[Revoke] [Cancel]:\n{s}"));
+    let x = line[..line.rfind(" Revoke ").unwrap() + 1].chars().count() + 1;
     h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes());
-    h.until("the new key", |h, _| {
-        h.ui.conn_token.get_untracked() != alice
-    });
-    let fresh = h.ui.conn_token.get_untracked();
-    assert_eq!(
-        get("/openai-api", &alice).unwrap_err(),
-        401,
-        "old key refused"
-    );
-    assert_eq!(
-        get("/openai-api", &fresh).unwrap()["key"]["user_id"],
-        json!("alice")
-    );
-    let s = h.until("reconnected, key shown", |h, s| {
-        h.store.conn.with_untracked(ConnPhase::is_connected) && s.contains(&fresh)
-    });
-    assert!(s.contains("Your gateway token"), "{s}");
-    // Print the new token for the operator's next run (the seed's is gone).
-    eprintln!("alice's new token: {fresh}");
+    h.until("revoked", |_, s| s.contains("Revoked “live tui key”"));
+    assert_eq!(v1_status("/v1/models", &key), 401, "refused at once");
 }
