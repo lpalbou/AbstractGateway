@@ -1,0 +1,23 @@
+{
+  "_source": "scripts/extract_web_wording.py (do not edit by hand)",
+  "title": "Gateway",
+  "note": "How this gateway is running right now. Pausing stops new workflow steps; the console and connected apps keep answering.",
+  "pause": "Workflows paused",
+  "pause_tip": "On: no new workflow step starts until you switch it off; work already inside a call finishes first",
+  "check": "Check now",
+  "check_tip": "Check for a newer release: an AbstractFramework installer install compares with the newest AbstractFramework release, any other install with the newest AbstractGateway on PyPI (needs internet)",
+  "update": "Update",
+  "update_tip": "Install it in the background (an installer install runs the AbstractFramework installer); restart to finish",
+  "restart": "Restart gateway…",
+  "quit": "Quit gateway…",
+  "login": "Start at login",
+  "restart_question": "Restart AbstractGateway? Running workflows pause at their next step and continue after the restart. The console is unavailable for a few seconds.",
+  "restart_go": "Restart",
+  "quit_question": "Quit AbstractGateway? Workflows stop and this console goes offline until you start AbstractGateway again.",
+  "quit_go": "Quit",
+  "update_go": "Update now",
+  "row_0": "Version",
+  "row_1": "Desktop icon",
+  "row_2": "Last restart",
+  "row_3": "Start at login"
+}
