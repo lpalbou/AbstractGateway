@@ -2685,7 +2685,7 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                             "Options (JSON, optional)",
                             TextInput::new()
                                 .value(options_json)
-                                .placeholder("optional — e.g. {\"voice\": \"M3\"}")
+                                .placeholder("{\"temperature\": 0.7}")
                                 .layout(LayoutStyle::default().w(52).h(1))
                                 .element(gcx, &t)
                                 .build(),
