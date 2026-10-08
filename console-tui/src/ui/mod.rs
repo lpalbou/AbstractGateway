@@ -2271,10 +2271,7 @@ pub fn screen_hint_pairs(ctx: &Ctx) -> Vec<(String, String)> {
         // footer_hints_stay_in_lockstep_with_screens.
         SCREEN_WORKFLOWS => pairs.extend(workflows::hints(&ctx_hints)),
         SCREEN_SKILLS => pairs.extend(skills_mcp::hints(&ctx_hints)),
-        SCREEN_REVIEW => {
-            pairs.push(("Tab→prompt, Enter", "run the test (REAL generation)"));
-            pairs.push(("r", "refresh providers"));
-        }
+        SCREEN_REVIEW => pairs.extend(sandbox::hints(&ctx_hints)), // R15 arm
         SCREEN_MODELS => {
             pairs.push(("u", "unload"));
             pairs.push(("k", "lock/unlock"));

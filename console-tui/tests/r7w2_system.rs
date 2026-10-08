@@ -536,6 +536,9 @@ fn sandbox_context_sentences_are_the_webs() {
     h.admin_on(ui::SCREEN_REVIEW);
     let s = h.turns(2);
     assert!(s.contains("╭ Sandbox"), "{s}");
-    assert!(s.contains("output "), "the web's Output field:\n{s}");
+    assert!(
+        s.contains("Output ") && s.contains(" Image "),
+        "the web's Output field (R15: a Segmented):\n{s}"
+    );
     h.shoot("sandbox-text");
 }

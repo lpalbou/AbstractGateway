@@ -758,6 +758,48 @@ def models_wording() -> dict:
         "clear": need(cat, r'data-mc-action="clear">([^<]+)</button>', "Clear filters"),
         "not_in_catalog": need(cat, r'<h4 class="mc-extra__title">([^<]+)</h4>', "Not in the catalog"),
     }
+
+
+def sandbox_wording() -> dict:
+    """Sandbox: the web tab's field labels and help sentences (console.py
+    `#tab-sandbox`), the Reasoning / MTP options, the mode buttons' tooltip
+    shape (`renderSandboxCapabilityOptions`), and the kit chat's Send label,
+    Attach and Clear tooltips (console.py sandboxChatProps + the islands
+    bundle)."""
+    src = read_b("console.py")
+    start = src.find('<div id="tab-sandbox" class="tab-panel">')
+    end = src.find("</section>", start)
+    if start < 0 or end < 0:
+        fail("the Sandbox tab markup (`#tab-sandbox` … `</section>`) is missing in console.py.")
+    tab = src[start:end]
+    def one_in(pattern: str, what: str, text: str = tab) -> str:
+        m = re.findall(pattern, text, re.S)
+        if len(m) != 1:
+            fail(f"Sandbox {what}: expected exactly one match, found {len(m)} (the anchor moved).")
+        return html.unescape(m[0])
+    out = {
+        "output_label": one_in(r'id="sandbox-modes-label"[^>]*>([^<]+)<', "Output label"),
+        "context": one_in(r'id="sandbox-context"[^>]*>([^<]+)<', "context sentence"),
+        "system_label": one_in(r'id="sandbox-system-label"[^>]*>([^<]+)<input', "System prompt label"),
+        "system_placeholder": one_in(r'id="sandbox-system" placeholder="([^"]*)"', "System prompt placeholder"),
+        "system_help": one_in(r'id="sandbox-system"[^>]*><span class="sandbox-field-help">([^<]+)<', "System prompt help"),
+        "reasoning_label": one_in(r'id="sandbox-reasoning-label"[^>]*>([^<]+)<select', "Reasoning label"),
+        "reasoning_help": one_in(r'</select><span class="sandbox-field-help">(Effort[^<]+)<', "Reasoning help"),
+        "mtp_label": one_in(r'id="sandbox-speculation-label"[^>]*>([^<]+)<select', "MTP label"),
+        "mtp_help": one_in(r'</select><span class="sandbox-field-help">(Per-request[^<]+)<', "MTP help"),
+    }
+    reasoning = re.search(r'<select id="sandbox-reasoning">(.*?)</select>', tab, re.S)
+    mtp = re.search(r'<select id="sandbox-speculation">(.*?)</select>', tab, re.S)
+    if not reasoning or not mtp:
+        fail("the Sandbox Reasoning / MTP <select> options are missing in console.py.")
+    out["reasoning_options"] = re.findall(r"<option[^>]*>([^<]*)</option>", reasoning.group(1))
+    out["mtp_options"] = re.findall(r"<option[^>]*>([^<]*)</option>", mtp.group(1))
+    tip = one_in(r'btn\.title = `\$\{label\}: \$\{configured \? `[^`]*` : "([^"]+)"\}`;', "mode tooltip", src)
+    out["mode_unconfigured"] = tip
+    out["send_label"] = one_in(r'sendLabel: "([^"]+)"', "Send label", src)
+    isl = read_b("console_islands.py")
+    out["clear_tip"] = one_in(r'af-sandbox-chat__clear","aria-label":"Clear chat","data-af-tip":"([^"]+)"', "Clear tooltip", isl)
+    out["attach_tip"] = one_in(r'"data-af-tip":"(Attach files to your question)"', "Attach tooltip", isl)
     return out
 
 
@@ -766,6 +808,7 @@ B_SCREENS = {
     "network": network_wording,
     "docs": docs_wording,
     "models": models_wording,
+    "sandbox": sandbox_wording,
 }
 
 

@@ -2951,7 +2951,7 @@ fn review_inline_sandbox_runs_and_renders_full_result() {
     h.turns(3);
     // Enter in the prompt runs the test with the picks (the prompt is
     // focused by the operator, never autofocused — REVIEW-1 M1).
-    click_field(&mut h, "prompt");
+    click_field(&mut h, "│prompt"); // R15: "System prompt" sits above
     h.type_text("\r");
     h.turns(2);
     match h.find_cmd(|c| matches!(c, Cmd::SandboxTest { .. })) {
@@ -3024,7 +3024,7 @@ fn review_sandbox_refusals_name_reasons() {
     // Not connected: refuse with the connect teaching.
     h.goto_screen(6);
     h.turns(2);
-    click_field(&mut h, "prompt");
+    click_field(&mut h, "│prompt"); // R15: "System prompt" sits above
     h.type_text("\r");
     h.turns(2);
     let notice = h.store.notice.get_untracked().unwrap_or_default();
@@ -3116,8 +3116,8 @@ fn review_screen_renders_whole_at_both_sizes() {
                 "[{label}] teaching line:\n{s}"
             );
             assert!(
-                s.contains("Generate (Enter)"),
-                "[{label}] Generate button:\n{s}"
+                s.contains(" Send ") && s.contains(" Clear chat "),
+                "[{label}] R15 action bar (Send):\n{s}"
             );
             assert!(
                 s.contains(" Finish ") && s.contains("Skip setup"),
@@ -3140,7 +3140,7 @@ fn review_screen_renders_whole_at_both_sizes() {
                         "[{label}] failed outcome renders verbatim:\n{s}"
                     );
                     assert!(
-                        s.contains("press g / Generate to retry"),
+                        s.contains("press g / Send to retry"),
                         "[{label}] retry teaching survives:\n{s}"
                     );
                 }
@@ -3974,8 +3974,8 @@ fn first_run_screens_survive_tight_height() {
         "live-test teaching line survives beside a journal entry:\n{s}"
     );
     assert!(
-        s.contains("Generate (Enter)"),
-        "the Generate button renders inside its block:\n{s}"
+        s.contains(" Send "),
+        "the R15 Send button renders inside its block:\n{s}"
     );
 }
 
@@ -7224,7 +7224,7 @@ fn footer_hints_stay_in_lockstep_with_screens() {
         (3, "Enter Email"),
         (4, "open runtime"),
         (5, "Drafts"),
-        (6, "run the test"),
+        (6, "Send (in the message)"), // R15: the Sandbox bar
         (7, "context estimate"),
         // The Models page (catalog.rs).
         (8, "use as default"),
@@ -7242,7 +7242,7 @@ fn footer_hints_stay_in_lockstep_with_screens() {
     h.ui.screen.set(5);
     let s = h.turns(2);
     assert!(
-        !s.contains("run the test"),
+        !s.contains("Send (in the message)"),
         "workflows screen never wears Review's sandbox hints:\n{s}"
     );
 }
