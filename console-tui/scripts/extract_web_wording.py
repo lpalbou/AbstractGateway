@@ -953,7 +953,19 @@ def multimodal_wording() -> dict:
             fail(f"modal button {bid} moved.")
         t = re.search(r'title="([^"]*)"', m.group(1))
         buttons.append({"label": m.group(2).strip(), "title": html.unescape(t.group(1)) if t else ""})
+    sa = req(src, r"(function renderStoreAuthority\(elementId, payload\) \{.*?el\.classList\.remove\(\"hidden\"\);\n\s*\})", "renderStoreAuthority")
+    store_line = {
+        "label": _one(sa, r'overlay \? "[^"]+" : "([^"]+)";', "store label"),
+        "overlay_label": _one(sa, r'overlay \? "([^"]+)" : "AbstractCore store";', "overlay label"),
+        "claim_overlay": _one(sa, r'const claim = overlay\s*\? "([^"]+)"', "overlay claim"),
+        "claim_writable": _one(sa, r': writable\s*\? "([^"]+)"', "writable claim"),
+        "claim_readonly": _one(sa, r': writable\s*\? "[^"]+"\s*: "([^"]+)";', "read-only claim"),
+        "shape": _one(sa, r"el\.innerHTML = `(\$\{esc\(label\)\} · <code>\$\{esc\(file\)\}</code> — \$\{esc\(claim\)\})`;", "line shape")
+        .replace("${esc(label)}", "{label}").replace("<code>${esc(file)}</code>", "{file}").replace("${esc(claim)}", "{claim}"),
+        "title": _one(sa, r"el\.title = `(authority: )\$\{authority\}`;", "line title") + "{authority}",
+    }
     return {
+        "store_line": store_line,
         "title": head.group(1),
         "subtitle": head.group(2),
         "scope_admin": scope.group(1),

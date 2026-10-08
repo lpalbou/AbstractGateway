@@ -746,3 +746,77 @@ fn the_editors_retry_buttons_reload_by_mouse() {
         "Retry voice catalog re-reads the voices"
     );
 }
+
+#[test]
+fn the_store_line_is_the_webs_and_only_when_a_file_is_named() {
+    // Absent: the payload names no AbstractCore store file → no line.
+    let mut h = page();
+    let s = h.turns(2);
+    assert!(
+        !s.contains("AbstractCore store ·"),
+        "no claim without evidence:\n{s}"
+    );
+    // Named (writable): the web's line, the authority as its tooltip.
+    let mut p = routes_payload();
+    p["authority"] = json!("abstractcore.gateway_runtime");
+    p["config_file"] = json!("/home/u/.abstractcore/config.json");
+    h.store
+        .routes
+        .set(Loadable::Ready(RoutesData::from_value(&p)));
+    let s = h.turns(3);
+    let flat: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        flat.contains("AbstractCore store · /home/u/.abstractcore/config.json — shared with AbstractCore — edits here apply to AbstractCore directly"),
+        "{s}"
+    );
+    // A gateway-owned authority never gets the sentence, file or not.
+    p["authority"] = json!("gateway");
+    h.store
+        .routes
+        .set(Loadable::Ready(RoutesData::from_value(&p)));
+    let s = h.turns(3);
+    assert!(!s.contains("AbstractCore store ·"), "{s}");
+    // The words are the web's (renderStoreAuthority).
+    let fx = fixture();
+    let sl = &fx["store_line"];
+    for (authority, writable, label, claim) in [
+        (
+            "abstractcore.gateway_runtime",
+            true,
+            "label",
+            "claim_writable",
+        ),
+        (
+            "abstractcore.gateway_runtime",
+            false,
+            "label",
+            "claim_readonly",
+        ),
+        (
+            "abstractcore.runtime",
+            true,
+            "overlay_label",
+            "claim_overlay",
+        ),
+    ] {
+        let mut p = routes_payload();
+        p["authority"] = json!(authority);
+        p["writable"] = json!(writable);
+        p["config_file"] = json!("/c.json");
+        let (text, tip) = routes::store_line(&RoutesData::from_value(&p)).expect("a line");
+        let want = sl["shape"]
+            .as_str()
+            .unwrap()
+            .replace("{label}", sl[label].as_str().unwrap())
+            .replace("{file}", "/c.json")
+            .replace("{claim}", sl[claim].as_str().unwrap());
+        assert_eq!(text, want);
+        assert_eq!(
+            tip,
+            sl["title"]
+                .as_str()
+                .unwrap()
+                .replace("{authority}", authority)
+        );
+    }
+}

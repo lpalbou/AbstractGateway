@@ -1,5 +1,14 @@
 {
   "_source": "scripts/extract_web_wording.py (do not edit by hand)",
+  "store_line": {
+    "label": "AbstractCore store",
+    "overlay_label": "This runtime's AbstractCore overlay",
+    "claim_overlay": "private to this runtime — routes left unset here fall back to the shared AbstractCore store",
+    "claim_writable": "shared with AbstractCore — edits here apply to AbstractCore directly",
+    "claim_readonly": "shared with AbstractCore — read-only from this Gateway; edit it where AbstractCore runs",
+    "shape": "{label} · {file} — {claim}",
+    "title": "authority: {authority}"
+  },
   "title": "Multimodal Capabilities",
   "subtitle": "Which provider/model serves each capability route",
   "scope_admin": "Editing as admin changes the Gateway multimodal capability defaults. Users inherit these unless they set their own runtime defaults.",

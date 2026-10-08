@@ -530,11 +530,20 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     t.text_muted,
                 ));
                 if let Loadable::Ready(d) = store.routes.get() {
-                    // The web's store line ("AbstractCore store · <file> — …")
-                    // needs the payload's `config_file`, which the store does
-                    // not carry: NO CLAIM WITHOUT EVIDENCE — a writable store
-                    // says nothing; a read-only one says so (edits are refused).
-                    if !d.writable {
+                    // The web's store line (renderStoreAuthority): only when
+                    // the payload NAMES an AbstractCore store file — no claim
+                    // without evidence; its tooltip is the authority.
+                    if let Some((text, tip)) = store_line(&d) {
+                        let el = Element::new()
+                            .style(LayoutStyle::column().shrink(0.0))
+                            .child(super::w::form::sentence(
+                                &t,
+                                &text,
+                                w,
+                                if d.writable { t.text_faint } else { t.warn },
+                            ));
+                        col = col.child(super::w::tip::with_tip(scx, el, tip).build());
+                    } else if !d.writable {
                         col = col.child(line(vec![
                             span_bold("read-only (backend unreachable?)", t.warn),
                             span(format!("  ·  route store {}", d.authority), t.text_faint),
@@ -1255,6 +1264,43 @@ fn copy_selected(ctx: &Ctx) {
 }
 
 /// The page's hint pairs (R15: the selected row's actions, then the page's).
+/// The web's store provenance line (console.py renderStoreAuthority):
+/// `(line, tooltip)` when the payload names an AbstractCore store file and
+/// its authority is AbstractCore's, else None (no line at all).
+pub fn store_line(d: &RoutesData) -> Option<(String, String)> {
+    let file = d.config_file.as_deref()?.trim();
+    let authority = d.authority.trim();
+    if file.is_empty() || !authority.starts_with("abstractcore") {
+        return None;
+    }
+    let overlay = authority == "abstractcore.runtime";
+    let label = if overlay {
+        STORE_OVERLAY_LABEL
+    } else {
+        STORE_LABEL
+    };
+    let claim = if overlay {
+        STORE_CLAIM_OVERLAY
+    } else if d.writable {
+        STORE_CLAIM_WRITABLE
+    } else {
+        STORE_CLAIM_READONLY
+    };
+    Some((
+        format!("{label} · {file} — {claim}"),
+        format!("authority: {authority}"),
+    ))
+}
+
+pub const STORE_LABEL: &str = "AbstractCore store";
+pub const STORE_OVERLAY_LABEL: &str = "This runtime's AbstractCore overlay";
+pub const STORE_CLAIM_OVERLAY: &str =
+    "private to this runtime — routes left unset here fall back to the shared AbstractCore store";
+pub const STORE_CLAIM_WRITABLE: &str =
+    "shared with AbstractCore — edits here apply to AbstractCore directly";
+pub const STORE_CLAIM_READONLY: &str =
+    "shared with AbstractCore — read-only from this Gateway; edit it where AbstractCore runs";
+
 pub fn hints(ctx: &Ctx) -> Vec<(&'static str, &'static str)> {
     let store = ctx.store;
     let admin = store.conn.with(ConnPhase::is_admin);
