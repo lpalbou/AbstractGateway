@@ -9181,10 +9181,17 @@ fn r15_arrows_switch_screens_with_real_data_and_focus_inside_the_page() {
                 // caret's, the screen stays; Esc hands the keyboard back.
                 h.key(dir);
                 h.turns(2);
-                assert_eq!(h.ui.screen.get_untracked(), from, "the caret keeps its arrows");
+                assert_eq!(
+                    h.ui.screen.get_untracked(),
+                    from,
+                    "the caret keeps its arrows"
+                );
                 h.press_escape();
                 h.turns(2);
-                assert!(h.ui.caret.get_untracked().is_none(), "Esc released the caret");
+                assert!(
+                    h.ui.caret.get_untracked().is_none(),
+                    "Esc released the caret"
+                );
             }
             h.key(dir);
             h.turns(3);
