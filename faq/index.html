@@ -2415,9 +2415,11 @@ abstractgateway<span class="w"> </span>serve<span class="w"> </span>--no-runner<
 <h3 id="what-happens-when-the-gateway-hangs">What happens when the gateway hangs?<a class="headerlink" href="#what-happens-when-the-gateway-hangs" title="Permanent link">&para;</a></h3>
 <p><code>abstractgateway serve</code> runs an event-loop watchdog. When the event loop has
 not run for <code>--watchdog-seconds</code> (default 30), the gateway writes the blocked
-stacks to its log and exits with code 75; the LaunchAgent, the systemd unit or
-the local supervisor then restarts it. <code>GET /api/health</code> reports the
-watchdog's state. See <a href="../deployment/">deployment.md</a> and
+stacks to its log and to <code>&lt;data dir&gt;/incidents/</code>, and exits with code 75; the
+LaunchAgent, the systemd unit or the local supervisor then restarts it. The
+console's Resources page (Gateway card) then shows
+"Gateway restarted at <time> after a hang — <reason>". <code>GET /api/health</code>
+reports the watchdog's state. See <a href="../deployment/">deployment.md</a> and
 <a href="../troubleshooting/#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75">troubleshooting.md</a>.</p>
 <h2 id="openai-api">OpenAI API<a class="headerlink" href="#openai-api" title="Permanent link">&para;</a></h2>
 <h3 id="can-i-use-this-gateway-from-an-openai-sdk-or-app">Can I use this gateway from an OpenAI SDK or app?<a class="headerlink" href="#can-i-use-this-gateway-from-an-openai-sdk-or-app" title="Permanent link">&para;</a></h3>

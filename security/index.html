@@ -939,6 +939,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Command sandbox">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#browser-probe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Browser probe
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1352,6 +1369,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Command sandbox">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#browser-probe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Browser probe
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1820,7 +1854,7 @@ it matches the allowlist (glob-style patterns, fnmatch). The allowlist is
 addresses the gateway detects (<code>http://&lt;interface address, Bonjour or Tailscale
 name&gt;:&lt;listening port&gt;</code> and <code>https://&lt;Tailscale name&gt;</code>, refreshed every 60 s;
 see <a href="../configuration/#detected-addresses-are-accepted-origins">configuration.md</a>),
-plus the <strong><code>allowed_origins</code> setting</strong> (console: Network → <em>Advanced</em>; TUI:
+plus the <strong><code>allowed_origins</code> setting</strong> (console: Network → <em>Reached through another address?</em>; TUI:
 Connection screen; CLI:
 <code>abstractgateway network set --allowed-origins https://gateway.example.com</code>).
 The setting is read per request: a change applies to the next request, no
@@ -2092,7 +2126,22 @@ beyond the new ceiling:</p>
   workspaces and every account's allowed folders become read &amp; write rows; an
   account that did not have a folder another account had gets a refused row for
   it; old refused folders become refused rows (gateway's or the account's);
-  launch folders trusted under the old model are not added.</li>
+  launch folders trusted under the old model are not added. When no root was
+  configured, nothing counts as "already reachable": every old folder becomes a
+  row (the old runtime's guess, the folder the gateway was started in, is never
+  used).</li>
+<li>Repair of a store migrated by gateway 0.13.0, <code>_migrated.workspace_policy_v1_repair</code>:
+  0.13.0 filtered the old folders by that guess (usually your home folder) and
+  then kept no row for it, so folders under it disappeared from the list (access
+  was not lost: the posture allows everything not refused). Once, at serve start
+  or the first read, the gateway recomputes the old migration from
+  <code>_migrated.workspace_policy_v1.old</code> and adds the rows it lost (gateway rows,
+  and the accounts' refused rows); a path the policy already lists keeps its
+  current mode, other rows are untouched. The restored rows are recorded there
+  and in the audit log (one <code>workspace_policy_changed</code> line per restored row, scope
+  <code>migration_repair</code>, with its path, mode and account); the restored rows are
+  ordinary rows in the console;
+  it never runs twice.</li>
 </ul>
 <p>Missing folders are dropped and listed in the settings store under
 <code>_migrated.workspace_policy_v1</code> / <code>_v2</code>, next to the old blocks. The old runtime-config
@@ -2140,7 +2189,15 @@ refused workspaces, the built-in refusals and the posture's default mode. The
 command string is never parsed. <code>cd</code>, <code>$(…)</code>, symlinks, scripts and
 interpreters are all confined by the kernel:</p>
 <ul>
-<li><strong>macOS</strong>: <code>/usr/bin/sandbox-exec</code> with a generated profile.</li>
+<li><strong>macOS</strong>: <code>/usr/bin/sandbox-exec</code> with a generated profile. Under "Deny
+  everything, allow listed workspaces" it denies reading and writing user data
+  (<code>/Users</code>, <code>/Volumes</code>, <code>/private/var/root</code>, the gateway user's home) and the
+  shared temp folders (<code>/private/tmp</code>, <code>/private/var/folders</code>), where other
+  processes leave files. System folders (<code>/usr</code>, <code>/System</code>, <code>/Library</code>, <code>/opt</code>,
+  <code>/usr/local</code>, <code>/Applications</code>) stay readable, because commands need their
+  programs and libraries, but nothing outside the listed workspaces and the
+  run's private temp folder can be written. A refused workspace is denied
+  wherever it is.</li>
 <li><strong>Linux</strong>: bubblewrap (<code>bwrap</code>) when installed; Landlock (kernel 5.13 or
   later) for "Deny everything, allow listed workspaces" when bubblewrap is
   missing.</li>
@@ -2183,8 +2240,27 @@ in the run ledger). The tool result carries <code>sandbox: {kind, label, posture
 default_mode, private_workspace, tmpdir, allowed: [{path, mode}], refused: [...],
 builtin_refused: &lt;count&gt;}</code> and the line <code>Sandbox: macOS sandbox-exec</code>, or
 <code>Sandbox: none — commands refused on this host</code>.</p>
+<p><strong>Nested workspaces</strong> follow the most-specific-row rule on every platform: an
+allowed workspace inside a refused folder is reachable (read &amp; write when it
+says so), the rest of the refused folder is not, and a refused folder inside
+the allowed one refuses its subtree again. On Linux, bubblewrap binds the
+allowed folder after masking its refused parent; Landlock grants the allowed
+folder alone.</p>
+<h3 id="browser-probe">Browser probe<a class="headerlink" href="#browser-probe" title="Permanent link">&para;</a></h3>
+<p><code>browser_probe</code> (the render check for a page an agent wrote) never opens a
+local page as <code>file://</code>. The page is served to the headless browser from a
+private loopback origin (<code>http://&lt;random name&gt;.localhost:&lt;port&gt;</code>) that answers
+only for files the run may read: the same scope as the commands (private
+workspace, allowed workspaces read-only or read &amp; write, refused workspaces,
+built-in refusals, most specific row first). Relative and root-relative links
+keep working; a file outside the scope answers 403, <code>file://</code> URLs are never
+loaded, and the report lists both under "Local files BLOCKED". A local page
+outside the run's workspaces is refused before the browser starts, and on a
+gateway host a probe call that carries no run scope is refused. Remote
+(<code>http(s)://</code>) targets are unchanged.</p>
 <p>Evidence: <code>src/abstractgateway/command_sandbox.py</code>, <code>src/abstractgateway/cli.py</code>
 (<code>--unsandboxed-commands</code>), AbstractCore <code>abstractcore/tools/sandbox.py</code>,
+<code>abstractcore/tools/browser_tools.py</code> (<code>_LocalOrigin</code>),
 AbstractRuntime <code>workspace_scoped_tools.py</code> (<code>sandbox_stamp</code>). Tests:
 <code>tests/test_r12w2_command_sandbox.py</code>, <code>tests/test_r12w2_nesting.py</code>.</p>
 <h2 id="common-security-env-vars">Common security env vars<a class="headerlink" href="#common-security-env-vars" title="Permanent link">&para;</a></h2>
@@ -2246,7 +2322,7 @@ AbstractRuntime <code>workspace_scoped_tools.py</code> (<code>sandbox_stamp</cod
 <ul>
 <li><code>X-Forwarded-For</code> from a proxy on the gateway machine (loopback peer, such
   as <code>tailscale serve</code>) is always used for IP attribution (audit log) and
-  lockout tracking. The <code>trust_proxy</code> setting (console: Network → <em>Advanced</em> →
+  lockout tracking. The <code>trust_proxy</code> setting (console: Network → <em>Reached through another address?</em> →
   <em>Trust proxies on other machines</em>; TUI: Connection screen checkbox; CLI:
   <code>abstractgateway network set --trust-proxy on|off</code>) extends that to a proxy
   on another machine. Read per request:

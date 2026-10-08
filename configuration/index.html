@@ -2200,7 +2200,7 @@ last two):</p>
 <tbody>
 <tr>
 <td>Where</td>
-<td>Network → <em>Advanced</em></td>
+<td>Network → <em>Reached through another address?</em></td>
 <td>Connection screen, below the addresses</td>
 <td><code>abstractgateway network …</code></td>
 </tr>
@@ -2599,7 +2599,11 @@ banner speaks only about <code>gaps</code> — a recommended model that is absen
 whose route has nothing serving it. Route text generation at a model of your
 own and the starter kit's LM Studio build stops being reported as missing:
 nothing on this host needs it. A route whose <em>own</em> model is not downloaded is
-still reported, on that row, in the Weights column. "Apply recommended" is a
+still reported, on that row, in the Weights column: the state (installed, not
+downloaded, remote, not checked) and AbstractCore's one short sentence ("In the
+Hugging Face cache."), with the probe's detail, the fix and the evidence path in
+the pill's tooltip. Every provider a route can name is checked, faster-whisper
+and Stable Audio included. "Apply recommended" is a
 standing action in the section head (<code>a</code> on the TUI Routes screen), available
 whether or not the banner has anything to say.</p>
 <p><strong>The artifact is not the model id.</strong> A route stores the id the provider
@@ -2894,6 +2898,10 @@ variable for this setting).</p>
 <p>Writes are admin-only and audit-logged like every other setting. A write that
 names a setting the gateway does not know is refused as a whole (400) and
 saves nothing; two writers at the same time never lose each other's change.</p>
+<p>An account may choose another workflow for itself (Accounts → <strong>Preferences</strong>, the Assistant's
+Settings → Workflow, AbstractCode's <em>Default for new conversations</em>). That choice is stored per
+account under <code>account_preferences</code> in the same store and never copies this setting: "Gateway
+default (<name>)" there always means the value set here (<a href="../api/#account-preferences">api.md</a>).</p>
 <h3 id="stream-replies-by-default">Stream replies by default<a class="headerlink" href="#stream-replies-by-default" title="Permanent link">&para;</a></h3>
 <p><code>agents.streaming_default</code> (<code>on</code>/<code>off</code>, default <code>off</code>) decides whether an
 interactive run streams the model's reply live when the app that started it
@@ -3301,13 +3309,13 @@ as sound or music understanding models.</p>
 signed-in users define reusable provider connections through a guided setup
 flow for <code>openai</code>, <code>anthropic</code>, <code>openrouter</code>, <code>portkey</code>, <code>lmstudio</code>, <code>ollama</code>,
 or <code>openai-compatible</code>. A connection includes a stable id, display name,
-description, optional base URL, optional API key, and optional advanced model
-allowlist. The raw API key is write-only: responses include only <code>api_key_set</code>
+description, optional base URL, optional API key, and an optional list of
+visible models. The raw API key is write-only: responses include only <code>api_key_set</code>
 and a short fingerprint. AbstractCore owns model capability metadata, so normal
 setup does not ask users to classify models manually.</p>
 <p>The console's <strong>Test</strong> action calls the selected provider through
 <code>POST /api/gateway/config/provider-endpoint-profiles/discover-models</code> and
-previews model discovery before saving. Leave the advanced model restriction
+previews model discovery before saving. Leave <strong>Visible models</strong>
 empty to keep live discovery active, or select one or more models to store a
 fixed allowlist. The <strong>Multimodal Capabilities</strong> tab shows configured provider
 connections and direct providers that are already usable from scoped

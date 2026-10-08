@@ -1356,6 +1356,13 @@ browser on this computer from one elsewhere on the network
   at every run start, for the HTTP routes, the Telegram bridge and the backlog
   advisor alike, and records the choice as <code>resolved_workflow</code>. See
   <a href="../configuration/#default-agent-workflow">configuration.md</a>.</li>
+<li><strong>Account preferences</strong> (<code>src/abstractgateway/account_preferences.py</code>,
+  <code>routes/account_preferences.py</code>): each account's default workflow per app,
+  stored in the same settings store under <code>account_preferences</code>
+  (<code>GET</code>/<code>PUT /api/gateway/accounts/{me|account}/preferences</code>). The admin
+  setting above stays the gateway default; an account overrides it for itself,
+  and the Assistant, AbstractCode and the consoles read and write it instead of
+  keeping the choice on the device. See <a href="../api/#account-preferences">api.md</a>.</li>
 <li><strong>Run workspace guard</strong> (<code>src/abstractgateway/run_workspace_guard.py</code>):
   called from the workflow host's <code>start_run</code> for every run, whatever started
   it. It gives a run that named no folder its conversation's gateway-made
@@ -1392,9 +1399,28 @@ browser on this computer from one elsewhere on the network
 <li><strong>Event-loop watchdog</strong> (<code>src/abstractgateway/loop_watchdog.py</code>): under
   <code>serve</code>, a tick on the event loop and a checker thread; when the loop has
   not run for <code>--watchdog-seconds</code> (default 30) the gateway writes the blocked
-  stacks to its log and exits with code 75, so the LaunchAgent, systemd unit
-  or local supervisor restarts it. <code>GET /api/health</code> reports its state. See
+  stacks to its log and to an incident file (<code>&lt;data dir&gt;/incidents/watchdog-&lt;UTC
+  stamp&gt;.json</code> + <code>.threads.txt</code>) and exits with code 75, so the LaunchAgent,
+  systemd unit or local supervisor restarts it. The next process reads the
+  newest incident; the console's Resources page (Gateway card, "Last restart")
+  shows "Gateway restarted at <time> after a hang —
+  <reason>". <code>GET /api/health</code> reports its state. See
   <a href="../deployment/">deployment.md</a>.</li>
+<li><strong>Nothing blocks the event loop</strong>: a request body that arrived
+  without a Content-Length (the console's <code>/apps/&lt;id&gt;/</code> proxy streams bodies)
+  is buffered by the security middleware and replayed through
+  <code>asgi_receive.replay_body_receive</code>, which suspends after the body (a replay
+  that kept answering "empty body" would make every streaming response's
+  disconnect listener a busy loop; the core endpoint's internal sub-requests use
+  the same helper). Streamed speech
+  (<code>voice_stream.py</code>) holds one permit of the voice synthesis bound
+  (<code>ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY</code>) from engine setup until its engine
+  thread ends, sets up and pulls the engine on worker threads, and hands
+  events to the loop through a bounded queue; a busy engine is announced to
+  the client with a <code>queued</code> line. Reading a reply aloud is never a wait of
+  the run: the durable child run is recorded completed when the stream ends,
+  and the runner closes any streamed-speech wait an older process left
+  behind.</li>
 <li><strong>Session and model-file housekeeping</strong> (<code>src/abstractgateway/session_archive.py</code>,
   <code>model_download_delete.py</code>): archive and unarchive a conversation (history
   kept), and delete a downloaded model's files with the engine's own
@@ -1614,6 +1640,7 @@ and the account's credential folders:</p>
   Level --&gt; Apply["Effective workspaces: min(gateway cap, the level's rule) per path; posture (Deny everything, allow listed workspaces / Allow everything, refuse listed workspaces), workspaces ro or rw, refused workspaces; recorded as _gateway_workspace.level"]
   Apply --&gt; Deny["Built-in deny rules: workspace_builtin_deny_prefixes (data folder + credential folders), workspace_builtin_allow (the run's own folder); client-sent values dropped"]
   Deny --&gt; Tools["AbstractRuntime file tools enforce the rules; the agent's context lists its working directory and the allowed workspaces with their modes, never the built-in rules"]
+  Tools --&gt; Sandbox["Commands run inside the OS sandbox built from the same set (macOS sandbox-exec, Linux bubblewrap or Landlock); the most specific workspace wins on every platform"]
 </code></pre></div>
 <p>The rules are whole-folder prefixes, never a listing of a folder's contents,
 so the model's prompt stays the same from turn to turn. An admin can turn the

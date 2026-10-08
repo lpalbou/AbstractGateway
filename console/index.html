@@ -437,6 +437,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#preferences-of-an-account" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Preferences of an account
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#runtimes-of-one-account" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1096,6 +1107,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#preferences-of-an-account" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Preferences of an account
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#runtimes-of-one-account" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1337,7 +1359,7 @@ You can also sign in with a user id and token (the admin's first token is in
 <tr>
 <td>System</td>
 <td><strong>Resources</strong></td>
-<td>memory and GPU meters, resident models (warm up, lock, unload), session prompt caches, and the <strong>Gateway</strong> card (pause, update, restart, desktop icon, start at login)</td>
+<td>memory and GPU meters, resident models (warm up, lock, unload), session prompt caches, and the <strong>Gateway</strong> card (pause, update, restart, desktop icon, start at login, last restart after a hang)</td>
 </tr>
 <tr>
 <td>System</td>
@@ -1363,6 +1385,12 @@ could start the gateway at login, it says why instead of offering the switch.</p
 <p><strong>Workflows paused</strong> (the Gateway card) is a switch for admins: on, no new
 workflow step starts and work already inside a call finishes; the console and
 the apps keep answering. A banner on every tab says so while it is on.</p>
+<p><strong>Last restart</strong> (the Gateway card, admins) appears after the event-loop
+watchdog restarted the gateway: "Gateway restarted at <time> after a hang —
+<reason>", the reason naming the code the event loop was stuck in and the
+request it was serving, with the path of the file holding every thread's
+stack (<code>&lt;data dir&gt;/incidents/</code>); its tooltip names the frame, the stack dump and
+the incident file. No incident, no row.</p>
 <p>Every persistent on/off setting in the console is a switch labelled by the
 feature (highlighted when on). It applies at once, shows the new state, and an
 unavailable switch stays visible with its reason ("Connect a mailbox first.").
@@ -1433,8 +1461,8 @@ state line, with an explanation in its tooltip:</p>
 <li><strong>Unsandboxed commands allowed (flag)</strong>: the gateway was started with
   <code>serve --unsandboxed-commands</code>.</li>
 </ul>
-<p>It is a state, not a control. The terminal console shows the same line on its
-<strong>Workspaces</strong> page (<a href="../security/#command-sandbox">security.md</a>).</p>
+<p>It is a state, not a control. The terminal console shows the same line under
+its Accounts header (<a href="../security/#command-sandbox">security.md</a>).</p>
 <table>
 <thead>
 <tr>
@@ -1490,7 +1518,7 @@ it is off by default and your browser remembers it.</p>
   turn Active back on."; on resumes it in the state it had before.</li>
 <li><strong>Email</strong> opens a dialog. On your own row it holds your email settings: your
   email address, your mailbox, the <strong>Job failed</strong> and <strong>Approval needed</strong>
-  notifications, <strong>Agent email tools</strong> and Advanced (<a href="../email/">email.md</a>).
+  notifications, <strong>Agent email tools</strong> and <strong>Recipients and limits</strong> (<a href="../email/">email.md</a>).
   An administrator's own row adds one sentence: the address also receives the
   administrator's sign-in codes and notifications, and the mailbox serves the
   administrator's own agents. On another user's row it holds only that user's
@@ -1616,6 +1644,20 @@ button. When the gateway refuses a change, its sentence shows under the control
 with "Not saved." and nothing changes. The API is <code>GET</code>/<code>PUT
 /api/gateway/workspace/policy</code> (eligible workspaces) and <code>GET</code>/<code>PUT
 /api/gateway/workspace/policy/{account}</code> (<code>me</code> for your own) (<a href="../api/">api.md</a>).</p>
+<h3 id="preferences-of-an-account">Preferences of an account<a class="headerlink" href="#preferences-of-an-account" title="Permanent link">&para;</a></h3>
+<p><strong>Preferences</strong> on an account's row (the sliders icon, tooltip "Default workflows of <name>")
+opens the workflow each app runs for that account unless a conversation picks another: one row per
+app (AbstractCode — chat agent, Assistant). The first option is <strong>Gateway default (<name>)</strong>,
+selected while the account has no choice of its own; it follows the administrator's <strong>Default
+workflow per app</strong> (Workflows). The other options are the workflows the account may run for that
+app. A change applies at once and says "Saved."; there is no Save button. When the gateway refuses
+a change, its sentence shows with "Not saved." and nothing changes. A choice that no longer runs
+says why under its row.</p>
+<p>Everyone opens their own from their own row. An administrator opens any account's (choosing among
+the gateway's shared workflows); an entity's preferences are set by its creator or an
+administrator. The Assistant (Settings → Workflow) and AbstractCode (Workflow → <em>Default for new
+conversations</em>) read and write the same choice. The API is <code>GET</code>/<code>PUT
+/api/gateway/accounts/{account}/preferences</code> (<a href="../api/#account-preferences">api.md</a>).</p>
 <h3 id="runtimes-of-one-account">Runtimes of one account<a class="headerlink" href="#runtimes-of-one-account" title="Permanent link">&para;</a></h3>
 <p>The Runtime link on an Accounts row opens <strong>Runtimes</strong> at
 <code>#runtimes?account=&lt;id&gt;</code> (<code>GET /api/gateway/admin/runtimes?account=&lt;id&gt;</code>): a
@@ -2026,11 +2068,20 @@ requested after 30 seconds.</p>
 <h3 id="setup-guide-and-browse-mode">Setup guide and browse mode<a class="headerlink" href="#setup-guide-and-browse-mode" title="Permanent link">&para;</a></h3>
 <p>The console lists its pages in the web console's sidebar order, each with a
 fixed key. <strong>1</strong> Connection (the terminal's sign-in) comes first, then the
-groups: ACCOUNTS <strong>2</strong> Accounts, <strong>W</strong> Workspaces; WORK <strong>3</strong> Workflows, <strong>4</strong> Skills &amp; MCP,
+groups: ACCOUNTS <strong>2</strong> Accounts; WORK <strong>3</strong> Workflows, <strong>4</strong> Skills &amp; MCP,
 <strong>5</strong> Runtimes, <strong>6</strong> Apps; MODELS <strong>7</strong> Providers, <strong>8</strong> OpenAI API, <strong>9</strong>
 Models, <strong>0</strong> Multimodal; SYSTEM <strong>H</strong> Resources, <strong>T</strong> Sandbox, <strong>N</strong>
 Network; then <strong>S</strong> Setup and <strong>I</strong> About. A line above the tabs names the
-groups and their keys. The local engines live on Providers, as on the web.</p>
+groups and their keys. The local engines live on Providers, as on the web.
+There is no Workspaces page: workspaces are set from Accounts, as on the web,
+and <code>W</code> opens Accounts.</p>
+<p>Signed in, the title bar shows the web top bar's memory and compute line in
+place of the gateway address: <code>Mem 18.2 GiB / 64.0 GiB (28%) · GPU 3% · 1
+model</code> (<code>Mem 28% · …</code> on a narrow terminal). It reads the same <code>GET
+/host/state</code> snapshot as <strong>H Resources</strong> every 5 seconds (on Resources, that
+page's own refresh updates it); a figure the gateway does not report reads
+<code>—</code>, and a failed refresh keeps the last values, dimmed. The address stays on
+Connection, Network and About.</p>
 <ul>
 <li><strong>Setup guide.</strong> For an admin whose first run is not completed, the console
   opens the setup guide: Connection → Setup → Providers (local engines, then
@@ -2089,7 +2140,8 @@ groups and their keys. The local engines live on Providers, as on the web.</p>
   and a read-only mailbox line; an entity: the entity's own mailbox form), <code>o</code>
   OpenAI API (admin, user rows: one switch), <code>l</code> logs ("Activity — <id>", <code>f</code> /
   <code>F</code> change the filter: All, Sign-ins, Runs, Automations, Email; <code>o</code> opens a
-  run in Observer), <code>w</code> opens <strong>Workspaces</strong>, <code>t</code> rotate token,
+  run in Observer), <code>w</code> <strong>Workspaces</strong> of that account (below), <code>p</code>
+  <strong>Preferences</strong> (below), <code>t</code> rotate token,
   <code>m</code> manage (entities), <code>d</code> archive (asks inline) or unarchive, <code>g</code> opens
   <strong>Runtimes</strong> filtered to that account. Also <code>a</code> create user, <code>e</code>
   edit user, <code>n</code> create entity, <code>c</code> talk with an entity, <code>i</code> inspect, <code>s</code> spark
@@ -2097,11 +2149,36 @@ groups and their keys. The local engines live on Providers, as on the web.</p>
   mailbox override. <strong>Email for everyone</strong> (admin) is the page's second tab
   (<code>Tab</code>): the three switches <strong>Mailboxes for users</strong>, <strong>Agent email tools for
   users</strong> and <strong>Sign-in by email</strong>, each applied at once. Someone who is not an administrator
-  sees their own row and the entities they created.</li>
-<li><strong>W Workspaces</strong> shows one sentence for now: "Workspaces are managed from
-  Accounts in the web console; the terminal console follows in the next
-  update." The page reads and changes nothing; <code>w</code> on an Accounts or Runtimes
-  row opens it. Set workspaces in the web console (<a href="#workspaces">Workspaces</a>).</li>
+  sees their own row and the entities they created. Under the header, every
+  signed-in user sees the command sandbox state line (for example <strong>Commands
+  sandboxed: macOS sandbox-exec</strong>) with its explanation below it.</li>
+<li><strong>Workspaces</strong> are the web console's two dialogs (<a href="#workspaces">Workspaces</a>),
+  with the same words. <code>E</code> (admins; the header's <strong>E Eligible workspaces</strong>)
+  opens <strong>Eligible workspaces</strong>: the posture (<strong>Deny everything, allow listed
+  workspaces</strong> or <strong>Allow everything, refuse listed workspaces</strong>), <strong>Everything
+  else</strong> under the second posture, the listed workspaces under <strong>Allowed
+  workspaces</strong> and <strong>Refused workspaces</strong> with their mode (<strong>Read &amp; write</strong>,
+  <strong>Read-only</strong> or <strong>Refused</strong>, the most an account can get there), the
+  gateway's built-in refusals listed as fixed rows, <strong>Add a workspace path</strong>,
+  and the gateway's summary line at the bottom. <code>w</code> on any Accounts row (users,
+  entities and your own) opens <strong>Workspaces — <id></strong>: the line "Gateway: …" on
+  top, <strong>Follow the gateway policy</strong>, then the same posture and rows for that
+  account. A mode above the gateway's limit is marked <code>×</code> with the reason under
+  the row ("The gateway allows this workspace read-only"); choosing it sends
+  nothing. Keys: <code>↑</code>/<code>↓</code> choose a line, <code>←</code>/<code>→</code> change the posture or a mode,
+  Space switches <strong>Follow the gateway policy</strong>, <code>Enter</code> on <strong>Add a workspace
+  path</strong> opens the field (<code>Enter</code> adds, <code>Esc</code> cancels), <code>x</code> removes a row. Each
+  change is saved at once; the line says <strong>Saved</strong>, or the gateway's sentence
+  followed by "Not saved." On <strong>5 Runtimes</strong>, <code>w</code> opens <strong>Eligible
+  workspaces</strong> from the default runtime and the owner's workspaces from a user
+  or entity runtime.</li>
+<li><strong>Preferences</strong> (<code>p</code> on an Accounts row; users and entities) opens
+  <strong>Preferences — <id></strong>: the workflow each app runs for that account. Each app
+  shows its current choice; <code>Enter</code> lists <strong>Gateway default (<name>)</strong> first,
+  then every workflow the gateway offers for that app, and <code>Enter</code> picks one
+  and saves it at once ("Saved.", or "Not saved." with the gateway's reason).
+  A gateway older than this route has no Preferences on its rows, and <code>p</code> says
+  so.</li>
 <li><strong>Your email settings</strong> (<code>@</code> on your own row): your <strong>Email address</strong>, your
   <strong>Mailbox</strong> (tabs <strong>IMAP</strong>, the default, <strong>Google</strong> and <strong>Microsoft</strong>; the
   IMAP pane shows the incoming and outgoing servers, filled in as soon as the
@@ -2112,7 +2189,7 @@ groups and their keys. The local engines live on Providers, as on the web.</p>
   the mailbox's <strong>Active</strong> switch, Test and Disconnect, the <strong>Job failed</strong> and
   <strong>Approval needed</strong> notifications with <strong>Send a test</strong> (its answer is a
   sentence, for example "Not sent: hourly limit reached (100 of 100 this hour)
-  — resets at 14:05."), the <strong>Agent email tools</strong> switch and Advanced
+  — resets at 14:05."), the <strong>Agent email tools</strong> switch and <strong>Recipients and limits</strong>
   (recipient rules, send limits, folder) — see <a href="../email/">email.md</a>.</li>
 <li><strong>3 Workflows</strong> is the web console's Workflows page, with three tabs
   (<code>Tab</code>). <strong>Workflows</strong> groups the bundles under <strong>Shared with everyone</strong> and
@@ -2180,7 +2257,11 @@ groups and their keys. The local engines live on Providers, as on the web.</p>
   the web console and the tray: an AbstractFramework installer install runs the
   installer, see <a href="../tray/#restart-and-update">tray.md</a>), the tray, and
   <strong>start at login</strong> (<code>L</code>,
-  confirmed, then read back). A banner shows on every screen while workflows
+  confirmed, then read back). After a watchdog restart it shows the web
+  Gateway card's <strong>last restart</strong> row, "Gateway restarted at <time> after a
+  hang — <reason>", with the stack dump's path, how long the gateway was
+  blocked and where, and the incident file (admins). The panel scrolls when
+  the terminal is too short. A banner shows on every screen while workflows
   are paused.</li>
 <li><strong>I About</strong> (also <code>F1</code>, or <code>?</code> outside a text field, as an overlay) shows the
   same card as the web console's About: this console's name and version, the
@@ -2195,7 +2276,8 @@ switches the focused one; it applies at once and the status line names the new
 state.</p>
 <p>Keys: <code>Tab</code> focus, <code>Enter</code> activate, <code>Ctrl+N</code> / <code>Ctrl+P</code> next and previous
 step, <code>Esc</code> back (in a text field, the first <code>Esc</code> releases it so screen keys
-work again), <code>1</code>-<code>9</code>, <code>0</code>, <code>W</code>, <code>H</code>, <code>T</code>, <code>N</code>, <code>S</code> and <code>I</code> screens, <code>r</code> refresh,
+work again), <code>1</code>-<code>9</code>, <code>0</code>, <code>H</code>, <code>T</code>, <code>N</code>, <code>S</code> and <code>I</code> screens (<code>W</code> opens
+Accounts), <code>r</code> refresh,
 <code>q</code> quit. Each screen lists its own actions in the key-hint bar at the bottom,
 which wraps onto a second line rather than cutting a verb.</p>
 <p><code>←</code> / <code>→</code> switch to the previous and next screen, wrapping from the last screen

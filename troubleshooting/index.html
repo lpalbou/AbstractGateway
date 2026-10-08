@@ -2023,6 +2023,20 @@ watchdog wrote the stack of the blocked event-loop thread and of every other
 thread to the gateway log, then exited with code 75 so the service manager
 started a fresh gateway. The stack under "the event-loop thread is blocked
 here" names the code that blocked; report it as a bug with that excerpt.</p>
+<p>The same facts are kept next to the data: <code>&lt;data dir&gt;/incidents/watchdog-&lt;UTC
+stamp&gt;.json</code> (when, how long, the innermost frame of the event-loop thread,
+the innermost gateway frame, the requests being served) and
+<code>watchdog-&lt;stamp&gt;.threads.txt</code> (every thread's stack). The restarted gateway
+reads the newest one: an admin sees "Gateway restarted at <time> after a hang
+— <reason>" in the console (Resources, Gateway card, "Last restart"), with
+the path of the stack dump.</p>
+<p>A Read aloud that was speaking when the gateway restarted cannot resume (the
+audio was being produced by the process that died): press Read aloud again.
+Gateways up to 0.13.0 left such a reply waiting ("Waiting for an event ›
+Streaming voice synthesis is running."); the current gateway closes those at
+startup with the sentence "Read aloud was interrupted because the gateway
+restarted; the audio was not finished. Press Read aloud again." and the
+conversation continues.</p>
 <ul>
 <li>Logs: macOS <code>~/Library/Logs/AbstractGateway/gateway.err.log</code>; Linux
   <code>journalctl --user -u abstractgateway</code>; the installer's background mode and
@@ -2033,8 +2047,19 @@ here" names the code that blocked; report it as a bug with that excerpt.</p>
   <code>start-local.sh</code> supervisor. A gateway started by hand in a terminal, or
   the Windows Run entry, is not restarted.</li>
 <li>A gateway whose stall comes from native code that keeps the Python lock is
-  stopped by the second, faulthandler-based timer 15 s later (exit code 1,
-  same restart).</li>
+  stopped by the backstop, a small separate process that watches a heartbeat
+  from the event loop: 15 s after the limit it has every thread's stack dumped
+  to the log, writes a backstop incident file and kills the gateway (same
+  restart).</li>
+<li>Sleep is not a hang. Waking a computer can make the clock jump by minutes;
+  the watchdog and the backstop both check once more whether the event loop
+  is still running before acting; a live loop at most leaves the log line
+  <code>[WARN] gateway watchdog: the event loop resumed after …s; not restarted</code>.
+  On Windows the backstop is still faulthandler's timer, which cannot make
+  that check, so a long sleep can restart the gateway there. To confirm after a sleep/wake, the incident folder stays empty and
+  the gateway's process start time is unchanged:
+  <code>ls ~/Library/Application\ Support/AbstractGateway/incidents 2&gt;/dev/null; ps -o lstart= -p "$(pgrep -f 'abstractgateway serve' | head -1)"</code>
+  (use your data folder if it is elsewhere).</li>
 <li><code>GET /api/health</code> reports <code>watchdog: {enabled, limit_s, last_tick_age_s}</code>.</li>
 <li><code>--watchdog-seconds 0</code> turns the watchdog off (a debugging session paused
   on a breakpoint); it is never active with <code>--reload</code>.</li>

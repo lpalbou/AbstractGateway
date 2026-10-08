@@ -1238,7 +1238,7 @@ two-step verification is on.</p>
 <h3 id="oauth2-sign-in-google-microsoft">OAuth2 sign-in (Google, Microsoft)<a class="headerlink" href="#oauth2-sign-in-google-microsoft" title="Permanent link">&para;</a></h3>
 <p>Microsoft 365 / Outlook needs OAuth2. In the <strong>Mailbox</strong> card, pick the <strong>Google</strong> or <strong>Microsoft</strong>
 tab and select <strong>Sign in with Google</strong> / <strong>Sign in with Microsoft</strong> (your own client id and secret go
-under the tab's <strong>Advanced</strong>):</p>
+under the tab's <strong>Sign-in app</strong>):</p>
 <ul>
 <li><strong>Microsoft</strong> uses a device code by default: open the link shown in any browser, on any machine,
   and enter the code.</li>
@@ -1316,7 +1316,7 @@ arrives after the change.</p>
 Assistant, Observer, the consoles) — get the email tools (list and search mail, read a message,
 list folders, send, reply, download an attachment) only when <strong>all</strong> of these hold:</p>
 <ol>
-<li><strong>Agent email tools for users</strong> is on (the administrator's Advanced setting; on by default);</li>
+<li><strong>Agent email tools for users</strong> is on (an administrator's setting; on by default);</li>
 <li>your mailbox is connected and in use, and mailboxes are allowed for you;</li>
 <li>you switched <strong>Agent email tools</strong> on (your account page in the web console, the terminal
    console, or <code>PUT /api/gateway/me/email/agent-tools {"enabled": true}</code>). Your own switch is off
@@ -1354,7 +1354,7 @@ code — goes through the same checks, in this order:</p>
    Until AbstractCore 2.21 the defaults were 20 and 100 and connecting a mailbox stored them
    unmarked; an upgrade treats exactly that pair as the old defaults, so the mailbox follows the new
    ones. Any other unmarked value is kept (the limits document's <code>source</code> is <code>legacy</code>; <code>default</code>
-   and <code>user</code> are the other values). Set new values under Advanced in your email settings to move
+   and <code>user</code> are the other values). Set new values under <strong>Recipients and limits</strong> in your email settings to move
    on.</li>
 </ol>
 <p>On top of the policy, the approval gate still decides whether an agent's send runs unattended: a

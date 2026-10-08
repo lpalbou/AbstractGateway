@@ -1122,12 +1122,12 @@ and the Runtime-owned provider/tool stack together.</p>
 <h2 id="published-image">Published image<a class="headerlink" href="#published-image" title="Permanent link">&para;</a></h2>
 <p>Release images are published to GHCR. The default image is the light,
 portable server image:</p>
-<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.13.0
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.13.1
 </code></pre></div>
 <p>NVIDIA hosts can try the experimental full GPU image when local
 vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:</p>
-<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.13.0-gpu
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.13.1-gpu
 </code></pre></div>
 <p>The image names <code>ghcr.io/lpalbou/abstractgateway-server:*</code> and
 <code>ghcr.io/lpalbou/abstractgateway-server-nvidia:*</code> are published as aliases for
@@ -1227,7 +1227,7 @@ curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authoriz
 <p>Common:</p>
 <ul>
 <li>Browser origins and trust proxy are settings, not variables: the console's
-  Network → <em>Advanced: reverse proxy</em>, the TUI's Connection screen, or
+  Network → <em>Reached through another address?</em>, the TUI's Connection screen, or
   <code>abstractgateway network set --allowed-origins https://gateway.example.com --trust-proxy on</code>
   (inside a container: <code>docker exec &lt;container&gt; abstractgateway network set …</code>).
   They apply to the next request. <code>ABSTRACTGATEWAY_ALLOWED_ORIGINS</code> in the
@@ -1288,12 +1288,26 @@ servers use the explicit configuration shown on this page: the image sets
 <code>--host 0.0.0.0</code> with user accounts on.</p>
 <p><strong>A hung gateway restarts itself.</strong> <code>serve</code> runs an event-loop watchdog: when
 the loop has not run for <code>--watchdog-seconds</code> (default 30), the gateway dumps
-every thread's stack to its log and exits with code 75. The LaunchAgent
+every thread's stack to its log, writes an incident file and exits with code
+75. A wake from sleep is not a hang: the clock may jump, but the watchdog
+fires only when the loop made no progress across one more tick. The LaunchAgent
 (<code>KeepAlive</code> with <code>SuccessfulExit: false</code>) and the systemd unit
 (<code>Restart=on-failure</code>) restart any non-zero exit; in a container, use a
 restart policy (<code>restart: unless-stopped</code>) for the same effect. <code>GET
 /api/health</code> reports <code>watchdog: {enabled, limit_s, last_tick_age_s}</code>. See
 <a href="../troubleshooting/#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75">troubleshooting.md</a>.</p>
+<p><strong>Incident files.</strong> Before it exits, the watchdog writes
+<code>&lt;data dir&gt;/incidents/watchdog-&lt;UTC stamp&gt;.json</code> and
+<code>watchdog-&lt;stamp&gt;.threads.txt</code> (every thread's stack). The JSON
+(<code>schema: abstractgateway.watchdog_incident.v1</code>) carries <code>at</code>, <code>stamp</code>, <code>pid</code>,
+<code>limit_s</code>, <code>blocked_s</code>, <code>exit_code</code>, <code>top_frame</code> and <code>gateway_frame</code>
+(<code>{file, line, function}</code>), <code>requests_in_flight</code> (<code>[{method, path, age_s}]</code>),
+<code>loop_stack</code>, <code>reason</code> (one sentence) and <code>dump_path</code>. The next process reads
+the newest file at startup: admins get it as <code>last_hang</code> from <code>GET
+/api/gateway/host/runner</code>, and the console's Resources page shows it as
+<strong>Last restart</strong> ("Gateway restarted at <time> after a hang — <reason>"). The
+files are small and kept until you delete them; back them up with the data
+folder or remove old ones freely.</p>
 <h2 id="behind-a-reverse-proxy-one-block-apps-included">Behind a reverse proxy (one block, apps included)<a class="headerlink" href="#behind-a-reverse-proxy-one-block-apps-included" title="Permanent link">&para;</a></h2>
 <p>The console, the API and every browser app share the gateway's one address:
 the apps are served at <code>/apps/&lt;app&gt;/</code> by the gateway itself
@@ -1382,7 +1396,7 @@ CachedSession persistence system.</p>
 <h2 id="local-source-image">Local-source image<a class="headerlink" href="#local-source-image" title="Permanent link">&para;</a></h2>
 <p>Before a version is published to PyPI, build from the checkout:</p>
 <div class="highlight"><pre><span></span><code><span class="nv">ABSTRACTGATEWAY_INSTALL_MODE</span><span class="o">=</span><span class="nb">local</span><span class="w"> </span><span class="se">\</span>
-<span class="nv">ABSTRACTGATEWAY_IMAGE_TAG</span><span class="o">=</span><span class="m">0</span>.13.0-local<span class="w"> </span><span class="se">\</span>
+<span class="nv">ABSTRACTGATEWAY_IMAGE_TAG</span><span class="o">=</span><span class="m">0</span>.13.1-local<span class="w"> </span><span class="se">\</span>
 docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>docker/abstractgateway-server/compose.yml<span class="w"> </span>up<span class="w"> </span>-d<span class="w"> </span>--build
 </code></pre></div>
 <p>Release automation builds the published image from the PyPI package after the

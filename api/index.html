@@ -1277,6 +1277,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#account-preferences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Account preferences
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#email" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2180,6 +2191,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#account-preferences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Account preferences
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#email" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2212,7 +2234,7 @@
 
 <h1 id="abstractgateway-api-overview">AbstractGateway — API overview<a class="headerlink" href="#abstractgateway-api-overview" title="Permanent link">&para;</a></h1>
 <p>The HTTP API is implemented with FastAPI under the <code>/api</code> prefix:
-- Health: <code>GET /api/health</code> (unauthenticated; <code>status</code>, <code>runner</code>, <code>watchdog: {enabled, limit_s, last_tick_age_s}</code> — see <a href="../troubleshooting/#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75">troubleshooting.md</a>)
+- Health: <code>GET /api/health</code> (unauthenticated; <code>status</code>, <code>runner</code>, <code>watchdog: {enabled, limit_s, last_tick_age_s}</code> — see <a href="../troubleshooting/#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75">troubleshooting.md</a>). The previous process's last watchdog incident is admin-only: <code>GET /api/gateway/host/runner</code> → <code>last_hang: {at, blocked_s, reason, top_frame, dump_path, file, line}</code> or <code>null</code>
 - Gateway surface: <code>/api/gateway/*</code> (durable runs + operator tooling)</p>
 <p>The API is documented at runtime:
 - OpenAPI JSON: <code>GET /openapi.json</code>
@@ -2252,6 +2274,11 @@ serve:</p>
 <td><code>/api/gateway/admin/runtime-config</code></td>
 <td>runtime settings (admin)</td>
 <td><a href="../configuration/">configuration.md</a></td>
+</tr>
+<tr>
+<td><code>/api/gateway/accounts/{me\|account}/preferences</code></td>
+<td>one account's client preferences: the default workflow per app (the account itself, an admin, an entity's creator)</td>
+<td><a href="#account-preferences">below</a></td>
 </tr>
 <tr>
 <td><code>/api/gateway/workspace/policy</code>, <code>/workspace/policy/{account}</code>, <code>/sessions/{id}/workspaces</code>, <code>/workspace/effective/{account}</code> (GET and dry-run POST), <code>POST /workspace/path-check</code></td>
@@ -3537,6 +3564,8 @@ and <code>turns[]</code> (<code>run_id</code>, <code>created_at</code>, <code>st
 returns JSON Lines stream events for progressive playback when discovery advertises
 <code>capabilities.contracts.assistant.voice.tts.streaming=true</code>; successful streams still
 finish with a Runtime-owned child-run audio artifact. The stream is real streaming: the engine splits the text at sentence boundaries (first segment one short clause), each segment is sent as soon as it is synthesised while the next one is synthesised, and the setup runs off the event loop. The terminal <code>done</code> event's <code>metrics</code> carry <code>ttfb_s</code>, <code>rtf</code>, <code>device</code> and, on the CPU, <code>device_reason</code>.</p>
+<p>Stream lines (JSON Lines): <code>runtime_start</code> (<code>run_id</code> = the run named in the path, <code>child_run_id</code> = the id the outcome will be recorded under, <code>schema: abstractruntime.tts_stream.start.v2</code>), engine events (<code>start</code>, <code>audio</code> with <code>sequence</code> and <code>audio_b64</code>), then one terminal line: <code>done</code> (with <code>audio_artifact</code> and <code>child_run_status</code>), <code>cancelled</code> or <code>error</code> (<code>error</code> = the sentence; <code>watchdog_timeout: true</code> when the engine went silent past <code>ABSTRACTGATEWAY_VOICE_TTS_TIMEOUT_S</code>). When the engine is busy (another stream, or the model using the machine) and its setup takes more than a second, the first line is <code>{"type": "queued", "message": "Waiting for the voice engine: …"}</code>; speech follows when the engine is free. A request past the voice synthesis bound (<code>ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY</code>) waits one second, then gets <code>503</code> "Read aloud is busy: N voice syntheses are already running on this gateway …".</p>
+<p>Reading aloud never changes the run's state: no wait is created while audio streams, and the child run is recorded already completed (<code>done</code>, or with <code>errors[0].code</code> <code>cancelled</code>/<code>stream_error</code>) when the stream ends. A stream cut by a gateway restart leaves no run behind; a wait left by a gateway up to 0.13.0 is closed at startup with <code>errors[0] = {"code": "interrupted", "message": "Read aloud was interrupted because the gateway restarted; …"}</code>.</p>
 <p>The catalog endpoints proxy AbstractCore Server routes when
 <code>ABSTRACTCORE_SERVER_BASE_URL</code>
 is configured. Gateway uses explicit Core auth settings for that hop and never
@@ -4342,7 +4371,7 @@ later <code>LLM_CALL.params.prompt_cache_binding</code> used inside real Runtime
 <tbody>
 <tr>
 <td><code>GET /admin/accounts</code></td>
-<td><code>{accounts: [{id, tenant_id, kind: user \| entity, role: admin \| user \| entity, own, email_address, mailbox{state: connected \| receive_only \| not_connected \| paused \| unavailable, address, provider, reason}, runtime_id, active, entity_state, actions{email, logs, workspace, rotate, manage, delete, suspend: {available, reason}}}]}</code>, sorted admins, users, entities, then id; <code>entities_warning</code> when the entity list could not be read</td>
+<td><code>{accounts: [{id, tenant_id, kind: user \| entity, role: admin \| user \| entity, own, email_address, mailbox{state: connected \| receive_only \| not_connected \| paused \| unavailable, address, provider, reason}, runtime_id, active, entity_state, actions{email, logs, workspace, preferences, rotate, manage, delete, suspend: {available, reason}}}]}</code>, sorted admins, users, entities, then id; <code>entities_warning</code> when the entity list could not be read</td>
 </tr>
 <tr>
 <td><code>PUT /admin/accounts/{id}/active</code></td>
@@ -4412,6 +4441,88 @@ recorded (before this version)" and it has no <code>run_id</code> and no <code>o
 times). A notification event's <code>detail</code> is its kind in words: "Approval needed", "Job failed", "Job
 finished", "Automation result", "Automation failed", "Test notification"; any other kind is shown as
 written.</p>
+<h2 id="account-preferences">Account preferences<a class="headerlink" href="#account-preferences" title="Permanent link">&para;</a></h2>
+<p>The gateway keeps each account's client preferences, so every app and every device of that account
+see the same choice and no client keeps it. The gateway defines the defaults; an account may
+override them for itself.</p>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /api/gateway/accounts/{account}/preferences</code></td>
+<td><code>{ok, account: "tenant:user", can_edit, preferences: {default_workflow: {&lt;interface&gt;: value \| null}}, declared: {default_workflow: {label, help}}, apps: [row]}</code></td>
+</tr>
+<tr>
+<td><code>PUT /api/gateway/accounts/{account}/preferences</code></td>
+<td><code>{"default_workflow": {&lt;interface&gt;: "bundle:flow" \| "catalog:bundle:flow" \| null}}</code> → the GET answer</td>
+</tr>
+</tbody>
+</table>
+<p><code>{account}</code> is <code>me</code> (the caller), <code>name</code>, <code>tenant:name</code> or an entity's slug. Who: anyone for their
+own; an admin for any account; an entity's preferences by an admin or the entity's creator. Anyone
+else gets 403 with "Only an admin or the account itself can read or change its preferences." (an entity:
+"Only an admin or <entity>'s creator can read or change its preferences."). An account that does not exist
+answers 404. A gateway older than 0.13.1 has no such route (404 Not Found); the Assistant and
+AbstractCode then keep their own choice as before.</p>
+<p>Only keys the gateway declares are accepted. Today there is one, <code>default_workflow</code>: one entry per
+app interface (<code>abstractcode.agent.v1</code>, <code>abstractassistant.agent.v1</code>). <code>null</code> follows the
+gateway's per-app default, which is the admin setting <code>agents.default_workflow.&lt;interface&gt;</code>
+(Workflows → <em>Default workflow per app</em>, <a href="../configuration/#default-agent-workflow">configuration.md</a>); it
+is never copied into the account. A chosen workflow is stored without a version, so it runs its
+latest published version. The PUT replaces the named interfaces and keeps the others. It is
+refused with 400 <code>{"detail": {"reason": "preference_refused", "message": &lt;sentence&gt;, "key": &lt;key&gt;}}</code>
+for an unknown key ("Unknown preference 'theme': this gateway declares default_workflow."), an
+interface that is not an app's, or a workflow the account may not run for that app ("…refused:
+'helper@1.0.0:agent' declares abstractassistant.agent.v1, not abstractcode.agent.v1"). A refused PUT
+changes nothing. The change is audited on the target account's activity ("Preferences changed").</p>
+<p>Each <code>apps</code> row: <code>{interface, label, app, help, value, state, reason, gateway_default,
+gateway_default_label, effective, choices}</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>value</code></td>
+<td>the account's choice, <code>null</code> = the gateway default</td>
+</tr>
+<tr>
+<td><code>state</code></td>
+<td><code>default</code> (null), <code>set</code> (a choice that runs), <code>broken</code> (a choice that no longer runs; <code>reason</code> says why and what to do, e.g. "coder-two:agent no longer runs for alice: … Pick another workflow or Gateway default.")</td>
+</tr>
+<tr>
+<td><code>gateway_default</code></td>
+<td><code>{available, name, value, workflow_id, reason}</code>: what the admin's per-app default resolves to now</td>
+</tr>
+<tr>
+<td><code>gateway_default_label</code></td>
+<td>"Gateway default (<name>)", or "Gateway default (unavailable)"; every client shows it verbatim as the first option</td>
+</tr>
+<tr>
+<td><code>effective</code></td>
+<td>what a run of this app starts for this account: <code>{source: account \| gateway, available, name, value, workflow_id, bundle_id, bundle_version, flow_id, registry_scope, reason}</code></td>
+</tr>
+<tr>
+<td><code>choices</code></td>
+<td>the workflows the account may run for this app: <code>[{value, label, name, workflow_id, bundle_id, bundle_version, flow_id, registry_scope}]</code>, latest versions, never one an admin made unavailable to users or archived; <code>label</code> is shown verbatim</td>
+</tr>
+</tbody>
+</table>
+<p>For <code>me</code> the choices are the caller's own (shared workflows available to them and their own
+workflows). For another account they are the gateway's shared workflows that account may run:
+an admin is never offered a user's private workflows.</p>
+<p>Runs: an app starts the account's choice as an explicit workflow, or <code>flow_id: "@default"</code> with
+its <code>interface</code> when the value is <code>null</code>. <code>@default</code> keeps meaning the admin's per-app default.</p>
+<p>Accounts rows (<code>GET /admin/accounts</code>, <code>GET /me/accounts</code>) carry <code>actions.preferences</code>
+<code>{available, reason}</code> (every user and entity that is not archived).</p>
 <h2 id="email">Email<a class="headerlink" href="#email" title="Permanent link">&para;</a></h2>
 <p>Per-user email (<a href="../email/">email.md</a>): every route acts on the <strong>caller's own</strong> account, resolved
 from the authenticated principal (never from a path or body id); entities are refused (403). No
