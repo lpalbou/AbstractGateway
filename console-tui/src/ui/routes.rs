@@ -10,7 +10,7 @@
 use abstracttui::prelude::*;
 use serde_json::{json, Value};
 
-use super::util::{line, or_dash, span, span_bold};
+use super::util::{line, span, span_bold};
 use super::w::action::{button, On};
 use super::w::{Action, Cell, Col, ColW, DataTable, Row as WRow};
 use super::widths;
@@ -70,6 +70,70 @@ pub const SCOPE_USER: &str = "Editing here changes your runtime multimodal capab
 /// The head buttons' tooltips (the web's `title`).
 pub const APPLY_TIP: &str = "Set the recommended provider/model on the text, voice, transcription, image and video routes this computer can run. Routes you configured differently are kept.";
 pub const REFRESH_TIP: &str = "Reload providers and capability defaults";
+/// The web's empty cell (`row.provider ? … : "-"`, `weightsCellMarkup`).
+pub const WEIGHTS_NONE: &str = "-";
+
+/// The web's dash for an absent provider / model.
+fn web_dash(v: &Option<String>) -> String {
+    v.as_deref()
+        .filter(|x| !x.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| WEIGHTS_NONE.to_string())
+}
+
+/// Wrap an identifier to `width` cells, breaking AFTER '/' or '-' (the
+/// places a model id reads as a path), then at spaces; only a single token
+/// longer than the cell is cut mid-token.
+pub fn id_lines(text: &str, width: i32) -> Vec<String> {
+    let width = width.max(1);
+    // Tokens: split after every '/', '-' and space (the separator stays on
+    // the left piece; a space is dropped at a line start).
+    let mut tokens: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for ch in text.chars() {
+        cur.push(ch);
+        if ch == '/' || ch == '-' || ch == ' ' {
+            tokens.push(std::mem::take(&mut cur));
+        }
+    }
+    if !cur.is_empty() {
+        tokens.push(cur);
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut line = String::new();
+    for tok in tokens {
+        let tw = abstracttui::text::width(&tok);
+        let lw = abstracttui::text::width(&line);
+        let fits = lw + abstracttui::text::width(tok.trim_end()) <= width;
+        if fits {
+            line.push_str(&tok);
+            continue;
+        }
+        if !line.trim().is_empty() {
+            out.push(line.trim_end().to_string());
+        }
+        line = String::new();
+        if tw <= width || abstracttui::text::width(tok.trim_end()) <= width {
+            line.push_str(tok.trim_start());
+        } else {
+            for piece in super::w::paint::wrap(&tok, width) {
+                if abstracttui::text::width(&piece) == width {
+                    out.push(piece);
+                } else {
+                    line = piece;
+                }
+            }
+        }
+    }
+    if !line.trim().is_empty() {
+        out.push(line.trim_end().to_string());
+    }
+    if out.is_empty() {
+        out.push(String::new());
+    }
+    out
+}
+
 /// The empty table.
 pub const EMPTY: &str = "No capability routes were returned by Gateway.";
 
@@ -451,8 +515,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         })
         .child(head(cx, ctx, &tt))
         // The scope sentence and the route store's state (read-only and
-        // its errors are said; a writable store needs no words beyond
-        // "writable").
+        // its errors are said; a writable store needs no words).
         .child(dyn_view_scoped(
             LayoutStyle::column().shrink(0.0),
             move |scx| {
@@ -467,15 +530,16 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     t.text_muted,
                 ));
                 if let Loadable::Ready(d) = store.routes.get() {
-                    let spans = if d.writable {
-                        vec![span("writable", t.ok)]
-                    } else {
-                        vec![
+                    // The web's store line ("AbstractCore store · <file> — …")
+                    // needs the payload's `config_file`, which the store does
+                    // not carry: NO CLAIM WITHOUT EVIDENCE — a writable store
+                    // says nothing; a read-only one says so (edits are refused).
+                    if !d.writable {
+                        col = col.child(line(vec![
                             span_bold("read-only (backend unreachable?)", t.warn),
                             span(format!("  ·  route store {}", d.authority), t.text_faint),
-                        ]
-                    };
-                    col = col.child(line(spans));
+                        ]));
+                    }
                     if !d.ok {
                         col = col.child(super::w::form::sentence(
                             &t,
@@ -952,103 +1016,10 @@ fn routes_table(
     let dl = store.download.get();
     let vp = crate::ui::page_viewport(gcx).get();
     let w = (vp.w - 2).max(20);
+    // The web's own columns from ~110 page cells (Route and Capability
+    // separate cells, the R14-W7 rule); narrower: Route · Model · Weights ·
+    // Actions, the status, capability and provider on the row's second line.
     let wide = w >= 110;
-    let rows: Vec<WRow> = data
-        .rows
-        .iter()
-        .map(|r| {
-            let wt = weights.get(&r.key);
-            let downloading = match (&dl, wt) {
-                (Some(d), Some(wt)) => {
-                    d.running() && d.provider == wt.provider && d.artifact == wt.artifact
-                }
-                _ => false,
-            };
-            let lock = if !r.editable() { " ⊘" } else { "" };
-            let route = format!("{}{}", r.display_key(), lock);
-            let capability = if r.is_task_parent() {
-                format!("{} — any {} task (fallback)", r.label, r.modality)
-            } else {
-                r.label.clone()
-            };
-            let mut model = or_dash(&r.model);
-            if r.is_text_generation() {
-                if let Some(re) = r.reasoning.as_deref().filter(|x| !x.is_empty()) {
-                    model.push_str(&format!(" · reasoning {re}"));
-                }
-            }
-            let status = status_label(r);
-            let status_ink = match status.as_str() {
-                "configured" => t.ok,
-                "not configured" | "cannot run here" | "engine missing" => t.warn,
-                _ => t.text_muted,
-            };
-            let weights_cell = if downloading {
-                let d = dl.clone().unwrap();
-                Cell::text(
-                    match d.percent {
-                        Some(p) => format!("Downloading {p:.0}%"),
-                        None => "Downloading…".to_string(),
-                    },
-                    t.info,
-                )
-            } else {
-                match wt {
-                    Some(w) => {
-                        let (label, tone, _) = weight_view(w);
-                        let ink = match tone {
-                            WeightTone::Ok => t.ok,
-                            WeightTone::Warn => t.warn,
-                            WeightTone::Info => t.info,
-                            WeightTone::Muted => t.text_muted,
-                        };
-                        let tip = weight_tip(w);
-                        Cell::Badge {
-                            label: label.to_string(),
-                            ink,
-                            action: None,
-                            tip: (!tip.is_empty()).then_some(tip),
-                        }
-                    }
-                    None => Cell::text("-", t.text_faint),
-                }
-            };
-            let acts = row_actions(r, wt, downloading, admin);
-            let words = readonly_words(r);
-            let (actions, note) = match (words, acts.is_empty()) {
-                (Some((w, _)), true) => (Cell::text(w, t.text_muted), None),
-                (Some((w, _)), false) => (Cell::Actions(acts), Some((w, t.text_muted))),
-                (None, _) => (Cell::Actions(acts), None),
-            };
-            let cells = if wide {
-                vec![
-                    Cell::text(route, t.text),
-                    Cell::text(capability, t.text),
-                    Cell::text(or_dash(&r.provider), t.text),
-                    Cell::text(model, t.text),
-                    weights_cell,
-                    Cell::text(source_label(r), t.text_muted),
-                    Cell::text(status, status_ink),
-                    actions,
-                ]
-            } else {
-                vec![
-                    Cell::Lines(vec![
-                        vec![Ink::new(route, t.text)],
-                        vec![Ink::new(capability, t.text_muted)],
-                    ]),
-                    Cell::Lines(vec![
-                        vec![Ink::new(model, t.text)],
-                        vec![Ink::new(or_dash(&r.provider), t.text_muted)],
-                    ]),
-                    weights_cell,
-                    Cell::text(status, status_ink),
-                    actions,
-                ]
-            };
-            WRow::new(r.key.clone(), cells).dim(read_only(r)).note(note)
-        })
-        .collect();
     let cols = if wide {
         vec![
             Col::new("Route", ColW::Fit { min: 10, max: 30 }),
@@ -1062,13 +1033,128 @@ fn routes_table(
         ]
     } else {
         vec![
-            Col::new("Route", ColW::Flex { weight: 1, min: 12 }),
-            Col::new("Model", ColW::Flex { weight: 1, min: 12 }),
+            Col::new("Route", ColW::Flex { weight: 3, min: 22 }),
+            Col::new("Model", ColW::Flex { weight: 2, min: 12 }),
             Col::new("Weights", ColW::Fit { min: 7, max: 15 }),
-            Col::new("Status", ColW::Fit { min: 6, max: 22 }),
             Col::new("Actions", ColW::Fit { min: 7, max: 12 }),
         ]
     };
+    let model_col = if wide { 3 } else { 1 };
+    // Two passes: the columns are solved with the model ids whole, then
+    // each id is re-wrapped at '/' or '-' to the model column's width (a
+    // single token longer than the cell is the only hard break).
+    let build = |model_w: Option<i32>| -> Vec<WRow> {
+        data.rows
+            .iter()
+            .map(|r| {
+                let wt = weights.get(&r.key);
+                let downloading = match (&dl, wt) {
+                    (Some(d), Some(wt)) => {
+                        d.running() && d.provider == wt.provider && d.artifact == wt.artifact
+                    }
+                    _ => false,
+                };
+                let lock = if !r.editable() { " ⊘" } else { "" };
+                let route = format!("{}{}", r.display_key(), lock);
+                let capability = if r.is_task_parent() {
+                    format!("{} — any {} task (fallback)", r.label, r.modality)
+                } else {
+                    r.label.clone()
+                };
+                let mut model = web_dash(&r.model);
+                if r.is_text_generation() {
+                    if let Some(re) = r.reasoning.as_deref().filter(|x| !x.is_empty()) {
+                        model.push_str(&format!(" · reasoning {re}"));
+                    }
+                }
+                let model_cell = match model_w {
+                    Some(mw) => Cell::Lines(
+                        id_lines(&model, mw)
+                            .into_iter()
+                            .map(|l| vec![Ink::new(l, t.text)])
+                            .collect(),
+                    ),
+                    None => Cell::text(model, t.text),
+                };
+                let status = status_label(r);
+                let status_ink = match status.as_str() {
+                    "configured" => t.ok,
+                    "not configured" | "cannot run here" | "engine missing" => t.warn,
+                    _ => t.text_muted,
+                };
+                let weights_cell = if downloading {
+                    let d = dl.clone().unwrap();
+                    Cell::text(
+                        match d.percent {
+                            Some(p) => format!("Downloading {p:.0}%"),
+                            None => "Downloading…".to_string(),
+                        },
+                        t.info,
+                    )
+                } else {
+                    match wt {
+                        Some(w) => {
+                            let (label, tone, _) = weight_view(w);
+                            let ink = match tone {
+                                WeightTone::Ok => t.ok,
+                                WeightTone::Warn => t.warn,
+                                WeightTone::Info => t.info,
+                                WeightTone::Muted => t.text_muted,
+                            };
+                            let tip = weight_tip(w);
+                            Cell::Badge {
+                                label: label.to_string(),
+                                ink,
+                                action: None,
+                                tip: (!tip.is_empty()).then_some(tip),
+                            }
+                        }
+                        // The web's empty Weights cell (`weightsCellMarkup`).
+                        None => Cell::text(WEIGHTS_NONE, t.text_faint),
+                    }
+                };
+                let acts = row_actions(r, wt, downloading, admin);
+                let words = readonly_words(r);
+                let (actions, note) = match (words, acts.is_empty()) {
+                    (Some((w, _)), true) => (Cell::text(w, t.text_muted), None),
+                    (Some((w, _)), false) => (Cell::Actions(acts), Some((w, t.text_muted))),
+                    (None, _) => (Cell::Actions(acts), None),
+                };
+                let cells = if wide {
+                    vec![
+                        Cell::text(route, t.text),
+                        Cell::text(capability, t.text),
+                        Cell::text(web_dash(&r.provider), t.text),
+                        model_cell,
+                        weights_cell,
+                        Cell::text(source_label(r), t.text_muted),
+                        Cell::text(status, status_ink),
+                        actions,
+                    ]
+                } else {
+                    vec![
+                        Cell::Lines(vec![
+                            vec![Ink::new(route, t.text)],
+                            vec![
+                                Ink::new(status, status_ink),
+                                Ink::new(
+                                    format!(" · {capability} · {}", web_dash(&r.provider)),
+                                    t.text_muted,
+                                ),
+                            ],
+                        ]),
+                        model_cell,
+                        weights_cell,
+                        actions,
+                    ]
+                };
+                WRow::new(r.key.clone(), cells).dim(read_only(r)).note(note)
+            })
+            .collect()
+    };
+    let first = build(None);
+    let solved = DataTable::solve(&cols, &first, w);
+    let rows = build(solved.get(model_col).copied());
     let max_rows = (vp.h - 10).max(4);
     let ctx_a = ctx.clone();
     let ctx_e = ctx.clone();
@@ -2088,7 +2174,7 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
     super::w::FormModal::new(DIALOG_TITLE)
         .lead(DIALOG_LEAD)
         .size(86, 36)
-        .open(ctx, cx, move |mcx, close, guard, _inner_w| {
+        .open(ctx, cx, move |mcx, close, guard, inner_w| {
         let theme = use_theme(mcx);
         let t0 = theme.get().tokens;
         let row2 = row.clone();
@@ -2745,7 +2831,10 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                 },
             ))
             .child(dyn_view_scoped(
-                LayoutStyle::line(1).shrink(0.0),
+                LayoutStyle::default()
+                    .width(Dimension::Cells(inner_w))
+                    .height(Dimension::Cells(1))
+                    .shrink(0.0),
                 move |gcx| {
                     let t = theme.get().tokens;
                     let overriding = mode.get() == 1;
@@ -2950,8 +3039,13 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                     };
                     let mut on_cancel = Some(on_cancel);
                     let mut on_clear = Some(on_clear);
+                    let acts = editor_actions(save_why, test_why, clear_why);
+                    // Right-aligned by arithmetic, not by a flex spacer: the
+                    // spacer is the inner width minus the buttons and their
+                    // gaps (a grow spacer rendered at 0 on some first frames).
+                    let bw: i32 = acts.iter().map(|a| a.width()).sum::<i32>() + acts.len() as i32 - 1;
                     let mut views = Vec::new();
-                    for a in editor_actions(save_why, test_why, clear_why) {
+                    for a in acts {
                         let v = match a.id {
                             "cancel" => {
                                 let f = on_cancel.take().expect("once");
@@ -2972,11 +3066,28 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                         };
                         views.push(v);
                     }
-                    // The row spans the dialog (button_row right-aligns).
-                    Element::new()
-                        .style(LayoutStyle::column().grow(1.0))
-                        .child(super::w::form::button_row(views))
-                        .build()
+                    let mut row = Element::new()
+                        .style(
+                            LayoutStyle::row()
+                                .width(Dimension::Cells(inner_w))
+                                .height(Dimension::Cells(1))
+                                .gap(1)
+                                .shrink(0.0),
+                        )
+                        .child(
+                            Element::new()
+                                .style(
+                                    LayoutStyle::default()
+                                        .width(Dimension::Cells((inner_w - bw - 1).max(0)))
+                                        .height(Dimension::Cells(1))
+                                        .shrink(0.0),
+                                )
+                                .build(),
+                        );
+                    for v in views {
+                        row = row.child(v);
+                    }
+                    row.build()
                 },
             ))
             .build()

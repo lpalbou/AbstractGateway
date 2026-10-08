@@ -581,3 +581,127 @@ fn the_multimodal_words_are_the_webs() {
     }
     assert_eq!(dl["buttons"].as_array().unwrap().len(), ours.len());
 }
+
+/// The editor's [Cancel] [Clear] [Test] [Save] row is right-aligned under
+/// the fields (w::form::button_row): Save ends one padding cell before the
+/// dialog's right border, at 80x24 and 120x40, before and after the
+/// provider's model list lands (the row's region rebuilds then).
+#[test]
+fn the_editor_buttons_are_right_aligned() {
+    for size in [(80, 24), (120, 40)] {
+        let mut h = harness(size, Mount::Page(page_view));
+        h.admin();
+        h.store
+            .routes
+            .set(Loadable::Ready(RoutesData::from_value(&routes_payload())));
+        h.store.providers.set(Loadable::Ready(providers()));
+        h.turns(3);
+        click_row(&mut h, "input.text", "✎");
+        for phase in ["open", "models landed"] {
+            if phase == "models landed" {
+                h.store.models.update(|m| {
+                    m.insert(
+                        "lmstudio".into(),
+                        Loadable::Ready(vec!["test-model-a".into()]),
+                    );
+                });
+            }
+            let s = h.turns(3);
+            let line = s
+                .lines()
+                .find(|l| l.contains(" Cancel ") && l.contains(" Save"))
+                .unwrap_or_else(|| panic!("{size:?} {phase}: no button row:\n{s}"));
+            let border = line.rfind('│').expect("the dialog's right border");
+            let save_end = line.rfind("Save").unwrap() + "Save".len();
+            let gap = line[save_end..border].chars().count();
+            assert!(
+                gap <= 3,
+                "{size:?} {phase}: Save ends {gap} cells before the border:\n{s}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_grid_has_the_webs_columns_wide_and_its_narrow_form() {
+    // Wide: the web's eight columns, Route and Capability separate cells.
+    let mut h = page();
+    let s = h.turns(1);
+    let head = s
+        .lines()
+        .find(|l| l.contains("Route") && l.contains("Actions"))
+        .expect("header");
+    let names = [
+        "Route",
+        "Capability",
+        "Provider",
+        "Model",
+        "Weights",
+        "Source",
+        "Status",
+        "Actions",
+    ];
+    let mut at = 0;
+    for n in names {
+        let i = head[at..]
+            .find(n)
+            .unwrap_or_else(|| panic!("{n} missing or out of order:\n{head}"));
+        at += i + n.len();
+    }
+    // An absent provider/model is the web's "-" (input.sound).
+    let row = s
+        .lines()
+        .find(|l| l.starts_with(" input.sound "))
+        .expect("input.sound");
+    assert!(row.contains(" - ") && !row.contains('—'), "{row}");
+    // Narrow (80x24): Route · Model · Weights · Actions; the status,
+    // capability and provider on the row's second line.
+    let mut h = harness((80, 24), Mount::Page(page_view));
+    h.admin();
+    h.store
+        .routes
+        .set(Loadable::Ready(RoutesData::from_value(&routes_payload())));
+    let s = h.turns(3);
+    let head = s
+        .lines()
+        .find(|l| l.contains("Route") && l.contains("Actions"))
+        .expect("header");
+    assert!(
+        head.contains("Model") && head.contains("Weights") && !head.contains("Capability"),
+        "{head}"
+    );
+    let second = s
+        .lines()
+        .skip_while(|l| !l.starts_with(" input.text "))
+        .nth(1)
+        .unwrap_or_default();
+    assert!(
+        second.trim_start().starts_with("configured · Text"),
+        "second line:\n{s}"
+    );
+}
+
+#[test]
+fn model_ids_wrap_at_slash_or_dash_never_mid_word() {
+    for (id, w) in [
+        ("mlx-community/Qwen3.8-Flash-Next-4bit", 20),
+        ("AbstractFramework/wan2.2-t2v-a14b-diffusers-8bit", 22),
+        ("qwen/qwen3.5-9b@4bit", 12),
+    ] {
+        let lines = routes::id_lines(id, w);
+        assert_eq!(lines.concat(), id, "nothing lost: {lines:?}");
+        for l in &lines[..lines.len() - 1] {
+            assert!(abstracttui::text::width(l) <= w, "{l:?} wider than {w}");
+            assert!(
+                l.ends_with('/') || l.ends_with('-'),
+                "{id}: broke mid-word at {l:?} ({lines:?})"
+            );
+        }
+    }
+    // Only a token longer than the cell is cut.
+    let lines = routes::id_lines("averyveryverylongtoken", 8);
+    assert!(
+        lines.iter().all(|l| abstracttui::text::width(l) <= 8),
+        "{lines:?}"
+    );
+}

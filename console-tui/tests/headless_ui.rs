@@ -1639,7 +1639,12 @@ fn routes_table_renders_states_distinctly() {
         "an unconfigured row says so — 'default' read as 'a default is \
          set' on a screen literally about defaults:\n{s}"
     );
-    assert!(s.contains("writable"), "authority banner:\n{s}");
+    // R15: a writable store makes no claim (the web's store line needs the
+    // payload's config_file); only a read-only store is said.
+    assert!(
+        !s.lines().any(|l| l.trim() == "writable") && !s.contains("read-only"),
+        "no bare authority word:\n{s}"
+    );
     assert!(s.contains("supertonic-3"), "route model cell:\n{s}");
     // No double-width emoji in a table cell: the padlock measures 2
     // cells and terminals draw it at their own advance, sliding every
@@ -5637,10 +5642,13 @@ fn narrow_routes_grid_keeps_the_discriminating_tail() {
     .enumerate()
     {
         let i = *starts.get(n).expect("row");
-        let col = lines[i].find("AbstractFramework").expect("model cell");
+        // A CELL column (chars, not bytes: the second line carries "·").
+        let byte = lines[i].find("AbstractFramework").expect("model cell");
+        let col = lines[i][..byte].chars().count();
         let take = |l: &str| -> String {
-            l.get(col..)
-                .unwrap_or("")
+            l.chars()
+                .skip(col)
+                .collect::<String>()
                 .split("  ")
                 .next()
                 .unwrap_or("")
