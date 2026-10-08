@@ -67,6 +67,19 @@ pub fn manage_sections(_non_admin: bool) -> Vec<Section> {
     ]
 }
 
+/// A card's description as shown: the web's words, minus the web's
+/// save-on-change sentence on the cards that keep a Save button here
+/// (free text: one write per keystroke otherwise) — one rule per card.
+pub fn shown_desc(title: &str, desc: &'static str) -> &'static str {
+    let rule = match title {
+        "Mind" | "Voice" => " Changes save by themselves.",
+        "Tools per phase" => " Each box saves when you tick it.",
+        "Instructions" => " Each layer saves when you leave it.",
+        _ => return desc,
+    };
+    desc.strip_suffix(rule).unwrap_or(desc)
+}
+
 /// What the inline cards share with the Manage modal: the "unsaved
 /// edit" predicates of the tab on screen (the modal's Close / Esc / ✕
 /// and a tab switch ask "Discard changes?" when one holds).
@@ -376,7 +389,12 @@ pub fn open_manage_menu(cx: Scope, ctx: &Ctx, entity: EntityRow) {
                         col = col
                             .child(line(vec![span(String::new(), t.text)]))
                             .child(super::w::form::section(&t, sec.title))
-                            .child(super::w::form::sentence(&t, sec.desc, cw, t.text_muted));
+                            .child(super::w::form::sentence(
+                                &t,
+                                shown_desc(sec.title, sec.desc),
+                                cw,
+                                t.text_muted,
+                            ));
                         if sec.title == "Right now" {
                             let theme = abstracttui::reactive::untrack(|| use_theme(bcx));
                             col = col.child(
@@ -1684,7 +1702,6 @@ fn tools_body(mcx: Scope, ctx: &Ctx, name: String, inl: &Inline, w: i32) -> View
     // (Inline in Manage: the tab bar holds the focus.)
     Element::new()
         .style(LayoutStyle::column().gap(0))
-        .child(super::w::form::sentence(&t0, TOOLS_DESC, 80, t0.text_muted))
         .child(
             super::w::Toggle::switch(EMPTY_PHASE_LABEL, deny_all)
                 .tip(EMPTY_PHASE_DESC)

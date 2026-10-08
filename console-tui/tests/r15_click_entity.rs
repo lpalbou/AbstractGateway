@@ -1142,3 +1142,24 @@ fn keyboard_tab_walks_the_tab_bar_and_enter_picks() {
         "{s}"
     );
 }
+
+#[test]
+fn a_card_with_a_save_button_never_says_it_saves_by_itself() {
+    // Adversary re-gate note: one rule per card. Mind / Voice keep a Save,
+    // so the web's "Changes save by themselves." is not shown above it;
+    // the Tools sentence is printed once.
+    let mut h = open_tab("Mind & voice");
+    let s = h.turns(2);
+    assert!(s.contains("The model it thinks with."), "{s}");
+    assert!(!s.contains("save by themselves"), "{s}");
+    let mut h = open_tab("Work & tools");
+    h.store.entity_policy.set(Loadable::Ready(policy()));
+    let s = h.turns(3);
+    let flat: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert_eq!(
+        flat.matches("Which tools it may use in each phase").count(),
+        1,
+        "{s}"
+    );
+    assert!(!s.contains("Each box saves when you tick it"), "{s}");
+}
