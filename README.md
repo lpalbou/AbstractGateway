@@ -70,7 +70,7 @@ the gateway machine whatever it listens on
 [docs/engines.md](docs/engines.md), [docs/model-downloads.md](docs/model-downloads.md)
 and [docs/console.md](docs/console.md).
 
-Admins can turn on the [OpenAI API](docs/openai-api.md) on the console's **OpenAI API** page: any OpenAI SDK or app then uses this gateway's models at `http://<gateway>/v1`, with the caller's gateway token as the API key.
+Admins can turn on the [OpenAI API](docs/openai-api.md) on the console's **OpenAI API** page: any OpenAI SDK or app then uses this gateway's models at `http://<gateway>/v1`, with a named API key per app, made on that page (valid at `/v1` only, revocable one at a time).
 
 ### Browser apps, network access and the tray
 

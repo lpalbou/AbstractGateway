@@ -39,7 +39,7 @@ The sidebar groups the tabs in four sections, in this order:
 | Work | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches; `#runtimes?account=<id>` lists one account's runtimes ([below](#runtimes-of-one-account)) |
 | Work | **Apps** | the browser apps, Code's terminal app and the desktop Assistant (below), no settings disclosures: the toolbar gear opens **Apps settings** and the gear beside Continuum's Open opens **Continuum settings** (backlog folder, exec runner, process manager), each a dialog whose rows apply on their own |
 | Models | **Providers** | **Local providers**: one card per local engine on the gateway host (Ollama, LM Studio, MLX, llama.cpp, Hugging Face, vLLM) with its status, install, start, stop, **Browse models** and its server connection; **Remote providers**: OpenAI, Anthropic, OpenRouter, Portkey and custom OpenAI-compatible connections with write-only keys (shown as fingerprints); then the **Available Providers** table ([below](#models-and-local-providers)) |
-| Models | **OpenAI API** | the OpenAI-compatible API at `/v1`: status with Endpoint switch, Restart and Check setup; the base URL and your API key (your gateway token); Authentication and Who can connect, applied at once; supported surface and snippets; recent requests ([openai-api.md](./openai-api.md)) |
+| Models | **OpenAI API** | the OpenAI-compatible API at `/v1`: status with Endpoint switch, Restart and Check setup; the base URL and your API keys (New key with a name, shown once; list; Revoke); Authentication and Who can connect, applied at once; supported surface and snippets; recent requests ([openai-api.md](./openai-api.md)) |
 | Models | **Models** | browse models that fit this machine, download them, delete installed ones (below) |
 | Models | **Multimodal** | capability route defaults, the text reasoning effort, the MTP (speculative decoding) default, and model weights per route |
 | System | **Resources** | memory and GPU meters, resident models (warm up, lock, unload), session prompt caches, and the **Gateway** card (pause, update, restart, desktop icon, start at login, last restart after a hang) |
@@ -194,10 +194,12 @@ it is off by default and your browser remembers it.
   it, and notifications about its runs go to its address); the administrator
   and the entity's creator can open it.
 - **OpenAI API** (administrators, user rows) opens a dialog with the
-  account's **OpenAI API** switch: on, the account's gateway token works as an
-  API key at `/v1`; off, its requests answer `403 openai_api_off` (its console
-  sign-in is unchanged). Entities have no key and never use the OpenAI API
-  ([openai-api.md](./openai-api.md#access)).
+  account's **OpenAI API** switch: on, the account's API keys work at `/v1`;
+  off, every one of them answers `403 openai_api_off` (its console sign-in is
+  unchanged). Below it, the account's **API keys** (name, created, last used
+  and from where, fingerprint; never a key) each with **Revoke**, which asks
+  **Revoke** / **Cancel** and applies at once. Entities have no key and never
+  use the OpenAI API ([openai-api.md](./openai-api.md#api-keys)).
 - **Logs** opens "Activity — <id>": the account's sign-ins, token rotations,
   runs started, automation commands, account changes and email events from the
   gateway's audit log, newest first, in your local time. The chips **All**,

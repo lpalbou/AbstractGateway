@@ -279,12 +279,12 @@ abstractgateway migrate --from=file --to=sqlite \
 
 An admin turns on the OpenAI-compatible API on the console's **OpenAI API**
 page (sidebar **Models**). Then any OpenAI SDK reaches this gateway's models
-with your gateway token as the API key:
+with an API key you make on that page (**New key**, one per app):
 
 ```python
 from openai import OpenAI
 
-client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="YOUR_GATEWAY_TOKEN")
+client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="YOUR_API_KEY")
 print(client.models.list())
 ```
 

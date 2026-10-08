@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Named API keys for the OpenAI API.** Each account makes its own keys for `/v1`, one per app: **New key** on the console's OpenAI API page asks for a name ("laptop Cursor") and shows the key (`sk-agw-...`) once, with Copy. The page lists each key's name, when it was made, when it was last used and from which address, and its fingerprint; **Revoke** asks **Revoke** / **Cancel** and refuses the key from the next request on (`401 invalid_api_key`), leaving the account's other keys working. A key works at `/v1` only: anywhere under `/api/gateway/`, sign-in included, it answers `401` "This is an API key for /v1; sign in with your gateway token." and never counts toward the sign-in lockout. Requests run as the key's account and obey its OpenAI API switch (`403 openai_api_off`) and Active state (`403 account_inactive`). The request log names the key (`key_label`, `key_fingerprint`; the Recent requests table shows it under the account), and making or revoking a key is an audit line (`openai_key_change`, name and fingerprint, never the key). Admins see every account's keys in **Accounts → OpenAI API** (never a key) and revoke any of them. Routes: `GET`/`POST /api/gateway/me/openai-keys`, `DELETE /api/gateway/me/openai-keys/{fingerprint}`, `GET /api/gateway/admin/accounts/{id}/openai-keys`, `DELETE /api/gateway/admin/accounts/{id}/openai-keys/{fingerprint}`. Keys are stored as PBKDF2 hashes with their fingerprint in the user registry (`users.json`, each account's `openai_keys`, written only for an account that has keys: existing registries load and save unchanged); last use is kept in `auth/openai_key_usage.json`. See [docs/openai-api.md](docs/openai-api.md#api-keys).
+
+### Changed
+
+- The console's OpenAI API page offers named API keys instead of your gateway token: the token is no longer shown on the page (no eye, no Copy), and **New key** makes a named key instead of replacing your gateway token. An account's gateway token is still accepted at `/v1` for compatibility. Sign-in keeps the typed token in the browser as before. The snippets use `YOUR_API_KEY`, or the key you just made.
+- The 401 at `/v1` says what to do: "Incorrect API key provided: it is not a key of this gateway, or it was revoked. Make a key on the gateway's OpenAI API page." (no key: "You didn't provide an API key: make one on the gateway's OpenAI API page and send it as Authorization: Bearer <key>.").
+
 ## [0.13.1] - 2026-10-08
 
 Requires AbstractRuntime 0.9.1, AbstractCore 2.25.1 and AbstractAgent 0.3.19 (installed automatically). The terminal console `abstractgateway-console` 0.15.1 matches this release; see [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md).
