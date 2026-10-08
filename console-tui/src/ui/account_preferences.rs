@@ -11,6 +11,13 @@
 //! <message>" beside the row; a broken choice shows the gateway's `reason`.
 //! Who may change it is the gateway's answer (`can_edit`; the row's
 //! `actions.preferences`).
+//!
+//! Round 16 (R16.1 API — FINAL (4)): + the account's TIME ZONE, the last
+//! row — the web's kit AfTimeZonePicker in words: label and help from the
+//! gateway's `time_zone` block, "Gateway default (<zone>)" first (= null),
+//! then the SERVED IANA names (`choices`); Enter opens a list you filter by
+//! typing ("Search time zones"), Enter applies at once (one PUT
+//! `{"time_zone": <zone> | null}`), "Saved." / "Not saved. <message>".
 
 use abstracttui::prelude::*;
 use abstracttui::ui::{Phase, UiEvent};
@@ -43,6 +50,14 @@ pub fn tip(id: &str) -> String {
 }
 
 pub const SAVED: &str = "Saved.";
+/// The kit's words (ui-kit automation_controls.json `schedule.time_zone_default` /
+/// `schedule.time_zone_search`), byte for byte.
+pub const TZ_DEFAULT: &str = "Gateway default ({time_zone})";
+pub const TZ_SEARCH: &str = "Search time zones";
+/// The note key of the time-zone row (beside the app rows' interfaces).
+pub const TZ_KEY: &str = "time_zone";
+/// How many options of the (filtered) time-zone list show at once.
+pub const TZ_WINDOW: usize = 10;
 pub const READING: &str = "Reading the preferences...";
 
 /// The route of a row (the web's `accountPreferencesPath`): your own row
@@ -117,10 +132,72 @@ impl PrefApp {
     }
 }
 
+/// The answer's `time_zone` block (R16.1): the picker's whole truth, served.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TimeZonePref {
+    /// The account's own zone (None = the gateway default).
+    pub value: Option<String>,
+    pub gateway_default: String,
+    pub effective: String,
+    pub label: String,
+    pub help: Option<String>,
+    /// The IANA names the gateway serves, in its order.
+    pub choices: Vec<String>,
+}
+
+impl TimeZonePref {
+    /// "Gateway default (<zone>)".
+    pub fn default_label(&self) -> String {
+        TZ_DEFAULT.replace("{time_zone}", &self.gateway_default)
+    }
+
+    /// Every option: the gateway default (None) first, then the served names.
+    pub fn options(&self) -> Vec<(Option<String>, String)> {
+        let mut out = vec![(None, self.default_label())];
+        out.extend(self.choices.iter().map(|z| (Some(z.clone()), z.clone())));
+        out
+    }
+
+    /// The options whose label contains `filter` (case-insensitive), in order.
+    pub fn filtered(&self, filter: &str) -> Vec<(Option<String>, String)> {
+        let f = filter.trim().to_lowercase();
+        self.options()
+            .into_iter()
+            .filter(|(_, l)| f.is_empty() || l.to_lowercase().contains(&f))
+            .collect()
+    }
+
+    pub fn current_label(&self) -> String {
+        self.value.clone().unwrap_or_else(|| self.default_label())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Prefs {
     pub can_edit: bool,
     pub apps: Vec<PrefApp>,
+    pub time_zone: TimeZonePref,
+}
+
+/// The `time_zone` block, checked like the web: a missing block or field
+/// fails loudly with the web's seam sentence.
+pub fn parse_time_zone(v: &Value) -> Result<TimeZonePref, String> {
+    const SEAM: &str =
+        "GET /accounts/{id}/preferences answered without a time_zone block (R16.1 preferences seam).";
+    let b = v.get("time_zone").filter(|b| b.is_object()).ok_or(SEAM)?;
+    let choices = b.get("choices").and_then(Value::as_array).ok_or(SEAM)?;
+    let gateway_default = st(b, "gateway_default").ok_or(SEAM)?;
+    Ok(TimeZonePref {
+        value: st(b, "value").filter(|z| !z.is_empty()),
+        effective: st(b, "effective").unwrap_or_else(|| gateway_default.clone()),
+        gateway_default,
+        label: st(b, "label").filter(|l| !l.is_empty()).ok_or(SEAM)?,
+        help: st(b, "help").filter(|h| !h.is_empty()),
+        choices: choices
+            .iter()
+            .filter_map(|z| z.as_str().map(str::to_string))
+            .collect(),
+    })
 }
 
 fn st(v: &Value, k: &str) -> Option<String> {
@@ -179,7 +256,13 @@ pub fn parse(v: &Value) -> Result<Prefs, String> {
     Ok(Prefs {
         can_edit: v.get("can_edit").and_then(Value::as_bool) != Some(false),
         apps: out,
+        time_zone: parse_time_zone(v)?,
     })
+}
+
+/// The PUT body of a time-zone pick (null = the gateway default).
+pub fn put_time_zone(value: Option<&str>) -> Value {
+    json!({ "time_zone": value })
 }
 
 /// The PUT body of one pick: that interface only (unnamed ones keep).
@@ -204,6 +287,8 @@ struct St {
     sel: Signal<usize>,
     /// Picking: the option under the cursor of the open row.
     picking: Signal<Option<usize>>,
+    /// The time-zone list's filter (typed while it is open).
+    filter: Signal<String>,
     /// (interface, text, tone) beside each row.
     notes: Signal<Vec<(String, String, Tone)>>,
     /// The interface of the write in flight.
@@ -225,11 +310,16 @@ pub fn open(cx: Scope, ctx: &Ctx, row: AccountRow) {
         ctx,
         cx,
         title(&id),
-        &[("↑/↓", "choose"), ("Enter", "change / pick")],
+        &[
+            ("↑/↓", "choose"),
+            ("Enter", "change / pick"),
+            ("type", "filter time zones"),
+        ],
         move |mcx, _close, guard| {
             let st = St {
                 sel: mcx.signal(0),
                 picking: mcx.signal(None),
+                filter: mcx.signal(String::new()),
                 notes: mcx.signal(Vec::new()),
                 pending: mcx.signal(None),
                 scroll: mcx.signal(0),
@@ -260,6 +350,7 @@ pub fn open(cx: Scope, ctx: &Ctx, row: AccountRow) {
             *guard.borrow_mut() = Some(Box::new(move || {
                 if st.picking.get_untracked().is_some() {
                     st.picking.set(None);
+                    st.filter.set(String::new());
                     return true;
                 }
                 false
@@ -296,9 +387,11 @@ fn body(cx: Scope, ctx: &Ctx, slot: &str, wk: &str, path: &str, id: &str, st: St
             )
         }
     };
-    let n = prefs.apps.len();
+    // The app rows, then the time-zone row (index = apps.len()).
+    let n = prefs.apps.len() + 1;
     let at = st.sel.get().min(n.saturating_sub(1));
     let picking = st.picking.get();
+    let filter = st.filter.get();
     let busy = st.pending.get().is_some();
     let mut lines: Vec<View> = Vec::new();
     let mut sel_range = (0, 0);
@@ -368,6 +461,18 @@ fn body(cx: Scope, ctx: &Ctx, slot: &str, wk: &str, path: &str, id: &str, st: St
             sel_range = (start, lines.len() as i32);
         }
     }
+    tz_lines(
+        &prefs,
+        st,
+        at == prefs.apps.len(),
+        picking,
+        &filter,
+        busy,
+        width,
+        &t,
+        &mut lines,
+        &mut sel_range,
+    );
     let _ = st.notes.get();
     // Keep the selected row (and its pick list) on screen.
     {
@@ -415,9 +520,178 @@ fn body(cx: Scope, ctx: &Ctx, slot: &str, wk: &str, path: &str, id: &str, st: St
         .view(cx)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn tz_lines(
+    prefs: &Prefs,
+    st: St,
+    selected: bool,
+    picking: Option<usize>,
+    filter: &str,
+    busy: bool,
+    width: i32,
+    t: &TokenSet,
+    lines: &mut Vec<View>,
+    sel_range: &mut (i32, i32),
+) {
+    let tz = &prefs.time_zone;
+    let start = lines.len() as i32;
+    let (mark, ink) = if selected {
+        ("▸ ", t.accent)
+    } else {
+        ("  ", t.text)
+    };
+    let open = selected && picking.is_some();
+    let mut spans = vec![span(mark, ink), span_bold(format!("{}: ", tz.label), ink)];
+    if !open {
+        spans.push(span(tz.current_label(), t.text));
+        if prefs.can_edit && selected && !busy {
+            spans.push(span("  (Enter: change)", t.text_faint));
+        }
+        if busy && st.pending.get_untracked().as_deref() == Some(TZ_KEY) {
+            spans.push(span(" · saving…", t.text_faint));
+        }
+    }
+    lines.push(line(spans));
+    if open {
+        let shown = if filter.is_empty() {
+            TZ_SEARCH.to_string()
+        } else {
+            format!("{filter}▏")
+        };
+        lines.push(line(vec![span(
+            format!("    › {shown}"),
+            if filter.is_empty() {
+                t.text_faint
+            } else {
+                t.text
+            },
+        )]));
+        let opts = tz.filtered(filter);
+        if opts.is_empty() {
+            lines.push(line(vec![span("    No results", t.text_muted)]));
+        }
+        let cur = picking.unwrap_or(0).min(opts.len().saturating_sub(1));
+        let first = cur
+            .saturating_sub(TZ_WINDOW / 2)
+            .min(opts.len().saturating_sub(TZ_WINDOW));
+        if first > 0 {
+            lines.push(line(vec![span(
+                format!("      ↑ {first} more"),
+                t.text_faint,
+            )]));
+        }
+        for (j, (v, label)) in opts.iter().enumerate().skip(first).take(TZ_WINDOW) {
+            let on = *v == tz.value;
+            let here = j == cur;
+            lines.push(line(vec![span(
+                format!(
+                    "    {}{} {label}",
+                    if here { "▸" } else { " " },
+                    if on { "●" } else { " " }
+                ),
+                if here { t.accent } else { t.text },
+            )]));
+        }
+        let after = opts.len().saturating_sub(first + TZ_WINDOW);
+        if after > 0 {
+            lines.push(line(vec![span(
+                format!("      ↓ {after} more"),
+                t.text_faint,
+            )]));
+        }
+    }
+    if let Some(h) = &tz.help {
+        for l in wrap_text(h, (width - 6).max(10) as usize) {
+            lines.push(line(vec![span(format!("      {l}"), t.text_faint)]));
+        }
+    }
+    let note = st.notes.with_untracked(|n| {
+        n.iter()
+            .find(|(k, _, _)| k == TZ_KEY)
+            .map(|(_, tx, tone)| (tx.clone(), *tone))
+    });
+    if let Some((text, tone)) = note {
+        for l in wrap_text(&text, (width - 6).max(10) as usize) {
+            lines.push(line(vec![span(
+                format!("      {l}"),
+                if tone == Tone::Ok { t.ok } else { t.error },
+            )]));
+        }
+    }
+    if selected {
+        *sel_range = (start, lines.len() as i32);
+    }
+}
+
+/// Keys while the time-zone row is selected (or its list is open).
+fn tz_keys(ctx: &Ctx, prefs: &Prefs, st: St, wk: &str, path: &str, key: Key) -> bool {
+    let tz = &prefs.time_zone;
+    let busy = st.pending.with_untracked(Option::is_some);
+    let filter = st.filter.get_untracked();
+    let opts = tz.filtered(&filter);
+    match (st.picking.get_untracked(), key) {
+        (Some(cur), Key::Up) => st.picking.set(Some(cur.saturating_sub(1))),
+        (Some(cur), Key::Down) => st
+            .picking
+            .set(Some((cur + 1).min(opts.len().saturating_sub(1)))),
+        (Some(_), Key::Backspace) => {
+            let mut f = filter.clone();
+            f.pop();
+            st.filter.set(f);
+            st.picking.set(Some(0));
+        }
+        (Some(_), Key::Char(c)) if !c.is_control() => {
+            st.filter.set(format!("{filter}{c}"));
+            st.picking.set(Some(0));
+        }
+        (Some(cur), Key::Enter) => {
+            let Some((value, _)) = opts.get(cur.min(opts.len().saturating_sub(1))).cloned() else {
+                return true;
+            };
+            st.picking.set(None);
+            st.filter.set(String::new());
+            if value == tz.value || busy {
+                return true;
+            }
+            st.pending.set(Some(TZ_KEY.to_string()));
+            st.notes.update(|n| n.retain(|(k, _, _)| k != TZ_KEY));
+            ctx.store.json.set_write(wk, Some(WriteState::Pending));
+            let slot = wk.trim_end_matches(".write").to_string();
+            ctx.send(Cmd::Json(JsonCmd::Send {
+                key: wk.to_string(),
+                method: "PUT".into(),
+                path: path.to_string(),
+                body: put_time_zone(value.as_deref()),
+                slow: false,
+                label: tz.label.clone(),
+                reload: vec![(slot, path.to_string())],
+                journal: false,
+            }));
+        }
+        (None, Key::Up) => st.sel.set(prefs.apps.len().saturating_sub(1)),
+        (None, Key::Down) => {}
+        (None, Key::Enter) | (None, Key::Char(' ')) => {
+            if prefs.can_edit && !busy {
+                st.filter.set(String::new());
+                st.picking.set(Some(
+                    tz.options()
+                        .iter()
+                        .position(|(v, _)| *v == tz.value)
+                        .unwrap_or(0),
+                ));
+            }
+        }
+        _ => return false,
+    }
+    true
+}
+
 fn keys(ctx: &Ctx, prefs: &Prefs, st: St, wk: &str, path: &str, key: Key) -> bool {
-    let n = prefs.apps.len();
+    let n = prefs.apps.len() + 1;
     let at = st.sel.get_untracked().min(n.saturating_sub(1));
+    if at == prefs.apps.len() {
+        return tz_keys(ctx, prefs, st, wk, path, key);
+    }
     let Some(app) = prefs.apps.get(at) else {
         return false;
     };
