@@ -88,6 +88,21 @@ pub fn recovery_actions(step: &str, ready: bool, wait: u64, can_resend: bool) ->
     }
 }
 
+/// The footer verbs of this page (R15: only what applies). The lead wires
+/// it into `screen_hint_pairs` (COORD "R15-A HINTS").
+pub fn hints(ctx: &Ctx) -> Vec<(&'static str, &'static str)> {
+    let connected = ctx.store.conn.with(ConnPhase::is_connected);
+    let mut out = vec![
+        ("Tab", "next"),
+        ("Enter", if connected { RE_PROBE } else { SIGN_IN }),
+    ];
+    if connected {
+        out.push(("r", RE_PROBE));
+        out.push(("N", "Network"));
+    }
+    out
+}
+
 /// A button for `a` on the Connection block's ground.
 fn btn(cx: Scope, t: &TokenSet, a: &Action, on_press: impl FnMut() + 'static) -> View {
     super::w::action::button(cx, t, a, On::Page, true, on_press)
