@@ -128,111 +128,543 @@ fn open_manage(h: &mut r8w4::Harness) -> String {
     s
 }
 
-fn covered() -> BTreeSet<&'static str> {
+/// A taller page (Manage's tabs whole, no scrolling) — the 80x24 test
+/// below proves the tab body scrolls.
+fn mpage() -> r8w4::Harness {
+    let mut h = harness((120, 72), Mount::Page(page_view));
+    h.admin();
+    let mut admin = accounts_fixture::user_row("admin", true, "", "", true, true);
+    admin["own"] = json!(true);
+    let castor = accounts_fixture::entity_row("castor", "awake", true);
+    h.store.accounts.set(Loadable::Ready(
+        accounts_from_payload(&json!({"accounts": [admin, castor]})).unwrap(),
+    ));
+    h.store.entities.set(Loadable::Ready(entities_from_payload(
+        &json!({"entities": [{"name": "castor", "state": "awake"}]}),
+    )));
+    h.turns(3);
+    h.sent();
+    h
+}
+
+/// Manage — castor on tab `tab` (by mouse), its fields inline.
+fn open_tab(tab: &str) -> r8w4::Harness {
+    let mut h = mpage();
+    open_manage(&mut h);
+    if tab != "Overview" {
+        let s = click_tab(&mut h, tab);
+        assert!(s.contains("Manage — castor"), "{s}");
+    }
+    h.sent();
+    h
+}
+
+/// Click a tab on Manage's tab bar (the FIRST line holding " Overview ").
+fn click_tab(h: &mut r8w4::Harness, tab: &str) -> String {
+    let s = h.turns(1);
+    let (y, line) = s
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains(" Overview ") && l.contains(" Prompt "))
+        .unwrap_or_else(|| panic!("tab bar:\n{s}"));
+    let b = line.find(&format!(" {tab} ")).unwrap() + 1;
+    let x = line[..b].chars().count() + 1;
+    h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes())
+}
+
+/// Click into the field `label` of the card titled `card` (the first
+/// `label` line at or below the card's title; the field column starts
+/// 19 cells after the label).
+fn click_field_in(h: &mut r8w4::Harness, card: &str, label: &str) {
+    let s = h.turns(1);
+    let lines: Vec<&str> = s.lines().collect();
+    let start = lines
+        .iter()
+        .position(|l| l.contains(card))
+        .unwrap_or_else(|| panic!("card {card:?}:\n{s}"));
+    let (y, line) = lines
+        .iter()
+        .enumerate()
+        .skip(start + 1)
+        .find(|(_, l)| l.contains(&format!("│{label} ")))
+        .unwrap_or_else(|| panic!("{label:?} under {card:?}:\n{s}"));
+    let x = line[..line.find(label).unwrap()].chars().count() + 21;
+    h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes());
+}
+
+/// Click into the text field labelled `label` (its last line on screen;
+/// the field column starts 19 cells after the label).
+fn click_field(h: &mut r8w4::Harness, label: &str) {
+    let s = h.turns(1);
+    let (y, line) = s
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains(label))
+        .last()
+        .unwrap_or_else(|| panic!("{label:?}:\n{s}"));
+    let x = line[..line.rfind(label).unwrap()].chars().count() + 21;
+    h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes());
+}
+
+/// Click the first `text` at or below the card titled `card`.
+fn click_in(h: &mut r8w4::Harness, card: &str, text: &str) -> String {
+    let s = h.turns(1);
+    let lines: Vec<&str> = s.lines().collect();
+    let start = lines
+        .iter()
+        .position(|l| l.contains(card))
+        .unwrap_or_else(|| panic!("card {card:?}:\n{s}"));
+    let (y, line) = lines
+        .iter()
+        .enumerate()
+        .skip(start + 1)
+        .find(|(_, l)| l.contains(text))
+        .unwrap_or_else(|| panic!("{text:?} under {card:?}:\n{s}"));
+    let x = line[..line.find(text).unwrap()].chars().count() + 2;
+    h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes())
+}
+
+/// Close Manage with unsaved edits: it asks; Keep editing returns to the
+/// same tab with the edit.
+fn close_asks(h: &mut r8w4::Harness, tab_marker: &str) {
+    let s = click_confirm_or_close(h);
+    assert!(s.contains(ui::DISCARD_QUESTION), "Close asks:\n{s}");
+    let s = click(h, " Keep editing ");
+    assert!(
+        s.contains("Manage — castor") && s.contains(tab_marker),
+        "kept:\n{s}"
+    );
+}
+
+fn click_confirm_or_close(h: &mut r8w4::Harness) -> String {
+    click(h, " Close ")
+}
+
+// ---- the inline cards (each form's fields live inside its card) ---------
+
+use abstractgateway_console::store::{CandidateRow, PromptData, ToolPolicyData};
+use abstractgateway_console::ui::entity_manage::{subform_actions, SubForm};
+
+/// (form, action id) pairs the tests below click.
+fn sub_covered() -> BTreeSet<(String, &'static str)> {
     [
-        "verify",
-        "card",
-        "candidates",
-        "talk",
-        "state",
-        "owntime",
-        "freeze",
-        "substrate",
-        "voice",
-        "reembed",
-        "work",
-        "tools",
-        "prompt",
+        ("Mind", "save"),
+        ("Voice", "audition"),
+        ("Voice", "play"),
+        ("Voice", "save"),
+        ("Work", "save"),
+        ("Work", "end"),
+        ("OwnTime", "grant"),
+        ("OwnTime", "revoke"),
+        ("Freeze", "freeze"),
+        ("Reembed", "rebuild"),
+        ("Tools", "save"),
+        ("Prompt", "save"),
+        ("Candidates", "promote"),
+        ("Candidates", "reject"),
+        ("Candidates", "reload"),
+        ("Card", "verify"),
+        ("Card", "reload"),
+        ("Talk", "open"),
+        ("Talk", "send"),
+        ("Talk", "close_visit"),
+        ("Talk", "close"),
     ]
     .into_iter()
+    .map(|(f, a)| (f.to_string(), a))
     .collect()
 }
 
 #[test]
-fn every_manage_action_has_a_click_test() {
-    let offered: BTreeSet<&'static str> = entity_manage::manage_sections(false)
-        .iter()
-        .flat_map(|s| s.actions.iter().map(|a| a.id))
-        .collect();
-    let missing: Vec<_> = offered.difference(&covered()).copied().collect();
+fn every_inline_action_has_a_click_test() {
+    let mut offered = BTreeSet::new();
+    for f in SubForm::ALL {
+        for a in subform_actions(f) {
+            offered.insert((format!("{f:?}"), a.id));
+        }
+    }
+    let missing: Vec<_> = offered.difference(&sub_covered()).cloned().collect();
     assert!(
         missing.is_empty(),
-        "Manage actions without a click test: {missing:?}"
+        "inline actions without a click test: {missing:?}"
+    );
+    // Every card of every tab holds its form (none opens a dialog).
+    for sec in entity_manage::manage_sections(false) {
+        assert!(
+            sec.form.is_some() || sec.title == "Right now",
+            "{}",
+            sec.title
+        );
+    }
+}
+
+#[test]
+fn manage_is_one_screen_with_the_webs_tabs_and_cards_inline() {
+    let mut h = mpage();
+    open_manage(&mut h);
+    for (i, tab) in entity_manage::MANAGE_TABS.iter().enumerate() {
+        let s = click_tab(&mut h, tab);
+        assert!(s.contains("Manage — castor"), "{tab}: still Manage:\n{s}");
+        for sec in entity_manage::manage_sections(false)
+            .iter()
+            .filter(|c| c.tab == i)
+        {
+            assert!(s.contains(sec.title), "{tab} shows {}:\n{s}", sec.title);
+        }
+    }
+    // Close by mouse.
+    let s = click(&mut h, " Close ");
+    assert!(!s.contains("Manage — castor"), "{s}");
+}
+
+#[test]
+fn state_applies_inline_and_a_cancelled_confirm_keeps_the_tab() {
+    let mut h = open_tab("Lifecycle");
+    let s = click_in(&mut h, "Awake or asleep", " asleep ");
+    let s = if s.contains(entity_manage::SLEEP_QUESTION) {
+        s
+    } else {
+        settle(&mut h)
+    };
+    assert!(s.contains(entity_manage::SLEEP_QUESTION), "{s}");
+    click_confirm(&mut h, "Sleep", "Cancel");
+    assert!(h
+        .sent()
+        .iter()
+        .any(|c| matches!(c, Cmd::EntityState { name, body }
+        if name == "castor" && body.0["state"] == "asleep" && body.0.get("dream").is_none())));
+    // The kill switch: a danger confirm; Esc keeps — Manage stays on Lifecycle.
+    let s = click_in(&mut h, "Awake or asleep", " paused ");
+    let s = if s.contains("Pause castor?") {
+        s
+    } else {
+        settle(&mut h)
+    };
+    assert!(s.contains("Pause castor?"), "{s}");
+    let s = h.esc();
+    assert!(
+        s.contains("Manage — castor") && s.contains("Emergency freeze"),
+        "same tab:\n{s}"
+    );
+    assert!(!h
+        .sent()
+        .iter()
+        .any(|c| matches!(c, Cmd::EntityState { .. })));
+}
+
+#[test]
+fn freeze_asks_over_manage_and_cancel_returns_to_the_tab() {
+    let mut h = open_tab("Lifecycle");
+    let s = click_in(&mut h, "Emergency freeze", " Freeze now ");
+    assert!(s.contains("Freeze it now?"), "{s}");
+    // A danger confirm opens on Cancel: Enter keeps.
+    let s = h.key(b"\r");
+    assert!(
+        s.contains("Manage — castor") && s.contains("Emergency freeze"),
+        "{s}"
+    );
+    assert!(!h.sent().iter().any(|c| matches!(c, Cmd::EntityLoop { .. })));
+    click_in(&mut h, "Emergency freeze", " Freeze now ");
+    click_confirm(&mut h, "Freeze", "Cancel");
+    assert!(h.sent().iter().any(
+        |c| matches!(c, Cmd::EntityLoop { start: false, body, .. } if body.0["mode"] == "freeze")
+    ));
+    let s = h.turns(2);
+    assert!(s.contains("Manage — castor"), "Manage stays:\n{s}");
+}
+
+#[test]
+fn personal_time_switch_and_grants_inline() {
+    let mut h = open_tab("Lifecycle");
+    click_in(&mut h, "Personal time", "●─ Personal time");
+    assert!(
+        h.sent()
+            .iter()
+            .any(|c| matches!(c, Cmd::EntityLoop { start: true, .. })),
+        "on = start"
+    );
+    click_field_in(&mut h, "Schedule", "Hours allowed");
+    h.type_text("2");
+    click_in(&mut h, "Schedule", " Grant (timer) ");
+    assert!(h
+        .sent()
+        .iter()
+        .any(|c| matches!(c, Cmd::SavePersonalGrant { body, .. } if body.0["mode"] == "timer")));
+    click_in(&mut h, "Schedule", " Revoke grant ");
+    assert!(h.sent().iter().any(|c| matches!(c, Cmd::SavePersonalGrant { body, .. } if body.0 == json!({"mode": "disabled"}))));
+}
+
+#[test]
+fn mind_save_stays_in_manage_and_close_asks_on_edits() {
+    let mut h = open_tab("Mind & voice");
+    click_field_in(&mut h, "The model it thinks with", "provider");
+    h.type_text("lmstudio");
+    click_field_in(&mut h, "The model it thinks with", "model");
+    h.type_text("qwen3");
+    click_in(&mut h, "The model it thinks with", " Save ");
+    let sent = h.sent();
+    assert!(
+        sent.iter()
+            .any(|c| matches!(c, Cmd::SaveEntitySubstrate { name, body, .. }
+            if name == "castor" && body.0 == json!({"provider": "lmstudio", "model": "qwen3"}))),
+        "Save sends the pair: {sent:?}"
+    );
+    // An unsaved edit: Close asks; Keep editing returns to the same tab.
+    let mut h = open_tab("Mind & voice");
+    click_field_in(&mut h, "The model it thinks with", "provider");
+    h.type_text("lmstudio");
+    close_asks(&mut h, "Danger zone");
+    // Esc asks too.
+    let s = h.esc();
+    assert!(s.contains(ui::DISCARD_QUESTION), "Esc asks:\n{s}");
+}
+
+#[test]
+fn switching_tab_with_unsaved_edits_asks() {
+    let mut h = open_tab("Mind & voice");
+    click_field_in(&mut h, "The model it thinks with", "provider");
+    h.type_text("lmstudio");
+    let s = click_tab(&mut h, "Overview");
+    assert!(s.contains(ui::DISCARD_QUESTION), "{s}");
+    let s = click(&mut h, " Keep editing ");
+    assert!(
+        s.contains("Danger zone") && s.contains("lmstudio"),
+        "kept on Mind & voice:\n{s}"
+    );
+    click_tab(&mut h, "Overview");
+    let s = click(&mut h, " Discard ");
+    assert!(
+        s.contains("Right now") && !s.contains("Danger zone"),
+        "switched:\n{s}"
     );
 }
 
-/// The window or command each Manage button leads to.
-fn expect(id: &str) -> &'static str {
-    match id {
-        "card" => "Identity card — castor",
-        "candidates" => "Candidates — castor",
-        "talk" => "Talk — castor",
-        "state" => "Entity state — castor",
-        "owntime" => "Own time — castor",
-        "substrate" => "Mind substrate — castor",
-        "voice" => "Voice — castor",
-        "reembed" => "Re-embed home — castor",
-        "work" => "Work order — castor",
-        "tools" => "Tool policy — castor",
-        "prompt" => "Prompt overlay — castor",
-        _ => "",
+#[test]
+fn voice_hear_a_sample_play_save_inline() {
+    let mut h = open_tab("Mind & voice");
+    click_field_in(&mut h, "How it sounds", "provider");
+    h.type_text("openai");
+    click_field_in(&mut h, "How it sounds", "model");
+    h.type_text("tts-1");
+    click_in(&mut h, "How it sounds", " Hear a sample ");
+    assert!(h.sent().iter().any(|c| matches!(c, Cmd::Entity(EntityCmd::VoiceAudition { provider, .. }) if provider == "openai")));
+    h.store
+        .entity_audition
+        .set(Loadable::Ready(ent::AuditionOutcome {
+            entity: "castor".into(),
+            summary: "Synthesized".into(),
+            path: Some("/nonexistent/r15-castor-audition.wav".into()),
+            bytes: 10,
+            error: None,
+            player: Some("afplay".into()),
+        }));
+    h.turns(2);
+    h.store.notice.set(None);
+    click_in(&mut h, "How it sounds", " Play ");
+    assert!(h.store.notice.get_untracked().is_some(), "Play answers");
+    click_in(&mut h, "How it sounds", " Save ");
+    assert!(h
+        .sent()
+        .iter()
+        .any(|c| matches!(c, Cmd::SaveEntityVoice { body, .. } if body.0["provider"] == "openai")));
+}
+
+#[test]
+fn rebuild_index_asks_over_manage_then_sends() {
+    let mut h = open_tab("Mind & voice");
+    click_field_in(&mut h, "Danger zone", "embedding model");
+    h.type_text("all-minilm");
+    let s = click_in(&mut h, "Danger zone", " Rebuild index ");
+    assert!(s.contains("Rebuild every memory vector now?"), "{s}");
+    click_confirm(&mut h, "Rebuild", "Cancel");
+    assert!(h.sent().iter().any(|c| matches!(c, Cmd::EntityReembed { body, .. } if body.0["embedding_model"] == "all-minilm")));
+    let s = h.turns(2);
+    assert!(
+        s.contains("Manage — castor") && s.contains("Danger zone"),
+        "same tab:\n{s}"
+    );
+}
+
+#[test]
+fn work_order_give_and_end_inline() {
+    let mut h = open_tab("Work & tools");
+    click_field_in(&mut h, "A task it works on", "order");
+    h.type_text("read the backlog");
+    click_in(&mut h, "A task it works on", " Give this task ");
+    assert!(h.sent().iter().any(|c| matches!(c, Cmd::SaveEntityWorkOrder { body, .. } if body.0 == json!({"order": "read the backlog"}))));
+    let mut h = open_tab("Work & tools");
+    click_in(&mut h, "A task it works on", " End the work order ");
+    assert!(h.sent().iter().any(
+        |c| matches!(c, Cmd::SaveEntityWorkOrder { body, .. } if body.0 == json!({"clear": true}))
+    ));
+}
+
+fn policy() -> ToolPolicyData {
+    ToolPolicyData {
+        entity: "castor".into(),
+        phases: vec![
+            ("visit".into(), vec!["web_search".into()], "default".into()),
+            ("work".into(), vec!["web_search".into()], "custom".into()),
+        ],
+        all_tools: vec!["web_search".into(), "read_file".into()],
     }
 }
 
 #[test]
-fn every_manage_button_by_mouse_does_what_it_says() {
-    for sec in entity_manage::manage_sections(false) {
-        for a in &sec.actions {
-            let mut h = page();
-            open_manage(&mut h);
-            click(
-                &mut h,
-                &format!(" {} ", entity_manage::MANAGE_TABS[sec.tab]),
-            );
-            let s = h.turns(2);
-            assert!(
-                s.contains(sec.title),
-                "{} tab shows {}:\n{s}",
-                sec.tab,
-                sec.title
-            );
-            h.sent();
-            let s = click(&mut h, &format!(" {} ", a.label));
-            match a.id {
-                "verify" => assert!(
-                    h.sent()
-                        .iter()
-                        .any(|c| matches!(c, Cmd::EntityVerify { name } if name == "castor")),
-                    "Verify memory sends EntityVerify"
-                ),
-                "freeze" => {
-                    assert!(s.contains("Freeze it now?"), "the web's confirm:\n{s}");
-                    // A danger confirm opens on Cancel: Enter keeps.
-                    h.key(b"\r");
-                    assert!(!h.sent().iter().any(|c| matches!(c, Cmd::EntityLoop { .. })));
-                    open_manage(&mut h);
-                    click(&mut h, " Lifecycle ");
-                    click(&mut h, " Freeze now ");
-                    click(&mut h, " Freeze ");
-                    assert!(
-                        h.sent()
-                            .iter()
-                            .any(|c| matches!(c, Cmd::EntityLoop { name, start: false, body }
-                            if name == "castor" && body.0["mode"] == "freeze")),
-                        "[Freeze] sends the freeze"
-                    );
-                }
-                id => assert!(s.contains(expect(id)), "{id} opens {}:\n{s}", expect(id)),
-            }
-        }
-    }
+fn tools_save_sends_the_changed_phase_inline() {
+    let mut h = open_tab("Work & tools");
+    h.store.entity_policy.set(Loadable::Ready(policy()));
+    h.turns(3);
+    let s = click_in(&mut h, "Tools per phase", " Save ");
+    assert!(s.contains("no changes to save"), "{s}");
+    // The visit phase's list (keyboard: Shift+Tab from Save → work → visit).
+    h.key(b"\x1b[Z\x1b[Z");
+    h.key(b"\r");
+    h.key(b"\x1b[B");
+    h.key(b" ");
+    let s = h.key(b"\r");
+    assert!(s.contains("web_search, read_file"), "{s}");
+    click_in(&mut h, "Tools per phase", " Save ");
+    assert!(h
+        .sent()
+        .iter()
+        .any(|c| matches!(c, Cmd::SaveToolPolicy { body, .. }
+        if body.0["policy"].get("visit").is_some() && body.0["policy"].get("work").is_none())));
 }
 
 #[test]
-fn hovering_a_manage_button_shows_its_tooltip_and_keys_work() {
-    let mut h = page();
-    open_manage(&mut h);
-    click(&mut h, " Lifecycle ");
+fn prompt_save_sends_every_layer_and_close_asks() {
+    let data = || PromptData {
+        entity: "castor".into(),
+        layers: vec![("persona".into(), "kind".into())],
+    };
+    let type_in_layer = |h: &mut r8w4::Harness, text: &str| {
+        let s = h.turns(1);
+        let (y, line) = s
+            .lines()
+            .enumerate()
+            .find(|(_, l)| l.contains("kind"))
+            .expect("layer text");
+        let x = line[..line.find("kind").unwrap()].chars().count() + 5;
+        h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes());
+        h.type_text(text);
+    };
+    let mut h = open_tab("Prompt");
+    h.store.entity_prompt.set(Loadable::Ready(data()));
+    h.turns(3);
+    type_in_layer(&mut h, " and curious");
+    click_in(&mut h, "Instructions", "│ Save ");
+    assert!(h
+        .sent()
+        .iter()
+        .any(|c| matches!(c, Cmd::SaveEntityPrompt { body, .. }
+        if body.0["overlay"]["persona"].as_str().is_some_and(|t| t.contains("curious")))));
+    let mut h = open_tab("Prompt");
+    h.store.entity_prompt.set(Loadable::Ready(data()));
+    h.turns(3);
+    type_in_layer(&mut h, "!");
+    close_asks(&mut h, "Instructions");
+}
+
+#[test]
+fn overview_card_verify_reload_and_candidates_inline() {
+    let mut h = open_tab("Overview");
+    click_in(&mut h, "Identity", " Verify memory ");
+    assert!(h
+        .sent()
+        .iter()
+        .any(|c| matches!(c, Cmd::EntityVerify { name } if name == "castor")));
+    click_in(&mut h, "Identity", " Reload ");
+    assert!(h
+        .sent()
+        .iter()
+        .any(|c| matches!(c, Cmd::Entity(EntityCmd::LoadCard { .. }))));
+    h.store.entity_candidates.set(Loadable::Ready((
+        "castor".to_string(),
+        vec![CandidateRow {
+            record_id: "rec_1".into(),
+            title: "likes rain".into(),
+            digest: "a digest".into(),
+            kind: "fact".into(),
+        }],
+    )));
+    h.turns(3);
+    // The Overview is taller than the modal: the body scrolls.
+    h.wheel_down(10);
+    let card = "Memories from sleep";
+    click_field_in(&mut h, card, "reason");
+    h.type_text("seen twice");
+    click_in(&mut h, card, " Reject ");
+    assert!(h.sent().iter().any(
+        |c| matches!(c, Cmd::CandidateAct { promote: false, record_id, .. } if record_id == "rec_1")
+    ));
+    click_field_in(&mut h, card, "corroborating");
+    h.type_text("a,b");
+    click_field_in(&mut h, card, "reason");
+    h.type_text("backed up");
+    click_in(&mut h, card, " Promote (accept) ");
+    assert!(h.sent().iter().any(|c| matches!(c, Cmd::CandidateAct { promote: true, corroborating_ids, .. } if corroborating_ids.len() == 2)));
+    click_in(&mut h, card, " Reload ");
+    assert!(h
+        .sent()
+        .iter()
+        .any(|c| matches!(c, Cmd::LoadCandidates { .. })));
+}
+
+#[test]
+fn talk_tab_opens_sends_and_closes_the_visit_inline() {
+    let mut h = open_tab("Talk");
+    click_in(&mut h, "Visit", "│ Open visit ");
+    assert!(h
+        .sent()
+        .iter()
+        .any(|c| matches!(c, Cmd::Entity(EntityCmd::ChatOpen { .. }))));
+    h.store.entity_chat.update(|c| {
+        c.busy = false;
+        c.apply_open(&json!({"chat_id": "chat_7", "yielded_loop": false}));
+    });
+    h.turns(2);
+    click(&mut h, "▐say something");
+    h.type_text("hello");
+    click_in(&mut h, "Visit", "Send    Close");
+    assert!(h
+        .sent()
+        .iter()
+        .any(|c| matches!(c, Cmd::Entity(EntityCmd::ChatTurn { text, .. }) if text == "hello")));
+    h.store.entity_chat.update(|c| c.busy = false);
+    h.turns(2);
+    // The button row (the hint line above also says "Close visit").
+    let s = h.turns(1);
+    let (y, line) = s
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("Send    Close visit"))
+        .expect("Talk buttons");
+    let b = line.find("Send    Close visit").unwrap() + "Send    ".len();
+    let x = line[..b].chars().count() + 2;
+    h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes());
+    assert!(h.sent().iter().any(
+        |c| matches!(c, Cmd::Entity(EntityCmd::ChatClose { chat_id, .. }) if chat_id == "chat_7")
+    ));
+    let s = h.turns(2);
+    assert!(s.contains("Manage — castor"), "still Manage:\n{s}");
+}
+
+#[test]
+fn the_standalone_talk_panel_closes_by_mouse() {
+    // `c` on Accounts opens the Talk panel alone (its own Close).
+    let mut h = mpage();
+    // Select castor's row, then `c` opens the Talk panel alone.
+    click(&mut h, " castor ");
+    let s = h.key(b"c");
+    assert!(s.contains("Talk — castor"), "{s}");
+    let s = click(&mut h, " Close ");
+    assert!(!s.contains("Talk — castor"), "{s}");
+}
+
+#[test]
+fn hovering_freeze_now_shows_its_tooltip() {
+    let mut h = open_tab("Lifecycle");
     let s = h.turns(1);
     let (row, col) = s
         .lines()
@@ -246,32 +678,46 @@ fn hovering_a_manage_button_shows_its_tooltip_and_keys_work() {
     std::thread::sleep(std::time::Duration::from_millis(400));
     let s = h.turns(3);
     assert!(
-        s.contains("Kill its personal-time process now (no reflection)  (f)"),
+        s.contains("Kill its personal-time process now (no reflection)"),
         "{s}"
     );
-    // Keyboard: `v` is Verify memory, from any tab.
-    let mut h = page();
-    open_manage(&mut h);
-    h.sent();
-    h.key(b"v");
-    assert!(h
-        .sent()
-        .iter()
-        .any(|c| matches!(c, Cmd::EntityVerify { .. })));
 }
 
 #[test]
-fn manage_survives_the_entity_detail_reload_and_closes_by_mouse() {
-    let mut h = page();
+fn the_tab_body_scrolls_at_80x24() {
+    let mut h = harness((80, 24), Mount::Page(page_view));
+    h.admin();
+    let castor = accounts_fixture::entity_row("castor", "awake", true);
+    h.store.accounts.set(Loadable::Ready(
+        accounts_from_payload(&json!({"accounts": [castor]})).unwrap(),
+    ));
+    h.store.entities.set(Loadable::Ready(entities_from_payload(
+        &json!({"entities": [{"name": "castor", "state": "awake"}]}),
+    )));
+    h.turns(3);
     open_manage(&mut h);
+    click_tab(&mut h, "Mind & voice");
+    let s = h.turns(2);
+    assert!(
+        !s.contains("Danger zone"),
+        "the rebuild card is below the fold:\n{s}"
+    );
+    let s = h.wheel_down(30);
+    assert!(s.contains("Danger zone"), "the body scrolls to it:\n{s}");
+}
+
+#[test]
+fn manage_survives_the_entity_detail_reload() {
+    let mut h = open_tab("Lifecycle");
     h.store.entity_detail.set(Loadable::Loading);
     h.store.entities.set(Loadable::Ready(entities_from_payload(
         &json!({"entities": [{"name": "castor", "state": "asleep"}]}),
     )));
     let s = h.turns(3);
-    assert!(s.contains("Manage — castor"), "survived:\n{s}");
-    let s = click(&mut h, " Close ");
-    assert!(!s.contains("Manage — castor"), "closed:\n{s}");
+    assert!(
+        s.contains("Manage — castor") && s.contains("Emergency freeze"),
+        "survived:\n{s}"
+    );
 }
 
 fn open_summon(h: &mut r8w4::Harness) -> String {
@@ -364,17 +810,29 @@ fn the_entity_words_are_the_webs() {
         );
     }
     let b = &fx["buttons"];
-    let label = |id: &str| -> String {
-        entity_manage::manage_sections(false)
+    let label = |f: SubForm, id: &str| -> String {
+        subform_actions(f)
             .into_iter()
-            .flat_map(|s| s.actions)
             .find(|a| a.id == id)
             .unwrap()
             .label
     };
-    for id in ["verify", "talk", "freeze", "reembed"] {
-        assert_eq!(b[id].as_str(), Some(label(id).as_str()), "{id}");
-    }
+    assert_eq!(
+        b["verify"].as_str(),
+        Some(label(SubForm::Card, "verify").as_str())
+    );
+    assert_eq!(
+        b["talk"].as_str(),
+        Some(label(SubForm::Talk, "open").as_str())
+    );
+    assert_eq!(
+        b["freeze"].as_str(),
+        Some(label(SubForm::Freeze, "freeze").as_str())
+    );
+    assert_eq!(
+        b["reembed"].as_str(),
+        Some(label(SubForm::Reembed, "rebuild").as_str())
+    );
     assert_eq!(
         fx["freeze_question"].as_str(),
         Some(entity_manage::FREEZE_QUESTION)
@@ -399,399 +857,6 @@ fn the_entity_words_are_the_webs() {
         Some(entity_create::CREATE_LABEL)
     );
     assert_eq!(c["create_tip"].as_str(), Some(entity_create::CREATE_TIP));
-}
-
-// ---- the sub-forms Manage opens (each a FormModal on w:: widgets) -------
-
-use abstractgateway_console::store::{CandidateRow, PromptData, ToolPolicyData};
-use abstractgateway_console::ui::entity_manage::{subform_actions, SubForm};
-
-/// (form, action id) pairs the tests below click.
-fn sub_covered() -> BTreeSet<(String, &'static str)> {
-    [
-        ("State", "close"),
-        ("Mind", "save"),
-        ("Mind", "close"),
-        ("Voice", "audition"),
-        ("Voice", "play"),
-        ("Voice", "save"),
-        ("Voice", "close"),
-        ("Work", "save"),
-        ("Work", "end"),
-        ("Work", "close"),
-        ("OwnTime", "grant"),
-        ("OwnTime", "revoke"),
-        ("OwnTime", "freeze"),
-        ("OwnTime", "close"),
-        ("Reembed", "rebuild"),
-        ("Reembed", "close"),
-        ("Tools", "save"),
-        ("Tools", "close"),
-        ("Prompt", "save"),
-        ("Prompt", "close"),
-        ("Candidates", "promote"),
-        ("Candidates", "reject"),
-        ("Candidates", "reload"),
-        ("Candidates", "close"),
-        ("Card", "reload"),
-        ("Card", "close"),
-        ("Talk", "open"),
-        ("Talk", "send"),
-        ("Talk", "close_visit"),
-        ("Talk", "close"),
-    ]
-    .into_iter()
-    .map(|(f, a)| (f.to_string(), a))
-    .collect()
-}
-
-#[test]
-fn every_sub_form_action_has_a_click_test() {
-    let mut offered = BTreeSet::new();
-    for f in SubForm::ALL {
-        for a in subform_actions(f) {
-            offered.insert((format!("{f:?}"), a.id));
-        }
-    }
-    let missing: Vec<_> = offered.difference(&sub_covered()).cloned().collect();
-    assert!(
-        missing.is_empty(),
-        "sub-form actions without a click test: {missing:?}"
-    );
-}
-
-/// Manage — castor, then the card key `k` (the sub-form opens on top).
-fn open_sub(k: &[u8], title: &str) -> r8w4::Harness {
-    let mut h = page();
-    open_manage(&mut h);
-    let s = h.key(k);
-    assert!(s.contains(title), "{title}:\n{s}");
-    h.sent();
-    h
-}
-
-/// Click into the text field labelled `label` (the field column starts
-/// 19 cells after the label).
-fn click_field(h: &mut r8w4::Harness, label: &str) {
-    let s = h.turns(1);
-    let (y, line) = s
-        .lines()
-        .enumerate()
-        .filter(|(_, l)| l.contains(label))
-        .last()
-        .unwrap_or_else(|| panic!("{label:?}:\n{s}"));
-    let x = line[..line.rfind(label).unwrap()].chars().count() + 21;
-    h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes());
-}
-
-/// The visit phase's list: Tab (Empty-phase switch, then visit), Enter
-/// opens, ↓ to read_file, Space ticks, Enter commits.
-fn pick_read_file(h: &mut r8w4::Harness, walk: &[u8]) {
-    h.key(walk);
-    h.key(b"\r");
-    h.key(b"\x1b[B");
-    h.key(b" ");
-    let s = h.key(b"\r");
-    assert!(s.contains("web_search, read_file"), "{s}");
-}
-
-/// Type, then Close: the form asks before dropping the edit.
-fn close_asks(h: &mut r8w4::Harness, title: &str) {
-    let s = click(h, " Close ");
-    assert!(
-        s.contains(ui::DISCARD_QUESTION),
-        "{title}: Close asks:\n{s}"
-    );
-    let s = click(h, " Keep editing ");
-    assert!(s.contains(title), "{title}: kept:\n{s}");
-}
-
-#[test]
-fn state_applies_at_once_and_sleep_asks_the_webs_question() {
-    let mut h = open_sub(b"s", "Entity state — castor");
-    click(&mut h, " asleep ");
-    let s = settle(&mut h);
-    assert!(s.contains(entity_manage::SLEEP_QUESTION), "{s}");
-    click_confirm(&mut h, "Sleep", "Cancel");
-    assert!(
-        h.sent().iter().any(|c| matches!(c, Cmd::EntityState { name, body } if name == "castor" && body.0["state"] == "asleep")),
-        "the state applies at once"
-    );
-    // The kill switch asks first (a danger confirm: focus on Cancel); Esc
-    // keeps the state.
-    click(&mut h, " paused ");
-    let s = settle(&mut h);
-    assert!(s.contains("Pause castor?"), "{s}");
-    let s = h.esc();
-    assert!(!s.contains("Pause castor?"), "{s}");
-    assert!(!h
-        .sent()
-        .iter()
-        .any(|c| matches!(c, Cmd::EntityState { .. })));
-    let s = click(&mut h, " Close ");
-    assert!(!s.contains("Entity state — castor"), "{s}");
-}
-
-#[test]
-fn mind_save_sends_and_close_asks() {
-    let mut h = open_sub(b"n", "Mind substrate — castor");
-    h.type_text("lmstudio");
-    click_field(&mut h, "model");
-    h.type_text("qwen3");
-    click(&mut h, " Save ");
-    assert!(
-        h.sent()
-            .iter()
-            .any(|c| matches!(c, Cmd::SaveEntitySubstrate { name, body, .. }
-            if name == "castor" && body.0 == json!({"provider": "lmstudio", "model": "qwen3"}))),
-        "Save sends the pair"
-    );
-    let mut h = open_sub(b"n", "Mind substrate — castor");
-    h.type_text("lmstudio");
-    close_asks(&mut h, "Mind substrate — castor");
-}
-
-#[test]
-fn voice_hear_a_sample_play_save_and_close_asks() {
-    let mut h = open_sub(b"c", "Voice — castor");
-    h.type_text("openai");
-    click_field(&mut h, "model");
-    h.type_text("tts-1");
-    click(&mut h, " Hear a sample ");
-    assert!(h.sent().iter().any(|c| matches!(c, Cmd::Entity(EntityCmd::VoiceAudition { provider, .. }) if provider == "openai")));
-    h.store
-        .entity_audition
-        .set(Loadable::Ready(ent::AuditionOutcome {
-            entity: "castor".into(),
-            summary: "Synthesized".into(),
-            path: Some("/nonexistent/r15-castor-audition.wav".into()),
-            bytes: 10,
-            error: None,
-            player: Some("afplay".into()),
-        }));
-    h.turns(2);
-    h.store.notice.set(None);
-    click(&mut h, " Play ");
-    assert!(h.store.notice.get_untracked().is_some(), "Play answers");
-    click(&mut h, " Save ");
-    assert!(h
-        .sent()
-        .iter()
-        .any(|c| matches!(c, Cmd::SaveEntityVoice { body, .. } if body.0["provider"] == "openai")));
-    let mut h = open_sub(b"c", "Voice — castor");
-    h.type_text("openai");
-    close_asks(&mut h, "Voice — castor");
-}
-
-#[test]
-fn work_order_give_end_and_close_asks() {
-    let mut h = open_sub(b"w", "Work order — castor");
-    h.type_text("read the backlog");
-    click(&mut h, " Give this task ");
-    assert!(h.sent().iter().any(|c| matches!(c, Cmd::SaveEntityWorkOrder { body, .. } if body.0 == json!({"order": "read the backlog"}))));
-    let mut h = open_sub(b"w", "Work order — castor");
-    click(&mut h, " End the work order ");
-    assert!(h.sent().iter().any(
-        |c| matches!(c, Cmd::SaveEntityWorkOrder { body, .. } if body.0 == json!({"clear": true}))
-    ));
-    let mut h = open_sub(b"w", "Work order — castor");
-    h.type_text("x");
-    close_asks(&mut h, "Work order — castor");
-}
-
-#[test]
-fn personal_time_switch_grants_and_freeze() {
-    let mut h = open_sub(b"o", "Own time — castor");
-    click(&mut h, "●─ Personal time");
-    assert!(
-        h.sent()
-            .iter()
-            .any(|c| matches!(c, Cmd::EntityLoop { start: true, .. })),
-        "on = start"
-    );
-    click_field(&mut h, "Hours allowed");
-    h.type_text("2");
-    click(&mut h, " Grant (timer) ");
-    assert!(h
-        .sent()
-        .iter()
-        .any(|c| matches!(c, Cmd::SavePersonalGrant { body, .. } if body.0["mode"] == "timer")));
-    click(&mut h, " Revoke grant ");
-    assert!(h.sent().iter().any(|c| matches!(c, Cmd::SavePersonalGrant { body, .. } if body.0 == json!({"mode": "disabled"}))));
-    let s = click(&mut h, " Freeze now ");
-    assert!(s.contains("Freeze it now?"), "{s}");
-    click_confirm(&mut h, "Freeze", "Cancel");
-    assert!(h.sent().iter().any(
-        |c| matches!(c, Cmd::EntityLoop { start: false, body, .. } if body.0["mode"] == "freeze")
-    ));
-    let s = click(&mut h, " Close ");
-    assert!(!s.contains("Own time — castor"), "{s}");
-}
-
-#[test]
-fn rebuild_index_asks_then_sends_and_close_asks() {
-    let mut h = open_sub(b"x", "Re-embed home — castor");
-    h.type_text("all-minilm");
-    let s = click(&mut h, " Rebuild index ");
-    assert!(s.contains("Rebuild every memory vector now?"), "{s}");
-    click_confirm(&mut h, "Rebuild", "Cancel");
-    assert!(h.sent().iter().any(|c| matches!(c, Cmd::EntityReembed { body, .. } if body.0["embedding_model"] == "all-minilm")));
-    let mut h = open_sub(b"x", "Re-embed home — castor");
-    h.type_text("all-minilm");
-    close_asks(&mut h, "Re-embed home — castor");
-}
-
-fn policy() -> ToolPolicyData {
-    ToolPolicyData {
-        entity: "castor".into(),
-        phases: vec![
-            ("visit".into(), vec!["web_search".into()], "default".into()),
-            ("work".into(), vec!["web_search".into()], "custom".into()),
-        ],
-        all_tools: vec!["web_search".into(), "read_file".into()],
-    }
-}
-
-#[test]
-fn tools_save_sends_the_changed_phase_and_close_asks() {
-    let mut h = open_sub(b"p", "Tool policy — castor");
-    h.store.entity_policy.set(Loadable::Ready(policy()));
-    h.turns(3);
-    // Unchanged: Save says so.
-    let s = click(&mut h, " Save ");
-    assert!(s.contains("no changes to save"), "{s}");
-    // The visit phase: add read_file (keyboard: the engine list opens on
-    // the press), commit, then Save by mouse.
-    // (The focus is on Save: Shift+Tab twice reaches visit.)
-    pick_read_file(&mut h, b"\x1b[Z\x1b[Z");
-    click(&mut h, " Save ");
-    assert!(h
-        .sent()
-        .iter()
-        .any(|c| matches!(c, Cmd::SaveToolPolicy { body, .. }
-        if body.0["policy"].get("visit").is_some() && body.0["policy"].get("work").is_none())));
-    let mut h = open_sub(b"p", "Tool policy — castor");
-    h.store.entity_policy.set(Loadable::Ready(policy()));
-    h.turns(3);
-    pick_read_file(&mut h, b"\t\t");
-    close_asks(&mut h, "Tool policy — castor");
-}
-
-#[test]
-fn prompt_save_sends_every_layer_and_close_asks() {
-    let data = || PromptData {
-        entity: "castor".into(),
-        layers: vec![("persona".into(), "kind".into())],
-    };
-    let mut h = open_sub(b"e", "Prompt overlay — castor");
-    h.store.entity_prompt.set(Loadable::Ready(data()));
-    let s = h.turns(3);
-    // Click into the layer's text, add a word, Save.
-    let (y, line) = s
-        .lines()
-        .enumerate()
-        .find(|(_, l)| l.contains("kind"))
-        .expect("layer text");
-    let x = line[..line.find("kind").unwrap()].chars().count() + 5;
-    h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes());
-    h.type_text(" and curious");
-    click(&mut h, " Save ");
-    assert!(h
-        .sent()
-        .iter()
-        .any(|c| matches!(c, Cmd::SaveEntityPrompt { body, .. }
-        if body.0["overlay"]["persona"].as_str().is_some_and(|t| t.contains("curious")))));
-    let mut h = open_sub(b"e", "Prompt overlay — castor");
-    h.store.entity_prompt.set(Loadable::Ready(data()));
-    let s = h.turns(3);
-    let (y, line) = s
-        .lines()
-        .enumerate()
-        .find(|(_, l)| l.contains("kind"))
-        .expect("layer text");
-    let x = line[..line.find("kind").unwrap()].chars().count() + 5;
-    h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes());
-    h.type_text("!");
-    close_asks(&mut h, "Prompt overlay — castor");
-}
-
-#[test]
-fn candidates_promote_reject_reload_close() {
-    let rows = || {
-        (
-            "castor".to_string(),
-            vec![CandidateRow {
-                record_id: "rec_1".into(),
-                title: "likes rain".into(),
-                digest: "a digest".into(),
-                kind: "fact".into(),
-            }],
-        )
-    };
-    let mut h = open_sub(b"m", "Candidates — castor");
-    h.store.entity_candidates.set(Loadable::Ready(rows()));
-    h.turns(3);
-    click_field(&mut h, "reason");
-    h.type_text("seen twice");
-    click(&mut h, " Reject ");
-    assert!(h.sent().iter().any(
-        |c| matches!(c, Cmd::CandidateAct { promote: false, record_id, .. } if record_id == "rec_1")
-    ));
-    click_field(&mut h, "corroborating");
-    h.type_text("a,b");
-    click_field(&mut h, "reason");
-    h.type_text("backed up");
-    click(&mut h, " Promote (accept) ");
-    assert!(h.sent().iter().any(|c| matches!(c, Cmd::CandidateAct { promote: true, corroborating_ids, .. } if corroborating_ids.len() == 2)));
-    click(&mut h, " Reload ");
-    assert!(h
-        .sent()
-        .iter()
-        .any(|c| matches!(c, Cmd::LoadCandidates { .. })));
-    let s = click(&mut h, " Close ");
-    assert!(!s.contains("Candidates — castor"), "{s}");
-}
-
-#[test]
-fn identity_card_reload_and_close() {
-    let mut h = open_sub(b"i", "Identity card — castor");
-    click(&mut h, " Reload ");
-    assert!(h
-        .sent()
-        .iter()
-        .any(|c| matches!(c, Cmd::Entity(EntityCmd::LoadCard { .. }))));
-    let s = click(&mut h, " Close ");
-    assert!(!s.contains("Identity card — castor"), "{s}");
-}
-
-#[test]
-fn talk_open_send_close_visit_and_close() {
-    let mut h = open_sub(b"t", "Talk — castor");
-    click(&mut h, " Open visit ");
-    assert!(h
-        .sent()
-        .iter()
-        .any(|c| matches!(c, Cmd::Entity(EntityCmd::ChatOpen { .. }))));
-    h.store.entity_chat.update(|c| {
-        c.busy = false;
-        c.apply_open(&json!({"chat_id": "chat_7", "yielded_loop": false}));
-    });
-    h.turns(2);
-    click(&mut h, "say something");
-    h.type_text("hello");
-    click(&mut h, " Send ");
-    assert!(h
-        .sent()
-        .iter()
-        .any(|c| matches!(c, Cmd::Entity(EntityCmd::ChatTurn { text, .. }) if text == "hello")));
-    h.store.entity_chat.update(|c| c.busy = false);
-    h.turns(2);
-    click(&mut h, " Close visit ");
-    assert!(h.sent().iter().any(
-        |c| matches!(c, Cmd::Entity(EntityCmd::ChatClose { chat_id, .. }) if chat_id == "chat_7")
-    ));
-    let s = click(&mut h, " Close ");
-    assert!(!s.contains("Talk — castor"), "{s}");
 }
 
 #[test]
@@ -834,7 +899,7 @@ fn the_sub_form_words_are_the_webs() {
         fx["buttons"]["reembed"].as_str().unwrap()
     );
     assert_eq!(
-        label(SubForm::OwnTime, "freeze"),
+        label(SubForm::Freeze, "freeze"),
         fx["buttons"]["freeze"].as_str().unwrap()
     );
     assert_eq!(
@@ -1007,7 +1072,7 @@ fn the_template_words_are_the_webs() {
     assert_eq!(ed[0].tooltip.as_deref(), t["save"]["tip"].as_str());
 }
 
-/// Headless captures of Manage (each tab) and every sub-form, both console
+/// Headless captures of Manage (each tab, top and scrolled to its end), both console
 /// themes, 80x24 and 120x40 — written only when `R8W4_SHOTS_DIR` is set
 /// (`cargo test --test r15_click_entity capture -- --ignored`).
 #[test]
@@ -1044,29 +1109,36 @@ fn capture_manage_and_sub_forms() {
                 }
                 h.shoot(&format!("manage-tab{i}-{tag}"));
             }
-            for (k, name) in [
-                (b"s", "state"),
-                (b"n", "mind"),
-                (b"c", "voice"),
-                (b"w", "work"),
-                (b"o", "owntime"),
-                (b"x", "reembed"),
-                (b"p", "tools"),
-                (b"e", "prompt"),
-                (b"m", "candidates"),
-                (b"i", "card"),
-                (b"t", "talk"),
-            ] {
+            // The taller tabs, scrolled to their end (the body scrolls).
+            for (i, tab) in entity_manage::MANAGE_TABS.iter().enumerate() {
                 let mut h = fresh();
                 open_manage(&mut h);
-                h.key(k);
-                h.shoot(&format!("sub-{name}-{tag}"));
+                if i > 0 {
+                    click(&mut h, &format!(" {tab} "));
+                }
+                h.wheel_down(40);
+                h.shoot(&format!("manage-tab{i}-end-{tag}"));
             }
             let mut h = fresh();
             open_manage(&mut h);
             click(&mut h, " Lifecycle ");
+            h.wheel_down(40);
             click(&mut h, " Freeze now ");
             h.shoot(&format!("freeze-confirm-{tag}"));
         }
     }
+}
+
+#[test]
+fn keyboard_tab_walks_the_tab_bar_and_enter_picks() {
+    let mut h = mpage();
+    open_manage(&mut h);
+    // The focus starts on the chosen tab (Overview); Tab, Tab → Lifecycle.
+    h.key(b"\t");
+    h.key(b"\t");
+    let s = h.key(b"\r");
+    assert!(
+        s.contains("Awake or asleep") && s.contains("Emergency freeze"),
+        "{s}"
+    );
 }

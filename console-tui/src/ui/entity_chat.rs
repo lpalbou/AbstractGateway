@@ -18,85 +18,79 @@ use crate::store::Loadable;
 use crate::worker::entities::EntityCmd;
 use crate::worker::Cmd;
 
-const CARD_W: i32 = 84;
 const TALK_W: i32 = 96;
 
 /// The identity card of `name` (pure read — knowing someone never
-/// fakes their memory usage).
-pub fn open_card_modal(cx: Scope, ctx: &Ctx, name: String) {
+/// fakes their memory usage), inline in Manage's Overview tab.
+pub(crate) fn card_body(mcx: Scope, ctx: &Ctx, name: String) -> View {
     let store = ctx.store;
     store.entity_card.set(Loadable::Loading);
     ctx.send(Cmd::Entity(EntityCmd::LoadCard { name: name.clone() }));
     let ctx2 = ctx.clone();
-    super::w::FormModal::new(format!("Identity card — {name}"))
-        .size(CARD_W, 24)
-        .open(ctx, cx, move |mcx, close, _guard, _w| {
-            let theme = use_theme(mcx);
-            let t0 = theme.get().tokens;
-            let n_render = name.clone();
-            let n_reload = name.clone();
-            let ctx_r = ctx2.clone();
-            let close_b = close.clone();
-            Element::new()
-                .focusable()
-                .autofocus()
-                .style(LayoutStyle::column().gap(0))
-                .child(dyn_view_scoped(
-                    LayoutStyle::default().grow(1.0),
-                    move |gcx| {
-                        let t = theme.get().tokens;
-                        match store.entity_card.get() {
-                            Loadable::Ready(c) if c.name == n_render => {
-                                let mut col = Element::new().style(LayoutStyle::column().gap(0));
-                                for (k, v) in &c.rows {
+    {
+        let theme = use_theme(mcx);
+        let t0 = theme.get().tokens;
+        let n_render = name.clone();
+        let n_reload = name.clone();
+        let ctx_r = ctx2.clone();
+        Element::new()
+            .style(LayoutStyle::column().gap(0).shrink(0.0))
+            .child(dyn_view_scoped(
+                LayoutStyle::column().shrink(0.0),
+                move |gcx| {
+                    let t = theme.get().tokens;
+                    match store.entity_card.get() {
+                        Loadable::Ready(c) if c.name == n_render => {
+                            let mut col = Element::new().style(LayoutStyle::column().gap(0));
+                            for (k, v) in &c.rows {
+                                col = col.child(line(vec![
+                                    span_bold(format!("{k:<28}"), t.text_muted),
+                                    span(v.clone(), t.text),
+                                ]));
+                            }
+                            if c.rows.is_empty() {
+                                col = col.child(line(vec![span(
+                                    "the card carries none of the overview fields",
+                                    t.text_muted,
+                                )]));
+                            }
+                            if !c.moments.is_empty() {
+                                col = col.child(line(vec![span_bold(
+                                    "Recent moments".to_string(),
+                                    t.text_muted,
+                                )]));
+                                for (at, what) in &c.moments {
                                     col = col.child(line(vec![
-                                        span_bold(format!("{k:<28}"), t.text_muted),
-                                        span(v.clone(), t.text),
+                                        span(format!("{at:<18}"), t.text_faint),
+                                        span(what.clone(), t.text),
                                     ]));
                                 }
-                                if c.rows.is_empty() {
-                                    col = col.child(line(vec![span(
-                                        "the card carries none of the overview fields",
-                                        t.text_muted,
-                                    )]));
-                                }
-                                if !c.moments.is_empty() {
-                                    col = col.child(line(vec![span_bold(
-                                        "Recent moments".to_string(),
-                                        t.text_muted,
-                                    )]));
-                                    for (at, what) in &c.moments {
-                                        col = col.child(line(vec![
-                                            span(format!("{at:<18}"), t.text_faint),
-                                            span(what.clone(), t.text),
-                                        ]));
-                                    }
-                                }
-                                Scroll::new(col.build()).view(gcx)
                             }
-                            Loadable::Failed(e) => super::util::error_panel_hint(
-                                &t,
-                                &e,
-                                Some("Reload retries (opening re-reads)"),
-                            ),
-                            _ => line(vec![span(format!("⟳ reading {n_render}'s card…"), t.info)]),
+                            let _ = gcx;
+                            col.build()
                         }
-                    },
-                ))
-                .child(
-                    Element::new()
-                        .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                        .child(wb(mcx, &t0, SubForm::Card, "reload", move || {
-                            ctx_r.store.entity_card.set(Loadable::Loading);
-                            ctx_r.send(Cmd::Entity(EntityCmd::LoadCard {
-                                name: n_reload.clone(),
-                            }));
-                        }))
-                        .child(wb(mcx, &t0, SubForm::Card, "close", move || close_b()))
-                        .build(),
-                )
-                .build()
-        });
+                        Loadable::Failed(e) => super::util::error_panel_hint(
+                            &t,
+                            &e,
+                            Some("Reload retries (opening re-reads)"),
+                        ),
+                        _ => line(vec![span(format!("⟳ reading {n_render}'s card…"), t.info)]),
+                    }
+                },
+            ))
+            .child(
+                Element::new()
+                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                    .child(wb(mcx, &t0, SubForm::Card, "reload", move || {
+                        ctx_r.store.entity_card.set(Loadable::Loading);
+                        ctx_r.send(Cmd::Entity(EntityCmd::LoadCard {
+                            name: n_reload.clone(),
+                        }));
+                    }))
+                    .build(),
+            )
+            .build()
+    }
 }
 
 /// Whether the console may open Talk on `name` now: one live visit at a
@@ -127,8 +121,42 @@ pub fn open_talk_modal(cx: Scope, ctx: &Ctx, name: String) {
             *c = ChatState::fresh(&name);
         }
     });
+    let n = name.clone();
     let ctx2 = ctx.clone();
-    super::w::FormModal::new(format!("Talk — {name}")).size(TALK_W, 32).open(ctx, cx, move |mcx, close, _guard, _w| {
+    super::w::FormModal::new(format!("Talk — {name}"))
+        .size(TALK_W, 32)
+        .open(ctx, cx, move |mcx, close, _guard, _w| {
+            talk_body(mcx, &ctx2, n, Some(close))
+        });
+}
+
+/// Whether the Talk panel may start: one live visit at a time. `None` =
+/// may talk; `Some(why)` = say why (Manage's Talk tab shows it inline).
+pub(crate) fn talk_prepare(ctx: &Ctx, name: &str) -> Option<String> {
+    let store = ctx.store;
+    if let Some(why) = store.entity_chat.with_untracked(|c| talk_refusal(c, name)) {
+        return Some(why);
+    }
+    store.entity_chat.update(|c| {
+        if c.entity != name {
+            *c = ChatState::fresh(name);
+        }
+    });
+    None
+}
+
+/// The Talk panel's body (the standalone panel, or inline in Manage's
+/// Talk tab — `close` = the standalone panel's Close).
+pub(crate) fn talk_body(
+    mcx: Scope,
+    ctx: &Ctx,
+    name: String,
+    close: Option<super::CloserFn>,
+) -> View {
+    let store = ctx.store;
+    let ctx2 = ctx.clone();
+    let inline = close.is_none();
+    {
         let theme = use_theme(mcx);
         let t0 = theme.get().tokens;
         let input = mcx.signal(String::new());
@@ -173,13 +201,19 @@ pub fn open_talk_modal(cx: Scope, ctx: &Ctx, name: String) {
                 "a hosted visit: Open (prelude + memory) → say something (Enter sends) → Close runs the reflection pass",
                 t0.text_faint,
             )]))
-            .child(dyn_view_scoped(LayoutStyle::default().grow(1.0).min_h(4), move |gcx| {
+            .child(dyn_view_scoped(
+                if inline {
+                    LayoutStyle::column().shrink(0.0)
+                } else {
+                    LayoutStyle::default().grow(1.0).min_h(4)
+                },
+                move |gcx| {
                 let t = theme.get().tokens;
                 let chat = store.entity_chat.get();
                 let width = (TALK_W - 8).max(20) as usize;
-                let mut col = Element::new().style(LayoutStyle::column().gap(0));
+                let mut rows: Vec<View> = Vec::new();
                 if chat.lines.is_empty() {
-                    col = col.child(line(vec![span(
+                    rows.push(line(vec![span(
                         if chat.chat_id.is_some() {
                             "the visit is open — say something"
                         } else {
@@ -190,19 +224,33 @@ pub fn open_talk_modal(cx: Scope, ctx: &Ctx, name: String) {
                 }
                 for l in &chat.lines {
                     let you = l.who == "you";
-                    col = col.child(line(vec![span_bold(
+                    rows.push(line(vec![span_bold(
                         l.who.clone(),
                         if you { t.info } else { t.accent },
                     )]));
                     for w in wrap_text(&l.text, width) {
-                        col = col.child(line(vec![span(format!("  {w}"), t.text)]));
+                        rows.push(line(vec![span(format!("  {w}"), t.text)]));
                     }
                 }
-                Scroll::new(col.build())
-                    .follow_tail(follow)
-                    .layout(LayoutStyle::default().grow(1.0))
-                    .element(gcx, &t)
-                    .build()
+                if inline {
+                    // Inline in Manage (whose body scrolls): the newest
+                    // ten lines, no scroll inside a scroll.
+                    let skip = rows.len().saturating_sub(10);
+                    return Element::new()
+                        .style(LayoutStyle::column().gap(0).shrink(0.0))
+                        .children(rows.into_iter().skip(skip).collect::<Vec<_>>())
+                        .build();
+                }
+                Scroll::new(
+                    Element::new()
+                        .style(LayoutStyle::column().gap(0))
+                        .children(rows)
+                        .build(),
+                )
+                .follow_tail(follow)
+                .layout(LayoutStyle::default().grow(1.0))
+                .element(gcx, &t)
+                .build()
             }))
             .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
                 let t = theme.get().tokens;
@@ -217,23 +265,31 @@ pub fn open_talk_modal(cx: Scope, ctx: &Ctx, name: String) {
                     ink,
                 )])
             }))
-            .child(
-                Element::new()
-                    .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
-                    .child(line(vec![span("you ›", t0.text_muted)]))
-                    .child(
-                        TextInput::new()
-                            .value(input)
-                            .placeholder("say something to the entity (Enter sends)")
-                            .placeholder_while_focused(true)
-                            .on_submit(move |_| send_submit())
-                            .layout(LayoutStyle::default().grow(1.0).h(1))
-                            .element(mcx, &t0)
-                            .autofocus()
-                            .build(),
-                    )
-                    .build(),
-            )
+            .child({
+                let el = TextInput::new()
+                    .value(input)
+                    .placeholder("say something to the entity (Enter sends)")
+                    .placeholder_while_focused(true)
+                    .on_submit(move |_| send_submit())
+                    .layout(if inline {
+                        LayoutStyle::default().w((TALK_W - 26).max(20)).h(1)
+                    } else {
+                        LayoutStyle::default().grow(1.0).h(1)
+                    })
+                    .element(mcx, &t0);
+                // The standalone panel puts the caret here; inline in Manage
+                // the tab bar keeps the focus.
+                let el = if inline { el.build() } else { el.autofocus().build() };
+                if inline {
+                    super::util::field(&t0, "you ›", el)
+                } else {
+                    Element::new()
+                        .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
+                        .child(line(vec![span("you ›", t0.text_muted)]))
+                        .child(el)
+                        .build()
+                }
+            })
             // Which verbs apply now (the web hides the others; the
             // terminal keeps ONE static row so focus never drops).
             .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
@@ -242,7 +298,13 @@ pub fn open_talk_modal(cx: Scope, ctx: &Ctx, name: String) {
                 let hint = if chat.busy {
                     "a request is in flight — wait for its answer"
                 } else if chat.chat_id.is_some() {
-                    "visit open: Send (or Enter in the input) · Close visit runs the reflection · Esc hides this panel, the visit stays open"
+                    if inline {
+                        "visit open: Send (or Enter in the input) · Close visit runs the reflection · closing Manage keeps the visit open"
+                    } else {
+                        "visit open: Send (or Enter in the input) · Close visit runs the reflection · Esc hides this panel, the visit stays open"
+                    }
+                } else if inline {
+                    "no visit: Open visit starts one"
                 } else {
                     "no visit: Open visit starts one · Esc closes this panel"
                 };
@@ -298,13 +360,13 @@ pub fn open_talk_modal(cx: Scope, ctx: &Ctx, name: String) {
                                 }));
                             }),
                     )
-                    .child(
-                        wb(mcx, &t0, SubForm::Talk, "close", move || close_x()),
-                    )
+                    .children(close_x.map(|c| {
+                        wb(mcx, &t0, SubForm::Talk, "close", move || c())
+                    }))
                     .build()
             })
             .build()
-    });
+    }
 }
 
 #[cfg(test)]

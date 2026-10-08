@@ -567,23 +567,20 @@ fn entity_manage_refuses_admin_acts_for_a_non_admin() {
     h.drain();
     let s = h.key(b"m");
     assert!(s.contains("You are not an admin"), "{s}");
-    // R15-B: the write forms open to read ("view only" in their
-    // tooltips); the admin acts are refused buttons — `s` (Awake or
-    // asleep) says why and opens nothing.
-    assert!(
-        ui::entity_manage::manage_sections(true)
-            .iter()
-            .flat_map(|sec| sec.actions.iter())
-            .any(|a| a.tip_text().contains("view only (changes are admin-only)")),
-        "view-only tooltips"
-    );
+    // R15-B: Manage is one screen; its Lifecycle tab (a click on the tab
+    // bar) shows the state read-only — the segments are off and the card
+    // says why — and nothing is written.
     h.drain();
-    h.key(b"s");
+    let (y, line) = s
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains(" Overview ") && l.contains(" Lifecycle "))
+        .expect("Manage's tab bar");
+    let x = line[..line.find(" Lifecycle ").unwrap()].chars().count() + 2;
+    let s = h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes());
     assert!(
-        h.notice()
-            .contains("Only an admin can change an entity's state."),
-        "{}",
-        h.notice()
+        s.contains("Awake or asleep") && s.contains("admin-only"),
+        "the state card says why:\n{s}"
     );
     let s = h.turns(2);
     assert!(!s.contains("Apply"), "no state modal opened:\n{s}");

@@ -2270,13 +2270,18 @@ fn entity_manage_menu_state_flow_sends_post() {
     assert!(s.contains("Awake or asleep"), "state card:\n{s}");
     click_label(&mut h, " Mind & voice ");
     let s = h.turns(2);
-    assert!(s.contains("Rebuild index"), "reembed card:\n{s}");
+    assert!(
+        s.contains("How it sounds"),
+        "the Mind & voice cards (the body scrolls to the rebuild card):\n{s}"
+    );
 
-    // `s` (Awake or asleep) opens the state modal.
-    h.type_text("s");
+    // R15-B: the state lives inline in the Lifecycle tab.
+    click_label(&mut h, " Lifecycle ");
     let s = h.turns(3);
-    assert!(s.contains("Entity state — Testor"), "state modal:\n{s}");
-    assert!(s.contains("dream pass"), "dream option:\n{s}");
+    assert!(
+        s.contains("Awake or asleep") && s.contains("dream pass"),
+        "state card:\n{s}"
+    );
 
     // R15-B: the Reason first (it rides the next change), then the
     // "asleep + dream pass" segment by mouse; the web's sleep question
@@ -2308,7 +2313,7 @@ fn entity_manage_menu_state_flow_sends_post() {
     // says the write is in flight (the journal's verdict follows).
     let s = h.turns(2);
     assert!(
-        s.contains("Entity state — Testor") && s.contains("Saving…"),
+        s.contains("Manage — Testor") && s.contains("Saving…"),
         "applied in place:\n{s}"
     );
 }
@@ -2585,10 +2590,12 @@ fn manage_menu_opens_the_identity_card() {
     entity_screen(&mut h);
     h.type_text("m");
     h.turns(2);
-    // R15-B: the Overview tab's Identity card button, by mouse.
-    click_label(&mut h, " Identity card ");
+    // R15-B: the identity card is inline in Manage's Overview tab.
     let s = h.turns(3);
-    assert!(s.contains("Identity card — Testor"), "card modal:\n{s}");
+    assert!(
+        s.contains("Manage — Testor") && s.contains("Identity"),
+        "card inline:\n{s}"
+    );
     assert!(
         h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::LoadCard { name }) if name == "Testor"))
             .is_some(),
@@ -2615,27 +2622,20 @@ fn voice_audition_sends_the_unsaved_selection_and_shows_the_file() {
     h.select_account("testor");
     h.type_text("m");
     h.turns(2);
-    // R15-B: `c` opens Voice (Mind & voice tab).
-    h.type_text("c");
+    // R15-B: Voice lives inline in the Mind & voice tab.
+    click_label(&mut h, " Mind & voice ");
     let s = h.turns(3);
-    assert!(s.contains("Voice — Testor"), "voice form:\n{s}");
     assert!(
-        s.contains("Hear a sample"),
-        "audition verb (the web's label):\n{s}"
+        s.contains("How it sounds") && s.contains("Hear a sample"),
+        "the voice card (the web's label):\n{s}"
     );
+    click_label(&mut h, "e.g. supertonic, openai");
     h.type_text("openai");
     h.turn();
-    h.key(b"\t");
-    h.turn();
+    click_label(&mut h, "e.g. supertonic-3");
     h.type_text("gpt-4o-mini-tts");
     h.turn();
-    // voice → clear checkbox → Audition.
-    for _ in 0..3 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r");
-    h.turns(2);
+    click_label(&mut h, " Hear a sample ");
     match h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::VoiceAudition { .. }))) {
         Some(Cmd::Entity(EntityCmd::VoiceAudition {
             name,
@@ -2690,10 +2690,10 @@ fn own_time_start_with_blank_fields_sends_the_web_body() {
     h.select_account("testor");
     h.type_text("m");
     h.turns(2);
-    // R15-B: `o` opens Personal time (Lifecycle tab).
-    h.type_text("o");
+    // R15-B: Personal time lives inline in the Lifecycle tab.
+    click_label(&mut h, " Lifecycle ");
     let s = h.turns(3);
-    assert!(s.contains("Own time — Testor"), "own-time form open:\n{s}");
+    assert!(s.contains("Personal time"), "own-time card:\n{s}");
     h.drain_cmds();
     // R15-B: the web's Personal time switch applies at once (on = start).
     click_label(&mut h, "●─ Personal time");
@@ -2723,7 +2723,8 @@ fn entity_tool_policy_editor_saves_changed_phases_only() {
     h.select_account("testor");
     h.type_text("m");
     h.turns(2);
-    h.type_text("p");
+    // R15-B: Tools per phase lives inline in the Work & tools tab.
+    click_label(&mut h, " Work & tools ");
     h.turns(2);
 
     // The editor opened with a Loading slot; feed the folded policy the
@@ -2743,17 +2744,12 @@ fn entity_tool_policy_editor_saves_changed_phases_only() {
         },
     ));
     let s = h.turns(3);
-    assert!(s.contains("Tool policy — Testor"), "editor open:\n{s}");
+    assert!(s.contains("Tools per phase"), "the tools card:\n{s}");
     assert!(s.contains("visit"), "phase rows:\n{s}");
     assert!(s.contains("(custom)"), "provenance shown:\n{s}");
 
     // No changes → Save refuses with the reason.
-    // Focus: the Empty-phase switch, visit, work, then Save.
-    for _ in 0..4 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r");
+    click_label(&mut h, " Save ");
     let s = h.turns(2);
     assert!(
         s.contains("no changes to save"),
@@ -2780,13 +2776,7 @@ fn entity_tool_policy_editor_saves_changed_phases_only() {
     h.turn();
     h.type_text("\r"); // Enter COMMITS the set (Esc would discard it)
     h.turns(2);
-    // Focus stays on the visit trigger: work → Save.
-    for _ in 0..2 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r"); // Save grants
-    h.turns(2);
+    click_label(&mut h, " Save ");
     match h.find_cmd(|c| matches!(c, Cmd::SaveToolPolicy { .. })) {
         Some(Cmd::SaveToolPolicy { name, body, .. }) => {
             assert_eq!(name, "Testor");

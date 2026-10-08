@@ -1049,19 +1049,15 @@ pub fn open_template_editor(cx: Scope, ctx: &Ctx, tp: TemplateRow, mode: TplMode
             let esc_armed = mcx.signal(false);
             let form_id = crate::worker::next_form_id();
             if mode != TplMode::View {
-                let st0 = spark_text.clone();
-                super::install_dirty_guard_with(
+                super::install_dirty_guard(
                     mcx,
                     &guard,
-                    move || {
-                        !id.get_untracked().is_empty()
-                            || tname.get_untracked() != name0
-                            || desc.get_untracked() != desc0
-                            || spark_sig.get_untracked() != st0
-                    },
-                    move || {
-                        let _ = (id.get(), tname.get(), desc.get(), spark_sig.get());
-                    },
+                    vec![
+                        (id, String::new()),
+                        (tname, name0.clone()),
+                        (desc, desc0.clone()),
+                        (spark_sig, spark_text.clone()),
+                    ],
                     esc_armed,
                     form_error,
                 );
