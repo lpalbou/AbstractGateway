@@ -524,3 +524,170 @@ def test_describe_workflow_reload_aggregates_per_service_results() -> None:
     out = describe_workflow_reload([swapped, broken], duration_ms=5)
     assert out["ok"] is False and out["kind"] == "registry_swap"
     assert out["sentence"].endswith("1 service could not reload: default:dave: disk full.")
+
+
+def _nested_bundle_bytes(*, version: str, child_prompt: str) -> bytes:
+    """`root` starts the sub-workflow `child` (a subflow node); `child` calls the model."""
+    import io
+
+    x_in = {"id": "exec-in", "label": "", "type": "execution"}
+    x_out = {"id": "exec-out", "label": "", "type": "execution"}
+    root = {
+        "id": "root", "name": "root", "entryNode": "s",
+        "nodes": [
+            {"id": "s", "type": "on_flow_start", "data": {"nodeType": "on_flow_start", "outputs": [x_out]}},
+            {"id": "sub", "type": "subflow", "data": {"nodeType": "subflow", "subflowId": "child", "inputs": [x_in], "outputs": [x_out]}},
+            {"id": "e", "type": "on_flow_end", "data": {"nodeType": "on_flow_end", "inputs": [x_in]}},
+        ],
+        "edges": [
+            {"id": "a", "source": "s", "sourceHandle": "exec-out", "target": "sub", "targetHandle": "exec-in"},
+            {"id": "b", "source": "sub", "sourceHandle": "exec-out", "target": "e", "targetHandle": "exec-in"},
+        ],
+    }
+    child = _llm_flow("child", prompt=child_prompt)
+    manifest = {
+        "bundle_format_version": "1", "bundle_id": "nest", "bundle_version": version,
+        "created_at": "2026-10-08T00:00:00+00:00",
+        "entrypoints": [{"flow_id": "root", "name": "root", "description": "", "interfaces": []}],
+        "default_entrypoint": "root",
+        "flows": {"root": "flows/root.json", "child": "flows/child.json"}, "artifacts": {}, "assets": {}, "metadata": {},
+    }
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps(manifest))
+        zf.writestr("flows/root.json", json.dumps(root))
+        zf.writestr("flows/child.json", json.dumps(child))
+    return buf.getvalue()
+
+
+def _drive_tree_to_end(host: Any, root_id: str, *, max_rounds: int = 60) -> None:
+    """Tick the root and every child the way the runner does (through the host's lookup)."""
+    from abstractruntime.core.models import RunStatus
+
+    for _ in range(max_rounds):
+        root = host.run_store.load(root_id)
+        if _run_is_done(root):
+            return
+        for status in (RunStatus.RUNNING, RunStatus.WAITING):
+            for run in list(host.run_store.list_runs(status=status, limit=1000) or []):
+                if status == RunStatus.WAITING:
+                    continue  # the runtime resumes a parent when its child completes
+                runtime, spec = host.runtime_and_workflow_for_run(run.run_id)
+                runtime.tick(workflow=spec, run_id=run.run_id, max_steps=50)
+        # resume parents whose child finished (what the runner's subworkflow pass does)
+        for run in list(host.run_store.list_runs(status=RunStatus.WAITING, limit=1000) or []):
+            children = [c for c in host.run_store.list_runs(limit=1000) if getattr(c, "parent_run_id", None) == run.run_id]
+            if children and all(_run_is_done(c) for c in children):
+                runtime, spec = host.runtime_and_workflow_for_run(run.run_id)
+                child = children[-1]
+                runtime.resume(workflow=spec, run_id=run.run_id, wait_key=getattr(run.waiting, "wait_key", None), payload={"sub_run_id": child.run_id, "output": getattr(child, "output", None) or {}})
+    raise AssertionError("the run tree did not finish")
+
+
+def _run_is_done(run: Any) -> bool:
+    st = getattr(getattr(run, "status", None), "value", getattr(run, "status", None))
+    return str(st) in {"completed", "failed", "cancelled"}
+
+
+def test_sub_workflow_of_an_in_flight_run_keeps_the_overwritten_version(tmp_path: Path, fake_engine) -> None:
+    """The draft/overwrite case desktop clients use at launch: the parent is in flight, the
+    version is replaced IN PLACE, then the parent starts its sub-workflow — the child runs the
+    version the parent started on; a run started after the overwrite runs the new one."""
+    bundles = tmp_path / "bundles"
+    bundles.mkdir(parents=True)
+    path = bundles / "nest@0.0.1.flow"
+    path.write_bytes(_nested_bundle_bytes(version="0.0.1", child_prompt="child-before"))
+    host = _host(bundles, tmp_path / "data")
+    in_flight = host.start_run(flow_id="root", bundle_id="nest@0.0.1", input_data={}, session_id="s1")
+
+    time.sleep(0.01)
+    path.write_bytes(_nested_bundle_bytes(version="0.0.1", child_prompt="child-after"))
+    out = host.reload_bundles_from_disk()
+    assert out.get("pinned_runs") == 1, out
+    _drive_tree_to_end(host, in_flight)
+
+    fresh = host.start_run(flow_id="root", bundle_id="nest@0.0.1", input_data={}, session_id="s2")
+    _drive_tree_to_end(host, fresh)
+
+    assert [c["prompt"] for c in FakeEngine.calls] == ["child-before", "child-after"], FakeEngine.calls
+
+
+def test_inline_sub_workflow_start_uses_the_parents_pinned_registry(tmp_path: Path, fake_engine) -> None:
+    """The other door: a synchronous START_SUBWORKFLOW resolves and runs the child inside
+    the parent's tick (`registry.get` with no run context) — the gateway's guard answers it
+    from the parent's pinned registry."""
+    from abstractruntime.core.models import Effect, EffectType
+
+    bundles = tmp_path / "bundles"
+    bundles.mkdir(parents=True)
+    path = bundles / "nest@0.0.1.flow"
+    path.write_bytes(_nested_bundle_bytes(version="0.0.1", child_prompt="child-before"))
+    host = _host(bundles, tmp_path / "data")
+    parent_id = host.start_run(flow_id="root", bundle_id="nest@0.0.1", input_data={}, session_id="s1")
+
+    time.sleep(0.01)
+    path.write_bytes(_nested_bundle_bytes(version="0.0.1", child_prompt="child-after"))
+    assert host.reload_bundles_from_disk().get("pinned_runs") == 1
+
+    handler = host.runtime._handlers[EffectType.START_SUBWORKFLOW]
+    parent = host.run_store.load(parent_id)
+    outcome = handler(parent, Effect(type=EffectType.START_SUBWORKFLOW, payload={"workflow_id": "nest@0.0.1:child", "async": False}), None)
+    assert str(getattr(outcome, "status", "")).endswith("completed"), outcome
+    assert [c["prompt"] for c in FakeEngine.calls] == ["child-before"], FakeEngine.calls
+
+
+def _ask_then_llm_bundle_bytes(*, prompt: str) -> bytes:
+    import io
+
+    x_in = {"id": "exec-in", "label": "", "type": "execution"}
+    x_out = {"id": "exec-out", "label": "", "type": "execution"}
+    llm = _llm_flow("root", prompt=prompt)["nodes"][1]
+    flow = {
+        "id": "root", "name": "root", "entryNode": "s",
+        "nodes": [
+            {"id": "s", "type": "on_flow_start", "data": {"nodeType": "on_flow_start", "outputs": [x_out]}},
+            {"id": "ask", "type": "ask_user", "data": {"nodeType": "ask_user", "inputs": [x_in, {"id": "prompt", "label": "prompt", "type": "string"}],
+                                                      "outputs": [x_out, {"id": "response", "label": "response", "type": "string"}],
+                                                      "pinDefaults": {"prompt": "Go?"}}},
+            llm,
+            {"id": "e", "type": "on_flow_end", "data": {"nodeType": "on_flow_end", "inputs": [x_in]}},
+        ],
+        "edges": [
+            {"id": "a", "source": "s", "sourceHandle": "exec-out", "target": "ask", "targetHandle": "exec-in"},
+            {"id": "b", "source": "ask", "sourceHandle": "exec-out", "target": "node-2", "targetHandle": "exec-in"},
+            {"id": "c", "source": "node-2", "sourceHandle": "exec-out", "target": "e", "targetHandle": "exec-in"},
+        ],
+    }
+    manifest = {
+        "bundle_format_version": "1", "bundle_id": "ask", "bundle_version": "0.0.1",
+        "created_at": "2026-10-08T00:00:00+00:00",
+        "entrypoints": [{"flow_id": "root", "name": "root", "description": "", "interfaces": []}],
+        "default_entrypoint": "root", "flows": {"root": "flows/root.json"}, "artifacts": {}, "assets": {}, "metadata": {},
+    }
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps(manifest))
+        zf.writestr("flows/root.json", json.dumps(flow))
+    return buf.getvalue()
+
+
+def test_runtime_initiated_resume_of_a_pinned_run_uses_its_pinned_spec(tmp_path: Path, fake_engine) -> None:
+    """An EMIT_EVENT effect resumes its target with `registry.get(target.workflow_id)` — the
+    overwrite. The gateway's runtime resumes a pinned run on its pinned spec instead."""
+    bundles = tmp_path / "bundles"
+    bundles.mkdir(parents=True)
+    path = bundles / "ask@0.0.1.flow"
+    path.write_bytes(_ask_then_llm_bundle_bytes(prompt="answer-before"))
+    host = _host(bundles, tmp_path / "data")
+    rid = host.start_run(flow_id="root", bundle_id="ask@0.0.1", input_data={}, session_id="s1")
+    runtime, spec = host.runtime_and_workflow_for_run(rid)
+    waiting = runtime.tick(workflow=spec, run_id=rid, max_steps=20)
+    assert getattr(getattr(waiting, "waiting", None), "wait_key", None), "the run must park on its question"
+
+    time.sleep(0.01)
+    path.write_bytes(_ask_then_llm_bundle_bytes(prompt="answer-after"))
+    assert host.reload_bundles_from_disk().get("pinned_runs") == 1
+
+    new_spec = host.workflow_registry.get("ask@0.0.1:root")  # what the runtime's own lookup returns
+    host.runtime.resume(workflow=new_spec, run_id=rid, wait_key=waiting.waiting.wait_key, payload={"response": "yes"}, max_steps=50)
+    assert [c["prompt"] for c in FakeEngine.calls] == ["answer-before"], FakeEngine.calls
