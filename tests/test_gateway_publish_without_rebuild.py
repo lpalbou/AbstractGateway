@@ -453,11 +453,13 @@ def test_health_stays_fast_during_twenty_publishes(gw) -> None:
         stop.set()
         th.join(5)
 
-    assert kinds == ["registry_swap"] * 20, kinds
-    assert FakeEngine.constructions == built, "a publish constructed a model client"
+    # Latency first: a rebuilding publish must fail HERE (the B3 measurement), not
+    # only on the kind check below.
     assert len(latencies) >= 10, f"too few health probes ({len(latencies)})"
     p99 = statistics.quantiles(latencies, n=100)[98] if len(latencies) >= 100 else max(latencies)
     assert p99 < 0.5, f"/api/health p99 {p99 * 1000:.0f} ms during 20 publishes (max {max(latencies) * 1000:.0f} ms)"
+    assert FakeEngine.constructions == built, "a publish constructed a model client"
+    assert kinds == ["registry_swap"] * 20, kinds
 
 
 # ---------------------------------------------------------------- one service per data dir

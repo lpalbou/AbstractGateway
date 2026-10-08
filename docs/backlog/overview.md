@@ -21,9 +21,9 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 5
+- Planned: 4
 - Proposed: 40
-- Completed: 23
+- Completed: 24
 - Deprecated: 1
 - Recurrent: 0
 
@@ -41,7 +41,8 @@ can trust without importing local gateway packages.
      planned files (0934, the uninstall process-tree item, had been added
      without a count update); after the 0928 move, planned = 5 and
      completed = 23. 0934 is still missing from the Planned Items table
-     below (flagged, not backfilled in this pass). -->
+     below (flagged, not backfilled in this pass).
+     2026-10-08: 0846 completed (R16.2) -> planned 4, completed 24. -->
 
 ## Priority Bands
 
@@ -98,7 +99,6 @@ relevant.
 
 | Item | Acceptance summary |
 | --- | --- |
-| [0846_publish_promote_must_not_rebuild_every_service.md](planned/0846_publish_promote_must_not_rebuild_every_service.md) | Publish/promote reloads only what changed, on the existing runtime, for the affected service only; no model reload, no prompt-cache loss, `/api/health` never misses a supervisor probe. |
 | [0233_real_run_cancellation.md](planned/0233_real_run_cancellation.md) | Cancel aborts the in-flight generation (cross-package; see the framework-root master item). |
 | [0929_automations_v2_external_event_admission.md](planned/0929_automations_v2_external_event_admission.md) | Automations v2: authenticated, idempotent external event admission into the runtime's durable inbox, event-kind trigger sources exposed, terminal-run chaining reconciled across restarts. Requires 0928 and the runtime v2 inbox. |
 | [0930_console_automations_inventory_and_controls.md](planned/0930_console_automations_inventory_and_controls.md) | Phase after v1: console lists automations, pauses/resumes/archives them with visible outcomes, and labels legacy schedules distinctly. Requires 0928. |
@@ -144,6 +144,7 @@ relevant.
 
 | Item | Original path | Completed path | Outcome | Validation |
 | --- | --- | --- | --- | --- |
+| Publish/promote without rebuilding every service (completed 2026-10-08, **UNRELEASED**, R16.2) | `planned/0846_publish_promote_must_not_rebuild_every_service.md` | [completed/0846_publish_promote_must_not_rebuild_every_service.md](completed/0846_publish_promote_must_not_rebuild_every_service.md) | A publish swaps the compiled workflow registry on the running runtime (`registry_swap`); a service's runtime is rebuilt only for a newly needed capability (`service_reload`) or on request (`full_rebuild`); in-flight runs keep their spec; one service per data dir; every publish reports `reload {kind, services, duration_ms, sentence}` and the audit line records it. | `tests/test_gateway_publish_without_rebuild.py`; mutation 12/12 red; live drive before/after (health p99 1048 ms -> 2.1 ms, next turn miss -> hit). |
 | Automations v1 façade and acceptance (completed 2026-09-27, **UNRELEASED**) | `planned/0928_automations_v1_gateway_facade_and_acceptance.md` | [completed/0928_automations_v1_gateway_facade_and_acceptance.md](completed/0928_automations_v1_gateway_facade_and_acceptance.md) | The `/api/gateway/automations…` façade and `/trigger-sources` over the runtime's automation objects; `session_kind` / `role` on `/runs` with turn roots; the seen store; the `reason_code` envelope; legacy projection; `automation_defaults`; typed waits and `policy.tool_approval`; the client `_runtime` allowlist. Commits `57f26b9`…`4ece2f5`; reviews 46/47/52 GO after fixes (55 pending); framework E2E 9/9 with a real model. The release needs the runtime floor raised (W1, root 0941). | Full suite 2514 passed; `scripts/accept_automations_v1.py` 16/16 (restart mid-occurrence, discussion read-only, zero-call replay, unattended shell tick, tool approval by kind). |
 | Route authorization contract test + exception-swallowing audit | `proposed/0070_route_authorization_contract_test_and_exception_audit.md` | [completed/0070_route_authorization_contract_test_and_exception_audit.md](completed/0070_route_authorization_contract_test_and_exception_audit.md) | Whole-app authorization invariant pinned in three layers (boundary, per-write decision, served-surface proof); 13 durability-relevant silent exception swallows now log with context and consequence. Accepted by laurent 2026-07-21 ("a route can never ship unprotected"). | `pytest -q tests/test_gateway_route_authorization_contract.py tests/test_gateway_runner_swallow_audit.py`; full suite 857 passed. |
 | Swagger UI bearer auth docs | N/A | [completed/001_openapi_swagger_auth.md](completed/001_openapi_swagger_auth.md) | OpenAPI advertises bearer auth for `/api/gateway/*`. | `PYTHONPATH=src pytest` passed at completion time. |
