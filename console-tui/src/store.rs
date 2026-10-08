@@ -2977,6 +2977,9 @@ pub struct Store {
     /// screen's selection; scope rides with the rows).
     pub runs: Signal<Loadable<RunsData>>,
     pub data_homes: Signal<Loadable<Vec<DataHomeRow>>>,
+    /// The last purge dry-run (`Cmd::PurgeDryRun`): what a purge of that
+    /// data home would delete — the web's confirm sentence states it.
+    pub purge_plan: Signal<Option<PurgePlan>>,
     /// Artifact metadata (deliverables — never caches), one page at a time.
     pub artifacts: Signal<Loadable<ArtifactsData>>,
     /// Log FILES across this gateway's registered log homes.
@@ -3777,6 +3780,7 @@ impl Store {
             entity_audition: cx.signal(Loadable::default()),
             runs: cx.signal(Loadable::default()),
             data_homes: cx.signal(Loadable::default()),
+            purge_plan: cx.signal(None),
             artifacts: cx.signal(Loadable::default()),
             logs: cx.signal(Loadable::default()),
             artifact_text: cx.signal(None),
@@ -3870,6 +3874,7 @@ impl Store {
             entity_audition,
             runs,
             data_homes,
+            purge_plan,
             artifacts,
             logs,
             artifact_text,
@@ -3936,6 +3941,7 @@ impl Store {
         entity_audition.set(Loadable::NotAsked);
         runs.set(Loadable::NotAsked);
         data_homes.set(Loadable::NotAsked);
+        purge_plan.set(None);
         artifacts.set(Loadable::NotAsked);
         logs.set(Loadable::NotAsked);
         artifact_text.set(None);
@@ -5077,5 +5083,43 @@ mod routes_config_file_tests {
             RoutesData::from_value(&serde_json::json!({})).config_file,
             None
         );
+    }
+}
+
+/// A purge dry-run's answer (`POST /admin/data-homes/purge {dry_run}`):
+/// `files_deleted` / `bytes_freed` as the gateway counted them (None = not
+/// reported — never a fabricated 0), or the refusal sentence.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PurgePlan {
+    pub name: String,
+    pub result: Result<PurgeCounts, String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PurgeCounts {
+    pub files_deleted: Option<u64>,
+    pub bytes_freed: Option<u64>,
+}
+
+impl PurgeCounts {
+    pub fn from_value(v: &Value) -> PurgeCounts {
+        PurgeCounts {
+            files_deleted: v.get("files_deleted").and_then(Value::as_u64),
+            bytes_freed: v.get("bytes_freed").and_then(Value::as_u64),
+        }
+    }
+}
+
+#[cfg(test)]
+mod purge_plan_tests {
+    use super::*;
+
+    #[test]
+    fn a_dry_run_reads_the_counts_and_never_invents_them() {
+        let c =
+            PurgeCounts::from_value(&serde_json::json!({"files_deleted": 12, "bytes_freed": 4096}));
+        assert_eq!((c.files_deleted, c.bytes_freed), (Some(12), Some(4096)));
+        let none = PurgeCounts::from_value(&serde_json::json!({"ok": true}));
+        assert_eq!((none.files_deleted, none.bytes_freed), (None, None));
     }
 }

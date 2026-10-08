@@ -1624,7 +1624,7 @@ pub fn kind_tone(label: &str) -> Tone {
 const RESV_MODAL_W: i32 = 88;
 const RESV_MODAL_CHROME: i32 = 4;
 
-fn open_reservations_modal(cx: Scope, ctx: &Ctx) {
+pub(crate) fn open_reservations_modal(cx: Scope, ctx: &Ctx) {
     let store = ctx.store;
     store.reservations.set(crate::store::Loadable::Loading);
     ctx.send(Cmd::LoadReservations);

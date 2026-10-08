@@ -535,18 +535,27 @@ impl DataTable {
             .on(Phase::Bubble, move |ectx, ev| {
                 if let UiEvent::Mouse(m) = ev {
                     match m.kind {
+                        // The wheel is the table's only while its window
+                        // moves: at an edge (or when every row fits) it
+                        // bubbles, so an enclosing page scrolls (R15-A).
                         MouseKind::ScrollDown => {
                             let cur = top.get_untracked();
                             if fits_from(&heights_s, cur + 1, max_rows)
                                 || cur + 1 < total && !fits_from(&heights_s, cur, max_rows)
                             {
-                                top.set((cur + 1).min(total.saturating_sub(1)));
+                                let next = (cur + 1).min(total.saturating_sub(1));
+                                if next != cur {
+                                    top.set(next);
+                                    ectx.stop_propagation();
+                                }
                             }
-                            ectx.stop_propagation();
                         }
                         MouseKind::ScrollUp => {
-                            top.update(|v| *v = v.saturating_sub(1));
-                            ectx.stop_propagation();
+                            let cur = top.get_untracked();
+                            if cur > 0 {
+                                top.set(cur - 1);
+                                ectx.stop_propagation();
+                            }
                         }
                         _ => {}
                     }

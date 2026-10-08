@@ -584,6 +584,11 @@ pub enum Cmd {
     PurgeDataHome {
         name: String,
     },
+    /// The dry-run alone: what a purge of `name` would delete, published
+    /// to `store.purge_plan` (the confirm states it, like the web's).
+    PurgeDryRun {
+        name: String,
+    },
     LoadReservations,
     ReservationTransfer {
         runtime_id: String,
@@ -3281,6 +3286,28 @@ fn handle(
             })
         }
 
+        Cmd::PurgeDryRun { name } => {
+            let dry = with_busy(store, wake, &format!("{name}: purge dry-run"), || {
+                require_client(client).and_then(|c| {
+                    c.purge_data_home(&serde_json::json!({ "name": name, "dry_run": true }))
+                })
+            });
+            let result = match dry {
+                Ok(v) if v.get("ok").and_then(Value::as_bool) == Some(false) => Err(v
+                    .get("errors")
+                    .map(|e| e.to_string())
+                    .or_else(|| v.get("error").and_then(Value::as_str).map(str::to_string))
+                    .unwrap_or_else(|| "dry-run answered ok:false".into())),
+                Ok(v) => Ok(crate::store::PurgeCounts::from_value(&v)),
+                Err(e) => Err(e.message.clone()),
+            };
+            let s = *store;
+            let plan = crate::store::PurgePlan {
+                name: name.clone(),
+                result,
+            };
+            wake.post(move || s.purge_plan.set(Some(plan.clone())));
+        }
         Cmd::PurgeDataHome { name } => {
             let action = format!("purge data home '{name}'");
             // Dry-run first — its failure VETOES the purge entirely.

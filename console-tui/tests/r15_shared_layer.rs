@@ -196,3 +196,97 @@ fn a_confirmations_focused_button_is_named_in_the_status_bar() {
         "Tab: the action is named"
     );
 }
+
+thread_local! {
+    static WHEEL_OUT: Cell<u32> = const { Cell::new(0) };
+}
+
+fn table_in_page(_ctx: &ui::Ctx, cx: Scope) -> View {
+    use abstracttui::ui::{MouseKind, Phase, UiEvent};
+    let t = use_theme(cx).get().tokens;
+    let sel = cx.signal(None::<String>);
+    let rows = (0..30)
+        .map(|i| {
+            w::Row::new(
+                format!("r{i}"),
+                vec![w::Cell::Text(vec![w::Ink::new(format!("row {i}"), t.text)])],
+            )
+        })
+        .collect();
+    Element::new()
+        .style(LayoutStyle::column().grow(1.0))
+        .on(Phase::Bubble, |_e, ev| {
+            if let UiEvent::Mouse(m) = ev {
+                if matches!(m.kind, MouseKind::ScrollUp | MouseKind::ScrollDown) {
+                    WHEEL_OUT.with(|w| w.set(w.get() + 1));
+                }
+            }
+        })
+        .child(
+            w::DataTable::new(
+                vec![w::Col::new("Name", w::ColW::Flex { weight: 1, min: 8 })],
+                rows,
+                sel,
+            )
+            .max_rows(5)
+            .view(cx, &t),
+        )
+        .build()
+}
+
+/// R15-A: the table owns the wheel only while its window moves — at its
+/// top edge a wheel-up bubbles to the page; mid-list it is the table's.
+#[test]
+fn a_tables_wheel_bubbles_at_its_edge_and_stays_while_it_moves() {
+    WHEEL_OUT.with(|w| w.set(0));
+    let mut h = harness((80, 24), Mount::Page(table_in_page));
+    let s = h.turns(2);
+    let (y, line) = s
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("row 1"))
+        .expect(&s);
+    let x = line.find("row 1").unwrap() + 2;
+    let wheel = |h: &mut r8w4::Harness, b: u8| {
+        h.key(format!("\x1b[<{b};{x};{}M", y + 1).as_bytes());
+    };
+    wheel(&mut h, 64); // up at the top: bubbles
+    assert_eq!(
+        WHEEL_OUT.with(|w| w.get()),
+        1,
+        "a wheel-up at the top reaches the page"
+    );
+    wheel(&mut h, 65); // down: the window moves, the table keeps it
+    assert_eq!(
+        WHEEL_OUT.with(|w| w.get()),
+        1,
+        "a moving wheel stays in the table"
+    );
+}
+
+fn refused_toggle_page(_ctx: &ui::Ctx, cx: Scope) -> View {
+    let t = use_theme(cx).get().tokens;
+    Element::new()
+        .style(LayoutStyle::column().grow(1.0))
+        .child(
+            w::Toggle::new(false)
+                .label("Feature")
+                .refused(Some("Only an admin can change this.".into()))
+                .tab_stop(false)
+                .view(cx, &t),
+        )
+        .build()
+}
+
+/// R15-A: a refused toggle that is not a tab stop still answers a click
+/// with its reason.
+#[test]
+fn a_refused_toggle_off_the_tab_order_still_says_why_on_a_click() {
+    let mut h = harness((80, 24), Mount::Page(refused_toggle_page));
+    h.turns(2);
+    h.click_text("Feature");
+    assert_eq!(
+        h.store.notice.get_untracked().as_deref(),
+        Some("Only an admin can change this.")
+    );
+}

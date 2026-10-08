@@ -161,8 +161,12 @@ impl Toggle {
         // A refused toggle still takes the focus (its reason must be
         // reachable from the keyboard: the tooltip + status bar show it) and
         // a press says the reason instead of doing anything.
-        if !allowed && self.tab_stop {
-            el = el.focusable();
+        // A click says the reason too when the toggle is not a tab stop
+        // (a row's toggle off the selected row) — R15-A.
+        if !allowed {
+            if self.tab_stop {
+                el = el.focusable();
+            }
             let why = self.allowed.clone().err().unwrap_or_default();
             el = el.on(Phase::Bubble, move |ctx, ev| {
                 let pressed = match ev {
