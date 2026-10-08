@@ -660,3 +660,23 @@ fn a_press_that_opens_a_dialog_never_keeps_the_pointer() {
         "the press reached Create user:\n{s}"
     );
 }
+
+/// R15-A AV4 note: Retained runtimes is a FormModal (title ✕ + Close).
+#[test]
+fn retained_runtimes_is_a_form_modal_with_a_title_close() {
+    let mut h = page();
+    let s = h.key(b"v");
+    let s = if s.contains("Retained runtimes") {
+        s
+    } else {
+        h.turns(2)
+    };
+    assert!(s.contains("Retained runtimes"), "{s}");
+    let s = click_confirm_any(&mut h, "✕");
+    let s = if s.contains("Retained runtimes") {
+        h.turns(2)
+    } else {
+        s
+    };
+    assert!(!s.contains("Retained runtimes"), "✕ closed it:\n{s}");
+}

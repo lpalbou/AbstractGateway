@@ -1630,11 +1630,10 @@ pub(crate) fn open_reservations_modal(cx: Scope, ctx: &Ctx) {
     ctx.send(Cmd::LoadReservations);
     let ctx2 = ctx.clone();
     let screen_cx = cx;
-    super::open_form(
-        ctx,
-        cx,
-        crate::ui::page_viewport(cx).get_untracked(),
-        move |mcx, close| {
+    super::w::FormModal::new("Retained runtimes")
+        .lead("Transfer one to a user — the data is never deleted.")
+        .size(RESV_MODAL_W, 30)
+        .open(ctx, cx, move |mcx, close, _guard, _inner_w| {
             let theme = use_theme(mcx);
             let ui = ctx2.ui;
             let ctx3 = ctx2.clone();
@@ -1648,15 +1647,7 @@ pub(crate) fn open_reservations_modal(cx: Scope, ctx: &Ctx) {
                     .with(|d| d.ready().map(Vec::len).unwrap_or(0))
             });
             Element::new()
-                .style(LayoutStyle::column().gap(0))
-                .child(dyn_view(LayoutStyle::line(1), move || {
-                    let t = theme.get().tokens;
-                    line(vec![span_bold(
-                        "Retained runtimes — transfer to a user (data is never deleted)"
-                            .to_string(),
-                        t.accent,
-                    )])
-                }))
+                .style(LayoutStyle::column().gap(0).grow(1.0))
                 .child(dyn_view_scoped(LayoutStyle::default().grow(1.0), {
                     move |gcx| {
                         let t = theme.get().tokens;
@@ -1743,49 +1734,53 @@ pub(crate) fn open_reservations_modal(cx: Scope, ctx: &Ctx) {
                         let ctx_t = ctx3.clone();
                         let close_t = close_b.clone();
                         let close_esc = close_b.clone();
-                        Element::new()
-                            .style(LayoutStyle::row().gap(2))
-                            .child(
-                                Button::new("Transfer to user")
-                                    .on_click(move || {
-                                        let idx = ctx_t.ui.resv_sel.get_untracked();
-                                        let row = ctx_t.store.reservations.with_untracked(|d| {
-                                            d.ready().and_then(|r| r.get(idx).cloned())
-                                        });
-                                        let Some(row) = row else {
-                                            ctx_t
-                                                .store
-                                                .notice
-                                                .set(Some("no reservation selected".into()));
-                                            return;
-                                        };
-                                        let tgt = target.get_untracked().trim().to_string();
-                                        if tgt.is_empty() {
-                                            ctx_t
-                                                .store
-                                                .notice
-                                                .set(Some("type the target user id first".into()));
-                                            return;
-                                        }
-                                        let c = ctx_t.clone();
-                                        close_t();
-                                        confirm_transfer(screen_cx, &c, row, tgt);
-                                    })
-                                    .element(bcx, &t)
-                                    .build(),
-                            )
-                            .child(
-                                Button::new("Close (Esc)")
-                                    .on_click(move || close_esc())
-                                    .element(bcx, &t)
-                                    .build(),
-                            )
-                            .build()
+                        let transfer = move || {
+                            let idx = ctx_t.ui.resv_sel.get_untracked();
+                            let row = ctx_t
+                                .store
+                                .reservations
+                                .with_untracked(|d| d.ready().and_then(|r| r.get(idx).cloned()));
+                            let Some(row) = row else {
+                                ctx_t
+                                    .store
+                                    .notice
+                                    .set(Some("no reservation selected".into()));
+                                return;
+                            };
+                            let tgt = target.get_untracked().trim().to_string();
+                            if tgt.is_empty() {
+                                ctx_t
+                                    .store
+                                    .notice
+                                    .set(Some("type the target user id first".into()));
+                                return;
+                            }
+                            let c = ctx_t.clone();
+                            close_t();
+                            confirm_transfer(screen_cx, &c, row, tgt);
+                        };
+                        super::w::form::button_row(vec![
+                            button(
+                                bcx,
+                                &t,
+                                &Action::label("transfer", "Transfer to user"),
+                                On::Raised,
+                                true,
+                                transfer,
+                            ),
+                            button(
+                                bcx,
+                                &t,
+                                &Action::label("close", "Close"),
+                                On::Raised,
+                                true,
+                                move || close_esc(),
+                            ),
+                        ])
                     },
                 ))
                 .build()
-        },
-    );
+        });
 }
 
 fn confirm_transfer(cx: Scope, ctx: &Ctx, row: crate::store::ReservationRow, target: String) {
