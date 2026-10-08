@@ -3088,6 +3088,11 @@ in its `details` field (`<data dir>/apps/jobs/<job>.log`).
   seconds). After more than 3 crashes in a minute it stops trying and shows
   "crash_loop" with the app's log.
 - Each app writes its output to `<data dir>/logs/apps/<app>.log`.
+- Apps that publish workflows (the Flow Editor's **Publish**, the Assistant
+  bringing its own workflow up to date when it starts) do not restart anything
+  on the gateway: the new workflow is swapped in place, so the other apps keep
+  their loaded model, their conversations' prompt caches and their running
+  runs ([architecture.md](docs/architecture.md#publishing-a-workflow)).
 - Apps always listen on `127.0.0.1`: browsers reach them through the gateway
   (next section), never directly. Ports: the app's usual port when it is
   free, else the first free port in 3100-3199. The usual ports are the
@@ -4441,6 +4446,45 @@ curl -sS -H "$AUTH" \
   -F "reload=true" \
   "$BASE_URL/api/gateway/bundles/upload"
 ```
+
+#### What a publish reloads
+
+Upload, `POST /visualflows/{flow_id}/publish` and the admin catalog upload and
+promote serve the new workflow by swapping the compiled workflow registry on the
+running runtime: loaded models, session prompt caches and runs in flight are not
+touched (see [architecture.md](docs/architecture.md#publishing-a-workflow)). Each
+response carries what it did:
+
+```json
+"reload": {
+  "ok": true,
+  "kind": "registry_swap",
+  "services": [{"service": "default:default", "kind": "registry_swap", "duration_ms": 14, "ok": true, "bundle_count": 6}],
+  "unchanged_services": 0,
+  "duration_ms": 15,
+  "sentence": "Workflows updated in place on 1 service in 15 ms. Nothing was restarted: loaded models, prompt caches and running runs were not touched."
+}
+```
+
+- `kind`: `registry_swap` (the normal case), `service_reload` (a service's runtime
+  was rebuilt because its workflows now need a language model, tool execution or
+  the memory store it was started without; its `reason` says which, and its
+  models and prompt caches start empty) or `full_rebuild` (only
+  `POST /api/gateway/bundles/reload?full=true`).
+- `services`: the services the reload touched, named `<tenant>:<runtime>`; a
+  service whose workflows did not change is only counted in
+  `unchanged_services`. Writing the shared workflow folder reloads every running
+  service; a user's own folder reloads only that user's.
+- `pinned_runs` on a service: runs in flight that keep the workflow they started
+  with because their version was replaced in place.
+- A service that failed to reload is listed with `ok: false` and `error`; the
+  publish route then answers `503`, the upload route reports it in
+  `gateway_reload_error`.
+
+`POST /api/gateway/bundles/reload` answers the host's reload result (`bundle_ids`,
+`count`, `skipped`) with the same `reload` object. The request's audit log line
+(`<data dir>/audit_log.jsonl`) records `reload: {kind, duration_ms, services}`
+next to the request's own `duration_ms`.
 
 ### 2) Start a run
 
@@ -7921,6 +7965,10 @@ The same `request_id` with a different request answers 409
 
 The concrete workflow (`bundle_id@version:flow_id`) is stored in the
 definition, so later changes to the default do not move the automation.
+Publishing a new version of the target does not move it either, and it
+interrupts nothing: a publish swaps the workflow list in place, so the
+controller, its waiting occurrences and the model they use keep running
+([architecture.md](docs/architecture.md#publishing-a-workflow)).
 
 **`target.input_data`** is your workflow's input. The gateway applies the
 same protections as for any run: your workspace settings are clamped to the
@@ -10211,6 +10259,25 @@ and set the mode again. See [security.md](docs/security.md#network-exposure).
 - A bundle can be present but not served: the `skipped` array names it with
   the reason (for example a `min_runtime` floor or a compile error).
 
+### A conversation answers slowly after a workflow was published
+
+A publish swaps the workflow list in place and keeps the loaded model and its
+prompt caches. Read the publish's `reload` object (in the response, and in the
+request's line of `<data dir>/audit_log.jsonl`):
+
+```bash
+grep -E '"/api/gateway/(visualflows/[^"]+/publish|bundles/upload|admin/workflow-catalog/(upload|promote))"' <data dir>/audit_log.jsonl | tail -5
+```
+
+- `"kind": "registry_swap"`: nothing was rebuilt; look elsewhere (the next
+  turn's `metadata.prompt_cache` in the run ledger says whether the cache was
+  read).
+- `"kind": "service_reload"`: that service's runtime was rebuilt because its
+  workflows started needing a language model, tool execution or the memory
+  store it had been started without; its first turn loads the model and fills
+  the cache again. This happens once per new need, not per publish.
+- `"kind": "full_rebuild"`: someone called `POST /api/gateway/bundles/reload?full=true`.
+
 ### A run stays RUNNING and nothing happens
 
 - `GET /api/health` reports the runner (`runner.runners[].status`). With
@@ -10527,12 +10594,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Requires AbstractRuntime with `schedule@2` (the next runtime release).
 
+### Changed
+
+- **Publishing a workflow no longer rebuilds every service.** Publish (`POST /visualflows/{id}/publish`), upload (`/bundles/upload`, `/admin/workflow-catalog/upload`), promote and the email-tools switch now compile only the bundle files that changed (cached by path, modification time and size) into a new workflow registry and set it on the RUNNING runtime (`registry_swap`): no new runtime, LLM client or provider, so an in-process model is not loaded again and every session's prompt cache survives (the next turn reads `metadata.prompt_cache` exactly as without the publish). Before, each one rebuilt the whole host once per instantiated service: publish up to 24 s and promote up to 99.7 s in the live audit log, prompt caches lost each time. A service's runtime is rebuilt only when its workflows newly need a language model, tool execution or the memory store it was started without (`service_reload`, logged with the reason), and every service only on `POST /bundles/reload?full=true` (`full_rebuild`). A service whose workflows did not change does nothing; writing the shared workflow folder reloads every running service, a user's own folder only theirs. See [docs/architecture.md](docs/architecture.md#publishing-a-workflow).
+- **Runs in flight keep their workflow across a publish.** A run ticks the spec it resolved: a new version is a new workflow id, and a version replaced in place (drafts, `overwrite: true`) or removed pins its RUNNING/WAITING runs to the spec they had until they end. Runs started after the publish get the new one.
+- **One service per data directory under user auth.** A caller without a signed-in principal is given the admin's default-runtime service instead of building a second service (second runtime, model client and runner) over the same directory.
+- The admin catalog upload (`/admin/workflow-catalog/upload`) runs its reload off the event loop like the other publish routes.
+
 ### Added
 
 - Automations: calendar schedules. The trigger `schedule@2` takes `{kind: "daily", at: "08:00"}`, `{kind: "weekly", days: ["mon", "thu"], at}`, `{kind: "monthly", day: 1..31 | "last", at}`, plus `every` and `once` (a `once` may give a wall time `at`), evaluated in the automation's `config.time_zone` with daylight saving handled. A rule sent without a time zone gets the owner's account time zone; a revision without one keeps the automation's zone. `schedule@1` automations and requests work unchanged. See `docs/automations.md`.
 - Every automation summary (list, read, create answer) carries `next_run_at`, `next_run_local`, `time_zone`, `schedule_rule_text` and `schedule_text`, the one sentence clients show for the schedule ("Every day at 08:00 (Europe/Paris) · next Fri 9 Oct 08:00"; a fixed UTC interval names the zone of the times it shows: "Every 8 hours (UTC) · next Fri 9 Oct 08:00 (Europe/Paris)"). `next_fire_at` stays. Occurrence rows use the same rule sentence ("schedule: Every 30 minutes (UTC), tick 5").
 - `POST /api/gateway/automations/schedule-preview`: what a trigger would do if saved now (normalized trigger, sentences, first run, `first_run_sentence`); nothing is stored.
 - Account preference `time_zone` (`GET/PUT /api/gateway/accounts/{account}/preferences`): an IANA zone or `null` for the gateway default, the time zone of the computer the gateway runs on. The GET adds a `time_zone` block with the default, the effective zone and the list of zone names.
+- **Every publish/promote/upload says what it reloaded**: the response carries `reload: {ok, kind: "registry_swap"|"service_reload"|"full_rebuild", services: [{service, kind, duration_ms, ...}], unchanged_services, duration_ms, sentence}` (`PublishVisualFlowResponse.reload`, the upload and catalog responses, `/bundles/reload`), and the request's audit log line records `reload: {kind, duration_ms, services}` next to its `duration_ms`. See [docs/api.md](docs/api.md#what-a-publish-reloads).
 
 ## [0.13.1] - 2026-10-08
 
@@ -13297,7 +13372,8 @@ browser on this computer from one elsewhere on the network
   WorkflowBundles and compiles their VisualFlow JSON with
   `abstractruntime.visualflow_compiler`. Bundle mode is the only workflow
   source; store VisualFlows through `/api/gateway/visualflows/*` and publish
-  them as bundles.
+  them as bundles. A publish swaps the compiled workflows onto the running
+  runtime (see [Publishing a workflow](#publishing-a-workflow)).
 - **Workflow catalog** (`src/abstractgateway/workflow_catalog.py`): shared,
   immutable workflow versions with admin-managed default pointers and ACLs.
   Catalog runs execute in the caller's runtime; the gateway signs the
@@ -13426,6 +13502,68 @@ browser on this computer from one elsewhere on the network
 - **Operator tooling** (`src/abstractgateway/maintenance/`): reports, triage,
   backlog browsing, the backlog exec runner and the process manager. See
   [maintenance.md](docs/maintenance.md).
+
+## Publishing a workflow
+
+A service is one data plane: its stores, its runner and one AbstractRuntime
+`Runtime`, which owns the LLM client and its providers (for an in-process
+engine such as MLX: the loaded weights and the session prompt caches), the
+tool executor, the effect handlers and the memory store. Workflows are only
+the compiled registry the runtime reads. So publishing, promoting or
+uploading a workflow changes the registry and nothing else.
+
+```mermaid
+flowchart LR
+  P["publish / promote / upload"] --> C["compile the changed .flow files<br/>(cached by path, mtime, size)"]
+  C --> Q{"does the runtime serve<br/>everything they need?"}
+  Q -->|yes| S["registry_swap<br/>new registry set on the running runtime"]
+  Q -->|no| R["service_reload<br/>rebuild this service's runtime"]
+  S --> K["models, prompt caches, runs<br/>untouched"]
+```
+
+What a reload does (`WorkflowBundleGatewayHost.reload_bundles_from_disk`):
+
+- **`registry_swap`** (publish, promote, upload, the agent email tools
+  switched): the bundle files are compiled into a new
+  `WorkflowRegistry` — only the files whose path, modification time or size
+  changed; every other workflow keeps its compiled object — and
+  `runtime.set_workflow_registry(...)` puts it on the running runtime. No
+  runtime, LLM client, provider, model weights, prompt cache, tool executor
+  or memory store is created or dropped. A service whose files did not move
+  does nothing. Compilation happens off the event loop and outside the host
+  lock; only the swap itself takes the lock.
+- **`service_reload`**: the new workflows need something this service's
+  runtime was started without — the first LLM, Agent or model-residency
+  workflow on a runtime built without a language model, the first tool
+  workflow on a plain one, or the first `memory_kg_*` workflow (it opens the
+  memory store). Only this service's runtime is rebuilt; its in-process models
+  and prompt caches start empty, and the reload says so.
+- **`full_rebuild`**: only on request, `POST /api/gateway/bundles/reload?full=true`
+  (for example after changing the memory store's configuration on disk).
+
+Archiving a workflow is not a reload either: the file keeps loading and the
+archive record refuses new runs. Changing the default model is not a reload: the console's default routes
+re-point the running client in place (`refresh_capability_defaults`).
+
+**Runs in flight keep their workflow.** A run ticks the spec it resolved. A new
+version is a new workflow id (`bundle@0.0.2:flow`), so runs on `0.0.1` simply
+continue on it while new runs start on `0.0.2`. When a version is replaced in
+place (drafts, `overwrite: true`) or removed, every RUNNING or WAITING run of
+it is pinned to the spec it already had (`_pin_in_flight_runs`); the pin is
+released when the run ends. Automations store their concrete
+`bundle@version:flow`, so a republish never changes them. A sub-workflow that
+an in-flight run starts after an in-place overwrite resolves the new spec.
+
+**Where it is reported.** Every publish/promote/upload response carries
+`reload: {kind, services, duration_ms, sentence}` (see
+[api.md](docs/api.md#what-a-publish-reloads)), the audit log line of the request
+carries the same `reload` object next to its `duration_ms`, and a
+`service_reload`/`full_rebuild` writes one warning to the gateway log.
+
+**One service per data directory.** Under user auth the admin's requests own
+the default runtime's service; a caller without a signed-in principal (a
+background thread, a boot step) is given that same service instead of a second
+one built over the same directory.
 
 ## Durable contract (replay-first)
 
@@ -13733,6 +13871,10 @@ plus CSRF token. See [security.md](docs/security.md).
 ## Evidence (jump-to-code)
 
 - Composition root: `src/abstractgateway/service.py`
+- Publishing without a rebuild: `src/abstractgateway/hosts/bundle_host.py`
+  (`_compile_workflows`, `_build_runtime`, `reload_bundles_from_disk`,
+  `_pin_in_flight_runs`), `src/abstractgateway/workflow_reload.py`,
+  `src/abstractgateway/service.py` (`reload_gateway_workflow_bundles`)
 - API surface: `src/abstractgateway/routes/` (`gateway.py`, `apps.py`,
   `engines.py`, `network.py`, `entities.py`)
 - Runner: `src/abstractgateway/runner.py`

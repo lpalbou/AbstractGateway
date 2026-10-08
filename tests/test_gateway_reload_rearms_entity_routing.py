@@ -12,6 +12,10 @@ before summoning.
 The fix: the factory registers a runtime-rebuild hook on the host; the
 reload re-arms the NEW runtime BEFORE the swap publishes it (no tick can
 observe an unarmed runtime).
+
+Since R16.2 a publish/reload keeps the runtime (registry swap), so the armed
+handlers simply stay; the hook still guards every path that DOES build a new
+runtime (service_reload, full_rebuild), pinned here with `full=True`.
 """
 
 from __future__ import annotations
@@ -62,15 +66,22 @@ def test_reload_bundles_keeps_entity_routing_armed(tmp_path: Path, monkeypatch: 
     for etype in ENTITY_EFFECTS:
         assert etype in _handlers(old_runtime), f"boot must arm {etype.value}"
 
-    result = svc.host.reload_bundles_from_disk()
+    # The everyday reload (publish/promote) keeps the armed runtime itself.
+    swap = svc.host.reload_bundles_from_disk()
+    assert swap.get("ok") is True and swap["reload"]["kind"] == "registry_swap"
+    assert svc.host.runtime is old_runtime
+    for etype in ENTITY_EFFECTS:
+        assert etype in _handlers(old_runtime), f"a registry swap disarmed {etype.value}"
+
+    result = svc.host.reload_bundles_from_disk(full=True)
     assert result.get("ok") is True
     assert result.get("warnings") is None or result.get("warnings") == [], (
         f"re-arm hook must succeed on reload: {result.get('warnings')}"
     )
 
     new_runtime = svc.host.runtime
-    # The reload really swaps the runtime — the pin is meaningless otherwise.
-    assert new_runtime is not old_runtime, "reload_bundles_from_disk must have rebuilt the runtime"
+    # The rebuild really swaps the runtime — the pin is meaningless otherwise.
+    assert new_runtime is not old_runtime, "a full rebuild must have rebuilt the runtime"
     for etype in ENTITY_EFFECTS:
         assert etype in _handlers(new_runtime), (
             f"reload disarmed {etype.value}: entity runs would fail "
@@ -91,8 +102,8 @@ def test_reload_survives_repeated_reloads(tmp_path: Path, monkeypatch: pytest.Mo
 
     svc = create_default_gateway_service(config=GatewayHostConfig.from_env())
     assert svc.entity_registry is not None
-    for _ in range(3):
-        result = svc.host.reload_bundles_from_disk()
+    for i in range(3):
+        result = svc.host.reload_bundles_from_disk(full=bool(i % 2))
         assert result.get("ok") is True
         assert not result.get("warnings"), result.get("warnings")
         assert EffectType.MEMORY_RECALL in _handlers(svc.host.runtime)
@@ -115,7 +126,7 @@ def test_rebuild_hook_failure_is_loud_not_fatal(tmp_path: Path, monkeypatch: pyt
         raise RuntimeError("injected hook failure")
 
     svc.host.add_runtime_rebuild_hook(_boom)
-    result = svc.host.reload_bundles_from_disk()
+    result = svc.host.reload_bundles_from_disk(full=True)
     assert result.get("ok") is True, "reload itself must survive a hook failure"
     warnings = result.get("warnings") or []
     assert any("#FALLBACK" in w and "injected hook failure" in w for w in warnings), warnings

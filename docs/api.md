@@ -107,6 +107,45 @@ curl -sS -H "$AUTH" \
   "$BASE_URL/api/gateway/bundles/upload"
 ```
 
+#### What a publish reloads
+
+Upload, `POST /visualflows/{flow_id}/publish` and the admin catalog upload and
+promote serve the new workflow by swapping the compiled workflow registry on the
+running runtime: loaded models, session prompt caches and runs in flight are not
+touched (see [architecture.md](./architecture.md#publishing-a-workflow)). Each
+response carries what it did:
+
+```json
+"reload": {
+  "ok": true,
+  "kind": "registry_swap",
+  "services": [{"service": "default:default", "kind": "registry_swap", "duration_ms": 14, "ok": true, "bundle_count": 6}],
+  "unchanged_services": 0,
+  "duration_ms": 15,
+  "sentence": "Workflows updated in place on 1 service in 15 ms. Nothing was restarted: loaded models, prompt caches and running runs were not touched."
+}
+```
+
+- `kind`: `registry_swap` (the normal case), `service_reload` (a service's runtime
+  was rebuilt because its workflows now need a language model, tool execution or
+  the memory store it was started without; its `reason` says which, and its
+  models and prompt caches start empty) or `full_rebuild` (only
+  `POST /api/gateway/bundles/reload?full=true`).
+- `services`: the services the reload touched, named `<tenant>:<runtime>`; a
+  service whose workflows did not change is only counted in
+  `unchanged_services`. Writing the shared workflow folder reloads every running
+  service; a user's own folder reloads only that user's.
+- `pinned_runs` on a service: runs in flight that keep the workflow they started
+  with because their version was replaced in place.
+- A service that failed to reload is listed with `ok: false` and `error`; the
+  publish route then answers `503`, the upload route reports it in
+  `gateway_reload_error`.
+
+`POST /api/gateway/bundles/reload` answers the host's reload result (`bundle_ids`,
+`count`, `skipped`) with the same `reload` object. The request's audit log line
+(`<data dir>/audit_log.jsonl`) records `reload: {kind, duration_ms, services}`
+next to the request's own `duration_ms`.
+
 ### 2) Start a run
 
 ```bash

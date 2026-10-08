@@ -1,6 +1,6 @@
 # 0846 — Publishing a workflow must not rebuild every service's runtime
 
-**Status**: planned · **Priority**: P1 · **Created**: 2026-09-18
+**Status**: completed 2026-10-08 (round 16, R16.2; unreleased) · **Priority**: P1 · **Created**: 2026-09-18
 **Package**: abstractgateway · **Related**: abstractcore 0847 (shared model pool),
 abstractruntime 0845 (session cache contract), framework 0848 (supervisor wording)
 
@@ -73,3 +73,58 @@ Health stays answerable and the memory blow-up is gone. The rebuild itself is un
   `service.py::reload_gateway_workflow_bundles` (all services).
 - Process footprint before the sharing fix: RSS 29.5 GB but physical footprint 113 GB
   (peak 129 GB on a 128 GB machine), ~85 GB compressed/swapped, system swap 18.3/19.5 GB.
+
+## Completion Report - 2026-10-08
+
+All four slices landed on branch `round16/2026-10-08-w3` (unreleased):
+
+1. **Incremental reload.** `hosts/bundle_host.py` splits loading into
+   `_compile_workflows` (bundles -> specs + a new `WorkflowRegistry`, no runtime
+   touched, cached per file by path/mtime/size so a publish compiles one file) and
+   `_build_runtime`. `reload_bundles_from_disk` swaps the new registry onto the
+   running runtime (`registry_swap`). A service's runtime is rebuilt only when its
+   workflows newly need a capability it was built without — LLM/model residency,
+   tools, memory_kg (`service_reload`) — and on `POST /bundles/reload?full=true`
+   (`full_rebuild`). A provider/model change never needed a rebuild: the default
+   routes re-point the live client (`refresh_capability_defaults`).
+2. **Reload only what changed.** A service whose files did not move does nothing
+   (`unchanged_services`); a write to a user's own registry reloads only that
+   user's service, the shared registry every running service.
+3. **No duplicate service.** Under user auth a principal-less caller gets the
+   admin's default-runtime service; `_service` is no longer built beside it.
+4. **Report the cost.** Publish/upload/catalog upload/promote/`/bundles/reload`
+   answer `reload {ok, kind, services, unchanged_services, duration_ms, sentence}`
+   (`workflow_reload.py`) and the audit line records `reload {kind, duration_ms,
+   services}`.
+
+Also: runs in flight keep the spec they resolved (a version replaced in place
+pins its RUNNING/WAITING runs; `_pin_in_flight_runs`), and the admin catalog
+upload's reload moved off the event loop.
+
+Validation:
+
+- `tests/test_gateway_publish_without_rebuild.py` (fake engine: construction
+  counted and GIL-holding, per-instance prompt-cache store): same runtime and
+  client after a publish, spec identity of untouched bundles, unchanged = no swap,
+  `service_reload`/`full_rebuild`, ledger `metadata.prompt_cache` of the next turn
+  identical to the no-publish control (and a rebuild shown to miss), in-flight
+  pinning for a new version and an overwritten one, `/api/health` p99 < 500 ms
+  during 20 publishes, response + audit line, one service per data dir.
+- Mutation: 12/12 mutants red (round16 scratch `w3/mutate.txt`), incl. teardown
+  reintroduced (cache test red) and scope widened (health p99 1187 ms, red).
+- Scratch live drive, fake engine with a 1 s GIL-holding load: before 1.0-1.3 s per
+  publish, health p99 1048 ms, the next turn `miss_created`; after 3-6 ms per
+  publish, health p99 2.1 ms, the next turn `hit` (222 cached tokens), one engine
+  construction for 21 publishes.
+- Full gateway suite: same failure set as origin/main (environment: browser tests
+  without node on PATH; they pass with node except the pre-existing kit-islands
+  sync check).
+
+Residual notes:
+
+- A sub-workflow that an in-flight run starts after its version was overwritten
+  in place resolves the new spec (the runtime's sub-workflow lookup has no run
+  context); new versions are unaffected (their ids differ).
+- The supervisor wording (framework 0848) is the root package's; its banner can
+  now point at the audit line's `reload` field.
+

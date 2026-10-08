@@ -189,6 +189,25 @@ and set the mode again. See [security.md](./security.md#network-exposure).
 - A bundle can be present but not served: the `skipped` array names it with
   the reason (for example a `min_runtime` floor or a compile error).
 
+### A conversation answers slowly after a workflow was published
+
+A publish swaps the workflow list in place and keeps the loaded model and its
+prompt caches. Read the publish's `reload` object (in the response, and in the
+request's line of `<data dir>/audit_log.jsonl`):
+
+```bash
+grep -E '"/api/gateway/(visualflows/[^"]+/publish|bundles/upload|admin/workflow-catalog/(upload|promote))"' <data dir>/audit_log.jsonl | tail -5
+```
+
+- `"kind": "registry_swap"`: nothing was rebuilt; look elsewhere (the next
+  turn's `metadata.prompt_cache` in the run ledger says whether the cache was
+  read).
+- `"kind": "service_reload"`: that service's runtime was rebuilt because its
+  workflows started needing a language model, tool execution or the memory
+  store it had been started without; its first turn loads the model and fills
+  the cache again. This happens once per new need, not per publish.
+- `"kind": "full_rebuild"`: someone called `POST /api/gateway/bundles/reload?full=true`.
+
 ### A run stays RUNNING and nothing happens
 
 - `GET /api/health` reports the runner (`runner.runners[].status`). With

@@ -224,6 +224,10 @@ The same `request_id` with a different request answers 409
 
 The concrete workflow (`bundle_id@version:flow_id`) is stored in the
 definition, so later changes to the default do not move the automation.
+Publishing a new version of the target does not move it either, and it
+interrupts nothing: a publish swaps the workflow list in place, so the
+controller, its waiting occurrences and the model they use keep running
+([architecture.md](./architecture.md#publishing-a-workflow)).
 
 **`target.input_data`** is your workflow's input. The gateway applies the
 same protections as for any run: your workspace settings are clamped to the
