@@ -1570,6 +1570,7 @@ mod tests {
             session_id: "sess1".into(),
             bytes: Some(4096),
             token_count: Some(100),
+            created_at_s: None,
         };
         assert_eq!(
             cache_row_cells(&r),

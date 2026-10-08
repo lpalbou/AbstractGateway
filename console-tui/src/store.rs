@@ -2394,6 +2394,9 @@ pub struct SessionCacheRow {
     pub session_id: String,
     pub bytes: Option<u64>,
     pub token_count: Option<u64>,
+    /// When the cache was created (epoch seconds; the web's "Created"
+    /// column, `_fmtEpochS(c.created_at_s)`). None = not reported.
+    pub created_at_s: Option<f64>,
 }
 
 impl SessionCacheRow {
@@ -2405,6 +2408,7 @@ impl SessionCacheRow {
             session_id: s(v, "session_id").unwrap_or_default(),
             bytes: v.get("bytes").and_then(Value::as_u64),
             token_count: v.get("token_count").and_then(Value::as_u64),
+            created_at_s: v.get("created_at_s").and_then(Value::as_f64),
         })
     }
 }
@@ -5026,5 +5030,21 @@ mod tests {
             candidate_act_body(false, &ids, "no"),
             json!({"reason": "no"})
         );
+    }
+}
+
+#[cfg(test)]
+mod session_cache_row_tests {
+    use super::*;
+
+    #[test]
+    fn a_cache_row_reads_its_creation_time() {
+        let r = SessionCacheRow::from_value(&serde_json::json!({
+            "key": "k", "created_at_s": 1_760_000_000.5
+        }))
+        .unwrap();
+        assert_eq!(r.created_at_s, Some(1_760_000_000.5));
+        let bare = SessionCacheRow::from_value(&serde_json::json!({"key": "k"})).unwrap();
+        assert_eq!(bare.created_at_s, None, "absent stays unknown, never 0");
     }
 }
