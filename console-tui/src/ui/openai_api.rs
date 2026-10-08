@@ -783,7 +783,7 @@ pub fn log_actions(r: &Value) -> Vec<Action> {
 
 /// Open `url` in a browser here, or (no display / no opener) copy it and
 /// say so.
-fn open_or_copy(ctx: &Ctx, url: &str) {
+pub(crate) fn open_or_copy(ctx: &Ctx, url: &str) {
     if ctx.no_display.is_none() && ctx.screens.open_url(url).is_ok() {
         return;
     }

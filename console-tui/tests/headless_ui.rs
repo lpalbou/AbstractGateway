@@ -1267,19 +1267,47 @@ fn applied_recommended_summary_counts_unavailable_rows() {
 // Providers step
 // =======================================================================
 
+/// R15 Providers: a page tall enough for its three stacked sections (the
+/// page scrolls; these tests read the Available Providers rows).
+fn providers_harness() -> Harness {
+    let mut h = harness_sized(Size::new(150, 90));
+    h.connect_as_admin();
+    h.goto_available_providers();
+    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
+    h.store.providers.set(Loadable::Ready(providers_fixture()));
+    h.turns(3);
+    h
+}
+
+/// Click `needle` on the first line at or below the line holding `anchor`
+/// that contains it (searched right of the anchor on that line).
+fn click_after(h: &mut Harness, anchor: &str, needle: &str) {
+    let s = h.turns(1);
+    let lines: Vec<&str> = s.lines().collect();
+    let start = lines
+        .iter()
+        .position(|l| l.contains(anchor))
+        .unwrap_or_else(|| panic!("{anchor:?} not on screen:\n{s}"));
+    let (y, l) = lines
+        .iter()
+        .enumerate()
+        .skip(start)
+        .find(|(_, l)| l.contains(needle))
+        .unwrap_or_else(|| panic!("{needle:?} at/below {anchor:?}:\n{s}"));
+    let x = l[..l.rfind(needle).unwrap()].chars().count() + 2;
+    click_at(h, x, y + 1);
+    h.turns(2);
+}
+
 /// The ONE unified list (operator ruling 2026-07-25: no second table).
 /// Rows come from the profiles payload alone — managed AND synthetic —
 /// under the join-law provider names; discovery demotes to the default
 /// line + the not-configured-yet line. Nothing double-lists.
 #[test]
 fn profiles_table_renders_without_secrets() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_available_providers();
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
-    h.store.providers.set(Loadable::Ready(providers_fixture()));
+    let mut h = providers_harness();
     let s = h.turns(2);
-    // Join-law provider names in the first column: managed rows show
+    // Join-law provider names in the Provider ID column: managed rows show
     // their virtual endpoint:<id>; synthetic rows their bare id.
     assert!(s.contains("endpoint:acme"), "managed provider name:\n{s}");
     assert!(s.contains("openai"), "synthetic provider name:\n{s}");
@@ -1315,12 +1343,13 @@ fn profiles_table_renders_without_secrets() {
         s.contains("gateway default: lmstudio / test-model-a"),
         "default line:\n{s}"
     );
-    // The selected row (acme, managed) names its own verbs — the
-    // web's per-row buttons as a TUI action line.
-    assert!(
-        s.contains("managed (gateway scope) · e edit · d delete"),
-        "selection action line:\n{s}"
-    );
+    // R15: each row's own buttons — the web's Edit / Delete for a managed
+    // row, Override for a synthetic one (then Models, Test).
+    let acme = s
+        .lines()
+        .find(|l| l.contains("endpoint:acme"))
+        .expect("acme row");
+    assert!(acme.contains("Edit") && acme.contains("Delete"), "{acme}");
 }
 
 /// The join law drives the row ACTIONS (live-verified 2026-07-25:
@@ -1329,14 +1358,9 @@ fn profiles_table_renders_without_secrets() {
 /// for the BARE name, on a managed row for endpoint:<id>.
 #[test]
 fn models_drilldown_uses_join_law_provider_names() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_available_providers();
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
-    h.turns(2);
-    // Row 0 = acme (managed).
-    h.type_text("m");
-    h.turns(2);
+    let mut h = providers_harness();
+    // Row 0 = acme (managed): its Models button.
+    click_after(&mut h, "endpoint:acme", "Models");
     assert!(
         matches!(
             h.find_cmd(|c| matches!(c, Cmd::LoadModels { .. })),
@@ -1346,12 +1370,20 @@ fn models_drilldown_uses_join_law_provider_names() {
     );
     h.press_escape();
     h.turns(2);
-    // Row 1 = openai (synthetic, provider_id "openai"). Selection set
-    // directly — focus restoration after a modal close is not what
-    // this test pins.
-    h.ui.profile_sel.set(1);
-    h.turns(2);
-    h.type_text("m");
+    // openai (synthetic, provider_id "openai"): its row's Models button.
+    let s = h.turns(1);
+    let from = s
+        .lines()
+        .position(|l| l.contains("Available Providers"))
+        .unwrap();
+    let (y, l) = s
+        .lines()
+        .enumerate()
+        .skip(from)
+        .find(|(_, l)| l.contains(" openai ") && l.contains("Models"))
+        .unwrap_or_else(|| panic!("openai row:\n{s}"));
+    let x = l[..l.rfind("Models").unwrap()].chars().count() + 2;
+    click_at(&mut h, x, y + 1);
     h.turns(2);
     assert!(
         matches!(
@@ -1364,31 +1396,23 @@ fn models_drilldown_uses_join_law_provider_names() {
 
 #[test]
 fn add_profile_form_validates_and_sends_create() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_available_providers();
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
-    h.turns(2);
-
+    let mut h = providers_harness();
     h.type_text("a");
     let s = h.turns(2);
-    assert!(s.contains("Add a provider connection"), "form open:\n{s}");
-    assert!(s.contains("choose a family…"), "placeholder family:\n{s}");
-
-    // The id input is autofocused: type an id, then walk to Save and
-    // press it with the family still on the placeholder.
+    // R15: the web's endpoint modal ("Configure provider" when blank).
+    assert!(s.contains("Configure provider"), "form open:\n{s}");
+    assert!(
+        s.contains("choose a provider type…"),
+        "placeholder type:\n{s}"
+    );
+    // The Provider ID input is autofocused: type an id, ✓ Confirm with
+    // the type still on the placeholder.
     h.type_text("acme2");
-    h.turn();
-    // Happy path (P1-C disclosure): id → family → base URL → API key →
-    // More-options header → Test → Save (advanced fields folded away).
-    for _ in 0..6 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r");
+    h.turns(2);
+    click_after(&mut h, "↻ Test", "✓ Confirm");
     let s = h.turns(2);
     assert!(
-        s.contains("choose a provider family"),
+        s.contains("Choose a provider type."),
         "validation error inline, modal stays:\n{s}"
     );
     assert!(
@@ -1396,38 +1420,19 @@ fn add_profile_form_validates_and_sends_create() {
             .is_none(),
         "no write leaves the app on a validation failure"
     );
-
-    // Fix the family: Shift+Tab from Save back to the Select (family is
-    // index 1, Save index 6 in the folded happy path → 5 stops).
-    for _ in 0..5 {
-        h.key(b"\x1b[Z");
-        h.turn();
-    }
-    h.type_text("\r"); // open the popup
-    h.turns(2);
-    h.key(b"\x1b[B"); // down to "openai-compatible"
-    h.turn();
-    h.type_text("\r"); // commit
-    h.turns(2);
-
-    // Base URL, then API key.
-    h.key(b"\t");
-    h.turn();
+    // Fix the type: click the picker, ↓ to the first family, Enter.
+    click_after(&mut h, "Provider type", "choose a provider type…");
+    // The popup lists the types: click one (a mouse pick commits it).
+    click_after(&mut h, "Provider type", "Custom OpenAI-compatible");
+    h.turns(3);
+    // Base URL, then API key (click each field).
+    click_after(&mut h, "Base URL", "optional; leave blank");
     h.type_text("http://127.0.0.1:1234/v1");
-    h.turn();
-    h.key(b"\t");
-    h.turn();
-    h.type_text("sk-testkey");
-    h.turn();
-    // API key → More-options header → Test → Save (advanced fields are
-    // folded; scope defaults to gateway for admin, allowed stays []).
-    for _ in 0..3 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r");
     h.turns(2);
-
+    click_after(&mut h, "API key", "leave blank to keep");
+    h.type_text("sk-testkey");
+    h.turns(2);
+    click_after(&mut h, "↻ Test", "✓ Confirm");
     let cmd = h.find_cmd(|c| matches!(c, Cmd::SaveProfile { .. }));
     match cmd {
         Some(Cmd::SaveProfile {
@@ -1449,41 +1454,22 @@ fn add_profile_form_validates_and_sends_create() {
 
 #[test]
 fn edit_profile_never_echoes_stored_key_and_closes_on_success() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_available_providers();
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
-    h.turns(2);
-
+    let mut h = providers_harness();
     // Row 0 = acme (managed, key stored). Open edit.
     h.type_text("e");
     let s = h.turns(2);
-    assert!(s.contains("Edit profile 'acme'"), "edit form:\n{s}");
     assert!(
-        s.contains("a key is stored (deadbeef1234)"),
+        s.contains("Configure Custom OpenAI-compatible"),
+        "edit form:\n{s}"
+    );
+    assert!(
+        s.contains("A key is stored (deadbeef1234)"),
         "stored-key note:\n{s}"
     );
-    assert!(
-        s.contains("clear the stored key on save"),
-        "clear affordance:\n{s}"
-    );
-    // The form must NOT prefill any secret — the API never returns one,
-    // and the field starts empty (bullets would render if it did).
+    assert!(s.contains("Clear stored API key"), "clear affordance:\n{s}");
+    // The form must NOT prefill any secret.
     assert!(!s.contains("sk-"), "no secret text anywhere:\n{s}");
-
-    // Simulate the worker completing the write for this form: the modal
-    // closes on success. (form_id is 1-based per process; fetch it from
-    // the command the form sends.)
-    // Edit mode: id is static, family autofocuses, the disclosure is
-    // OPEN. family → base URL → API key → More-options header →
-    // display → description → allowed → scope → clear-key → enabled →
-    // Test → Save (11 tabs from family).
-    for _ in 0..11 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r");
-    h.turns(2);
+    click_after(&mut h, "↻ Test", "✓ Confirm");
     let cmd = h.find_cmd(|c| matches!(c, Cmd::SaveProfile { .. }));
     let form_id = match cmd {
         Some(Cmd::SaveProfile {
@@ -1498,8 +1484,6 @@ fn edit_profile_never_echoes_stored_key_and_closes_on_success() {
                 body.get("api_key").is_none(),
                 "blank key field must OMIT api_key (keep stored): {body:?}"
             );
-            // Scope now rides edits too (web parity: the gateway moves
-            // the profile between stores when scope changes).
             assert_eq!(body["scope"], "gateway", "unchanged scope resent as-is");
             form_id.expect("edit form correlates its write")
         }
@@ -1508,19 +1492,13 @@ fn edit_profile_never_echoes_stored_key_and_closes_on_success() {
     h.ui.write_done.set(Some((form_id, Ok("applied".into()))));
     let s = h.turns(3);
     assert!(
-        !s.contains("Edit profile 'acme'"),
+        !s.contains("Configure Custom OpenAI-compatible"),
         "modal closed on success:\n{s}"
     );
-
-    // And on failure the modal stays with the verbatim error.
+    // And on failure the modal stays with the gateway's sentence.
     h.type_text("e");
     h.turns(2);
-    for _ in 0..11 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r");
-    h.turns(2);
+    click_after(&mut h, "↻ Test", "✓ Confirm");
     let form_id = match h.find_cmd(|c| matches!(c, Cmd::SaveProfile { .. })) {
         Some(Cmd::SaveProfile { form_id, .. }) => form_id.unwrap(),
         other => panic!("expected SaveProfile, got {other:?}"),
@@ -1531,7 +1509,7 @@ fn edit_profile_never_echoes_stored_key_and_closes_on_success() {
     )));
     let s = h.turns(3);
     assert!(
-        s.contains("Edit profile 'acme'"),
+        s.contains("Configure Custom OpenAI-compatible"),
         "modal stays on failure:\n{s}"
     );
     assert!(
@@ -1546,18 +1524,12 @@ fn edit_profile_never_echoes_stored_key_and_closes_on_success() {
 /// the teach-the-override reason.
 #[test]
 fn synthetic_row_override_opens_prefilled_create() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_available_providers();
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
-    h.turns(2);
-    // Move selection to row 1 (openai, synthetic).
-    h.key(b"\x1b[B");
-    h.turns(2);
-    h.type_text("e");
+    let mut h = providers_harness();
+    // openai (synthetic): its Override button.
+    click_after(&mut h, "Available Providers", "Override");
     let s = h.turns(2);
     assert!(
-        s.contains("Override 'openai' — create a managed connection"),
+        s.contains("Configure OpenAI"),
         "override form (not a refusal, not Edit):\n{s}"
     );
     assert!(
@@ -1568,9 +1540,11 @@ fn synthetic_row_override_opens_prefilled_create() {
     h.press_escape();
     let s = h.turns(2);
     assert!(
-        !s.contains("Override 'openai'"),
+        !s.contains("already usable from environment config"),
         "untouched override form closes on one Esc:\n{s}"
     );
+    h.ui.profile_sel.set(1);
+    h.turns(2);
     h.type_text("d");
     let s = h.turns(2);
     assert!(
@@ -1589,23 +1563,10 @@ fn synthetic_row_override_opens_prefilled_create() {
 /// the exact name that shadows the env/core row.
 #[test]
 fn override_save_posts_create_with_prefilled_identity() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_available_providers();
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
+    let mut h = providers_harness();
+    click_after(&mut h, "Available Providers", "Override");
     h.turns(2);
-    h.key(b"\x1b[B");
-    h.turns(2);
-    h.type_text("e");
-    h.turns(2);
-    // Create-mode fold: id (autofocused) → family → base URL →
-    // API key → More-options header → Test → Save.
-    for _ in 0..6 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r");
-    h.turns(2);
+    click_after(&mut h, "↻ Test", "✓ Confirm");
     match h.find_cmd(|c| matches!(c, Cmd::SaveProfile { .. })) {
         Some(Cmd::SaveProfile {
             create, id, body, ..
@@ -1624,18 +1585,14 @@ fn override_save_posts_create_with_prefilled_identity() {
 
 #[test]
 fn escape_closes_form_modal() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_available_providers();
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
-    h.turns(2);
+    let mut h = providers_harness();
     h.type_text("a");
     let s = h.turns(2);
-    assert!(s.contains("Add a provider connection"), "form open:\n{s}");
+    assert!(s.contains("Configure provider"), "form open:\n{s}");
     h.press_escape();
     let s = h.turns(2);
     assert!(
-        !s.contains("Add a provider connection"),
+        !s.contains("Configure provider"),
         "Esc closes the form:\n{s}"
     );
     assert!(
@@ -1647,18 +1604,15 @@ fn escape_closes_form_modal() {
 
 #[test]
 fn delete_profile_needs_danger_confirm() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_available_providers();
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
-    h.turns(2);
+    let mut h = providers_harness();
     h.type_text("d");
     let s = h.turns(2);
+    let flat = s.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
-        s.contains("Delete provider connection 'acme'"),
-        "confirm:\n{s}"
+        flat.contains("Delete endpoint:acme? Existing workflows"),
+        "the web's question:\n{s}"
     );
-    // Initial highlight is "keep" — Enter must NOT delete.
+    // Initial focus is Cancel — Enter must NOT delete.
     h.type_text("\r");
     h.turns(2);
     assert!(
@@ -1666,10 +1620,10 @@ fn delete_profile_needs_danger_confirm() {
             .is_none(),
         "keep does not delete"
     );
-    // Again, choose the danger option explicitly.
+    // Again, choose the action explicitly (Shift+Tab to it, Enter).
     h.type_text("d");
     h.turns(2);
-    h.key(b"\x1b[Z"); // Shift+Tab to the action button — up to "Delete the profile"
+    h.key(b"\x1b[Z");
     h.turn();
     h.type_text("\r");
     h.turns(2);
@@ -3231,12 +3185,7 @@ fn review_screen_renders_whole_at_both_sizes() {
 /// the Review screen with the provider pinned BY NAME (no modal).
 #[test]
 fn providers_t_jumps_to_inline_sandbox_prefilled() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_available_providers();
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
-    h.store.providers.set(Loadable::Ready(providers_fixture()));
-    h.turns(3);
+    let mut h = providers_harness();
     h.type_text("t");
     let s = h.turns(3);
     assert_eq!(
@@ -3249,9 +3198,6 @@ fn providers_t_jumps_to_inline_sandbox_prefilled() {
         pinned.starts_with("endpoint:"),
         "the selected profile's provider is pinned by name: {pinned:?}"
     );
-    // The visible acknowledgment is the pinned pick itself: the picker
-    // renders the provider name (notices are screen-scoped and would
-    // be retired on arrival — the state change is the evidence).
     assert!(
         s.contains(&pinned),
         "the landing screen shows the pinned provider:\n{s}"
@@ -3582,21 +3528,17 @@ fn token_waits_for_open_prompt() {
 /// escape_closes_form_modal).
 #[test]
 fn escape_on_dirty_form_asks_discard_then_discards() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_available_providers();
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
-    h.turns(2);
+    let mut h = providers_harness();
     h.type_text("a");
     let s = h.turns(2);
-    assert!(s.contains("Add a provider connection"), "form open:\n{s}");
+    assert!(s.contains("Configure provider"), "form open:\n{s}");
     // Type into the autofocused id field → dirty.
     h.type_text("acme3");
     h.turns(2);
     h.press_escape();
     let s = h.turns(2);
     assert!(
-        s.contains("Add a provider connection") && s.contains("Discard changes?"),
+        s.contains("Configure provider") && s.contains("Discard changes?"),
         "dirty form asks first:\n{s}"
     );
     assert!(s.contains("Discard") && s.contains("Keep editing"), "{s}");
@@ -3604,9 +3546,7 @@ fn escape_on_dirty_form_asks_discard_then_discards() {
     h.press_escape();
     let s = h.turns(2);
     assert!(
-        s.contains("Add a provider connection")
-            && s.contains("acme3")
-            && !s.contains("Discard changes?"),
+        s.contains("Configure provider") && s.contains("acme3") && !s.contains("Discard changes?"),
         "kept editing:\n{s}"
     );
     // Ask again; Discard (Shift+Tab to it, Enter) closes the form.
@@ -3617,7 +3557,7 @@ fn escape_on_dirty_form_asks_discard_then_discards() {
     h.key(b"\r");
     let s = h.turns(2);
     assert!(
-        !s.contains("Add a provider connection") && !s.contains("Discard changes?"),
+        !s.contains("Configure provider") && !s.contains("Discard changes?"),
         "Discard closed the form:\n{s}"
     );
 }
@@ -3625,11 +3565,7 @@ fn escape_on_dirty_form_asks_discard_then_discards() {
 /// The question's default is the safe answer: Enter on it keeps editing.
 #[test]
 fn discard_question_defaults_to_keep_editing() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_available_providers();
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
-    h.turns(2);
+    let mut h = providers_harness();
     h.type_text("a");
     h.turns(2);
     h.type_text("acme3");
@@ -3639,7 +3575,7 @@ fn discard_question_defaults_to_keep_editing() {
     h.key(b"\r");
     let s = h.turns(2);
     assert!(
-        s.contains("Add a provider connection") && !s.contains("Discard changes?"),
+        s.contains("Configure provider") && !s.contains("Discard changes?"),
         "Enter kept editing:\n{s}"
     );
 }
@@ -3826,7 +3762,7 @@ fn footer_leads_with_the_screen_keys_at_80x24() {
     h.connect_as_admin();
     h.ui.wizard.set(false);
     for (screen, lead) in [
-        (1usize, "v local/remote/available"),
+        (1usize, "↑↓ rows · Tab next table"),
         (2, "Enter/e edit route"),
         (3, "↑↓ rows · Enter Email"),
         (4, "Enter inspect runtime"),
@@ -4191,32 +4127,33 @@ fn wizard_steps_carry_a_goal_line() {
 /// (the operator is deliberately changing an existing profile).
 #[test]
 fn profile_form_folds_advanced_fields_on_create() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_available_providers();
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
-    h.turns(2);
+    // R15 D1: no disclosure ("More options" / "Advanced") — every field of
+    // the web's endpoint modal is visible, create and edit alike, with the
+    // model allowlist under its content-named section "Visible models".
+    let mut h = providers_harness();
     h.type_text("a");
     let s = h.turns(2);
-    // Happy path visible.
-    assert!(s.contains("family"), "family in happy path:\n{s}");
-    assert!(s.contains("API key"), "API key in happy path:\n{s}");
-    // The disclosure header is present…
-    assert!(s.contains("More options"), "disclosure header:\n{s}");
-    // …and the advanced fields are folded away (scope radio hidden).
-    assert!(
-        !s.contains("just this login"),
-        "scope folded on create:\n{s}"
-    );
+    for needle in [
+        "Provider type",
+        "Who can use it?",
+        "Provider ID",
+        "Name",
+        "Description",
+        "Base URL",
+        "API key",
+        "Enabled",
+        "Visible models",
+    ] {
+        assert!(s.contains(needle), "{needle:?} on create:\n{s}");
+    }
+    assert!(!s.contains("More options"), "no disclosure:\n{s}");
     h.press_escape();
     h.turns(2);
-
-    // Edit mode opens the disclosure: scope is visible immediately.
     h.type_text("e");
     let s = h.turns(2);
     assert!(
-        s.contains("just this login"),
-        "edit mode opens the advanced fields:\n{s}"
+        s.contains("Who can use it?") && s.contains("Clear stored API key"),
+        "edit shows them too:\n{s}"
     );
 }
 
@@ -4751,25 +4688,15 @@ fn double_click_opens_entity_manage_menu() {
 /// Enter now that an activation is bound — same body as `e`).
 #[test]
 fn enter_activates_profile_editor() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_available_providers();
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
-    h.store.providers.set(Loadable::Ready(providers_fixture()));
-    h.turns(2);
-    // R7.2: Enter expands the row (description, endpoint, its actions);
-    // e opens the editor (the web row's Edit button).
+    let mut h = providers_harness();
+    // R15: a click selects a row of the Available Providers table (and
+    // gives it the keyboard); Enter = the row's first action (Edit).
+    click_after(&mut h, "Available Providers", "test endpoint");
     h.type_text("\r");
     let s = h.turns(3);
     assert!(
-        s.contains("test endpoint") && s.contains("e Edit · d Delete"),
-        "Enter expands the selected profile:\n{s}"
-    );
-    h.type_text("e");
-    let s = h.turns(3);
-    assert!(
-        s.contains("Edit profile 'acme'"),
-        "e opens the selected profile in its editor:\n{s}"
+        s.contains("Configure Custom OpenAI-compatible"),
+        "Enter opens the selected profile in its editor:\n{s}"
     );
 }
 
@@ -7361,7 +7288,7 @@ fn footer_hints_stay_in_lockstep_with_screens() {
     h.connect_as_admin();
     h.ui.wizard.set(false);
     for (screen, needle) in [
-        (1usize, "local/remote/available"),
+        (1usize, "Add connection"),
         (2, "edit route"),
         (3, "Enter Email"),
         (4, "inspect runtime"),
