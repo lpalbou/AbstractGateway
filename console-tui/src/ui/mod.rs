@@ -2258,7 +2258,7 @@ pub fn screen_hint_pairs(ctx: &Ctx) -> Vec<(String, String)> {
         SCREEN_WORKFLOWS => pairs.extend(workflows::hints(&ctx_hints)),
         SCREEN_SKILLS => pairs.extend(skills_mcp::hints(&ctx_hints)),
         SCREEN_REVIEW => pairs.extend(sandbox::hints(&ctx_hints)), // R15 arm
-        SCREEN_MODELS => pairs.extend(models::hints(&ctx_hints)), // R15 arm
+        SCREEN_MODELS => pairs.extend(models::hints(&ctx_hints)),  // R15 arm
         // The shared screens publish their own verbs.
         SCREEN_CATALOG => pairs.extend(catalog::hints(non_admin)), // R15 arm
         SCREEN_ENGINES => {
