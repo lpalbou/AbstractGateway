@@ -700,7 +700,7 @@ def docs_wording() -> dict:
         "busy": req(isl, r'sendLabel:"Send",busyLabel:"([^"]*)"', "busy label"),
         "stop": req(isl, r'"aria-label":"(Stop)","data-af-tip":"Stop the answer"', "Stop"),
         "stop_tip": req(isl, r'"aria-label":"Stop","data-af-tip":"([^"]*)"', "Stop tip"),
-        "stopped": req(isl, r'content:V\?"([^"]*)":String', "Stopped sentence"),
+        "stopped": req(isl, r'content:[A-Za-z_$][\w$]*\?"([^"]*)":String', "Stopped sentence"),
         "empty": req(isl, r'children:\["(Ask anything about) ",e\.source\.name,"\."\]', "empty state") + " {name}.",
         "footer": req(isl, r'children:\["(Grounded on) ",e\.source\.name,"’s documentation \(llms\.txt\) · docs-qa"\]', "footer")
         + " {name}’s documentation (llms.txt) · docs-qa",
