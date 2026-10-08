@@ -861,6 +861,96 @@ def entity_wording() -> dict:
     return {"tabs": tabs, "cards": cards, "buttons": buttons, "freeze_question": freeze_q, "create": create}
 
 
+
+def _one(src: str, pattern: str, what: str, flags: int = 0) -> str:
+    m = re.findall(pattern, src, flags)
+    if len(m) != 1:
+        fail(f"{what}: expected exactly one match, found {len(m)} (the anchor moved).")
+    return m[0]
+
+
+def multimodal_wording() -> dict:
+    """Multimodal: the page head, the scope sentences, the table's columns,
+    the row actions' words and tooltip templates (R14-W7 icon buttons:
+    `{label} {key}`, `Clear {key}`, `Download {artifact} with {provider}`,
+    `Copy: {instruction}`), the Weights pill vocabulary, the status
+    vocabulary, the banner, and the "Configure capability default" modal."""
+    src = read_b("console.py")
+    head = re.search(r'defaults: \["(Multimodal Capabilities)", "([^"]+)"\]', src)
+    if not head:
+        fail("the Multimodal heading (`defaults: [\"Multimodal Capabilities\", …]`) is missing.")
+    scope = re.search(r'\$\("defaults-scope"\)\.textContent = p\.admin\s*\? "([^"]+)"\s*: "([^"]+)";', src)
+    if not scope:
+        fail("the Multimodal scope sentences (defaults-scope) are missing.")
+    cols = _one(src, r'<table class="capability-table">\s*<thead><tr>((?:<th>[^<]+</th>)+)</tr></thead>', "the capability table head")
+    labels = re.search(
+        r'function defaultRowActionLabel\(row\) \{\s*if \(row\?\.covered_by === "input\.text"\) return row\?\.overrideable \? "(Override)" : "(Covered by input\.text)";\s*'
+        r'if \(row\?\.derived_from === "input\.text"\) return "(Derived \\u2190 input\.text)";\s*'
+        r'if \(defaultRowConfigured\(row\)\) return "(Edit)";.*?return defaultRowIsTaskParent\(row\) \? "(Set for all)" : "(Configure)";',
+        src, re.S)
+    if not labels:
+        fail("defaultRowActionLabel's words moved.")
+    weights = dict(re.findall(r'(\w+): \{ label: "([^"]+)", cls: "\w+" \}', _one(src, r"const WEIGHT_LABELS = \{(.*?)\};", "WEIGHT_LABELS", re.S)))
+    unknown = re.search(r'if \(a\.status === "unknown"\) return a\.downloadable \? \{ label: "([^"]+)".*?: \{ label: "([^"]+)"', src)
+    if not unknown or len(weights) != 4:
+        fail("the Weights pill vocabulary (WEIGHT_LABELS / weightView) moved.")
+    status = []
+    body = _one(src, r"function defaultRowStatus\(row\) \{(.*?)\n\s*\}\n", "defaultRowStatus", re.S)
+    for lab in re.findall(r'label: (?:rowHasProviderModel\(row\) \? )?"([^"]+)"', body):
+        status.append(lab.replace("\\u2190", "←"))
+    inh = re.search(r"label: `(inherited ← )\$\{defaultRowParentKey\(row\)\}`", body)
+    if not inh:
+        fail("defaultRowStatus' inherited label moved.")
+    status.append(inh.group(1) + "{parent}")
+    if "configured" not in status or "not configured" not in status:
+        fail(f"defaultRowStatus' labels moved: {status!r}")
+    def tip(pattern: str, what: str) -> str:
+        return _one(src, pattern, what).replace("${defaultRowActionLabel(row)}", "{label}").replace("${key}", "{key}") \
+            .replace("${artifact}", "{artifact}").replace("${row.provider}", "{provider}").replace("${availability.instruction}", "{instruction}")
+    modal = _one(src, r'(<div id="default-modal-backdrop".*?)<div id="log-modal-backdrop"', "the Configure capability default modal", re.S)
+    mtitle = _one(modal, r'<h2 id="default-modal-title">([^<]+)</h2>', "modal title")
+    mdesc = _one(modal, r'<p id="default-modal-description">([^<]+)</p>', "modal description")
+    buttons = []
+    for bid in ("close-default-modal", "clear-default", "test-default", "save-default"):
+        m = re.search(rf'<button id="{bid}"([^>]*)>(?:<span class="button-icon"[^>]*>[^<]*</span>)?(?:<span>)?([^<]+)', modal)
+        if not m:
+            fail(f"modal button {bid} moved.")
+        t = re.search(r'title="([^"]*)"', m.group(1))
+        buttons.append({"label": m.group(2).strip(), "title": html.unescape(t.group(1)) if t else ""})
+    return {
+        "title": head.group(1),
+        "subtitle": head.group(2),
+        "scope_admin": scope.group(1),
+        "scope_user": scope.group(2),
+        "apply": {"label": _one(src, r'id="defaults-apply-recommended"[^>]*>.*?<span>([^<]+)</span></button>', "apply label"),
+                  "title": _one(src, r'id="defaults-apply-recommended" class="secondary" title="([^"]+)"', "apply title")},
+        "refresh": {"label": _one(src, r'id="refresh-catalog"[^>]*>.*?<span>([^<]+)</span></button>', "refresh label"),
+                    "title": _one(src, r'id="refresh-catalog" class="secondary" title="([^"]+)"', "refresh title")},
+        "columns": re.findall(r"<th>([^<]+)</th>", cols),
+        "empty": _one(src, r'class="empty">(No capability routes were returned by Gateway\.)</td>', "the empty sentence"),
+        "action_labels": [x.replace("\\u2190", "←") for x in labels.groups()],
+        "tips": {
+            "configure": tip(r"configure\.dataset\.afTip = `([^`]+)`;", "configure tip"),
+            "clear": tip(r"clear\.dataset\.afTip = `([^`]+)`;", "clear tip"),
+            "download": tip(r"download\.dataset\.afTip = `([^`]+)`;", "download tip"),
+            "copy": tip(r"copy\.dataset\.afTip = `([^`]+)`;", "copy tip"),
+        },
+        "weights": {**weights, "unknown_downloadable": unknown.group(1), "unknown_not_downloadable": unknown.group(2)},
+        "weight_tip_fix": _one(src, r"if \(a\.instruction\) lines\.push\(`(To fix: )\$\{a\.instruction\}`\);", "weightTip To fix"),
+        "status": status,
+        "banner": {
+            "one": _one(src, r'gaps\.length === 1 \? "(One route has)"', "banner one"),
+            "many": _one(src, r': `\$\{gaps\.length\} (routes have)`\}', "banner many"),
+            "tail": _one(src, r'\} (no model yet) \(\$\{routes\}\)\. `', "banner tail"),
+            "recommended": _one(src, r'\+ `(Recommended to get started: )\$\{pairs\}\. `', "banner recommended"),
+            "button": _one(src, r'aria-hidden="true">⭳</span><span>(Download missing)</span>', "Download missing"),
+        },
+        "dialog": {"title": mtitle, "lead": mdesc, "buttons": buttons,
+                   "base_url_placeholder": _one(modal, r'id="modal-default-base-url"[^>]*placeholder="([^"]+)"', "base URL placeholder"),
+                   "labels": ["Provider", "Model", "Voice", "Reasoning"] if all(f"<label>{x}<select" in modal or f'>{x}<select' in modal for x in ("Provider", "Model", "Voice", "Reasoning")) else fail("modal labels moved")},
+    }
+
+
 B_SCREENS = {
     "about": about_wording,
     "network": network_wording,
@@ -868,6 +958,7 @@ B_SCREENS = {
     "models": models_wording,
     "sandbox": sandbox_wording,
     "entity": entity_wording,
+    "multimodal": multimodal_wording,
 }
 
 

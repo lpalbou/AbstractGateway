@@ -45,7 +45,7 @@ fn transcription_line_names_the_engine_and_the_true_reason() {
 fn multimodal_screen_shows_the_transcription_line() {
     let mut h = shots::routes_screen((120, 40), voice_missing());
     let s = h.turns(3);
-    assert!(s.contains("Multimodal — which provider"), "{s}");
+    assert!(s.contains("Multimodal Capabilities"), "{s}");
     assert!(
         s.contains("Transcription (speech → text): huggingface"),
         "{s}"

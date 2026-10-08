@@ -2246,21 +2246,7 @@ pub fn screen_hint_pairs(ctx: &Ctx) -> Vec<(String, String)> {
     match screen {
         SCREEN_CONNECTION => pairs.extend(connection::hints(&ctx_hints)), // R15 arm
         SCREEN_PROVIDERS => pairs.extend(providers::hints(&store)),
-        2 => {
-            pairs.push(("Enter/e", "edit route"));
-            pairs.push(("x", "clear route"));
-            // `d` is "delete" on Connections/Users and
-            // "download" nowhere: weights are `w`, the whole
-            // recommended set `D`, each behind a confirm. (The
-            // plan line on the screen teaches p / D / a too, for
-            // rows too narrow to reach them here.)
-            pairs.push(("w", "download weights"));
-            pairs.push(("a", "apply recommended"));
-            pairs.push(("D", "download all"));
-            pairs.push(("C", "cancel download all"));
-            pairs.push(("p", "recommended plan"));
-            pairs.push(("r", "refresh"));
-        }
+        SCREEN_ROUTES => pairs.extend(routes::hints(&ctx_hints)), // R15 arm
         SCREEN_USERS => pairs.extend(users::hints(&ctx_hints)),
         SCREEN_RUNTIMES => pairs.extend(runtimes::hints(&ctx_hints)), // R15 arm
         // Named arms from here down (the numbered arms above

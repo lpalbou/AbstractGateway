@@ -1,0 +1,95 @@
+{
+  "_source": "scripts/extract_web_wording.py (do not edit by hand)",
+  "title": "Multimodal Capabilities",
+  "subtitle": "Which provider/model serves each capability route",
+  "scope_admin": "Editing as admin changes the Gateway multimodal capability defaults. Users inherit these unless they set their own runtime defaults.",
+  "scope_user": "Editing here changes your runtime multimodal capability defaults. Unset routes inherit the Gateway defaults.",
+  "apply": {
+    "label": "Apply recommended",
+    "title": "Set the recommended provider/model on the text, voice, transcription, image and video routes this computer can run. Routes you configured differently are kept."
+  },
+  "refresh": {
+    "label": "Refresh",
+    "title": "Reload providers and capability defaults"
+  },
+  "columns": [
+    "Route",
+    "Capability",
+    "Provider",
+    "Model",
+    "Weights",
+    "Source",
+    "Status",
+    "Actions"
+  ],
+  "empty": "No capability routes were returned by Gateway.",
+  "action_labels": [
+    "Override",
+    "Covered by input.text",
+    "Derived ← input.text",
+    "Edit",
+    "Set for all",
+    "Configure"
+  ],
+  "tips": {
+    "configure": "{label} {key}",
+    "clear": "Clear {key}",
+    "download": "Download {artifact} with {provider}",
+    "copy": "Copy: {instruction}"
+  },
+  "weights": {
+    "installed": "installed",
+    "absent": "not downloaded",
+    "unknown": "unknown",
+    "not_applicable": "remote",
+    "unknown_downloadable": "download needed",
+    "unknown_not_downloadable": "not checked"
+  },
+  "weight_tip_fix": "To fix: ",
+  "status": [
+    "covered by input.text",
+    "derived ← input.text",
+    "cannot run here",
+    "engine missing",
+    "configured",
+    "not needed",
+    "not configured",
+    "inherited ← {parent}"
+  ],
+  "banner": {
+    "one": "One route has",
+    "many": "routes have",
+    "tail": "no model yet",
+    "recommended": "Recommended to get started: ",
+    "button": "Download missing"
+  },
+  "dialog": {
+    "title": "Configure capability default",
+    "lead": "Select a provider and one of its discovered models.",
+    "buttons": [
+      {
+        "label": "Cancel",
+        "title": ""
+      },
+      {
+        "label": "Clear",
+        "title": "Remove this override — the route falls back to what it inherits"
+      },
+      {
+        "label": "Test",
+        "title": "Test this selection with a real generation through the production lane — for voice routes, hear the selected voice before saving"
+      },
+      {
+        "label": "Save",
+        "title": "Persist this provider/model as the capability default"
+      }
+    ],
+    "base_url_placeholder": "inherit from the provider — e.g. http://localhost:1234/v1",
+    "labels": [
+      "Provider",
+      "Model",
+      "Voice",
+      "Reasoning"
+    ]
+  }
+}

@@ -317,18 +317,19 @@ fn admin_reaches_the_gated_verbs() {
 fn footer_hides_admin_verbs_from_a_non_admin() {
     let mut h = harness();
     let s = h.on(ui::SCREEN_ROUTES, true);
+    // R15: the Multimodal hints name the web's buttons.
     assert!(
-        s.contains("apply recommended") && s.contains("download weights"),
+        s.contains("Apply recommended") && s.contains("Download all"),
         "{s}"
     );
     assert!(s.contains("Ctrl+G setup guide"), "{s}");
     let mut h = harness();
     let s = h.on(ui::SCREEN_ROUTES, false);
-    assert!(s.contains("edit route") && s.contains("clear route"), "{s}");
+    assert!(s.contains("Enter Configure"), "{s}");
     for hidden in [
-        "apply recommended",
-        "download weights",
-        "download all",
+        "Apply recommended",
+        "Download missing",
+        "Download all",
         "Ctrl+G",
     ] {
         assert!(
@@ -337,7 +338,7 @@ fn footer_hides_admin_verbs_from_a_non_admin() {
         );
     }
     assert!(
-        s.contains("w/a/D/C admin only"),
+        s.contains("a/m/D admin only"),
         "disabled with the reason:\n{s}"
     );
     let s = h.on(ui::SCREEN_MODELS, false);

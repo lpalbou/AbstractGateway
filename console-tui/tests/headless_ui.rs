@@ -1106,9 +1106,7 @@ fn routes_model_step_shows_the_plan_and_downloads_all() {
         s.contains("Download the recommended set"),
         "confirm first:\n{s}"
     );
-    // Danger confirm defaults to keep → Up to "Download all".
-    h.key(b"\x1b[Z"); // Shift+Tab to the action button
-    h.turn();
+    // R15: a download confirm is a plain one — focus on [Download all].
     h.type_text("\r");
     h.turns(2);
     let cmds = h.drain_cmds();
@@ -1197,7 +1195,9 @@ fn routes_show_the_unavailable_reason_and_the_plan_lists_it() {
         .set(Loadable::Ready(availability_with_plan()));
     h.ui.route_sel.set(1);
     let s = h.turns(3);
-    assert!(s.contains("unavailable here"), "state column:\n{s}");
+    // R15: the web's status pill says "not configured"; the reason rides
+    // the selected-row line.
+    assert!(s.contains("not configured"), "state column:\n{s}");
     assert!(
         s.contains("the recommended mlx-gen · AbstractFramework/flux.2-klein-4b-8bit cannot run on this computer: MLX-Gen image generation needs MLX"),
         "selected-row reason:\n{s}"
@@ -1719,8 +1719,11 @@ fn route_editor_override_flow_sends_put_with_picked_pair() {
     h.type_text("\r");
     h.turns(2);
 
-    // Mode radio has focus first: Down switches to override.
-    h.key(b"\x1b[B");
+    // R15: the mode is a Segmented (one Tab stop per segment): the chosen
+    // "use default" segment has the focus; Tab reaches "override", Enter picks.
+    h.key(b"\t");
+    h.turn();
+    h.key(b"\r");
     let s = h.turns(2);
     assert!(
         s.contains("choose a provider…"),
@@ -1769,8 +1772,8 @@ fn route_editor_override_flow_sends_put_with_picked_pair() {
     h.type_text("\r");
     h.turns(2);
 
-    // Tab past base URL + options to Save.
-    for _ in 0..3 {
+    // Tab past base URL + options and the web's [Cancel] [Clear] [Test] to [Save].
+    for _ in 0..6 {
         h.key(b"\t");
         h.turn();
     }
@@ -1849,7 +1852,8 @@ fn text_route_editor_carries_reasoning_and_sends_only_what_changed() {
     }
     h.type_text("http://127.0.0.1:1234/v1");
     h.turn();
-    for _ in 0..4 {
+    // R15: reasoning → options → MTP → [Cancel] [Clear] [Test] → [Save].
+    for _ in 0..7 {
         h.key(b"\t");
         h.turn();
     }
@@ -1929,8 +1933,9 @@ fn text_route_audition_uses_the_mtp_control_and_preserves_explicit_off() {
             screen.contains("MTP default"),
             "MTP policy control must be visible: {screen}"
         );
-        // mode -> provider -> model -> URL -> reasoning -> options -> MTP -> Save -> Test
-        for _ in 0..8 {
+        // mode -> provider -> model -> URL -> reasoning -> options -> MTP ->
+        // [Cancel] -> [Clear] -> [Test] (R15: the web's button order)
+        for _ in 0..9 {
             h.key(b"\t");
             h.turn();
         }
@@ -3662,7 +3667,7 @@ fn footer_leads_with_the_screen_keys_at_80x24() {
     h.ui.wizard.set(false);
     for (screen, lead) in [
         (1usize, "↑↓ rows · Tab next table"),
-        (2, "Enter/e edit route"),
+        (2, "↑↓ rows · Enter Configure"),
         (3, "↑↓ rows · Enter Email"),
         (4, "↑↓ Enter open runtime"),
         (5, "↑↓ rows · Enter Export"),
@@ -3888,7 +3893,10 @@ fn select_popup_inside_modal_opens_adjacent_to_its_field() {
     }
     h.type_text("\r");
     h.turns(2);
-    h.key(b"\x1b[B");
+    // R15: the mode Segmented — Tab to "override", Enter picks it.
+    h.key(b"\t");
+    h.turn();
+    h.key(b"\r");
     h.turns(2);
     h.key(b"\t");
     h.turn();
@@ -5154,10 +5162,11 @@ fn routes_screen_shows_weight_availability_and_no_banner_when_every_route_is_ans
         s.contains("installed"),
         "present weights read plainly:\n{s}"
     );
-    assert!(s.contains("weights"), "the column is labelled:\n{s}");
+    assert!(s.contains("Weights"), "the column is labelled:\n{s}");
+    // R15: the absent, downloadable row carries the web's Download button.
     assert!(
-        s.contains("download weights"),
-        "the hint row offers the verb on THIS screen:\n{s}"
+        s.contains('\u{2913}'),
+        "the row offers the Download button on THIS screen:\n{s}"
     );
 }
 
@@ -5177,7 +5186,7 @@ fn routes_screen_banners_only_the_routes_with_no_model_at_all() {
         .set(Loadable::Ready(availability_fixture_fresh_install()));
     let s = h.turns(2);
     assert!(
-        s.contains("1 route with no model yet"),
+        s.contains("One route has no model yet (input.text)."),
         "the banner counts ROUTES that need one, not catalog entries:\n{s}"
     );
     assert!(
@@ -5189,8 +5198,8 @@ fn routes_screen_banners_only_the_routes_with_no_model_at_all() {
         "the banner names the ARTIFACT, not the served id:\n{s}"
     );
     assert!(
-        s.contains("w downloads"),
-        "the actionable verb survives the elastic list:\n{s}"
+        s.contains("Download missing"),
+        "the actionable button is there (the web's Download missing):\n{s}"
     );
 }
 
@@ -5205,9 +5214,10 @@ fn a_applies_the_recommended_routes() {
     h.goto_screen(2);
     h.store.routes.set(Loadable::Ready(routes_fixture()));
     let s = h.turns(2);
+    // R15: the web's head button (its key is `a`).
     assert!(
-        s.contains("a applies the recommended routes"),
-        "the banner names the verb:\n{s}"
+        s.contains(" Apply recommended "),
+        "the head names the verb:\n{s}"
     );
     h.drain_cmds();
 
@@ -5218,7 +5228,7 @@ fn a_applies_the_recommended_routes() {
         "the prompt asks first:\n{s}"
     );
     assert!(h.drain_cmds().is_empty(), "nothing before the answer");
-    // The DEFAULT answer keeps the operator's routes.
+    // The answer (the focused [Apply recommended]) keeps the operator's routes.
     h.key(b"\r");
     h.turns(2);
     let dbg = format!("{:?}", h.drain_cmds());
@@ -5252,7 +5262,7 @@ fn a_applies_the_recommended_routes() {
     h.store.apply_followup.set(Some("Replace mine too".into()));
     let s = h.turns(3);
     assert!(s.contains("Leave them as they are"), "offered again:\n{s}");
-    h.key(b"\x1b[A");
+    h.key(b"\x1b[Z"); // Shift+Tab: from [Leave them as they are] to the action
     h.turn();
     h.key(b"\r");
     h.turns(2);
@@ -5316,9 +5326,9 @@ fn w_confirms_then_downloads_the_recommended_artifact() {
         .availability
         .set(Loadable::Ready(availability_fixture()));
     let s = h.turns(2);
-    // The verb rides in the row of an absent, downloadable model.
+    // R15: the web's pill, and the row's Download button (key w).
     assert!(
-        s.contains("not downloaded — w: download"),
+        s.contains("not downloaded") && s.contains('\u{2913}'),
         "weights cell:\n{s}"
     );
     h.drain_cmds();
@@ -5352,9 +5362,7 @@ fn w_confirms_then_downloads_the_recommended_artifact() {
         h.drain_cmds().is_empty(),
         "nothing downloads before the operator confirms"
     );
-    // Danger confirms default to the SAFE option; move to Download.
-    h.key(b"\x1b[Z"); // Shift+Tab to the action button
-    h.turn();
+    // R15: a download is a plain confirm — the focus is on [Download].
     h.key(b"\r");
     h.turns(2);
     let dbg = format!("{:?}", h.drain_cmds());
@@ -5535,7 +5543,7 @@ fn grid_rows(screen: &str) -> Vec<String> {
             l.to_string()
         };
         let body = l.trim_matches(|c| c == '│' || c == ' ');
-        if body.starts_with("route ") {
+        if body.starts_with("route ") || body.starts_with("Route ") {
             inside = true;
             continue;
         }
@@ -5568,7 +5576,8 @@ fn routes_grid_prints_whole_names_when_the_terminal_has_room() {
     for whole in [
         "AbstractFramework/wan2.2-t2v-a14b-diffusers-8bit",
         "AbstractFramework/wan2.2-i2v-a14b-diffusers-8bit",
-        "abstractcore.gateway_runtime",
+        // R15: the web's source label for abstractcore.gateway_runtime.
+        "Gateway baseline",
         "endpoint:airelay",
         "covered by input.text",
     ] {
@@ -5602,11 +5611,22 @@ fn narrow_routes_grid_keeps_the_discriminating_tail() {
     // Read the model cell across its wrap: the line holding the tag plus
     // the continuation line under it, at the same column.
     let lines: Vec<&str> = s.lines().collect();
-    for (tag, whole) in [
+    // R15: the narrow grid stacks the provider under the model (Cell::Lines),
+    // so the model's wrap is read until that line.
+    let starts: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.contains("AbstractFramework"))
+        .map(|(i, _)| i)
+        .collect();
+    for (n, (tag, whole)) in [
         ("t2v", "AbstractFramework/wan2.2-t2v-a14b-diffusers-8bit"),
         ("i2v", "AbstractFramework/wan2.2-i2v-a14b-diffusers-8bit"),
-    ] {
-        let i = lines.iter().position(|l| l.contains(tag)).expect("row");
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let i = *starts.get(n).expect("row");
         let col = lines[i].find("AbstractFramework").expect("model cell");
         let take = |l: &str| -> String {
             l.get(col..)
@@ -5617,7 +5637,12 @@ fn narrow_routes_grid_keeps_the_discriminating_tail() {
                 .trim()
                 .to_string()
         };
-        let joined = format!("{}{}", take(lines[i]), take(lines[i + 1]));
+        let mut joined = take(lines[i]);
+        let mut k = i + 1;
+        while joined.len() < whole.len() && k < lines.len() {
+            joined.push_str(&take(lines[k]));
+            k += 1;
+        }
         assert_eq!(joined, whole, "{tag} cell whole across its wrap:\n{s}");
     }
     // The closed vocabulary keeps its whole word at every width.
@@ -7220,7 +7245,7 @@ fn footer_hints_stay_in_lockstep_with_screens() {
     h.ui.wizard.set(false);
     for (screen, needle) in [
         (1usize, "Add connection"),
-        (2, "edit route"),
+        (2, "Enter Configure"),
         (3, "Enter Email"),
         (4, "open runtime"),
         (5, "Drafts"),
@@ -8382,9 +8407,10 @@ fn eighty_by_twenty_four_nothing_is_clipped() {
         "no ellipsis on the intro:\n{s}"
     );
 }
-/// A choice dialog does not show the screen through (review 2 e): an
-/// opaque backdrop covers the screen while the prompt is open, and it is
-/// gone once the prompt resolves.
+/// A choice dialog does not show the screen through (review 2 e). R15 F1:
+/// Multimodal's Apply recommended asks with THE confirm widget (w::Confirm)
+/// — its sentence and [Apply recommended] [Cancel] on an opaque panel; the
+/// page stays visible AROUND it; Esc keeps things as they are.
 #[test]
 fn a_choice_dialog_covers_the_screen_while_open() {
     let mut h = harness_sized(Size::new(80, 24));
@@ -8392,23 +8418,25 @@ fn a_choice_dialog_covers_the_screen_while_open() {
     h.goto_screen(2);
     h.store.routes.set(Loadable::Ready(routes_fixture()));
     let s = h.turns(3);
-    assert!(s.contains("Multimodal — which provider"), "{s}");
+    assert!(s.contains("Multimodal Capabilities"), "{s}");
     h.key(b"a");
     let s = h.turns(3);
     assert!(
-        s.contains("Apply — keep routes I configured"),
+        s.contains("Apply the framework's recommended routes")
+            && s.contains(" Apply recommended ")
+            && s.contains(" Cancel "),
         "the dialog:\n{s}"
-    );
-    assert!(
-        !s.contains("Multimodal — which provider") && !s.contains("input.video"),
-        "the screen does not show around/through the dialog:\n{s}"
     );
     h.press_escape();
     let s = h.turns(3);
     assert!(
-        s.contains("Multimodal — which provider"),
+        s.contains("Multimodal Capabilities") && !s.contains(" Cancel "),
         "the screen is back:\n{s}"
     );
+    assert!(h
+        .drain_cmds()
+        .iter()
+        .all(|c| !matches!(c, Cmd::ApplyRecommendedRoutes { .. })));
 }
 
 /// 80x24: the export dialog's path field stays inside the dialog.
@@ -8539,8 +8567,9 @@ fn routes_and_plan_show_engine_missing_and_the_gpu_limit() {
         s.contains("engine missing: MLX (mlx-lm) is not installed in this Python environment"),
         "selected-row line:\n{s}"
     );
+    // R15: the plan has its own button ("Recommended for this computer").
     assert!(
-        s.contains("1 engine missing (p says what to install)"),
+        s.contains("1 engine missing") && s.contains("Recommended for this computer"),
         "plan banner:\n{s}"
     );
     h.type_text("p");
