@@ -85,22 +85,24 @@ fn groups_rows_and_the_web_words() {
         let mut h = page(size, true);
         let s = h.shoot("workflows");
         assert!(
-            s.contains("Workflows — Bundles, versions, import and export"),
+            s.contains("Workflows") && s.contains("Bundles, versions, import and export"),
             "{s}"
         );
-        assert!(
-            s.contains("Shared with everyone") && s.contains("Mine"),
-            "{s}"
-        );
+        assert!(s.contains("Shared with everyone"), "{s}");
+        // The table windows itself on a short page: End reaches "Mine".
+        let s = if size.1 < 30 { h.key(b"\x1b[F") } else { s };
+        assert!(s.contains("Mine"), "{s}");
+        let s = h.key(b"\x1b[H");
         assert!(
             s.contains("Basic agent") && s.contains("basic-agent"),
             "{s}"
         );
         assert!(s.contains("0.0.5 +1 older"), "{s}");
+        // R15: the switches are Toggles labelled by the feature.
         assert!(
-            s.contains("[ ] Drafts")
-                && s.contains("[ ] Older versions")
-                && s.contains("[ ] Show archived"),
+            s.contains("●─ Drafts")
+                && s.contains("●─ Older versions")
+                && s.contains("●─ Show archived"),
             "{s}"
         );
         assert!(
@@ -111,8 +113,8 @@ fn groups_rows_and_the_web_words() {
             }),
             "admin column:\n{s}"
         );
-        assert!(s.contains("[x]") && s.contains("[ ]"), "{s}");
-        assert!(s.contains("⚠ Broken workflows"), "{s}");
+        // The Available to users cells: one on, one off.
+        assert!(s.contains("━●") && s.matches("●─").count() >= 4, "{s}");
         if size.0 >= 110 {
             assert!(
                 s.contains("Shipped") && s.contains("AbstractCode —") && s.contains("From"),
@@ -122,6 +124,11 @@ fn groups_rows_and_the_web_words() {
         assert!(!s.contains('…'), "cut:\n{s}");
         h.assert_fits();
     }
+    // The Broken workflows section follows on the same page (scrolled into
+    // view on a short terminal).
+    let mut h = page((120, 60), true);
+    let s = h.text();
+    assert!(s.contains("⚠ Broken workflows"), "{s}");
 }
 
 #[test]
@@ -133,19 +140,24 @@ fn a_user_sees_no_availability_column() {
 
 #[test]
 fn rows_never_expand_and_older_versions_are_their_own_rows() {
-    // R8.1: no ▸ unfold — the highlighted row's actions sit in one line;
+    // R8.1: no ▸ unfold — R15: the row's actions are glyph buttons in its
+    // own Actions cell; Enter = the first one (Export), nothing expands.
     // "Older versions" lists each older version as its own row.
     let mut h = page((80, 24), true);
+    h.sent();
     let s = h.key(b"\r");
     assert!(
         !s.contains("0.0.5 — published"),
         "Enter expands nothing:\n{s}"
     );
-    assert!(s.contains("Basic agent (Shipped · used by"), "{s}");
-    assert!(
-        s.contains("x Export") && s.contains("f Open in AbstractFlow"),
-        "{s}"
-    );
+    assert!(h.sent().iter().any(|c| matches!(c, Cmd::Workflows(WfCmd::Export { bundle_id, .. }) if bundle_id == "basic-agent")));
+    let row = s
+        .lines()
+        .find(|l| l.contains("Basic agent"))
+        .unwrap_or_else(|| panic!("{s}"));
+    assert!(row.contains("⤓") && row.contains("⇗"), "{s}");
+    // At 80 columns Source / Used by ride in the name cell.
+    assert!(s.contains("Shipped · AbstractCode —"), "{s}");
     h.shoot("workflows-actions");
     h.key(b"o");
     let s = h.text();
@@ -168,6 +180,20 @@ fn availability_switch_sends_the_web_route() {
     );
 }
 
+/// Click the `label` button of an open dialog.
+fn click_confirm(h: &mut r7w1::Harness, label: &str, other: &str) -> String {
+    let screen = h.turns(1);
+    let (y, line) = screen
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains(&format!(" {label} ")) && l.contains(&format!(" {other} ")))
+        .last()
+        .unwrap_or_else(|| panic!("no [{label}] [{other}] button row:\n{screen}"));
+    let b = line.rfind(&format!(" {label} ")).unwrap() + 1;
+    let x = line[..b].chars().count() + 1;
+    h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes())
+}
+
 #[test]
 fn shipped_cannot_be_archived_and_mine_asks_inline() {
     let mut h = page((120, 40), true);
@@ -186,42 +212,44 @@ fn shipped_cannot_be_archived_and_mine_asks_inline() {
         s.contains("Archive Note taker? It disappears from lists and can't start new runs"),
         "{s}"
     );
-    assert!(h.sent().is_empty(), "nothing before y");
-    h.key(b"y");
+    assert!(h.sent().is_empty(), "nothing before [Archive]");
+    // R15 F1: the confirmation's [Archive] button does it.
+    click_confirm(&mut h, "Archive", "Cancel");
     assert!(h.sent().iter().any(|c| matches!(c, Cmd::Workflows(WfCmd::Archive { bundle_id, .. }) if bundle_id == "note-taker")));
 }
 
 #[test]
 fn defaults_tab_options_state_and_streaming() {
-    for size in SIZES {
+    // R15: the defaults are a card on the Workflows page (no tab), below the
+    // table (scrolled into view on a short terminal).
+    for size in [(120, 60), (100, 60)] {
         let mut h = page(size, true);
-        h.key(b"\t");
         let s = h.shoot("workflows-defaults");
-        assert!(s.contains("[Default workflow per app]"), "{s}");
+        assert!(s.contains("Default workflow per app"), "{s}");
         assert!(s.contains("When an app asks for “an agent”"), "{s}");
         assert!(
             s.contains("AbstractCode — chat agent")
                 && s.contains("Gateway default: Basic agent 0.0.5"),
             "{s}"
         );
-        assert!(s.contains("gone@1:f1 (not installed) · Broken"), "{s}");
-        assert!(s.contains("Other workflow types (1) — o shows them"), "{s}");
-        assert!(s.contains("[x] Streamed replies"), "{s}");
+        assert!(s.contains("gone@1:f1 (not installed)"), "{s}");
+        assert!(s.contains("Broken: gone@1 is not installed"), "{s}");
+        // R15 D1: the other types are a visible section, never folded.
+        assert!(
+            s.contains("Other workflow types (1)") && s.contains("Batch map-reduce"),
+            "{s}"
+        );
+        assert!(s.contains("━● Streamed replies"), "{s}");
         h.assert_fits();
     }
 }
 
 #[test]
 fn picking_a_default_saves_at_once() {
-    let mut h = page((120, 40), true);
-    h.key(b"\t");
+    let mut h = page((120, 60), true);
     h.sent();
-    let s = h.key(b"\r");
-    assert!(
-        s.contains("Default workflow per app — AbstractCode — chat agent"),
-        "{s}"
-    );
-    assert!(s.contains("Note taker 1.2.0"), "{s}");
+    let s = h.click_text("Gateway default: Basic agent 0.0.5");
+    assert!(s.contains("Note taker 1.2.0"), "the picker's popup:\n{s}");
     h.key(b"\x1b[B");
     h.key(b"\x1b[B");
     h.key(b"\r");
@@ -235,12 +263,11 @@ fn picking_a_default_saves_at_once() {
 #[test]
 fn a_user_never_sees_the_default_workflow_per_app() {
     // R8.1: "Default workflow per app" is admin-only — hidden and never
-    // read for anyone else; Tab goes straight to Broken workflows.
-    let mut h = page((120, 40), false);
+    // read for anyone else; the Broken workflows section still shows.
+    let mut h = page((120, 60), false);
     let s = h.text();
     assert!(!s.contains("Default workflow per app"), "{s}");
-    let s = h.key(b"\t");
-    assert!(s.contains("[⚠ Broken workflows]"), "{s}");
+    assert!(s.contains("⚠ Broken workflows"), "{s}");
     h.sent();
     workflows::refresh_for_tests(&h.store, &h.tx);
     let sent = h.sent();
@@ -253,8 +280,7 @@ fn a_user_never_sees_the_default_workflow_per_app() {
 
 #[test]
 fn broken_tab_lists_and_archives() {
-    let mut h = page((120, 40), true);
-    h.key(b"["); // wraps to Broken
+    let mut h = page((120, 60), true);
     let s = h.shoot("workflows-broken");
     assert!(
         s.contains("1 workflow, 1 version the gateway could not load."),
@@ -266,7 +292,14 @@ fn broken_tab_lists_and_archives() {
     );
     assert!(s.contains("needs abstractruntime >= 0.9"), "{s}");
     h.sent();
-    h.key(b"d");
+    // R15: its Archive button.
+    let (y, line) = s
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("old-flow") && l.contains("Archive"))
+        .unwrap_or_else(|| panic!("{s}"));
+    let x = line[..line.rfind("Archive").unwrap()].chars().count() + 1;
+    h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes());
     assert!(h.sent().iter().any(|c| matches!(c, Cmd::Workflows(WfCmd::ArchiveBroken { bundle_id, .. }) if bundle_id == "old-flow")));
 }
 
@@ -290,6 +323,15 @@ fn until_row(h: &mut r7w1::Harness, bundle_id: &str, archived: Option<bool>) {
                     .any(|r| r.bundle_id == id && archived.is_none_or(|a| r.archived == a))
             })
         })
+    });
+}
+
+/// Wait until `needle` is on screen or was said as a toast (R15: verified
+/// successes are toasts).
+fn until_said(h: &mut r7w1::Harness, needle: &str) {
+    let n = needle.to_string();
+    h.until(needle, move |_, s| {
+        s.contains(&n) || ui::w::notify::toasts().iter().any(|t| t.contains(&n))
     });
 }
 
@@ -340,7 +382,7 @@ fn live_availability_archive_export_import_default() {
     // Available to users: off, verified on the gateway, then on.
     select(&mut h, "team-digest");
     h.key(b" ");
-    h.until_text("Team digest is hidden from users");
+    until_said(&mut h, "Team digest is hidden from users");
     let alice = gw(
         "GET",
         &url,
@@ -358,13 +400,13 @@ fn live_availability_archive_export_import_default() {
     );
     select(&mut h, "team-digest");
     h.key(b" ");
-    h.until_text("Team digest is available to users again.");
+    until_said(&mut h, "Team digest is available to users again.");
     // Archive (inline confirm) then Unarchive via Show archived.
     select(&mut h, "team-digest");
     h.key(b"d");
     h.until_text("Archive Team digest?");
-    h.key(b"y");
-    h.until_text("Archived Team digest. Turn on “Show archived”");
+    click_confirm(&mut h, "Archive", "Cancel");
+    until_said(&mut h, "Archived Team digest. Turn on “Show archived”");
     let v = gw(
         "GET",
         &url,
@@ -381,11 +423,14 @@ fn live_availability_archive_export_import_default() {
         "{v}"
     );
     h.key(b"h");
-    h.until_text("[x] Show archived");
+    h.until_text("━● Show archived");
     until_row(&mut h, "team-digest", Some(true));
     select(&mut h, "team-digest");
     h.key(b"d");
-    h.until_text("Team digest is back in the lists and can start runs again.");
+    until_said(
+        &mut h,
+        "Team digest is back in the lists and can start runs again.",
+    );
     // Export then re-import the same file (installed again, same version).
     let dir = std::env::temp_dir().join(format!("r7w1-wf-{}", std::process::id()));
     h.tx.send(Cmd::Workflows(WfCmd::Export {
@@ -394,7 +439,7 @@ fn live_availability_archive_export_import_default() {
         dir: dir.clone(),
     }))
     .unwrap();
-    h.until_text("Exported team-digest@2.0.0 to");
+    until_said(&mut h, "Exported team-digest@2.0.0 to");
     let file = dir.join("team-digest@2.0.0.flow");
     assert!(std::fs::metadata(&file).unwrap().len() > 0);
     h.tx.send(Cmd::Workflows(WfCmd::Import {
@@ -403,14 +448,14 @@ fn live_availability_archive_export_import_default() {
     }))
     .unwrap();
     h.until("import result", |_h, s| {
-        s.contains("Installed") || s.contains("Failed —")
+        let said = |n: &str| s.contains(n) || ui::w::notify::toasts().iter().any(|t| t.contains(n));
+        said("Installed") || said("Failed —")
     });
     h.shoot("live-workflows-import");
-    // Default workflow per app: pick Note taker? (admin's eligible) — pick the first non-default option.
-    h.key(b"\t");
+    // Default workflow per app (the card's picker): pick the first
+    // non-default option — saved at once.
     h.until_text("AbstractCode — chat agent");
-    h.key(b"\r");
-    h.until_text("Default workflow per app — AbstractCode — chat agent");
+    h.click_text("Gateway default:");
     h.key(b"\x1b[B");
     h.key(b"\r");
     h.until_text("Saved");
@@ -418,8 +463,14 @@ fn live_availability_archive_export_import_default() {
     let row = &rc["agents"]["default_workflow"]["abstractcode.agent.v1"];
     assert_eq!(row["source"], "stored", "{row}");
     // Back to the gateway default.
-    h.key(b"\r");
-    h.until_text("Default workflow per app — AbstractCode — chat agent");
+    let s = h.turns(2);
+    let picked = s
+        .lines()
+        .find(|l| l.contains("AbstractCode — chat agent"))
+        .and_then(|l| l.split('▐').nth(1))
+        .map(|v| v.trim_end_matches(['▌', '▾', ' ']).trim().to_string())
+        .unwrap_or_default();
+    h.click_text(&picked);
     h.key(b"\x1b[A");
     h.key(b"\x1b[A");
     h.key(b"\r");

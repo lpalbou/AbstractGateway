@@ -73,20 +73,28 @@ fn select(h: &mut r8w4::Harness, row: usize) {
 
 #[test]
 fn rows_do_not_expand_and_the_actions_are_one_line() {
+    // R15: the row's actions are glyph buttons in its Actions cell (one
+    // line); Enter is the row's first action (Export) — nothing unfolds.
     for size in SIZES {
         let mut h = page(size);
         select(&mut h, 3); // group, Basic agent, group, Note taker
+        h.sent();
         let s = h.key(b"\r");
         h.shoot("workflows-row");
         assert!(
             !s.contains("Actions:") && !s.contains("▸"),
             "nothing unfolds:\n{s}"
         );
-        assert!(s.contains("Note taker"), "{s}");
-        assert!(s.contains("x Export"), "{s}");
+        let row = s
+            .lines()
+            .find(|l| l.contains("Note taker"))
+            .unwrap_or_else(|| panic!("{s}"));
+        assert!(row.contains("⤓ ⇗ ⊟ ✎"), "the row's glyph actions:\n{s}");
         assert!(
-            s.contains("d Archive") && s.contains("e Edit description"),
-            "{s}"
+            wf_cmds(&mut h)
+                .iter()
+                .any(|c| matches!(c, WfCmd::Export { bundle_id, .. } if bundle_id == "note-taker")),
+            "Enter = Export"
         );
         assert!(s.contains("My own words. (edited)"), "{s}");
         h.assert_fits();
@@ -101,14 +109,16 @@ fn older_versions_are_rows_with_their_own_archive() {
     assert!(s.contains("↳ older version") && s.contains("1.1.0"), "{s}");
     select(&mut h, 4); // the 1.1.0 row under Note taker
     let s = h.text();
-    assert!(s.contains("Note taker 1.1.0: x Export"), "{s}");
-    assert!(
-        !s.contains("e Edit description"),
-        "one description per bundle:\n{s}"
-    );
+    let row = s
+        .lines()
+        .find(|l| l.contains("↳ older version"))
+        .unwrap_or_else(|| panic!("{s}"));
+    assert!(row.contains("⤓ ⇗ ⊟"), "its own actions:\n{s}");
+    assert!(!row.contains('✎'), "one description per bundle:\n{s}");
     h.sent();
-    h.key(b"d");
-    h.key(b"y");
+    let s = h.key(b"d");
+    assert!(s.contains("Archive Note taker 1.1.0?"), "{s}");
+    click_confirm(&mut h, "Archive", "Cancel");
     match wf_cmds(&mut h).as_slice() {
         [WfCmd::Archive {
             bundle_id, version, ..
@@ -120,15 +130,32 @@ fn older_versions_are_rows_with_their_own_archive() {
     }
 }
 
+/// Click the `label` button of an open dialog (its button row holds
+/// `label` and `other`).
+fn click_confirm(h: &mut r8w4::Harness, label: &str, other: &str) -> String {
+    let screen = h.turns(1);
+    let (y, line) = screen
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains(&format!(" {label} ")) && l.contains(&format!(" {other} ")))
+        .last()
+        .unwrap_or_else(|| panic!("no [{label}] [{other}] button row:\n{screen}"));
+    let b = line.rfind(&format!(" {label} ")).unwrap() + 1;
+    let x = line[..b].chars().count() + 1;
+    h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes())
+}
+
 #[test]
 fn e_edits_the_description_in_place_and_enter_saves() {
+    // R15: `e` (or the ✎ button) opens the description form; Enter in its
+    // one field saves (the PATCH).
     for size in SIZES {
         let mut h = page(size);
         select(&mut h, 3);
         h.key(b"e");
         let s = h.shoot("workflows-description-editing");
-        assert!(s.contains("Description of Note taker:"), "{s}");
-        assert!(s.contains("Enter saves · Esc keeps"), "{s}");
+        assert!(s.contains("Description of Note taker"), "{s}");
+        assert!(s.contains("Save") && s.contains("Close"), "{s}");
         h.sent();
         // Clear and type: the input owns the keys (x/d/e do nothing here).
         h.key(b"\x1b[F"); // End: the caret starts at the beginning
@@ -153,11 +180,15 @@ fn e_edits_the_description_in_place_and_enter_saves() {
 
 #[test]
 fn esc_keeps_the_description() {
+    // Esc on an edited description asks "Discard changes?" (R15 F2);
+    // Discard keeps the gateway's description and the table has the keys.
     let mut h = page((80, 24));
     select(&mut h, 3);
     h.key(b"e");
     h.type_text(" more");
     let s = h.esc();
+    assert!(s.contains("Discard changes?"), "{s}");
+    let s = click_confirm(&mut h, "Discard", "Keep editing");
     assert!(!s.contains("Description of"), "{s}");
     assert!(wf_cmds(&mut h).is_empty());
     // The table has the keyboard again: ↑ moves the selection.
@@ -198,25 +229,25 @@ fn live_description_edit() {
             .data
             .with_untracked(|d| matches!(d, Loadable::Ready(_)))
     });
-    // Pick the row by its bundle id in the actions line.
-    let mut found = false;
-    for i in 0..60 {
-        h.store.wf.sel.set(i);
-        let s = h.turns(2);
-        if s.lines().any(|l| l.contains(&bid)) && s.contains("e Edit description") {
-            found = true;
-            break;
-        }
-    }
-    assert!(found, "{bid} editable row");
+    // Pick the row: search by its bundle id (one group caption, one row).
+    h.store.wf.query.set(bid.clone());
+    h.store.wf.sel.set(1);
+    let s = h.turns(3);
+    assert!(s.lines().any(|l| l.contains(&bid)), "{bid} row:\n{s}");
     h.key(b"e");
+    h.until_text("Description of");
     h.key(b"\x1b[F");
     for _ in 0..300 {
         h.key(b"\x7f");
     }
     h.type_text("Edited from the terminal (R8-W4).");
     h.key(b"\r");
-    h.until_text("Saved the description");
+    h.until("the description saved", |_, s| {
+        s.contains("Saved the description")
+            || ui::w::notify::toasts()
+                .iter()
+                .any(|t| t.contains("Saved the description"))
+    });
     h.shoot("live-workflows-description-saved");
     let v = gw("GET", &url, &token, "/bundles?all_versions=true", None);
     let it = v["items"]
@@ -238,7 +269,12 @@ fn live_description_edit() {
         h.key(b"\x7f");
     }
     h.key(b"\r");
-    h.until_text("Saved the description");
+    h.until("the description saved", |_, s| {
+        s.contains("Saved the description")
+            || ui::w::notify::toasts()
+                .iter()
+                .any(|t| t.contains("Saved the description"))
+    });
     let v = gw("GET", &url, &token, "/bundles?all_versions=true", None);
     let it = v["items"]
         .as_array()

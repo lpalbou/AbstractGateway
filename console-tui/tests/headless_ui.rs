@@ -3830,7 +3830,7 @@ fn footer_leads_with_the_screen_keys_at_80x24() {
         (2, "Enter/e edit route"),
         (3, "↑↓ rows · Enter Email"),
         (4, "Enter inspect runtime"),
-        (5, "Tab tab · space Available to users"),
+        (5, "↑↓ rows · Enter Export"),
         (7, "u unload"),
     ] {
         h.ui.screen.set(screen);
@@ -7365,7 +7365,7 @@ fn footer_hints_stay_in_lockstep_with_screens() {
         (2, "edit route"),
         (3, "Enter Email"),
         (4, "inspect runtime"),
-        (5, "drafts"),
+        (5, "Drafts"),
         (6, "run the test"),
         (7, "context estimate"),
         // The Models page (catalog.rs).
