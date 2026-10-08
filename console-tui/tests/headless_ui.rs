@@ -7692,10 +7692,14 @@ fn paused_banner_shows_on_every_screen_and_f2_panel_resumes() {
     let _ = h.drain_cmds();
     h.key(b"\x1bOR"); // F3
     let s = h.turns(2);
-    assert!(s.contains("Gateway host"), "F3 opens the host panel:\n{s}");
+    // R15: the panel is the web's Gateway card (title, note, Toggle).
+    assert!(
+        s.contains("How this gateway is running right now."),
+        "F3 opens the host panel:\n{s}"
+    );
     assert!(s.contains("Paused — still running"), "state pill:\n{s}");
     assert!(
-        s.contains("[x] Workflows paused"),
+        s.contains("━● Workflows paused"),
         "a switch labelled by the state:\n{s}"
     );
     assert!(!s.contains("Resume workflows"), "never the verb:\n{s}");
@@ -7841,16 +7845,16 @@ fn host_panel_start_at_login_toggle_confirms_then_puts() {
         .start_at_login
         .set(Loadable::Ready(start_at_login("off", false, true)));
     let s = h.turns(2);
+    let row = s
+        .lines()
+        .find(|l| l.contains("off — Off — nothing starts the gateway at login"))
+        .unwrap_or_else(|| panic!("{s}"));
+    assert!(row.contains("Start at login"), "the card's row:\n{s}");
     assert!(
-        s.contains("start at login: off — Off — nothing starts the gateway at login"),
-        "{s}"
-    );
-    assert!(
-        s.contains("[ ] Start at login"),
+        s.contains("●─ Start at login"),
         "a switch labelled by the feature:\n{s}"
     );
     assert!(!s.contains("Turn on"), "never the verb:\n{s}");
-    assert!(s.contains("L Start at login"), "key listed:\n{s}");
     h.type_text("L");
     let s = h.turns(2);
     // A2 (adversary note a): the confirm's focused button is named in the
@@ -7904,8 +7908,8 @@ fn host_panel_start_at_login_toggle_confirms_then_puts() {
         "{s}"
     );
     assert!(
-        s.contains("[-] Start at login — no systemd user manager"),
-        "unavailable with the reason:\n{s}"
+        s.contains("●─ Start at login"),
+        "the switch stays (refused, its reason on press):\n{s}"
     );
     h.type_text("L");
     h.turns(2);
@@ -8344,7 +8348,7 @@ fn eighty_by_twenty_four_nothing_is_clipped() {
     h.store.op.runner.set(Loadable::Ready(paused_runner()));
     h.key(b"\x1bOR");
     let s = h.turns(3);
-    for needle in ["Install update…", "Quit…", "Esc close"] {
+    for needle in ["Check now", "Quit gateway…", "Close"] {
         let row = s
             .lines()
             .find(|l| l.contains(needle))

@@ -500,6 +500,37 @@ def setup_words() -> dict:
 SCREEN_FIXTURES["setup"] = setup_words
 
 
+def host_words() -> dict:
+    """R15-A F3 host panel: the web's Gateway card (Resources) — title, note, switch, rows, buttons, questions."""
+    src = read("console.py")
+    sect = need(src, r'(<section id="gateway-host-section".*?</section>)', "gateway card", re.S)
+    keys = re.findall(r'<span class="entity-kv-key">([^<]*)</span>', sect)
+    out = {
+        "title": need(sect, r'<span>(Gateway)</span></h2>', "title"),
+        "note": need(sect, r'<p class="section-note">([^<]*)</p>', "note"),
+        "pause": need(sect, r'<span class="af-switch__label">(Workflows paused)</span>', "pause label"),
+        "pause_tip": need(sect, r'<button id="gateway-host-pause"[^>]*title="([^"]*)"', "pause tooltip"),
+        "check": need(sect, r'<button id="gateway-host-update-check"[^>]*>([^<]*)</button>', "check now"),
+        "check_tip": need(sect, r'<button id="gateway-host-update-check"[^>]*title="([^"]*)"', "check tooltip"),
+        "update": need(sect, r'<button id="gateway-host-update-start"[^>]*>([^<]*)</button>', "update"),
+        "update_tip": need(sect, r'<button id="gateway-host-update-start"[^>]*title="([^"]*)"', "update tooltip"),
+        "restart": need(sect, r'<button id="gateway-host-restart"[^>]*>([^<]*)</button>', "restart"),
+        "quit": need(sect, r'<button id="gateway-host-quit"[^>]*>([^<]*)</button>', "quit"),
+        "login": need(sect, r'<span class="af-switch__label">(Start at login)</span>', "login switch"),
+        "restart_question": need(src, r'title: "(Restart AbstractGateway\?)"', "restart title") + " " + need(src, r'title: "Restart AbstractGateway\?", message: "([^"]*)"', "restart message"),
+        "restart_go": need(src, r'title: "Restart AbstractGateway\?"[^}]*confirmLabel: "([^"]*)"', "restart button"),
+        "quit_question": need(src, r'title: "(Quit AbstractGateway\?)"', "quit title") + " " + need(src, r'title: "Quit AbstractGateway\?", message: "([^"]*)"', "quit message"),
+        "quit_go": need(src, r'title: "Quit AbstractGateway\?"[^}]*confirmLabel: "([^"]*)"', "quit button"),
+        "update_go": need(src, r'title: "Update available", message: action\.confirm, confirmLabel: "([^"]*)"', "update now"),
+    }
+    for i, k in enumerate(keys):
+        out[f"row_{i}"] = k
+    return out
+
+
+SCREEN_FIXTURES["host"] = host_words
+
+
 def screens_main(write: bool) -> int:
     rc = 0
     for name, build_fn in SCREEN_FIXTURES.items():
