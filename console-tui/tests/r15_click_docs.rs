@@ -415,3 +415,30 @@ fn the_archive_confirm_opens_on_cancel() {
         "Enter on the default keeps"
     );
 }
+
+#[test]
+fn the_status_bar_carries_the_drawers_keys_while_it_is_open() {
+    let mut h = root();
+    h.ui.screen.set(abstractgateway_console::ui::SCREEN_USERS);
+    let s = h.turns(3);
+    let bar = |s: &str| s.lines().last().unwrap_or("").to_string();
+    assert!(
+        bar(&s).contains("Enter Email"),
+        "Accounts' keys first:\n{s}"
+    );
+    h.click_text("✦ Docs");
+    let s = h.turns(3);
+    assert!(
+        bar(&s).contains("n New conversation"),
+        "the drawer's keys:\n{}",
+        bar(&s)
+    );
+    assert!(!bar(&s).contains("Enter Email"), "{}", bar(&s));
+    h.esc();
+    let s = h.turns(3);
+    assert!(
+        bar(&s).contains("Enter Email"),
+        "back to the page's keys:\n{}",
+        bar(&s)
+    );
+}

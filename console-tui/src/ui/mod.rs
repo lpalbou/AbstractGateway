@@ -2227,6 +2227,13 @@ pub fn screen_hint_pairs(ctx: &Ctx) -> Vec<(String, String)> {
     // verbs (the web hides the same controls); pressing one still
     // answers with the reason.
     let non_admin = store.conn.with(ConnPhase::is_known_non_admin);
+    // R15 arm: the docs drawer's keys while it is open (the page's are not reachable).
+    if docs::open_now(&store) {
+        return docs::hints()
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+    }
     let mut pairs: Vec<(&str, &str)> = Vec::new();
     // THE SCREEN'S OWN KEYS LEAD (review 2, 80x24): the row
     // truncates right-edge-first, and with the universal pairs

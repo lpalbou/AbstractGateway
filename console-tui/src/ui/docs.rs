@@ -88,6 +88,8 @@ pub struct DocsState {
     /// (their late answers are not shown — the kit's abort).
     pub op: Signal<u64>,
     pub stopped: Signal<Vec<u64>>,
+    /// The drawer is open (reactive: the status bar's hints follow it).
+    pub drawer_open: Signal<bool>,
 }
 
 /// A fresh conversation's session id: nothing from another conversation is replayed.
@@ -118,6 +120,7 @@ impl DocsState {
             resuming: cx.signal(None),
             op: cx.signal(0),
             stopped: cx.signal(Vec::new()),
+            drawer_open: cx.signal(false),
         }
     }
 
@@ -814,6 +817,7 @@ thread_local! {
 pub fn install(cx: Scope, ctx: &Ctx) {
     use abstracttui::app::drawer::{Drawer, DrawerEdge, DrawerFocus, DrawerSize};
     ROOT_SCOPE.with(|s| s.set(Some(cx)));
+    let open_sig = ctx.store.docs.drawer_open;
     let build = |size: f32| {
         let c = ctx.clone();
         Drawer::new(DrawerEdge::Right)
@@ -822,6 +826,12 @@ pub fn install(cx: Scope, ctx: &Ctx) {
             .title(TITLE)
             .motion(std::time::Duration::ZERO)
             .overlays(&ctx.overlays)
+            // (a drawer of a disposed console may still be told it closed)
+            .on_close(move |_| {
+                if open_sig.is_alive() {
+                    open_sig.set(false)
+                }
+            })
             .install(cx, move |dcx| drawer_view(dcx, &c))
     };
     let wide = build(0.48);
@@ -838,6 +848,11 @@ pub fn hints() -> Vec<(&'static str, &'static str)> {
         ("n", "New conversation"),
         ("Esc", "close"),
     ]
+}
+
+/// Is the docs drawer open — reactive (the status bar's hints read it).
+pub fn open_now(store: &Store) -> bool {
+    store.docs.drawer_open.get()
 }
 
 /// Is the docs drawer open (tests, the shell)?
@@ -870,6 +885,7 @@ pub fn open(ctx: &Ctx, cx: Scope) {
         Some(h) => {
             super::w::tip::hide_all();
             h.open();
+            store.docs.drawer_open.set(true);
         }
         // The root installs it (ui::root → docs::install): reaching here
         // without it is a console defect, said — never a silent no-op.
