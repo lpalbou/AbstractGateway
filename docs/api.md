@@ -42,8 +42,15 @@ serve:
 ## OpenAI API
 
 The OpenAI-compatible API is served at `/v1` on this Gateway listener
-(`/v1/models`, `/v1/chat/completions`, `/v1/embeddings`, ...); callers use their
-gateway token as the API key. `/core/v1` answers 308 to `/v1` (deprecated).
+(`/v1/models`, `/v1/chat/completions`, `/v1/embeddings`, ...); callers use one
+of their account's named API keys (valid at `/v1` only; the gateway token is
+still accepted there). `/core/v1` answers 308 to `/v1` (deprecated).
+API keys: `GET/POST /api/gateway/me/openai-keys`,
+`DELETE /api/gateway/me/openai-keys/{fingerprint}`; admins
+`GET /api/gateway/admin/accounts/{id}/openai-keys` and
+`DELETE /api/gateway/admin/accounts/{id}/openai-keys/{fingerprint}`. A named key
+sent to any `/api/gateway/` route answers `401`
+`{"detail": "This is an API key for /v1; sign in with your gateway token.", "reason_code": "openai_api_key"}`.
 Status and logs: `GET /api/gateway/openai-api[/logs]`; admin changes:
 `/api/gateway/admin/core-endpoint`. See [openai-api.md](./openai-api.md) for the
 supported surface, access settings and errors.

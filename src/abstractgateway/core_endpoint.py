@@ -5,8 +5,11 @@ answers 308 to it for one release (deprecated). Configuration, who may
 connect and the request log belong to this host; inference and provider
 credential policy belong to Core (framework ADR-0033, Core ADR-0004).
 
-Authentication: a caller's API key is their own gateway token (resolved by
-the security middleware into `scope["state"]["gateway_principal"]`). The
+Authentication: a caller's API key is one of their account's named API keys
+(round 16, `openai_keys.py`: valid at /v1 only) or, for compatibility, their
+gateway token; the security middleware resolves either into
+`scope["state"]["gateway_principal"]` (a named key also into
+`scope["state"]["openai_key"]` {label, fingerprint}). The
 stored endpoint token is the gateway's internal credential towards Core; a
 client presenting it is still accepted for one release (the 0.12.0 key).
 
@@ -482,8 +485,9 @@ ROUTING_FIELDS = frozenset({
 
 def _capability_refusal(principal) -> Optional[str]:
     """Why a signed-in caller may not use /v1 (its account's "OpenAI API" switch is off), or None.
-    The operator's own token (not a registry account) is always allowed."""
-    if getattr(principal, "source", "") != "user-registry":
+    The operator's own token (not a registry account) is always allowed. A named API key
+    (source "openai-key") obeys its account's switch exactly like the account's token."""
+    if getattr(principal, "source", "") not in ("user-registry", "openai-key"):
         return None
     from .users import GatewayUserRegistry
 
@@ -496,7 +500,13 @@ def _capability_refusal(principal) -> Optional[str]:
 def _inactive_account(token: str) -> Optional[str]:
     from .users import GatewayUserRegistry
 
-    rec = GatewayUserRegistry().inactive_record_for(token)
+    registry = GatewayUserRegistry()
+    rec = registry.inactive_record_for(token)
+    if rec is None:
+        # A named API key of a deactivated or archived account: the same 403 as its token.
+        owner = registry.openai_key_owner(token)
+        if owner is not None and (owner[0].archived or not owner[0].enabled):
+            rec = owner[0]
     return rec.user_id if rec is not None else None
 
 
@@ -808,8 +818,8 @@ class CoreEndpoint:
                 note["run_as"] = account
             if guest and path not in GUEST_PATHS and not retrieve:
                 return await openai_error(
-                    403, "Without a key, this API answers model requests only (Guest). Send your gateway token "
-                         "as the API key for this endpoint.", type_="permission_error",
+                    403, "Without a key, this API answers model requests only (Guest). Send an API key "
+                         "from the gateway's OpenAI API page.", type_="permission_error",
                     code="guest_not_allowed")(scope, receive, send)
         else:
             note["client"] = "refused"
@@ -820,8 +830,10 @@ class CoreEndpoint:
                     403, f"The account {inactive} is not active (deactivated or archived), so its key can't use the "
                          "OpenAI API. An admin can turn it back on in Accounts.", type_="permission_error",
                     code="account_inactive")(scope, receive, send)
-            message = ("Incorrect API key provided: use your gateway token." if authorization
-                       else "You didn't provide an API key: send your gateway token as Authorization: Bearer <token>.")
+            message = ("Incorrect API key provided: it is not a key of this gateway, or it was revoked. "
+                       "Make a key on the gateway's OpenAI API page." if authorization
+                       else "You didn't provide an API key: make one on the gateway's OpenAI API page and send it "
+                            "as Authorization: Bearer <key>.")
             return await openai_error(401, message, code="invalid_api_key",
                                       headers={"WWW-Authenticate": "Bearer"})(scope, receive, send)
         # A chosen Open-mode account runs with the gateway's credential, like a keyed caller;
@@ -1229,6 +1241,9 @@ def _row(doc: Dict[str, Any], api: Dict[str, Any]) -> Dict[str, Any]:
         "ts": doc.get("ts"),
         "client": api.get("client") or "unknown",
         "user_id": doc.get("principal_user_id"),
+        # The named API key that made the request (backlog 1000); null for a gateway token or Open mode.
+        "key_label": api.get("key_label"),
+        "key_fingerprint": api.get("key_fingerprint"),
         "ip": doc.get("ip"),
         "method": doc.get("method"),
         "path": doc.get("path"),

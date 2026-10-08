@@ -419,7 +419,13 @@ async def gateway_session_login(
     response: Response,
     payload: GatewaySessionLoginRequest,
 ) -> Dict[str, Any]:
-    principal = GatewayUserRegistry().authenticate(payload.token)
+    registry = GatewayUserRegistry()
+    principal = registry.authenticate(payload.token)
+    if principal is None and registry.openai_key_owner(str(payload.token or "").strip()) is not None:
+        # A named API key (backlog 1000) is for /v1 only: it never signs in.
+        from ..openai_keys import ENDPOINT_ONLY
+
+        raise HTTPException(status_code=401, detail={"reason_code": "openai_api_key", "message": ENDPOINT_ONLY})
     if principal is None or principal.source != "user-registry":
         raise HTTPException(status_code=401, detail="Invalid Gateway user token")
     expected_user = str(payload.user_id or "").strip()

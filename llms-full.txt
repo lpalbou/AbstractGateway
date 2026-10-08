@@ -465,9 +465,9 @@ session through `/api/gateway/session/login`; the raw bearer token should not be
 kept in browser storage, and the login response body does not expose the session
 id or CSRF token. One exception: the web
 console keeps the token a person typed at sign-in in session storage (local
-storage with *Remember this browser*) so the OpenAI API page can show that
-person their own API key without any server route returning a stored token; it
-is removed at sign-out. Session-authenticated writes carry
+storage with *Remember this browser*); it is removed at sign-out. No server
+route returns a stored token, and the OpenAI API page offers named
+[API keys](docs/openai-api.md#api-keys) instead of the token. Session-authenticated writes carry
 `X-AbstractGateway-Session` plus `X-AbstractGateway-CSRF`, and
 `/api/gateway/session/logout` revokes the session. Apps such as AbstractFlow,
 AbstractCode, AbstractAssistant, and AbstractObserver should authenticate as the
@@ -2718,7 +2718,7 @@ All are loaded by `load_gateway_auth_policy_from_env()` (see `src/abstractgatewa
 
 ## OpenAI API
 
-The OpenAI-compatible API at `/v1` is stopped by default. In **Protected** mode a caller's API key is their own gateway token, resolved by the security middleware; the gateway forwards authenticated requests to Core with its own internal credential, so a caller's token never reaches Core, and refused keys count toward the per-address lockout. **Open** mode serves direct local, LAN and VPN clients without a key, never through a proxy or in Internet mode, and Core keeps stored cloud-provider credentials for authenticated callers. **Who can connect** filters on the client address (the socket peer, or `X-Forwarded-For` from a proxy on this machine or a trusted proxy); **Anywhere** requires Internet mode with its acknowledgement and Protected. Request fields that would re-route a provider or carry a credential (`base_url`, `api_key`, `provider`, `headers`, ...) are refused with 400, so a caller cannot make the gateway connect to an address of its choosing. Browser pages without a key are limited to the accepted origins. Every request is one audit-log line (no prompts or replies). See [openai-api.md](docs/openai-api.md).
+The OpenAI-compatible API at `/v1` is stopped by default. In **Protected** mode a caller's API key is one of their account's named API keys (or, for compatibility, their gateway token), resolved by the security middleware. A named key is stored as a PBKDF2 hash with its fingerprint in the user registry, answered once when it is made, valid at `/v1` only (anywhere under `/api/gateway/`, sign-in included, it answers 401 and never counts as a guess), obeys its account's OpenAI API switch and Active state, and is revoked one at a time with effect at the next request; making or revoking one is an audit line (`openai_key_change`: name and fingerprint, never the key). Admins see every account's keys (never a key) and can revoke any; the gateway forwards authenticated requests to Core with its own internal credential, so a caller's token never reaches Core, and refused keys count toward the per-address lockout. **Open** mode serves direct local, LAN and VPN clients without a key, never through a proxy or in Internet mode, and Core keeps stored cloud-provider credentials for authenticated callers. **Who can connect** filters on the client address (the socket peer, or `X-Forwarded-For` from a proxy on this machine or a trusted proxy); **Anywhere** requires Internet mode with its acknowledgement and Protected. Request fields that would re-route a provider or carry a credential (`base_url`, `api_key`, `provider`, `headers`, ...) are refused with 400, so a caller cannot make the gateway connect to an address of its choosing. Browser pages without a key are limited to the accepted origins. Every request is one audit-log line naming the account and, for a named key, its name; it records the request and the response with credentials removed (the caller's key, the internal key and fields named like a credential read `[redacted]`), readable by an admin for every request and by each account for its own. See [openai-api.md](docs/openai-api.md).
 
 ---
 
@@ -2734,34 +2734,36 @@ SDK or tool that speaks the OpenAI API can use the models this gateway reaches
 http://<gateway host>:<port>/v1
 ```
 
-The API key is the caller's own **gateway token**. There is no separate process
-or port: the API follows the gateway's [Network](docs/configuration.md#network-exposure-localhost--local-network--internet)
+The API key is one of your account's **API keys**: named keys you make on the
+OpenAI API page, one per app, valid at `/v1` only (see [API keys](#api-keys)).
+There is no separate process or port: the API follows the gateway's [Network](docs/configuration.md#network-exposure-localhost--local-network--internet)
 setting, and AbstractCore answers each request behind it.
 
 ## Turn it on
 
 Open the web console, **Models → OpenAI API**. An admin sees five cards; any
 other account sees Status (running or not, the base URL), Connect your app
-(their own key), Docs and Recent requests (their own):
+(their own API keys), Docs and Recent requests (their own):
 
 - **Status**: Running or Stopped, the base URL with **Copy**; for an admin, the **Endpoint**
   switch (on: apps can connect; off: apps get 404 and open requests end),
   **Restart** (ends open requests, keeps serving) and **Check setup** (settings,
   AbstractCore's server, whether the gateway listens where *Who can connect*
   needs it, and how many models `/v1/models` lists).
-- **Connect your app**: the base URL and the API key. The key is the token you
-  sign in with, shown masked (`••••`) with an eye to reveal it and **Copy**. The
-  page fills it in from what this browser kept when you signed in with your
-  token: no gateway route ever returns a stored token. Signed in with a link or
-  an emailed code, the browser has no copy: **New key** makes one. **New key**
-  replaces your gateway token everywhere (the old one stops working) and the
-  gateway shows the new key once; this browser keeps it for the page.
+- **Connect your app**: the base URL and your **API keys**. **New key** asks for
+  a name (the app that will use it, for example "laptop Cursor"), then shows the
+  key once with **Copy**: copy it into the app right away, the gateway never
+  shows it again. The list shows each key's name, when it was made, when it was
+  last used and from which address, and its fingerprint; **Revoke** asks
+  **Revoke** / **Cancel** and refuses the key from the next request on. With no
+  key yet, the card says so.
 - **Access** (admin): *Authentication*, who requests without a key run as, and
   *Who can connect* (below). Changes apply to the next request.
 - **Docs**: what is supported, links to this page and to AbstractCore's server
   docs, and a first request (curl, Python, JavaScript) with your base URL and
-  your key (masked on the page; **Copy example** copies it in clear).
-- **Recent requests**: time, client (account and address), model, tokens in and
+  `YOUR_API_KEY`, or the key you just made (masked on the page; **Copy example**
+  copies it in clear).
+- **Recent requests**: time, client (account, the API key's name, and address), model, tokens in and
   out, latency and status, newest first, refreshed every 5 s. A row opens to the
   request and the response as recorded (see [Request log](#request-log)) with
   **Open in Observer** when the request belongs to a run. An admin sees every
@@ -2773,7 +2775,7 @@ Use `provider/model` as the model name, as listed by `GET /v1/models`.
 
 ```bash
 curl http://127.0.0.1:8080/v1/chat/completions \
-  -H "Authorization: Bearer YOUR_GATEWAY_TOKEN" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model": "ollama/qwen3:4b", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
@@ -2781,7 +2783,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 ```python
 from openai import OpenAI
 
-client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="YOUR_GATEWAY_TOKEN")
+client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="YOUR_API_KEY")
 reply = client.chat.completions.create(
     model="ollama/qwen3:4b",
     messages=[{"role": "user", "content": "Hello"}],
@@ -2792,7 +2794,7 @@ print(reply.choices[0].message.content)
 ```javascript
 import OpenAI from "openai";
 
-const client = new OpenAI({ baseURL: "http://127.0.0.1:8080/v1", apiKey: "YOUR_GATEWAY_TOKEN" });
+const client = new OpenAI({ baseURL: "http://127.0.0.1:8080/v1", apiKey: "YOUR_API_KEY" });
 const reply = await client.chat.completions.create({
   model: "ollama/qwen3:4b",
   messages: [{ role: "user", content: "Hello" }],
@@ -2800,7 +2802,49 @@ const reply = await client.chat.completions.create({
 console.log(reply.choices[0].message.content);
 ```
 
+Tools with command-line flags take the same two values, for example
+[aider](https://aider.chat):
+
+```bash
+aider --openai-api-base http://127.0.0.1:8080/v1 --openai-api-key YOUR_API_KEY --model openai/ollama/qwen3:4b
+```
+
 The console fills in your real base URL and the gateway's default text model.
+
+## API keys
+
+Each account makes its own named keys for this API, one per app or device:
+
+- **Made with a name** on the OpenAI API page (**New key**) or with
+  `POST /api/gateway/me/openai-keys {"label": "laptop Cursor"}`. The key
+  (`sk-agw-...`) is answered once, by that request. The gateway keeps only its
+  PBKDF2 hash and its fingerprint (the first 12 hex digits of its SHA-256) in
+  the account's record, so a lost key cannot be shown again: make a new one.
+- **Valid at `/v1` only.** A key never signs in to the console and never calls
+  the gateway API: anywhere under `/api/gateway/` (sign-in included) it answers
+  `401` with `This is an API key for /v1; sign in with your gateway token.`
+  It cannot touch runs, files, email or workflows.
+- **Runs as its account.** Requests made with it are that account's: its models
+  and providers, its OpenAI API switch (off: every key of the account answers
+  `403 openai_api_off`) and its Active state (`403 account_inactive`).
+- **Revoked one at a time, immediately.** **Revoke** (or
+  `DELETE /api/gateway/me/openai-keys/{fingerprint}`) refuses the key from the
+  next request on with `401 invalid_api_key`; the account's other keys keep
+  working.
+- **Named in the log.** Each request records the key's name and fingerprint, so
+  [Recent requests](#request-log) shows which app called. The key list shows
+  when each key was last used and from which address.
+- **Admins** see every account's keys (names, dates, fingerprints, never a key)
+  in **Accounts → OpenAI API** and can revoke any of them. An admin account
+  (including the admin account created at first start when user accounts are
+  on) makes its own keys like any other account. Only the operator token a
+  gateway is started with is not an account: signed in with it, the key routes
+  answer `409 no_account`.
+
+Names are unique per account (case-insensitive, up to 80 characters). For
+compatibility, an account's gateway token is still accepted at `/v1`; the page
+offers named keys, so a key pasted into an app can be revoked without changing
+how you sign in.
 
 ## What is supported
 
@@ -2855,13 +2899,13 @@ Accepted and ignored: `user`, `store`, `metadata`, `service_tier`,
 Every error uses the OpenAI envelope, so SDKs raise their usual exceptions:
 
 ```json
-{"error": {"message": "Incorrect API key provided: use your gateway token.", "type": "invalid_request_error", "param": null, "code": "invalid_api_key"}}
+{"error": {"message": "Incorrect API key provided: it is not a key of this gateway, or it was revoked. Make a key on the gateway's OpenAI API page.", "type": "invalid_request_error", "param": null, "code": "invalid_api_key"}}
 ```
 
 | Status | When | `code` |
 | --- | --- | --- |
 | 400 | invalid request, unsupported parameter, unusable `response_format` | `unsupported_parameter`, `invalid_response_format` or none |
-| 401 | missing or wrong key | `invalid_api_key` |
+| 401 | missing, wrong or revoked key | `invalid_api_key` |
 | 403 | the account's OpenAI API switch is off, or the account is deactivated or archived (`account_inactive`); the client is outside *Who can connect*; Guest asked for more than models; the account Open mode runs as is unavailable; a page without a key from an origin that is not accepted | `openai_api_off`, `account_inactive`, `client_not_allowed`, `guest_not_allowed`, `open_account_unavailable`, `origin_not_allowed` |
 | 404 | unknown route, an unknown provider or model, or the API is stopped | `model_not_found`, `endpoint_stopped` |
 | 429 | too many refused keys from one address | `auth_lockout` |
@@ -2872,9 +2916,10 @@ Each response carries `x-request-id`.
 ## Access
 
 **Who may use it.** Identities are the gateway's own accounts. A caller's key is
-their gateway token and the request runs as that account. Each account has an
+one of their account's [API keys](#api-keys) (or, for compatibility, their
+gateway token) and the request runs as that account. Each account has an
 **OpenAI API** switch (Accounts → the row's **OpenAI API** button, admins): on
-by default for an active account; off, that account's key answers
+by default for an active account; off, every key of that account answers
 `403 openai_api_off` at `/v1` (its console sign-in is unchanged). The first time
 the endpoint is turned on, the switch is written on for every active account
 and off for inactive ones. Without a key (Open mode), requests run as the
@@ -2888,13 +2933,13 @@ switch is off. The operator's own token (not an account) is always accepted.
 
 **Authentication**
 
-- **Protected (API key)** (default): every request sends a gateway token as
-  `Authorization: Bearer <token>`. The gateway resolves it to the account; the
-  token never reaches AbstractCore. Repeated wrong keys from one address are
+- **Protected (API key)** (default): every request sends an API key as
+  `Authorization: Bearer <key>`. The gateway resolves it to the account; the
+  key never reaches AbstractCore. Repeated wrong keys from one address are
   locked out like sign-in attempts.
 - **Open (no key)**: requests without a key are served, as Guest or the chosen
   account (above). SDKs still require some key value; any text works, for
-  example `not-needed` (a key that is not a gateway token is served without
+  example `not-needed` (a key that is not a key of this gateway is served without
   one). Open applies only to direct clients on this machine, your network or
   your VPN: a request through a proxy, in Internet mode, or with proxies
   elsewhere trusted needs a key. As Guest, cloud providers whose keys are stored
@@ -2925,7 +2970,7 @@ may call it.
 
 Each `/v1` request writes one line to the gateway's audit log
 (`<data dir>/audit_log.jsonl`; no other store) with an `openai_api` object:
-client, model, `prompt_tokens`, `completion_tokens`, `stream`, `run_id` when the
+client, `key_label` and `key_fingerprint` for a named API key, model, `prompt_tokens`, `completion_tokens`, `stream`, `run_id` when the
 request sent `X-AbstractCore-Run-Id`, `run_as` for an Open-mode account, and the
 `request` and `response` as they crossed `/v1`. A streamed answer is recorded
 assembled (content, tool calls, finish reason, usage). Credentials are removed
@@ -2933,7 +2978,8 @@ before the line is written: fields named like a credential (`api_key`,
 `authorization`, `token`, `password`, `secret`, ...) and every occurrence of the
 caller's key and the internal endpoint key read `[redacted]`; inline media
 (`data:` URLs) is replaced by its type and size; a side larger than 256 KB is
-kept to that size and marked truncated. Who reads it: an admin, every request;
+kept to that size and marked truncated. Who reads it: an admin, every request,
+with the full recorded request and response (credentials removed as above);
 anyone else, their own. The log shares the audit log's rotation and retention
 (`ABSTRACTGATEWAY_AUDIT_LOG_*`); with the audit log off, the card stays empty.
 
@@ -2941,9 +2987,14 @@ anyone else, their own. The log shares the audit log's rotation and retention
 
 | Method | Route | Who | Result |
 | --- | --- | --- | --- |
-| GET | `/api/gateway/openai-api` | any account | status `gateway_openai_api_v1`: everyone `role`, `writable`, `enabled`, `running`, `base_url`, `key{own_token, user_id, fingerprint, allowed}` (`fingerprint`: first 12 hex digits of the token's SHA-256, never the token), `docs`, `support`, `example_model` (a text model `/v1/models` lists; null when stopped); an admin also `access`, `reach`, `reach_options[]`, `open_account`, `open_account_options[]`, `warnings[]`, `listener`, `tailscale`, `open_requests`, `legacy_base_url` |
-| GET | `/api/gateway/openai-api/logs?limit=` | any account | `{rows[{request_id, ts, client, user_id, ip, method, path, model, prompt_tokens, completion_tokens, stream, duration_ms, status, run_id, observer_path, recorded}], scope}`: every request for an admin, the caller's own otherwise |
+| GET | `/api/gateway/openai-api` | any account | status `gateway_openai_api_v1`: everyone `role`, `writable`, `enabled`, `running`, `base_url`, `key{own_token, user_id, named_keys, fingerprint, allowed}` (`named_keys`: true when the caller's account makes API keys, false for the operator's own token; `fingerprint`: first 12 hex digits of the gateway token's SHA-256, never the token), `docs`, `support`, `example_model` (a text model `/v1/models` lists; null when stopped); an admin also `access`, `reach`, `reach_options[]`, `open_account`, `open_account_options[]`, `warnings[]`, `listener`, `tailscale`, `open_requests`, `legacy_base_url` |
+| GET | `/api/gateway/openai-api/logs?limit=` | any account | `{rows[{request_id, ts, client, user_id, key_label, key_fingerprint, ip, method, path, model, prompt_tokens, completion_tokens, stream, duration_ms, status, run_id, observer_path, recorded}], scope}`: every request for an admin, the caller's own otherwise |
 | GET | `/api/gateway/openai-api/logs/{request_id}` | any account | `{row{..., request, response, user_agent}}`, the recorded request and response (redacted); someone else's id answers 404 for a non-admin |
+| GET | `/api/gateway/me/openai-keys` | any account | `{account, keys[{label, fingerprint, created_at, created_by, last_used_at, last_client}]}`, never a key; `409 no_account` for the operator's own token |
+| POST | `/api/gateway/me/openai-keys` | any account | `{label}` → `{key, item}`: the key, answered only here; `400 label_required`/`label_too_long`, `409 label_taken` |
+| DELETE | `/api/gateway/me/openai-keys/{fingerprint}` | any account | revokes one of your keys at once → `{revoked}`; `404 key_not_found` |
+| GET | `/api/gateway/admin/accounts/{id}/openai-keys` | admin | that account's keys (same items) |
+| DELETE | `/api/gateway/admin/accounts/{id}/openai-keys/{fingerprint}` | admin | revokes one of that account's keys at once |
 | POST | `/api/gateway/admin/core-endpoint` | admin | `{enabled?, access?: token\|open, reach?: machine\|network\|tailnet\|anywhere, open_account?: guest\|<user id>}`; `409` with the reason when refused |
 | PUT | `/api/gateway/admin/accounts/{id}/openai-api` | admin | `{enabled}`: the account's OpenAI API switch; answers the account row (`openai_api`) |
 | POST | `/api/gateway/admin/core-endpoint/restart` | admin | ends open requests; `{ended_requests}` |
@@ -2951,13 +3002,16 @@ anyone else, their own. The log shares the audit log's rotation and retention
 | GET | `/api/gateway/admin/core-endpoint` | admin | the same status |
 
 Settings live in `<data dir>/config/core_endpoint.json` (owner-only, atomic
-writes).
+writes). API keys live in the user registry (`users.json`, each account's
+`openai_keys`: name, PBKDF2 hash, fingerprint, creation time); when each key was
+last used is kept beside it in `<data dir>/auth/openai_key_usage.json`. Errors
+of the key routes answer `{"detail": {"reason_code", "message"}}`.
 
 ## Moving from `/core/v1`
 
 `/core/v1/...` answers `308 Permanent Redirect` to `/v1/...` (method and body
 kept) and is deprecated: point your apps at `/v1`. The dedicated endpoint token
-of gateway 0.12.0 is still accepted as a key (deprecated: use gateway tokens);
+of gateway 0.12.0 is still accepted as a key (deprecated: use API keys);
 `/api/gateway/admin/core-endpoint/token/rotate` still makes a new one (answered
 once), and the reveal route is gone: no route returns a stored token. A 0.12.0 settings file without *Who can
 connect* reads as **Devices on my network**.
@@ -4382,8 +4436,15 @@ serve:
 ## OpenAI API
 
 The OpenAI-compatible API is served at `/v1` on this Gateway listener
-(`/v1/models`, `/v1/chat/completions`, `/v1/embeddings`, ...); callers use their
-gateway token as the API key. `/core/v1` answers 308 to `/v1` (deprecated).
+(`/v1/models`, `/v1/chat/completions`, `/v1/embeddings`, ...); callers use one
+of their account's named API keys (valid at `/v1` only; the gateway token is
+still accepted there). `/core/v1` answers 308 to `/v1` (deprecated).
+API keys: `GET/POST /api/gateway/me/openai-keys`,
+`DELETE /api/gateway/me/openai-keys/{fingerprint}`; admins
+`GET /api/gateway/admin/accounts/{id}/openai-keys` and
+`DELETE /api/gateway/admin/accounts/{id}/openai-keys/{fingerprint}`. A named key
+sent to any `/api/gateway/` route answers `401`
+`{"detail": "This is an API key for /v1; sign in with your gateway token.", "reason_code": "openai_api_key"}`.
 Status and logs: `GET /api/gateway/openai-api[/logs]`; admin changes:
 `/api/gateway/admin/core-endpoint`. See [openai-api.md](docs/openai-api.md) for the
 supported surface, access settings and errors.
@@ -6642,7 +6703,7 @@ The sidebar groups the tabs in four sections, in this order:
 | Work | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches; `#runtimes?account=<id>` lists one account's runtimes ([below](#runtimes-of-one-account)) |
 | Work | **Apps** | the browser apps, Code's terminal app and the desktop Assistant (below), no settings disclosures: the toolbar gear opens **Apps settings** and the gear beside Continuum's Open opens **Continuum settings** (backlog folder, exec runner, process manager), each a dialog whose rows apply on their own |
 | Models | **Providers** | **Local providers**: one card per local engine on the gateway host (Ollama, LM Studio, MLX, llama.cpp, Hugging Face, vLLM) with its status, install, start, stop, **Browse models** and its server connection; **Remote providers**: OpenAI, Anthropic, OpenRouter, Portkey and custom OpenAI-compatible connections with write-only keys (shown as fingerprints); then the **Available Providers** table ([below](#models-and-local-providers)) |
-| Models | **OpenAI API** | the OpenAI-compatible API at `/v1`: status with Endpoint switch, Restart and Check setup; the base URL and your API key (your gateway token); Authentication and Who can connect, applied at once; supported surface and snippets; recent requests ([openai-api.md](docs/openai-api.md)) |
+| Models | **OpenAI API** | the OpenAI-compatible API at `/v1`: status with Endpoint switch, Restart and Check setup; the base URL and your API keys (New key with a name, shown once; list; Revoke); Authentication and Who can connect, applied at once; supported surface and snippets; recent requests ([openai-api.md](docs/openai-api.md)) |
 | Models | **Models** | browse models that fit this machine, download them, delete installed ones (below) |
 | Models | **Multimodal** | capability route defaults, the text reasoning effort, the MTP (speculative decoding) default, and model weights per route |
 | System | **Resources** | memory and GPU meters, resident models (warm up, lock, unload), session prompt caches, and the **Gateway** card (pause, update, restart, desktop icon, start at login, last restart after a hang) |
@@ -6797,10 +6858,12 @@ it is off by default and your browser remembers it.
   it, and notifications about its runs go to its address); the administrator
   and the entity's creator can open it.
 - **OpenAI API** (administrators, user rows) opens a dialog with the
-  account's **OpenAI API** switch: on, the account's gateway token works as an
-  API key at `/v1`; off, its requests answer `403 openai_api_off` (its console
-  sign-in is unchanged). Entities have no key and never use the OpenAI API
-  ([openai-api.md](docs/openai-api.md#access)).
+  account's **OpenAI API** switch: on, the account's API keys work at `/v1`;
+  off, every one of them answers `403 openai_api_off` (its console sign-in is
+  unchanged). Below it, the account's **API keys** (name, created, last used
+  and from where, fingerprint; never a key) each with **Revoke**, which asks
+  **Revoke** / **Cancel** and applies at once. Entities have no key and never
+  use the OpenAI API ([openai-api.md](docs/openai-api.md#api-keys)).
 - **Logs** opens "Activity — <id>": the account's sign-ins, token rotations,
   runs started, automation commands, account changes and email events from the
   gateway's audit log, newest first, in your local time. The chips **All**,
@@ -9349,7 +9412,7 @@ the gateway machine whatever it listens on
 [docs/engines.md](docs/engines.md), [docs/model-downloads.md](docs/model-downloads.md)
 and [docs/console.md](docs/console.md).
 
-Admins can turn on the [OpenAI API](docs/openai-api.md) on the console's **OpenAI API** page: any OpenAI SDK or app then uses this gateway's models at `http://<gateway>/v1`, with the caller's gateway token as the API key.
+Admins can turn on the [OpenAI API](docs/openai-api.md) on the console's **OpenAI API** page: any OpenAI SDK or app then uses this gateway's models at `http://<gateway>/v1`, with a named API key per app, made on that page (valid at `/v1` only, revocable one at a time).
 
 ### Browser apps, network access and the tray
 
@@ -10036,12 +10099,12 @@ abstractgateway migrate --from=file --to=sqlite \
 
 An admin turns on the OpenAI-compatible API on the console's **OpenAI API**
 page (sidebar **Models**). Then any OpenAI SDK reaches this gateway's models
-with your gateway token as the API key:
+with an API key you make on that page (**New key**, one per app):
 
 ```python
 from openai import OpenAI
 
-client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="YOUR_GATEWAY_TOKEN")
+client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="YOUR_API_KEY")
 print(client.models.list())
 ```
 
@@ -10600,6 +10663,8 @@ Requires AbstractRuntime with `schedule@2` (the next runtime release).
 - **Runs in flight keep their workflow across a publish.** A run ticks the spec it resolved: a new version is a new workflow id, and a version replaced in place (drafts, `overwrite: true`) or removed pins its RUNNING/WAITING runs to the spec they had until they end. Runs started after the publish get the new one.
 - **One service per data directory under user auth.** A caller without a signed-in principal is given the admin's default-runtime service instead of building a second service (second runtime, model client and runner) over the same directory.
 - The admin catalog upload (`/admin/workflow-catalog/upload`) runs its reload off the event loop like the other publish routes.
+- The console's OpenAI API page offers named API keys instead of your gateway token: the token is no longer shown on the page (no eye, no Copy), and **New key** makes a named key instead of replacing your gateway token. An account's gateway token is still accepted at `/v1` for compatibility. Sign-in keeps the typed token in the browser as before. The snippets use `YOUR_API_KEY`, or the key you just made.
+- The 401 at `/v1` says what to do: "Incorrect API key provided: it is not a key of this gateway, or it was revoked. Make a key on the gateway's OpenAI API page." (no key: "You didn't provide an API key: make one on the gateway's OpenAI API page and send it as Authorization: Bearer <key>.").
 
 ### Added
 
@@ -10608,6 +10673,7 @@ Requires AbstractRuntime with `schedule@2` (the next runtime release).
 - `POST /api/gateway/automations/schedule-preview`: what a trigger would do if saved now (normalized trigger, sentences, first run, `first_run_sentence`); nothing is stored.
 - Account preference `time_zone` (`GET/PUT /api/gateway/accounts/{account}/preferences`): an IANA zone or `null` for the gateway default, the time zone of the computer the gateway runs on. The GET adds a `time_zone` block with the default, the effective zone and the list of zone names.
 - **Every publish/promote/upload says what it reloaded**: the response carries `reload: {ok, kind: "registry_swap"|"service_reload"|"full_rebuild", services: [{service, kind, duration_ms, ...}], unchanged_services, duration_ms, sentence}` (`PublishVisualFlowResponse.reload`, the upload and catalog responses, `/bundles/reload`), and the request's audit log line records `reload: {kind, duration_ms, services}` next to its `duration_ms`. See [docs/api.md](docs/api.md#what-a-publish-reloads).
+- **Named API keys for the OpenAI API.** Each account makes its own keys for `/v1`, one per app: **New key** on the console's OpenAI API page asks for a name ("laptop Cursor") and shows the key (`sk-agw-...`) once, with Copy. The page lists each key's name, when it was made, when it was last used and from which address, and its fingerprint; **Revoke** asks **Revoke** / **Cancel** and refuses the key from the next request on (`401 invalid_api_key`), leaving the account's other keys working. A key works at `/v1` only: anywhere under `/api/gateway/`, sign-in included, it answers `401` "This is an API key for /v1; sign in with your gateway token." and never counts toward the sign-in lockout. Requests run as the key's account and obey its OpenAI API switch (`403 openai_api_off`) and Active state (`403 account_inactive`). The request log names the key (`key_label`, `key_fingerprint`; the Recent requests table shows it under the account), and making or revoking a key is an audit line (`openai_key_change`, name and fingerprint, never the key). Admins see every account's keys in **Accounts → OpenAI API** (never a key) and revoke any of them. Routes: `GET`/`POST /api/gateway/me/openai-keys`, `DELETE /api/gateway/me/openai-keys/{fingerprint}`, `GET /api/gateway/admin/accounts/{id}/openai-keys`, `DELETE /api/gateway/admin/accounts/{id}/openai-keys/{fingerprint}`. Keys are stored as PBKDF2 hashes with their fingerprint in the user registry (`users.json`, each account's `openai_keys`, written only for an account that has keys: existing registries load and save unchanged); last use is kept in `auth/openai_key_usage.json`. See [docs/openai-api.md](docs/openai-api.md#api-keys).
 
 ## [0.13.1] - 2026-10-08
 
@@ -13292,7 +13358,7 @@ flowchart LR
     AppsMgr["Apps manager: Node.js, npm installs, app processes"]
     Jobs["Engine installs and model download jobs"]
     HostCtl["Host control: pause, restart, update"]
-    V1["OpenAI API /v1: gateway-token keys, Who can connect, request log"]
+    V1["OpenAI API /v1: named API keys, Who can connect, request log"]
     Watchdog["Event-loop watchdog: exits 75 when the loop is blocked"]
   end
 
@@ -13312,7 +13378,7 @@ flowchart LR
   Asst -->|HTTP, gateway session| Sec
   CLI -->|HTTP or data dir| Sec
   Tray -->|loopback HTTP, ephemeral token| Sec
-  OAI -->|"HTTP /v1, gateway token as API key"| Sec
+  OAI -->|"HTTP /v1, named API key"| Sec
   Sec --> V1
   V1 -->|serving facade| Core
   V1 -->|request log| Data
@@ -13430,8 +13496,10 @@ browser on this computer from one elsewhere on the network
   settings the security middleware reads per request.
 - **OpenAI API** (`src/abstractgateway/core_endpoint.py`,
   `routes/core_endpoint.py`): serves the OpenAI-compatible API at `/v1` on the
-  gateway listener. The security middleware resolves the caller's gateway
-  token to an account; this layer applies the account's **OpenAI API** switch,
+  gateway listener. The security middleware resolves the caller's API key
+  (a named key from `openai_keys.py`, found by its fingerprint, or the
+  account's gateway token) to an account and refuses a named key anywhere
+  outside `/v1`; this layer applies the account's **OpenAI API** switch,
   Open mode (Guest or the chosen account), *Who can connect* and the request
   log in the audit log, then hands the request to AbstractCore's serving
   routes through AbstractRuntime's serving facade. See
@@ -14341,7 +14409,7 @@ reports the watchdog's state. See [deployment.md](docs/deployment.md) and
 ### Can I use this gateway from an OpenAI SDK or app?
 
 Yes. An admin turns on the API on the console's **OpenAI API** page. Point the
-SDK at `http://<gateway>/v1` and use your gateway token as the API key; the
+SDK at `http://<gateway>/v1` and use an API key from that page (**New key**); the
 model name is `provider/model` as listed by `GET /v1/models`. Chat completions
 (with tools, streaming and structured outputs through `response_format`
 `json_object` or `json_schema`) and embeddings are supported. See

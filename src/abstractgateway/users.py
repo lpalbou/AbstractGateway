@@ -151,6 +151,63 @@ def verify_gateway_token(token: str, token_hash: str) -> bool:
         return False
 
 
+def generate_openai_api_key() -> str:
+    """A named API key for the OpenAI API at /v1 (backlog 1000). The `sk-` start is what OpenAI
+    SDKs and apps expect of a key; the gateway never reads meaning into it (a key is recognized
+    only by its hash in the registry)."""
+    return "sk-agw-" + secrets.token_urlsafe(32)
+
+
+OPENAI_KEY_LABEL_MAX = 80
+
+
+@dataclass(frozen=True)
+class OpenAIKeyRecord:
+    """One named API key of an account (backlog 1000): valid at `/v1/*` only, hashed like a
+    gateway token (PBKDF2), identified by `fingerprint` (SHA-256 of the key, 12 hex). The key
+    itself is never stored and answered only once, when it is made."""
+
+    label: str
+    key_hash: str
+    fingerprint: str
+    created_at: str = ""
+    created_by: str = ""
+
+    def to_storage_dict(self) -> dict[str, Any]:
+        return {"label": self.label, "key_hash": self.key_hash, "fingerprint": self.fingerprint,
+                "created_at": self.created_at, "created_by": self.created_by}
+
+    def public_dict(self) -> dict[str, Any]:
+        return {"label": self.label, "fingerprint": self.fingerprint, "created_at": self.created_at or None,
+                "created_by": self.created_by or None}
+
+
+def _normalize_openai_keys(raw: Any) -> tuple[OpenAIKeyRecord, ...]:
+    out: list[OpenAIKeyRecord] = []
+    seen: set[str] = set()
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        key_hash = str(item.get("key_hash") or "")
+        fp = str(item.get("fingerprint") or "")
+        if not key_hash or not fp or fp in seen:
+            continue
+        seen.add(fp)
+        out.append(OpenAIKeyRecord(label=str(item.get("label") or "")[:OPENAI_KEY_LABEL_MAX], key_hash=key_hash,
+                                   fingerprint=fp, created_at=str(item.get("created_at") or ""),
+                                   created_by=str(item.get("created_by") or "")))
+    return tuple(out)
+
+
+class OpenAIKeyError(ValueError):
+    """A named-key request the registry refuses: `code` + one sentence (routes map it to HTTP)."""
+
+    def __init__(self, status: int, code: str, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+        self.code = code
+
+
 ARCHIVED_ENABLE_MESSAGE = "{user_id} is archived: unarchive it first, then turn Active on."
 
 
@@ -201,6 +258,9 @@ class GatewayUserRecord:
     # "OpenAI API" capability (round 5): None = never set, read through `openai_api_allowed()`
     # (on for an active account). Additive: absent in users.json = None.
     openai_api: Optional[bool] = None
+    # Named API keys for /v1 (round 16, backlog 1000). Additive: absent in users.json = none,
+    # and a record without keys is stored exactly as before.
+    openai_keys: tuple[OpenAIKeyRecord, ...] = ()
 
     @property
     def key(self) -> str:
@@ -223,6 +283,8 @@ class GatewayUserRecord:
             out["archived_by"] = self.archived_by
         if self.openai_api is not None:
             out["openai_api"] = bool(self.openai_api)
+        if self.openai_keys:
+            out["openai_keys"] = [k.to_storage_dict() for k in self.openai_keys]
         return out
 
     def _storage_core(self) -> dict[str, Any]:
@@ -348,6 +410,7 @@ def _normalize_record(raw: dict[str, Any]) -> GatewayUserRecord:
         archived_at=str(raw.get("archived_at") or ""),
         archived_by=str(raw.get("archived_by") or ""),
         openai_api=raw["openai_api"] if isinstance(raw.get("openai_api"), bool) else None,
+        openai_keys=_normalize_openai_keys(raw.get("openai_keys")),
     )
 
 
@@ -630,6 +693,7 @@ class GatewayUserRegistry:
                 archived_at=rec.archived_at,
                 archived_by=rec.archived_by,
                 openai_api=bool(openai_api) if openai_api is not None else rec.openai_api,
+                openai_keys=rec.openai_keys,
             )
             self._require_runtime_available_unlocked(
                 records,
@@ -749,6 +813,7 @@ class GatewayUserRegistry:
                 archived_at=target.archived_at,
                 archived_by=target.archived_by,
                 openai_api=target.openai_api,
+                openai_keys=target.openai_keys,
             )
             if previous_runtime_id != runtime0:
                 self._reserve_runtime_unlocked(reservations, record=target, reason="runtime-transferred")
@@ -770,6 +835,68 @@ class GatewayUserRegistry:
                 continue
             if verify_gateway_token(token, rec.token_hash):
                 return rec
+        return None
+
+    # ---- named API keys for /v1 (round 16, backlog 1000) ------------------------------
+
+    def create_openai_key(self, *, user_id: str, tenant_id: str = "default", label: str,
+                          created_by: str = "") -> tuple[OpenAIKeyRecord, str]:
+        """A new named key for this account: (its record, the key — the only time it exists in
+        clear). Refused for an unknown, entity or archived account and for a blank or reused label."""
+        text = " ".join(str(label or "").split())
+        if not text:
+            raise OpenAIKeyError(400, "label_required", "Give the key a name, for example the app that will use it.")
+        if len(text) > OPENAI_KEY_LABEL_MAX:
+            raise OpenAIKeyError(400, "label_too_long", f"A key name has at most {OPENAI_KEY_LABEL_MAX} characters.")
+        key = f"{safe_principal_component(tenant_id, default='default')}:{safe_principal_component(user_id, default='')}"
+        with self._lock:
+            records, reservations = self._load_store_unlocked()
+            rec = records.get(key)
+            if rec is None:
+                raise OpenAIKeyError(404, "account_not_found", f"There is no account named {user_id!r} on this gateway.")
+            if rec.principal_kind == "entity":
+                raise OpenAIKeyError(409, "entity_no_key", "Entities never use the OpenAI API, so they have no API keys.")
+            if rec.archived:
+                raise OpenAIKeyError(409, "archived", f"{rec.user_id} is archived: unarchive it first.")
+            if any(k.label.casefold() == text.casefold() for k in rec.openai_keys):
+                raise OpenAIKeyError(409, "label_taken", f"There is already a key named {text!r}: choose another name.")
+            issued = generate_openai_api_key()
+            item = OpenAIKeyRecord(label=text, key_hash=hash_gateway_token(issued), fingerprint=token_fingerprint(issued),
+                                   created_at=_now_utc_iso(), created_by=str(created_by or ""))
+            records[key] = dataclasses.replace(rec, openai_keys=rec.openai_keys + (item,), updated_at=_now_utc_iso())
+            self._save_store_unlocked(records, reservations)
+            return item, issued
+
+    def revoke_openai_key(self, *, user_id: str, tenant_id: str = "default", fingerprint: str) -> OpenAIKeyRecord:
+        """Remove one named key; the next request with it is refused (the registry file changes,
+        so every auth cache keyed on it is invalid at once)."""
+        key = f"{safe_principal_component(tenant_id, default='default')}:{safe_principal_component(user_id, default='')}"
+        fp = str(fingerprint or "").strip().lower()
+        with self._lock:
+            records, reservations = self._load_store_unlocked()
+            rec = records.get(key)
+            if rec is None:
+                raise OpenAIKeyError(404, "account_not_found", f"There is no account named {user_id!r} on this gateway.")
+            gone = next((k for k in rec.openai_keys if k.fingerprint == fp), None)
+            if gone is None:
+                raise OpenAIKeyError(404, "key_not_found", "There is no such key on this account (already revoked?).")
+            records[key] = dataclasses.replace(rec, openai_keys=tuple(k for k in rec.openai_keys if k.fingerprint != fp),
+                                               updated_at=_now_utc_iso())
+            self._save_store_unlocked(records, reservations)
+            return gone
+
+    def openai_key_owner(self, key: str) -> Optional[tuple[GatewayUserRecord, OpenAIKeyRecord]]:
+        """The account and named key this text is, whatever the account's state, or None. One
+        PBKDF2 check per key with the same fingerprint (normally one), never a scan of every hash."""
+        if not key:
+            return None
+        fp = token_fingerprint(key)
+        with self._lock:
+            records = self._load_unlocked()
+        for rec in records.values():
+            for item in rec.openai_keys:
+                if item.fingerprint == fp and verify_gateway_token(key, item.key_hash):
+                    return rec, item
         return None
 
     def authenticate(self, token: str) -> Optional[GatewayPrincipal]:

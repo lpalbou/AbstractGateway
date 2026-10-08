@@ -1,5 +1,7 @@
 // The OpenAI API page in a real browser at three widths (admin), then a user's own view, then the
-// Accounts row's OpenAI API switch. The key card is filled client-side (masked, eye, copy).
+// Accounts row's OpenAI API switch and keys. API keys are named keys (round 16): New key asks for a
+// name, the key is shown once with Copy, the list shows name · created · last used · fingerprint,
+// Revoke asks [Revoke] [Cancel] and applies at once. Shots in light and dark.
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import assert from 'node:assert/strict';
@@ -14,10 +16,16 @@ async function signIn(page, user, token) {
   await page.click('#login-button');
   await page.waitForFunction(() => document.body.classList.contains('signed-in'));
 }
+// The console's own theme setting (light | dark), as the other browser tests set it.
+async function themed(options, theme) {
+  const context = await browser.newContext({ ...options, colorScheme: theme });
+  await context.addInitScript((t) => { try { localStorage.setItem('abstractgateway_ui_settings_v1', JSON.stringify({ theme: t })); } catch {} }, theme);
+  return context;
+}
 const idle = (page) => page.waitForFunction(() => !document.querySelector('#openai-root [aria-busy="true"]'));
 try {
-  for (const [width, height] of [[1440, 1000], [768, 1024], [390, 844]]) {
-    const context = await browser.newContext({ viewport: { width, height } });
+  for (const [width, height, theme] of [[1440, 1000, 'light'], [768, 1024, 'dark'], [390, 844, 'light']]) {
+    const context = await themed({ viewport: { width, height } }, theme);
     const page = await context.newPage();
     page.on('pageerror', (error) => errors.push(error.message));
     await signIn(page, 'admin', admin);
@@ -49,17 +57,35 @@ try {
     assert.match(await root.locator('[data-oai-support]').textContent(), /Supported:.*Not yet:/s);
     await root.locator('[data-oai-snippet="python"]').click();
     assert.match(await root.locator('[data-oai-code]').textContent(), new RegExp(`base_url="${base}/v1"`));
-    // The key: masked, revealed by the eye, masked again; the example never shows it in clear.
-    const keyText = () => root.locator('[data-oai-key-value]').textContent();
-    assert.match(await keyText(), /^•+$/);
-    assert(!(await root.locator('[data-oai-code]').textContent()).includes(admin));
-    await root.locator('[data-oai-action="reveal"]').click();
-    assert.equal(await keyText(), admin);
-    await root.locator('[data-oai-action="reveal"]').click();
-    assert.match(await keyText(), /^•+$/);
-    // A request shows in the log.
-    assert.equal((await page.request.get(`${base}/v1/models`, { headers: { Authorization: `Bearer ${admin}` } })).status(), 200);
+    // API keys: never the gateway token; New key -> name -> shown once -> works at /v1 -> listed -> revoked.
+    assert.equal(await root.locator('[data-oai-key-value], [data-oai-action="reveal"]').count(), 0);
+    assert(!(await root.textContent()).includes(admin));
+    assert.match(await root.locator('[data-oai-code]').textContent(), /YOUR_API_KEY/);
+    if (width === 1440) await page.waitForSelector('[data-oai-keys-empty]');
+    await root.locator('[data-oai-action="new-key"]').click();
+    await root.locator('[data-oai-key-label]').fill(`laptop ${width}`);
+    await root.locator('[data-oai-key-make]').click();
+    await page.waitForSelector('[data-oai-made-key]');
+    const made = (await root.locator('[data-oai-made-key]').textContent()).trim();
+    assert.match(made, /^sk-agw-/);
+    assert.match(await root.locator('[data-oai-made]').textContent(), /shows a key only once/);
+    // The example masks it; Copy example would include it.
+    assert(!(await root.locator('[data-oai-code]').textContent()).includes(made));
+    const row = root.locator('[data-oai-keyrow]', { hasText: `laptop ${width}` });
+    await row.waitFor();
+    assert.match(await row.textContent(), /Never used/);
+    assert.equal((await page.request.get(`${base}/v1/models`, { headers: { Authorization: `Bearer ${made}` } })).status(), 200);
+    // Endpoint-only: the same key is refused by the console API, with the sentence.
+    const outside = await page.request.get(`${base}/api/gateway/openai-api`, { headers: { Authorization: `Bearer ${made}` } });
+    assert.equal(outside.status(), 401);
+    assert.equal((await outside.json()).detail, 'This is an API key for /v1; sign in with your gateway token.');
+    await page.screenshot({ path: path.join(output, `openai-keys-made-${width}-${theme}.png`), fullPage: true });
+    await root.locator('[data-oai-action="made-done"]').click();
+    assert.equal(await root.locator('[data-oai-made-key]').count(), 0);
+    // A request shows in the log, named by its key.
+    assert.equal((await page.request.get(`${base}/v1/models`, { headers: { Authorization: `Bearer ${made}` } })).status(), 200);
     await page.waitForSelector('[data-oai-logs] tbody tr', { timeout: 15000 });
+    await page.waitForFunction((label) => [...document.querySelectorAll('[data-oai-key-label-cell]')].some((c) => c.textContent === label), `laptop ${width}`, { timeout: 15000 });
     // A row opens to the recorded request and response (keys removed), with Open in Observer.
     const okRid = await (await page.waitForFunction(() => {
       const row = [...document.querySelectorAll('#openai-root tr.oai-row')]
@@ -76,7 +102,21 @@ try {
       const b = await card.boundingBox();
       assert(b.x >= 0 && b.x + b.width <= width + 1, `card bounds at ${width}`);
     }
-    await page.screenshot({ path: path.join(output, `openai-api-${width}.png`), fullPage: true });
+    await page.screenshot({ path: path.join(output, `openai-api-${width}-${theme}.png`), fullPage: true });
+    // Revoke: [Revoke] [Cancel]; Cancel keeps it, Revoke refuses it at once.
+    const fp = await row.getAttribute('data-oai-keyrow');
+    await row.locator('[data-oai-revoke]').click();
+    await page.waitForSelector(`[data-oai-revoke-yes="${fp}"]`);
+    await root.locator('[data-oai-action="revoke-no"]').click();
+    assert.equal(await root.locator(`[data-oai-revoke-yes="${fp}"]`).count(), 0);
+    assert.equal((await page.request.get(`${base}/v1/models`, { headers: { Authorization: `Bearer ${made}` } })).status(), 200);
+    await row.locator('[data-oai-revoke]').click();
+    await root.locator(`[data-oai-revoke-yes="${fp}"]`).click();
+    await page.waitForFunction((f) => !document.querySelector(`[data-oai-keyrow="${f}"]`), fp);
+    assert.match(await root.locator('[data-oai-key-notice]').textContent(), /Revoked/);
+    const gone = await page.request.get(`${base}/v1/models`, { headers: { Authorization: `Bearer ${made}` } });
+    assert.equal(gone.status(), 401);
+    assert.equal((await gone.json()).error.code, 'invalid_api_key');
     await sw.uncheck();
     await page.waitForFunction(() => { const i = document.querySelector('[data-oai-enabled]'); return !i.checked && !i.disabled; });
     assert.equal((await page.request.get(`${base}/v1/models`, { headers: { Authorization: `Bearer ${admin}` } })).status(), 404);
@@ -90,24 +130,40 @@ try {
   page.on('pageerror', (error) => errors.push(error.message));
   await signIn(page, 'alice', 'endpoint-browser-user-001');
   await page.evaluate(() => document.getElementById('tab-button-openai').click());
-  // A user's own view: on/off, base URL, their key, docs, their requests; no access settings.
+  // A user's own view: on/off, base URL, their keys, docs, their requests; no access settings.
   await page.waitForSelector('#openai-root [data-oai-user-status]');
   assert.equal(await page.locator('#openai-root [data-oai-enabled]').count(), 0);
   assert.equal(await page.locator('#openai-root [data-oai-card="access"]').count(), 0);
-  assert.equal(await page.locator('#openai-root [data-oai-action="new-key"]').count(), 1);
-  await page.locator('#openai-root [data-oai-action="reveal"]').click();
-  assert.equal(await page.locator('#openai-root [data-oai-key-value]').textContent(), 'endpoint-browser-user-001');
+  await page.waitForSelector('#openai-root [data-oai-keys-empty]');
+  assert(!(await page.locator('#openai-root').textContent()).includes('endpoint-browser-user-001'));
+  await page.locator('#openai-root [data-oai-action="new-key"]').click();
+  await page.locator('#openai-root [data-oai-key-label]').fill('home assistant');
+  await page.locator('#openai-root [data-oai-key-label]').press('Enter');
+  await page.waitForSelector('#openai-root [data-oai-made-key]');
+  const aliceKey = (await page.locator('#openai-root [data-oai-made-key]').textContent()).trim();
   await page.close();
   // Accounts: the admin turns alice's OpenAI API off; her key is refused at /v1 with the standard 403.
-  const adminPage = await browser.newPage();
-  adminPage.on('pageerror', (error) => errors.push(error.message));
-  await signIn(adminPage, 'admin', admin);
-  await adminPage.evaluate(() => document.getElementById('tab-button-users').click());
-  const button = adminPage.locator('tr[data-user="alice"] [data-action="openai_api"]');
-  await button.waitFor();
-  await button.click();
+  async function accountModal(theme) {
+    const p = await (await themed({ viewport: { width: 1280, height: 800 } }, theme)).newPage();
+    p.on('pageerror', (error) => errors.push(error.message));
+    await signIn(p, 'admin', admin);
+    await p.evaluate(() => document.getElementById('tab-button-users').click());
+    const b = p.locator('tr[data-user="alice"] [data-action="openai_api"]');
+    await b.waitFor();
+    await b.click();
+    await p.locator('#account-openai-body [data-account-openai-key]', { hasText: 'home assistant' }).waitFor();
+    await p.screenshot({ path: path.join(output, `account-openai-keys-${theme}.png`) });
+    return p;
+  }
+  await (await accountModal('dark')).context().close();
+  const adminPage = await accountModal('light');
   const toggle = adminPage.locator('#account-openai-body [role="switch"]');
   await toggle.waitFor();
+  // The admin sees alice's keys (never a key) and can revoke them.
+  const keyRow = adminPage.locator('#account-openai-body [data-account-openai-key]', { hasText: 'home assistant' });
+  await keyRow.waitFor();
+  assert(!(await adminPage.locator('#account-openai-body').textContent()).includes(aliceKey));
+
   assert.equal(await toggle.getAttribute('aria-checked'), 'true');
   await toggle.click();
   await adminPage.waitForFunction(() => document.querySelector('#account-openai-body [role="switch"]').getAttribute('aria-checked') === 'false'
@@ -117,6 +173,16 @@ try {
   const refused = await adminPage.request.get(`${base}/v1/models`, { headers: { Authorization: 'Bearer endpoint-browser-user-001' } });
   assert.equal(refused.status(), 403);
   assert.equal((await refused.json()).error.code, 'openai_api_off');
+  // Every key of the account obeys the switch.
+  const keyOff = await adminPage.request.get(`${base}/v1/models`, { headers: { Authorization: `Bearer ${aliceKey}` } });
+  assert.equal(keyOff.status(), 403);
+  assert.equal((await keyOff.json()).error.code, 'openai_api_off');
+  // The admin revokes alice's key: [Revoke] [Cancel] inline, then 401 at once.
+  await keyRow.locator('[data-account-openai-revoke]').click();
+  await adminPage.locator('#account-openai-body .inline-confirm button.danger').click();
+  await adminPage.waitForSelector('#account-openai-body [data-account-openai-keys-empty]');
+  const revoked = await adminPage.request.get(`${base}/v1/models`, { headers: { Authorization: `Bearer ${aliceKey}` } });
+  assert.equal(revoked.status(), 401);
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ ok: true, screens: 3 }));
+  console.log(JSON.stringify({ ok: true, screens: 3, keys: true }));
 } finally { await browser.close(); }

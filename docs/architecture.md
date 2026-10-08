@@ -68,7 +68,7 @@ flowchart LR
     AppsMgr["Apps manager: Node.js, npm installs, app processes"]
     Jobs["Engine installs and model download jobs"]
     HostCtl["Host control: pause, restart, update"]
-    V1["OpenAI API /v1: gateway-token keys, Who can connect, request log"]
+    V1["OpenAI API /v1: named API keys, Who can connect, request log"]
     Watchdog["Event-loop watchdog: exits 75 when the loop is blocked"]
   end
 
@@ -88,7 +88,7 @@ flowchart LR
   Asst -->|HTTP, gateway session| Sec
   CLI -->|HTTP or data dir| Sec
   Tray -->|loopback HTTP, ephemeral token| Sec
-  OAI -->|"HTTP /v1, gateway token as API key"| Sec
+  OAI -->|"HTTP /v1, named API key"| Sec
   Sec --> V1
   V1 -->|serving facade| Core
   V1 -->|request log| Data
@@ -206,8 +206,10 @@ browser on this computer from one elsewhere on the network
   settings the security middleware reads per request.
 - **OpenAI API** (`src/abstractgateway/core_endpoint.py`,
   `routes/core_endpoint.py`): serves the OpenAI-compatible API at `/v1` on the
-  gateway listener. The security middleware resolves the caller's gateway
-  token to an account; this layer applies the account's **OpenAI API** switch,
+  gateway listener. The security middleware resolves the caller's API key
+  (a named key from `openai_keys.py`, found by its fingerprint, or the
+  account's gateway token) to an account and refuses a named key anywhere
+  outside `/v1`; this layer applies the account's **OpenAI API** switch,
   Open mode (Guest or the chosen account), *Who can connect* and the request
   log in the audit log, then hands the request to AbstractCore's serving
   routes through AbstractRuntime's serving facade. See

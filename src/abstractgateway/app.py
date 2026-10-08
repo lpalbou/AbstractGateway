@@ -205,9 +205,11 @@ app.include_router(network_router, prefix="/api")
 from .core_endpoint import CoreEndpoint, LegacyCoreRedirect  # noqa: E402
 from .routes.core_endpoint import router as core_endpoint_router  # noqa: E402
 from .routes.core_endpoint import user_router as openai_api_router  # noqa: E402
+from .routes.core_endpoint import keys_router as openai_keys_router  # noqa: E402
 
 app.include_router(core_endpoint_router, prefix="/api")
 app.include_router(openai_api_router, prefix="/api")
+app.include_router(openai_keys_router, prefix="/api")
 # The OpenAI-compatible API (standard layout: /v1/models, /v1/chat/completions, ...);
 # /core/v1 answers 308 to it for one release (deprecated).
 app.mount("/v1", CoreEndpoint(), name="openai-api")

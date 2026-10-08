@@ -429,7 +429,7 @@ reports the watchdog's state. See [deployment.md](./deployment.md) and
 ### Can I use this gateway from an OpenAI SDK or app?
 
 Yes. An admin turns on the API on the console's **OpenAI API** page. Point the
-SDK at `http://<gateway>/v1` and use your gateway token as the API key; the
+SDK at `http://<gateway>/v1` and use an API key from that page (**New key**); the
 model name is `provider/model` as listed by `GET /v1/models`. Chat completions
 (with tools, streaming and structured outputs through `response_format`
 `json_object` or `json_schema`) and embeddings are supported. See

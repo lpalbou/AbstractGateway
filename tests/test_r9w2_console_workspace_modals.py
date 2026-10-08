@@ -84,6 +84,7 @@ def test_icon_buttons_use_the_kit_tooltip_never_a_native_title(html: str) -> Non
         assert sentence in js, sentence
     for tag in re.findall(r"<button[^`]*?ui-icon-btn[^`]*?>", html):
         assert "data-af-tip=" in tag and " title=" not in tag, tag
-    assert re.search(r'class="ui-btn is-ghost oai-eye"[^>]*data-af-tip="\$\{oaiStore.reveal \? "Hide your API key" : "Show your API key"\}"', html)
+    # Round 16: the OpenAI API page's eye (the token as key) is gone; a named key's Revoke carries a kit tip.
+    assert re.search(r'data-oai-revoke="\$\{esc\(fp\)\}" data-af-tip="Revoke this key: apps using it stop working at once"', html)
     trash = js[js.index("function mcDeleteButton(") : js.index("}", js.index('data-mc-action="delete-ask"', js.index("function mcDeleteButton(")))]
     assert "data-af-tip" in trash and "title=" not in trash
