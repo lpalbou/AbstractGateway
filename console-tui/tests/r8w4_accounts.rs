@@ -186,8 +186,8 @@ fn the_runtimes_chip_names_the_account_and_x_clears_it() {
                           "owners": ["alice"], "state": "active", "data_dir": "/data/rt/alice"}],
             "filter": {"account": "alice", "tenant_id": "default"}}))));
         let s = h.shoot("runtimes-filtered");
-        assert!(s.contains("[Account: alice ×]"), "{s}");
-        assert!(s.contains("x shows every runtime"), "{s}");
+        // R15: the chip is a head button with the web's words (× = x).
+        assert!(s.contains("Account: alice ×"), "{s}");
         h.sent();
         let s = h.key(b"x");
         assert!(!s.contains("Account: alice"), "{s}");

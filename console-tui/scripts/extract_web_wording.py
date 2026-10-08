@@ -365,6 +365,99 @@ def providers_words() -> dict:
 SCREEN_FIXTURES["providers"] = providers_words
 
 
+def runtimes_words() -> dict:
+    """R15-A Runtimes: the inventory, the inspector's tabs, toolbars, row buttons, confirms and modals."""
+    src = read("console.py")
+    ws = read("console_workspaces.py")
+    head = re.findall(r'runtimes: \["([^"]*)", "([^"]*)"\]', src)
+    if len(head) != 1:
+        fail(f"runtimes nav title: expected 1, found {head!r}.")
+    ths = lambda region: re.findall(r"<th>([^<]*)</th>", region)
+    inv = ths(need(src, r'(<thead><tr><th>Runtime</th>.*?</tr></thead>)', "inventory columns"))
+    runs = ths(need(src, r'(<thead><tr><th>Run</th><th>Workflow</th><th>Status</th><th>Node</th>.*?</tr></thead>)', "runs columns"))
+    ro = ths(need(src, r'(<thead><tr><th>Run</th><th>Workflow</th><th>Status</th><th>Session</th>.*?</tr></thead>)', "read-only runs columns"))
+    arts = ths(need(src, r'(<thead><tr><th>Artifact</th>.*?</tr></thead>)', "artifacts columns"))
+    caches = ths(need(src, r'(<thead><tr><th>Cache</th>.*?</tr></thead>)', "caches columns"))
+    logs = ths(need(src, r'(<thead><tr><th>File</th>.*?</tr></thead>)', "logs columns"))
+    statuses = re.findall(r'<option value="[^"]*">([^<]*)</option>', need(src, r'(<select id="runs-status".*?</select>)', "status select"))
+    tails = re.findall(r'<option value="\d+">([^<]*)</option>', need(src, r'(<select id="log-modal-tail-size">.*?</select>)', "tail sizes"))
+    out = {
+        "title": head[0][0],
+        "subtitle": head[0][1],
+        "note": need(src, r'<span>Runtimes</span></h2>\s*<p class="section-note">([^<]*)</p>', "runtimes note"),
+        "reload_tip": need(src, r'<button id="runtimes-refresh"[^>]*data-af-tip="([^"]*)"', "reload tooltip"),
+        "detail_reload_tip": need(src, r'<button id="runtime-detail-refresh"[^>]*data-af-tip="([^"]*)"', "detail reload tooltip"),
+        "teach": need(src, r'<p id="runtime-detail-teach" class="section-note">([^<]*)</p>', "teaching line"),
+        "tab_runs": need(src, r'<button id="runtime-subtab-sessions"[^>]*>([^<]*)</button>', "Runs tab"),
+        "tab_artifacts": need(src, r'<button id="runtime-subtab-artifacts"[^>]*>([^<]*)</button>', "Artifacts tab"),
+        "tab_cache": need(src, r'<button id="runtime-subtab-caches"[^>]*>([^<]*)</button>', "Cache tab"),
+        "tab_logs": need(src, r'<button id="runtime-subtab-logs"[^>]*>([^<]*)</button>', "Logs tab"),
+        "chip": need(ws, r'label\.textContent = `(Account: )\$\{', "account chip"),
+        "chip_clear_tip": need(ws, r'accountIconButton\("close", `(Show every runtime, not only \$\{filter\.account\}\'s)`', "chip clear tooltip").replace("${filter.account}", "{a}"),
+        "eligible": need(src, r'wsOpen\("(Eligible workspaces)"', "eligible workspaces link"),
+        "workspaces": need(src, r'policyTd\.append\(wsOpen\("(Workspaces)"', "workspaces link"),
+        "none": need(src, r'policyTd\.textContent = "(None)";', "no workspaces"),
+        "no_runtimes": need(src, r'"(No runtimes found\.)"', "no runtimes"),
+        "status_tip": need(src, r'<select id="runs-status" title="([^"]*)"', "status tooltip"),
+        "runs_search": need(src, r'<input id="runs-search"[^>]*placeholder="([^"]*)"', "runs search placeholder"),
+        "root_only": need(src, r'<input id="runs-root-only" type="checkbox" checked> ([^<]*)</label>', "root runs only"),
+        "root_only_tip": need(src, r'<label class="entity-checkbox" title="([^"]*)"><input id="runs-root-only"', "root only tooltip"),
+        "readonly_note": need(src, r'<div id="runtime-runs-readonly" class="hidden">\s*<p class="section-note">([^<]*)</p>', "read-only note"),
+        "inspect": need(src, r'inspect\.textContent = "([^"]*)";', "Inspect"),
+        "steer": need(src, r'steer\.textContent = "([^"]*)";', "Steer"),
+        "cancel": need(src, r'cancel\.textContent = "([^"]*)";', "Cancel"),
+        "cancel_confirm": need(src, r'message: `(Cancel run \$\{runId\}\? [^`]*)`, confirmLabel', "cancel question").replace("${runId}", "{id}"),
+        "cancel_go": need(src, r'Any in-flight work stops at the next tick\.`, confirmLabel: "([^"]*)"', "cancel button"),
+        "steer_title": need(src, r'title: "(Steer run)",', "steer title"),
+        "steer_lead": need(src, r'message: `(Guidance folds into \$\{runId\}[^`]*)`', "steer sentence").replace("${runId}", "{id}"),
+        "steer_go": need(src, r'confirmLabel: "(Send guidance)"', "send guidance"),
+        "steer_placeholder": need(src, r'input: \{ placeholder: "(e\.g\. focus on the failing test first[^"]*)" \}', "steer placeholder"),
+        "modality_tip": need(src, r'<select id="runtime-artifacts-modality" title="([^"]*)"', "type tooltip"),
+        "artifacts_search": need(src, r'<input id="runtime-artifacts-search"[^>]*placeholder="([^"]*)"', "artifacts placeholder"),
+        "artifacts_note": need(src, r'note\.textContent = "(Artifacts are indexed[^"]*)";', "artifacts note"),
+        "artifact_tip": need(src, r'tr\.title = `(Click to preview )\$\{name\}`;', "artifact row tooltip") + "{n}",
+        "cache_kind_tip": need(src, r'<select id="runtime-caches-kind" title="([^"]*)"', "kind tooltip"),
+        "caches_search": need(src, r'<input id="runtime-caches-search"[^>]*placeholder="([^"]*)"', "caches placeholder"),
+        "caches_note": need(src, r'<div id="runtime-panel-caches".*?<p class="section-note">([^<]*)</p>', "caches note", re.S),
+        "purge": need(src, r'<span class="button-icon" aria-hidden="true">×</span><span>(Purge…)</span>', "Purge…"),
+        "purge_tip": need(src, r'btn\.title = "(Delete the CONTENTS of this cache[^"]*)";', "purge tooltip"),
+        "purge_title": need(src, r'title: `(Purge )\$\{name\}\?`', "purge title") + "{n}?",
+        "forget": need(src, r'forget\.innerHTML = `<span class="button-icon" aria-hidden="true">×</span><span>([^<]*)</span>`;', "Forget"),
+        "forget_tip": need(src, r'forget\.title = "([^"]*)";', "forget tooltip"),
+        "forget_all": need(src, r'<span>(Forget all stale) \(\$\{stale\.length\}\)</span>', "forget all stale"),
+        "forget_all_tip": need(src, r'bulk\.title = "([^"]*)";', "forget all tooltip"),
+        "forget_confirm": need(src, r'message: `(This removes \$\{label\} from the data-home registry\.[^`]*)`', "forget question").replace("${label}", "{l}"),
+        "logs_home_tip": need(src, r'<select id="runtime-logs-home" title="([^"]*)"', "log home tooltip"),
+        "logs_search": need(src, r'<input id="runtime-logs-search"[^>]*placeholder="([^"]*)"', "logs placeholder"),
+        "log_tip": need(src, r'tr\.title = `(Click to tail )\$\{f\.name\}`;', "log row tooltip") + "{n}",
+        "log_sub": need(src, r'\$\("log-modal-sub"\)\.textContent = `from \$\{home\}( — newest lines at the bottom)`;', "log modal sub"),
+        "log_refresh_tip": need(src, r'<button id="log-modal-refresh"[^>]*data-af-tip="([^"]*)"', "log refresh tooltip"),
+        "close": need(src, r'<button id="log-modal-close" class="secondary" type="button">([^<]*)</button>', "Close"),
+        "prev": need(src, r'mk\("(‹ Prev)"', "Prev"),
+        "next": need(src, r'mk\("(Next ›)"', "Next"),
+    }
+    for i, c in enumerate(inv):
+        out[f"inv_col_{i}"] = c
+    for i, c in enumerate(runs):
+        out[f"runs_col_{i}"] = c
+    for i, c in enumerate(ro):
+        out[f"ro_col_{i}"] = c
+    for i, c in enumerate(arts):
+        out[f"art_col_{i}"] = c
+    for i, c in enumerate(caches):
+        out[f"cache_col_{i}"] = c
+    for i, c in enumerate(logs):
+        out[f"log_col_{i}"] = c
+    for i, c in enumerate(statuses):
+        out[f"status_{i}"] = c
+    for i, c in enumerate(tails):
+        out[f"tail_{i}"] = c
+    return out
+
+
+SCREEN_FIXTURES["runtimes"] = runtimes_words
+
+
 def screens_main(write: bool) -> int:
     rc = 0
     for name, build_fn in SCREEN_FIXTURES.items():

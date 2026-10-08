@@ -2828,12 +2828,16 @@ fn runtimes_table_renders_sizes_and_states() {
         .runtimes
         .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
     let s = h.turns(2);
+    // R15: the web's columns — Runtime · Kind · Owner · State · Size · Workspace.
     assert!(
-        s.contains("Gateway default run"),
-        "default row (label cell may ellipsize):\n{s}"
+        s.contains("default") && s.contains("Eligible workspaces"),
+        "default row:\n{s}"
     );
     assert!(s.contains("7.8 GiB"), "humanized size:\n{s}");
-    assert!(s.contains("asleep (alive)"), "entity state cell:\n{s}");
+    assert!(
+        s.contains("asleep"),
+        "entity state cell (the web's word):\n{s}"
+    );
 }
 
 /// A write that applied but left something the operator must see (an
@@ -3580,80 +3584,6 @@ fn discard_question_defaults_to_keep_editing() {
     );
 }
 
-/// Web-console parity: the Runtimes screen renders the runtime-config
-/// knob surface with per-knob PROVENANCE (value + which layer set it).
-#[test]
-fn runtime_knobs_render_with_provenance() {
-    // Three rows taller than the default harness: the knobs gained a second
-    // button row (backlog settings + skills reseed) and the key-hint bar
-    // wraps onto a second line (R7.2).
-    let mut h = harness_sized(Size::new(110, 37));
-    h.connect_as_admin();
-    h.goto_screen(4);
-    h.store
-        .runtimes
-        .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
-    // Knobs live behind a collapsed disclosure — the load fires on first
-    // expand, never eagerly (2026-07-26 lazy law). Discoverability comes
-    // from the folded header's wording and the `w` hint instead.
-    h.turns(2);
-    let _ = h.drain_cmds();
-    h.ui.rt_knobs_folded.set(false);
-    h.turns(2);
-    assert!(
-        h.find_cmd(|c| matches!(c, Cmd::LoadRuntimeConfig))
-            .is_some(),
-        "expanding the knobs disclosure triggers the lazy load"
-    );
-    h.store.runtime_config.set(Loadable::Ready(
-        abstractgateway_console::store::RuntimeConfigData::from_value(&json!({
-            "writable": true,
-            "workspace_policy": {"endpoint": "/api/gateway/workspace/policy"},
-            "process_manager": {"value": false, "source": "default"},
-            "executor": {"value": "codex", "source": "stored"},
-            "operator_email": {"value": null, "source": "default"},
-            "executors": [
-                {"id": "codex", "display": "Codex CLI", "available": true, "default": true},
-                {"id": "claude", "display": "Claude Code", "available": false, "default": false}
-            ]
-        })),
-    ));
-    let s = h.turns(2);
-    assert!(s.contains("Runtime knobs"), "knob block:\n{s}");
-    assert!(
-        s.contains("executor: codex  (stored)"),
-        "a knob with its source:\n{s}"
-    );
-    // Round 10 (Y1): the round-9 gateway serves no workspace knobs (the
-    // policy lives under Accounts): no workspace row, no editor, and the
-    // `workspace_policy` pointer is not rendered as a knob.
-    for gone in [
-        "default_workspace",
-        "launch_folder_trust",
-        "scope_overrides",
-        "Edit workspace access policy",
-        "workspace_policy",
-    ] {
-        assert!(!s.contains(gone), "{gone:?} still rendered:\n{s}");
-    }
-    assert!(
-        s.contains("executor: codex  (stored)"),
-        "knob value + provenance:\n{s}"
-    );
-    assert!(
-        s.contains("process_manager: off  (default)"),
-        "bool knob rendered:\n{s}"
-    );
-    assert!(
-        s.contains("operator_email: —  (default)"),
-        "null renders as an honest dash:\n{s}"
-    );
-    assert!(
-        s.contains("Codex CLI (default)") && s.contains("Claude Code — unavailable"),
-        "executors availability-honest:\n{s}"
-    );
-}
-
 /// The probe-acknowledgment law (operator incident 2026-07-23: pressing
 /// Probe while already connected looked dead): every probe renders a
 /// numbered, timestamped report line — same-outcome re-probes included.
@@ -3765,7 +3695,7 @@ fn footer_leads_with_the_screen_keys_at_80x24() {
         (1usize, "↑↓ rows · Tab next table"),
         (2, "Enter/e edit route"),
         (3, "↑↓ rows · Enter Email"),
-        (4, "Enter inspect runtime"),
+        (4, "↑↓ Enter open runtime"),
         (5, "↑↓ rows · Enter Export"),
         (7, "u unload"),
     ] {
@@ -4283,7 +4213,7 @@ fn runtimes_screen_loads_nothing_eagerly() {
         "NOTHING below the inventory loads before a choice: {sent:?}"
     );
     assert!(
-        s.contains("select a runtime above"),
+        s.contains("Select a runtime above"),
         "the detail region teaches the gesture:\n{s}"
     );
     assert!(
@@ -4341,7 +4271,7 @@ fn runs_panel_follows_runtime_selection() {
         "the inspector tabs render once a runtime is chosen:\n{s}"
     );
     assert!(
-        s.contains("loading this runtime's runs…"),
+        s.contains("Loading runs…"),
         "the load names itself while in flight:\n{s}"
     );
 
@@ -4369,8 +4299,8 @@ fn runs_panel_follows_runtime_selection() {
         "empty state names the plane AND the why:\n{s}"
     );
     assert!(
-        s.contains("entity plane: Testor"),
-        "scope line names the plane:\n{s}"
+        s.contains("▷ Runtime runtime_testor"),
+        "the inspector names the plane:\n{s}"
     );
 }
 
@@ -4497,15 +4427,14 @@ fn data_tab_lazy_load_and_attribution() {
         !s.contains("gateway-root-store") && !s.contains("abstractcore-blocs"),
         "root + shared stores stay off a nested plane's tab:\n{s}"
     );
-    assert!(
-        s.contains("data dir: /tmp/runtime/entities/testor"),
-        "the plane's dir fact renders:\n{s}"
-    );
 
     // The default plane sees its own PURGEABLE stores AND the shared
     // caches; durable stores (safe_to_purge=false) are NOT caches and
     // never render on the Cache tab (operator 2026-08-19).
     h.key(b"\x1b[A");
+    h.turns(2);
+    // Choosing lands on Runs (the web's); back to the Cache tab.
+    h.ui.rt_tab.set(2);
     let s = h.turns(3);
     assert!(
         s.contains("abstractcore-blocs"),
@@ -4514,10 +4443,6 @@ fn data_tab_lazy_load_and_attribution() {
     assert!(
         !s.contains("gateway-root-store"),
         "durable stores are not caches — kept off the Cache tab:\n{s}"
-    );
-    assert!(
-        s.contains("shared (outside planes)"),
-        "shared rows carry the label:\n{s}"
     );
     assert!(
         !s.contains("testor-artifacts"),
@@ -4568,7 +4493,7 @@ fn foreign_plane_cancel_and_steer_refused() {
     );
     let notice = h.store.notice.get_untracked().unwrap_or_default();
     assert!(
-        notice.contains("ticked by that plane's own runtime"),
+        notice.contains("through the default runtime's command lane"),
         "refusal names the mechanism: {notice}"
     );
 
@@ -4613,9 +4538,11 @@ fn run_double_click_opens_steer_form() {
     h.key(b"\r");
     let s = h.turns(3);
     assert!(
-        s.contains("Run      run-0000-aaaaaaaa"),
-        "Enter expands the run's Inspect rows:\n{s}"
+        s.contains("Run run-0000-aaa"),
+        "Enter opens the run's Inspect dialog (the web's):\n{s}"
     );
+    h.press_escape();
+    h.turns(2);
     h.type_text("s");
     let s = h.turns(3);
     assert!(
@@ -4861,7 +4788,7 @@ fn gateway_reset_forgets_the_chosen_runtime() {
     );
     let s = h.turns(1);
     assert!(
-        s.contains("select a runtime above"),
+        s.contains("Select a runtime above"),
         "teaching line back after the reset:\n{s}"
     );
 }
@@ -4896,10 +4823,16 @@ fn busy_tick_does_not_steal_focus_from_the_inspector_segments() {
         },
         rows: vec![],
     }));
-    h.turns(2);
-    h.key(b"\t"); // Runs segment
+    let s = h.turns(2);
+    // Focus the Runs segment by mouse, then Tab to Artifacts.
+    let y = find_row(&s, "▷ Runtime");
+    let line = s.lines().nth(y - 1).unwrap();
+    let x = line[..line.find(" Runs ").unwrap()].chars().count() + 2;
+    click_at(&mut h, x, y);
     h.turns(1);
     h.key(b"\t"); // Artifacts segment
+    h.turns(1);
+    h.ui.rt_tab.set(0);
     h.turns(1);
     let _ = h.drain_cmds();
     // The busy heartbeat ticks while some op runs elsewhere.
@@ -4935,7 +4868,7 @@ fn runtimes_inspector_fits_at_80x24() {
         .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
     let s = h.turns(2);
     assert!(
-        s.contains("select a runtime above"),
+        s.contains("Select a runtime above"),
         "teaching line visible at 80x24:\n{s}"
     );
     h.type_text("\r"); // choose the default plane
@@ -4959,15 +4892,15 @@ fn runtimes_inspector_fits_at_80x24() {
         "at least one run row visible at 80x24:\n{s}"
     );
     assert!(
-        s.contains("kind") && s.contains("runtime"),
+        s.contains("Kind") && s.contains("Runtime"),
         "inventory table header survives at 80x24:\n{s}"
     );
     assert!(
-        s.contains("Runtime knobs"),
-        "knobs disclosure header survives at 80x24:\n{s}"
+        !s.contains("Runtime knobs"),
+        "the knobs live on the pages that own them (DESIGN D3):\n{s}"
     );
     assert!(
-        s.contains("inspect runtime"),
+        s.contains("open runtime"),
         "the screen's own keys lead the footer at 80x24:\n{s}"
     );
 }
@@ -4997,8 +4930,8 @@ fn unmaterialized_plane_data_dir_renders_a_dash() {
     h.store.data_homes.set(Loadable::Ready(vec![]));
     let s = h.turns(3);
     assert!(
-        s.contains("data dir: —"),
-        "an unmaterialized plane's dir renders an honest dash:\n{s}"
+        s.contains("(not materialized yet)"),
+        "an unmaterialized plane says so (the web's Owner cell):\n{s}"
     );
 }
 
@@ -5044,11 +4977,10 @@ fn home_plane_index_duplicate_dirs_first_wins() {
     assert_eq!(home_plane_index(&planes2, "/tmp/runtime/x"), Some(1));
 }
 
-/// Gesture-gap probe (engine Table policy): a single click on the
-/// ALREADY-selected row fires neither on_select (no change) nor
-/// on_activate (click_count 1) — so the very first click most
-/// operators make (row 0 is pre-highlighted) cannot be the ONLY
-/// taught gesture. The teaching line must name the working gestures.
+/// Gesture-gap pin: the very first click most operators make lands on
+/// the PRE-highlighted row 0. On the engine Table that click was dead
+/// (no selection change, click count 1); the R15 inventory (DataTable)
+/// chooses on that click — the web's "click a runtime to open it".
 #[test]
 fn teaching_line_names_working_gestures_for_the_highlighted_row() {
     let mut h = harness();
@@ -5058,27 +4990,16 @@ fn teaching_line_names_working_gestures_for_the_highlighted_row() {
         .runtimes
         .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
     let s = h.turns(2);
-    // The dead gesture, demonstrated: one click on the pre-selected row
-    // (the label column ellipsizes, so match the un-truncated head).
-    let y = find_row(&s, "Gateway default");
+    assert!(
+        s.contains("Select a runtime above — click a row — to load its runs and cache."),
+        "the web's teaching line:\n{s}"
+    );
+    let y = find_row(&s, "Eligible workspaces");
     click_at(&mut h, 6, y);
     h.turns(3);
     assert!(
-        h.ui.rt_detail.get_untracked().is_none(),
-        "engine fact this test documents: a single click on the selected row is DEAD"
-    );
-    // Therefore the teaching must offer Enter/double-click explicitly.
-    let s = h.turns(1);
-    assert!(
-        s.contains("select a runtime above") && s.contains("double-click the highlighted"),
-        "teaching line names a gesture that works on the highlighted row:\n{s}"
-    );
-    // And the taught gesture must actually work: double-click chooses.
-    double_click_at(&mut h, 6, y);
-    h.turns(3);
-    assert!(
         h.ui.rt_detail.get_untracked().is_some(),
-        "double-click on the highlighted row chooses it"
+        "one click on the highlighted row chooses it"
     );
 }
 
@@ -5742,17 +5663,24 @@ fn runtime_tabs_show_toolbar_state_and_gestures() {
         rows: runs_fixture_rows(3, "running"),
     }));
     let s = h.turns(2);
+    // R15: the state is the toolbar's own controls (the web's dropdown
+    // and search box) and the web's pager.
+    let bar = s
+        .lines()
+        .find(|l| l.contains("root runs only"))
+        .unwrap_or_else(|| panic!("toolbar:\n{s}"));
     assert!(
-        s.contains("status=running"),
-        "status filter on the line:\n{s}"
+        bar.contains("running"),
+        "status filter in the dropdown:\n{s}"
     );
-    assert!(s.contains("q=\"coder\""), "query on the line:\n{s}");
-    assert!(s.contains("101–103"), "page position on the line:\n{s}");
-    // Gestures are taught once, in the footer hint bar (repeating them on
-    // every panel line truncated the state at 108 columns).
+    assert!(bar.contains("coder"), "query in the search box:\n{s}");
     assert!(
-        s.contains("f filter") && s.contains("search") && s.contains("n/p"),
-        "the footer teaches the toolbar gestures:\n{s}"
+        s.contains("101–103 · more"),
+        "page position in the pager:\n{s}"
+    );
+    assert!(
+        s.contains("f status") && s.contains("n/p page"),
+        "the footer teaches the toolbar keys:\n{s}"
     );
 
     // --- Artifacts tab: same shape, with the real total ---
@@ -5779,7 +5707,11 @@ fn runtime_tabs_show_toolbar_state_and_gestures() {
     }));
     let s = h.turns(2);
     assert!(s.contains("hero.png"), "artifact row renders:\n{s}");
-    assert!(s.contains("type=image"), "type filter named:\n{s}");
+    assert!(
+        s.lines()
+            .any(|l| l.contains("▐image") && l.contains("Search artifacts")),
+        "type filter in the dropdown:\n{s}"
+    );
     assert!(
         s.contains("of 79147"),
         "the real total, never a 'newest N' cap:\n{s}"
@@ -5795,7 +5727,7 @@ fn runtime_tabs_show_toolbar_state_and_gestures() {
     }]));
     let s = h.turns(2);
     assert!(
-        s.contains("abstractgateway.log") && s.contains("Enter tail"),
+        s.contains("abstractgateway.log") && s.contains("o tail"),
         "log FILES list with the tail gesture:\n{s}"
     );
 }
@@ -5841,7 +5773,8 @@ fn cache_tab_lists_caches_and_stale_rows_only() {
         "durable stores are not caches:\n{s}"
     );
     assert!(
-        s.contains("gateway-artifacts-dead") && s.contains("stale row"),
+        s.contains("gateway-artifacts-dead")
+            && s.contains("Stale registrations (1, whole machine registry)"),
         "stale registrations surface HERE with an honest marker:\n{s}"
     );
 }
@@ -5894,7 +5827,7 @@ fn list_tabs_have_own_selection_and_a_visible_toolbar() {
         "the filter DROPDOWN is visible:\n{s}"
     );
     assert!(
-        s.contains("search log files"),
+        s.contains("Search log files"),
         "the SEARCH box is visible:\n{s}"
     );
 
@@ -5944,7 +5877,7 @@ fn list_tabs_have_own_selection_and_a_visible_toolbar() {
         "artifacts filter dropdown visible:\n{s}"
     );
     assert!(
-        s.contains("search artifacts"),
+        s.contains("Search artifacts"),
         "artifacts search box visible:\n{s}"
     );
     h.ui.rt_art_sel.set(4);
@@ -6094,18 +6027,18 @@ fn log_tail_scrolls_through_its_content() {
 
     // THE MOUSE WHEEL SCROLLS TOO (operator 2026-08-19). SGR wheel-down
     // over the viewer: `CSI < 65 ; col ; row M`, three lines per notch.
-    h.key(b"\x1b[<65;60;12M");
+    h.key(b"\x1b[<65;60;16M");
     let s = h.turns(3);
     assert!(
         s.contains("line 4/60"),
         "one wheel notch scrolls three lines:\n{s}"
     );
-    h.key(b"\x1b[<65;60;12M");
-    h.key(b"\x1b[<65;60;12M");
+    h.key(b"\x1b[<65;60;16M");
+    h.key(b"\x1b[<65;60;16M");
     let s = h.turns(3);
     assert!(s.contains("line 10/60"), "the wheel keeps scrolling:\n{s}");
     // And back up.
-    h.key(b"\x1b[<64;60;12M");
+    h.key(b"\x1b[<64;60;16M");
     let s = h.turns(3);
     assert!(s.contains("line 7/60"), "wheel-up scrolls back:\n{s}");
 }
@@ -6176,8 +6109,8 @@ fn a_filetype_glob_filters_the_cache_tab() {
     );
 }
 
-/// The search modal states the rule ONCE, above the field — the glob half
-/// is undiscoverable otherwise, and the box is where a user meets it.
+/// R15: the search box is ON the page (the web's toolbar), so `/` says
+/// where it is instead of opening a modal.
 #[test]
 fn the_search_modal_teaches_the_glob_half() {
     let mut h = harness();
@@ -6187,21 +6120,20 @@ fn the_search_modal_teaches_the_glob_half() {
         .runtimes
         .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
     h.turns(2);
-    h.key(b"\x1b[B"); // choose a plane — `/` refuses without one
+    h.key(b"\x1b[B");
     h.turns(2);
     h.ui.rt_tab.set(1);
-    h.turns(2);
-    // `/` opens the active tab's search box.
-    h.key(b"/");
     let s = h.turns(2);
-    assert!(s.contains("Search artifacts"), "the modal opened:\n{s}");
     assert!(
-        s.contains("*.jpg"),
-        "the modal names the glob half by example:\n{s}"
+        s.contains("Search artifacts — name, kind, tags"),
+        "the box:\n{s}"
     );
+    h.key(b"/");
+    h.turns(2);
+    let notice = h.store.notice.get_untracked().unwrap_or_default();
     assert!(
-        s.contains("substring"),
-        "and names the half a plain query still gets:\n{s}"
+        notice.contains("search field is in the toolbar"),
+        "{notice}"
     );
 }
 
@@ -7291,7 +7223,7 @@ fn footer_hints_stay_in_lockstep_with_screens() {
         (1usize, "Add connection"),
         (2, "edit route"),
         (3, "Enter Email"),
-        (4, "inspect runtime"),
+        (4, "open runtime"),
         (5, "Drafts"),
         (6, "run the test"),
         (7, "context estimate"),
@@ -8017,78 +7949,6 @@ fn finish_step_offers_start_at_login() {
     assert!(!s.contains("Turn off"), "{s}");
 }
 
-/// `e` shows the destination (the console's downloads folder, never the
-/// working directory) and exports only after Enter (review 2 N3).
-#[test]
-fn backlog_settings_rows_and_skills_reseed_in_the_knobs() {
-    use abstractgateway_console::worker::operator::OpCmd;
-    let mut h = harness_sized(Size::new(160, 70));
-    h.connect_as_admin();
-    h.goto_screen(4);
-    h.store
-        .runtimes
-        .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
-    h.turns(2);
-    h.ui.rt_knobs_folded.set(false);
-    h.turns(2);
-    h.store.runtime_config.set(Loadable::Ready(
-        abstractgateway_console::store::RuntimeConfigData::from_value(&json!({
-            "writable": true,
-            "triage_repo_root": {"source": "default", "value": "/d/backlog", "default_path": "/d/backlog",
-                                 "available": true, "label": "Backlog folder"},
-            "backlog_exec_runner": {"value": false, "source": "default", "label": "Backlog exec runner"},
-            "process_manager": {"value": true, "source": "stored", "label": "Process manager"},
-            "skills": {"shelf": {"value": null, "source": "seeded", "resolved": "/d/skills/registry",
-                                 "available": true, "default_path": "/d/skills/registry", "bundled_version": "2026.09.25"}}
-        })),
-    ));
-    let s = h.turns(2);
-    assert!(
-        s.contains("triage_repo_root: /d/backlog  (default)"),
-        "folder row:\n{s}"
-    );
-    assert!(
-        s.contains("backlog_exec_runner: off  (default)"),
-        "runner row:\n{s}"
-    );
-    assert!(
-        s.contains("process_manager: on  (saved setting)"),
-        "pm row:\n{s}"
-    );
-    assert!(
-        s.contains("Edit backlog settings"),
-        "editor entry point:\n{s}"
-    );
-    assert!(
-        s.contains("Refresh the curated skills shelf"),
-        "reseed entry point:\n{s}"
-    );
-    let _ = h.drain_cmds();
-    // Click the reseed button: find it on screen and press it by mouse.
-    let (row, col) = s
-        .lines()
-        .enumerate()
-        .find_map(|(i, l)| {
-            l.find("Refresh the curated skills shelf")
-                .map(|c| (i, l[..c].chars().count()))
-        })
-        .expect("button on screen");
-    let click = format!(
-        "\x1b[<0;{};{}M\x1b[<0;{};{}m",
-        col + 3,
-        row + 1,
-        col + 3,
-        row + 1
-    );
-    h.key(click.as_bytes());
-    h.turns(2);
-    assert!(
-        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::ReseedSkills)))
-            .is_some(),
-        "the button posts the reseed"
-    );
-}
-
 #[test]
 fn users_w_opens_the_accounts_workspaces() {
     // R14.3: `w` on an Accounts row opens THAT account's workspaces (the
@@ -8188,33 +8048,6 @@ fn apps_runtime_config() -> Value {
 }
 
 #[test]
-fn apps_settings_render_in_runtime_knobs_with_their_source() {
-    let mut h = harness_sized(Size::new(120, 70));
-    h.connect_as_admin();
-    h.goto_screen(4);
-    h.store
-        .runtimes
-        .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
-    h.turns(2);
-    h.ui.rt_knobs_folded.set(false);
-    h.turns(2);
-    h.store.runtime_config.set(Loadable::Ready(
-        abstractgateway_console::store::RuntimeConfigData::from_value(&apps_runtime_config()),
-    ));
-    let s = h.turns(2);
-    assert!(s.contains("apps.host: 0.0.0.0  (stored)"), "host row:\n{s}");
-    assert!(
-        s.contains("apps.node: system  (env)"),
-        "env-sourced row:\n{s}"
-    );
-    assert!(s.contains("apps.ports: —  (default)"), "default row:\n{s}");
-    assert!(s.contains("Edit apps settings"), "editor entry point:\n{s}");
-    if let Ok(dir) = std::env::var("MISSION_Z_RENDER_DIR") {
-        std::fs::write(format!("{dir}/tui_runtime_knobs_apps.txt"), &s).expect("write render");
-    }
-}
-
-#[test]
 fn apps_settings_body_sends_only_changed_keys_and_clears_with_empty() {
     use abstractgateway_console::ui::runtimes::apps_settings_body;
 
@@ -8299,31 +8132,6 @@ fn agent_defaults_parse_render_and_body() {
         agent_defaults_body(&d.agent_defaults, &typed),
         json!({"agents": {"default_workflow": {"abstractcode.agent.v1": ""}}})
     );
-
-    // Render: one knob row per interface with what it runs or why not.
-    let mut h = harness_sized(Size::new(140, 70));
-    h.connect_as_admin();
-    h.goto_screen(4);
-    h.store
-        .runtimes
-        .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
-    h.turns(2);
-    h.ui.rt_knobs_folded.set(false);
-    h.turns(2);
-    h.store.runtime_config.set(Loadable::Ready(d));
-    let s = h.turns(2);
-    assert!(
-        s.contains("abstractcode.agent.v1 → coder@1.1.0:code (Coder)  (stored)"),
-        "code row:\n{s}"
-    );
-    assert!(
-        s.contains("abstractassistant.agent.v1 → unavailable: no host workflow"),
-        "assistant row:\n{s}"
-    );
-    assert!(
-        s.contains("Edit default agent workflows"),
-        "editor entry point:\n{s}"
-    );
 }
 
 #[test]
@@ -8347,23 +8155,6 @@ fn skills_shelf_parse_render_and_body() {
         ..Default::default()
     };
     assert_eq!(skills_shelf_body(&stored, ""), json!({"skills.shelf": ""}));
-
-    let mut h = harness_sized(Size::new(140, 70));
-    h.connect_as_admin();
-    h.goto_screen(4);
-    h.store
-        .runtimes
-        .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
-    h.turns(2);
-    h.ui.rt_knobs_folded.set(false);
-    h.turns(2);
-    h.store.runtime_config.set(Loadable::Ready(d));
-    let s = h.turns(2);
-    assert!(
-        s.contains("skills.shelf: /d/skills/registry (curated 2026.09.25)  (seeded)"),
-        "shelf row:\n{s}"
-    );
-    assert!(s.contains("Edit skills shelf"), "editor entry point:\n{s}");
 }
 
 // ---------------------------------------------------------------------
@@ -8527,46 +8318,6 @@ fn streaming_default_knob_reads_edits_and_never_hides() {
         &json!({"agents": {"streaming_default": {"value": "yes", "source": "stored"}}})
     )
     .is_none());
-
-    for (payload, want, button) in [
-        (
-            on.clone(),
-            "stream replies: on — interactive replies stream live  (stored)",
-            true,
-        ),
-        (
-            json!({"writable": true, "agents": {"streaming_default": {"value": false, "source": "default"}}}),
-            "stream replies: off — replies arrive whole  (default)",
-            true,
-        ),
-        (
-            json!({"writable": true, "agents": {"default_workflow": {}}}),
-            "stream replies: not available on this gateway",
-            false,
-        ),
-    ] {
-        // A real read always carries the workspace knobs beside it.
-        let mut payload = payload;
-        payload["workspace_root"] = json!({"value": "/w", "source": "stored"});
-        let d = abstractgateway_console::store::RuntimeConfigData::from_value(&payload);
-        let mut h = harness_sized(Size::new(160, 70));
-        h.connect_as_admin();
-        h.goto_screen(4);
-        h.store
-            .runtimes
-            .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
-        h.turns(2);
-        h.ui.rt_knobs_folded.set(false);
-        h.turns(2);
-        h.store.runtime_config.set(Loadable::Ready(d));
-        let s = h.turns(2);
-        assert!(s.contains(want), "row {want:?}:\n{s}");
-        assert_eq!(
-            s.contains("Edit stream replies"),
-            button,
-            "edit entry point:\n{s}"
-        );
-    }
 }
 
 /// 80x24 (review 2 e): the Resources title fits inside its border, the
@@ -9205,6 +8956,8 @@ fn inspector_segments_take_tab_and_enter_and_arrows_stay_global() {
         rows: vec![],
     }));
     h.turns(2);
+    h.key(b"\t"); // the chosen row's Workspaces link (a tab stop on the selected row)
+    h.turns(1);
     h.key(b"\t"); // the "Runs" segment
     h.turns(1);
     h.key(b"\t"); // the "Artifacts" segment
