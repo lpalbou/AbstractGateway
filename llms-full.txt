@@ -2055,14 +2055,67 @@ entity's). The console's Accounts page follows the same rule.
 - Entity names belong to the whole gateway: creating an entity under a name
   another account already holds (an entity in any runtime, or a user account)
   answers 409 "That name is taken".
-- Seeing an entity is not managing it: admin-only entity writes (state, tool
-  policy, prompt, substrate, …) stay admin-only for the entities you created,
-  and only an admin can suspend an entity or rotate a user's token.
+- Seeing an entity is not the same as configuring it: its creator configures
+  it ([below](#who-configures-an-entity)); its lifecycle acts stay an admin's,
+  and only an admin rotates a user's token.
 - A gateway without user accounts is one shared world: every entity is visible.
 
+### Roles: admin and member
+
+An account has one of two roles: **admin** (manages the gateway) or
+**member**. A member is a human account (role `user` on the wire) or an entity
+account (an AI member, created by a human account). There is no viewer,
+read-only or third role: `POST /admin/users` and `PATCH /admin/users/{id}`
+refuse any other role with `400 unknown_role` ("'readonly' is not a role: an
+account is an admin or a member (roles "admin" and "user").").
+
+### Who configures an entity
+
+The entity's **creator** configures it, within what the admin authorised; an
+admin always can (operator ruling 2026-10-08). Nobody else: another member
+gets 403 "Only an admin or <entity>'s creator can …" (or 404 when they can't
+see it at all), and the entity itself never changes its own settings.
+
+| Setting | Route | Creator's bound |
+|---|---|---|
+| Mind (model) | `PUT /entities/{name}/substrate` | a model the gateway offers for that provider (the list `GET /discovery/providers/{provider}/models` shows a member); **Gateway default** always |
+| Voice | `PUT /entities/{name}/voice` | a voice (and speech model) the gateway offers (`GET /voice/voices`); the gateway default voice always |
+| Tools per phase | `PUT /entities/{name}/tool-policy` | the tier-1 and workspace tools; a tier-2 tool (`execute_command`) is given only by an admin (keeping or removing it is fine) |
+| Instructions | `PUT /entities/{name}/prompt` | — |
+| Skills | `PUT /entities/{name}/skills` | the shelf's skills (as at creation) |
+| Workspaces | `PUT /workspace/policy/{entity}` | within the admin's eligible workspaces and caps |
+| Preferences | `PUT /accounts/{entity}/preferences` | the declared keys |
+| Archive, unarchive, Active | `POST /me/accounts/{id}/archive\|unarchive`, `PUT /me/accounts/{id}/active` | — |
+
+A creator outside the bound gets `403` with `reason_code` `not_offered` or
+`admin_only_tool` and a sentence that names what is offered ("llama-x isn't a
+lmstudio model this gateway offers. Offered: qwen3-4b, qwen3-30b.").
+
+An admin always can, wherever the entity lives: on a gateway with user
+accounts a member's entity lives in that member's runtime, and an admin's
+request on `/entities/{name}/…` (and Accounts' Active, Archive, Unarchive) is
+served by the runtime that holds it, so the console's Manage works on every
+entity the admin's Accounts page lists.
+
+These stay an admin's: sleep and wake (`state`), personal time (`loop/*`,
+`personal-grant`), the work order and tasks, memory review (`candidates`), the
+memory index rebuild (`reembed`), maintenance windows, the capability map and
+host-folder mounts (`workspace/mounts`).
+
+The settings routes are one row of the route table (required role
+`admin_or_creator`); the entity routers decide it once for every such route,
+so no route can forget the check. `GET /entities/{name}/access` answers
+`{can_configure, as: "admin"|"creator"|null, reason, admin_only_tools,
+admin_only}` so clients enable their controls from the gateway's answer.
+Every decision is on the request's audit line (`entity_settings: {entity,
+setting, actor, as, outcome}`), and the entity's own history records who
+changed a setting and as whom (`by`, `as` on `substrate_changed`,
+`voice_changed`, `tool_policy_changed`, `prompt_overlay_changed`,
+`skills_selection_changed`).
+
 An entity has no token to rotate (its credential is discarded when it is
-created) and cannot be deleted (its name is kept for life); an admin suspends
-it instead. Details: [api.md](docs/api.md#who-sees-which-account).
+created) and cannot be deleted (its name is kept for life); an admin or its
+creator suspends or archives it instead. Details: [api.md](docs/api.md#who-sees-which-account).
 
 ### Per-user email
 
@@ -6456,11 +6509,12 @@ The Accounts page (admin): users and entities in one list.
 
 | Route | Purpose |
 |---|---|
-| `GET /admin/accounts` | `{accounts: [{id, tenant_id, kind: user \| entity, role: admin \| user \| entity, own, email_address, mailbox{state: connected \| receive_only \| not_connected \| paused \| unavailable, address, provider, reason}, runtime_id, active, entity_state, actions{email, logs, workspace, preferences, rotate, manage, delete, suspend: {available, reason}}}]}`, sorted admins, users, entities, then id; `entities_warning` when the entity list could not be read |
+| `GET /admin/accounts` | `{accounts: [{id, tenant_id, kind: user \| entity, role: admin \| user \| entity, own, email_address, mailbox{state: connected \| receive_only \| not_connected \| paused \| unavailable, address, provider, reason}, runtime_id, active, entity_state, actions{email, logs, workspace, preferences, rotate, manage, configure, archive, unarchive, suspend: {available, reason}}}]}` (role `user` = a member; an account is an admin or a member), sorted admins, users, entities, then id; `entities_warning` when the entity list could not be read |
 | `PUT /admin/accounts/{id}/active` | `{active}` → the updated row. Users: `false` = deactivated (signed out, cannot sign in); 409 `{message}` for your own account ("You can't deactivate your own account.") or the last active admin. Entities: `false` = suspended (entity state `paused`, its door credential off, an open visit closed); `true` = resumed (the state it had before is restored, stored in `<data_dir>/auth/entity_suspended.json`) |
 | `GET /admin/accounts/{id}/activity` | `?limit=100&kind=sign_in,run,…` (admin) |
 | `GET /me/activity` | the same for the signed-in account |
-| `GET /me/accounts` | any signed-in account: `{accounts: [rows], scope: "own"}`, the same row shape — your own row plus one row per entity **you** created; actions only an admin can take are unavailable with the reason |
+| `GET /me/accounts` | any signed-in account: `{accounts: [rows], scope: "own"}`, the same row shape — your own row plus one row per entity **you** created; actions only an admin can take are unavailable with the reason. `?include_archived=true` adds the archived entities you created |
+| `POST /me/accounts/{id}/archive`, `POST /me/accounts/{id}/unarchive`, `PUT /me/accounts/{id}/active` | an entity **you** created: archive it, unarchive it (it comes back inactive) or turn it on or off (`{active}`); any other id answers 404 like a missing account ([who configures an entity](docs/security.md#who-configures-an-entity)) |
 | `GET /me/accounts/{id}/activity` | the activity of your own account or of an entity you created; any other id answers 404 |
 
 ### Who sees which account
@@ -6484,8 +6538,11 @@ This is enforced on every entity route, not only on the Accounts page:
   …"): entity names are unique per gateway, so this is the one place a name's existence shows. This
   holds across runtimes: an entity living in another user's runtime, or a user account with that
   name, also answers 409 (`POST /entities/{name}/validate` reports the same error).
-- Visibility is not management: entity writes that are admin-only (state, tool policy, prompt,
-  substrate, …) stay admin-only for the entities you created.
+- Visibility is not the same as configuration: the creator of an entity changes its settings (mind,
+  voice, tools per phase, instructions, skills, workspaces, preferences, archive, unarchive, Active)
+  within what the admin authorised; its lifecycle acts (state, personal time, work order, memory
+  review and rebuild, mounts) stay admin-only. `GET /entities/{name}/access` says what the caller
+  may change: [security.md](docs/security.md#who-configures-an-entity).
 
 Without user accounts (the single-operator gateway) every entity is visible, as before.
 
@@ -6815,13 +6872,13 @@ its Accounts header ([security.md](docs/security.md#command-sandbox)).
 
 | Column | Shows |
 |---|---|
-| **Name** | the account id and a kind chip: **Admin**, **User** or **Entity** (hover it for the role) |
+| **Name** | the account id and a kind chip: **Admin**, **Member** or **Entity** (hover it for the role). There are two roles: admin and member; a member is a human account or an entity |
 | **Email** | the account's address and its mailbox state in one line: `alice@example.org · connected`, `· not connected`, `· receive only` (with the reason under it) or `· paused`; "No address" when the account has neither a registered address nor a connected mailbox (users and entities alike: an entity has its own mailbox) |
 | **Runtime** | the account's runtime id as a link to the Runtimes page filtered to that account (administrators; plain text for everyone else), or "No runtime" |
 | **Active** | the switch described below; "Archived" on an archived row |
 | **Actions** | icon buttons, each with a tooltip sentence: users **Email**, **OpenAI API**, **Logs**, **Workspace**, **Rotate token**, **Archive**; entities **Email**, **Logs**, **Workspace**, **Manage**, **Archive**; archived rows **Logs**, **Unarchive** |
 
-Rows are tinted by kind (a legend under the table reads "Tint: admin · user ·
+Rows are tinted by kind (a legend under the table reads "Tint: admin · member ·
 entity"). Only the actions that apply to a row are shown: your own row has no
 **Archive** and an entity has no token to rotate. The action buttons are
 44 px targets. Hover one, or reach it with the keyboard, and a tooltip says
@@ -6835,8 +6892,9 @@ addresses wrap, and below about 900 px of window width each account becomes
 one flat block: name, kind chip and Active, then the email line, then the
 runtime, then the actions, which wrap.
 
-**Show archived** (administrators, above the table) lists archived accounts too;
-it is off by default and your browser remembers it.
+**Show archived** (above the table) lists archived accounts too (for someone
+who is not an administrator: the archived entities they created); it is off by
+default and your browser remembers it.
 
 - **Active** for a user: off signs them out and refuses their sign-in until you
   turn it back on. Turning it off asks first ("Deactivate alice? They are
@@ -6883,7 +6941,13 @@ it is off by default and your browser remembers it.
 - **Manage** (entities) opens the entity's lifecycle, mind and voice,
   capabilities and prompt; **Talk** is there too. **Mind & voice** uses the
   shared pickers: **Gateway default** (the gateway's text model and default
-  voice) or its own choice; changes save themselves.
+  voice) or its own choice; changes save themselves. An administrator or the
+  entity's creator changes its mind, voice, tools per phase and instructions
+  (the creator picks among the models and voices the gateway offers; a tier-2
+  tool's box stays off for the creator, with the tooltip "Only an admin can
+  give castor a tier-2 tool: …"); sleep and wake, personal time, freeze, the
+  work order and the memory index rebuild are an administrator's. Anyone else
+  reads the current values as text.
 - **Archive** asks in a row under the account ("Archive alice? They can't sign
   in any more. Their runtime, runs and history are kept; you can unarchive
   later." / for an entity: "It stops acting and never wakes. Its memory, runs
@@ -6901,9 +6965,9 @@ one row per entity they created (`GET /api/gateway/me/accounts`). There is no
 Create user, no Eligible workspaces and no Email for everyone;
 their own row's **Workspace** opens their own workspaces, and an entity's row
 opens that entity's; it has no **Rotate token**
-(only an admin rotates tokens), they can archive an entity they created but not
-unarchive it, and an entity's Active switch says "Only an admin can suspend an
-entity." Archived accounts are not listed for them. See [security.md](docs/security.md#who-sees-which-account).
+(only an admin rotates tokens). They configure an entity they created: its
+**Manage** settings, **Archive**, **Unarchive** (with **Show archived** on) and
+its **Active** switch. See [security.md](docs/security.md#who-configures-an-entity).
 
 
 ### Workspaces
@@ -10804,6 +10868,8 @@ Requires AbstractRuntime with `schedule@2` (the next runtime release).
 - The admin catalog upload (`/admin/workflow-catalog/upload`) runs its reload off the event loop like the other publish routes.
 - The console's OpenAI API page offers named API keys instead of your gateway token: the token is no longer shown on the page (no eye, no Copy), and **New key** makes a named key instead of replacing your gateway token. An account's gateway token is still accepted at `/v1` for compatibility. Sign-in keeps the typed token in the browser as before. The snippets use `YOUR_API_KEY`, or the key you just made.
 - The 401 at `/v1` says what to do: "Incorrect API key provided: it is not a key of this gateway, or it was revoked. Make a key on the gateway's OpenAI API page." (no key: "You didn't provide an API key: make one on the gateway's OpenAI API page and send it as Authorization: Bearer <key>.").
+- **The creator configures their entity** (operator ruling 2026-10-08, R16.5). An entity's settings — mind (`PUT /entities/{name}/substrate`), voice, tools per phase, instructions (`prompt`), skills, plus archive, unarchive and its Active switch — are changed by an admin or the entity's creator, within what the admin authorised: the creator picks among the models the gateway offers (`GET /discovery/providers/{provider}/models`) and the voices it offers (`GET /voice/voices`), never gives a tier-2 tool (`execute_command`; keeping or removing one is fine), and stays within the workspace caps (round 11). Outside the bound: `403` `not_offered` / `admin_only_tool` with a sentence naming what is offered. Anyone else: `403` "Only an admin or <entity>'s creator can …" (404 when they can't see it), and the entity never changes its own settings. The settings routes are ONE route-table row (required role `admin_or_creator`) decided by `entity_settings_access.entity_settings_guard`, a dependency of both entity routers. Lifecycle acts (sleep/wake, personal time, work order, tasks, memory review and rebuild, maintenance windows, capability map, mounts) stay admin-only. New: `GET /entities/{name}/access` (`{can_configure, as, reason, admin_only_tools, admin_only}`), `POST /me/accounts/{id}/unarchive`, `PUT /me/accounts/{id}/active`, `GET /me/accounts?include_archived=true`, `actions.configure` on every Accounts row. Each decision is on the request's audit line (`entity_settings: {entity, setting, actor, as, outcome}`) and the entity's history markers carry `by` and `as`. Console: the creator's Manage dialog edits mind, voice, tools (a tier-2 box stays off with the gateway's sentence as the kit tooltip) and instructions; the Active switch, Archive and Unarchive work for the creator; **Show archived** is offered to members. An admin always can, wherever the entity lives: an admin's `/entities/{name}/…` request (and Accounts' Active / Archive / Unarchive) is served by the runtime plane that holds the entity (a member's entity lives in the member's plane; before, the admin got 404 there while Accounts listed it), and the admin's Accounts census covers every plane. Tests: `tests/test_r16w6_entity_settings_authz.py` (creator / admin / other member / the entity itself per route, bounds, audit, markers, archive/unarchive/Active), `tests/test_r16w6_admin_cross_plane.py` (admin on a member's entity: access, settings, lifecycle, Accounts), `tests/test_gateway_console_browser_r16w6.py` (browser).
+- **Two roles: admin and member** (operator ruling 2026-10-08). A member is a human account (role `user` on the wire) or an entity account; there is no viewer or read-only role. `POST /admin/users` and `PATCH /admin/users/{id}` refuse any other role with `400 unknown_role`; the console's Create user offers **Member** and **Admin** only (the "Read-only — can look, cannot change anything" option promised a restriction the gateway never enforced), and the Accounts chip, legend and tooltips say **Member**. Docs: security.md "Roles: admin and member" and "Who configures an entity", api.md, entities.md, console.md.
 
 ### Added
 
@@ -14810,10 +14876,22 @@ This page uses human words first, API names in parentheses.
 
 Who can see an entity: an admin sees every entity; anyone else sees only the
 entities they created (recorded as `created_by` when the entity is created).
-An entity you may not see answers like a missing one (404). In the consoles,
-entities are rows of the **Accounts** table, with an **Active** switch that
-suspends and resumes them; they have no mailbox, no token to rotate and no
-delete. See [security.md](docs/security.md#who-sees-which-account) and
+An entity you may not see answers like a missing one (404). An entity is a
+member account (the two roles are admin and member).
+
+Who configures an entity: its **creator** — mind, voice, tools per phase,
+instructions, skills, workspaces, preferences, archive, unarchive and its
+**Active** switch — within what the admin authorised (the models and voices
+the gateway offers, the workspace caps, no tier-2 tool); an admin always can.
+Another member gets "Only an admin or <entity>'s creator can …", and the
+entity never changes its own settings. Sleep and wake, personal time, the work
+order, memory review and the memory index rebuild stay an admin's. `GET
+/api/gateway/entities/{name}/access` says what you may change. See
+[security.md](docs/security.md#who-configures-an-entity).
+
+In the consoles, entities are rows of the **Accounts** table, with an
+**Active** switch that suspends and resumes them; they have no token to rotate
+and no delete. See [security.md](docs/security.md#who-sees-which-account) and
 [console.md](docs/console.md#accounts).
 
 ## What an entity is
@@ -14883,8 +14961,9 @@ HTTP (rides the same auth as every `/api/gateway/*` endpoint):
 | Method | Path | What it does |
 |--------|------|--------------|
 | GET | `/api/gateway/entities/{name}/substrate` | Its mind: its own choice (`provider`, `model`, `thinking`, `speculation`; null when it has none), `gateway_default` (the gateway's text route), `effective` (what its next visit thinks with) and `source`: `entity`, `gateway`, or `unset` (the gateway has no text model; `note` says what to do). |
-| PUT | `/api/gateway/entities/{name}/substrate` | Admin. `{provider, model, thinking?, speculation?}` sets its own mind; `{"clear": true}` returns it to the gateway default. Each change is recorded in its history (`substrate_changed`). `speculation` is MTP: `false` (off) or `{"mode": "native_mtp", "num_draft_tokens": N}`. |
-| GET/PUT | `/api/gateway/entities/{name}/voice` | Its voice: `{provider, model, voice}` or `{"clear": true}`; unset, it speaks with the gateway's default voice (`effective`). |
+| GET | `/api/gateway/entities/{name}/access` | May you change its settings? `{entity, can_configure, as: "admin" \| "creator" \| null, reason, admin_only_tools: {tools, reason}, admin_only: {available, reason}}` — `reason` is the sentence to show on a control you can't use. |
+| PUT | `/api/gateway/entities/{name}/substrate` | An admin or its creator (the creator: a model the gateway offers, else `403 not_offered` naming the offered models). `{provider, model, thinking?, speculation?}` sets its own mind; `{"clear": true}` returns it to the gateway default. Each change is recorded in its history (`substrate_changed`). `speculation` is MTP: `false` (off) or `{"mode": "native_mtp", "num_draft_tokens": N}`. |
+| GET/PUT | `/api/gateway/entities/{name}/voice` | Its voice: `{provider, model, voice}` or `{"clear": true}`; unset, it speaks with the gateway's default voice (`effective`). PUT: an admin or its creator (the creator: a voice the gateway offers, else `403 not_offered`). |
 
 An entity without its own mind thinks with the gateway's text route (the
 console's text default, with its endpoint and reasoning); a request may still
@@ -14925,7 +15004,7 @@ every other lane — default-requested, never trust-bypassed:
 | Method | Path | What it does |
 |--------|------|--------------|
 | GET | `/api/gateway/entities/{name}/skills` | One resolved truth for every UI: the stored selection, roster rows (name, description, trust_level, requires_review, tree_hash, source) with labeled verdicts for anything unresolvable, and the capability-matrix payload (a global selection renders all four phases with identical cells). |
-| PUT | `/api/gateway/entities/{name}/skills` | Replace the selection (admin). Marker-first (`skills_selection_changed`, old/new names+phases — never skill bodies); the response is the resolved view so a typo or blocked skill is visible the moment it is written. |
+| PUT | `/api/gateway/entities/{name}/skills` | Replace the selection (an admin or its creator). Marker-first (`skills_selection_changed`, old/new names+phases — never skill bodies); the response is the resolved view so a typo or blocked skill is visible the moment it is written. |
 
 `POST /api/gateway/entities` accepts the same selection at **birth**
 (`skills: [{name, phases?}]`) so a new entity carries teaching from day

@@ -149,7 +149,10 @@ def test_me_accounts_is_self_plus_own_entities(world) -> None:
     assert me["actions"]["rotate"] == {"available": True, "reason": None}  # your own token: POST /me/token/rotate
     assert me["actions"]["workspace"]["available"] is True  # your own workspace policy
     assert ent["created_by"] == {"tenant_id": "default", "user_id": "alice"}
-    assert ent["actions"]["suspend"] == {"available": False, "reason": "Only an admin can suspend an entity."}
+    # R16.5 (operator ruling 2026-10-08): the creator configures their entity — its Active switch
+    # (suspend / resume) and its settings included.
+    assert ent["actions"]["suspend"] == {"available": True, "reason": None}
+    assert ent["actions"]["configure"] == {"available": True, "reason": None}
     bob = c.get("/api/gateway/me/accounts", headers=world["bob"]).json()["accounts"]
     assert [a["id"] for a in bob] == ["bob", "borea"]
 

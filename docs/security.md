@@ -228,14 +228,67 @@ entity's). The console's Accounts page follows the same rule.
 - Entity names belong to the whole gateway: creating an entity under a name
   another account already holds (an entity in any runtime, or a user account)
   answers 409 "That name is taken".
-- Seeing an entity is not managing it: admin-only entity writes (state, tool
-  policy, prompt, substrate, …) stay admin-only for the entities you created,
-  and only an admin can suspend an entity or rotate a user's token.
+- Seeing an entity is not the same as configuring it: its creator configures
+  it ([below](#who-configures-an-entity)); its lifecycle acts stay an admin's,
+  and only an admin rotates a user's token.
 - A gateway without user accounts is one shared world: every entity is visible.
 
+### Roles: admin and member
+
+An account has one of two roles: **admin** (manages the gateway) or
+**member**. A member is a human account (role `user` on the wire) or an entity
+account (an AI member, created by a human account). There is no viewer,
+read-only or third role: `POST /admin/users` and `PATCH /admin/users/{id}`
+refuse any other role with `400 unknown_role` ("'readonly' is not a role: an
+account is an admin or a member (roles "admin" and "user").").
+
+### Who configures an entity
+
+The entity's **creator** configures it, within what the admin authorised; an
+admin always can (operator ruling 2026-10-08). Nobody else: another member
+gets 403 "Only an admin or <entity>'s creator can …" (or 404 when they can't
+see it at all), and the entity itself never changes its own settings.
+
+| Setting | Route | Creator's bound |
+|---|---|---|
+| Mind (model) | `PUT /entities/{name}/substrate` | a model the gateway offers for that provider (the list `GET /discovery/providers/{provider}/models` shows a member); **Gateway default** always |
+| Voice | `PUT /entities/{name}/voice` | a voice (and speech model) the gateway offers (`GET /voice/voices`); the gateway default voice always |
+| Tools per phase | `PUT /entities/{name}/tool-policy` | the tier-1 and workspace tools; a tier-2 tool (`execute_command`) is given only by an admin (keeping or removing it is fine) |
+| Instructions | `PUT /entities/{name}/prompt` | — |
+| Skills | `PUT /entities/{name}/skills` | the shelf's skills (as at creation) |
+| Workspaces | `PUT /workspace/policy/{entity}` | within the admin's eligible workspaces and caps |
+| Preferences | `PUT /accounts/{entity}/preferences` | the declared keys |
+| Archive, unarchive, Active | `POST /me/accounts/{id}/archive\|unarchive`, `PUT /me/accounts/{id}/active` | — |
+
+A creator outside the bound gets `403` with `reason_code` `not_offered` or
+`admin_only_tool` and a sentence that names what is offered ("llama-x isn't a
+lmstudio model this gateway offers. Offered: qwen3-4b, qwen3-30b.").
+
+An admin always can, wherever the entity lives: on a gateway with user
+accounts a member's entity lives in that member's runtime, and an admin's
+request on `/entities/{name}/…` (and Accounts' Active, Archive, Unarchive) is
+served by the runtime that holds it, so the console's Manage works on every
+entity the admin's Accounts page lists.
+
+These stay an admin's: sleep and wake (`state`), personal time (`loop/*`,
+`personal-grant`), the work order and tasks, memory review (`candidates`), the
+memory index rebuild (`reembed`), maintenance windows, the capability map and
+host-folder mounts (`workspace/mounts`).
+
+The settings routes are one row of the route table (required role
+`admin_or_creator`); the entity routers decide it once for every such route,
+so no route can forget the check. `GET /entities/{name}/access` answers
+`{can_configure, as: "admin"|"creator"|null, reason, admin_only_tools,
+admin_only}` so clients enable their controls from the gateway's answer.
+Every decision is on the request's audit line (`entity_settings: {entity,
+setting, actor, as, outcome}`), and the entity's own history records who
+changed a setting and as whom (`by`, `as` on `substrate_changed`,
+`voice_changed`, `tool_policy_changed`, `prompt_overlay_changed`,
+`skills_selection_changed`).
+
 An entity has no token to rotate (its credential is discarded when it is
-created) and cannot be deleted (its name is kept for life); an admin suspends
-it instead. Details: [api.md](./api.md#who-sees-which-account).
+created) and cannot be deleted (its name is kept for life); an admin or its
+creator suspends or archives it instead. Details: [api.md](./api.md#who-sees-which-account).
 
 ### Per-user email
 

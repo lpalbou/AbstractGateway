@@ -187,10 +187,12 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     ("PUT", "/api/gateway/accounts/{account_id}/email/address"),
     ("PUT", "/api/gateway/accounts/{account_id}/email/notifications"),
     ("PUT", "/api/gateway/accounts/{account_id}/email/folder"),
-    # Archiving an entity YOU created (round 3 §2): the handler admits only the
-    # caller's own entities (anything else answers 404 like a missing account);
-    # only an admin unarchives (/admin/accounts/{id}/unarchive, admin-gated).
+    # Archiving / unarchiving / switching an entity YOU created (round 3 §2, R16.5 "the
+    # creator configures their entity"): the handlers admit only the caller's own entities
+    # (entity_settings_access.configure_role; anything else answers 404 like a missing account).
     ("POST", "/api/gateway/me/accounts/{account_id}/archive"),
+    ("POST", "/api/gateway/me/accounts/{account_id}/unarchive"),
+    ("PUT", "/api/gateway/me/accounts/{account_id}/active"),
     # Rotating YOUR OWN token (round 3): the handler acts only on the caller's own
     # registry record (resolved from the principal, never from a path or body id).
     ("POST", "/api/gateway/me/token/rotate"),
@@ -476,7 +478,14 @@ def test_every_write_route_has_an_explicit_authorization_decision() -> None:
                 "add a GATEWAY_ROUTE_POLICIES row (admin) or record it in "
                 "USER_LEVEL_WRITES with the reason it is safe for any principal"
             )
-            assert requirement.required_role == "admin"
+            # R16.5: the one admin-or-creator row is an entity's settings (decided by the entity
+            # routers' guard, matrix in test_r16w6_entity_settings_authz.py); everything else is admin.
+            if requirement.required_role == "admin_or_creator":
+                assert path.startswith("/api/gateway/entities/{name}/") and path.rsplit("/", 1)[-1] in {
+                    "substrate", "voice", "tool-policy", "prompt", "skills",
+                }, f"{method} {path}: admin_or_creator is for an entity's settings only"
+            else:
+                assert requirement.required_role == "admin"
 
 
 def test_no_policy_row_is_dead() -> None:
@@ -562,11 +571,17 @@ def _representative_route_per_policy_row() -> list[tuple[int, str, str]]:
 def test_served_surface_non_admin_is_refused_on_every_policy_family(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from abstractgateway.security.authorization import GATEWAY_ROUTE_POLICIES
+
     representatives = _representative_route_per_policy_row()
     assert representatives, "policy table must not be empty"
     with _client(tmp_path, monkeypatch) as client:
         headers = _non_admin_bearer(client)
         for index, method, path in representatives:
+            if GATEWAY_ROUTE_POLICIES[index].required_role == "admin_or_creator":
+                # R16.5: an entity's settings are admin-OR-CREATOR; the non-creator / entity-itself
+                # refusals are proven per route in test_r16w6_entity_settings_authz.py.
+                continue
             response = client.request(method, path, headers=headers, json={})
             assert response.status_code == 403, (
                 f"policy row {index}: {method} {path} answered {response.status_code} "

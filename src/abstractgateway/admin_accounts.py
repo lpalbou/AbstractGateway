@@ -4,8 +4,10 @@ switch for both, and what each row's actions can do (with the reason when they c
     GET  /api/gateway/admin/accounts                 list_accounts()  (?include_archived=true)
     PUT  /api/gateway/admin/accounts/{id}/active     set_active()
     POST /api/gateway/admin/accounts/{id}/archive    archive_account()   (admin: any account)
-    POST /api/gateway/admin/accounts/{id}/unarchive  unarchive_account() (admin only)
+    POST /api/gateway/admin/accounts/{id}/unarchive  unarchive_account() (admin: any account)
     POST /api/gateway/me/accounts/{id}/archive       archive_account()   (non-admin: an entity they created)
+    POST /api/gateway/me/accounts/{id}/unarchive     unarchive_account() (non-admin: an entity they created)
+    PUT  /api/gateway/me/accounts/{id}/active        set_active()        (non-admin: an entity they created)
 
 Accounts are ARCHIVED, never deleted (round 3, operator decision): an archived user can't sign in
 (`users.json` `archived`, refused by `authenticate`); an archived entity is suspended (paused,
@@ -43,15 +45,15 @@ CANNOT_DEACTIVATE_SELF = "You can't deactivate your own account."
 REASON_OWN_ARCHIVE = "You can't archive your own account."
 REASON_ARCHIVED = "Archived accounts stay inactive: unarchive it first."
 REASON_NOT_ARCHIVED = "This account isn't archived."
-REASON_ADMIN_UNARCHIVE = "Only an admin can unarchive an account."
+# R16.5 (operator ruling 2026-10-08): an entity's settings, archive / unarchive and Active switch
+# are changed by an admin or the entity's CREATOR (entity_settings_access.py).
+REASON_CREATOR_CONFIGURE = "Only an admin or {id}'s creator can change its settings."
 REASON_ENTITY_ROTATE = (
     "An entity has no token to rotate: its credential is discarded when it is created and no one holds it."
 )
 REASON_USER_MANAGE = "Only entities have a management page."
 REASON_ENTITY_NO_HOME = "This entity's home is not on this gateway's runtime, so it can't be managed here."
 REASON_LAST_ADMIN = "This is the last active admin account; make another account admin first."
-# Non-admin rows (GET /me/accounts): what only an admin can do, said once per action.
-REASON_ADMIN_SUSPEND_ENTITY = "Only an admin can suspend an entity."
 # The "OpenAI API" switch (round 5): who may call /v1 with their own key.
 REASON_ENTITY_OPENAI = "Entities have no key, so they never use the OpenAI API."
 REASON_ADMIN_OPENAI = "Only an admin can change who may use the OpenAI API."
@@ -146,6 +148,40 @@ def _entity_homes() -> Tuple[Dict[str, Dict[str, Any]], Optional[str]]:
     return {str(r.get("slug")): r for r in rows if isinstance(r, dict) and r.get("slug") and not r.get("error")}, None
 
 
+def _all_entity_homes() -> Tuple[Dict[str, Dict[str, Any]], Optional[str]]:
+    """An ADMIN's census (R16.5, "admins always"): the caller's own runtime plus every other
+    runtime plane on this gateway (a member's entities live in the member's plane). Read-only:
+    the other planes' homes are listed through a registry over that plane's data dir."""
+    from .entity_access import entities_dirs
+    from .entities import EntityRegistry
+    from .users import gateway_data_dir_from_env
+
+    homes, warning = _entity_homes()
+    try:
+        from .routes.entities import _registry
+
+        own_dir = _registry().entities_dir.resolve()
+    except Exception:  # noqa: BLE001
+        own_dir = None
+    users_file = gateway_data_dir_from_env() / "auth" / "users.json"
+    for entities_dir in entities_dirs():
+        if not entities_dir.is_dir() or (own_dir is not None and entities_dir.resolve() == own_dir):
+            continue
+        try:
+            rows = EntityRegistry(data_dir=entities_dir.parent, embedder_factory=lambda: None, users_registry_path=users_file).list_entities()
+        except Exception as exc:  # noqa: BLE001 - a census that cannot be read is reported
+            warning = (warning + " " if warning else "") + f"The entities of {entities_dir.parent} could not be read: {exc}"
+            continue
+        for r in rows:
+            if isinstance(r, dict) and r.get("slug") and not r.get("error") and str(r["slug"]) not in homes:
+                homes[str(r["slug"])] = r
+    return homes, warning
+
+
+def _homes_for(caller: GatewayPrincipal) -> Tuple[Dict[str, Dict[str, Any]], Optional[str]]:
+    return _all_entity_homes() if caller.is_admin() else _entity_homes()
+
+
 def _user_row(rec: GatewayUserRecord, caller: GatewayPrincipal, records: List[GatewayUserRecord]) -> Dict[str, Any]:
     from .mail.accounts import account_email_view
 
@@ -189,6 +225,7 @@ def _user_row(rec: GatewayUserRecord, caller: GatewayPrincipal, records: List[Ga
             "preferences": _act(not archived, REASON_ARCHIVED),
             "rotate": _act(not archived, REASON_ARCHIVED),
             "manage": _act(False, REASON_USER_MANAGE),
+            "configure": _act(False, REASON_USER_MANAGE),
             "archive": archive,
             "unarchive": _act(archived, REASON_NOT_ARCHIVED),
             "suspend": suspend,
@@ -236,6 +273,13 @@ def _entity_row(
             "preferences": _act(not archived, REASON_ARCHIVED),
             "rotate": _act(False, REASON_ENTITY_ROTATE),
             "manage": _act(has_home and not archived, REASON_ARCHIVED if archived else REASON_ENTITY_NO_HOME),
+            # R16.5: may the caller change its settings (mind, voice, tools, instructions, skills)?
+            # Rows are listed to admins (/admin/accounts) and to the entity's creator
+            # (/me/accounts) only, so both may; the reason covers what blocks it.
+            "configure": _act(
+                has_home and not archived,
+                REASON_ARCHIVED if archived else (REASON_ENTITY_NO_HOME if not has_home else REASON_CREATOR_CONFIGURE.format(id=slug)),
+            ),
             "archive": _act(not archived, REASON_ARCHIVED),
             "unarchive": _act(archived, REASON_NOT_ARCHIVED),
             "suspend": _act((has_home or rec is not None) and not archived, REASON_ARCHIVED if archived else REASON_ENTITY_NO_HOME),
@@ -302,7 +346,7 @@ def _creator(slug: str, home: Optional[Dict[str, Any]], creators: Dict[str, Dict
 
 def list_accounts(caller: GatewayPrincipal, *, include_archived: bool = False) -> Dict[str, Any]:
     records = GatewayUserRegistry().list_users()
-    homes, warning = _entity_homes()
+    homes, warning = _homes_for(caller)
     creators = _entity_creators()
     rows: List[Dict[str, Any]] = []
     seen_entities: set = set()
@@ -326,7 +370,7 @@ def list_accounts(caller: GatewayPrincipal, *, include_archived: bool = False) -
     return out
 
 
-def list_my_accounts(caller: GatewayPrincipal) -> Dict[str, Any]:
+def list_my_accounts(caller: GatewayPrincipal, *, include_archived: bool = False) -> Dict[str, Any]:
     """`GET /me/accounts`, for ANY signed-in account (operator ruling 2026-10-01): the caller's own
     row plus the entities the caller created — never another user, never an entity someone else
     (or no recorded creator) made. Same row shape as `GET /admin/accounts`; actions only an admin
@@ -355,12 +399,12 @@ def list_my_accounts(caller: GatewayPrincipal) -> Dict[str, Any]:
         elif not (isinstance(created_by, dict) and entity_visible_to(caller, slug, created_by)):
             continue
         row = _entity_row(slug, by_id.get(slug), home, dict(created_by))
-        if row["archived"]:
-            continue  # archived accounts are never listed here (A16); admins: /admin/accounts
+        if row["archived"] and not include_archived:
+            continue  # archived entities only with ?include_archived=true (R16.5: their creator unarchives)
         if not caller.is_admin():
-            row["actions"]["suspend"] = _act(False, REASON_ADMIN_SUSPEND_ENTITY)
+            # R16.5: the creator archives / unarchives it and turns it on or off; the OpenAI
+            # API switch stays an admin's (an entity has no key anyway).
             row["actions"]["openai_api"] = _act(False, REASON_ADMIN_OPENAI)
-            row["actions"]["unarchive"] = _act(False, REASON_ADMIN_UNARCHIVE)
         rows.append(row)
     rows.sort(key=_sort_key)
     out: Dict[str, Any] = {"accounts": rows, "scope": "own"}
@@ -393,6 +437,13 @@ class AccountError(Exception):
         self.status = status
         self.reason_code = reason_code
         self.message = message
+
+
+def _plane(slug: str):
+    """An admin acts on `slug` in the runtime plane that holds it (R16.5, "admins always")."""
+    from .entity_access import entity_plane_for
+
+    return entity_plane_for(slug)
 
 
 def _suspend_entity(slug: str, actor: str) -> None:
@@ -440,6 +491,13 @@ def set_active(caller: GatewayPrincipal, account_id: str, *, active: bool, tenan
     records = registry.list_users()
     rec = next((r for r in records if r.user_id == account_id and (r.tenant_id == tenant_id or r.principal_kind == "entity")), None)
     actor = f"person:{caller.user_id}"
+    if not caller.is_admin():
+        # R16.5: the entity's creator turns it on or off (PUT /me/accounts/{id}/active); a user
+        # account's Active switch stays an admin's.
+        missing = AccountError(404, "account_not_found", f"There is no account named {account_id!r} on this gateway.")
+        if rec is not None and rec.principal_kind != "entity":
+            raise missing
+        _require_creator(caller, account_id, _entity_homes()[0], missing)
     if active and (
         (rec is not None and rec.archived) or (rec is None and bool((suspended_record(account_id) or {}).get("archived")))
     ):
@@ -451,17 +509,19 @@ def set_active(caller: GatewayPrincipal, account_id: str, *, active: bool, tenan
             raise AccountError(409, "last_admin", REASON_LAST_ADMIN)
         registry.update_user(user_id=rec.user_id, tenant_id=rec.tenant_id, enabled=bool(active))
     else:
-        homes, _warning = _entity_homes()
+        homes, _warning = _homes_for(caller)
         if rec is None and account_id not in homes:
             raise AccountError(404, "account_not_found", f"There is no account named {account_id!r} on this gateway.")
         if active:
             if rec is not None:
                 registry.update_user(user_id=rec.user_id, tenant_id=rec.tenant_id, enabled=True)
             if account_id in homes:
-                _resume_entity(account_id, actor)
+                with _plane(account_id):
+                    _resume_entity(account_id, actor)
         else:
             if account_id in homes:
-                _suspend_entity(account_id, actor)
+                with _plane(account_id):
+                    _suspend_entity(account_id, actor)
             if rec is not None:
                 registry.update_user(user_id=rec.user_id, tenant_id=rec.tenant_id, enabled=False)
         _sync_entity_mail()
@@ -550,16 +610,13 @@ def archive_account(caller: GatewayPrincipal, account_id: str, *, tenant_id: str
     actor = f"person:{caller.user_id}"
     missing = AccountError(404, "account_not_found", f"There is no account named {account_id!r} on this gateway.")
     is_entity = rec is None or rec.principal_kind == "entity"
-    homes, _warning = _entity_homes() if is_entity else ({}, None)
+    homes, _warning = _homes_for(caller) if is_entity else ({}, None)
     if rec is None and account_id not in homes:
         raise missing
     if not caller.is_admin():
         if not is_entity:
             raise missing
-        home = homes.get(account_id)
-        created_by = (home or {}).get("created_by") if home is not None else _entity_creators().get(account_id)
-        if not (isinstance(created_by, dict) and created_by.get("user_id") and entity_visible_to(caller, account_id, created_by)):
-            raise missing
+        _require_creator(caller, account_id, homes, missing)
     if not is_entity:
         assert rec is not None
         if rec.archived:
@@ -574,8 +631,9 @@ def archive_account(caller: GatewayPrincipal, account_id: str, *, tenant_id: str
         if _entity_is_archived(account_id, rec):
             raise AccountError(409, "already_archived", f"{account_id} is already archived.")
         if account_id in homes:
-            _suspend_entity(account_id, actor)
-            _stop_entity_loop(account_id, actor)
+            with _plane(account_id):
+                _suspend_entity(account_id, actor)
+                _stop_entity_loop(account_id, actor)
         _mark_entity_archived(account_id, archived=True, actor=actor)
         if rec is not None:
             registry.set_archived(user_id=rec.user_id, tenant_id=rec.tenant_id, archived=True, actor=actor)
@@ -583,10 +641,20 @@ def archive_account(caller: GatewayPrincipal, account_id: str, *, tenant_id: str
     row = account_row(caller, account_id, rec.tenant_id if rec is not None else tenant_id)
     if row is None:
         raise missing
-    if not caller.is_admin():
-        row["actions"]["unarchive"] = _act(False, REASON_ADMIN_UNARCHIVE)
-        row["actions"]["suspend"] = _act(False, REASON_ADMIN_SUSPEND_ENTITY)
     return row
+
+
+def _require_creator(caller: GatewayPrincipal, account_id: str, homes: Dict[str, Any], missing: "AccountError") -> None:
+    """A non-admin acts on an account here only as the CREATOR of that entity (R16.5,
+    `entity_settings_access.configure_role`): anything else answers `missing` (404, like an
+    account that does not exist — names are never probed). The entity itself never acts on its
+    own account."""
+    from .entity_settings_access import configure_role
+
+    home = homes.get(account_id)
+    created_by = (home or {}).get("created_by") if home is not None else _entity_creators().get(account_id)
+    if configure_role(caller, created_by) is None:
+        raise missing
 
 
 def unarchive_account(caller: GatewayPrincipal, account_id: str, *, tenant_id: str = "default") -> Dict[str, Any]:
@@ -596,9 +664,15 @@ def unarchive_account(caller: GatewayPrincipal, account_id: str, *, tenant_id: s
     records = registry.list_users()
     rec = _find_record(records, account_id, tenant_id)
     actor = f"person:{caller.user_id}"
+    if not caller.is_admin():
+        # R16.5: the entity's creator unarchives it (POST /me/accounts/{id}/unarchive).
+        missing = AccountError(404, "account_not_found", f"There is no account named {account_id!r} on this gateway.")
+        if rec is not None and rec.principal_kind != "entity":
+            raise missing
+        _require_creator(caller, account_id, _entity_homes()[0], missing)
     if rec is None or rec.principal_kind == "entity":
         if not _entity_is_archived(account_id, rec):
-            if rec is None and account_id not in _entity_homes()[0]:
+            if rec is None and account_id not in _homes_for(caller)[0]:
                 raise AccountError(404, "account_not_found", f"There is no account named {account_id!r} on this gateway.")
             raise AccountError(409, "not_archived", REASON_NOT_ARCHIVED)
         _mark_entity_archived(account_id, archived=False, actor=actor)

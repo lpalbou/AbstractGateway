@@ -10,10 +10,22 @@ This page uses human words first, API names in parentheses.
 
 Who can see an entity: an admin sees every entity; anyone else sees only the
 entities they created (recorded as `created_by` when the entity is created).
-An entity you may not see answers like a missing one (404). In the consoles,
-entities are rows of the **Accounts** table, with an **Active** switch that
-suspends and resumes them; they have no mailbox, no token to rotate and no
-delete. See [security.md](./security.md#who-sees-which-account) and
+An entity you may not see answers like a missing one (404). An entity is a
+member account (the two roles are admin and member).
+
+Who configures an entity: its **creator** — mind, voice, tools per phase,
+instructions, skills, workspaces, preferences, archive, unarchive and its
+**Active** switch — within what the admin authorised (the models and voices
+the gateway offers, the workspace caps, no tier-2 tool); an admin always can.
+Another member gets "Only an admin or <entity>'s creator can …", and the
+entity never changes its own settings. Sleep and wake, personal time, the work
+order, memory review and the memory index rebuild stay an admin's. `GET
+/api/gateway/entities/{name}/access` says what you may change. See
+[security.md](./security.md#who-configures-an-entity).
+
+In the consoles, entities are rows of the **Accounts** table, with an
+**Active** switch that suspends and resumes them; they have no token to rotate
+and no delete. See [security.md](./security.md#who-sees-which-account) and
 [console.md](./console.md#accounts).
 
 ## What an entity is
@@ -83,8 +95,9 @@ HTTP (rides the same auth as every `/api/gateway/*` endpoint):
 | Method | Path | What it does |
 |--------|------|--------------|
 | GET | `/api/gateway/entities/{name}/substrate` | Its mind: its own choice (`provider`, `model`, `thinking`, `speculation`; null when it has none), `gateway_default` (the gateway's text route), `effective` (what its next visit thinks with) and `source`: `entity`, `gateway`, or `unset` (the gateway has no text model; `note` says what to do). |
-| PUT | `/api/gateway/entities/{name}/substrate` | Admin. `{provider, model, thinking?, speculation?}` sets its own mind; `{"clear": true}` returns it to the gateway default. Each change is recorded in its history (`substrate_changed`). `speculation` is MTP: `false` (off) or `{"mode": "native_mtp", "num_draft_tokens": N}`. |
-| GET/PUT | `/api/gateway/entities/{name}/voice` | Its voice: `{provider, model, voice}` or `{"clear": true}`; unset, it speaks with the gateway's default voice (`effective`). |
+| GET | `/api/gateway/entities/{name}/access` | May you change its settings? `{entity, can_configure, as: "admin" \| "creator" \| null, reason, admin_only_tools: {tools, reason}, admin_only: {available, reason}}` — `reason` is the sentence to show on a control you can't use. |
+| PUT | `/api/gateway/entities/{name}/substrate` | An admin or its creator (the creator: a model the gateway offers, else `403 not_offered` naming the offered models). `{provider, model, thinking?, speculation?}` sets its own mind; `{"clear": true}` returns it to the gateway default. Each change is recorded in its history (`substrate_changed`). `speculation` is MTP: `false` (off) or `{"mode": "native_mtp", "num_draft_tokens": N}`. |
+| GET/PUT | `/api/gateway/entities/{name}/voice` | Its voice: `{provider, model, voice}` or `{"clear": true}`; unset, it speaks with the gateway's default voice (`effective`). PUT: an admin or its creator (the creator: a voice the gateway offers, else `403 not_offered`). |
 
 An entity without its own mind thinks with the gateway's text route (the
 console's text default, with its endpoint and reasoning); a request may still
@@ -125,7 +138,7 @@ every other lane — default-requested, never trust-bypassed:
 | Method | Path | What it does |
 |--------|------|--------------|
 | GET | `/api/gateway/entities/{name}/skills` | One resolved truth for every UI: the stored selection, roster rows (name, description, trust_level, requires_review, tree_hash, source) with labeled verdicts for anything unresolvable, and the capability-matrix payload (a global selection renders all four phases with identical cells). |
-| PUT | `/api/gateway/entities/{name}/skills` | Replace the selection (admin). Marker-first (`skills_selection_changed`, old/new names+phases — never skill bodies); the response is the resolved view so a typo or blocked skill is visible the moment it is written. |
+| PUT | `/api/gateway/entities/{name}/skills` | Replace the selection (an admin or its creator). Marker-first (`skills_selection_changed`, old/new names+phases — never skill bodies); the response is the resolved view so a typo or blocked skill is visible the moment it is written. |
 
 `POST /api/gateway/entities` accepts the same selection at **birth**
 (`skills: [{name, phases?}]`) so a new entity carries teaching from day

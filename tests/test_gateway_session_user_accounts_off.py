@@ -365,7 +365,7 @@ def test_regression_bob_writes_his_own_runtime_with_user_accounts_on(tmp_path: P
 def test_creating_a_non_admin_with_user_accounts_off_is_refused_in_plain_words(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _app(tmp_path, monkeypatch, user_accounts=False)
     with TestClient(app) as client:
-        for roles in (["user"], ["readonly"]):
+        for roles in (["user"],):
             res = client.post("/api/gateway/admin/users", headers=ADMIN, json={"user_id": "bob", "roles": roles})
             assert res.status_code == 409, res.text
             detail = res.json()["detail"]
@@ -378,6 +378,25 @@ def test_creating_a_non_admin_with_user_accounts_off_is_refused_in_plain_words(t
         assert [u["user_id"] for u in users] == []
         ok = client.post("/api/gateway/admin/users", headers=ADMIN, json={"user_id": "root", "roles": ["admin", "user"]})
         assert ok.status_code == 200, ok.text
+
+
+def test_a_third_role_is_refused_in_plain_words(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Operator ruling 2026-10-08 (R16): an account is an admin or a member (role `user`); there is
+    no viewer / read-only role, at create or at a role change."""
+    app = _app(tmp_path, monkeypatch, user_accounts=True)
+    with TestClient(app) as client:
+        for roles in (["readonly"], ["viewer"], ["user", "viewer"]):
+            res = client.post("/api/gateway/admin/users", headers=ADMIN, json={"user_id": "bob", "roles": roles})
+            assert res.status_code == 400, res.text
+            detail = res.json()["detail"]
+            assert detail["reason_code"] == "unknown_role"
+            assert "an account is an admin or a member" in detail["message"]
+        assert client.post("/api/gateway/admin/users", headers=ADMIN, json={"user_id": "bob", "roles": ["user"]}).status_code == 200
+        res = client.patch("/api/gateway/admin/users/bob", headers=ADMIN, json={"roles": ["readonly"]})
+        assert res.status_code == 400, res.text
+        assert res.json()["detail"]["reason_code"] == "unknown_role"
+        users = {u["user_id"]: u for u in client.get("/api/gateway/admin/users", headers=ADMIN).json()["users"]}
+        assert users["bob"]["roles"] == ["user"]
 
 
 def test_creating_a_non_admin_with_user_accounts_on_still_works(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

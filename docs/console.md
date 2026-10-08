@@ -151,13 +151,13 @@ its Accounts header ([security.md](./security.md#command-sandbox)).
 
 | Column | Shows |
 |---|---|
-| **Name** | the account id and a kind chip: **Admin**, **User** or **Entity** (hover it for the role) |
+| **Name** | the account id and a kind chip: **Admin**, **Member** or **Entity** (hover it for the role). There are two roles: admin and member; a member is a human account or an entity |
 | **Email** | the account's address and its mailbox state in one line: `alice@example.org · connected`, `· not connected`, `· receive only` (with the reason under it) or `· paused`; "No address" when the account has neither a registered address nor a connected mailbox (users and entities alike: an entity has its own mailbox) |
 | **Runtime** | the account's runtime id as a link to the Runtimes page filtered to that account (administrators; plain text for everyone else), or "No runtime" |
 | **Active** | the switch described below; "Archived" on an archived row |
 | **Actions** | icon buttons, each with a tooltip sentence: users **Email**, **OpenAI API**, **Logs**, **Workspace**, **Rotate token**, **Archive**; entities **Email**, **Logs**, **Workspace**, **Manage**, **Archive**; archived rows **Logs**, **Unarchive** |
 
-Rows are tinted by kind (a legend under the table reads "Tint: admin · user ·
+Rows are tinted by kind (a legend under the table reads "Tint: admin · member ·
 entity"). Only the actions that apply to a row are shown: your own row has no
 **Archive** and an entity has no token to rotate. The action buttons are
 44 px targets. Hover one, or reach it with the keyboard, and a tooltip says
@@ -171,8 +171,9 @@ addresses wrap, and below about 900 px of window width each account becomes
 one flat block: name, kind chip and Active, then the email line, then the
 runtime, then the actions, which wrap.
 
-**Show archived** (administrators, above the table) lists archived accounts too;
-it is off by default and your browser remembers it.
+**Show archived** (above the table) lists archived accounts too (for someone
+who is not an administrator: the archived entities they created); it is off by
+default and your browser remembers it.
 
 - **Active** for a user: off signs them out and refuses their sign-in until you
   turn it back on. Turning it off asks first ("Deactivate alice? They are
@@ -219,7 +220,13 @@ it is off by default and your browser remembers it.
 - **Manage** (entities) opens the entity's lifecycle, mind and voice,
   capabilities and prompt; **Talk** is there too. **Mind & voice** uses the
   shared pickers: **Gateway default** (the gateway's text model and default
-  voice) or its own choice; changes save themselves.
+  voice) or its own choice; changes save themselves. An administrator or the
+  entity's creator changes its mind, voice, tools per phase and instructions
+  (the creator picks among the models and voices the gateway offers; a tier-2
+  tool's box stays off for the creator, with the tooltip "Only an admin can
+  give castor a tier-2 tool: …"); sleep and wake, personal time, freeze, the
+  work order and the memory index rebuild are an administrator's. Anyone else
+  reads the current values as text.
 - **Archive** asks in a row under the account ("Archive alice? They can't sign
   in any more. Their runtime, runs and history are kept; you can unarchive
   later." / for an entity: "It stops acting and never wakes. Its memory, runs
@@ -237,9 +244,9 @@ one row per entity they created (`GET /api/gateway/me/accounts`). There is no
 Create user, no Eligible workspaces and no Email for everyone;
 their own row's **Workspace** opens their own workspaces, and an entity's row
 opens that entity's; it has no **Rotate token**
-(only an admin rotates tokens), they can archive an entity they created but not
-unarchive it, and an entity's Active switch says "Only an admin can suspend an
-entity." Archived accounts are not listed for them. See [security.md](./security.md#who-sees-which-account).
+(only an admin rotates tokens). They configure an entity they created: its
+**Manage** settings, **Archive**, **Unarchive** (with **Show archived** on) and
+its **Active** switch. See [security.md](./security.md#who-configures-an-entity).
 
 
 ### Workspaces

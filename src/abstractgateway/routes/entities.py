@@ -29,10 +29,12 @@ from ..entities import EntityRegistry, entity_slug
 from ..entity_access import (
     creator_of,
     entity_name_guard,
+    entity_plane_resolver,
     entity_visible_to,
     name_taken_detail,
     require_entity_visible,
 )
+from ..entity_settings_access import entity_settings_guard
 from ..entity_seat import (
     cancel_run_tree,
     door_decision,
@@ -55,7 +57,13 @@ from .gateway import VoiceTTSRequest as GatewayVoiceTTSRequest
 
 # RBAC (operator ruling 2026-10-01, entity_access.py): every `{name}` route checks that the
 # caller may see that entity BEFORE its handler runs (hidden answers like missing: 404).
-router = APIRouter(prefix="/gateway/entities", tags=["entities"], dependencies=[Depends(entity_name_guard)])
+# R16.5 (entity_settings_access.py): a settings route (mind, voice, tools, instructions, skills)
+# runs only for an admin or the entity's creator, decided once here for every such route.
+router = APIRouter(
+    prefix="/gateway/entities",
+    tags=["entities"],
+    dependencies=[Depends(entity_plane_resolver), Depends(entity_name_guard), Depends(entity_settings_guard)],
+)
 
 
 def _registry() -> EntityRegistry:
@@ -1274,6 +1282,25 @@ def list_entities() -> Dict[str, Any]:
     caller = current_gateway_principal()
     rows = _registry().list_entities()
     return {"entities": [r for r in rows if entity_visible_to(caller, str(r.get("slug") or ""), r.get("created_by"))]}
+
+
+@router.get("/{name}/access")
+def entity_access_view(name: str) -> Dict[str, Any]:
+    """May the caller change this entity's settings (R16.5: an admin or its creator)?
+    `{entity, can_configure, as: "admin"|"creator"|null, reason, admin_only: {available, reason}}`
+    — `reason` is the sentence a client shows on a disabled control; `admin_only` covers the acts
+    that stay with admins (sleep/wake, personal time, work order, memory review and rebuild).
+    Clients enable their controls from this answer, never from a role they derive themselves."""
+    from ..entity_settings_access import access_view, creator_of_slug
+    from ..security.principal import current_gateway_principal, local_admin_principal
+
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    principal = current_gateway_principal() or local_admin_principal()
+    return access_view(principal, manifest.slug, creator_of_slug(manifest.slug, registry=registry))
 
 
 @router.get("/{name}")
@@ -4379,6 +4406,13 @@ def put_entity_tool_policy(name: str, req: PutToolPolicyRequest) -> Dict[str, An
         manifest = registry.manifest_for(name)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    role = _settings_role(registry, manifest)
+    if role == "creator":
+        from ..entity_settings_access import REASON_ADMIN_ONLY_TOOL, tool_bound_problem
+
+        problem = tool_bound_problem(manifest.slug, registry.entities_dir / manifest.slug, req.policy or {})
+        if problem:
+            raise _bound_refusal(problem, REASON_ADMIN_ONLY_TOOL)
     try:
         home = registry.get_home(manifest.slug)
         record_host_marker(
@@ -4390,6 +4424,7 @@ def put_entity_tool_policy(name: str, req: PutToolPolicyRequest) -> Dict[str, An
             details={
                 "channel": "operator",
                 "by": _task_actor(),
+                "as": role,
                 "phases_named": sorted(k for k in (req.policy or {}).keys() if isinstance(k, str)),
             },
         )
@@ -4697,6 +4732,7 @@ def put_entity_skills(name: str, req: PutSkillsRequest) -> Dict[str, Any]:
             details={
                 "channel": "operator",
                 "by": actor,
+                "as": _settings_role(registry, manifest),
                 "old": [{"name": s["name"], **({"phases": s["phases"]} if s.get("phases") else {})} for s in prior.get("skills") or []],
                 "new": [{"name": s["name"], **({"phases": s["phases"]} if s.get("phases") else {})} for s in normalized],
             },
@@ -4881,6 +4917,8 @@ def put_entity_prompt(name: str, req: PutPromptOverlayRequest) -> Dict[str, Any]
             journal_seq=int(home.memory.current_seq()),
             details={
                 "channel": "operator",
+                "by": _task_actor(),
+                "as": _settings_role(registry, manifest),
                 "layers": {
                     key: _hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
                     for key, text in sorted(live.items())
@@ -5044,6 +5082,15 @@ def _put_entity_substrate_locked(name: str, req: PutSubstrateRequest, *, registr
         thinking_in = str(prior.get("thinking") or "").strip() or None
     principal = current_gateway_principal()
     actor = f"person:{principal.user_id}" if principal is not None else "person:operator"
+    # R16.5: the entity's creator picks among the models the gateway offers (the list the
+    # mind picker shows a member); an admin may name any model.
+    role = _settings_role(registry, manifest)
+    if role == "creator":
+        from ..entity_settings_access import REASON_NOT_OFFERED, mind_bound_problem
+
+        problem = mind_bound_problem(provider_in, model_in)
+        if problem:
+            raise _bound_refusal(problem, REASON_NOT_OFFERED)
     # MARKER-FIRST: record the intent before the file changes. A marker
     # failure blocks the write (unlike cosmetic markers) — an unrecorded
     # substrate change is the incident class this closes.
@@ -5060,6 +5107,7 @@ def _put_entity_substrate_locked(name: str, req: PutSubstrateRequest, *, registr
             details={
                 "channel": "operator",
                 "by": actor,
+                "as": role,
                 "old": {
                     "provider": prior.get("provider"),
                     "model": prior.get("model"),
@@ -5113,6 +5161,7 @@ def _clear_entity_substrate_locked(name: str, *, registry, manifest, prior: Dict
                     "thinking": prior.get("thinking") or None,
                 },
                 "new": {"source": "gateway"},
+                "as": _settings_role(registry, manifest),
             },
         )
     except Exception as e:  # noqa: BLE001
@@ -5219,6 +5268,15 @@ def put_entity_voice(name: str, req: PutVoiceRequest) -> Dict[str, Any]:
             )
     prior = read_entity_voice(home_dir)
     actor = _task_actor()
+    # R16.5: the entity's creator picks among the voices the gateway offers (the voice picker's
+    # list); an admin may name any voice. Going back to the Gateway default is always allowed.
+    role = _settings_role(registry, manifest)
+    if role == "creator" and not req.clear:
+        from ..entity_settings_access import REASON_NOT_OFFERED, voice_bound_problem
+
+        problem = voice_bound_problem(str(req.provider).strip(), str(req.model).strip(), str(req.voice).strip())
+        if problem:
+            raise _bound_refusal(problem, REASON_NOT_OFFERED)
     new_value = None if req.clear else {"provider": str(req.provider).strip(), "model": str(req.model).strip(), "voice": str(req.voice).strip()}
     try:
         from ..entity_replay import record_host_marker
@@ -5233,6 +5291,7 @@ def put_entity_voice(name: str, req: PutVoiceRequest) -> Dict[str, Any]:
             details={
                 "channel": "operator",
                 "by": actor,
+                "as": role,
                 "old": ({"provider": prior.get("provider"), "model": prior.get("model"), "voice": prior.get("voice")} if prior else None),
                 "new": new_value,
             },
@@ -5467,6 +5526,21 @@ class PostTaskRequest(BaseModel):
 class PostTaskStatusRequest(BaseModel):
     status: str = Field(..., description="pending | taken | done | parked")
     note: Optional[str] = Field(default=None, max_length=2000, description="Optional status note")
+
+
+def _settings_role(registry: Any, manifest: Any) -> Optional[str]:
+    """"admin" / "creator" for the caller of an entity SETTINGS route (R16.5); the router's
+    `entity_settings_guard` already refused everyone else. Written into the route's marker
+    (`as`) and decides whether the creator bounds apply."""
+    from ..entity_settings_access import configure_role, creator_of_slug
+    from ..security.principal import current_gateway_principal, local_admin_principal
+
+    principal = current_gateway_principal() or local_admin_principal()
+    return configure_role(principal, creator_of_slug(manifest.slug, registry=registry))
+
+
+def _bound_refusal(problem: str, reason_code: str) -> HTTPException:
+    return HTTPException(status_code=403, detail={"reason_code": reason_code, "message": problem})
 
 
 def _task_actor() -> str:

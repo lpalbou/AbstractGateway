@@ -144,7 +144,7 @@ def test_console_carries_the_voice_picker() -> None:
     assert 'voiceDefaultLabel: "Gateway default voice"' in html
     assert "body = { provider, model, voice };" in html
     assert "/voice/tts" in html and "entityVoiceAudition" in html
-    assert 'id="entity-voice-picker" class="entity-picker entity-admin-only"' in html
+    assert 'id="entity-voice-picker" class="entity-picker entity-config-only"' in html  # R16.5: admin or creator
 
 
 def test_unset_entity_serves_the_resolved_effective_default(monkeypatch) -> None:

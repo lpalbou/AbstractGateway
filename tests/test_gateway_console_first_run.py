@@ -438,7 +438,7 @@ if (scenario.name === "create-user") {
   vm.runInContext("refresh()", context);
   await settle();
   const opt = (value) => ({ value, hidden: false, disabled: false });
-  el("new-roles").children = [opt("user"), opt("admin"), opt("readonly")];
+  el("new-roles").children = [opt("user"), opt("admin")];
   el("new-roles").value = "user";
   el("new-user").focus = () => {};
   context.openUserCreate();
@@ -574,12 +574,28 @@ def test_tray_claim_never_opens_the_guide_even_before_completion() -> None:
     assert result.returncode == 0, result.stderr + result.stdout
 
 
+def test_create_user_modal_offers_exactly_two_roles() -> None:
+    """Operator ruling 2026-10-08 (R16): an account is an admin or a member — the create-user
+    modal offers exactly those two, no read-only / viewer role."""
+    import re
+
+    from abstractgateway.console import gateway_console_html
+
+    page = gateway_console_html()
+    select = re.search(r'<select id="new-roles">(.*?)</select>', page, re.S)
+    assert select, "the create-user modal has no role select"
+    values = re.findall(r'<option value="([^"]+)"', select.group(1))
+    assert values == ["user", "admin"], values
+    assert "Member — runs workflows on their own runtime" in select.group(1)
+    assert 'value="readonly"' not in page and 'includes("readonly")' not in page and "Read-only —" not in page
+
+
 @pytest.mark.parametrize(
     "me_auth,want_roles,want_note,post",
     [
         ({"mode": "legacy-token", "user_auth_enabled": False}, ["admin"], "User accounts are off on this gateway: only admin accounts can sign in. Turn user accounts on to add members.", False),
-        ({"mode": "users", "user_auth_enabled": True}, ["user", "admin", "readonly"], "", False),
-        (None, ["user", "admin", "readonly"], "did not say whether user accounts are on", True),
+        ({"mode": "users", "user_auth_enabled": True}, ["user", "admin"], "", False),
+        (None, ["user", "admin"], "did not say whether user accounts are on", True),
     ],
     ids=["accounts-off", "accounts-on", "field-absent"],
 )

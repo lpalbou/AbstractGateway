@@ -615,6 +615,27 @@ def _same_account(principal: Any, *, user_id: str, tenant_id: str) -> bool:
     )
 
 
+# Operator ruling 2026-10-08 (R16): an account is an ADMIN or a MEMBER (a human account or an
+# entity account) — no viewer, no read-only, no third role. On the wire a member's role is
+# `user` (an entity's `entity` is minted by the entities lane only).
+ACCOUNT_ROLES = ("admin", "user")
+
+
+def _refuse_unknown_roles(roles: Any) -> None:
+    unknown = [str(r).strip() for r in (roles or []) if str(r).strip() and str(r).strip().lower() not in (*ACCOUNT_ROLES, "entity")]
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "reason_code": "unknown_role",
+                "message": (
+                    f"{', '.join(repr(r) for r in unknown)} is not a role: an account is an admin or a member "
+                    "(roles \"admin\" and \"user\")."
+                ),
+            },
+        )
+
+
 def _roles_grant_admin(roles: Any) -> bool:
     return "admin" in {str(r).strip() for r in (roles or [])}
 
@@ -691,6 +712,7 @@ async def gateway_admin_create_user(request: Request, payload: GatewayUserCreate
                 "not exist); the generic users lane does not mint role=entity accounts"
             ),
         )
+    _refuse_unknown_roles(payload.roles)
     _refuse_non_admin_account_while_user_accounts_off(payload.roles)
     registry = GatewayUserRegistry()
     try:
@@ -745,6 +767,8 @@ async def gateway_admin_update_user(
         token_update = ""
     from ..users import AccountArchivedError, EntityPrincipalGuardError
 
+    if payload.roles is not None:
+        _refuse_unknown_roles(payload.roles)
     registry = GatewayUserRegistry()
     demoting = payload.roles is not None and not _roles_grant_admin(payload.roles)
     if demoting or payload.enabled is False:
@@ -913,6 +937,25 @@ async def gateway_admin_set_account_openai_api(
     return row
 
 
+def _audit_creator_act(request: Request, *, entity: str, setting: str, principal: GatewayPrincipal, allowed: bool) -> None:
+    """R16.5: a non-admin's act on an entity's account (archive / unarchive / Active) names the
+    actor, the entity and `as: creator` (or the refusal) on the request's audit line, like the
+    entity settings routes (`entity_settings_access.entity_settings_guard`)."""
+    try:
+        detail = getattr(request.state, "audit_detail", None)
+        detail = dict(detail) if isinstance(detail, dict) else {}
+        detail["entity_settings"] = {
+            "entity": str(entity),
+            "setting": str(setting),
+            "actor": f"person:{principal.user_id}",
+            "as": "creator" if allowed else None,
+            "outcome": "allowed" if allowed else "refused",
+        }
+        request.state.audit_detail = detail
+    except Exception:  # noqa: BLE001 - auditing never breaks the request
+        pass
+
+
 def _audit_archive(event: str, row: Dict[str, Any], actor: GatewayPrincipal) -> None:
     from ..mail.audit import audit_email_event
 
@@ -947,7 +990,7 @@ async def gateway_admin_archive_account(request: Request, account_id: str, tenan
     tags=["accounts"],
     summary="Archive an entity I created",
     description=_ARCHIVE_DESCRIPTION + " For any signed-in account: only an entity YOU created (one of your "
-    "`GET /me/accounts` rows); anything else answers 404. Only an admin can unarchive.",
+    "`GET /me/accounts` rows); anything else answers 404. You unarchive it with `POST /me/accounts/{id}/unarchive`.",
 )
 async def gateway_me_archive_account(request: Request, account_id: str) -> Dict[str, Any]:
     principal = _principal_from_request(request)
@@ -956,8 +999,62 @@ async def gateway_me_archive_account(request: Request, account_id: str) -> Dict[
     try:
         row = await _off_the_event_loop(archive_account, principal, account_id)
     except AccountError as exc:
+        if not principal.is_admin():
+            _audit_creator_act(request, entity=account_id, setting="archive", principal=principal, allowed=False)
         raise _account_error(exc) from None
+    if not principal.is_admin():
+        _audit_creator_act(request, entity=account_id, setting="archive", principal=principal, allowed=True)
     _audit_archive("account.archived", row, principal)
+    return row
+
+
+@router.post(
+    "/me/accounts/{account_id}/unarchive",
+    tags=["accounts"],
+    summary="Unarchive an entity I created",
+    description="R16.5 (the creator configures their entity): for any signed-in account, only an entity YOU created "
+    "(one of your `GET /me/accounts?include_archived=true` rows); anything else answers 404 like a missing account. "
+    "It comes back INACTIVE: turn Active on (`PUT /me/accounts/{id}/active`) to let it act. Answers the updated row.",
+)
+async def gateway_me_unarchive_account(request: Request, account_id: str) -> Dict[str, Any]:
+    principal = _principal_from_request(request)
+    from ..admin_accounts import AccountError, unarchive_account
+
+    try:
+        row = await _off_the_event_loop(unarchive_account, principal, account_id)
+    except AccountError as exc:
+        if not principal.is_admin():
+            _audit_creator_act(request, entity=account_id, setting="unarchive", principal=principal, allowed=False)
+        raise _account_error(exc) from None
+    if not principal.is_admin():
+        _audit_creator_act(request, entity=account_id, setting="unarchive", principal=principal, allowed=True)
+    _audit_archive("account.unarchived", row, principal)
+    return row
+
+
+@router.put(
+    "/me/accounts/{account_id}/active",
+    tags=["accounts"],
+    summary="Turn an entity I created on or off",
+    description="R16.5 (the creator configures their entity): the Active switch of an entity YOU created — false = "
+    "suspended (paused, its door credential off; an open visit is closed), true = resumed (the state it had before). "
+    "Anything else answers 404 like a missing account; a user account's Active switch is an admin's "
+    "(`PUT /admin/accounts/{id}/active`). Answers the updated row.",
+)
+async def gateway_me_set_account_active(request: Request, account_id: str, payload: AccountActiveRequest) -> Dict[str, Any]:
+    principal = _principal_from_request(request)
+    from ..admin_accounts import AccountError, set_active
+
+    try:
+        row = await _off_the_event_loop(set_active, principal, account_id, active=bool(payload.active))
+    except AccountError as exc:
+        if not principal.is_admin():
+            _audit_creator_act(request, entity=account_id, setting="active", principal=principal, allowed=False)
+        raise _account_error(exc) from None
+    if not principal.is_admin():
+        _audit_creator_act(request, entity=account_id, setting="active", principal=principal, allowed=True)
+    _audit_account_change(request, user_id=str(row.get("id")), tenant_id=str(row.get("tenant_id") or "default"),
+                          changes={"active": bool(payload.active), "entity_state": row.get("entity_state")})
     return row
 
 
@@ -1043,13 +1140,14 @@ async def gateway_me_activity(
     "`GET /admin/accounts` — your own row and one row per entity YOU created (`created_by`). Other users, and "
     "entities someone else (or no recorded creator) made, are never listed: an admin sees everything on "
     "`GET /admin/accounts` (non-admins get 403 there). Actions only an admin can take are unavailable with the "
-    "reason.",
+    "reason. The creator of an entity configures it (R16.5): its settings (`actions.configure`), archive, unarchive "
+    "and Active switch. Archived entities are listed with `include_archived=true`.",
 )
-async def gateway_me_accounts(request: Request) -> Dict[str, Any]:
+async def gateway_me_accounts(request: Request, include_archived: bool = Query(default=False)) -> Dict[str, Any]:
     principal = _principal_from_request(request)
     from ..admin_accounts import list_my_accounts
 
-    return await _off_the_event_loop(list_my_accounts, principal)
+    return await _off_the_event_loop(list_my_accounts, principal, include_archived=bool(include_archived))
 
 
 NO_OWN_TOKEN = (

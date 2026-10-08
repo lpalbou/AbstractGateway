@@ -109,10 +109,40 @@ def _default_runtime_principal() -> Optional[GatewayPrincipal]:
     return principal if _principal_uses_default_runtime(principal) else None
 
 
+# R16.5 ("admins always"): an admin acting on an entity whose home lives in ANOTHER account's
+# runtime plane is served by THAT plane's service for the request (set by
+# `entity_access.entity_plane_resolver` / `entity_access.entity_plane_for`); the caller stays the
+# admin (audit, markers, authorization). Never set for a non-admin.
+import contextvars as _contextvars
+from contextlib import contextmanager as _contextmanager
+
+_ENTITY_PLANE_OWNER: "_contextvars.ContextVar[Optional[GatewayPrincipal]]" = _contextvars.ContextVar(
+    "abstractgateway_entity_plane_owner", default=None
+)
+
+
+@_contextmanager
+def using_entity_plane(owner: Optional[GatewayPrincipal]):
+    """Serve this block from `owner`'s runtime plane (an admin acting on an entity there)."""
+    token = _ENTITY_PLANE_OWNER.set(owner)
+    try:
+        yield
+    finally:
+        _ENTITY_PLANE_OWNER.reset(token)
+
+
+def set_entity_plane_owner(owner: Optional[GatewayPrincipal]) -> None:
+    """For the rest of this request's context (a router dependency)."""
+    _ENTITY_PLANE_OWNER.set(owner)
+
+
 def get_gateway_service() -> GatewayService:
     global _service
     principal = current_gateway_principal()
     if principal is not None and gateway_multi_user_enabled():
+        owner = _ENTITY_PLANE_OWNER.get()
+        if owner is not None and principal.is_admin():
+            return get_gateway_service_for_principal(owner)
         return get_gateway_service_for_principal(principal)
     if gateway_multi_user_enabled():
         # ONE SERVICE PER DATA DIRECTORY (R16.2). Under user auth the admin's

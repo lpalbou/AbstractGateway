@@ -125,6 +125,83 @@ def require_entity_visible(name: str, *, registry: Any = None) -> None:
         raise HTTPException(status_code=404, detail=not_found_detail(registry.entities_dir, slug))
 
 
+def entity_plane_owner(slug: str) -> Optional[GatewayPrincipal]:
+    """The principal whose runtime plane holds entity `slug`'s home (R16.5, "admins always"):
+    the default plane's operator for `<data_dir>/entities`, else the account whose runtime is
+    `<data_dir>/users/<tenant>/<runtime>`. None when no plane holds it."""
+    from .users import GatewayUserRegistry, gateway_data_dir_from_env
+
+    root = gateway_data_dir_from_env()
+    for entities_dir in entities_dirs():
+        exists, _created_by = manifest_creator(entities_dir, slug)
+        if not exists:
+            continue
+        if entities_dir == root / "entities":
+            return GatewayPrincipal(
+                user_id="admin", tenant_id="default", roles=("admin", "user"), scopes=("*",), runtime_id="default", source="entity-plane"
+            )
+        runtime_root = entities_dir.parent.parent  # <root>/users/<tenant>/<runtime>
+        tenant, runtime = runtime_root.parent.name, runtime_root.name
+        for rec in GatewayUserRegistry().list_users():
+            if rec.principal_kind == "entity":
+                continue
+            if safe_principal_component(rec.tenant_id or "default", default="default") == tenant and (
+                safe_principal_component(rec.runtime_id or rec.user_id, default=rec.user_id) == runtime
+            ):
+                return rec.to_principal()
+        return None
+    return None
+
+
+def _admin_plane_owner_for(principal: Optional[GatewayPrincipal], name: str) -> Optional[GatewayPrincipal]:
+    """For an ADMIN on a multi-user gateway: the owner of the plane holding entity `name` when it
+    is not the admin's own plane; else None (the admin's own service serves it)."""
+    from .service import gateway_multi_user_enabled
+
+    if principal is None or not principal.is_admin() or not gateway_multi_user_enabled():
+        return None
+    from .entities import entity_slug
+
+    try:
+        slug = entity_slug(name)
+    except Exception:  # noqa: BLE001 - an invalid name is the route's own 400
+        return None
+    from .routes.entities import _registry
+
+    if manifest_creator(_registry().entities_dir, slug)[0]:
+        return None  # the admin's own plane holds it
+    return entity_plane_owner(slug)
+
+
+async def entity_plane_resolver(request: Request) -> None:
+    """Router dependency, FIRST on both entity routers (async, so what it sets reaches the
+    sync dependencies and handlers of this request): an admin acting on an entity that lives in
+    another account's plane is served by that plane (R16.5, operator ruling 2026-10-08: "admins
+    always"); everyone else is untouched."""
+    name = request.path_params.get("name")
+    if name is None:
+        return
+    principal = getattr(request.state, "gateway_principal", None) or current_gateway_principal()
+    import asyncio
+
+    owner = await asyncio.to_thread(_admin_plane_owner_for, principal, str(name))
+    if owner is not None:
+        from .service import set_entity_plane_owner
+
+        set_entity_plane_owner(owner)
+
+
+def entity_plane_for(slug: str):
+    """Context manager for in-process entity acts outside the entity routers (Accounts'
+    Active / archive / unarchive): an admin acts in the plane that holds `slug`."""
+    from contextlib import nullcontext
+
+    from .service import using_entity_plane
+
+    owner = _admin_plane_owner_for(current_gateway_principal(), slug)
+    return using_entity_plane(owner) if owner is not None else nullcontext()
+
+
 def entity_name_guard(request: Request) -> None:
     """Router dependency for both entity routers: every route with a `{name}` path parameter is
     checked before its handler runs."""

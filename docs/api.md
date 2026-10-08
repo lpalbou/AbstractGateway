@@ -2062,11 +2062,12 @@ The Accounts page (admin): users and entities in one list.
 
 | Route | Purpose |
 |---|---|
-| `GET /admin/accounts` | `{accounts: [{id, tenant_id, kind: user \| entity, role: admin \| user \| entity, own, email_address, mailbox{state: connected \| receive_only \| not_connected \| paused \| unavailable, address, provider, reason}, runtime_id, active, entity_state, actions{email, logs, workspace, preferences, rotate, manage, delete, suspend: {available, reason}}}]}`, sorted admins, users, entities, then id; `entities_warning` when the entity list could not be read |
+| `GET /admin/accounts` | `{accounts: [{id, tenant_id, kind: user \| entity, role: admin \| user \| entity, own, email_address, mailbox{state: connected \| receive_only \| not_connected \| paused \| unavailable, address, provider, reason}, runtime_id, active, entity_state, actions{email, logs, workspace, preferences, rotate, manage, configure, archive, unarchive, suspend: {available, reason}}}]}` (role `user` = a member; an account is an admin or a member), sorted admins, users, entities, then id; `entities_warning` when the entity list could not be read |
 | `PUT /admin/accounts/{id}/active` | `{active}` → the updated row. Users: `false` = deactivated (signed out, cannot sign in); 409 `{message}` for your own account ("You can't deactivate your own account.") or the last active admin. Entities: `false` = suspended (entity state `paused`, its door credential off, an open visit closed); `true` = resumed (the state it had before is restored, stored in `<data_dir>/auth/entity_suspended.json`) |
 | `GET /admin/accounts/{id}/activity` | `?limit=100&kind=sign_in,run,…` (admin) |
 | `GET /me/activity` | the same for the signed-in account |
-| `GET /me/accounts` | any signed-in account: `{accounts: [rows], scope: "own"}`, the same row shape — your own row plus one row per entity **you** created; actions only an admin can take are unavailable with the reason |
+| `GET /me/accounts` | any signed-in account: `{accounts: [rows], scope: "own"}`, the same row shape — your own row plus one row per entity **you** created; actions only an admin can take are unavailable with the reason. `?include_archived=true` adds the archived entities you created |
+| `POST /me/accounts/{id}/archive`, `POST /me/accounts/{id}/unarchive`, `PUT /me/accounts/{id}/active` | an entity **you** created: archive it, unarchive it (it comes back inactive) or turn it on or off (`{active}`); any other id answers 404 like a missing account ([who configures an entity](./security.md#who-configures-an-entity)) |
 | `GET /me/accounts/{id}/activity` | the activity of your own account or of an entity you created; any other id answers 404 |
 
 ### Who sees which account
@@ -2090,8 +2091,11 @@ This is enforced on every entity route, not only on the Accounts page:
   …"): entity names are unique per gateway, so this is the one place a name's existence shows. This
   holds across runtimes: an entity living in another user's runtime, or a user account with that
   name, also answers 409 (`POST /entities/{name}/validate` reports the same error).
-- Visibility is not management: entity writes that are admin-only (state, tool policy, prompt,
-  substrate, …) stay admin-only for the entities you created.
+- Visibility is not the same as configuration: the creator of an entity changes its settings (mind,
+  voice, tools per phase, instructions, skills, workspaces, preferences, archive, unarchive, Active)
+  within what the admin authorised; its lifecycle acts (state, personal time, work order, memory
+  review and rebuild, mounts) stay admin-only. `GET /entities/{name}/access` says what the caller
+  may change: [security.md](./security.md#who-configures-an-entity).
 
 Without user accounts (the single-operator gateway) every entity is visible, as before.
 
