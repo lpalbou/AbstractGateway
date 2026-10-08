@@ -1,6 +1,6 @@
 # Changelog — abstractgateway-console
 
-## 0.15.1 (2026-10-07)
+## 0.15.1 (2026-10-08)
 
 Needs AbstractGateway 0.13.1 or later for **Preferences** (`/accounts/{id}/preferences`) and the **last restart**
 row (`/host/runner` `last_hang`); against 0.13.0 the rest works, `p` says the gateway has no preferences and the
