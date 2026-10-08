@@ -1055,7 +1055,7 @@ fn retained_runtimes_opens_the_reservations_dialog() {
     assert!(h.sent().iter().any(|c| matches!(c, Cmd::LoadReservations)));
     let s = h.turns(2);
     assert!(
-        s.contains("Retained runtimes —"),
-        "the Accounts dialog:\n{s}"
+        s.contains("Transfer one to a user — the data is never deleted."),
+        "the Accounts dialog (a FormModal since f2b4a14):\n{s}"
     );
 }
