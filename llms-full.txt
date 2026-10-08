@@ -13754,8 +13754,8 @@ pin, so the whole run tree finishes on the version it started on. The pin is
 released when the run ends. Automations store their concrete
 `bundle@version:flow`, so a republish never changes them; the automation
 controller's spec never changes, so its later occurrences start on what is
-published then. A run resumed by an event (`emit_event`) resolves its own
-workflow through the same pin at its next tick.
+published then. A pinned run resumed by the runtime itself (an event delivered
+to its listener) resumes on its pinned spec too.
 
 **Where it is reported.** Every publish/promote/upload response carries
 `reload: {kind, services, duration_ms, sentence}` (see
