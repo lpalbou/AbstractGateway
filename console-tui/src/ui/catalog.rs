@@ -24,6 +24,19 @@
 //! each chip with its count. Filters hide, they never cap. Every sentence
 //! (empty states, errors, confirmations, refusals) is the web page's.
 //!
+//! R15 (DESIGN-TUI.md §3.9): the list is a `w::DataTable` — one group line
+//! per model above its artifact rows (Artifact · Provider · Quant · Size ·
+//! Weights · Fit · Actions; narrow: Provider/Quant/Size/Fit under the id),
+//! the rows outside the catalog under "Not in the catalog". Each row's
+//! actions come from ONE `row_actions` (labelled Download / Try again / Use
+//! as default / Cancel, the ⌫ trash glyph with the web's tooltip; refused
+//! ones faint with the web's reason). The head: [Check again]; the bar:
+//! Catalog | Hugging Face (Segmented), the search field, [Search] in Hugging
+//! Face mode, "Fits this computer" (Toggle); the four chip groups are
+//! Selects. Delete and Cancel confirm with `w::Confirm` ([Delete] [Keep],
+//! [Stop download] [Keep downloading]). Enter = the row's first action;
+//! `i` opens its facts.
+//!
 //! The page's own state (filters, selection, the delete in progress…)
 //! lives in a thread-local so it survives a tab switch like the web
 //! page's `mcStore`; a reconnect (the catalog slot back to NotAsked)
@@ -32,15 +45,13 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
-use abstracttui::base::Point;
 use abstracttui::prelude::*;
-use abstracttui::render::{Attrs, Style};
-use abstracttui::ui::{MouseButton, MouseKind, Phase, UiEvent};
+use abstracttui::ui::{Phase, UiEvent};
 use abstracttui::widgets::TextInput;
 use serde_json::{json, Value};
 
-use super::kit::InlineConfirm;
-use super::util::{line, span, span_bold, wrap_text};
+use super::w::action::{button, On};
+use super::w::{Action, Cell, Col, ColW, Confirm, DataTable, Row, Segmented, Toggle};
 use super::Ctx;
 use crate::api::{urlencode, ApiError};
 use crate::store::json::WriteState;
@@ -1004,110 +1015,145 @@ pub fn reset_state() {
 }
 
 // ---------------------------------------------------------------------------
-// Layout: the list as painted lines (pure, tested)
+// R15: the artifact rows as DataTable rows, their actions as `w::Action`s
+// (ONE source for the Actions cell, the keys, the hint bar and the tests)
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LKind {
-    Model,
-    Art,
-    Under,
-    Section,
-    Note,
-}
-
-#[derive(Clone, Debug)]
-pub struct PLine {
-    pub spans: Vec<(String, Tone)>,
-    /// The artifact row this line belongs to (selection + clicks).
-    pub row: Option<String>,
-    pub kind: LKind,
-}
-
-impl PLine {
-    pub fn text(&self) -> String {
-        self.spans.iter().map(|(s, _)| s.as_str()).collect()
-    }
-}
-
-fn pl(text: impl Into<String>, tone: Tone, kind: LKind, row: Option<String>) -> PLine {
-    PLine {
-        spans: vec![(text.into(), tone)],
-        row,
-        kind,
-    }
-}
-
-/// Column widths for the artifact rows (engine · id · quant · size ·
-/// status · action) at `width`: every column at its natural width, the id
-/// taking what is left; when the id would get less than its floor, the
-/// widest of action / status / engine / quant give cells back down to
-/// their own floors (their words then wrap onto a second line — never cut).
-pub fn art_widths(rows: &[Vec<String>], width: i32) -> Vec<i32> {
-    const FLOORS: [i32; 6] = [12, 16, 6, 12, 21, 18];
-    let mut nat = [0i32; 6];
-    for r in rows {
-        for (i, c) in r.iter().enumerate().take(6) {
-            nat[i] = nat[i].max(abstracttui::text::width(c));
+/// The web's delete tooltip (`mcDeleteButton`).
+pub fn delete_tip(artifact: &str) -> String {
+    format!(
+        "Delete {} from this computer (files only)",
+        if artifact.is_empty() {
+            "this model"
+        } else {
+            artifact
         }
-    }
-    let avail = (width - 2 - 2 * 5).max(30);
-    let mut ws = nat;
-    for (i, f) in FLOORS.iter().enumerate() {
-        ws[i] = ws[i].max((*f).min(nat[i]).max(1));
-    }
-    let id_floor = FLOORS[1].min(nat[1].max(1));
-    loop {
-        let others: i32 = ws
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| *i != 1)
-            .map(|(_, w)| *w)
-            .sum();
-        let id = avail - others;
-        if id >= id_floor.max(nat[1].min(32)) {
-            ws[1] = id.min(nat[1]).max(id_floor);
-            break;
-        }
-        // Give cells back in the web's order of importance: the action
-        // words first, then the engine, the quantization, the status
-        // chips, the size last.
-        let pick = [5usize, 0, 2, 4, 3]
-            .into_iter()
-            .find(|i| ws[*i] > FLOORS[*i]);
-        match pick {
-            Some(i) => ws[i] -= 1,
-            None => {
-                // Every floor reached and still too narrow (80 columns):
-                // the widest other column gives cells until the id has 8
-                // (words wrap; the row never runs past the width).
-                let widest = [5usize, 0, 2, 4, 3]
-                    .into_iter()
-                    .filter(|i| ws[*i] > 4)
-                    .max_by_key(|i| ws[*i]);
-                match widest {
-                    Some(i) if id < 8 => ws[i] -= 1,
-                    _ => {
-                        ws[1] = id.max(1);
-                        break;
-                    }
-                }
-            }
-        }
-    }
-    ws.to_vec()
+    )
 }
 
-/// One artifact row's cells (engine · id · quant · size · status · action).
-fn art_cells(
+/// The trash button of a downloaded row (`mcDeleteButton`): a glyph, its
+/// tooltip the web's sentence; while the dry run / the delete runs it is
+/// faint with what it is doing.
+fn delete_action(st: &PageState, k: &str, artifact: &str, admin: bool) -> Action {
+    let a = Action::glyph("delete", "Delete")
+        .key('d')
+        .tooltip(delete_tip(artifact))
+        .danger();
+    match st.del.get(k) {
+        Some(DelPhase::Checking) | Some(DelPhase::Confirm(_)) => {
+            a.refused(Some("Checking what a delete would free".into()))
+        }
+        Some(DelPhase::Deleting) => a.refused(Some("Deleting the downloaded files".into())),
+        None if !admin => a.refused(Some("Only an admin can delete downloaded models".into())),
+        None => a,
+    }
+}
+
+/// Is `a` the current default text model?
+fn is_default(a: &Value, default: &Option<(String, String)>) -> bool {
+    let model = served_model_id(sv(a, "provider"), sv(a, "artifact"));
+    default
+        .as_ref()
+        .is_some_and(|(p, m)| p == sv(a, "provider") && *m == model)
+}
+
+/// One artifact row's actions, in the web's order (`mcActionMarkup`):
+/// a running download → Cancel; downloaded → Use as default (text models,
+/// not the current default) + the trash; downloadable → Download (or Try
+/// again after a failure); otherwise "Not available here" with its reason.
+/// `row` is None for a row outside the catalog (trash only). An action
+/// that cannot run here stays, faint, with the web's reason.
+pub fn row_actions(
     cv: &Cv,
     st: &PageState,
-    row: &Value,
+    row: Option<&Value>,
     a: &Value,
-    alone: bool,
     admin: bool,
     default: &Option<(String, String)>,
-) -> Vec<String> {
+) -> Vec<Action> {
+    let k = art_key(a);
+    let artifact = sv(a, "artifact");
+    if let Some(j) = cv.job(a).filter(|j| job_active(j)) {
+        if st.cancelling.contains(&job_id(j)) {
+            return vec![Action::label("cancelling", "Cancelling...")
+                .refused(Some("Stopping the download".into()))];
+        }
+        return vec![Action::label("cancel", "Cancel").key('c')];
+    }
+    if st.busy.contains(&k) {
+        return vec![
+            Action::label("starting", "Starting...").refused(Some("Starting the download".into()))
+        ];
+    }
+    let installed = cv.installed(a) || row.is_none();
+    if installed {
+        let del = delete_action(st, &k, artifact, admin);
+        let Some(row) = row else { return vec![del] };
+        if !can_be_default(row) || is_default(a, default) {
+            return vec![del];
+        }
+        let use_default = Action::label("default", "Use as default")
+            .key('u')
+            .refused((!admin).then(|| "Only an admin can change the default model".into()));
+        return vec![use_default, del];
+    }
+    if a.get("downloadable").and_then(Value::as_bool) != Some(true) {
+        let why = if a.get("supported_on_host").and_then(Value::as_bool) == Some(false) {
+            "Its engine does not run on this computer"
+        } else {
+            "This build cannot be downloaded from here"
+        };
+        return vec![Action::label("unavailable", "Not available here").refused(Some(why.into()))];
+    }
+    let failed = cv.job(a).is_some_and(|j| sv(j, "status") == "failed");
+    let label = if failed { "Try again" } else { "Download" };
+    vec![Action::label("download", label)
+        .key('w')
+        .refused((!admin).then(|| "Only an admin can download models".into()))]
+}
+
+/// Every visible artifact row's actions (key, actions) for the current
+/// filters — what the page offers; the click tests' meta-test reads it.
+pub fn offered_actions(
+    catalog: &Value,
+    installed: &Value,
+    defaults: &Value,
+    admin: bool,
+) -> Vec<(String, Vec<Action>)> {
+    let st = PageState::default();
+    let cv = Cv {
+        data: Some(catalog),
+        catalog: Some(catalog),
+        installed: Some(installed),
+        jobs: &st.jobs,
+        deleted: &st.deleted,
+    };
+    let default = current_default(Some(defaults));
+    let mut out = Vec::new();
+    for item in visible(&cv, &st.filters) {
+        for a in &item.arts {
+            out.push((
+                art_key(a),
+                row_actions(&cv, &st, Some(item.row), a, admin, &default),
+            ));
+        }
+    }
+    for r in extras(&cv, &st.filters) {
+        out.push((art_key(r), row_actions(&cv, &st, None, r, admin, &default)));
+    }
+    out
+}
+
+/// The facts of one artifact (engine · quant · size · weights · fit).
+struct ArtFacts {
+    provider: String,
+    quant: String,
+    size: String,
+    weights: (String, Tone),
+    fit: (String, Tone),
+}
+
+fn art_facts(cv: &Cv, st: &PageState, a: &Value, alone: bool) -> ArtFacts {
     let k = art_key(a);
     let job = cv.job(a);
     let installed = cv.installed(a);
@@ -1116,28 +1162,29 @@ fn art_cells(
     let weights = match job {
         Some(j) if job_active(j) => {
             if st.cancelling.contains(&job_id(j)) {
-                "Cancelling".to_string()
+                ("Cancelling".to_string(), Tone::Warn)
             } else {
-                state_pill(&job_phase(j)).0.to_string()
+                let phase = job_phase(j);
+                let (l, t) = state_pill(&phase);
+                (l.to_string(), t)
             }
         }
         _ => {
-            let (l, _) = if installed {
+            let (l, t) = if installed {
                 weights_label("installed")
             } else if gone {
                 weights_label("absent")
             } else {
                 weights_label(presence)
             };
-            l.to_string()
+            (l.to_string(), t)
         }
     };
-    let fitw = if a.get("supported_on_host").and_then(Value::as_bool) == Some(false) {
-        "Not for this computer".to_string()
+    let fit = if a.get("supported_on_host").and_then(Value::as_bool) == Some(false) {
+        ("Not for this computer".to_string(), Tone::Err)
     } else {
-        fit_label(a.get("fit").map(|f| sv(f, "verdict")).unwrap_or(""))
-            .0
-            .to_string()
+        let (l, t) = fit_label(a.get("fit").map(|f| sv(f, "verdict")).unwrap_or(""));
+        (l.to_string(), t)
     };
     let qc = sv(a, "quant_class");
     let quant = if QUANT_CLASSES.contains(&qc) {
@@ -1153,133 +1200,56 @@ fn art_cells(
         None => "Size unknown".into(),
     };
     let rec = a.get("recommended").and_then(Value::as_bool) == Some(true) && !alone;
-    vec![
-        format!(
+    ArtFacts {
+        // The web's recommended dot (`mc-rec`, "Recommended for this
+        // computer") beside its siblings.
+        provider: format!(
             "{}{}",
             if rec { "● " } else { "" },
             provider_label(sv(a, "provider"))
         ),
-        sv(a, "artifact").to_string(),
         quant,
         size,
-        format!("{weights} · {fitw}"),
-        action_words(cv, st, row, a, admin, default),
-    ]
+        weights,
+        fit,
+    }
 }
 
-/// `mcActionMarkup`, as the key that does it.
-fn action_words(
-    cv: &Cv,
-    st: &PageState,
-    row: &Value,
-    a: &Value,
-    admin: bool,
-    default: &Option<(String, String)>,
-) -> String {
-    let k = art_key(a);
-    if let Some(j) = cv.job(a).filter(|j| job_active(j)) {
-        return if st.cancelling.contains(&job_id(j)) {
-            "Cancelling...".into()
-        } else {
-            "c Cancel".into()
-        };
-    }
-    if st.busy.contains(&k) {
-        return "Starting...".into();
-    }
-    if cv.installed(a) {
-        let del = delete_word(st, &k, admin);
-        if !can_be_default(row) {
-            return del;
-        }
-        let model = served_model_id(sv(a, "provider"), sv(a, "artifact"));
-        if default
-            .as_ref()
-            .is_some_and(|(p, m)| p == sv(a, "provider") && *m == model)
-        {
-            return join_words("Default text model", &del);
-        }
-        let use_w = if admin {
-            "u Use as default".to_string()
-        } else {
-            "Use as default (admin only)".to_string()
-        };
-        return join_words(&use_w, &del);
-    }
-    if a.get("downloadable").and_then(Value::as_bool) != Some(true) {
-        return "Not available here".into();
-    }
-    let failed = cv.job(a).is_some_and(|j| sv(j, "status") == "failed");
-    let label = if failed { "Try again" } else { "Download" };
-    if admin {
-        format!("w {label}")
+/// The facts of a row outside the catalog (`mcExtraArtMarkup`).
+fn extra_facts(r: &Value) -> ArtFacts {
+    let size = num(r, "size_bytes")
+        .map(ui_bytes)
+        .unwrap_or_else(|| "Size unknown".into());
+    let quant = if sv(r, "quant").is_empty() {
+        "Not stated".to_string()
     } else {
-        format!("{label} (admin only)")
-    }
-}
-
-fn join_words(a: &str, b: &str) -> String {
-    if b.is_empty() {
-        a.to_string()
+        sv(r, "quant").to_string()
+    };
+    let weights = if r.get("loaded").and_then(Value::as_bool) == Some(true) {
+        "Downloaded · Loaded"
     } else {
-        format!("{a} · {b}")
-    }
-}
-
-fn delete_word(st: &PageState, k: &str, admin: bool) -> String {
-    match st.del.get(k) {
-        Some(DelPhase::Checking) => "Checking...".into(),
-        Some(DelPhase::Deleting) => "Deleting...".into(),
-        Some(DelPhase::Confirm(_)) => String::new(),
-        None if admin => "d Delete".into(),
-        None => "Delete (admin only)".into(),
+        "Downloaded"
+    };
+    ArtFacts {
+        provider: provider_label(sv(r, "provider")),
+        quant,
+        size,
+        weights: (weights.to_string(), Tone::Ok),
+        fit: (String::new(), Tone::Muted),
     }
 }
 
 /// The lines under an artifact row (`mcJobMarkup` + the GPU-limit note).
-fn under_lines(
-    cv: &Cv,
-    st: &PageState,
-    a: &Value,
-    k: &str,
-    confirm: Option<(String, String)>,
-    width: i32,
-) -> Vec<PLine> {
-    let mut out = Vec::new();
-    let w = (width - 4).max(10) as usize;
-    let push = |out: &mut Vec<PLine>, text: &str, tone: Tone| {
-        for l in wrap_text(text, w) {
-            out.push(pl(
-                format!("    {l}"),
-                tone,
-                LKind::Under,
-                Some(k.to_string()),
-            ));
-        }
-    };
+fn under_lines(cv: &Cv, st: &PageState, a: &Value, k: &str) -> Vec<(String, Tone)> {
+    let mut out: Vec<(String, Tone)> = Vec::new();
     if a.get("supported_on_host").and_then(Value::as_bool) != Some(false) {
         if let Some(n) = gpu_limit_note(a) {
-            push(&mut out, &n, Tone::Warn);
+            out.push((n, Tone::Warn));
         }
-    }
-    if let Some((sentence, verb)) = confirm {
-        push(&mut out, &sentence, Tone::Warn);
-        out.push(PLine {
-            spans: vec![
-                ("    [y] ".into(), Tone::Accent),
-                (verb, Tone::Err),
-                ("  [n] ".into(), Tone::Accent),
-                ("Keep".into(), Tone::Text),
-            ],
-            row: Some(k.to_string()),
-            kind: LKind::Under,
-        });
     }
     if let Some(j) = cv.jobs.get(k) {
         if job_active(j) {
-            for (l, tone) in progress_lines(j) {
-                push(&mut out, &l, tone);
-            }
+            out.extend(progress_lines(j));
         } else if sv(j, "status") == "failed" {
             let said = {
                 let r = sv(j, "ended_reason").trim();
@@ -1292,11 +1262,7 @@ fn under_lines(
                     "Try again.".to_string()
                 }
             };
-            push(
-                &mut out,
-                &format!("The download did not finish. {said}"),
-                Tone::Err,
-            );
+            out.push((format!("The download did not finish. {said}"), Tone::Err));
             let why = {
                 let e = sv(j, "error").trim();
                 if e.is_empty() {
@@ -1306,30 +1272,30 @@ fn under_lines(
                 }
             };
             if !why.is_empty() && why != said {
-                push(&mut out, &why, Tone::Muted);
+                out.push((why, Tone::Muted));
             }
         } else if sv(j, "status") == "cancelled" && !cv.installed(a) {
             let r = sv(j, "ended_reason");
-            push(
-                &mut out,
+            out.push((
                 if r.is_empty() {
-                    "Download cancelled. Download it again any time."
+                    "Download cancelled. Download it again any time.".to_string()
                 } else {
-                    r
+                    r.to_string()
                 },
                 Tone::Muted,
-            );
+            ));
         }
     }
     if let Some((tone, text)) = st.notices.get(k) {
-        push(&mut out, text, *tone);
+        out.push((text.clone(), *tone));
     }
     out
 }
 
-/// The expanded row's facts (Enter): the full id, engine, quantization,
-/// size source, presence, fit facts, the download command.
-fn detail_lines(a: &Value, alone: bool, k: &str, width: i32) -> Vec<PLine> {
+/// The facts shown under a row when its details are open (`i`): the full
+/// id, engine, quantization, size source, presence, fit facts, the
+/// download command (the web shows them as the cells' tooltips).
+fn detail_facts(a: &Value, alone: bool) -> Vec<String> {
     let mut facts: Vec<String> = Vec::new();
     facts.push(format!("Artifact: {}", sv(a, "artifact")));
     let (p, e) = (sv(a, "provider"), sv(a, "engine"));
@@ -1375,415 +1341,288 @@ fn detail_lines(a: &Value, alone: bool, k: &str, width: i32) -> Vec<PLine> {
     if !sv(a, "cli_download").is_empty() {
         facts.push(format!("CLI: {}", sv(a, "cli_download")));
     }
-    let w = (width - 6).max(10) as usize;
+    facts
+}
+
+/// The model's header line (name · organisation · parameters · licence,
+/// the capability tags, the Starter / Hugging Face badges) — the group
+/// line drawn above its first artifact row.
+pub fn model_header(row: &Value) -> String {
+    let mut meta: Vec<String> = Vec::new();
+    if !sv(row, "vendor").is_empty() {
+        meta.push(sv(row, "vendor").to_string());
+    }
+    let p = params(num(row, "params_total"));
+    let act = params(num(row, "params_active"));
+    if !p.is_empty() {
+        meta.push(if act.is_empty() {
+            format!("{p} params")
+        } else {
+            format!("{p} params ({act} active)")
+        });
+    }
+    if !sv(row, "license").is_empty() {
+        meta.push(sv(row, "license").to_string());
+    }
+    let mut head = if sv(row, "display_name").is_empty() {
+        sv(row, "id").to_string()
+    } else {
+        sv(row, "display_name").to_string()
+    };
+    if !meta.is_empty() {
+        head.push_str(&format!("  {}", meta.join(" · ")));
+    }
+    let caps: Vec<String> = row_caps(row)
+        .iter()
+        .map(|c| format!("[{}]", cap_label(c)))
+        .collect();
+    if !caps.is_empty() {
+        head.push_str(&format!("  {}", caps.join(" ")));
+    }
+    if row.get("starter").and_then(Value::as_bool) == Some(true) {
+        head.push_str("  Starter");
+    }
+    if sv(row, "source") == "hf_search" {
+        head.push_str("  Hugging Face");
+    }
+    head
+}
+
+/// The web's column names (the artifact grid).
+pub const COLUMNS: [&str; 7] = [
+    "Artifact", "Provider", "Quant", "Size", "Weights", "Fit", "Actions",
+];
+
+/// The table's columns at width `w` (narrow: Provider/Quant/Size/Fit move
+/// to the Artifact cell's second line).
+pub fn columns(w: i32) -> Vec<Col> {
+    if w < 100 {
+        vec![
+            Col::new(COLUMNS[0], ColW::Flex { weight: 1, min: 16 }),
+            Col::new(COLUMNS[4], ColW::Fit { min: 8, max: 16 }),
+            Col::new(COLUMNS[6], ColW::Fit { min: 7, max: 22 }),
+        ]
+    } else {
+        vec![
+            Col::new(COLUMNS[0], ColW::Flex { weight: 1, min: 18 }),
+            Col::new(COLUMNS[1], ColW::Fit { min: 8, max: 16 }),
+            Col::new(COLUMNS[2], ColW::Fit { min: 5, max: 14 }),
+            Col::new(COLUMNS[3], ColW::Fit { min: 6, max: 14 }),
+            Col::new(COLUMNS[4], ColW::Fit { min: 8, max: 18 }),
+            Col::new(COLUMNS[5], ColW::Fit { min: 4, max: 16 }),
+            Col::new(COLUMNS[6], ColW::Fit { min: 7, max: 24 }),
+        ]
+    }
+}
+
+/// One DataTable row.
+#[allow(clippy::too_many_arguments)]
+fn table_row(
+    t: &TokenSet,
+    k: String,
+    f: ArtFacts,
+    id: &str,
+    strong: bool,
+    is_default: bool,
+    actions: Vec<Action>,
+    note: Vec<(String, Tone)>,
+    narrow: bool,
+) -> Row {
+    use super::w::Ink;
+    let id_ink = if strong {
+        Ink::new(id, t.text).bold()
+    } else {
+        Ink::new(id, t.text)
+    };
+    let mut weights = vec![Ink::new(f.weights.0.clone(), fg_of(t, f.weights.1))];
+    if is_default {
+        weights.push(Ink::new("\nDefault text model", t.info));
+    }
+    let cells = if narrow {
+        let mut facts = vec![f.provider, f.quant, f.size];
+        if !f.fit.0.is_empty() {
+            facts.push(f.fit.0.clone());
+        }
+        vec![
+            Cell::Lines(vec![
+                vec![id_ink],
+                vec![Ink::new(facts.join(" · "), t.text_muted)],
+            ]),
+            Cell::Text(weights),
+            Cell::Actions(actions),
+        ]
+    } else {
+        vec![
+            Cell::Text(vec![id_ink]),
+            Cell::text(f.provider, t.text),
+            Cell::text(f.quant, t.text),
+            Cell::text(f.size, t.text),
+            Cell::Text(weights),
+            Cell::text(f.fit.0.clone(), fg_of(t, f.fit.1)),
+            Cell::Actions(actions),
+        ]
+    };
+    let note = if note.is_empty() {
+        None
+    } else {
+        let worst = note
+            .iter()
+            .map(|(_, t)| *t)
+            .max_by_key(|t| match t {
+                Tone::Err => 4,
+                Tone::Warn => 3,
+                Tone::Ok => 2,
+                Tone::Info => 1,
+                _ => 0,
+            })
+            .unwrap_or(Tone::Muted);
+        let text = note
+            .into_iter()
+            .map(|(s, _)| s)
+            .collect::<Vec<_>>()
+            .join("\n");
+        Some((text, fg_of(t, worst)))
+    };
+    Row::new(k, cells).note(note)
+}
+
+/// The table rows of the visible list (catalog models grouped under their
+/// header line, then "Not in the catalog").
+pub fn table_rows(
+    t: &TokenSet,
+    cv: &Cv,
+    st: &PageState,
+    admin: bool,
+    default: &Option<(String, String)>,
+    width: i32,
+) -> Vec<Row> {
+    let f = &st.filters;
+    let narrow = width < 100;
     let mut out = Vec::new();
-    for f in facts {
-        for l in wrap_text(&f, w) {
-            out.push(pl(
-                format!("      {l}"),
-                Tone::Muted,
-                LKind::Under,
-                Some(k.to_string()),
-            ));
+    for item in visible(cv, f) {
+        let alone = arts(item.row).len() == 1;
+        let header = model_header(item.row);
+        for (i, a) in item.arts.iter().enumerate() {
+            let k = art_key(a);
+            let mut note = under_lines(cv, st, a, &k);
+            if st.expanded.as_deref() == Some(k.as_str()) {
+                note.extend(detail_facts(a, alone).into_iter().map(|s| (s, Tone::Muted)));
+            }
+            let installed = cv.installed(a);
+            let mut r = table_row(
+                t,
+                k,
+                art_facts(cv, st, a, alone),
+                sv(a, "artifact"),
+                a.get("recommended").and_then(Value::as_bool) == Some(true),
+                installed && can_be_default(item.row) && is_default(a, default),
+                row_actions(cv, st, Some(item.row), a, admin, default),
+                note,
+                narrow,
+            );
+            if i == 0 {
+                r = r.group(header.clone());
+            }
+            out.push(r);
+        }
+    }
+    let show_extras = !(f.hf_mode());
+    if show_extras {
+        for (i, r) in extras(cv, f).into_iter().enumerate() {
+            let k = art_key(r);
+            let mut note = under_lines(cv, st, r, &k);
+            if st.expanded.as_deref() == Some(k.as_str()) {
+                note.push((format!("Artifact: {}", sv(r, "artifact")), Tone::Muted));
+                if !sv(r, "location").is_empty() {
+                    note.push((format!("Size on disk · {}", sv(r, "location")), Tone::Muted));
+                }
+            }
+            let mut row = table_row(
+                t,
+                k,
+                extra_facts(r),
+                sv(r, "artifact"),
+                false,
+                false,
+                row_actions(cv, st, None, r, admin, default),
+                note,
+                narrow,
+            );
+            if i == 0 {
+                row = row.group("Not in the catalog");
+            }
+            out.push(row);
         }
     }
     out
 }
 
-/// The extra (not-in-catalog) row's cells (`mcExtraArtMarkup`).
-fn extra_cells(st: &PageState, r: &Value, admin: bool) -> Vec<String> {
-    let size = num(r, "size_bytes")
-        .map(ui_bytes)
-        .unwrap_or_else(|| "Size unknown".into());
-    let quant = if sv(r, "quant").is_empty() {
-        "Not stated".to_string()
-    } else {
-        sv(r, "quant").to_string()
-    };
-    let chips = if r.get("loaded").and_then(Value::as_bool) == Some(true) {
-        "Downloaded · Loaded"
-    } else {
-        "Downloaded"
-    };
-    vec![
-        provider_label(sv(r, "provider")),
-        sv(r, "artifact").to_string(),
-        quant,
-        size,
-        chips.to_string(),
-        delete_word(st, &art_key(r), admin),
-    ]
-}
-
-/// The narrow row (the web's container query under 1000 px): the engine
-/// badge and the id on the first line, the facts and the action under it.
-fn stack_cells(cells: &[String], width: i32) -> Vec<String> {
-    let mut out = Vec::new();
-    let head = format!(
-        "{}  {}",
-        cells.first().cloned().unwrap_or_default(),
-        cells.get(1).cloned().unwrap_or_default()
-    );
-    for l in wrap_text(&head, (width - 2).max(10) as usize) {
-        out.push(format!("  {l}"));
-    }
-    let facts: Vec<String> = cells
-        .iter()
-        .skip(2)
-        .filter(|c| !c.is_empty())
-        .cloned()
-        .collect();
-    for l in wrap_text(&facts.join(" · "), (width - 4).max(10) as usize) {
-        out.push(format!("    {l}"));
-    }
-    out
-}
-
-fn join_cells(cells: &[String], ws: &[i32]) -> Vec<String> {
-    let wrapped: Vec<Vec<String>> = cells
-        .iter()
-        .zip(ws)
-        .map(|(c, w)| wrap_text(c, (*w).max(1) as usize))
-        .collect();
-    let h = wrapped.iter().map(Vec::len).max().unwrap_or(1).max(1);
-    (0..h)
-        .map(|li| {
-            let mut s = String::from("  ");
-            for (c, w) in ws.iter().enumerate() {
-                let piece = wrapped[c].get(li).cloned().unwrap_or_default();
-                let pw = abstracttui::text::width(&piece);
-                s.push_str(&piece);
-                if c + 1 < ws.len() {
-                    s.push_str(&" ".repeat(((*w - pw).max(0) + 2) as usize));
-                }
-            }
-            s.trim_end().to_string()
-        })
-        .collect()
-}
-
-/// Every line of the list (`mcListMarkup`), for `width` cells.
-#[allow(clippy::too_many_arguments)]
-pub fn list_lines(
+/// The sentences shown INSTEAD of the table (loading, errors, the Hugging
+/// Face prompt, empty states), or None when the table shows.
+pub fn list_notes(
     cv: &Cv,
     st: &PageState,
     hub: &Loadable<Value>,
     catalog: &Loadable<Value>,
-    installed_err: Option<String>,
-    default: &Option<(String, String)>,
-    admin: bool,
-    confirm: Option<(String, String, String)>,
-    width: i32,
-) -> Vec<PLine> {
+) -> Option<Vec<(String, Tone)>> {
     let f = &st.filters;
-    let w = width.max(20);
-    let note = |text: &str, tone: Tone| -> Vec<PLine> {
-        wrap_text(text, w as usize)
-            .into_iter()
-            .map(|l| pl(l, tone, LKind::Note, None))
-            .collect()
-    };
     if let Some(q) = &f.hf {
         if q.is_empty() {
-            let mut out = note("Search Hugging Face", Tone::Strong);
-            out.extend(note("Type a model name above and press Enter. Results show as cards you can download, like the catalog.", Tone::Muted));
-            return out;
+            return Some(vec![
+                ("Search Hugging Face".into(), Tone::Strong),
+                ("Type a model name above and press Enter. Results show as cards you can download, like the catalog.".into(), Tone::Muted),
+            ]);
         }
         if st.hub_q.as_deref() == Some(q.as_str()) {
             if let Loadable::Failed(e) = hub {
-                let mut out = note("Hugging Face could not be searched right now.", Tone::Err);
-                out.extend(note(
-                    "Check that the gateway host is online, then search again.",
-                    Tone::Muted,
-                ));
-                out.extend(note(&format!("Details: {}", err_text(e)), Tone::Faint));
-                return out;
+                return Some(vec![
+                    (
+                        "Hugging Face could not be searched right now.".into(),
+                        Tone::Err,
+                    ),
+                    (
+                        "Check that the gateway host is online, then search again.".into(),
+                        Tone::Muted,
+                    ),
+                    (format!("Details: {}", err_text(e)), Tone::Faint),
+                ]);
             }
         }
         if cv.data.is_none() {
-            return note(&format!("Searching Hugging Face for “{q}”..."), Tone::Muted);
+            return Some(vec![(
+                format!("Searching Hugging Face for “{q}”..."),
+                Tone::Muted,
+            )]);
         }
         if cv.rows().is_empty() {
-            let mut out = note(
-                &format!("Hugging Face has no model matching “{q}”."),
-                Tone::Strong,
-            );
-            out.extend(note("Try another name, or fewer words.", Tone::Muted));
-            return out;
+            return Some(vec![
+                (
+                    format!("Hugging Face has no model matching “{q}”."),
+                    Tone::Strong,
+                ),
+                ("Try another name, or fewer words.".into(), Tone::Muted),
+            ]);
         }
     }
     if cv.catalog.is_none() {
         if let Loadable::Failed(e) = catalog {
-            let mut out = note("The model catalog did not load.", Tone::Err);
-            out.extend(note(&err_text(e), Tone::Muted));
-            return out;
+            return Some(vec![
+                ("The model catalog did not load.".into(), Tone::Err),
+                (err_text(e), Tone::Muted),
+            ]);
         }
-        return note("Loading the model catalog...", Tone::Muted);
+        return Some(vec![("Loading the model catalog...".into(), Tone::Muted)]);
     }
-    let list = visible(cv, f);
-    let extra = extras(cv, f);
-    let confirm_for = |k: &str| -> Option<(String, String)> {
-        confirm
-            .as_ref()
-            .filter(|(ck, _, _)| ck == k)
-            .map(|(_, s, v)| (s.clone(), v.clone()))
-    };
-    // Column widths solved across EVERY artifact row, so the columns line
-    // up from one model to the next (the web's fixed grid).
-    let mut cells_by_key: Vec<(String, Vec<String>)> = Vec::new();
-    for item in &list {
-        let alone = arts(item.row).len() == 1;
-        for a in &item.arts {
-            cells_by_key.push((
-                art_key(a),
-                art_cells(cv, st, item.row, a, alone, admin, default),
-            ));
-        }
-    }
-    for r in &extra {
-        cells_by_key.push((art_key(r), extra_cells(st, r, admin)));
-    }
-    let all_cells: Vec<Vec<String>> = cells_by_key.iter().map(|(_, c)| c.clone()).collect();
-    let ws = art_widths(&all_cells, w);
-    let narrow = w < 100;
-    let layout_row = |cells: &[String]| -> Vec<String> {
-        if narrow {
-            stack_cells(cells, w)
-        } else {
-            join_cells(cells, &ws)
-        }
-    };
-    let cells_of = |k: &str| -> Vec<String> {
-        cells_by_key
-            .iter()
-            .find(|(ck, _)| ck == k)
-            .map(|(_, c)| c.clone())
-            .unwrap_or_default()
-    };
-    let mut out: Vec<PLine> = Vec::new();
-    let extras_block = |out: &mut Vec<PLine>| {
-        let show_err = !f.hf_mode() && f.status != "not_downloaded";
-        let err = installed_err.clone().filter(|_| show_err);
-        let xnote = if f.hf_mode() {
-            None
-        } else {
-            st.extra_notice.clone()
-        };
-        if extra.is_empty() && err.is_none() && xnote.is_none() {
-            return;
-        }
-        out.push(pl("Not in the catalog", Tone::Muted, LKind::Section, None));
-        if let Some((tone, t)) = xnote {
-            for l in wrap_text(&t, w as usize) {
-                out.push(pl(l, tone, LKind::Note, None));
-            }
-        }
-        if let Some(e) = err {
-            for l in wrap_text(
-                "The models outside the catalog could not be listed.",
-                w as usize,
-            ) {
-                out.push(pl(l, Tone::Warn, LKind::Note, None));
-            }
-            for l in wrap_text(&e, w as usize) {
-                out.push(pl(l, Tone::Muted, LKind::Note, None));
-            }
-        }
-        for r in &extra {
-            let k = art_key(r);
-            for l in layout_row(&cells_of(&k)) {
-                out.push(pl(l, Tone::Text, LKind::Art, Some(k.clone())));
-            }
-            if st.expanded.as_deref() == Some(k.as_str()) {
-                let mut facts = vec![format!("Artifact: {}", sv(r, "artifact"))];
-                if !sv(r, "location").is_empty() {
-                    facts.push(format!("Size on disk · {}", sv(r, "location")));
-                }
-                for fct in facts {
-                    for l in wrap_text(&fct, (w - 6).max(10) as usize) {
-                        out.push(pl(
-                            format!("      {l}"),
-                            Tone::Muted,
-                            LKind::Under,
-                            Some(k.clone()),
-                        ));
-                    }
-                }
-            }
-            out.extend(under_lines(cv, st, r, &k, confirm_for(&k), w));
-        }
-    };
-    if list.is_empty() && !extra.is_empty() {
-        extras_block(&mut out);
-        return out;
-    }
-    if list.is_empty() {
-        out.extend(note("No model matches these filters.", Tone::Strong));
-        if cv.rows().is_empty() {
-            out.extend(note("This gateway's catalog is empty.", Tone::Muted));
-        } else {
-            out.extend(note(
-                "Change or clear the filters to see the rest of the catalog. (x clears the filters)",
-                Tone::Muted,
-            ));
-        }
-        extras_block(&mut out);
-        return out;
-    }
-    for item in &list {
-        let row = item.row;
-        let mut meta: Vec<String> = Vec::new();
-        if !sv(row, "vendor").is_empty() {
-            meta.push(sv(row, "vendor").to_string());
-        }
-        let p = params(num(row, "params_total"));
-        let act = params(num(row, "params_active"));
-        if !p.is_empty() {
-            meta.push(if act.is_empty() {
-                format!("{p} params")
-            } else {
-                format!("{p} params ({act} active)")
-            });
-        }
-        if !sv(row, "license").is_empty() {
-            meta.push(sv(row, "license").to_string());
-        }
-        let mut head = vec![(
-            if sv(row, "display_name").is_empty() {
-                sv(row, "id").to_string()
-            } else {
-                sv(row, "display_name").to_string()
-            },
-            Tone::Strong,
-        )];
-        if !meta.is_empty() {
-            head.push((format!("  {}", meta.join(" · ")), Tone::Muted));
-        }
-        let caps: Vec<String> = row_caps(row)
-            .iter()
-            .map(|c| format!("[{}]", cap_label(c)))
-            .collect();
-        if !caps.is_empty() {
-            head.push((format!("  {}", caps.join(" ")), Tone::Faint));
-        }
-        if row.get("starter").and_then(Value::as_bool) == Some(true) {
-            head.push(("  Starter".into(), Tone::Accent));
-        }
-        if sv(row, "source") == "hf_search" {
-            head.push(("  Hugging Face".into(), Tone::Accent));
-        }
-        // The header wraps as one sentence (never cut).
-        let text: String = head.iter().map(|(s, _)| s.as_str()).collect();
-        if abstracttui::text::width(&text) <= w {
-            out.push(PLine {
-                spans: head,
-                row: None,
-                kind: LKind::Model,
-            });
-        } else {
-            for (i, l) in wrap_text(&text, w as usize).into_iter().enumerate() {
-                out.push(pl(
-                    l,
-                    if i == 0 { Tone::Strong } else { Tone::Muted },
-                    LKind::Model,
-                    None,
-                ));
-            }
-        }
-        let alone = arts(row).len() == 1;
-        for a in &item.arts {
-            let k = art_key(a);
-            let primary = a.get("recommended").and_then(Value::as_bool) == Some(true);
-            for l in layout_row(&cells_of(&k)) {
-                out.push(pl(
-                    l,
-                    if primary { Tone::Strong } else { Tone::Text },
-                    LKind::Art,
-                    Some(k.clone()),
-                ));
-            }
-            if st.expanded.as_deref() == Some(k.as_str()) {
-                out.extend(detail_lines(a, alone, &k, w));
-            }
-            out.extend(under_lines(cv, st, a, &k, confirm_for(&k), w));
-        }
-    }
-    extras_block(&mut out);
-    out
+    None
 }
 
-/// The selectable rows in order (artifact keys).
-pub fn selectable(lines: &[PLine]) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for l in lines {
-        if l.kind == LKind::Art {
-            if let Some(k) = &l.row {
-                if out.last() != Some(k) {
-                    out.push(k.clone());
-                }
-            }
-        }
-    }
-    out
-}
-
-/// The header block above the list: host facts, the bar, the chips, the
-/// notices (`mcHostMarkup`, `mcControlsMarkup`, `mcNoticeMarkup`).
-/// The host facts line (`mcHostMarkup` + Check again).
-pub fn host_lines(cv: &Cv, loading: bool, width: i32) -> Vec<PLine> {
-    let w = width.max(20) as usize;
-    let mut out = Vec::new();
-    // Host facts.
-    if let Some(p) = cv.catalog.and_then(|d| d.get("host_profile")) {
-        let mut bits = Vec::new();
-        let chip = if !sv(p, "gpu_name").is_empty() {
-            sv(p, "gpu_name")
-        } else {
-            sv(p, "accelerator")
-        };
-        if !chip.is_empty() {
-            bits.push(chip.to_string());
-        }
-        if let Some(r) = num(p, "ram_bytes") {
-            bits.push(format!(
-                "{} {}",
-                ui_bytes(r),
-                if p.get("unified_memory").and_then(Value::as_bool) == Some(true) {
-                    "unified memory"
-                } else {
-                    "memory"
-                }
-            ));
-        }
-        if let Some(c) = num(p, "ceiling_bytes") {
-            bits.push(format!("models up to about {}", ui_bytes(c)));
-        }
-        if !bits.is_empty() {
-            let t = format!(
-                "This computer: {}  · r {}",
-                bits.join(" · "),
-                if loading {
-                    "Checking..."
-                } else {
-                    "Check again"
-                }
-            );
-            for l in wrap_text(&t, w) {
-                out.push(pl(l, Tone::Muted, LKind::Note, None));
-            }
-        }
-    }
-    out
-}
-
-/// The block under the bar: the count, the active filters, the chips,
-/// the notices and the page message.
-pub fn header_lines(cv: &Cv, st: &PageState, width: i32) -> Vec<PLine> {
+/// The lines between the filters and the list: the count with the active
+/// filters (`mcCountMarkup` + `mcActiveMarkup`), the notices and the page
+/// message (`mcNoticeMarkup`, the message alert).
+pub fn header_lines(cv: &Cv, st: &PageState) -> Vec<(String, Tone)> {
     let f = &st.filters;
-    let w = width.max(20) as usize;
     let mut out = Vec::new();
     let have = cv.data.is_some();
-    // The bar's right end: count + active filters.
     if have {
         let list = visible(cv, f);
         let ex = extras(cv, f);
@@ -1792,158 +1631,32 @@ pub fn header_lines(cv: &Cv, st: &PageState, width: i32) -> Vec<PLine> {
         if !act.is_empty() {
             t.push_str(&format!("  · {}", act.join(" · ")));
         }
-        for l in wrap_text(&t, w) {
-            out.push(pl(l, Tone::Text, LKind::Note, None));
-        }
-        // The chips (with counts), one group per line when narrow.
-        let quant_on = cv.quant_reported();
-        let chip = |label: &str, on: bool, n: Option<usize>| -> String {
-            let n = n.map(|n| format!(" {n}")).unwrap_or_default();
-            if on {
-                format!("[{label}{n}]")
-            } else {
-                format!("{label}{n}")
-            }
-        };
-        let mut groups: Vec<String> = Vec::new();
-        if w < 100 {
-            // Narrow: one line, each group's chosen chip with its count
-            // (z p t s step through a group's chips).
-            let on = |group: &str, value: &str, label: String| -> String {
-                if value == "all" {
-                    label
-                } else {
-                    format!("{label} {}", chip_count(cv, f, group, value))
-                }
-            };
-            let quant = QUANT_CHIPS
-                .iter()
-                .find(|c| c.0 == f.quant)
-                .map(|c| c.1)
-                .unwrap_or("All");
-            let status = STATUS_CHIPS
-                .iter()
-                .find(|c| c.0 == f.status)
-                .map(|c| c.1)
-                .unwrap_or("All");
-            let prov = if f.provider == "all" {
-                "All".to_string()
-            } else {
-                provider_label(&f.provider)
-            };
-            groups.push(format!(
-                "z Quantization{}: [{}] · p Provider: [{}] · t Capability: [{}] · s Status: [{}]",
-                if quant_on { "" } else { " (off)" },
-                on("quant", &f.quant, quant.to_string()),
-                on("provider", &f.provider, prov),
-                on(
-                    "cap",
-                    &f.cap,
-                    if f.cap == "all" {
-                        "All".into()
-                    } else {
-                        cap_label(&f.cap).to_string()
-                    }
-                ),
-                on("status", &f.status, status.to_string()),
-            ));
-            for g in groups {
-                for l in wrap_text(&g, w) {
-                    out.push(pl(l, Tone::Faint, LKind::Note, None));
-                }
-            }
-            return notices(cv, st, have, w, out);
-        }
-        let q: Vec<String> = QUANT_CHIPS
-            .iter()
-            .map(|(id, l)| {
-                chip(
-                    l,
-                    quant_on && f.quant == *id,
-                    (quant_on && *id != "all").then(|| chip_count(cv, f, "quant", id)),
-                )
-            })
-            .collect();
-        groups.push(format!(
-            "z Quantization{}: {}",
-            if quant_on { "" } else { " (off)" },
-            q.join(" ")
-        ));
-        let mut pv = vec![chip("All", f.provider == "all", None)];
-        for p in providers(cv, f) {
-            pv.push(chip(
-                &provider_label(&p),
-                f.provider == p,
-                Some(chip_count(cv, f, "provider", &p)),
-            ));
-        }
-        groups.push(format!("p Provider: {}", pv.join(" ")));
-        let mut cp = vec![chip("All", f.cap == "all", None)];
-        for c in caps_offered(cv, f) {
-            cp.push(chip(
-                cap_label(c),
-                f.cap == c,
-                Some(chip_count(cv, f, "cap", c)),
-            ));
-        }
-        groups.push(format!("t Capability: {}", cp.join(" ")));
-        let sp: Vec<String> = STATUS_CHIPS
-            .iter()
-            .map(|(id, l)| {
-                chip(
-                    l,
-                    f.status == *id,
-                    (*id != "all").then(|| chip_count(cv, f, "status", id)),
-                )
-            })
-            .collect();
-        groups.push(format!("s Status: {}", sp.join(" ")));
-        for g in groups {
-            for l in wrap_text(&g, w) {
-                out.push(pl(l, Tone::Faint, LKind::Note, None));
-            }
-        }
+        out.push((t, Tone::Text));
     }
-    notices(cv, st, have, w, out)
-}
-
-fn notices(cv: &Cv, st: &PageState, have: bool, w: usize, mut out: Vec<PLine>) -> Vec<PLine> {
-    let f = &st.filters;
     // Notices: the Hub answered in part; quant_class missing.
     if f.hf_mode() {
         if let Some(hub) = cv.data.and_then(|d| d.get("hub")) {
             if hub.get("ok").and_then(Value::as_bool) == Some(false) {
-                for (t, tone) in [
-                    (
-                        "Hugging Face could not be reached, so these results may be incomplete.",
-                        Tone::Warn,
-                    ),
-                    (
-                        "Check that the gateway host is online, then search again.",
-                        Tone::Muted,
-                    ),
-                ] {
-                    for l in wrap_text(t, w) {
-                        out.push(pl(l, tone, LKind::Note, None));
-                    }
-                }
+                out.push((
+                    "Hugging Face could not be reached, so these results may be incomplete.".into(),
+                    Tone::Warn,
+                ));
+                out.push((
+                    "Check that the gateway host is online, then search again.".into(),
+                    Tone::Muted,
+                ));
             }
         }
     }
     if have && !cv.quant_reported() {
-        for (t, tone) in [
-            ("This gateway's catalog does not report quant_class yet.", Tone::Warn),
-            ("The 4-bit / 8-bit filter needs it, so it is off. Every model and every artifact is still listed below. Updating AbstractCore on the gateway host turns the filter on.", Tone::Muted),
-        ] {
-            for l in wrap_text(t, w) {
-                out.push(pl(l, tone, LKind::Note, None));
-            }
-        }
+        out.push((
+            "This gateway's catalog does not report quant_class yet.".into(),
+            Tone::Warn,
+        ));
+        out.push(("The 4-bit / 8-bit filter needs it, so it is off. Every model and every artifact is still listed below. Updating AbstractCore on the gateway host turns the filter on.".into(), Tone::Muted));
     }
     if let Some((tone, t)) = &st.message {
-        for l in wrap_text(t, w) {
-            out.push(pl(l, *tone, LKind::Note, None));
-        }
+        out.push((t.clone(), *tone));
     }
     out
 }
@@ -2057,22 +1770,23 @@ fn find_art(cv: &Cv, k: &str) -> Option<(Option<Value>, Value)> {
 /// for anyone else, like the web page's disabled buttons).
 pub const ADMIN_KEYS: &[&str] = &["w", "d", "u", "c"];
 
-/// The footer's verbs for this page (the admin ones are gated by
-/// [`ADMIN_KEYS`] in the footer).
+/// The footer's verbs for this page (R15: the row actions' keys, the
+/// table, the page buttons; the admin ones are gated by [`ADMIN_KEYS`]).
 pub fn hints(_non_admin: bool) -> Vec<(&'static str, &'static str)> {
     vec![
-        ("↑↓ Enter", "details"),
-        ("/", "search"),
+        ("↑↓", "rows"),
+        ("Enter", "row action"),
+        ("Tab", "actions"),
         ("w", "download"),
         ("d", "delete"),
         ("u", "use as default"),
         ("c", "cancel download"),
-        ("m", "catalog/Hugging Face"),
-        ("f", "fits"),
-        ("z p t s", "filters"),
-        ("x", "clear"),
+        ("i", "details"),
+        ("/", "search"),
+        ("f", "Fits this computer"),
+        ("x", "Clear filters"),
         ("Y", "copy id"),
-        ("r", "refresh"),
+        ("r", "Check again"),
     ]
 }
 
@@ -2087,16 +1801,6 @@ fn fg_of(t: &TokenSet, tone: Tone) -> abstracttui::base::Rgba {
         Tone::Warn => t.warn,
         Tone::Err => t.error,
         Tone::Info => t.info,
-    }
-}
-
-fn ink(t: &TokenSet, tone: Tone) -> Style {
-    let fg = fg_of(t, tone);
-    let s = Style::new().fg(fg).bg(t.surface);
-    if tone == Tone::Strong {
-        s.attrs(Attrs::BOLD)
-    } else {
-        s
     }
 }
 
@@ -2155,21 +1859,63 @@ fn with_cv<R>(snap: &Snapshot, st: &PageState, f: impl FnOnce(&Cv, Option<String
     f(&cv, installed_err)
 }
 
+type Bump = std::rc::Rc<dyn Fn()>;
+
+/// Where the keyboard was before a rebuild (the table / a filter Select
+/// is rebuilt by every change; the control that had the focus takes it
+/// back, so the page's keys and the next Tab keep working).
+#[derive(Clone, Default)]
+struct Focus {
+    /// The table (or a row's button) had the keyboard.
+    table: std::rc::Rc<std::cell::Cell<bool>>,
+    /// The filter Select just picked (its group index).
+    select: std::rc::Rc<std::cell::Cell<Option<usize>>>,
+    /// The mode segment / the Fits toggle was just used.
+    mode: std::rc::Rc<std::cell::Cell<bool>>,
+    fits: std::rc::Rc<std::cell::Cell<bool>>,
+}
+
+impl Focus {
+    fn elsewhere(&self) {
+        self.table.set(false);
+        self.select.set(None);
+        self.mode.set(false);
+        self.fits.set(false);
+    }
+}
+
+/// The page width the content lays out in.
+fn page_w(cx: Scope) -> i32 {
+    (crate::ui::page_viewport(cx).get().w - 2).max(20)
+}
+
+/// The page title and subtitle (the web tab's head).
+pub const TITLE: &str = "Models";
+pub const SUBTITLE: &str = "Browse, download and delete models that fit this machine";
+
 /// The page.
 pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
     let tt = *t;
     let rev = cx.signal(0u64);
-    let bump = move || rev.update(|r| *r += 1);
-    let confirm = InlineConfirm::new(cx);
-    // Which artifact the open confirmation is about (`delete` or `cancel`).
-    let confirm_key: Signal<Option<String>> = cx.signal(None);
+    let bump: Bump = std::rc::Rc::new(move || rev.update(|r| *r += 1));
+    // The selected artifact row, by key (sticky across rebuilds; the
+    // page state keeps it across a tab switch).
+    let sel: Signal<Option<String>> = cx.signal(with_state(|p| p.sel.clone()));
+    let top: Signal<usize> = cx.signal(0usize);
+    cx.effect(move || {
+        let k = sel.get();
+        if with_state(|p| p.sel != k) {
+            edit(|p| p.sel = k.clone());
+        }
+    });
 
     // Providers' "Browse models" hands an engine over through the shared
     // engine filter: the list opens on that engine's builds (the web's
     // engine card opens the catalog filtered the same way).
     {
         let ef = ctx.screens.store.engine_filter;
+        let bump = bump.clone();
         cx.effect(move || {
             let Some(p) = ef.get() else {
                 return;
@@ -2183,6 +1929,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     // Read on entry (connected), and again after a reconnect.
     {
         let ctx_l = ctx.clone();
+        let bump = bump.clone();
         cx.effect(move || {
             let connected = store.conn.with(ConnPhase::is_connected);
             let not_asked = store.json.slots.with(|m| !m.contains_key(K_CATALOG));
@@ -2208,6 +1955,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     // Running downloads found on open are followed (uiRestoreDownloads).
     {
         let ctx_d = ctx.clone();
+        let bump = bump.clone();
         cx.effect(move || {
             let Loadable::Ready(d) = store.json.get(K_DOWNLOADS) else {
                 return;
@@ -2235,6 +1983,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     // Polled jobs land here.
     {
         let ctx_j = ctx.clone();
+        let bump = bump.clone();
         cx.effect(move || {
             let polled: Vec<(String, Loadable<Value>)> = store.json.slots.with(|m| {
                 m.iter()
@@ -2290,9 +2039,10 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         let _h = abstracttui::reactive::interval(cx, JOB_POLL, move || poll_jobs(&ctx_p));
     }
 
-    // Write outcomes.
+    // Write outcomes (confirmations open on the PAGE scope).
     {
         let ctx_w = ctx.clone();
+        let bump = bump.clone();
         cx.effect(move || {
             let done: Vec<(String, WriteState)> = store.json.writes.with(|m| {
                 m.iter()
@@ -2305,30 +2055,36 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             }
             for (k, w) in done {
                 store.json.set_write(&k, None);
-                on_write(&ctx_w, &k, w, confirm, confirm_key);
+                on_write(&ctx_w, cx, &k, w, bump.clone());
             }
             bump();
         });
     }
 
-    // The search box: rebuilt with the keyboard when `/` asks for it
-    // (Esc gives the keys back to the page).
+    // The search box: a page text field (the caret keeps ←/→); `/` gives
+    // it the keyboard, Esc gives the keys back to the list.
     let search = cx.signal(with_state(|p| {
         p.filters.hf.clone().unwrap_or_else(|| p.filters.q.clone())
     }));
     let search_gen = cx.signal(0u64);
-    // The list's node, recorded as events pass through it: Esc in the
-    // search box hands the keyboard back to the LIST (the page's keys live
-    // on its path), not to the tree root.
+    // The mode decides the search box's placeholder: a mode change
+    // rebuilds the box (typing never does — the caret stays).
+    let mode_rev = cx.signal(0u64);
+    let focus = Focus::default();
     let list_id: std::rc::Rc<std::cell::Cell<Option<abstracttui::ui::ViewId>>> =
         std::rc::Rc::new(std::cell::Cell::new(None));
     let list_id_esc = list_id.clone();
     let ctx_s = ctx.clone();
+    let bump_s = bump.clone();
+    let focus_s = focus.clone();
     let search_box = dyn_view_scoped(LayoutStyle::default().grow(1.0).h(1), move |gcx| {
         let g = search_gen.get();
+        let _ = mode_rev.get();
+        let focus_s = focus_s.clone();
         let hf = with_state(|p| p.filters.hf_mode());
         let ctx_s = ctx_s.clone();
         let caret_c = ctx_s.ui.caret;
+        let (b1, b2) = (bump_s.clone(), bump_s.clone());
         let el = TextInput::new()
             .value(search)
             .placeholder(if hf {
@@ -2341,17 +2097,21 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 if !with_state(|p| p.filters.hf_mode()) {
                     let text = text.to_string();
                     edit(|p| p.filters.q = text);
-                    bump();
+                    b1();
                 }
             })
             .on_submit(move |text: &str| {
                 if with_state(|p| p.filters.hf_mode()) {
                     hub_search(&ctx_s, text);
-                    bump();
+                    b2();
                 }
             })
             .element(gcx, &tt);
-        let el = super::w::caret_tracked(gcx, caret_c, el);
+        let el = super::w::caret_tracked(gcx, caret_c, el).on(Phase::Bubble, move |_e, ev| {
+            if matches!(ev, UiEvent::FocusIn) {
+                focus_s.elsewhere();
+            }
+        });
         let list_id_esc = list_id_esc.clone();
         let el = el.shortcut(KeyChord::plain(Key::Escape), move |ecx| {
             let target = list_id_esc.get().or_else(|| ecx.current());
@@ -2367,346 +2127,55 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         }
     });
 
-    let vp = crate::ui::page_viewport(cx);
-
-    // The list (focusable, keys) + its reactive painter.
-    let list_focus = cx.signal(false);
-    let top = std::rc::Rc::new(std::cell::Cell::new(0i32));
-    let painted: std::rc::Rc<RefCell<Vec<Option<String>>>> =
-        std::rc::Rc::new(RefCell::new(Vec::new()));
-    let painted_ev = painted.clone();
-    let page_h = std::rc::Rc::new(std::cell::Cell::new(10i32));
-    let page_h_ev = page_h.clone();
-    let list = Element::new()
-        .style(LayoutStyle::default().grow(1.0).min_h(3))
-        .focusable()
-        .autofocus()
-        .focus_signal(list_focus)
-        .on(Phase::Capture, move |ectx, _| {
-            if list_id.get().is_none() {
-                list_id.set(ectx.current());
-            }
-        })
-        .on(Phase::Bubble, move |ectx, ev| match ev {
-            UiEvent::Key(k) if k.mods.0 == 0 => {
-                let order: Vec<String> = {
-                    let p = painted_ev.borrow();
-                    let mut o: Vec<String> = Vec::new();
-                    for k in p.iter().flatten() {
-                        if o.last() != Some(k) && !o.contains(k) {
-                            o.push(k.clone());
-                        }
-                    }
-                    o
-                };
-                let all = with_state(|p| p.sel.clone());
-                let _ = all;
-                let sel_list = SEL_ORDER.with(|s| s.borrow().clone());
-                let order = if sel_list.is_empty() { order } else { sel_list };
-                let cur = with_state(|p| p.sel.clone())
-                    .and_then(|s| order.iter().position(|x| *x == s))
-                    .unwrap_or(0);
-                let n = order.len();
-                let pageh = (page_h_ev.get() / 2).max(1) as usize;
-                let target = match k.key {
-                    Key::Up | Key::Char('k') => Some(cur.saturating_sub(1)),
-                    Key::Down | Key::Char('j') => Some((cur + 1).min(n.saturating_sub(1))),
-                    Key::PageUp => Some(cur.saturating_sub(pageh)),
-                    Key::PageDown => Some((cur + pageh).min(n.saturating_sub(1))),
-                    Key::Home => Some(0),
-                    Key::End => Some(n.saturating_sub(1)),
-                    Key::Enter => {
-                        if let Some(s) = order.get(cur).cloned() {
-                            edit(|p| {
-                                p.expanded = if p.expanded.as_deref() == Some(s.as_str()) {
-                                    None
-                                } else {
-                                    Some(s.clone())
-                                };
-                                p.sel = Some(s);
-                            });
-                            bump();
-                        }
-                        ectx.stop_propagation();
-                        None
-                    }
-                    _ => None,
-                };
-                if let Some(i) = target {
-                    if let Some(s) = order.get(i).cloned() {
-                        edit(|p| p.sel = Some(s));
-                        bump();
-                    }
-                    ectx.stop_propagation();
-                }
-            }
-            UiEvent::Mouse(m) => match m.kind {
-                MouseKind::Down(MouseButton::Left) => {
-                    let rect = ectx.current_rect();
-                    let y = m.pos.y - rect.y;
-                    if y >= 0 {
-                        if let Some(Some(k)) = painted_ev.borrow().get(y as usize) {
-                            let k = k.clone();
-                            edit(|p| p.sel = Some(k));
-                            bump();
-                        }
-                    }
-                    ectx.stop_propagation();
-                }
-                MouseKind::ScrollDown | MouseKind::ScrollUp => {
-                    let order = SEL_ORDER.with(|s| s.borrow().clone());
-                    let cur = with_state(|p| p.sel.clone())
-                        .and_then(|s| order.iter().position(|x| *x == s))
-                        .unwrap_or(0);
-                    let i = if matches!(m.kind, MouseKind::ScrollDown) {
-                        (cur + 1).min(order.len().saturating_sub(1))
-                    } else {
-                        cur.saturating_sub(1)
-                    };
-                    if let Some(s) = order.get(i).cloned() {
-                        edit(|p| p.sel = Some(s));
-                        bump();
-                    }
-                    ectx.stop_propagation();
-                }
-                _ => {}
-            },
-            _ => {}
-        })
-        .child(dyn_view(
-            LayoutStyle::default().grow(1.0).min_h(1),
-            move || {
-                let _ = rev.get();
-                let focus = list_focus.get();
-                let snap = snapshot(&store, true);
-                let admin = !store.conn.with(ConnPhase::is_known_non_admin);
-                let pending = confirm.pending.get();
-                let ck = confirm_key.get();
-                let top = top.clone();
-                let painted = painted.clone();
-                let page_h = page_h.clone();
-                Element::new()
-                    .style(LayoutStyle::default().grow(1.0).min_h(1))
-                    .draw(move |canvas, rect| {
-                        if rect.is_empty() {
-                            return;
-                        }
-                        let ground = Style::new().fg(tt.text).bg(tt.surface);
-                        canvas.fill_styled(rect, ' ', &ground);
-                        let lines = with_state(|st| {
-                            with_cv(&snap, st, |cv, ierr| {
-                                let default = current_default(snap.defaults.ready());
-                                let conf = match (&pending, &ck) {
-                                    (Some(p), Some(k)) => {
-                                        Some((k.clone(), p.sentence.clone(), p.confirm.clone()))
-                                    }
-                                    _ => None,
-                                };
-                                list_lines(
-                                    cv,
-                                    st,
-                                    &snap.hub,
-                                    &snap.catalog,
-                                    ierr,
-                                    &default,
-                                    admin,
-                                    conf,
-                                    rect.w,
-                                )
-                            })
-                        });
-                        let order = selectable(&lines);
-                        SEL_ORDER.with(|s| *s.borrow_mut() = order.clone());
-                        // Keep a valid selection.
-                        let sel = with_state(|p| p.sel.clone())
-                            .filter(|s| order.contains(s))
-                            .or_else(|| order.first().cloned());
-                        if with_state(|p| p.sel != sel) {
-                            edit(|p| p.sel = sel.clone());
-                        }
-                        let first = lines
-                            .iter()
-                            .position(|l| l.row == sel && l.row.is_some())
-                            .unwrap_or(0) as i32;
-                        let last = lines
-                            .iter()
-                            .rposition(|l| l.row == sel && l.row.is_some())
-                            .unwrap_or(0) as i32;
-                        let h = rect.h.max(1);
-                        page_h.set(h);
-                        let mut tp = top.get();
-                        if first < tp {
-                            tp = first;
-                        }
-                        if last >= tp + h {
-                            tp = (last - h + 1).min(first);
-                        }
-                        tp = tp.clamp(0, (lines.len() as i32 - h).max(0));
-                        top.set(tp);
-                        let mut map = Vec::new();
-                        for (y, l) in (rect.y..).zip(lines.iter().skip(tp as usize)) {
-                            if y >= rect.y + rect.h {
-                                break;
-                            }
-                            let selected = l.kind == LKind::Art && l.row.is_some() && l.row == sel;
-                            let mut x = rect.x;
-                            if selected {
-                                let st = if focus {
-                                    Style::new().fg(tt.selection_fg).bg(tt.selection_bg)
-                                } else {
-                                    Style::new()
-                                        .fg(tt.text)
-                                        .bg(tt.surface_raised)
-                                        .attrs(Attrs::BOLD)
-                                };
-                                canvas.fill_styled(
-                                    abstracttui::base::Rect::new(rect.x, y, rect.w, 1),
-                                    ' ',
-                                    &st,
-                                );
-                                let text = l.text();
-                                canvas.print_styled(Point::new(x, y), &clip(&text, rect.w), &st);
-                            } else {
-                                for (s, tone) in &l.spans {
-                                    let room = rect.x + rect.w - x;
-                                    if room <= 0 {
-                                        break;
-                                    }
-                                    x += canvas.print_styled(
-                                        Point::new(x, y),
-                                        &clip(s, room),
-                                        &ink(&tt, *tone),
-                                    );
-                                }
-                            }
-                            map.push(l.row.clone());
-                        }
-                        *painted.borrow_mut() = map;
-                    })
-                    .build()
-            },
-        ));
-
-    // Page keys.
-    let mut root = Element::new().style(LayoutStyle::column().gap(0).grow(1.0));
+    // Page keys (the selected row's accelerators + the page's buttons).
+    let mut root = Element::new().style(LayoutStyle::column().gap(0).grow(1.0).padding(Edges {
+        left: 1,
+        right: 1,
+        top: 0,
+        bottom: 0,
+    }));
     let chord = |c: char| KeyChord::plain(Key::Char(c));
     {
-        let c = ctx.clone();
-        root = root.shortcut(chord('r'), move |_| {
-            refresh(&c);
-            c.store.notice.set(Some("⟳ refreshing Models…".into()));
-            bump();
-        });
+        let (c, b) = (ctx.clone(), bump.clone());
+        root = root.shortcut(chord('r'), move |_| check_again(&c, &b));
     }
     root = root.shortcut(chord('/'), move |_| search_gen.update(|g| *g += 1));
     {
-        let c = ctx.clone();
-        root = root.shortcut(chord('m'), move |_| {
-            let hf = with_state(|p| p.filters.hf_mode());
-            if hf {
-                edit(|p| p.filters.hf = None);
-                search.set(with_state(|p| p.filters.q.clone()));
-            } else {
-                // The catalog query moves to the Hub search (mcSetMode).
-                let q = with_state(|p| p.filters.q.clone());
-                edit(|p| p.filters.q.clear());
-                hub_search(&c, &q);
-                search.set(q);
-            }
-            bump();
+        let b = bump.clone();
+        root = root.shortcut(chord('f'), move |_| {
+            edit(|p| p.filters.fits = !p.filters.fits);
+            b();
         });
     }
-    root = root.shortcut(chord('f'), move |_| {
-        edit(|p| p.filters.fits = !p.filters.fits);
-        bump();
-    });
-    root = root.shortcut(chord('x'), move |_| {
-        edit(|p| {
-            let hf = p.filters.hf.clone();
-            p.filters = Filters {
-                hf,
-                ..Filters::default()
-            };
-        });
-        search.set(with_state(|p| p.filters.hf.clone().unwrap_or_default()));
-        bump();
-    });
-    for (ch, group) in [
-        ('z', "quant"),
-        ('p', "provider"),
-        ('t', "cap"),
-        ('s', "status"),
+    {
+        let b = bump.clone();
+        root = root.shortcut(chord('x'), move |_| clear_filters(search, &b));
+    }
+    for (ch, id) in [
+        ('w', "download"),
+        ('d', "delete"),
+        ('u', "default"),
+        ('c', "cancel"),
     ] {
-        root = root.shortcut(chord(ch), move |_| {
-            let snap = snapshot(&store, false);
-            let next = with_state(|st| {
-                with_cv(&snap, st, |cv, _| {
-                    let f = &st.filters;
-                    let (opts, cur): (Vec<String>, String) = match group {
-                        "quant" => {
-                            if !cv.quant_reported() {
-                                return None;
-                            }
-                            (QUANT_CHIPS.iter().map(|c| c.0.to_string()).collect(), f.quant.clone())
-                        }
-                        "provider" => {
-                            let mut o = vec!["all".to_string()];
-                            o.extend(providers(cv, f));
-                            (o, f.provider.clone())
-                        }
-                        "cap" => {
-                            let mut o = vec!["all".to_string()];
-                            o.extend(caps_offered(cv, f).into_iter().map(str::to_string));
-                            (o, f.cap.clone())
-                        }
-                        _ => (STATUS_CHIPS.iter().map(|c| c.0.to_string()).collect(), f.status.clone()),
+        let (c, b) = (ctx.clone(), bump.clone());
+        root = root.shortcut(chord(ch), move |_| match with_state(|p| p.sel.clone()) {
+            Some(k) => row_action(cx, &c, &k, id, sel, &b),
+            None => c.store.notice.set(Some("No model row selected.".into())),
+        });
+    }
+    {
+        let b = bump.clone();
+        root = root.shortcut(chord('i'), move |_| {
+            if let Some(s) = with_state(|p| p.sel.clone()) {
+                edit(|p| {
+                    p.expanded = if p.expanded.as_deref() == Some(s.as_str()) {
+                        None
+                    } else {
+                        Some(s.clone())
                     };
-                    let i = opts.iter().position(|o| *o == cur).unwrap_or(0);
-                    opts.get((i + 1) % opts.len().max(1)).cloned()
-                })
-            });
-            match next {
-                Some(v) => {
-                    edit(|p| match group {
-                        "quant" => p.filters.quant = v,
-                        "provider" => p.filters.provider = v,
-                        "cap" => p.filters.cap = v,
-                        _ => p.filters.status = v,
-                    });
-                    bump();
-                }
-                None => store.notice.set(Some(
-                    "This gateway's catalog does not report quant_class yet: the 4-bit / 8-bit filter is off.".into(),
-                )),
+                });
+                b();
             }
-        });
-    }
-    {
-        let c = ctx.clone();
-        root = root.shortcut(chord('w'), move |_| {
-            act(&c, Act::Download, confirm, confirm_key);
-            bump();
-        });
-    }
-    {
-        let c = ctx.clone();
-        root = root.shortcut(chord('d'), move |_| {
-            act(&c, Act::Delete, confirm, confirm_key);
-            bump();
-        });
-    }
-    {
-        let c = ctx.clone();
-        root = root.shortcut(chord('u'), move |_| {
-            act(&c, Act::Default, confirm, confirm_key);
-            bump();
-        });
-    }
-    {
-        let c = ctx.clone();
-        root = root.shortcut(chord('c'), move |_| {
-            act(&c, Act::Cancel, confirm, confirm_key);
-            bump();
         });
     }
     root = root.shortcut(chord('Y'), move |_| {
@@ -2720,139 +2189,711 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             }
         }
     });
-    let root = confirm.keys(root);
 
-    // The host line above the bar; the count, chips and notices below it.
-    let host = dyn_view(LayoutStyle::column().gap(0).shrink(0.0), move || {
-        let _ = rev.get();
-        let snap = snapshot(&store, true);
-        let w = vp.get().w - 4;
-        let loading = snap.catalog.is_loading() || snap.installed.is_loading();
-        let lines = with_state(|st| with_cv(&snap, st, |cv, _| host_lines(cv, loading, w)));
-        lines_view(&tt, lines)
-    });
-    let header = dyn_view(LayoutStyle::column().gap(0).shrink(0.0), move || {
-        let _ = rev.get();
-        let snap = snapshot(&store, true);
-        let w = vp.get().w - 4;
-        let lines = with_state(|st| with_cv(&snap, st, |cv, _| header_lines(cv, st, w)));
-        lines_view(&tt, lines)
-    });
-    // The bar: mode, fits, then the search box (it takes the rest).
-    let bar_left = dyn_view(LayoutStyle::row().gap(0).shrink(0.0), move || {
-        let _ = rev.get();
-        let (hf, fits) = with_state(|p| (p.filters.hf_mode(), p.filters.fits));
-        let mode = if hf {
-            "m Catalog [Hugging Face]"
-        } else {
-            "m [Catalog] Hugging Face"
-        };
-        line(vec![
-            span(mode, tt.text_muted),
-            span("  ·  ", tt.text_faint),
-            span(
-                format!(
-                    "{} Fits this computer (f)",
-                    super::switch::marker(fits, false)
-                ),
-                if fits { tt.accent } else { tt.text_muted },
-            ),
-            span("  ·  ", tt.text_faint),
-            span(
-                if hf {
-                    "/ Search Hugging Face: "
-                } else {
-                    "/ Search: "
-                },
-                tt.text_muted,
-            ),
-        ])
-    });
-    let bar = Element::new()
-        .style(LayoutStyle::row().gap(0).h(1).shrink(0.0))
-        .child(bar_left)
-        .child(search_box)
-        .build();
-
-    // n / Esc on a delete confirmation: back to the trash verb.
-    cx.effect(move || {
-        let open = confirm.pending.with(Option::is_some);
-        if open {
-            return;
-        }
-        if let Some(k) = confirm_key.get_untracked() {
-            edit(|p| {
-                if matches!(p.del.get(&k), Some(DelPhase::Confirm(_))) {
-                    p.del.remove(&k);
-                }
-            });
-            confirm_key.set(None);
-            bump();
-        }
-    });
-
-    root.child(
-        Block::new()
-            .border(BorderKind::Rounded)
-            .title("Models — browse, download and delete models that fit this machine")
-            .fill(t.surface)
-            .layout(
-                LayoutStyle::column()
-                    .gap(0)
-                    .grow(1.0)
-                    .padding(Edges::hv(1, 0))
-                    .clip(),
-            )
-            .child(host)
-            .child(bar)
-            .child(header)
-            .child(list)
-            .element(t)
-            .build(),
-    )
-    .build()
+    root.child(head(cx, ctx, &tt, rev, bump.clone()))
+        .child(bar(
+            cx,
+            ctx,
+            &tt,
+            rev,
+            bump.clone(),
+            search,
+            search_box,
+            mode_rev,
+            focus.clone(),
+        ))
+        .child(filters_region(&tt, store, rev, bump.clone(), focus.clone()))
+        .child(body(
+            cx,
+            ctx,
+            &tt,
+            rev,
+            bump.clone(),
+            sel,
+            top,
+            search,
+            list_id,
+            focus,
+        ))
+        .build()
 }
 
-fn lines_view(tt: &TokenSet, lines: Vec<PLine>) -> View {
-    let views: Vec<View> = lines
-        .into_iter()
-        .map(|l| {
-            line(
-                l.spans
+/// `r` / [Check again] (`mcAction("refresh")`).
+fn check_again(ctx: &Ctx, bump: &Bump) {
+    refresh(ctx);
+    ctx.store.notice.set(Some("⟳ refreshing Models…".into()));
+    bump();
+}
+
+/// [Clear filters] / `x`: every filter back to All (the mode stays).
+fn clear_filters(search: Signal<String>, bump: &Bump) {
+    edit(|p| {
+        let hf = p.filters.hf.clone();
+        p.filters = Filters {
+            hf,
+            ..Filters::default()
+        };
+    });
+    search.set(with_state(|p| p.filters.hf.clone().unwrap_or_default()));
+    bump();
+}
+
+/// Title + subtitle, [Check again] on the right; the host facts under.
+fn head(pcx: Scope, ctx: &Ctx, t: &TokenSet, rev: Signal<u64>, bump: Bump) -> View {
+    let ctx = ctx.clone();
+    let tt = *t;
+    let _ = pcx;
+    dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |hcx| {
+        let _ = rev.get();
+        let store = ctx.store;
+        let snap = snapshot(&store, true);
+        let loading = snap.catalog.is_loading() || snap.installed.is_loading();
+        let w = page_w(hcx);
+        let a = Action::label(
+            "refresh",
+            if loading {
+                "Checking..."
+            } else {
+                "Check again"
+            },
+        )
+        .key('r');
+        let bw = a.width();
+        let (c, b) = (ctx.clone(), bump.clone());
+        let btn = button(hcx, &tt, &a, On::Page, true, move || check_again(&c, &b));
+        let titles = Element::new()
+            .style(
+                LayoutStyle::column()
+                    .width(Dimension::Cells((w - bw - 1).max(10)))
+                    .shrink(0.0),
+            )
+            .child(super::w::paint::fill_line(
+                LayoutStyle::line(1).shrink(0.0),
+                vec![super::w::Ink::new(TITLE, tt.text).bold()],
+                None,
+            ))
+            .child(super::w::form::sentence(
+                &tt,
+                SUBTITLE,
+                (w - bw - 1).max(10),
+                tt.text_muted,
+            ))
+            .build();
+        let host = with_state(|st| with_cv(&snap, st, |cv, _| host_line(cv)));
+        let mut col = Element::new()
+            .style(LayoutStyle::column().shrink(0.0))
+            .child(
+                Element::new()
+                    .style(LayoutStyle::row().shrink(0.0))
+                    .child(titles)
+                    .child(btn)
+                    .build(),
+            );
+        if let Some(h) = host {
+            col = col.child(super::w::form::sentence(&tt, &h, w, tt.text_muted));
+        }
+        col.build()
+    })
+}
+
+/// The bar: Catalog | Hugging Face, the search field ([Search] in Hugging
+/// Face mode), "Fits this computer".
+#[allow(clippy::too_many_arguments)]
+fn bar(
+    pcx: Scope,
+    ctx: &Ctx,
+    t: &TokenSet,
+    rev: Signal<u64>,
+    bump: Bump,
+    search: Signal<String>,
+    search_box: View,
+    mode_rev: Signal<u64>,
+    focus: Focus,
+) -> View {
+    let tt = *t;
+    let _ = pcx;
+    let (ctx_m, bump_m, focus_m) = (ctx.clone(), bump.clone(), focus.clone());
+    let mode = dyn_view_scoped(LayoutStyle::row().shrink(0.0).h(1), move |mcx| {
+        let _ = rev.get();
+        let hf = with_state(|p| p.filters.hf_mode());
+        let (c, b, f) = (ctx_m.clone(), bump_m.clone(), focus_m.clone());
+        let seg = Segmented::new(MODES, Some(if hf { 1 } else { 0 }))
+            .autofocus_chosen(focus_m.mode.get())
+            .on_pick(move |i| {
+                f.elsewhere();
+                f.mode.set(true);
+                set_mode(&c, i == 1, search);
+                mode_rev.update(|r| *r += 1);
+                b();
+            });
+        let w = seg.width();
+        Element::new()
+            .style(
+                LayoutStyle::row()
+                    .width(Dimension::Cells(w + 1))
+                    .h(1)
+                    .shrink(0.0),
+            )
+            .child(seg.view(mcx, &tt))
+            .build()
+    });
+    let (ctx_r, bump_r, focus_r) = (ctx.clone(), bump.clone(), focus);
+    let right = dyn_view_scoped(LayoutStyle::row().shrink(0.0).h(1), move |rcx| {
+        let _ = rev.get();
+        let (hf, fits) = with_state(|p| (p.filters.hf_mode(), p.filters.fits));
+        let mut row = Element::new().style(LayoutStyle::row().h(1).gap(1).shrink(0.0));
+        let mut w = 1;
+        if hf {
+            let a = Action::label("hf_search", "Search");
+            w += a.width() + 1;
+            let c = ctx_r.clone();
+            let b = bump_r.clone();
+            row = row.child(button(rcx, &tt, &a, On::Page, true, move || {
+                hub_search(&c, &search.get_untracked());
+                b();
+            }));
+        }
+        let b = bump_r.clone();
+        let f = focus_r.clone();
+        let tg = Toggle::new(fits)
+            .autofocus(focus_r.fits.get())
+            .label("Fits this computer")
+            .tip("Fits this computer  (f)")
+            .on_change(move |v| {
+                f.elsewhere();
+                f.fits.set(true);
+                edit(|p| p.filters.fits = v);
+                b();
+            });
+        w += tg.width() + 1;
+        row = row.child(tg.view(rcx, &tt));
+        Element::new()
+            .style(
+                LayoutStyle::row()
+                    .width(Dimension::Cells(w))
+                    .h(1)
+                    .shrink(0.0),
+            )
+            .child(
+                Element::new()
+                    .style(LayoutStyle::default().width(Dimension::Cells(1)))
+                    .build(),
+            )
+            .child(row.build())
+            .build()
+    });
+    Element::new()
+        .style(LayoutStyle::row().h(1).shrink(0.0))
+        .child(mode)
+        .child(search_box)
+        .child(right)
+        .build()
+}
+
+/// The two search modes (the web's mode buttons).
+pub const MODES: [&str; 2] = ["Catalog", "Hugging Face"];
+
+/// Switch Catalog / Hugging Face (`mcSetMode`): the catalog query moves to
+/// the Hub search and back.
+fn set_mode(ctx: &Ctx, hf: bool, search: Signal<String>) {
+    let now = with_state(|p| p.filters.hf_mode());
+    if now == hf {
+        return;
+    }
+    if !hf {
+        edit(|p| p.filters.hf = None);
+        search.set(with_state(|p| p.filters.q.clone()));
+    } else {
+        let q = with_state(|p| p.filters.q.clone());
+        edit(|p| p.filters.q.clear());
+        hub_search(ctx, &q);
+        search.set(q);
+    }
+}
+
+/// The four filter groups' labels (the web's chip groups).
+pub const GROUPS: [&str; 4] = ["Quantization", "Provider", "Capability", "Status"];
+
+/// One filter group's options: (value, label with its count) and the
+/// chosen index.
+pub fn group_options(cv: &Cv, f: &Filters, group: &str) -> (Vec<(String, String)>, usize) {
+    let quant_on = cv.quant_reported();
+    let label = |l: &str, n: Option<usize>| match n {
+        Some(n) => format!("{l} {n}"),
+        None => l.to_string(),
+    };
+    let (opts, cur): (Vec<(String, String)>, &str) = match group {
+        "quant" => (
+            QUANT_CHIPS
+                .iter()
+                .map(|(id, l)| {
+                    (
+                        id.to_string(),
+                        label(
+                            l,
+                            (quant_on && *id != "all").then(|| chip_count(cv, f, "quant", id)),
+                        ),
+                    )
+                })
+                .collect(),
+            &f.quant,
+        ),
+        "provider" => {
+            let mut o = vec![("all".to_string(), "All".to_string())];
+            for p in providers(cv, f) {
+                let n = chip_count(cv, f, "provider", &p);
+                o.push((p.clone(), label(&provider_label(&p), Some(n))));
+            }
+            (o, &f.provider)
+        }
+        "cap" => {
+            let mut o = vec![("all".to_string(), "All".to_string())];
+            for c in caps_offered(cv, f) {
+                o.push((
+                    c.to_string(),
+                    label(cap_label(c), Some(chip_count(cv, f, "cap", c))),
+                ));
+            }
+            (o, &f.cap)
+        }
+        _ => (
+            STATUS_CHIPS
+                .iter()
+                .map(|(id, l)| {
+                    (
+                        id.to_string(),
+                        label(l, (*id != "all").then(|| chip_count(cv, f, "status", id))),
+                    )
+                })
+                .collect(),
+            &f.status,
+        ),
+    };
+    let i = opts.iter().position(|(v, _)| v == cur).unwrap_or(0);
+    (opts, i)
+}
+
+/// One filter group as drawn: (id, options (value, label), chosen, off).
+type FilterGroup = (&'static str, Vec<(String, String)>, usize, bool);
+
+/// The filter row: Quantization · Provider · Capability · Status, each a
+/// Select (the web's chip rows; a terminal row of chips would wrap).
+fn filters_region(t: &TokenSet, store: Store, rev: Signal<u64>, bump: Bump, focus: Focus) -> View {
+    let tt = *t;
+    dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |fcx| {
+        let _ = rev.get();
+        let snap = snapshot(&store, true);
+        let w = page_w(fcx);
+        let have = with_state(|st| with_cv(&snap, st, |cv, _| cv.data.is_some()));
+        if !have {
+            return Element::new().style(LayoutStyle::default().h(0)).build();
+        }
+        let groups: Vec<FilterGroup> = with_state(|st| {
+            with_cv(&snap, st, |cv, _| {
+                ["quant", "provider", "cap", "status"]
                     .into_iter()
-                    .map(|(s, tone)| match tone {
-                        Tone::Strong => span_bold(s, tt.text),
-                        other => span(s, fg_of(tt, other)),
+                    .map(|g| {
+                        let (o, i) = group_options(cv, &st.filters, g);
+                        (g, o, i, g == "quant" && !cv.quant_reported())
                     })
+                    .collect()
+            })
+        });
+        let mut rows: Vec<Element> =
+            vec![Element::new().style(LayoutStyle::row().h(1).gap(2).shrink(0.0))];
+        let mut used = 0;
+        for (gi, (g, opts, cur, off)) in groups.into_iter().enumerate() {
+            let label = GROUPS[gi];
+            let sel_w = opts
+                .iter()
+                .map(|(_, l)| abstracttui::text::width(l))
+                .max()
+                .unwrap_or(4)
+                + 4;
+            let need = abstracttui::text::width(label) + 1 + sel_w + 2;
+            if used > 0 && used + need > w {
+                rows.push(Element::new().style(LayoutStyle::row().h(1).gap(2).shrink(0.0)));
+                used = 0;
+            }
+            used += need;
+            let chosen = fcx.signal(cur);
+            let values: Vec<String> = opts.iter().map(|(v, _)| v.clone()).collect();
+            let b = bump.clone();
+            let group = g.to_string();
+            let f = focus.clone();
+            let refocus = focus.select.get() == Some(gi);
+            let select = abstracttui::app::select::Select::new(
+                opts.iter()
+                    .map(|(_, l)| abstracttui::app::select::SelectOption::new(l.clone()))
                     .collect(),
             )
-        })
-        .collect();
+            .value(chosen)
+            .disabled(off)
+            .layout(
+                LayoutStyle::default()
+                    .width(Dimension::Cells(sel_w))
+                    .h(1)
+                    .shrink(0.0),
+            )
+            .on_change(move |i| {
+                let Some(v) = values.get(i).cloned() else {
+                    return;
+                };
+                f.elsewhere();
+                f.select.set(Some(gi));
+                edit(|p| match group.as_str() {
+                    "quant" => p.filters.quant = v,
+                    "provider" => p.filters.provider = v,
+                    "cap" => p.filters.cap = v,
+                    _ => p.filters.status = v,
+                });
+                b();
+            })
+            .element(fcx, &tt);
+            let select = if refocus { select.autofocus() } else { select }.build();
+            let tip = if off {
+                "This gateway's catalog does not report quant_class yet: the 4-bit / 8-bit filter is off.".to_string()
+            } else {
+                label.to_string()
+            };
+            let lab = super::w::paint::fill_line(
+                LayoutStyle::default()
+                    .width(Dimension::Cells(abstracttui::text::width(label) + 1))
+                    .h(1)
+                    .shrink(0.0),
+                vec![super::w::Ink::new(
+                    label,
+                    if off { tt.text_faint } else { tt.text_muted },
+                )],
+                None,
+            );
+            let item = Element::new()
+                .style(LayoutStyle::row().h(1).shrink(0.0))
+                .child(lab)
+                .child(select);
+            let item = super::w::tip::with_tip(fcx, item, if off { tip } else { String::new() });
+            let last = rows.pop().expect("row");
+            rows.push(last.child(item.build()));
+        }
+        let mut col = Element::new().style(LayoutStyle::column().shrink(0.0));
+        for r in rows {
+            col = col.child(r.build());
+        }
+        col.build()
+    })
+}
+
+/// The count + active filters, the notices, the page message, then the
+/// table (or the sentence that replaces it), then "Not in the catalog"'s
+/// notices.
+#[allow(clippy::too_many_arguments)]
+fn body(
+    pcx: Scope,
+    ctx: &Ctx,
+    t: &TokenSet,
+    rev: Signal<u64>,
+    bump: Bump,
+    sel: Signal<Option<String>>,
+    top: Signal<usize>,
+    search: Signal<String>,
+    list_id: std::rc::Rc<std::cell::Cell<Option<abstracttui::ui::ViewId>>>,
+    focus: Focus,
+) -> View {
+    let ctx = ctx.clone();
+    let focus_b = focus.clone();
+    let tt = *t;
+    let ctx_k = ctx.clone();
+    let bump_k = bump.clone();
+    let region = dyn_view_scoped(LayoutStyle::column().grow(1.0), move |bcx| {
+        let _ = rev.get();
+        let store = ctx.store;
+        let snap = snapshot(&store, true);
+        let admin = !store.conn.with(ConnPhase::is_known_non_admin);
+        let vp = crate::ui::page_viewport(bcx).get();
+        let w = (vp.w - 2).max(20);
+        let mut col = Element::new().style(LayoutStyle::column().grow(1.0));
+        let mut used = 0i32;
+        let say = |col: Element, text: &str, tone: Tone, used: &mut i32| -> Element {
+            let lines = super::w::paint::wrap(text, w);
+            *used += lines.len() as i32;
+            let v = if tone == Tone::Strong {
+                let mut c = Element::new().style(LayoutStyle::column().shrink(0.0));
+                for l in lines {
+                    c = c.child(super::w::paint::fill_line(
+                        LayoutStyle::line(1).shrink(0.0),
+                        vec![super::w::Ink::new(l, tt.text).bold()],
+                        None,
+                    ));
+                }
+                c.build()
+            } else {
+                super::w::form::sentence(&tt, text, w, fg_of(&tt, tone))
+            };
+            col.child(v)
+        };
+        let (top_lines, notes, rows, empty, extras_notes) = with_state(|st| {
+            with_cv(&snap, st, |cv, ierr| {
+                let default = current_default(snap.defaults.ready());
+                let top_lines = header_lines(cv, st);
+                let notes = list_notes(cv, st, &snap.hub, &snap.catalog);
+                let rows = if notes.is_none() {
+                    table_rows(&tt, cv, st, admin, &default, w)
+                } else {
+                    Vec::new()
+                };
+                // No catalog match but rows outside it: only those (the web's
+                // `mcExtrasMarkup` alone, no empty sentence).
+                let list_empty =
+                    notes.is_none() && visible(cv, &st.filters).is_empty() && rows.is_empty();
+                let empty = list_empty.then(|| cv.rows().is_empty());
+                // "Not in the catalog"'s own notices (no rows of their own).
+                let mut x: Vec<(String, Tone)> = Vec::new();
+                if notes.is_none() && !st.filters.hf_mode() {
+                    if let Some((tone, t)) = st.extra_notice.clone() {
+                        x.push((t, tone));
+                    }
+                    let show_err = st.filters.status != "not_downloaded";
+                    if let Some(e) = ierr.filter(|_| show_err) {
+                        x.push((
+                            "The models outside the catalog could not be listed.".into(),
+                            Tone::Warn,
+                        ));
+                        x.push((e, Tone::Muted));
+                    }
+                }
+                (top_lines, notes, rows, empty, x)
+            })
+        });
+        for (text, tone) in &top_lines {
+            col = say(col, text, *tone, &mut used);
+        }
+        if let Some(notes) = notes {
+            for (text, tone) in &notes {
+                col = say(col, text, *tone, &mut used);
+            }
+            return col.build();
+        }
+        if let Some(catalog_empty) = empty {
+            col = say(
+                col,
+                "No model matches these filters.",
+                Tone::Strong,
+                &mut used,
+            );
+            if catalog_empty {
+                col = say(
+                    col,
+                    "This gateway's catalog is empty.",
+                    Tone::Muted,
+                    &mut used,
+                );
+            } else {
+                col = say(
+                    col,
+                    "Change or clear the filters to see the rest of the catalog.",
+                    Tone::Muted,
+                    &mut used,
+                );
+                let a = Action::label("clear", "Clear filters").key('x');
+                let b = bump.clone();
+                col = col.child(
+                    Element::new()
+                        .style(LayoutStyle::row().h(1).shrink(0.0))
+                        .child(button(bcx, &tt, &a, On::Page, true, move || {
+                            clear_filters(search, &b)
+                        }))
+                        .build(),
+                );
+                used += 1;
+            }
+        }
+        let order: Vec<String> = rows.iter().map(|r| r.key.clone()).collect();
+        SEL_ORDER.with(|s| *s.borrow_mut() = order.clone());
+        // Keep a valid selection (the first row when none / gone).
+        let cur = sel.get_untracked();
+        if !order.is_empty() && cur.as_ref().is_none_or(|k| !order.contains(k)) {
+            sel.set(order.first().cloned());
+        }
+        if !rows.is_empty() {
+            let head_rows = if w < 100 { 8 } else { 6 };
+            let extra = extras_notes.len() as i32 + 1;
+            let max_rows = (vp.h - head_rows - used - 2 - extra).max(4);
+            let (ca, cact) = (ctx.clone(), ctx.clone());
+            let (ba, bact) = (bump.clone(), bump.clone());
+            let mut table = DataTable::new(columns(w), rows, sel)
+                .width(w)
+                .max_rows(max_rows)
+                .top(top)
+                .on_action(move |key, id| row_action(pcx, &ca, key, id, sel, &ba))
+                .on_activate(move |key| primary_action(pcx, &cact, key, sel, &bact));
+            // The table had the keyboard before this rebuild: it takes it back.
+            if focus_b.table.get() {
+                table = table.autofocus();
+            }
+            col = col.child(table.view(bcx, &tt));
+        }
+        if !extras_notes.is_empty() {
+            if order
+                .iter()
+                .all(|k| with_state(|st| with_cv(&snap, st, |cv, _| !cv.is_extra_key(k))))
+            {
+                col = say(col, "Not in the catalog", Tone::Muted, &mut used);
+            }
+            for (text, tone) in &extras_notes {
+                col = say(col, text, *tone, &mut used);
+            }
+        }
+        col.build()
+    });
+    // A focus anchor around the list: the page's keys live from the first
+    // frame; ↑/↓ move the selection and Enter runs the row's first action
+    // even before Tab enters the table.
     Element::new()
-        .style(LayoutStyle::column().gap(0).shrink(0.0))
-        .children(views)
+        .style(LayoutStyle::column().grow(1.0))
+        .focusable()
+        .autofocus()
+        .on(Phase::Capture, move |ectx, ev| {
+            if list_id.get().is_none() {
+                list_id.set(ectx.current());
+            }
+            // A key or a press inside the list: the keyboard is here.
+            let here = match ev {
+                UiEvent::Key(_) => true,
+                UiEvent::Mouse(m) => matches!(m.kind, abstracttui::ui::MouseKind::Down(_)),
+                _ => false,
+            };
+            if here {
+                focus.elsewhere();
+                focus.table.set(true);
+            }
+        })
+        .on(Phase::Bubble, move |ectx, ev| {
+            let UiEvent::Key(k) = ev else { return };
+            if k.mods.0 != 0 {
+                return;
+            }
+            let order = SEL_ORDER.with(|s| s.borrow().clone());
+            if order.is_empty() {
+                return;
+            }
+            let cur = sel
+                .get_untracked()
+                .and_then(|s| order.iter().position(|x| *x == s))
+                .unwrap_or(0);
+            let n = order.len();
+            let next = match k.key {
+                Key::Up => Some(cur.saturating_sub(1)),
+                Key::Down => Some((cur + 1).min(n - 1)),
+                Key::PageUp => Some(cur.saturating_sub(5)),
+                Key::PageDown => Some((cur + 5).min(n - 1)),
+                Key::Home => Some(0),
+                Key::End => Some(n - 1),
+                Key::Enter => {
+                    ectx.stop_propagation();
+                    primary_action(pcx, &ctx_k, &order[cur], sel, &bump_k);
+                    None
+                }
+                _ => None,
+            };
+            if let Some(i) = next {
+                ectx.stop_propagation();
+                sel.set(Some(order[i].clone()));
+                if i < top.get_untracked() {
+                    top.set(i);
+                }
+            }
+        })
+        .child(region)
         .build()
+}
+
+/// The host facts line (`mcHostMarkup`).
+fn host_line(cv: &Cv) -> Option<String> {
+    let p = cv.catalog.and_then(|d| d.get("host_profile"))?;
+    let mut bits = Vec::new();
+    let chip = if !sv(p, "gpu_name").is_empty() {
+        sv(p, "gpu_name")
+    } else {
+        sv(p, "accelerator")
+    };
+    if !chip.is_empty() {
+        bits.push(chip.to_string());
+    }
+    if let Some(r) = num(p, "ram_bytes") {
+        bits.push(format!(
+            "{} {}",
+            ui_bytes(r),
+            if p.get("unified_memory").and_then(Value::as_bool) == Some(true) {
+                "unified memory"
+            } else {
+                "memory"
+            }
+        ));
+    }
+    if let Some(c) = num(p, "ceiling_bytes") {
+        bits.push(format!("models up to about {}", ui_bytes(c)));
+    }
+    (!bits.is_empty()).then(|| format!("This computer: {}", bits.join(" · ")))
+}
+
+/// The row's actions for key `k` (None when the row is not on the page).
+fn actions_of(ctx: &Ctx, k: &str) -> Option<Vec<Action>> {
+    let snap = snapshot(&ctx.store, false);
+    let admin = admin_of(&ctx.store);
+    with_state(|st| {
+        with_cv(&snap, st, |cv, _| {
+            let default = current_default(snap.defaults.ready());
+            let (row, a) = find_art(cv, k)?;
+            Some(row_actions(cv, st, row.as_ref(), &a, admin, &default))
+        })
+    })
+}
+
+/// A row action (a click or its key): the row becomes the selection, the
+/// action runs; a refused one says why and does nothing.
+fn row_action(cx: Scope, ctx: &Ctx, k: &str, id: &str, sel: Signal<Option<String>>, bump: &Bump) {
+    edit(|p| p.sel = Some(k.to_string()));
+    if sel.get_untracked().as_deref() != Some(k) {
+        sel.set(Some(k.to_string()));
+    }
+    let Some(actions) = actions_of(ctx, k) else {
+        return;
+    };
+    let Some(a) = actions.into_iter().find(|a| a.id == id) else {
+        return;
+    };
+    if let Err(why) = a.enabled {
+        ctx.store.notice.set(Some(why));
+        return;
+    }
+    let what = match id {
+        "download" => Act::Download,
+        "delete" => Act::Delete,
+        "default" => Act::Default,
+        "cancel" => Act::Cancel,
+        _ => return,
+    };
+    act(cx, ctx, what, bump.clone());
+    bump();
+}
+
+/// Enter / double-click: the row's first action (a refused one says why).
+fn primary_action(cx: Scope, ctx: &Ctx, k: &str, sel: Signal<Option<String>>, bump: &Bump) {
+    let Some(actions) = actions_of(ctx, k) else {
+        return;
+    };
+    let first = actions
+        .iter()
+        .find(|a| a.is_enabled())
+        .or(actions.first())
+        .cloned();
+    if let Some(a) = first {
+        row_action(cx, ctx, k, a.id, sel, bump);
+    }
 }
 
 thread_local! {
     static SEL_ORDER: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-}
-
-fn clip(s: &str, w: i32) -> String {
-    if abstracttui::text::width(s) <= w {
-        return s.to_string();
-    }
-    let mut out = String::new();
-    let mut used = 0;
-    for ch in s.chars() {
-        let cw = abstracttui::text::width(&ch.to_string());
-        if used + cw > w {
-            break;
-        }
-        out.push(ch);
-        used += cw;
-    }
-    out
 }
 
 /// Store one job by provider/artifact (`dlApply`): an older finished job
@@ -2900,7 +2941,7 @@ enum Act {
     Cancel,
 }
 
-fn act(ctx: &Ctx, what: Act, confirm: InlineConfirm, confirm_key: Signal<Option<String>>) {
+fn act(cx: Scope, ctx: &Ctx, what: Act, bump: Bump) {
     let store = ctx.store;
     let Some(k) = with_state(|p| p.sel.clone()) else {
         store.notice.set(Some("No model row selected.".into()));
@@ -2936,12 +2977,6 @@ fn act(ctx: &Ctx, what: Act, confirm: InlineConfirm, confirm_key: Signal<Option<
                 return;
             }
             if a.get("downloadable").and_then(Value::as_bool) != Some(true) {
-                let why = if a.get("supported_on_host").and_then(Value::as_bool) == Some(false) {
-                    "Its engine does not run on this computer"
-                } else {
-                    "This build cannot be downloaded from here"
-                };
-                store.notice.set(Some(format!("Not available here: {why}")));
                 return;
             }
             let mut body = json!({"provider": provider, "artifact": artifact});
@@ -3021,33 +3056,35 @@ fn act(ctx: &Ctx, what: Act, confirm: InlineConfirm, confirm_key: Signal<Option<
             };
             let id = job_id(&j);
             let c = ctx.clone();
-            confirm_key.set(Some(k.clone()));
-            confirm.ask("Stop this download?", "Stop download", move || {
-                edit(|p| {
-                    p.cancelling.insert(id.clone());
-                });
-                send_write(
-                    &c,
-                    format!("{W_CANCEL}{id}"),
-                    "POST",
-                    format!("/models/download/{}/cancel", urlencode(&id)),
-                    json!({"via": "console"}),
-                    format!("Cancel download {id}"),
-                    vec![],
-                    true,
-                );
-            });
+            // The web's two steps (`dlCancelMarkup`): a click only asks.
+            Confirm::danger(CANCEL_QUESTION, "Stop download", "Keep downloading").open(
+                cx,
+                ctx.ui,
+                move || {
+                    edit(|p| {
+                        p.cancelling.insert(id.clone());
+                    });
+                    send_write(
+                        &c,
+                        format!("{W_CANCEL}{id}"),
+                        "POST",
+                        format!("/models/download/{}/cancel", urlencode(&id)),
+                        json!({"via": "console"}),
+                        format!("Cancel download {id}"),
+                        vec![],
+                        true,
+                    );
+                    bump();
+                },
+            );
         }
     }
 }
 
-fn on_write(
-    ctx: &Ctx,
-    k: &str,
-    w: WriteState,
-    confirm: InlineConfirm,
-    confirm_key: Signal<Option<String>>,
-) {
+/// The web's cancel question (`dlCancelMarkup`).
+pub const CANCEL_QUESTION: &str = "Stop this download?";
+
+fn on_write(ctx: &Ctx, cx: Scope, k: &str, w: WriteState, bump: Bump) {
     let snap = snapshot(&ctx.store, false);
     if let Some(art) = k.strip_prefix(W_DOWNLOAD) {
         edit(|p| {
@@ -3104,28 +3141,41 @@ fn on_write(
                 let sentence = confirm_sentence(&plan);
                 let c = ctx.clone();
                 let key_s = art.to_string();
-                confirm_key.set(Some(key_s.clone()));
+                let key_n = art.to_string();
                 let found = with_state(|st| with_cv(&snap, st, |cv, _| find_art(cv, &key_s)));
                 let Some((_, a)) = found else { return };
                 let (provider, artifact) = (
                     sv(&a, "provider").to_string(),
                     sv(&a, "artifact").to_string(),
                 );
-                confirm.ask(sentence, "Delete", move || {
-                    edit(|p| {
-                        p.del.insert(key_s.clone(), DelPhase::Deleting);
-                    });
-                    send_write(
-                        &c,
-                        format!("{W_DELETE}{key_s}"),
-                        "POST",
-                        DELETE_URL.into(),
-                        json!({"provider": provider, "artifact": artifact, "dry_run": false}),
-                        format!("Delete {artifact}"),
-                        vec![],
-                        true,
-                    );
-                });
+                let (b_yes, b_no) = (bump.clone(), bump.clone());
+                Confirm::danger(sentence, "Delete", "Keep").open_with(
+                    cx,
+                    ctx.ui,
+                    move || {
+                        edit(|p| {
+                            p.del.insert(key_s.clone(), DelPhase::Deleting);
+                        });
+                        send_write(
+                            &c,
+                            format!("{W_DELETE}{key_s}"),
+                            "POST",
+                            DELETE_URL.into(),
+                            json!({"provider": provider, "artifact": artifact, "dry_run": false}),
+                            format!("Delete {artifact}"),
+                            vec![],
+                            true,
+                        );
+                        b_yes();
+                    },
+                    move || {
+                        // Keep: back to the trash button, nothing sent.
+                        edit(|p| {
+                            p.del.remove(&key_n);
+                        });
+                        b_no();
+                    },
+                );
             }
             WriteState::Failed(e) => {
                 let gone = e
@@ -3167,6 +3217,11 @@ fn on_write(
                         .or_else(|| i.checked_sub(1).and_then(|j| o.get(j)))
                         .cloned()
                 });
+                let said = if extra {
+                    format!("Deleted {artifact}.{freed}")
+                } else {
+                    format!("Download deleted.{freed}")
+                };
                 edit(|p| {
                     p.del.remove(art);
                     p.deleted.insert(art.to_string());
@@ -3174,14 +3229,12 @@ fn on_write(
                         p.sel = neighbour.clone();
                     }
                     if extra {
-                        p.extra_notice = Some((Tone::Ok, format!("Deleted {artifact}.{freed}")));
+                        p.extra_notice = Some((Tone::Ok, said.clone()));
                     } else {
-                        p.notices.insert(
-                            art.to_string(),
-                            (Tone::Ok, format!("Download deleted.{freed}")),
-                        );
+                        p.notices.insert(art.to_string(), (Tone::Ok, said.clone()));
                     }
                 });
+                super::w::toast(ctx, cx, said);
                 load(ctx);
             }
             WriteState::Failed(e) => {
@@ -3201,7 +3254,8 @@ fn on_write(
                     Some((p, m)) => format!("Default text model: {} · {m}.", provider_label(&p)),
                     None => "Default text model saved.".into(),
                 };
-                edit(|p| p.message = Some((Tone::Ok, text)));
+                edit(|p| p.message = Some((Tone::Ok, text.clone())));
+                super::w::toast(ctx, cx, text);
                 // The Multimodal screen reads the routes again on its next visit.
                 ctx.store.routes.set(Loadable::NotAsked);
             }

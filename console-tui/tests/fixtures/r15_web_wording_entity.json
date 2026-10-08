@@ -1,0 +1,85 @@
+{
+  "_source": "scripts/extract_web_wording.py (do not edit by hand)",
+  "tabs": [
+    "Overview",
+    "Talk",
+    "Lifecycle",
+    "Mind & voice",
+    "Work & tools",
+    "Prompt"
+  ],
+  "cards": {
+    "Right now": "What it is doing, read live every few seconds.",
+    "Visit": "Talk with it in a hosted visit: the conversation becomes its memories, and closing the visit runs its reflection. A visit pauses its personal time until you close it.",
+    "Emergency freeze": "Kills its personal-time process now and stops it: work in progress ends without reflection. For hard failures only; turn Active on in its Accounts row to bring it back.",
+    "Mind": "The model it thinks with. Changes save by themselves.",
+    "Voice": "How it sounds when it speaks. Changes save by themselves.",
+    "Work order": "A task it works on instead of its personal time, from its next day on, with the Work tools below. It says itself when the task is done or blocked.",
+    "Tools per phase": "Which tools it may use in each phase of its day. Each box saves when you tick it.",
+    "Instructions": "Layers you may rewrite in its system prompt; an empty layer uses the built-in text. Its identity is never editable. Each layer saves when you leave it.",
+    "Identity": "Verify memory checks that its memory history and birth record were never altered. It only reads.",
+    "Awake or asleep": "On: it serves visits and work. Off: it sleeps, its memory consolidates, and the next visit wakes it.",
+    "Personal time": "On: it explores on its own schedule and spends tokens without anyone watching. Off: it acts only when visited or given work.",
+    "Memories from sleep waiting for your review": "Sleep proposes new long-term memories. Keep one with two independent records that back it up, or reject it with a reason.",
+    "Danger zone: rebuild its memory index": "Only when the status below says MISMATCH: re-computes every memory's search vector with the gateway's embedding model. Type that model's name to confirm you mean it."
+  },
+  "buttons": {
+    "verify": "Verify memory",
+    "talk": "Open visit",
+    "freeze": "Freeze now",
+    "reembed": "Rebuild index"
+  },
+  "freeze_question": "Freeze it now? Its process is killed, an open visit closes without reflection, and it refuses everything until Active is turned back on.",
+  "create": {
+    "title": "Summon a new entity",
+    "lead": "Pick a spark template and name it. The name is permanent — there is no delete (spark v1-for-life), so it is validated (dry-run) before anything is written.",
+    "admin_note": "Optional configuration (substrate, per-phase capabilities) requires an admin session — entities you create carry the safe framework defaults; an admin can configure them after.",
+    "optional_title": "Optional configuration",
+    "optional_lead": "Defaults are safe: leave anything on Gateway default to inherit it.",
+    "create_label": "Validate & create",
+    "create_tip": "Dry-run validate the name and configuration, then create",
+    "cancel_label": "Cancel"
+  },
+  "sub": {
+    "sleep_question": "Put it to sleep? An open visit closes and its reflection runs first.",
+    "reembed_question": "Rebuild every memory vector now? The swap is atomic and recorded in its history.",
+    "reason_help": "Optional: recorded in its history with the next change you make on this tab, and given to it when it wakes.",
+    "empty_phase_label": "Empty phase means no tools",
+    "empty_phase_desc": "On: a phase with every box cleared has no tools at all. Off: it goes back to the default tools.",
+    "schedule_help": "Used the next time Personal time is switched on. Blank fields keep the defaults.",
+    "audition_label": "Hear a sample",
+    "give_task_label": "Give this task",
+    "end_task_label": "End the work order",
+    "close_visit_label": "Close visit"
+  },
+  "templates": {
+    "title": "Spark templates",
+    "lead": "A template is a reusable blueprint — every save is a new version; the framework default is the floor and can be seeded but not edited. Editing a template never touches a living entity.",
+    "picker_tip": "Templates on this gateway (builtin + operator-authored)",
+    "view": {
+      "label": "View",
+      "tip": "Show this template's spark document"
+    },
+    "edit": {
+      "label": "Edit",
+      "tip": "Edit this template (saves as a new version)"
+    },
+    "new": {
+      "label": "New from selected",
+      "tip": "Create a new template seeded from the selected one"
+    },
+    "save": {
+      "label": "Save",
+      "tip": "Lint and save as a new version"
+    },
+    "cancel": {
+      "label": "Cancel",
+      "tip": ""
+    },
+    "close": {
+      "label": "Close",
+      "tip": ""
+    },
+    "spark_label": "Spark (JSON — core values are enforced at save)"
+  }
+}

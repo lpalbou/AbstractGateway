@@ -1513,6 +1513,8 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
                 entity_manage::inspector_view(dcx, &drawer_ctx, theme)
             });
         *ctx.entity_drawer.borrow_mut() = Some(handle);
+        // R15 seam: docs drawer (DESIGN §3.16)
+        docs::install(cx, &ctx);
         // Leaving the Users screen closes the inspector — a stale panel
         // over an unrelated page would be a lying surface.
         let drawer_slot = ctx.entity_drawer.clone();
@@ -2225,6 +2227,13 @@ pub fn screen_hint_pairs(ctx: &Ctx) -> Vec<(String, String)> {
     // verbs (the web hides the same controls); pressing one still
     // answers with the reason.
     let non_admin = store.conn.with(ConnPhase::is_known_non_admin);
+    // R15 arm: the docs drawer's keys while it is open (the page's are not reachable).
+    if docs::open_now(&store) {
+        return docs::hints()
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+    }
     let mut pairs: Vec<(&str, &str)> = Vec::new();
     // THE SCREEN'S OWN KEYS LEAD (review 2, 80x24): the row
     // truncates right-edge-first, and with the universal pairs
@@ -2245,21 +2254,7 @@ pub fn screen_hint_pairs(ctx: &Ctx) -> Vec<(String, String)> {
     match screen {
         SCREEN_CONNECTION => pairs.extend(connection::hints(&ctx_hints)), // R15 arm
         SCREEN_PROVIDERS => pairs.extend(providers::hints(&store)),
-        2 => {
-            pairs.push(("Enter/e", "edit route"));
-            pairs.push(("x", "clear route"));
-            // `d` is "delete" on Connections/Users and
-            // "download" nowhere: weights are `w`, the whole
-            // recommended set `D`, each behind a confirm. (The
-            // plan line on the screen teaches p / D / a too, for
-            // rows too narrow to reach them here.)
-            pairs.push(("w", "download weights"));
-            pairs.push(("a", "apply recommended"));
-            pairs.push(("D", "download all"));
-            pairs.push(("C", "cancel download all"));
-            pairs.push(("p", "recommended plan"));
-            pairs.push(("r", "refresh"));
-        }
+        SCREEN_ROUTES => pairs.extend(routes::hints(&ctx_hints)), // R15 arm
         SCREEN_USERS => pairs.extend(users::hints(&ctx_hints)),
         SCREEN_RUNTIMES => pairs.extend(runtimes::hints(&ctx_hints)), // R15 arm
         // Named arms from here down (the numbered arms above
@@ -2270,25 +2265,10 @@ pub fn screen_hint_pairs(ctx: &Ctx) -> Vec<(String, String)> {
         // footer_hints_stay_in_lockstep_with_screens.
         SCREEN_WORKFLOWS => pairs.extend(workflows::hints(&ctx_hints)),
         SCREEN_SKILLS => pairs.extend(skills_mcp::hints(&ctx_hints)),
-        SCREEN_REVIEW => {
-            pairs.push(("Tab→prompt, Enter", "run the test (REAL generation)"));
-            pairs.push(("r", "refresh providers"));
-        }
-        SCREEN_MODELS => {
-            pairs.push(("u", "unload"));
-            pairs.push(("k", "lock/unlock"));
-            pairs.push(("w", "load (warm up)"));
-            pairs.push(("e", "context estimate"));
-            pairs.push(("c", "clear session caches"));
-            // At 80x24 the memory itemization does not fit beside the
-            // Loaded table, and the table wins the rows — so the verb
-            // that pages the itemization has to be as visible as the
-            // rest of them.
-            pairs.push(("m", "more memory detail"));
-            pairs.push(("r", "refresh"));
-        }
+        SCREEN_REVIEW => pairs.extend(sandbox::hints(&ctx_hints)), // R15 arm
+        SCREEN_MODELS => pairs.extend(models::hints(&ctx_hints)),  // R15 arm
         // The shared screens publish their own verbs.
-        SCREEN_CATALOG => pairs.extend(catalog::hints(non_admin)),
+        SCREEN_CATALOG => pairs.extend(catalog::hints(non_admin)), // R15 arm
         SCREEN_ENGINES => {
             pairs.extend(abstractcore_console::screens::engines::hints(
                 screens_caps,
@@ -2297,18 +2277,9 @@ pub fn screen_hint_pairs(ctx: &Ctx) -> Vec<(String, String)> {
         }
         SCREEN_APPS => pairs.extend_from_slice(apps::HINTS),
         SCREEN_WELCOME => pairs.extend(welcome::hints(&ctx_hints)), // R15 arm
-        SCREEN_NETWORK => {
-            pairs.push(("↑↓ Enter", "who can reach it"));
-            pairs.push(("c", "copy address"));
-            pairs.push(("w", "what to know"));
-            pairs.push(("a", "advanced"));
-            pairs.push(("x", "remove origin"));
-            pairs.push(("r", "check again"));
-        }
+        SCREEN_NETWORK => pairs.extend(network::hints()),           // R15 arm
         SCREEN_OPENAI => pairs.extend(openai_api::hints(non_admin)),
-        SCREEN_ABOUT => {
-            pairs.push(("r", "refresh"));
-        }
+        SCREEN_ABOUT => pairs.extend(about::hints()), // R15 arm
         _ => {}
     }
     let admin_keys: &[&str] = match screen {

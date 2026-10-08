@@ -10,9 +10,10 @@
 use abstracttui::prelude::*;
 use serde_json::{json, Value};
 
-use super::util::{field, line, or_dash, span, span_bold};
+use super::util::{line, span, span_bold};
+use super::w::action::{button, On};
+use super::w::{Action, Cell, Col, ColW, DataTable, Row as WRow};
 use super::widths;
-use super::widths::BLOCK_CHROME;
 use super::Ctx;
 use crate::api::firstrun::{can_download_all, GroupStatus};
 use crate::store::{ConnPhase, Loadable, RouteRow, RoutesData, WeightsRow};
@@ -22,7 +23,7 @@ use crate::worker::Cmd;
 /// gateway's admin routes: model downloads, their cancel, and
 /// apply-recommended). Editing and clearing a route stay open to every
 /// principal, like the web's Configure / Clear.
-pub const ADMIN_KEYS: &[&str] = &["w", "a", "D", "C"];
+pub const ADMIN_KEYS: &[&str] = &["w", "a", "m", "D", "C"];
 
 /// The route keys apply-recommended plans — AbstractCore's
 /// `RECOMMENDED_SELECTORS` (config/capability_defaults.py: text, voice,
@@ -49,12 +50,343 @@ pub fn broken_route_fix(key: &str, admin: bool) -> &'static str {
     }
 }
 
+// ---------------------------------------------------------------------------
+// R15 Multimodal (DESIGN-TUI.md §3.10): the web's head (title, subtitle,
+// [Apply recommended] [↻ Refresh]), the scope sentence, the weights banner
+// with [⤓ Download missing], ONE table (Route · Capability · Provider ·
+// Model · Weights · Source · Status · Actions) whose row actions are the
+// web's icon buttons with the web's tooltips ("Edit <key>", "Clear <key>",
+// "Download <artifact> with <provider>", "Copy: <command>"), the Weights
+// cell a pill whose tooltip is the probe's words. Every action is a click
+// AND a key; the editor is one FormModal ("Configure capability default").
+// ---------------------------------------------------------------------------
+
+/// The page title and subtitle (the web's tab heading).
+pub const TITLE: &str = "Multimodal Capabilities";
+pub const SUBTITLE: &str = "Which provider/model serves each capability route";
+/// The scope sentence under the head (admin / everyone else).
+pub const SCOPE_ADMIN: &str = "Editing as admin changes the Gateway multimodal capability defaults. Users inherit these unless they set their own runtime defaults.";
+pub const SCOPE_USER: &str = "Editing here changes your runtime multimodal capability defaults. Unset routes inherit the Gateway defaults.";
+/// The head buttons' tooltips (the web's `title`).
+pub const APPLY_TIP: &str = "Set the recommended provider/model on the text, voice, transcription, image and video routes this computer can run. Routes you configured differently are kept.";
+pub const REFRESH_TIP: &str = "Reload providers and capability defaults";
+/// The web's empty cell (`row.provider ? … : "-"`, `weightsCellMarkup`).
+pub const WEIGHTS_NONE: &str = "-";
+
+/// The web's dash for an absent provider / model.
+fn web_dash(v: &Option<String>) -> String {
+    v.as_deref()
+        .filter(|x| !x.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| WEIGHTS_NONE.to_string())
+}
+
+/// Wrap an identifier to `width` cells, breaking AFTER '/' or '-' (the
+/// places a model id reads as a path), then at spaces; only a single token
+/// longer than the cell is cut mid-token.
+pub fn id_lines(text: &str, width: i32) -> Vec<String> {
+    let width = width.max(1);
+    // Tokens: split after every '/', '-' and space (the separator stays on
+    // the left piece; a space is dropped at a line start).
+    let mut tokens: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for ch in text.chars() {
+        cur.push(ch);
+        if ch == '/' || ch == '-' || ch == ' ' {
+            tokens.push(std::mem::take(&mut cur));
+        }
+    }
+    if !cur.is_empty() {
+        tokens.push(cur);
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut line = String::new();
+    for tok in tokens {
+        let tw = abstracttui::text::width(&tok);
+        let lw = abstracttui::text::width(&line);
+        let fits = lw + abstracttui::text::width(tok.trim_end()) <= width;
+        if fits {
+            line.push_str(&tok);
+            continue;
+        }
+        if !line.trim().is_empty() {
+            out.push(line.trim_end().to_string());
+        }
+        line = String::new();
+        if tw <= width || abstracttui::text::width(tok.trim_end()) <= width {
+            line.push_str(tok.trim_start());
+        } else {
+            for piece in super::w::paint::wrap(&tok, width) {
+                if abstracttui::text::width(&piece) == width {
+                    out.push(piece);
+                } else {
+                    line = piece;
+                }
+            }
+        }
+    }
+    if !line.trim().is_empty() {
+        out.push(line.trim_end().to_string());
+    }
+    if out.is_empty() {
+        out.push(String::new());
+    }
+    out
+}
+
+/// The empty table.
+pub const EMPTY: &str = "No capability routes were returned by Gateway.";
+
+/// The head actions (single source for the buttons, keys, hints, tests).
+pub fn head_actions(admin: bool) -> Vec<Action> {
+    let mut out = Vec::new();
+    // Admin-only server-side (it rewrites the gateway's store): the web
+    // hides the button from everyone else; its key still says why.
+    if admin {
+        out.push(
+            Action::label("apply", "Apply recommended")
+                .key('a')
+                .tooltip(APPLY_TIP),
+        );
+    }
+    out.push(
+        Action::label("refresh", format!("{} Refresh", glyph("rotate")))
+            .key('r')
+            .tooltip(REFRESH_TIP),
+    );
+    out
+}
+
+fn glyph(id: &str) -> &'static str {
+    super::w::glyphs::glyph(id, true)
+}
+
+/// The web's `weightView`: the pill's label and tone, and whether a
+/// download can do something.
+pub fn weight_view(w: &WeightsRow) -> (&'static str, WeightTone, bool) {
+    match w.status.as_str() {
+        "installed" => ("installed", WeightTone::Ok, false),
+        "absent" => ("not downloaded", WeightTone::Warn, w.downloadable),
+        "not_applicable" => ("remote", WeightTone::Info, false),
+        "unknown" if w.downloadable => ("download needed", WeightTone::Warn, true),
+        "unknown" => ("not checked", WeightTone::Muted, false),
+        _ => ("unknown", WeightTone::Muted, false),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WeightTone {
+    Ok,
+    Warn,
+    Info,
+    Muted,
+}
+
+/// The pill's tooltip (R14-W7): AbstractCore's one-sentence `summary`
+/// (the words the web prints under the pill), then everything the probe
+/// said, one fact per line (the web's `weightTip`: its detail, "To fix:").
+pub fn weight_tip(w: &WeightsRow) -> String {
+    let mut lines = Vec::new();
+    let sum = w.summary.trim();
+    if !sum.is_empty() {
+        lines.push(sum.to_string());
+    }
+    let d = w.detail.trim();
+    if !d.is_empty() {
+        lines.push(if d.ends_with(['.', '!', '?']) {
+            d.to_string()
+        } else {
+            format!("{d}.")
+        });
+    }
+    if !w.instruction.trim().is_empty() {
+        lines.push(format!("To fix: {}", w.instruction.trim()));
+    }
+    lines.join("\n")
+}
+
+/// The web's `defaultRowReadOnly`.
+pub fn read_only(r: &RouteRow) -> bool {
+    r.read_only || r.derived_from.is_some() || (r.covered_by.is_some() && !r.overrideable)
+}
+
+/// The web's `defaultRowActionLabel`.
+pub fn action_label(r: &RouteRow) -> String {
+    if r.covered_by.as_deref() == Some("input.text") {
+        return if r.overrideable {
+            "Override".into()
+        } else {
+            "Covered by input.text".into()
+        };
+    }
+    if r.derived_from.as_deref() == Some("input.text") {
+        return "Derived \u{2190} input.text".into();
+    }
+    if r.configured {
+        return "Edit".into();
+    }
+    if r.is_task_parent() {
+        "Set for all".into()
+    } else {
+        "Configure".into()
+    }
+}
+
+/// The web's `defaultRowStatus` label.
+pub fn status_label(r: &RouteRow) -> String {
+    let has_pair = r.provider.as_deref().is_some_and(|p| !p.is_empty())
+        && r.model.as_deref().is_some_and(|m| !m.is_empty());
+    if r.covered_by.as_deref() == Some("input.text") {
+        return "covered by input.text".into();
+    }
+    if let Some(from) = r.derived_from.as_deref() {
+        return if has_pair {
+            format!("derived \u{2190} {from}")
+        } else {
+            "not configured".into()
+        };
+    }
+    if let Some(by) = r.covered_by.as_deref() {
+        return format!("covered by {by}");
+    }
+    if r.configured && r.route_unavailable.is_some() {
+        return "cannot run here".into();
+    }
+    if r.configured && r.engine_missing.is_some() {
+        return "engine missing".into();
+    }
+    if r.configured {
+        return "configured".into();
+    }
+    if r.covered_by_tasks {
+        return "not needed".into();
+    }
+    if r.inherits_broad {
+        return format!(
+            "inherited \u{2190} {}",
+            r.broad_key.clone().unwrap_or_default()
+        );
+    }
+    "not configured".into()
+}
+
+/// The web's `defaultSourceLabel` (covered / derived rows: "Text Input").
+pub fn source_label(r: &RouteRow) -> String {
+    if r.covered_by.as_deref() == Some("input.text")
+        || r.derived_from.as_deref() == Some("input.text")
+    {
+        return "Text Input".into();
+    }
+    match r.source.trim() {
+        "abstractcore.runtime" => "Runtime override".into(),
+        "abstractcore.gateway_runtime" => "Gateway baseline".into(),
+        "abstractcore.local" => "Local Core config".into(),
+        "abstractcore.server" => "Core server".into(),
+        "abstractcore.capability_defaults" => "Core config".into(),
+        "abstractcore.capability_defaults.input_text_multimodal" => "Text model handles it".into(),
+        "not_configured" => "Not configured".into(),
+        other => other.to_string(),
+    }
+}
+
+/// A row's actions, in the web's order with the web's tooltips: Edit /
+/// Configure (or the read-only words, faint), Clear (configured rows),
+/// Download (weights missing and this host can fetch them) or Copy (no
+/// download verb here: the command to run). `downloading`: a download of
+/// this row's model runs (the Weights cell shows it; no button).
+pub fn row_actions(
+    r: &RouteRow,
+    weights: Option<&WeightsRow>,
+    downloading: bool,
+    admin: bool,
+) -> Vec<Action> {
+    let key = &r.key;
+    let mut out = Vec::new();
+    let label = action_label(r);
+    if read_only(r) {
+        // Status is not a verb (the web): a read-only row offers no edit;
+        // its words stand in the Actions cell (`readonly_words`).
+    } else if r.configured && r.covered_by.is_none() {
+        out.push(
+            Action::glyph("edit", label.clone())
+                .key('e')
+                .tooltip(format!("{label} {key}")),
+        );
+    } else {
+        out.push(
+            Action::glyph("configure", label.clone())
+                .key('e')
+                .tooltip(format!("{label} {key}")),
+        );
+    }
+    if r.configured && r.covered_by.is_none() && !read_only(r) {
+        out.push(
+            Action::glyph("clear", "Clear")
+                .key('x')
+                .tooltip(format!("Clear {key}"))
+                .danger(),
+        );
+    }
+    if let Some(w) = weights {
+        let (_, _, can) = weight_view(w);
+        if !downloading && can {
+            let provider = r.provider.clone().unwrap_or_else(|| w.provider.clone());
+            let mut a = Action::glyph("install", "Download")
+                .key('w')
+                .tooltip(format!("Download {} with {provider}", w.artifact));
+            a.id = "download";
+            if !admin {
+                a = a.refused(Some(
+                    "Only an admin can download models (they use the gateway host's disk).".into(),
+                ));
+            }
+            out.push(a);
+        } else if !downloading && w.status == "absent" && !w.instruction.trim().is_empty() {
+            out.push(
+                Action::glyph("copy", "Copy")
+                    .key('c')
+                    .tooltip(format!("Copy: {}", w.instruction.trim())),
+            );
+        }
+    }
+    out
+}
+
+/// The muted words a read-only row shows where its buttons would be (the
+/// web's `defaultRowActionLabel`), with why it cannot be edited.
+pub fn readonly_words(r: &RouteRow) -> Option<(String, String)> {
+    if !read_only(r) {
+        return None;
+    }
+    let key = &r.key;
+    let why = if let Some(d) = &r.derived_from {
+        format!("{key} derives from {d} — edit that route instead")
+    } else if r.covered_by.is_some() {
+        format!("{key} is covered and not overrideable")
+    } else {
+        format!("{key} is read-only")
+    };
+    Some((action_label(r), why))
+}
+
+/// The page width the content lays out in.
+fn page_w(cx: Scope) -> i32 {
+    (crate::ui::page_viewport(cx).get().w - 2).max(20)
+}
+
+/// The rows' keys in table order (the selection's single source).
+fn route_keys(store: &crate::store::Store) -> Vec<String> {
+    store.routes.with(|d| {
+        d.ready()
+            .map(|d| d.rows.iter().map(|r| r.key.clone()).collect())
+            .unwrap_or_default()
+    })
+}
+
 pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
     let ui = ctx.ui;
     let tt = *t;
-    let viewport = crate::ui::page_viewport(cx);
-
     // The web's second pass: after a non-forced apply that kept routes or
     // left one that cannot run here, offer the forced apply under the
     // web's own label ("Replace mine too" / "Clear what cannot run here").
@@ -71,21 +403,15 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             } else {
                 "The recommended routes were applied; a configured route this computer cannot run was left in place."
             };
-            let prompt = abstracttui::app::ChoicePrompt::new(title.to_string())
-            .option_with(abstracttui::app::ChoiceOption::new("force", label).danger(true))
-            .option("leave", "Leave them as they are")
-            .initial("leave");
-            super::open_prompt(cx, ctx_f.ui, prompt, move |outcome| {
-                if let abstracttui::app::ChoiceOutcome::Answered(a) = outcome {
-                    if a.selected.first().map(String::as_str) == Some("force") {
-                        ctx_go.send(Cmd::ApplyRecommendedRoutes { force: true });
-                    }
-                }
-            });
+            super::w::Confirm::danger(title, &label, "Leave them as they are").open(
+                cx,
+                ctx_f.ui,
+                move || ctx_go.send(Cmd::ApplyRecommendedRoutes { force: true }),
+            );
         });
     }
 
-    // `w`: the worker read the target's catalog size; now confirm it.
+    // `w` / ⤓: the worker read the target's catalog size; now confirm it.
     {
         let ctx_d = ctx.clone();
         cx.effect(move || {
@@ -95,16 +421,12 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             store.download_offer.set(None);
             let ctx_go = ctx_d.clone();
             let (provider, artifact) = (offer.provider.clone(), offer.artifact.clone());
-            super::confirm_danger(
+            super::w::Confirm::plain(offer.prompt(), "Download", "Not now").open(
                 cx,
                 ctx_d.ui,
-                offer.prompt(),
-                "Download",
-                "Not now",
                 move || {
                     // The weights column and the voice lists are re-read when
-                    // the job FINISHES (worker `finish_download`), not now:
-                    // the job has only just started.
+                    // the job FINISHES (worker `finish_download`), not now.
                     ctx_go.send(Cmd::DownloadModel {
                         provider: provider.clone(),
                         artifact: artifact.clone(),
@@ -119,13 +441,39 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             .routes
             .with(|d| d.ready().map(|d| d.rows.len()).unwrap_or(0))
     });
+    // The table's keyed selection, synced both ways with the legacy index
+    // every other path reads (`selected_route`).
+    let sel_key = cx.signal(Option::<String>::None);
+    cx.effect(move || {
+        let k = sel_key.get();
+        let keys = route_keys(&store);
+        if let Some(i) = k.and_then(|k| keys.iter().position(|x| *x == k)) {
+            if ui.route_sel.get_untracked() != i {
+                ui.route_sel.set(i);
+            }
+        }
+    });
+    cx.effect(move || {
+        let i = ui.route_sel.get();
+        let keys = route_keys(&store);
+        if let Some(k) = keys.get(i) {
+            if sel_key.with_untracked(|c| c.as_deref() != Some(k.as_str())) {
+                sel_key.set(Some(k.clone()));
+            }
+        }
+    });
 
     let ctx_edit = ctx.clone();
     let ctx_edit2 = ctx.clone();
     let ctx_clear = ctx.clone();
 
     Element::new()
-        .style(LayoutStyle::column().gap(0))
+        .style(LayoutStyle::column().gap(0).grow(1.0).padding(Edges {
+            left: 1,
+            right: 1,
+            top: 0,
+            bottom: 0,
+        }))
         .shortcut(KeyChord::plain(Key::Char('e')), move |_| {
             edit_selected(cx, &ctx_edit);
         })
@@ -135,29 +483,24 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         .shortcut(KeyChord::plain(Key::Char('x')), move |_| {
             clear_selected(cx, &ctx_clear);
         })
-        // `w` for WEIGHTS, and deliberately not `d`. `d` deletes on the
-        // Providers and Users screens, and a key that means "delete" two
-        // screens over must not mean "download" here: downloads are safe and
-        // frequent, so `d` would train a fast confirm-and-move-on reflex that
-        // an operator then carries onto a destructive prompt. `w` also names
-        // the column the operator is looking at.
+        // `w` for WEIGHTS, and deliberately not `d` (`d` deletes two
+        // screens over; a download must not train that reflex).
         .shortcut(KeyChord::plain(Key::Char('w')), {
             let ctx_dl = ctx.clone();
             move |_| download_selected(&ctx_dl)
         })
-        // `a` for APPLY — the other half of the weights banner, and the
-        // same key, prompt and vocabulary as the AbstractCore console-TUI
-        // and the gateway console's "Apply recommended" button. Safe by
-        // default: replacing routes the operator configured is a separate,
-        // danger-tinted answer, never the accidental one.
+        .shortcut(KeyChord::plain(Key::Char('c')), {
+            let ctx_cp = ctx.clone();
+            move |_| copy_selected(&ctx_cp)
+        })
         .shortcut(KeyChord::plain(Key::Char('a')), {
             let ctx_apply = ctx.clone();
             move |_| apply_recommended(cx, &ctx_apply)
         })
-        // The web guide's model step: "Download all" (one parent job for
-        // the whole recommended set), its cancel, and the full plan with
-        // AbstractCore's fit warnings. Capital D/C: `d` deletes two
-        // screens over, and a bulk download must never be a reflex key.
+        .shortcut(KeyChord::plain(Key::Char('m')), {
+            let ctx_m = ctx.clone();
+            move |_| download_missing(cx, &ctx_m)
+        })
         .shortcut(KeyChord::plain(Key::Char('D')), {
             let ctx_all = ctx.clone();
             move |_| download_all(cx, &ctx_all)
@@ -170,511 +513,827 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             let ctx_plan = ctx.clone();
             move |_| open_plan(cx, &ctx_plan)
         })
-        .child(
-            Block::new()
-                .border(BorderKind::Rounded)
-                .title("Multimodal — which provider & model serve each input/output")
-                .fill(t.surface)
-                .layout(
-                    LayoutStyle::column()
-                        .gap(0)
-                        .grow(1.0)
-                        .padding(Edges::all(1)),
-                )
-                .child(dyn_view(LayoutStyle::column(), move || {
-                    let t = tt;
-                    match store.routes.get() {
-                        Loadable::Ready(d) => {
-                            // The authority MODULE NAME is internal noise
-                            // in the healthy case (P2-A) — surface it only
-                            // in the read-only/error state, where it is
-                            // actionable ("which backend is refusing").
-                            let spans = if d.writable {
-                                // `a` rides the ALWAYS-PRESENT banner, not the
-                                // weights line below: that line fills with a
-                                // missing-artifact list and truncates anything
-                                // appended to it.
-                                vec![
-                                    span("writable", t.ok),
-                                    span(
-                                        "  ·  a applies the recommended routes".to_string(),
-                                        t.text_faint,
-                                    ),
-                                ]
-                            } else {
-                                vec![
-                                    span_bold("read-only (backend unreachable?)", t.warn),
-                                    span(format!("  ·  route store {}", d.authority), t.text_faint),
-                                ]
-                            };
-                            let mut col = Element::new()
-                                .style(LayoutStyle::column())
-                                .child(line(spans));
-                            if !d.ok {
-                                // Errors get their own full-width line —
-                                // appended to the banner they clip away.
-                                col = col.child(line(vec![span_bold(
-                                    format!("gateway reports errors: {}", d.errors.join(" | ")),
-                                    t.error,
-                                )]));
-                            }
-                            col.build()
-                        }
-                        _ => line(vec![span(String::new(), t.text)]),
-                    }
-                }))
-                // WEIGHTS BANNER. A route with NOTHING serving it cannot
-                // run, and the framework's recommended model for it is the
-                // one-click way out — invisible in the grid above, which is
-                // the single most common fresh-install confusion. This line
-                // names those routes and nothing else.
-                //
-                // IT USED TO READ "recommended models: 2 of 3 present ·
-                // missing: lmstudio qwen/qwen3.5-9b@4bit" ON A FULLY
-                // CONFIGURED HOST, in warn amber, forever: the operator had
-                // routed text generation at their own model, so the starter
-                // kit's build was absent and would stay absent. A warning
-                // whose only cure is installing the model you chose against
-                // is not a warning, it is noise — and noise on the healthy
-                // path is how an operator learns to skip the line that
-                // matters. The gateway now decides which recommended models
-                // belong to an UNANSWERED route (`recommended.gaps`), and a
-                // host with none gets no banner at all.
-                //
-                // THE MISSING LIST IS THE ELASTIC PART. It can name a
-                // dozen artifacts; the verb after it is the only
-                // actionable text on the row, and `line()` clips
-                // last-span-first — which is how the operator saw
-                // `w downloads the selecte…`. So the verb (and the count,
-                // and the `missing:` label) are reserved, the list gets
-                // what is left, and it keeps its TAIL: the `@4bit`-style
-                // tag is what distinguishes one absent artifact from
-                // another.
-                .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
-                    let t = tt;
-                    let avail = viewport.get().w - BLOCK_CHROME;
-                    if let Some(dl) = store.download.get() {
-                        // A live download outranks the summary: it is the
-                        // thing that is happening right now.
-                        let tone = if dl.running() {
-                            t.info
-                        } else if dl.status == "completed" {
-                            t.ok
-                        } else {
-                            t.error
-                        };
-                        return line(vec![span_bold(format!("download: {}", dl.line()), tone)]);
-                    }
-                    match store.availability.get() {
-                        Loadable::Ready(a) if !a.missing.is_empty() => {
-                            let head = format!(
-                                "{} route{} with no model yet",
-                                a.missing.len(),
-                                if a.missing.len() == 1 { "" } else { "s" }
-                            );
-                            let routes = a
-                                .missing
-                                .iter()
-                                .map(|(route, _, _)| route.as_str())
-                                .filter(|route| !route.is_empty())
-                                .collect::<Vec<_>>()
-                                .join(", ");
-                            let routes = if routes.is_empty() {
-                                String::new()
-                            } else {
-                                format!("  ·  {routes}")
-                            };
-                            let mut spans = vec![
-                                span_bold(head.clone(), t.warn),
-                                span(routes.clone(), t.text),
-                            ];
-                            const LABEL: &str = "  ·  recommended: ";
-                            const VERB: &str = "  ·  w downloads the selected route's weights";
-                            let list = a
-                                .missing
-                                .iter()
-                                .map(|(_, p, art)| format!("{p} {art}"))
-                                .collect::<Vec<_>>()
-                                .join(", ");
-                            let budget =
-                                widths::elastic_budget(&[&head, &routes, LABEL, VERB], avail);
-                            // Two honest lines, widest first: name the
-                            // artifacts, or say nothing about them — but
-                            // never at the verb's expense, and never by
-                            // clipping a word. The COUNT is already in the
-                            // head, so there is no third form to fall back on.
-                            if budget >= 8 {
-                                spans.push(span(
-                                    format!("{LABEL}{}", widths::middle_fit(&list, budget)),
-                                    t.warn,
-                                ));
-                            }
-                            spans.push(span(VERB.to_string(), t.text_faint));
-                            line(spans)
-                        }
-                        Loadable::Failed(e) => line(vec![span(
-                            format!("model availability unavailable: {e}"),
-                            t.text_muted,
-                        )]),
-                        _ => line(vec![span(String::new(), t.text)]),
-                    }
-                }))
-                // RECOMMENDED FOR THIS COMPUTER (the web guide's model
-                // step): the Download-all progress while it exists, and
-                // the plan — one line per model in the wizard, one
-                // summary line in browse; `p` shows every word.
-                .child(dyn_view(LayoutStyle::column().shrink(0.0), move || {
-                    let t = tt;
-                    let avail = (viewport.get().w - BLOCK_CHROME).max(20) as usize;
-                    let wizard = ui.wizard.get();
-                    let mut rows: Vec<View> = Vec::new();
-                    if let Some(g) = store.download_group.get() {
-                        rows.push(line(vec![span_bold(
-                            widths::middle_fit(&g.line(), avail as i32),
-                            group_tone(&t, &g),
-                        )]));
-                    }
-                    let plan = store
-                        .availability
-                        .with(|a| a.ready().map(|a| a.plan.clone()).unwrap_or_default());
-                    if !plan.is_empty() {
-                        let installed = plan.iter().filter(|r| r.status == "installed").count();
-                        let warned = plan.iter().filter(|r| r.warning.is_some()).count();
-                        let mut head = format!(
-                            "recommended for this computer: {installed} of {} installed",
-                            plan.len()
-                        );
-                        if warned > 0 {
-                            head.push_str(&format!(
-                                " · {warned} fit warning{}",
-                                if warned == 1 { "" } else { "s" }
+        .child(head(cx, ctx, &tt))
+        // The scope sentence and the route store's state (read-only and
+        // its errors are said; a writable store needs no words).
+        .child(dyn_view_scoped(
+            LayoutStyle::column().shrink(0.0),
+            move |scx| {
+                let t = tt;
+                let w = page_w(scx);
+                let admin = store.conn.with(ConnPhase::is_admin);
+                let mut col = Element::new().style(LayoutStyle::column().shrink(0.0));
+                col = col.child(super::w::form::sentence(
+                    &t,
+                    if admin { SCOPE_ADMIN } else { SCOPE_USER },
+                    w,
+                    t.text_muted,
+                ));
+                if let Loadable::Ready(d) = store.routes.get() {
+                    // The web's store line (renderStoreAuthority): only when
+                    // the payload NAMES an AbstractCore store file — no claim
+                    // without evidence; its tooltip is the authority.
+                    if let Some((text, tip)) = store_line(&d) {
+                        let el = Element::new()
+                            .style(LayoutStyle::column().shrink(0.0))
+                            .child(super::w::form::sentence(
+                                &t,
+                                &text,
+                                w,
+                                if d.writable { t.text_faint } else { t.warn },
                             ));
-                        }
-                        let missing = plan.iter().filter(|r| r.engine_missing.is_some()).count();
-                        if missing > 0 {
-                            head.push_str(&format!(
-                                " · {missing} engine{} missing (p says what to install)",
-                                if missing == 1 { "" } else { "s" }
-                            ));
-                        }
-                        let attention = warned > 0 || missing > 0;
-                        rows.push(line(vec![
-                            span_bold(head, if attention { t.warn } else { t.text }),
-                            span("  ·  p plan · D download all · a apply", t.text_faint),
+                        col = col.child(super::w::tip::with_tip(scx, el, tip).build());
+                    } else if !d.writable {
+                        col = col.child(line(vec![
+                            span_bold("read-only (backend unreachable?)", t.warn),
+                            span(format!("  ·  route store {}", d.authority), t.text_faint),
                         ]));
-                        if wizard {
-                            for r in &plan {
-                                let mut spans = vec![
-                                    span(format!("  {:<14}", r.title()), t.text_muted),
-                                    span(format!("{:<15}", r.status_label()), status_tone(&t, &r.status)),
-                                    span(format!("{} {}", r.provider, r.artifact), t.text),
-                                ];
-                                if let Some(m) = &r.engine_missing {
-                                    spans.push(span(format!("  ⚠ {}", m.text()), t.warn));
-                                } else if let Some(g) = r.gpu_limit_text() {
-                                    spans.push(span(format!("  {g}"), t.info));
-                                } else if let Some(w) = &r.warning {
-                                    spans.push(span(format!("  ⚠ {w}"), t.warn));
-                                }
-                                rows.push(line(spans));
-                            }
-                        }
                     }
-                    Element::new().style(LayoutStyle::column()).children(rows).build()
-                }))
-                // TRANSCRIPTION (the web's Multimodal card, item 1): the
-                // engine that turns speech into text, by the name the row
-                // carries, and "Engine missing" only with the reason Core
-                // gave. Nothing when the gateway has no input.voice row.
-                .child(dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |lcx| {
-                    let t = tt;
-                    let found = store
-                        .routes
-                        .with(|d| d.ready().and_then(|d| transcription_line(&d.rows)));
-                    let Some((text, level)) = found else {
-                        return Element::new().style(LayoutStyle::default().h(0)).build();
+                    if !d.ok {
+                        col = col.child(super::w::form::sentence(
+                            &t,
+                            &format!("gateway reports errors: {}", d.errors.join(" | ")),
+                            w,
+                            t.error,
+                        ));
+                    }
+                }
+                col.build()
+            },
+        ))
+        // WEIGHTS BANNER: only the routes with NOTHING serving them (the
+        // gateway's `recommended.gaps`), the web's sentence, and the web's
+        // [⤓ Download missing]. A live download outranks it.
+        .child(banner(cx, ctx, &tt))
+        // RECOMMENDED FOR THIS COMPUTER (the web guide's model step): the
+        // Download-all progress while it exists, and the plan summary with
+        // its buttons.
+        .child(plan_region(cx, ctx, &tt))
+        // TRANSCRIPTION (the web's Multimodal card, item 1).
+        .child(dyn_view_scoped(
+            LayoutStyle::column().shrink(0.0),
+            move |lcx| {
+                let t = tt;
+                let found = store
+                    .routes
+                    .with(|d| d.ready().and_then(|d| transcription_line(&d.rows)));
+                let Some((text, level)) = found else {
+                    return Element::new().style(LayoutStyle::default().h(0)).build();
+                };
+                let ink = match level {
+                    TranscriptionLevel::Ready => t.ok,
+                    TranscriptionLevel::Unset => t.text_muted,
+                    TranscriptionLevel::Warn => t.warn,
+                    TranscriptionLevel::Error => t.error,
+                };
+                let w = (page_w(lcx) - 14).max(20) as usize;
+                let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
+                for (i, l) in super::util::wrap_text(&text, w).into_iter().enumerate() {
+                    let lead = if i == 0 {
+                        span_bold("Transcription ", t.text)
+                    } else {
+                        span(" ".repeat(14), t.text)
                     };
-                    let ink = match level {
-                        TranscriptionLevel::Ready => t.ok,
-                        TranscriptionLevel::Unset => t.text_muted,
-                        TranscriptionLevel::Warn => t.warn,
-                        TranscriptionLevel::Error => t.error,
-                    };
-                    // Wrapped, never cut: the reason is the point.
-                    let w = (crate::ui::page_viewport(lcx).get().w - BLOCK_CHROME - 14)
-                        .max(20) as usize;
-                    let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
-                    for (i, l) in super::util::wrap_text(&text, w).into_iter().enumerate() {
-                        let lead = if i == 0 {
-                            span_bold("Transcription ", t.text)
+                    col = col.child(line(vec![lead, span(l, ink)]));
+                }
+                col.build()
+            },
+        ))
+        .child(table_region(cx, ctx, &tt, sel_key))
+        // SELECTED-ROW LINE: the full route key and, in words, what the
+        // row is FOR or why it cannot run.
+        .child(dyn_view_scoped(
+            LayoutStyle::column().shrink(0.0),
+            move |rcx| {
+                let t = tt;
+                let row: Option<RouteRow> = store.routes.with(|d| {
+                    d.ready()
+                        .and_then(|d| d.rows.get(ui.route_sel.get()).cloned())
+                });
+                let Some(r) = row else {
+                    return Element::new().style(LayoutStyle::default().h(0)).build();
+                };
+                let mut text = String::new();
+                let mut ink = t.text_muted;
+                if let Some(u) = r.route_unavailable.as_ref().filter(|_| r.configured) {
+                    let admin = store.conn.with(|c| c.is_admin());
+                    text = format!(
+                        "configured but cannot run on this computer: {} — {}",
+                        u.reason,
+                        broken_route_fix(&r.key, admin)
+                    );
+                    ink = t.error;
+                } else if let Some(m) = r.engine_missing.as_ref().filter(|_| r.configured) {
+                    text = format!(
+                        "{}{}",
+                        m.text(),
+                        if m.engine_row.is_some() {
+                            " (Providers tab, Local providers: Install)"
                         } else {
-                            span(" ".repeat(14), t.text)
-                        };
-                        col = col.child(line(vec![lead, span(l, ink)]));
-                    }
-                    col.build()
-                }))
-                .child(dyn_view_scoped(LayoutStyle::default().grow(1.0), {
-                    let ctx_act = ctx.clone();
-                    let keeper = super::util::FocusKeeper::new();
-                    move |gcx| {
-                        let data = store.routes.get();
-                        let ctx_act = ctx_act.clone();
-                        super::util::loadable_view_kept(
-                            &keeper,
-                            &tt,
-                            &store.conn.get(),
-                            || store.tick.get(),
-                            &data,
-                            |d: &RoutesData| d.rows.is_empty(),
-                            "the gateway reported no routes",
-                            |d| {
-                                let weights = store.availability.with(|a| {
-                                    a.ready().map(|a| a.by_route.clone()).unwrap_or_default()
-                                });
-                                routes_table(gcx, &tt, d, &weights, ui.route_sel, &keeper, move |_| {
-                                    // Activation = the Enter/e path, one
-                                    // body (per-row editability refusals
-                                    // included). The screen-level Enter
-                                    // shortcut stays as the empty-table
-                                    // fallback: with rows, the focused
-                                    // table consumes Enter first.
-                                    edit_selected(cx, &ctx_act);
-                                })
-                            },
-                        )
-                    }
-                }))
-                // SELECTED-ROW LINE. Two jobs, both of which the columns
-                // cannot do: keep the FULL route key readable (the route
-                // column now shows a task row as `└ text_to_image` under
-                // its parent) and say in words what a parent row is FOR.
-                // The grid alone made an operator ask whether
-                // `output.image` was dead code sitting above t2i / i2i /
-                // upscale; it is the opposite — the ONE value that serves
-                // every image task with no row of its own, and the simple
-                // setting for someone who wants one image model.
-                .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
-                    let t = tt;
-                    let row: Option<RouteRow> = store.routes.with(|d| {
-                        d.ready()
-                            .and_then(|d| d.rows.get(ui.route_sel.get()).cloned())
-                    });
-                    match row {
-                        Some(r) => {
-                            let mut spans = vec![span_bold(format!(" {} ", r.key), t.accent)];
-
-                            // The core console's words (abstractcore-console
-                            // ui/routes.rs), so both grids say the same.
-                            if let Some(u) = r.route_unavailable.as_ref().filter(|_| r.configured) {
-                                // Configured, and this host cannot run it
-                                // (REVIEW-1 contract): never shown as fine,
-                                // and the fix named is the one that exists.
-                                let admin = store.conn.with(|c| c.is_admin());
-                                spans.push(span(
-                                    format!(
-                                        "configured but cannot run on this computer: {} — {}  ",
-                                        u.reason,
-                                        broken_route_fix(&r.key, admin)
-                                    ),
-                                    t.error,
-                                ));
-                            } else if let Some(m) = r.engine_missing.as_ref().filter(|_| r.configured) {
-                                // Runnable here, engine not installed: the
-                                // reason and the exact command, never "fine".
-                                spans.push(span(
-                                    format!(
-                                        "{}{}  ",
-                                        m.text(),
-                                        if m.engine_row.is_some() {
-                                            " (0 Engines: i installs it)"
-                                        } else {
-                                            ""
-                                        }
-                                    ),
-                                    t.warn,
-                                ));
-                            } else if let Some(u) = &r.recommendation_unavailable {
-                                // Host-aware recommendation: unset because
-                                // the recommended engine cannot run here.
-                                let what = u.pair_text();
-                                spans.push(span(
-                                    if what.is_empty() {
-                                        format!("nothing recommended runs on this computer: {}  ", u.reason)
-                                    } else {
-                                        format!(
-                                            "the recommended {what} cannot run on this computer: {}  ",
-                                            u.reason
-                                        )
-                                    },
-                                    t.warn,
-                                ));
-                            } else if r.is_task_parent() {
-                                spans.push(span(
-                                    format!(
-                                        "serves any {} task with no row of its own  ",
-                                        r.modality
-                                    ),
-                                    t.text_muted,
-                                ));
-                                if r.covered_by_tasks {
-                                    spans.push(span(
-                                        format!(
-                                            "· all {} task rows below are set, so nothing reads it",
-                                            r.task_keys.len()
-                                        ),
-                                        t.text_faint,
-                                    ));
-                                }
-                            } else if let Some(parent) = &r.broad_key {
-                                spans.push(span(
-                                    if r.inherits_broad {
-                                        format!("no value of its own — {parent} answers it  ")
-                                    } else {
-                                        format!("overrides {parent}  ")
-                                    },
-                                    t.text_muted,
-                                ));
-                            }
-                            // The columns a narrow terminal leaves out are
-                            // said here (never silently dropped).
-                            let vw = viewport.get().w;
-                            if vw < 96 {
-                                if let Some(p) = r.provider.as_deref().filter(|p| !p.is_empty()) {
-                                    spans.push(span(format!("· provider {p}  "), t.text_muted));
-                                }
-                            }
-                            if vw < 112 && !r.source.is_empty() {
-                                spans.push(span(format!("· source {}", r.source), t.text_faint));
-                            }
-                            line(spans)
+                            ""
                         }
-                        None => line(vec![span(String::new(), t.text)]),
+                    );
+                    ink = t.warn;
+                } else if let Some(u) = &r.recommendation_unavailable {
+                    let what = u.pair_text();
+                    text = if what.is_empty() {
+                        format!("nothing recommended runs on this computer: {}", u.reason)
+                    } else {
+                        format!(
+                            "the recommended {what} cannot run on this computer: {}",
+                            u.reason
+                        )
+                    };
+                    ink = t.warn;
+                } else if r.is_task_parent() {
+                    text = format!("serves any {} task with no row of its own", r.modality);
+                    if r.covered_by_tasks {
+                        text.push_str(&format!(
+                            " · all {} task rows below are set, so nothing reads it",
+                            r.task_keys.len()
+                        ));
                     }
-                }))
-                .element(t)
-                .build(),
-        )
+                } else if let Some(parent) = &r.broad_key {
+                    text = if r.inherits_broad {
+                        format!("no value of its own — {parent} answers it")
+                    } else {
+                        format!("overrides {parent}")
+                    };
+                }
+                // The Weights pill's sentence (core `summary`), readable from
+                // the keyboard too (the pill's tooltip carries the rest).
+                if let Some(sum) = store.availability.with(|a| {
+                    a.ready()
+                        .and_then(|a| a.by_route.get(&r.key))
+                        .map(|w| w.summary.trim().to_string())
+                        .filter(|x| !x.is_empty())
+                }) {
+                    if text.is_empty() {
+                        text = format!("Weights: {sum}");
+                    } else {
+                        text = format!("{text} · Weights: {sum}");
+                    }
+                }
+                let w = page_w(rcx);
+                let head = format!(" {} ", r.key);
+                let mut col = Element::new().style(LayoutStyle::column().shrink(0.0));
+                let lines =
+                    super::w::paint::wrap(&text, (w - abstracttui::text::width(&head) - 1).max(10));
+                if lines.is_empty() {
+                    col = col.child(line(vec![span_bold(head.clone(), t.accent)]));
+                }
+                for (i, l) in lines.into_iter().enumerate() {
+                    let lead = if i == 0 {
+                        span_bold(head.clone(), t.accent)
+                    } else {
+                        span(" ".repeat(abstracttui::text::width(&head) as usize), t.text)
+                    };
+                    col = col.child(line(vec![lead, span(format!(" {l}"), ink)]));
+                }
+                col.build()
+            },
+        ))
         .build()
 }
 
+/// Title + subtitle on the left, the web's head buttons on the right
+/// (wrapping under the title on a narrow page). Actions open on the PAGE
+/// scope (`pcx`).
+fn head(pcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
+    let ctx = ctx.clone();
+    let tt = *t;
+    dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |hcx| {
+        let admin = ctx.store.conn.with(ConnPhase::is_admin);
+        let w = page_w(hcx);
+        let mut row = Element::new().style(
+            LayoutStyle::row()
+                .height(Dimension::Cells(1))
+                .gap(1)
+                .shrink(0.0),
+        );
+        let mut bw = 0;
+        for a in head_actions(admin) {
+            bw += a.width() + 1;
+            let c = ctx.clone();
+            let id = a.id;
+            row = row.child(button(hcx, &tt, &a, On::Page, true, move || {
+                head_action(pcx, &c, id)
+            }));
+        }
+        let title_w = abstracttui::text::width(TITLE).max(abstracttui::text::width(SUBTITLE));
+        let side = title_w + bw + 2 <= w;
+        let titles = Element::new()
+            .style(if side {
+                LayoutStyle::column()
+                    .width(Dimension::Cells(w - bw - 1))
+                    .shrink(0.0)
+            } else {
+                LayoutStyle::column().shrink(0.0)
+            })
+            .child(super::w::paint::fill_line(
+                LayoutStyle::line(1).shrink(0.0),
+                vec![super::w::Ink::new(TITLE, tt.text).bold()],
+                None,
+            ))
+            .child(super::w::form::sentence(
+                &tt,
+                SUBTITLE,
+                (w - if side { bw + 2 } else { 0 }).max(20),
+                tt.text_muted,
+            ))
+            .build();
+        Element::new()
+            .style(if side {
+                LayoutStyle::row().shrink(0.0)
+            } else {
+                LayoutStyle::column().shrink(0.0)
+            })
+            .child(titles)
+            .child(row.build())
+            .build()
+    })
+}
+
+/// A head button (or its key).
+fn head_action(cx: Scope, ctx: &Ctx, id: &str) {
+    match id {
+        "apply" => apply_recommended(cx, ctx),
+        "refresh" => ctx.refresh_screen(crate::ui::SCREEN_ROUTES),
+        _ => {}
+    }
+}
+
+/// The weights banner's buttons (Download missing, while the gateway names
+/// gaps), and the plan region's (the plan, Cancel downloads while a
+/// Download all runs). Single source for the buttons, keys and tests.
+pub fn banner_actions(admin: bool) -> Vec<Action> {
+    // Downloads are admin-only (the gateway host's disk): hidden from
+    // everyone else, like the web's admin controls.
+    if !admin {
+        return Vec::new();
+    }
+    vec![Action::label(
+        "download_missing",
+        format!("{} Download missing", glyph("install")),
+    )
+    .key('m')
+    .tooltip(
+        "Download the recommended models of the routes that have no model yet (one download each)",
+    )]
+}
+
+pub fn plan_actions(admin: bool, group_running: bool, can_all: bool) -> Vec<Action> {
+    let mut out = vec![Action::label("plan", "Recommended for this computer")
+        .key('p')
+        .tooltip("Every recommended model for this computer: status, fit warnings, the engine to install")];
+    if admin && can_all && !group_running {
+        out.push(
+            Action::label("download_all", "Download all")
+                .key('D')
+                .tooltip("Download the whole recommended set in one job"),
+        );
+    }
+    if admin && group_running {
+        out.push(
+            Action::label("cancel_all", "Cancel downloads")
+                .key('C')
+                .tooltip("Cancel Download all: every model still downloading stops")
+                .danger(),
+        );
+    }
+    out
+}
+
+fn banner(pcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
+    let ctx = ctx.clone();
+    let tt = *t;
+    dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |bcx| {
+        let t = tt;
+        let store = ctx.store;
+        let w = page_w(bcx);
+        if let Some(dl) = store.download.get() {
+            let tone = if dl.running() {
+                t.info
+            } else if dl.status == "completed" {
+                t.ok
+            } else {
+                t.error
+            };
+            return super::w::form::sentence(&t, &format!("download: {}", dl.line()), w, tone);
+        }
+        match store.availability.get() {
+            Loadable::Ready(a) if !a.missing.is_empty() => {
+                let routes = a
+                    .missing
+                    .iter()
+                    .map(|(route, _, _)| route.as_str())
+                    .filter(|route| !route.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let pairs = a
+                    .missing
+                    .iter()
+                    .map(|(_, p, art)| format!("{p} {art}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let text = gaps_sentence(a.missing.len(), &routes, &pairs);
+                let admin = store.conn.with(ConnPhase::is_admin);
+                let mut row = Element::new().style(
+                    LayoutStyle::row()
+                        .height(Dimension::Cells(1))
+                        .gap(1)
+                        .shrink(0.0),
+                );
+                for a in banner_actions(admin) {
+                    let c = ctx.clone();
+                    let id = a.id;
+                    row = row.child(button(bcx, &t, &a, On::Page, true, move || {
+                        banner_action(pcx, &c, id)
+                    }));
+                }
+                Element::new()
+                    .style(LayoutStyle::column().shrink(0.0))
+                    .child(super::w::form::sentence(&t, &text, w, t.warn))
+                    .child(row.build())
+                    .build()
+            }
+            Loadable::Failed(e) => super::w::form::sentence(
+                &t,
+                &format!("model availability unavailable: {e}"),
+                w,
+                t.text_muted,
+            ),
+            _ => Element::new().style(LayoutStyle::default().h(0)).build(),
+        }
+    })
+}
+
+/// The web banner's sentence (`renderAvailabilityBanner`).
+pub fn gaps_sentence(n: usize, routes: &str, pairs: &str) -> String {
+    let head = if n == 1 {
+        "One route has".to_string()
+    } else {
+        format!("{n} routes have")
+    };
+    format!("{head} no model yet ({routes}). Recommended to get started: {pairs}. ")
+        .trim_end()
+        .to_string()
+}
+
+fn banner_action(cx: Scope, ctx: &Ctx, id: &str) {
+    match id {
+        "download_missing" => download_missing(cx, ctx),
+        "download_all" => download_all(cx, ctx),
+        "plan" => open_plan(cx, ctx),
+        "cancel_all" => cancel_download_all(cx, ctx),
+        _ => {}
+    }
+}
+
+fn plan_region(pcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
+    let ctx = ctx.clone();
+    let tt = *t;
+    dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |gcx| {
+        let t = tt;
+        let store = ctx.store;
+        let ui = ctx.ui;
+        let avail = page_w(gcx).max(20) as usize;
+        let wizard = ui.wizard.get();
+        let mut rows: Vec<View> = Vec::new();
+        let group = store.download_group.get();
+        if let Some(g) = &group {
+            rows.push(line(vec![span_bold(
+                widths::middle_fit(&g.line(), avail as i32),
+                group_tone(&t, g),
+            )]));
+        }
+        let plan = store
+            .availability
+            .with(|a| a.ready().map(|a| a.plan.clone()).unwrap_or_default());
+        if !plan.is_empty() {
+            let installed = plan.iter().filter(|r| r.status == "installed").count();
+            let warned = plan.iter().filter(|r| r.warning.is_some()).count();
+            let mut head = format!(
+                "recommended for this computer: {installed} of {} installed",
+                plan.len()
+            );
+            if warned > 0 {
+                head.push_str(&format!(
+                    " · {warned} fit warning{}",
+                    if warned == 1 { "" } else { "s" }
+                ));
+            }
+            let missing = plan.iter().filter(|r| r.engine_missing.is_some()).count();
+            if missing > 0 {
+                head.push_str(&format!(
+                    " · {missing} engine{} missing",
+                    if missing == 1 { "" } else { "s" }
+                ));
+            }
+            let attention = warned > 0 || missing > 0;
+            rows.push(super::w::form::sentence(
+                &t,
+                &head,
+                avail as i32,
+                if attention { t.warn } else { t.text },
+            ));
+            if wizard {
+                for r in &plan {
+                    let mut spans = vec![
+                        span(format!("  {:<14}", r.title()), t.text_muted),
+                        span(
+                            format!("{:<15}", r.status_label()),
+                            status_tone(&t, &r.status),
+                        ),
+                        span(format!("{} {}", r.provider, r.artifact), t.text),
+                    ];
+                    if let Some(m) = &r.engine_missing {
+                        spans.push(span(format!("  ⚠ {}", m.text()), t.warn));
+                    } else if let Some(g) = r.gpu_limit_text() {
+                        spans.push(span(format!("  {g}"), t.info));
+                    } else if let Some(w) = &r.warning {
+                        spans.push(span(format!("  ⚠ {w}"), t.warn));
+                    }
+                    rows.push(line(spans));
+                }
+            }
+        }
+        if !plan.is_empty() || group.is_some() {
+            let admin = store.conn.with(ConnPhase::is_admin);
+            let running = group.as_ref().map(GroupStatus::running).unwrap_or(false);
+            let can_all = can_download_all(&plan, group.as_ref());
+            let mut row = Element::new().style(
+                LayoutStyle::row()
+                    .height(Dimension::Cells(1))
+                    .gap(1)
+                    .shrink(0.0),
+            );
+            for a in plan_actions(admin, running, can_all) {
+                let c = ctx.clone();
+                let id = a.id;
+                row = row.child(button(gcx, &t, &a, On::Page, true, move || {
+                    banner_action(pcx, &c, id)
+                }));
+            }
+            rows.push(row.build());
+        }
+        Element::new()
+            .style(LayoutStyle::column().shrink(0.0))
+            .children(rows)
+            .build()
+    })
+}
+
+/// The table region (rebuilt when the rows, the weights, the role or the
+/// width change). Row actions open on the PAGE scope (`pcx`).
+fn table_region(pcx: Scope, ctx: &Ctx, t: &TokenSet, sel_key: Signal<Option<String>>) -> View {
+    let ctx = ctx.clone();
+    let tt = *t;
+    let keeper = super::util::FocusKeeper::new();
+    dyn_view_scoped(LayoutStyle::column().grow(1.0), move |gcx| {
+        let store = ctx.store;
+        let data = store.routes.get();
+        let ctx = ctx.clone();
+        super::util::loadable_view_kept(
+            &keeper,
+            &tt,
+            &store.conn.get(),
+            || store.tick.get(),
+            &data,
+            |_d: &RoutesData| false,
+            EMPTY,
+            |d| routes_table(gcx, pcx, &ctx, &tt, d, sel_key),
+        )
+    })
+}
+
+/// The DataTable of routes.
 fn routes_table(
-    cx: Scope,
+    gcx: Scope,
+    pcx: Scope,
+    ctx: &Ctx,
     t: &TokenSet,
     data: &RoutesData,
-    weights: &std::collections::HashMap<String, WeightsRow>,
-    sel: Signal<usize>,
-    keeper: &super::util::FocusKeeper,
-    on_activate: impl FnMut(usize) + 'static,
+    sel_key: Signal<Option<String>>,
 ) -> View {
-    // Width-aware columns (0900 class): which columns APPEAR is a
-    // breakpoint decision (source drops first, provider second); how wide
-    // the survivors are is MEASURED from the rows themselves by
-    // `ui::widths`, never spent as a constant. The old policy sized the
-    // grid from `Cells(28)`/`Cells(20)` plus a pre-render
-    // `ellipsize(model, 40)` and handed the leftover to a Flex model
-    // column — which is how a 200-cell terminal printed
-    // `AbstractFramework/wan2.2-t2v-a14b-diffu…` beside seventy blank
-    // cells, with the `t2v`/`i2v` that told the two rows apart cut off.
-    let w = crate::ui::page_viewport(cx).get().w;
-    let rows: Vec<Vec<String>> = data
-        .rows
-        .iter()
-        .map(|r| {
-            // THE shared state vocabulary, straight off the row model —
-            // the same four strings the AbstractCore console prints.
-            let state = r.state_label();
-            // `⊘` U+2298, NOT `🔒` U+1F512 (the sibling console's glyph
-            // research, adopted here): the padlock is Emoji=Yes and
-            // measures 2 cells, and terminals/fonts routinely draw it at
-            // a different advance than the engine measured — the row's
-            // later columns then slide and overlap. U+2298 is width 1
-            // under BOTH unicode-width conventions, in a block
-            // emoji-data never touches. The `state` column already
-            // spells the reason in words, so the glyph is garnish.
-            let lock = if !r.editable() { " ⊘" } else { "" };
-            // THE ROUTE COLUMN CARRIES THE HIERARCHY. `output.image` is
-            // the PARENT of `output.image.*` — one value for every image
-            // task, overridden per task by the rows beneath it. Printed
-            // as four flat siblings with the parent on top reading "not
-            // configured", it looked like a leftover key ("why do we have
-            // output.image AND t2i/i2i/upscale?"). `display_key()` indents
-            // the children under a tree marker and drops the repeated
-            // parent prefix; the parent names what it is for.
-            let mut row = vec![format!("{}{}", r.display_key(), lock), state];
-            if w >= 96 {
-                row.push(or_dash(&r.provider));
-            }
-            // The FULL model name — the column solver sizes to it and
-            // cuts it only when the terminal cannot carry it. A constant
-            // cap here truncated the payload while the space to print it
-            // whole sat unused one column over.
-            row.push(or_dash(&r.model));
-            // WEIGHTS: is this route's model actually on the execution
-            // host? Blank while unprobed and for rows that name no model
-            // — the absence of an answer must not read as an answer.
-            row.push(
-                weights
-                    .get(&r.key)
-                    .map(|w| w.label().to_string())
-                    .unwrap_or_default(),
-            );
-            if w >= 112 {
-                row.push(r.source.clone());
-            }
-            row
+    use super::w::Ink;
+    let store = ctx.store;
+    let admin = store.conn.with(ConnPhase::is_admin);
+    let weights = store
+        .availability
+        .with(|a| a.ready().map(|a| a.by_route.clone()).unwrap_or_default());
+    let dl = store.download.get();
+    let vp = crate::ui::page_viewport(gcx).get();
+    let w = (vp.w - 2).max(20);
+    // The web's own columns from ~110 page cells (Route and Capability
+    // separate cells, the R14-W7 rule); narrower: Route · Model · Weights ·
+    // Actions, the status, capability and provider on the row's second line.
+    let wide = w >= 110;
+    let cols = if wide {
+        vec![
+            Col::new("Route", ColW::Fit { min: 10, max: 30 }),
+            Col::new("Capability", ColW::Flex { weight: 1, min: 10 }),
+            Col::new("Provider", ColW::Fit { min: 8, max: 18 }),
+            Col::new("Model", ColW::Fit { min: 14, max: 52 }),
+            Col::new("Weights", ColW::Fit { min: 7, max: 16 }),
+            Col::new("Source", ColW::Fit { min: 6, max: 18 }),
+            Col::new("Status", ColW::Fit { min: 6, max: 22 }),
+            Col::new("Actions", ColW::Fit { min: 7, max: 12 }),
+        ]
+    } else {
+        vec![
+            Col::new("Route", ColW::Flex { weight: 3, min: 22 }),
+            Col::new("Model", ColW::Flex { weight: 2, min: 12 }),
+            Col::new("Weights", ColW::Fit { min: 7, max: 15 }),
+            Col::new("Actions", ColW::Fit { min: 7, max: 12 }),
+        ]
+    };
+    let model_col = if wide { 3 } else { 1 };
+    // Two passes: the columns are solved with the model ids whole, then
+    // each id is re-wrapped at '/' or '-' to the model column's width (a
+    // single token longer than the cell is the only hard break).
+    let build = |model_w: Option<i32>| -> Vec<WRow> {
+        data.rows
+            .iter()
+            .map(|r| {
+                let wt = weights.get(&r.key);
+                let downloading = match (&dl, wt) {
+                    (Some(d), Some(wt)) => {
+                        d.running() && d.provider == wt.provider && d.artifact == wt.artifact
+                    }
+                    _ => false,
+                };
+                let lock = if !r.editable() { " ⊘" } else { "" };
+                let route = format!("{}{}", r.display_key(), lock);
+                let capability = if r.is_task_parent() {
+                    format!("{} — any {} task (fallback)", r.label, r.modality)
+                } else {
+                    r.label.clone()
+                };
+                let mut model = web_dash(&r.model);
+                if r.is_text_generation() {
+                    if let Some(re) = r.reasoning.as_deref().filter(|x| !x.is_empty()) {
+                        model.push_str(&format!(" · reasoning {re}"));
+                    }
+                }
+                let model_cell = match model_w {
+                    Some(mw) => Cell::Lines(
+                        id_lines(&model, mw)
+                            .into_iter()
+                            .map(|l| vec![Ink::new(l, t.text)])
+                            .collect(),
+                    ),
+                    None => Cell::text(model, t.text),
+                };
+                let status = status_label(r);
+                let status_ink = match status.as_str() {
+                    "configured" => t.ok,
+                    "not configured" | "cannot run here" | "engine missing" => t.warn,
+                    _ => t.text_muted,
+                };
+                let weights_cell = if downloading {
+                    let d = dl.clone().unwrap();
+                    Cell::text(
+                        match d.percent {
+                            Some(p) => format!("Downloading {p:.0}%"),
+                            None => "Downloading…".to_string(),
+                        },
+                        t.info,
+                    )
+                } else {
+                    match wt {
+                        Some(w) => {
+                            let (label, tone, _) = weight_view(w);
+                            let ink = match tone {
+                                WeightTone::Ok => t.ok,
+                                WeightTone::Warn => t.warn,
+                                WeightTone::Info => t.info,
+                                WeightTone::Muted => t.text_muted,
+                            };
+                            let tip = weight_tip(w);
+                            Cell::Badge {
+                                label: label.to_string(),
+                                ink,
+                                action: None,
+                                tip: (!tip.is_empty()).then_some(tip),
+                            }
+                        }
+                        // The web's empty Weights cell (`weightsCellMarkup`).
+                        None => Cell::text(WEIGHTS_NONE, t.text_faint),
+                    }
+                };
+                let acts = row_actions(r, wt, downloading, admin);
+                let words = readonly_words(r);
+                let (actions, note) = match (words, acts.is_empty()) {
+                    (Some((w, _)), true) => (Cell::text(w, t.text_muted), None),
+                    (Some((w, _)), false) => (Cell::Actions(acts), Some((w, t.text_muted))),
+                    (None, _) => (Cell::Actions(acts), None),
+                };
+                let cells = if wide {
+                    vec![
+                        Cell::text(route, t.text),
+                        Cell::text(capability, t.text),
+                        Cell::text(web_dash(&r.provider), t.text),
+                        model_cell,
+                        weights_cell,
+                        Cell::text(source_label(r), t.text_muted),
+                        Cell::text(status, status_ink),
+                        actions,
+                    ]
+                } else {
+                    vec![
+                        Cell::Lines(vec![
+                            vec![Ink::new(route, t.text)],
+                            vec![
+                                Ink::new(status, status_ink),
+                                Ink::new(
+                                    format!(" · {capability} · {}", web_dash(&r.provider)),
+                                    t.text_muted,
+                                ),
+                            ],
+                        ]),
+                        model_cell,
+                        weights_cell,
+                        actions,
+                    ]
+                };
+                WRow::new(r.key.clone(), cells).dim(read_only(r)).note(note)
+            })
+            .collect()
+    };
+    let first = build(None);
+    let solved = DataTable::solve(&cols, &first, w);
+    let rows = build(solved.get(model_col).copied());
+    let max_rows = (vp.h - 10).max(4);
+    let ctx_a = ctx.clone();
+    let ctx_e = ctx.clone();
+    DataTable::new(cols, rows, sel_key)
+        .width(w)
+        .max_rows(max_rows)
+        .empty(EMPTY)
+        .autofocus()
+        .on_action(move |key, id| row_action(pcx, &ctx_a, key, id))
+        .on_activate(move |key| {
+            select_key(&ctx_e, key);
+            edit_selected(pcx, &ctx_e);
         })
-        .collect();
-    // The rules carry a FLOOR, not a width: nothing is capped while the
-    // terminal has room. Route keys, provider ids, model artifacts and
-    // source modules all discriminate on their TAIL
-    // (`…image_to_scene3d`, `…-t2v-a14b-diffusers-8bit`), so those cut in
-    // the middle. `state` and `weights` print CLOSED VOCABULARIES, so
-    // their floor is the widest word each can say — a squeezed vocabulary
-    // column is not a shorter answer, it is a different (wrong) one; the
-    // open columns take the squeeze on its behalf.
-    let mut rules = vec![
-        widths::ColRule::tail("route", 18),
-        widths::ColRule::head("state", 21),
-    ];
-    if w >= 96 {
-        rules.push(widths::ColRule::tail("provider", 10));
+        .view(gcx, t)
+}
+
+/// Select the route `key` (the legacy index paths read it at once).
+fn select_key(ctx: &Ctx, key: &str) {
+    let keys = ctx.store.routes.with_untracked(|d| {
+        d.ready()
+            .map(|d| d.rows.iter().map(|r| r.key.clone()).collect::<Vec<_>>())
+            .unwrap_or_default()
+    });
+    if let Some(i) = keys.iter().position(|k| k == key) {
+        if ctx.ui.route_sel.get_untracked() != i {
+            ctx.ui.route_sel.set(i);
+        }
     }
-    rules.push(widths::ColRule::tail("model", 22));
-    // The weights column earns its floor at every width: "configured
-    // but not downloaded" is the single most common reason a route that
-    // LOOKS right does not run, and hiding it on a narrow terminal hides
-    // it on exactly the machine most likely to be a fresh install. 14
-    // cells is the widest label it prints ("not downloaded"), so the
-    // floor is the whole vocabulary, never a stub.
-    // The floor is the widest label IN USE: "not downloaded — w: download"
-    // carries its verb whenever a row can be fetched, and a verb cut to
-    // "w: d…" teaches nothing.
-    let weights_floor = weights
-        .values()
-        .map(|w| w.label().chars().count() as i32)
-        .max()
-        .unwrap_or(0)
-        .max(14);
-    rules.push(widths::ColRule::head("weights", weights_floor));
-    if w >= 112 {
-        rules.push(widths::ColRule::tail("source", 12));
+}
+
+/// A row action (a click or its key): the row becomes the selection, the
+/// action runs.
+fn row_action(cx: Scope, ctx: &Ctx, key: &str, id: &str) {
+    select_key(ctx, key);
+    match id {
+        "edit" | "configure" => edit_selected(cx, ctx),
+        "clear" => clear_selected(cx, ctx),
+        "download" => download_selected(ctx),
+        "copy" => copy_selected(ctx),
+        _ => {}
     }
-    // This grid lives inside the screen's bordered block, which spends one
-    // cell on each side (measured against the live gateway: a 200-cell
-    // terminal gives the table 198). The core console's routes screen
-    // mounts bare in PageHost's page region and passes the viewport
-    // straight through — one policy, per-screen chrome.
-    // R7.2: cells WRAP onto continuation lines instead of being cut
-    // (the kit's wrapping table); Enter still opens the route editor.
-    let rows: Vec<super::kit::Row> = rows.into_iter().map(super::kit::Row::new).collect();
-    let _ = BLOCK_CHROME;
-    keeper.wire(
-        super::kit::WrapTable::new(rules, rows, sel)
-            .on_activate(on_activate)
-            .layout(LayoutStyle::default().grow(1.0).min_h(2))
-            .element(cx, t),
+}
+
+/// [⤓ Download missing]: EXACTLY the gaps the banner named, one download
+/// each (the web's `downloadRecommended(gaps)`), after a confirm naming them.
+fn download_missing(cx: Scope, ctx: &Ctx) {
+    if !super::util::admin_gate(&ctx.store, "downloading model weights") {
+        return;
+    }
+    let gaps = ctx
+        .store
+        .availability
+        .with_untracked(|a| a.ready().map(|a| a.missing.clone()).unwrap_or_default());
+    if gaps.is_empty() {
+        ctx.store.notice.set(Some(
+            "no route is missing a model — nothing to download".into(),
+        ));
+        return;
+    }
+    let list = gaps
+        .iter()
+        .map(|(_, p, a)| format!("{p} {a}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let c = ctx.clone();
+    super::w::Confirm::plain(
+        format!("Download {list} on the gateway host? Each one runs its provider's own tool."),
+        "Download",
+        "Not now",
     )
+    .open(cx, ctx.ui, move || {
+        for (_, provider, artifact) in gaps {
+            c.send(Cmd::DownloadModel { provider, artifact });
+        }
+    });
+}
+
+/// Copy the selected row's install command (no download verb here).
+fn copy_selected(ctx: &Ctx) {
+    let Some(row) = selected_route(ctx) else {
+        return;
+    };
+    let cmd = ctx.store.availability.with_untracked(|a| {
+        a.ready()
+            .and_then(|a| a.by_route.get(&row.key))
+            .map(|w| w.instruction.trim().to_string())
+    });
+    match cmd.filter(|c| !c.is_empty()) {
+        Some(c) => {
+            copy_to_clipboard(c.clone());
+            ctx.store.notice.set(Some(format!("Copied: {c}")));
+        }
+        None => ctx
+            .store
+            .notice
+            .set(Some(format!("{}: no command to copy", row.key))),
+    }
+}
+
+/// The page's hint pairs (R15: the selected row's actions, then the page's).
+/// The web's store provenance line (console.py renderStoreAuthority):
+/// `(line, tooltip)` when the payload names an AbstractCore store file and
+/// its authority is AbstractCore's, else None (no line at all).
+pub fn store_line(d: &RoutesData) -> Option<(String, String)> {
+    let file = d.config_file.as_deref()?.trim();
+    let authority = d.authority.trim();
+    if file.is_empty() || !authority.starts_with("abstractcore") {
+        return None;
+    }
+    let overlay = authority == "abstractcore.runtime";
+    let label = if overlay {
+        STORE_OVERLAY_LABEL
+    } else {
+        STORE_LABEL
+    };
+    let claim = if overlay {
+        STORE_CLAIM_OVERLAY
+    } else if d.writable {
+        STORE_CLAIM_WRITABLE
+    } else {
+        STORE_CLAIM_READONLY
+    };
+    Some((
+        format!("{label} · {file} — {claim}"),
+        format!("authority: {authority}"),
+    ))
+}
+
+pub const STORE_LABEL: &str = "AbstractCore store";
+pub const STORE_OVERLAY_LABEL: &str = "This runtime's AbstractCore overlay";
+pub const STORE_CLAIM_OVERLAY: &str =
+    "private to this runtime — routes left unset here fall back to the shared AbstractCore store";
+pub const STORE_CLAIM_WRITABLE: &str =
+    "shared with AbstractCore — edits here apply to AbstractCore directly";
+pub const STORE_CLAIM_READONLY: &str =
+    "shared with AbstractCore — read-only from this Gateway; edit it where AbstractCore runs";
+
+pub fn hints(ctx: &Ctx) -> Vec<(&'static str, &'static str)> {
+    let store = ctx.store;
+    let admin = store.conn.with(ConnPhase::is_admin);
+    let _ = ctx.ui.route_sel.get();
+    let mut out = vec![("↑↓", "rows"), ("Enter", "Configure"), ("Tab", "actions")];
+    if let Some(r) = store.routes.with(|d| {
+        d.ready()
+            .and_then(|d| d.rows.get(ctx.ui.route_sel.get()).cloned())
+    }) {
+        let wt = store
+            .availability
+            .with(|a| a.ready().and_then(|a| a.by_route.get(&r.key).cloned()));
+        // Every principal sees the row's verbs; the admin-only ones (w, and
+        // a/m/D below) are folded into "… admin only" for a non-admin by
+        // the footer (`ADMIN_KEYS`).
+        for a in row_actions(&r, wt.as_ref(), false, true) {
+            match a.id {
+                "edit" => out.push(("e", "Edit")),
+                "configure" => out.push(("e", "Configure")),
+                "clear" => out.push(("x", "Clear")),
+                "download" => out.push(("w", "Download")),
+                "copy" => out.push(("c", "Copy")),
+                _ => {}
+            }
+        }
+    }
+    let _ = admin;
+    out.push(("a", "Apply recommended"));
+    out.push(("m", "Download missing"));
+    out.push(("D", "Download all"));
+    out.push(("p", "Recommended for this computer"));
+    out.push(("r", "Refresh"));
+    out
 }
 
 fn selected_route(ctx: &Ctx) -> Option<RouteRow> {
@@ -746,21 +1405,16 @@ fn apply_recommended(cx: Scope, ctx: &Ctx) {
         return;
     }
     let ctx_keep = ctx.clone();
-    let prompt = abstracttui::app::ChoicePrompt::new(
-        "Apply the framework's recommended routes (text, voice, transcription, images, video — what this computer can run) on the execution host?"
-            .to_string(),
-    )
-    .option("keep", "Apply — keep routes I configured")
-    .option("cancel", "Cancel")
-    .initial("keep");
-    super::open_prompt(cx, ctx.ui, prompt, move |outcome| {
-        if let abstracttui::app::ChoiceOutcome::Answered(a) = outcome {
-            if a.selected.first().map(String::as_str) == Some("keep") {
-                ctx_keep.send(Cmd::ApplyRecommendedRoutes { force: false });
-            }
-        }
-    });
+    super::w::Confirm::plain(APPLY_QUESTION, "Apply recommended", "Cancel").open(
+        cx,
+        ctx.ui,
+        move || ctx_keep.send(Cmd::ApplyRecommendedRoutes { force: false }),
+    );
 }
+
+/// The question Apply recommended asks (the first pass never forces: the
+/// routes you configured are kept).
+pub const APPLY_QUESTION: &str = "Apply the framework's recommended routes (text, voice, transcription, images, video — what this computer can run) on the execution host? Routes you configured differently are kept.";
 
 fn status_tone(t: &TokenSet, status: &str) -> Rgba {
     match status {
@@ -798,9 +1452,11 @@ fn open_plan(cx: Scope, ctx: &Ctx) {
     };
     let store = ctx.store;
     let size = super::preview_size(cx);
-    super::open_form(ctx, cx, size, move |mcx, close| {
+    super::w::FormModal::new("Recommended for this computer")
+        .size(size.w.max(76), size.h.max(20))
+        .open(ctx, cx, move |mcx, close, _guard, inner_w| {
         let t = use_theme(mcx).get().tokens;
-        let width = (size.w - 8).max(20) as usize;
+        let width = inner_w.max(20) as usize;
         let mut rows: Vec<View> = Vec::new();
         let current = store.routes.with_untracked(|r| {
             r.ready().and_then(|d| {
@@ -953,7 +1609,7 @@ fn open_plan(cx: Scope, ctx: &Ctx) {
         }
         rows.push(line(vec![span(
             if store.conn.with_untracked(|c| c.is_admin()) {
-                "On Multimodal: a applies the recommended routes (yours are kept) · D downloads all · C cancels it"
+                "On Multimodal: Apply recommended (yours are kept) · Download all · Cancel downloads"
             } else {
                 "Applying the recommended routes and downloading models are admin-only"
             },
@@ -962,10 +1618,6 @@ fn open_plan(cx: Scope, ctx: &Ctx) {
         let c = close.clone();
         Element::new()
             .style(LayoutStyle::column().grow(1.0))
-            .child(line(vec![span_bold(
-                "Recommended for this computer",
-                t.accent,
-            )]))
             .child(
                 Scroll::new(
                     Element::new()
@@ -977,12 +1629,14 @@ fn open_plan(cx: Scope, ctx: &Ctx) {
                 .scrollbar_auto_hide(true)
                 .view(mcx),
             )
-            .child(
-                Button::new("Close")
-                    .on_click(move || c())
-                    .element(mcx, &t)
-                    .build(),
-            )
+            .child(super::w::form::button_row(vec![button(
+                mcx,
+                &t,
+                &Action::label("close", "Close"),
+                On::Raised,
+                true,
+                move || c(),
+            )]))
             .build()
     });
 }
@@ -1024,16 +1678,14 @@ fn download_all(cx: Scope, ctx: &Ctx) {
         .collect::<Vec<_>>()
         .join(", ");
     let ctx2 = ctx.clone();
-    super::confirm_danger(
-        cx,
-        ctx.ui,
+    super::w::Confirm::plain(
         format!(
-            "Download the recommended set on the gateway host? {list}. Models already there              finish at once; the rest run the providers' own tools and may fetch many gigabytes."
+            "Download the recommended set on the gateway host? {list}. Models already there finish at once; the rest run the providers' own tools and may fetch many gigabytes."
         ),
         "Download all",
         "Not now",
-        move || ctx2.send(Cmd::DownloadRecommended),
-    );
+    )
+    .open(cx, ctx.ui, move || ctx2.send(Cmd::DownloadRecommended));
 }
 
 /// `C` — cancel the running Download all (admin; every child stops).
@@ -1073,17 +1725,22 @@ fn cancel_download_all(cx: Scope, ctx: &Ctx) {
 /// `unknown` answer, where guessing would spend the host's disk on a
 /// model that may already be there.
 fn download_selected(ctx: &Ctx) {
-    // `POST /models/download` spends the shared host's disk: admin-only
-    // on the gateway (security/authorization.py, resource "models").
-    if !super::util::admin_gate(&ctx.store, "downloading model weights") {
-        return;
-    }
     let Some(row) = selected_route(ctx) else {
         ctx.store
             .notice
             .set(Some("no route selected — nothing to download".into()));
         return;
     };
+    download_route(ctx, row);
+}
+
+/// Download `row`'s weights (the table's ⤓ and the editor's [Download]).
+fn download_route(ctx: &Ctx, row: RouteRow) {
+    // `POST /models/download` spends the shared host's disk: admin-only
+    // on the gateway (security/authorization.py, resource "models").
+    if !super::util::admin_gate(&ctx.store, "downloading model weights") {
+        return;
+    }
     let weights = ctx
         .store
         .availability
@@ -1177,8 +1834,8 @@ fn confirm_clear(cx: Scope, ctx: &Ctx, row: RouteRow) {
             row.provider.clone().unwrap_or_default(),
             row.model.clone().unwrap_or_default()
         ),
-        "Clear the route",
-        "Keep the override",
+        "Clear",
+        "Cancel",
         move || {
             ctx2.send(Cmd::ClearRoute {
                 kind: row.kind,
@@ -1250,6 +1907,63 @@ pub fn voice_test_run_id_for(tenant: &str, user: &str) -> String {
 
 /// The (provider, model) the form currently resolves to — EXACTLY the
 /// Save handler's resolution (placeholder/blank picks → None). Tracked
+/// The route's saved (provider, model), the editor's preselect.
+pub type SavedPair = (Option<String>, String);
+
+/// The model list the editor offers under provider `name`: the discovered
+/// models, plus the route's CONFIGURED model when it is saved under this
+/// provider but not discovered (a recommended model before its download):
+/// the picker keeps it — it never falls back to "choose a model…".
+pub fn model_list(models: &[String], name: &str, saved: &SavedPair) -> Vec<String> {
+    let mut out = models.to_vec();
+    if let Some(extra) = undiscovered(models, name, saved) {
+        out.push(extra);
+    }
+    out
+}
+
+/// The configured model when it is not in `name`'s discovered list.
+pub fn undiscovered(models: &[String], name: &str, saved: &SavedPair) -> Option<String> {
+    let (p, m) = saved;
+    (p.as_deref() == Some(name) && !m.is_empty() && !models.iter().any(|x| x == m))
+        .then(|| m.clone())
+}
+
+/// The web's discovery catalog scope of a route (console.py
+/// defaultCatalogForRow `scope`), for its sentences.
+pub fn catalog_scope(row: &RouteRow) -> &'static str {
+    let task = row.task.as_deref().unwrap_or("");
+    match (row.kind.as_str(), row.modality.as_str()) {
+        ("embedding", "text") => "embedding.text",
+        ("embedding", "image") => "image embeddings",
+        ("output", "image") => match task {
+            "image_to_image" => "image edit",
+            "image_upscale" => "image restore / upscale",
+            _ => "image generation",
+        },
+        ("output", "video") => match task {
+            "image_to_video" => "image to video",
+            _ => "video generation",
+        },
+        ("input", "image") => "image input",
+        ("input", "video") => "video input",
+        ("input", "sound") | ("input", "audio") => "audio input",
+        ("input", "music") => "music input",
+        ("output", "voice") | ("output", "audio") => "voice generation",
+        ("input", "voice") => "speech transcription",
+        ("output", "sound") => "sound effects generation",
+        (_, "scene3d") => "3D scene generation",
+        ("output", "music") => "music generation",
+        _ => "text generation",
+    }
+}
+
+/// The web's sentence for a configured model the provider's catalog does
+/// not list (console.py loadDefaultModels).
+pub fn undiscovered_sentence(model: &str, scope: &str, provider: &str) -> String {
+    format!("Configured model \"{model}\" is not currently in the discovered {scope} catalog for {provider}.")
+}
+
 /// reads: effects using this re-fire on any pick change.
 #[allow(clippy::too_many_arguments)]
 fn picked_pair(
@@ -1260,6 +1974,7 @@ fn picked_pair(
     prov_custom: Signal<String>,
     model_ix: Signal<usize>,
     model_custom: Signal<String>,
+    saved: &SavedPair,
 ) -> Option<(String, String)> {
     let ix = prov_ix.get();
     if ix == 0 {
@@ -1289,7 +2004,11 @@ fn picked_pair(
             store.models.with(|m| {
                 m.get(&prov_options[ix - 1])
                     .and_then(|l| l.ready())
-                    .and_then(|ms| ms.get(mix - 1).cloned())
+                    .and_then(|ms| {
+                        model_list(ms, &prov_options[ix - 1], saved)
+                            .get(mix - 1)
+                            .cloned()
+                    })
             })?
         } else {
             let mc = model_custom.get().trim().to_string();
@@ -1517,6 +2236,41 @@ fn speculation_options(text: &str, ix: usize) -> Result<String, String> {
     })
 }
 
+/// The editor's title and purpose line (the web modal's words).
+pub const DIALOG_TITLE: &str = "Configure capability default";
+pub const DIALOG_LEAD: &str = "Select a provider and one of its discovered models.";
+/// The mode choice (the fabricated-selection law: default vs override).
+pub const MODE_LABELS: [&str; 2] = [
+    "use default (engine decides)",
+    "override: pick provider + model",
+];
+/// The editor buttons' tooltips (the web's `title`).
+pub const CLEAR_TIP: &str = "Remove this override — the route falls back to what it inherits";
+pub const TEST_TIP: &str = "Test this selection with a real generation through the production lane — for voice routes, hear the selected voice before saving";
+pub const SAVE_TIP: &str = "Persist this provider/model as the capability default";
+
+/// The editor's buttons in the web's order (Cancel · Clear · Test · Save),
+/// each refused with its reason while it cannot act.
+pub fn editor_actions(
+    save: Result<(), String>,
+    test: Result<(), String>,
+    clear: Result<(), String>,
+) -> Vec<Action> {
+    let mut c = Action::label("clear", "Clear").tooltip(CLEAR_TIP).danger();
+    c.enabled = clear;
+    let mut te = Action::label("test", "Test").tooltip(TEST_TIP);
+    te.enabled = test;
+    let mut sv = Action::label("save", "Save").tooltip(SAVE_TIP);
+    sv.enabled = save;
+    vec![Action::label("cancel", "Cancel"), c, te, sv]
+}
+
+/// A labelled row of the editor (the label column fits "Options (JSON,
+/// optional)", the web's longest label).
+fn efield(t: &TokenSet, label: &str, child: View) -> View {
+    super::util::field_w(t, label, 25, child)
+}
+
 pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
     let store = ctx.store;
     let providers = super::providers::provider_names(&store);
@@ -1530,7 +2284,10 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
     store.voices.set(Loadable::NotAsked);
     store.route_test.set(Loadable::NotAsked);
 
-    super::open_form_guarded(ctx, cx, Size::new(78, 27), move |mcx, close, guard| {
+    super::w::FormModal::new(DIALOG_TITLE)
+        .lead(DIALOG_LEAD)
+        .size(86, 36)
+        .open(ctx, cx, move |mcx, close, guard, inner_w| {
         let theme = use_theme(mcx);
         let t0 = theme.get().tokens;
         let row2 = row.clone();
@@ -1570,6 +2327,9 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
         // ---- model picker (per provider; resets on provider change) ---
         let model_ix = mcx.signal(if explicit { usize::MAX } else { 0usize });
         let model_custom = mcx.signal(row.model.clone().unwrap_or_default());
+        // The route's saved pair (the picker keeps an undiscovered saved model).
+        let saved_sig: Signal<SavedPair> =
+            mcx.signal((row.provider.clone(), row.model.clone().unwrap_or_default()));
         // ---- voice picker (output.voice only; sentinel = resolve the
         // saved options.voice against the list once it arrives) --------
         let voice_ix = mcx.signal(usize::MAX);
@@ -1689,7 +2449,12 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                 match ready {
                     Some(models) if !models.is_empty() => {
                         let pos = if Some(&name) == saved_provider.as_ref() {
-                            models.iter().position(|m| *m == saved_model).map(|i| i + 1)
+                            let list = model_list(
+                                &models,
+                                &name,
+                                &(saved_provider.clone(), saved_model.clone()),
+                            );
+                            list.iter().position(|m| *m == saved_model).map(|i| i + 1)
                         } else {
                             None
                         };
@@ -1721,6 +2486,7 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                     prov_custom,
                     model_ix,
                     model_custom,
+                    &saved_sig.get_untracked(),
                 ) else {
                     return;
                 };
@@ -1769,26 +2535,27 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
         let ctx_save = ctx2.clone();
         let ctx_clear = ctx2.clone();
         let close_cancel = close.clone();
+        let guard_cancel = guard.clone();
 
         Element::new()
-            .style(LayoutStyle::column().gap(0))
+            .style(LayoutStyle::column().gap(0).grow(1.0))
             .child(line(vec![span_bold(
                 format!("Route — {} ({})", row2.label, row2.key),
                 t0.accent,
             )]))
             .child(applies_now(&t0, &row2))
             .child(line(vec![span(String::new(), t0.text)]))
-            .child(field(
+            .child(efield(
                 &t0,
-                "mode",
-                RadioGroup::new(vec![
-                    "use default (engine decides)".to_string(),
-                    "override: pick provider + model".to_string(),
-                ])
-                .selection(mode)
-                .element(mcx, &t0)
-                .autofocus()
-                .build(),
+                "Mode",
+                // One Tab stop per segment (A1): Tab reaches a segment,
+                // Enter/Space or a click picks it; ←/→ are never taken.
+                super::w::Segmented::new(MODE_LABELS, Some(mode.get_untracked()))
+                    .vertical(true)
+                    .bind(mode)
+                    .autofocus_chosen(true)
+                    .on_pick(move |i| mode.set(i))
+                    .view(mcx, &t0),
             ))
             // ---- override controls -------------------------------------
             // Granularity is deliberate: the OUTER region reads only the
@@ -1798,8 +2565,10 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
             // regions.
             .child({
                 let ctx_retry = ctx2.clone();
+                let dl_row = row2.clone();
                 dyn_view_scoped(LayoutStyle::column().gap(0), move |gcx| {
                     let ctx_retry = ctx_retry.clone();
+                    let dl_row = dl_row.clone();
                     let t = theme.get().tokens;
                     if mode.get() != 1 {
                         return Element::new()
@@ -1815,9 +2584,9 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                     let ctx_vr = ctx_retry.clone();
                     Element::new()
                         .style(LayoutStyle::column().gap(0))
-                        .child(field(
+                        .child(efield(
                             &t,
-                            "provider",
+                            "Provider",
                             Select::new(prov_select_options.clone())
                                 .value(prov_ix)
                                 .on_change(move |_| {
@@ -1836,9 +2605,9 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                             if prov_ix.get() != custom_row {
                                 return Element::new().style(LayoutStyle::default().h(0)).build();
                             }
-                            field(
+                            efield(
                                 &t,
-                                "provider name",
+                                "Provider name",
                                 TextInput::new()
                                     .value(prov_custom)
                                     .placeholder("e.g. supertonic, mlx-gen, faster-whisper")
@@ -1852,20 +2621,21 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                         // otherwise.
                         .child(dyn_view_scoped(LayoutStyle::column(), move |g2| {
                             let ctx_retry = ctx_retry.clone();
+                            let dl_row = dl_row.clone();
                             let t = theme.get().tokens;
                             let ix = prov_ix.get();
                             let is_custom = ix == custom_row;
                             if ix == 0 {
-                                return field(
+                                return efield(
                                     &t,
-                                    "model",
+                                    "Model",
                                     line(vec![span("choose a provider first", t.text_faint)]),
                                 );
                             }
                             if is_custom {
-                                return field(
+                                return efield(
                                     &t,
-                                    "model",
+                                    "Model",
                                     TextInput::new()
                                         .value(model_custom)
                                         .placeholder("model id for that provider")
@@ -1882,26 +2652,82 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                 .unwrap_or(Loadable::NotAsked);
                             match entry {
                                 Loadable::Ready(models) if !models.is_empty() => {
+                                    let saved = saved_sig.get_untracked();
+                                    let list = model_list(&models, &chosen_name, &saved);
                                     let opts: Vec<SelectOption> =
                                         std::iter::once(SelectOption::new("choose a model…"))
                                             .chain(
-                                                models.iter().map(|m| SelectOption::new(m.clone())),
+                                                list.iter().map(|m| SelectOption::new(m.clone())),
                                             )
                                             .collect();
-                                    field(
+                                    let picker = efield(
                                         &t,
-                                        "model",
+                                        "Model",
                                         Combobox::new(opts)
                                             .value(model_ix)
                                             .placeholder("type to filter models…")
                                             .layout(LayoutStyle::default().w(52).h(1).shrink(0.0))
                                             .element(g2, &t)
                                             .build(),
-                                    )
+                                    );
+                                    // The configured model is not in the
+                                    // discovered catalog (e.g. before its
+                                    // download): the web's sentence, and
+                                    // the route's Download when it has one.
+                                    let Some(m) = undiscovered(&models, &chosen_name, &saved) else {
+                                        return picker;
+                                    };
+                                    let mut col = Element::new()
+                                        .style(LayoutStyle::column())
+                                        .child(picker)
+                                        .child(efield(
+                                            &t,
+                                            "",
+                                            super::w::form::sentence(
+                                                &t,
+                                                &undiscovered_sentence(
+                                                    &m,
+                                                    catalog_scope(&dl_row),
+                                                    &chosen_name,
+                                                ),
+                                                52,
+                                                t.error,
+                                            ),
+                                        ));
+                                    let weights = store.availability.with(|d| {
+                                        d.ready().and_then(|a| a.by_route.get(&dl_row.key).cloned())
+                                    });
+                                    let admin = store.conn.with(ConnPhase::is_admin);
+                                    let downloading = match (store.download.get(), weights.as_ref()) {
+                                        (Some(d), Some(wt)) => {
+                                            d.running()
+                                                && d.provider == wt.provider
+                                                && d.artifact == wt.artifact
+                                        }
+                                        _ => false,
+                                    };
+                                    if let Some(a) = row_actions(&dl_row, weights.as_ref(), downloading, admin)
+                                        .into_iter()
+                                        .find(|a| a.id == "download")
+                                    {
+                                        let a = Action::label("download", "Download")
+                                            .tooltip(a.tooltip.clone().unwrap_or_default())
+                                            .refused(a.enabled.clone().err());
+                                        let c = ctx_retry.clone();
+                                        let r = dl_row.clone();
+                                        col = col.child(efield(
+                                            &t,
+                                            "",
+                                            button(g2, &t, &a, On::Raised, true, move || {
+                                                download_route(&c, r.clone())
+                                            }),
+                                        ));
+                                    }
+                                    col.build()
                                 }
-                                Loadable::Loading | Loadable::NotAsked => field(
+                                Loadable::Loading | Loadable::NotAsked => efield(
                                     &t,
-                                    "model",
+                                    "Model",
                                     line(vec![span("⟳ discovering models…", t.info)]),
                                 ),
                                 // Discovery FAILED ≠ "endpoint has no
@@ -1916,9 +2742,9 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                     let ctx_btn = ctx_retry.clone();
                                     Element::new()
                                         .style(LayoutStyle::column())
-                                        .child(field(
+                                        .child(efield(
                                             &t,
-                                            "model",
+                                            "Model",
                                             TextInput::new()
                                                 .value(model_custom)
                                                 .placeholder("discovery failed — type the model id")
@@ -1927,7 +2753,7 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                                 .element(g2, &t)
                                                 .build(),
                                         ))
-                                        .child(field(
+                                        .child(efield(
                                             &t,
                                             "",
                                             line(vec![span(
@@ -1935,25 +2761,29 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                                 t.error,
                                             )]),
                                         ))
-                                        .child(field(
+                                        .child(efield(
                                             &t,
                                             "",
-                                            Button::new("Retry model discovery")
-                                                .on_click(move || {
+                                            button(
+                                                g2,
+                                                &t,
+                                                &Action::label("retry_models", "Retry model discovery"),
+                                                On::Raised,
+                                                true,
+                                                move || {
                                                     let n = name_btn.clone();
                                                     ctx_btn.store.models.update(|m| {
                                                         drop(m.insert(n.clone(), Loadable::Loading))
                                                     });
                                                     ctx_btn.send(Cmd::LoadModels { provider: n });
-                                                })
-                                                .element(g2, &t)
-                                                .build(),
+                                                },
+                                            ),
                                         ))
                                         .build()
                                 }
-                                Loadable::Ready(_) => field(
+                                Loadable::Ready(_) => efield(
                                     &t,
-                                    "model",
+                                    "Model",
                                     TextInput::new()
                                         .value(model_custom)
                                         .placeholder("no discoverable models — type the model id")
@@ -1975,10 +2805,11 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                             let Some(pair) = picked_pair(
                                 &store, &prov_vp, custom_row, prov_ix, prov_custom, model_ix,
                                 model_custom,
+                                &saved_sig.get_untracked(),
                             ) else {
-                                return field(
+                                return efield(
                                     &t,
-                                    "voice",
+                                    "Voice",
                                     line(vec![span(
                                         "pick provider + model first — voices are per-pair",
                                         t.text_faint,
@@ -1990,9 +2821,9 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                     if d.voices.is_empty() {
                                         // The reason when the gateway gave
                                         // one (not installed / needs a key).
-                                        return field(
+                                        return efield(
                                             &t,
-                                            "voice",
+                                            "Voice",
                                             match &d.unavailable_reason {
                                                 Some(why) => {
                                                     let lines = super::util::wrap_text(why, 52);
@@ -2019,9 +2850,9 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                     .chain(d.voices.iter().map(|v| SelectOption::new(v.clone())))
                                     .collect();
                                     let voices_list = d.voices.clone();
-                                    field(
+                                    efield(
                                         &t,
-                                        "voice",
+                                        "Voice",
                                         Combobox::new(opts)
                                             .value(voice_ix)
                                             .placeholder("type to filter voices…")
@@ -2043,19 +2874,24 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                     let pair_btn = pair.clone();
                                     Element::new()
                                         .style(LayoutStyle::column())
-                                        .child(field(
+                                        .child(efield(
                                             &t,
-                                            "voice",
+                                            "Voice",
                                             line(vec![span(
                                                 format!("voice catalog failed: {}", e.message),
                                                 t.error,
                                             )]),
                                         ))
-                                        .child(field(
+                                        .child(efield(
                                             &t,
                                             "",
-                                            Button::new("Retry voice catalog")
-                                                .on_click(move || {
+                                            button(
+                                                g2,
+                                                &t,
+                                                &Action::label("retry_voices", "Retry voice catalog"),
+                                                On::Raised,
+                                                true,
+                                                move || {
                                                     voices_req.set(Some(pair_btn.clone()));
                                                     ctx_btn
                                                         .store
@@ -2065,11 +2901,10 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                                         provider: pair_btn.0.clone(),
                                                         model: pair_btn.1.clone(),
                                                     });
-                                                })
-                                                .element(g2, &t)
-                                                .build(),
+                                                },
+                                            ),
                                         ))
-                                        .child(field(
+                                        .child(efield(
                                             &t,
                                             "",
                                             line(vec![span(
@@ -2079,19 +2914,19 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                         ))
                                         .build()
                                 }
-                                _ => field(
+                                _ => efield(
                                     &t,
-                                    "voice",
+                                    "Voice",
                                     line(vec![span("⟳ loading voices…", t.info)]),
                                 ),
                             }
                         }))
-                        .child(field(
+                        .child(efield(
                             &t,
-                            "base URL",
+                            "Base URL (optional)",
                             TextInput::new()
                                 .value(base_url)
-                                .placeholder("optional — endpoint override")
+                                .placeholder("inherit from the provider — e.g. http://localhost:1234/v1")
                                 .layout(LayoutStyle::default().w(52).h(1))
                                 .element(gcx, &t)
                                 .build(),
@@ -2101,9 +2936,9 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                         // other route, exactly as the web console hides
                         // it. `not set` clears the stored effort.
                         .child(if is_text {
-                            field(
+                            efield(
                                 &t,
-                                "reasoning",
+                                "Reasoning",
                                 Select::new(
                                     std::iter::once(SelectOption::new("not set"))
                                         .chain(
@@ -2121,20 +2956,20 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                         } else {
                             Element::new().style(LayoutStyle::default().h(0)).build()
                         })
-                        .child(field(
+                        .child(efield(
                             &t,
-                            "options (JSON)",
+                            "Options (JSON, optional)",
                             TextInput::new()
                                 .value(options_json)
-                                .placeholder("optional — e.g. {\"voice\": \"M3\"}")
+                                .placeholder("{\"temperature\": 0.7}")
                                 .layout(LayoutStyle::default().w(52).h(1))
                                 .element(gcx, &t)
                                 .build(),
                         ))
                         .child(if is_text {
-                            field(
+                            efield(
                                 &t,
-                                "MTP default",
+                                "MTP",
                                 Select::new(["inherit", "off", "depth 2", "depth 3", "depth 4", "depth 5", "custom (JSON)"]
                                     .iter().map(|label| SelectOption::new(*label)).collect::<Vec<_>>())
                                     .value(speculation_ix)
@@ -2186,7 +3021,10 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                 },
             ))
             .child(dyn_view_scoped(
-                LayoutStyle::default().h(1).shrink(0.0),
+                LayoutStyle::default()
+                    .width(Dimension::Cells(inner_w))
+                    .height(Dimension::Cells(1))
+                    .shrink(0.0),
                 move |gcx| {
                     let t = theme.get().tokens;
                     let overriding = mode.get() == 1;
@@ -2218,8 +3056,6 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                     };
                     let busy_form = in_flight.get();
                     let testing = matches!(store.route_test.get(), Loadable::Loading);
-                    let save_enabled = overriding && provider_ok && model_ok && !busy_form;
-                    let test_enabled = overriding && provider_ok && model_ok && !testing;
                     let clear_enabled = !overriding
                         && row_for_clear.configured
                         && row_for_clear.covered_by.is_none()
@@ -2237,12 +3073,30 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                     let prov_options_t = prov_options_d.clone();
                     let close_b = close_cancel.clone();
                     let close_after_clear = close_cancel.clone();
-                    Element::new()
-                        .style(LayoutStyle::row().gap(2))
-                        .child(
-                            Button::new("Save override")
-                                .disabled(!save_enabled)
-                                .on_click(move || {
+                    let save_why = if !overriding {
+                        Err("pick \"override\" first — the default mode has nothing to save".to_string())
+                    } else if !(provider_ok && model_ok) {
+                        Err("choose a provider and model first".to_string())
+                    } else if busy_form {
+                        Err("saving…".to_string())
+                    } else {
+                        Ok(())
+                    };
+                    let test_why = if !overriding || !(provider_ok && model_ok) {
+                        Err("pick provider + model first".to_string())
+                    } else if testing {
+                        Err("a test is running".to_string())
+                    } else {
+                        Ok(())
+                    };
+                    let clear_why = if clear_enabled {
+                        Ok(())
+                    } else if overriding {
+                        Err("pick \"use default\" first — Clear removes the override".to_string())
+                    } else {
+                        Err("this route has no override to clear".to_string())
+                    };
+                    let mut on_save: Box<dyn FnMut()> = Box::new(move || {
                                     if in_flight.get_untracked() {
                                         return; // a write is already running
                                     }
@@ -2260,6 +3114,7 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                         prov_custom,
                                         model_ix,
                                         model_custom,
+                                        &saved_sig.get_untracked(),
                                     ) else {
                                         form_error.set(Some(
                                             "choose a provider and model first".into(),
@@ -2306,17 +3161,8 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                         key: row3.key.clone(),
                                         form_id: Some(form_id),
                                     });
-                                })
-                                .element(gcx, &t)
-                                .build(),
-                        )
-                        .child(
-                            // Test auditions the CURRENT UNSAVED picks
-                            // through the production lane — proving the
-                            // selection before it is stored (web parity).
-                            Button::new("Test")
-                                .disabled(!test_enabled)
-                                .on_click(move || {
+                                });
+                    let mut on_test: Box<dyn FnMut()> = Box::new(move || {
                                     let Some((provider, model)) = picked_pair(
                                         &ctx_t.store,
                                         &prov_options_t,
@@ -2325,6 +3171,7 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                         prov_custom,
                                         model_ix,
                                         model_custom,
+                                        &saved_sig.get_untracked(),
                                     ) else {
                                         form_error
                                             .set(Some("pick provider + model first".into()));
@@ -2369,34 +3216,70 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                         controls,
                                         voice_run_id: voice_test_run_id(&ctx_t.store),
                                     });
-                                })
-                                .element(gcx, &t)
-                                .build(),
+                                });
+                    let on_clear = move || {
+                        close_after_clear();
+                        confirm_clear(screen_cx, &ctx_c, row4.clone());
+                    };
+                    let guard_c = guard_cancel.clone();
+                    let on_cancel = move || {
+                        // Cancel asks first when edits are unsaved (R15 F2).
+                        let handled = guard_c.borrow().as_ref().map(|g| g()).unwrap_or(false);
+                        if !handled {
+                            close_b();
+                        }
+                    };
+                    let mut on_cancel = Some(on_cancel);
+                    let mut on_clear = Some(on_clear);
+                    let acts = editor_actions(save_why, test_why, clear_why);
+                    // Right-aligned by arithmetic, not by a flex spacer: the
+                    // spacer is the inner width minus the buttons and their
+                    // gaps (a grow spacer rendered at 0 on some first frames).
+                    let bw: i32 = acts.iter().map(|a| a.width()).sum::<i32>() + acts.len() as i32 - 1;
+                    let mut views = Vec::new();
+                    for a in acts {
+                        let v = match a.id {
+                            "cancel" => {
+                                let f = on_cancel.take().expect("once");
+                                button(gcx, &t, &a, On::Raised, true, f)
+                            }
+                            "clear" => {
+                                let f = on_clear.take().expect("once");
+                                button(gcx, &t, &a, On::Raised, true, f)
+                            }
+                            "test" => {
+                                let f = std::mem::replace(&mut on_test, Box::new(|| {}) as Box<dyn FnMut()>);
+                                button(gcx, &t, &a, On::Raised, true, f)
+                            }
+                            _ => {
+                                let f = std::mem::replace(&mut on_save, Box::new(|| {}) as Box<dyn FnMut()>);
+                                button(gcx, &t, &a, On::Raised, true, f)
+                            }
+                        };
+                        views.push(v);
+                    }
+                    let mut row = Element::new()
+                        .style(
+                            LayoutStyle::row()
+                                .width(Dimension::Cells(inner_w))
+                                .height(Dimension::Cells(1))
+                                .gap(1)
+                                .shrink(0.0),
                         )
                         .child(
-                            Button::new("Clear override")
-                                .disabled(!clear_enabled)
-                                .on_click(move || {
-                                    // ONE policy for a destructive clear:
-                                    // the same danger confirm as the
-                                    // table's x. Close this editor first
-                                    // (prompt-over-modal would stack two
-                                    // modals — the engine hazard), then
-                                    // prompt on the SCREEN scope, which
-                                    // outlives the editor.
-                                    close_after_clear();
-                                    confirm_clear(screen_cx, &ctx_c, row4.clone());
-                                })
-                                .element(gcx, &t)
+                            Element::new()
+                                .style(
+                                    LayoutStyle::default()
+                                        .width(Dimension::Cells((inner_w - bw - 1).max(0)))
+                                        .height(Dimension::Cells(1))
+                                        .shrink(0.0),
+                                )
                                 .build(),
-                        )
-                        .child(
-                            Button::new("Cancel (Esc)")
-                                .on_click(move || close_b())
-                                .element(gcx, &t)
-                                .build(),
-                        )
-                        .build()
+                        );
+                    for v in views {
+                        row = row.child(v);
+                    }
+                    row.build()
                 },
             ))
             .build()

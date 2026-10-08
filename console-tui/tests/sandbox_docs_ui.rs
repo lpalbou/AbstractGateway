@@ -189,6 +189,18 @@ impl H {
         self.turns(3);
         self.focus_prompt();
     }
+    /// R15: a synthesized mouse click on the first `text` on screen.
+    fn click(&mut self, text: &str) -> String {
+        let s = self.turns(1);
+        let (row, col) = s
+            .lines()
+            .enumerate()
+            .find_map(|(i, l)| l.find(text).map(|c| (i, l[..c].chars().count())))
+            .unwrap_or_else(|| panic!("{text:?} not on screen:\n{s}"));
+        let (x, y) = (col + 2, row + 1);
+        self.type_text(&format!("\x1b[<0;{x};{y}M\x1b[<0;{x};{y}m"));
+        self.turns(3)
+    }
     /// The prompt never autofocuses (REVIEW-1 M1: a parked caret ate the
     /// screen keys, and the mode switch re-mounts it): put the caret there
     /// the way an operator does, with a click on its field column.
@@ -252,9 +264,11 @@ fn image_mode_dispatches_the_web_route_and_renders_the_saved_file() {
         s.contains("Image will use mlx-gen / test-flux."),
         "the media route line names the configured pair:\n{s}"
     );
-    assert!(
-        s.contains("Image — test-flux"),
-        "the mode picker shows the mode + model:\n{s}"
+    // R15: the Output segment's tooltip is the web's "<mode>: <pair>".
+    assert!(s.contains(" Image "), "the Image segment:\n{s}");
+    assert_eq!(
+        abstractgateway_console::ui::sandbox::mode_tips(Some(&routes().rows))[1],
+        "Image: mlx-gen / test-flux"
     );
     h.type_text("\r");
     h.turns(2);
@@ -344,12 +358,17 @@ fn voice_carries_route_voice_and_unconfigured_modes_refuse() {
     h.review();
     let s = h.turns(2);
     assert!(
-        s.contains("Music — not configured"),
-        "picker labels the gap:\n{s}"
+        s.contains("Music is not configured yet."),
+        "the route line names the gap:\n{s}"
+    );
+    assert_eq!(
+        abstractgateway_console::ui::sandbox::mode_tips(Some(&routes().rows))[3],
+        "Music: not configured"
     );
     h.type_text("jazz\r");
     h.turns(2);
-    let notice = h.store.notice.get_untracked().unwrap_or_default();
+    // R15: refusals sit inline under the action bar (adversary note c).
+    let notice = abstractgateway_console::ui::sandbox::refusal_now().unwrap_or_default();
     assert!(
         notice.contains("output.music is not configured"),
         "names the refusal: {notice}"
@@ -363,7 +382,7 @@ fn voice_carries_route_voice_and_unconfigured_modes_refuse() {
     h.focus_prompt();
     h.type_text("waves\r");
     h.turns(2);
-    let notice = h.store.notice.get_untracked().unwrap_or_default();
+    let notice = abstractgateway_console::ui::sandbox::refusal_now().unwrap_or_default();
     assert!(
         notice.contains("not offered by this gateway"),
         "absent route refusal: {notice}"
@@ -401,9 +420,14 @@ fn video_task_row_inherits_the_parent_like_the_server() {
         s.contains("Video will use mlx-gen / test-ltx (inherited from output.video)."),
         "the route line names the inherited pair and its source:\n{s}"
     );
-    assert!(
-        s.contains("Video — test-ltx"),
-        "the picker shows it ready:\n{s}"
+    let rows = h
+        .store
+        .routes
+        .with_untracked(|r| r.ready().unwrap().rows.clone());
+    assert_eq!(
+        abstractgateway_console::ui::sandbox::mode_tips(Some(&rows))[5],
+        "Video: mlx-gen / test-ltx",
+        "the Video segment's tooltip names the ready pair"
     );
     h.type_text("\r");
     h.turns(2);
@@ -439,9 +463,14 @@ fn partial_task_row_stops_resolution_and_refuses() {
     h.ui.sb_prompt.set("a fox".into());
     h.review();
     let s = h.turns(2);
-    assert!(
-        s.contains("Image — not ready"),
-        "picker says not ready:\n{s}"
+    let rows = h
+        .store
+        .routes
+        .with_untracked(|r| r.ready().unwrap().rows.clone());
+    assert_eq!(
+        abstractgateway_console::ui::sandbox::mode_tips(Some(&rows))[1],
+        "Image: not configured",
+        "the Image segment says it cannot run"
     );
     assert!(
         s.contains("output.image.text_to_image is not ready"),
@@ -449,7 +478,8 @@ fn partial_task_row_stops_resolution_and_refuses() {
     );
     h.type_text("\r");
     h.turns(2);
-    let notice = h.store.notice.get_untracked().unwrap_or_default();
+    // R15: refusals sit inline under the action bar (adversary note c).
+    let notice = abstractgateway_console::ui::sandbox::refusal_now().unwrap_or_default();
     assert!(
         notice.contains("has settings but no provider + model"),
         "refusal names the reason: {notice}"
@@ -588,10 +618,15 @@ fn f2_docs_assistant_asks_and_renders() {
     h.connect();
     h.type_text("\x1bOQ");
     let s = h.turns(3);
-    assert!(s.contains("Docs assistant"), "modal opens:\n{s}");
+    // R15: the kit's right-edge drawer (title, head buttons, footer).
+    assert!(s.contains("Docs assistant"), "drawer opens:\n{s}");
     assert!(
-        s.contains("grounded on the gateway's own documentation"),
-        "note:\n{s}"
+        s.contains("Past conversations") && s.contains("New conversation"),
+        "head buttons:\n{s}"
+    );
+    assert!(
+        s.contains("Grounded on AbstractGateway’s documentation"),
+        "footer:\n{s}"
     );
     h.type_text("how do I add a provider?\r");
     let s = h.turns(3);
@@ -605,13 +640,13 @@ fn f2_docs_assistant_asks_and_renders() {
             // The conversation's own session: the gateway replays its turns.
             assert_eq!(session_id, h.store.docs.session_id.get_untracked());
             assert!(
-                session_id.starts_with("gateway-console-docs-assistant:"),
+                session_id.starts_with("gateway-docs-assistant:"),
                 "{session_id}"
             );
         }
         other => panic!("expected DocsAsk, got {other:?}"),
     }
-    assert!(s.contains("Thinking"), "pending turn renders:\n{s}");
+    assert!(s.contains("Answering…"), "pending turn renders:\n{s}");
     // A second ask while one is in flight is refused.
     h.type_text("again\r");
     h.turns(2);
@@ -671,12 +706,8 @@ fn attachments_upload_on_the_session_and_ride_the_next_turn() {
     h.store.routes.set(Loadable::Ready(routes()));
     text_ready(&mut h);
     h.review();
-    for _ in 0..4 {
-        h.type_text("\t");
-        h.turns(1);
-    }
-    h.type_text("\r");
-    let s = h.turns(3);
+    // R15: the Attach button, by mouse.
+    let s = h.click(" Attach ");
     assert!(
         s.contains("Attach a file to the next text turn"),
         "attach dialog opens:\n{s}"
@@ -759,12 +790,7 @@ fn speak_sends_the_reply_through_the_voice_lane() {
     }));
     let s = h.turns(2);
     assert!(s.contains("Speak"), "Speak offered on a reply:\n{s}");
-    for _ in 0..5 {
-        h.type_text("\t");
-        h.turns(1);
-    }
-    h.type_text("\r");
-    h.turns(2);
+    h.click(" Speak ");
     match h.find_cmd(|c| matches!(c, Cmd::SandboxSpeak { .. })) {
         Some(Cmd::SandboxSpeak { request }) => {
             assert_eq!(request.leaf, "voice/tts");
@@ -816,7 +842,8 @@ fn mtp_depths_follow_the_capabilities_probe() {
     h.turns(2);
     h.type_text("\r");
     h.turns(2);
-    let notice = h.store.notice.get_untracked().unwrap_or_default();
+    // R15: refusals sit inline under the action bar (adversary note c).
+    let notice = abstractgateway_console::ui::sandbox::refusal_now().unwrap_or_default();
     assert!(
         notice.contains("MTP depth 3 is not available")
             && notice.contains("depth 2 only on this host"),
@@ -835,17 +862,11 @@ fn mtp_depths_follow_the_capabilities_probe() {
         }
         other => panic!("expected SandboxTest, got {other:?}"),
     }
-    // Options dialog: the reason line renders.
-    h.store.sandbox.set(Loadable::NotAsked); // Generate enabled again (tab order)
-    h.turns(2);
-    for _ in 0..3 {
-        h.type_text("\t");
-        h.turns(1);
-    }
-    h.type_text("\r");
+    // R15: the MTP control is inline; its availability line renders under it.
+    h.store.sandbox.set(Loadable::NotAsked);
     let s = h.turns(3);
     assert!(
-        s.contains("Sandbox text options") && s.contains("depths 2 available"),
-        "options dialog:\n{s}"
+        s.contains("MTP: depths 2 available"),
+        "the inline MTP line:\n{s}"
     );
 }

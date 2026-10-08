@@ -1106,9 +1106,7 @@ fn routes_model_step_shows_the_plan_and_downloads_all() {
         s.contains("Download the recommended set"),
         "confirm first:\n{s}"
     );
-    // Danger confirm defaults to keep → Up to "Download all".
-    h.key(b"\x1b[Z"); // Shift+Tab to the action button
-    h.turn();
+    // R15: a download confirm is a plain one — focus on [Download all].
     h.type_text("\r");
     h.turns(2);
     let cmds = h.drain_cmds();
@@ -1197,7 +1195,9 @@ fn routes_show_the_unavailable_reason_and_the_plan_lists_it() {
         .set(Loadable::Ready(availability_with_plan()));
     h.ui.route_sel.set(1);
     let s = h.turns(3);
-    assert!(s.contains("unavailable here"), "state column:\n{s}");
+    // R15: the web's status pill says "not configured"; the reason rides
+    // the selected-row line.
+    assert!(s.contains("not configured"), "state column:\n{s}");
     assert!(
         s.contains("the recommended mlx-gen · AbstractFramework/flux.2-klein-4b-8bit cannot run on this computer: MLX-Gen image generation needs MLX"),
         "selected-row reason:\n{s}"
@@ -1639,7 +1639,12 @@ fn routes_table_renders_states_distinctly() {
         "an unconfigured row says so — 'default' read as 'a default is \
          set' on a screen literally about defaults:\n{s}"
     );
-    assert!(s.contains("writable"), "authority banner:\n{s}");
+    // R15: a writable store makes no claim (the web's store line needs the
+    // payload's config_file); only a read-only store is said.
+    assert!(
+        !s.lines().any(|l| l.trim() == "writable") && !s.contains("read-only"),
+        "no bare authority word:\n{s}"
+    );
     assert!(s.contains("supertonic-3"), "route model cell:\n{s}");
     // No double-width emoji in a table cell: the padlock measures 2
     // cells and terminals draw it at their own advance, sliding every
@@ -1719,8 +1724,11 @@ fn route_editor_override_flow_sends_put_with_picked_pair() {
     h.type_text("\r");
     h.turns(2);
 
-    // Mode radio has focus first: Down switches to override.
-    h.key(b"\x1b[B");
+    // R15: the mode is a Segmented (one Tab stop per segment): the chosen
+    // "use default" segment has the focus; Tab reaches "override", Enter picks.
+    h.key(b"\t");
+    h.turn();
+    h.key(b"\r");
     let s = h.turns(2);
     assert!(
         s.contains("choose a provider…"),
@@ -1769,8 +1777,8 @@ fn route_editor_override_flow_sends_put_with_picked_pair() {
     h.type_text("\r");
     h.turns(2);
 
-    // Tab past base URL + options to Save.
-    for _ in 0..3 {
+    // Tab past base URL + options and the web's [Cancel] [Clear] [Test] to [Save].
+    for _ in 0..6 {
         h.key(b"\t");
         h.turn();
     }
@@ -1849,7 +1857,8 @@ fn text_route_editor_carries_reasoning_and_sends_only_what_changed() {
     }
     h.type_text("http://127.0.0.1:1234/v1");
     h.turn();
-    for _ in 0..4 {
+    // R15: reasoning → options → MTP → [Cancel] [Clear] [Test] → [Save].
+    for _ in 0..7 {
         h.key(b"\t");
         h.turn();
     }
@@ -1929,8 +1938,9 @@ fn text_route_audition_uses_the_mtp_control_and_preserves_explicit_off() {
             screen.contains("MTP default"),
             "MTP policy control must be visible: {screen}"
         );
-        // mode -> provider -> model -> URL -> reasoning -> options -> MTP -> Save -> Test
-        for _ in 0..8 {
+        // mode -> provider -> model -> URL -> reasoning -> options -> MTP ->
+        // [Cancel] -> [Clear] -> [Test] (R15: the web's button order)
+        for _ in 0..9 {
             h.key(b"\t");
             h.turn();
         }
@@ -2248,28 +2258,48 @@ fn entity_manage_menu_state_flow_sends_post() {
     // m over the selected entity opens the manage menu.
     h.type_text("m");
     let s = h.turns(2);
-    assert!(s.contains("Manage entity 'Testor'"), "manage menu:\n{s}");
-    assert!(s.contains("wake / sleep / pause"), "state option:\n{s}");
-    assert!(s.contains("Re-embed"), "reembed option:\n{s}");
+    // R15-B: the Manage FormModal — the web's tabs; Lifecycle holds
+    // "Awake or asleep", Mind & voice the index rebuild.
+    assert!(s.contains("Manage — Testor"), "manage modal:\n{s}");
+    assert!(
+        s.contains(" Lifecycle ") && s.contains(" Mind & voice "),
+        "tabs:\n{s}"
+    );
+    click_label(&mut h, " Lifecycle ");
+    let s = h.turns(2);
+    assert!(s.contains("Awake or asleep"), "state card:\n{s}");
+    click_label(&mut h, " Mind & voice ");
+    let s = h.turns(2);
+    assert!(
+        s.contains("How it sounds"),
+        "the Mind & voice cards (the body scrolls to the rebuild card):\n{s}"
+    );
 
-    // Initial pick = state → Enter opens the state modal.
-    h.type_text("\r");
+    // R15-B: the state lives inline in the Lifecycle tab.
+    click_label(&mut h, " Lifecycle ");
     let s = h.turns(3);
-    assert!(s.contains("Entity state — Testor"), "state modal:\n{s}");
-    assert!(s.contains("dream pass"), "dream option:\n{s}");
+    assert!(
+        s.contains("Awake or asleep") && s.contains("dream pass"),
+        "state card:\n{s}"
+    );
 
-    // Testor is asleep (fixture) → radio starts on asleep (ix 1). Move
-    // down one to "asleep + dream pass", walk to Apply, press it.
-    h.key(b"\x1b[B");
-    h.turn();
-    h.key(b"\t"); // → reason
-    h.turn();
+    // R15-B: the Reason first (it rides the next change), then the
+    // "asleep + dream pass" segment by mouse; the web's sleep question
+    // is answered with [Sleep].
+    let s2 = h.turns(1);
+    let row = find_row(&s2, "Reason");
+    let line = s2.lines().nth(row - 1).unwrap();
+    let x = line[..line.find("Reason").unwrap()].chars().count() + 22;
+    click_at(&mut h, x, row);
     h.type_text("nightly consolidation");
     h.turn();
-    h.key(b"\t"); // → Apply
-    h.turn();
-    h.type_text("\r");
-    h.turns(2);
+    click_label(&mut h, " asleep + dream pass ");
+    let s = h.turns(2);
+    assert!(
+        s.contains("Put it to sleep?"),
+        "the web's sleep question:\n{s}"
+    );
+    click_label(&mut h, " Sleep ");
     match h.find_cmd(|c| matches!(c, Cmd::EntityState { .. })) {
         Some(Cmd::EntityState { name, body }) => {
             assert_eq!(name, "Testor");
@@ -2279,9 +2309,13 @@ fn entity_manage_menu_state_flow_sends_post() {
         }
         other => panic!("expected EntityState, got {other:?}"),
     }
-    // The modal closed on Apply (outcome rides toast + journal).
+    // Applied at once (the web's switch): the form stays, its state line
+    // says the write is in flight (the journal's verdict follows).
     let s = h.turns(2);
-    assert!(!s.contains("Entity state — Testor"), "modal closed:\n{s}");
+    assert!(
+        s.contains("Manage — Testor") && s.contains("Saving…"),
+        "applied in place:\n{s}"
+    );
 }
 
 // ---- entity parity: summon / talk / card / voice audition -------------
@@ -2351,16 +2385,14 @@ fn summon_validates_first_then_confirms_then_creates() {
         "locked core values:\n{s}"
     );
 
-    // Name (autofocused) → Tab to the template → the Advanced toggle →
-    // Validate & create.
+    // Name (autofocused), then the web's [Validate & create] by mouse.
     h.type_text("Castor");
     h.turn();
-    for _ in 0..3 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r");
-    h.turns(2);
+    assert!(
+        s.contains("Optional configuration") || h.turns(1).contains("Optional configuration"),
+        "R15 D1: the named section, never a disclosure"
+    );
+    click_label(&mut h, " Validate & create ");
     let body = match h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::ValidateEntity { .. }))) {
         Some(Cmd::Entity(EntityCmd::ValidateEntity { name, body })) => {
             assert_eq!(name, "Castor");
@@ -2395,12 +2427,8 @@ fn summon_validates_first_then_confirms_then_creates() {
         s.contains("no interests seeded"),
         "dry-run warnings reviewed BEFORE the birth:\n{s}"
     );
-    // The button row is static, so focus is still on Validate: one Tab
-    // reaches Summon (focus never drops when the stage changes).
-    h.key(b"\t");
-    h.turn();
-    h.type_text("\r");
-    h.turns(2);
+    // R15 F1: THE confirm widget — [Summon] [Back to the form], by mouse.
+    click_label(&mut h, " Summon ");
     match h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::CreateEntity { .. }))) {
         Some(Cmd::Entity(EntityCmd::CreateEntity {
             name,
@@ -2435,12 +2463,7 @@ fn summon_refusal_shows_the_web_sentence_and_writes_nothing() {
     h.turns(2);
     h.type_text("Testor");
     h.turn();
-    for _ in 0..3 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r");
-    h.turns(2);
+    click_label(&mut h, " Validate & create ");
     assert!(h
         .find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::ValidateEntity { .. })))
         .is_some());
@@ -2567,14 +2590,12 @@ fn manage_menu_opens_the_identity_card() {
     entity_screen(&mut h);
     h.type_text("m");
     h.turns(2);
-    // state is the initial pick; card sits ten rows below it.
-    for _ in 0..10 {
-        h.key(b"\x1b[B");
-        h.turn();
-    }
-    h.type_text("\r");
+    // R15-B: the identity card is inline in Manage's Overview tab.
     let s = h.turns(3);
-    assert!(s.contains("Identity card — Testor"), "card modal:\n{s}");
+    assert!(
+        s.contains("Manage — Testor") && s.contains("Identity"),
+        "card inline:\n{s}"
+    );
     assert!(
         h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::LoadCard { name }) if name == "Testor"))
             .is_some(),
@@ -2601,28 +2622,20 @@ fn voice_audition_sends_the_unsaved_selection_and_shows_the_file() {
     h.select_account("testor");
     h.type_text("m");
     h.turns(2);
-    // state → substrate → voice.
-    h.key(b"\x1b[B");
-    h.turn();
-    h.key(b"\x1b[B");
-    h.turn();
-    h.type_text("\r");
+    // R15-B: Voice lives inline in the Mind & voice tab.
+    click_label(&mut h, " Mind & voice ");
     let s = h.turns(3);
-    assert!(s.contains("Voice — Testor"), "voice form:\n{s}");
-    assert!(s.contains("Audition"), "audition verb:\n{s}");
+    assert!(
+        s.contains("How it sounds") && s.contains("Hear a sample"),
+        "the voice card (the web's label):\n{s}"
+    );
+    click_label(&mut h, "e.g. supertonic, openai");
     h.type_text("openai");
     h.turn();
-    h.key(b"\t");
-    h.turn();
+    click_label(&mut h, "e.g. supertonic-3");
     h.type_text("gpt-4o-mini-tts");
     h.turn();
-    // voice → clear checkbox → Audition.
-    for _ in 0..3 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r");
-    h.turns(2);
+    click_label(&mut h, " Hear a sample ");
     match h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::VoiceAudition { .. }))) {
         Some(Cmd::Entity(EntityCmd::VoiceAudition {
             name,
@@ -2647,6 +2660,9 @@ fn voice_audition_sends_the_unsaved_selection_and_shows_the_file() {
             error: None,
             player: None,
         }));
+    // R15: the focused button's tooltip sits over the outcome lines; the
+    // keyboard steps back to the clear switch (no tooltip).
+    h.key(b"\x1b[Z");
     let s = h.turns(2);
     assert!(s.contains("audio saved:"), "file path shown:\n{s}");
     assert!(s.contains("Testor-audition-a1.wav"), "path:\n{s}");
@@ -2674,21 +2690,13 @@ fn own_time_start_with_blank_fields_sends_the_web_body() {
     h.select_account("testor");
     h.type_text("m");
     h.turns(2);
-    for _ in 0..4 {
-        h.key(b"\x1b[B");
-        h.turn();
-    }
-    h.type_text("\r");
+    // R15-B: Personal time lives inline in the Lifecycle tab.
+    click_label(&mut h, " Lifecycle ");
     let s = h.turns(3);
-    assert!(s.contains("Own time — Testor"), "own-time form open:\n{s}");
+    assert!(s.contains("Personal time"), "own-time card:\n{s}");
     h.drain_cmds();
-    // tick → ticks → rest → grant hours → Grant → Revoke → Start loop.
-    for _ in 0..6 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r");
-    h.turns(2);
+    // R15-B: the web's Personal time switch applies at once (on = start).
+    click_label(&mut h, "●─ Personal time");
     match h.find_cmd(|c| matches!(c, Cmd::EntityLoop { start: true, .. })) {
         Some(Cmd::EntityLoop { name, body, .. }) => {
             assert_eq!(name, "Testor");
@@ -2711,15 +2719,12 @@ fn entity_tool_policy_editor_saves_changed_phases_only() {
         .set(Loadable::Ready(entities_from_payload(&entities_fixture())));
     h.turns(2);
 
-    // Open the manage menu, walk down to "Tool policy", Enter.
+    // Open Manage, `p` = Tools per phase (Work & tools tab).
     h.select_account("testor");
     h.type_text("m");
     h.turns(2);
-    for _ in 0..5 {
-        h.key(b"\x1b[B");
-        h.turn();
-    }
-    h.type_text("\r");
+    // R15-B: Tools per phase lives inline in the Work & tools tab.
+    click_label(&mut h, " Work & tools ");
     h.turns(2);
 
     // The editor opened with a Loading slot; feed the folded policy the
@@ -2739,17 +2744,12 @@ fn entity_tool_policy_editor_saves_changed_phases_only() {
         },
     ));
     let s = h.turns(3);
-    assert!(s.contains("Tool policy — Testor"), "editor open:\n{s}");
+    assert!(s.contains("Tools per phase"), "the tools card:\n{s}");
     assert!(s.contains("visit"), "phase rows:\n{s}");
     assert!(s.contains("(custom)"), "provenance shown:\n{s}");
 
     // No changes → Save refuses with the reason.
-    // Focus: visit MultiSelect autofocus is not set; walk to Save.
-    for _ in 0..3 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r");
+    click_label(&mut h, " Save ");
     let s = h.turns(2);
     assert!(
         s.contains("no changes to save"),
@@ -2776,13 +2776,7 @@ fn entity_tool_policy_editor_saves_changed_phases_only() {
     h.turn();
     h.type_text("\r"); // Enter COMMITS the set (Esc would discard it)
     h.turns(2);
-    // Focus stays on the visit trigger: work → Save.
-    for _ in 0..2 {
-        h.key(b"\t");
-        h.turn();
-    }
-    h.type_text("\r"); // Save grants
-    h.turns(2);
+    click_label(&mut h, " Save ");
     match h.find_cmd(|c| matches!(c, Cmd::SaveToolPolicy { .. })) {
         Some(Cmd::SaveToolPolicy { name, body, .. }) => {
             assert_eq!(name, "Testor");
@@ -2951,7 +2945,7 @@ fn review_inline_sandbox_runs_and_renders_full_result() {
     h.turns(3);
     // Enter in the prompt runs the test with the picks (the prompt is
     // focused by the operator, never autofocused — REVIEW-1 M1).
-    click_field(&mut h, "prompt");
+    click_field(&mut h, "│prompt"); // R15: "System prompt" sits above
     h.type_text("\r");
     h.turns(2);
     match h.find_cmd(|c| matches!(c, Cmd::SandboxTest { .. })) {
@@ -3024,14 +3018,16 @@ fn review_sandbox_refusals_name_reasons() {
     // Not connected: refuse with the connect teaching.
     h.goto_screen(6);
     h.turns(2);
-    click_field(&mut h, "prompt");
+    click_field(&mut h, "│prompt"); // R15: "System prompt" sits above
     h.type_text("\r");
-    h.turns(2);
-    let notice = h.store.notice.get_untracked().unwrap_or_default();
+    let s = h.turns(2);
+    // R15: the refusal sits inline under the action bar (adversary note c).
+    let notice = abstractgateway_console::ui::sandbox::refusal_now().unwrap_or_default();
     assert!(
         notice.contains("connect to the gateway first"),
         "disconnected run names its refusal: {notice}"
     );
+    assert!(s.contains("connect to the gateway first"), "inline:\n{s}");
     assert!(
         h.find_cmd(|c| matches!(c, Cmd::SandboxTest { .. }))
             .is_none(),
@@ -3043,12 +3039,13 @@ fn review_sandbox_refusals_name_reasons() {
     h.store.notice.set(None);
     h.turns(2);
     h.type_text("\r");
-    h.turns(2);
-    let notice = h.store.notice.get_untracked().unwrap_or_default();
+    let s = h.turns(2);
+    let notice = abstractgateway_console::ui::sandbox::refusal_now().unwrap_or_default();
     assert!(
         notice.contains("pick a provider first"),
         "unpicked run names the missing pick: {notice}"
     );
+    assert!(s.contains("pick a provider first"), "inline:\n{s}");
     assert!(
         h.find_cmd(|c| matches!(c, Cmd::SandboxTest { .. }))
             .is_none(),
@@ -3116,8 +3113,8 @@ fn review_screen_renders_whole_at_both_sizes() {
                 "[{label}] teaching line:\n{s}"
             );
             assert!(
-                s.contains("Generate (Enter)"),
-                "[{label}] Generate button:\n{s}"
+                s.contains(" Send ") && s.contains(" Clear chat "),
+                "[{label}] R15 action bar (Send):\n{s}"
             );
             assert!(
                 s.contains(" Finish ") && s.contains("Skip setup"),
@@ -3140,7 +3137,7 @@ fn review_screen_renders_whole_at_both_sizes() {
                         "[{label}] failed outcome renders verbatim:\n{s}"
                     );
                     assert!(
-                        s.contains("press g / Generate to retry"),
+                        s.contains("press g / Send to retry"),
                         "[{label}] retry teaching survives:\n{s}"
                     );
                 }
@@ -3678,11 +3675,11 @@ fn footer_leads_with_the_screen_keys_at_80x24() {
     h.ui.wizard.set(false);
     for (screen, lead) in [
         (1usize, "↑↓ rows · Tab next table"),
-        (2, "Enter/e edit route"),
+        (2, "↑↓ rows · Enter Configure"),
         (3, "↑↓ rows · Enter Email"),
         (4, "↑↓ Enter open runtime"),
         (5, "↑↓ rows · Enter Export"),
-        (7, "u unload"),
+        (7, "↑↓ rows · Tab actions · e Estimate"),
     ] {
         h.ui.screen.set(screen);
         let s = h.turns(3);
@@ -3904,7 +3901,10 @@ fn select_popup_inside_modal_opens_adjacent_to_its_field() {
     }
     h.type_text("\r");
     h.turns(2);
-    h.key(b"\x1b[B");
+    // R15: the mode Segmented — Tab to "override", Enter picks it.
+    h.key(b"\t");
+    h.turn();
+    h.key(b"\r");
     h.turns(2);
     h.key(b"\t");
     h.turn();
@@ -3974,8 +3974,8 @@ fn first_run_screens_survive_tight_height() {
         "live-test teaching line survives beside a journal entry:\n{s}"
     );
     assert!(
-        s.contains("Generate (Enter)"),
-        "the Generate button renders inside its block:\n{s}"
+        s.contains(" Send "),
+        "the R15 Send button renders inside its block:\n{s}"
     );
 }
 
@@ -4151,6 +4151,22 @@ fn click_last_text(h: &mut Harness, label: &str) {
 fn double_click_at(h: &mut Harness, x: usize, y: usize) {
     click_at(h, x, y);
     click_at(h, x, y);
+}
+
+/// R15-B: click the LAST on-screen occurrence of `label` (a dialog's
+/// button sits above the page that may repeat the word).
+fn click_label(h: &mut Harness, label: &str) {
+    let s = h.turns(1);
+    let (y, line) = s
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains(label))
+        .last()
+        .unwrap_or_else(|| panic!("{label:?} not on screen:\n{s}"));
+    let b = line.rfind(label).unwrap();
+    let x = line[..b].chars().count() + 2;
+    click_at(h, x, y + 1);
+    h.turns(2);
 }
 
 /// Put the caret in the text field labelled `label` (the field column
@@ -4606,7 +4622,7 @@ fn double_click_opens_entity_manage_menu() {
     // Manage stays one key (or its ⬖ button) away.
     h.type_text("m");
     let s = h.turns(3);
-    assert!(s.contains("Manage entity 'Testor'"), "m opens Manage:\n{s}");
+    assert!(s.contains("Manage — Testor"), "m opens Manage:\n{s}");
 }
 
 /// COMPLAINT A, providers unified table: Enter on the focused table
@@ -5154,10 +5170,11 @@ fn routes_screen_shows_weight_availability_and_no_banner_when_every_route_is_ans
         s.contains("installed"),
         "present weights read plainly:\n{s}"
     );
-    assert!(s.contains("weights"), "the column is labelled:\n{s}");
+    assert!(s.contains("Weights"), "the column is labelled:\n{s}");
+    // R15: the absent, downloadable row carries the web's Download button.
     assert!(
-        s.contains("download weights"),
-        "the hint row offers the verb on THIS screen:\n{s}"
+        s.contains('\u{2913}'),
+        "the row offers the Download button on THIS screen:\n{s}"
     );
 }
 
@@ -5177,7 +5194,7 @@ fn routes_screen_banners_only_the_routes_with_no_model_at_all() {
         .set(Loadable::Ready(availability_fixture_fresh_install()));
     let s = h.turns(2);
     assert!(
-        s.contains("1 route with no model yet"),
+        s.contains("One route has no model yet (input.text)."),
         "the banner counts ROUTES that need one, not catalog entries:\n{s}"
     );
     assert!(
@@ -5189,8 +5206,8 @@ fn routes_screen_banners_only_the_routes_with_no_model_at_all() {
         "the banner names the ARTIFACT, not the served id:\n{s}"
     );
     assert!(
-        s.contains("w downloads"),
-        "the actionable verb survives the elastic list:\n{s}"
+        s.contains("Download missing"),
+        "the actionable button is there (the web's Download missing):\n{s}"
     );
 }
 
@@ -5205,9 +5222,10 @@ fn a_applies_the_recommended_routes() {
     h.goto_screen(2);
     h.store.routes.set(Loadable::Ready(routes_fixture()));
     let s = h.turns(2);
+    // R15: the web's head button (its key is `a`).
     assert!(
-        s.contains("a applies the recommended routes"),
-        "the banner names the verb:\n{s}"
+        s.contains(" Apply recommended "),
+        "the head names the verb:\n{s}"
     );
     h.drain_cmds();
 
@@ -5218,7 +5236,7 @@ fn a_applies_the_recommended_routes() {
         "the prompt asks first:\n{s}"
     );
     assert!(h.drain_cmds().is_empty(), "nothing before the answer");
-    // The DEFAULT answer keeps the operator's routes.
+    // The answer (the focused [Apply recommended]) keeps the operator's routes.
     h.key(b"\r");
     h.turns(2);
     let dbg = format!("{:?}", h.drain_cmds());
@@ -5252,7 +5270,7 @@ fn a_applies_the_recommended_routes() {
     h.store.apply_followup.set(Some("Replace mine too".into()));
     let s = h.turns(3);
     assert!(s.contains("Leave them as they are"), "offered again:\n{s}");
-    h.key(b"\x1b[A");
+    h.key(b"\x1b[Z"); // Shift+Tab: from [Leave them as they are] to the action
     h.turn();
     h.key(b"\r");
     h.turns(2);
@@ -5316,9 +5334,9 @@ fn w_confirms_then_downloads_the_recommended_artifact() {
         .availability
         .set(Loadable::Ready(availability_fixture()));
     let s = h.turns(2);
-    // The verb rides in the row of an absent, downloadable model.
+    // R15: the web's pill, and the row's Download button (key w).
     assert!(
-        s.contains("not downloaded — w: download"),
+        s.contains("not downloaded") && s.contains('\u{2913}'),
         "weights cell:\n{s}"
     );
     h.drain_cmds();
@@ -5352,9 +5370,7 @@ fn w_confirms_then_downloads_the_recommended_artifact() {
         h.drain_cmds().is_empty(),
         "nothing downloads before the operator confirms"
     );
-    // Danger confirms default to the SAFE option; move to Download.
-    h.key(b"\x1b[Z"); // Shift+Tab to the action button
-    h.turn();
+    // R15: a download is a plain confirm — the focus is on [Download].
     h.key(b"\r");
     h.turns(2);
     let dbg = format!("{:?}", h.drain_cmds());
@@ -5535,7 +5551,7 @@ fn grid_rows(screen: &str) -> Vec<String> {
             l.to_string()
         };
         let body = l.trim_matches(|c| c == '│' || c == ' ');
-        if body.starts_with("route ") {
+        if body.starts_with("route ") || body.starts_with("Route ") {
             inside = true;
             continue;
         }
@@ -5568,7 +5584,8 @@ fn routes_grid_prints_whole_names_when_the_terminal_has_room() {
     for whole in [
         "AbstractFramework/wan2.2-t2v-a14b-diffusers-8bit",
         "AbstractFramework/wan2.2-i2v-a14b-diffusers-8bit",
-        "abstractcore.gateway_runtime",
+        // R15: the web's source label for abstractcore.gateway_runtime.
+        "Gateway baseline",
         "endpoint:airelay",
         "covered by input.text",
     ] {
@@ -5602,22 +5619,41 @@ fn narrow_routes_grid_keeps_the_discriminating_tail() {
     // Read the model cell across its wrap: the line holding the tag plus
     // the continuation line under it, at the same column.
     let lines: Vec<&str> = s.lines().collect();
-    for (tag, whole) in [
+    // R15: the narrow grid stacks the provider under the model (Cell::Lines),
+    // so the model's wrap is read until that line.
+    let starts: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.contains("AbstractFramework"))
+        .map(|(i, _)| i)
+        .collect();
+    for (n, (tag, whole)) in [
         ("t2v", "AbstractFramework/wan2.2-t2v-a14b-diffusers-8bit"),
         ("i2v", "AbstractFramework/wan2.2-i2v-a14b-diffusers-8bit"),
-    ] {
-        let i = lines.iter().position(|l| l.contains(tag)).expect("row");
-        let col = lines[i].find("AbstractFramework").expect("model cell");
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let i = *starts.get(n).expect("row");
+        // A CELL column (chars, not bytes: the second line carries "·").
+        let byte = lines[i].find("AbstractFramework").expect("model cell");
+        let col = lines[i][..byte].chars().count();
         let take = |l: &str| -> String {
-            l.get(col..)
-                .unwrap_or("")
+            l.chars()
+                .skip(col)
+                .collect::<String>()
                 .split("  ")
                 .next()
                 .unwrap_or("")
                 .trim()
                 .to_string()
         };
-        let joined = format!("{}{}", take(lines[i]), take(lines[i + 1]));
+        let mut joined = take(lines[i]);
+        let mut k = i + 1;
+        while joined.len() < whole.len() && k < lines.len() {
+            joined.push_str(&take(lines[k]));
+            k += 1;
+        }
         assert_eq!(joined, whole, "{tag} cell whole across its wrap:\n{s}");
     }
     // The closed vocabulary keeps its whole word at every width.
@@ -6483,13 +6519,15 @@ fn models_table_and_its_lock_verb_are_reachable_at_80x24() {
     let s = h.turns(2);
 
     // 1. THE TABLE IS THERE AT REST, with the columns the operator came for.
+    // R15: the web's columns (Modality · Provider · Model · Resident · Size ·
+    // Context · Flags · Actions); the KV cache column joins from 100 cells.
     let header = s
         .lines()
-        .find(|l| l.contains("modality") && l.contains("provider"))
+        .find(|l| l.contains("Modality") && l.contains("Provider"))
         .unwrap_or_else(|| panic!("the Loaded table header renders at 80x24:\n{s}"));
     assert!(
-        header.contains("size") && header.contains("cache") && header.contains("lock"),
-        "the size/cache/lock columns are visible, not scrolled off:\n{s}"
+        header.contains("Size") && header.contains("Flags") && header.contains("Actions"),
+        "the size/flags/actions columns are visible, not scrolled off:\n{s}"
     );
     let row = s
         .lines()
@@ -6501,9 +6539,9 @@ fn models_table_and_its_lock_verb_are_reachable_at_80x24() {
     );
 
     // 2. THE LOCK AFFORDANCE IS REACHABLE FOR A ROW — per row, and it names
-    // the verb it will actually perform.
+    // the verb it will actually perform (R15: the row's own button).
     assert!(
-        s.contains("k unlocks"),
+        s.contains("Unlock"),
         "the selected row's lock verb renders at 80x24:\n{s}"
     );
     h.term.push_input(b"\x1b[B");
@@ -6511,7 +6549,7 @@ fn models_table_and_its_lock_verb_are_reachable_at_80x24() {
     h.term.push_input(b"\x1b[B");
     let s = h.turns(2);
     assert!(
-        s.contains("k locks (adopts it)"),
+        s.contains("lockable (adopts it)") && s.contains(" Lock"),
         "moving to the sweep row carries ITS lock verb — the table is not \
          merely visible, it is navigable:\n{s}"
     );
@@ -6523,8 +6561,13 @@ fn models_table_and_its_lock_verb_are_reachable_at_80x24() {
         h.term.push_input(b"\x1b[B");
         h.turn();
     }
-    let s = h.turns(1);
-    assert!(s.contains("RAM"), "the RAM meter is PINNED:\n{s}");
+    // R15: the cards stack and the PAGE scrolls (DESIGN §3.11); the meters
+    // are above the Models card — the wheel brings them back.
+    for _ in 0..12 {
+        h.term.push_input(b"\x1b[<64;10;8M");
+    }
+    let s = h.turns(3);
+    assert!(s.contains("RAM"), "the RAM meter is one wheel away:\n{s}");
     assert!(
         s.contains("128.0 GiB"),
         "the RAM meter keeps its figures, not just its label:\n{s}"
@@ -6538,29 +6581,26 @@ fn models_table_and_its_lock_verb_are_reachable_at_80x24() {
         "the GGUF note is PINNED — it is the caveat that makes the \
          accelerator figure readable:\n{s}"
     );
+    // …and the wheel takes the page back down to the model rows.
+    for _ in 0..12 {
+        h.term.push_input(b"\x1b[<65;10;8M");
+    }
+    let s2 = h.turns(3);
     assert!(
-        s.lines()
-            .any(|l| l.contains("qwen3-32b") && l.contains("yes")),
-        "and the model rows are still there at the tail:\n{s}"
+        s2.lines()
+            .any(|l| l.contains("lmstudio") && l.contains("glm-4.6") && l.contains("yes")),
+        "and the model rows are one wheel away below:\n{s2}"
     );
+    for _ in 0..12 {
+        h.term.push_input(b"\x1b[<64;10;8M");
+    }
+    let s = h.turns(3);
 
-    // 4. THE BOTTOM BORDER IS INTACT — one unbroken `╰───╯` run, not a
-    // clipped detail line wearing the frame's row.
-    let bottom = s
-        .lines()
-        .rev()
-        .find(|l| l.trim_start().starts_with('\u{2570}'))
-        .unwrap_or_else(|| panic!("the block's bottom border renders at 80x24:\n{s}"));
+    // 4. R15: no page border any more; the pinned totals footer closes
+    // the page, on screen, below the table.
     assert!(
-        bottom.trim_end().ends_with('\u{256F}'),
-        "the bottom border closes with its corner:\n{s}"
-    );
-    assert!(
-        bottom
-            .trim()
-            .chars()
-            .all(|c| matches!(c, '\u{2570}' | '\u{2500}' | '\u{256F}')),
-        "nothing is painted ON the bottom border:\n{s}"
+        s.lines().any(|l| l.contains("totals: 2 resident")),
+        "the totals footer renders at 80x24:\n{s}"
     );
 
     // GUARD, before the paging claims below: this fixture must genuinely
@@ -6615,6 +6655,18 @@ fn models_tab_resident_null_renders_the_third_state() {
         .host_state
         .set(Loadable::Ready(host_state_fixture()));
     let s = h.turns(2);
+    // R15 (web parity): the default view is the RESIDENT rows; a configured
+    // / cached row (resident false or unknown) sits behind "Show configured /
+    // cached" — `a` (or a click) shows it.
+    assert!(
+        !s.contains("mystery-model") && s.contains("Show configured / cached (1)"),
+        "the null-resident row waits behind the toggle:\n{s}"
+    );
+    h.key(b"a");
+    // The page scrolls; selecting the row brings it on screen.
+    h.key(b"\x1b[B");
+    h.key(b"\x1b[B");
+    let s = h.turns(2);
     assert!(
         s.contains("mystery-model"),
         "the null-resident row renders:\n{s}"
@@ -6623,9 +6675,11 @@ fn models_tab_resident_null_renders_the_third_state() {
         s.contains("unknown"),
         "null resident renders the distinct third state:\n{s}"
     );
+    // The TABLE row (the selected row's facts line above it reads
+    // "lmstudio / mystery-model · no lock (…)").
     let row = s
         .lines()
-        .find(|l| l.contains("mystery-model"))
+        .find(|l| l.contains("mystery-model") && !l.contains(" / "))
         .expect("mystery-model row");
     assert!(
         row.contains("unknown") && !row.contains(" no "),
@@ -6639,6 +6693,8 @@ fn models_tab_resident_null_renders_the_third_state() {
 fn models_tab_locked_row_shows_the_lock_marker() {
     let mut h = harness();
     h.connect_as_admin();
+    // R15: the unknown-residency row is behind "Show configured / cached".
+    ui::models::set_show_cached(true);
     h.goto_screen(7);
     h.store
         .host_state
@@ -6716,7 +6772,7 @@ fn resources_w_works_with_no_model_resident_across_polls() {
     h.type_text("w");
     let s = h.turns(3);
     assert!(
-        s.contains("Load (warm up) a model"),
+        s.contains("Load (warm up) this model on the host now"),
         "w opens the warm-up form:\n{s}"
     );
 }
@@ -6924,7 +6980,9 @@ fn models_tab_breaks_down_what_is_consuming_memory() {
         "an unknown residency is not an attribution:\n{strip}"
     );
     assert!(line_of("model KV caches").contains("2.0 GiB"));
-    assert!(line_of("session caches").contains("4.0 KiB"));
+    // R15: the page subtitle names "session caches" too — the item is the
+    // indented line of the itemization.
+    assert!(line_of("  session caches ").contains("4.0 KiB"));
     assert!(line_of("gateway process RSS").contains("1.0 GiB"));
     // The references live behind their rule, and are NOT summable with
     // the items above them.
@@ -6990,8 +7048,10 @@ fn models_tab_states_the_gateway_process_rss_exactly_once() {
 /// the strip explains it in the spec's words, wrapped, never truncated.
 #[test]
 fn models_tab_names_the_gguf_case_when_weights_exceed_the_accelerator_heap() {
-    // R15: 110x31 keeps the old page area (the shell chrome shrank by 3 rows).
-    let mut h = harness_sized(Size::new(110, 31));
+    // R15: the Resources page also carries the Gateway card and the Models
+    // section; a tall terminal shows the itemization whole (shorter ones
+    // window it — `m` pages, pinned by the 80x24 test).
+    let mut h = harness_sized(Size::new(110, 60));
     h.connect_as_admin();
     h.goto_screen(7);
     let mut d = host_state_fixture();
@@ -7032,12 +7092,13 @@ fn models_tab_locks_an_externally_loaded_sweep_row() {
         .host_state
         .set(Loadable::Ready(host_state_fixture()));
     h.turns(2);
-    // Down twice: qwen3-32b → mystery-model → glm-4.6-gguf (the sweep).
-    h.key(b"\x1b[B");
+    // R15: the resident rows lead (qwen3-32b, glm-4.6-gguf); Down once
+    // reaches the sweep row, whose detail line and Lock button offer the
+    // adoption.
     h.key(b"\x1b[B");
     let s = h.turns(2);
     assert!(
-        s.contains("k locks (adopts it)"),
+        s.contains("lockable (adopts it)") && s.contains(" Lock"),
         "the row's own hint offers the adoption:\n{s}"
     );
     h.type_text("k");
@@ -7063,6 +7124,8 @@ fn models_tab_locks_an_externally_loaded_sweep_row() {
 fn models_tab_refuses_lock_and_unload_on_a_non_resident_row() {
     let mut h = harness();
     h.connect_as_admin();
+    // R15: non-resident rows are behind "Show configured / cached".
+    ui::models::set_show_cached(true);
     h.goto_screen(7);
     let mut d = host_state_fixture();
     d.models.push(abstractgateway_console::store::ModelRow {
@@ -7122,9 +7185,13 @@ fn models_tab_warmup_form_picks_provider_and_model_from_the_catalogs() {
     h.turns(2);
     h.type_text("w");
     let s = h.turns(2);
-    assert!(s.contains("Load (warm up) a model"), "{s}");
+    // R15: the web's words — "Load model", "lock in memory" (a Toggle).
     assert!(
-        s.contains("lock after load"),
+        s.contains("Load model") && s.contains("Load (warm up) this model on the host now"),
+        "{s}"
+    );
+    assert!(
+        s.contains("lock in memory"),
         "the lock-after-load option survives the rework:\n{s}"
     );
     // The highlighted row prefilled the provider picker, and picking it
@@ -7154,9 +7221,9 @@ fn models_tab_warmup_form_picks_provider_and_model_from_the_catalogs() {
                     .is_some_and(|head| head.trim_end().ends_with(label))
         })
     };
-    let prov = field_row("provider").expect("the provider field is a picker");
+    let prov = field_row("Provider").expect("the provider field is a picker");
     assert!(prov.contains("mlx"), "{prov}");
-    let model = field_row("model").expect("the model field is a picker over the catalog");
+    let model = field_row("Model").expect("the model field is a picker over the catalog");
     assert!(model.contains("qwen3-32b"), "{model}");
     assert!(
         !s.contains("model id for that provider"),
@@ -7220,15 +7287,15 @@ fn footer_hints_stay_in_lockstep_with_screens() {
     h.ui.wizard.set(false);
     for (screen, needle) in [
         (1usize, "Add connection"),
-        (2, "edit route"),
+        (2, "Enter Configure"),
         (3, "Enter Email"),
         (4, "open runtime"),
         (5, "Drafts"),
-        (6, "run the test"),
-        (7, "context estimate"),
+        (6, "Send (in the message)"), // R15: the Sandbox bar
+        (7, "e Estimate"),
         // The Models page (catalog.rs).
         (8, "use as default"),
-        (ui::SCREEN_NETWORK, "copy address"),
+        (ui::SCREEN_NETWORK, "c Copy"),
     ] {
         h.ui.screen.set(screen);
         let s = h.turns(2);
@@ -7242,7 +7309,7 @@ fn footer_hints_stay_in_lockstep_with_screens() {
     h.ui.screen.set(5);
     let s = h.turns(2);
     assert!(
-        !s.contains("run the test"),
+        !s.contains("Send (in the message)"),
         "workflows screen never wears Review's sandbox hints:\n{s}"
     );
 }
@@ -8336,13 +8403,14 @@ fn eighty_by_twenty_four_nothing_is_clipped() {
         .host_state
         .set(Loadable::Ready(host_state_fixture()));
     let s = h.turns(3);
+    // R15: no page border; the head line (title, subtitle, Refresh) fits.
     let title = s
         .lines()
-        .find(|l| l.contains("╭ Resources"))
+        .find(|l| l.starts_with(" Resources"))
         .expect("title row");
     assert!(
-        title.trim_end().ends_with("─╮"),
-        "the title closes inside the border:\n{title}"
+        title.contains("↻ Refresh") && abstracttui::text::width(title) <= 80,
+        "the head fits the width:\n{title}"
     );
 
     h.store.op.runner.set(Loadable::Ready(paused_runner()));
@@ -8382,9 +8450,10 @@ fn eighty_by_twenty_four_nothing_is_clipped() {
         "no ellipsis on the intro:\n{s}"
     );
 }
-/// A choice dialog does not show the screen through (review 2 e): an
-/// opaque backdrop covers the screen while the prompt is open, and it is
-/// gone once the prompt resolves.
+/// A choice dialog does not show the screen through (review 2 e). R15 F1:
+/// Multimodal's Apply recommended asks with THE confirm widget (w::Confirm)
+/// — its sentence and [Apply recommended] [Cancel] on an opaque panel; the
+/// page stays visible AROUND it; Esc keeps things as they are.
 #[test]
 fn a_choice_dialog_covers_the_screen_while_open() {
     let mut h = harness_sized(Size::new(80, 24));
@@ -8392,23 +8461,25 @@ fn a_choice_dialog_covers_the_screen_while_open() {
     h.goto_screen(2);
     h.store.routes.set(Loadable::Ready(routes_fixture()));
     let s = h.turns(3);
-    assert!(s.contains("Multimodal — which provider"), "{s}");
+    assert!(s.contains("Multimodal Capabilities"), "{s}");
     h.key(b"a");
     let s = h.turns(3);
     assert!(
-        s.contains("Apply — keep routes I configured"),
+        s.contains("Apply the framework's recommended routes")
+            && s.contains(" Apply recommended ")
+            && s.contains(" Cancel "),
         "the dialog:\n{s}"
-    );
-    assert!(
-        !s.contains("Multimodal — which provider") && !s.contains("input.video"),
-        "the screen does not show around/through the dialog:\n{s}"
     );
     h.press_escape();
     let s = h.turns(3);
     assert!(
-        s.contains("Multimodal — which provider"),
+        s.contains("Multimodal Capabilities") && !s.contains(" Cancel "),
         "the screen is back:\n{s}"
     );
+    assert!(h
+        .drain_cmds()
+        .iter()
+        .all(|c| !matches!(c, Cmd::ApplyRecommendedRoutes { .. })));
 }
 
 /// 80x24: the export dialog's path field stays inside the dialog.
@@ -8429,7 +8500,7 @@ fn the_current_screen_key_keeps_the_screen_keys_live() {
     h.type_text("w");
     let s = h.turns(3);
     assert!(
-        s.contains("Load (warm up) a model"),
+        s.contains("Load (warm up) this model on the host now"),
         "w still reaches the screen:\n{s}"
     );
 }
@@ -8539,8 +8610,9 @@ fn routes_and_plan_show_engine_missing_and_the_gpu_limit() {
         s.contains("engine missing: MLX (mlx-lm) is not installed in this Python environment"),
         "selected-row line:\n{s}"
     );
+    // R15: the plan has its own button ("Recommended for this computer").
     assert!(
-        s.contains("1 engine missing (p says what to install)"),
+        s.contains("1 engine missing") && s.contains("Recommended for this computer"),
         "plan banner:\n{s}"
     );
     h.type_text("p");

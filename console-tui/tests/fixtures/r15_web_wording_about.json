@@ -1,0 +1,40 @@
+{
+  "_source": "scripts/extract_web_wording.py (do not edit by hand)",
+  "links": [
+    {
+      "id": "website",
+      "label": "Website",
+      "title": "website"
+    },
+    {
+      "id": "source",
+      "label": "Source",
+      "title": "repo"
+    },
+    {
+      "id": "docs",
+      "label": "Docs",
+      "title": "docs"
+    },
+    {
+      "id": "issues",
+      "label": "Issues",
+      "title": "issues"
+    },
+    {
+      "id": "feedback",
+      "label": "Feedback",
+      "title": "feedback"
+    },
+    {
+      "id": "contact",
+      "label": "Contact",
+      "title": "contact_email"
+    }
+  ],
+  "version_rows": [
+    "AbstractFramework",
+    "AbstractGateway"
+  ],
+  "dialog": "About AbstractGateway"
+}

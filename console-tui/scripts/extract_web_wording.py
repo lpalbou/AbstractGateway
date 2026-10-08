@@ -550,6 +550,568 @@ def screens_main(write: bool) -> int:
     return rc
 
 
+
+# ---------------------------------------------------------------------------
+# R15 group B (worker B): one fixture per screen,
+# tests/fixtures/r15_web_wording_<screen>.json, checked (or rewritten with
+# --write) after the reference fixture. Each function reads its anchors from
+# the web sources and FAILS when one is missing.
+# ---------------------------------------------------------------------------
+
+
+def read_b(name: str) -> str:
+    return read(name)
+
+
+def about_wording() -> dict:
+    """About: the kit's About link list (ui-kit AfAbout, bundled in
+    console_islands.py) — label, and which identity field is its tooltip
+    (`title`) — the version rows' labels, and the top bar's dialog label."""
+    isl = read_b("console_islands.py")
+    m = re.search(r"function \w+\(e\)\{let t=\w+\(\);return\[(\{id:\"website\".*?)\]\}", isl)
+    if not m:
+        fail("the kit's About link list (`{id:\"website\",…}`) is missing in console_islands.py.")
+    links = []
+    for e in re.finditer(r'\{id:"(\w+)",label:"([^"]+)",href:[^,]+,title:(?:e|t)\.(\w+)\}', m.group(1)):
+        links.append({"id": e.group(1), "label": e.group(2), "title": e.group(3)})
+    if [l["id"] for l in links] != ["website", "source", "docs", "issues", "feedback", "contact"]:
+        fail(f"the kit's About links changed: {links!r}")
+    rows = re.search(r'return\[\["(AbstractFramework)",.*?\],\["(AbstractGateway)",', isl)
+    if not rows:
+        fail("the kit's About version rows (AbstractFramework / AbstractGateway) are missing.")
+    ui = read_b("console_ui.py")
+    label = re.search(r'label: "(About AbstractGateway)"', ui)
+    if not label:
+        fail("the top bar's About label is missing in console_ui.py.")
+    return {
+        "links": links,
+        "version_rows": [rows.group(1), rows.group(2)],
+        "dialog": label.group(1),
+    }
+
+
+def req(src: str, pattern: str, what: str, group: int = 1) -> str:
+    """Exactly one match of `pattern` (re.S) in `src`, or FAIL naming `what`."""
+    m = re.findall(pattern, src, re.S)
+    if len(m) != 1:
+        fail(f"{what}: expected exactly one match, found {len(m)} (the anchor moved).")
+    v = m[0]
+    return v if isinstance(v, str) else v[group - 1]
+
+
+def network_wording() -> dict:
+    """Network (console_ui.py netViewMarkup / netAddressRow /
+    netOtherAddressMarkup / netProxyMarkup): mode sentences, address labels
+    and pills, button labels, aria labels (the TUI's tooltips), headings
+    and sentences."""
+    ui = read_b("console_ui.py")
+    block = req(ui, r"const NET_MODE_TEXT = \{(.*?)\n    \};", "NET_MODE_TEXT")
+    modes = dict(re.findall(r'(\w+): "([^"]*)"', block))
+    if set(modes) != {"localhost", "lan", "internet"}:
+        fail(f"NET_MODE_TEXT keys changed: {sorted(modes)}")
+    kinds = dict(re.findall(r'(\w+): "([^"]*)"', req(ui, r"const NET_KIND_LABEL = \{(.*?)\};", "NET_KIND_LABEL")))
+    region = req(ui, r"(function netAddressRow\(a, primary\).*?function netProxySave)", "the Network page markup")
+    pills = {
+        "works": req(region, r'uiPill\("(Works now)", "ok"\)', "Works now pill"),
+        "not_in_mode": req(region, r'uiPill\("(Not in this mode)", "muted"\)', "Not in this mode pill"),
+        "public": req(region, r'a\.kind === "public" \? "(Through your proxy only)"', "proxy-only pill"),
+        "unknown": req(region, r'"Through your proxy only" : "(Unknown)"', "Unknown pill"),
+        "primary": req(region, r'uiPill\("(Primary)", "info"\)', "Primary pill"),
+    }
+    buttons = {
+        "copy": req(region, r'data-net-copy="\$\{esc\(url\)\}" aria-label="Copy \$\{esc\(url\)\}">(Copy)</button>', "Copy button"),
+        "lookup": req(region, r'"Looking up\.\.\." : "(Look up my public address)"', "Look up button"),
+        "check": req(region, r'tools\.push\(`<button[^`]*\$\{netStore\.loading \? "Checking\.\.\." : "(Check again)"\}', "Check again button"),
+        "restart": req(region, r'"Restarting\.\.\." : "(Restart now)"', "Restart now button"),
+        "add_origin": req(region, r'"Saving\.\.\." : "(Add origin)"', "Add origin button"),
+        "openai": req(region, r'data-net-action="goto-openai">(OpenAI API)</button>', "OpenAI API button"),
+        "internet_go": req(region, r'"Saving\.\.\." : "(I understand, use Internet mode)"', "Internet confirm button"),
+        "keep": req(region, r'data-net-action="ack-cancel">(Keep) \$\{esc\(conf\.label \|\| "the current mode"\)\}', "Keep button") + " {mode}",
+        "keep_default": req(region, r'ack-cancel">Keep \$\{esc\(conf\.label \|\| "(the current mode)"\)\}', "Keep default"),
+    }
+    aria = {
+        "copy": req(region, r'aria-label="(Copy) \$\{esc\(url\)\}"', "Copy aria-label") + " {url}",
+        "remove": req(region, r'aria-label="(Remove) \$\{esc\(x\)\}"', "Remove aria-label") + " {origin}",
+    }
+    text = {
+        "who": req(region, r"<h3>(Who can reach this gateway)</h3>", "mode heading"),
+        "running": req(region, r'<span class="ui-sub">(Running now:) <b>', "Running now"),
+        "addresses": req(region, r"<h3>(Addresses)</h3>", "Addresses heading"),
+        "addresses_sub": req(region, r'<h3>Addresses</h3><span class="ui-sub">([^<]*)</span>', "Addresses sub"),
+        "other": req(region, r'<h3 id="net-other-h">([^<]*)</h3>', "other-address heading"),
+        "other_sub": req(region, r'net-other-h">[^<]*</h3><span class="ui-sub">([^<]*)</span>', "other-address sub"),
+        "origins": req(region, r'<h4 id="net-origins-h">([^<]*)</h4>', "Allowed origins heading"),
+        "client": req(region, r'<h4 id="net-trust-h">([^<]*)</h4>', "Client address heading"),
+        "trust": req(region, r'"Saving\.\.\." : "(Trust proxies on other machines)"', "trust label"),
+        "trust_text": req(region, r'id="net-trust-text">([^<]*)</p>', "trust sentence"),
+        "trust_danger": req(region, r'id="net-trust-danger">([^<]*)</p>', "trust danger sentence"),
+        "empty_origin": req(ui, r'p\.error = "(Type an origin, for example https://gateway\.example\.com\.)"', "empty origin sentence"),
+        "applies": req(region, r"<span>(Changes apply to the next request: no restart\.)</span>", "applies sentence"),
+        "non_admin_proxy": req(region, r"<span>(Only an admin can change these\.)</span>", "non-admin proxy sentence"),
+        "non_admin_mode": req(region, r'<p class="ui-card__note">(Only an admin can change who can reach this gateway\.)</p>', "non-admin mode sentence"),
+        "confirm": req(region, r"<p><strong>(Before you open the gateway to the internet)</strong></p>", "Internet confirm heading"),
+        "needs_accounts": req(region, r'<span class="ui-seg__lock">(Needs accounts)</span>', "lock tag"),
+        "no_address": req(region, r'<div class="ui-empty">(The gateway found no address to show\.)</div>', "no address"),
+    }
+    if "Advanced" in req(ui, r"(function netProxyMarkup\(d\).*?\n    \})\n", "netProxyMarkup"):
+        fail("netProxyMarkup still names an 'Advanced' section (R15 D1 says none).")
+    return {"modes": modes, "kinds": kinds, "pills": pills, "buttons": buttons, "aria": aria, "text": text}
+
+
+def docs_wording() -> dict:
+    """Docs assistant: the console's props (console.py docsAssistantProps:
+    placeholder, suggestions) and the kit's DocsAssistantDrawer words
+    (console_islands.py: title, head buttons + tips, composer, footer,
+    history, archive, stop). `{name}` = the source name (AbstractGateway),
+    `{title}` = a past conversation's title."""
+    con = read_b("console.py")
+    props = req(con, r"function docsAssistantProps\(\) \{(.*?)\n\s*\}\n", "docsAssistantProps")
+    placeholder = req(props, r'placeholder: "([^"]*)"', "the docs placeholder")
+    sugg = re.findall(r'"([^"]+)"', req(props, r"suggestions: \[([^\]]*)\]", "the docs suggestions"))
+    if len(sugg) != 3:
+        fail(f"expected 3 docs suggestions, found {sugg!r}")
+    name = req(con, r'const DOCS_ASSISTANT_SOURCE = \{ app: "gateway", name: "([^"]*)" \};', "DOCS_ASSISTANT_SOURCE")
+    isl = read_b("console_islands.py")
+    t = {
+        "title": req(isl, r'label:"(Docs assistant)",title:', "drawer title"),
+        "history": req(isl, r'"aria-label":"(Past conversations)","data-af-tip":"Past conversations"', "Past conversations button"),
+        "history_tip": req(isl, r'"aria-label":"Past conversations","data-af-tip":"([^"]*)"', "Past conversations tip"),
+        "new": req(isl, r'"aria-label":"(New conversation)","data-af-tip"', "New conversation button"),
+        "new_tip": req(isl, r'"aria-label":"New conversation","data-af-tip":"([^"]*)"', "New conversation tip"),
+        "send": req(isl, r'sendLabel:"([^"]*)",busyLabel:"Answering…"', "Send"),
+        "busy": req(isl, r'sendLabel:"Send",busyLabel:"([^"]*)"', "busy label"),
+        "stop": req(isl, r'"aria-label":"(Stop)","data-af-tip":"Stop the answer"', "Stop"),
+        "stop_tip": req(isl, r'"aria-label":"Stop","data-af-tip":"([^"]*)"', "Stop tip"),
+        "stopped": req(isl, r'content:V\?"([^"]*)":String', "Stopped sentence"),
+        "empty": req(isl, r'children:\["(Ask anything about) ",e\.source\.name,"\."\]', "empty state") + " {name}.",
+        "footer": req(isl, r'children:\["(Grounded on) ",e\.source\.name,"’s documentation \(llms\.txt\) · docs-qa"\]', "footer")
+        + " {name}’s documentation (llms.txt) · docs-qa",
+        # (console_islands.py holds the bundle in a Python literal: \' is a ').
+        "footer_tip": req(isl, r"title:`(Answers come from \$\{e\.source\.name\}\\'s documentation \(llms\.txt\) through the gateway\\'s docs-qa workflow\.)`", "footer tip").replace("${e.source.name}", "{name}").replace("\\'", "'"),
+        "history_loading": req(isl, r'role:"status",children:"(Loading past conversations…)"', "history loading"),
+        "history_error": req(isl, r'e\.error\|\|"(The history could not be read\.)"', "history error"),
+        "history_empty": req(isl, r'children:"(No past conversations yet\.)"', "history empty"),
+        "archive_question": req(isl, r'children:"(Archive this conversation\? It stays in the gateway; it leaves this list\.)"', "archive question"),
+        "archive_go": req(isl, r'pc-docs-history__btn--danger",onClick:\(\)=>\{n\(null\),e\.onArchive\(r\)\},children:"([^"]*)"', "archive button"),
+        "archive_keep": req(isl, r'className:"pc-docs-history__btn",onClick:\(\)=>n\(null\),children:"([^"]*)"', "archive cancel"),
+        "archive_tip": req(isl, r'"data-af-tip":`(Archive "\$\{r\.title\}" \(kept, hidden\))`', "archive tip").replace("${r.title}", "{title}"),
+        "untitled": req(isl, r'title:p\|\|"([^"]*)"', "untitled"),
+        "questions": req(isl, r'r\.runIds\.length>1\?` · \$\{r\.runIds\.length\} (questions)`', "questions count"),
+    }
+    return {"name": name, "placeholder": placeholder, "suggestions": sugg, "kit": t}
+
+
+def models_wording() -> dict:
+    """Models: the web Models page's words (console_catalog.py) — the row
+    actions and their refusals/tooltips, the delete confirmation, the
+    head/bar/filter controls, the empty state — and the download cancel
+    question (console_ui.py dlCancelMarkup)."""
+    cat = read_b("console_catalog.py")
+    ui = read_b("console_ui.py")
+
+    def need(src: str, pattern: str, what: str, group: int = 1) -> str:
+        m = re.search(pattern, src, re.S)
+        if not m:
+            fail(f"Models: {what} not found (the anchor moved).")
+        return m.group(group)
+
+    out = {
+        "delete_tip": need(cat, r'const tip = admin \? `(Delete \$\{a\.artifact \|\| "this model"\} from this computer \(files only\))`', "the delete tooltip")
+        .replace('${a.artifact || "this model"}', "{n}"),
+        "delete_refused": need(cat, r'"(Only an admin can delete downloaded models)"', "the delete refusal"),
+        "delete_checking": need(cat, r'aria-label="Checking" data-af-tip="([^"]+)"', "the checking tooltip"),
+        "delete_deleting": need(cat, r'aria-label="Deleting" data-af-tip="([^"]+)"', "the deleting tooltip"),
+        "use_default": need(cat, r'data-mc-action="default" \$\{attrs\}\$\{admin \? "" : \' disabled title="[^"]+"\'\}>([^<]+)</button>', "Use as default"),
+        "use_default_refused": need(cat, r"title=\"(Only an admin can change the default model)\"", "the default refusal"),
+        "default_pill": need(cat, r'uiPill\("(Default text model)", "info"\)', "the default pill"),
+        "download": need(cat, r'job\.status === "failed" \? "(Try again)" : "(Download)"', "Download", 2),
+        "try_again": need(cat, r'job\.status === "failed" \? "(Try again)" : "(Download)"', "Try again", 1),
+        "download_refused": need(cat, r"title=\"(Only an admin can download models)\"", "the download refusal"),
+        "unavailable": need(cat, r'title="\$\{esc\(why\)\}">(Not available here)</span>', "Not available here"),
+        "unavailable_engine": need(cat, r'a\.supported_on_host === false \? "([^"]+)" : "([^"]+)"', "why (engine)", 1),
+        "unavailable_build": need(cat, r'a\.supported_on_host === false \? "([^"]+)" : "([^"]+)"', "why (build)", 2),
+        "starting": need(cat, r'aria-busy="true">(Starting\.\.\.)</button>', "Starting..."),
+        "cancel": need(cat, r'dlCancelMarkup\(jid, "(Cancel)"', "Cancel"),
+        "confirm_tail": need(cat, r'\$\{esc\(size\)\} (Files only — nothing in your runs is touched\.)', "the confirm sentence"),
+        "confirm_no_size": need(cat, r'"(Deletes this model\'s files from this computer\.)"', "the confirm sentence without a size"),
+        "confirm_keep": need(cat, r'data-mc-action="delete-keep" \$\{attrs\}>(\w+)</button>', "Keep"),
+        "confirm_delete": need(cat, r'data-mc-action="delete-confirm" \$\{attrs\}>(\w+)</button>', "Delete"),
+        "cancel_question": need(ui, r'<span class="ui-dl-confirm__q">([^<]+)</span>', "the cancel question"),
+        "cancel_keep": need(ui, r'data-dl-step="keep"\$\{attrs\}>([^<]+)</button>', "Keep downloading"),
+        "cancel_confirm": need(ui, r'data-dl-step="confirm"\$\{attrs\}>([^<]+)</button>', "Stop download"),
+        "cancelling": need(ui, r'ui-dl-cancel" data-dl-cancel="\$\{id\}"\$\{attrs\} disabled>([^<]+)</button>', "Cancelling..."),
+        "check_again": need(cat, r'mcStore\.loading \? "Checking\.\.\." : "(Check again)"', "Check again"),
+        "checking": need(cat, r'mcStore\.loading \? "(Checking\.\.\.)" : "Check again"', "Checking..."),
+        "modes": [
+            need(cat, r'data-mc-mode="catalog" aria-pressed="\$\{[^}]*\}">(\w+)</button>', "Catalog"),
+            need(cat, r'data-mc-mode="hf" aria-pressed="\$\{[^}]*\}">([\w ]+)</button>', "Hugging Face"),
+        ],
+        "hf_search": need(cat, r'data-mc-action="hf-search"[^>]*>(\w+)</button>', "Search"),
+        "fits": need(cat, r'data-mc-fits="1"[^>]*><span>([^<]+)</span>', "Fits this computer"),
+        "placeholder_catalog": need(cat, r'mcHfMode\(f\) \? "([^"]+)" : "([^"]+)"; \}', "placeholder", 2),
+        "placeholder_hf": need(cat, r'mcHfMode\(f\) \? "([^"]+)" : "([^"]+)"; \}', "placeholder (hf)", 1),
+        "groups": [need(cat, rf'group\("({g})", ', g) for g in ("Quantization", "Provider", "Capability", "Status")],
+        "quant_chips": [l for _, l in re.findall(r'\["(\w+)", "([^"]+)"\]', need(cat, r"const MC_QUANT_CHIPS = \[(.*?)\];", "MC_QUANT_CHIPS"))],
+        "status_chips": [l for _, l in re.findall(r'\["(\w+)", "([^"]+)"\]', need(cat, r"const MC_STATUS_CHIPS = \[(.*?)\];", "MC_STATUS_CHIPS"))],
+        "empty": need(cat, r'data-mc-empty="1"><strong>([^<]+)</strong>', "the empty sentence"),
+        "empty_hint": need(cat, r'mcRows\(\)\.length \? "([^"]+)" : "This gateway', "the empty hint"),
+        "clear": need(cat, r'data-mc-action="clear">([^<]+)</button>', "Clear filters"),
+        "not_in_catalog": need(cat, r'<h4 class="mc-extra__title">([^<]+)</h4>', "Not in the catalog"),
+    }
+    return out
+
+
+def sandbox_wording() -> dict:
+    """Sandbox: the web tab's field labels and help sentences (console.py
+    `#tab-sandbox`), the Reasoning / MTP options, the mode buttons' tooltip
+    shape (`renderSandboxCapabilityOptions`), and the kit chat's Send label,
+    Attach and Clear tooltips (console.py sandboxChatProps + the islands
+    bundle)."""
+    src = read_b("console.py")
+    start = src.find('<div id="tab-sandbox" class="tab-panel">')
+    end = src.find("</section>", start)
+    if start < 0 or end < 0:
+        fail("the Sandbox tab markup (`#tab-sandbox` … `</section>`) is missing in console.py.")
+    tab = src[start:end]
+    def one_in(pattern: str, what: str, text: str = tab) -> str:
+        m = re.findall(pattern, text, re.S)
+        if len(m) != 1:
+            fail(f"Sandbox {what}: expected exactly one match, found {len(m)} (the anchor moved).")
+        return html.unescape(m[0])
+    out = {
+        "output_label": one_in(r'id="sandbox-modes-label"[^>]*>([^<]+)<', "Output label"),
+        "context": one_in(r'id="sandbox-context"[^>]*>([^<]+)<', "context sentence"),
+        "system_label": one_in(r'id="sandbox-system-label"[^>]*>([^<]+)<input', "System prompt label"),
+        "system_placeholder": one_in(r'id="sandbox-system" placeholder="([^"]*)"', "System prompt placeholder"),
+        "system_help": one_in(r'id="sandbox-system"[^>]*><span class="sandbox-field-help">([^<]+)<', "System prompt help"),
+        "reasoning_label": one_in(r'id="sandbox-reasoning-label"[^>]*>([^<]+)<select', "Reasoning label"),
+        "reasoning_help": one_in(r'</select><span class="sandbox-field-help">(Effort[^<]+)<', "Reasoning help"),
+        "mtp_label": one_in(r'id="sandbox-speculation-label"[^>]*>([^<]+)<select', "MTP label"),
+        "mtp_help": one_in(r'</select><span class="sandbox-field-help">(Per-request[^<]+)<', "MTP help"),
+    }
+    reasoning = re.search(r'<select id="sandbox-reasoning">(.*?)</select>', tab, re.S)
+    mtp = re.search(r'<select id="sandbox-speculation">(.*?)</select>', tab, re.S)
+    if not reasoning or not mtp:
+        fail("the Sandbox Reasoning / MTP <select> options are missing in console.py.")
+    out["reasoning_options"] = re.findall(r"<option[^>]*>([^<]*)</option>", reasoning.group(1))
+    out["mtp_options"] = re.findall(r"<option[^>]*>([^<]*)</option>", mtp.group(1))
+    tip = one_in(r'btn\.title = `\$\{label\}: \$\{configured \? `[^`]*` : "([^"]+)"\}`;', "mode tooltip", src)
+    out["mode_unconfigured"] = tip
+    out["send_label"] = one_in(r'sendLabel: "([^"]+)"', "Send label", src)
+    out["seconds_label"] = one_in(r'id="sandbox-seconds-label"[^>]*>([^<]+)<input', "Length label")
+    out["seconds_help"] = one_in(r'id="sandbox-seconds"[^>]*><span class="sandbox-field-help">([^<]+)<', "Length help")
+    out["seconds_refusal"] = one_in(r'throw new Error\("(Length must be[^"]+)"\)', "Length refusal", src)
+    isl = read_b("console_islands.py")
+    out["clear_tip"] = one_in(r'af-sandbox-chat__clear","aria-label":"Clear chat","data-af-tip":"([^"]+)"', "Clear tooltip", isl)
+    out["attach_tip"] = one_in(r'"data-af-tip":"(Attach files to your question)"', "Attach tooltip", isl)
+    return out
+
+
+def entity_wording() -> dict:
+    """Manage entity + Summon a new entity (console.py): the Manage modal's
+    tabs, each card's title and description (switch cards: the switch's
+    label and description; disclosures: their summary and help), the
+    buttons the terminal mirrors, the freeze confirmation; the Summon
+    modal's title, lead, "Optional configuration" (R15 D1) and its button."""
+    src = read_b("console.py")
+    start = src.find('<div id="entity-manage-section"')
+    end = src.find('<div id="entity-create-backdrop"', start)
+    if start < 0 or end < 0:
+        fail("the Manage entity modal (`#entity-manage-section`) is missing in console.py.")
+    m = src[start:end]
+    def one_in(pattern: str, what: str, text: str = m) -> str:
+        found = re.findall(pattern, text, re.S)
+        if len(found) != 1:
+            fail(f"Entity {what}: expected exactly one match, found {len(found)} (the anchor moved).")
+        return html.unescape(found[0])
+    tabs = [html.unescape(t) for t in re.findall(r'id="entity-subtab-\w+"[^>]*>([^<]+)</button>', m)]
+    if len(tabs) != 6:
+        fail(f"the Manage tabs changed: {tabs!r}")
+    cards = {}
+    for title, desc in re.findall(r'class="af-card__title">([^<]+)</h3>\s*<p class="af-card__desc">([^<]+)</p>', m):
+        cards[html.unescape(title)] = html.unescape(desc)
+    cards["Identity"] = one_in(r'<p class="af-form__help">(Verify memory checks[^<]+)</p>', "Identity help")
+    cards["Awake or asleep"] = one_in(r'id="entity-state-awake-desc">([^<]+)<', "Awake description")
+    pt_label = one_in(r'<span class="af-switch__label">(Personal time)</span>', "Personal time label")
+    cards[pt_label] = one_in(r'id="entity-owntime-toggle-desc">([^<]+)<', "Personal time description")
+    cand = one_in(r'<summary>(Memories from sleep waiting for your review) \(', "candidates summary")
+    cards[cand] = one_in(r'<p class="af-form__help">(Sleep proposes[^<]+)</p>', "candidates help")
+    dz = one_in(r'<summary>(Danger zone: rebuild its memory index)</summary>', "danger zone summary")
+    cards[dz] = one_in(r'<p class="af-form__help">(Only when the status below says MISMATCH[^<]+)</p>', "danger zone help")
+    for must in ("Right now", "Visit", "Emergency freeze", "Mind", "Voice", "Work order", "Tools per phase", "Instructions"):
+        if must not in cards:
+            fail(f"the Manage card {must!r} is missing (the anchors moved).")
+    buttons = {
+        "verify": one_in(r'id="entity-verify"[^>]*>([^<]+)<', "Verify memory button"),
+        "talk": one_in(r'id="entity-chat-open"[^>]*>([^<]+)<', "Open visit button"),
+        "freeze": one_in(r'id="entity-loop-freeze"[^>]*>([^<]+)<', "Freeze now button"),
+        "reembed": one_in(r'id="entity-reembed"[^>]*>([^<]+)<', "Rebuild index button"),
+    }
+    freeze_q = one_in(r'aria-label="Confirm freeze"[^>]*>\s*<span>([^<]+)</span>', "freeze confirmation")
+    sub = {
+        "sleep_question": one_in(r'aria-label="Confirm sleep"[^>]*>\s*<span>([^<]+)</span>', "sleep confirmation"),
+        "reembed_question": one_in(r'aria-label="Confirm rebuild"[^>]*>\s*<span>([^<]+)</span>', "rebuild confirmation"),
+        "reason_help": one_in(r'id="entity-state-reason-help" class="af-form__help">([^<]+)<', "Reason help"),
+        "empty_phase_label": one_in(r'<span class="af-switch__label">(Empty phase means no tools)</span>', "Empty phase label"),
+        "empty_phase_desc": one_in(r'id="entity-tools-denyall-desc">([^<]+)<', "Empty phase description"),
+        "schedule_help": one_in(r'<summary id="entity-schedule-summary">[^<]*</summary>\s*<p class="af-form__help">([^<]+)</p>', "Schedule help"),
+        "audition_label": one_in(r'id="entity-voice-audition"[^>]*>([^<]+)<', "Hear a sample button"),
+        "give_task_label": one_in(r'id="entity-workorder-save"[^>]*>([^<]+)<', "Give this task button"),
+        "end_task_label": one_in(r'id="entity-workorder-clear"[^>]*>([^<]+)<', "End the work order button"),
+        "close_visit_label": one_in(r'id="entity-chat-close"[^>]*>([^<]+)<', "Close visit button"),
+    }
+    c0 = src.find('<div id="entity-create-backdrop"')
+    c1 = src.find('<div id="templates-backdrop"', c0)
+    c = src[c0:c1]
+    create = {
+        "title": one_in(r'<h2 id="entity-create-title">([^<]+)</h2>', "Summon title", c),
+        "lead": one_in(r'</h2>\s*<p class="section-note">([^<]+)</p>', "Summon lead", c),
+        "admin_note": one_in(r'id="entity-create-admin-note"[^>]*>([^<]+)</p>', "admin note", c),
+        "optional_title": one_in(r'id="entity-optional-title"[^>]*>([^<]+)</h3>', "Optional configuration title", c),
+        "optional_lead": one_in(r'id="entity-optional-title"[^>]*>[^<]+</h3>\s*<p class="section-note">([^<]+)</p>', "Optional configuration lead", c),
+        "create_label": one_in(r'id="entity-create"[^>]*>.*?<span>([^<]+)</span></button>', "Validate & create label", c),
+        "create_tip": one_in(r'id="entity-create" title="([^"]+)"', "Validate & create tooltip", c),
+        "cancel_label": one_in(r'id="entity-create-cancel"[^>]*>([^<]+)</button>', "Cancel label", c),
+    }
+    t0 = src.find('<div id="templates-backdrop"')
+    t1 = src.find('<div id="af-docs-assistant-root">', t0)
+    tpl_src = src[t0:t1]
+    def btn(i: str) -> dict:
+        m = re.search(r'<button id="' + i + r'"([^>]*)>(?:<span[^>]*>[^<]*</span><span>)?([^<]+)<', tpl_src)
+        if not m:
+            fail(f"Spark templates button #{i} is missing in console.py.")
+        tip = re.search(r'title="([^"]*)"', m.group(1))
+        return {"label": html.unescape(m.group(2)), "tip": html.unescape(tip.group(1)) if tip else ""}
+    templates = {
+        "title": one_in(r'<h2 id="templates-title">([^<]+)</h2>', "templates title", tpl_src),
+        "lead": one_in(r'</h2>\s*<p class="section-note">([^<]+)</p>', "templates lead", tpl_src),
+        "picker_tip": one_in(r'<select id="tpl-select" title="([^"]+)"', "template picker tooltip", tpl_src),
+        "view": btn("tpl-view"),
+        "edit": btn("tpl-edit"),
+        "new": btn("tpl-new"),
+        "save": btn("tpl-save"),
+        "cancel": btn("tpl-cancel"),
+        "close": btn("templates-close"),
+        "spark_label": one_in(r'<label>(Spark \(JSON[^<]+)<textarea', "spark label", tpl_src),
+    }
+    return {"tabs": tabs, "cards": cards, "buttons": buttons, "freeze_question": freeze_q, "create": create, "sub": sub, "templates": templates}
+
+
+
+def _one(src: str, pattern: str, what: str, flags: int = 0) -> str:
+    m = re.findall(pattern, src, flags)
+    if len(m) != 1:
+        fail(f"{what}: expected exactly one match, found {len(m)} (the anchor moved).")
+    return m[0]
+
+
+def multimodal_wording() -> dict:
+    """Multimodal: the page head, the scope sentences, the table's columns,
+    the row actions' words and tooltip templates (R14-W7 icon buttons:
+    `{label} {key}`, `Clear {key}`, `Download {artifact} with {provider}`,
+    `Copy: {instruction}`), the Weights pill vocabulary, the status
+    vocabulary, the banner, and the "Configure capability default" modal."""
+    src = read_b("console.py")
+    head = re.search(r'defaults: \["(Multimodal Capabilities)", "([^"]+)"\]', src)
+    if not head:
+        fail("the Multimodal heading (`defaults: [\"Multimodal Capabilities\", …]`) is missing.")
+    scope = re.search(r'\$\("defaults-scope"\)\.textContent = p\.admin\s*\? "([^"]+)"\s*: "([^"]+)";', src)
+    if not scope:
+        fail("the Multimodal scope sentences (defaults-scope) are missing.")
+    cols = _one(src, r'<table class="capability-table">\s*<thead><tr>((?:<th>[^<]+</th>)+)</tr></thead>', "the capability table head")
+    labels = re.search(
+        r'function defaultRowActionLabel\(row\) \{\s*if \(row\?\.covered_by === "input\.text"\) return row\?\.overrideable \? "(Override)" : "(Covered by input\.text)";\s*'
+        r'if \(row\?\.derived_from === "input\.text"\) return "(Derived \\u2190 input\.text)";\s*'
+        r'if \(defaultRowConfigured\(row\)\) return "(Edit)";.*?return defaultRowIsTaskParent\(row\) \? "(Set for all)" : "(Configure)";',
+        src, re.S)
+    if not labels:
+        fail("defaultRowActionLabel's words moved.")
+    weights = dict(re.findall(r'(\w+): \{ label: "([^"]+)", cls: "\w+" \}', _one(src, r"const WEIGHT_LABELS = \{(.*?)\};", "WEIGHT_LABELS", re.S)))
+    unknown = re.search(r'if \(a\.status === "unknown"\) return a\.downloadable \? \{ label: "([^"]+)".*?: \{ label: "([^"]+)"', src)
+    if not unknown or len(weights) != 4:
+        fail("the Weights pill vocabulary (WEIGHT_LABELS / weightView) moved.")
+    status = []
+    body = _one(src, r"function defaultRowStatus\(row\) \{(.*?)\n\s*\}\n", "defaultRowStatus", re.S)
+    for lab in re.findall(r'label: (?:rowHasProviderModel\(row\) \? )?"([^"]+)"', body):
+        status.append(lab.replace("\\u2190", "←"))
+    inh = re.search(r"label: `(inherited ← )\$\{defaultRowParentKey\(row\)\}`", body)
+    if not inh:
+        fail("defaultRowStatus' inherited label moved.")
+    status.append(inh.group(1) + "{parent}")
+    if "configured" not in status or "not configured" not in status:
+        fail(f"defaultRowStatus' labels moved: {status!r}")
+    def tip(pattern: str, what: str) -> str:
+        return _one(src, pattern, what).replace("${defaultRowActionLabel(row)}", "{label}").replace("${key}", "{key}") \
+            .replace("${artifact}", "{artifact}").replace("${row.provider}", "{provider}").replace("${availability.instruction}", "{instruction}")
+    modal = _one(src, r'(<div id="default-modal-backdrop".*?)<div id="log-modal-backdrop"', "the Configure capability default modal", re.S)
+    mtitle = _one(modal, r'<h2 id="default-modal-title">([^<]+)</h2>', "modal title")
+    mdesc = _one(modal, r'<p id="default-modal-description">([^<]+)</p>', "modal description")
+    buttons = []
+    for bid in ("close-default-modal", "clear-default", "test-default", "save-default"):
+        m = re.search(rf'<button id="{bid}"([^>]*)>(?:<span class="button-icon"[^>]*>[^<]*</span>)?(?:<span>)?([^<]+)', modal)
+        if not m:
+            fail(f"modal button {bid} moved.")
+        t = re.search(r'title="([^"]*)"', m.group(1))
+        buttons.append({"label": m.group(2).strip(), "title": html.unescape(t.group(1)) if t else ""})
+    sa = req(src, r"(function renderStoreAuthority\(elementId, payload\) \{.*?el\.classList\.remove\(\"hidden\"\);\n\s*\})", "renderStoreAuthority")
+    store_line = {
+        "label": _one(sa, r'overlay \? "[^"]+" : "([^"]+)";', "store label"),
+        "overlay_label": _one(sa, r'overlay \? "([^"]+)" : "AbstractCore store";', "overlay label"),
+        "claim_overlay": _one(sa, r'const claim = overlay\s*\? "([^"]+)"', "overlay claim"),
+        "claim_writable": _one(sa, r': writable\s*\? "([^"]+)"', "writable claim"),
+        "claim_readonly": _one(sa, r': writable\s*\? "[^"]+"\s*: "([^"]+)";', "read-only claim"),
+        "shape": _one(sa, r"el\.innerHTML = `(\$\{esc\(label\)\} · <code>\$\{esc\(file\)\}</code> — \$\{esc\(claim\)\})`;", "line shape")
+        .replace("${esc(label)}", "{label}").replace("<code>${esc(file)}</code>", "{file}").replace("${esc(claim)}", "{claim}"),
+        "title": _one(sa, r"el\.title = `(authority: )\$\{authority\}`;", "line title") + "{authority}",
+    }
+    undiscovered = _one(src, r'\$\("default-modal-message"\)\.textContent = `(Configured model "\$\{selected\}" is not currently in the discovered \$\{catalog\.scope\} catalog for \$\{provider\}\.)`;', "the undiscovered-model sentence")
+    return {
+        "undiscovered_model": undiscovered.replace("${selected}", "{model}").replace("${catalog.scope}", "{scope}").replace("${provider}", "{provider}"),
+        "store_line": store_line,
+        "title": head.group(1),
+        "subtitle": head.group(2),
+        "scope_admin": scope.group(1),
+        "scope_user": scope.group(2),
+        "apply": {"label": _one(src, r'id="defaults-apply-recommended"[^>]*>.*?<span>([^<]+)</span></button>', "apply label"),
+                  "title": _one(src, r'id="defaults-apply-recommended" class="secondary" title="([^"]+)"', "apply title")},
+        "refresh": {"label": _one(src, r'id="refresh-catalog"[^>]*>.*?<span>([^<]+)</span></button>', "refresh label"),
+                    "title": _one(src, r'id="refresh-catalog" class="secondary" title="([^"]+)"', "refresh title")},
+        "columns": re.findall(r"<th>([^<]+)</th>", cols),
+        "empty": _one(src, r'class="empty">(No capability routes were returned by Gateway\.)</td>', "the empty sentence"),
+        "action_labels": [x.replace("\\u2190", "←") for x in labels.groups()],
+        "tips": {
+            "configure": tip(r"configure\.dataset\.afTip = `([^`]+)`;", "configure tip"),
+            "clear": tip(r"clear\.dataset\.afTip = `([^`]+)`;", "clear tip"),
+            "download": tip(r"download\.dataset\.afTip = `([^`]+)`;", "download tip"),
+            "copy": tip(r"copy\.dataset\.afTip = `([^`]+)`;", "copy tip"),
+        },
+        "weights": {**weights, "unknown_downloadable": unknown.group(1), "unknown_not_downloadable": unknown.group(2)},
+        "weight_tip_fix": _one(src, r"if \(a\.instruction\) lines\.push\(`(To fix: )\$\{a\.instruction\}`\);", "weightTip To fix"),
+        "status": status,
+        "banner": {
+            "one": _one(src, r'gaps\.length === 1 \? "(One route has)"', "banner one"),
+            "many": _one(src, r': `\$\{gaps\.length\} (routes have)`\}', "banner many"),
+            "tail": _one(src, r'\} (no model yet) \(\$\{routes\}\)\. `', "banner tail"),
+            "recommended": _one(src, r'\+ `(Recommended to get started: )\$\{pairs\}\. `', "banner recommended"),
+            "button": _one(src, r'aria-hidden="true">⭳</span><span>(Download missing)</span>', "Download missing"),
+        },
+        "dialog": {"title": mtitle, "lead": mdesc, "buttons": buttons,
+                   "base_url_placeholder": _one(modal, r'id="modal-default-base-url"[^>]*placeholder="([^"]+)"', "base URL placeholder"),
+                   "labels": ["Provider", "Model", "Voice", "Reasoning"] if all(f"<label>{x}<select" in modal or f'>{x}<select' in modal for x in ("Provider", "Model", "Voice", "Reasoning")) else fail("modal labels moved")},
+    }
+
+
+
+def resources_wording() -> dict:
+    """Resources: the ◎ Gateway card (title, note, the Workflows paused
+    switch, Check now / Update, Restart gateway… / Quit gateway…, the
+    restart / quit confirmations), the ▦ Memory & GPU / ▣ Models / ⌸
+    Session caches headings, the Models table's columns and row buttons
+    (labels + tooltips), "Show configured / cached", the load form, the
+    caches' Clear, the confirmations and the empty sentences."""
+    src = read_b("console.py")
+    sec = _one(src, r'(<div id="tab-models".*?)<!-- Models \(id catalog\)', "the Resources tab markup", re.S)
+    def btn(bid: str) -> dict:
+        m = re.search(rf'<button id="{bid}"([^>]*)>([^<]+)</button>', sec)
+        if not m:
+            fail(f"Resources button {bid} moved.")
+        t = re.search(r'title="([^"]*)"', m.group(1))
+        return {"label": m.group(2).strip(), "title": html.unescape(t.group(1)) if t else ""}
+    headings = re.findall(r'<h2 class="section-title"><span class="section-icon" aria-hidden="true">([^<]+)</span><span(?: id="[^"]+")?>([^<]+)</span></h2>', sec)
+    pause_title = _one(sec, r'<button id="gateway-host-pause"[^>]*title="([^"]+)"', "the pause switch's title")
+    pause_label = _one(sec, r'id="gateway-host-pause".*?af-switch__label">([^<]+)<', "the pause switch's label", re.S)
+    show = re.search(r'<label id="models-show-cached-label"[^>]*title="([^"]+)"><input id="models-show-cached" type="checkbox"> <span id="models-show-cached-text">([^<]+)</span>', sec)
+    lock = re.search(r'<label class="entity-checkbox" title="([^"]+)"><input id="models-load-lock" type="checkbox"> ([^<]+)</label>', sec)
+    if not show or not lock:
+        fail("the Show configured / cached toggle or the lock-in-memory checkbox moved.")
+    tables = re.findall(r"<thead><tr>((?:<th>[^<]+</th>)+)</tr></thead>", sec)
+    if len(tables) != 2:
+        fail(f"the Models / Session caches tables moved ({len(tables)} heads).")
+    def call(pattern: str, what: str) -> str:
+        return _one(src, pattern, what, re.S)
+    rows = {
+        "estimate": {"label": call(r'est\.textContent = "([^"]+)";', "Estimate"), "title": call(r'est\.title = "([^"]+)";', "Estimate title")},
+        "unlock_resident": call(r'\? \(row\.resident === true\s*\? "(Release the memory lock[^"]+)"', "Unlock title (resident)"),
+        "unlock_evicted": call(r': "(Release a lock whose model is no longer in memory[^"]+)"\)', "Unlock title (evicted)"),
+        "lock_adopt": call(r'\? "(Lock this model in memory — this host loaded it[^"]+)"', "Lock title (adopt)"),
+        "lock": call(r': "(Lock this model in memory so nothing can evict it)"\);', "Lock title"),
+        "lock_labels": list(re.search(r'lockBtn\.textContent = row\.locked === true \? "([^"]+)" : "([^"]+)";', src).groups()),
+        "unload": {"label": call(r'unload\.textContent = "([^"]+)";', "Unload"), "title": call(r'unload\.title = "([^"]+)";', "Unload title")},
+        "clear": {"label": call(r'clear\.textContent = "(Clear)";\s*clear\.title = "Clear every prompt cache', "cache Clear"),
+                  "title": call(r'clear\.title = "(Clear every prompt cache for this session)";', "cache Clear title")},
+    }
+    confirms = {
+        "restart": call(r'confirmAction\(\{ title: "(Restart AbstractGateway\?)", message: "([^"]+)"', "restart confirm"),
+        "quit": call(r'confirmAction\(\{ title: "(Quit AbstractGateway\?)", message: "([^"]+)"', "quit confirm"),
+        "unload": call(r'title: "Unload model",\s*message: `([^`]+)`', "unload confirm").replace("${name}", "{name}"),
+        "force": call(r'title: "Model locked",\s*message: `([^`]+)`', "force unload confirm").replace("${name}", "{name}"),
+        "clear_cache": call(r'title: "Clear session caches",\s*message: `([^`]+)`', "clear caches confirm").replace("${sessionId}", "{session}"),
+    }
+    return {
+        "headings": [{"icon": i, "title": html.unescape(t)} for i, t in headings],
+        "gateway_note": _one(sec, r'<span>Gateway</span></h2>\s*<p class="section-note">([^<]+)</p>', "the Gateway note"),
+        "refresh_tip": _one(sec, r'id="models-refresh"[^>]*data-af-tip="([^"]+)"', "the Refresh tip"),
+        "pause": {"label": pause_label.strip(), "title": pause_title},
+        "check": btn("gateway-host-update-check"),
+        "update": btn("gateway-host-update-start"),
+        "restart": btn("gateway-host-restart"),
+        "quit": btn("gateway-host-quit"),
+        "kv": [html.unescape(k) for k in re.findall(r'<span class="entity-kv-key">([^<]+)</span>', sec)],
+        "show_cached": {"label": show.group(2), "title": show.group(1)},
+        "lock_in_memory": {"label": lock.group(2).strip(), "title": lock.group(1)},
+        "load": btn("models-load-button"),
+        "models_columns": re.findall(r"<th>([^<]+)</th>", tables[0]),
+        "caches_columns": re.findall(r"<th>([^<]+)</th>", tables[1]),
+        "rows": rows,
+        "confirms": {"restart": " ".join(confirms["restart"]), "quit": " ".join(confirms["quit"]),
+                     "unload": confirms["unload"], "force": confirms["force"], "clear_cache": confirms["clear_cache"]},
+        "empty": {"models": call(r'modelsEmptyRow\(body, 8, "(No models loaded right now\.)"\)', "models empty"),
+                  "caches": call(r'modelsEmptyRow\(body, 6, "(No session prompt caches right now\.)"\)', "caches empty")},
+    }
+
+
+B_SCREENS = {
+    "about": about_wording,
+    "network": network_wording,
+    "docs": docs_wording,
+    "models": models_wording,
+    "sandbox": sandbox_wording,
+    "entity": entity_wording,
+    "multimodal": multimodal_wording,
+    "resources": resources_wording,
+}
+
+
+def b_fixture(screen: str) -> Path:
+    return CRATE / "tests" / "fixtures" / f"r15_web_wording_{screen}.json"
+
+
+def check_b_screens(write: bool) -> int:
+    rc = 0
+    for screen, fn in B_SCREENS.items():
+        text = json.dumps({"_source": "scripts/extract_web_wording.py (do not edit by hand)", **fn()},
+                          indent=2, ensure_ascii=False) + "\n"
+        path = b_fixture(screen)
+        if write:
+            path.write_text(text, encoding="utf-8")
+            print(f"wrote {path}")
+        elif not path.is_file():
+            fail(f"{path} missing; run with --write.")
+        elif path.read_text(encoding="utf-8") != text:
+            print(f"{path} differs from the web sources; run with --write, then make the terminal match.")
+            rc = 1
+        else:
+            print(f"r15 web wording ({screen}): fixture matches the web sources")
+    return rc
+
+
+_main_before_b = main
+
+
+def main() -> int:  # noqa: F811 - chains the reference check, then group B's
+    rc = _main_before_b()
+    return check_b_screens("--write" in sys.argv[1:]) or rc
+
 if __name__ == "__main__":
     _rc = main()
     raise SystemExit(screens_main("--write" in sys.argv) or _rc)

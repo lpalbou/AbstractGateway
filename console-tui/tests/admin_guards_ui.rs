@@ -303,7 +303,10 @@ fn admin_reaches_the_gated_verbs() {
     let mut h = harness();
     h.on(ui::SCREEN_MODELS, true);
     let s = h.key(b"w");
-    assert!(s.contains("Load (warm up) a model"), "{s}");
+    assert!(
+        s.contains("Load (warm up) this model on the host now"),
+        "{s}"
+    );
     let mut h = harness();
     h.on(ui::SCREEN_USERS, true);
     let s = h.key(b"a");
@@ -317,18 +320,19 @@ fn admin_reaches_the_gated_verbs() {
 fn footer_hides_admin_verbs_from_a_non_admin() {
     let mut h = harness();
     let s = h.on(ui::SCREEN_ROUTES, true);
+    // R15: the Multimodal hints name the web's buttons.
     assert!(
-        s.contains("apply recommended") && s.contains("download weights"),
+        s.contains("Apply recommended") && s.contains("Download all"),
         "{s}"
     );
     assert!(s.contains("Ctrl+G setup guide"), "{s}");
     let mut h = harness();
     let s = h.on(ui::SCREEN_ROUTES, false);
-    assert!(s.contains("edit route") && s.contains("clear route"), "{s}");
+    assert!(s.contains("Enter Configure"), "{s}");
     for hidden in [
-        "apply recommended",
-        "download weights",
-        "download all",
+        "Apply recommended",
+        "Download missing",
+        "Download all",
         "Ctrl+G",
     ] {
         assert!(
@@ -337,13 +341,14 @@ fn footer_hides_admin_verbs_from_a_non_admin() {
         );
     }
     assert!(
-        s.contains("w/a/D/C admin only"),
+        s.contains("a/m/D admin only"),
         "disabled with the reason:\n{s}"
     );
     let s = h.on(ui::SCREEN_MODELS, false);
-    assert!(s.contains("context estimate"), "{s}");
+    // R15: the Resources hints name the web's buttons.
+    assert!(s.contains("e Estimate"), "{s}");
     assert!(
-        !s.contains("load (warm up)") && !s.contains("clear session caches"),
+        !s.contains("Load model") && !s.contains("Clear session caches"),
         "{s}"
     );
     assert!(s.contains("u/k/w/c admin only"), "{s}");
@@ -562,15 +567,20 @@ fn entity_manage_refuses_admin_acts_for_a_non_admin() {
     h.drain();
     let s = h.key(b"m");
     assert!(s.contains("You are not an admin"), "{s}");
-    assert!(s.contains("view only (changes are admin-only)"), "{s}");
+    // R15-B: Manage is one screen; its Lifecycle tab (a click on the tab
+    // bar) shows the state read-only — the segments are off and the card
+    // says why — and nothing is written.
     h.drain();
-    // The menu opens on "state".
-    h.key(b"\r");
+    let (y, line) = s
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains(" Overview ") && l.contains(" Lifecycle "))
+        .expect("Manage's tab bar");
+    let x = line[..line.find(" Lifecycle ").unwrap()].chars().count() + 2;
+    let s = h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes());
     assert!(
-        h.notice()
-            .contains("changing an entity's state is admin-only"),
-        "{}",
-        h.notice()
+        s.contains("Awake or asleep") && s.contains("admin-only"),
+        "the state card says why:\n{s}"
     );
     let s = h.turns(2);
     assert!(!s.contains("Apply"), "no state modal opened:\n{s}");

@@ -36,6 +36,8 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use super::util::{error_panel_hint, field, line, span, span_bold, wrap_text};
+use super::w::action::{button, On, RowActions};
+use super::w::Action;
 use super::Ctx;
 use crate::api::{ApiError, ApiErrorKind, ApiResult, GatewayClient};
 use crate::store::{ConnPhase, Loadable, RouteRow, SandboxOutcome, Store};
@@ -221,11 +223,22 @@ pub fn resolve_mode_route(rows: &[RouteRow], mode: SbMode) -> Option<ModeRoute> 
     Some(ModeRoute::NotConfigured)
 }
 
+/// "Multimodal (0)": the Multimodal screen named with its REAL accelerator,
+/// read from the shell's table (a hard-coded key drifted once: "(9)").
+pub fn multimodal_ref() -> String {
+    let i = super::SCREEN_ROUTES;
+    match super::screen_key(i) {
+        Some(k) => format!("{} ({k})", super::SCREENS[i]),
+        None => super::SCREENS[i].to_string(),
+    }
+}
+
 /// Why an incomplete route cannot run (route line + refusal notice).
 fn incomplete_reason(mode: SbMode, stop_key: &str) -> String {
     format!(
-        "{} is not ready — {stop_key} has settings but no provider + model, and resolution stops there; complete it on Multimodal (9)",
-        mode.route_key()
+        "{} is not ready — {stop_key} has settings but no provider + model, and resolution stops there; complete it on {}",
+        mode.route_key(),
+        multimodal_ref()
     )
 }
 
@@ -353,6 +366,7 @@ pub fn media_body(
     voice: Option<&str>,
     prompt: &str,
     request_id: &str,
+    seconds: Option<f64>,
 ) -> Option<(&'static str, Value)> {
     Some(match mode {
         SbMode::Text => return None,
@@ -367,14 +381,18 @@ pub fn media_body(
             }
             ("voice/tts", b)
         }
-        SbMode::Music | SbMode::Sound => (
-            "music/generate",
-            json!({
+        SbMode::Music | SbMode::Sound => {
+            let mut b = json!({
                 "prompt": prompt,
                 "task": if mode == SbMode::Sound { "text_to_audio" } else { "text_to_music" },
                 "music_provider": provider, "music_model": model, "request_id": request_id,
-            }),
-        ),
+            });
+            // The web's `seconds: sandboxSecondsFor(mode)` (a number).
+            if let Some(n) = seconds.and_then(serde_json::Number::from_f64) {
+                b["seconds"] = Value::Number(n);
+            }
+            ("music/generate", b)
+        }
         SbMode::Video => (
             "videos/generate",
             json!({"prompt": prompt, "video_provider": provider, "video_model": model, "request_id": request_id}),
@@ -1047,6 +1065,10 @@ pub struct SandboxWs {
     pub speech_for: Signal<String>,
     /// MTP depth availability for the picked text pair.
     pub mtp: Signal<MtpSupport>,
+    /// "Length (seconds)", remembered per mode like the web's
+    /// `state.sandboxSeconds` (sound 5, music 30).
+    pub seconds_sound: Signal<String>,
+    pub seconds_music: Signal<String>,
 }
 
 impl SandboxWs {
@@ -1067,6 +1089,18 @@ impl SandboxWs {
             speech: cx.signal(Loadable::NotAsked),
             speech_for: cx.signal(String::new()),
             mtp: cx.signal(MtpSupport::NoPair),
+            seconds_sound: cx.signal("5".to_string()),
+            seconds_music: cx.signal("30".to_string()),
+        }
+    }
+
+    /// The "Length (seconds)" field of a timed mode (Music, SFX); None for
+    /// the others (the web hides the field there).
+    pub fn seconds_for(&self, mode: SbMode) -> Option<Signal<String>> {
+        match mode {
+            SbMode::Music => Some(self.seconds_music),
+            SbMode::Sound => Some(self.seconds_sound),
+            _ => None,
         }
     }
 
@@ -1093,6 +1127,39 @@ impl SandboxWs {
 /// The first audio player on PATH (the one table: `crate::audio`).
 pub fn find_player() -> Option<(PathBuf, &'static [&'static str])> {
     crate::audio::find_player()
+}
+
+thread_local! {
+    /// The page's inline refusal line (R15: refusals sit next to the
+    /// controls, never only in the status bar). None while no page is mounted.
+    static REFUSAL: std::cell::Cell<Option<Signal<Option<String>>>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Say why the Sandbox refused: inline under the action bar when the page
+/// is mounted (a key from elsewhere still reaches the status bar).
+fn refuse(store: &Store, msg: impl Into<String>) {
+    let msg = msg.into();
+    match REFUSAL.with(|r| r.get()).filter(|s| s.is_alive()) {
+        Some(sig) => sig.set(Some(msg)),
+        None => store.notice.set(Some(msg)),
+    }
+}
+
+/// [`refuse`] for the sites that hold an `Option<String>` (a refused
+/// action's reason).
+fn refuse_some(store: &Store, msg: Option<String>) {
+    if let Some(m) = msg {
+        refuse(store, m);
+    }
+}
+
+/// The inline refusal currently shown (tests).
+pub fn refusal_now() -> Option<String> {
+    REFUSAL
+        .with(|r| r.get())
+        .filter(|s| s.is_alive())
+        .and_then(|s| s.get_untracked())
 }
 
 thread_local! {
@@ -1157,6 +1224,33 @@ pub fn workspace(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let prov_ix = cx.signal(0usize);
     let model_ix = cx.signal(0usize);
     let mode_ix = cx.signal(ws.mode.get_untracked().index());
+    // The inline refusal line (registered for `refuse`); a new mode or a
+    // run that starts clears it.
+    let refusal: Signal<Option<String>> = cx.signal(None);
+    REFUSAL.with(|r| r.set(Some(refusal)));
+    cx.effect(move || {
+        let _ = ws.mode.get();
+        let _ = store.sandbox.with(|s| matches!(s, Loadable::Loading));
+        let _ = ws.media.with(|m| matches!(m, Loadable::Loading));
+        if refusal.get_untracked().is_some()
+            && (store
+                .sandbox
+                .with_untracked(|s| matches!(s, Loadable::Loading))
+                || ws.media.with_untracked(|m| matches!(m, Loadable::Loading)))
+        {
+            refusal.set(None);
+        }
+    });
+    {
+        let mut last_mode = ws.mode.get_untracked();
+        cx.effect(move || {
+            let m = ws.mode.get();
+            if m != last_mode {
+                last_mode = m;
+                refusal.set(None);
+            }
+        });
+    }
 
     // Provider index ⇄ durable name (see the pre-move review.rs notes:
     // tracked reads, equality guards, a missing saved name clears only
@@ -1325,66 +1419,93 @@ pub fn workspace(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
 
     Element::new()
         .style(LayoutStyle::column().gap(0).grow(1.0))
-        .shortcut(KeyChord::plain(Key::Char('g')), move |_| {
-            run(&ctx_g, prov_ix, model_ix, &ps_g);
+        // The bar's accelerators (outside the prompt: the prompt keeps
+        // its letters). `g` = Send.
+        .on(abstracttui::ui::Phase::Bubble, move |ectx, ev| {
+            if let abstracttui::ui::UiEvent::Key(k) = ev {
+                if k.mods.0 != 0 {
+                    return;
+                }
+                let Key::Char(c) = k.key else { return };
+                let st = bar_state_untracked(&ctx_g.store);
+                if let Some(a) = bar_actions(&st).into_iter().find(|a| a.key == Some(c)) {
+                    ectx.stop_propagation();
+                    bar_action(cx, &ctx_g, a.id, prov_ix, model_ix, &ps_g);
+                }
+            }
         })
         .child(
             Block::new()
                 .border(BorderKind::Rounded)
                 .title("Sandbox")
                 .fill(t.surface)
-                .layout(LayoutStyle::column().gap(0).grow(1.0).padding(Edges::hv(1, 0)))
-                // Mode picker + the mode's teaching line on ONE row (the
-                // 80x24 budget: every added control row costs the body).
-                .child(dyn_view_scoped(LayoutStyle::default().shrink(0.0), move |gcx| {
-                    let t = tt;
-                    let rows = store.routes.with(|r| r.ready().map(|d| d.rows.clone()));
-                    let opts: Vec<SelectOption> = SbMode::ALL
-                        .iter()
-                        .map(|m| SelectOption::new(mode_option_label(*m, rows.as_deref())))
-                        .collect();
-                    let mode = ws.mode.get();
-                    // The web's field help: what the next message generates.
-                    let teach = match mode {
-                        // The web's context line for Text Chat: the pair the
-                        // next message uses (the picked one), else why not.
-                        SbMode::Text => {
-                            let (p, m) = (ui.sb_provider.get(), ui.sb_model.get());
-                            let route = rows
-                                .as_deref()
-                                .and_then(|r| mode_row(r, SbMode::Text).and_then(row_pair));
-                            if !p.is_empty() && !m.is_empty() {
-                                context_ready("Text Chat", &p, &m, None, "")
-                            } else if route.is_none() && rows.is_some() && p.is_empty() {
-                                context_unconfigured("Text Chat")
-                            } else {
-                                "run a REAL text generation through the gateway to prove a provider/model pair works".to_string()
-                            }
-                        }
-                        _ => "What the next message generates, with its route from Multimodal.".to_string(),
-                    };
-                    Element::new()
-                        .style(LayoutStyle::row().gap(1).h(1))
-                        .child(
-                            Element::new()
-                                .style(LayoutStyle::default().w(18 + 1 + 28).h(1).shrink(0.0))
-                                .child(field(
-                                    &t,
-                                    "output",
-                                    Select::new(opts)
-                                        .value(mode_ix)
-                                        .layout(LayoutStyle::default().w(28).h(1).shrink(0.0))
-                                        .element(gcx, &t)
-                                        .build(),
-                                ))
-                                .build(),
+                .layout(
+                    LayoutStyle::column()
+                        .gap(0)
+                        .grow(1.0)
+                        .padding(Edges::hv(1, 0)),
+                )
+                // R15: the web's "Output" mode buttons — a Segmented, one Tab
+                // stop per segment, every mode choosable (an unconfigured one
+                // says so in its tooltip and refuses on Send, as the web);
+                // the mode's teaching line beside it.
+                .child(dyn_view_scoped(
+                    LayoutStyle::default().shrink(0.0),
+                    move |gcx| {
+                        let t = tt;
+                        let rows = store.routes.with(|r| r.ready().map(|d| d.rows.clone()));
+                        // Read untracked: the bound Segmented repaints its own pick
+                        // (focus stays on the segment); the teaching line beside it
+                        // is its own region and follows the mode.
+                        let mode = ws.mode.get_untracked();
+                        let mut seg = super::w::Segmented::new(
+                            SbMode::ALL.iter().map(|m| m.label()),
+                            Some(mode.index()),
                         )
-                        // A hint beside the picker: cut with a visible `…`
-                        // when narrow (the pickers / route line below carry
-                        // the same facts whole).
-                        .child(line(vec![span(teach, t.text_muted)]))
-                        .build()
-                }))
+                        .bind(mode_ix);
+                        for (i, tip) in mode_tips(rows.as_deref()).into_iter().enumerate() {
+                            seg = seg.tip(i, tip);
+                        }
+                        let seg_w = seg.width();
+                        let inner =
+                            crate::ui::page_viewport(gcx).get().w - super::widths::BLOCK_CHROME - 2;
+                        let beside = inner - (18 + 1 + seg_w + 1);
+                        let seg_row = Element::new()
+                            .style(LayoutStyle::default().w(18 + 1 + seg_w).h(1).shrink(0.0))
+                            .child(field(&t, OUTPUT_LABEL, seg.view(gcx, &t)))
+                            .build();
+                        // Wide: the teaching line beside the segments (wrapped in
+                        // its column); narrow: under them, whole.
+                        let (teach_w, side) = if beside >= 40 {
+                            (beside, true)
+                        } else {
+                            (inner.max(20), false)
+                        };
+                        let teach_view = dyn_view(LayoutStyle::column().shrink(0.0), move || {
+                            let t = abstracttui::app::current_theme().tokens;
+                            let rows = store.routes.with(|r| r.ready().map(|d| d.rows.clone()));
+                            let teach = teach_line(ws.mode.get(), &ui, rows.as_deref());
+                            let mut col = Element::new().style(LayoutStyle::column().shrink(0.0));
+                            for l in wrap_text(&teach, teach_w.max(10) as usize) {
+                                col = col.child(line(vec![span(l, t.text_muted)]));
+                            }
+                            col.build()
+                        });
+                        if side {
+                            Element::new()
+                                .style(LayoutStyle::row().gap(1).shrink(0.0))
+                                .child(seg_row)
+                                .child(teach_view)
+                                .build()
+                        } else {
+                            Element::new()
+                                .style(LayoutStyle::column().shrink(0.0))
+                                .child(seg_row)
+                                .child(teach_view)
+                                .build()
+                        }
+                    },
+                ))
                 // Text: the pair pickers + controls. Media: the route line.
                 .child(dyn_view_scoped(LayoutStyle::default().shrink(0.0), {
                     let ctx2 = ctx.clone();
@@ -1392,7 +1513,22 @@ pub fn workspace(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         let t = tt;
                         match ws.mode.get() {
                             SbMode::Text => text_controls(gcx, &ctx2, &t, prov_ix, model_ix),
-                            m => route_line(&t, &store, m, crate::ui::page_viewport(gcx).get().w),
+                            m => {
+                                let route = route_line(
+                                    &t,
+                                    &store,
+                                    m,
+                                    crate::ui::page_viewport(gcx).get().w,
+                                );
+                                match ws.seconds_for(m) {
+                                    None => route,
+                                    Some(sig) => Element::new()
+                                        .style(LayoutStyle::column().shrink(0.0))
+                                        .child(route)
+                                        .child(seconds_row(gcx, &ctx2, &t, sig))
+                                        .build(),
+                                }
+                            }
                         }
                     }
                 }))
@@ -1434,7 +1570,8 @@ pub fn workspace(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         field(
                             &t,
                             "prompt",
-                            super::util::esc_releases_focus(prompt, ctx_submit.store.notice).build(),
+                            super::util::esc_releases_focus(prompt, ctx_submit.store.notice)
+                                .build(),
                         )
                     }
                 }))
@@ -1451,118 +1588,48 @@ pub fn workspace(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         .collect();
                     field(&tt, "attached", line(vec![span(names.join("  "), tt.text)]))
                 }))
-                .child(dyn_view_scoped(LayoutStyle::default().h(1).shrink(0.0), {
+                // R15: the action bar — ONE action list (`bar_actions`) for
+                // the buttons, the keys, the hints and the click tests.
+                // Dialogs open on the PAGE scope `cx`, never this row's `gcx`
+                // (the row re-renders when a label changes — "Attach (1)").
+                .child(dyn_view_scoped(LayoutStyle::default().shrink(0.0), {
                     let ctx_btn = ctx.clone();
                     let ps_btn = prompt_state.clone();
                     move |gcx| {
                         let t = tt;
+                        let st = bar_state_tracked(&store);
+                        let w = (crate::ui::page_viewport(gcx).get().w
+                            - super::widths::BLOCK_CHROME
+                            - 2)
+                        .max(20);
                         let ctx3 = ctx_btn.clone();
-                        let ctx4 = ctx_btn.clone();
                         let ps = ps_btn.clone();
-                        let running = store.sandbox.with(Loadable::is_loading)
-                            || ws.media.with(Loadable::is_loading);
-                        let mut row = Element::new()
-                            .style(LayoutStyle::row().gap(2))
-                            .child(
-                                Button::new("Generate (Enter)")
-                                    .disabled(running)
-                                    .on_click(move || run(&ctx3, prov_ix, model_ix, &ps))
-                                    .element(gcx, &t)
-                                    .build(),
-                            )
-                            .child(
-                                Button::new("Clear")
-                                    .disabled(running)
-                                    .on_click(move || clear(&ctx4))
-                                    .element(gcx, &t)
-                                    .build(),
-                            );
-                        // (Dialogs open on the PAGE scope `cx`, never this
-                        // row's `gcx`: the row re-renders when a label
-                        // changes — "Attach (1)", "Options ✓" — and a
-                        // modal owned by the disposed scope would vanish.)
-                        // Text mode: Options (the web's system prompt,
-                        // reasoning and MTP — in a dialog, the 80x24 row
-                        // budget has no room inline), Attach (the web's ＋
-                        // / drop zone, from a local path) and Speak (the
-                        // web's 🔊 on a reply, when output.voice is set).
-                        if ws.mode.get() == SbMode::Text {
-                            let ctx5 = ctx_btn.clone();
-                            let ctx6 = ctx_btn.clone();
-                            let customized = ws.system.with(|s| !s.trim().is_empty())
-                                || ws.reasoning_ix.get() > 0
-                                || ws.mtp_ix.get() > 0;
-                            let n_att = ws.attachments.with(Vec::len);
-                            row = row
-                                .child(
-                                    Button::new(if customized { "Options ✓" } else { "Options…" })
-                                        .on_click(move || open_options(&ctx5, cx))
-                                        .element(gcx, &t)
-                                        .build(),
-                                )
-                                .child(
-                                    Button::new(if n_att == 0 {
-                                        "Attach…".to_string()
-                                    } else {
-                                        format!("Attach ({n_att})")
-                                    })
-                                    .on_click(move || open_attach(&ctx6, cx))
-                                    .element(gcx, &t)
-                                    .build(),
-                                );
-                            let reply = store.sandbox.with(|s| match s {
-                                Loadable::Ready(o) if o.ok && !o.response.trim().is_empty() => {
-                                    Some(o.response.clone())
-                                }
-                                _ => None,
-                            });
-                            if let (Some(reply), true) = (reply, voice_pair_tracked(&store).is_some()) {
-                                let ctx7 = ctx_btn.clone();
-                                let busy = ws.speech.with(Loadable::is_loading);
-                                row = row.child(
-                                    Button::new(if busy { "Speaking…" } else { "Speak" })
-                                        .disabled(busy)
-                                        .on_click(move || speak(&ctx7, &reply))
-                                        .element(gcx, &t)
-                                        .build(),
-                                );
-                            }
-                        }
-                        // Play/Stop for a saved AUDIO result (the web's
-                        // <audio controls>), shown only in its mode.
-                        if let Loadable::Ready(o) = ws.media.get() {
-                            if o.mode.is_audio() && o.mode == ws.mode.get() {
-                                if let Ok((path, _)) = &o.saved {
-                                    let path = path.clone();
-                                    row = row
-                                        .child(
-                                            Button::new("Play audio")
-                                                .on_click(move || {
-                                                    let msg = play_file(&path).unwrap_or_else(|e| e);
-                                                    store.notice.set(Some(msg));
-                                                })
-                                                .element(gcx, &t)
-                                                .build(),
-                                        )
-                                        .child(
-                                            Button::new("Stop")
-                                                .on_click(move || {
-                                                    let was = stop_player();
-                                                    store.notice.set(Some(
-                                                        if was { "■ playback stopped" } else { "nothing is playing" }.into(),
-                                                    ));
-                                                })
-                                                .element(gcx, &t)
-                                                .build(),
-                                        );
-                                }
-                            }
-                        }
-                        row.build()
+                        let on: std::rc::Rc<dyn Fn(&'static str)> = std::rc::Rc::new(move |id| {
+                            bar_action(cx, &ctx3, id, prov_ix, model_ix, &ps)
+                        });
+                        let (v, _) =
+                            RowActions::new(bar_actions(&st)).view(gcx, &t, On::Page, true, w, on);
+                        v
                     }
                 }))
+                // The refusal of the last action, inline (error ink), until
+                // the next action goes through.
                 .child(dyn_view(LayoutStyle::default().shrink(0.0), move || {
-                    match ws.mode.get() {
+                    let t = tt;
+                    match refusal.get() {
+                        Some(why) => {
+                            let w = (crate::ui::page_viewport(cx).get_untracked().w
+                                - super::widths::BLOCK_CHROME
+                                - 2)
+                            .max(20);
+                            super::w::form::sentence(&t, &why, w, t.error)
+                        }
+                        None => Element::new().style(LayoutStyle::default().h(0)).build(),
+                    }
+                }))
+                .child(dyn_view(
+                    LayoutStyle::default().shrink(0.0),
+                    move || match ws.mode.get() {
                         SbMode::Text => text_status(
                             &tt,
                             &store.sandbox.get(),
@@ -1570,41 +1637,19 @@ pub fn workspace(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                             ws.history.with(Vec::len),
                         ),
                         m => media_status(&tt, m, &ws.media.get()),
-                    }
-                }))
-                .child(dyn_view_scoped(LayoutStyle::default().grow(1.0), move |gcx| {
-                    match ws.mode.get() {
+                    },
+                ))
+                .child(dyn_view_scoped(
+                    LayoutStyle::default().grow(1.0),
+                    move |gcx| match ws.mode.get() {
                         SbMode::Text => text_body_view(gcx, &tt, &store),
                         m => media_body_view(gcx, &tt, m, &ws.media.get()),
-                    }
-                }))
+                    },
+                ))
                 .element(t)
                 .build(),
         )
         .build()
-}
-
-fn mode_option_label(m: SbMode, rows: Option<&[RouteRow]>) -> String {
-    // The web's mode buttons: the short label, then the route's model or
-    // "not configured" (`renderSandboxCapabilityOptions`).
-    if m == SbMode::Text {
-        return match rows
-            .and_then(|r| mode_row(r, SbMode::Text))
-            .and_then(row_pair)
-        {
-            Some((_, model)) => format!("Text — {model}"),
-            None => "Text — not configured".into(),
-        };
-    }
-    match rows {
-        None => format!("{} — routes not loaded", m.label()),
-        Some(rows) => match resolve_mode_route(rows, m) {
-            None => format!("{} — not offered", m.label()),
-            Some(ModeRoute::Ready { model, .. }) => format!("{} — {model}", m.label()),
-            Some(ModeRoute::Incomplete { .. }) => format!("{} — not ready", m.label()),
-            Some(ModeRoute::NotConfigured) => format!("{} — not configured", m.label()),
-        },
-    }
 }
 
 /// The web's context sentence for a configured mode (`updateSandboxControls`):
@@ -1725,13 +1770,17 @@ fn text_controls(
                 .child(field(
                     &t,
                     "",
-                    Button::new("Retry provider discovery")
-                        .on_click(move || {
+                    button(
+                        gcx,
+                        &t,
+                        &Action::label("retry_providers", "Retry provider discovery"),
+                        On::Page,
+                        true,
+                        move || {
                             ctx3.store.providers.set(Loadable::Loading);
                             ctx3.send(Cmd::LoadProviders);
-                        })
-                        .element(gcx, &t)
-                        .build(),
+                        },
+                    ),
                 ))
                 .build()
         }
@@ -1850,16 +1899,20 @@ fn text_controls(
                             .child(field(
                                 &t,
                                 "",
-                                Button::new("Retry model discovery")
-                                    .on_click(move || {
+                                button(
+                                    gcx,
+                                    &t,
+                                    &Action::label("retry_models", "Retry model discovery"),
+                                    On::Page,
+                                    true,
+                                    move || {
                                         let n = name_btn.clone();
                                         ctx3.store.models.update(|m| {
                                             drop(m.insert(n.clone(), Loadable::Loading))
                                         });
                                         ctx3.send(Cmd::LoadModels { provider: n });
-                                    })
-                                    .element(gcx, &t)
-                                    .build(),
+                                    },
+                                ),
                             ))
                             .build()
                     }
@@ -1886,6 +1939,163 @@ fn text_controls(
         .style(LayoutStyle::column().gap(0))
         .child(provider_row)
         .child(model_row)
+        .child(options_row(gcx, ctx, &t))
+        .build()
+}
+
+/// The web's "Length (seconds)" field (Music, SFX): a page text field
+/// (caret-tracked), its help sentence as the tooltip.
+fn seconds_row(gcx: Scope, ctx: &Ctx, t: &TokenSet, sig: Signal<String>) -> View {
+    let input = super::w::caret_tracked(
+        gcx,
+        ctx.ui.caret,
+        super::util::esc_releases_focus(
+            TextInput::new()
+                .value(sig)
+                .placeholder("5")
+                .layout(LayoutStyle::default().w(8).h(1).shrink(0.0))
+                .element(gcx, t),
+            ctx.store.notice,
+        ),
+    );
+    field(
+        t,
+        SECONDS_LABEL,
+        super::w::tip::with_tip(gcx, input, SECONDS_HELP.to_string()).build(),
+    )
+}
+
+/// "MTP: depths 2 available · <the gateway's reason>".
+pub fn mtp_line(sup: &MtpSupport) -> String {
+    let depths = sup.depths();
+    let head = match sup {
+        MtpSupport::Known { .. } if !depths.is_empty() => format!(
+            "depths {} available · ",
+            depths
+                .iter()
+                .map(u64::to_string)
+                .collect::<Vec<_>>()
+                .join("/")
+        ),
+        MtpSupport::Known { .. } => "no explicit depth available · ".to_string(),
+        _ => String::new(),
+    };
+    format!("MTP: {head}{}", sup.reason())
+}
+
+/// The web's composer toolbar (System prompt · Reasoning · MTP), inline:
+/// real controls, the web's help sentences as their tooltips, the MTP
+/// availability under them. Wraps onto two rows on a narrow page.
+fn options_row(gcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
+    let ws = ctx.store.sandbox_ws;
+    let ui = ctx.ui;
+    let t = *t;
+    let vp = crate::ui::page_viewport(gcx).get();
+    let page_w = vp.w - super::widths::BLOCK_CHROME - 2;
+    // The System prompt field gives way first: the three controls stay on
+    // one row down to an 80-column page.
+    let sys_w = (page_w - 55).clamp(12, 22);
+    let compact = vp.h < 30;
+    let reasoning_opts: Vec<SelectOption> = REASONING_CHOICES
+        .iter()
+        .map(|r| SelectOption::new(*r))
+        .collect();
+    let label = |s: &str| line(vec![span(s.to_string(), t.text_muted)]);
+    let sized = |w: i32, v: View| {
+        Element::new()
+            .style(LayoutStyle::default().w(w).h(1).shrink(0.0))
+            .child(v)
+            .build()
+    };
+    let system = super::w::caret_tracked(
+        gcx,
+        ui.caret,
+        super::util::esc_releases_focus(
+            TextInput::new()
+                .value(ws.system)
+                .placeholder(SYSTEM_PLACEHOLDER)
+                .layout(LayoutStyle::default().w(sys_w).h(1).shrink(0.0))
+                .element(gcx, &t),
+            ctx.store.notice,
+        ),
+    );
+    let system = super::w::tip::with_tip(gcx, system, SYSTEM_HELP.to_string()).build();
+    let reasoning = super::w::tip::with_tip(
+        gcx,
+        Element::new()
+            .style(LayoutStyle::default().w(12).h(1).shrink(0.0))
+            .child(
+                Select::new(reasoning_opts)
+                    .value(ws.reasoning_ix)
+                    .layout(LayoutStyle::default().w(12).h(1).shrink(0.0))
+                    .element(gcx, &t)
+                    .build(),
+            ),
+        REASONING_HELP.to_string(),
+    )
+    .build();
+    let mtp = dyn_view_scoped(LayoutStyle::default().w(12).h(1).shrink(0.0), move |dcx| {
+        let t = use_theme(dcx).get().tokens;
+        let sup = ws.mtp.get();
+        super::w::tip::with_tip(
+            dcx,
+            Element::new()
+                .style(LayoutStyle::default().w(12).h(1).shrink(0.0))
+                .child(
+                    Select::new(mtp_options(&sup))
+                        .value(ws.mtp_ix)
+                        .layout(LayoutStyle::default().w(12).h(1).shrink(0.0))
+                        .element(dcx, &t)
+                        .build(),
+                ),
+            if compact {
+                format!("{MTP_HELP} {}", mtp_line(&sup))
+            } else {
+                MTP_HELP.to_string()
+            },
+        )
+        .build()
+    });
+    let a = Element::new()
+        .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
+        .child(sized(13, label(SYSTEM_LABEL)))
+        .child(system)
+        .build();
+    let b = Element::new()
+        .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
+        .child(sized(9, label(REASONING_LABEL)))
+        .child(reasoning)
+        .child(sized(3, label(MTP_LABEL)))
+        .child(mtp)
+        .build();
+    // 13+1+sys_w · 2 · 9+1+12+1+3+1+12
+    let one_row = page_w >= 14 + sys_w + 2 + 39;
+    let controls = if one_row {
+        Element::new()
+            .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+            .child(a)
+            .child(b)
+            .build()
+    } else {
+        Element::new()
+            .style(LayoutStyle::column().shrink(0.0))
+            .child(a)
+            .child(b)
+            .build()
+    };
+    let reason = dyn_view(LayoutStyle::default().shrink(0.0), move || {
+        let t = abstracttui::app::current_theme().tokens;
+        line(vec![span(mtp_line(&ws.mtp.get()), t.text_faint)])
+    });
+    // A short terminal keeps the rows for the conversation: the MTP
+    // availability then lives in the MTP control's tooltip only.
+    if compact {
+        return controls;
+    }
+    Element::new()
+        .style(LayoutStyle::column().shrink(0.0))
+        .child(controls)
+        .child(reason)
         .build()
 }
 
@@ -1907,200 +2117,109 @@ pub fn mtp_options(sup: &MtpSupport) -> Vec<SelectOption> {
         .collect()
 }
 
-/// The Options dialog: the web Sandbox's System prompt, Reasoning and
-/// MTP controls (one dialog — the terminal's row budget has no room
-/// inline). MTP depths follow `/discovery/models/capabilities`.
-fn open_options(ctx: &Ctx, cx: Scope) {
-    let ws = ctx.store.sandbox_ws;
-    let vp = crate::ui::page_viewport(cx).get_untracked();
-    let size = Size::new(vp.w.clamp(1, 96), 13);
-    super::open_form(ctx, cx, size, move |mcx, close| {
-        let t0 = use_theme(mcx).get().tokens;
-        let c1 = close.clone();
-        let c2 = close.clone();
-        let reasoning_opts: Vec<SelectOption> = REASONING_CHOICES
-            .iter()
-            .map(|r| SelectOption::new(*r))
-            .collect();
-        Element::new()
-            .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold("Sandbox text options", t0.accent)]))
-            .child(field(
-                &t0,
-                "system prompt",
-                TextInput::new()
-                    .value(ws.system)
-                    .placeholder("optional — empty = the gateway's default")
-                    .on_submit(move |_| c1())
-                    .layout(LayoutStyle::default().grow(1.0).h(1).shrink(0.0))
-                    .element(mcx, &t0)
-                    .autofocus()
-                    .build(),
-            ))
-            .child(field(
-                &t0,
-                "reasoning",
-                Select::new(reasoning_opts)
-                    .value(ws.reasoning_ix)
-                    .layout(LayoutStyle::default().w(14).h(1).shrink(0.0))
-                    .element(mcx, &t0)
-                    .build(),
-            ))
-            .child(line(vec![span(
-                "reasoning effort for reasoning models — default sends nothing",
-                t0.text_faint,
-            )]))
-            .child(dyn_view_scoped(
-                LayoutStyle::default().shrink(0.0),
-                move |dcx| {
-                    let t = use_theme(dcx).get().tokens;
-                    let sup = ws.mtp.get();
-                    field(
-                        &t,
-                        "MTP",
-                        Select::new(mtp_options(&sup))
-                            .value(ws.mtp_ix)
-                            .layout(LayoutStyle::default().w(14).h(1).shrink(0.0))
-                            .element(dcx, &t)
-                            .build(),
-                    )
-                },
-            ))
-            .child(dyn_view(LayoutStyle::default().shrink(0.0), move || {
-                let sup = ws.mtp.get();
-                let depths = sup.depths();
-                let head = match &sup {
-                    MtpSupport::Known { .. } if !depths.is_empty() => format!(
-                        "depths {} available · ",
-                        depths
-                            .iter()
-                            .map(u64::to_string)
-                            .collect::<Vec<_>>()
-                            .join("/")
-                    ),
-                    MtpSupport::Known { .. } => "no explicit depth available · ".to_string(),
-                    _ => String::new(),
-                };
-                line(vec![span(format!("{head}{}", sup.reason()), t0.text_faint)])
-            }))
-            .child(
-                Element::new()
-                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                    .child(
-                        Button::new("Done (Esc)")
-                            .on_click(move || c2())
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .child(
-                        Button::new("Reset")
-                            .on_click(move || {
-                                ws.system.set(String::new());
-                                ws.reasoning_ix.set(0);
-                                ws.mtp_ix.set(0);
-                            })
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .build(),
-            )
-            .build()
-    });
-}
-
-/// The Attach dialog: a local path, uploaded through `/attachments/upload`
-/// on the sandbox session; attachments ride the NEXT text turn.
+/// The Attach dialog (the web's Attach button: "Attach files to your
+/// question"): a local path, uploaded through `/attachments/upload` on the
+/// sandbox session; attachments ride the NEXT text turn.
 fn open_attach(ctx: &Ctx, cx: Scope) {
     let store = ctx.store;
     let ws = store.sandbox_ws;
     ws.attach_state.set(Loadable::NotAsked);
-    let vp = crate::ui::page_viewport(cx).get_untracked();
-    let size = Size::new(vp.w.clamp(1, 96), 12);
     let ctx_up = ctx.clone();
     let ctx_btn = ctx.clone();
-    super::open_form(ctx, cx, size, move |mcx, close| {
-        let t0 = use_theme(mcx).get().tokens;
-        let c2 = close.clone();
-        Element::new()
-            .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold(
-                "Attach a file to the next text turn",
-                t0.accent,
-            )]))
-            .child(line(vec![span(
-                "images, audio, video, PDFs, markdown or text — uploaded to the gateway now",
-                t0.text_faint,
-            )]))
-            .child(field(
-                &t0,
-                "local path",
-                TextInput::new()
-                    .value(ws.attach_path)
-                    .placeholder("~/Pictures/photo.png — Enter uploads")
-                    .on_submit({
-                        let c = ctx_up.clone();
-                        move |_| attach(&c)
-                    })
-                    .layout(LayoutStyle::default().grow(1.0).h(1).shrink(0.0))
-                    .element(mcx, &t0)
-                    .autofocus()
-                    .build(),
-            ))
-            .child(dyn_view(LayoutStyle::default().shrink(0.0), move || {
-                let t = t0;
-                match ws.attach_state.get() {
-                    Loadable::NotAsked => line(vec![]),
-                    Loadable::Loading => line(vec![span("⟳ uploading…", t.info)]),
-                    Loadable::Ready(m) => line(vec![span(format!("✓ {m}"), t.ok)]),
-                    Loadable::Failed(e) => line(vec![span(format!("✗ {}", e.message), t.error)]),
-                }
-            }))
-            .child(dyn_view(LayoutStyle::default().shrink(0.0), move || {
-                let atts = ws.attachments.get();
-                let text = if atts.is_empty() {
-                    "nothing attached yet".to_string()
-                } else {
-                    atts.iter()
-                        .map(|a| format!("📎 {} ({})", a.name, human_bytes(a.size)))
-                        .collect::<Vec<_>>()
-                        .join("  ")
-                };
-                line(vec![span(text, t0.text_muted)])
-            }))
-            .child(dyn_view_scoped(
-                LayoutStyle::default().h(1).shrink(0.0),
-                move |bcx| {
-                    let t = use_theme(bcx).get().tokens;
-                    let busy = ws.attach_state.with(Loadable::is_loading);
-                    let c = ctx_btn.clone();
-                    let c3 = c2.clone();
+    super::w::FormModal::new(ATTACH_TITLE)
+        .lead(ATTACH_LEAD)
+        .size(84, 14)
+        .open(ctx, cx, move |mcx, close, _guard, w| {
+            let t0 = use_theme(mcx).get().tokens;
+            Element::new()
+                .style(LayoutStyle::column().gap(0).grow(1.0))
+                .child(field(
+                    &t0,
+                    "Local path",
+                    TextInput::new()
+                        .value(ws.attach_path)
+                        .placeholder("~/Pictures/photo.png — Enter uploads")
+                        .on_submit({
+                            let c = ctx_up.clone();
+                            move |_| attach(&c)
+                        })
+                        .layout(LayoutStyle::default().w((w - 19).max(20)).h(1).shrink(0.0))
+                        .element(mcx, &t0)
+                        .autofocus()
+                        .build(),
+                ))
+                .child(dyn_view(LayoutStyle::default().shrink(0.0), move || {
+                    let t = t0;
+                    match ws.attach_state.get() {
+                        Loadable::NotAsked => line(vec![]),
+                        Loadable::Loading => line(vec![span("⟳ uploading…", t.info)]),
+                        Loadable::Ready(m) => line(vec![span(format!("✓ {m}"), t.ok)]),
+                        Loadable::Failed(e) => {
+                            super::w::form::sentence(&t, &format!("✗ {}", e.message), w, t.error)
+                        }
+                    }
+                }))
+                .child(dyn_view(LayoutStyle::default().shrink(0.0), move || {
+                    let atts = ws.attachments.get();
+                    let text = if atts.is_empty() {
+                        "nothing attached yet".to_string()
+                    } else {
+                        atts.iter()
+                            .map(|a| format!("📎 {} ({})", a.name, human_bytes(a.size)))
+                            .collect::<Vec<_>>()
+                            .join("  ")
+                    };
+                    line(vec![span(text, t0.text_muted)])
+                }))
+                .child(
                     Element::new()
-                        .style(LayoutStyle::row().gap(2).h(1))
-                        .child(
-                            Button::new("Upload")
-                                .disabled(busy)
-                                .on_click(move || attach(&c))
-                                .element(bcx, &t)
-                                .build(),
+                        .style(LayoutStyle::default().grow(1.0))
+                        .build(),
+                )
+                .child(dyn_view_scoped(
+                    LayoutStyle::column().shrink(0.0),
+                    move |bcx| {
+                        let t = use_theme(bcx).get().tokens;
+                        let mut acts = attach_actions(ws.attach_state.with(Loadable::is_loading));
+                        let close_a = Action::label("close", "Close");
+                        acts.push(close_a);
+                        let c = ctx_btn.clone();
+                        let close = close.clone();
+                        super::w::form::button_row(
+                            acts.into_iter()
+                                .map(|a| {
+                                    let id = a.id;
+                                    let c = c.clone();
+                                    let close = close.clone();
+                                    button(bcx, &t, &a, On::Raised, true, move || match id {
+                                        "upload" => attach(&c),
+                                        "remove_all" => ws.attachments.set(Vec::new()),
+                                        _ => close(),
+                                    })
+                                })
+                                .collect(),
                         )
-                        .child(
-                            Button::new("Remove all")
-                                .disabled(busy)
-                                .on_click(move || ws.attachments.set(Vec::new()))
-                                .element(bcx, &t)
-                                .build(),
-                        )
-                        .child(
-                            Button::new("Done (Esc)")
-                                .on_click(move || c3())
-                                .element(bcx, &t)
-                                .build(),
-                        )
-                        .build()
-                },
-            ))
-            .build()
-    });
+                    },
+                ))
+                .build()
+        });
+}
+
+/// The Attach dialog's title (the web's Attach button tooltip).
+pub const ATTACH_TITLE: &str = "Attach a file";
+const ATTACH_LEAD: &str = "Attach a file to the next text turn: images, audio, video, PDFs, markdown or text — uploaded to the gateway now.";
+
+/// The Attach dialog's actions (Close follows them).
+pub fn attach_actions(busy: bool) -> Vec<Action> {
+    let why = busy.then(|| "an upload is running".to_string());
+    vec![
+        Action::label("upload", "Upload")
+            .tooltip("Upload the file at this path to the gateway")
+            .refused(why.clone()),
+        Action::label("remove_all", "Remove all")
+            .tooltip("Forget the files attached to the next turn")
+            .refused(why),
+    ]
 }
 
 fn principal(store: &Store) -> (String, String) {
@@ -2178,9 +2297,13 @@ fn speak(ctx: &Ctx, reply: &str) {
         }
     }
     let Some((provider, model, voice)) = voice_pair_tracked(&store) else {
-        store.notice.set(Some(
-            "output.voice is not configured — set it on Multimodal (9) to speak replies".into(),
-        ));
+        refuse_some(
+            &store,
+            Some(format!(
+                "output.voice is not configured — set it on {} to speak replies",
+                multimodal_ref()
+            )),
+        );
         return;
     };
     let (tenant, user) = principal(&store);
@@ -2192,6 +2315,7 @@ fn speak(ctx: &Ctx, reply: &str) {
         voice.as_deref(),
         reply,
         &request_id,
+        None,
     ) else {
         return;
     };
@@ -2241,12 +2365,285 @@ fn provider_names_tracked(store: &Store) -> Vec<String> {
 }
 
 /// Clear chat (the web's `clearSandbox`): history, results, the draft.
-fn clear(ctx: &Ctx) {
+fn clear(ctx: &Ctx, cx: Scope) {
     let store = ctx.store;
     stop_player();
     store.sandbox_ws.reset();
     store.sandbox.set(Loadable::NotAsked);
-    store.notice.set(Some("sandbox chat cleared".into()));
+    super::w::toast(ctx, cx, "sandbox chat cleared");
+}
+
+/// The web's Sandbox help sentences (console.py `#tab-sandbox`), shown as
+/// the controls' tooltips.
+pub const OUTPUT_LABEL: &str = "Output";
+pub const SECONDS_LABEL: &str = "Length (seconds)";
+pub const SECONDS_HELP: &str = "How long the generated clip is.";
+pub const SECONDS_REFUSAL: &str = "Length must be a positive number of seconds.";
+
+/// `sandboxSecondsFor`: a finite number above zero, else the web's refusal.
+pub fn parse_seconds(raw: &str) -> Result<f64, String> {
+    match raw.trim().parse::<f64>() {
+        Ok(n) if n.is_finite() && n > 0.0 => Ok(n),
+        _ => Err(SECONDS_REFUSAL.to_string()),
+    }
+}
+pub const SYSTEM_LABEL: &str = "System prompt";
+pub const SYSTEM_PLACEHOLDER: &str = "None";
+pub const REASONING_LABEL: &str = "Reasoning";
+pub const MTP_LABEL: &str = "MTP";
+pub const SEND_LABEL: &str = "Send";
+pub const SANDBOX_CONTEXT: &str =
+    "What the next message generates, with its route from Multimodal.";
+pub const SYSTEM_HELP: &str = "Instructions sent before your message.";
+pub const REASONING_HELP: &str = "Effort for reasoning models; default sends none.";
+pub const MTP_HELP: &str = "Per-request speculative decoding; inherit uses the Core default.";
+/// The kit chat's Clear button tooltip / Attach button tooltip.
+pub const CLEAR_TIP: &str = "Clear the chat";
+pub const ATTACH_TIP: &str = "Attach files to your question";
+
+/// The teaching line beside the Output segments (the web's
+/// `#sandbox-context`): Text names the pair the next message uses (or why
+/// none); the media modes say what the next message generates.
+fn teach_line(mode: SbMode, ui: &super::UiState, rows: Option<&[RouteRow]>) -> String {
+    match mode {
+        SbMode::Text => {
+            let (p, m) = (ui.sb_provider.get(), ui.sb_model.get());
+            let route = rows.and_then(|r| mode_row(r, SbMode::Text).and_then(row_pair));
+            if !p.is_empty() && !m.is_empty() {
+                context_ready("Text Chat", &p, &m, None, "")
+            } else if route.is_none() && rows.is_some() && p.is_empty() {
+                context_unconfigured("Text Chat")
+            } else {
+                "run a REAL text generation through the gateway to prove a provider/model pair works".to_string()
+            }
+        }
+        _ => SANDBOX_CONTEXT.to_string(),
+    }
+}
+
+/// The web's mode-button tooltips (`renderSandboxCapabilityOptions`):
+/// "<label>: <provider> / <model>" or "<label>: not configured", in
+/// `SbMode::ALL` order.
+pub fn mode_tips(rows: Option<&[RouteRow]>) -> Vec<String> {
+    SbMode::ALL
+        .iter()
+        .map(|m| {
+            let pair = rows.and_then(|r| {
+                if *m == SbMode::Text {
+                    mode_row(r, SbMode::Text).and_then(row_pair)
+                } else {
+                    match resolve_mode_route(r, *m)? {
+                        ModeRoute::Ready {
+                            provider, model, ..
+                        } => Some((provider, model)),
+                        _ => None,
+                    }
+                }
+            });
+            match pair {
+                Some((p, model)) => format!("{}: {p} / {model}", m.label()),
+                None => format!("{}: not configured", m.label()),
+            }
+        })
+        .collect()
+}
+
+/// What the action bar offers right now (a plain snapshot, so the bar,
+/// its keys, the hints and the click tests share one list).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BarState {
+    pub mode: SbMode,
+    /// A generation is in flight (Send / Clear wait for it).
+    pub running: bool,
+    /// Attachments pending for the next text turn.
+    pub attachments: usize,
+    /// A text reply exists and output.voice is configured (Speak).
+    pub speakable: bool,
+    pub speaking: bool,
+    /// A saved audio result of the current mode (Play / Stop).
+    pub audio: bool,
+}
+
+/// Why Send / Clear wait.
+pub const RUNNING_REASON: &str = "a generation is running — wait for its answer";
+
+/// The action bar: Send · Attach (text) · Speak (a reply, voice set) ·
+/// Play audio / Stop (an audio result) · Clear chat.
+pub fn bar_actions(s: &BarState) -> Vec<Action> {
+    let busy = s.running.then(|| RUNNING_REASON.to_string());
+    let mut out = vec![Action::label("send", SEND_LABEL)
+        .key('g')
+        .tooltip("Send (Enter in the message field)")
+        .refused(busy.clone())];
+    if s.mode == SbMode::Text {
+        let label = if s.attachments == 0 {
+            "Attach".to_string()
+        } else {
+            format!("Attach ({})", s.attachments)
+        };
+        out.push(Action::label("attach", label).key('a').tooltip(ATTACH_TIP));
+        if s.speakable {
+            out.push(
+                Action::label("speak", if s.speaking { "Speaking…" } else { "Speak" })
+                    .key('v')
+                    .tooltip("Speak this reply with the output.voice route")
+                    .refused(
+                        s.speaking
+                            .then(|| "the reply is being synthesized".to_string()),
+                    ),
+            );
+        }
+    }
+    if s.audio {
+        out.push(
+            Action::label("play", "Play audio")
+                .key('p')
+                .tooltip("Play the saved clip on this computer"),
+        );
+        out.push(
+            Action::label("stop", "Stop")
+                .key('s')
+                .tooltip("Stop the playback"),
+        );
+    }
+    out.push(
+        Action::label("clear", "Clear chat")
+            .key('x')
+            .tooltip(CLEAR_TIP)
+            .refused(busy),
+    );
+    out
+}
+
+fn bar_state_from(store: &Store, tracked: bool) -> BarState {
+    let ws = store.sandbox_ws;
+    let get = |b: bool| b;
+    let (mode, running, attachments, reply, speaking, media) = if tracked {
+        (
+            ws.mode.get(),
+            store.sandbox.with(Loadable::is_loading) || ws.media.with(Loadable::is_loading),
+            ws.attachments.with(Vec::len),
+            store
+                .sandbox
+                .with(|s| matches!(s, Loadable::Ready(o) if o.ok && !o.response.trim().is_empty())),
+            ws.speech.with(Loadable::is_loading),
+            ws.media.get(),
+        )
+    } else {
+        (
+            ws.mode.get_untracked(),
+            store.sandbox.with_untracked(Loadable::is_loading)
+                || ws.media.with_untracked(Loadable::is_loading),
+            ws.attachments.with_untracked(Vec::len),
+            store.sandbox.with_untracked(
+                |s| matches!(s, Loadable::Ready(o) if o.ok && !o.response.trim().is_empty()),
+            ),
+            ws.speech.with_untracked(Loadable::is_loading),
+            ws.media.get_untracked(),
+        )
+    };
+    let voice = if tracked {
+        voice_pair_tracked(store).is_some()
+    } else {
+        store.routes.with_untracked(|r| {
+            r.ready()
+                .and_then(|d| resolve_mode_route(&d.rows, SbMode::Voice))
+                .map(|m| matches!(m, ModeRoute::Ready { .. }))
+                .unwrap_or(false)
+        })
+    };
+    let audio = matches!(&media, Loadable::Ready(o) if o.mode.is_audio() && o.mode == mode && o.saved.is_ok());
+    BarState {
+        mode,
+        running: get(running),
+        attachments,
+        speakable: reply && voice,
+        speaking,
+        audio,
+    }
+}
+
+fn bar_state_tracked(store: &Store) -> BarState {
+    bar_state_from(store, true)
+}
+
+fn bar_state_untracked(store: &Store) -> BarState {
+    bar_state_from(store, false)
+}
+
+/// One bar action (a click or its key). A refused one says why.
+fn bar_action(
+    cx: Scope,
+    ctx: &Ctx,
+    id: &str,
+    prov_ix: Signal<usize>,
+    model_ix: Signal<usize>,
+    prompt_state: &TextAreaState,
+) {
+    let store = ctx.store;
+    let ws = store.sandbox_ws;
+    let st = bar_state_untracked(&store);
+    match bar_actions(&st).into_iter().find(|a| a.id == id) {
+        Some(a) if a.is_enabled() => {}
+        Some(a) => {
+            refuse_some(&store, a.enabled.err());
+            return;
+        }
+        None => return,
+    }
+    match id {
+        "send" => run(ctx, prov_ix, model_ix, prompt_state),
+        "attach" => open_attach(ctx, cx),
+        "speak" => {
+            let reply = store.sandbox.with_untracked(|s| match s {
+                Loadable::Ready(o) => o.response.clone(),
+                _ => String::new(),
+            });
+            speak(ctx, &reply);
+        }
+        "play" => {
+            if let Loadable::Ready(o) = ws.media.get_untracked() {
+                if let Ok((path, _)) = &o.saved {
+                    let msg = play_file(path).unwrap_or_else(|e| e);
+                    store.notice.set(Some(msg));
+                }
+            }
+        }
+        "stop" => {
+            let was = stop_player();
+            store.notice.set(Some(
+                if was {
+                    "■ playback stopped"
+                } else {
+                    "nothing is playing"
+                }
+                .into(),
+            ));
+        }
+        "clear" => clear(ctx, cx),
+        _ => {}
+    }
+}
+
+/// The Sandbox page's hint pairs (R15): the bar's keys, then the page's.
+pub fn hints(ctx: &Ctx) -> Vec<(&'static str, &'static str)> {
+    let st = bar_state_tracked(&ctx.store);
+    let mut out = vec![("Tab", "controls"), ("Enter", "Send (in the message)")];
+    for a in bar_actions(&st) {
+        if a.is_enabled() {
+            out.push(match a.id {
+                "send" => ("g", "Send"),
+                "attach" => ("a", "Attach"),
+                "speak" => ("v", "Speak"),
+                "play" => ("p", "Play audio"),
+                "stop" => ("s", "Stop"),
+                "clear" => ("x", "Clear chat"),
+                _ => continue,
+            });
+        }
+    }
+    out.push(("r", "refresh providers"));
+    out
 }
 
 /// The one Generate path (g, Enter in the prompt, the button). Every
@@ -2256,9 +2653,10 @@ fn run(ctx: &Ctx, prov_ix: Signal<usize>, model_ix: Signal<usize>, prompt_state:
     let store = ctx.store;
     let ws = store.sandbox_ws;
     if !store.conn.with_untracked(ConnPhase::is_connected) {
-        store.notice.set(Some(
-            "connect to the gateway first — the sandbox runs real generations".into(),
-        ));
+        refuse_some(
+            &store,
+            Some("connect to the gateway first — the sandbox runs real generations".into()),
+        );
         return;
     }
     if store.sandbox.with_untracked(Loadable::is_loading)
@@ -2277,9 +2675,10 @@ fn run(ctx: &Ctx, prov_ix: Signal<usize>, model_ix: Signal<usize>, prompt_state:
     let names = crate::ui::providers::provider_names(&store);
     let ix = prov_ix.get_untracked();
     if ix == 0 || ix > names.len() {
-        store.notice.set(Some(
-            "pick a provider first — Tab reaches the picker".into(),
-        ));
+        refuse_some(
+            &store,
+            Some("pick a provider first — Tab reaches the picker".into()),
+        );
         return;
     }
     let name = names[ix - 1].clone();
@@ -2317,9 +2716,10 @@ fn run(ctx: &Ctx, prov_ix: Signal<usize>, model_ix: Signal<usize>, prompt_state:
         typed
     };
     if prompt.trim().is_empty() {
-        store.notice.set(Some(
-            "type a prompt — the test sends it to the model".into(),
-        ));
+        refuse_some(
+            &store,
+            Some("type a prompt — the test sends it to the model".into()),
+        );
         return;
     }
     // An explicit MTP depth the gateway did not report for this pair is
@@ -2330,11 +2730,14 @@ fn run(ctx: &Ctx, prov_ix: Signal<usize>, model_ix: Signal<usize>, prompt_state:
             .mtp
             .with_untracked(|m| m.depths().contains(&(mtp_ix as u64)))
     {
-        store.notice.set(Some(format!(
-            "MTP {} is not available for this pair — {}",
-            MTP_CHOICES[mtp_ix],
-            ws.mtp.with_untracked(MtpSupport::reason)
-        )));
+        refuse_some(
+            &store,
+            Some(format!(
+                "MTP {} is not available for this pair — {}",
+                MTP_CHOICES[mtp_ix],
+                ws.mtp.with_untracked(MtpSupport::reason)
+            )),
+        );
         return;
     }
     // Fold the previous answered turn into the history the web sends as
@@ -2381,26 +2784,34 @@ fn run_media(ctx: &Ctx, mode: SbMode, prompt_state: &TextAreaState) {
     let rows = match store.routes.get_untracked() {
         Loadable::Ready(d) => d.rows,
         Loadable::Failed(e) => {
-            store.notice.set(Some(format!(
-                "capability routes unavailable ({}) — press r on Multimodal (9)",
-                e.message
-            )));
+            refuse_some(
+                &store,
+                Some(format!(
+                    "capability routes unavailable ({}) — press r on {}",
+                    e.message,
+                    multimodal_ref()
+                )),
+            );
             return;
         }
         _ => {
-            store.notice.set(Some(
-                "capability routes are still loading — try again in a moment".into(),
-            ));
+            refuse_some(
+                &store,
+                Some("capability routes are still loading — try again in a moment".into()),
+            );
             return;
         }
     };
     let (row, provider, model) = match resolve_mode_route(&rows, mode) {
         None => {
-            store.notice.set(Some(format!(
-                "{} ({}) is not offered by this gateway",
-                mode.label(),
-                mode.route_key()
-            )));
+            refuse_some(
+                &store,
+                Some(format!(
+                    "{} ({}) is not offered by this gateway",
+                    mode.label(),
+                    mode.route_key()
+                )),
+            );
             return;
         }
         Some(ModeRoute::Ready {
@@ -2410,23 +2821,30 @@ fn run_media(ctx: &Ctx, mode: SbMode, prompt_state: &TextAreaState) {
             ..
         }) => (row, provider, model),
         Some(ModeRoute::Incomplete { key }) => {
-            store.notice.set(Some(incomplete_reason(mode, &key)));
+            refuse_some(&store, Some(incomplete_reason(mode, &key)));
             return;
         }
         Some(ModeRoute::NotConfigured) => {
-            store.notice.set(Some(format!(
-                "{} is not configured — configure it on Multimodal (9) first",
-                mode.route_key()
-            )));
+            refuse_some(
+                &store,
+                Some(format!(
+                    "{} is not configured — configure it on {} first",
+                    mode.route_key(),
+                    multimodal_ref()
+                )),
+            );
             return;
         }
     };
     let prompt = ctx.ui.sb_prompt.get_untracked().trim().to_string();
     if prompt.is_empty() {
-        store.notice.set(Some(format!(
-            "type a prompt — {}",
-            mode.placeholder().split(" — ").next().unwrap_or("")
-        )));
+        refuse_some(
+            &store,
+            Some(format!(
+                "type a prompt — {}",
+                mode.placeholder().split(" — ").next().unwrap_or("")
+            )),
+        );
         return;
     }
     let (tenant, user) = store.conn.with_untracked(|c| match c {
@@ -2440,6 +2858,16 @@ fn run_media(ctx: &Ctx, mode: SbMode, prompt_state: &TextAreaState) {
     } else {
         None
     };
+    let seconds = match ws.seconds_for(mode) {
+        None => None,
+        Some(sig) => match parse_seconds(&sig.get_untracked()) {
+            Ok(n) => Some(n),
+            Err(why) => {
+                refuse_some(&store, Some(why));
+                return;
+            }
+        },
+    };
     let Some((leaf, body)) = media_body(
         mode,
         &provider,
@@ -2447,6 +2875,7 @@ fn run_media(ctx: &Ctx, mode: SbMode, prompt_state: &TextAreaState) {
         voice.as_deref(),
         &prompt,
         &request_id,
+        seconds,
     ) else {
         return;
     };
@@ -2475,14 +2904,14 @@ fn text_status(
 ) -> View {
     match s {
         Loadable::NotAsked => line(vec![span(
-            "no test run yet — pick a provider and model, then Generate",
+            "no test run yet — pick a provider and model, then Send",
             t.text_faint,
         )]),
         Loadable::Loading => line(vec![span(
             "⟳ generating… (a real model call — can take tens of seconds)",
             t.info,
         )]),
-        Loadable::Failed(e) => error_panel_hint(t, e, Some("press g / Generate to retry")),
+        Loadable::Failed(e) => error_panel_hint(t, e, Some("press g / Send to retry")),
         Loadable::Ready(o) if o.ok => {
             let routed = match (&o.routed_provider, &o.profile) {
                 (Some(rp), Some(pf)) => format!("routed via {rp} (profile {pf})"),
@@ -2581,7 +3010,7 @@ fn media_status(t: &TokenSet, mode: SbMode, s: &Loadable<MediaOutcome>) -> View 
     match s {
         Loadable::NotAsked => line(vec![span(
             format!(
-                "no {} generated yet — type a prompt, then Generate",
+                "no {} generated yet — type a prompt, then Send",
                 mode.label().to_lowercase()
             ),
             t.text_faint,
@@ -2590,7 +3019,7 @@ fn media_status(t: &TokenSet, mode: SbMode, s: &Loadable<MediaOutcome>) -> View 
             "⟳ generating… (local media models can take MINUTES — the gateway keeps going)",
             t.info,
         )]),
-        Loadable::Failed(e) => error_panel_hint(t, e, Some("press g / Generate to retry")),
+        Loadable::Failed(e) => error_panel_hint(t, e, Some("press g / Send to retry")),
         Loadable::Ready(o) => {
             let secs = o.elapsed_ms as f64 / 1000.0;
             let mut col = Element::new().style(LayoutStyle::column()).child(line(vec![
@@ -2718,7 +3147,8 @@ mod tests {
 
     #[test]
     fn media_bodies_match_the_web_payloads() {
-        let (leaf, b) = media_body(SbMode::Image, "mlx-gen", "flux", None, "a cat", "r1").unwrap();
+        let (leaf, b) =
+            media_body(SbMode::Image, "mlx-gen", "flux", None, "a cat", "r1", None).unwrap();
         assert_eq!(leaf, "images/generate");
         assert_eq!(
             b,
@@ -2732,6 +3162,7 @@ mod tests {
             Some("af_heart"),
             "hi",
             "r2",
+            None,
         )
         .unwrap();
         assert_eq!(leaf, "voice/tts");
@@ -2739,30 +3170,63 @@ mod tests {
             b,
             json!({"text": "hi", "provider": "abstractvoice", "model": "kokoro", "voice": "af_heart", "request_id": "r2"})
         );
-        let (_, b) = media_body(SbMode::Voice, "p", "m", None, "hi", "r").unwrap();
+        let (_, b) = media_body(SbMode::Voice, "p", "m", None, "hi", "r", None).unwrap();
         assert!(
             b.get("voice").is_none(),
             "no voice key without a route voice"
         );
 
-        let (leaf, b) = media_body(SbMode::Music, "acestep", "v1", None, "jazz", "r3").unwrap();
+        let (leaf, b) = media_body(
+            SbMode::Music,
+            "acestep",
+            "v1",
+            None,
+            "jazz",
+            "r3",
+            Some(30.0),
+        )
+        .unwrap();
         assert_eq!(leaf, "music/generate");
-        assert_eq!(b["task"], "text_to_music");
+        assert_eq!(
+            b,
+            json!({"prompt": "jazz", "task": "text_to_music", "seconds": 30.0,
+                   "music_provider": "acestep", "music_model": "v1", "request_id": "r3"}),
+            "the web's music body carries `seconds` (a number)"
+        );
         assert_eq!(b["music_provider"], "acestep");
         assert_eq!(b["music_model"], "v1");
-        let (leaf, b) =
-            media_body(SbMode::Sound, "acestep", "v1", None, "door slam", "r4").unwrap();
+        let (leaf, b) = media_body(
+            SbMode::Sound,
+            "acestep",
+            "v1",
+            None,
+            "door slam",
+            "r4",
+            Some(2.5),
+        )
+        .unwrap();
         assert_eq!(leaf, "music/generate");
         assert_eq!(b["task"], "text_to_audio");
+        assert_eq!(b["seconds"], 2.5);
+        assert_eq!(parse_seconds("5"), Ok(5.0));
+        assert_eq!(parse_seconds(" 0.5 "), Ok(0.5));
+        for bad in ["", "0", "-1", "abc", "inf", "NaN"] {
+            assert_eq!(
+                parse_seconds(bad),
+                Err(SECONDS_REFUSAL.to_string()),
+                "{bad:?}"
+            );
+        }
 
-        let (leaf, b) = media_body(SbMode::Video, "mlx-gen", "wan", None, "waves", "r5").unwrap();
+        let (leaf, b) =
+            media_body(SbMode::Video, "mlx-gen", "wan", None, "waves", "r5", None).unwrap();
         assert_eq!(leaf, "videos/generate");
         assert_eq!(
             b,
             json!({"prompt": "waves", "video_provider": "mlx-gen", "video_model": "wan", "request_id": "r5"})
         );
 
-        assert!(media_body(SbMode::Text, "p", "m", None, "x", "r").is_none());
+        assert!(media_body(SbMode::Text, "p", "m", None, "x", "r", None).is_none());
     }
 
     #[test]
@@ -2914,16 +3378,16 @@ mod tests {
             "absent row = not offered"
         );
         assert_eq!(
-            mode_option_label(SbMode::Image, Some(&rows)),
-            "Image — flux"
+            mode_tips(Some(&rows))[SbMode::Image.index()],
+            "Image: mlx-gen / flux"
         );
         assert_eq!(
-            mode_option_label(SbMode::Music, Some(&rows)),
-            "Music — not configured"
+            mode_tips(Some(&rows))[SbMode::Music.index()],
+            "Music: not configured"
         );
         assert_eq!(
-            mode_option_label(SbMode::Video, Some(&rows)),
-            "Video — not offered"
+            mode_tips(Some(&rows))[SbMode::Video.index()],
+            "Video: not configured"
         );
     }
 
@@ -2983,8 +3447,8 @@ mod tests {
             other => panic!("expected inherited Ready, got {other:?}"),
         }
         assert_eq!(
-            mode_option_label(SbMode::Image, Some(&rows)),
-            "Image — flux-schnell"
+            mode_tips(Some(&rows))[SbMode::Image.index()],
+            "Image: mlx-gen / flux-schnell"
         );
 
         // A configured task row wins over the parent.
@@ -3018,8 +3482,8 @@ mod tests {
             other => panic!("expected Incomplete, got {other:?}"),
         }
         assert_eq!(
-            mode_option_label(SbMode::Image, Some(&rows)),
-            "Image — not ready"
+            mode_tips(Some(&rows))[SbMode::Image.index()],
+            "Image: not configured"
         );
 
         // Neither set: not configured.

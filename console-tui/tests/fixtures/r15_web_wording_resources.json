@@ -1,0 +1,112 @@
+{
+  "_source": "scripts/extract_web_wording.py (do not edit by hand)",
+  "headings": [
+    {
+      "icon": "◎",
+      "title": "Gateway"
+    },
+    {
+      "icon": "▦",
+      "title": "Memory & GPU"
+    },
+    {
+      "icon": "▣",
+      "title": "Models"
+    },
+    {
+      "icon": "⌸",
+      "title": "Session caches"
+    }
+  ],
+  "gateway_note": "How this gateway is running right now. Pausing stops new workflow steps; the console and connected apps keep answering.",
+  "refresh_tip": "Reload the loaded models, memory and GPU state",
+  "pause": {
+    "label": "Workflows paused",
+    "title": "On: no new workflow step starts until you switch it off; work already inside a call finishes first"
+  },
+  "check": {
+    "label": "Check now",
+    "title": "Check for a newer release: an AbstractFramework installer install compares with the newest AbstractFramework release, any other install with the newest AbstractGateway on PyPI (needs internet)"
+  },
+  "update": {
+    "label": "Update",
+    "title": "Install it in the background (an installer install runs the AbstractFramework installer); restart to finish"
+  },
+  "restart": {
+    "label": "Restart gateway…",
+    "title": ""
+  },
+  "quit": {
+    "label": "Quit gateway…",
+    "title": ""
+  },
+  "kv": [
+    "Version",
+    "Desktop icon",
+    "Last restart",
+    "Start at login"
+  ],
+  "show_cached": {
+    "label": "Show configured / cached",
+    "title": "Also show configured / cached rows that are NOT resident in memory — informational only, nothing to unload"
+  },
+  "lock_in_memory": {
+    "label": "lock in memory",
+    "title": "Lock the model in memory after loading so nothing can evict it until it is unlocked"
+  },
+  "load": {
+    "label": "Load model",
+    "title": "Load (warm up) this model on the host now"
+  },
+  "models_columns": [
+    "Modality",
+    "Provider",
+    "Model",
+    "Resident",
+    "Size",
+    "Context",
+    "Flags",
+    "Actions"
+  ],
+  "caches_columns": [
+    "Session",
+    "Model",
+    "Size",
+    "Tokens",
+    "Created",
+    "Actions"
+  ],
+  "rows": {
+    "estimate": {
+      "label": "Estimate",
+      "title": "Ask the host how much context actually fits for this model (calibrated when it has measured)"
+    },
+    "unlock_resident": "Release the memory lock so this model can be unloaded or evicted",
+    "unlock_evicted": "Release a lock whose model is no longer in memory (the lock still blocks unloads)",
+    "lock_adopt": "Lock this model in memory — this host loaded it outside the Gateway, so locking adopts it first",
+    "lock": "Lock this model in memory so nothing can evict it",
+    "lock_labels": [
+      "Unlock",
+      "Lock"
+    ],
+    "unload": {
+      "label": "Unload",
+      "title": "Unload this model from host memory"
+    },
+    "clear": {
+      "label": "Clear",
+      "title": "Clear every prompt cache for this session"
+    }
+  },
+  "confirms": {
+    "restart": "Restart AbstractGateway? Running workflows pause at their next step and continue after the restart. The console is unavailable for a few seconds.",
+    "quit": "Quit AbstractGateway? Workflows stop and this console goes offline until you start AbstractGateway again.",
+    "unload": "Unload {name} from host memory? The next request that needs it pays the full load again.",
+    "force": "{name} is locked in memory — the lock exists to keep it resident. Force the unload anyway?",
+    "clear_cache": "Clear every prompt cache for session {session}? The next turn re-encodes its prompt from scratch — nothing durable is lost."
+  },
+  "empty": {
+    "models": "No models loaded right now.",
+    "caches": "No session prompt caches right now."
+  }
+}

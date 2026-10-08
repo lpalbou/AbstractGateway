@@ -299,7 +299,7 @@ fn clicks_on_the_entitys_actions_do_what_they_say() {
     assert!(opened(&s, "Preferences — castor"), "{s}");
     let mut h = page();
     let s = click_row(&mut h, "castor", "⬖");
-    assert!(s.contains("Manage entity 'castor'"), "{s}");
+    assert!(s.contains("Manage — castor"), "{s}"); // R15-B: the Manage FormModal
     let mut h = page();
     let s = click_row(&mut h, "castor", "⊟");
     assert!(s.contains("Archive castor? It stops acting"), "{s}");

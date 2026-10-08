@@ -1,0 +1,57 @@
+{
+  "_source": "scripts/extract_web_wording.py (do not edit by hand)",
+  "modes": {
+    "localhost": "Only this computer can connect: apps and browsers running here. Nothing on your network sees the gateway.",
+    "lan": "Phones, tablets and other computers on the same Wi-Fi or office network can connect. Everyone signs in with their own account.",
+    "internet": "Reachable from anywhere, through a secure proxy or tunnel that you set up. The gateway itself speaks plain HTTP and never touches your router."
+  },
+  "kinds": {
+    "loopback": "This computer",
+    "lan": "Local network",
+    "hostname": "Network name",
+    "tailscale": "Tailscale",
+    "public": "Public address"
+  },
+  "pills": {
+    "works": "Works now",
+    "not_in_mode": "Not in this mode",
+    "public": "Through your proxy only",
+    "unknown": "Unknown",
+    "primary": "Primary"
+  },
+  "buttons": {
+    "copy": "Copy",
+    "lookup": "Look up my public address",
+    "check": "Check again",
+    "restart": "Restart now",
+    "add_origin": "Add origin",
+    "openai": "OpenAI API",
+    "internet_go": "I understand, use Internet mode",
+    "keep": "Keep {mode}",
+    "keep_default": "the current mode"
+  },
+  "aria": {
+    "copy": "Copy {url}",
+    "remove": "Remove {origin}"
+  },
+  "text": {
+    "who": "Who can reach this gateway",
+    "running": "Running now:",
+    "addresses": "Addresses",
+    "addresses_sub": "Other devices use one of these to connect.",
+    "other": "Reached through another address?",
+    "other_sub": "Tailscale, a reverse proxy",
+    "origins": "Allowed origins",
+    "client": "Client address",
+    "trust": "Trust proxies on other machines",
+    "trust_text": "A proxy on this computer always names the real client (X-Forwarded-For), for sign-in lockouts and the audit log. On: a proxy on another machine may too.",
+    "trust_danger": "Only when your own proxy on that machine sits in front of every request: otherwise anyone can choose the address the gateway sees.",
+    "empty_origin": "Type an origin, for example https://gateway.example.com.",
+    "applies": "Changes apply to the next request: no restart.",
+    "non_admin_proxy": "Only an admin can change these.",
+    "non_admin_mode": "Only an admin can change who can reach this gateway.",
+    "confirm": "Before you open the gateway to the internet",
+    "needs_accounts": "Needs accounts",
+    "no_address": "The gateway found no address to show."
+  }
+}
