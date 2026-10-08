@@ -1031,10 +1031,7 @@ fn defaults_card(cx: Scope, pcx: Scope, ctx: &Ctx, t: &TokenSet, width: i32) -> 
         col = col.child(default_row(cx, ctx, t, r, &d, label_w, width));
     }
     if !others.is_empty() {
-        col = col.child(super::w::section(
-            t,
-            &format!("{OTHER_TYPES} ({})", others.len()),
-        ));
+        col = col.child(super::w::section(t, OTHER_TYPES));
         for r in &others {
             col = col.child(default_row(cx, ctx, t, r, &d, label_w, width));
         }

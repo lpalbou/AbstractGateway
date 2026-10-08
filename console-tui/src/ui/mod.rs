@@ -2243,6 +2243,7 @@ pub fn screen_hint_pairs(ctx: &Ctx) -> Vec<(String, String)> {
     }
     globals.push(("Tab", "focus"));
     match screen {
+        SCREEN_CONNECTION => pairs.extend(connection::hints(&ctx_hints)), // R15 arm
         SCREEN_PROVIDERS => pairs.extend(providers::hints(&store)),
         2 => {
             pairs.push(("Enter/e", "edit route"));
