@@ -496,7 +496,11 @@ fn resources_speaks_the_web_sections_and_empty_sentences() {
             .host_state
             .set(Loadable::Ready(host(json!([]), json!([]))));
         let s = h.turns(3);
-        assert!(s.contains("Resources — Memory & GPU"), "{s}");
+        // R15: the web's page head and section headings.
+        assert!(
+            s.contains("Resources") && s.contains("▦ Memory & GPU"),
+            "{s}"
+        );
         assert!(s.contains("Models (0 resident)"), "{s}");
         assert!(s.contains("Session caches"), "{s}");
         assert!(s.contains("No models loaded right now."), "{s}");

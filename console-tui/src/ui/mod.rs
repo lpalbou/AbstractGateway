@@ -2258,19 +2258,7 @@ pub fn screen_hint_pairs(ctx: &Ctx) -> Vec<(String, String)> {
         SCREEN_WORKFLOWS => pairs.extend(workflows::hints(&ctx_hints)),
         SCREEN_SKILLS => pairs.extend(skills_mcp::hints(&ctx_hints)),
         SCREEN_REVIEW => pairs.extend(sandbox::hints(&ctx_hints)), // R15 arm
-        SCREEN_MODELS => {
-            pairs.push(("u", "unload"));
-            pairs.push(("k", "lock/unlock"));
-            pairs.push(("w", "load (warm up)"));
-            pairs.push(("e", "context estimate"));
-            pairs.push(("c", "clear session caches"));
-            // At 80x24 the memory itemization does not fit beside the
-            // Loaded table, and the table wins the rows — so the verb
-            // that pages the itemization has to be as visible as the
-            // rest of them.
-            pairs.push(("m", "more memory detail"));
-            pairs.push(("r", "refresh"));
-        }
+        SCREEN_MODELS => pairs.extend(models::hints(&ctx_hints)), // R15 arm
         // The shared screens publish their own verbs.
         SCREEN_CATALOG => pairs.extend(catalog::hints(non_admin)), // R15 arm
         SCREEN_ENGINES => {

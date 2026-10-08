@@ -951,6 +951,75 @@ def multimodal_wording() -> dict:
     }
 
 
+
+def resources_wording() -> dict:
+    """Resources: the ◎ Gateway card (title, note, the Workflows paused
+    switch, Check now / Update, Restart gateway… / Quit gateway…, the
+    restart / quit confirmations), the ▦ Memory & GPU / ▣ Models / ⌸
+    Session caches headings, the Models table's columns and row buttons
+    (labels + tooltips), "Show configured / cached", the load form, the
+    caches' Clear, the confirmations and the empty sentences."""
+    src = read_b("console.py")
+    sec = _one(src, r'(<div id="tab-models".*?)<!-- Models \(id catalog\)', "the Resources tab markup", re.S)
+    def btn(bid: str) -> dict:
+        m = re.search(rf'<button id="{bid}"([^>]*)>([^<]+)</button>', sec)
+        if not m:
+            fail(f"Resources button {bid} moved.")
+        t = re.search(r'title="([^"]*)"', m.group(1))
+        return {"label": m.group(2).strip(), "title": html.unescape(t.group(1)) if t else ""}
+    headings = re.findall(r'<h2 class="section-title"><span class="section-icon" aria-hidden="true">([^<]+)</span><span(?: id="[^"]+")?>([^<]+)</span></h2>', sec)
+    pause_title = _one(sec, r'<button id="gateway-host-pause"[^>]*title="([^"]+)"', "the pause switch's title")
+    pause_label = _one(sec, r'id="gateway-host-pause".*?af-switch__label">([^<]+)<', "the pause switch's label", re.S)
+    show = re.search(r'<label id="models-show-cached-label"[^>]*title="([^"]+)"><input id="models-show-cached" type="checkbox"> <span id="models-show-cached-text">([^<]+)</span>', sec)
+    lock = re.search(r'<label class="entity-checkbox" title="([^"]+)"><input id="models-load-lock" type="checkbox"> ([^<]+)</label>', sec)
+    if not show or not lock:
+        fail("the Show configured / cached toggle or the lock-in-memory checkbox moved.")
+    tables = re.findall(r"<thead><tr>((?:<th>[^<]+</th>)+)</tr></thead>", sec)
+    if len(tables) != 2:
+        fail(f"the Models / Session caches tables moved ({len(tables)} heads).")
+    def call(pattern: str, what: str) -> str:
+        return _one(src, pattern, what, re.S)
+    rows = {
+        "estimate": {"label": call(r'est\.textContent = "([^"]+)";', "Estimate"), "title": call(r'est\.title = "([^"]+)";', "Estimate title")},
+        "unlock_resident": call(r'\? \(row\.resident === true\s*\? "(Release the memory lock[^"]+)"', "Unlock title (resident)"),
+        "unlock_evicted": call(r': "(Release a lock whose model is no longer in memory[^"]+)"\)', "Unlock title (evicted)"),
+        "lock_adopt": call(r'\? "(Lock this model in memory — this host loaded it[^"]+)"', "Lock title (adopt)"),
+        "lock": call(r': "(Lock this model in memory so nothing can evict it)"\);', "Lock title"),
+        "lock_labels": list(re.search(r'lockBtn\.textContent = row\.locked === true \? "([^"]+)" : "([^"]+)";', src).groups()),
+        "unload": {"label": call(r'unload\.textContent = "([^"]+)";', "Unload"), "title": call(r'unload\.title = "([^"]+)";', "Unload title")},
+        "clear": {"label": call(r'clear\.textContent = "(Clear)";\s*clear\.title = "Clear every prompt cache', "cache Clear"),
+                  "title": call(r'clear\.title = "(Clear every prompt cache for this session)";', "cache Clear title")},
+    }
+    confirms = {
+        "restart": call(r'confirmAction\(\{ title: "(Restart AbstractGateway\?)", message: "([^"]+)"', "restart confirm"),
+        "quit": call(r'confirmAction\(\{ title: "(Quit AbstractGateway\?)", message: "([^"]+)"', "quit confirm"),
+        "unload": call(r'title: "Unload model",\s*message: `([^`]+)`', "unload confirm").replace("${name}", "{name}"),
+        "force": call(r'title: "Model locked",\s*message: `([^`]+)`', "force unload confirm").replace("${name}", "{name}"),
+        "clear_cache": call(r'title: "Clear session caches",\s*message: `([^`]+)`', "clear caches confirm").replace("${sessionId}", "{session}"),
+    }
+    return {
+        "headings": [{"icon": i, "title": html.unescape(t)} for i, t in headings],
+        "gateway_note": _one(sec, r'<span>Gateway</span></h2>\s*<p class="section-note">([^<]+)</p>', "the Gateway note"),
+        "refresh_tip": _one(sec, r'id="models-refresh"[^>]*data-af-tip="([^"]+)"', "the Refresh tip"),
+        "pause": {"label": pause_label.strip(), "title": pause_title},
+        "check": btn("gateway-host-update-check"),
+        "update": btn("gateway-host-update-start"),
+        "restart": btn("gateway-host-restart"),
+        "quit": btn("gateway-host-quit"),
+        "kv": [html.unescape(k) for k in re.findall(r'<span class="entity-kv-key">([^<]+)</span>', sec)],
+        "show_cached": {"label": show.group(2), "title": show.group(1)},
+        "lock_in_memory": {"label": lock.group(2).strip(), "title": lock.group(1)},
+        "load": btn("models-load-button"),
+        "models_columns": re.findall(r"<th>([^<]+)</th>", tables[0]),
+        "caches_columns": re.findall(r"<th>([^<]+)</th>", tables[1]),
+        "rows": rows,
+        "confirms": {"restart": " ".join(confirms["restart"]), "quit": " ".join(confirms["quit"]),
+                     "unload": confirms["unload"], "force": confirms["force"], "clear_cache": confirms["clear_cache"]},
+        "empty": {"models": call(r'modelsEmptyRow\(body, 8, "(No models loaded right now\.)"\)', "models empty"),
+                  "caches": call(r'modelsEmptyRow\(body, 6, "(No session prompt caches right now\.)"\)', "caches empty")},
+    }
+
+
 B_SCREENS = {
     "about": about_wording,
     "network": network_wording,
@@ -959,6 +1028,7 @@ B_SCREENS = {
     "sandbox": sandbox_wording,
     "entity": entity_wording,
     "multimodal": multimodal_wording,
+    "resources": resources_wording,
 }
 
 

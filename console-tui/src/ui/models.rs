@@ -12,12 +12,15 @@
 
 use abstracttui::base::Rgba;
 use abstracttui::prelude::*;
-use abstracttui::widgets::{Progress, Table, Tone};
+use abstracttui::widgets::{Progress, Tone};
 
 use super::util::{badge, field, field_w, line, span, span_bold, wrap_text};
-use super::widths;
+use super::w::action::{button, On};
+use super::w::{Action, Cell, Col, ColW, DataTable, Row as WRow};
 use super::widths::BLOCK_CHROME;
 use super::Ctx;
+use crate::store::operator::{HostRunner, HostUpdate};
+use crate::store::ConnPhase;
 use crate::store::{
     human_bytes, lock_action, memory_breakdown, resident_label, size_marked, unload_refusal,
     BreakdownKind, HostStateData, Loadable, LockAction, ModelRow, SessionCacheRow,
@@ -187,27 +190,301 @@ pub fn totals_line(d: &HostStateData) -> String {
 /// estimate stay open to every principal.
 pub const ADMIN_KEYS: &[&str] = &["u", "k", "w", "c"];
 
+// ---------------------------------------------------------------------
+// R15 Resources (DESIGN-TUI.md §3.11): the web's page — ◎ Gateway (how
+// this gateway runs: Workflows paused, Version + Check now / Update,
+// Desktop icon, Last restart, Start at login, Restart gateway… / Quit
+// gateway…), ▦ Memory & GPU (the gauges and the itemization), ▣ Models
+// (the "Show configured / cached" toggle, [Load model], ONE DataTable
+// whose rows carry the web's Estimate / Lock|Unlock / Unload buttons) and
+// ⌸ Session caches (a DataTable with Clear). Every action is a click AND a
+// key; every confirm is w::Confirm with the web's sentence.
+// ---------------------------------------------------------------------
+
+/// The page title and subtitle (the web's tab heading).
+pub const TITLE: &str = "Resources";
+pub const SUBTITLE: &str = "Host resources: loaded models, memory and GPU, session caches";
+/// The section headings and notes (the web's words).
+pub const GATEWAY_TITLE: &str = "Gateway";
+pub const GATEWAY_NOTE: &str = "How this gateway is running right now. Pausing stops new workflow steps; the console and connected apps keep answering.";
+pub const MEMORY_TITLE: &str = "Memory & GPU";
+pub const MODELS_TITLE: &str = "Models";
+pub const CACHES_TITLE: &str = "Session caches";
+pub const REFRESH_TIP: &str = "Reload the loaded models, memory and GPU state";
+pub const PAUSE_LABEL: &str = "Workflows paused";
+pub const PAUSE_TIP: &str = "On: no new workflow step starts until you switch it off; work already inside a call finishes first";
+pub const CHECK_TIP: &str = "Check for a newer release: an AbstractFramework installer install compares with the newest AbstractFramework release, any other install with the newest AbstractGateway on PyPI (needs internet)";
+pub const UPDATE_TIP: &str = "Install it in the background (an installer install runs the AbstractFramework installer); restart to finish";
+pub const SHOW_CACHED_TIP: &str = "Also show configured / cached rows that are NOT resident in memory — informational only, nothing to unload";
+pub const LOAD_TIP: &str = "Load (warm up) this model on the host now";
+pub const LOCK_IN_MEMORY: &str = "lock in memory";
+/// The warm-up dialog's title (the web's inline form button).
+pub const LOAD_TITLE: &str = "Load model";
+pub const LOCK_IN_MEMORY_TIP: &str =
+    "Lock the model in memory after loading so nothing can evict it until it is unlocked";
+pub const MODELS_EMPTY: &str = "No models loaded right now.";
+/// The Size column's estimate marker (a TUI note: `~` = estimated).
+pub const ESTIMATE_MARKER: &str = "~ = estimated size, not measured";
+pub const CACHES_EMPTY: &str = "No session prompt caches right now.";
+/// The confirmations (the web's `confirmAction` sentences).
+pub const RESTART_QUESTION: &str = "Restart AbstractGateway? Running workflows pause at their next step and continue after the restart. The console is unavailable for a few seconds.";
+pub const QUIT_QUESTION: &str = "Quit AbstractGateway? Workflows stop and this console goes offline until you start AbstractGateway again.";
+pub fn unload_question(name: &str) -> String {
+    format!(
+        "Unload {name} from host memory? The next request that needs it pays the full load again."
+    )
+}
+pub fn force_unload_question(name: &str) -> String {
+    format!("{name} is locked in memory — the lock exists to keep it resident. Force the unload anyway?")
+}
+pub fn clear_cache_question(session: &str) -> String {
+    format!("Clear every prompt cache for session {session}? The next turn re-encodes its prompt from scratch — nothing durable is lost.")
+}
+
+thread_local! {
+    /// "Show configured / cached" (the web's `modelsShowCached`): survives
+    /// a tab switch; off by default — default ≠ loaded.
+    static SHOW_CACHED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The "Show configured / cached" state (tests and the toggle).
+pub fn show_cached() -> bool {
+    SHOW_CACHED.with(|c| c.get())
+}
+pub fn set_show_cached(on: bool) {
+    SHOW_CACHED.with(|c| c.set(on));
+}
+
+/// The model rows the table shows: resident rows first, then — behind the
+/// toggle — the configured / cached ones (the web's `renderModelsTable`).
+pub fn visible_models(rows: &[ModelRow], show: bool) -> Vec<ModelRow> {
+    let mut out: Vec<ModelRow> = rows
+        .iter()
+        .filter(|r| r.resident == Some(true))
+        .cloned()
+        .collect();
+    if show {
+        out.extend(rows.iter().filter(|r| r.resident != Some(true)).cloned());
+    }
+    out
+}
+
+/// A model row's stable key (provider/model, or its index when unnamed).
+pub fn model_key(r: &ModelRow, i: usize) -> String {
+    match (&r.provider, &r.model) {
+        (Some(p), Some(m)) => format!("{p}/{m}"),
+        _ => format!("#{i}"),
+    }
+}
+
+/// The page's head action (Refresh).
+pub fn head_actions() -> Vec<Action> {
+    vec![Action::label(
+        "refresh",
+        format!("{} Refresh", super::w::glyphs::glyph("rotate", true)),
+    )
+    .key('r')
+    .tooltip(REFRESH_TIP)]
+}
+
+/// The ◎ Gateway card's buttons (admin; the web hides them otherwise):
+/// Check now, Update (when the check found one), Restart gateway…, Quit
+/// gateway… (refused with the gateway's reason when this launch cannot).
+pub fn gateway_actions(r: Option<&HostRunner>, u: Option<&HostUpdate>, admin: bool) -> Vec<Action> {
+    if !admin {
+        return Vec::new();
+    }
+    let mut out = vec![Action::label("check", "Check now")
+        .key('U')
+        .tooltip(CHECK_TIP)];
+    if let Some(u) = u {
+        if u.update_available {
+            out.push(
+                Action::label("update", "Update")
+                    .key('I')
+                    .tooltip(UPDATE_TIP)
+                    .refused(u.start_refusal()),
+            );
+        }
+    }
+    let cap_why = |ok: bool| -> Option<String> {
+        match r {
+            None => Some("the runner state is not loaded yet".into()),
+            Some(_) if ok => None,
+            Some(r) => Some(if r.cap_reason.is_empty() {
+                "not available for this launch".to_string()
+            } else {
+                r.cap_reason.clone()
+            }),
+        }
+    };
+    out.push(
+        Action::label("restart", "Restart gateway…")
+            .key('R')
+            .refused(cap_why(r.map(|r| r.cap_restart).unwrap_or(false))),
+    );
+    out.push(
+        Action::label("quit", "Quit gateway…")
+            .key('Q')
+            .refused(cap_why(r.map(|r| r.cap_shutdown).unwrap_or(false)))
+            .danger(),
+    );
+    out
+}
+
+/// A model row's actions (the web's order and tooltips): Estimate (a
+/// provider/model pair), then for admins Lock / Unlock (lock on every
+/// resident line; Unlock on any locked one) and Unload (resident rows).
+pub fn row_actions(r: &ModelRow, admin: bool) -> Vec<Action> {
+    let mut out = Vec::new();
+    if r.provider.is_some() && r.model.is_some() {
+        out.push(
+            Action::label("estimate", "Estimate")
+                .key('e')
+                .tooltip("Ask the host how much context actually fits for this model (calibrated when it has measured)"),
+        );
+    }
+    if !admin {
+        return out;
+    }
+    let resident = r.resident == Some(true);
+    if r.locked == Some(true) {
+        out.push(Action::label("unlock", "Unlock").key('k').tooltip(if resident {
+            "Release the memory lock so this model can be unloaded or evicted"
+        } else {
+            "Release a lock whose model is no longer in memory (the lock still blocks unloads)"
+        }));
+    } else if r.lockable != Some(false) && resident {
+        out.push(
+            Action::label("lock", "Lock")
+                .key('k')
+                .tooltip(if r.source.as_deref() == Some("provider_server") {
+                    "Lock this model in memory — this host loaded it outside the Gateway, so locking adopts it first"
+                } else {
+                    "Lock this model in memory so nothing can evict it"
+                }),
+        );
+    }
+    if resident {
+        out.push(
+            Action::label("unload", "Unload")
+                .key('u')
+                .tooltip("Unload this model from host memory")
+                .danger(),
+        );
+    }
+    out
+}
+
+/// A session cache row's actions (admins): Clear.
+pub fn cache_actions(c: &SessionCacheRow, admin: bool) -> Vec<Action> {
+    if !admin || c.session_id.is_empty() {
+        return Vec::new();
+    }
+    vec![Action::label("clear", "Clear")
+        .key('c')
+        .tooltip("Clear every prompt cache for this session")
+        .danger()]
+}
+
+/// The Models section's head buttons: [Load model] (admin).
+pub fn models_actions(admin: bool) -> Vec<Action> {
+    if !admin {
+        return Vec::new();
+    }
+    vec![Action::label("load", "Load model")
+        .key('w')
+        .tooltip(LOAD_TIP)]
+}
+
+fn page_w(cx: Scope) -> i32 {
+    (crate::ui::page_viewport(cx).get().w - 2).max(20)
+}
+
+/// A short page (under 40 rows): the head is one line and the ◎ Gateway
+/// card is its state line (the F3 host panel carries the rest, from every
+/// screen) — the Models table's rows come first (the per-row verbs are why
+/// the operator is here).
+pub fn compact(cx: Scope) -> bool {
+    crate::ui::page_viewport(cx).get().h < 40
+}
+
+/// One section heading line: icon + title (+ a trailing note), bold.
+fn section_head(t: &TokenSet, icon: &str, title: &str) -> View {
+    super::w::paint::fill_line(
+        LayoutStyle::line(1).shrink(0.0),
+        vec![
+            super::w::Ink::new(format!("{icon} "), t.accent),
+            super::w::Ink::new(title, t.text).bold(),
+        ],
+        None,
+    )
+}
+
+/// The memory section's focus memory: the table that held the keyboard
+/// keeps it across the 4 s poll's rebuilds, and never takes it from
+/// elsewhere (the FocusKeeper rule, for a DataTable).
+#[derive(Clone, Default)]
+struct TableFocus {
+    held: std::rc::Rc<std::cell::Cell<bool>>,
+    ever: std::rc::Rc<std::cell::Cell<bool>>,
+}
+
+impl TableFocus {
+    fn wants(&self) -> bool {
+        !self.ever.get() || self.held.get()
+    }
+    fn wrap(&self, v: View) -> View {
+        let (held, ever) = (self.held.clone(), self.ever.clone());
+        Element::new()
+            .style(LayoutStyle::column().grow(1.0))
+            .on(abstracttui::ui::Phase::Bubble, move |_c, ev| match ev {
+                abstracttui::ui::UiEvent::FocusIn => {
+                    held.set(true);
+                    ever.set(true);
+                }
+                abstracttui::ui::UiEvent::FocusOut => held.set(false),
+                _ => {}
+            })
+            .child(v)
+            .build()
+    }
+}
+
 pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
     let ui = ctx.ui;
     let tt = *t;
+    let show = cx.signal(show_cached());
 
     super::util::clamp_selection(cx, ui.model_sel, move || {
-        store
-            .host_state
-            .with(|d| d.ready().map(|d| d.models.len()).unwrap_or(0))
+        store.host_state.with(|d| {
+            d.ready()
+                .map(|d| visible_models(&d.models, show.get()).len())
+                .unwrap_or(0)
+        })
     });
     super::util::clamp_selection(cx, ui.cache_sel, move || {
         store
             .host_state
             .with(|d| d.ready().map(|d| d.caches.len()).unwrap_or(0))
     });
+    // The Gateway card's facts (runner, tray, update, start at login): read
+    // once a connected principal is here (the F3 panel's loader).
+    {
+        let ctx_h = ctx.clone();
+        let asked = cx.signal(false);
+        cx.effect(move || {
+            let on = store.conn.with(ConnPhase::is_connected);
+            if on && !asked.get_untracked() {
+                asked.set(true);
+                super::host::refresh(&ctx_h);
+            }
+        });
+    }
 
-    // The 409 model_locked second confirm: the worker fills
-    // `store.unload_locked` when the gateway refuses an unload because
-    // the model is pinned; this effect consumes the slot and offers
-    // "Force unload?". PAGE scope — the prompt survives the 4s poll's
-    // region rebuilds.
+    // The 409 model_locked second confirm (the web's "Model locked"):
+    // PAGE scope — it survives the 4 s poll's region rebuilds.
     {
         let ctx2 = ctx.clone();
         cx.effect(move || {
@@ -217,25 +494,79 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             store.unload_locked.set(None);
             let ctx3 = ctx2.clone();
             let (p2, m2) = (p.clone(), m.clone());
-            super::confirm_danger(
-                cx,
-                ctx2.ui,
-                format!("{p}/{m} is locked — the gateway refused the unload. Force unload anyway?"),
+            super::w::Confirm::danger(
+                force_unload_question(&format!("{p}/{m}")),
                 "Force unload",
-                "Keep it loaded",
-                move || {
-                    send_mutation(&ctx3, format!("force-unloading {p2}/{m2}"), |op| {
-                        Cmd::UnloadModel {
-                            provider: p2,
-                            model: m2,
-                            force: true,
-                            op,
-                        }
-                    });
-                },
-            );
+                "Cancel",
+            )
+            .open(cx, ctx2.ui, move || {
+                send_mutation(&ctx3, format!("force-unloading {p2}/{m2}"), |op| {
+                    Cmd::UnloadModel {
+                        provider: p2,
+                        model: m2,
+                        force: true,
+                        op,
+                    }
+                });
+            });
         });
     }
+
+    // Keyed selections (the tables) synced with the legacy indices.
+    let model_key_sel = cx.signal(Option::<String>::None);
+    let cache_key_sel = cx.signal(Option::<String>::None);
+    let vis_keys = move || -> Vec<String> {
+        store.host_state.with(|d| {
+            d.ready()
+                .map(|d| {
+                    visible_models(&d.models, show.get())
+                        .iter()
+                        .enumerate()
+                        .map(|(i, r)| model_key(r, i))
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+    };
+    let cache_keys = move || -> Vec<String> {
+        store.host_state.with(|d| {
+            d.ready()
+                .map(|d| d.caches.iter().map(|c| c.key.clone()).collect())
+                .unwrap_or_default()
+        })
+    };
+    cx.effect(move || {
+        let k = model_key_sel.get();
+        if let Some(i) = k.and_then(|k| vis_keys().iter().position(|x| *x == k)) {
+            if ui.model_sel.get_untracked() != i {
+                ui.model_sel.set(i);
+            }
+        }
+    });
+    cx.effect(move || {
+        let i = ui.model_sel.get();
+        if let Some(k) = vis_keys().get(i) {
+            if model_key_sel.with_untracked(|c| c.as_deref() != Some(k.as_str())) {
+                model_key_sel.set(Some(k.clone()));
+            }
+        }
+    });
+    cx.effect(move || {
+        let k = cache_key_sel.get();
+        if let Some(i) = k.and_then(|k| cache_keys().iter().position(|x| *x == k)) {
+            if ui.cache_sel.get_untracked() != i {
+                ui.cache_sel.set(i);
+            }
+        }
+    });
+    cx.effect(move || {
+        let i = ui.cache_sel.get();
+        if let Some(k) = cache_keys().get(i) {
+            if cache_key_sel.with_untracked(|c| c.as_deref() != Some(k.as_str())) {
+                cache_key_sel.set(Some(k.clone()));
+            }
+        }
+    });
 
     let ctx_unload = ctx.clone();
     let ctx_lock = ctx.clone();
@@ -243,13 +574,16 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let ctx_est = ctx.clone();
     let ctx_clear = ctx.clone();
     let detail_top = ui.models_detail_top;
-    // This screen's table region regenerates on EVERY ~4s poll: the
-    // keeper carries the keyboard from one table instance to the next
-    // (and never yanks it back from elsewhere).
-    let keeper = super::util::FocusKeeper::new();
+    let focus = TableFocus::default();
+    let sels = (model_key_sel, cache_key_sel);
 
     Element::new()
-        .style(LayoutStyle::column().gap(0))
+        .style(LayoutStyle::column().gap(0).grow(1.0).padding(Edges {
+            left: 1,
+            right: 1,
+            top: 0,
+            bottom: 0,
+        }))
         .shortcut(KeyChord::plain(Key::Char('u')), move |_| {
             unload_selected(cx, &ctx_unload);
         })
@@ -265,122 +599,503 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         .shortcut(KeyChord::plain(Key::Char('c')), move |_| {
             clear_caches_selected(cx, &ctx_clear);
         })
-        // `m` pages the memory itemization. It is a plain char on purpose:
-        // PageUp/PageDown reach the focused Table first (the engine runs
-        // element handlers BEFORE shortcuts), and `[`/`]` are the root's
-        // screen switches. The body reads this counter MODULO the live
-        // window count, so a bare `+ 1` here is always a valid position and
-        // wraps back to the top at the end.
+        // `m` pages the memory itemization (read MODULO the live window
+        // count, so a bare `+ 1` is always valid and wraps to the top).
         .shortcut(KeyChord::plain(Key::Char('m')), move |_| {
             detail_top.update(|n| *n = n.saturating_add(1));
         })
-        .child(
-            Block::new()
-                .border(BorderKind::Rounded)
-                // The title must fit INSIDE the border: at 80 columns the
-                // long one ran into the corner (no closing run).
-                .title(if crate::ui::page_viewport(cx).get_untracked().w >= 110 {
-                    "Resources — Memory & GPU, Models, Session caches \
-                         · ~ = estimated size, not measured"
-                } else {
-                    "Resources — Memory & GPU · Models · Session caches"
-                })
-                .fill(t.surface)
-                .layout(
-                    LayoutStyle::column()
-                        .gap(0)
-                        .grow(1.0)
-                        .padding(Edges::all(1))
-                        // THE BOTTOM BORDER IS NOT A DRAWING SURFACE. Every
-                        // `line(...)` here paints at its own `rect.y` and
-                        // clips on X only, and flex hands an over-demanded
-                        // `shrink(0.0)` child a y past this box — which is
-                        // how the selected-row detail line came to sit ON the
-                        // `╰────╯` run at 80x24, leaving the block with no
-                        // closing corner. The budget in `body` is what stops
-                        // the overflow; this is the guarantee that a future
-                        // one cannot reach the frame.
-                        .clip(),
+        .shortcut(KeyChord::plain(Key::Char('a')), move |_| {
+            let v = !show.get_untracked();
+            set_show_cached(v);
+            show.set(v);
+        })
+        .shortcut(KeyChord::plain(Key::Char('p')), {
+            let c = ctx.clone();
+            move |_| gateway_action(cx, &c, "pause")
+        })
+        .shortcut(KeyChord::plain(Key::Char('L')), {
+            let c = ctx.clone();
+            move |_| gateway_action(cx, &c, "login")
+        })
+        .shortcut(KeyChord::plain(Key::Char('U')), {
+            let c = ctx.clone();
+            move |_| gateway_action(cx, &c, "check")
+        })
+        .shortcut(KeyChord::plain(Key::Char('I')), {
+            let c = ctx.clone();
+            move |_| gateway_action(cx, &c, "update")
+        })
+        .shortcut(KeyChord::plain(Key::Char('R')), {
+            let c = ctx.clone();
+            move |_| gateway_action(cx, &c, "restart")
+        })
+        .shortcut(KeyChord::plain(Key::Char('Q')), {
+            let c = ctx.clone();
+            move |_| gateway_action(cx, &c, "quit")
+        })
+        .child(head(cx, ctx, &tt))
+        .child(gateway_card(cx, ctx, &tt))
+        .child(dyn_view_scoped(LayoutStyle::default().grow(1.0), {
+            let ctx_body = ctx.clone();
+            let keeper = super::util::FocusKeeper::new();
+            move |gcx| {
+                let data = store.host_state.get();
+                let ctx_b = ctx_body.clone();
+                let focus = focus.clone();
+                super::util::loadable_view_kept(
+                    &keeper,
+                    &tt,
+                    &store.conn.get(),
+                    || store.tick.get(),
+                    &data,
+                    |_d: &HostStateData| false, // the strip renders even with zero rows
+                    "",
+                    |d| body(gcx, cx, &ctx_b, &tt, d, show, &focus, sels),
                 )
-                .child(dyn_view_scoped(LayoutStyle::default().grow(1.0), {
-                    let ctx_body = ctx.clone();
-                    move |gcx| {
-                        let data = store.host_state.get();
-                        let _ = &ctx_body;
-                        super::util::loadable_view_kept(
-                            &keeper,
-                            &tt,
-                            &store.conn.get(),
-                            || store.tick.get(),
-                            &data,
-                            |_d: &HostStateData| false, // the strip renders even with zero rows
-                            "",
-                            |d| body(gcx, &tt, ui, d, &keeper),
-                        )
-                    }
-                }))
-                .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
-                    // The totals footer — pinned so the tables' growth
-                    // never squeezes it out.
-                    let text = store
-                        .host_state
-                        .with(|d| d.ready().map(totals_line))
-                        .unwrap_or_default();
-                    line(vec![span(text, tt.text_faint)])
-                }))
-                .element(t)
-                .build(),
-        )
+            }
+        }))
+        .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
+            // The totals footer — pinned so the tables' growth never
+            // squeezes it out.
+            let text = store
+                .host_state
+                .with(|d| d.ready().map(totals_line))
+                .unwrap_or_default();
+            line(vec![span(text, tt.text_faint)])
+        }))
         .build()
 }
 
-/// Rows the page chrome takes inside the PAGE region (R15: the shell's
-/// header, nav and status rows are already outside `page_viewport`): the
-/// Block's own top and bottom border (2) and the pinned totals footer
-/// inside it (1).
-///
-/// It is a constant because the engine hands a view its own rect only at
-/// DRAW time and the budget below has to be decided during BUILD. The
-/// 80x21 and 110x31 layout tests pin the outcome, so a chrome change fails
-/// loudly instead of silently squeezing the Loaded table off screen again.
-const PAGE_CHROME_ROWS: usize = 3;
+/// Title + subtitle, the Refresh button on the right.
+fn head(pcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
+    let ctx = ctx.clone();
+    let tt = *t;
+    dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |hcx| {
+        let w = page_w(hcx);
+        let mut row = Element::new().style(
+            LayoutStyle::row()
+                .height(Dimension::Cells(1))
+                .gap(1)
+                .shrink(0.0),
+        );
+        let mut bw = 0;
+        for a in head_actions() {
+            bw += a.width() + 1;
+            let c = ctx.clone();
+            row = row.child(button(hcx, &tt, &a, On::Page, true, move || {
+                c.refresh_screen(crate::ui::SCREEN_MODELS);
+                super::host::refresh(&c);
+            }));
+        }
+        let _ = pcx;
+        if compact(hcx) {
+            return Element::new()
+                .style(LayoutStyle::row().height(Dimension::Cells(1)).shrink(0.0))
+                .child(super::w::paint::fill_line(
+                    LayoutStyle::default().grow(1.0).height(Dimension::Cells(1)),
+                    vec![
+                        super::w::Ink::new(TITLE, tt.text).bold(),
+                        super::w::Ink::new(format!("  {SUBTITLE}"), tt.text_muted),
+                    ],
+                    None,
+                ))
+                .child(row.build())
+                .build();
+        }
+        let title_w = abstracttui::text::width(SUBTITLE);
+        let side = title_w + bw + 2 <= w;
+        let titles = Element::new()
+            .style(if side {
+                LayoutStyle::column()
+                    .width(Dimension::Cells(w - bw - 1))
+                    .shrink(0.0)
+            } else {
+                LayoutStyle::column().shrink(0.0)
+            })
+            .child(super::w::paint::fill_line(
+                LayoutStyle::line(1).shrink(0.0),
+                vec![super::w::Ink::new(TITLE, tt.text).bold()],
+                None,
+            ))
+            .child(super::w::form::sentence(
+                &tt,
+                SUBTITLE,
+                (w - if side { bw + 2 } else { 0 }).max(20),
+                tt.text_muted,
+            ))
+            .build();
+        Element::new()
+            .style(if side {
+                LayoutStyle::row().shrink(0.0)
+            } else {
+                LayoutStyle::column().shrink(0.0)
+            })
+            .child(titles)
+            .child(row.build())
+            .build()
+    })
+}
 
-/// The Ready body: the PINNED head (meters, the accelerator's scoped label
-/// and its note, degradation notes), then the WINDOWED memory itemization,
-/// then the Loaded/Caches sub-tabs and the selected row's detail line.
+/// The ◎ Gateway card. Rebuilt only when its facts change (a memo over the
+/// runner / tray / update / start-at-login answers): the runner poll must
+/// not take the focus off its switches and buttons.
+fn gateway_card(pcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
+    let ctx = ctx.clone();
+    let tt = *t;
+    let store = ctx.store;
+    let facts = pcx.memo(move || {
+        let op = store.op;
+        (
+            store.conn.with(ConnPhase::is_connected),
+            store.conn.with(ConnPhase::is_admin),
+            op.runner.with(|r| r.ready().cloned()),
+            op.runner.with(|r| match r {
+                Loadable::Failed(e) => Some(e.to_string()),
+                _ => None,
+            }),
+            op.tray.with(|r| r.ready().cloned()),
+            op.update.with(|r| r.ready().cloned()),
+            op.start_at_login.with(|r| r.ready().cloned()),
+            op.lifecycle.get(),
+        )
+    });
+    dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |gcx| {
+        let (connected, admin, runner, runner_err, tray, update, login, lifecycle) = facts.get();
+        let w = page_w(gcx);
+        let mut col = Element::new().style(LayoutStyle::column().shrink(0.0));
+        if compact(gcx) {
+            let head_w = abstracttui::text::width(GATEWAY_TITLE) + 2;
+            let mut row = Element::new()
+                .style(
+                    LayoutStyle::row()
+                        .height(Dimension::Cells(1))
+                        .gap(2)
+                        .shrink(0.0),
+                )
+                .child(super::w::paint::fill_line(
+                    LayoutStyle::default()
+                        .width(Dimension::Cells(head_w))
+                        .height(Dimension::Cells(1))
+                        .shrink(0.0),
+                    vec![
+                        super::w::Ink::new("◎ ", tt.accent),
+                        super::w::Ink::new(GATEWAY_TITLE, tt.text).bold(),
+                    ],
+                    None,
+                ));
+            match (&runner, connected) {
+                (_, false) => {
+                    row = row.child(line(vec![span("not connected", tt.warn)]));
+                }
+                (Some(r), true) => {
+                    let ink = if r.paused { tt.warn } else { tt.ok };
+                    row = row.child(line(vec![span_bold(format!("● {}", r.state_text()), ink)]));
+                    if admin {
+                        let c = ctx.clone();
+                        row = row.child(
+                            super::w::Toggle::new(r.paused)
+                                .label(PAUSE_LABEL)
+                                .tip(format!("{PAUSE_TIP}  (p)"))
+                                .on_change(move |_| gateway_action(pcx, &c, "pause"))
+                                .view(gcx, &tt),
+                        );
+                    }
+                }
+                (None, true) => {
+                    row = row.child(line(vec![span("◌ reading the gateway host…", tt.info)]));
+                }
+            }
+            row = row.child(line(vec![span("F3 more", tt.text_faint)]));
+            return row.build();
+        }
+        col = col.child(section_head(&tt, "◎", GATEWAY_TITLE));
+        if w >= 100 {
+            col = col.child(super::w::form::sentence(
+                &tt,
+                GATEWAY_NOTE,
+                w,
+                tt.text_muted,
+            ));
+        }
+        if !connected {
+            return col
+                .child(line(vec![span(
+                    "not connected — the host state needs a live gateway",
+                    tt.warn,
+                )]))
+                .build();
+        }
+        // The state pill + the Workflows paused switch (admin).
+        let mut state_row = Element::new().style(
+            LayoutStyle::row()
+                .height(Dimension::Cells(1))
+                .gap(2)
+                .shrink(0.0),
+        );
+        match (&runner, &runner_err) {
+            (Some(r), _) => {
+                let ink = if r.paused { tt.warn } else { tt.ok };
+                state_row =
+                    state_row.child(line(vec![span_bold(format!("● {}", r.state_text()), ink)]));
+                if admin {
+                    let c = ctx.clone();
+                    let tg = super::w::Toggle::new(r.paused)
+                        .label(PAUSE_LABEL)
+                        .tip(format!("{PAUSE_TIP}  (p)"))
+                        .on_change(move |_| gateway_action(pcx, &c, "pause"));
+                    state_row = state_row.child(tg.view(gcx, &tt));
+                }
+            }
+            (None, Some(e)) => {
+                state_row = state_row.child(line(vec![span(
+                    format!("gateway state unavailable: {e}"),
+                    tt.error,
+                )]));
+            }
+            (None, None) => {
+                state_row =
+                    state_row.child(line(vec![span("◌ reading the gateway host…", tt.info)]));
+            }
+        }
+        col = col.child(state_row.build());
+        if let Some(r) = &runner {
+            let d = r.detail_text();
+            if !d.is_empty() {
+                col = col.child(super::w::form::sentence(&tt, &d, w, tt.text_faint));
+            }
+        }
+        let kv = |label: &str, value: View| -> View { super::util::field_w(&tt, label, 15, value) };
+        if admin {
+            if let Some(u) = &update {
+                let mut text = u.version_text();
+                let hint = u.hint_text();
+                if !hint.is_empty() {
+                    text.push_str(&format!(" · {hint}"));
+                }
+                col = col.child(kv(
+                    "Version",
+                    line(vec![span(
+                        text,
+                        if u.update_available {
+                            tt.accent
+                        } else {
+                            tt.text
+                        },
+                    )]),
+                ));
+            }
+        }
+        if let Some(note) = &tray {
+            col = col.child(kv("Desktop icon", line(vec![span(note.clone(), tt.text)])));
+        }
+        if let Some(h) = runner.as_ref().and_then(|r| r.last_hang.clone()) {
+            // The web row + its tooltip ("Blocked N s in <frame>", "Every
+            // thread's stack: …", "Incident file: …").
+            let mut tip_lines = h.detail_lines();
+            if let Some(dump) = h.dump_text() {
+                tip_lines.insert(1, dump);
+            }
+            let row = Element::new()
+                .style(LayoutStyle::line(1).shrink(0.0))
+                .focusable()
+                .child(line(vec![span(h.text(), tt.warn)]));
+            let tipped = super::w::tip::with_tip(gcx, row, tip_lines.join("\n")).build();
+            col = col.child(kv("Last restart", tipped));
+            if let Some(dump) = h.dump_text() {
+                col = col.child(kv("", line(vec![span(dump, tt.text_faint)])));
+            }
+        }
+        if admin {
+            let on = login.as_ref().map(|l| l.enabled).unwrap_or(false);
+            let refused = match &login {
+                None => Some("not read yet".to_string()),
+                Some(l) if l.verb().is_none() => {
+                    Some(format!("can't be changed here: {}", l.reason))
+                }
+                _ => None,
+            };
+            let c = ctx.clone();
+            let tg = super::w::Toggle::new(on)
+                .refused(refused)
+                .tip("Start at login  (L)")
+                .on_change(move |_| gateway_action(pcx, &c, "login"));
+            let text = login
+                .as_ref()
+                .map(|l| l.text())
+                .unwrap_or_else(|| "not read yet".to_string());
+            col = col.child(kv(
+                "Start at login",
+                Element::new()
+                    .style(
+                        LayoutStyle::row()
+                            .height(Dimension::Cells(1))
+                            .gap(2)
+                            .shrink(0.0),
+                    )
+                    .child(tg.view(gcx, &tt))
+                    .child(line(vec![span(text, tt.text_muted)]))
+                    .build(),
+            ));
+        }
+        if let Some(l) = lifecycle {
+            col = col.child(super::w::form::sentence(&tt, &l, w, tt.info));
+        }
+        let acts = gateway_actions(runner.as_ref(), update.as_ref(), admin);
+        if !acts.is_empty() {
+            let mut row = Element::new().style(
+                LayoutStyle::row()
+                    .height(Dimension::Cells(1))
+                    .gap(1)
+                    .shrink(0.0),
+            );
+            for a in acts {
+                let c = ctx.clone();
+                let id = a.id;
+                row = row.child(button(gcx, &tt, &a, On::Page, true, move || {
+                    gateway_action(pcx, &c, id)
+                }));
+            }
+            col = col.child(row.build());
+        }
+        col.build()
+    })
+}
+
+/// Rows the Gateway card takes (for the memory section's budget).
+fn gateway_rows(store: &crate::store::Store, w: i32, compact: bool) -> usize {
+    if compact {
+        return 1;
+    }
+    let op = store.op;
+    if !store.conn.with_untracked(ConnPhase::is_connected) {
+        return 2;
+    }
+    let admin = store.conn.with_untracked(ConnPhase::is_admin);
+    let runner = op.runner.with_untracked(|r| r.ready().cloned());
+    let mut n = 2; // heading + state line
+    if w >= 100 {
+        n += super::util::wrap_text(GATEWAY_NOTE, w as usize).len();
+    }
+    if let Some(r) = &runner {
+        if !r.detail_text().is_empty() {
+            n += 1;
+        }
+        if let Some(h) = &r.last_hang {
+            n += 1 + usize::from(h.dump_text().is_some());
+        }
+    }
+    if admin && op.update.with_untracked(|u| u.ready().is_some()) {
+        n += 1;
+    }
+    if op.tray.with_untracked(|t| t.ready().is_some()) {
+        n += 1;
+    }
+    if admin {
+        n += 2; // start at login + buttons
+    }
+    if op.lifecycle.with_untracked(Option::is_some) {
+        n += 1;
+    }
+    n
+}
+
+/// A Gateway card action (a click, a switch or its key).
+fn gateway_action(cx: Scope, ctx: &Ctx, id: &str) {
+    use crate::worker::operator::OpCmd;
+    let connected = ctx.store.conn.with_untracked(ConnPhase::is_connected);
+    let admin = ctx.store.conn.with_untracked(ConnPhase::is_admin);
+    if let Some(why) = super::host::refusal(connected, admin) {
+        ctx.store.notice.set(Some(why.into()));
+        return;
+    }
+    let runner = ctx.store.op.runner.with_untracked(|r| r.ready().cloned());
+    match id {
+        "pause" => match runner {
+            Some(r) => ctx.send(Cmd::Operator(OpCmd::SetPaused { pause: !r.paused })),
+            None => ctx.store.notice.set(Some(
+                "the runner state is not loaded yet — r reloads it".into(),
+            )),
+        },
+        "login" => super::host::toggle_start_at_login(cx, ctx, &|| {}),
+        "check" => ctx.send(Cmd::Operator(OpCmd::UpdateCheck)),
+        "update" => {
+            let Some(u) = ctx.store.op.update.with_untracked(|u| u.ready().cloned()) else {
+                ctx.store
+                    .notice
+                    .set(Some("check for an update first (Check now)".into()));
+                return;
+            };
+            if let Some(why) = u.start_refusal() {
+                ctx.store.notice.set(Some(why));
+                return;
+            }
+            let c = ctx.clone();
+            let sha = u.installer_sha256();
+            super::w::Confirm::plain(u.confirm_text(), "Update now", "Not now").open(
+                cx,
+                ctx.ui,
+                move || {
+                    c.send(Cmd::Operator(OpCmd::UpdateStart {
+                        installer_sha256: sha.clone(),
+                    }))
+                },
+            );
+        }
+        "restart" | "quit" => {
+            let restart = id == "restart";
+            let a = gateway_actions(runner.as_ref(), None, true);
+            if let Some(Err(why)) = a.iter().find(|x| x.id == id).map(|x| x.enabled.clone()) {
+                ctx.store.notice.set(Some(format!(
+                    "{} is not available: {why}",
+                    if restart { "restart" } else { "quit" }
+                )));
+                return;
+            }
+            let c = ctx.clone();
+            if restart {
+                super::w::Confirm::danger(RESTART_QUESTION, "Restart", "Cancel").open(
+                    cx,
+                    ctx.ui,
+                    move || c.send(Cmd::Operator(OpCmd::Restart)),
+                );
+            } else {
+                super::w::Confirm::danger(QUIT_QUESTION, "Quit", "Cancel").open(
+                    cx,
+                    ctx.ui,
+                    move || c.send(Cmd::Operator(OpCmd::Shutdown)),
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The Ready body: ▦ Memory & GPU (the PINNED head — meters, the
+/// accelerator's scoped label and its note, degradation notes — then the
+/// WINDOWED memory itemization), then the ▣ Models / ⌸ Session caches
+/// sections (one at a time: two segments) and the selected row's detail.
 ///
-/// THE 80x24 RULE. Every one of those parts refuses to shrink, and the
-/// itemization's natural height is ~11 rows on a real host — so it used to
-/// take the whole block and push the sub-tabs, the table and the detail
-/// line past the bottom border: at 80x24, 80x26 and 110x24 the Loaded
-/// table had ZERO model rows and neither `Tab` nor ten `Down` presses
-/// brought it back, while the detail line painted over the `╰────╯`. This
-/// crate treats 80x24 as supported (`connection_screen_fits_at_macos_default_80x24`,
-/// `runtimes_inspector_fits_at_80x24`), and on THIS screen 80x24 is where
-/// the operator most needs the table: the lock/unlock verb is per row.
-///
-/// So when the terminal cannot hold both, the table's rows are reserved
-/// FIRST and the itemization gets what is left — windowed, with an
-/// affordance naming the lines that are off screen and the key that pages
-/// to them. When it CAN hold both, nothing is reserved and the itemization
-/// renders whole, exactly as before. Nothing is shrunk and nothing is
-/// reordered: at 80x24 the itemization is one `m` away instead of
-/// unreachable, and the table is on screen instead of past the border.
+/// THE 80x24 RULE: when the terminal cannot hold both, the table's rows
+/// are reserved FIRST and the itemization gets what is left — windowed,
+/// with an affordance naming the lines that are off screen and the key
+/// that pages to them (`m`).
+#[allow(clippy::too_many_arguments)]
 fn body(
     cx: Scope,
+    pcx: Scope,
+    ctx: &Ctx,
     t: &TokenSet,
-    ui: super::UiState,
     d: &HostStateData,
-    keeper: &super::util::FocusKeeper,
+    show: Signal<bool>,
+    focus: &TableFocus,
+    sels: (Signal<Option<String>>, Signal<Option<String>>),
 ) -> View {
     let tt = *t;
-    let models = d.models.clone();
+    let ui = ctx.ui;
+    let admin = ctx.store.conn.with(ConnPhase::is_admin);
+    let all_models = d.models.clone();
     let caches = d.caches.clone();
-    let models_detail = d.models.clone();
     let caches_detail = d.caches.clone();
-    // The strip wraps the GGUF note to the live viewport (block borders
-    // + padding + a safety cell), the review-screen precedent: a note
-    // the spec forbids truncating may not meet the terminal's edge.
     let viewport = crate::ui::page_viewport(cx).get();
     let wrap_w = (viewport.w as usize)
         .saturating_sub(BLOCK_CHROME as usize + 6)
@@ -389,61 +1104,46 @@ fn body(
     let head = head_rows(t, d);
     let detail = detail_rows(t, d, wrap_w);
 
-    // The reservation, in order of what the operator cannot do without.
-    const TABS_BAR: usize = 2; // the Loaded / Caches control surface
-    const ROW_DETAIL: usize = 1; // the selected row's `k …` line
-    const TABLE_MIN: usize = 2; // header + one row — the least that is usable
+    // THE BUDGET, in rows, measured from what renders: the page head (1
+    // compact / 2), the Gateway card, the Memory & GPU heading (not
+    // compact), the pinned meters, the section segments, the Models bar,
+    // the selected row's detail and the totals footer are FIXED; the table
+    // (header + rule + up to four rows of two lines) is reserved next; the
+    // itemization takes what is left, windowed (`m` pages it).
+    let small = compact(cx);
+    let card = gateway_rows(&ctx.store, viewport.w - 2, small);
+    let fixed = if small { 2 } else { 3 }
+        + card
+        + head.len()
+        + 1
+        + 1
+        + 1
+        + 1
+        + usize::from(ui.wizard.get());
+    let room = (viewport.h.max(0) as usize).saturating_sub(fixed);
+    let n_vis = visible_models(&d.models, show.get()).len();
+    let table_want = 2 + 2 * n_vis.clamp(1, 4);
     let total = detail.len();
-    let body_h = (viewport.h.max(0) as usize)
-        .saturating_sub(PAGE_CHROME_ROWS + if ui.wizard.get() { 1 } else { 0 });
-
-    // The table's reservation is CONDITIONAL, and the condition is whether
-    // the terminal can hold both. When it can, nothing is reserved and the
-    // itemization renders whole — a tall terminal has room for the full
-    // accounting and the operator asked for the accounting. When it cannot,
-    // the table's rows come FIRST: at 80x24 this screen's reason to exist is
-    // the per-row lock/unlock verb, and the operator needs the rows and the
-    // size/cache columns more than the full itemization, which is one `m`
-    // away either way.
-    let table_floor = if head.len() + total + TABS_BAR + ROW_DETAIL + TABLE_MIN <= body_h {
-        TABLE_MIN
-    } else {
-        // Header + up to four rows: enough to see a row, move between rows
-        // and read the columns. More than four and the itemization starts
-        // losing lines that would otherwise have fitted.
-        1 + d.models.len().clamp(1, 4)
-    };
-    let detail_cap = body_h.saturating_sub(head.len() + TABS_BAR + ROW_DETAIL + table_floor);
-
-    // The window. `detail_cap - 1` because the affordance owns a row of the
-    // budget; below 2 rows there is nothing left to window and only the
-    // affordance renders, which is still the honest answer — it names the
-    // lines and the key that reaches them.
+    // The itemization keeps two lines and its affordance whatever happens
+    // (`m` must have something to page), the table the rest.
+    let detail_min = if total > 0 { total.min(2) + 1 } else { 0 };
+    let detail_cap = room
+        .saturating_sub(table_want)
+        .max(detail_min.min(room.saturating_sub(3)));
     let win = if detail_cap >= total {
         total
     } else {
         detail_cap.saturating_sub(1)
     };
-    let positions = total - win + 1; // 1 when everything fits
+    let positions = total - win + 1;
+    let shown_detail = win + usize::from(win < total && detail_cap > 0);
+    let table_rows = (room.saturating_sub(shown_detail + 2)).max(1) as i32;
 
-    // ONE `shrink(0.0)` column for the whole strip, exactly as before: a
-    // `line(1)` row carries the flex default `shrink: 1.0`, so as loose
-    // children of the body these rows get squeezed to nothing and paint
-    // over each other — the first build of this fix lost the RAM gauge and
-    // both accelerator lines that way, which is the very reading it exists
-    // to keep on screen. The strip refuses to shrink; the BUDGET above is
-    // what keeps it from needing to.
     let mut strip = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
+    strip = strip.child(section_head(&tt, "▦", MEMORY_TITLE));
     for row in head {
         strip = strip.child(row);
     }
-    // The window position gets its OWN region. `models_detail_top` must not
-    // be read out here: this body lives in the poll region, so a tracked
-    // read would rebuild the whole subtree on every `m` — including the
-    // Table, which loses focus when it is re-created (autofocus is
-    // first-mount-only, by design, so the 4s poll cannot yank focus
-    // mid-keystroke). Measured: with the read out here the FIRST `m`
-    // worked and every one after it went nowhere.
     let detail_top = ui.models_detail_top;
     let faint = tt.text_faint;
     strip = strip.child(dyn_view(
@@ -480,33 +1180,55 @@ fn body(
         },
     ));
 
+    let ctx_m = ctx.clone();
+    let ctx_c = ctx.clone();
+    let focus_m = focus.clone();
+    let focus_c = focus.clone();
+    let models_title = format!("▣ {}", models_tab_title(&all_models));
+    let cached_n = all_models
+        .iter()
+        .filter(|r| r.resident != Some(true))
+        .count();
+
+    let models_detail = all_models.clone();
     Element::new()
-        .style(LayoutStyle::column().gap(0))
+        .style(LayoutStyle::column().gap(0).grow(1.0))
         .child(strip.build())
         .child(super::w::segmented::tabs(
             cx,
             t,
-            vec![models_tab_title(&models), "Session caches".to_string()],
+            vec![models_title, format!("⌸ {CACHES_TITLE}")],
             ui.models_tab,
             vec![
-                Box::new({
-                    let keeper = keeper.clone();
-                    move || models_table(cx, &tt, &models, ui.model_sel, &keeper)
+                Box::new(move || {
+                    models_section(
+                        cx,
+                        pcx,
+                        &ctx_m,
+                        &tt,
+                        &all_models,
+                        cached_n,
+                        show,
+                        admin,
+                        &focus_m,
+                        sels.0,
+                        table_rows,
+                    )
                 }),
-                Box::new({
-                    let keeper = keeper.clone();
-                    move || caches_table(cx, &tt, &caches, ui.cache_sel, &keeper)
+                Box::new(move || {
+                    caches_section(
+                        cx, pcx, &ctx_c, &tt, &caches, admin, &focus_c, sels.1, table_rows,
+                    )
                 }),
             ],
         ))
         .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
-            // The selected row's detail: the toned modality BADGE (a
-            // Table cell is a string, so the chip lives here), the
-            // full identifiers the columns may have cut, and the state
-            // facts that earn no column of their own.
+            // The selected row's detail: the toned modality badge, the full
+            // identifiers, the state facts that earn no column of their own.
             let t = tt;
             if ui.models_tab.get() == 0 {
-                let Some(r) = models_detail.get(ui.model_sel.get()) else {
+                let vis = visible_models(&models_detail, show.get());
+                let Some(r) = vis.get(ui.model_sel.get()) else {
                     return line(vec![span(String::new(), t.text)]);
                 };
                 let (tone, label) = task_tone(r.task.as_deref());
@@ -516,15 +1238,10 @@ fn body(
                     r.provider.as_deref().unwrap_or("—"),
                     r.model.as_deref().unwrap_or("—")
                 ));
-                // What `k` DOES on THIS row — the lock affordance is per
-                // row (every resident line has one, adoption included),
-                // so the hint is per row too, and a refusal names why.
-                // It rides HIGH in the line: the softer facts below are
-                // the ones a narrow terminal may truncate away.
                 bits.push(match lock_action(r) {
-                    LockAction::Unlock => "k unlocks".to_string(),
-                    LockAction::Lock { adopt: true } => "k locks (adopts it)".to_string(),
-                    LockAction::Lock { adopt: false } => "k locks".to_string(),
+                    LockAction::Unlock => "locked".to_string(),
+                    LockAction::Lock { adopt: true } => "lockable (adopts it)".to_string(),
+                    LockAction::Lock { adopt: false } => "lockable".to_string(),
                     LockAction::Refused(why) => format!("no lock ({why})"),
                 });
                 if let Some(st) = &r.state {
@@ -539,7 +1256,6 @@ fn body(
                 if let Some(lu) = &r.last_used_at {
                     bits.push(format!("last used {lu}"));
                 }
-                bits.push("e estimates context".into());
                 Element::new()
                     .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
                     .child(badge(&t, label, tone))
@@ -549,13 +1265,314 @@ fn body(
                 let Some(r) = caches_detail.get(ui.cache_sel.get()) else {
                     return line(vec![span(String::new(), t.text)]);
                 };
-                line(vec![
-                    span_bold(format!(" {} ", r.key), t.accent),
-                    span("· c clears every cache of its session", t.text_faint),
-                ])
+                line(vec![span_bold(format!(" {} ", r.key), t.accent)])
             }
         }))
         .build()
+}
+
+fn tone_ink(t: &TokenSet, tone: Tone) -> Rgba {
+    match tone {
+        Tone::Accent => t.accent,
+        Tone::Ok => t.ok,
+        Tone::Info => t.info,
+        Tone::Warn => t.warn,
+        Tone::Error => t.error,
+        _ => t.text_muted,
+    }
+}
+
+/// The Flags cell (the web's chips): locked, default, pinned.
+pub fn flags_cell(r: &ModelRow) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    if r.locked == Some(true) {
+        out.push("⊘ locked");
+    }
+    if r.default == Some(true) {
+        out.push("default");
+    }
+    if r.pinned == Some(true) {
+        out.push("pinned");
+    }
+    out.join(" ")
+}
+
+/// ▣ Models: the "Show configured / cached (N)" toggle and [Load model] on
+/// one line, then the table (resident rows; the toggle adds the rest).
+#[allow(clippy::too_many_arguments)]
+fn models_section(
+    cx: Scope,
+    pcx: Scope,
+    ctx: &Ctx,
+    t: &TokenSet,
+    all: &[ModelRow],
+    cached_n: usize,
+    show: Signal<bool>,
+    admin: bool,
+    focus: &TableFocus,
+    sel: Signal<Option<String>>,
+    max_rows: i32,
+) -> View {
+    let tt = *t;
+    let mut bar = Element::new().style(
+        LayoutStyle::row()
+            .height(Dimension::Cells(1))
+            .gap(2)
+            .shrink(0.0),
+    );
+    if cached_n > 0 {
+        let tg = super::w::Toggle::bound(show)
+            .label(format!("Show configured / cached ({cached_n})"))
+            .tip(format!("{SHOW_CACHED_TIP}  (a)"))
+            .on_change(move |v| {
+                set_show_cached(v);
+                show.set(v);
+            });
+        bar = bar.child(tg.view(cx, &tt));
+    }
+    for a in models_actions(admin) {
+        let c = ctx.clone();
+        bar = bar.child(button(cx, &tt, &a, On::Page, true, move || {
+            open_warmup_form(pcx, &c)
+        }));
+    }
+    // The size column's marker, said where the column is.
+    bar = bar.child(line(vec![span(ESTIMATE_MARKER, tt.text_faint)]));
+    let rows_src = all.to_vec();
+    let ctx2 = ctx.clone();
+    let focus = focus.clone();
+    let table = dyn_view_scoped(LayoutStyle::column().grow(1.0), move |tcx| {
+        let vis = visible_models(&rows_src, show.get());
+        let w = (crate::ui::page_viewport(tcx).get().w - 2).max(20);
+        if vis.is_empty() {
+            let text = if rows_src.is_empty() {
+                MODELS_EMPTY.to_string()
+            } else {
+                format!(
+                    "No models resident in memory right now — {cached_n} configured / cached row{} behind the toggle above.",
+                    if cached_n == 1 { "" } else { "s" }
+                )
+            };
+            let mut el = Element::new()
+                .style(LayoutStyle::column().grow(1.0))
+                .focusable();
+            if focus.wants() {
+                el = el.autofocus();
+            }
+            return focus.wrap(
+                el.child(super::w::form::sentence(&tt, &text, w, tt.text_muted))
+                    .build(),
+            );
+        }
+        // The KV cache column joins where the row still fits on one line.
+        let wide = w >= 140;
+        let rows: Vec<WRow> = vis
+            .iter()
+            .enumerate()
+            .map(|(i, r)| {
+                let (tone, label) = task_tone(r.task.as_deref());
+                let modality = Cell::Badge {
+                    label: label.to_string(),
+                    ink: tone_ink(&tt, tone),
+                    action: None,
+                    tip: r.task.clone(),
+                };
+                let mut cells = vec![
+                    modality,
+                    Cell::text(r.provider.clone().unwrap_or_else(|| "—".into()), tt.text),
+                    Cell::text(r.model.clone().unwrap_or_else(|| "—".into()), tt.text),
+                    Cell::text(
+                        resident_label(r.resident),
+                        if r.resident == Some(true) {
+                            tt.ok
+                        } else {
+                            tt.text_muted
+                        },
+                    ),
+                    Cell::text(size_cell(r), tt.text),
+                ];
+                if wide {
+                    cells.push(Cell::text(cache_cell(r), tt.text_muted));
+                }
+                cells.push(Cell::text(ctx_cell(r), tt.text));
+                cells.push(Cell::text(flags_cell(r), tt.text_muted));
+                cells.push(Cell::Actions(row_actions(r, admin)));
+                WRow::new(model_key(r, i), cells).dim(r.resident != Some(true))
+            })
+            .collect();
+        let mut cols = vec![
+            Col::new("Modality", ColW::Fit { min: 5, max: 10 }),
+            Col::new("Provider", ColW::Fit { min: 6, max: 16 }),
+            Col::new(
+                "Model",
+                ColW::Flex {
+                    weight: 1,
+                    min: if w >= 100 { 16 } else { 10 },
+                },
+            ),
+            Col::new("Resident", ColW::Fit { min: 5, max: 10 }),
+            Col::new("Size", ColW::Fit { min: 4, max: 10 }),
+        ];
+        if wide {
+            cols.push(Col::new("Cache", ColW::Fit { min: 5, max: 10 }));
+        }
+        cols.push(Col::new("Context", ColW::Fit { min: 5, max: 8 }));
+        cols.push(Col::new("Flags", ColW::Fit { min: 5, max: 18 }));
+        cols.push(Col::new(
+            "Actions",
+            ColW::Fit {
+                min: 8,
+                max: if wide { 30 } else { 20 },
+            },
+        ));
+        let c_a = ctx2.clone();
+        let mut dt = DataTable::new(cols, rows, sel)
+            .width(w)
+            .max_rows(max_rows)
+            .on_action(move |key, id| model_action(pcx, &c_a, key, id, show.get_untracked()));
+        if focus.wants() {
+            dt = dt.autofocus();
+        }
+        focus.wrap(dt.view(tcx, &tt))
+    });
+    Element::new()
+        .style(LayoutStyle::column().grow(1.0))
+        .child(bar.build())
+        .child(table)
+        .build()
+}
+
+/// ⌸ Session caches: Session · Model · Size · Tokens · Actions (the web's
+/// Created column needs the row's `created_at_s` — not in the store yet).
+#[allow(clippy::too_many_arguments)]
+fn caches_section(
+    cx: Scope,
+    pcx: Scope,
+    ctx: &Ctx,
+    t: &TokenSet,
+    caches: &[SessionCacheRow],
+    admin: bool,
+    focus: &TableFocus,
+    sel: Signal<Option<String>>,
+    max_rows: i32,
+) -> View {
+    let tt = *t;
+    let w = (crate::ui::page_viewport(cx).get().w - 2).max(20);
+    if caches.is_empty() {
+        let mut el = Element::new()
+            .style(LayoutStyle::column().grow(1.0))
+            .focusable();
+        if focus.wants() {
+            el = el.autofocus();
+        }
+        return focus.wrap(
+            el.child(super::w::form::sentence(
+                &tt,
+                CACHES_EMPTY,
+                w,
+                tt.text_muted,
+            ))
+            .build(),
+        );
+    }
+    let rows: Vec<WRow> = caches
+        .iter()
+        .map(|c| {
+            let cells = cache_row_cells(c);
+            WRow::new(
+                c.key.clone(),
+                vec![
+                    Cell::text(cells[1].clone(), tt.text),
+                    Cell::text(cells[2].clone(), tt.text),
+                    Cell::text(cells[3].clone(), tt.text),
+                    Cell::text(cells[4].clone(), tt.text),
+                    Cell::Actions(cache_actions(c, admin)),
+                ],
+            )
+        })
+        .collect();
+    let cols = vec![
+        Col::new("Session", ColW::Flex { weight: 1, min: 10 }),
+        Col::new("Model", ColW::Flex { weight: 1, min: 10 }),
+        Col::new("Size", ColW::Fit { min: 4, max: 10 }),
+        Col::new("Tokens", ColW::Fit { min: 6, max: 9 }),
+        Col::new("Actions", ColW::Fit { min: 7, max: 8 }),
+    ];
+    let c_a = ctx.clone();
+    let mut dt = DataTable::new(cols, rows, sel)
+        .width(w)
+        .max_rows(max_rows)
+        .on_action(move |key, id| cache_action(pcx, &c_a, key, id));
+    if focus.wants() {
+        dt = dt.autofocus();
+    }
+    focus.wrap(dt.view(cx, &tt))
+}
+
+/// A model row action (a click): the row becomes the selection, the verb
+/// runs (the same bodies as the keys).
+fn model_action(cx: Scope, ctx: &Ctx, key: &str, id: &str, show: bool) {
+    let keys: Vec<String> = ctx.store.host_state.with_untracked(|d| {
+        d.ready()
+            .map(|d| {
+                visible_models(&d.models, show)
+                    .iter()
+                    .enumerate()
+                    .map(|(i, r)| model_key(r, i))
+                    .collect()
+            })
+            .unwrap_or_default()
+    });
+    if let Some(i) = keys.iter().position(|k| k == key) {
+        ctx.ui.model_sel.set(i);
+    }
+    match id {
+        "estimate" => estimate_selected(ctx),
+        "lock" | "unlock" => toggle_lock_selected(cx, ctx),
+        "unload" => unload_selected(cx, ctx),
+        _ => {}
+    }
+}
+
+/// A cache row action (a click): select it, then clear.
+fn cache_action(cx: Scope, ctx: &Ctx, key: &str, id: &str) {
+    let i = ctx.store.host_state.with_untracked(|d| {
+        d.ready()
+            .and_then(|d| d.caches.iter().position(|c| c.key == key))
+    });
+    if let Some(i) = i {
+        ctx.ui.cache_sel.set(i);
+    }
+    if id == "clear" {
+        clear_caches_selected(cx, ctx);
+    }
+}
+
+/// The page's hint pairs (R15: the selected row's actions, then the page's).
+pub fn hints(ctx: &Ctx) -> Vec<(&'static str, &'static str)> {
+    let store = ctx.store;
+    let tab = ctx.ui.models_tab.get();
+    let _ = (ctx.ui.model_sel.get(), ctx.ui.cache_sel.get());
+    let mut out = vec![("↑↓", "rows"), ("Tab", "actions"), ("e", "Estimate")];
+    // The residency verbs (admin: folded into "u/k/w/c admin only" for
+    // everyone else by the footer, `ADMIN_KEYS`).
+    out.push(("u", "Unload"));
+    out.push(("k", "Lock/Unlock"));
+    out.push(("w", "Load model"));
+    out.push(("c", "Clear session caches"));
+    if tab == 0 {
+        out.push(("a", "Show configured / cached"));
+    }
+    out.push(("m", "more memory detail"));
+    if store.conn.with(ConnPhase::is_admin) {
+        out.push(("p", "Workflows paused"));
+        out.push(("L", "Start at login"));
+        out.push(("U", "Check now"));
+        out.push(("R", "Restart gateway…"));
+        out.push(("Q", "Quit gateway…"));
+    }
+    out.push(("r", "Refresh"));
+    out
 }
 
 /// THE PINNED HEAD: the RAM gauge (the PRIMARY system meter — "how full
@@ -801,78 +1818,6 @@ pub fn models_tab_title(rows: &[ModelRow]) -> String {
     format!("Models ({n} resident)")
 }
 
-fn models_table(
-    cx: Scope,
-    t: &TokenSet,
-    data: &[ModelRow],
-    sel: Signal<usize>,
-    keeper: &super::util::FocusKeeper,
-) -> View {
-    if data.is_empty() {
-        // The web's sentence (console.py `renderModelsTable`).
-        return keeper.anchor(line(vec![span(
-            "No models loaded right now.  w warms one up",
-            t.text_muted,
-        )]));
-    }
-    let w = crate::ui::page_viewport(cx).get().w;
-    let mut rows: Vec<Vec<String>> = data.iter().map(model_row_cells).collect();
-    // Modality/resident/size/ctx/lock/default print closed vocabularies
-    // (head-fit floors sized to their widest word); provider and model
-    // are identifiers that discriminate on their TAIL.
-    let rules = [
-        widths::ColRule::head("modality", 9),
-        widths::ColRule::tail("provider", 10),
-        widths::ColRule::tail("model", 22),
-        widths::ColRule::head("resident", 8),
-        widths::ColRule::head("size", 10),
-        widths::ColRule::head("cache", 8),
-        widths::ColRule::head("ctx", 7),
-        widths::ColRule::head("lock", 4),
-        widths::ColRule::head("default", 7),
-    ];
-    let cols = widths::columns(&rules, &mut rows, w - BLOCK_CHROME);
-    keeper.wire(
-        Table::new(cols)
-            .rows(rows)
-            .selection(sel)
-            .layout(LayoutStyle::default().grow(1.0))
-            .element(cx, t),
-    )
-}
-
-fn caches_table(
-    cx: Scope,
-    t: &TokenSet,
-    data: &[SessionCacheRow],
-    sel: Signal<usize>,
-    keeper: &super::util::FocusKeeper,
-) -> View {
-    if data.is_empty() {
-        return keeper.anchor(line(vec![span(
-            "No session prompt caches right now.",
-            t.text_muted,
-        )]));
-    }
-    let w = crate::ui::page_viewport(cx).get().w;
-    let mut rows: Vec<Vec<String>> = data.iter().map(cache_row_cells).collect();
-    let rules = [
-        widths::ColRule::tail("key", 16),
-        widths::ColRule::tail("session", 10),
-        widths::ColRule::tail("model", 14),
-        widths::ColRule::head("size", 9),
-        widths::ColRule::head("tokens", 7),
-    ];
-    let cols = widths::columns(&rules, &mut rows, w - BLOCK_CHROME);
-    keeper.wire(
-        Table::new(cols)
-            .rows(rows)
-            .selection(sel)
-            .layout(LayoutStyle::default().grow(1.0))
-            .element(cx, t),
-    )
-}
-
 // ---------------------------------------------------------------------
 // Actions (refusals name their reasons — the F2/F3 law)
 // ---------------------------------------------------------------------
@@ -889,11 +1834,14 @@ fn send_mutation(ctx: &Ctx, label: String, make: impl FnOnce(u64) -> Cmd) {
     ctx.send(make(op));
 }
 
+/// The selected row of the Models table (an index into the VISIBLE rows:
+/// resident ones, plus the configured / cached ones behind the toggle).
 fn selected_model(ctx: &Ctx) -> Option<ModelRow> {
     let idx = ctx.ui.model_sel.get_untracked();
-    ctx.store
-        .host_state
-        .with_untracked(|d| d.ready().and_then(|d| d.models.get(idx).cloned()))
+    ctx.store.host_state.with_untracked(|d| {
+        d.ready()
+            .and_then(|d| visible_models(&d.models, show_cached()).get(idx).cloned())
+    })
 }
 
 /// The (provider, model) a mutation can target — both halves required
@@ -939,21 +1887,19 @@ fn unload_selected(cx: Scope, ctx: &Ctx) {
         ""
     };
     let ctx2 = ctx.clone();
-    super::confirm_danger(
-        cx,
-        ctx.ui,
-        format!("Unload {p}/{m} from the execution host?{locked_hint}"),
+    super::w::Confirm::danger(
+        format!("{}{locked_hint}", unload_question(&format!("{p}/{m}"))),
         "Unload",
-        "Keep it loaded",
-        move || {
-            send_mutation(&ctx2, format!("unloading {p}/{m}"), |op| Cmd::UnloadModel {
-                provider: p,
-                model: m,
-                force: false,
-                op,
-            });
-        },
-    );
+        "Cancel",
+    )
+    .open(cx, ctx.ui, move || {
+        send_mutation(&ctx2, format!("unloading {p}/{m}"), |op| Cmd::UnloadModel {
+            provider: p,
+            model: m,
+            force: false,
+            op,
+        });
+    });
 }
 
 /// `k` — toggle the residency lock. Locking is safe (no confirm);
@@ -983,21 +1929,19 @@ fn toggle_lock_selected(cx: Scope, ctx: &Ctx) {
     match lock_action(&row) {
         LockAction::Unlock => {
             let ctx2 = ctx.clone();
-            super::confirm_danger(
-                cx,
-                ctx.ui,
+            super::w::Confirm::danger(
                 format!("Unlock {p}/{m}? An unlocked model can be evicted or unloaded."),
                 "Unlock",
-                "Keep the lock",
-                move || {
-                    send_mutation(&ctx2, format!("unlocking {p}/{m}"), |op| Cmd::LockModel {
-                        provider: p,
-                        model: m,
-                        lock: false,
-                        op,
-                    });
-                },
-            );
+                "Cancel",
+            )
+            .open(cx, ctx.ui, move || {
+                send_mutation(&ctx2, format!("unlocking {p}/{m}"), |op| Cmd::LockModel {
+                    provider: p,
+                    model: m,
+                    lock: false,
+                    op,
+                });
+            });
         }
         LockAction::Lock { adopt } => {
             let label = if adopt {
@@ -1067,291 +2011,295 @@ fn open_warmup_form(cx: Scope, ctx: &Ctx) {
         ctx.send(Cmd::LoadProviders);
     }
     let ctx2 = ctx.clone();
-    super::open_form(ctx, cx, Size::new(72, 16), move |mcx, close| {
-        let theme = use_theme(mcx);
-        let t0 = theme.get().tokens;
-        // Provider options: [placeholder] + discovered + CUSTOM. Read
-        // once per form open — a picker whose indices shift under the
-        // operator mid-selection is a fabricated pick waiting to happen.
-        let mut prov_options: Vec<String> = super::providers::provider_names(&store);
-        if let Some((p, _)) = &prefill {
-            if !p.is_empty() && !prov_options.iter().any(|x| x == p) {
-                prov_options.insert(0, p.clone());
+    super::w::FormModal::new(LOAD_TITLE)
+        .lead(LOAD_TIP)
+        .size(78, 18)
+        .open(ctx, cx, move |mcx, close, _guard, _w| {
+            let theme = use_theme(mcx);
+            let t0 = theme.get().tokens;
+            // Provider options: [placeholder] + discovered + CUSTOM. Read
+            // once per form open — a picker whose indices shift under the
+            // operator mid-selection is a fabricated pick waiting to happen.
+            let mut prov_options: Vec<String> = super::providers::provider_names(&store);
+            if let Some((p, _)) = &prefill {
+                if !p.is_empty() && !prov_options.iter().any(|x| x == p) {
+                    prov_options.insert(0, p.clone());
+                }
             }
-        }
-        let custom_row = prov_options.len() + 1;
-        let prov_ix = mcx.signal(
-            prefill
-                .as_ref()
-                .and_then(|(p, _)| prov_options.iter().position(|x| x == p))
-                .map(|i| i + 1)
-                .unwrap_or(0),
-        );
-        let prov_custom = mcx.signal(String::new());
-        // usize::MAX = "resolve the prefilled model against the list the
-        // moment it lands" (the routes.rs sentinel).
-        let model_ix = mcx.signal(if prefill.is_some() { usize::MAX } else { 0 });
-        let model_custom = mcx.signal(prefill.as_ref().map(|(_, m)| m.clone()).unwrap_or_default());
-        let lock_after = mcx.signal(false);
-        let form_error = mcx.signal(Option::<String>::None);
+            let custom_row = prov_options.len() + 1;
+            let prov_ix = mcx.signal(
+                prefill
+                    .as_ref()
+                    .and_then(|(p, _)| prov_options.iter().position(|x| x == p))
+                    .map(|i| i + 1)
+                    .unwrap_or(0),
+            );
+            let prov_custom = mcx.signal(String::new());
+            // usize::MAX = "resolve the prefilled model against the list the
+            // moment it lands" (the routes.rs sentinel).
+            let model_ix = mcx.signal(if prefill.is_some() { usize::MAX } else { 0 });
+            let model_custom =
+                mcx.signal(prefill.as_ref().map(|(_, m)| m.clone()).unwrap_or_default());
+            let lock_after = mcx.signal(false);
+            let form_error = mcx.signal(Option::<String>::None);
 
-        // Fetch the chosen provider's catalog. UNTRACKED cache read: a
-        // tracked one would re-fire on the failure landing = a retry
-        // loop (the routes.rs law, same reason).
-        {
-            let prov_options = prov_options.clone();
-            let ctx3 = ctx2.clone();
-            mcx.effect(move || {
-                let ix = prov_ix.get();
-                if ix == 0 || ix >= custom_row {
-                    return;
-                }
-                let name = prov_options[ix - 1].clone();
-                if matches!(catalog_for(&store, &name), Loadable::Ready(_)) {
-                    return;
-                }
-                let needs = store.models.with_untracked(|m| {
-                    !m.contains_key(&name) || matches!(m.get(&name), Some(Loadable::Failed(_)))
-                });
-                if needs {
-                    store
-                        .models
-                        .update(|m| drop(m.insert(name.clone(), Loadable::Loading)));
-                    ctx3.send(Cmd::LoadModels { provider: name });
-                }
-            });
-        }
-        // Resolve the prefilled model against its own provider's list —
-        // and only its own: a saved model under another provider is a
-        // fabricated pair, so it resolves to the placeholder.
-        {
-            let prov_options = prov_options.clone();
-            let prefill2 = prefill.clone();
-            mcx.effect(move || {
-                if model_ix.get() != usize::MAX {
-                    return;
-                }
-                let ix = prov_ix.get();
-                if ix == 0 || ix >= custom_row {
-                    model_ix.set(0);
-                    return;
-                }
-                let name = prov_options[ix - 1].clone();
-                // Track the map so this re-runs when the catalog lands.
-                let _ = store.models.with(|m| m.len());
-                match catalog_for(&store, &name) {
-                    Loadable::Ready(models) if !models.is_empty() => {
-                        let pos = prefill2
-                            .as_ref()
-                            .filter(|(p, _)| *p == name)
-                            .and_then(|(_, m)| models.iter().position(|x| x == m))
-                            .map(|i| i + 1);
-                        model_ix.set(pos.unwrap_or(0));
+            // Fetch the chosen provider's catalog. UNTRACKED cache read: a
+            // tracked one would re-fire on the failure landing = a retry
+            // loop (the routes.rs law, same reason).
+            {
+                let prov_options = prov_options.clone();
+                let ctx3 = ctx2.clone();
+                mcx.effect(move || {
+                    let ix = prov_ix.get();
+                    if ix == 0 || ix >= custom_row {
+                        return;
                     }
-                    Loadable::Ready(_) | Loadable::Failed(_) => model_ix.set(0),
-                    _ => {}
-                }
-            });
-        }
-
-        let prov_select_options: Vec<SelectOption> =
-            std::iter::once(SelectOption::new("choose a provider…"))
-                .chain(prov_options.iter().map(|p| SelectOption::new(p.clone())))
-                .chain(std::iter::once(SelectOption::new(CUSTOM_PROVIDER)))
-                .collect();
-        let prov_options_pick = prov_options.clone();
-        let prov_options_send = prov_options.clone();
-        let ctx3 = ctx2.clone();
-        let close_ok = close.clone();
-        let close_cancel = close.clone();
-        Element::new()
-            .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold("Load (warm up) a model", t0.accent)]))
-            .child(line(vec![span(
-                "the gateway pulls the model into host memory — a cold load can take a while",
-                t0.text_faint,
-            )]))
-            .child(field(
-                &t0,
-                "provider",
-                Select::new(prov_select_options)
-                    .value(prov_ix)
-                    .on_change(move |_| {
-                        // A provider switch RESETS the model picker —
-                        // never a pair the catalogs never served.
+                    let name = prov_options[ix - 1].clone();
+                    if matches!(catalog_for(&store, &name), Loadable::Ready(_)) {
+                        return;
+                    }
+                    let needs = store.models.with_untracked(|m| {
+                        !m.contains_key(&name) || matches!(m.get(&name), Some(Loadable::Failed(_)))
+                    });
+                    if needs {
+                        store
+                            .models
+                            .update(|m| drop(m.insert(name.clone(), Loadable::Loading)));
+                        ctx3.send(Cmd::LoadModels { provider: name });
+                    }
+                });
+            }
+            // Resolve the prefilled model against its own provider's list —
+            // and only its own: a saved model under another provider is a
+            // fabricated pair, so it resolves to the placeholder.
+            {
+                let prov_options = prov_options.clone();
+                let prefill2 = prefill.clone();
+                mcx.effect(move || {
+                    if model_ix.get() != usize::MAX {
+                        return;
+                    }
+                    let ix = prov_ix.get();
+                    if ix == 0 || ix >= custom_row {
                         model_ix.set(0);
-                        model_custom.set(String::new());
-                    })
-                    .layout(LayoutStyle::default().w(40).h(1).shrink(0.0))
-                    .element(mcx, &t0)
-                    .autofocus()
-                    .build(),
-            ))
-            // Custom-provider name row (only for the custom pick).
-            .child(dyn_view_scoped(LayoutStyle::column(), move |g2| {
-                let t = theme.get().tokens;
-                if prov_ix.get() != custom_row {
-                    return Element::new().style(LayoutStyle::default().h(0)).build();
-                }
-                field(
-                    &t,
-                    "provider name",
-                    TextInput::new()
-                        .value(prov_custom)
-                        .placeholder("e.g. lmstudio, mlx, ollama")
-                        .placeholder_while_focused(true)
-                        .layout(LayoutStyle::default().w(40).h(1))
-                        .element(g2, &t)
+                        return;
+                    }
+                    let name = prov_options[ix - 1].clone();
+                    // Track the map so this re-runs when the catalog lands.
+                    let _ = store.models.with(|m| m.len());
+                    match catalog_for(&store, &name) {
+                        Loadable::Ready(models) if !models.is_empty() => {
+                            let pos = prefill2
+                                .as_ref()
+                                .filter(|(p, _)| *p == name)
+                                .and_then(|(_, m)| models.iter().position(|x| x == m))
+                                .map(|i| i + 1);
+                            model_ix.set(pos.unwrap_or(0));
+                        }
+                        Loadable::Ready(_) | Loadable::Failed(_) => model_ix.set(0),
+                        _ => {}
+                    }
+                });
+            }
+
+            let prov_select_options: Vec<SelectOption> =
+                std::iter::once(SelectOption::new("choose a provider…"))
+                    .chain(prov_options.iter().map(|p| SelectOption::new(p.clone())))
+                    .chain(std::iter::once(SelectOption::new(CUSTOM_PROVIDER)))
+                    .collect();
+            let prov_options_pick = prov_options.clone();
+            let prov_options_send = prov_options.clone();
+            let ctx3 = ctx2.clone();
+            let close_ok = close.clone();
+            let close_cancel = close.clone();
+            Element::new()
+                .style(LayoutStyle::column().gap(0))
+                .child(line(vec![span(
+                    "the gateway pulls the model into host memory — a cold load can take a while",
+                    t0.text_faint,
+                )]))
+                .child(field(
+                    &t0,
+                    "Provider",
+                    Select::new(prov_select_options)
+                        .value(prov_ix)
+                        .on_change(move |_| {
+                            // A provider switch RESETS the model picker —
+                            // never a pair the catalogs never served.
+                            model_ix.set(0);
+                            model_custom.set(String::new());
+                        })
+                        .layout(LayoutStyle::default().w(40).h(1).shrink(0.0))
+                        .element(mcx, &t0)
+                        .autofocus()
                         .build(),
-                )
-            }))
-            // Model row: the provider's catalog when it answered, an
-            // honest free-text lane (with the reason) when it did not.
-            .child(dyn_view_scoped(LayoutStyle::column(), move |g2| {
-                let t = theme.get().tokens;
-                let ix = prov_ix.get();
-                if ix == 0 {
-                    return field(
+                ))
+                // Custom-provider name row (only for the custom pick).
+                .child(dyn_view_scoped(LayoutStyle::column(), move |g2| {
+                    let t = theme.get().tokens;
+                    if prov_ix.get() != custom_row {
+                        return Element::new().style(LayoutStyle::default().h(0)).build();
+                    }
+                    field(
                         &t,
-                        "model",
-                        line(vec![span("choose a provider first", t.text_faint)]),
-                    );
-                }
-                if ix >= custom_row {
-                    return field(
-                        &t,
-                        "model",
+                        "provider name",
                         TextInput::new()
-                            .value(model_custom)
-                            .placeholder("model id for that provider")
+                            .value(prov_custom)
+                            .placeholder("e.g. lmstudio, mlx, ollama")
                             .placeholder_while_focused(true)
-                            .layout(LayoutStyle::default().w(50).h(1))
+                            .layout(LayoutStyle::default().w(40).h(1))
                             .element(g2, &t)
                             .build(),
-                    );
-                }
-                // Track the catalog map so this region re-renders when
-                // the list lands.
-                let _ = store.models.with(|m| m.len());
-                let name = prov_options_pick[ix - 1].clone();
-                match catalog_for(&store, &name) {
-                    Loadable::Ready(models) if !models.is_empty() => {
-                        let opts: Vec<SelectOption> =
-                            std::iter::once(SelectOption::new("choose a model…"))
-                                .chain(models.iter().map(|m| SelectOption::new(m.clone())))
-                                .collect();
-                        field(
+                    )
+                }))
+                // Model row: the provider's catalog when it answered, an
+                // honest free-text lane (with the reason) when it did not.
+                .child(dyn_view_scoped(LayoutStyle::column(), move |g2| {
+                    let t = theme.get().tokens;
+                    let ix = prov_ix.get();
+                    if ix == 0 {
+                        return field(
                             &t,
-                            "model",
-                            Combobox::new(opts)
-                                .value(model_ix)
-                                .placeholder("type to filter models…")
-                                .layout(LayoutStyle::default().w(50).h(1).shrink(0.0))
-                                .element(g2, &t)
-                                .build(),
-                        )
+                            "Model",
+                            line(vec![span("choose a provider first", t.text_faint)]),
+                        );
                     }
-                    Loadable::Loading | Loadable::NotAsked => field(
-                        &t,
-                        "model",
-                        line(vec![span("⟳ discovering models…", t.info)]),
-                    ),
-                    // Discovery FAILED ≠ "this provider has no models":
-                    // name the error and keep the free-text lane.
-                    Loadable::Failed(e) => Element::new()
-                        .style(LayoutStyle::column())
-                        .child(field(
+                    if ix >= custom_row {
+                        return field(
                             &t,
-                            "model",
+                            "Model",
                             TextInput::new()
                                 .value(model_custom)
-                                .placeholder("discovery failed — type the model id")
+                                .placeholder("model id for that provider")
                                 .placeholder_while_focused(true)
                                 .layout(LayoutStyle::default().w(50).h(1))
                                 .element(g2, &t)
                                 .build(),
-                        ))
-                        .child(field(
+                        );
+                    }
+                    // Track the catalog map so this region re-renders when
+                    // the list lands.
+                    let _ = store.models.with(|m| m.len());
+                    let name = prov_options_pick[ix - 1].clone();
+                    match catalog_for(&store, &name) {
+                        Loadable::Ready(models) if !models.is_empty() => {
+                            let opts: Vec<SelectOption> =
+                                std::iter::once(SelectOption::new("choose a model…"))
+                                    .chain(models.iter().map(|m| SelectOption::new(m.clone())))
+                                    .collect();
+                            field(
+                                &t,
+                                "Model",
+                                Combobox::new(opts)
+                                    .value(model_ix)
+                                    .placeholder("type to filter models…")
+                                    .layout(LayoutStyle::default().w(50).h(1).shrink(0.0))
+                                    .element(g2, &t)
+                                    .build(),
+                            )
+                        }
+                        Loadable::Loading | Loadable::NotAsked => field(
                             &t,
-                            "",
-                            line(vec![span(
-                                format!("model discovery failed: {}", e.message),
-                                t.error,
-                            )]),
-                        ))
-                        .build(),
-                    Loadable::Ready(_) => field(
-                        &t,
-                        "model",
-                        TextInput::new()
-                            .value(model_custom)
-                            .placeholder("no discoverable models — type the model id")
-                            .placeholder_while_focused(true)
-                            .layout(LayoutStyle::default().w(50).h(1))
-                            .element(g2, &t)
+                            "Model",
+                            line(vec![span("⟳ discovering models…", t.info)]),
+                        ),
+                        // Discovery FAILED ≠ "this provider has no models":
+                        // name the error and keep the free-text lane.
+                        Loadable::Failed(e) => Element::new()
+                            .style(LayoutStyle::column())
+                            .child(field(
+                                &t,
+                                "Model",
+                                TextInput::new()
+                                    .value(model_custom)
+                                    .placeholder("discovery failed — type the model id")
+                                    .placeholder_while_focused(true)
+                                    .layout(LayoutStyle::default().w(50).h(1))
+                                    .element(g2, &t)
+                                    .build(),
+                            ))
+                            .child(field(
+                                &t,
+                                "",
+                                line(vec![span(
+                                    format!("model discovery failed: {}", e.message),
+                                    t.error,
+                                )]),
+                            ))
                             .build(),
+                        Loadable::Ready(_) => field(
+                            &t,
+                            "Model",
+                            TextInput::new()
+                                .value(model_custom)
+                                .placeholder("no discoverable models — type the model id")
+                                .placeholder_while_focused(true)
+                                .layout(LayoutStyle::default().w(50).h(1))
+                                .element(g2, &t)
+                                .build(),
+                        ),
+                    }
+                }))
+                .child(field(
+                    &t0,
+                    "",
+                    super::w::Toggle::switch(LOCK_IN_MEMORY, lock_after)
+                        .tip(LOCK_IN_MEMORY_TIP)
+                        .on_change(move |v| lock_after.set(v))
+                        .view(mcx, &t0),
+                ))
+                .child(dyn_view(
+                    LayoutStyle::line(1).shrink(0.0),
+                    move || match form_error.get() {
+                        Some(e) => line(vec![span_bold(format!("✗ {e}"), t0.error)]),
+                        None => line(vec![span(String::new(), t0.text)]),
+                    },
+                ))
+                .child(super::w::form::button_row(vec![
+                    button(
+                        mcx,
+                        &t0,
+                        &Action::label("cancel", "Cancel"),
+                        On::Raised,
+                        true,
+                        move || close_cancel(),
                     ),
-                }
-            }))
-            .child(field(
-                &t0,
-                "",
-                Checkbox::new("lock after load (pin against eviction)")
-                    .checked(lock_after)
-                    .element(mcx, &t0)
-                    .build(),
-            ))
-            .child(dyn_view(
-                LayoutStyle::line(1).shrink(0.0),
-                move || match form_error.get() {
-                    Some(e) => line(vec![span_bold(format!("✗ {e}"), t0.error)]),
-                    None => line(vec![span(String::new(), t0.text)]),
-                },
-            ))
-            .child(
-                Element::new()
-                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                    .child(
-                        Button::new("Load")
-                            .on_click(move || {
-                                let Some((p, m)) = picked_pair(
-                                    &store,
-                                    &prov_options_send,
-                                    custom_row,
-                                    prov_ix,
-                                    prov_custom,
-                                    model_ix,
-                                    model_custom,
-                                ) else {
-                                    form_error.set(Some(
-                                        "pick a provider and a model — both name the target".into(),
-                                    ));
-                                    return;
-                                };
-                                send_mutation(&ctx3, format!("loading model {p}/{m}"), |op| {
-                                    Cmd::WarmupModel {
-                                        task: None, // gateway defaults to text_generation
-                                        provider: p,
-                                        model: m,
-                                        lock: lock_after.get_untracked(),
-                                        op,
-                                    }
-                                });
-                                close_ok();
-                            })
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .child(
-                        Button::new("Cancel (Esc)")
-                            .on_click(move || close_cancel())
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .build(),
-            )
-            .build()
-    });
+                    button(
+                        mcx,
+                        &t0,
+                        &Action::label("load", "Load model").tooltip(LOAD_TIP),
+                        On::Raised,
+                        true,
+                        move || {
+                            let Some((p, m)) = picked_pair(
+                                &store,
+                                &prov_options_send,
+                                custom_row,
+                                prov_ix,
+                                prov_custom,
+                                model_ix,
+                                model_custom,
+                            ) else {
+                                form_error.set(Some(
+                                    "pick a provider and a model — both name the target".into(),
+                                ));
+                                return;
+                            };
+                            send_mutation(&ctx3, format!("loading model {p}/{m}"), |op| {
+                                Cmd::WarmupModel {
+                                    task: None, // gateway defaults to text_generation
+                                    provider: p,
+                                    model: m,
+                                    lock: lock_after.get_untracked(),
+                                    op,
+                                }
+                            });
+                            close_ok();
+                        },
+                    ),
+                ]))
+                .build()
+        });
 }
 
 /// The (provider, model) the two pickers currently name — `None` while
@@ -1428,7 +2376,7 @@ fn clear_caches_selected(cx: Scope, ctx: &Ctx) {
     }
     if ctx.ui.models_tab.get_untracked() != 1 {
         ctx.store.notice.set(Some(
-            "switch to the Caches tab — c clears the selected session's caches there".into(),
+            "switch to Session caches — c clears the selected session's caches there".into(),
         ));
         return;
     }
@@ -1451,12 +2399,9 @@ fn clear_caches_selected(cx: Scope, ctx: &Ctx) {
     }
     let sid = row.session_id.clone();
     let ctx2 = ctx.clone();
-    super::confirm_danger(
+    super::w::Confirm::danger(clear_cache_question(&sid), "Clear", "Cancel").open(
         cx,
         ctx.ui,
-        format!("Clear ALL prompt caches for session '{sid}'? Cached prompts rebuild on next use."),
-        "Clear the caches",
-        "Keep them",
         move || {
             send_mutation(&ctx2, format!("clearing caches of '{sid}'"), |op| {
                 Cmd::ClearSessionCaches {

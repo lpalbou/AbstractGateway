@@ -303,7 +303,10 @@ fn admin_reaches_the_gated_verbs() {
     let mut h = harness();
     h.on(ui::SCREEN_MODELS, true);
     let s = h.key(b"w");
-    assert!(s.contains("Load (warm up) a model"), "{s}");
+    assert!(
+        s.contains("Load (warm up) this model on the host now"),
+        "{s}"
+    );
     let mut h = harness();
     h.on(ui::SCREEN_USERS, true);
     let s = h.key(b"a");
@@ -342,9 +345,10 @@ fn footer_hides_admin_verbs_from_a_non_admin() {
         "disabled with the reason:\n{s}"
     );
     let s = h.on(ui::SCREEN_MODELS, false);
-    assert!(s.contains("context estimate"), "{s}");
+    // R15: the Resources hints name the web's buttons.
+    assert!(s.contains("e Estimate"), "{s}");
     assert!(
-        !s.contains("load (warm up)") && !s.contains("clear session caches"),
+        !s.contains("Load model") && !s.contains("Clear session caches"),
         "{s}"
     );
     assert!(s.contains("u/k/w/c admin only"), "{s}");

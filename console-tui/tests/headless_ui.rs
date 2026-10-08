@@ -3671,7 +3671,7 @@ fn footer_leads_with_the_screen_keys_at_80x24() {
         (3, "↑↓ rows · Enter Email"),
         (4, "↑↓ Enter open runtime"),
         (5, "↑↓ rows · Enter Export"),
-        (7, "u unload"),
+        (7, "↑↓ rows · Tab actions · e Estimate"),
     ] {
         h.ui.screen.set(screen);
         let s = h.turns(3);
@@ -6508,13 +6508,15 @@ fn models_table_and_its_lock_verb_are_reachable_at_80x24() {
     let s = h.turns(2);
 
     // 1. THE TABLE IS THERE AT REST, with the columns the operator came for.
+    // R15: the web's columns (Modality · Provider · Model · Resident · Size ·
+    // Context · Flags · Actions); the KV cache column joins from 100 cells.
     let header = s
         .lines()
-        .find(|l| l.contains("modality") && l.contains("provider"))
+        .find(|l| l.contains("Modality") && l.contains("Provider"))
         .unwrap_or_else(|| panic!("the Loaded table header renders at 80x24:\n{s}"));
     assert!(
-        header.contains("size") && header.contains("cache") && header.contains("lock"),
-        "the size/cache/lock columns are visible, not scrolled off:\n{s}"
+        header.contains("Size") && header.contains("Flags") && header.contains("Actions"),
+        "the size/flags/actions columns are visible, not scrolled off:\n{s}"
     );
     let row = s
         .lines()
@@ -6526,9 +6528,9 @@ fn models_table_and_its_lock_verb_are_reachable_at_80x24() {
     );
 
     // 2. THE LOCK AFFORDANCE IS REACHABLE FOR A ROW — per row, and it names
-    // the verb it will actually perform.
+    // the verb it will actually perform (R15: the row's own button).
     assert!(
-        s.contains("k unlocks"),
+        s.contains("Unlock"),
         "the selected row's lock verb renders at 80x24:\n{s}"
     );
     h.term.push_input(b"\x1b[B");
@@ -6536,7 +6538,7 @@ fn models_table_and_its_lock_verb_are_reachable_at_80x24() {
     h.term.push_input(b"\x1b[B");
     let s = h.turns(2);
     assert!(
-        s.contains("k locks (adopts it)"),
+        s.contains("lockable (adopts it)") && s.contains(" Lock"),
         "moving to the sweep row carries ITS lock verb — the table is not \
          merely visible, it is navigable:\n{s}"
     );
@@ -6563,29 +6565,18 @@ fn models_table_and_its_lock_verb_are_reachable_at_80x24() {
         "the GGUF note is PINNED — it is the caveat that makes the \
          accelerator figure readable:\n{s}"
     );
+    // R15: the table windows to the selected row (the sweep row).
     assert!(
         s.lines()
-            .any(|l| l.contains("qwen3-32b") && l.contains("yes")),
+            .any(|l| l.contains("lmstudio") && l.contains("glm-4.6") && l.contains("yes")),
         "and the model rows are still there at the tail:\n{s}"
     );
 
-    // 4. THE BOTTOM BORDER IS INTACT — one unbroken `╰───╯` run, not a
-    // clipped detail line wearing the frame's row.
-    let bottom = s
-        .lines()
-        .rev()
-        .find(|l| l.trim_start().starts_with('\u{2570}'))
-        .unwrap_or_else(|| panic!("the block's bottom border renders at 80x24:\n{s}"));
+    // 4. R15: no page border any more; the pinned totals footer closes
+    // the page, on screen, below the table.
     assert!(
-        bottom.trim_end().ends_with('\u{256F}'),
-        "the bottom border closes with its corner:\n{s}"
-    );
-    assert!(
-        bottom
-            .trim()
-            .chars()
-            .all(|c| matches!(c, '\u{2570}' | '\u{2500}' | '\u{256F}')),
-        "nothing is painted ON the bottom border:\n{s}"
+        s.lines().any(|l| l.contains("totals: 2 resident")),
+        "the totals footer renders at 80x24:\n{s}"
     );
 
     // GUARD, before the paging claims below: this fixture must genuinely
@@ -6640,6 +6631,15 @@ fn models_tab_resident_null_renders_the_third_state() {
         .host_state
         .set(Loadable::Ready(host_state_fixture()));
     let s = h.turns(2);
+    // R15 (web parity): the default view is the RESIDENT rows; a configured
+    // / cached row (resident false or unknown) sits behind "Show configured /
+    // cached" — `a` (or a click) shows it.
+    assert!(
+        !s.contains("mystery-model") && s.contains("Show configured / cached (1)"),
+        "the null-resident row waits behind the toggle:\n{s}"
+    );
+    h.key(b"a");
+    let s = h.turns(2);
     assert!(
         s.contains("mystery-model"),
         "the null-resident row renders:\n{s}"
@@ -6664,6 +6664,8 @@ fn models_tab_resident_null_renders_the_third_state() {
 fn models_tab_locked_row_shows_the_lock_marker() {
     let mut h = harness();
     h.connect_as_admin();
+    // R15: the unknown-residency row is behind "Show configured / cached".
+    ui::models::set_show_cached(true);
     h.goto_screen(7);
     h.store
         .host_state
@@ -6741,7 +6743,7 @@ fn resources_w_works_with_no_model_resident_across_polls() {
     h.type_text("w");
     let s = h.turns(3);
     assert!(
-        s.contains("Load (warm up) a model"),
+        s.contains("Load (warm up) this model on the host now"),
         "w opens the warm-up form:\n{s}"
     );
 }
@@ -6949,7 +6951,9 @@ fn models_tab_breaks_down_what_is_consuming_memory() {
         "an unknown residency is not an attribution:\n{strip}"
     );
     assert!(line_of("model KV caches").contains("2.0 GiB"));
-    assert!(line_of("session caches").contains("4.0 KiB"));
+    // R15: the page subtitle names "session caches" too — the item is the
+    // indented line of the itemization.
+    assert!(line_of("  session caches ").contains("4.0 KiB"));
     assert!(line_of("gateway process RSS").contains("1.0 GiB"));
     // The references live behind their rule, and are NOT summable with
     // the items above them.
@@ -7015,8 +7019,10 @@ fn models_tab_states_the_gateway_process_rss_exactly_once() {
 /// the strip explains it in the spec's words, wrapped, never truncated.
 #[test]
 fn models_tab_names_the_gguf_case_when_weights_exceed_the_accelerator_heap() {
-    // R15: 110x31 keeps the old page area (the shell chrome shrank by 3 rows).
-    let mut h = harness_sized(Size::new(110, 31));
+    // R15: the Resources page also carries the Gateway card and the Models
+    // section; a tall terminal shows the itemization whole (shorter ones
+    // window it — `m` pages, pinned by the 80x24 test).
+    let mut h = harness_sized(Size::new(110, 60));
     h.connect_as_admin();
     h.goto_screen(7);
     let mut d = host_state_fixture();
@@ -7057,12 +7063,13 @@ fn models_tab_locks_an_externally_loaded_sweep_row() {
         .host_state
         .set(Loadable::Ready(host_state_fixture()));
     h.turns(2);
-    // Down twice: qwen3-32b → mystery-model → glm-4.6-gguf (the sweep).
-    h.key(b"\x1b[B");
+    // R15: the resident rows lead (qwen3-32b, glm-4.6-gguf); Down once
+    // reaches the sweep row, whose detail line and Lock button offer the
+    // adoption.
     h.key(b"\x1b[B");
     let s = h.turns(2);
     assert!(
-        s.contains("k locks (adopts it)"),
+        s.contains("lockable (adopts it)") && s.contains(" Lock"),
         "the row's own hint offers the adoption:\n{s}"
     );
     h.type_text("k");
@@ -7088,6 +7095,8 @@ fn models_tab_locks_an_externally_loaded_sweep_row() {
 fn models_tab_refuses_lock_and_unload_on_a_non_resident_row() {
     let mut h = harness();
     h.connect_as_admin();
+    // R15: non-resident rows are behind "Show configured / cached".
+    ui::models::set_show_cached(true);
     h.goto_screen(7);
     let mut d = host_state_fixture();
     d.models.push(abstractgateway_console::store::ModelRow {
@@ -7147,9 +7156,13 @@ fn models_tab_warmup_form_picks_provider_and_model_from_the_catalogs() {
     h.turns(2);
     h.type_text("w");
     let s = h.turns(2);
-    assert!(s.contains("Load (warm up) a model"), "{s}");
+    // R15: the web's words — "Load model", "lock in memory" (a Toggle).
     assert!(
-        s.contains("lock after load"),
+        s.contains("Load model") && s.contains("Load (warm up) this model on the host now"),
+        "{s}"
+    );
+    assert!(
+        s.contains("lock in memory"),
         "the lock-after-load option survives the rework:\n{s}"
     );
     // The highlighted row prefilled the provider picker, and picking it
@@ -7179,9 +7192,9 @@ fn models_tab_warmup_form_picks_provider_and_model_from_the_catalogs() {
                     .is_some_and(|head| head.trim_end().ends_with(label))
         })
     };
-    let prov = field_row("provider").expect("the provider field is a picker");
+    let prov = field_row("Provider").expect("the provider field is a picker");
     assert!(prov.contains("mlx"), "{prov}");
-    let model = field_row("model").expect("the model field is a picker over the catalog");
+    let model = field_row("Model").expect("the model field is a picker over the catalog");
     assert!(model.contains("qwen3-32b"), "{model}");
     assert!(
         !s.contains("model id for that provider"),
@@ -7250,7 +7263,7 @@ fn footer_hints_stay_in_lockstep_with_screens() {
         (4, "open runtime"),
         (5, "Drafts"),
         (6, "Send (in the message)"), // R15: the Sandbox bar
-        (7, "context estimate"),
+        (7, "e Estimate"),
         // The Models page (catalog.rs).
         (8, "use as default"),
         (ui::SCREEN_NETWORK, "c Copy"),
@@ -8361,13 +8374,14 @@ fn eighty_by_twenty_four_nothing_is_clipped() {
         .host_state
         .set(Loadable::Ready(host_state_fixture()));
     let s = h.turns(3);
+    // R15: no page border; the head line (title, subtitle, Refresh) fits.
     let title = s
         .lines()
-        .find(|l| l.contains("╭ Resources"))
+        .find(|l| l.starts_with(" Resources"))
         .expect("title row");
     assert!(
-        title.trim_end().ends_with("─╮"),
-        "the title closes inside the border:\n{title}"
+        title.contains("↻ Refresh") && abstracttui::text::width(title) <= 80,
+        "the head fits the width:\n{title}"
     );
 
     h.store.op.runner.set(Loadable::Ready(paused_runner()));
@@ -8457,7 +8471,7 @@ fn the_current_screen_key_keeps_the_screen_keys_live() {
     h.type_text("w");
     let s = h.turns(3);
     assert!(
-        s.contains("Load (warm up) a model"),
+        s.contains("Load (warm up) this model on the host now"),
         "w still reaches the screen:\n{s}"
     );
 }
