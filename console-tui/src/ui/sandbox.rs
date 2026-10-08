@@ -223,11 +223,22 @@ pub fn resolve_mode_route(rows: &[RouteRow], mode: SbMode) -> Option<ModeRoute> 
     Some(ModeRoute::NotConfigured)
 }
 
+/// "Multimodal (0)": the Multimodal screen named with its REAL accelerator,
+/// read from the shell's table (a hard-coded key drifted once: "(9)").
+pub fn multimodal_ref() -> String {
+    let i = super::SCREEN_ROUTES;
+    match super::screen_key(i) {
+        Some(k) => format!("{} ({k})", super::SCREENS[i]),
+        None => super::SCREENS[i].to_string(),
+    }
+}
+
 /// Why an incomplete route cannot run (route line + refusal notice).
 fn incomplete_reason(mode: SbMode, stop_key: &str) -> String {
     format!(
-        "{} is not ready — {stop_key} has settings but no provider + model, and resolution stops there; complete it on Multimodal (9)",
-        mode.route_key()
+        "{} is not ready — {stop_key} has settings but no provider + model, and resolution stops there; complete it on {}",
+        mode.route_key(),
+        multimodal_ref()
     )
 }
 
@@ -2211,9 +2222,10 @@ fn speak(ctx: &Ctx, reply: &str) {
         }
     }
     let Some((provider, model, voice)) = voice_pair_tracked(&store) else {
-        store.notice.set(Some(
-            "output.voice is not configured — set it on Multimodal (9) to speak replies".into(),
-        ));
+        store.notice.set(Some(format!(
+            "output.voice is not configured — set it on {} to speak replies",
+            multimodal_ref()
+        )));
         return;
     };
     let (tenant, user) = principal(&store);
@@ -2689,8 +2701,9 @@ fn run_media(ctx: &Ctx, mode: SbMode, prompt_state: &TextAreaState) {
         Loadable::Ready(d) => d.rows,
         Loadable::Failed(e) => {
             store.notice.set(Some(format!(
-                "capability routes unavailable ({}) — press r on Multimodal (9)",
-                e.message
+                "capability routes unavailable ({}) — press r on {}",
+                e.message,
+                multimodal_ref()
             )));
             return;
         }
@@ -2722,8 +2735,9 @@ fn run_media(ctx: &Ctx, mode: SbMode, prompt_state: &TextAreaState) {
         }
         Some(ModeRoute::NotConfigured) => {
             store.notice.set(Some(format!(
-                "{} is not configured — configure it on Multimodal (9) first",
-                mode.route_key()
+                "{} is not configured — configure it on {} first",
+                mode.route_key(),
+                multimodal_ref()
             )));
             return;
         }
