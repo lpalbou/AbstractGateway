@@ -590,8 +590,77 @@ def about_wording() -> dict:
     }
 
 
+def req(src: str, pattern: str, what: str, group: int = 1) -> str:
+    """Exactly one match of `pattern` (re.S) in `src`, or FAIL naming `what`."""
+    m = re.findall(pattern, src, re.S)
+    if len(m) != 1:
+        fail(f"{what}: expected exactly one match, found {len(m)} (the anchor moved).")
+    v = m[0]
+    return v if isinstance(v, str) else v[group - 1]
+
+
+def network_wording() -> dict:
+    """Network (console_ui.py netViewMarkup / netAddressRow /
+    netOtherAddressMarkup / netProxyMarkup): mode sentences, address labels
+    and pills, button labels, aria labels (the TUI's tooltips), headings
+    and sentences."""
+    ui = read_b("console_ui.py")
+    block = req(ui, r"const NET_MODE_TEXT = \{(.*?)\n    \};", "NET_MODE_TEXT")
+    modes = dict(re.findall(r'(\w+): "([^"]*)"', block))
+    if set(modes) != {"localhost", "lan", "internet"}:
+        fail(f"NET_MODE_TEXT keys changed: {sorted(modes)}")
+    kinds = dict(re.findall(r'(\w+): "([^"]*)"', req(ui, r"const NET_KIND_LABEL = \{(.*?)\};", "NET_KIND_LABEL")))
+    region = req(ui, r"(function netAddressRow\(a, primary\).*?function netProxySave)", "the Network page markup")
+    pills = {
+        "works": req(region, r'uiPill\("(Works now)", "ok"\)', "Works now pill"),
+        "not_in_mode": req(region, r'uiPill\("(Not in this mode)", "muted"\)', "Not in this mode pill"),
+        "public": req(region, r'a\.kind === "public" \? "(Through your proxy only)"', "proxy-only pill"),
+        "unknown": req(region, r'"Through your proxy only" : "(Unknown)"', "Unknown pill"),
+        "primary": req(region, r'uiPill\("(Primary)", "info"\)', "Primary pill"),
+    }
+    buttons = {
+        "copy": req(region, r'data-net-copy="\$\{esc\(url\)\}" aria-label="Copy \$\{esc\(url\)\}">(Copy)</button>', "Copy button"),
+        "lookup": req(region, r'"Looking up\.\.\." : "(Look up my public address)"', "Look up button"),
+        "check": req(region, r'tools\.push\(`<button[^`]*\$\{netStore\.loading \? "Checking\.\.\." : "(Check again)"\}', "Check again button"),
+        "restart": req(region, r'"Restarting\.\.\." : "(Restart now)"', "Restart now button"),
+        "add_origin": req(region, r'"Saving\.\.\." : "(Add origin)"', "Add origin button"),
+        "openai": req(region, r'data-net-action="goto-openai">(OpenAI API)</button>', "OpenAI API button"),
+        "internet_go": req(region, r'"Saving\.\.\." : "(I understand, use Internet mode)"', "Internet confirm button"),
+        "keep": req(region, r'data-net-action="ack-cancel">(Keep) \$\{esc\(conf\.label \|\| "the current mode"\)\}', "Keep button") + " {mode}",
+        "keep_default": req(region, r'ack-cancel">Keep \$\{esc\(conf\.label \|\| "(the current mode)"\)\}', "Keep default"),
+    }
+    aria = {
+        "copy": req(region, r'aria-label="(Copy) \$\{esc\(url\)\}"', "Copy aria-label") + " {url}",
+        "remove": req(region, r'aria-label="(Remove) \$\{esc\(x\)\}"', "Remove aria-label") + " {origin}",
+    }
+    text = {
+        "who": req(region, r"<h3>(Who can reach this gateway)</h3>", "mode heading"),
+        "running": req(region, r'<span class="ui-sub">(Running now:) <b>', "Running now"),
+        "addresses": req(region, r"<h3>(Addresses)</h3>", "Addresses heading"),
+        "addresses_sub": req(region, r'<h3>Addresses</h3><span class="ui-sub">([^<]*)</span>', "Addresses sub"),
+        "other": req(region, r'<h3 id="net-other-h">([^<]*)</h3>', "other-address heading"),
+        "other_sub": req(region, r'net-other-h">[^<]*</h3><span class="ui-sub">([^<]*)</span>', "other-address sub"),
+        "origins": req(region, r'<h4 id="net-origins-h">([^<]*)</h4>', "Allowed origins heading"),
+        "client": req(region, r'<h4 id="net-trust-h">([^<]*)</h4>', "Client address heading"),
+        "trust": req(region, r'"Saving\.\.\." : "(Trust proxies on other machines)"', "trust label"),
+        "trust_text": req(region, r'id="net-trust-text">([^<]*)</p>', "trust sentence"),
+        "trust_danger": req(region, r'id="net-trust-danger">([^<]*)</p>', "trust danger sentence"),
+        "empty_origin": req(ui, r'p\.error = "(Type an origin, for example https://gateway\.example\.com\.)"', "empty origin sentence"),
+        "applies": req(region, r"<span>(Changes apply to the next request: no restart\.)</span>", "applies sentence"),
+        "non_admin_proxy": req(region, r"<span>(Only an admin can change these\.)</span>", "non-admin proxy sentence"),
+        "non_admin_mode": req(region, r'<p class="ui-card__note">(Only an admin can change who can reach this gateway\.)</p>', "non-admin mode sentence"),
+        "confirm": req(region, r"<p><strong>(Before you open the gateway to the internet)</strong></p>", "Internet confirm heading"),
+        "needs_accounts": req(region, r'<span class="ui-seg__lock">(Needs accounts)</span>', "lock tag"),
+        "no_address": req(region, r'<div class="ui-empty">(The gateway found no address to show\.)</div>', "no address"),
+    }
+    if "Advanced" in req(ui, r"(function netProxyMarkup\(d\).*?\n    \})\n", "netProxyMarkup"):
+        fail("netProxyMarkup still names an 'Advanced' section (R15 D1 says none).")
+    return {"modes": modes, "kinds": kinds, "pills": pills, "buttons": buttons, "aria": aria, "text": text}
+
+
 B_SCREENS = {
     "about": about_wording,
+    "network": network_wording,
 }
 
 

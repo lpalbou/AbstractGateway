@@ -74,12 +74,34 @@ fn net_page(size: Size, v: Value) -> (Harness, String) {
     (h, s)
 }
 
+/// Click the first on-screen occurrence of `needle` (its first cell + `dx`).
+fn net_click(h: &mut Harness, needle: &str, dx: usize) -> String {
+    let screen = h.turns(1);
+    let (row, col) = screen
+        .lines()
+        .enumerate()
+        .find_map(|(i, l)| l.find(needle).map(|c| (i, l[..c].chars().count())))
+        .unwrap_or_else(|| panic!("{needle:?} not on screen:\n{screen}"));
+    let x = col + dx + 1;
+    h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", row + 1, row + 1).as_bytes())
+}
+
+/// The JSON bodies the page sent.
+fn net_bodies(cmds: &[Cmd]) -> Vec<Value> {
+    cmds.iter()
+        .filter_map(|c| match c {
+            Cmd::Json(JsonCmd::Send { body, .. }) => Some(body.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
 #[test]
 fn network_page_speaks_the_web_sentences() {
     let (mut h, s) = net_page(Size::new(120, 60), network("lan", true, false));
     for needle in [
         "Who can reach this gateway  Running now: Localhost only · port 18811",
-        "(•) Local network",
+        " Localhost only   Local network   Internet ",
         "Local network: Phones, tablets and other computers on the same Wi-Fi or office network can connect.",
         "Stored",
     ]
@@ -105,11 +127,15 @@ fn network_page_speaks_the_web_sentences() {
         "including its Tailscale name",
         "tailscale serve --bg http://127.0.0.1:18811",
         "The OpenAI-compatible API has its own page:",
-        "Advanced",
-        "1 origin · local proxy only",
+        // R15 D1: the proxy fields are IN "Reached through another address?".
+        "Allowed origins  [Saved setting]",
     ] {
         assert!(s.contains(needle), "missing {needle:?}:\n{s}");
     }
+    assert!(
+        !s.contains("Advanced"),
+        "no Advanced disclosure (R15 D1):\n{s}"
+    );
     // The Tailscale row is labelled as such (the web's NET_KIND_LABEL).
     assert!(
         s.lines()
@@ -127,45 +153,47 @@ fn network_page_speaks_the_web_sentences() {
 }
 
 #[test]
-fn network_advanced_opens_with_a_and_shows_origins_and_the_switch() {
-    // Closed by default when nothing is set (the web's `auto` rule) …
+fn network_proxy_fields_are_shown_in_the_other_address_card() {
+    // R15 D1: no "Advanced" fold — the origins and the switch are always
+    // shown inside "Reached through another address?", set or not.
     let mut v = network("lan", false, false);
     v["reverse_proxy"]["allowed_origins"]["value"] = json!([]);
     let (mut h, s) = net_page(Size::new(120, 60), v);
+    assert!(!s.contains("Advanced"), "{s}");
     assert!(
-        s.contains("Advanced  no manual origin · local proxy only"),
+        s.contains("None yet: only this computer's own pages"),
         "{s}"
     );
-    assert!(!s.contains("Allowed origins"), "folded:\n{s}");
-    // … open by default once an origin is saved; `a` folds and unfolds.
+    assert!(
+        s.contains("Allowed origins  [Default]") || s.contains("Allowed origins  [Saved setting]"),
+        "{s}"
+    );
     let s = set_net(&mut h, network("lan", false, false));
     for needle in [
         "Allowed origins  [Saved setting]",
         "Other web addresses whose pages may use this gateway",
-        "https://gw.example.com",
+        "https://gw.example.com  Remove",
         "Add origin",
         "Always allowed: http://localhost:* http://127.0.0.1:*",
         "Client address  [Default]",
-        "[ ] Trust proxies on other machines",
+        "●─ Trust proxies on other machines",
         "A proxy on this computer always names the real client (X-Forwarded-For)",
         "Only when your own proxy on that machine sits in front of every request",
         "Changes apply to the next request: no restart.",
     ] {
         assert!(s.contains(needle), "missing {needle:?}:\n{s}");
     }
+    // `a` folds nothing any more (it is the Add origin key).
     let s = h.key(b"a");
-    assert!(!s.contains("Allowed origins"), "a folds it:\n{s}");
-    let s = h.key(b"a");
-    assert!(s.contains("Allowed origins"), "a unfolds it:\n{s}");
+    assert!(s.contains("Allowed origins"), "{s}");
 }
 
 #[test]
 fn network_mode_choice_posts_mode_then_internet_confirm_comes_from_the_gateway() {
     let (mut h, _) = net_page(Size::new(120, 50), network("lan", false, false));
     h.drain();
-    // The mode list holds the keyboard: Down → Internet, Enter.
-    h.key(b"\x1b[B");
-    h.key(b"\r");
+    // A click on the Internet segment chooses it.
+    net_click(&mut h, " Internet ", 1);
     let cmds = h.drain();
     let sent = cmds.iter().find_map(|c| match c {
         Cmd::Json(JsonCmd::Send {
@@ -186,7 +214,8 @@ fn network_mode_choice_posts_mode_then_internet_confirm_comes_from_the_gateway()
         cmds.iter().any(|c| matches!(c, Cmd::LoadNetwork)),
         "re-read after the write"
     );
-    // The gateway asks for the acknowledgement (409): the confirm shows its words.
+    // The gateway asks for the acknowledgement (409): the confirmation
+    // (w::Confirm) shows its words and the two buttons.
     let mut e = ApiError::new(ApiErrorKind::Http(409), "acknowledgement required");
     e.body = Some(
         json!({"reason_code": "acknowledgement_required", "mode": "internet",
@@ -202,18 +231,18 @@ fn network_mode_choice_posts_mode_then_internet_confirm_comes_from_the_gateway()
         "Before you open the gateway to the internet",
         "Internet mode needs your acknowledgement.",
         "• The gateway speaks plain HTTP: put a TLS proxy in front.",
-        "[y] I understand, use Internet mode  [n] Keep Local network",
+        " I understand, use Internet mode ",
+        " Keep Local network ",
     ] {
         assert!(s.contains(needle), "missing {needle:?}:\n{s}");
     }
     h.shoot("network-internet-confirm");
-    h.key(b"y");
+    // Answered by mouse: the action button.
+    net_click(&mut h, " I understand, use Internet mode ", 2);
     let cmds = h.drain();
     assert!(
-        cmds.iter()
-            .any(|c| matches!(c, Cmd::Json(JsonCmd::Send { body, .. })
-            if *body == json!({"mode": "internet", "acknowledge_internet": true}))),
-        "y acknowledges: {cmds:?}"
+        net_bodies(&cmds).contains(&json!({"mode": "internet", "acknowledge_internet": true})),
+        "the action button acknowledges: {cmds:?}"
     );
 }
 
@@ -224,10 +253,9 @@ fn network_refused_mode_says_why_and_how_to_fix_and_posts_nothing() {
     v["modes"][1]["reason"] = json!("Local network needs accounts.");
     v["modes"][1]["fix"] = json!("Start the gateway with accounts on.");
     let (mut h, s) = net_page(Size::new(120, 50), v.clone());
-    assert!(s.contains("( ) Local network  Needs accounts"), "{s}");
+    assert!(s.contains(" Local network  Needs accounts "), "{s}");
     h.drain();
-    h.key(b"\x1b[B");
-    h.key(b"\r");
+    net_click(&mut h, " Local network  Needs accounts ", 2);
     let s = set_net(&mut h, v);
     assert!(
         !h.drain().iter().any(|c| matches!(c, Cmd::Json(_))),
@@ -260,36 +288,26 @@ fn network_restart_box_offers_restart_now() {
 fn network_origin_add_remove_and_the_gateways_refusal_verbatim() {
     let (mut h, _) = net_page(Size::new(120, 60), network("lan", false, false));
     h.drain();
-    // Tab to the origin list (modes → addresses → Check again → OpenAI API → origins).
-    let mut guard = 0;
-    while !h.turns(1).contains("x removes the selected origin") && guard < 3 {
-        guard += 1;
-    }
-    for _ in 0..4 {
-        h.key(b"\t");
-    }
-    h.key(b"x");
+    // The origin's Remove button.
+    net_click(&mut h, " Remove ", 2);
     let cmds = h.drain();
     assert!(
-        cmds.iter()
-            .any(|c| matches!(c, Cmd::Json(JsonCmd::Send { body, .. })
-            if *body == json!({"allowed_origins": []}))),
-        "x removes the selected origin: {cmds:?}"
+        net_bodies(&cmds).contains(&json!({"allowed_origins": []})),
+        "Remove removes the origin: {cmds:?}"
     );
     // (headless: no worker answers — clear the pending write by hand.)
     h.store.json.set_write("network.proxy", None);
     h.turns(2);
-    // Tab to the input, type a bad origin, Enter.
-    h.key(b"\t");
+    // Click into the input, type a bad origin, Enter.
+    net_click(&mut h, "https://gateway.example.com ", 2);
     for ch in "ftp://nope".bytes() {
         h.key(&[ch]);
     }
     h.key(b"\r");
     let cmds = h.drain();
     assert!(
-        cmds.iter()
-            .any(|c| matches!(c, Cmd::Json(JsonCmd::Send { body, .. })
-            if *body == json!({"allowed_origins": ["https://gw.example.com", "ftp://nope"]}))),
+        net_bodies(&cmds)
+            .contains(&json!({"allowed_origins": ["https://gw.example.com", "ftp://nope"]})),
         "Enter adds to the list: {cmds:?}"
     );
     let mut e = ApiError::new(ApiErrorKind::Http(400), "bad origin");
@@ -304,7 +322,6 @@ fn network_origin_add_remove_and_the_gateways_refusal_verbatim() {
         s.contains("ftp://nope: an origin starts with http:// or https://."),
         "the gateway's sentence under the input:\n{s}"
     );
-    // Empty draft: the web's own sentence, nothing sent.
     h.store.json.set_write("network.proxy", None);
     h.turns(2);
 }
@@ -313,17 +330,11 @@ fn network_origin_add_remove_and_the_gateways_refusal_verbatim() {
 fn network_trust_switch_posts_trust_proxy() {
     let (mut h, _) = net_page(Size::new(120, 60), network("lan", false, false));
     h.drain();
-    // modes → addresses → Check again → OpenAI API → origins → input → Add origin → switch
-    for _ in 0..7 {
-        h.key(b"\t");
-    }
-    let s = h.key(b" ");
+    let s = net_click(&mut h, "●─ Trust proxies on other machines", 0);
     let cmds = h.drain();
     assert!(
-        cmds.iter()
-            .any(|c| matches!(c, Cmd::Json(JsonCmd::Send { body, .. })
-            if *body == json!({"trust_proxy": true}))),
-        "space switches trust: {cmds:?}\n{s}"
+        net_bodies(&cmds).contains(&json!({"trust_proxy": true})),
+        "a click switches trust: {cmds:?}\n{s}"
     );
     h.store.json.set_write(
         "network.proxy",
@@ -341,23 +352,32 @@ fn network_trust_switch_posts_trust_proxy() {
 #[test]
 fn network_fits_80x24_and_scrolls_to_the_focused_control() {
     let (mut h, s) = net_page(Size::new(80, 24), network("lan", false, false));
-    assert!(s.contains("Who can reach this gateway"), "{s}");
+    assert!(
+        s.contains("Who can reach this gateway") || s.contains("Addresses"),
+        "{s}"
+    );
     h.shoot("network-80");
-    for _ in 0..7 {
-        h.key(b"\t");
+    // Tab walks the page's controls; the page follows the focus down to
+    // the switch (address table → Copy → Check again → What to know →
+    // Remove → origin field → Add origin → the switch).
+    let mut s = String::new();
+    for _ in 0..12 {
+        s = h.key(b"\t");
+        if s.contains("Trust proxies on other machines") {
+            break;
+        }
     }
-    let s = h.turns(2);
     assert!(
         s.contains("Trust proxies on other machines"),
         "scrolled to the switch:\n{s}"
     );
-    h.shoot("network-80-advanced");
+    h.shoot("network-80-proxy");
 }
 
 #[test]
 fn network_c_copies_only_an_address_that_works_now() {
-    let (mut h, _) = net_page(Size::new(120, 60), network("lan", false, false));
-    h.key(b"\t"); // → the address table
+    let (mut h, s) = net_page(Size::new(120, 60), network("lan", false, false));
+    // The address table holds the keyboard first.
     h.key(b"c");
     assert_eq!(
         h.store.notice.get_untracked().as_deref(),
@@ -369,8 +389,7 @@ fn network_c_copies_only_an_address_that_works_now() {
         h.store.notice.get_untracked().as_deref(),
         Some("http://[2a01:e0a:d5e:e7f0:8d8c:d71a:9989:d324]:18811 is not in this mode: nothing copied")
     );
-    // Enter shows the row's note (the gateway's words).
-    let s = h.key(b"\r");
+    // Each row's note (the gateway's words) is under it.
     assert!(
         s.contains("not listening here yet: the gateway is bound to 127.0.0.1"),
         "{s}"
@@ -378,12 +397,29 @@ fn network_c_copies_only_an_address_that_works_now() {
 }
 
 #[test]
-fn network_mode_list_marks_the_saved_mode_not_the_cursor() {
-    let (mut h, _) = net_page(Size::new(120, 50), network("localhost", false, false));
-    h.key(b"\x1b[B");
-    let s = h.key(b"\x1b[B");
-    assert!(s.contains("(•) Localhost only"), "{s}");
-    assert!(s.contains("( ) Internet"), "{s}");
+fn network_mode_choice_marks_the_saved_mode_not_the_focus() {
+    let (mut h, s) = net_page(Size::new(120, 50), network("localhost", false, false));
+    // The saved mode's segment wears the selection ground; moving the
+    // keyboard over the segments changes nothing.
+    let ground = |h: &Harness, s: &str, label: &str| {
+        let (y, line) = s
+            .lines()
+            .enumerate()
+            .find(|(_, l)| l.contains(&format!(" {label} ")))
+            .expect("segment");
+        let x = line[..line.find(&format!(" {label} ")).unwrap()]
+            .chars()
+            .count() as i32
+            + 1;
+        h.term.screen().cell(x, y as i32).map(|c| c.paint.bg)
+    };
+    let saved = ground(&h, &s, "Localhost only");
+    let other = ground(&h, &s, "Internet");
+    assert_ne!(saved, other, "the saved mode is marked:\n{s}");
+    h.key(b"\x1b[Z");
+    let s = h.key(b"\x1b[Z");
+    assert_eq!(ground(&h, &s, "Localhost only"), saved);
+    assert!(!h.drain().iter().any(|c| matches!(c, Cmd::Json(_))));
 }
 
 #[test]
@@ -417,7 +453,7 @@ fn network_environment_overrides_are_said_and_non_admins_read_only() {
         "{s}"
     );
     assert!(
-        s.contains("[-] Trust proxies on other machines — Only an admin can change these."),
+        s.contains("Trust proxies on other machines — Only an admin can change these."),
         "{s}"
     );
     assert!(!s.contains("Add origin"), "no input for a non-admin:\n{s}");
@@ -427,10 +463,8 @@ fn network_environment_overrides_are_said_and_non_admins_read_only() {
 fn network_empty_origin_says_the_web_sentence_and_sends_nothing() {
     let (mut h, _) = net_page(Size::new(120, 60), network("lan", false, false));
     h.drain();
-    for _ in 0..5 {
-        h.key(b"\t"); // → the origin input
-    }
-    let s = h.key(b"\r");
+    // Add origin with nothing typed.
+    let s = net_click(&mut h, " Add origin ", 2);
     assert!(
         s.contains("Type an origin, for example https://gateway.example.com."),
         "{s}"

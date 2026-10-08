@@ -2297,18 +2297,9 @@ pub fn screen_hint_pairs(ctx: &Ctx) -> Vec<(String, String)> {
         }
         SCREEN_APPS => pairs.extend_from_slice(apps::HINTS),
         SCREEN_WELCOME => pairs.extend(welcome::hints(&ctx_hints)), // R15 arm
-        SCREEN_NETWORK => {
-            pairs.push(("↑↓ Enter", "who can reach it"));
-            pairs.push(("c", "copy address"));
-            pairs.push(("w", "what to know"));
-            pairs.push(("a", "advanced"));
-            pairs.push(("x", "remove origin"));
-            pairs.push(("r", "check again"));
-        }
+        SCREEN_NETWORK => pairs.extend(network::hints()), // R15 arm
         SCREEN_OPENAI => pairs.extend(openai_api::hints(non_admin)),
-        SCREEN_ABOUT => {
-            pairs.push(("r", "refresh"));
-        }
+        SCREEN_ABOUT => pairs.extend(about::hints()), // R15 arm
         _ => {}
     }
     let admin_keys: &[&str] = match screen {

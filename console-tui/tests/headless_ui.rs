@@ -7228,7 +7228,7 @@ fn footer_hints_stay_in_lockstep_with_screens() {
         (7, "context estimate"),
         // The Models page (catalog.rs).
         (8, "use as default"),
-        (ui::SCREEN_NETWORK, "copy address"),
+        (ui::SCREEN_NETWORK, "c Copy"),
     ] {
         h.ui.screen.set(screen);
         let s = h.turns(2);
