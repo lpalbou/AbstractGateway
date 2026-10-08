@@ -210,6 +210,9 @@ impl Toggle {
                     }
                     UiEvent::Mouse(m) if matches!(m.kind, MouseKind::Down(MouseButton::Left)) => {
                         ctx.stop_propagation();
+                        // Never keep the pointer: the flip may open a confirm
+                        // (see w::segmented — the release lands in its tree).
+                        ctx.release_pointer();
                         fire();
                     }
                     _ => {}

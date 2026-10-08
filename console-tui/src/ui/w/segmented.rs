@@ -182,6 +182,11 @@ fn segment(
             }
             UiEvent::Mouse(m) if matches!(m.kind, MouseKind::Down(MouseButton::Left)) => {
                 ctx.stop_propagation();
+                // A press that acts never keeps the pointer: the pick may open
+                // a dialog, the release then lands in the dialog's tree, and
+                // the automatic press capture held here would swallow every
+                // later press (R15-B trace).
+                ctx.release_pointer();
                 on_pick();
             }
             _ => {}

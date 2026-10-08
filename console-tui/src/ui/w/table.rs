@@ -909,6 +909,9 @@ fn row_view(
                     let was = selection.get_untracked().as_deref() == Some(k2.as_str())
                         || (selected && selection.get_untracked().is_none());
                     selection.set(Some(k2.clone()));
+                    // Never keep the pointer: a double-click may open a
+                    // dialog (see w::segmented).
+                    ectx.release_pointer();
                     if ectx.click_count() >= 2 && was {
                         if let Some(f) = &act {
                             f(&k2);

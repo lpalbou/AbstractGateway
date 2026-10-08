@@ -640,3 +640,23 @@ fn create_user_has_a_title_close_that_asks_before_dropping_typed_work() {
         "nothing created"
     );
 }
+
+/// A press that opens a dialog never keeps the pointer (R15-B trace): the
+/// toggle flips on the press, its confirm opens, the release lands in the
+/// confirm — the next press after the dialog still goes where it lands.
+#[test]
+fn a_press_that_opens_a_dialog_never_keeps_the_pointer() {
+    let mut h = page();
+    let s = click_row(&mut h, "alice", "━●");
+    assert!(s.contains("Deactivate alice?"), "{s}");
+    click_confirm(&mut h, "Cancel", "Deactivate");
+    let s = h.turns(2);
+    assert!(!s.contains("Deactivate alice?"), "{s}");
+    // The next press lands on Create user, not on the toggle.
+    let s = h.click_text("Create user");
+    let s = if s.contains("User ID") { s } else { h.turns(2) };
+    assert!(
+        s.contains("User ID") && !s.contains("Deactivate alice?"),
+        "the press reached Create user:\n{s}"
+    );
+}
