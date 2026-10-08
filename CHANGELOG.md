@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `GET /api/gateway/voice/defaults`: the speech-input entry carries AbstractCore's served `hint` `{code, sentence, route}` when there is one (on Apple silicon, a faster-whisper route runs on the processor while mlx-whisper runs the same model on the GPU). The console's defaults grid shows the `input.voice` row's `route_hint` sentence; "Apply recommended" switches the route.
+- The fallback transcription model list offers `large-v3-turbo` and covers the `mlx-whisper` engine.
+
 ## [0.13.1] - 2026-10-08
 
 Requires AbstractRuntime 0.9.1, AbstractCore 2.25.1 and AbstractAgent 0.3.19 (installed automatically). The terminal console `abstractgateway-console` 0.15.1 matches this release; see [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md).
