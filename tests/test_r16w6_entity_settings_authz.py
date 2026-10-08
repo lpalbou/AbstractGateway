@@ -294,3 +294,16 @@ def test_real_discovery_path_refuses_a_creator_when_no_provider_answers(world, m
     r = world["c"].put("/api/gateway/entities/aster/substrate", headers=world["alice"], json={"provider": "lmstudio", "model": "anything"})
     assert r.status_code == 403, r.text
     assert "offers no lmstudio model right now" in r.json()["detail"]["message"]
+
+
+def test_the_entity_itself_never_configures_itself_even_if_named_its_own_creator() -> None:
+    """A manifest naming the entity as its own creator (hand-edited, or an entity that created
+    an entity of the same name) never lets the entity principal configure itself."""
+    from abstractgateway.entity_settings_access import configure_role
+    from abstractgateway.security.principal import GatewayPrincipal
+
+    me = GatewayPrincipal(user_id="aster", tenant_id="default", roles=("entity",), scopes=(), runtime_id="aster", source="test")
+    assert configure_role(me, {"tenant_id": "default", "user_id": "aster"}) is None
+    alice = GatewayPrincipal(user_id="alice", tenant_id="default", roles=("user",), scopes=(), runtime_id="alice", source="test")
+    assert configure_role(alice, {"tenant_id": "default", "user_id": "alice"}) == "creator"
+    assert configure_role(alice, None) is None  # a legacy home without a creator: admins only
