@@ -758,6 +758,7 @@ def models_wording() -> dict:
         "clear": need(cat, r'data-mc-action="clear">([^<]+)</button>', "Clear filters"),
         "not_in_catalog": need(cat, r'<h4 class="mc-extra__title">([^<]+)</h4>', "Not in the catalog"),
     }
+    return out
 
 
 def sandbox_wording() -> dict:
