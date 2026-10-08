@@ -109,7 +109,11 @@ Each account makes its own named keys for this API, one per app or device:
   [Recent requests](#request-log) shows which app called. The key list shows
   when each key was last used and from which address.
 - **Admins** see every account's keys (names, dates, fingerprints, never a key)
-  in **Accounts → OpenAI API** and can revoke any of them.
+  in **Accounts → OpenAI API** and can revoke any of them. An admin account
+  (including the admin account created at first start when user accounts are
+  on) makes its own keys like any other account. Only the operator token a
+  gateway is started with is not an account: signed in with it, the key routes
+  answer `409 no_account`.
 
 Names are unique per account (case-insensitive, up to 80 characters). For
 compatibility, an account's gateway token is still accepted at `/v1`; the page
