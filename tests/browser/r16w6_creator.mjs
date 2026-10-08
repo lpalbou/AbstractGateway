@@ -177,6 +177,21 @@ try {
     check(r.status === 404, "another member's write answers like a missing entity", r.status);
     await ctx.close();
   }
+  // "Admins always" (R16.5 F1): an admin manages Nova although it lives in alice's runtime plane.
+  {
+    const { ctx, page } = await open(browser, "admin", "light");
+    await page.waitForSelector(`#users-table tr[data-user='${ENTITY}'] button[data-action='manage']`, { timeout: 20000 });
+    await page.locator(`#users-table tr[data-user='${ENTITY}'] button[data-action='manage']`).click();
+    await page.waitForFunction(() => !document.getElementById("entity-manage-section").classList.contains("entity-manage--noconfig"), null, { timeout: 15000 });
+    check(await page.locator("#entity-manage-section.entity-manage--readonly").count() === 0, "an admin has every control on a member's entity");
+    const acc = await apiAs(page, "GET", `/api/gateway/entities/${ENTITY}/access`);
+    check(acc.status === 200 && acc.body.as === "admin", "the admin's access to a member's entity", acc);
+    await page.click("#entity-subtab-substrate");
+    const up = await page.waitForFunction(() => { const el = document.getElementById("entity-mind-picker"); return el && el.children.length > 0; }, null, { timeout: 15000 }).then(() => true, () => false);
+    check(up, "the admin sees Nova's mind picker");
+    await shot(page, "r16w6-manage-mind-admin-on-member-entity-light");
+    await ctx.close();
+  }
   // An admin manages the entities of its own runtime (Vega, created by the admin): every control.
   for (const theme of ["light", "dark"]) {
     const { ctx, page } = await open(browser, "admin", theme);

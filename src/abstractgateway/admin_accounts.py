@@ -148,6 +148,40 @@ def _entity_homes() -> Tuple[Dict[str, Dict[str, Any]], Optional[str]]:
     return {str(r.get("slug")): r for r in rows if isinstance(r, dict) and r.get("slug") and not r.get("error")}, None
 
 
+def _all_entity_homes() -> Tuple[Dict[str, Dict[str, Any]], Optional[str]]:
+    """An ADMIN's census (R16.5, "admins always"): the caller's own runtime plus every other
+    runtime plane on this gateway (a member's entities live in the member's plane). Read-only:
+    the other planes' homes are listed through a registry over that plane's data dir."""
+    from .entity_access import entities_dirs
+    from .entities import EntityRegistry
+    from .users import gateway_data_dir_from_env
+
+    homes, warning = _entity_homes()
+    try:
+        from .routes.entities import _registry
+
+        own_dir = _registry().entities_dir.resolve()
+    except Exception:  # noqa: BLE001
+        own_dir = None
+    users_file = gateway_data_dir_from_env() / "auth" / "users.json"
+    for entities_dir in entities_dirs():
+        if not entities_dir.is_dir() or (own_dir is not None and entities_dir.resolve() == own_dir):
+            continue
+        try:
+            rows = EntityRegistry(data_dir=entities_dir.parent, embedder_factory=lambda: None, users_registry_path=users_file).list_entities()
+        except Exception as exc:  # noqa: BLE001 - a census that cannot be read is reported
+            warning = (warning + " " if warning else "") + f"The entities of {entities_dir.parent} could not be read: {exc}"
+            continue
+        for r in rows:
+            if isinstance(r, dict) and r.get("slug") and not r.get("error") and str(r["slug"]) not in homes:
+                homes[str(r["slug"])] = r
+    return homes, warning
+
+
+def _homes_for(caller: GatewayPrincipal) -> Tuple[Dict[str, Dict[str, Any]], Optional[str]]:
+    return _all_entity_homes() if caller.is_admin() else _entity_homes()
+
+
 def _user_row(rec: GatewayUserRecord, caller: GatewayPrincipal, records: List[GatewayUserRecord]) -> Dict[str, Any]:
     from .mail.accounts import account_email_view
 
@@ -312,7 +346,7 @@ def _creator(slug: str, home: Optional[Dict[str, Any]], creators: Dict[str, Dict
 
 def list_accounts(caller: GatewayPrincipal, *, include_archived: bool = False) -> Dict[str, Any]:
     records = GatewayUserRegistry().list_users()
-    homes, warning = _entity_homes()
+    homes, warning = _homes_for(caller)
     creators = _entity_creators()
     rows: List[Dict[str, Any]] = []
     seen_entities: set = set()
@@ -405,6 +439,13 @@ class AccountError(Exception):
         self.message = message
 
 
+def _plane(slug: str):
+    """An admin acts on `slug` in the runtime plane that holds it (R16.5, "admins always")."""
+    from .entity_access import entity_plane_for
+
+    return entity_plane_for(slug)
+
+
 def _suspend_entity(slug: str, actor: str) -> None:
     from .routes.entities import SetEntityStateRequest, _registry, set_entity_state
 
@@ -468,17 +509,19 @@ def set_active(caller: GatewayPrincipal, account_id: str, *, active: bool, tenan
             raise AccountError(409, "last_admin", REASON_LAST_ADMIN)
         registry.update_user(user_id=rec.user_id, tenant_id=rec.tenant_id, enabled=bool(active))
     else:
-        homes, _warning = _entity_homes()
+        homes, _warning = _homes_for(caller)
         if rec is None and account_id not in homes:
             raise AccountError(404, "account_not_found", f"There is no account named {account_id!r} on this gateway.")
         if active:
             if rec is not None:
                 registry.update_user(user_id=rec.user_id, tenant_id=rec.tenant_id, enabled=True)
             if account_id in homes:
-                _resume_entity(account_id, actor)
+                with _plane(account_id):
+                    _resume_entity(account_id, actor)
         else:
             if account_id in homes:
-                _suspend_entity(account_id, actor)
+                with _plane(account_id):
+                    _suspend_entity(account_id, actor)
             if rec is not None:
                 registry.update_user(user_id=rec.user_id, tenant_id=rec.tenant_id, enabled=False)
         _sync_entity_mail()
@@ -567,7 +610,7 @@ def archive_account(caller: GatewayPrincipal, account_id: str, *, tenant_id: str
     actor = f"person:{caller.user_id}"
     missing = AccountError(404, "account_not_found", f"There is no account named {account_id!r} on this gateway.")
     is_entity = rec is None or rec.principal_kind == "entity"
-    homes, _warning = _entity_homes() if is_entity else ({}, None)
+    homes, _warning = _homes_for(caller) if is_entity else ({}, None)
     if rec is None and account_id not in homes:
         raise missing
     if not caller.is_admin():
@@ -588,8 +631,9 @@ def archive_account(caller: GatewayPrincipal, account_id: str, *, tenant_id: str
         if _entity_is_archived(account_id, rec):
             raise AccountError(409, "already_archived", f"{account_id} is already archived.")
         if account_id in homes:
-            _suspend_entity(account_id, actor)
-            _stop_entity_loop(account_id, actor)
+            with _plane(account_id):
+                _suspend_entity(account_id, actor)
+                _stop_entity_loop(account_id, actor)
         _mark_entity_archived(account_id, archived=True, actor=actor)
         if rec is not None:
             registry.set_archived(user_id=rec.user_id, tenant_id=rec.tenant_id, archived=True, actor=actor)
@@ -628,7 +672,7 @@ def unarchive_account(caller: GatewayPrincipal, account_id: str, *, tenant_id: s
         _require_creator(caller, account_id, _entity_homes()[0], missing)
     if rec is None or rec.principal_kind == "entity":
         if not _entity_is_archived(account_id, rec):
-            if rec is None and account_id not in _entity_homes()[0]:
+            if rec is None and account_id not in _homes_for(caller)[0]:
                 raise AccountError(404, "account_not_found", f"There is no account named {account_id!r} on this gateway.")
             raise AccountError(409, "not_archived", REASON_NOT_ARCHIVED)
         _mark_entity_archived(account_id, archived=False, actor=actor)

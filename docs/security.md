@@ -264,6 +264,12 @@ A creator outside the bound gets `403` with `reason_code` `not_offered` or
 `admin_only_tool` and a sentence that names what is offered ("llama-x isn't a
 lmstudio model this gateway offers. Offered: qwen3-4b, qwen3-30b.").
 
+An admin always can, wherever the entity lives: on a gateway with user
+accounts a member's entity lives in that member's runtime, and an admin's
+request on `/entities/{name}/…` (and Accounts' Active, Archive, Unarchive) is
+served by the runtime that holds it, so the console's Manage works on every
+entity the admin's Accounts page lists.
+
 These stay an admin's: sleep and wake (`state`), personal time (`loop/*`,
 `personal-grant`), the work order and tasks, memory review (`candidates`), the
 memory index rebuild (`reembed`), maintenance windows, the capability map and

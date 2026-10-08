@@ -29,6 +29,7 @@ from ..entities import EntityRegistry, entity_slug
 from ..entity_access import (
     creator_of,
     entity_name_guard,
+    entity_plane_resolver,
     entity_visible_to,
     name_taken_detail,
     require_entity_visible,
@@ -61,7 +62,7 @@ from .gateway import VoiceTTSRequest as GatewayVoiceTTSRequest
 router = APIRouter(
     prefix="/gateway/entities",
     tags=["entities"],
-    dependencies=[Depends(entity_name_guard), Depends(entity_settings_guard)],
+    dependencies=[Depends(entity_plane_resolver), Depends(entity_name_guard), Depends(entity_settings_guard)],
 )
 
 
