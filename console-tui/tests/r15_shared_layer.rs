@@ -290,3 +290,65 @@ fn a_refused_toggle_off_the_tab_order_still_says_why_on_a_click() {
         Some("Only an admin can change this.")
     );
 }
+
+thread_local! {
+    static SEL: Cell<Option<Signal<Option<String>>>> = const { Cell::new(None) };
+}
+
+/// A page that rebuilds its table when the selection changes (Providers'
+/// engine section does), with a Link per row.
+fn rebuilding_table_page(_ctx: &ui::Ctx, cx: Scope) -> View {
+    let sel = cx.signal(Some("r0".to_string()));
+    SEL.with(|s| s.set(Some(sel)));
+    dyn_view_scoped(LayoutStyle::column().grow(1.0), move |rcx| {
+        let t = use_theme(rcx).get().tokens;
+        let _ = sel.get(); // the whole region rebuilds on a new selection
+        let rows = (0..5)
+            .map(|i| {
+                w::Row::new(
+                    format!("r{i}"),
+                    vec![
+                        w::Cell::Text(vec![w::Ink::new(format!("engine {i}"), t.text)]),
+                        w::Cell::Link {
+                            label: format!("Learn more {i}"),
+                            action: "learn",
+                            tip: None,
+                        },
+                    ],
+                )
+            })
+            .collect();
+        w::DataTable::new(
+            vec![
+                w::Col::new("Engine", w::ColW::Flex { weight: 1, min: 8 }),
+                w::Col::new("Docs", w::ColW::Fit { min: 12, max: 16 }),
+            ],
+            rows,
+            sel,
+        )
+        .view(rcx, &t)
+    })
+}
+
+/// R15-A (2): a Link click on a row that is not selected keeps the
+/// keyboard in the table, even when the selection rebuilds the page.
+#[test]
+fn a_link_click_on_another_row_keeps_the_keyboard_in_the_table() {
+    let mut h = harness((80, 24), Mount::Page(rebuilding_table_page));
+    h.turns(2);
+    h.click_text("Learn more 2");
+    let sel = SEL.with(|s| s.get()).unwrap();
+    h.turns(2);
+    assert_eq!(
+        sel.get_untracked().as_deref(),
+        Some("r2"),
+        "the click selects its row"
+    );
+    h.key(b"\x1b[B"); // ↓
+    h.turns(2);
+    assert_eq!(
+        sel.get_untracked().as_deref(),
+        Some("r3"),
+        "↓ moves the selection: the table kept the focus"
+    );
+}

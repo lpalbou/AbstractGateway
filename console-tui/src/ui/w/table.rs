@@ -477,11 +477,12 @@ impl DataTable {
                 };
                 if let Some(i) = next {
                     ectx.stop_propagation();
+                    mark_refocus(selection);
                     selection.set(Some(keys_k[i].clone()));
                     keep_visible(top, &heights_k, i, max_rows);
                 }
             });
-        if autofocus {
+        if autofocus || take_refocus(selection) {
             root = root.autofocus();
         }
         root = root.child(header).child(rule);
@@ -832,6 +833,7 @@ fn row_view(
                     .refused(refused.clone())
                     .tab_stop(selected)
                     .on_change(move |v| {
+                        mark_refocus(selection);
                         selection.set(Some(k.clone()));
                         if let Some(f) = &cb {
                             f(&k, id, v);
@@ -856,6 +858,7 @@ fn row_view(
                         let k = key.clone();
                         let cb = on_action.clone();
                         badge_button(cx, t, &a, *bink, selected, move || {
+                            mark_refocus(selection);
                             selection.set(Some(k.clone()));
                             if let Some(f) = &cb {
                                 f(&k, id);
@@ -881,6 +884,7 @@ fn row_view(
                 let a = Action::link(id, label.clone())
                     .tooltip(tip.clone().unwrap_or_else(|| label.clone()));
                 link_button(cx, t, &a, selected, move || {
+                    mark_refocus(selection);
                     selection.set(Some(k.clone()));
                     if let Some(f) = &cb {
                         f(&k, id);
@@ -891,6 +895,7 @@ fn row_view(
                 let k = key.clone();
                 let cb = on_action.clone();
                 let handler: Rc<dyn Fn(&'static str)> = Rc::new(move |id| {
+                    mark_refocus(selection);
                     selection.set(Some(k.clone()));
                     if let Some(f) = &cb {
                         f(&k, id);
@@ -917,6 +922,7 @@ fn row_view(
                 if matches!(m.kind, MouseKind::Down(MouseButton::Left)) {
                     let was = selection.get_untracked().as_deref() == Some(k2.as_str())
                         || (selected && selection.get_untracked().is_none());
+                    mark_refocus(selection);
                     selection.set(Some(k2.clone()));
                     // Never keep the pointer: a double-click may open a
                     // dialog (see w::segmented).
@@ -976,6 +982,35 @@ fn badge_button(
         selected,
         f,
     )
+}
+
+thread_local! {
+    /// The table whose row a press just selected (its selection signal):
+    /// if that selection rebuilds the table (a page keyed on it), the new
+    /// table root takes the focus back — the keyboard stays in the table
+    /// (R15-A: a Link click on another row left no focus at all).
+    static REFOCUS: std::cell::Cell<Option<Signal<Option<String>>>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// A press in a row is about to change `selection`: remember it for the
+/// rebuild (cleared on the next frame either way).
+fn mark_refocus(selection: Signal<Option<String>>) {
+    REFOCUS.with(|r| r.set(Some(selection)));
+    abstracttui::reactive::after(std::time::Duration::from_millis(50), || {
+        REFOCUS.with(|r| r.set(None));
+    });
+}
+
+fn take_refocus(selection: Signal<Option<String>>) -> bool {
+    REFOCUS.with(|r| {
+        if r.get() == Some(selection) {
+            r.set(None);
+            true
+        } else {
+            false
+        }
+    })
 }
 
 fn link_button(
