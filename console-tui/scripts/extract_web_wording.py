@@ -148,5 +148,408 @@ def main() -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# R15 per-screen fixtures (append-only): each screen worker adds ONE function
+# returning the web words its terminal screen must say, and registers it in
+# SCREEN_FIXTURES under the screen's name. The fixture is
+# tests/fixtures/r15_web_wording_<screen>.json; a missing anchor FAILS.
+# ---------------------------------------------------------------------------
+
+SCREEN_FIXTURES: dict = {}
+
+
+def need(src: str, pattern: str, what: str, flags: int = 0) -> str:
+    """Exactly one match of `pattern` (its group 1, or the whole match)."""
+    m = list(re.finditer(pattern, src, flags))
+    if len(m) != 1:
+        fail(f"{what}: expected exactly one match, found {len(m)} (the anchor moved).")
+    g = m[0].groups()
+    return html.unescape(g[0] if g else m[0].group(0))
+
+
+def need_first(src: str, pattern: str, what: str, flags: int = 0) -> str:
+    """The first match of `pattern` (its group 1); none is a FAILURE."""
+    m = re.search(pattern, src, flags)
+    if not m:
+        fail(f"{what}: no match (the anchor moved).")
+    return html.unescape(m.group(1) if m.groups() else m.group(0))
+
+
+def connection_words() -> dict:
+    """R15-A Connection: the web sign-in card's words (the TUI's sign-in surface)."""
+    src = read("console.py")
+    return {
+        "token_label": need(src, r'<label class="af-gateway-signin__label" for="login-token">([^<]*)</label>', "token label"),
+        "user_label": need(src, r'<label class="af-gateway-signin__label" for="login-user">([^<]*)</label>', "user label"),
+        "show": need(src, r'<button id="toggle-token"[^>]*>([^<]*)</button>', "token reveal"),
+        "show_tip": need(src, r'<button id="toggle-token"[^>]*aria-label="([^"]*)"', "token reveal label"),
+        "hide": need(src, r'\$\("toggle-token"\)\.textContent = visible \? "Show" : "([^"]*)";', "token hide"),
+        "hide_tip": need(src, r'setAttribute\("aria-label", visible \? "Show token" : "([^"]*)"\);', "token hide label"),
+        "sign_in": need(src, r'<button id="login-button"[^>]*>([^<]*)</button>', "sign in button"),
+        "recovery_link": need(src, r'<button id="recovery-link"[^>]*>([^<]*)</button>', "recovery link"),
+        "code_label": need(src, r'<label class="af-gateway-signin__label" for="recovery-code-input">([^<]*)</label>', "code label"),
+        "resend": need(src, r'<button id="recovery-resend"[^>]*>([^<]*)</button>', "resend"),
+        "use_code": need(src, r'<button id="recovery-use"[^>]*>([^<]*)</button>', "use code"),
+        "back": need(src, r'<button id="recovery-back"[^>]*>([^<]*)</button>', "back to token"),
+        "network_tip": need(src, r'<button id="tab-button-network"[^>]*title="([^"]*)"', "network nav tooltip"),
+    }
+
+
+SCREEN_FIXTURES["connection"] = connection_words
+
+
+def workflows_words() -> dict:
+    """R15-A Workflows: the page's tooltips, sentences, switches and columns ({n} = the workflow)."""
+    src = read("console.py")
+    ui = read("console_ui.py")
+    def tip(cls: str) -> str:
+        t = need(src, r'workflowIconButton\("' + cls + r'", ICONS\.\w+, `([^`]*)`', f"{cls} tooltip")
+        return t.replace("${label}", "{n}").replace("${row.name}", "{n}")
+    th = need(src, r'<thead><tr>(<th class="workflows-col-name">.*?)</tr></thead>', "workflows table head")
+    cols = re.findall(r'<th[^>]*>(?:<span[^>]*>)?([^<]+)<', th)
+    if len(cols) < 6:
+        fail(f"workflows table head: expected 6+ columns, found {cols!r}.")
+    def switch(id_: str) -> str:
+        return need(src, r'afSwitchCreate\(\{ id: "' + id_ + r'", label: "([^"]*)"', f"{id_} switch")
+    return {
+        "export_tip": tip("workflows-export"),
+        "open_tip": tip("workflows-open-flow"),
+        "unarchive_tip": tip("workflows-unarchive"),
+        "archive_tip": tip("workflows-archive"),
+        "edit_tip": tip("workflows-desc-edit"),
+        "archive_confirm": need(src, r'const text = `(Archive \$\{label\}\? It disappears[^`]*)`', "archive confirm").replace("${label}", "{n}"),
+        "reload_tip": need(src, r'<button id="workflows-refresh"[^>]*data-af-tip="([^"]*)"', "reload tooltip"),
+        "import_label": need(src, r'<button id="workflows-import"[^>]*>([^<]*)</button>', "import label"),
+        "import_tip": need(src, r'<button id="workflows-import"[^>]*title="([^"]*)"', "import tooltip"),
+        "search_placeholder": need(src, r'<input id="workflows-search"[^>]*placeholder="([^"]*)"', "search placeholder"),
+        "broken_archive_tip": need(src, r'`Archive \$\{g\.count\}`;\s*ar\.title = "([^"]*)";', "broken archive tooltip"),
+        "purpose": need(src, r'<p class="section-note workflows-purpose">([^<]*)</p>', "purpose"),
+        "available_help": need(src, r'const WORKFLOW_AVAILABLE_HELP = "([^"]*)";', "available help"),
+        "broken_sentence": need(src, r'<p class="section-note">(These bundle files are on disk[^<]*)</p>', "broken sentence"),
+        "streaming_label": need(ui, r'const STREAMING_DEFAULT_LABEL = "([^"]*)";', "streaming label"),
+        "streaming_help": need(ui, r'const STREAMING_DEFAULT_DESC = "([^"]*)";', "streaming help"),
+        "other_types": need(ui, r'<h3 id="agent-defaults-other-h" class="section-subtitle">([^<]*)</h3>', "other workflow types"),
+        "settings": need(ui, r'<h3 class="section-subtitle">([^<]*)</h3>`;\n\s*if \(!r \|\| typeof r !== "object"', "settings subheading", re.S),
+        "switch_drafts": switch("workflows-show-drafts"),
+        "switch_older": switch("workflows-show-older"),
+        "switch_archived": switch("workflows-show-archived"),
+        "col_name": cols[0],
+        "col_what": cols[1],
+        "col_version": cols[2],
+        "col_source": cols[3],
+        "col_usedby": cols[4],
+        "col_available": cols[5],
+    }
+
+
+SCREEN_FIXTURES["workflows"] = workflows_words
+
+
+def skills_words() -> dict:
+    """R15-A Skills & MCP: tabs, toolbars, row buttons, the agents question, columns."""
+    src = read("console.py")
+    sk = read("console_skills_mcp.py")
+    ui = read("console_ui.py")
+    th = need(src, r'<thead><tr>(<th class="sk-col-name">.*?)</tr></thead>', "skills table head")
+    cols = re.findall(r'<th[^>]*>(?:<span[^>]*>)?([^<]+)<', th)
+    if len(cols) < 5:
+        fail(f"skills table head: expected 5+ columns, found {cols!r}.")
+    def btn(data: str) -> str:
+        return need_first(sk, r'<button type="button" class="secondary" ' + data + r'="\$\{n\}">([^<]*)</button>', data)
+    confirm = need(sk, r'<span>(Offer its \$\{k\} tool\$\{k === 1 \? "" : "s"\} to your agents\?[^<]*)</span>', "agents confirm")
+    return {
+        "tab_skills": need(src, r'<button id="skmcp-tab-skills"[^>]*>([^<]*)</button>', "skills tab"),
+        "tab_mcp": need(src, r'<button id="skmcp-tab-mcp"[^>]*>([^<]*)</button>', "mcp tab"),
+        "search_placeholder": need(src, r'<input id="skills-search"[^>]*placeholder="([^"]*)"', "skills search"),
+        "import_zip": need(src, r'<button id="skills-import-zip"[^>]*>([^<]*)</button>', "import zip"),
+        "import_zip_tip": need(src, r'<button id="skills-import-zip"[^>]*title="([^"]*)"', "import zip tooltip"),
+        "import_folder": need(src, r'<button id="skills-import-folder"[^>]*>([^<]*)</button>', "import folder"),
+        "import_folder_tip": need(src, r'<button id="skills-import-folder"[^>]*title="([^"]*)"', "import folder tooltip"),
+        "add_server": need(src, r'<button id="mcp-add"[^>]*>([^<]*)</button>', "add server"),
+        "refresh_shelf": need(ui, r'\$\{st\.saving \? "Working\.\.\." : "([^"]*)"\}</button>', "refresh curated shelf"),
+        "shelf_label": need(ui, r'<label for="skills-shelf-input">([^<]*)</label>', "shelf label"),
+        "skills_purpose": need(src, r'<p class="section-note skmcp-purpose">(Instructions agents load[^<]*)</p>', "skills purpose"),
+        "mcp_purpose": need(src, r'<p class="section-note skmcp-purpose">(Tool servers over[^<]*)</p>', "mcp purpose"),
+        "agents_label": need_first(sk, r'<span class="af-switch__label">([^<]*)</span>', "agents label"),
+        "skill_view": btn("data-skill-view"),
+        "skill_export": btn("data-skill-export"),
+        "skill_archive": btn("data-skill-archive"),
+        "skill_unarchive": btn("data-skill-unarchive"),
+        "mcp_edit": btn("data-mcp-edit"),
+        "mcp_test": btn("data-mcp-test"),
+        "mcp_archive": btn("data-mcp-archive"),
+        "mcp_unarchive": btn("data-mcp-unarchive"),
+        "agents_confirm": confirm.replace('${k === 1 ? "" : "s"}', "{s}").replace("${k}", "{k}"),
+        "col_name": cols[0],
+        "col_what": cols[1],
+        "col_version": cols[2],
+        "col_trust": cols[3],
+        "col_source": cols[4],
+    }
+
+
+SCREEN_FIXTURES["skills"] = skills_words
+
+
+def openai_words() -> dict:
+    """R15-A OpenAI API: the cards' buttons, tooltips, segments and the New key question."""
+    ui = read("console_ui.py")
+    snips = re.findall(r'\["(\w+)", "([^"]+)"\]', need(ui, r'const OAI_SNIPPETS = (\[.*?\]);', "OAI_SNIPPETS"))
+    if len(snips) != 3:
+        fail(f"OAI_SNIPPETS: expected 3, found {snips!r}.")
+    auth = re.findall(r'\{ id: "(\w+)", label: "([^"]+)", text: "([^"]+)" \}', need(ui, r'const OAI_AUTH = \[(.*?)\];', "OAI_AUTH", re.S))
+    if len(auth) != 2:
+        fail(f"OAI_AUTH: expected 2, found {auth!r}.")
+    out = {
+        "endpoint_tip": need(ui, r'<label class="ui-switch" title="([^"]*)"><input type="checkbox" role="switch" data-oai-enabled', "endpoint tooltip"),
+        "restart_tip": need(ui, r'data-oai-action="restart" title="([^"]*)"', "restart tooltip"),
+        "check_tip": need(ui, r'data-oai-action="check" title="([^"]*)"', "check tooltip"),
+        "show_key_tip": need_first(ui, r'data-af-tip="\$\{oaiStore\.reveal \? "Hide your API key" : "([^"]*)"\}"', "show key tooltip"),
+        "hide_key_tip": need_first(ui, r'data-af-tip="\$\{oaiStore\.reveal \? "([^"]*)" : "Show your API key"\}"', "hide key tooltip"),
+        "not_in_a_run": need_first(ui, r'disabled title="([^"]*)" data-oai-observer', "observer disabled tooltip"),
+        "restart": need(ui, r'oaiStore\.busy === "restart" \? "Restarting\.\.\." : "([^"]*)"\}</button>', "restart label"),
+        "check": need(ui, r'oaiStore\.busy === "check" \? "Checking\.\.\." : "([^"]*)"\}</button>', "check label"),
+        "new_key": need_first(ui, r'data-oai-action="new-key"\$\{oaiStore\.busy \? " disabled" : ""\}>([^<]*)</button>', "new key label"),
+        "copy_example": need(ui, r'data-oai-copy-snippet>([^<]*)</button>', "copy example"),
+        "copy": need(ui, r'aria-label="Copy \$\{esc\(label\)\}">([^<]*)</button>', "copy button"),
+        "doc_openai": need(ui, r'rel="noopener">(OpenAI API compatibility)</a>', "openai docs link"),
+        "doc_core": need(ui, r'rel="noopener">(AbstractCore server)</a>', "abstractcore docs link"),
+        "new_key_confirm": need(ui, r'<p>(Make a new key\?[^<]*)</p>', "new key confirmation"),
+    }
+    for i, (_, label) in enumerate(snips):
+        out[f"snippet_{i}"] = label
+    for i, (_, label, text) in enumerate(auth):
+        out[f"auth_{i}_label"] = label
+        out[f"auth_{i}_text"] = text
+    return out
+
+
+SCREEN_FIXTURES["openai"] = openai_words
+
+
+def providers_words() -> dict:
+    """R15-A Providers: the three sections, the endpoint modal, the connection button, the delete question."""
+    src = read("console.py")
+    region = need(src, r'(<div id="tab-providers".*?Multimodal Capabilities)', "providers tab region", re.S)
+    titles = re.findall(r'<h2 class="section-title"><span class="section-icon[^"]*" aria-hidden="true">[^<]*</span><span>([^<]*)</span></h2>\s*<p class="section-note">([^<]*)</p>', region)
+    if len(titles) < 3:
+        fail(f"providers sections: expected 3 titles + notes, found {titles!r}.")
+    def btn_label(word: str) -> str:
+        return need(src, r'innerHTML = `<span class="button-icon" aria-hidden="true">[^<]*</span><span>(' + word + r')</span>`;', f"{word} button")
+    return {
+        "section_local": titles[0][0],
+        "note_local": titles[0][1],
+        "section_remote": titles[1][0],
+        "note_remote": titles[1][1],
+        "section_available": titles[2][0],
+        "note_available": titles[2][1],
+        "form_description": need(src, r'<p id="provider-modal-description">([^<]*)</p>', "modal description"),
+        "key_placeholder": need(src, r'<input id="endpoint-api-key" type="password" placeholder="([^"]*)">', "api key placeholder"),
+        "base_url_placeholder": need(src, r'<input id="endpoint-base-url" placeholder="([^"]*)">', "base url placeholder"),
+        "description_placeholder": need(src, r'<textarea id="endpoint-description" placeholder="([^"]*)">', "description placeholder"),
+        "visible_models": need(src, r'<h4 id="endpoint-visible-models-title" class="named-section__title">([^<]*)</h4>', "visible models"),
+        "visible_models_help": need(src, r'<p class="field-help">(Optional\. Use Test to preview discovery[^<]*)</p>', "visible models help"),
+        "clear_restriction_tip": need(src, r'<button id="clear-endpoint-models"[^>]*title="([^"]*)"', "clear restriction tooltip"),
+        "test_tip": need(src, r'<button id="discover-endpoint-models"[^>]*title="([^"]*)"', "test tooltip"),
+        "confirm_tip": need(src, r'<button id="save-endpoint-profile" title="([^"]*)"', "confirm tooltip"),
+        "scope_gateway": need(src, r'opt\.textContent = value === "gateway" \? "([^"]*)" : "Only me";', "gateway scope"),
+        "scope_user": need(src, r'opt\.textContent = value === "gateway" \? "Gateway-wide" : "([^"]*)";', "user scope"),
+        "connect_tip": need(src, r'data-provider-connect="\$\{esc\(e\.id\)\}" title="([^"]*)"', "connect tooltip"),
+        "delete_confirm": need(src, r'message: `(Delete \$\{profile\.virtual_provider \|\| "endpoint:" \+ profile\.id\}\? Existing workflows[^`]*)`', "delete question").replace('${profile.virtual_provider || "endpoint:" + profile.id}', "{n}"),
+        "edit": btn_label("Edit"),
+        "delete": btn_label("Delete"),
+        "override": btn_label("Override"),
+    }
+
+
+SCREEN_FIXTURES["providers"] = providers_words
+
+
+def runtimes_words() -> dict:
+    """R15-A Runtimes: the inventory, the inspector's tabs, toolbars, row buttons, confirms and modals."""
+    src = read("console.py")
+    ws = read("console_workspaces.py")
+    head = re.findall(r'runtimes: \["([^"]*)", "([^"]*)"\]', src)
+    if len(head) != 1:
+        fail(f"runtimes nav title: expected 1, found {head!r}.")
+    ths = lambda region: re.findall(r"<th>([^<]*)</th>", region)
+    inv = ths(need(src, r'(<thead><tr><th>Runtime</th>.*?</tr></thead>)', "inventory columns"))
+    runs = ths(need(src, r'(<thead><tr><th>Run</th><th>Workflow</th><th>Status</th><th>Node</th>.*?</tr></thead>)', "runs columns"))
+    ro = ths(need(src, r'(<thead><tr><th>Run</th><th>Workflow</th><th>Status</th><th>Session</th>.*?</tr></thead>)', "read-only runs columns"))
+    arts = ths(need(src, r'(<thead><tr><th>Artifact</th>.*?</tr></thead>)', "artifacts columns"))
+    caches = ths(need(src, r'(<thead><tr><th>Cache</th>.*?</tr></thead>)', "caches columns"))
+    logs = ths(need(src, r'(<thead><tr><th>File</th>.*?</tr></thead>)', "logs columns"))
+    statuses = re.findall(r'<option value="[^"]*">([^<]*)</option>', need(src, r'(<select id="runs-status".*?</select>)', "status select"))
+    tails = re.findall(r'<option value="\d+">([^<]*)</option>', need(src, r'(<select id="log-modal-tail-size">.*?</select>)', "tail sizes"))
+    out = {
+        "title": head[0][0],
+        "subtitle": head[0][1],
+        "note": need(src, r'<span>Runtimes</span></h2>\s*<p class="section-note">([^<]*)</p>', "runtimes note"),
+        "reload_tip": need(src, r'<button id="runtimes-refresh"[^>]*data-af-tip="([^"]*)"', "reload tooltip"),
+        "detail_reload_tip": need(src, r'<button id="runtime-detail-refresh"[^>]*data-af-tip="([^"]*)"', "detail reload tooltip"),
+        "teach": need(src, r'<p id="runtime-detail-teach" class="section-note">([^<]*)</p>', "teaching line"),
+        "tab_runs": need(src, r'<button id="runtime-subtab-sessions"[^>]*>([^<]*)</button>', "Runs tab"),
+        "tab_artifacts": need(src, r'<button id="runtime-subtab-artifacts"[^>]*>([^<]*)</button>', "Artifacts tab"),
+        "tab_cache": need(src, r'<button id="runtime-subtab-caches"[^>]*>([^<]*)</button>', "Cache tab"),
+        "tab_logs": need(src, r'<button id="runtime-subtab-logs"[^>]*>([^<]*)</button>', "Logs tab"),
+        "chip": need(ws, r'label\.textContent = `(Account: )\$\{', "account chip"),
+        "chip_clear_tip": need(ws, r'accountIconButton\("close", `(Show every runtime, not only \$\{filter\.account\}\'s)`', "chip clear tooltip").replace("${filter.account}", "{a}"),
+        "eligible": need(src, r'wsOpen\("(Eligible workspaces)"', "eligible workspaces link"),
+        "workspaces": need(src, r'policyTd\.append\(wsOpen\("(Workspaces)"', "workspaces link"),
+        "none": need(src, r'policyTd\.textContent = "(None)";', "no workspaces"),
+        "no_runtimes": need(src, r'"(No runtimes found\.)"', "no runtimes"),
+        "status_tip": need(src, r'<select id="runs-status" title="([^"]*)"', "status tooltip"),
+        "runs_search": need(src, r'<input id="runs-search"[^>]*placeholder="([^"]*)"', "runs search placeholder"),
+        "root_only": need(src, r'<input id="runs-root-only" type="checkbox" checked> ([^<]*)</label>', "root runs only"),
+        "root_only_tip": need(src, r'<label class="entity-checkbox" title="([^"]*)"><input id="runs-root-only"', "root only tooltip"),
+        "readonly_note": need(src, r'<div id="runtime-runs-readonly" class="hidden">\s*<p class="section-note">([^<]*)</p>', "read-only note"),
+        "inspect": need(src, r'inspect\.textContent = "([^"]*)";', "Inspect"),
+        "steer": need(src, r'steer\.textContent = "([^"]*)";', "Steer"),
+        "cancel": need(src, r'cancel\.textContent = "([^"]*)";', "Cancel"),
+        "cancel_confirm": need(src, r'message: `(Cancel run \$\{runId\}\? [^`]*)`, confirmLabel', "cancel question").replace("${runId}", "{id}"),
+        "cancel_go": need(src, r'Any in-flight work stops at the next tick\.`, confirmLabel: "([^"]*)"', "cancel button"),
+        "steer_title": need(src, r'title: "(Steer run)",', "steer title"),
+        "steer_lead": need(src, r'message: `(Guidance folds into \$\{runId\}[^`]*)`', "steer sentence").replace("${runId}", "{id}"),
+        "steer_go": need(src, r'confirmLabel: "(Send guidance)"', "send guidance"),
+        "steer_placeholder": need(src, r'input: \{ placeholder: "(e\.g\. focus on the failing test first[^"]*)" \}', "steer placeholder"),
+        "modality_tip": need(src, r'<select id="runtime-artifacts-modality" title="([^"]*)"', "type tooltip"),
+        "artifacts_search": need(src, r'<input id="runtime-artifacts-search"[^>]*placeholder="([^"]*)"', "artifacts placeholder"),
+        "artifacts_note": need(src, r'note\.textContent = "(Artifacts are indexed[^"]*)";', "artifacts note"),
+        "artifact_tip": need(src, r'tr\.title = `(Click to preview )\$\{name\}`;', "artifact row tooltip") + "{n}",
+        "cache_kind_tip": need(src, r'<select id="runtime-caches-kind" title="([^"]*)"', "kind tooltip"),
+        "caches_search": need(src, r'<input id="runtime-caches-search"[^>]*placeholder="([^"]*)"', "caches placeholder"),
+        "caches_note": need(src, r'<div id="runtime-panel-caches".*?<p class="section-note">([^<]*)</p>', "caches note", re.S),
+        "purge": need(src, r'<span class="button-icon" aria-hidden="true">×</span><span>(Purge…)</span>', "Purge…"),
+        "purge_tip": need(src, r'btn\.title = "(Delete the CONTENTS of this cache[^"]*)";', "purge tooltip"),
+        "purge_title": need(src, r'title: `(Purge )\$\{name\}\?`', "purge title") + "{n}?",
+        "purge_confirm": need(src, r'message: `(This deletes the CONTENTS of \$\{name\}: [^`]*)`', "purge question").replace("${name}", "{n}").replace("${dry.files_deleted}", "{files}").replace("${_fmtBytes(dry.bytes_freed)}", "{bytes}"),
+        "retained": need(src, r'<span>(Retained runtimes)</span></h2>', "retained title"),
+        "retained_note": need(src, r'<span>Retained runtimes</span></h2>\s*<p class="section-note">([^<]*)</p>', "retained note"),
+        "forget": need(src, r'forget\.innerHTML = `<span class="button-icon" aria-hidden="true">×</span><span>([^<]*)</span>`;', "Forget"),
+        "forget_tip": need(src, r'forget\.title = "([^"]*)";', "forget tooltip"),
+        "forget_all": need(src, r'<span>(Forget all stale) \(\$\{stale\.length\}\)</span>', "forget all stale"),
+        "forget_all_tip": need(src, r'bulk\.title = "([^"]*)";', "forget all tooltip"),
+        "forget_confirm": need(src, r'message: `(This removes \$\{label\} from the data-home registry\.[^`]*)`', "forget question").replace("${label}", "{l}"),
+        "logs_home_tip": need(src, r'<select id="runtime-logs-home" title="([^"]*)"', "log home tooltip"),
+        "logs_search": need(src, r'<input id="runtime-logs-search"[^>]*placeholder="([^"]*)"', "logs placeholder"),
+        "log_tip": need(src, r'tr\.title = `(Click to tail )\$\{f\.name\}`;', "log row tooltip") + "{n}",
+        "log_sub": need(src, r'\$\("log-modal-sub"\)\.textContent = `from \$\{home\}( — newest lines at the bottom)`;', "log modal sub"),
+        "log_refresh_tip": need(src, r'<button id="log-modal-refresh"[^>]*data-af-tip="([^"]*)"', "log refresh tooltip"),
+        "close": need(src, r'<button id="log-modal-close" class="secondary" type="button">([^<]*)</button>', "Close"),
+        "prev": need(src, r'mk\("(‹ Prev)"', "Prev"),
+        "next": need(src, r'mk\("(Next ›)"', "Next"),
+    }
+    for i, c in enumerate(inv):
+        out[f"inv_col_{i}"] = c
+    for i, c in enumerate(runs):
+        out[f"runs_col_{i}"] = c
+    for i, c in enumerate(ro):
+        out[f"ro_col_{i}"] = c
+    for i, c in enumerate(arts):
+        out[f"art_col_{i}"] = c
+    for i, c in enumerate(caches):
+        out[f"cache_col_{i}"] = c
+    for i, c in enumerate(logs):
+        out[f"log_col_{i}"] = c
+    for i, c in enumerate(statuses):
+        out[f"status_{i}"] = c
+    for i, c in enumerate(tails):
+        out[f"tail_{i}"] = c
+    return out
+
+
+SCREEN_FIXTURES["runtimes"] = runtimes_words
+
+
+def setup_words() -> dict:
+    """R15-A Setup: the guide's welcome step — titles, lede, tiles' section, the three cards, the recommended set's buttons, the footer's Skip setup."""
+    src = read("console.py")
+    copy = need(src, r"const FIRST_RUN_STEP_COPY = \{(.*?)\n\s*\};", "FIRST_RUN_STEP_COPY", re.S)
+    titles = need(src, r"const FIRST_RUN_STEP_TITLES = \{(.*?)\};", "FIRST_RUN_STEP_TITLES", re.S)
+    def field(step: str, key: str) -> str:
+        return need(copy, step + r': \{[^}]*?' + key + r': "([^"]*)"', f"{step}.{key}")
+    def title(step: str) -> str:
+        return need(titles, step + r': "([^"]*)"', f"title {step}")
+    out = {
+        "title": field("welcome", "title"),
+        "hint": field("welcome", "hint"),
+        "admin_lede": field("welcome", "lede"),
+        "skip": need(src, r'<button id="first-run-skip"[^>]*>([^<]*)</button>', "Skip setup"),
+        "skip_tip": need(src, r'<button id="first-run-skip" class="secondary" title="([^"]*)"', "Skip setup tooltip"),
+        "finish": need(src, r'<button id="first-run-finish"[^>]*>([^<]*)</button>', "Finish"),
+        "next": need(src, r'<button id="first-run-next">([^<]*)</button>', "Next"),
+        "guide_tip": need(src, r'<button id="open-setup"[^>]*title="([^"]*)"', "Setup tooltip"),
+        "sets_up": need(src, r'<h3>(What this guide sets up)</h3>', "what this guide sets up"),
+        "sets_up_sub": need(src, r'<h3>What this guide sets up</h3><span class="ui-sub">([^<]*)</span>', "sets up sub"),
+        "looking": need(src, r'<div class="ui-empty">(Looking at this computer\.\.\.)</div>', "looking"),
+        "checking": need(src, r'<p class="subtle">(Checking the recommended starter models\.\.\.)</p>', "checking"),
+        "recommended": need(src, r'<h3>(Recommended for this computer)</h3>', "recommended heading"),
+        "no_text_model": need(src, r'"(No text model is set yet\.)"', "no text model"),
+        "no_downloads": need(src, r'<div class="ui-empty">(This gateway reported no recommended downloads\.)</div>', "no downloads"),
+        "apply": need(src, r'<button id="first-run-apply-recommended" class="ui-btn is-primary">([^<]*)</button>', "apply"),
+        "download_all": need(src, r'<button id="first-run-download-all" class="ui-btn is-ghost">([^<]*)</button>', "download all"),
+        "recommended_note": need(src, r'<span>(Sets the recommended models for text, voice[^<]*)</span>', "recommended note"),
+        "replace": need(src, r'kept\.length \? "([^"]*)" : "Clear what cannot run here"', "replace mine too"),
+        "clear_broken": need(src, r'kept\.length \? "Replace mine too" : "([^"]*)"', "clear what cannot run"),
+        "not_available": need(src, r'<strong>(This computer\'s summary is not available right now\.)</strong>', "summary unavailable"),
+    }
+    for i, step in enumerate(["engines", "model", "apps"]):
+        out[f"card_{i}_title"] = field(step, "title")
+        out[f"card_{i}_lede"] = field(step, "lede")
+        out[f"card_{i}_go"] = "Go to " + title(step).lower()
+    return out
+
+
+SCREEN_FIXTURES["setup"] = setup_words
+
+
+def host_words() -> dict:
+    """R15-A F3 host panel: the web's Gateway card (Resources) — title, note, switch, rows, buttons, questions."""
+    src = read("console.py")
+    sect = need(src, r'(<section id="gateway-host-section".*?</section>)', "gateway card", re.S)
+    keys = re.findall(r'<span class="entity-kv-key">([^<]*)</span>', sect)
+    out = {
+        "title": need(sect, r'<span>(Gateway)</span></h2>', "title"),
+        "note": need(sect, r'<p class="section-note">([^<]*)</p>', "note"),
+        "pause": need(sect, r'<span class="af-switch__label">(Workflows paused)</span>', "pause label"),
+        "pause_tip": need(sect, r'<button id="gateway-host-pause"[^>]*title="([^"]*)"', "pause tooltip"),
+        "check": need(sect, r'<button id="gateway-host-update-check"[^>]*>([^<]*)</button>', "check now"),
+        "check_tip": need(sect, r'<button id="gateway-host-update-check"[^>]*title="([^"]*)"', "check tooltip"),
+        "update": need(sect, r'<button id="gateway-host-update-start"[^>]*>([^<]*)</button>', "update"),
+        "update_tip": need(sect, r'<button id="gateway-host-update-start"[^>]*title="([^"]*)"', "update tooltip"),
+        "restart": need(sect, r'<button id="gateway-host-restart"[^>]*>([^<]*)</button>', "restart"),
+        "quit": need(sect, r'<button id="gateway-host-quit"[^>]*>([^<]*)</button>', "quit"),
+        "login": need(sect, r'<span class="af-switch__label">(Start at login)</span>', "login switch"),
+        "restart_question": need(src, r'title: "(Restart AbstractGateway\?)"', "restart title") + " " + need(src, r'title: "Restart AbstractGateway\?", message: "([^"]*)"', "restart message"),
+        "restart_go": need(src, r'title: "Restart AbstractGateway\?"[^}]*confirmLabel: "([^"]*)"', "restart button"),
+        "quit_question": need(src, r'title: "(Quit AbstractGateway\?)"', "quit title") + " " + need(src, r'title: "Quit AbstractGateway\?", message: "([^"]*)"', "quit message"),
+        "quit_go": need(src, r'title: "Quit AbstractGateway\?"[^}]*confirmLabel: "([^"]*)"', "quit button"),
+        "update_go": need(src, r'title: "Update available", message: action\.confirm, confirmLabel: "([^"]*)"', "update now"),
+    }
+    for i, k in enumerate(keys):
+        out[f"row_{i}"] = k
+    return out
+
+
+SCREEN_FIXTURES["host"] = host_words
+
+
+def screens_main(write: bool) -> int:
+    rc = 0
+    for name, build_fn in SCREEN_FIXTURES.items():
+        path = CRATE / "tests" / "fixtures" / f"r15_web_wording_{name}.json"
+        text = json.dumps({"_source": "scripts/extract_web_wording.py (do not edit by hand)", **build_fn()}, indent=2, ensure_ascii=False) + "\n"
+        if write:
+            path.write_text(text, encoding="utf-8")
+            print(f"wrote {path}")
+        elif not path.is_file() or path.read_text(encoding="utf-8") != text:
+            print(f"{path} differs from the web sources; run with --write, then make the terminal match.")
+            rc = 1
+        else:
+            print(f"r15 web wording ({name}): fixture matches the web sources")
+    return rc
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    _rc = main()
+    raise SystemExit(screens_main("--write" in sys.argv) or _rc)

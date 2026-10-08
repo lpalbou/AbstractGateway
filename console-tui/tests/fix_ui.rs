@@ -438,9 +438,9 @@ fn m3_connection_keeps_its_top_rows_at_every_height() {
     for (w, hh) in [(80, 24), (80, 28), (80, 30), (110, 32), (200, 60)] {
         let s = connection_connected(Size::new(w, hh));
         for needle in [
-            "Gateway URL",
-            "Admin token",
-            "Re-probe (connected ✓)",
+            "Gateway address",
+            "Token",
+            "Re-probe",
             "● connected",
             // The Connection screen keeps ONE network line; N opens the screen.
             "Network: Localhost only · running Localhost only 127.0.0.1:8080",
@@ -515,7 +515,7 @@ fn m3_signin_needed_fits_at_80x24() {
         .set(ConnPhase::Unauthorized("Missing bearer token".into()));
     let s = h.turns(3);
     for needle in [
-        "Gateway URL",
+        "Gateway address",
         "sign-in needed (401)",
         "`abstractgateway serve` prints it",
     ] {

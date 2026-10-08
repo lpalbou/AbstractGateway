@@ -470,18 +470,19 @@ fn runs_table_has_the_web_columns_and_enter_opens_inspect_rows() {
         .as_bytes(),
     );
     let s = h.key(b"\r");
-    assert!(
-        s.contains("Actor    gateway"),
-        "Inspect rows in place:\n{s}"
-    );
-    assert!(s.contains("Created  2026-10-04T02:32:01"), "{s}");
+    let s = if s.contains("Run r-1") { s } else { h.turns(2) };
+    // R15: Enter opens the web's Inspect dialog (its rows, Close).
+    assert!(s.contains("Run r-1"), "the Inspect dialog:\n{s}");
+    let actor = s.lines().find(|l| l.contains("Actor")).unwrap_or_default();
+    assert!(actor.contains("gateway"), "Inspect rows:\n{s}");
+    assert!(s.contains("2026-10-04T02:32:01"), "{s}");
 }
 
 #[test]
 fn root_runs_only_switch_rereads_with_children() {
     let mut h = harness_sized(Size::new(150, 50));
     let s = on_runs(&mut h, vec![run("r-1", "running")]);
-    assert!(s.contains("[x] Root runs only (t)"), "{s}");
+    assert!(s.contains("━● root runs only"), "{s}");
     h.key(b"t");
     let sent = h.drain();
     assert!(
@@ -504,7 +505,7 @@ fn root_runs_only_switch_rereads_with_children() {
         rows: vec![run("r-1", "running")],
     }));
     let s = h.turns(3);
-    assert!(s.contains("[ ] Root runs only (t)"), "{s}");
+    assert!(s.contains("●─ root runs only"), "{s}");
 }
 
 #[test]
@@ -512,34 +513,56 @@ fn cancel_is_an_inline_confirm_in_the_web_words() {
     let mut h = harness_sized(Size::new(150, 50));
     on_runs(&mut h, vec![run("r-1", "running")]);
     let s = h.key(b"c");
+    let s = if s.contains("Cancel run r-1?") {
+        s
+    } else {
+        h.turns(2)
+    };
     let f = flat(&s);
     assert!(
         f.contains("Cancel run r-1? Any in-flight work stops at the next tick."),
         "the web's confirm sentence:\n{s}"
     );
-    assert!(s.contains("[y] Cancel run"), "{s}");
+    // R15 rule 7: w::Confirm — [Cancel run] [Cancel].
+    let (y, line) = s
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains(" Cancel run ") && l.contains(" Cancel "))
+        .last()
+        .unwrap_or_else(|| panic!("[Cancel run] [Cancel]:\n{s}"));
     assert!(
         !h.drain().iter().any(|c| matches!(c, Cmd::CancelRun { .. })),
         "nothing sent yet"
     );
-    h.key(b"n");
+    h.key(b"\x1b");
+    h.turns(2);
     assert!(
         !h.drain().iter().any(|c| matches!(c, Cmd::CancelRun { .. })),
-        "n keeps"
+        "Esc keeps"
     );
     h.key(b"c");
-    h.key(b"y");
+    h.turns(2);
+    let x = line[..line.find(" Cancel run ").unwrap() + 1]
+        .chars()
+        .count()
+        + 1;
+    h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes());
+    h.turns(2);
     assert!(
         h.drain()
             .iter()
             .any(|c| matches!(c, Cmd::CancelRun { run_id } if run_id == "r-1")),
-        "y sends the durable cancel"
+        "Cancel run sends the durable cancel"
     );
     // A finished run has no Cancel (the web shows none): refused with why.
     let mut h = harness_sized(Size::new(150, 50));
     on_runs(&mut h, vec![run("r-2", "completed")]);
     h.key(b"c");
-    assert!(h.notice().contains("already completed"), "{}", h.notice());
+    assert!(
+        h.notice().contains("is completed — nothing to cancel"),
+        "{}",
+        h.notice()
+    );
 }
 
 #[test]

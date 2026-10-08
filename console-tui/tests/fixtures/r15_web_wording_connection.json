@@ -1,0 +1,16 @@
+{
+  "_source": "scripts/extract_web_wording.py (do not edit by hand)",
+  "token_label": "Token",
+  "user_label": "Gateway user",
+  "show": "Show",
+  "show_tip": "Show token",
+  "hide": "Hide",
+  "hide_tip": "Hide token",
+  "sign_in": "Sign in",
+  "recovery_link": "Forgot your token? Email me a sign-in code",
+  "code_label": "Code from the email",
+  "resend": "Send a new code",
+  "use_code": "Use code",
+  "back": "Back to token",
+  "network_tip": "Who can reach this gateway (this computer, local network, internet) and its addresses"
+}

@@ -2243,6 +2243,7 @@ pub fn screen_hint_pairs(ctx: &Ctx) -> Vec<(String, String)> {
     }
     globals.push(("Tab", "focus"));
     match screen {
+        SCREEN_CONNECTION => pairs.extend(connection::hints(&ctx_hints)), // R15 arm
         SCREEN_PROVIDERS => pairs.extend(providers::hints(&store)),
         2 => {
             pairs.push(("Enter/e", "edit route"));
@@ -2260,25 +2261,7 @@ pub fn screen_hint_pairs(ctx: &Ctx) -> Vec<(String, String)> {
             pairs.push(("r", "refresh"));
         }
         SCREEN_USERS => pairs.extend(users::hints(&ctx_hints)),
-        // The whole Runtimes screen is admin-only: no verbs.
-        4 if non_admin => {}
-        4 => {
-            pairs.push(("Enter", "inspect runtime"));
-            pairs.push(("f", "filter"));
-            pairs.push(("/", "search"));
-            pairs.push(("n/p", "page"));
-            pairs.push(("o", "open row"));
-            pairs.push(("i", "run detail"));
-            pairs.push(("w", "Workspaces"));
-            pairs.push(("←/→", "inspector tab (when focused)"));
-            pairs.push(("c", "cancel run"));
-            pairs.push(("s", "steer run"));
-            pairs.push(("t", "root runs only"));
-            if store.runtime_filter.get().is_some() {
-                pairs.push(("x", "every runtime"));
-            }
-            pairs.push(("r", "refresh"));
-        }
+        SCREEN_RUNTIMES => pairs.extend(runtimes::hints(&ctx_hints)), // R15 arm
         // Named arms from here down (the numbered arms above
         // predate the constants): the Workflows/Review pair had
         // drifted one screen left when Workflows was inserted —
@@ -2313,11 +2296,7 @@ pub fn screen_hint_pairs(ctx: &Ctx) -> Vec<(String, String)> {
             ));
         }
         SCREEN_APPS => pairs.extend_from_slice(apps::HINTS),
-        SCREEN_WELCOME => {
-            pairs.push(("a", "Use recommended defaults"));
-            pairs.push(("D", "Download all"));
-            pairs.push(("r", "refresh"));
-        }
+        SCREEN_WELCOME => pairs.extend(welcome::hints(&ctx_hints)), // R15 arm
         SCREEN_NETWORK => {
             pairs.push(("↑↓ Enter", "who can reach it"));
             pairs.push(("c", "copy address"));
