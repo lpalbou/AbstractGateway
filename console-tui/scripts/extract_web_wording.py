@@ -798,6 +798,9 @@ def sandbox_wording() -> dict:
     tip = one_in(r'btn\.title = `\$\{label\}: \$\{configured \? `[^`]*` : "([^"]+)"\}`;', "mode tooltip", src)
     out["mode_unconfigured"] = tip
     out["send_label"] = one_in(r'sendLabel: "([^"]+)"', "Send label", src)
+    out["seconds_label"] = one_in(r'id="sandbox-seconds-label"[^>]*>([^<]+)<input', "Length label")
+    out["seconds_help"] = one_in(r'id="sandbox-seconds"[^>]*><span class="sandbox-field-help">([^<]+)<', "Length help")
+    out["seconds_refusal"] = one_in(r'throw new Error\("(Length must be[^"]+)"\)', "Length refusal", src)
     isl = read_b("console_islands.py")
     out["clear_tip"] = one_in(r'af-sandbox-chat__clear","aria-label":"Clear chat","data-af-tip":"([^"]+)"', "Clear tooltip", isl)
     out["attach_tip"] = one_in(r'"data-af-tip":"(Attach files to your question)"', "Attach tooltip", isl)

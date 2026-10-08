@@ -28,6 +28,9 @@
   ],
   "mode_unconfigured": "not configured",
   "send_label": "Send",
+  "seconds_label": "Length (seconds)",
+  "seconds_help": "How long the generated clip is.",
+  "seconds_refusal": "Length must be a positive number of seconds.",
   "clear_tip": "Clear the chat",
   "attach_tip": "Attach files to your question"
 }

@@ -355,6 +355,7 @@ pub fn media_body(
     voice: Option<&str>,
     prompt: &str,
     request_id: &str,
+    seconds: Option<f64>,
 ) -> Option<(&'static str, Value)> {
     Some(match mode {
         SbMode::Text => return None,
@@ -369,14 +370,18 @@ pub fn media_body(
             }
             ("voice/tts", b)
         }
-        SbMode::Music | SbMode::Sound => (
-            "music/generate",
-            json!({
+        SbMode::Music | SbMode::Sound => {
+            let mut b = json!({
                 "prompt": prompt,
                 "task": if mode == SbMode::Sound { "text_to_audio" } else { "text_to_music" },
                 "music_provider": provider, "music_model": model, "request_id": request_id,
-            }),
-        ),
+            });
+            // The web's `seconds: sandboxSecondsFor(mode)` (a number).
+            if let Some(n) = seconds.and_then(serde_json::Number::from_f64) {
+                b["seconds"] = Value::Number(n);
+            }
+            ("music/generate", b)
+        }
         SbMode::Video => (
             "videos/generate",
             json!({"prompt": prompt, "video_provider": provider, "video_model": model, "request_id": request_id}),
@@ -1049,6 +1054,10 @@ pub struct SandboxWs {
     pub speech_for: Signal<String>,
     /// MTP depth availability for the picked text pair.
     pub mtp: Signal<MtpSupport>,
+    /// "Length (seconds)", remembered per mode like the web's
+    /// `state.sandboxSeconds` (sound 5, music 30).
+    pub seconds_sound: Signal<String>,
+    pub seconds_music: Signal<String>,
 }
 
 impl SandboxWs {
@@ -1069,6 +1078,18 @@ impl SandboxWs {
             speech: cx.signal(Loadable::NotAsked),
             speech_for: cx.signal(String::new()),
             mtp: cx.signal(MtpSupport::NoPair),
+            seconds_sound: cx.signal("5".to_string()),
+            seconds_music: cx.signal("30".to_string()),
+        }
+    }
+
+    /// The "Length (seconds)" field of a timed mode (Music, SFX); None for
+    /// the others (the web hides the field there).
+    pub fn seconds_for(&self, mode: SbMode) -> Option<Signal<String>> {
+        match mode {
+            SbMode::Music => Some(self.seconds_music),
+            SbMode::Sound => Some(self.seconds_sound),
+            _ => None,
         }
     }
 
@@ -1421,7 +1442,22 @@ pub fn workspace(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         let t = tt;
                         match ws.mode.get() {
                             SbMode::Text => text_controls(gcx, &ctx2, &t, prov_ix, model_ix),
-                            m => route_line(&t, &store, m, crate::ui::page_viewport(gcx).get().w),
+                            m => {
+                                let route = route_line(
+                                    &t,
+                                    &store,
+                                    m,
+                                    crate::ui::page_viewport(gcx).get().w,
+                                );
+                                match ws.seconds_for(m) {
+                                    None => route,
+                                    Some(sig) => Element::new()
+                                        .style(LayoutStyle::column().shrink(0.0))
+                                        .child(route)
+                                        .child(seconds_row(gcx, &ctx2, &t, sig))
+                                        .build(),
+                                }
+                            }
                         }
                     }
                 }))
@@ -1821,6 +1857,28 @@ fn text_controls(
         .build()
 }
 
+/// The web's "Length (seconds)" field (Music, SFX): a page text field
+/// (caret-tracked), its help sentence as the tooltip.
+fn seconds_row(gcx: Scope, ctx: &Ctx, t: &TokenSet, sig: Signal<String>) -> View {
+    let input = super::w::caret_tracked(
+        gcx,
+        ctx.ui.caret,
+        super::util::esc_releases_focus(
+            TextInput::new()
+                .value(sig)
+                .placeholder("5")
+                .layout(LayoutStyle::default().w(8).h(1).shrink(0.0))
+                .element(gcx, t),
+            ctx.store.notice,
+        ),
+    );
+    field(
+        t,
+        SECONDS_LABEL,
+        super::w::tip::with_tip(gcx, input, SECONDS_HELP.to_string()).build(),
+    )
+}
+
 /// "MTP: depths 2 available · <the gateway's reason>".
 pub fn mtp_line(sup: &MtpSupport) -> String {
     let depths = sup.depths();
@@ -2167,6 +2225,7 @@ fn speak(ctx: &Ctx, reply: &str) {
         voice.as_deref(),
         reply,
         &request_id,
+        None,
     ) else {
         return;
     };
@@ -2227,6 +2286,17 @@ fn clear(ctx: &Ctx, cx: Scope) {
 /// The web's Sandbox help sentences (console.py `#tab-sandbox`), shown as
 /// the controls' tooltips.
 pub const OUTPUT_LABEL: &str = "Output";
+pub const SECONDS_LABEL: &str = "Length (seconds)";
+pub const SECONDS_HELP: &str = "How long the generated clip is.";
+pub const SECONDS_REFUSAL: &str = "Length must be a positive number of seconds.";
+
+/// `sandboxSecondsFor`: a finite number above zero, else the web's refusal.
+pub fn parse_seconds(raw: &str) -> Result<f64, String> {
+    match raw.trim().parse::<f64>() {
+        Ok(n) if n.is_finite() && n > 0.0 => Ok(n),
+        _ => Err(SECONDS_REFUSAL.to_string()),
+    }
+}
 pub const SYSTEM_LABEL: &str = "System prompt";
 pub const SYSTEM_PLACEHOLDER: &str = "None";
 pub const REASONING_LABEL: &str = "Reasoning";
@@ -2677,6 +2747,16 @@ fn run_media(ctx: &Ctx, mode: SbMode, prompt_state: &TextAreaState) {
     } else {
         None
     };
+    let seconds = match ws.seconds_for(mode) {
+        None => None,
+        Some(sig) => match parse_seconds(&sig.get_untracked()) {
+            Ok(n) => Some(n),
+            Err(why) => {
+                store.notice.set(Some(why));
+                return;
+            }
+        },
+    };
     let Some((leaf, body)) = media_body(
         mode,
         &provider,
@@ -2684,6 +2764,7 @@ fn run_media(ctx: &Ctx, mode: SbMode, prompt_state: &TextAreaState) {
         voice.as_deref(),
         &prompt,
         &request_id,
+        seconds,
     ) else {
         return;
     };
@@ -2955,7 +3036,8 @@ mod tests {
 
     #[test]
     fn media_bodies_match_the_web_payloads() {
-        let (leaf, b) = media_body(SbMode::Image, "mlx-gen", "flux", None, "a cat", "r1").unwrap();
+        let (leaf, b) =
+            media_body(SbMode::Image, "mlx-gen", "flux", None, "a cat", "r1", None).unwrap();
         assert_eq!(leaf, "images/generate");
         assert_eq!(
             b,
@@ -2969,6 +3051,7 @@ mod tests {
             Some("af_heart"),
             "hi",
             "r2",
+            None,
         )
         .unwrap();
         assert_eq!(leaf, "voice/tts");
@@ -2976,30 +3059,63 @@ mod tests {
             b,
             json!({"text": "hi", "provider": "abstractvoice", "model": "kokoro", "voice": "af_heart", "request_id": "r2"})
         );
-        let (_, b) = media_body(SbMode::Voice, "p", "m", None, "hi", "r").unwrap();
+        let (_, b) = media_body(SbMode::Voice, "p", "m", None, "hi", "r", None).unwrap();
         assert!(
             b.get("voice").is_none(),
             "no voice key without a route voice"
         );
 
-        let (leaf, b) = media_body(SbMode::Music, "acestep", "v1", None, "jazz", "r3").unwrap();
+        let (leaf, b) = media_body(
+            SbMode::Music,
+            "acestep",
+            "v1",
+            None,
+            "jazz",
+            "r3",
+            Some(30.0),
+        )
+        .unwrap();
         assert_eq!(leaf, "music/generate");
-        assert_eq!(b["task"], "text_to_music");
+        assert_eq!(
+            b,
+            json!({"prompt": "jazz", "task": "text_to_music", "seconds": 30.0,
+                   "music_provider": "acestep", "music_model": "v1", "request_id": "r3"}),
+            "the web's music body carries `seconds` (a number)"
+        );
         assert_eq!(b["music_provider"], "acestep");
         assert_eq!(b["music_model"], "v1");
-        let (leaf, b) =
-            media_body(SbMode::Sound, "acestep", "v1", None, "door slam", "r4").unwrap();
+        let (leaf, b) = media_body(
+            SbMode::Sound,
+            "acestep",
+            "v1",
+            None,
+            "door slam",
+            "r4",
+            Some(2.5),
+        )
+        .unwrap();
         assert_eq!(leaf, "music/generate");
         assert_eq!(b["task"], "text_to_audio");
+        assert_eq!(b["seconds"], 2.5);
+        assert_eq!(parse_seconds("5"), Ok(5.0));
+        assert_eq!(parse_seconds(" 0.5 "), Ok(0.5));
+        for bad in ["", "0", "-1", "abc", "inf", "NaN"] {
+            assert_eq!(
+                parse_seconds(bad),
+                Err(SECONDS_REFUSAL.to_string()),
+                "{bad:?}"
+            );
+        }
 
-        let (leaf, b) = media_body(SbMode::Video, "mlx-gen", "wan", None, "waves", "r5").unwrap();
+        let (leaf, b) =
+            media_body(SbMode::Video, "mlx-gen", "wan", None, "waves", "r5", None).unwrap();
         assert_eq!(leaf, "videos/generate");
         assert_eq!(
             b,
             json!({"prompt": "waves", "video_provider": "mlx-gen", "video_model": "wan", "request_id": "r5"})
         );
 
-        assert!(media_body(SbMode::Text, "p", "m", None, "x", "r").is_none());
+        assert!(media_body(SbMode::Text, "p", "m", None, "x", "r", None).is_none());
     }
 
     #[test]

@@ -38,7 +38,9 @@ fn routes() -> RoutesData {
              "label": "Image Generation", "task": "text_to_image",
              "provider": "mlx-gen", "model": "test-flux", "configured": true},
             {"key": "output.music", "kind": "output", "modality": "music", "label": "Music Output",
-             "source": "not_configured", "configured": false}
+             "source": "not_configured", "configured": false},
+            {"key": "output.sound", "kind": "output", "modality": "sound", "label": "Sound Output",
+             "provider": "acestep", "model": "v1", "configured": true}
         ]
     }))
 }
@@ -396,6 +398,9 @@ fn the_sandbox_words_are_the_webs() {
     assert_eq!(sandbox::SEND_LABEL, s("send_label"));
     assert_eq!(sandbox::CLEAR_TIP, s("clear_tip"));
     assert_eq!(sandbox::ATTACH_TIP, s("attach_tip"));
+    assert_eq!(sandbox::SECONDS_LABEL, s("seconds_label"));
+    assert_eq!(sandbox::SECONDS_HELP, s("seconds_help"));
+    assert_eq!(sandbox::SECONDS_REFUSAL, s("seconds_refusal"));
     let list = |k: &str| -> Vec<String> {
         fx[k]
             .as_array()
@@ -426,4 +431,53 @@ fn the_sandbox_words_are_the_webs() {
     let tips = sandbox::mode_tips(Some(&routes().rows));
     assert_eq!(tips[3], format!("Music: {}", s("mode_unconfigured")));
     assert_eq!(tips[2], "Voice: supertonic / supertonic-3");
+}
+
+#[test]
+fn length_seconds_is_shown_for_sfx_and_rides_the_music_body() {
+    let mut h = page();
+    // Not on Text.
+    let s = h.turns(2);
+    assert!(!s.contains(sandbox::SECONDS_LABEL), "{s}");
+    h.store.sandbox_ws.mode.set(SbMode::Sound);
+    let s = h.turns(3);
+    assert!(
+        s.contains(sandbox::SECONDS_LABEL),
+        "the SFX length field:\n{s}"
+    );
+    // Click into the field, replace 5 with 2.5, Send by mouse.
+    let (y, line) = s
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains(sandbox::SECONDS_LABEL))
+        .unwrap();
+    let x = line[..line.find(sandbox::SECONDS_LABEL).unwrap()]
+        .chars()
+        .count()
+        + 21;
+    h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes());
+    h.key(b"\x1b[F\x7f2.5");
+    assert_eq!(h.store.sandbox_ws.seconds_sound.get_untracked(), "2.5");
+    click(&mut h, " Send ");
+    let body = h
+        .sent()
+        .into_iter()
+        .find_map(|c| match c {
+            Cmd::SandboxMedia { request } => Some(request.body),
+            _ => None,
+        })
+        .expect("SFX sends music/generate");
+    assert_eq!(body["seconds"], 2.5);
+    assert_eq!(body["task"], "text_to_audio");
+    // A bad length refuses with the web's sentence and sends nothing.
+    let mut h = page();
+    h.store.sandbox_ws.mode.set(SbMode::Sound);
+    h.store.sandbox_ws.seconds_sound.set("0".into());
+    h.turns(3);
+    click(&mut h, " Send ");
+    assert!(!h
+        .sent()
+        .iter()
+        .any(|c| matches!(c, Cmd::SandboxMedia { .. })));
+    assert_eq!(notice(&h), sandbox::SECONDS_REFUSAL);
 }
