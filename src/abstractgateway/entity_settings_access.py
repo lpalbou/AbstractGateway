@@ -110,11 +110,22 @@ def access_view(principal: Optional[GatewayPrincipal], name: str, created_by: An
     and the sentence when not. Clients enable/disable their controls from this, never from a
     role they derive themselves."""
     role = configure_role(principal, created_by)
+    tier2: list = []
+    if role == ROLE_CREATOR:
+        from abstractruntime.identity.tool_policy import TIER2_TOOL_NAMES
+
+        tier2 = list(TIER2_TOOL_NAMES)
     return {
         "entity": name,
         "can_configure": role is not None,
         "as": role,
         "reason": None if role is not None else refusal(name),
+        # Tools a creator can't GIVE (tier 2: they act outside its memory and workspace); keeping
+        # or removing one an admin gave is fine. Empty for admins.
+        "admin_only_tools": {
+            "tools": tier2,
+            "reason": f"Only an admin can give {name} a tier-2 tool: it acts on the world outside its memory and workspace." if tier2 else None,
+        },
         "admin_only": {
             "available": bool(principal is not None and principal.is_admin()),
             "reason": None

@@ -183,10 +183,12 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     ("PUT", "/api/gateway/accounts/{account_id}/email/address"),
     ("PUT", "/api/gateway/accounts/{account_id}/email/notifications"),
     ("PUT", "/api/gateway/accounts/{account_id}/email/folder"),
-    # Archiving an entity YOU created (round 3 §2): the handler admits only the
-    # caller's own entities (anything else answers 404 like a missing account);
-    # only an admin unarchives (/admin/accounts/{id}/unarchive, admin-gated).
+    # Archiving / unarchiving / switching an entity YOU created (round 3 §2, R16.5 "the
+    # creator configures their entity"): the handlers admit only the caller's own entities
+    # (entity_settings_access.configure_role; anything else answers 404 like a missing account).
     ("POST", "/api/gateway/me/accounts/{account_id}/archive"),
+    ("POST", "/api/gateway/me/accounts/{account_id}/unarchive"),
+    ("PUT", "/api/gateway/me/accounts/{account_id}/active"),
     # Rotating YOUR OWN token (round 3): the handler acts only on the caller's own
     # registry record (resolved from the principal, never from a path or body id).
     ("POST", "/api/gateway/me/token/rotate"),

@@ -171,7 +171,9 @@ def test_delete_and_purge_answer_410_with_the_sentence(gateway) -> None:
 # ---------------------------------------------------------------------------------------
 
 
-def test_creator_archives_own_entity_but_never_unarchives_or_touches_others(world) -> None:
+def test_creator_archives_and_unarchives_own_entity_but_never_touches_others(world) -> None:
+    """R16.5 (operator ruling 2026-10-08): the creator configures their entity — archive AND
+    unarchive (through /me); never someone else's entity nor a user account."""
     c = world["c"]
     assert "aster" in _ids(c.get("/api/gateway/me/accounts", headers=world["alice"]))
 
@@ -181,12 +183,17 @@ def test_creator_archives_own_entity_but_never_unarchives_or_touches_others(worl
 
     r = c.post("/api/gateway/me/accounts/aster/archive", headers=world["alice"])
     assert r.status_code == 200, r.text
-    assert r.json()["archived"] is True and r.json()["actions"]["unarchive"]["available"] is False
-    # A16: archived rows never appear on /me/accounts.
+    assert r.json()["archived"] is True and r.json()["actions"]["unarchive"]["available"] is True
+    # Archived rows appear on /me/accounts only with include_archived.
     assert "aster" not in _ids(c.get("/api/gateway/me/accounts", headers=world["alice"]))
-    # Only an admin unarchives.
+    assert "aster" in _ids(c.get("/api/gateway/me/accounts?include_archived=true", headers=world["alice"]))
+    # The admin route stays an admin's; the creator unarchives through /me.
     assert c.post("/api/gateway/admin/accounts/aster/unarchive", headers=world["alice"]).status_code == 403
-    assert "aster" in _ids(c.get("/api/gateway/admin/accounts?include_archived=true", headers=world["admin"]))
+    assert c.post("/api/gateway/me/accounts/borea/unarchive", headers=world["alice"]).status_code == 404
+    r = c.post("/api/gateway/me/accounts/aster/unarchive", headers=world["alice"])
+    assert r.status_code == 200 and r.json()["archived"] is False and r.json()["active"] is False, r.text
+    # An admin still unarchives anything.
+    assert c.post("/api/gateway/me/accounts/aster/archive", headers=world["alice"]).status_code == 200
     r = c.post("/api/gateway/admin/accounts/aster/unarchive", headers=world["admin"])
     assert r.status_code == 200 and r.json()["archived"] is False and r.json()["active"] is False
 

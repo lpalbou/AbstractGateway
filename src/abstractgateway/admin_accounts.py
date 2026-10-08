@@ -191,6 +191,7 @@ def _user_row(rec: GatewayUserRecord, caller: GatewayPrincipal, records: List[Ga
             "preferences": _act(not archived, REASON_ARCHIVED),
             "rotate": _act(not archived, REASON_ARCHIVED),
             "manage": _act(False, REASON_USER_MANAGE),
+            "configure": _act(False, REASON_USER_MANAGE),
             "archive": archive,
             "unarchive": _act(archived, REASON_NOT_ARCHIVED),
             "suspend": suspend,

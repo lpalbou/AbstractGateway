@@ -1903,6 +1903,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	       touch), kit cards and switches. Phones: the kit makes it a full-screen sheet; the cards go
 	       flat (no card in a card) and the page has one scroll. */
 	    .entity-manage--readonly .entity-admin-only { display: none !important; }
+	    .entity-manage--noconfig .entity-config-only { display: none !important; }
+	    /* A box the caller can't tick (R16.5: a tier-2 tool for the creator) lets its cell take the
+	       hover, so the kit tooltip on the cell says why. */
+	    .entity-matrix td[data-af-tip] input:disabled { pointer-events: none; }
 	    .entity-manage-tabs { flex: 0 0 auto; padding: 0 20px; background: var(--bg-secondary); }
 	    .entity-manage-tabs .af-tabs__list { border-bottom: 0; }
 	    .entity-manage-tabs .af-tabs__tab { font-size: var(--font-size-base); font-weight: 500; }
@@ -2692,7 +2696,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              </div>
 	              <p class="af-row-legend accounts-legend" aria-label="Row tint by account kind">Tint:
 	                <span class="af-row-legend__item"><span class="af-row-legend__swatch af-row-legend__swatch--admin" aria-hidden="true"></span>admin</span>
-	                <span class="af-row-legend__item"><span class="af-row-legend__swatch af-row-legend__swatch--user" aria-hidden="true"></span>user</span>
+	                <span class="af-row-legend__item"><span class="af-row-legend__swatch af-row-legend__swatch--user" aria-hidden="true"></span>member</span>
 	                <span class="af-row-legend__item"><span class="af-row-legend__swatch af-row-legend__swatch--entity" aria-hidden="true"></span>entity</span>
 	              </p>
 	              <!-- Email for everyone (round 8): the three switches sit directly in the card
@@ -3270,6 +3274,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
   </div>
   <!-- Entity Manage (round 3 §12): the kit's af-modal (wide), bound through the islands'
        bindModal like Email/Logs. Opening never navigates away: the Accounts table stays behind.
+       R16.5: its settings (entity-config-only: mind, voice, tools, instructions) are editable by
+       an admin or the entity's creator (GET /entities/{name}/access); its lifecycle acts
+       (entity-admin-only) stay an admin's.
        State on/off = kit switches labelled by the feature; one-shot acts stay buttons; settings
        save themselves ("Saved"); Active, Email, Logs and Archive live on the Accounts row only. -->
   <div id="entity-manage-backdrop" class="af-modal-backdrop" hidden>
@@ -3395,7 +3402,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
             <p id="entity-substrate-current" class="entity-line"></p>
             <!-- The kit's shared provider + model picker (islands mountProviderModelPicker):
                  "Gateway default" (the text route) or its own choice, with reasoning and MTP. -->
-            <div id="entity-mind-picker" class="entity-picker entity-admin-only"></div>
+            <div id="entity-mind-picker" class="entity-picker entity-config-only"></div>
             <p id="entity-substrate-out" class="inline-state" role="status" aria-live="polite"></p>
           </section>
           <section class="af-card entity-card" aria-labelledby="entity-voice-title">
@@ -3405,7 +3412,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
             </div>
             <p id="entity-voice-current" class="entity-line"></p>
             <!-- The kit's shared voice picker (islands mountVoiceSettings). -->
-            <div id="entity-voice-picker" class="entity-picker entity-admin-only"></div>
+            <div id="entity-voice-picker" class="entity-picker entity-config-only"></div>
             <div class="entity-actions">
               <button id="entity-voice-audition" class="secondary" type="button">Hear a sample</button>
             </div>
@@ -3453,7 +3460,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
               <p class="af-card__desc">Which tools it may use in each phase of its day. Each box saves when you tick it.</p>
             </div>
             <div id="entity-manage-matrix" class="entity-matrix"></div>
-            <div id="entity-tools-denyall-row" class="switch-list entity-admin-only">
+            <div id="entity-tools-denyall-row" class="switch-list entity-config-only">
               <button type="button" role="switch" id="entity-tools-denyall" class="af-switch af-switch--row" aria-checked="false" aria-describedby="entity-tools-denyall-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Empty phase means no tools</span><span class="af-switch__desc" id="entity-tools-denyall-desc">On: a phase with every box cleared has no tools at all. Off: it goes back to the default tools.</span></span></button><span id="entity-tools-denyall-reason" class="af-switch__reason" hidden></span>
             </div>
             <p id="entity-tools-out" class="inline-state" role="status" aria-live="polite"></p>
@@ -3499,9 +3506,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         <div class="af-form__field">
           <label class="af-form__label" for="new-roles">Role</label>
           <select id="new-roles">
-            <option value="user" selected>User — runs workflows on their own runtime</option>
+            <option value="user" selected>Member — runs workflows on their own runtime</option>
             <option value="admin">Admin — manages this gateway</option>
-            <option value="readonly">Read-only — can look, cannot change anything</option>
           </select>
           <p id="new-roles-note" class="af-form__help hidden" role="status"></p>
         </div>
@@ -5416,11 +5422,28 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 
 	    // ---- Manage an existing entity ----
 	    const ENTITY_SUBTABS = ["overview", "talk", "lifecycle", "substrate", "tools", "prompt"];
-	    // Entity CONFIG is admin-gated at the server (substrate/tool-policy/prompt/
-	    // state/loop/reembed). A non-admin sees the current values as text; the
-	    // controls that would only answer 403 are not rendered (round 3: no greyed
-	    // controls, no apology sentence). Create + all GETs stay user-level.
+	    // R16.5 (operator ruling 2026-10-08): an entity's SETTINGS (mind, voice, tools per phase,
+	    // instructions) are changed by an admin or the entity's CREATOR — the gateway says which
+	    // (GET /entities/{name}/access, state.manageAccess); its LIFECYCLE acts (sleep/wake,
+	    // personal time, freeze, work order, memory review and rebuild) stay an admin's. Someone
+	    // who may not change a thing sees its current value as text; the controls that would only
+	    // answer 403 are not rendered (round 3: no greyed controls). Create + all GETs stay user-level.
 	    const ENTITY_ADMIN_CONTROLS = ["entity-advanced"];
+	    function entityCanConfigure() {
+	      return Boolean(state.manageAccess && state.manageAccess.can_configure === true);
+	    }
+	    async function loadEntityAccess(name, token) {
+	      try {
+	        const access = await api(`/api/gateway/entities/${encodeURIComponent(name)}/access`);
+	        if (manageStale(token)) return;
+	        if (!access || typeof access.can_configure !== "boolean") throw new Error("GET /entities/{name}/access answered without can_configure (R16.5 seam).");
+	        state.manageAccess = access;
+	      } catch (e) {
+	        if (manageStale(token)) return;
+	        state.manageAccess = null;
+	        inlineState("entity-verify-out", "Who may change its settings could not be read: " + String(e.message || e), "error");
+	      }
+	    }
 	    function applyEntityAdminGating() {
 	      const admin = Boolean(state.principal && state.principal.admin);
 	      for (const id of ENTITY_ADMIN_CONTROLS) {
@@ -5428,6 +5451,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        if (el) el.classList.toggle("hidden", !admin);
 	      }
 	      $("entity-manage-section").classList.toggle("entity-manage--readonly", !admin);
+	      $("entity-manage-section").classList.toggle("entity-manage--noconfig", !entityCanConfigure());
 	      // What stays visible to a non-admin reads, never writes (the voice pickers stay
 	      // usable for "Hear a sample"; only an admin's choice saves).
 	      $("entity-workorder-text").readOnly = !admin;
@@ -5527,11 +5551,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      entityConfirmsHide();
 	      for (const id of ["entity-state-out", "entity-loop-out", "entity-substrate-out", "entity-voice-out", "entity-workorder-out", "entity-tools-out", "entity-prompt-out", "entity-reembed-out", "entity-verify-out"]) _entOut(id, "");
 	      $("entity-manage-name").textContent = name;
+	      state.manageAccess = null;
 	      applyEntityAdminGating();
 	      setEntitySubtab("overview");
 	      // A modal over the Accounts page (round 3 §12): nothing behind it is hidden or scrolled.
 	      backdrop.hidden = false;
 	      state.manageRelease = bindAccountModal(backdrop, closeEntityManage);
+	      // R16.5: who may change its settings decides what renders, so it is read first.
+	      await loadEntityAccess(name, token);
+	      if (manageStale(token)) return;
+	      applyEntityAdminGating();
 	      try {
 	        await Promise.all([
 	          loadEntityOverview(name, token), loadEntitySubstrate(name, token),
@@ -5696,8 +5725,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        state._entityMindValue = s.source === "entity"
 	          ? { provider: s.provider || "", model: s.model || "", reasoning: s.thinking || "", ...(s.speculation !== null && s.speculation !== undefined ? { speculation: s.speculation } : {}) }
 	          : { provider: "", model: "" };
-	        // Admins see the state in the picker itself; the line is for read-only viewers.
-	        _entOut("entity-substrate-current", state.principal && state.principal.admin ? "" : entityMindLine(s));
+	        // Whoever may change it (an admin or its creator) sees the state in the picker itself;
+	        // the line is for everyone else.
+	        _entOut("entity-substrate-current", entityCanConfigure() ? "" : entityMindLine(s));
 	        renderEntityMindPicker(name);
 	      } catch (e) {
 	        if (manageStale(token)) return;
@@ -5767,7 +5797,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        state._entityVoice = v;
 	        state._entityVoiceValue = v.provider ? { provider: v.provider || "", model: v.model || "", voice: v.voice || "" } : {};
 	        let line = "";
-	        if (!(state.principal && state.principal.admin)) {
+	        if (!entityCanConfigure()) {
 	          if (v.provider) line = `Now: its own voice, ${v.provider} · ${v.voice || "?"}.`;
 	          else if (v.effective && v.effective.provider) line = `Now: Gateway default, ${v.effective.provider} · ${v.effective.voice || "the provider's default voice"}.`;
 	          else line = `Now: ${v.note || "no gateway default voice is set, so the speech engine decides."}`;
@@ -5920,8 +5950,21 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        for (const p of phaseIds) grantByPhase[p] = new Set((tp.phases[p] && tp.phases[p].tools) || []);
 	        const box = $("entity-manage-matrix");
 	        renderMatrix(box, phaseIds, phaseLabels, tools, grantByPhase);
-	        const admin = Boolean(state.principal && state.principal.admin);
-	        for (const cb of box.querySelectorAll("input[type=checkbox]")) cb.disabled = !admin;
+	        // R16.5: an admin or its creator ticks the boxes; a creator can't GIVE a tier-2 tool
+	        // (the gateway serves which and why: access.admin_only_tools), only keep or remove it.
+	        const canConfigure = entityCanConfigure();
+	        const adminOnly = (state.manageAccess && state.manageAccess.admin_only_tools) || { tools: [], reason: null };
+	        const adminOnlyTools = new Set(Array.isArray(adminOnly.tools) ? adminOnly.tools : []);
+	        for (const cb of box.querySelectorAll("input[type=checkbox]")) {
+	          const giveOnlyAdmin = adminOnlyTools.has(cb.dataset.tool) && !cb.checked;
+	          cb.disabled = !canConfigure || giveOnlyAdmin;
+	          if (giveOnlyAdmin && canConfigure) {
+	            if (!adminOnly.reason) throw new Error("GET /entities/{name}/access lists admin_only_tools without a reason (R16.5 seam).");
+	            // A disabled box gets no hover: the kit tooltip rides on its cell.
+	            (cb.parentElement || cb).setAttribute("data-af-tip", adminOnly.reason);
+	            cb.setAttribute("aria-description", adminOnly.reason);
+	          }
+	        }
 	      } catch (e) {
 	        if (manageStale(token)) return;
 	        $("entity-manage-matrix").textContent = "Tools unavailable: " + (e.message || e);
@@ -5933,7 +5976,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        if (manageStale(token)) return;
 	        const box = $("entity-prompt-layers");
 	        box.textContent = "";
-	        const admin = Boolean(state.principal && state.principal.admin);
+	        const canConfigure = entityCanConfigure();
 	        const layers = Array.isArray(p.editable) ? p.editable : Object.keys(p.layers || {});
 	        for (const key of layers) {
 	          const fid = `entity-prompt-layer-${key}`.replace(/[^A-Za-z0-9_-]/g, "-");
@@ -5948,7 +5991,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          ta.id = fid;
 	          ta.dataset.layer = key;
 	          ta.rows = 6;
-	          ta.readOnly = !admin;
+	          ta.readOnly = !canConfigure;
 	          ta.value = (p.layers && p.layers[key] && p.layers[key].text) || "";
 	          ta.placeholder = (p.defaults && p.defaults[key]) || "(built-in text)";
 	          ta.setAttribute("aria-describedby", `${fid}-help`);
@@ -12212,8 +12255,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     function userRoleLabel(u) {
       const roles = (u && Array.isArray(u.roles) ? u.roles : []).map((r) => String(r || "").trim().toLowerCase());
       if (roles.includes("admin")) return "Admin";
-      if (roles.includes("readonly")) return "Read-only";
-      return "User";
+      return "Member";
     }
     function userMailboxNote(acc) {
       // DESIGN §5.1 (same words as the terminal console): a per-user override
@@ -12287,10 +12329,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     // Email · OpenAI API · Logs · Workspace (users) | Manage (entities) · Rotate (users) · Archive;
     // no "⋯" menu, no labels). Nothing unavailable is rendered. Archive, never delete.
     const accountsUi = { rows: [], emailRelease: null, logsRelease: null, emailHome: null, logsFor: null, logsKind: "", showArchived: false, archivedSwitch: null };
-    const ACCOUNT_KIND_LABEL = { admin: "Admin", user: "User", entity: "Entity" };
-    const ACCOUNT_ROLE_TITLE = { admin: "Admin — manages this gateway", user: "User — signs in and runs their own agents", entity: "Entity — an AI user with its own memory and mailbox" };
-    // The row contract of accounts-api (DESIGN-v3 §2.2): every key present, `delete` gone.
-    const ACCOUNT_ACTIONS = ["openai_api", "email", "logs", "workspace", "preferences", "rotate", "manage", "archive", "unarchive", "suspend"];
+    // Two roles (operator ruling 2026-10-08): an admin, or a member — a human account (role
+    // `user` on the wire) or an entity account. No viewer, no read-only, no third role.
+    const ACCOUNT_KIND_LABEL = { admin: "Admin", user: "Member", entity: "Entity" };
+    const ACCOUNT_ROLE_TITLE = { admin: "Admin — manages this gateway", user: "Member — signs in and runs their own agents", entity: "Entity — a member that is an AI, with its own memory and mailbox; its creator configures it" };
+    // The row contract of accounts-api (DESIGN-v3 §2.2): every key present, `delete` gone;
+    // `configure` (R16.5): may the caller change the entity's settings (its Manage dialog).
+    const ACCOUNT_ACTIONS = ["openai_api", "email", "logs", "workspace", "preferences", "rotate", "manage", "configure", "archive", "unarchive", "suspend"];
     const ACCOUNTS_SHOW_ARCHIVED_KEY = "abstractgateway.console.accounts.show_archived";
     function accountKindClass(a) {
       if (a.kind === "entity") return "entity";
@@ -12331,8 +12376,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     function accountsReadShowArchived() {
       try { return readStringSetting(ACCOUNTS_SHOW_ARCHIVED_KEY, "0") === "1"; } catch { return false; }
     }
-    // "Show archived" (admins): a kit switch in the header row, off by default, remembered
-    // per viewer (localStorage, try/catch inside the setting helpers).
+    // "Show archived": a kit switch in the header row, off by default, remembered per browser
+    // (localStorage, try/catch inside the setting helpers). Admins see every archived account;
+    // anyone else the archived entities they created (R16.5: their creator unarchives them).
     function renderAccountsArchivedSwitch() {
       const slot = $("accounts-archived-slot");
       if (!slot) throw new Error("Accounts markup has no #accounts-archived-slot (DESIGN-v3 §1.1).");
@@ -12350,10 +12396,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           return true;
         }, (e) => usersMessage(emailErrorText(e), "error"));
       }
-      accountsUi.showArchived = admin && accountsReadShowArchived();
+      accountsUi.showArchived = accountsReadShowArchived();
       afSwitchSet(accountsUi.archivedSwitch, { checked: accountsUi.showArchived });
-      slot.hidden = !admin;
-      accountsUi.archivedSwitch.classList.toggle("hidden", !admin);
+      slot.hidden = false;
+      accountsUi.archivedSwitch.classList.remove("hidden");
+      accountsUi.archivedSwitch.title = admin
+        ? "Archived accounts can't sign in or act; their runs and history are kept."
+        : "Archived entities you created can't act; their memory, runs and history are kept, and you can unarchive them.";
     }
     // Round 12 (R12.1): the host's command sandbox state line under the Accounts head (everyone
     // signed in): the gateway's line verbatim, its sentence as the kit tooltip; never a control.
@@ -12377,7 +12426,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const admin = accountsAdmin();
       renderAccountsArchivedSwitch();
       loadCommandSandboxState();
-      const path = admin ? `/api/gateway/admin/accounts${accountsUi.showArchived ? "?include_archived=true" : ""}` : "/api/gateway/me/accounts";
+      const archivedQuery = accountsUi.showArchived ? "?include_archived=true" : "";
+      const path = admin ? `/api/gateway/admin/accounts${archivedQuery}` : `/api/gateway/me/accounts${archivedQuery}`;
       const out = await api(path);
       if (!out || !Array.isArray(out.accounts)) throw new Error(`GET ${path.replace("/api/gateway", "")} answered without an accounts list (accounts-api seam, DESIGN-v3 §2.2).`);
       accountsUi.rows = out.accounts;
@@ -12388,8 +12438,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       user: (id) => `Archive ${id}? They can't sign in any more. Their runtime, runs and history are kept; you can unarchive later.`,
       entity: (id) => `Archive ${id}? It stops acting and never wakes. Its memory, runs and history are kept; you can unarchive later.`,
     };
-    // Admins: POST /admin/accounts/{id}/archive|unarchive (any account). Anyone else archives an
-    // entity they created through POST /me/accounts/{id}/archive (accounts-api §2.2); only an admin unarchives.
+    // Admins: POST /admin/accounts/{id}/archive|unarchive (any account). Anyone else archives and
+    // unarchives an entity they created through POST /me/accounts/{id}/archive|unarchive (R16.5).
     async function accountArchiveCall(a, verb) {
       const scope = accountsAdmin() ? "admin" : "me";
       const out = await api(`/api/gateway/${scope}/accounts/${encodeURIComponent(a.id)}/${verb}`, { method: "POST" });
@@ -12519,7 +12569,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           });
           activeCell.append(...sw.nodes);
           const setActive = async (next) => {
-            const out = await api(`/api/gateway/admin/accounts/${encodeURIComponent(a.id)}/active`, { method: "PUT", body: JSON.stringify({ active: next }) });
+            // Admins: any account; the creator of an entity: that entity (R16.5, PUT /me/accounts/{id}/active).
+            const scope = accountsAdmin() ? "admin" : "me";
+            const out = await api(`/api/gateway/${scope}/accounts/${encodeURIComponent(a.id)}/active`, { method: "PUT", body: JSON.stringify({ active: next }) });
             if (!out || out.id !== a.id) throw new Error("PUT /admin/accounts/{id}/active answered without the updated account (accounts-api seam, DESIGN-v3 §2.2).");
             Object.assign(a, out);
             return out;
@@ -15076,9 +15128,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       location.reload();
     }
     async function createUser() {
-      // Runs inside the create-user modal. The role is a SELECT over the
-      // accepted vocabulary (admin/user/readonly — entity is door-assigned,
-      // never pickable); the issued token REPLACES the form on success so
+      // Runs inside the create-user modal. The role is a SELECT over the two
+      // roles (admin, or member = `user` on the wire — entity is door-assigned,
+      // never pickable; no viewer / read-only role exists); the issued token REPLACES the form on success so
       // its one showing cannot be lost behind a closed dialog.
       $("user-create-message").textContent = "";
       const payload = {
