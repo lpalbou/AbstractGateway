@@ -5576,7 +5576,10 @@ fn w_refuses_with_a_reason_instead_of_guessing() {
     let s = h.turns(2);
     assert!(s.contains("already installed"), "installed refusal:\n{s}");
     // R14.7: the web console's sentence under the pill (core `summary`).
-    assert!(s.contains("In AbstractVoice's cache."), "installed summary:\n{s}");
+    assert!(
+        s.contains("In AbstractVoice's cache."),
+        "installed summary:\n{s}"
+    );
     assert!(
         h.drain_cmds().is_empty(),
         "no download for an installed model"
