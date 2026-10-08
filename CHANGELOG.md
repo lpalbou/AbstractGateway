@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `GET /api/gateway/voice/defaults`: the speech-input entry carries AbstractCore's served `hint` `{code, sentence, route}` when there is one (on Apple silicon, a faster-whisper route runs on the processor while mlx-whisper runs the same model on the GPU). The console's defaults grid shows the `input.voice` row's `route_hint` sentence; "Apply recommended" switches the route.
+- `GET /api/gateway/voice/defaults`: the speech-input entry carries AbstractCore's served `hint` `{code, sentence, route}` when there is one (on Apple silicon, a faster-whisper route runs on the processor while mlx-whisper runs the same model on the GPU). The console's defaults grid shows the `input.voice` row's `route_hint` sentence verbatim (it names where to act).
 - The fallback transcription model list offers `large-v3-turbo` and covers the `mlx-whisper` engine.
 
 ## [0.13.1] - 2026-10-08

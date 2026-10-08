@@ -20,7 +20,7 @@ pytestmark = pytest.mark.basic
 
 HINT = {
     "code": "apple_gpu_engine",
-    "sentence": "Runs on the processor: faster-whisper has no Apple GPU backend. mlx-whisper runs large-v3 on this Mac's GPU, about 15 times faster.",
+    "sentence": "Runs on the processor: faster-whisper has no Apple GPU backend. mlx-whisper runs large-v3 on this Mac's GPU, many times faster. Apply recommended (Multimodal page in the gateway console, Routes in the core console) switches it.",
     "route": {"key": "input.voice", "provider": "mlx-whisper", "model": "large-v3"},
 }
 
@@ -35,17 +35,24 @@ def _run(expr: str) -> object:
     return json.loads(proc.stdout)
 
 
-def test_the_served_sentence_is_shown_verbatim_with_the_apply_pointer() -> None:
+def _text(markup: str) -> str:
+    import html
+    import re
+
+    return html.unescape(re.sub(r"<[^>]+>", "", markup))
+
+
+def test_the_served_sentence_is_shown_byte_for_byte_and_nothing_else() -> None:
     markup = _run(f"routeHintMarkup({json.dumps({'key': 'input.voice', 'route_hint': HINT})})")
-    assert HINT["sentence"].replace("'", "&#39;") in markup
-    assert markup.endswith("Apply recommended switches it.</div>")
+    assert _text(markup) == HINT["sentence"]
     assert 'data-hint="apple_gpu_engine"' in markup and "capability-route-hint" in markup
 
 
-def test_a_hint_without_a_route_has_no_apply_pointer() -> None:
-    hint = dict(HINT, code="apple_gpu_engine_not_installed", route=None)
+def test_a_hint_without_a_route_is_also_shown_verbatim() -> None:
+    hint = dict(HINT, code="apple_gpu_engine_not_installed", route=None,
+                sentence="Runs on the processor: faster-whisper has no Apple GPU backend. mlx-whisper runs Whisper on this Mac's GPU, many times faster; it comes with the abstractcore[apple] setting.")
     markup = _run(f"routeHintMarkup({json.dumps({'route_hint': hint})})")
-    assert "Apply recommended" not in markup and "capability-route-hint" in markup
+    assert _text(markup) == hint["sentence"]
 
 
 def test_no_hint_no_markup() -> None:
