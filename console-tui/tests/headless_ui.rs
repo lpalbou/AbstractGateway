@@ -559,8 +559,8 @@ fn boots_to_connection_wizard_step() {
         strip.find("Workflows"),
     );
     assert!(c.is_some() && c < a && a < w, "nav strip order:\n{screen}");
-    assert!(screen.contains("Gateway URL"), "url field:\n{screen}");
-    assert!(screen.contains("Admin token"), "token field:\n{screen}");
+    assert!(screen.contains("Gateway address"), "url field:\n{screen}");
+    assert!(screen.contains("Token "), "token field:\n{screen}");
     assert!(
         screen.contains("not connected"),
         "honest initial state:\n{screen}"
@@ -3332,7 +3332,7 @@ fn reprobe_resets_cached_domains() {
     h.goto_screen(0);
     h.ui.wizard.set(true);
     h.turns(2);
-    click_field(&mut h, "Gateway URL");
+    click_field(&mut h, "Gateway address");
     h.type_text("\r");
     h.turns(2);
     assert!(
@@ -4911,7 +4911,7 @@ fn gateway_reset_forgets_the_chosen_runtime() {
     h.goto_screen(0);
     h.ui.wizard.set(true);
     h.turns(2);
-    click_field(&mut h, "Gateway URL");
+    click_field(&mut h, "Gateway address");
     h.type_text("\r");
     h.turns(2);
     assert!(
@@ -9004,17 +9004,11 @@ fn a_url_the_person_typed_never_follows_the_pointer() {
             // Typing in the Gateway URL field (it has the caret while
             // disconnected) makes the address the person's.
             "edit" => h.type_text("3"),
-            // Probe gateway: the person confirms the address shown.
+            // Sign in: the person confirms the address shown.
             _ => {
                 let s = h.turns(1);
-                let row = find_row(&s, "Probe gateway");
-                let col = s
-                    .lines()
-                    .nth(row - 1)
-                    .unwrap()
-                    .find("Probe gateway")
-                    .unwrap()
-                    + 3;
+                let row = find_row(&s, " Sign in ");
+                let col = s.lines().nth(row - 1).unwrap().find(" Sign in ").unwrap() + 3;
                 click_at(&mut h, col, row);
             }
         }
