@@ -272,8 +272,22 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
     GatewayRoutePolicy(
         resource="entities",
         reason_code="admin_required",
-        pattern=r"^/api/gateway/entities/[^/]+/(state|reembed|tool-policy|prompt|substrate|capability-map|skills|voice|tasks|tasks/[^/]+/status|work-order|candidates/[^/]+/(promote|reject)|personal-grant|maintenance-window|loop/start|loop/stop|workspace/mounts)$",
+        pattern=r"^/api/gateway/entities/[^/]+/(state|reembed|capability-map|tasks|tasks/[^/]+/status|work-order|candidates/[^/]+/(promote|reject)|personal-grant|maintenance-window|loop/start|loop/stop|workspace/mounts)$",
         methods=("POST", "PUT", "PATCH", "DELETE"),
+    ),
+    # An entity's SETTINGS (operator ruling 2026-10-08, R16.5 "the creator configures their
+    # entity"): its mind (substrate), voice, tools per phase, instructions (prompt) and skills are
+    # changed by an admin OR the entity's creator, within what the admin authorised; never by
+    # another member nor by the entity itself. The middleware lets admins through; everyone else
+    # is decided by `entity_settings_access.entity_settings_guard` (a dependency of both entity
+    # routers) with the sentence "Only an admin or <name>'s creator can …".
+    GatewayRoutePolicy(
+        resource="entities",
+        reason_code="admin_or_creator_required",
+        pattern=r"^/api/gateway/entities/[^/]+/(tool-policy|prompt|substrate|skills|voice)$",
+        methods=("POST", "PUT", "PATCH", "DELETE"),
+        admin_required=False,
+        required_role="admin_or_creator",
     ),
     # Spark TEMPLATE mutations (operator directive 2026-07-13: create/edit
     # versioned templates). A template seeds EVERY entity summoned from it,

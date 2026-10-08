@@ -1325,6 +1325,10 @@ class GatewaySecurityMiddleware:
                     return
 
             requirement = self._route_authorization_requirement(path, method)
+            if requirement is not None and requirement.get("required_role") == "admin_or_creator":
+                # An entity's settings (R16.5): admins pass here; the entity routers'
+                # `entity_settings_guard` decides everyone else (the entity's creator may).
+                requirement = None
             if requirement is not None:
                 decision = authorize_gateway_principal(
                     principal,

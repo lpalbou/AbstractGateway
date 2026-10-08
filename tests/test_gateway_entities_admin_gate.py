@@ -31,12 +31,11 @@ pytest.importorskip("yaml")
 # Every entity MUTATION route named by the signed N1 finding, plus
 # workspace/mounts (host-filesystem exposure — same rule that admin-gates
 # /api/gateway/files). Method + path + a minimal body that would parse.
+# The settings routes (tool-policy, prompt, substrate, voice, skills) are admin-OR-CREATOR since
+# R16.5: their authz matrix lives in test_r16w6_entity_settings_authz.py.
 _MUTATION_CASES = [
     ("POST", "/api/gateway/entities/Castor/state", {"state": "asleep"}),
     ("POST", "/api/gateway/entities/Castor/reembed", {"model": "x", "confirm_token": "y"}),
-    ("PUT", "/api/gateway/entities/Castor/tool-policy", {"policy": {"visit": []}}),
-    ("PUT", "/api/gateway/entities/Castor/prompt", {"overlay": {"operator": "hi"}}),
-    ("PUT", "/api/gateway/entities/Castor/substrate", {"provider": "p", "model": "m"}),
     ("POST", "/api/gateway/entities/Castor/loop/start", {}),
     ("POST", "/api/gateway/entities/Castor/loop/stop", {}),
     ("PUT", "/api/gateway/entities/Castor/workspace/mounts", {"mounts": []}),
@@ -215,4 +214,20 @@ def test_policy_rows_cover_the_live_mutation_route_table() -> None:
                 f"{method} {path} is a NEW entity mutation route with no policy row — "
                 "add it to GATEWAY_ROUTE_POLICIES (admin) or the explicit user-level allowlist in this test"
             )
-            assert requirement.required_role == "admin"
+            # R16.5: an entity's SETTINGS are admin-or-creator (decided by the entity routers'
+            # entity_settings_guard); every other entity mutation stays admin-only.
+            expected = "admin_or_creator" if (method, path) in _CREATOR_SETTINGS_ROUTES else "admin"
+            assert requirement.required_role == expected, f"{method} {path}: {requirement.required_role}"
+
+
+# R16.5 (operator ruling 2026-10-08, "the creator configures their entity"): the settings routes an
+# entity's creator may also use. Lifecycle / maintenance acts (state, loop, personal-grant,
+# work-order, tasks, candidates, reembed, maintenance-window, capability-map, workspace/mounts)
+# stay admin-only.
+_CREATOR_SETTINGS_ROUTES = {
+    ("PUT", "/api/gateway/entities/{name}/substrate"),
+    ("PUT", "/api/gateway/entities/{name}/voice"),
+    ("PUT", "/api/gateway/entities/{name}/tool-policy"),
+    ("PUT", "/api/gateway/entities/{name}/prompt"),
+    ("PUT", "/api/gateway/entities/{name}/skills"),
+}
