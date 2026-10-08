@@ -25,6 +25,7 @@ from fastapi import APIRouter, HTTPException, Request
 from ..account_preferences import (
     DECLARED,
     DEFAULT_WORKFLOW,
+    TIME_ZONE,
     PreferenceError,
     app_interfaces,
     app_row,
@@ -33,6 +34,8 @@ from ..account_preferences import (
     stored_preferences,
     write_preferences,
 )
+
+from ..automation_schedule import preferences_time_zone_block
 
 router = APIRouter(prefix="/gateway", tags=["accounts"])
 
@@ -176,10 +179,12 @@ class _Context:
             "preferences": view,
             "declared": {k: dict(v) for k, v in DECLARED.items()},
             "apps": apps,
+            # R16.1: the account's time zone (null = this host's zone, the gateway default).
+            "time_zone": preferences_time_zone_block(view[TIME_ZONE]),
         }
 
 
-@router.get("/accounts/{account}/preferences", summary="An account's client preferences (default workflow per app)")
+@router.get("/accounts/{account}/preferences", summary="An account's client preferences (default workflow per app, time zone)")
 async def get_account_preferences(request: Request, account: str) -> Dict[str, Any]:
     """`me`, or another account (an admin; an entity's creator). See the module docstring."""
     caller, tenant, user, is_self = _target(request, account)
@@ -192,8 +197,9 @@ async def get_account_preferences(request: Request, account: str) -> Dict[str, A
 
 @router.put("/accounts/{account}/preferences", summary="Change an account's client preferences")
 async def put_account_preferences(request: Request, account: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Body `{"default_workflow": {<interface>: "bundle:flow" | null}}`: named interfaces replace
-    (null = follow the gateway default), unnamed keep. Unknown keys, unknown interfaces and
+    """Body `{"default_workflow": {<interface>: "bundle:flow" | null}, "time_zone": "<IANA>" | null}`
+    (each key optional): named interfaces replace (null = follow the gateway default), unnamed keep;
+    `time_zone` null = this host's zone. Unknown keys, unknown interfaces and
     workflows the account may not run are refused (400 preference_refused, a sentence)."""
     caller, tenant, user, is_self = _target(request, account)
     gw = _gw()

@@ -14,9 +14,12 @@ Declared keys:
   ``agents.default_workflow.<interface>`` (agent_defaults.py, "Default workflow per app") and is
   never copied here. A chosen workflow is stored version-less, so it follows new versions.
   The interfaces are the app rows of ``agent_defaults.INTERFACE_TABLE`` (group "apps").
+- ``time_zone`` (R16.1): an IANA zone name (``"Europe/Paris"``) or ``null`` = follow the gateway
+  default, which is THIS host's zone (automation_schedule.host_time_zone). Daily, weekly and
+  monthly automations are created on the owner's time zone; summaries show times in it.
 
 Storage: the runtime-config store (``runtime_config.json``), top-level key
-``account_preferences`` = ``{"<tenant>:<user>": {"default_workflow": {iface: value}}}``, written
+``account_preferences`` = ``{"<tenant>:<user>": {"default_workflow": {iface: value}, "time_zone": "<IANA>"}}``, written
 under the store lock; an account with nothing set has no entry.
 
 This module holds the store and the payload rules; routes/account_preferences.py binds them to
@@ -39,6 +42,7 @@ from .agent_defaults import (
 
 STORE_KEY = "account_preferences"
 DEFAULT_WORKFLOW = "default_workflow"
+TIME_ZONE = "time_zone"
 GATEWAY_DEFAULT_LABEL = "Gateway default ({name})"
 GATEWAY_DEFAULT_UNAVAILABLE_LABEL = "Gateway default (unavailable)"
 
@@ -48,6 +52,10 @@ DECLARED: Dict[str, Dict[str, str]] = {
         "label": "Default workflow",
         "help": "The workflow each app runs for this account unless a conversation picks another. "
         "Gateway default follows the admin's Default workflow per app.",
+    },
+    TIME_ZONE: {
+        "label": "Time zone",
+        "help": "Daily, weekly and monthly automations run on this clock. Gateway default follows this computer's time zone.",
     },
 }
 
@@ -94,7 +102,38 @@ def _clean(entry: Any) -> Dict[str, Any]:
         dw = {str(k): str(v) for k, v in mapping.items() if str(k) in known and isinstance(v, str) and v.strip()}
         if dw:
             out[DEFAULT_WORKFLOW] = dw
+    zone = entry.get(TIME_ZONE)
+    if isinstance(zone, str) and _valid_zone(zone):
+        out[TIME_ZONE] = zone.strip()
     return out
+
+
+def _valid_zone(value: str) -> bool:
+    from abstractruntime.triggers.protocol import TriggerConfigError
+    from abstractruntime.triggers.schedule import validate_time_zone
+
+    try:
+        validate_time_zone(value)
+    except TriggerConfigError:
+        return False
+    return True
+
+
+def normalize_time_zone(value: Any) -> Optional[str]:
+    """``None``/"" -> None (gateway default); otherwise an IANA zone this host knows, else refused."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if not isinstance(value, str) or not _valid_zone(value):
+        raise PreferenceError(
+            f"time_zone = {value!r} refused: use an IANA time zone name such as 'Europe/Paris', or null for the gateway default.",
+            key=TIME_ZONE,
+        )
+    return value.strip()
+
+
+def stored_time_zone(data_dir: Path, *, tenant_id: str, user_id: str) -> Optional[str]:
+    """The account's saved time zone, or None (= the gateway default)."""
+    return stored_preferences(data_dir, tenant_id=tenant_id, user_id=user_id).get(TIME_ZONE)
 
 
 def stored_preferences(data_dir: Path, *, tenant_id: str, user_id: str) -> Dict[str, Any]:
@@ -107,9 +146,12 @@ def stored_preferences(data_dir: Path, *, tenant_id: str, user_id: str) -> Dict[
 
 
 def preferences_view(stored: Mapping[str, Any]) -> Dict[str, Any]:
-    """Every declared key with every app interface: ``{"default_workflow": {iface: value|null}}``."""
+    """Every declared key: ``{"default_workflow": {iface: value|null}, "time_zone": value|null}``."""
     dw = stored.get(DEFAULT_WORKFLOW) if isinstance(stored.get(DEFAULT_WORKFLOW), Mapping) else {}
-    return {DEFAULT_WORKFLOW: {iface: (dw.get(iface) or None) for iface in app_interfaces()}}
+    return {
+        DEFAULT_WORKFLOW: {iface: (dw.get(iface) or None) for iface in app_interfaces()},
+        TIME_ZONE: stored.get(TIME_ZONE) or None,
+    }
 
 
 def normalize_workflow_value(iface: str, value: Any) -> Optional[str]:
@@ -133,9 +175,10 @@ def normalize_workflow_value(iface: str, value: Any) -> Optional[str]:
     return format_workflow_ref(bid, None, fid, scope)
 
 
-def check_changes(changes: Any) -> Dict[str, Dict[str, Optional[str]]]:
+def check_changes(changes: Any) -> Dict[str, Any]:
     """Shape check of a PUT body (no workflow resolution): only declared keys, only app
-    interfaces, string-or-null values. Returns ``{"default_workflow": {iface: value|None}}``."""
+    interfaces, string-or-null values. Returns ``{"default_workflow": {iface: value|None},
+    "time_zone": value|None}`` (only the keys sent)."""
     if not isinstance(changes, Mapping):
         raise PreferenceError("Send an object, e.g. {\"default_workflow\": {\"abstractcode.agent.v1\": null}}.")
     body = {k: v for k, v in changes.items() if k not in ("ok", "account")}
@@ -144,7 +187,9 @@ def check_changes(changes: Any) -> Dict[str, Dict[str, Optional[str]]]:
         declared = ", ".join(sorted(DECLARED))
         what = f"Unknown preference '{unknown[0]}'" if len(unknown) == 1 else "Unknown preferences " + ", ".join(f"'{k}'" for k in unknown)
         raise PreferenceError(f"{what}: this gateway declares {declared}.", key=unknown[0])
-    out: Dict[str, Dict[str, Optional[str]]] = {}
+    out: Dict[str, Any] = {}
+    if TIME_ZONE in body:
+        out[TIME_ZONE] = normalize_time_zone(body[TIME_ZONE])
     if DEFAULT_WORKFLOW in body:
         mapping = body[DEFAULT_WORKFLOW]
         if not isinstance(mapping, Mapping):
@@ -200,6 +245,11 @@ def write_preferences(
                 entry[DEFAULT_WORKFLOW] = dw
             else:
                 entry.pop(DEFAULT_WORKFLOW, None)
+        if TIME_ZONE in checked:
+            if checked[TIME_ZONE] is None:
+                entry.pop(TIME_ZONE, None)
+            else:
+                entry[TIME_ZONE] = checked[TIME_ZONE]
         if entry:
             block[key] = entry
         else:

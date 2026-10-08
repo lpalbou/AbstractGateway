@@ -235,6 +235,8 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     ("PATCH", "/api/gateway/automations/{automation_id}"),
     ("POST", "/api/gateway/automations/{automation_id}/commands"),
     ("POST", "/api/gateway/automations/{automation_id}/discuss"),
+    # R16.1: a stateless preview of the caller's own trigger (nothing stored).
+    ("POST", "/api/gateway/automations/schedule-preview"),
     ("POST", "/api/gateway/runs/{run_id}/chat"),
     ("POST", "/api/gateway/runs/{run_id}/chat_threads"),
     ("POST", "/api/gateway/runs/{run_id}/summary"),

@@ -63,6 +63,7 @@ from ..automation_defaults import (
 )
 from ..automation_errors import AutomationError
 from ..automation_pause_reasons import clear_pause_reason, pause_reason
+from ..automation_schedule import first_run_sentence, is_schedule_v2, owner_time_zone, schedule_fields, trigger_time_zone, with_time_zone
 from ..run_retention import resolve_gateway_run_workspace, write_gateway_workspace_marker
 from ..run_workspace_guard import guard_run_vars
 from ..service import get_gateway_service
@@ -238,6 +239,11 @@ def _trigger_summary(envelope: Dict[str, Any], definition_trigger: Dict[str, Any
         return f"manual: run now ({payload.get('command_id')})"
     if source_id == "schedule":
         config = definition_trigger.get("config") if isinstance(definition_trigger.get("config"), dict) else {}
+        if is_schedule_v2(definition_trigger):
+            from ..automation_schedule import rule_text
+
+            zone = trigger_time_zone(definition_trigger, "UTC")
+            return f"schedule: {rule_text(definition_trigger, zone)}, tick {payload.get('tick')}"
         cadence = f"{_interval_label(config['every'])} (UTC)" if config.get("every") else "once"
         return f"schedule: {cadence}, tick {payload.get('tick')}"
     return f"{source_id}@{envelope.get('source_version')}"
@@ -300,7 +306,15 @@ def _capabilities(status: str) -> List[str]:
     return [c for c in AUTOMATION_SUMMARY_CAPABILITIES if c != "unarchive"]
 
 
-def automation_summary_row(svc: Any, principal: Any, controller: Any) -> Dict[str, Any]:
+def principal_time_zone(svc: Any, principal: Any) -> str:
+    """The automation owner's (= this principal's) time zone: the account preference, else this
+    host's zone (R16.1)."""
+    tenant, user = _principal_tuple(principal)
+    root_data_dir = getattr(svc.config, "root_data_dir", None) or svc.config.data_dir
+    return owner_time_zone(root_data_dir, tenant_id=tenant, user_id=user or "admin")
+
+
+def automation_summary_row(svc: Any, principal: Any, controller: Any, *, owner_zone: Optional[str] = None) -> Dict[str, Any]:
     """Contract F `AutomationSummary` of one controller run."""
     runtime = svc.host.runtime
     base = automation_summary(controller)
@@ -331,6 +345,8 @@ def automation_summary_row(svc: Any, principal: Any, controller: Any) -> Dict[st
     }
     if out["next_fire_at"] is None:
         del out["next_fire_at"]
+    # R16.1 A4: the served next run + THE sentence every client shows (never computed client-side).
+    out.update(schedule_fields(base["trigger"], out.get("next_fire_at"), owner_zone or principal_time_zone(svc, principal)))
     if status == "paused":
         # Why the GATEWAY paused it (e.g. its workflow was made unavailable, DESIGN-v3 §13.4).
         reason = pause_reason(svc.config.data_dir, str(controller.run_id))
@@ -356,7 +372,7 @@ def automation_summary_row(svc: Any, principal: Any, controller: Any) -> Dict[st
     return out
 
 
-def legacy_summary_row(run: Any, run_store: Any) -> Dict[str, Any]:
+def legacy_summary_row(run: Any, run_store: Any, *, owner_zone: Optional[str] = None) -> Dict[str, Any]:
     """A legacy `scheduled:*` wrapper root, projected read-only (`legacy: true`)."""
     legacy = adopt_legacy_schedule_projection(run)
     config = dict(legacy["trigger"].get("config") or {})
@@ -384,6 +400,11 @@ def legacy_summary_row(run: Any, run_store: Any) -> Dict[str, Any]:
         out["workspace_root"] = legacy_ws
     if run.status == RunStatus.WAITING and run.waiting is not None and run.waiting.until:
         out["next_fire_at"] = run.waiting.until
+    if owner_zone is None:
+        from ..automation_schedule import host_time_zone
+
+        owner_zone = host_time_zone()
+    out.update(schedule_fields(out["trigger"], out.get("next_fire_at"), owner_zone))
     if children:
         # The wrapper's latest child is its last occurrence (index = ordinal).
         child = children[-1]
@@ -610,6 +631,9 @@ def _create(svc: Any, principal: Any, body: CreateAutomationBody) -> Dict[str, A
         if not title:
             raise AutomationError(422, "invalid_request", "title is required", field="title")
     automation_id = automation_id_for(tenant=tenant, user=user, request_id=str(body.request_id))
+    # R16.1 A2: a schedule@2 rule without a time zone runs on the OWNER's account time zone.
+    owner_zone = principal_time_zone(svc, principal)
+    trigger = with_time_zone(trigger, owner_zone)
     target["input_data"] = _guarded_input_data(svc, principal, target["input_data"], automation_id=automation_id)
     request: Dict[str, Any] = {
         "request_id": body.request_id,
@@ -641,7 +665,7 @@ def _create(svc: Any, principal: Any, body: CreateAutomationBody) -> Dict[str, A
         if worker is not None:
             worker.nudge()
     controller = load_automation_controller(svc, created_id)
-    return {"automation_id": created_id, "revision": revision, "summary": automation_summary_row(svc, principal, controller)}
+    return {"automation_id": created_id, "revision": revision, "summary": automation_summary_row(svc, principal, controller, owner_zone=owner_zone)}
 
 
 @router.post("/automations")
@@ -652,6 +676,56 @@ async def create_automation_route(request: Request, body: CreateAutomationBody) 
     out = await _off_the_event_loop(_create, svc, principal, body)
     _audit_automation(request, automation_id=str((out or {}).get("automation_id") or ""), command="automation.create")
     return out
+
+
+class SchedulePreviewBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    trigger: Dict[str, Any]
+
+
+def _schedule_preview(svc: Any, principal: Any, body: SchedulePreviewBody, now_iso: Optional[str] = None) -> Dict[str, Any]:
+    """What a trigger WOULD do if saved now: the normalized binding (time zone filled exactly as a
+    create fills it), the sentences and the first run — computed by the runtime adapter, never by
+    the dialog. Refusals are the create's 422 shape (same validator)."""
+    from abstractruntime.automations.models import validate_trigger_request
+    from abstractruntime.automations.controller import adapter_kind
+    from abstractruntime.triggers.registry import get_trigger_adapter
+
+    now_iso = now_iso or _now_iso()
+    owner_zone = principal_time_zone(svc, principal)
+    trigger = with_time_zone(body.trigger, owner_zone)
+    try:
+        binding = validate_trigger_request(trigger, now=now_iso, binding_id="preview")
+    except RuntimeAutomationError as e:
+        raise _domain_error(e)
+    adapter = get_trigger_adapter(binding["source_id"], binding["source_version"])
+    next_run_at: Optional[str] = None
+    if adapter_kind(adapter) == "time":
+        wait = adapter.prepare(binding, state=adapter.initial_state(binding["config"]), now=now_iso)
+        if wait.get("kind") == "until":
+            next_run_at = str(wait["until"])
+    fields = schedule_fields(binding, next_run_at, owner_zone)
+    now_dt = datetime.datetime.fromisoformat(now_iso)
+    zone = fields["time_zone"]
+    return {
+        "trigger": {k: binding[k] for k in ("source_id", "source_version", "config")},
+        "time_zone": zone,
+        "schedule_rule_text": fields["schedule_rule_text"],
+        "schedule_text": fields["schedule_text"],
+        "next_run_at": fields.get("next_run_at"),
+        "next_run_local": fields.get("next_run_local"),
+        "first_run_sentence": first_run_sentence(binding, zone, next_run_at, now=now_dt),
+    }
+
+
+@router.post("/automations/schedule-preview")
+async def schedule_preview_route(request: Request, body: SchedulePreviewBody) -> Dict[str, Any]:
+    """Preview a trigger before saving it (R16.1): `{trigger, time_zone, schedule_rule_text,
+    schedule_text, next_run_at, next_run_local, first_run_sentence}`. Nothing is stored."""
+    principal = _principal_from_request(request)
+    svc = get_gateway_service()
+    return await _off_the_event_loop(_schedule_preview, svc, principal, body)
 
 
 def _audit_automation(request: Request, *, automation_id: str, command: str) -> None:
@@ -693,6 +767,7 @@ def _list(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str]
         # Archived automations leave the default listing (archived_only=true lists them).
         wanted = [s for s in AUTOMATION_STATUSES if s != "archived"]
     run_store = svc.host.run_store
+    owner_zone = principal_time_zone(svc, principal)
     try:
         # The status filter rides the runtime's page so a page is never short of what it hides.
         page = list_automations(run_store, status=list(wanted), cursor=cursor, limit=limit)
@@ -702,7 +777,7 @@ def _list(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str]
     for row in page.items:
         controller = run_store.load(str(row["automation_id"]))
         try:
-            summary = automation_summary_row(svc, principal, controller)
+            summary = automation_summary_row(svc, principal, controller, owner_zone=owner_zone)
         except (RuntimeAutomationError, LookupError, ValueError, KeyError, TypeError) as e:
             # One malformed row must never take the whole list down (review 47 P2-1).
             logger.warning("automations list: skipping malformed automation %s: %s", row.get("automation_id"), e)
@@ -719,7 +794,7 @@ def _list(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str]
             run = run_store.load(str(row["run_id"]))
             if run is None:
                 continue
-            summary = legacy_summary_row(run, run_store)
+            summary = legacy_summary_row(run, run_store, owner_zone=owner_zone)
             if wanted is None or summary["status"] in wanted:
                 items.append(summary)
     return {"items": items, "next_cursor": page.next_cursor, "archived_automations": _archived_count(svc, principal, run_store)}
@@ -797,6 +872,12 @@ def _check_revise(svc: Any, principal: Any, controller: Any, payload: Dict[str, 
     if not isinstance(changes, dict) or not changes:
         raise AutomationError(422, "invalid_request", "changes must be a non-empty object", field="changes", command_id=command_id)
     changes = dict(changes)
+    if "trigger" in changes and is_schedule_v2(changes["trigger"]):
+        # R16.1 A2: a revised schedule@2 rule without a time zone keeps the binding's zone (an
+        # older binding without one: the owner's account time zone).
+        old = definition.get("trigger") if isinstance(definition.get("trigger"), dict) else {}
+        keep = (old.get("config") or {}).get("time_zone") if is_schedule_v2(old) else None
+        changes["trigger"] = with_time_zone(changes["trigger"], keep or principal_time_zone(svc, principal))
     if "target" in changes:
         target = _resolve_target(svc, principal, changes["target"], field="changes.target")
         target.pop("_bundle")
