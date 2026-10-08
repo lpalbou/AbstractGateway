@@ -1,5 +1,14 @@
 # Changelog — abstractgateway-console
 
+## Unreleased
+
+### Added
+- **Preferences: Time zone** (the web console's row, its words): the account's time zone as the last row of
+  **Preferences — <id>**; `Enter` lists **Gateway default (<zone>)** then the gateway's time zone names, typing
+  filters them ("Search time zones"), `Enter` saves at once ("Saved." / "Not saved." with the gateway's
+  reason). Needs the gateway's `time_zone` block (AbstractGateway with R16.1); an answer without it says so.
+  Tests: `tests/r16w2_time_zone.rs`.
+
 ## 0.15.1 (2026-10-08)
 
 Needs AbstractGateway 0.13.1 or later for **Preferences** (`/accounts/{id}/preferences`) and the **last restart**

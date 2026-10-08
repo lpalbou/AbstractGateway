@@ -5,6 +5,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Console → Accounts → **Preferences**: the account's **Time zone** (R16.1), the kit's time-zone picker (islands `mountTimeZonePicker`, ui-kit 0.8.7): label, help and the IANA names come from the gateway's `time_zone` block, **Gateway default (<zone>)** first (= `null`, this computer's zone), type to search, a pick is one `PUT {"time_zone": …}` at once ("Saved." / "Not saved." + the gateway's sentence). A preferences answer without the block fails loud in the modal. Islands and themes re-synced from the kit. Tests: `tests/test_r16w2_console_time_zone_browser.py`.
+
 ## [0.13.1] - 2026-10-08
 
 Requires AbstractRuntime 0.9.1, AbstractCore 2.25.1 and AbstractAgent 0.3.19 (installed automatically). The terminal console `abstractgateway-console` 0.15.1 matches this release; see [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md).
