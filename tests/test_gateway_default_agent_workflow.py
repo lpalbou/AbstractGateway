@@ -485,7 +485,7 @@ const out = {{
   warns, broken: html.includes("Broken: coding-agent 0.2.8 is no longer installed"),
   notAvailable: html.includes("Not available"),
   save: html.includes("data-agent-defaults-save") || html.includes(">Save"),
-  otherFolded: other.includes("Other workflow types (1)") && other.includes("Adversarial review"),
+  otherSection: other.includes(">Other workflow types</h3>") && other.includes("Adversarial review"),
 }};
 agentDefStore.data = {{ writable: false, agents: block }};
 const ro = agentDefaultsMarkup();
@@ -501,7 +501,7 @@ console.log(JSON.stringify([out]));
     assert out == {
         "names": True, "ids": True, "help": 4, "builtin": True, "clients": False, "scope": True, "none": True,
         "warns": 1, "broken": True,
-        "notAvailable": False, "save": False, "otherFolded": True, "readonly": True, "missingLabel": True,
+        "notAvailable": False, "save": False, "otherSection": True, "readonly": True, "missingLabel": True,
     }, out
 
 

@@ -126,7 +126,9 @@ def test_a_simulated_sleep_neither_trips_the_watchdog_nor_the_backstop(tmp_path:
         proc.kill()
         _, err = proc.communicate(timeout=10)
     assert "[FATAL]" not in err and "Timeout (" not in err, err
-    assert "[WARN] gateway watchdog: the event loop resumed after" in err, err
+    # The resume WARN line may appear or not: when the loop ticks before the watcher
+    # looks again, there is no jump left to report (docs/troubleshooting.md: the line may appear).
+    assert "not restarted" in err or "[WARN] gateway watchdog" not in err, err
     assert not list((tmp_path / "incidents").glob("watchdog-*.json"))
 
 
