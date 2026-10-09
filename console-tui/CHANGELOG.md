@@ -30,10 +30,14 @@ actions, switches, choices, dialogs — and every control is still reachable fro
   (`Ctrl+U`) are links you can click.
 ### Added
 - **Named API keys on the OpenAI API page** (AbstractGateway's named keys for `/v1`): **New key** asks for a
-  **Name** and shows the key once with **Copy** / **Done**; **Your API keys** lists name, created, last used (time
+  **Name**, copies the key to the clipboard at once (the engine's clipboard: OSC 52, `pbcopy` / `wl-copy` / `xclip`
+  when the terminal has none) and keeps it shown with **Copy** ("Copied" for 2 s) / **Hide** until Hide — a resize or
+  a trip to another page never loses it; each row of **Your API keys** has **Reveal** (`⦿`) and **Copy** (the owner's key
+  again, audited; refused ones say why, `v` / `y`), and an admin gets the **API keys can be revealed by their owner**
+  toggle; the examples carry the shown key (`<your key>` before); **Your API keys** lists name, created, last used (time
   and address, or "Never used") and fingerprint, with **Revoke** → "Revoke “<name>”? Apps using it stop working at
-  once. …" [Revoke] [Cancel]. The page no longer shows, copies or rotates your gateway token (`v` / `y` are gone;
-  `n` makes a named key, `d` revokes the selected one). Recent requests name the key under the client. On Accounts,
+  once. …" [Revoke] [Cancel]. The page no longer shows, copies or rotates your gateway token (`v` / `y` now reveal / copy the
+  selected named key; `n` makes a named key, `d` revokes the selected one). Recent requests name the key under the client. On Accounts,
   the **OpenAI API — <id>** dialog lists that account's keys (never a key) with **Revoke**. Needs an AbstractGateway
   with `/api/gateway/me/openai-keys`.
 - **The creator configures their entity** (R16.5, gateway 0.14+). Manage's settings saves (mind, voice, tools per phase, instructions) follow the gateway's `GET /entities/{name}/access`: an admin or the entity's creator saves; anyone else gets the gateway's sentence in the card and nothing is sent; an unread answer refuses with the reason (never guessed). A creator can't give a tier-2 tool (the gateway's `admin_only_tools` sentence before the write). Manage's lead says what is the creator's and what stays an admin's (the gateway's `admin_only` sentence). Accounts: the Active toggle, Archive and Unarchive of an entity you created go through `/me/accounts/{id}/…`; **Show archived** (`h`) is offered to members (`/me/accounts?include_archived=true`). Tests: `tests/r16w6_creator.rs` (clicks, meta-test over the creator's rows, wording fixture `r15_web_wording_accounts_roles.json`).

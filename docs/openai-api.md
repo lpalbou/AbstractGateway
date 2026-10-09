@@ -9,7 +9,9 @@ http://<gateway host>:<port>/v1
 ```
 
 The API key is one of your account's **API keys**: named keys you make on the
-OpenAI API page, one per app, valid at `/v1` only (see [API keys](#api-keys)).
+OpenAI API page, valid at `/v1` only (see [API keys](#api-keys)). One key can
+serve every app; separate keys are optional, for revoking one app without the
+others.
 There is no separate process or port: the API follows the gateway's [Network](./configuration.md#network-exposure-localhost--local-network--internet)
 setting, and AbstractCore answers each request behind it.
 
@@ -25,18 +27,22 @@ other account sees Status (running or not, the base URL), Connect your app
   AbstractCore's server, whether the gateway listens where *Who can connect*
   needs it, and how many models `/v1/models` lists).
 - **Connect your app**: the base URL and your **API keys**. **New key** asks for
-  a name (the app that will use it, for example "laptop Cursor"), then shows the
-  key once with **Copy**: copy it into the app right away, the gateway never
-  shows it again. The list shows each key's name, when it was made, when it was
-  last used and from which address, and its fingerprint; **Revoke** asks
-  **Revoke** / **Cancel** and refuses the key from the next request on. With no
-  key yet, the card says so.
-- **Access** (admin): *Authentication*, who requests without a key run as, and
-  *Who can connect* (below). Changes apply to the next request.
+  a name (for example "laptop Cursor"), then puts the key on the clipboard at
+  once and keeps it on the page, with **Copy** (it says *Copied*) and **Hide**,
+  until you press Hide: resizing the window, a refresh of the page's data or
+  visiting another page does not lose it. The list shows each key's name, when
+  it was made, when it was last used and from which address, and its
+  fingerprint, with **Reveal** (eye) and **Copy** to get the key again (see
+  [Reveal](#reveal-a-key-again)) and **Revoke**, which asks **Revoke** /
+  **Cancel** and refuses the key from the next request on. With no key yet, the
+  card says so.
+- **Access** (admin): *Authentication*, who requests without a key run as,
+  *Who can connect* (below), and **API keys can be revealed by their owner**
+  (see [Reveal](#reveal-a-key-again)). Changes apply to the next request.
 - **Docs**: what is supported, links to this page and to AbstractCore's server
   docs, and a first request (curl, Python, JavaScript) with your base URL and
-  `YOUR_API_KEY`, or the key you just made (masked on the page; **Copy example**
-  copies it in clear).
+  your key: `<your key>` until you make or reveal one, then that key, in clear;
+  **Copy example** copies the example as shown.
 - **Recent requests**: time, client (account, the API key's name, and address), model, tokens in and
   out, latency and status, newest first, refreshed every 5 s. A row opens to the
   request and the response as recorded (see [Request log](#request-log)) with
@@ -49,7 +55,7 @@ Use `provider/model` as the model name, as listed by `GET /v1/models`.
 
 ```bash
 curl http://127.0.0.1:8080/v1/chat/completions \
-  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Authorization: Bearer <your key>" \
   -H "Content-Type: application/json" \
   -d '{"model": "ollama/qwen3:4b", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
@@ -57,7 +63,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 ```python
 from openai import OpenAI
 
-client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="YOUR_API_KEY")
+client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="<your key>")
 reply = client.chat.completions.create(
     model="ollama/qwen3:4b",
     messages=[{"role": "user", "content": "Hello"}],
@@ -68,7 +74,7 @@ print(reply.choices[0].message.content)
 ```javascript
 import OpenAI from "openai";
 
-const client = new OpenAI({ baseURL: "http://127.0.0.1:8080/v1", apiKey: "YOUR_API_KEY" });
+const client = new OpenAI({ baseURL: "http://127.0.0.1:8080/v1", apiKey: "<your key>" });
 const reply = await client.chat.completions.create({
   model: "ollama/qwen3:4b",
   messages: [{ role: "user", content: "Hello" }],
@@ -80,20 +86,23 @@ Tools with command-line flags take the same two values, for example
 [aider](https://aider.chat):
 
 ```bash
-aider --openai-api-base http://127.0.0.1:8080/v1 --openai-api-key YOUR_API_KEY --model openai/ollama/qwen3:4b
+aider --openai-api-base http://127.0.0.1:8080/v1 --openai-api-key "<your key>" --model openai/ollama/qwen3:4b
 ```
 
-The console fills in your real base URL and the gateway's default text model.
+The console fills in your real base URL, the gateway's default text model and,
+once you make or reveal a key, that key.
 
 ## API keys
 
-Each account makes its own named keys for this API, one per app or device:
+Each account makes its own named keys for this API. One key can serve every
+app; make more only if you want to revoke one app without the others:
 
 - **Made with a name** on the OpenAI API page (**New key**) or with
-  `POST /api/gateway/me/openai-keys {"label": "laptop Cursor"}`. The key
-  (`sk-agw-...`) is answered once, by that request. The gateway keeps only its
-  PBKDF2 hash and its fingerprint (the first 12 hex digits of its SHA-256) in
-  the account's record, so a lost key cannot be shown again: make a new one.
+  `POST /api/gateway/me/openai-keys {"label": "laptop Cursor"}`, which answers
+  the key (`sk-agw-...`). The gateway checks keys against their PBKDF2 hash and
+  fingerprint (the first 12 hex digits of the SHA-256) in the account's record;
+  while owner reveal is on (the default) it also keeps the key **encrypted** so
+  you can see it again (below).
 - **Valid at `/v1` only.** A key never signs in to the console and never calls
   the gateway API: anywhere under `/api/gateway/` (sign-in included) it answers
   `401` with `This is an API key for /v1; sign in with your gateway token.`
@@ -114,6 +123,42 @@ Each account makes its own named keys for this API, one per app or device:
   on) makes its own keys like any other account. Only the operator token a
   gateway is started with is not an account: signed in with it, the key routes
   answer `409 no_account`.
+
+### Reveal a key again
+
+A key's owner, and only its owner, can see it again: **Reveal** (eye) on its
+row, or **Copy** to put it straight on the clipboard
+(`POST /api/gateway/me/openai-keys/{fingerprint}/reveal` → `{key, item}`).
+Each reveal is an audit line (`openai_key_change` with `action: "reveal"`, the
+key's name and fingerprint, never the key); a refused attempt is one too
+(`reveal_refused`). Anyone else asking for that fingerprint gets
+`403 not_owner`, admins included: an admin sees names, dates and fingerprints,
+never a key.
+
+The trade-off, plainly:
+
+- **Owner reveal on (default).** Each key is also stored encrypted at rest in
+  `<data dir>/auth/openai_key_secrets/`, with the same sealing as email
+  passwords: AES-256-GCM through AbstractCore's SecretVault, the encryption key
+  in the OS keychain (a `0600` key file next to it when the host has no
+  keychain). Forgetting a key then costs nothing: reveal it instead of making a
+  new one and reconfiguring every app. This suits a personal or small gateway,
+  where the person who can read the data folder is the person who owns the keys.
+- **Owner reveal off (show-once).** An admin turns off **API keys can be
+  revealed by their owner** on the OpenAI API page (`POST
+  /api/gateway/admin/core-endpoint {"owner_reveal": false}`). Every stored copy
+  is erased at once and the gateway keeps only hashes from then on: a key is
+  answered once, by the request that makes it, and a lost key means a new key.
+  This protects keys against a leak of the data folder or a backup (and, with
+  the key-file fallback, against anyone who reads both files). Reveal answers
+  `404 reveal_off`. Turning the setting back on applies to keys made afterwards;
+  keys made while it was off stay hash-only (`404 not_revealable`).
+
+Each key item says `revealable: true|false`; the status (`GET
+/api/gateway/openai-api`) says `owner_reveal` to everyone. If the keychain is
+locked or the data folder moved to another machine, reveal answers
+`503 key_store_unavailable` (the keys themselves keep working: they are checked
+against their hash). See also [Security](./security.md#openai-api).
 
 Names are unique per account (case-insensitive, up to 80 characters). For
 compatibility, an account's gateway token is still accepted at `/v1`; the page
@@ -261,15 +306,17 @@ anyone else, their own. The log shares the audit log's rotation and retention
 
 | Method | Route | Who | Result |
 | --- | --- | --- | --- |
-| GET | `/api/gateway/openai-api` | any account | status `gateway_openai_api_v1`: everyone `role`, `writable`, `enabled`, `running`, `base_url`, `key{own_token, user_id, named_keys, fingerprint, allowed}` (`named_keys`: true when the caller's account makes API keys, false for the operator's own token; `fingerprint`: first 12 hex digits of the gateway token's SHA-256, never the token), `docs`, `support`, `example_model` (a text model `/v1/models` lists; null when stopped); an admin also `access`, `reach`, `reach_options[]`, `open_account`, `open_account_options[]`, `warnings[]`, `listener`, `tailscale`, `open_requests`, `legacy_base_url` |
+| GET | `/api/gateway/openai-api` | any account | status `gateway_openai_api_v1`: everyone `role`, `writable`, `enabled`, `running`, `base_url`, `key{own_token, user_id, named_keys, fingerprint, allowed}` (`named_keys`: true when the caller's account makes API keys, false for the operator's own token; `fingerprint`: first 12 hex digits of the gateway token's SHA-256, never the token), `docs`, `support`, `example_model` (a text model `/v1/models` lists; null when stopped), `owner_reveal` (may owners reveal their keys); an admin also `access`, `reach`, `reach_options[]`, `open_account`, `open_account_options[]`, `warnings[]`, `listener`, `tailscale`, `open_requests`, `legacy_base_url` |
 | GET | `/api/gateway/openai-api/logs?limit=` | any account | `{rows[{request_id, ts, client, user_id, key_label, key_fingerprint, ip, method, path, model, prompt_tokens, completion_tokens, stream, duration_ms, status, run_id, observer_path, recorded}], scope}`: every request for an admin, the caller's own otherwise |
 | GET | `/api/gateway/openai-api/logs/{request_id}` | any account | `{row{..., request, response, user_agent}}`, the recorded request and response (redacted); someone else's id answers 404 for a non-admin |
-| GET | `/api/gateway/me/openai-keys` | any account | `{account, keys[{label, fingerprint, created_at, created_by, last_used_at, last_client}]}`, never a key; `409 no_account` for the operator's own token |
-| POST | `/api/gateway/me/openai-keys` | any account | `{label}` → `{key, item}`: the key, answered only here; `400 label_required`/`label_too_long`, `409 label_taken` |
+| GET | `/api/gateway/me/openai-keys` | any account | `{account, keys[{label, fingerprint, created_at, created_by, last_used_at, last_client, revealable}]}`, never a key; `409 no_account` for the operator's own token |
+| POST | `/api/gateway/me/openai-keys` | any account | `{label}` → `{key, item}`; `400 label_required`/`label_too_long`, `409 label_taken` |
+| POST | `/api/gateway/me/openai-keys/{fingerprint}/reveal` | the key's owner | → `{key, item}`, one audit line per reveal; `403 not_owner` (someone else's key, admins included), `404 key_not_found`/`reveal_off`/`not_revealable`, `503 key_store_unavailable` |
 | DELETE | `/api/gateway/me/openai-keys/{fingerprint}` | any account | revokes one of your keys at once → `{revoked}`; `404 key_not_found` |
 | GET | `/api/gateway/admin/accounts/{id}/openai-keys` | admin | that account's keys (same items) |
 | DELETE | `/api/gateway/admin/accounts/{id}/openai-keys/{fingerprint}` | admin | revokes one of that account's keys at once |
-| POST | `/api/gateway/admin/core-endpoint` | admin | `{enabled?, access?: token\|open, reach?: machine\|network\|tailnet\|anywhere, open_account?: guest\|<user id>}`; `409` with the reason when refused |
+| POST | `/api/gateway/admin/accounts/{id}/openai-keys/{fingerprint}/reveal` | admin | always `403 not_owner`: only a key's owner reveals it |
+| POST | `/api/gateway/admin/core-endpoint` | admin | `{enabled?, access?: token\|open, reach?: machine\|network\|tailnet\|anywhere, open_account?: guest\|<user id>, owner_reveal?: bool}` (`owner_reveal: false` erases every stored key copy: show-once); `409` with the reason when refused |
 | PUT | `/api/gateway/admin/accounts/{id}/openai-api` | admin | `{enabled}`: the account's OpenAI API switch; answers the account row (`openai_api`) |
 | POST | `/api/gateway/admin/core-endpoint/restart` | admin | ends open requests; `{ended_requests}` |
 | POST | `/api/gateway/admin/core-endpoint/check` | admin | `{checks[{id, ok, text}], ok}` |
@@ -277,8 +324,11 @@ anyone else, their own. The log shares the audit log's rotation and retention
 
 Settings live in `<data dir>/config/core_endpoint.json` (owner-only, atomic
 writes). API keys live in the user registry (`users.json`, each account's
-`openai_keys`: name, PBKDF2 hash, fingerprint, creation time); when each key was
-last used is kept beside it in `<data dir>/auth/openai_key_usage.json`. Errors
+`openai_keys`: name, PBKDF2 hash, fingerprint, creation time, `sealed` when an
+encrypted copy exists); the encrypted copies (owner reveal) are in
+`<data dir>/auth/openai_key_secrets/secret.enc` (`0600`, AES-256-GCM, key in the
+OS keychain or `secret.key` beside it); when each key was last used is kept in
+`<data dir>/auth/openai_key_usage.json`. Errors
 of the key routes answer `{"detail": {"reason_code", "message"}}`.
 
 ## Moving from `/core/v1`
@@ -287,5 +337,6 @@ of the key routes answer `{"detail": {"reason_code", "message"}}`.
 kept) and is deprecated: point your apps at `/v1`. The dedicated endpoint token
 of gateway 0.12.0 is still accepted as a key (deprecated: use API keys);
 `/api/gateway/admin/core-endpoint/token/rotate` still makes a new one (answered
-once), and the reveal route is gone: no route returns a stored token. A 0.12.0 settings file without *Who can
+once), and that token's reveal route is gone: no route returns a stored token
+(a named key's owner can reveal their own key, see [Reveal](#reveal-a-key-again)). A 0.12.0 settings file without *Who can
 connect* reads as **Devices on my network**.

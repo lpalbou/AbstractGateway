@@ -46,6 +46,8 @@ The OpenAI-compatible API is served at `/v1` on this Gateway listener
 of their account's named API keys (valid at `/v1` only; the gateway token is
 still accepted there). `/core/v1` answers 308 to `/v1` (deprecated).
 API keys: `GET/POST /api/gateway/me/openai-keys`,
+`POST /api/gateway/me/openai-keys/{fingerprint}/reveal` (the key's owner only,
+audited; off when an admin turns off owner reveal),
 `DELETE /api/gateway/me/openai-keys/{fingerprint}`; admins
 `GET /api/gateway/admin/accounts/{id}/openai-keys` and
 `DELETE /api/gateway/admin/accounts/{id}/openai-keys/{fingerprint}`. A named key

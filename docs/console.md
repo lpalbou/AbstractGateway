@@ -39,7 +39,7 @@ The sidebar groups the tabs in four sections, in this order:
 | Work | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches; `#runtimes?account=<id>` lists one account's runtimes ([below](#runtimes-of-one-account)) |
 | Work | **Apps** | the browser apps, Code's terminal app and the desktop Assistant (below), no settings disclosures: the toolbar gear opens **Apps settings** and the gear beside Continuum's Open opens **Continuum settings** (backlog folder, exec runner, process manager), each a dialog whose rows apply on their own |
 | Models | **Providers** | **Local providers**: one card per local engine on the gateway host (Ollama, LM Studio, MLX, llama.cpp, Hugging Face, vLLM) with its status, install, start, stop, **Browse models** and its server connection; **Remote providers**: OpenAI, Anthropic, OpenRouter, Portkey and custom OpenAI-compatible connections with write-only keys (shown as fingerprints); then the **Available Providers** table ([below](#models-and-local-providers)) |
-| Models | **OpenAI API** | the OpenAI-compatible API at `/v1`: status with Endpoint switch, Restart and Check setup; the base URL and your API key (your gateway token); Authentication and Who can connect, applied at once; supported surface and snippets; recent requests ([openai-api.md](./openai-api.md)) |
+| Models | **OpenAI API** | the OpenAI-compatible API at `/v1`: status with Endpoint switch, Restart and Check setup; the base URL and your named API keys (New key, Reveal, Copy, Revoke); Authentication, who may reveal keys and Who can connect, applied at once; supported surface and snippets; recent requests ([openai-api.md](./openai-api.md)) |
 | Models | **Models** | browse models that fit this machine, download them, delete installed ones (below) |
 | Models | **Multimodal** | capability route defaults, the text reasoning effort, the MTP (speculative decoding) default, and model weights per route |
 | System | **Resources** | memory and GPU meters, resident models (warm up, lock, unload), session prompt caches, and the **Gateway** card (pause, update, restart, desktop icon, start at login, last restart after a hang) |
@@ -195,8 +195,8 @@ default and your browser remembers it.
   it, and notifications about its runs go to its address); the administrator
   and the entity's creator can open it.
 - **OpenAI API** (administrators, user rows) opens a dialog with the
-  account's **OpenAI API** switch: on, the account's gateway token works as an
-  API key at `/v1`; off, its requests answer `403 openai_api_off` (its console
+  account's **OpenAI API** switch and its API keys (never a key) with **Revoke**:
+  on, the account's API keys work at `/v1`; off, its requests answer `403 openai_api_off` (its console
   sign-in is unchanged). Entities have no key and never use the OpenAI API
   ([openai-api.md](./openai-api.md#access)).
 - **Logs** opens "Activity — <id>": the account's sign-ins, token rotations,
@@ -982,21 +982,27 @@ you can click.
     switch (`e`), **Restart** (`x`) and **Check setup** (`h`), with the check's
     rows.
   - **Connect your app:** the Base URL and **API keys** with **New key**
-    (`n`). New key asks for a **Name** ([Make key] [Cancel]); the key is then
-    shown once with **Copy** and **Done** ("Key “<name>” made. Copy it now:
-    the gateway shows a key only once."). Under the cards, **Your API keys**
-    lists each key's name, when it was made, when it was last used and from
-    where, and its fingerprint, with **Revoke** (`d`): "Revoke “<name>”? Apps
+    (`n`); one key can serve every app. New key asks for a **Name** ([Make
+    key] [Cancel]); the key goes straight to the clipboard ("Key “<name>” made
+    and copied to the clipboard.") and stays shown with **Copy** ("Copied" for
+    2 s) and **Hide** until Hide: a resize or a trip to another page does not
+    lose it. Under the cards, **Your API keys** lists each key's name, when it
+    was made, when it was last used and from where, and its fingerprint, with
+    **Reveal** (`⦿`, `v`) and **Copy** (`y`) — your key again, each reveal in
+    the audit log; refused with the reason when an admin turned owner reveal
+    off or the key is hash-only — and **Revoke** (`d`): "Revoke “<name>”? Apps
     using it stop working at once. …" [Revoke] [Cancel], focus on Cancel.
     Signed in with the gateway's own token (no account), the row says named
     keys belong to an account.
   - **Access** (admin): **Authentication** [Protected (API key)] [Open (no
     key)] (`a`), and the pickers **Requests without a key run as** (`u`) and
-    **Who can connect** (`w`), each with its options' sentences. A listener
-    warning comes with **Network**.
+    **Who can connect** (`w`), each with its options' sentences, and the
+    **API keys can be revealed by their owner** toggle. A listener warning
+    comes with **Network**.
   - **Docs:** the links **OpenAI API compatibility** and **AbstractCore
     server**, then [curl] [Python] [JavaScript] (`s`) and **Copy example**
-    (`c`).
+    (`c`); the example shows `<your key>` until a key is made or revealed,
+    then that key.
   - **Recent requests** is a table: Time, Client (with the API key's name
     under it), Model, Tokens, Latency, Status, Run. The Time link (`Enter`, `f`) opens the request's record, with
     **Copy request**, **Copy response**, **Open in Observer** and **Close**.
