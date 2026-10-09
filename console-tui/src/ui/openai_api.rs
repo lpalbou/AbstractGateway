@@ -13,13 +13,21 @@
 //! | Restart | `POST /admin/core-endpoint/restart` |
 //! | Check setup | `POST /admin/core-endpoint/check` |
 //! | API keys | `GET /me/openai-keys` |
-//! | New key | `POST /me/openai-keys {label}` (the key is answered once) |
+//! | New key | `POST /me/openai-keys {label}` |
+//! | Reveal / Copy (a row) | `POST /me/openai-keys/{fingerprint}/reveal` (owner only, audited) |
 //! | Revoke | `DELETE /me/openai-keys/{fingerprint}` |
+//! | API keys can be revealed by their owner (admin) | `POST /admin/core-endpoint {owner_reveal}` |
 //!
 //! API keys (round 16, gateway backlog 1000) are NAMED keys of the signed-in
-//! account, valid at `/v1` only. New key asks for a name, shows the key once
-//! with Copy (the example embeds it masked on screen, in clear when copied);
-//! the table lists name · created · last used · fingerprint, never a key;
+//! account, valid at `/v1` only; one key can serve every app. New key asks
+//! for a name; the key goes straight to the clipboard (the engine's
+//! `copy_to_clipboard`: OSC 52, `pbcopy`/`wl-copy`/`xclip` when the
+//! terminal has none) and stays shown with Copy / Hide until Hide — it lives
+//! in the store (`KEY_SHOWN`), so a resize or a page rebuild never loses it
+//! (operator feedback 2026-10-09). Each row has Reveal and Copy (the owner's
+//! key again, audited) while the gateway's `owner_reveal` is on and the key
+//! is `revealable`; the examples carry the shown key (`<your key>` before).
+//! The table lists name · created · last used · fingerprint;
 //! Revoke asks [Revoke] [Cancel] and applies at once. The gateway token is
 //! not offered as a key (it still works at `/v1` for compatibility); a
 //! console signed in with the gateway's own token (no account) says so.
@@ -62,6 +70,16 @@ pub const KEY_NEW_KEY: &str = "openai.newkey";
 pub const KEY_KEYS: &str = "openai.keys";
 /// Revoke one (`DELETE /me/openai-keys/{fingerprint}`).
 pub const KEY_REVOKE: &str = "openai.revoke";
+/// Reveal one (`POST /me/openai-keys/{fingerprint}/reveal`): shown on the page.
+pub const KEY_REVEAL: &str = "openai.reveal";
+/// The same reveal for a row's Copy: straight to the clipboard.
+pub const KEY_REVEAL_COPY: &str = "openai.reveal_copy";
+/// The key shown on the page (made or revealed) — store-level, so a resize
+/// or a page rebuild keeps it until Hide: `{key, label, fingerprint, kind:
+/// "made"|"revealed", revealable}`.
+pub const KEY_SHOWN: &str = "openai.shown";
+/// The Copy button showing "Copied" (its id) for 2 s.
+pub const KEY_COPIED: &str = "openai.copied";
 
 pub const PATH_PAGE: &str = "/openai-api";
 pub const PATH_LOGS: &str = "/openai-api/logs?limit=25";
@@ -72,8 +90,12 @@ pub const PATH_KEYS: &str = "/me/openai-keys";
 
 /// The web page's log cadence (`OAI_LOG_REFRESH_MS`).
 pub const LOG_REFRESH: Duration = Duration::from_secs(5);
-/// The masked key (`OAI_MASK`).
+/// A masked secret (never on this page any more; tests assert its absence).
 pub const MASK: &str = "••••••••••••••••";
+/// The examples' key until one is made or revealed (`OAI_KEY_PLACEHOLDER`).
+pub const KEY_PLACEHOLDER: &str = "<your key>";
+/// How long a Copy button says "Copied" (`OAI_COPIED_MS`).
+pub const COPIED_FOR: Duration = Duration::from_millis(2000);
 
 /// The Authentication options (`OAI_AUTH`).
 pub const AUTH: [(&str, &str, &str); 2] = [
@@ -253,21 +275,16 @@ pub fn is_admin(d: &Value) -> bool {
     s(d, "role") == "admin"
 }
 
-/// The example request (`oaiSnippet`): `made` = the key just made (masked
-/// on screen); `clear` = what Copy example puts on the clipboard.
-pub fn snippet(kind: &str, d: &Value, made: Option<&str>, clear: bool) -> String {
+/// The example request (`oaiSnippet`) with `key` (the key shown on the
+/// page, made or revealed) in clear, else `<your key>`; Copy example copies
+/// exactly what is shown.
+pub fn snippet(kind: &str, d: &Value, key: Option<&str>) -> String {
     let base = s(d, "base_url");
-    let open = s(d, "access") == "open" && made.is_none();
+    let open = s(d, "access") == "open" && key.is_none();
     let key = if open {
         "not-needed".to_string()
-    } else if let Some(k) = made {
-        if clear {
-            k.to_string()
-        } else {
-            MASK.to_string()
-        }
     } else {
-        "YOUR_API_KEY".to_string()
+        key.unwrap_or(KEY_PLACEHOLDER).to_string()
     };
     let model = match s(d, "example_model") {
         "" => "provider/model",
@@ -516,6 +533,13 @@ pub fn saved_text(field: &str, d: &Value) -> String {
             "Saved: {}. Applies now.",
             label_of("reach_options", s(d, "reach"))
         ),
+        "owner_reveal" => {
+            if b(d, "owner_reveal") {
+                "Saved: owners can reveal their API keys.".into()
+            } else {
+                "Saved: API keys are shown once; stored keys were erased.".into()
+            }
+        }
         _ => format!(
             "Saved: requests without a key run as {}.",
             label_of("open_account_options", s(d, "open_account"))
@@ -526,8 +550,7 @@ pub fn saved_text(field: &str, d: &Value) -> String {
 // ---- Named API keys: the web page's words (console_ui.py `oaiKey*`) ----
 
 /// The key row's note (also New key's tooltip).
-pub const KEYS_NOTE: &str =
-    "One key per app: it works only at this base URL, acts as you, and can be revoked on its own.";
+pub const KEYS_NOTE: &str = "One key can serve every app. Separate keys are optional: make one per app only to revoke an app on its own. A key works only at this base URL and acts as you.";
 /// A console signed in with the gateway's own token (no account).
 pub const ADMIN_TOKEN_LABEL: &str = "The gateway admin token";
 pub const ADMIN_TOKEN_NOTE: &str = "The token this gateway was started with. Named keys belong to an account: sign in with one to make them.";
@@ -538,16 +561,60 @@ pub const NAME_HELP: &str =
     "Name it after the app that will use it, so the request log shows which app called.";
 pub const MAKE_KEY: &str = "Make key";
 pub const NAME_REQUIRED: &str = "Give the key a name, for example the app that will use it.";
-pub const KEYS_EMPTY: &str =
-    "No API keys yet. Make one for each app with New key; the gateway shows it once.";
+pub const KEYS_EMPTY: &str = "No API keys yet. Make one with New key: one key can serve every app.";
 pub const KEYS_READING: &str = "Reading your API keys...";
 pub const KEYS_TABLE: &str = "Your API keys";
 pub const REVOKE_TIP: &str = "Revoke this key: apps using it stop working at once";
-pub const COPY_MADE_TIP: &str = "Copy the new API key";
+pub const COPY_MADE_TIP: &str = "Copy the API key";
+/// The shown key's dismiss button.
+pub const HIDE: &str = "Hide";
+/// A Copy button for 2 s after its copy.
+pub const COPIED: &str = "Copied";
+/// Under a new key: can its owner see it again?
+pub const REVEAL_AGAIN: &str = "You can reveal it again any time under Your API keys.";
+pub const SHOWN_ONCE: &str = "Keep it somewhere safe: this gateway shows a key only once.";
+/// A row's Reveal and Copy (and why they are refused).
+pub const REVEAL_TIP: &str =
+    "Reveal this key: only you can, and each reveal is noted in the audit log";
+pub const COPY_KEY_TIP: &str = "Copy this key to the clipboard (a reveal, noted in the audit log)";
+pub const REVEAL_OFF_WHY: &str =
+    "Revealing keys is turned off on this gateway: make a new key if you lost this one.";
+pub const NOT_REVEALABLE_WHY: &str =
+    "Made while revealing was off: the gateway keeps only its hash. Make a new key if you lost it.";
+/// Docs: the card note, Copy example's tooltip, the note under the example.
+pub const DOCS_NOTE: &str = "What is supported, and a first request with your base URL and key.";
+pub const COPY_EXAMPLE_TIP: &str = "Copy this example, key included";
+pub const SNIPPET_NOTE_EMPTY: &str =
+    "<your key> is filled in when you make or reveal a key under Your API keys.";
+/// The admin setting (Access card).
+pub const OWNER_REVEAL_LABEL: &str = "API keys can be revealed by their owner";
+pub const OWNER_REVEAL_HELP: &str = "On: each person can reveal their own keys again (kept encrypted, with the key in the OS keychain; each reveal is audited). Off: a key is shown once, when it is made, and the gateway keeps only its hash; turning it off erases the stored keys.";
 
-/// "Key “<label>” made. Copy it now: the gateway shows a key only once."
+/// "Key “<label>” made and copied to the clipboard." (the terminal copies
+/// it at once through the engine).
 pub fn made_sentence(label: &str) -> String {
-    format!("Key “{label}” made. Copy it now: the gateway shows a key only once.")
+    format!("Key “{label}” made and copied to the clipboard.")
+}
+
+/// A revealed key's sentence.
+pub fn revealed_sentence(label: &str) -> String {
+    format!("Key “{label}”. Each reveal is noted in the audit log.")
+}
+
+/// The note under the example when it carries a key.
+pub fn snippet_note_key(label: &str) -> String {
+    format!("The examples use your key “{label}”.")
+}
+
+/// Why one of the caller's keys can't be revealed now (`oaiRevealRefusal`).
+pub fn reveal_refusal(d: &Value, k: &Value) -> Option<String> {
+    if d.get("owner_reveal").and_then(Value::as_bool) == Some(false) {
+        return Some(REVEAL_OFF_WHY.into());
+    }
+    if k.get("revealable").and_then(Value::as_bool) != Some(true) {
+        return Some(NOT_REVEALABLE_WHY.into());
+    }
+    None
 }
 
 /// The Revoke question (`w::Confirm` [Revoke] [Cancel]).
@@ -592,12 +659,32 @@ pub fn key_cells(k: &Value) -> [String; 4] {
     ]
 }
 
-/// A key row's actions (one list: the cell, the key, the tests).
+/// An account's key row as an ADMIN sees it (Accounts → OpenAI API):
+/// Revoke only — admins see fingerprints, never keys.
 pub fn key_actions(_k: &Value) -> Vec<Action> {
     vec![Action::label("revoke", "Revoke")
         .key('d')
         .tooltip(REVOKE_TIP)
         .danger()]
+}
+
+/// One of the caller's OWN key rows on this page (one list: the cell, the
+/// keys, the hints, the tests): Reveal (glyph), Copy ("Copied" for 2 s
+/// when `copied`), Revoke. Refused ones stay, faint, with the reason.
+pub fn own_key_actions(d: &Value, k: &Value, copied: bool) -> Vec<Action> {
+    let why = reveal_refusal(d, k);
+    let mut out = vec![
+        Action::glyph("reveal", "Reveal")
+            .key('v')
+            .tooltip(why.clone().unwrap_or_else(|| REVEAL_TIP.into()))
+            .refused(why.clone()),
+        Action::label("copy_key", if copied { COPIED } else { "Copy" })
+            .key('y')
+            .tooltip(why.clone().unwrap_or_else(|| COPY_KEY_TIP.into()))
+            .refused(why),
+    ];
+    out.extend(key_actions(k));
+    out
 }
 
 // ---- Accounts → OpenAI API — <id>: the account's keys (admins) ----
@@ -657,6 +744,8 @@ pub fn hints(non_admin: bool) -> Vec<(&'static str, &'static str)> {
         ("Enter", "press · open request"),
         ("b", "Copy base URL"),
         ("n", "New key"),
+        ("v", "Reveal key"),
+        ("y", "Copy key"),
         ("d", "Revoke key"),
     ];
     if !non_admin {
@@ -723,9 +812,88 @@ fn change(ctx: &Ctx, busy: Signal<Option<String>>, field: &str, value: Value) {
                 .map(str::to_string)
                 .unwrap_or_else(|| value.to_string())
         ),
-        reload: vec![(KEY_PAGE.into(), PATH_PAGE.into())],
+        reload: if field == "owner_reveal" {
+            // Each row's Reveal says what is possible now.
+            vec![
+                (KEY_PAGE.into(), PATH_PAGE.into()),
+                (KEY_KEYS.into(), PATH_KEYS.into()),
+            ]
+        } else {
+            vec![(KEY_PAGE.into(), PATH_PAGE.into())]
+        },
         journal: true,
     }));
+}
+
+/// The key shown on the page (made or revealed): `(key, label, fingerprint,
+/// kind, revealable)`. Tracked.
+fn shown(ctx: &Ctx) -> Option<(String, String, String, String, bool)> {
+    ctx.store.json.get(KEY_SHOWN).ready().map(|v| {
+        (
+            s(v, "key").to_string(),
+            s(v, "label").to_string(),
+            s(v, "fingerprint").to_string(),
+            s(v, "kind").to_string(),
+            b(v, "revealable"),
+        )
+    })
+}
+
+fn shown_untracked(ctx: &Ctx) -> Option<(String, String, String, String, bool)> {
+    ctx.store.json.get_untracked(KEY_SHOWN).ready().map(|v| {
+        (
+            s(v, "key").to_string(),
+            s(v, "label").to_string(),
+            s(v, "fingerprint").to_string(),
+            s(v, "kind").to_string(),
+            b(v, "revealable"),
+        )
+    })
+}
+
+fn show_key(ctx: &Ctx, key: &str, item: &Value, kind: &str) {
+    ctx.store.json.set(
+        KEY_SHOWN,
+        Loadable::Ready(serde_json::json!({
+            "key": key, "label": s(item, "label"), "fingerprint": s(item, "fingerprint"),
+            "kind": kind, "revealable": b(item, "revealable"),
+        })),
+    );
+}
+
+fn hide_key(ctx: &Ctx) {
+    ctx.store.json.set(KEY_SHOWN, Loadable::NotAsked);
+}
+
+/// Is the Copy button `id` saying "Copied"? Tracked.
+fn copied(ctx: &Ctx, id: &str) -> bool {
+    ctx.store
+        .json
+        .get(KEY_COPIED)
+        .ready()
+        .and_then(Value::as_str)
+        .map(|c| c == id)
+        .unwrap_or(false)
+}
+
+/// Copy `text` (the engine: OSC 52, the host clipboard when the terminal
+/// has none) and let the button `id` say "Copied" for 2 s.
+fn copy_marked(ctx: &Ctx, text: String, id: &str) {
+    copy_to_clipboard(text);
+    let json = ctx.store.json;
+    json.set(KEY_COPIED, Loadable::Ready(Value::String(id.to_string())));
+    let id = id.to_string();
+    abstracttui::reactive::after(COPIED_FOR, move || {
+        let same = json
+            .get_untracked(KEY_COPIED)
+            .ready()
+            .and_then(Value::as_str)
+            .map(|c| c == id)
+            .unwrap_or(false);
+        if same {
+            json.set(KEY_COPIED, Loadable::NotAsked);
+        }
+    });
 }
 
 fn post(ctx: &Ctx, key: &str, path: &str, label: &str, slow: bool) {
@@ -827,7 +995,7 @@ pub fn page_actions(d: &Value, made: bool) -> Vec<Action> {
         );
         if made {
             out.push(Action::label("copy_made", "Copy").tooltip(COPY_MADE_TIP));
-            out.push(Action::label("made_done", "Done"));
+            out.push(Action::label("made_done", HIDE));
         }
     }
     if admin
@@ -844,7 +1012,11 @@ pub fn page_actions(d: &Value, made: bool) -> Vec<Action> {
             .tooltip("endpoints and parameters this gateway supports"),
     );
     out.push(Action::link("doc_core", "AbstractCore server").tooltip("the engine behind it"));
-    out.push(Action::label("copy_example", "Copy example").key('c'));
+    out.push(
+        Action::label("copy_example", "Copy example")
+            .key('c')
+            .tooltip(COPY_EXAMPLE_TIP),
+    );
     out
 }
 
@@ -884,7 +1056,6 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
     let tt = *t;
     let st = Page {
-        made: cx.signal(None),
         revoking: cx.signal(String::new()),
         key_sel: cx.signal(None),
         snippet: cx.signal(0usize),
@@ -984,8 +1155,6 @@ pub const SUBTITLE: &str = "Let apps use your models through one OpenAI-compatib
 /// The page's own state beside the gateway's document.
 #[derive(Clone)]
 struct Page {
-    /// The key just made (key, its label, its fingerprint): shown once.
-    made: Signal<Option<(String, String, String)>>,
     /// The label of the key being revoked (for the sentence).
     revoking: Signal<String>,
     /// The keys table's selection (fingerprint).
@@ -1080,11 +1249,12 @@ fn install_write_effects(cx: Scope, ctx: &Ctx, st: &Page) {
                                 "No new key: The gateway answered without the new key.".into(),
                             )));
                         } else {
-                            st.made.set(Some((
-                                key,
-                                s(&item, "label").to_string(),
-                                s(&item, "fingerprint").to_string(),
-                            )));
+                            // Straight to the clipboard, and kept shown until Hide.
+                            show_key(&ctx_w, &key, &item, "made");
+                            copy_marked(&ctx_w, key, "made");
+                            store
+                                .notice
+                                .set(Some("API key copied to the clipboard".into()));
                         }
                     }
                     WriteState::Failed(e) => st
@@ -1106,11 +1276,8 @@ fn install_write_effects(cx: Scope, ctx: &Ctx, st: &Page) {
                             .and_then(Value::as_str)
                             .unwrap_or("")
                             .to_string();
-                        if st
-                            .made
-                            .with_untracked(|m| m.as_ref().map(|m| m.2 == fp).unwrap_or(false))
-                        {
-                            st.made.set(None);
+                        if shown_untracked(&ctx_w).map(|m| m.2 == fp).unwrap_or(false) {
+                            hide_key(&ctx_w);
                         }
                         let text = revoked_sentence(&label);
                         super::w::toast(&ctx_w, cx, text.clone());
@@ -1123,6 +1290,39 @@ fn install_write_effects(cx: Scope, ctx: &Ctx, st: &Page) {
                 }
                 st.busy.set(None);
                 store.json.set_write(KEY_REVOKE, None);
+            }
+        }
+        for (slot, copy) in [(KEY_REVEAL, false), (KEY_REVEAL_COPY, true)] {
+            if let Some(w) = store.json.write(slot) {
+                if !w.is_pending() {
+                    match w {
+                        WriteState::Done(v) => {
+                            let key = s(&v, "key").to_string();
+                            let item = v.get("item").cloned().unwrap_or(Value::Null);
+                            if key.is_empty() {
+                                st.key_notice.set(Some((
+                                    Tone::Err,
+                                    "Not revealed: The gateway answered without the key.".into(),
+                                )));
+                            } else if copy {
+                                let fp = s(&item, "fingerprint").to_string();
+                                copy_marked(&ctx_w, key, &format!("key:{fp}"));
+                                store.notice.set(Some(format!(
+                                    "API key “{}” copied to the clipboard",
+                                    s(&item, "label")
+                                )));
+                            } else {
+                                show_key(&ctx_w, &key, &item, "revealed");
+                            }
+                        }
+                        WriteState::Failed(e) => st
+                            .key_notice
+                            .set(Some((Tone::Err, format!("Not revealed: {}", e.message)))),
+                        WriteState::Pending => {}
+                    }
+                    st.busy.set(None);
+                    store.json.set_write(slot, None);
+                }
             }
         }
     });
@@ -1159,7 +1359,7 @@ fn page_action(cx: Scope, ctx: &Ctx, st: &Page, id: &str) {
         say("Reading the OpenAI API settings...");
         return;
     };
-    let made = st.made.get_untracked().map(|m| m.0);
+    let made = shown_untracked(ctx).map(|m| m.0);
     if let Some(a) = page_actions(&d, made.is_some())
         .into_iter()
         .find(|a| a.id == id)
@@ -1196,11 +1396,11 @@ fn page_action(cx: Scope, ctx: &Ctx, st: &Page, id: &str) {
         }
         "copy_made" => {
             if let Some(k) = made {
-                copy_to_clipboard(k);
+                copy_marked(ctx, k, "made");
                 say("API key copied to the clipboard");
             }
         }
-        "made_done" => st.made.set(None),
+        "made_done" => hide_key(ctx),
         "new_key" => {
             if st.busy.get_untracked().is_some() {
                 return;
@@ -1225,7 +1425,7 @@ fn page_action(cx: Scope, ctx: &Ctx, st: &Page, id: &str) {
         }
         "copy_example" => {
             let kind = SNIPPETS[st.snippet.get_untracked() % SNIPPETS.len()].0;
-            copy_to_clipboard(snippet(kind, &d, made.as_deref(), true));
+            copy_marked(ctx, snippet(kind, &d, made.as_deref()), "copy_example");
             say("example copied to the clipboard");
         }
         _ => {}
@@ -1240,6 +1440,19 @@ fn switch_endpoint(ctx: &Ctx, st: &Page) {
         st.notice.set(None);
         change(ctx, st.busy, "enabled", Value::Bool(!on));
     }
+}
+
+/// "API keys can be revealed by their owner" (admins): flips the setting.
+fn set_owner_reveal(ctx: &Ctx, st: &Page) {
+    if !admin_only(ctx, "change who can reveal API keys") {
+        return;
+    }
+    let on = doc(ctx)
+        .map(|d| d.get("owner_reveal").and_then(Value::as_bool) != Some(false))
+        .unwrap_or(true);
+    st.last_field.set("owner_reveal".into());
+    st.notice.set(None);
+    change(ctx, st.busy, "owner_reveal", Value::Bool(!on));
 }
 
 /// Authentication: Protected (API key) | Open (no key).
@@ -1310,6 +1523,16 @@ fn handle_key(cx: Scope, ctx: &Ctx, st: &Page, key: Key) -> bool {
         Key::Char('d') => {
             if let Some(fp) = st.key_sel.get_untracked() {
                 key_action(cx, ctx, st, &fp, "revoke");
+            }
+        }
+        Key::Char('v') => {
+            if let Some(fp) = st.key_sel.get_untracked() {
+                key_action(cx, ctx, st, &fp, "reveal");
+            }
+        }
+        Key::Char('y') => {
+            if let Some(fp) = st.key_sel.get_untracked() {
+                key_action(cx, ctx, st, &fp, "copy_key");
             }
         }
         Key::Char('b') => page_action(cx, ctx, st, "copy_base"),
@@ -1442,14 +1665,23 @@ fn cards(cx: Scope, pcx: Scope, ctx: &Ctx, t: &TokenSet, st: &Page) -> View {
     };
     let admin = is_admin(&d);
     let busy = st.busy.get();
-    let made = st.made.get();
+    let made = shown(ctx);
     let acts = page_actions(&d, made.is_some());
     let btnw = |id: &str| -> (View, i32) {
-        let a = acts
+        let mut a = acts
             .iter()
             .find(|a| a.id == id)
             .cloned()
             .unwrap_or_else(|| Action::label("none", ""));
+        // A Copy button says "Copied" for 2 s after its copy.
+        let copy_id = match id {
+            "copy_made" => Some("made"),
+            "copy_example" => Some("copy_example"),
+            _ => None,
+        };
+        if copy_id.map(|c| copied(ctx, c)).unwrap_or(false) {
+            a.label = COPIED.into();
+        }
         let c = ctx.clone();
         let st2 = st.clone();
         let aid = a.id;
@@ -1625,8 +1857,20 @@ fn cards(cx: Scope, pcx: Scope, ctx: &Ctx, t: &TokenSet, st: &Page) -> View {
         }
         rows.push(addr_row(t, w, "API keys", vec![], vec![nk]));
         rows.push(sentence(t, KEYS_NOTE, w, t.text_muted));
-        if let Some((key, label, _)) = &made {
-            rows.push(sentence(t, &made_sentence(label), w, t.ok));
+        if let Some((key, label, _, kind, revealable)) = &made {
+            if kind == "revealed" {
+                rows.push(sentence(t, &revealed_sentence(label), w, t.ok));
+            } else {
+                rows.push(sentence(t, &made_sentence(label), w, t.ok));
+                let again =
+                    *revealable && d.get("owner_reveal").and_then(Value::as_bool) != Some(false);
+                rows.push(sentence(
+                    t,
+                    if again { REVEAL_AGAIN } else { SHOWN_ONCE },
+                    w,
+                    t.text_muted,
+                ));
+            }
             rows.push(sentence(t, &format!("  {key}"), w, t.info));
             rows.push(
                 Element::new()
@@ -1722,34 +1966,20 @@ fn cards(cx: Scope, pcx: Scope, ctx: &Ctx, t: &TokenSet, st: &Page) -> View {
     );
     let kind = SNIPPETS[st.snippet.get() % SNIPPETS.len()].0;
     let made_key = made.as_ref().map(|m| m.0.clone());
-    for l in snippet(kind, &d, made_key.as_deref(), false).lines() {
+    for l in snippet(kind, &d, made_key.as_deref()).lines() {
         rows.push(sentence(t, &format!("  {l}"), w, t.info));
     }
-    let note = if made_key.is_some() {
-        "The new key is hidden here; Copy example includes it."
+    let note = if let Some(m) = &made {
+        snippet_note_key(&m.1)
     } else if s(&d, "access") == "open" {
-        ""
+        String::new()
     } else {
-        "Replace YOUR_API_KEY with a key made under Connect your app."
+        SNIPPET_NOTE_EMPTY.to_string()
     };
     if !note.is_empty() {
-        rows.push(sentence(t, note, w, t.text_muted));
+        rows.push(sentence(t, &note, w, t.text_muted));
     }
-    col = col.child(card(
-        t,
-        "Docs",
-        &format!(
-            "What is supported, and a first request with your base URL{}.",
-            if made_key.is_some() {
-                " and your key"
-            } else {
-                ""
-            }
-        ),
-        None,
-        w,
-        rows,
-    ));
+    col = col.child(card(t, "Docs", DOCS_NOTE, None, w, rows));
     Scroll::new(col.build())
         .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))
         .scrollbar_auto_hide(true)
@@ -1910,6 +2140,27 @@ fn access_card(cx: Scope, ctx: &Ctx, t: &TokenSet, st: &Page, d: &Value, w: i32)
                 move || super::shell::go(&c, super::SCREEN_NETWORK),
             ));
         }
+    }
+    // API keys: "API keys can be revealed by their owner" (default on).
+    {
+        let on = d.get("owner_reveal").and_then(Value::as_bool) != Some(false);
+        let label = if busy.as_deref() == Some("owner_reveal") {
+            "Saving...".to_string()
+        } else {
+            OWNER_REVEAL_LABEL.to_string()
+        };
+        let (c, st2) = (ctx.clone(), st.clone());
+        rows.push(super::w::field_row(
+            t,
+            "API keys",
+            18,
+            Toggle::new(on)
+                .label(label)
+                .tip(OWNER_REVEAL_HELP)
+                .on_change(move |_| set_owner_reveal(&c, &st2))
+                .view(cx, t),
+        ));
+        rows.push(indent(t, OWNER_REVEAL_HELP, w, t.text_muted));
     }
     if let Some((tone, text)) = st.notice.get() {
         if !(text.starts_with("Restarted") || text.starts_with("Not restarted")) {
@@ -2235,7 +2486,6 @@ fn open_new_key(pcx: Scope, ctx: &Ctx, st: &Page) {
                     }
                     st.busy.set(Some("new-key".into()));
                     st.key_notice.set(None);
-                    st.made.set(None);
                     c.store
                         .json
                         .set_write(KEY_NEW_KEY, Some(WriteState::Pending));
@@ -2318,8 +2568,13 @@ fn open_new_key(pcx: Scope, ctx: &Ctx, st: &Page) {
         });
 }
 
-/// A key row's action (a click or its key): Revoke asks first.
+/// A key row's action (a click or its key): Reveal / Copy (the owner's key,
+/// audited; a refused one says why), Revoke asks first.
 fn key_action(pcx: Scope, ctx: &Ctx, st: &Page, fp: &str, id: &str) {
+    if id == "reveal" || id == "copy_key" {
+        reveal_or_copy(ctx, st, fp, id == "copy_key");
+        return;
+    }
     if id != "revoke" {
         return;
     }
@@ -2364,6 +2619,46 @@ fn key_action(pcx: Scope, ctx: &Ctx, st: &Page, fp: &str, id: &str) {
             }));
         },
     );
+}
+
+fn reveal_or_copy(ctx: &Ctx, st: &Page, fp: &str, copy: bool) {
+    let row = ctx
+        .store
+        .json
+        .get_untracked(KEY_KEYS)
+        .ready()
+        .and_then(|v| {
+            v.get("keys")
+                .and_then(Value::as_array)
+                .and_then(|a| a.iter().find(|k| s(k, "fingerprint") == fp).cloned())
+        });
+    let (Some(row), Some(d)) = (row, doc(ctx)) else {
+        return;
+    };
+    st.key_sel.set(Some(fp.to_string()));
+    if let Some(why) = reveal_refusal(&d, &row) {
+        st.key_notice.set(Some((Tone::Warn, why.clone())));
+        ctx.store.notice.set(Some(why));
+        return;
+    }
+    if st.busy.get_untracked().is_some() {
+        return;
+    }
+    let slot = if copy { KEY_REVEAL_COPY } else { KEY_REVEAL };
+    st.busy.set(Some(format!("reveal:{fp}")));
+    st.key_notice.set(None);
+    ctx.store.json.set_write(slot, Some(WriteState::Pending));
+    ctx.send(Cmd::Json(JsonCmd::Send {
+        key: slot.into(),
+        method: "POST".into(),
+        path: format!("{PATH_KEYS}/{}/reveal", urlencode(fp)),
+        body: serde_json::json!({}),
+        slow: false,
+        label: format!("OpenAI API: reveal {}", s(&row, "label")),
+        reload: vec![],
+        // The answer carries the key: page-local, never journaled.
+        journal: false,
+    }));
 }
 
 /// "Your API keys": the account's named keys (Name · Created · Last used ·
@@ -2411,7 +2706,7 @@ fn keys_region(pcx: Scope, ctx: &Ctx, t: &TokenSet, st: &Page) -> View {
         if !narrow {
             cols.push(Col::new("Fingerprint", ColW::Fit { min: 12, max: 12 }));
         }
-        cols.push(Col::new("", ColW::Fit { min: 8, max: 10 }));
+        cols.push(Col::new("", ColW::Fit { min: 8, max: 20 }));
         let rows: Vec<WRow> = list
             .clone()
             .unwrap_or_default()
@@ -2427,8 +2722,10 @@ fn keys_region(pcx: Scope, ctx: &Ctx, t: &TokenSet, st: &Page) -> View {
                 if !narrow {
                     cells.push(Cell::text(c[3].clone(), t.info));
                 }
-                cells.push(Cell::Actions(key_actions(k)));
-                WRow::new(s(k, "fingerprint").to_string(), cells)
+                let fp = s(k, "fingerprint");
+                let was_copied = copied(&ctx, &format!("key:{fp}"));
+                cells.push(Cell::Actions(own_key_actions(d, k, was_copied)));
+                WRow::new(fp.to_string(), cells)
             })
             .collect();
         if st.key_sel.get_untracked().is_none() {
@@ -2484,14 +2781,17 @@ mod tests {
     }
 
     #[test]
-    fn snippet_masks_unless_copied() {
+    fn snippet_carries_the_shown_key_or_the_placeholder() {
         let d = serde_json::json!({"base_url": "http://h:1/v1", "example_model": "m/x", "access": "token"});
-        let shown = snippet("curl", &d, Some("sekret"), false);
-        assert!(shown.contains(MASK) && !shown.contains("sekret"), "{shown}");
-        assert!(snippet("python", &d, Some("sekret"), true).contains("api_key=\"sekret\""));
-        assert!(snippet("js", &d, None, false).contains("YOUR_API_KEY"));
+        let shown = snippet("curl", &d, Some("sekret"));
+        assert!(
+            shown.contains("Bearer sekret") && !shown.contains(MASK),
+            "{shown}"
+        );
+        assert!(snippet("python", &d, Some("sekret")).contains("api_key=\"sekret\""));
+        assert!(snippet("js", &d, None).contains("apiKey: \"<your key>\""));
         let open = serde_json::json!({"base_url": "b", "access": "open"});
-        assert!(snippet("curl", &open, None, true).contains("not-needed"));
+        assert!(snippet("curl", &open, None).contains("not-needed"));
     }
 
     #[test]

@@ -322,7 +322,8 @@ fn admin_overview_has_every_card_and_masks_the_key() {
         "Connect your app",
         "Paste these two values into any OpenAI SDK or app.",
         "API keys",
-        openai_api::KEYS_NOTE,
+        // The note wraps at 120 columns (round 16 keys fix wording).
+        "One key can serve every app. Separate keys are optional",
         "Access",
         // R15: Authentication = two segments, the chosen one's sentence under.
         "Protected (API key)",
@@ -525,14 +526,17 @@ fn restart_check_and_new_key_use_the_web_routes() {
     assert!(sent
         .iter()
         .any(|(_, p, _)| p == "/admin/core-endpoint/check"));
-    // The key is shown once; the console keeps its own token.
+    // The key is shown (copied at once, kept until Hide); the console keeps its own token.
     h.store.json.set_write(
         KEY_NEW_KEY,
         Some(WriteState::Done(json!({"key": "sk-agw-fresh-named", "item": {"label": "laptop Cursor", "fingerprint": "aaaaaaaaaaaa"}}))),
     );
     let s = h.turns(3);
     assert!(s.contains("sk-agw-fresh-named"), "{s}");
-    assert!(s.contains("Key “laptop Cursor” made."), "{s}");
+    assert!(
+        s.contains("Key “laptop Cursor” made and copied to the clipboard."),
+        "{s}"
+    );
     assert_eq!(h.ui.conn_token.get_untracked(), ADMIN_TOKEN);
     assert!(
         !h.cmds().iter().any(|c| matches!(c, Cmd::Connect { .. })),
@@ -542,7 +546,9 @@ fn restart_check_and_new_key_use_the_web_routes() {
 
 #[test]
 fn who_can_connect_offers_the_gateways_options() {
-    let mut h = harness(Size::new(120, 40), ADMIN_TOKEN);
+    // 44 rows: the picker must be on screen for `w` to open it (the API keys
+    // note takes two lines at 120 columns since the keys fix).
+    let mut h = harness(Size::new(120, 44), ADMIN_TOKEN);
     h.connect(true);
     h.open_page();
     h.seed(admin_page(), logs("all"));

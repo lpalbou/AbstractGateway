@@ -1,7 +1,10 @@
 //! R15 (DESIGN-TUI.md §3.8): a synthesized mouse click for EVERY OpenAI API
 //! control — Copy (base URL), the Endpoint toggle, Restart, Check setup,
-//! New key (its Name form: [Make key] [Cancel]), the key shown once (Copy,
-//! Done), each key's Revoke (its [Revoke] [Cancel] answered by mouse),
+//! New key (its Name form: [Make key] [Cancel]), the key shown (straight to
+//! the clipboard by OSC 52; Copy -> "Copied", Hide; kept across a resize),
+//! each key's Reveal and Copy (the owner's key again; refused ones say why),
+//! each key's Revoke (its [Revoke] [Cancel] answered by mouse), the admin's
+//! "API keys can be revealed by their owner" toggle,
 //! the Authentication segments, the Who can connect and Requests without a
 //! key run as pickers, Network, the two docs links, the example segments,
 //! Copy example, and each request row's Time (the recorded request and
@@ -18,7 +21,8 @@ use std::collections::BTreeSet;
 use abstractgateway_console::store::json::WriteState;
 use abstractgateway_console::store::Loadable;
 use abstractgateway_console::ui::openai_api::{
-    self, sha256_hex, KEY_KEYS, KEY_LOGS, KEY_NEW_KEY, KEY_PAGE, MASK,
+    self, sha256_hex, KEY_KEYS, KEY_LOGS, KEY_NEW_KEY, KEY_PAGE, KEY_REVEAL, KEY_REVEAL_COPY,
+    KEY_SHOWN, MASK,
 };
 use abstractgateway_console::worker::json::JsonCmd;
 use abstractgateway_console::worker::Cmd;
@@ -42,7 +46,7 @@ fn admin_page() -> Value {
         "key": {"own_token": true, "user_id": "admin", "named_keys": true, "fingerprint": &sha256_hex(TOKEN.as_bytes())[..12], "allowed": true},
         "docs": {"openai_api": "https://example.test/openai-api.md", "abstractcore": "https://example.test/server.md"},
         "support": {"tested": ["GET /v1/models"], "served": ["POST /v1/responses"], "not_yet": ["n > 1"]},
-        "example_model": "lmstudio/fake-model", "access": "open", "reach": "machine",
+        "example_model": "lmstudio/fake-model", "access": "open", "reach": "machine", "owner_reveal": true,
         "reach_options": [
             {"id": "machine", "label": "This machine only", "selected": true, "available": true},
             {"id": "network", "label": "Devices on my network", "selected": false, "available": true},
@@ -64,9 +68,10 @@ const NEW_KEY: &str = "sk-agw-r15-fresh-named-key-0001";
 fn keys() -> Value {
     json!({"schema": "gateway_openai_api_v1", "account": "admin", "keys": [
         {"label": "laptop Cursor", "fingerprint": "a1b2c3d4e5f6", "created_at": "2026-10-08T16:00:00+00:00",
-         "created_by": "admin", "last_used_at": "2026-10-08T16:30:00+00:00", "last_client": "192.168.1.20"},
+         "created_by": "admin", "last_used_at": "2026-10-08T16:30:00+00:00", "last_client": "192.168.1.20",
+         "revealable": true},
         {"label": "home assistant", "fingerprint": "0f1e2d3c4b5a", "created_at": "2026-10-08T16:05:00+00:00",
-         "created_by": "admin", "last_used_at": null, "last_client": null}
+         "created_by": "admin", "last_used_at": null, "last_client": null, "revealable": false}
     ]})
 }
 
@@ -176,6 +181,11 @@ fn offered() -> BTreeSet<&'static str> {
         for a in openai_api::key_actions(k) {
             out.insert(a.id);
         }
+        for copied in [false, true] {
+            for a in openai_api::own_key_actions(&admin_page(), k, copied) {
+                out.insert(a.id);
+            }
+        }
     }
     for r in logs()["rows"].as_array().unwrap() {
         for a in openai_api::log_actions(r) {
@@ -194,6 +204,8 @@ fn covered() -> BTreeSet<&'static str> {
         "copy_made",
         "made_done",
         "revoke",
+        "reveal",
+        "copy_key",
         "network",
         "doc_openai",
         "doc_core",
@@ -230,7 +242,7 @@ fn the_cards_have_the_web_words_and_mask_the_key() {
         "Check setup",
         "Connect your app",
         "API keys",
-        "One key per app: it works only at this base URL, acts as you, and can be revoked on its own.",
+        "One key can serve every app. Separate keys are optional: make one per app only to revoke an",
         "New key",
         "Your API keys",
         "laptop Cursor",
@@ -308,20 +320,215 @@ fn new_key_asks_a_name_then_shows_the_key_once() {
     );
     let s = h.turns(3);
     assert!(
-        s.contains("Key “phone app” made. Copy it now: the gateway shows a key only once."),
+        s.contains("Key “phone app” made and copied to the clipboard."),
         "{s}"
     );
-    assert!(s.contains(NEW_KEY), "shown once, in clear:\n{s}");
-    // The example masks it, Copy example puts it in clear (the page's
-    // `snippet`, unit-tested in openai_api.rs; the docs card is below the fold).
-    click_pair(&mut h, "Copy", "Done");
+    assert!(
+        s.contains("Keep it somewhere safe: this gateway shows a key only once."),
+        "the item is not revealable:\n{s}"
+    );
+    assert!(s.contains(NEW_KEY), "shown, in clear:\n{s}");
+    // Straight to the clipboard: the engine's OSC 52 frame carries it.
+    assert!(clipboard(&h).contains(&b64(NEW_KEY)), "OSC 52 with the key");
+    assert!(
+        s.contains(" Copied   Hide"),
+        "the Copy button says Copied:\n{s}"
+    );
+    // Copy again (the button keeps its place; it says Copied for 2 s).
+    h.term.take_bytes();
+    h.store.notice.set(None);
+    click_pair(&mut h, "Copied", "Hide");
     assert_eq!(
         h.store.notice.get_untracked().as_deref(),
         Some("API key copied to the clipboard")
     );
-    click_pair(&mut h, "Done", "Copy");
+    h.turns(2);
+    assert!(clipboard(&h).contains(&b64(NEW_KEY)), "Copy: OSC 52 again");
+    click_pair(&mut h, "Hide", "Copied");
     let s = h.turns(2);
-    assert!(!s.contains(NEW_KEY), "Done forgets it:\n{s}");
+    assert!(!s.contains(NEW_KEY), "Hide forgets it:\n{s}");
+}
+
+/// The OSC 52 payloads the engine wrote (base64 of what was copied).
+fn clipboard(h: &r8w4::Harness) -> String {
+    String::from_utf8_lossy(h.term.bytes()).to_string()
+}
+
+fn b64(text: &str) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for c in text.as_bytes().chunks(3) {
+        let n = (c[0] as u32) << 16
+            | (*c.get(1).unwrap_or(&0) as u32) << 8
+            | *c.get(2).unwrap_or(&0) as u32;
+        for i in 0..4 {
+            if i <= c.len() {
+                out.push(T[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+fn made(h: &mut r8w4::Harness, revealable: bool) {
+    click_on(h, "API keys", "New key");
+    h.type_text("phone app");
+    click_pair(h, "Make key", "Cancel");
+    h.sent();
+    h.store.json.set_write(
+        KEY_NEW_KEY,
+        Some(WriteState::Done(json!({"key": NEW_KEY,
+            "item": {"label": "phone app", "fingerprint": "999999999999", "revealable": revealable}}))),
+    );
+    h.turns(3);
+}
+
+#[test]
+fn a_new_key_survives_a_resize_and_says_it_can_be_revealed() {
+    let mut h = page();
+    made(&mut h, true);
+    let s = h.turns(1);
+    assert!(s.contains(NEW_KEY), "{s}");
+    assert!(
+        s.contains("You can reveal it again any time under Your API keys."),
+        "{s}"
+    );
+    // The operator's case: resize the window (smaller, then back).
+    h.term.push_resize(abstracttui::base::Size::new(100, 40));
+    let s = h.turns(3);
+    assert!(s.contains(NEW_KEY), "kept at 100x40:\n{s}");
+    h.term.push_resize(abstracttui::base::Size::new(161, 70));
+    let s = h.turns(3);
+    assert!(s.contains(NEW_KEY), "kept after the resize back:\n{s}");
+    assert!(h.store.json.get_untracked(KEY_SHOWN).ready().is_some());
+    // The examples carry it (in clear) instead of <your key>.
+    let s = h.wheel_down(30);
+    assert!(
+        s.contains(&format!("Bearer {NEW_KEY}")),
+        "the example:\n{s}"
+    );
+    assert!(s.contains("The examples use your key “phone app”."), "{s}");
+}
+
+#[test]
+fn the_examples_say_your_key_until_one_is_shown() {
+    let mut h = page_with({
+        let mut p = admin_page();
+        p["access"] = json!("token");
+        p
+    });
+    let s = h.wheel_down(30);
+    assert!(s.contains("Bearer <your key>"), "{s}");
+    assert!(
+        s.contains("<your key> is filled in when you make or reveal a key under Your API keys."),
+        "{s}"
+    );
+}
+
+#[test]
+fn reveal_shows_the_owners_key() {
+    let mut h = page();
+    click_on(&mut h, "laptop Cursor", "⦿");
+    assert_eq!(
+        methods(&mut h),
+        vec![(
+            "POST".to_string(),
+            "/me/openai-keys/a1b2c3d4e5f6/reveal".to_string()
+        )]
+    );
+    h.store.json.set_write(
+        KEY_REVEAL,
+        Some(WriteState::Done(json!({"key": "sk-agw-revealed-0001",
+            "item": {"label": "laptop Cursor", "fingerprint": "a1b2c3d4e5f6", "revealable": true}}))),
+    );
+    let s = h.turns(3);
+    assert!(
+        s.contains("Key “laptop Cursor”. Each reveal is noted in the audit log."),
+        "{s}"
+    );
+    assert!(s.contains("sk-agw-revealed-0001"), "{s}");
+}
+
+#[test]
+fn copy_on_a_row_puts_the_key_on_the_clipboard() {
+    let mut h = page();
+    click_on(&mut h, "laptop Cursor", "Copy");
+    assert_eq!(
+        methods(&mut h),
+        vec![(
+            "POST".to_string(),
+            "/me/openai-keys/a1b2c3d4e5f6/reveal".to_string()
+        )]
+    );
+    h.term.take_bytes();
+    h.store.json.set_write(
+        KEY_REVEAL_COPY,
+        Some(WriteState::Done(json!({"key": "sk-agw-revealed-0002",
+            "item": {"label": "laptop Cursor", "fingerprint": "a1b2c3d4e5f6", "revealable": true}}))),
+    );
+    let s = h.turns(3);
+    assert!(
+        clipboard(&h).contains(&b64("sk-agw-revealed-0002")),
+        "OSC 52"
+    );
+    assert!(
+        !s.contains("sk-agw-revealed-0002"),
+        "Copy does not show it:\n{s}"
+    );
+    assert_eq!(
+        h.store.notice.get_untracked().as_deref(),
+        Some("API key “laptop Cursor” copied to the clipboard")
+    );
+    let line = s
+        .lines()
+        .find(|l| l.contains("laptop Cursor") && l.contains("Revoke"))
+        .unwrap_or_else(|| panic!("{s}"));
+    assert!(line.contains("Copied"), "the row's Copy says Copied:\n{s}");
+}
+
+#[test]
+fn a_key_that_cannot_be_revealed_says_why() {
+    let mut h = page();
+    click_on(&mut h, "home assistant", "⦿");
+    assert!(methods(&mut h).is_empty(), "nothing sent");
+    assert_eq!(
+        h.store.notice.get_untracked().as_deref(),
+        Some(openai_api::NOT_REVEALABLE_WHY)
+    );
+    let mut p = admin_page();
+    p["owner_reveal"] = json!(false);
+    let mut h = page_with(p);
+    click_on(&mut h, "laptop Cursor", "Copy");
+    assert!(methods(&mut h).is_empty(), "nothing sent");
+    assert_eq!(
+        h.store.notice.get_untracked().as_deref(),
+        Some(openai_api::REVEAL_OFF_WHY)
+    );
+}
+
+#[test]
+fn the_admin_turns_owner_reveal_off() {
+    let mut h = page();
+    h.click_text(openai_api::OWNER_REVEAL_LABEL);
+    assert_eq!(
+        sends(&mut h),
+        vec![(
+            "/admin/core-endpoint".to_string(),
+            json!({"owner_reveal": false})
+        )]
+    );
+    let mut answered = admin_page();
+    answered["owner_reveal"] = json!(false);
+    h.store
+        .json
+        .set_write(openai_api::KEY_CHANGE, Some(WriteState::Done(answered)));
+    let s = h.turns(3);
+    assert!(
+        s.contains("Saved: API keys are shown once; stored keys were erased."),
+        "{s}"
+    );
 }
 
 #[test]
@@ -394,9 +601,7 @@ fn no_keys_says_the_web_sentence() {
         .set(KEY_KEYS, Loadable::Ready(json!({"keys": []})));
     let s = h.turns(3);
     assert!(
-        s.contains(
-            "No API keys yet. Make one for each app with New key; the gateway shows it once."
-        ),
+        s.contains("No API keys yet. Make one with New key: one key can serve every app."),
         "{s}"
     );
 }
@@ -508,9 +713,12 @@ fn docs_links_examples_and_copy_example() {
     let n = h.store.notice.get_untracked().unwrap_or_default();
     assert!(n.contains("https://example.test/server.md"), "{n}");
     let mut h = page();
-    let s = h.click_text("Python");
+    h.click_text("Python");
+    // The example is below the fold since the Access card has the owner-reveal row.
+    let s = h.wheel_down(30);
     assert!(s.contains("from openai import OpenAI"), "{s}");
-    let s = h.click_text("JavaScript");
+    h.click_text("JavaScript");
+    let s = h.wheel_down(30);
     assert!(s.contains("import OpenAI from \"openai\";"), "{s}");
     h.click_text("Copy example");
     assert_eq!(
@@ -568,6 +776,18 @@ fn the_keyboard_reaches_the_controls() {
     assert!(sends(&mut h)
         .iter()
         .any(|(p, b)| p == "/admin/core-endpoint" && b == &json!({"enabled": false})));
+    // v / y on the selected key (the first row): Reveal, Copy.
+    for k in [b"v", b"y"] {
+        let mut h = page();
+        h.key(k);
+        assert_eq!(
+            methods(&mut h),
+            vec![(
+                "POST".to_string(),
+                "/me/openai-keys/a1b2c3d4e5f6/reveal".to_string()
+            )]
+        );
+    }
 }
 
 #[test]
@@ -617,8 +837,55 @@ fn the_words_are_the_webs() {
     assert_eq!(label("doc_core"), w("doc_core"));
     assert_eq!(label("copy_made"), w("copy"));
     assert_eq!(label("made_done"), w("made_done"));
+    assert_eq!(openai_api::HIDE, w("made_done"));
+    assert_eq!(openai_api::COPIED, w("copied"));
+    assert_eq!(openai_api::REVEAL_AGAIN, w("reveal_again"));
+    assert_eq!(openai_api::SHOWN_ONCE, w("shown_once"));
+    assert_eq!(openai_api::REVEAL_TIP, w("reveal_tip"));
+    assert_eq!(openai_api::COPY_KEY_TIP, w("copy_key_tip"));
+    assert_eq!(openai_api::REVEAL_OFF_WHY, w("reveal_off_why"));
+    assert_eq!(openai_api::NOT_REVEALABLE_WHY, w("not_revealable_why"));
+    assert_eq!(openai_api::DOCS_NOTE, w("docs_note"));
+    assert_eq!(openai_api::SNIPPET_NOTE_EMPTY, w("snippet_note_empty"));
+    assert_eq!(openai_api::KEY_PLACEHOLDER, w("key_placeholder"));
+    assert_eq!(openai_api::OWNER_REVEAL_LABEL, w("owner_reveal_label"));
+    assert_eq!(openai_api::OWNER_REVEAL_HELP, w("owner_reveal_help"));
+    assert_eq!(
+        openai_api::revealed_sentence("X"),
+        w("revealed_sentence").replace("{label}", "X")
+    );
+    assert_eq!(
+        openai_api::snippet_note_key("X"),
+        w("snippet_note_key").replace("{label}", "X")
+    );
+    let mut on = admin_page();
+    assert_eq!(
+        openai_api::saved_text("owner_reveal", &on),
+        w("saved_owner_reveal_on")
+    );
+    on["owner_reveal"] = json!(false);
+    assert_eq!(
+        openai_api::saved_text("owner_reveal", &on),
+        w("saved_owner_reveal_off")
+    );
+    let own = openai_api::own_key_actions(&admin_page(), &keys()["keys"][0], false);
+    let own_tip = |id: &str| own.iter().find(|a| a.id == id).unwrap().tooltip.clone();
+    assert_eq!(own_tip("reveal").as_deref(), Some(w("reveal_tip").as_str()));
+    assert_eq!(
+        own_tip("copy_key").as_deref(),
+        Some(w("copy_key_tip").as_str())
+    );
+    let refused = openai_api::own_key_actions(&admin_page(), &keys()["keys"][1], false);
+    assert_eq!(
+        refused.iter().find(|a| a.id == "reveal").unwrap().enabled,
+        Err(w("not_revealable_why"))
+    );
     let tip = |id: &str| acts.iter().find(|a| a.id == id).unwrap().tooltip.clone();
     assert_eq!(tip("new_key").as_deref(), Some(w("keys_note").as_str()));
+    assert_eq!(
+        tip("copy_example").as_deref(),
+        Some(w("copy_example_tip").as_str())
+    );
     assert_eq!(
         tip("copy_made").as_deref(),
         Some(w("copy_made_tip").as_str())
@@ -675,4 +942,48 @@ fn the_words_are_the_webs() {
         assert_eq!(*l, w(&format!("auth_{i}_label")));
         assert_eq!(*text, w(&format!("auth_{i}_text")));
     }
+}
+
+/// The operator's report (2026-10-09): "I resized the window and it lost the
+/// key". In the real shell (root mount) a resize across the rail threshold
+/// and a trip to another page rebuild the OpenAI page: the shown key lives in
+/// the store, so it is still there until Hide.
+#[test]
+fn the_shell_keeps_a_new_key_across_resizes_and_page_changes() {
+    let mut h = harness((140, 50), Mount::Root);
+    h.ui.conn_token.set(TOKEN.into());
+    h.admin();
+    h.store.json.set(KEY_PAGE, Loadable::Ready(admin_page()));
+    h.store.json.set(KEY_LOGS, Loadable::Ready(logs()));
+    h.store.json.set(KEY_KEYS, Loadable::Ready(keys()));
+    h.ui.screen.set(abstractgateway_console::ui::SCREEN_OPENAI);
+    h.turns(3);
+    h.store.json.set_write(
+        KEY_NEW_KEY,
+        Some(WriteState::Done(json!({"key": NEW_KEY,
+            "item": {"label": "phone app", "fingerprint": "999999999999", "revealable": true}}))),
+    );
+    let s = h.turns(3);
+    assert!(s.contains(NEW_KEY), "{s}");
+    // Narrow (no rail; the key is below the fold there), then wide again.
+    h.term.push_resize(abstracttui::base::Size::new(90, 30));
+    h.turns(4);
+    assert!(
+        h.store.json.get_untracked(KEY_SHOWN).ready().is_some(),
+        "kept at 90x30"
+    );
+    for (w, ht) in [(200, 60), (140, 50)] {
+        h.term.push_resize(abstracttui::base::Size::new(w, ht));
+        let s = h.turns(4);
+        assert!(s.contains(NEW_KEY), "kept at {w}x{ht}:\n{s}");
+    }
+    h.ui.screen.set(abstractgateway_console::ui::SCREEN_NETWORK);
+    h.turns(3);
+    h.ui.screen.set(abstractgateway_console::ui::SCREEN_OPENAI);
+    let s = h.turns(4);
+    assert!(s.contains(NEW_KEY), "kept after another page:\n{s}");
+    assert!(
+        s.contains("Key “phone app” made and copied to the clipboard."),
+        "{s}"
+    );
 }

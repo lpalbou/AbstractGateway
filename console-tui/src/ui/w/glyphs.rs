@@ -25,6 +25,9 @@ pub const GLYPHS: &[(&str, &str, &str)] = &[
     ("configure", "⊞", "+"),
     ("delete", "⌫", "X"),
     ("copy", "⧉", "c"),
+    // Round 16 keys fix: Reveal an API key (the web's eye icon). U+29BF CIRCLED
+    // BULLET: East-Asian-width neutral, not in emoji-data.
+    ("reveal", "⦿", "o"),
     ("docs", "✦", "?"),
 ];
 
