@@ -140,6 +140,9 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     # principal, never from a path or body id); a named key itself is refused here (401).
     ("POST", "/api/gateway/me/openai-keys"),
     ("DELETE", "/api/gateway/me/openai-keys/{fingerprint}"),
+    # Reveal (round 16 keys fix): the caller's OWN key only, audited; another account's
+    # fingerprint answers 403 not_owner (admins included).
+    ("POST", "/api/gateway/me/openai-keys/{fingerprint}/reveal"),
     ("PUT", "/api/gateway/me/email"),
     ("DELETE", "/api/gateway/me/email"),
     ("POST", "/api/gateway/me/email/test"),

@@ -10,7 +10,7 @@ import secrets
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from .security.principal import GatewayPrincipal, safe_principal_component
 
@@ -164,18 +164,24 @@ OPENAI_KEY_LABEL_MAX = 80
 @dataclass(frozen=True)
 class OpenAIKeyRecord:
     """One named API key of an account (backlog 1000): valid at `/v1/*` only, hashed like a
-    gateway token (PBKDF2), identified by `fingerprint` (SHA-256 of the key, 12 hex). The key
-    itself is never stored and answered only once, when it is made."""
+    gateway token (PBKDF2), identified by `fingerprint` (SHA-256 of the key, 12 hex). The
+    registry never holds the key itself: `sealed` says a copy is kept ENCRYPTED in the key
+    store (`abstractgateway.openai_keys`, AbstractCore's SecretVault) so its owner can reveal
+    it again; a key made while revealing is off is hash-only (`sealed` false, field absent)."""
 
     label: str
     key_hash: str
     fingerprint: str
     created_at: str = ""
     created_by: str = ""
+    sealed: bool = False
 
     def to_storage_dict(self) -> dict[str, Any]:
-        return {"label": self.label, "key_hash": self.key_hash, "fingerprint": self.fingerprint,
-                "created_at": self.created_at, "created_by": self.created_by}
+        out: dict[str, Any] = {"label": self.label, "key_hash": self.key_hash, "fingerprint": self.fingerprint,
+                               "created_at": self.created_at, "created_by": self.created_by}
+        if self.sealed:
+            out["sealed"] = True
+        return out
 
     def public_dict(self) -> dict[str, Any]:
         return {"label": self.label, "fingerprint": self.fingerprint, "created_at": self.created_at or None,
@@ -195,7 +201,8 @@ def _normalize_openai_keys(raw: Any) -> tuple[OpenAIKeyRecord, ...]:
         seen.add(fp)
         out.append(OpenAIKeyRecord(label=str(item.get("label") or "")[:OPENAI_KEY_LABEL_MAX], key_hash=key_hash,
                                    fingerprint=fp, created_at=str(item.get("created_at") or ""),
-                                   created_by=str(item.get("created_by") or "")))
+                                   created_by=str(item.get("created_by") or ""),
+                                   sealed=item.get("sealed") is True))
     return tuple(out)
 
 
@@ -840,9 +847,13 @@ class GatewayUserRegistry:
     # ---- named API keys for /v1 (round 16, backlog 1000) ------------------------------
 
     def create_openai_key(self, *, user_id: str, tenant_id: str = "default", label: str,
-                          created_by: str = "") -> tuple[OpenAIKeyRecord, str]:
-        """A new named key for this account: (its record, the key — the only time it exists in
-        clear). Refused for an unknown, entity or archived account and for a blank or reused label."""
+                          created_by: str = "",
+                          seal: Optional[Callable[[str, str, frozenset], bool]] = None) -> tuple[OpenAIKeyRecord, str]:
+        """A new named key for this account: (its record, the key in clear). Refused for an
+        unknown, entity or archived account and for a blank or reused label. `seal(fingerprint,
+        key, every_live_fingerprint)` keeps an encrypted copy for owner reveal and answers whether
+        it did; it runs before the registry is written, so a key is never listed as revealable
+        without its sealed copy. Without `seal` the key is hash-only."""
         text = " ".join(str(label or "").split())
         if not text:
             raise OpenAIKeyError(400, "label_required", "Give the key a name, for example the app that will use it.")
@@ -861,8 +872,11 @@ class GatewayUserRegistry:
             if any(k.label.casefold() == text.casefold() for k in rec.openai_keys):
                 raise OpenAIKeyError(409, "label_taken", f"There is already a key named {text!r}: choose another name.")
             issued = generate_openai_api_key()
-            item = OpenAIKeyRecord(label=text, key_hash=hash_gateway_token(issued), fingerprint=token_fingerprint(issued),
-                                   created_at=_now_utc_iso(), created_by=str(created_by or ""))
+            fp = token_fingerprint(issued)
+            live = frozenset([fp] + [k.fingerprint for r in records.values() for k in r.openai_keys])
+            sealed = bool(seal(fp, issued, live)) if seal is not None else False
+            item = OpenAIKeyRecord(label=text, key_hash=hash_gateway_token(issued), fingerprint=fp,
+                                   created_at=_now_utc_iso(), created_by=str(created_by or ""), sealed=sealed)
             records[key] = dataclasses.replace(rec, openai_keys=rec.openai_keys + (item,), updated_at=_now_utc_iso())
             self._save_store_unlocked(records, reservations)
             return item, issued
@@ -884,6 +898,26 @@ class GatewayUserRegistry:
                                                updated_at=_now_utc_iso())
             self._save_store_unlocked(records, reservations)
             return gone
+
+    def clear_openai_key_seals(self) -> int:
+        """Every key becomes hash-only (the admin turned owner reveal off): returns how many keys
+        were revealable. The caller erases the sealed copies."""
+        changed = 0
+        with self._lock:
+            records, reservations = self._load_store_unlocked()
+            for key, rec in list(records.items()):
+                if any(k.sealed for k in rec.openai_keys):
+                    changed += sum(1 for k in rec.openai_keys if k.sealed)
+                    records[key] = dataclasses.replace(
+                        rec, openai_keys=tuple(dataclasses.replace(k, sealed=False) for k in rec.openai_keys))
+            if changed:
+                self._save_store_unlocked(records, reservations)
+        return changed
+
+    def openai_key_fingerprints(self) -> frozenset:
+        with self._lock:
+            records = self._load_unlocked()
+        return frozenset(k.fingerprint for r in records.values() for k in r.openai_keys)
 
     def openai_key_owner(self, key: str) -> Optional[tuple[GatewayUserRecord, OpenAIKeyRecord]]:
         """The account and named key this text is, whatever the account's state, or None. One

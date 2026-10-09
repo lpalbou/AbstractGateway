@@ -96,6 +96,11 @@ os.environ.update(_hermetic_env(_SESSION_HOME))
 # Read-only pointer for a test that declares @pytest.mark.real_home (e.g. to
 # READ installed tokenizers at collection); HOME itself stays tmp.
 os.environ["ABSTRACT_TEST_REAL_HOME"] = _REAL_HOME
+# The OS keychain does not follow HOME: no test may write the operator's keychain. Named API
+# keys are sealed with AbstractCore's SecretVault on creation (owner reveal, round 16), so the
+# null backend makes every vault in the suite use its 0600 key file in the test's data dir
+# (tests that need a keychain install their own in-memory one, tests/email_fixtures.py).
+os.environ["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"
 
 
 def _under(path: Path, root: str) -> bool:

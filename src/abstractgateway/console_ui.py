@@ -2709,14 +2709,20 @@ CONSOLE_UI_JS = r"""
     // open_requests}. GET /openai-api/logs -> {rows[], scope: all|own}; GET
     // /openai-api/logs/{request_id} -> {row{..., request, response}} (keys and
     // tokens removed when recorded). Admin: POST /admin/core-endpoint
-    // {enabled?|access?|reach?|open_account?} applies immediately; POST
+    // {enabled?|access?|reach?|open_account?|owner_reveal?} applies immediately; POST
     // /admin/core-endpoint/restart; POST /admin/core-endpoint/check. Every
     // sentence about access comes from the gateway; the page lays it out.
     //
     // API keys (round 16, backlog 1000): named keys of the signed-in account, valid
     // at /v1 only. GET /me/openai-keys -> {keys: [{label, fingerprint, created_at,
-    // created_by, last_used_at, last_client}]}; POST /me/openai-keys {label} ->
-    // {key, item} (the only time a key is answered: shown once here, with Copy);
+    // created_by, last_used_at, last_client, revealable}]}; POST /me/openai-keys
+    // {label} -> {key, item}: the new key is copied to the clipboard at once and
+    // stays shown (Copy, Hide) until Hide -- a re-render, a resize or leaving the
+    // page never loses it. POST /me/openai-keys/{fp}/reveal -> {key, item}: the
+    // OWNER's key again (each reveal audited), offered while `owner_reveal` (the
+    // admin setting "API keys can be revealed by their owner", default on) is on
+    // and the key is `revealable`; off = show-once. The examples carry the shown
+    // key (`<your key>` until one is made or revealed).
     // DELETE /me/openai-keys/{fingerprint} revokes at once. The gateway token is
     // not offered as a key any more (it still works at /v1 for compatibility).
     // Sign-in still keeps the typed token in this browser (operator ruling 1001
@@ -2735,12 +2741,15 @@ CONSOLE_UI_JS = r"""
     };
     const OAI_SNIPPETS = [["curl", "curl"], ["python", "Python"], ["js", "JavaScript"]];
     const OAI_LOG_REFRESH_MS = 5000;
-    const OAI_MASK = "••••••••••••••••";
+    const OAI_KEY_PLACEHOLDER = "<your key>";
+    const OAI_COPIED_MS = 2000;
     const oaiStore = { data: null, error: "", loading: false, busy: "", notice: null, checks: null, logs: null, logsScope: "", logsError: "",
       snippet: "curl", views: new Map(), confirmKey: false, timer: null, reveal: false, keyCheck: "", keyNotice: null,
       open: new Set(), details: new Map(),
-      // Named API keys: the list, the New key form (label), the key just made (shown once), the revoke being confirmed.
-      keys: null, keysError: "", keyForm: false, keyLabel: "", made: null, confirmRevoke: "" };
+      // Named API keys: the list, the New key form (label), the key shown (made or revealed:
+      // {key, item, kind: "made"|"revealed", copied}; kept until Hide), the revoke being confirmed,
+      // the Copy button showing "Copied" (its id) and its timer.
+      keys: null, keysError: "", keyForm: false, keyLabel: "", made: null, confirmRevoke: "", copied: "", copiedTimer: null };
     function oaiStorages() {
       const out = [];
       try { if (typeof sessionStorage !== "undefined" && sessionStorage) out.push(sessionStorage); } catch {}
@@ -2759,12 +2768,13 @@ CONSOLE_UI_JS = r"""
       oaiStore.keyCheck = "";
       oaiStore.reveal = false;
     }
-    // shown: what the page displays (the key just made is masked); copied: the real text.
-    function oaiSnippet(kind, d, opts) {
+    // The example request with the key shown on this page (made or revealed) in clear, else
+    // <your key>; what Copy example puts on the clipboard is exactly what is shown.
+    function oaiSnippet(kind, d) {
       const base = String(d.base_url || "");
       const made = oaiStore.made && oaiStore.made.key ? String(oaiStore.made.key) : "";
       const open = d.access === "open" && !made;
-      const key = open ? "not-needed" : (made ? (opts && opts.clear ? made : OAI_MASK) : "YOUR_API_KEY");
+      const key = open ? "not-needed" : (made || OAI_KEY_PLACEHOLDER);
       const model = d.example_model || "provider/model";
       if (kind === "python") {
         return `from openai import OpenAI\n\nclient = OpenAI(base_url="${base}", api_key="${key}")\nreply = client.chat.completions.create(\n    model="${model}",\n    messages=[{"role": "user", "content": "Hello"}],\n)\nprint(reply.choices[0].message.content)`;
@@ -2787,6 +2797,24 @@ CONSOLE_UI_JS = r"""
     }
     function oaiCopyButton(value, label) {
       return `<button type="button" class="ui-btn is-ghost ui-addr__copy" data-oai-copy="${esc(value)}" aria-label="Copy ${esc(label)}">Copy</button>`;
+    }
+    // A Copy button's label: "Copied" for 2 s after its copy succeeded.
+    function oaiCopyLabel(id) { return oaiStore.copied === id ? "Copied" : "Copy"; }
+    // Copy `text`; on success the button `id` says Copied for 2 s. Resolves true/false.
+    async function oaiCopyText(text, id) {
+      let ok = false;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(String(text)); ok = true; }
+      } catch { ok = false; }
+      if (!ok) ok = uiExecCopy(String(text));
+      if (!ok) { uiToast("Copy failed — select and copy"); return false; }
+      if (id) {
+        oaiStore.copied = id;
+        if (oaiStore.copiedTimer) clearTimeout(oaiStore.copiedTimer);
+        oaiStore.copiedTimer = setTimeout(() => { oaiStore.copied = ""; oaiStore.copiedTimer = null; oaiRender(); }, OAI_COPIED_MS);
+        oaiRender();
+      }
+      return true;
     }
     function oaiStatusCard(d) {
       const admin = d.role === "admin";
@@ -2817,7 +2845,7 @@ CONSOLE_UI_JS = r"""
       if (!k.named_keys) {
         return out + `<span>The gateway admin token</span><span class="ui-addr__note">The token this gateway was started with. Named keys belong to an account: sign in with one to make them.</span></div></li>`;
       }
-      return out + `<span class="ui-addr__note">One key per app: it works only at this base URL, acts as you, and can be revoked on its own.</span></div>`
+      return out + `<span class="ui-addr__note">One key can serve every app. Separate keys are optional: make one per app only to revoke an app on its own. A key works only at this base URL and acts as you.</span></div>`
         + `<div class="ui-addr__side"><button type="button" class="ui-btn is-ghost" data-oai-action="new-key"${oaiStore.busy || oaiStore.keyForm ? " disabled" : ""}>New key</button></div></li>`;
     }
     function oaiKeyFormMarkup() {
@@ -2828,22 +2856,39 @@ CONSOLE_UI_JS = r"""
         + `<div class="ui-toolbar"><button type="submit" class="ui-btn is-primary" data-oai-key-make${busy ? ' disabled aria-busy="true"' : ""}>${busy ? "Making..." : "Make key"}</button>`
         + `<button type="button" class="ui-btn is-ghost" data-oai-action="new-key-no"${busy ? " disabled" : ""}>Cancel</button></div></form>`;
     }
-    function oaiMadeMarkup() {
+    // The key shown on the page (made or revealed): the sentence, the key, Copy (kit tooltip,
+    // "Copied" for 2 s) and Hide. Kept in oaiStore until Hide: re-renders and resizes never lose it.
+    function oaiMadeMarkup(d) {
       const m = oaiStore.made;
-      return `<div class="ui-alert tone-ok oai-made" role="status" data-oai-made><strong>Key “${esc(m.item.label)}” made. Copy it now: the gateway shows a key only once.</strong>`
+      const label = esc(m.item.label);
+      let head;
+      if (m.kind === "revealed") head = `Key “${label}”. Each reveal is noted in the audit log.`;
+      else if (m.copied) head = `Key “${label}” made and copied to the clipboard.`;
+      else head = `Key “${label}” made. Use Copy to put it on the clipboard.`;
+      const policy = m.kind === "revealed" ? ""
+        : (d.owner_reveal !== false && m.item.revealable
+          ? `<span data-oai-made-policy>You can reveal it again any time under Your API keys.</span>`
+          : `<span data-oai-made-policy>Keep it somewhere safe: this gateway shows a key only once.</span>`);
+      return `<div class="ui-alert tone-ok oai-made" role="status" data-oai-made="${esc(m.kind)}"><strong>${head}</strong>${policy}`
         + `<code class="ui-ellip is-block oai-key" data-oai-made-key>${esc(m.key)}</code>`
-        + `<div class="ui-toolbar"><button type="button" class="ui-btn is-ghost ui-addr__copy" data-oai-action="copy-made" aria-label="Copy the new API key">Copy</button>`
-        + `<button type="button" class="ui-btn is-ghost" data-oai-action="made-done">Done</button></div></div>`;
+        + `<div class="ui-toolbar"><button type="button" class="ui-btn is-ghost ui-addr__copy" data-oai-action="copy-made" aria-label="Copy the API key" data-af-tip="Copy the API key">${oaiCopyLabel("made")}</button>`
+        + `<button type="button" class="ui-btn is-ghost" data-oai-action="made-done">Hide</button></div></div>`;
+    }
+    // Why a key can't be revealed (or copied) now, or "" when it can.
+    function oaiRevealRefusal(d, key) {
+      if (d.owner_reveal === false) return "Revealing keys is turned off on this gateway: make a new key if you lost this one.";
+      if (!key.revealable) return "Made while revealing was off: the gateway keeps only its hash. Make a new key if you lost it.";
+      return "";
     }
     function oaiKeysMarkup(d) {
       if (!(d.key || {}).named_keys) return "";
       let out = "";
       if (oaiStore.keyForm) out += oaiKeyFormMarkup();
-      if (oaiStore.made) out += oaiMadeMarkup();
+      if (oaiStore.made) out += oaiMadeMarkup(d);
       if (oaiStore.keysError) out += `<div class="ui-alert tone-err" role="alert"><strong>Could not read your API keys.</strong><span>${esc(oaiStore.keysError)}</span></div>`;
       const keys = Array.isArray(oaiStore.keys) ? oaiStore.keys : null;
       if (!keys) return out + (oaiStore.keysError ? "" : `<div class="ui-empty">Reading your API keys...</div>`);
-      if (!keys.length) return out + `<div class="ui-empty" data-oai-keys-empty>No API keys yet. Make one for each app with New key; the gateway shows it once.</div>`;
+      if (!keys.length) return out + `<div class="ui-empty" data-oai-keys-empty>No API keys yet. Make one with New key: one key can serve every app.</div>`;
       out += `<ul class="oai-keys" data-oai-keys aria-label="Your API keys">`;
       for (const key of keys) {
         const fp = String(key.fingerprint || "");
@@ -2852,7 +2897,7 @@ CONSOLE_UI_JS = r"""
         const busy = oaiStore.busy === `revoke:${fp}`;
         out += `<li class="oai-keyrow" data-oai-keyrow="${esc(fp)}"><div class="oai-keyrow__text"><span class="oai-keyrow__label">${esc(key.label)}</span>`
           + `<span class="ui-card__note">Created ${esc(oaiWhen(key.created_at))} · ${esc(used)} · <code title="Fingerprint: the first 12 hex digits of the key's SHA-256">${esc(fp)}</code></span></div>`
-          + `<div class="oai-keyrow__side"><button type="button" class="ui-btn is-ghost" data-oai-revoke="${esc(fp)}" data-af-tip="Revoke this key: apps using it stop working at once"${oaiStore.busy || confirming ? " disabled" : ""}>Revoke</button></div>`;
+          + `<div class="oai-keyrow__side ui-toolbar">${oaiKeyRowButtons(d, key, fp)}<button type="button" class="ui-btn is-ghost" data-oai-revoke="${esc(fp)}" data-af-tip="Revoke this key: apps using it stop working at once"${oaiStore.busy || confirming ? " disabled" : ""}>Revoke</button></div>`;
         if (confirming) {
           out += `<div class="ui-confirm oai-keyrow__confirm" role="alertdialog" aria-label="Revoke ${esc(key.label)}"><p>Revoke “${esc(key.label)}”? Apps using it stop working at once. This can't be undone; you can make a new key.</p>`
             + `<div class="ui-toolbar"><button type="button" class="ui-btn is-danger" data-oai-revoke-yes="${esc(fp)}"${busy ? ' disabled aria-busy="true"' : ""}>${busy ? "Revoking..." : "Revoke"}</button><button type="button" class="ui-btn is-ghost" data-oai-action="revoke-no"${busy ? " disabled" : ""}>Cancel</button></div></div>`;
@@ -2860,6 +2905,17 @@ CONSOLE_UI_JS = r"""
         out += `</li>`;
       }
       return out + `</ul>`;
+    }
+    // Reveal (eye icon) and Copy for one of the caller's keys. A key that can't be revealed keeps
+    // both buttons, aria-disabled with the reason as the kit tooltip (a press says it).
+    function oaiKeyRowButtons(d, key, fp) {
+      const why = oaiRevealRefusal(d, key);
+      const busy = oaiStore.busy === `reveal:${fp}` || oaiStore.busy === `copy:${fp}`;
+      const off = why ? ' aria-disabled="true"' : "";
+      const revealTip = why || "Reveal this key: only you can, and each reveal is noted in the audit log";
+      const copyTip = why || "Copy this key to the clipboard (a reveal, noted in the audit log)";
+      return `<button type="button" class="ui-btn is-ghost ui-icon-btn" data-oai-reveal="${esc(fp)}" aria-label="Reveal ${esc(key.label)}" data-af-tip="${esc(revealTip)}"${off}${busy || oaiStore.busy ? " disabled" : ""}><span class="button-icon" aria-hidden="true">${ICONS.eye}</span></button>`
+        + `<button type="button" class="ui-btn is-ghost" data-oai-copy-key="${esc(fp)}" aria-label="Copy ${esc(key.label)}" data-af-tip="${esc(copyTip)}"${off}${busy || oaiStore.busy ? " disabled" : ""}>${oaiCopyLabel(`key:${fp}`)}</button>`;
     }
     function oaiConnectCard(d) {
       const k = d.key || {};
@@ -2898,6 +2954,10 @@ CONSOLE_UI_JS = r"""
         out += `<div class="ui-alert tone-${esc(w.tone === "warn" ? "warn" : "info")}" role="status" data-oai-warning="${esc(w.id)}"><strong>${esc(w.text)}</strong>`
           + (w.id === "listener" ? `<div class="ui-card__actions"><button type="button" class="ui-btn is-ghost" data-oai-action="goto-network">Network</button></div>` : "") + `</div>`;
       }
+      const revealBusy = oaiStore.busy === "owner_reveal";
+      out += `<div class="oai-field" data-oai-owner-reveal-field><h4 class="oai-field__title">API keys</h4>`
+        + `<label class="ui-switch"><input type="checkbox" role="switch" data-oai-owner-reveal aria-describedby="oai-owner-reveal-help"${d.owner_reveal !== false ? " checked" : ""}${oaiStore.busy ? " disabled" : ""}><span>${revealBusy ? "Saving..." : "API keys can be revealed by their owner"}</span></label>`
+        + `<p class="ui-card__note" id="oai-owner-reveal-help">On: each person can reveal their own keys again (kept encrypted, with the key in the OS keychain; each reveal is audited). Off: a key is shown once, when it is made, and the gateway keeps only its hash; turning it off erases the stored keys.</p></div>`;
       if (oaiStore.notice) {
         const n = oaiStore.notice;
         out += `<div class="ui-alert tone-${esc(n.tone)}" role="${n.tone === "err" ? "alert" : "status"}" data-oai-notice><strong>${esc(n.text)}</strong></div>`;
@@ -2909,15 +2969,15 @@ CONSOLE_UI_JS = r"""
       const tabs = OAI_SNIPPETS.map(([id, label]) => `<button type="button" role="tab" class="ui-btn ${oaiStore.snippet === id ? "is-primary" : "is-ghost"}" data-oai-snippet="${id}" aria-selected="${oaiStore.snippet === id ? "true" : "false"}">${label}</button>`).join("");
       const kept = !!(oaiStore.made && oaiStore.made.key);
       return `<article class="ui-card oai-card" data-oai-card="docs"><div class="ui-card__head"><div class="ui-card__titles"><h3 class="ui-card__title">Docs</h3>`
-        + `<p class="ui-card__note">What is supported, and a first request with your base URL${kept ? " and your key" : ""}.</p></div></div>`
+        + `<p class="ui-card__note">What is supported, and a first request with your base URL and key.</p></div></div>`
         + `<ul class="oai-links"><li><a href="${esc(docs.openai_api || "#")}" target="_blank" rel="noopener">OpenAI API compatibility</a> <span class="ui-card__note">endpoints and parameters this gateway supports</span></li>`
         + `<li><a href="${esc(docs.abstractcore || "#")}" target="_blank" rel="noopener">AbstractCore server</a> <span class="ui-card__note">the engine behind it</span></li></ul>`
         + oaiSupportMarkup(d.support)
         + `<div class="ui-toolbar oai-tabs" role="tablist" aria-label="Example">${tabs}</div>`
         + `<pre class="ui-log oai-snippet" data-oai-code>${esc(oaiSnippet(oaiStore.snippet, d))}</pre>`
-        + `<div class="ui-toolbar"><button type="button" class="ui-btn is-ghost" data-oai-copy-snippet>Copy example</button>`
-        + (kept ? `<span class="ui-card__note">The new key is hidden here; Copy example includes it.</span>`
-          : (d.access === "open" ? "" : `<span class="ui-card__note">Replace YOUR_API_KEY with a key made under Connect your app.</span>`)) + `</div></article>`;
+        + `<div class="ui-toolbar"><button type="button" class="ui-btn is-ghost" data-oai-copy-snippet data-af-tip="Copy this example, key included">${oaiStore.copied === "snippet" ? "Copied" : "Copy example"}</button>`
+        + (kept ? `<span class="ui-card__note" data-oai-snippet-note>The examples use your key “${esc(oaiStore.made.item.label)}”.</span>`
+          : (d.access === "open" ? "" : `<span class="ui-card__note" data-oai-snippet-note>&lt;your key&gt; is filled in when you make or reveal a key under Your API keys.</span>`)) + `</div></article>`;
     }
     function oaiSupportMarkup(sp) {
       if (!sp) return "";
@@ -3022,14 +3082,39 @@ CONSOLE_UI_JS = r"""
       try {
         const res = await api("/api/gateway/me/openai-keys", { method: "POST", body: JSON.stringify({ label }) });
         if (!res || !res.key || !res.item) throw new Error("The gateway answered without the new key.");
-        oaiStore.made = { key: String(res.key), item: res.item };
+        oaiStore.made = { key: String(res.key), item: res.item, kind: "made", copied: null };
         oaiStore.keyForm = false;
         oaiStore.keyLabel = "";
+        // Straight to the clipboard; the sentence says whether that worked.
+        const made = oaiStore.made;
+        made.copied = await oaiCopyText(made.key, "made");
       } catch (err) {
         oaiStore.keyNotice = { tone: "err", text: `No new key: ${String((err && err.message) || err)}` };
       }
       oaiStore.busy = "";
       await oaiKeysRefresh();
+    }
+    // Reveal (show: true) or Copy (show: false) one of the caller's keys: POST .../reveal, audited.
+    async function oaiRevealKey(fp, show) {
+      if (oaiStore.busy) return;
+      const key = (oaiStore.keys || []).find((k) => k.fingerprint === fp);
+      if (!key || !oaiStore.data) return;
+      const why = oaiRevealRefusal(oaiStore.data, key);
+      if (why) { oaiStore.keyNotice = { tone: "err", text: why }; oaiRender(); return; }
+      oaiStore.busy = `${show ? "reveal" : "copy"}:${fp}`;
+      oaiStore.keyNotice = null;
+      oaiRender();
+      try {
+        const res = await api(`/api/gateway/me/openai-keys/${encodeURIComponent(fp)}/reveal`, { method: "POST" });
+        if (!res || !res.key || !res.item) throw new Error("The gateway answered without the key.");
+        oaiStore.busy = "";
+        if (show) oaiStore.made = { key: String(res.key), item: res.item, kind: "revealed", copied: null };
+        else await oaiCopyText(String(res.key), `key:${fp}`);
+      } catch (err) {
+        oaiStore.keyNotice = { tone: "err", text: `Not revealed: ${String((err && err.message) || err)}` };
+      }
+      oaiStore.busy = "";
+      oaiRender();
     }
     async function oaiRevokeKey(fp) {
       if (oaiStore.busy) return;
@@ -3080,15 +3165,19 @@ CONSOLE_UI_JS = r"""
       access: (d) => `Saved: ${d.access === "open" ? "Open (no key)" : "Protected (API key)"}. Applies now.`,
       reach: (d) => `Saved: ${((d.reach_options || []).find((o) => o.id === d.reach) || {}).label || d.reach}. Applies now.`,
       open_account: (d) => `Saved: requests without a key run as ${((d.open_account_options || []).find((o) => o.id === d.open_account) || {}).label || d.open_account}.`,
+      owner_reveal: (d) => d.owner_reveal ? "Saved: owners can reveal their API keys." : "Saved: API keys are shown once; stored keys were erased.",
     };
     async function oaiChange(field, value) {
       if (oaiStore.busy) return;
-      oaiStore.busy = field === "enabled" || field === "open_account" ? field : `${field}:${value}`;
+      oaiStore.busy = field === "enabled" || field === "open_account" || field === "owner_reveal" ? field : `${field}:${value}`;
       oaiStore.notice = null;
       oaiRender();
       try {
         oaiStore.data = await api("/api/gateway/admin/core-endpoint", { method: "POST", body: JSON.stringify({ [field]: value }) });
         oaiStore.notice = { tone: "ok", text: OAI_SAVED[field](oaiStore.data) };
+        // A shown key that can no longer be revealed stays shown (it is the person's); the list
+        // re-reads so each row's Reveal says what is possible now.
+        if (field === "owner_reveal" && oaiStore.data && oaiStore.data.key && oaiStore.data.key.named_keys) oaiKeysRefresh();
       } catch (err) {
         oaiStore.notice = { tone: "err", text: `Not saved: ${String((err && err.message) || err)}` };
       }
@@ -3106,7 +3195,7 @@ CONSOLE_UI_JS = r"""
         if (oaiStore.keyForm) { for (const el of oaiStore.views.values()) { const i = el && el.querySelector ? el.querySelector("[data-oai-key-label]") : null; if (i && i.focus) { i.focus(); break; } } }
         return;
       }
-      if (action === "copy-made") { if (oaiStore.made) uiCopy(oaiStore.made.key); return; }
+      if (action === "copy-made") { if (oaiStore.made) oaiCopyText(oaiStore.made.key, "made"); return; }
       if (action === "made-done") { oaiStore.made = null; oaiRender(); return; }
       if (action === "revoke-no") { oaiStore.confirmRevoke = ""; oaiRender(); return; }
       if (oaiStore.busy) return;
@@ -3138,7 +3227,11 @@ CONSOLE_UI_JS = r"""
         if (!t) return;
         const copy = t.closest("[data-oai-copy]");
         if (copy) { uiCopy(copy.dataset.oaiCopy); return; }
-        if (t.closest("[data-oai-copy-snippet]") && oaiStore.data) { uiCopy(oaiSnippet(oaiStore.snippet, oaiStore.data, { clear: true })); return; }
+        if (t.closest("[data-oai-copy-snippet]") && oaiStore.data) { oaiCopyText(oaiSnippet(oaiStore.snippet, oaiStore.data), "snippet"); return; }
+        const reveal = t.closest("[data-oai-reveal]");
+        if (reveal && !reveal.disabled) { oaiRevealKey(reveal.dataset.oaiReveal, true); return; }
+        const copyKey = t.closest("[data-oai-copy-key]");
+        if (copyKey && !copyKey.disabled) { oaiRevealKey(copyKey.dataset.oaiCopyKey, false); return; }
         const rec = t.closest("[data-oai-copy-record]");
         if (rec) { const det = oaiStore.details.get(rec.dataset.oaiCopyRecord); if (det && det.row) uiCopy(oaiJson(det.row[rec.dataset.oaiSide])); return; }
         const toggle = t.closest("[data-oai-toggle]");
@@ -3161,6 +3254,7 @@ CONSOLE_UI_JS = r"""
         if (!target || target.disabled || !target.matches) return;
         if (target.matches("[data-oai-enabled]")) oaiChange("enabled", !!target.checked);
         else if (target.matches("[data-oai-open-account]")) oaiChange("open_account", String(target.value || ""));
+        else if (target.matches("[data-oai-owner-reveal]")) oaiChange("owner_reveal", !!target.checked);
       };
       // The label field keeps what is typed across re-renders (the log poll redraws only its card).
       el.oninput = (event) => {
@@ -3194,8 +3288,9 @@ CONSOLE_UI_JS = r"""
       oaiStore.views.delete(key);
       if (!oaiStore.views.size) {
         oaiStore.confirmKey = false; oaiStore.reveal = false; oaiStore.keyNotice = null;
-        // A key made here is never kept: leaving the page forgets it (it was shown once).
-        oaiStore.made = null; oaiStore.keyForm = false; oaiStore.keyLabel = ""; oaiStore.confirmRevoke = "";
+        // The shown key (made or revealed) stays until Hide: leaving the page and coming back,
+        // a re-render or a resize never loses it (operator feedback 2026-10-09). Sign-out reloads.
+        oaiStore.keyForm = false; oaiStore.keyLabel = ""; oaiStore.confirmRevoke = "";
         if (oaiStore.timer) { clearInterval(oaiStore.timer); oaiStore.timer = null; }
       }
     }

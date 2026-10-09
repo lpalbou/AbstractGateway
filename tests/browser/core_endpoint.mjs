@@ -1,7 +1,9 @@
 // The OpenAI API page in a real browser at three widths (admin), then a user's own view, then the
 // Accounts row's OpenAI API switch and keys. API keys are named keys (round 16): New key asks for a
-// name, the key is shown once with Copy, the list shows name · created · last used · fingerprint,
-// Revoke asks [Revoke] [Cancel] and applies at once. Shots in light and dark.
+// name, the key goes straight to the clipboard and stays shown (Copy -> "Copied", Hide) across
+// re-renders, resizes and leaving the page; the examples carry it (<your key> before); each row
+// has Reveal (eye) and Copy (owner only, audited); the admin setting "API keys can be revealed by
+// their owner" off = show-once; Revoke asks [Revoke] [Cancel] and applies at once. Light and dark.
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import assert from 'node:assert/strict';
@@ -18,11 +20,12 @@ async function signIn(page, user, token) {
 }
 // The console's own theme setting (light | dark), as the other browser tests set it.
 async function themed(options, theme) {
-  const context = await browser.newContext({ ...options, colorScheme: theme });
+  const context = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'], ...options, colorScheme: theme });
   await context.addInitScript((t) => { try { localStorage.setItem('abstractgateway_ui_settings_v1', JSON.stringify({ theme: t })); } catch {} }, theme);
   return context;
 }
 const idle = (page) => page.waitForFunction(() => !document.querySelector('#openai-root [aria-busy="true"]'));
+const clip = (page) => page.evaluate(() => navigator.clipboard.readText());
 try {
   for (const [width, height, theme] of [[1440, 1000, 'light'], [768, 1024, 'dark'], [390, 844, 'light']]) {
     const context = await themed({ viewport: { width, height } }, theme);
@@ -60,7 +63,8 @@ try {
     // API keys: never the gateway token; New key -> name -> shown once -> works at /v1 -> listed -> revoked.
     assert.equal(await root.locator('[data-oai-key-value], [data-oai-action="reveal"]').count(), 0);
     assert(!(await root.textContent()).includes(admin));
-    assert.match(await root.locator('[data-oai-code]').textContent(), /YOUR_API_KEY/);
+    assert.match(await root.locator('[data-oai-code]').textContent(), /<your key>/);
+    assert.match(await root.locator('[data-oai-key]').textContent(), /One key can serve every app\. Separate keys are optional/);
     if (width === 1440) await page.waitForSelector('[data-oai-keys-empty]');
     await root.locator('[data-oai-action="new-key"]').click();
     await root.locator('[data-oai-key-label]').fill(`laptop ${width}`);
@@ -68,9 +72,31 @@ try {
     await page.waitForSelector('[data-oai-made-key]');
     const made = (await root.locator('[data-oai-made-key]').textContent()).trim();
     assert.match(made, /^sk-agw-/);
-    assert.match(await root.locator('[data-oai-made]').textContent(), /shows a key only once/);
-    // The example masks it; Copy example would include it.
-    assert(!(await root.locator('[data-oai-code]').textContent()).includes(made));
+    // Straight to the clipboard, and the sentence says so; it can be revealed again.
+    await page.waitForFunction(() => /made and copied to the clipboard/.test(document.querySelector('[data-oai-made]').textContent));
+    assert.equal(await clip(page), made);
+    assert.match(await root.locator('[data-oai-made-policy]').textContent(), /reveal it again any time/);
+    // The examples carry the real key (curl and Python), and Copy example copies exactly that.
+    assert.match(await root.locator('[data-oai-code]').textContent(), new RegExp(`api_key="${made}"`));
+    await root.locator('[data-oai-snippet="curl"]').click();
+    assert.match(await root.locator('[data-oai-code]').textContent(), new RegExp(`Bearer ${made}`));
+    await page.evaluate(() => navigator.clipboard.writeText('-'));
+    await root.locator('[data-oai-copy-snippet]').click();
+    await page.waitForFunction(() => document.querySelector('[data-oai-copy-snippet]').textContent === 'Copied');
+    assert.match(await clip(page), new RegExp(`Bearer ${made}`));
+    // Copy beside the key: the kit tooltip, "Copied", the key on the clipboard.
+    assert.equal(await root.locator('[data-oai-action="copy-made"]').getAttribute('data-af-tip'), 'Copy the API key');
+    await page.evaluate(() => navigator.clipboard.writeText('-'));
+    await root.locator('[data-oai-action="copy-made"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-oai-action="copy-made"]').textContent === 'Copied');
+    assert.equal(await clip(page), made);
+    // A re-render, a resize and leaving the page never lose it (operator feedback 2026-10-09).
+    await page.setViewportSize({ width: Math.max(360, width - 300), height: height - 200 });
+    await page.evaluate(() => document.getElementById('tab-button-network').click());
+    await page.evaluate(() => document.getElementById('tab-button-openai').click());
+    await page.setViewportSize({ width, height });
+    await page.waitForSelector('[data-oai-made-key]');
+    assert.equal((await root.locator('[data-oai-made-key]').textContent()).trim(), made);
     const row = root.locator('[data-oai-keyrow]', { hasText: `laptop ${width}` });
     await row.waitFor();
     assert.match(await row.textContent(), /Never used/);
@@ -82,6 +108,36 @@ try {
     await page.screenshot({ path: path.join(output, `openai-keys-made-${width}-${theme}.png`), fullPage: true });
     await root.locator('[data-oai-action="made-done"]').click();
     assert.equal(await root.locator('[data-oai-made-key]').count(), 0);
+    assert.match(await root.locator('[data-oai-code]').textContent(), /<your key>/);
+    // Reveal (eye, kit tooltip) shows it again and fills the examples; the row's Copy copies it.
+    const eye = row.locator('[data-oai-reveal]');
+    assert.match(await eye.getAttribute('data-af-tip'), /only you can, and each reveal is noted in the audit log/);
+    assert.equal(await eye.locator('svg').count(), 1);
+    await eye.click();
+    await page.waitForSelector('[data-oai-made="revealed"] [data-oai-made-key]');
+    assert.equal((await root.locator('[data-oai-made-key]').textContent()).trim(), made);
+    assert.match(await root.locator('[data-oai-code]').textContent(), new RegExp(made));
+    await root.locator('[data-oai-action="made-done"]').click();
+    await page.evaluate(() => navigator.clipboard.writeText('-'));
+    await row.locator('[data-oai-copy-key]').click();
+    await page.waitForFunction((f) => document.querySelector(`[data-oai-copy-key="${f}"]`).textContent === 'Copied', await row.getAttribute('data-oai-keyrow'));
+    assert.equal(await clip(page), made);
+    if (width === 1440) {
+      // The admin setting off: show-once; the row's Reveal and Copy say why, nothing is revealed.
+      const setting = root.locator('[data-oai-owner-reveal]');
+      assert.equal(await setting.isChecked(), true);
+      await setting.uncheck();
+      await page.waitForFunction(() => /stored keys were erased/.test((document.querySelector('[data-oai-notice]') || {}).textContent || ''));
+      await page.waitForFunction(() => document.querySelector('[data-oai-reveal]').getAttribute('aria-disabled') === 'true');
+      await row.locator('[data-oai-reveal]').click({ force: true });  // aria-disabled: a press says why
+      await page.waitForFunction(() => /Revealing keys is turned off/.test((document.querySelector('[data-oai-key-notice]') || {}).textContent || ''));
+      assert.equal(await root.locator('[data-oai-made-key]').count(), 0);
+      await root.locator('[data-oai-owner-reveal]').check();
+      await page.waitForFunction(() => /owners can reveal/.test((document.querySelector('[data-oai-notice]') || {}).textContent || ''));
+      // ...and the key made before stays hash-only (its sealed copy was erased).
+      await page.waitForFunction(() => document.querySelector('[data-oai-reveal]').getAttribute('aria-disabled') === 'true');
+      assert.match(await row.locator('[data-oai-reveal]').getAttribute('data-af-tip'), /Made while revealing was off/);
+    }
     // A request shows in the log, named by its key.
     assert.equal((await page.request.get(`${base}/v1/models`, { headers: { Authorization: `Bearer ${made}` } })).status(), 200);
     await page.waitForSelector('[data-oai-logs] tbody tr', { timeout: 15000 });

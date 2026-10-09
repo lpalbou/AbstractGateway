@@ -1,6 +1,7 @@
 """Named API keys for the OpenAI API at /v1 (round 16, backlog 1000; operator ruling 1001 Q3
-"Yes, build them"): made with a name and answered once, listed without the key, revoked one at a
-time with immediate effect, valid at /v1 ONLY (401 with a sentence anywhere under /api/gateway,
+"Yes, build them"): made with a name, listed without the key, revealed again by their OWNER only
+(audited; operator ruling 2026-10-09: show-once rejected, encrypted at rest with the email
+credentials' sealing, admin setting restores show-once), revoked one at a time with immediate effect, valid at /v1 ONLY (401 with a sentence anywhere under /api/gateway,
 sign-in included), running as the owning account under its OpenAI API switch and Active state,
 named in the request log, admin view and revoke, and users.json stays loadable both ways.
 
@@ -46,7 +47,7 @@ def _keys(gw, headers=ALICE):
 
 # ---- make, list, answered once ----------------------------------------------------
 
-def test_a_new_key_is_answered_once_and_listed_without_the_key(gw):
+def test_a_new_key_is_answered_and_listed_without_the_key(gw):
     _set(gw, enabled=True)
     assert _keys(gw) == []
     made = _new_key(gw)
@@ -60,7 +61,9 @@ def test_a_new_key_is_answered_once_and_listed_without_the_key(gw):
     assert key not in listed.text and "key_hash" not in listed.text and "pbkdf2" not in listed.text
     rows = listed.json()["keys"]
     assert [r["label"] for r in rows] == ["laptop Cursor"]
-    assert set(rows[0]) == {"label", "fingerprint", "created_at", "created_by", "last_used_at", "last_client"}
+    assert set(rows[0]) == {"label", "fingerprint", "created_at", "created_by", "last_used_at", "last_client",
+                            "revealable"}
+    assert rows[0]["revealable"] is True and item["revealable"] is True
     # The registry keeps a PBKDF2 hash and the fingerprint, never the key.
     raw = (gw.data / "auth" / "users.json").read_text() if (gw.data / "auth" / "users.json").exists() else ""
     from abstractgateway.users import gateway_user_registry_path_from_env
@@ -278,7 +281,7 @@ def test_registry_without_keys_loads_and_saves_byte_identically(gw, tmp_path):
     reg.set_archived(user_id="alice", archived=False)
     alice = next(u for u in json.loads(path.read_text())["users"] if u["user_id"] == "alice")
     assert [k["label"] for k in alice["openai_keys"]] == ["laptop Cursor"]
-    assert set(alice["openai_keys"][0]) == {"label", "key_hash", "fingerprint", "created_at", "created_by"}
+    assert set(alice["openai_keys"][0]) == {"label", "key_hash", "fingerprint", "created_at", "created_by", "sealed"}
     # A malformed entry is skipped, not fatal.
     doc = json.loads(path.read_text())
     for u in doc["users"]:
@@ -293,3 +296,141 @@ def test_status_says_named_keys_and_offers_no_token_as_the_key(gw):
     key = gw.admin.get("/api/gateway/openai-api", headers=ALICE).json()["key"]
     assert key["named_keys"] is True
     assert gw.admin.get("/api/gateway/openai-api", headers=ADMIN).json()["key"]["named_keys"] is False
+
+
+# ---- owner reveal (round 16 keys fix; operator ruling 2026-10-09) ------------------
+
+SECRETS = ("auth", "openai_key_secrets")
+
+
+def _reveal(gw, fp, headers=ALICE):
+    return gw.admin.post(f"/api/gateway/me/openai-keys/{fp}/reveal", headers=headers)
+
+
+def _reveal_lines(gw):
+    path = gw.data / "audit_log.jsonl"
+    return [json.loads(x) for x in path.read_text().splitlines()
+            if '"openai_key_change"' in x and '"reveal' in x] if path.exists() else []
+
+
+def test_the_owner_reveals_their_key_any_time_and_each_reveal_is_audited(gw):
+    _set(gw, enabled=True)
+    made = _new_key(gw)
+    key, fp = made["key"], made["item"]["fingerprint"]
+    for n in (1, 2):
+        r = _reveal(gw, fp)
+        assert r.status_code == 200, r.text
+        assert r.headers["cache-control"] == "no-store"
+        body = r.json()
+        assert body["key"] == key and body["item"]["fingerprint"] == fp and body["item"]["label"] == "laptop Cursor"
+        lines = _reveal_lines(gw)
+        assert len(lines) == n, lines
+        change = lines[-1]["openai_key_change"]
+        assert change == {"action": "reveal", "user_id": "alice", "tenant_id": "default",
+                          "label": "laptop Cursor", "fingerprint": fp}
+    # The revealed key still works at /v1, and no line of the audit log carries it.
+    assert gw.admin.get("/v1/models", headers=_bearer(key)).status_code == 200
+    assert key not in (gw.data / "audit_log.jsonl").read_text()
+
+
+def test_the_key_is_encrypted_at_rest_with_the_email_sealing(gw):
+    from abstractgateway.openai_keys import sealed_fingerprints
+    from abstractgateway.users import gateway_user_registry_path_from_env
+
+    made = _new_key(gw)
+    key, fp = made["key"], made["item"]["fingerprint"]
+    store = gw.data.joinpath(*SECRETS)
+    sealed = (store / "secret.enc").read_text()
+    doc = json.loads(sealed)
+    assert doc["alg"] == "AES-256-GCM" and key not in sealed
+    # The suite never touches the operator's keychain (conftest: null keyring -> 0600 key file).
+    assert doc["key"] == "file" and (store / "secret.key").exists()
+    assert oct((store / "secret.enc").stat().st_mode & 0o777) == "0o600"
+    assert sealed_fingerprints(gw.data) == {fp}
+    # Nowhere else in the data dir in clear (registry, usage file, audit log).
+    for path in gw.data.rglob("*"):
+        if path.is_file() and path.suffix in {".json", ".jsonl", ".enc", ""}:
+            assert key not in path.read_text(errors="ignore"), path
+    assert key not in gateway_user_registry_path_from_env().read_text()
+    # Revoke erases the sealed copy.
+    assert gw.admin.delete(f"/api/gateway/me/openai-keys/{fp}", headers=ALICE).status_code == 200
+    assert sealed_fingerprints(gw.data) == frozenset()
+
+
+def test_only_the_owner_reveals_other_users_and_admins_get_403(gw):
+    _make(gw, "bob", BOB_TOKEN)
+    _make(gw, "root", "openai-admin-account-token-0003", roles=("admin",))
+    root = {"Authorization": "Bearer openai-admin-account-token-0003"}
+    made = _new_key(gw)
+    key, fp = made["key"], made["item"]["fingerprint"]
+    for headers in (BOB, root):
+        r = _reveal(gw, fp, headers=headers)
+        assert r.status_code == 403, r.text
+        assert r.json()["detail"]["reason_code"] == "not_owner" and key not in r.text
+    # The admin door refuses too, with the same sentence; the operator token has no keys at all.
+    for headers in (ADMIN, root):
+        r = gw.admin.post(f"/api/gateway/admin/accounts/alice/openai-keys/{fp}/reveal", headers=headers)
+        assert r.status_code == 403 and r.json()["detail"]["reason_code"] == "not_owner", r.text
+    assert _reveal(gw, fp, headers=ADMIN).status_code == 409
+    assert gw.admin.post(f"/api/gateway/admin/accounts/alice/openai-keys/{fp}/reveal", headers=BOB).status_code == 403
+    # ...while the admin still LISTS the keys (fingerprints, never keys).
+    r = gw.admin.get("/api/gateway/admin/accounts/alice/openai-keys", headers=ADMIN)
+    assert r.status_code == 200 and r.json()["keys"][0]["fingerprint"] == fp and key not in r.text
+    # An unknown fingerprint is 404; refused attempts are on the record too.
+    assert _reveal(gw, "000000000000").status_code == 404
+    refused = [x["openai_key_change"] for x in _reveal_lines(gw) if x["openai_key_change"]["action"] == "reveal_refused"]
+    assert {r["user_id"] for r in refused} >= {"bob", "root"}
+    # A named key can't reveal anything (endpoint-only).
+    r = _reveal(gw, fp, headers=_bearer(key))
+    assert r.status_code == 401 and r.json()["detail"] == ENDPOINT_ONLY
+
+
+def test_owner_reveal_off_is_show_once_and_hash_only(gw):
+    from abstractgateway.openai_keys import REVEAL_OFF, sealed_fingerprints
+    from abstractgateway.users import GatewayUserRegistry
+
+    _set(gw, enabled=True)
+    assert gw.admin.get("/api/gateway/openai-api", headers=ALICE).json()["owner_reveal"] is True
+    old = _new_key(gw, label="old")
+    assert sealed_fingerprints(gw.data) == {old["item"]["fingerprint"]}
+    status = _set(gw, owner_reveal=False)
+    assert status["owner_reveal"] is False
+    assert gw.admin.get("/api/gateway/openai-api", headers=ALICE).json()["owner_reveal"] is False
+    # Every sealed copy is erased at once and the registry is hash-only.
+    assert not gw.data.joinpath(*SECRETS, "secret.enc").exists()
+    assert sealed_fingerprints(gw.data) == frozenset()
+    assert not any(k.sealed for k in GatewayUserRegistry().get_user("alice").openai_keys)
+    r = _reveal(gw, old["item"]["fingerprint"])
+    assert r.status_code == 404 and r.json()["detail"] == {"reason_code": "reveal_off", "message": REVEAL_OFF}
+    # A key made now is answered by its POST only, never stored in clear or sealed.
+    new = _new_key(gw, label="new")
+    assert new["key"].startswith("sk-agw-") and new["item"]["revealable"] is False
+    assert sealed_fingerprints(gw.data) == frozenset()
+    assert all(k["revealable"] is False for k in _keys(gw))
+    assert gw.admin.get("/v1/models", headers=_bearer(new["key"])).status_code == 200
+    # On again: keys made while it was off stay hash-only; new ones are revealable.
+    _set(gw, owner_reveal=True)
+    r = _reveal(gw, new["item"]["fingerprint"])
+    assert r.status_code == 404 and r.json()["detail"]["reason_code"] == "not_revealable"
+    third = _new_key(gw, label="third")
+    assert _reveal(gw, third["item"]["fingerprint"]).json()["key"] == third["key"]
+    # The setting change is on the record; only an admin may change it.
+    lines = [json.loads(x) for x in (gw.data / "audit_log.jsonl").read_text().splitlines() if '"setting_change"' in x]
+    assert any(x["setting_change"].get("owner_reveal") is False for x in lines)
+    r = gw.admin.post("/api/gateway/admin/core-endpoint", headers=ALICE, json={"owner_reveal": False})
+    assert r.status_code == 403
+
+
+def test_a_key_store_that_cannot_be_written_leaves_a_working_hash_only_key(gw, monkeypatch):
+    from abstractgateway import openai_keys as ok
+
+    def broken(*_a, **_k):
+        raise RuntimeError("keychain locked")
+
+    monkeypatch.setattr(ok, "_vault", broken)
+    made = _new_key(gw)
+    assert made["item"]["revealable"] is False
+    _set(gw, enabled=True)
+    assert gw.admin.get("/v1/models", headers=_bearer(made["key"])).status_code == 200
+    r = _reveal(gw, made["item"]["fingerprint"])
+    assert r.status_code == 404 and r.json()["detail"]["reason_code"] == "not_revealable"

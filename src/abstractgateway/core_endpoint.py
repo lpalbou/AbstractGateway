@@ -79,6 +79,10 @@ class EndpointSettings:
     reach: str = "machine"
     token: str = field(default="", repr=False)
     open_account: str = GUEST_ACCOUNT
+    # "API keys can be revealed by their owner" (round 16 keys fix): on, each named API key is
+    # also kept encrypted so its owner can reveal it again; off, a key is shown once and the
+    # gateway keeps only its hash (`abstractgateway.openai_keys`).
+    owner_reveal: bool = True
 
 
 def _settings_path(data_dir: Path) -> Path:
@@ -96,14 +100,17 @@ def read_settings(data_dir: Path) -> EndpointSettings:
     # A 0.12.0 file has no `reach`: it served every client the listener reached.
     reach = raw.get("reach", "network")
     open_account = raw.get("open_account", GUEST_ACCOUNT)
+    owner_reveal = raw.get("owner_reveal", True)
     if (not isinstance(open_account, str) or not open_account.strip()
+            or type(owner_reveal) is not bool
             or type(raw.get("enabled")) is not bool
             or raw.get("access") not in ACCESS_MODES
             or reach not in REACH_MODES
             or not isinstance(raw.get("token"), str)
             or (raw["enabled"] and not raw["token"].strip())):
         raise ValueError("Invalid Core endpoint settings; restore config/core_endpoint.json")
-    return EndpointSettings(raw["enabled"], raw["access"], reach, raw["token"], open_account.strip())
+    return EndpointSettings(raw["enabled"], raw["access"], reach, raw["token"], open_account.strip(),
+                            owner_reveal=owner_reveal)
 
 
 def open_account_refusal(account: str, *, tenant_id: str = "default") -> Optional[str]:
@@ -157,14 +164,15 @@ def anywhere_allowed(data_dir: Path) -> Optional[str]:
 
 
 def change_settings(data_dir: Path, *, enabled=None, access=None, reach=None, open_account=None,
-                    rotate=False) -> EndpointSettings:
+                    rotate=False, owner_reveal=None) -> EndpointSettings:
     with store_lock(data_dir):
         current = read_settings(data_dir)
         updated = replace(current,
                           enabled=current.enabled if enabled is None else enabled,
                           access=current.access if access is None else access,
                           reach=current.reach if reach is None else reach,
-                          open_account=current.open_account if open_account is None else str(open_account).strip())
+                          open_account=current.open_account if open_account is None else str(open_account).strip(),
+                          owner_reveal=current.owner_reveal if owner_reveal is None else bool(owner_reveal))
         if open_account is not None:
             reason = open_account_refusal(updated.open_account)
             if reason:
@@ -199,6 +207,11 @@ def change_settings(data_dir: Path, *, enabled=None, access=None, reach=None, op
         from .users import GatewayUserRegistry
 
         GatewayUserRegistry().migrate_openai_api_default()
+    if current.owner_reveal and not updated.owner_reveal:
+        # Show-once from now on: every sealed copy is erased and every key becomes hash-only.
+        from .openai_keys import erase_sealed_keys
+
+        erase_sealed_keys(Path(data_dir))
     return updated
 
 

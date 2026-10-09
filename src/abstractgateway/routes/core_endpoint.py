@@ -3,22 +3,25 @@
     GET  /gateway/openai-api                    status for every signed-in account (an admin sees the access settings)
     GET  /gateway/openai-api/logs?limit=        recent requests (an admin: all; anyone else: their own)
     GET  /gateway/openai-api/logs/{request_id}  one request with its recorded request and response (redacted)
-    POST /gateway/admin/core-endpoint {enabled?, access?, reach?, open_account?}   admin: applies immediately
+    POST /gateway/admin/core-endpoint {enabled?, access?, reach?, open_account?, owner_reveal?}   admin: applies immediately
     POST /gateway/admin/core-endpoint/restart   admin: ends open requests, keeps the settings
     POST /gateway/admin/core-endpoint/check     admin: plain setup checks
     GET  /gateway/admin/core-endpoint           admin: the same status (0.12.0 door)
     POST /gateway/admin/core-endpoint/token/rotate   admin: a new internal endpoint key (deprecated)
 
     GET    /gateway/me/openai-keys                       my named API keys (label, created, last used, fingerprint)
-    POST   /gateway/me/openai-keys {label}               a new named key, answered once
+    POST   /gateway/me/openai-keys {label}               a new named key (answered in clear)
+    POST   /gateway/me/openai-keys/{fingerprint}/reveal  the owner's key again (owner only; audited)
     DELETE /gateway/me/openai-keys/{fingerprint}         revoke one (immediate)
-    GET    /gateway/admin/accounts/{id}/openai-keys      admin: an account's keys
+    GET    /gateway/admin/accounts/{id}/openai-keys      admin: an account's keys (fingerprints, never keys)
+    POST   /gateway/admin/accounts/{id}/openai-keys/{fp}/reveal   403 always: only the owner reveals
     DELETE /gateway/admin/accounts/{id}/openai-keys/{fp} admin: revoke one
 
 A caller's API key is one of their named API keys (round 16, `abstractgateway.openai_keys`:
 valid at /v1 only); their gateway token is still accepted at /v1 for compatibility. The
-semantics live in `abstractgateway.core_endpoint`. No route answers a stored key or token: a
-new key is answered once, by the request that makes it.
+semantics live in `abstractgateway.core_endpoint`. A named key is answered to its OWNER only: by
+the request that makes it, and by reveal while the admin setting "API keys can be revealed by
+their owner" (`owner_reveal`, default on) is on; off = show-once, hash-only.
 """
 from __future__ import annotations
 
@@ -49,6 +52,7 @@ class EndpointChange(BaseModel):
     access: Optional[Literal["token", "open"]] = None
     reach: Optional[Literal["machine", "network", "tailnet", "anywhere"]] = None
     open_account: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    owner_reveal: Optional[StrictBool] = None
 
 
 def _network(data_dir) -> Dict[str, Any]:
@@ -133,6 +137,9 @@ def _status(request: Request, settings: ce.EndpointSettings, data_dir, *, admin:
         # /v1/models lists it, else the first listed text model; null when the
         # API is stopped or lists none.
         "example_model": _example_model(listed),
+        # "API keys can be revealed by their owner" (admin setting, default on): everyone reads
+        # it, so the page says whether a lost key can be revealed or must be remade.
+        "owner_reveal": settings.owner_reveal,
     }
     if not admin:
         return out
@@ -224,13 +231,15 @@ async def change(request: Request, body: EndpointChange):
     data_dir = gateway_data_dir_from_env()
     try:
         settings = await asyncio.to_thread(ce.change_settings, data_dir, enabled=body.enabled, access=body.access,
-                                           reach=body.reach, open_account=body.open_account)
+                                           reach=body.reach, open_account=body.open_account,
+                                           owner_reveal=body.owner_reveal)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     ended = ce.end_inflight_requests() if body.enabled is False else 0
     request.state.audit_detail = {"setting_change": {"setting": "core_endpoint", "enabled": settings.enabled,
                                                      "access": settings.access, "reach": settings.reach,
-                                                     "open_account": settings.open_account}}
+                                                     "open_account": settings.open_account,
+                                                     "owner_reveal": settings.owner_reveal}}
     out = await asyncio.to_thread(_status, request, settings, data_dir, admin=True, listed=await _listed(settings))
     out["ended_requests"] = ended
     return _response(out)
@@ -315,9 +324,10 @@ async def my_openai_keys(request: Request):
     return _response({"schema": SCHEMA, "account": rec.user_id, "keys": keys or []})
 
 
-@keys_router.post("/me/openai-keys", summary="Make a named API key (answered once)",
-                  description="`{label}` -> `{key, item}`. The key works at `/v1/*` only and is answered only here; "
-                              "the gateway keeps its hash and fingerprint.")
+@keys_router.post("/me/openai-keys", summary="Make a named API key",
+                  description="`{label}` -> `{key, item}`. The key works at `/v1/*` only. The gateway keeps its hash "
+                              "and fingerprint, and (owner reveal on) an encrypted copy its owner can reveal; "
+                              "`item.revealable` says which.")
 async def my_openai_key_create(request: Request, body: OpenAIKeyCreate):
     from .. import openai_keys as ok
     from ..users import OpenAIKeyError
@@ -329,6 +339,25 @@ async def my_openai_key_create(request: Request, body: OpenAIKeyCreate):
     except OpenAIKeyError as exc:
         raise _key_error(exc) from None
     _note_key_change(request, action="create", user_id=rec.user_id, tenant_id=rec.tenant_id, item=out["item"])
+    return _response({"schema": SCHEMA, **out})
+
+
+@keys_router.post("/me/openai-keys/{fingerprint}/reveal", summary="Reveal one of my named API keys (owner only, audited)",
+                  description="-> `{key, item}`. Only the key's owner: someone else's key answers 403 `not_owner` "
+                              "(admins included); 404 `reveal_off` when the admin turned owner reveal off, "
+                              "`not_revealable` for a hash-only key. Each reveal writes an audit line.")
+async def my_openai_key_reveal(request: Request, fingerprint: str):
+    from .. import openai_keys as ok
+    from ..users import OpenAIKeyError
+
+    _principal, rec = await asyncio.to_thread(_own_account, request)
+    try:
+        out = await asyncio.to_thread(ok.reveal_key, rec.user_id, rec.tenant_id, fingerprint)
+    except OpenAIKeyError as exc:
+        _note_key_change(request, action="reveal_refused", user_id=rec.user_id, tenant_id=rec.tenant_id,
+                         item={"label": None, "fingerprint": str(fingerprint)[:64]})
+        raise _key_error(exc) from None
+    _note_key_change(request, action="reveal", user_id=rec.user_id, tenant_id=rec.tenant_id, item=out["item"])
     return _response({"schema": SCHEMA, **out})
 
 
@@ -356,6 +385,15 @@ async def account_openai_keys(request: Request, account_id: str, tenant_id: str 
         raise HTTPException(status_code=404, detail={"reason_code": "account_not_found",
                                                      "message": f"There is no account named {account_id!r} on this gateway."})
     return _response({"schema": SCHEMA, "account": account_id, "keys": keys})
+
+
+@keys_router.post("/admin/accounts/{account_id}/openai-keys/{fingerprint}/reveal",
+                  summary="Never: only a key's owner reveals it (403)")
+async def account_openai_key_reveal(request: Request, account_id: str, fingerprint: str):
+    from ..openai_keys import NOT_OWNER
+
+    _require_admin_principal(request)
+    raise HTTPException(status_code=403, detail={"reason_code": "not_owner", "message": NOT_OWNER})
 
 
 @keys_router.delete("/admin/accounts/{account_id}/openai-keys/{fingerprint}",
