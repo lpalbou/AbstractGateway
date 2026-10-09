@@ -393,6 +393,8 @@ async def account_openai_key_reveal(request: Request, account_id: str, fingerpri
     from ..openai_keys import NOT_OWNER
 
     _require_admin_principal(request)
+    _note_key_change(request, action="reveal_refused", user_id=account_id, tenant_id="default",
+                     item={"label": None, "fingerprint": str(fingerprint)[:64]})
     raise HTTPException(status_code=403, detail={"reason_code": "not_owner", "message": NOT_OWNER})
 
 

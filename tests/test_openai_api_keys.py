@@ -380,6 +380,8 @@ def test_only_the_owner_reveals_other_users_and_admins_get_403(gw):
     assert _reveal(gw, "000000000000").status_code == 404
     refused = [x["openai_key_change"] for x in _reveal_lines(gw) if x["openai_key_change"]["action"] == "reveal_refused"]
     assert {r["user_id"] for r in refused} >= {"bob", "root"}
+    # The admin door's refusals are on the record too (they name the account asked for).
+    assert sum(1 for r in refused if r["user_id"] == "alice") >= 2
     # A named key can't reveal anything (endpoint-only).
     r = _reveal(gw, fp, headers=_bearer(key))
     assert r.status_code == 401 and r.json()["detail"] == ENDPOINT_ONLY
