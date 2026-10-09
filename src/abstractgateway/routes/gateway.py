@@ -67,6 +67,7 @@ from ..core_config import (
     runtime_core_config_file,
     save_gateway_capability_default,
     text_route_provider_warnings,
+    voice_input_route_hint,
 )
 from ..provider_defaults import (
     ProviderModelConfigError,
@@ -17319,9 +17320,7 @@ def _effective_voice_routes() -> Dict[str, Any]:
             # faster-whisper route on Apple silicon runs on the processor while mlx-whisper
             # runs the same model on the GPU. Clients show `hint.sentence` next to the
             # engine line, verbatim; nothing is computed client-side and nothing is applied.
-            from abstractcore.config.recommendations import voice_input_hint
-
-            hint = voice_input_hint({"provider": provider, "model": entry["model"]})
+            hint = voice_input_route_hint(provider, entry["model"])
             if hint:
                 entry["hint"] = hint
         if not provider:

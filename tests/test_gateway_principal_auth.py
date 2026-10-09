@@ -984,7 +984,7 @@ def test_a_fresh_gateway_serves_the_recommended_seed_and_users_inherit_it(tmp_pa
     for key, provider, model in (
         ("output.text", "lmstudio", "qwen/qwen3.5-9b"),
         ("output.voice", "supertonic", "supertonic-3"),
-        ("input.voice", "faster-whisper", "base"),
+        ("input.voice", "faster-whisper", "large-v3"),
     ):
         assert rows[key]["configured"] is True, f"{key} must be an ordinary configured row"
         assert (rows[key]["provider"], rows[key]["model"]) == (provider, model)

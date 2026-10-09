@@ -114,6 +114,9 @@ _SEAM_EXPORTS = frozenset(
         "text_default",
         "reasoning_default",
         "read_core_config_api_key",
+        # The speech-input row's served hint (round 16): AbstractCore's
+        # `voice_input_hint` through the Runtime facade, reached only here.
+        "voice_input_route_hint",
         # The weights half of the same door: availability probes and the
         # download verb are AbstractCore's materializer, reached only here.
         # A Gateway module that re-exported these could grow its own

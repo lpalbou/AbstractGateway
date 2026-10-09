@@ -105,7 +105,7 @@ dependencies = [
 # Tooling extras for contributors: `dev`, `docs`.
 
 embeddings = [
-  "abstractcore[embeddings]>=2.25.1",
+  "abstractcore[embeddings]>=2.26.0",
 ]
 
 # Desktop tray / menu-bar icon shown by `abstractgateway serve` (macOS, Windows,
@@ -123,7 +123,7 @@ tray = [
 # deployment entry point, Gateway's `apple` profile installs the full native
 # Apple stack and all relevant non-NVIDIA framework capabilities.
 apple = [
-  "AbstractRuntime[apple]>=0.9.1",
+  "AbstractRuntime[apple]>=0.10.0",
   "abstractagent[apple]>=0.3.19",
   "AbstractMemory[all-apple]>=0.3.0",
 ]
@@ -131,7 +131,7 @@ apple = [
 # Native/container GPU Gateway profile. This is the full local GPU aggregate for
 # Python installs and for the NVIDIA Docker image.
 gpu = [
-  "AbstractRuntime[gpu]>=0.9.1",
+  "AbstractRuntime[gpu]>=0.10.0",
   "abstractagent[gpu]>=0.3.19",
   "AbstractMemory[all-gpu]>=0.3.0",
 ]

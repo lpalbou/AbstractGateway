@@ -1427,6 +1427,16 @@ def _core_server_json(method: str, path: str, body: Optional[Dict[str, Any]] = N
     return payload
 
 
+def voice_input_route_hint(provider: str, model: Optional[str]) -> Optional[Dict[str, Any]]:
+    """AbstractCore's served hint for the gateway's configured speech-input route (round 16).
+
+    Through the Runtime facade (`config_facade.voice_input_hint`, AbstractCore >= 2.26.0),
+    never AbstractCore directly: `{"sentence", "code", ...}` or None. Clients show
+    `sentence` verbatim next to the engine line; nothing is computed client-side.
+    """
+    return config_facade.voice_input_hint({"provider": provider, "model": model})
+
+
 def core_server_base_url() -> str:
     raw = os.getenv("ABSTRACTCORE_SERVER_BASE_URL")
     return raw.strip().rstrip("/") if isinstance(raw, str) and raw.strip() else ""
