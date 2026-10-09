@@ -10939,6 +10939,8 @@ Requires AbstractRuntime with `schedule@2` (the next runtime release). Dependenc
 
 ### Added
 
+- Test: an automation created on 0.13.x (`schedule@1` `start_at + every`, no `time_zone` on its binding, no account preference) serves the same summary block as a round-16 one on create, GET and the list — `time_zone` (the host zone), `next_run_at` (= `next_fire_at`, kept), `next_run_local`, `schedule_text`, `schedule_rule_text` — on its unchanged 24 h grid (`test_a_0_13_repeat_automation_serves_the_whole_block_and_keeps_next_fire_at`).
+
 - Automations: calendar schedules. The trigger `schedule@2` takes `{kind: "daily", at: "08:00"}`, `{kind: "weekly", days: ["mon", "thu"], at}`, `{kind: "monthly", day: 1..31 | "last", at}`, plus `every` and `once` (a `once` may give a wall time `at`), evaluated in the automation's `config.time_zone` with daylight saving handled. A rule sent without a time zone gets the owner's account time zone; a revision without one keeps the automation's zone. `schedule@1` automations and requests work unchanged. See `docs/automations.md`.
 - Every automation summary (list, read, create answer) carries `next_run_at`, `next_run_local`, `time_zone`, `schedule_rule_text` and `schedule_text`, the one sentence clients show for the schedule ("Every day at 08:00 (Europe/Paris) · next Fri 9 Oct 08:00"; a fixed UTC interval names the zone of the times it shows: "Every 8 hours (UTC) · next Fri 9 Oct 08:00 (Europe/Paris)"). `next_fire_at` stays. Occurrence rows use the same rule sentence ("schedule: Every 30 minutes (UTC), tick 5").
 - `POST /api/gateway/automations/schedule-preview`: what a trigger would do if saved now (normalized trigger, sentences, first run, `first_run_sentence`); nothing is stored.

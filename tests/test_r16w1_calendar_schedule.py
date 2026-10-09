@@ -223,6 +223,26 @@ def test_v1_and_manual_rows_use_the_owner_zone(gw):
     assert s["schedule_text"] == "Manual runs only" and "next_run_at" not in s and s["time_zone"] == "Europe/Paris"
 
 
+def test_a_0_13_repeat_automation_serves_the_whole_block_and_keeps_next_fire_at(gw):
+    """The operator's automation (created on 0.13.x: schedule@1 `start_at + every`, no
+    `time_zone` on its binding, no account preference): every row serves the same block as a
+    round-16 one — `time_zone` (the host zone), `next_run_at` (= `next_fire_at`, kept),
+    `next_run_local`, `schedule_text`, `schedule_rule_text` — and its tick grid is unchanged."""
+    v1 = {"source_id": "schedule", "source_version": 1,
+          "config": {"start_at": "2026-10-02T19:53:29.622724+00:00", "every": "24h"}}
+    out = _create(gw, v1, "op")
+    assert out["summary"]["trigger"]["config"] == {
+        "start_at": "2026-10-02T19:53:29.622724+00:00", "anchor": "2026-10-02T19:53:29.622724+00:00", "every": "24h"}
+    for s in (out["summary"], _get(gw, out["automation_id"])["summary"],
+              next(i for i in gw.get("/api/gateway/automations", headers=HEADERS).json()["items"] if i["automation_id"] == out["automation_id"])):
+        assert s["time_zone"] == HOST_TZ
+        assert s["next_fire_at"].endswith(":53:29.622724+00:00")  # the 24 h grid from start_at
+        assert s["next_run_at"] == s["next_fire_at"]
+        assert s["next_run_local"].endswith("+09:00") and s["next_run_local"][11:16] == "04:53"
+        assert s["schedule_rule_text"] == "Every 24 hours (UTC)"
+        assert s["schedule_text"].startswith("Every 24 hours (UTC) · next ") and s["schedule_text"].endswith(" 04:53 (Asia/Tokyo)")
+
+
 def test_legacy_rows_carry_the_sentence(gw):
     save_runs(legacy_schedule_run())
     rows = gw.get("/api/gateway/automations?archived_only=false", headers=HEADERS).json()["items"]
