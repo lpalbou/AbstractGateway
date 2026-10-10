@@ -17,9 +17,13 @@ Declared keys:
 - ``time_zone`` (R16.1): an IANA zone name (``"Europe/Paris"``) or ``null`` = follow the gateway
   default, which is THIS host's zone (automation_schedule.host_time_zone). Daily, weekly and
   monthly automations are created on the owner's time zone; summaries show times in it.
+- ``spoken_language`` (round 18): ``"auto"`` or an ISO 639-1 code the speech engines support
+  (THE list is AbstractVoice's, spoken_language.py). Every transcription of this account that
+  carries no ``language`` hint of its own is told this language; ``"auto"`` (= nothing stored)
+  lets the engine detect it. ``null`` and "" on a PUT mean auto.
 
 Storage: the runtime-config store (``runtime_config.json``), top-level key
-``account_preferences`` = ``{"<tenant>:<user>": {"default_workflow": {iface: value}, "time_zone": "<IANA>"}}``, written
+``account_preferences`` = ``{"<tenant>:<user>": {"default_workflow": {iface: value}, "time_zone": "<IANA>", "spoken_language": "<code>"}}``, written
 under the store lock; an account with nothing set has no entry.
 
 This module holds the store and the payload rules; routes/account_preferences.py binds them to
@@ -43,6 +47,7 @@ from .agent_defaults import (
 STORE_KEY = "account_preferences"
 DEFAULT_WORKFLOW = "default_workflow"
 TIME_ZONE = "time_zone"
+SPOKEN_LANGUAGE = "spoken_language"
 GATEWAY_DEFAULT_LABEL = "Gateway default ({name})"
 GATEWAY_DEFAULT_UNAVAILABLE_LABEL = "Gateway default (unavailable)"
 
@@ -56,6 +61,13 @@ DECLARED: Dict[str, Dict[str, str]] = {
     TIME_ZONE: {
         "label": "Time zone",
         "help": "Daily, weekly and monthly automations run on this clock. Gateway default follows this computer's time zone.",
+    },
+    SPOKEN_LANGUAGE: {
+        "label": "Spoken language",
+        "help": (
+            "The language spoken to the microphone. Auto lets the speech engine detect it; naming it skips "
+            "detection, so short phrases and mixed-language speech transcribe reliably and a little faster."
+        ),
     },
 }
 
@@ -105,6 +117,14 @@ def _clean(entry: Any) -> Dict[str, Any]:
     zone = entry.get(TIME_ZONE)
     if isinstance(zone, str) and _valid_zone(zone):
         out[TIME_ZONE] = zone.strip()
+    code = entry.get(SPOKEN_LANGUAGE)
+    if isinstance(code, str):
+        try:
+            normalized = normalize_spoken_language(code)
+        except PreferenceError:
+            normalized = None  # a hand-edited store never serves a code the engines refuse
+        if normalized:
+            out[SPOKEN_LANGUAGE] = normalized
     return out
 
 
@@ -136,6 +156,22 @@ def stored_time_zone(data_dir: Path, *, tenant_id: str, user_id: str) -> Optiona
     return stored_preferences(data_dir, tenant_id=tenant_id, user_id=user_id).get(TIME_ZONE)
 
 
+def normalize_spoken_language(value: Any) -> Optional[str]:
+    """``None``/""/"auto" -> None (auto, nothing stored); a supported code -> the code; otherwise
+    refused with the voice layer's sentence (key ``spoken_language``)."""
+    from . import spoken_language
+
+    try:
+        return spoken_language.normalize(value)
+    except spoken_language.SpokenLanguageError as exc:
+        raise PreferenceError(str(exc), key=SPOKEN_LANGUAGE) from exc
+
+
+def stored_spoken_language(data_dir: Path, *, tenant_id: str, user_id: str) -> Optional[str]:
+    """The account's saved spoken language code, or None (= auto)."""
+    return stored_preferences(data_dir, tenant_id=tenant_id, user_id=user_id).get(SPOKEN_LANGUAGE)
+
+
 def stored_preferences(data_dir: Path, *, tenant_id: str, user_id: str) -> Dict[str, Any]:
     """The account's saved overrides: ``{"default_workflow": {iface: value}}`` (only set ones)."""
     stored = _rc()._read_store(Path(data_dir))
@@ -146,11 +182,13 @@ def stored_preferences(data_dir: Path, *, tenant_id: str, user_id: str) -> Dict[
 
 
 def preferences_view(stored: Mapping[str, Any]) -> Dict[str, Any]:
-    """Every declared key: ``{"default_workflow": {iface: value|null}, "time_zone": value|null}``."""
+    """Every declared key: ``{"default_workflow": {iface: value|null}, "time_zone": value|null,
+    "spoken_language": "auto"|code}``."""
     dw = stored.get(DEFAULT_WORKFLOW) if isinstance(stored.get(DEFAULT_WORKFLOW), Mapping) else {}
     return {
         DEFAULT_WORKFLOW: {iface: (dw.get(iface) or None) for iface in app_interfaces()},
         TIME_ZONE: stored.get(TIME_ZONE) or None,
+        SPOKEN_LANGUAGE: stored.get(SPOKEN_LANGUAGE) or "auto",
     }
 
 
@@ -190,6 +228,8 @@ def check_changes(changes: Any) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     if TIME_ZONE in body:
         out[TIME_ZONE] = normalize_time_zone(body[TIME_ZONE])
+    if SPOKEN_LANGUAGE in body:
+        out[SPOKEN_LANGUAGE] = normalize_spoken_language(body[SPOKEN_LANGUAGE])
     if DEFAULT_WORKFLOW in body:
         mapping = body[DEFAULT_WORKFLOW]
         if not isinstance(mapping, Mapping):
@@ -250,6 +290,11 @@ def write_preferences(
                 entry.pop(TIME_ZONE, None)
             else:
                 entry[TIME_ZONE] = checked[TIME_ZONE]
+        if SPOKEN_LANGUAGE in checked:
+            if checked[SPOKEN_LANGUAGE] is None:
+                entry.pop(SPOKEN_LANGUAGE, None)
+            else:
+                entry[SPOKEN_LANGUAGE] = checked[SPOKEN_LANGUAGE]
         if entry:
             block[key] = entry
         else:

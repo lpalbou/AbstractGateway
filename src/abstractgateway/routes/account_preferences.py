@@ -25,6 +25,7 @@ from fastapi import APIRouter, HTTPException, Request
 from ..account_preferences import (
     DECLARED,
     DEFAULT_WORKFLOW,
+    SPOKEN_LANGUAGE,
     TIME_ZONE,
     PreferenceError,
     app_interfaces,
@@ -36,6 +37,7 @@ from ..account_preferences import (
 )
 
 from ..automation_schedule import preferences_time_zone_block
+from ..spoken_language import preferences_block as preferences_spoken_language_block
 
 router = APIRouter(prefix="/gateway", tags=["accounts"])
 
@@ -181,10 +183,15 @@ class _Context:
             "apps": apps,
             # R16.1: the account's time zone (null = this host's zone, the gateway default).
             "time_zone": preferences_time_zone_block(view[TIME_ZONE]),
+            # Round 18: the account's spoken language ("auto" = the engine detects it), with the
+            # served choices (AbstractVoice's list) — the control's whole truth.
+            "spoken_language": preferences_spoken_language_block(
+                None if view[SPOKEN_LANGUAGE] == "auto" else view[SPOKEN_LANGUAGE]
+            ),
         }
 
 
-@router.get("/accounts/{account}/preferences", summary="An account's client preferences (default workflow per app, time zone)")
+@router.get("/accounts/{account}/preferences", summary="An account's client preferences (default workflow per app, time zone, spoken language)")
 async def get_account_preferences(request: Request, account: str) -> Dict[str, Any]:
     """`me`, or another account (an admin; an entity's creator). See the module docstring."""
     caller, tenant, user, is_self = _target(request, account)
@@ -197,10 +204,11 @@ async def get_account_preferences(request: Request, account: str) -> Dict[str, A
 
 @router.put("/accounts/{account}/preferences", summary="Change an account's client preferences")
 async def put_account_preferences(request: Request, account: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Body `{"default_workflow": {<interface>: "bundle:flow" | null}, "time_zone": "<IANA>" | null}`
-    (each key optional): named interfaces replace (null = follow the gateway default), unnamed keep;
-    `time_zone` null = this host's zone. Unknown keys, unknown interfaces and
-    workflows the account may not run are refused (400 preference_refused, a sentence)."""
+    """Body `{"default_workflow": {<interface>: "bundle:flow" | null}, "time_zone": "<IANA>" | null,
+    "spoken_language": "auto" | "<code>" | null}` (each key optional): named interfaces replace (null =
+    follow the gateway default), unnamed keep; `time_zone` null = this host's zone; `spoken_language`
+    null/"auto" = the engine detects the language. Unknown keys, unknown interfaces, unknown language
+    codes and workflows the account may not run are refused (400 preference_refused, a sentence)."""
     caller, tenant, user, is_self = _target(request, account)
     gw = _gw()
     from ..runtime_config import RuntimeConfigStoreCorrupt

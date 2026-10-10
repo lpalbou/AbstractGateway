@@ -567,6 +567,50 @@ async def _form_field_names(scope, raw: bytes) -> List[str]:
         await form.close()
 
 
+def multipart_boundary(content_type: str) -> Optional[str]:
+    """The boundary of a multipart/form-data content type, or None."""
+    for part in str(content_type or "").split(";")[1:]:
+        key, _, value = part.strip().partition("=")
+        if key.strip().lower() == "boundary":
+            return value.strip().strip('"') or None
+    return None
+
+
+def append_form_field(body: bytes, boundary: str, name: str, value: str) -> bytes:
+    """``body`` (a multipart/form-data body) with one more text field before its closing
+    delimiter. The body is returned untouched when its closing delimiter cannot be found."""
+    closing = f"--{boundary}--".encode("latin-1")
+    at = body.rfind(closing)
+    if at < 0:
+        return body
+    part = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").encode("utf-8")
+    return body[:at] + part + body[at:]
+
+
+def with_account_spoken_language(raw: bytes, content_type: str, field_names: List[str], principal: Any,
+                                 data_dir: Path) -> bytes:
+    """A transcription form without a `language` field, sent by a gateway account whose
+    spoken_language preference names a language: that code appended as the `language` field.
+    Every other case (the form names it, no account, the account on auto) leaves the body alone.
+    An unknown code in the form is Core's 400 to give, not this layer's."""
+    if "language" in field_names or principal is None:
+        return raw
+    from .spoken_language import resolve
+
+    resolved = resolve(
+        None,
+        data_dir=data_dir,
+        tenant_id=getattr(principal, "tenant_id", None),
+        user_id=getattr(principal, "user_id", None),
+    )
+    if resolved.language is None:
+        return raw
+    boundary = multipart_boundary(content_type)
+    if not boundary:
+        return raw
+    return append_form_field(raw, boundary, "language", resolved.language)
+
+
 def normalize_embeddings_request(doc: Dict[str, Any]) -> Dict[str, Any]:
     """Core computes floats; base64 (the OpenAI SDK's default) is encoded here."""
     if not isinstance(doc, dict):
@@ -900,7 +944,14 @@ class CoreEndpoint:
                     if guest:
                         raise RequestRefused("Without a key, files can't be sent (Guest: models only).", None,
                                              "guest_not_allowed", 403)
-                    refuse_routing_fields(await _form_field_names(scope, raw))
+                    field_names = await _form_field_names(scope, raw)
+                    refuse_routing_fields(field_names)
+                    if path == "/v1/audio/transcriptions" and "multipart/form-data" in ctype:
+                        # Round 18: the form's own `language` wins; without one, a gateway
+                        # account's spoken_language preference is told to the engine (THE
+                        # resolver, spoken_language.resolve) — the same rule as /audio/transcribe.
+                        raw = await asyncio.to_thread(
+                            with_account_spoken_language, raw, ctype, field_names, principal, data_dir)
             except RequestRefused as exc:
                 return await openai_error(413 if exc.code == "request_too_large" else exc.status, str(exc),
                                           type_="permission_error" if exc.status == 403 else "invalid_request_error",

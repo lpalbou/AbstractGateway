@@ -12851,7 +12851,13 @@ async def voice_tts_stream(run_id: str, req: VoiceTTSRequest) -> StreamingRespon
 
 class AudioTranscribeRequest(BaseModel):
     audio_artifact: Dict[str, Any] = Field(..., description="Audio artifact ref dict like {'$artifact': '...'} (from /attachments/*).")
-    language: Optional[str] = Field(default=None, description="Optional language hint (backend-specific).")
+    language: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional spoken-language hint for THIS transcription: 'auto' or an ISO 639-1 code the speech engines support. "
+            "Absent = the account's spoken_language preference, else auto (the engine detects it). An unknown code is refused (400)."
+        ),
+    )
     provider: Optional[str] = Field(default=None, description="Optional STT provider/engine selector for this transcription request.")
     model: Optional[str] = Field(default=None, description="Optional STT model override for this transcription request.")
     prompt: Optional[str] = Field(default=None, max_length=20000, description="Optional transcription prompt/context hint.")
@@ -12871,6 +12877,9 @@ class AudioTranscribeResponse(BaseModel):
     provider: Optional[str] = Field(default=None, description="The STT engine that ran (the request's, else the gateway default route).")
     model: Optional[str] = Field(default=None, description="The STT model that ran, when known.")
     duration_ms: Optional[int] = Field(default=None, description="Server-side transcription time in milliseconds.")
+    language: str = Field(default="auto", description="The spoken language told to the engine: the request's hint, else the account's spoken_language preference, else 'auto' (round 18).")
+    language_source: str = Field(default="auto", description="Where that language came from: 'request', 'account' or 'auto'.")
+    detected_language: Optional[str] = Field(default=None, description="The language the engine reported (ISO 639-1), when it reports one.")
 
 
 class ImageGenerateRequest(BaseModel):
@@ -13092,7 +13101,7 @@ class MusicGenerateResponse(BaseModel):
 
 
 @router.post("/runs/{run_id}/audio/transcribe", response_model=AudioTranscribeResponse)
-async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTranscribeResponse:
+async def audio_transcribe(run_id: str, req: AudioTranscribeRequest, request: Request) -> AudioTranscribeResponse:
     """Delegate STT to Runtime-owned durable child execution."""
     svc = get_gateway_service()
     rs = svc.host.run_store
@@ -13125,8 +13134,23 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
     )
     session_id = str(getattr(run, "session_id", "") or "")
 
-    language = getattr(req, "language", None)
-    language_hint = str(language).strip() if isinstance(language, str) and language.strip() else None
+    # Round 18 — the spoken language reaching the engine is resolved in ONE place
+    # (spoken_language.resolve): the request's hint, else the caller's account preference, else
+    # auto. An unknown code is refused here with the voice layer's sentence.
+    from ..spoken_language import SpokenLanguageError, detected_language_of, resolve as resolve_spoken_language
+
+    _tenant_id, _user_id = _principal_account(_principal_from_request(request))
+    try:
+        spoken = await asyncio.to_thread(
+            resolve_spoken_language,
+            getattr(req, "language", None),
+            data_dir=gateway_data_dir_from_env(),
+            tenant_id=_tenant_id,
+            user_id=_user_id,
+        )
+    except SpokenLanguageError as exc:
+        raise HTTPException(status_code=400, detail={"reason": "language_refused", "message": str(exc), "key": "language"}) from exc
+    language_hint = spoken.language
     stt_provider = getattr(req, "provider", None)
     stt_provider_name = str(stt_provider).strip() if isinstance(stt_provider, str) and stt_provider.strip() else None
     stt_model = getattr(req, "model", None)
@@ -13195,6 +13219,7 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
 
     result = _gateway_completed_child_result(child, operation="STT")
     text = str(result.get("content") or result.get("text") or "")
+    language_facts = spoken.evidence(detected_language_of(result))
 
     # Store transcript as an artifact (durable; avoids inlining large strings in ledger-only mode).
     store_fn = getattr(store, "store", None)
@@ -13226,8 +13251,9 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
     generation: Dict[str, Any] = {}
     if prompt_hint:
         generation["prompt"] = prompt_hint
-    if language_hint:
-        generation["language"] = language_hint
+    # The ledger evidence of the spoken language (round 18): what reached the engine, where it
+    # came from, what the engine reported — the same three facts the response carries.
+    generation.update(language_facts)
     params_meta: Dict[str, Any] = {}
     if response_format:
         params_meta["response_format"] = response_format
@@ -13298,6 +13324,7 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
         provider=stt_provider_name,
         model=stt_model_name,
         duration_ms=int((time.monotonic() - _stt_started) * 1000),
+        **language_facts,
     )
 
 
@@ -18059,6 +18086,12 @@ def _static_vision_provider_models_response(*, task: Optional[str]) -> Dict[str,
     }
 
 
+def _spoken_language_codes() -> list[str]:
+    from ..spoken_language import supported_codes
+
+    return list(supported_codes())
+
+
 def _voice_contract_descriptor(caps: Dict[str, Any], *, kind: str) -> Dict[str, Any]:
     assert kind in {"tts", "stt"}
     abstractvoice = caps.get("abstractvoice") if isinstance(caps.get("abstractvoice"), dict) else {}
@@ -18164,7 +18197,9 @@ def _voice_contract_descriptor(caps: Dict[str, Any], *, kind: str) -> Dict[str, 
         "input_modes": ["artifact"],
         "upload_endpoint": _api_gateway_path("/attachments/upload"),
         "content_types": ["audio/wav", "audio/mpeg", "audio/mp4", "audio/webm", "audio/ogg", "application/octet-stream"],
-        "languages": [],
+        # Round 18: the spoken languages a request's `language` / the account's spoken_language
+        # may name (AbstractVoice's list; "auto" = detected is always accepted).
+        "languages": _spoken_language_codes(),
         "max_upload_bytes": int(policy.get("max_attachment_bytes") or 0),
         "durability": "runtime_child_run",
         "returns_child_run_id": True,
