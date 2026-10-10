@@ -81,7 +81,11 @@ sign-in code** requests a code and opens the code step in place
 
 In **Multimodal**, a configured route whose engine is not installed reads
 "engine missing" with the install command, and the voice pickers say why a
-provider lists no voices. The cloud voice providers (OpenAI,
+provider lists no voices. Under the capability table, **Spoken language** is
+your own account's spoken language, the same setting as the last row of
+[Preferences](#preferences-of-an-account): pick **Auto (detected)** or a
+language, it saves at once ("Saved." / "Not saved." with the gateway's
+sentence). The cloud voice providers (OpenAI,
 OpenAI-compatible) are always listed, marked "needs an API key" until you add
 one under **Providers**.
 
@@ -323,6 +327,16 @@ time zone names the gateway knows (type to search, e.g. "Europe/Par"). A pick ap
 they are created. The list, its label and its help come from the gateway (the `time_zone` block of
 the answer); the row is the kit's time-zone picker, the same one AbstractCode uses. An answer
 without that block shows an error in the dialog instead of the row.
+
+After it comes **Spoken language**: the language you speak to the microphone. **Auto (detected)**,
+the default, lets the speech engine detect it; naming a language (English, French, ...) skips
+detection, so short phrases and mixed-language speech transcribe reliably and a little faster.
+Every transcription of the account uses it — dictation in the apps and the Sandbox, and the
+OpenAI-compatible transcription route — unless a request names a language of its own. A pick
+applies at once ("Saved." / "Not saved." with the gateway's sentence). The label, the help (the
+**?** beside the label) and the list of languages come from the gateway (the `spoken_language`
+block of the answer); an answer without that block shows an error in the dialog instead of the
+row.
 
 Everyone opens their own from their own row. An administrator opens any account's (choosing among
 the gateway's shared workflows); an entity's preferences are set by its creator or an
@@ -855,7 +869,10 @@ you can click.
   searchable list: click it (or `Enter`) for **Gateway default (<zone>)** and
   the gateway's time zone names, type to filter ("Search time zones"), click a
   name (or `Enter`) to save at once. Hovering its label shows the gateway's
-  help. A gateway older than this route has no Preferences on its rows, and the
+  help. After it, **Spoken language** lists **Auto (detected)** and the
+  languages the gateway serves; click it (or `Enter`), then click a language
+  (or `Enter`) to save at once ("Saved.", or "Not saved." with the gateway's
+  reason). A gateway older than this route has no Preferences on its rows, and the
   button says so.
 
 - **3 Workflows** is one page, as on the web. The head has **↻** (`r`, "Reload
@@ -1016,6 +1033,7 @@ you can click.
   Downloading, deleting and changing the default are admin-only. For anyone else these buttons stay visible but faint, and pressing one says why ("Only an admin can download models"). An artifact this computer cannot run reads **Not available here**, with the reason in its tooltip. "No model matches these filters." comes with **Clear filters** (`x`).
 
 - **0 Multimodal** (**Multimodal Capabilities**) shows which provider and model serves each capability route. The head has **Apply recommended** (`a`, admin) and **↻ Refresh** (`r`), then the scope sentence. When a route has no model, a banner names it and offers **⤓ Download missing** (`m`). **Recommended for this computer** (`p`) carries **Download all** (`D`).
+  Under the **Transcription** line, **Spoken language** is your own account's spoken language, as on the web: the same list and words as in Preferences, a pick saves at once ("Saved." / "Not saved." with the gateway's reason), and hovering the label shows the gateway's help.
   When the gateway names the AbstractCore store file, a line says so: "AbstractCore store · <file> — shared with AbstractCore — edits here apply to AbstractCore directly" (a read-only store or a runtime overlay says so instead).
   The table has the columns **Route**, **Capability**, **Provider**, **Model**, **Weights**, **Source**, **Status** and **Actions**. On a narrow terminal it shows Route, Model, Weights and Actions, and Capability, Provider and Status move to the row's second line.
   The **Weights** pill reads installed, not downloaded, remote or unknown; its tooltip gives the gateway's sentence and "To fix: …". Model ids wrap at `/` or `-`.
