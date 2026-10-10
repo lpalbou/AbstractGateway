@@ -4580,7 +4580,7 @@ serve:
 | `/api/gateway/admin/users`, `/admin/runtime-reservations` | user accounts and retained runtimes (admin) | [security.md](docs/security.md#tenant-and-user-isolation) |
 | `/api/gateway/admin/accounts`, `/admin/accounts/{id}/active`, `/admin/accounts/{id}/activity`, `/me/accounts`, `/me/accounts/{id}/activity`, `/me/activity` | the Accounts page: users and entities in one list (admin), your own account and your entities (everyone), the Active switch, activity from the audit log | [below](#accounts-and-activity) |
 | `/api/gateway/admin/runtime-config` | runtime settings (admin) | [configuration.md](docs/configuration.md) |
-| `/api/gateway/accounts/{me\|account}/preferences` | one account's client preferences: the default workflow per app and the time zone (the account itself, an admin, an entity's creator) | [below](#account-preferences) |
+| `/api/gateway/accounts/{me\|account}/preferences` | one account's client preferences: the default workflow per app, the time zone and the spoken language (the account itself, an admin, an entity's creator) | [below](#account-preferences) |
 | `/api/gateway/workspace/policy`, `/workspace/policy/{account}`, `/sessions/{id}/workspaces`, `/workspace/effective/{account}` (GET and dry-run POST), `POST /workspace/path-check` | workspaces, three levels: the gateway policy = the eligible set (read: everyone; write: admin), one account's default subset (admin, the account itself, an entity's creator; `me` = the caller), one conversation's subset (its owner, or an admin), the effective set the gateway enforces, and the path check run before saving a row (`{path}` → `{path, normalized, absolute, exists, is_dir, valid, sentence}`; any signed-in principal) | [below](#workspaces), [security.md](docs/security.md#workspaces-three-levels) |
 | `/api/gateway/admin/runtimes`, `?account=<id>[&tenant_id=<t>]` | the runtime inventory (admin); `account` keeps only the planes that account owns and echoes `filter` | [console.md](docs/console.md#runtimes-of-one-account) |
 | `/api/gateway/network`, `/network/restart` | network exposure, addresses, reverse proxy | [configuration.md](docs/configuration.md#api-gateway_network_v1) |
@@ -6031,6 +6031,20 @@ STT and listen contract notes:
 - `POST /api/gateway/runs/{run_id}/audio/transcribe` accepts a run-visible
   `audio_artifact` plus optional `language`, `prompt`, `response_format`,
   `temperature`, `format`, `provider`, and `model` hints.
+- The spoken language told to the engine is resolved in one place, in this
+  order: the request's `language` hint (`"auto"` or a supported code; an unknown
+  code is refused with 400 `{"reason": "language_refused", "message": <sentence>,
+  "key": "language"}`), else the caller's account preference `spoken_language`
+  ([Account preferences](#account-preferences)), else auto (the engine detects
+  it). The response carries `language` (what reached the engine: the code or
+  `"auto"`), `language_source` (`"request"`, `"account"` or `"auto"`) and
+  `detected_language` (the ISO 639-1 code the engine reported, or `null`); the
+  transcript artifact's `generation` metadata records the same three facts.
+- `capabilities.contracts.*.voice.stt.languages` lists the codes a request or a
+  preference may name.
+- The OpenAI-compatible `POST /v1/audio/transcriptions` ([openai-api.md](docs/openai-api.md))
+  follows the same rule: the form's own `language` field wins; a form without one,
+  sent with a gateway account's key, is told that account's `spoken_language`.
 - `capabilities.contracts.flow_editor.voice.stt` and
   `capabilities.contracts.assistant.voice.stt` point to that upload route.
 - `capabilities.contracts.flow_editor.voice.listen` and
@@ -6701,7 +6715,20 @@ else gets 403 with "Only an admin or the account itself can read or change its p
 answers 404. A gateway older than 0.13.1 has no such route (404 Not Found); the Assistant and
 AbstractCode then keep their own choice as before.
 
-Only keys the gateway declares are accepted: `default_workflow` and `time_zone`.
+Only keys the gateway declares are accepted: `default_workflow`, `time_zone` and `spoken_language`.
+
+`spoken_language` is the language spoken to the microphone: `"auto"` or an ISO 639-1 code the speech
+engines support (`en`, `fr`, `de`, `es`, `ru`, `zh`, `it`, `pt`, `ja`, `ko`, `ar`, `hi`, `nl`, `pl`,
+`vi`, `el` — AbstractVoice's list, which the GET serves as `choices`). Every transcription of the
+account that carries no `language` hint of its own is told this language, so short phrases and
+mixed-language speech transcribe reliably and a little faster; `"auto"` (the default; `null` and `""`
+mean the same on a PUT) lets the engine detect the language. The GET's `spoken_language` block is the
+control's whole truth: `{value, label, help, choices: [{value, label}]}` with `value` `"auto"` or the
+code, `label` "Spoken language", the one-sentence `help`, and the choices with their display labels
+("Auto (detected)", "English", "French", …); clients show exactly those. An unknown code is refused
+with 400 `preference_refused`, key `spoken_language`: "spoken_language = 'xx' refused: not a language
+the speech engines support. Choose auto or one of: ar, de, el, en, es, fr, hi, it, ja, ko, nl, pl, pt,
+ru, vi, zh."
 
 `time_zone` is the account's IANA time zone. Daily, weekly and monthly automations are created on it
 ([automations.md](docs/automations.md#trigger-sources)), and automation summaries show times in it.
@@ -6720,7 +6747,7 @@ gateway's per-app default, which is the admin setting `agents.default_workflow.<
 is never copied into the account. A chosen workflow is stored without a version, so it runs its
 latest published version. The PUT replaces the named interfaces and keeps the others. It is
 refused with 400 `{"detail": {"reason": "preference_refused", "message": <sentence>, "key": <key>}}`
-for an unknown key ("Unknown preference 'theme': this gateway declares default_workflow, time_zone."), an
+for an unknown key ("Unknown preference 'theme': this gateway declares default_workflow, spoken_language, time_zone."), an
 interface that is not an app's, or a workflow the account may not run for that app ("…refused:
 'helper@1.0.0:agent' declares abstractassistant.agent.v1, not abstractcode.agent.v1"). A refused PUT
 changes nothing. The change is audited on the target account's activity ("Preferences changed").
@@ -6913,7 +6940,11 @@ sign-in code** requests a code and opens the code step in place
 
 In **Multimodal**, a configured route whose engine is not installed reads
 "engine missing" with the install command, and the voice pickers say why a
-provider lists no voices. The cloud voice providers (OpenAI,
+provider lists no voices. Under the capability table, **Spoken language** is
+your own account's spoken language, the same setting as the last row of
+[Preferences](#preferences-of-an-account): pick **Auto (detected)** or a
+language, it saves at once ("Saved." / "Not saved." with the gateway's
+sentence). The cloud voice providers (OpenAI,
 OpenAI-compatible) are always listed, marked "needs an API key" until you add
 one under **Providers**.
 
@@ -7155,6 +7186,16 @@ time zone names the gateway knows (type to search, e.g. "Europe/Par"). A pick ap
 they are created. The list, its label and its help come from the gateway (the `time_zone` block of
 the answer); the row is the kit's time-zone picker, the same one AbstractCode uses. An answer
 without that block shows an error in the dialog instead of the row.
+
+After it comes **Spoken language**: the language you speak to the microphone. **Auto (detected)**,
+the default, lets the speech engine detect it; naming a language (English, French, ...) skips
+detection, so short phrases and mixed-language speech transcribe reliably and a little faster.
+Every transcription of the account uses it — dictation in the apps and the Sandbox, and the
+OpenAI-compatible transcription route — unless a request names a language of its own. A pick
+applies at once ("Saved." / "Not saved." with the gateway's sentence). The label, the help (the
+**?** beside the label) and the list of languages come from the gateway (the `spoken_language`
+block of the answer); an answer without that block shows an error in the dialog instead of the
+row.
 
 Everyone opens their own from their own row. An administrator opens any account's (choosing among
 the gateway's shared workflows); an entity's preferences are set by its creator or an
@@ -7687,7 +7728,10 @@ you can click.
   searchable list: click it (or `Enter`) for **Gateway default (<zone>)** and
   the gateway's time zone names, type to filter ("Search time zones"), click a
   name (or `Enter`) to save at once. Hovering its label shows the gateway's
-  help. A gateway older than this route has no Preferences on its rows, and the
+  help. After it, **Spoken language** lists **Auto (detected)** and the
+  languages the gateway serves; click it (or `Enter`), then click a language
+  (or `Enter`) to save at once ("Saved.", or "Not saved." with the gateway's
+  reason). A gateway older than this route has no Preferences on its rows, and the
   button says so.
 
 - **3 Workflows** is one page, as on the web. The head has **↻** (`r`, "Reload
@@ -7848,6 +7892,7 @@ you can click.
   Downloading, deleting and changing the default are admin-only. For anyone else these buttons stay visible but faint, and pressing one says why ("Only an admin can download models"). An artifact this computer cannot run reads **Not available here**, with the reason in its tooltip. "No model matches these filters." comes with **Clear filters** (`x`).
 
 - **0 Multimodal** (**Multimodal Capabilities**) shows which provider and model serves each capability route. The head has **Apply recommended** (`a`, admin) and **↻ Refresh** (`r`), then the scope sentence. When a route has no model, a banner names it and offers **⤓ Download missing** (`m`). **Recommended for this computer** (`p`) carries **Download all** (`D`).
+  Under the **Transcription** line, **Spoken language** is your own account's spoken language, as on the web: the same list and words as in Preferences, a pick saves at once ("Saved." / "Not saved." with the gateway's reason), and hovering the label shows the gateway's help.
   When the gateway names the AbstractCore store file, a line says so: "AbstractCore store · <file> — shared with AbstractCore — edits here apply to AbstractCore directly" (a read-only store or a runtime overlay says so instead).
   The table has the columns **Route**, **Capability**, **Provider**, **Model**, **Weights**, **Source**, **Status** and **Actions**. On a narrow terminal it shows Route, Model, Weights and Actions, and Capability, Provider and Status move to the row's second line.
   The **Weights** pill reads installed, not downloaded, remote or unknown; its tooltip gives the gateway's sentence and "To fix: …". Model ids wrap at `/` or `-`.
@@ -11049,6 +11094,9 @@ Requires AbstractRuntime with `schedule@2` (the next runtime release). Dependenc
 - Automations: calendar schedules. The trigger `schedule@2` takes `{kind: "daily", at: "08:00"}`, `{kind: "weekly", days: ["mon", "thu"], at}`, `{kind: "monthly", day: 1..31 | "last", at}`, plus `every` and `once` (a `once` may give a wall time `at`), evaluated in the automation's `config.time_zone` with daylight saving handled. A rule sent without a time zone gets the owner's account time zone; a revision without one keeps the automation's zone. `schedule@1` automations and requests work unchanged. See `docs/automations.md`.
 - Every automation summary (list, read, create answer) carries `next_run_at`, `next_run_local`, `time_zone`, `schedule_rule_text` and `schedule_text`, the one sentence clients show for the schedule ("Every day at 08:00 (Europe/Paris) · next Fri 9 Oct 08:00"; a fixed UTC interval names the zone of the times it shows: "Every 8 hours (UTC) · next Fri 9 Oct 08:00 (Europe/Paris)"). `next_fire_at` stays. Occurrence rows use the same rule sentence ("schedule: Every 30 minutes (UTC), tick 5").
 - `POST /api/gateway/automations/schedule-preview`: what a trigger would do if saved now (normalized trigger, sentences, first run, `first_run_sentence`); nothing is stored.
+- **Spoken language (round 18).** Account preference `spoken_language` (`GET/PUT /api/gateway/accounts/{account}/preferences`): `"auto"` or an ISO 639-1 code the speech engines support (AbstractVoice's list, served as `choices` with display labels in the GET's `spoken_language` block `{value, label, help, choices}`). Every transcription of the account without a `language` hint of its own is told that language; auto (the default) lets the engine detect it. An unknown code is refused with the voice layer's sentence (400 `preference_refused`, key `spoken_language`). The spoken language reaching the engine is resolved in ONE place for every transcription entry point — the request's `language` hint (an unknown code: 400 `language_refused`), else the account preference, else auto — and `POST /runs/{run_id}/audio/transcribe` now answers `language`, `language_source` (`request` | `account` | `auto`) and `detected_language` (what the engine reported), recorded in the transcript artifact's `generation` metadata too. The OpenAI-compatible `POST /v1/audio/transcriptions` follows the same rule (a form without `language`, sent with an account's key, is told the account's language). `capabilities.contracts.*.voice.stt.languages` lists the supported codes. Requires AbstractVoice 0.15.0 (`abstractvoice.stt.languages`), AbstractCore 2.26.0 and AbstractRuntime 0.10.0 of this wave for `detected_language`.
+- Console → Accounts → **Preferences**: a **Spoken language** row after the time zone (label, help and the languages from the gateway's `spoken_language` block; **Auto (detected)** first). A pick is one `PUT {spoken_language}` at once, "Saved." / "Not saved. <the gateway's sentence>"; an answer without the block shows the seam error instead of the row. Console → **Multimodal**: the same **Spoken language** control for the signed-in account, under the capability table (`GET`/`PUT /api/gateway/accounts/me/preferences`). Browser test: `tests/test_r18_console_spoken_language_browser.py`.
+- Terminal console (`abstractgateway-console`): the same **Spoken language** row in **Preferences — <id>** (a Select after **Time zone**) and the same control on **0 Multimodal** under the Transcription line, read from `GET /accounts/me/preferences` when the screen opens; same words, apply on pick. Tests: `console-tui/tests/r18_click_spoken_language.rs`, unit tests in `ui/account_preferences.rs`, web wording fixture `r15_web_wording_preferences_spoken_language.json`.
 - Account preference `time_zone` (`GET/PUT /api/gateway/accounts/{account}/preferences`): an IANA zone or `null` for the gateway default, the time zone of the computer the gateway runs on. The GET adds a `time_zone` block with the default, the effective zone and the list of zone names.
 - **Every publish/promote/upload says what it reloaded**: the response carries `reload: {ok, kind: "registry_swap"|"service_reload"|"full_rebuild", services: [{service, kind, duration_ms, ...}], unchanged_services, duration_ms, sentence}` (`PublishVisualFlowResponse.reload`, the upload and catalog responses, `/bundles/reload`), and the request's audit log line records `reload: {kind, duration_ms, services}` next to its `duration_ms`. See [docs/api.md](docs/api.md#what-a-publish-reloads).
 - **Named API keys for the OpenAI API.** Each account makes its own keys for `/v1`; one key can serve every app, and separate keys are optional, for revoking one app without the others. **New key** on the console's OpenAI API page asks for a name ("laptop Cursor"), puts the key (`sk-agw-...`) on the clipboard at once and keeps it shown, with **Copy** (kit tooltip, "Copied") and **Hide**, until Hide: resizing, a re-render or visiting another page does not lose it (web and terminal console). The page lists each key's name, when it was made, when it was last used and from which address, and its fingerprint; **Revoke** asks **Revoke** / **Cancel** and refuses the key from the next request on (`401 invalid_api_key`), leaving the account's other keys working. A key works at `/v1` only: anywhere under `/api/gateway/`, sign-in included, it answers `401` "This is an API key for /v1; sign in with your gateway token." and never counts toward the sign-in lockout. Requests run as the key's account and obey its OpenAI API switch (`403 openai_api_off`) and Active state (`403 account_inactive`). The request log names the key (`key_label`, `key_fingerprint`; the Recent requests table shows it under the account), and making or revoking a key is an audit line (`openai_key_change`, name and fingerprint, never the key). Admins see every account's keys in **Accounts → OpenAI API** (never a key) and revoke any of them. Routes: `GET`/`POST /api/gateway/me/openai-keys`, `DELETE /api/gateway/me/openai-keys/{fingerprint}`, `GET /api/gateway/admin/accounts/{id}/openai-keys`, `DELETE /api/gateway/admin/accounts/{id}/openai-keys/{fingerprint}`. Keys are checked against PBKDF2 hashes with their fingerprint in the user registry (`users.json`, each account's `openai_keys`, written only for an account that has keys: existing registries load and save unchanged); last use is kept in `auth/openai_key_usage.json`. See [docs/openai-api.md](docs/openai-api.md#api-keys).
