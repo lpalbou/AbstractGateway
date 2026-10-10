@@ -289,6 +289,9 @@ pub struct McpRow {
     pub enabled_for_agents: bool,
     pub last_test: Option<McpTest>,
     pub agents_status: String,
+    /// THE sentence when the header values were sealed with the old keychain key and must be
+    /// typed again (gateway 0.14 `needs_reconnect`); empty otherwise.
+    pub needs_reconnect: String,
 }
 
 impl McpRow {
@@ -448,6 +451,7 @@ pub fn mcp_row_from(r: &Value) -> McpRow {
         enabled_for_agents: b(r, "enabled_for_agents"),
         last_test: r.get("last_test").filter(|t| t.is_object()).map(test_from),
         agents_status: s(r, "agents_status"),
+        needs_reconnect: s(r, "needs_reconnect"),
     }
 }
 
@@ -625,6 +629,18 @@ impl SkillsStore {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn mcp_row_carries_the_needs_reconnect_sentence() {
+        let v: Value = serde_json::json!({"name": "docs", "transport": "http", "url": "http://x",
+            "needs_reconnect": "The MCP header values were sealed with the old macOS keychain key; enter them again \u{2014} the new key lives in the data folder."});
+        assert!(mcp_row_from(&v)
+            .needs_reconnect
+            .contains("old macOS keychain key"));
+        let none: Value =
+            serde_json::json!({"name": "docs", "transport": "http", "needs_reconnect": null});
+        assert_eq!(mcp_row_from(&none).needs_reconnect, "");
+    }
+
     use super::*;
     use serde_json::json;
 

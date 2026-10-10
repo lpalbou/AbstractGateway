@@ -383,7 +383,7 @@ for a trigger with no clock time (manual, email).
  "schedule_text": "Every day at 08:00 (Europe/Paris) · next Fri 9 Oct 08:00",
  "current_occurrence": {"index": 7, "run_id": "…", "attempt": 1, "status": "running"},   // or null
  "last_occurrence": {"run_id", "index", "status", "attempts", "fired_at", "finished_at"?, "excerpt", "notify"},
- "last_notification": {"channel": "email", "state": "failed", "at", "sent_at", "code", "cause", "text": "Email result failed — …"},  // or null
+ "last_notification": {"channel": "email", "status": "failed", "at", "sent_at", "code", "sentence", "text": "Email result failed — …"},  // or null
  "attention": {"pending_waits": 0, "unread": false, "unseen_count": 0, "cursor": "att1:3", "items": [], "waits": []},
  "legacy": false, "revision": 1, "updated_at": "…",
  "capabilities": ["revise", "pause", "resume", "run_now", "stop_current", "archive", "discuss"],  // archived: ["unarchive", "discuss"]
@@ -417,10 +417,10 @@ for a trigger with no clock time (manual, email).
   `running` or `backoff` (waiting to retry), or `null` when none is.
 - `last_occurrence.excerpt` holds the first 280 characters of its answer.
 - `last_notification` is the newest "Email result" notice of this automation
-  (`null` when it never asked for one): `state` `queued`, `sending`, `sent`,
-  `failed` or `unknown`, the typed `code` and `cause` of a failure, and `text`,
+  (`null` when it never asked for one): `status` `queued`, `sending`, `sent`,
+  `failed` or `unknown`, the typed `code` and `sentence` of a failure, and `text`,
   the one line clients show verbatim ("Email result sent", "Email result
-  failed — <cause>"). A mailbox that must be connected again (sealed with the
+  failed — <sentence>"). A mailbox that must be connected again (sealed with the
   old macOS keychain key, gateway 0.14) fails such a notice once, with
   "Email result failed — The mailbox credentials were sealed with the old macOS
   keychain key; connect the mailbox again — the new key lives in the data

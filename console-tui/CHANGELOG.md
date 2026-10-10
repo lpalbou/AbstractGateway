@@ -10,7 +10,8 @@ actions, switches, choices, dialogs — and every control is still reachable fro
   the data folder (secrets/sealing.key)". Accounts / Users: the Email cell says "needs reconnecting" with the reason
   on the next line. The OpenAI API page shows a key's served `reveal_unavailable` sentence ("Reveal unavailable:
   created before the key moved — create a new key") as its refusal; the owner-reveal help says the key is in the
-  data folder.
+  data folder. MCP servers: a row whose header values were sealed with the old key shows the served
+  `needs_reconnect` sentence first on its note line, in the warning colour.
 - **Navigation.** A grouped left rail like the web sidebar on terminals of 120×32 and larger, a one-row tab strip
   with `‹` `›` below that; click a screen, or use `←` / `→` and the screen keys from anywhere outside a text field.
   The header's memory line opens Resources, the identity opens Connection, **✦ Docs** opens the docs assistant.

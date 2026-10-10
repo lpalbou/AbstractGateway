@@ -72,7 +72,7 @@ def test_admin_oauth_clients_secret_never_returned(gateway) -> None:
     r = c.put("/api/gateway/admin/email/oauth-clients/microsoft", headers=ADMIN, json={"client_id": "cid-123", "client_secret": "csecret-XYZ", "tenant": "common"})
     assert r.status_code == 200, r.text
     ms = r.json()["providers"]["microsoft"]
-    assert ms == {"configured": True, "client_id": "cid-123", "client_secret_set": True, "tenant": "common", "builtin_available": False}
+    assert ms == {"configured": True, "client_id": "cid-123", "client_secret_set": True, "tenant": "common", "builtin_available": False, "needs_reconnect": None}
     assert "csecret-XYZ" not in r.text
     # Users see which providers have a client (no secret), and the secret is sealed at rest.
     view = c.get("/api/gateway/me/email/oauth/clients", headers=gateway["alice"])

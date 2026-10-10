@@ -361,7 +361,7 @@ def automation_summary_row(svc: Any, principal: Any, controller: Any, *, owner_z
 
 def _last_notification(svc: Any, automation_id: str) -> Optional[Dict[str, Any]]:
     """The newest "Email result" notice of this automation from the owner's outbox (round 16):
-    `{channel, state, at, sent_at, code, cause, text}`, `text` = THE line clients show
+    `{channel, status, at, sent_at, code, sentence, text}`, `text` = THE line clients show
     ("Email result failed — <sentence>"); null when it never asked for an email."""
     try:
         from ..mail.accounts import plane_for_service_config

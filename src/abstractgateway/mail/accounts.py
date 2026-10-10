@@ -1309,7 +1309,13 @@ def oauth_clients_raw() -> Dict[str, Dict[str, str]]:
 
 
 def oauth_clients_public() -> Dict[str, Any]:
+    """Per provider: configured, client id, secret set, tenant, built-in available, and
+    `needs_reconnect` — THE sentence when this provider's settings were sealed with the old
+    keychain key (moved aside at boot, round 16) and have not been entered again; else null."""
     raw = oauth_clients_raw()
+    from ..security.sealing import LEGACY_RETIRED_NAME
+
+    retired = (gateway_data_dir_from_env() / "email" / "oauth_clients" / LEGACY_RETIRED_NAME).is_file()
     out: Dict[str, Any] = {}
     for prov in OAUTH_PROVIDERS:
         row = raw.get(prov)
@@ -1326,6 +1332,7 @@ def oauth_clients_public() -> Dict[str, Any]:
             "client_secret_set": bool(row and row.get("client_secret")),
             "tenant": row["tenant"] if row else "",
             "builtin_available": builtin is not None,
+            "needs_reconnect": OAUTH_CLIENTS_KEY_MOVED if (retired and row is None) else None,
         }
     return {"providers": out}
 

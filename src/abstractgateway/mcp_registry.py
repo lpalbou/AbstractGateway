@@ -527,12 +527,26 @@ def check_unsaved(data_dir: Path, body: Dict[str, Any]) -> Dict[str, Any]:
     return run_connection_test(row, values, scratch_parent=Path(data_dir) / "tmp" / "mcp-tests")
 
 
+def legacy_store_retired(data_dir: Path) -> bool:
+    """True when header values sealed with the old keychain key were moved aside (never read)."""
+
+    from .security.sealing import LEGACY_RETIRED_NAME
+
+    return (Path(data_dir) / "config" / SECRETS_DIRNAME / LEGACY_RETIRED_NAME).is_file()
+
+
 def public_inventory(data_dir: Path) -> Dict[str, Any]:
-    """GET /mcp/servers: v2 rows (headers as fingerprints only) + the honest agents note."""
+    """GET /mcp/servers: v2 rows (headers as fingerprints only) + the honest agents note.
+    A row whose header values were sealed with the old keychain key (moved aside at boot,
+    round 16) carries `needs_reconnect`: THE sentence its card shows until they are typed again."""
     reg = read_registry(data_dir)
+    retired = legacy_store_retired(data_dir)
+    stored = _secrets(data_dir) if retired else {}
     for row in reg["servers"]:
         row["offered_to_agents"] = offered_to_agents(row)
         row["agents_status"] = agents_status(row)
+        lost = retired and bool(set(row.get("headers") or {}) - set(stored.get(row["name"], {})))
+        row["needs_reconnect"] = MCP_HEADERS_KEY_MOVED if lost else None
     offered = any(row["offered_to_agents"] for row in reg["servers"])
     out: Dict[str, Any] = {
         "servers": reg["servers"],

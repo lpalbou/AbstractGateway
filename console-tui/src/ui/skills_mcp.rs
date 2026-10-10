@@ -1128,7 +1128,12 @@ fn mcp_table(cx: Scope, pcx: Scope, ctx: &Ctx, t: &TokenSet, width: i32, page_h:
                     note.push(names.join(", "));
                 }
             }
-            let note = (!note.is_empty()).then(|| (note.join(" · "), t.text_muted));
+            let note = if !r.needs_reconnect.is_empty() {
+                note.insert(0, r.needs_reconnect.clone());
+                Some((note.join(" · "), t.warn))
+            } else {
+                (!note.is_empty()).then(|| (note.join(" · "), t.text_muted))
+            };
             WRow::new(r.name.clone(), cells).dim(r.archived).note(note)
         })
         .collect();

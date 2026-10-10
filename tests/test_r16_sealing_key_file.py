@@ -212,7 +212,8 @@ def test_an_email_result_on_such_a_mailbox_fails_once_and_the_automation_says_so
     assert len(rows) == 1 and rows[0]["state"] == "failed" and rows[0]["error_code"] == "email_needs_reconnect"
     assert len(_audit(gateway["data_dir"], "email.notification_failed")) == 1
     last = last_automation_notification(plane, "auto-1")
-    assert last["state"] == "failed" and last["channel"] == "email" and last["code"] == "email_needs_reconnect"
+    assert last["status"] == "failed" and last["channel"] == "email" and last["code"] == "email_needs_reconnect"
+    assert last["sentence"] == SENTENCE
     assert last["text"] == f"Email result failed — {SENTENCE}"
     # The mailbox's own status keeps no "send error" for it (its reason already says it).
     assert c.get("/api/gateway/me/email", headers=gateway["alice"]).json()["status"].get("last_error") is None
@@ -237,7 +238,13 @@ def test_boot_moves_keychain_sealed_oauth_and_mcp_stores_aside(gateway) -> None:
     from abstractgateway import mcp_registry
     from abstractgateway.mail.accounts import OAUTH_CLIENTS_KEY_MOVED, migrate_keychain_sealed_mailboxes, oauth_clients_raw
 
+    from abstractgateway.mail.accounts import oauth_clients_public
+
     data = gateway["data_dir"]
+    body = {"name": "docs", "transport": "http", "url": "http://127.0.0.1:9/mcp", "headers": {"Authorization": "Bearer t0k"}}
+    mcp_registry.create_server(data, body)
+    assert mcp_registry.public_inventory(data)["servers"][0]["needs_reconnect"] is None
+    assert oauth_clients_public()["providers"]["google"]["needs_reconnect"] is None
     _keychain_sealed(data / "email" / "oauth_clients" / "secret.enc")
     _keychain_sealed(data / "config" / "mcp_secrets" / "secret.enc")
     assert OAUTH_CLIENTS_KEY_MOVED in migrate_keychain_sealed_mailboxes()
@@ -246,6 +253,13 @@ def test_boot_moves_keychain_sealed_oauth_and_mcp_stores_aside(gateway) -> None:
     assert (data / "email" / "oauth_clients" / "secret.keychain-old.enc").exists()
     assert (data / "config" / "mcp_secrets" / "secret.keychain-old.enc").exists()
     assert {line["store"] for line in _audit(data, "secret_key_migrated_to_file")} == {"oauth_clients", "mcp_secrets"}
+    # Their cards say so (the MCP row; the OAuth provider row), until the values are typed again.
+    assert mcp_registry.public_inventory(data)["servers"][0]["needs_reconnect"] == mcp_registry.MCP_HEADERS_KEY_MOVED
+    assert "old macOS keychain key" in mcp_registry.MCP_HEADERS_KEY_MOVED
+    providers = oauth_clients_public()["providers"]
+    assert providers["google"]["needs_reconnect"] == providers["microsoft"]["needs_reconnect"] == OAUTH_CLIENTS_KEY_MOVED
+    mcp_registry.update_server(data, "docs", body)
+    assert mcp_registry.public_inventory(data)["servers"][0]["needs_reconnect"] is None
 
 
 # ---- keyring is gone ---------------------------------------------------------------------

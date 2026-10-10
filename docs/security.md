@@ -321,15 +321,19 @@ What the key file protects, plainly:
   included, while the gateway is stopped or idle, and store that backup as
   carefully as the folder itself.
 - **Windows:** the 0600 / 0700 modes are best effort (Python maps them to the
-  read-only flag); the data folder's NTFS permissions (your user only, the
-  default under your profile) are what protect the key file there.
+  read-only flag), so `secrets/` and the key also get an owner-only ACL
+  (`icacls`, AbstractCore 2.26); when that cannot be applied, the data folder's
+  NTFS permissions (your user only, the default under your profile) are what
+  protect the key file there.
 
 Secrets sealed by gateway 0.13 or older with the key in the macOS keychain are
 **never opened** — no keychain call, no password prompt: each such mailbox shows
 "The mailbox credentials were sealed with the old macOS keychain key; connect
 the mailbox again — the new key lives in the data folder." (`mailbox.state`
 `needs_reconnect`), the other stores read as empty (the old file is kept as
-`secret.keychain-old.enc`, never read), and the audit log has one
+`secret.keychain-old.enc`, never read) and their cards say to enter the values
+again (`needs_reconnect` on each MCP server row whose header values were lost and
+on each OAuth sign-in provider not entered again), and the audit log has one
 `…secret_key_migrated_to_file` line per store. The old keychain items stay in
 the login keychain until you delete them ([email.md](email.md#upgrading-from-013-the-keychain-key)).
 

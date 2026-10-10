@@ -34,6 +34,9 @@ from typing import Any, Optional
 
 SECRETS_DIRNAME = "secrets"
 KEY_FILENAME = "sealing.key"
+# Where a store sealed with the old keychain key is moved at boot (AbstractCore's
+# SecretVault.retire_legacy_keychain); never read.
+LEGACY_RETIRED_NAME = "secret.keychain-old.enc"
 
 
 def secrets_dir(data_dir: Path) -> Path:

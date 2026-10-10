@@ -61,6 +61,7 @@ SKILLS_MCP_CSS = r"""
 .skmcp-mono { font-family: var(--font-mono); font-size: var(--font-size-md); display: block; overflow-wrap: anywhere; word-break: break-word; }
 .skmcp-chip { display: inline-flex; align-items: center; min-height: 22px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); font-size: var(--font-size-sm); font-weight: 500; white-space: nowrap; }
 .skmcp-chip.is-ok { border-color: color-mix(in srgb, var(--success, #2f9e44) 55%, transparent); color: var(--success, #2f9e44); }
+.skmcp-reconnect { color: var(--warning, #c77700); }
 .skmcp-chip.is-warn { border-color: color-mix(in srgb, var(--warning, #c77700) 55%, transparent); color: var(--warning, #c77700); }
 .skmcp-chip.is-err { border-color: color-mix(in srgb, var(--error, #d6336c) 55%, transparent); color: var(--error, #d6336c); }
 .skmcp-chip.is-muted { color: var(--muted); }
@@ -251,7 +252,7 @@ SKILLS_MCP_JS = r"""
           + `${s.description ? `<span class="skmcp-sub">${esc(s.description)}</span>` : ""}`
           + `<span class="skmcp-sub skmcp-fold">${how}</span><div class="skmcp-fold">${skmcpMore(mcpTransportText(s), "skmcp-mono")}</div></td>`
           + `<td class="mcp-transport"><span class="skmcp-sub">${how}</span>${skmcpMore(mcpTransportText(s), "skmcp-mono")}</td>`
-          + `<td class="mcp-status"><span class="skmcp-status${st.failed ? " is-failed" : ""}">${esc(st.text)}</span>${admin ? mcpAgentsControlMarkup(s, { where: "row", pending: opts && opts.pending }) : ""}</td>`
+          + `<td class="mcp-status"><span class="skmcp-status${st.failed ? " is-failed" : ""}">${esc(st.text)}</span>${s.needs_reconnect ? `<span class="skmcp-sub skmcp-reconnect" data-mcp-needs-reconnect>${esc(s.needs_reconnect)}</span>` : ""}${admin ? mcpAgentsControlMarkup(s, { where: "row", pending: opts && opts.pending }) : ""}</td>`
           + `<td class="mcp-tools">${mcpToolsCell(s.last_test)}</td>`
           + `<td class="mcp-actions"><div class="skmcp-actions">${acts.join("")}</div></td></tr>`;
       }).join("");

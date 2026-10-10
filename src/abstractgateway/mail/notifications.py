@@ -726,7 +726,7 @@ _LAST_NOTIFICATION_WORDS = {
 
 def last_automation_notification(plane: EmailPlane, automation_id: str) -> Optional[Dict[str, Any]]:
     """The automation summary's `last_notification` (round 16): the newest "Email result" notice
-    of this automation, `{channel: "email", state, at, sent_at, code, cause, text}` — `text` is
+    of this automation, `{channel: "email", status, at, sent_at, code, sentence, text}` — `text` is
     THE line clients show ("Email result failed \u2014 <cause>", "Email result sent"); None when
     the automation never asked for an email."""
 
@@ -739,11 +739,11 @@ def last_automation_notification(plane: EmailPlane, automation_id: str) -> Optio
     text = f"{words} \u2014 {cause}" if cause and state in ("failed", "unknown") else words
     return {
         "channel": "email",
-        "state": state,
+        "status": state,
         "at": str(row.get("created_at") or "") or None,
         "sent_at": str(row.get("sent_at") or "") or None,
         "code": str(row.get("error_code") or "") or None,
-        "cause": cause or None,
+        "sentence": cause or None,
         "text": text,
     }
 
