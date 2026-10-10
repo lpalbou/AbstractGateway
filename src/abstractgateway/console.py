@@ -7282,8 +7282,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const connected = Boolean(d.configured);
       const mailboxesOff = d.email_available === false;
       myEmailShow("my-email-unavailable", mailboxesOff ? "Your admin turned mailboxes off. Your settings are kept." : "");
+      // Sealed with the old macOS keychain key (round 16): the status line says so and the connect
+      // tabs show under it, so the mailbox can be connected again in place.
+      const needsReconnect = Boolean(connected && d.mailbox && d.mailbox.state === "needs_reconnect");
+      if (needsReconnect && !(d.mailbox.reason)) consoleSeamFailure(new Error("GET …/email: mailbox.state needs_reconnect without a reason (gateway seam)."));
       $("my-email-connected").hidden = !connected;
-      $("my-email-connect").hidden = connected || mailboxesOff;
+      $("my-email-connect").hidden = (connected && !needsReconnect) || mailboxesOff;
       $("my-email-disconnect-confirm").hidden = true;
       const st = d.status || {};
       if (connected) {
@@ -7293,12 +7297,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         // A mailbox stored without an outgoing server reads "Receive only" + the API's sentence, never "Connected" alone.
         const receiveOnly = Boolean(d.mailbox && d.mailbox.state === "receive_only");
         if (receiveOnly && !(d.mailbox.reason)) consoleSeamFailure(new Error("GET …/email: mailbox.state receive_only without a reason (gateway seam)."));
-        $("my-email-status").textContent = `${receiveOnly ? "Receive only" : "Connected"} as ${d.address} · ${how === "password" ? "IMAP" : how} · ${checked}${paused}`;
+        $("my-email-status").textContent = `${needsReconnect ? "Needs reconnecting" : (receiveOnly ? "Receive only" : "Connected")} as ${d.address} · ${how === "password" ? "IMAP" : how} · ${checked}${paused}`;
         const err = st.last_error;
         const errText = err ? `${err.cause || err.code}${err.fix ? ` ${err.fix}` : ""}` : "";
-        myEmailShow("my-email-status-error", [receiveOnly ? (d.mailbox.reason || "") : "", errText].filter(Boolean).join(" "));
-      } else {
-        const want = d.email_address || "";
+        myEmailShow("my-email-status-error", [(receiveOnly || needsReconnect) ? (d.mailbox.reason || "") : "", errText].filter(Boolean).join(" "));
+      }
+      if (!connected || needsReconnect) {
+        const want = needsReconnect ? (d.address || d.email_address || "") : (d.email_address || "");
         if (!myEmailVal("my-email-address")) myEmailSet("my-email-address", want);
         if (!myEmailVal("my-email-oauth-address")) myEmailSet("my-email-oauth-address", want);
         if (!myEmailUi.tab) myEmailUi.tab = "imap";
@@ -12377,7 +12382,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     }
     // Round 8: ONE Email column = "address · connection state" (`alice@x.org · connected`), or
     // "No address" when the account has none. Same words in the table and the card list.
-    const ACCOUNT_MAILBOX_STATE = { connected: "connected", receive_only: "receive only", paused: "paused", not_connected: "not connected", unavailable: "mailbox not available" };
+    const ACCOUNT_MAILBOX_STATE = { connected: "connected", receive_only: "receive only", needs_reconnect: "needs reconnecting", paused: "paused", not_connected: "not connected", unavailable: "mailbox not available" };
     function accountEmailText(a) {
       const m = a.mailbox || {};
       const word = ACCOUNT_MAILBOX_STATE[m.state];
@@ -12561,9 +12566,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         const connected = a.mailbox && a.mailbox.state === "connected";
         const emailTd = accountTextCell("accounts-col-email", "Email", accountEmailText(a), { muted: !connected });
         emailTd.firstChild.classList.add("accounts-email__text");
-        if (a.mailbox && a.mailbox.state === "receive_only") {
+        if (a.mailbox && (a.mailbox.state === "receive_only" || a.mailbox.state === "needs_reconnect")) {
           // The API's sentence, visible (never a tooltip only): why it can't send and what to do.
-          if (!a.mailbox.reason) throw new Error(`GET /admin/accounts row ${a.id}: mailbox.state receive_only without a reason (gateway seam).`);
+          if (!a.mailbox.reason) throw new Error(`GET /admin/accounts row ${a.id}: mailbox.state ${a.mailbox.state} without a reason (gateway seam).`);
           const why = document.createElement("span");
           why.className = "accounts-cell-text accounts-email__reason af-row__muted";
           why.textContent = a.mailbox.reason;

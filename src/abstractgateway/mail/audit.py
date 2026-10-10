@@ -47,6 +47,8 @@ _ALLOWED_FIELDS = frozenset(
         "pinned_off",
         "source",
         "discovered",
+        # round 16: which sealed store moved off the OS keychain (mailbox, oauth_clients, ...)
+        "store",
     }
 )
 

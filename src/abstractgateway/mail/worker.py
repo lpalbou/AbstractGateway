@@ -19,7 +19,7 @@ import logging
 import threading
 from typing import Any, Dict, Optional
 
-from .accounts import EmailPlane, email_usable, plane_for_service_config
+from .accounts import REASON_MAILBOX_NEEDS_RECONNECT, EmailPlane, email_usable, mailbox_unavailable_reason, plane_for_service_config
 
 logger = logging.getLogger("abstractgateway.mail")
 
@@ -88,7 +88,13 @@ class EmailWorker:
             usable = email_usable(self.plane)
         except Exception:  # noqa: BLE001
             usable = False
+        reconnect = False
         if not usable:
+            try:
+                reconnect = mailbox_unavailable_reason(self.plane) == REASON_MAILBOX_NEEDS_RECONNECT
+            except Exception:  # noqa: BLE001
+                reconnect = False
+        if not usable and not reconnect:
             # No account / turned off: nothing to collect or send (D5). The collector
             # baselines on its first usable tick, so history is never mailed later. Notices
             # already queued are closed as failed with the typed cause (never silent).

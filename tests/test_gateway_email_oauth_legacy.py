@@ -268,7 +268,7 @@ def test_core_local_account_is_imported_once_for_the_admin(gateway, imap, smtp, 
         imap=ImapSettings.build("localhost", port=imap.port, security="ssl"),
         smtp=SmtpSettings.build("localhost", port=smtp.port, security="starttls"),
     )
-    EmailAccountStore(config_file=core_file).connect(account, EmailSecret(PASSWORDS[ADMIN_ADDR]), test=False)
+    EmailAccountStore(config_file=core_file, key_backend="file").connect(account, EmailSecret(PASSWORDS[ADMIN_ADDR]), test=False)
     notes = import_core_account_once()
     assert any("AbstractCore's local email account" in n for n in notes)
     pub = public_status(admin_plane())
@@ -292,7 +292,7 @@ def test_core_import_copies_limits_someone_set_and_keeps_a_legacy_value(gateway,
         imap=ImapSettings.build("localhost", port=imap.port, security="ssl"),
         smtp=SmtpSettings.build("localhost", port=smtp.port, security="starttls"),
     )
-    core = EmailAccountStore(config_file=core_file)
+    core = EmailAccountStore(config_file=core_file, key_backend="file")
     core.connect(account, EmailSecret(PASSWORDS[ADMIN_ADDR]), test=False)
     # An unmarked value other than AbstractCore 2.21's old defaults: legacy, kept and copied.
     doc = json.loads(core_file.read_text())
@@ -317,7 +317,7 @@ def test_core_import_of_the_old_unmarked_defaults_follows_the_new_defaults(gatew
         imap=ImapSettings.build("localhost", port=imap.port, security="ssl"),
         smtp=SmtpSettings.build("localhost", port=smtp.port, security="starttls"),
     )
-    EmailAccountStore(config_file=core_file).connect(account, EmailSecret(PASSWORDS[ADMIN_ADDR]), test=False)
+    EmailAccountStore(config_file=core_file, key_backend="file").connect(account, EmailSecret(PASSWORDS[ADMIN_ADDR]), test=False)
     doc = json.loads(core_file.read_text())
     doc["email"]["limits"] = {"per_hour": 20, "per_day": 100}
     core_file.write_text(json.dumps(doc))

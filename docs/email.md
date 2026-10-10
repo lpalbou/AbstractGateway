@@ -366,7 +366,8 @@ account is copied once into the gateway settings (the consoles say which account
 | What | Where |
 |---|---|
 | Account settings, policy, limits | `<plane>/email/account/abstractcore.json` |
-| Password / OAuth tokens | `<plane>/email/account/email/secret.enc` (AES-256-GCM; key in the OS keychain, or a 0600 key file when there is none) |
+| Password / OAuth tokens | `<plane>/email/account/email/secret.enc` (AES-256-GCM under the data folder's key `<data_dir>/secrets/sealing.key`; never the OS keychain, [security](security.md#sealed-secrets-one-key-file-per-data-folder)) |
+| The sealing key (every sealed secret) | `<data_dir>/secrets/sealing.key` (0600 in a 0700 folder; back it up with the data folder) |
 | Watcher state | `<plane>/email/watcher.json`; the cursor and received mail in `<runtime data dir>/event_inbox/` |
 | Notification preferences and outbox | `<plane>/email/notifications.json`, `<plane>/email/outbox.sqlite3` (created with the first notice) |
 | What is available to users (defaults + per-user) | `<data_dir>/auth/capabilities.json` |
@@ -376,6 +377,37 @@ account is copied once into the gateway settings (the consoles say which account
 
 `<plane>` is `<data_dir>` for the default runtime (single-user gateways and the administrator) and
 `<data_dir>/users/<tenant>/<runtime>` for every other user.
+
+## Upgrading from 0.13: the keychain key
+
+Up to 0.13 the key that sealed mailbox credentials was kept in the macOS keychain (a key file on
+hosts without one). Since 0.14.0 the gateway never uses an OS keychain: one key file per data
+folder, `<data_dir>/secrets/sealing.key`, identical on macOS, Linux and Windows.
+
+- A mailbox sealed with the old **keychain** key is never opened (no keychain call, no password
+  prompt). On the first start of 0.14 it is marked: `GET /api/gateway/me/email` answers
+  `mailbox: {state: "needs_reconnect", reason: "The mailbox credentials were sealed with the old
+  macOS keychain key; connect the mailbox again — the new key lives in the data folder."}`, the
+  Email card (web and terminal console) shows that sentence, the watcher stops reading it, and
+  the audit log has one `email.secret_key_migrated_to_file` line for it. Connect the mailbox
+  again (same address; your recipient rules and limits are kept) and it is sealed under the new
+  key.
+- An "Email result" asked for while the mailbox waits to be reconnected fails **once** with that
+  sentence (never retried); the automation's summary says so in `last_notification`
+  (`text: "Email result failed — <sentence>"`).
+- A mailbox sealed with the old **key file** (`secret.key` beside it, hosts without a keychain) is
+  opened and re-sealed under the new key automatically; nothing to do.
+- The OAuth sign-in app settings (admin) sealed with the keychain key read as not set: enter them
+  again.
+
+The old keychain items (service `abstractcore-email`, one per sealed store) stay in your login
+keychain until you delete them; the gateway no longer uses them. AbstractCore's own local account
+(`abstractcore email connect`) uses the same service name, so delete them only if you do not use
+that, or connect it again afterwards. On macOS, list them, then delete them all in Terminal (each
+`delete` removes one item; the loop stops when none is left):
+
+    security find-generic-password -s abstractcore-email
+    while security delete-generic-password -s abstractcore-email >/dev/null 2>&1; do :; done
 
 ## Migrating from the environment variables
 

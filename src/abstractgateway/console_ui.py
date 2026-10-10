@@ -2877,6 +2877,7 @@ CONSOLE_UI_JS = r"""
     // Why a key can't be revealed (or copied) now, or "" when it can.
     function oaiRevealRefusal(d, key) {
       if (d.owner_reveal === false) return "Revealing keys is turned off on this gateway: make a new key if you lost this one.";
+      if (key.reveal_unavailable) return key.reveal_unavailable;  // the gateway's sentence (round 16: key moved off the keychain)
       if (!key.revealable) return "Made while revealing was off: the gateway keeps only its hash. Make a new key if you lost it.";
       return "";
     }
@@ -2957,7 +2958,7 @@ CONSOLE_UI_JS = r"""
       const revealBusy = oaiStore.busy === "owner_reveal";
       out += `<div class="oai-field" data-oai-owner-reveal-field><h4 class="oai-field__title">API keys</h4>`
         + `<label class="ui-switch"><input type="checkbox" role="switch" data-oai-owner-reveal aria-describedby="oai-owner-reveal-help"${d.owner_reveal !== false ? " checked" : ""}${oaiStore.busy ? " disabled" : ""}><span>${revealBusy ? "Saving..." : "API keys can be revealed by their owner"}</span></label>`
-        + `<p class="ui-card__note" id="oai-owner-reveal-help">On: each person can reveal their own keys again (kept encrypted, with the key in the OS keychain; each reveal is audited). Off: a key is shown once, when it is made, and the gateway keeps only its hash; turning it off erases the stored keys.</p></div>`;
+        + `<p class="ui-card__note" id="oai-owner-reveal-help">On: each person can reveal their own keys again (kept encrypted, with the key in the data folder; each reveal is audited). Off: a key is shown once, when it is made, and the gateway keeps only its hash; turning it off erases the stored keys.</p></div>`;
       if (oaiStore.notice) {
         const n = oaiStore.notice;
         out += `<div class="ui-alert tone-${esc(n.tone)}" role="${n.tone === "err" ? "alert" : "status"}" data-oai-notice><strong>${esc(n.text)}</strong></div>`;

@@ -5,8 +5,10 @@ runtime -- the single-user gateway and the admin -- else `<data_dir>/users/<tena
 
     <plane>/email/account/abstractcore.json     account settings, policy, limits (AbstractCore
                                                 `EmailAccountStore`, `email` section)
-    <plane>/email/account/email/secret.enc      the password / OAuth tokens, AES-256-GCM; key in
-                                                the OS keychain (0600 key file when none)
+    <plane>/email/account/email/secret.enc      the password / OAuth tokens, AES-256-GCM, sealed
+                                                with the data folder's key file
+                                                (`<data_dir>/secrets/sealing.key`, security/sealing.py;
+                                                never the OS keychain)
     <plane>/email/watcher.json                  the mail watcher cursor and state (watcher.py)
     <plane>/email/inbox.sqlite3                 the durable inbox of received-mail events
     <plane>/email/outbox.sqlite3                the durable notification outbox (notifications.py)
@@ -69,6 +71,7 @@ from .core_mail import legacy as core_legacy
 from .core_mail import server_defaults
 
 from ..security.principal import GatewayPrincipal, local_admin_principal, safe_principal_component
+from ..security.sealing import sealed_vault
 from ..users import gateway_data_dir_from_env
 from .audit import audit_email_event
 
@@ -82,6 +85,13 @@ REASON_ADMIN_MAILBOXES_OFF = "Your admin turned mailboxes off."
 REASON_ADMIN_AGENT_TOOLS_OFF = "Your admin turned agent email tools off."
 REASON_CONNECT_MAILBOX = "Connect a mailbox first."
 REASON_MAILBOX_NOT_IN_USE = "Switch on \u201cUse this mailbox\u201d (Advanced) first."
+# A mailbox sealed by gateway <= 0.13 with the key in the macOS keychain (round 16: the keychain
+# is never read again; the key is a file in the data folder, security/sealing.py).
+REASON_MAILBOX_NEEDS_RECONNECT = (
+    "The mailbox credentials were sealed with the old macOS keychain key; connect the mailbox again "
+    "\u2014 the new key lives in the data folder."
+)
+NEEDS_RECONNECT_FIX = f"Connect the mailbox again in {SETTINGS_LABEL} (your recipient rules and limits are kept)."
 
 
 def _now_iso() -> str:
@@ -228,8 +238,41 @@ def admin_plane() -> EmailPlane:
     return plane_for_principal(local_admin_principal())
 
 
+def mailbox_vault(email_dir: Path, *, reseal_legacy: bool = True) -> SecretVault:
+    """The sealed credentials of one mailbox store, under the data folder's key (never a keychain)."""
+
+    return sealed_vault(
+        Path(email_dir),
+        data_dir=gateway_data_dir_from_env(),
+        legacy_cause=REASON_MAILBOX_NEEDS_RECONNECT,
+        legacy_fix=NEEDS_RECONNECT_FIX,
+        legacy_code="email_needs_reconnect",
+        reseal_legacy=reseal_legacy,
+    )
+
+
+def sealed_account_store(config_file: Path, *, environ: Optional[Dict[str, str]] = None, reseal_legacy: bool = True) -> EmailAccountStore:
+    """AbstractCore's account store sealed with the DATA FOLDER's key (`secrets/sealing.key`)
+    and the gateway's reconnect sentence: every mailbox store the gateway opens goes through here."""
+
+    config_file = Path(config_file)
+    return EmailAccountStore(
+        config_file=config_file, environ=environ,
+        vault=mailbox_vault(config_file.parent / "email", reseal_legacy=reseal_legacy),
+    )
+
+
 def account_store(plane: EmailPlane) -> EmailAccountStore:
-    return EmailAccountStore(config_file=plane.account_config_file)
+    return sealed_account_store(plane.account_config_file)
+
+
+def needs_reconnect(plane: EmailPlane) -> bool:
+    """The plane's mailbox was sealed with the old keychain key: connect it again."""
+
+    try:
+        return mailbox_vault(plane.account_config_file.parent / "email").legacy_keychain()
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def registered_address(plane: EmailPlane) -> str:
@@ -629,7 +672,7 @@ def email_usable(plane: EmailPlane) -> bool:
         st = account_store(plane).settings()
     except EmailError:
         return False
-    return bool(st.account is not None and st.enabled and account_store(plane).vault.exists())
+    return bool(st.account is not None and st.enabled and account_store(plane).vault.exists() and not needs_reconnect(plane))
 
 
 # ---------------------------------------------------------------------------------------
@@ -685,6 +728,8 @@ def mailbox_unavailable_reason(plane: EmailPlane) -> Optional[str]:
         configured, in_use = False, False
     if not configured:
         return REASON_CONNECT_MAILBOX
+    if needs_reconnect(plane):
+        return REASON_MAILBOX_NEEDS_RECONNECT
     if not in_use:
         return REASON_MAILBOX_NOT_IN_USE
     return None
@@ -862,7 +907,7 @@ def admin_status(plane: EmailPlane) -> Dict[str, Any]:
         "capabilities": {"email": capability_for(plane, "email"), "email_agent_tools": capability_for(plane, "email_agent_tools")},
         "agent_tools": {"available": agent_tools_available(plane), "user_enabled": agent_tools_switch(plane), "active": agent_tools_active(plane)},
         "watcher": watcher,
-        "state": _admin_state_label(pub, admin_on, last_error),
+        "state": "needs reconnecting" if (admin_on and pub.get("configured") and needs_reconnect(plane)) else _admin_state_label(pub, admin_on, last_error),
     }
 
 
@@ -881,7 +926,7 @@ REASON_MAILBOX_RECEIVE_ONLY = "No outgoing server: this mailbox is receive only 
 def mailbox_view(plane: EmailPlane) -> Dict[str, Any]:
     """`{state, address, provider, reason}` of the plane's mailbox — the one shape the account
     page, `/admin/users` and `/admin/accounts` show. state: connected | not_connected | paused |
-    unavailable."""
+    receive_only | needs_reconnect (sealed with the old keychain key, round 16) | unavailable."""
 
     pub = account_store(plane).public()
     configured = bool(pub.get("configured"))
@@ -892,6 +937,8 @@ def mailbox_view(plane: EmailPlane) -> Dict[str, Any]:
         return {"state": "unavailable", "address": address, "provider": provider, "reason": REASON_MAILBOXES_OFF_FOR_USER}
     if not configured:
         return {"state": "not_connected", "address": None, "provider": None, "reason": None}
+    if needs_reconnect(plane):
+        return {"state": "needs_reconnect", "address": address, "provider": provider, "reason": REASON_MAILBOX_NEEDS_RECONNECT}
     if not pub.get("enabled"):
         return {"state": "paused", "address": address, "provider": provider, "reason": REASON_MAILBOX_PAUSED}
     if not isinstance(pub.get("smtp"), dict):
@@ -1229,8 +1276,19 @@ OAUTH_PROVIDERS = ("google", "microsoft")
 _OAUTH_LOCK = threading.Lock()
 
 
+OAUTH_CLIENTS_KEY_MOVED = (
+    "The sign-in app settings were sealed with the old macOS keychain key; enter them again "
+    "\u2014 the new key lives in the data folder."
+)
+
+
 def _oauth_vault() -> SecretVault:
-    return SecretVault(gateway_data_dir_from_env() / "email" / "oauth_clients")
+    return sealed_vault(
+        gateway_data_dir_from_env() / "email" / "oauth_clients",
+        data_dir=gateway_data_dir_from_env(),
+        legacy_cause=OAUTH_CLIENTS_KEY_MOVED,
+        legacy_fix="Enter the sign-in app (client id and secret) again in Settings.",
+    )
 
 
 def oauth_clients_raw() -> Dict[str, Dict[str, str]]:
@@ -1674,7 +1732,7 @@ def import_legacy_env_once(environ: Optional[Dict[str, str]] = None) -> List[str
     notes: List[str] = []
     try:
         plane = admin_plane()
-        store = EmailAccountStore(config_file=plane.account_config_file, environ=env)
+        store = sealed_account_store(plane.account_config_file, environ=env)
         before = store.settings().legacy_import
         core_notes = store.ensure_legacy_imported()
         after = store.settings().legacy_import
@@ -1724,9 +1782,21 @@ def import_core_account_once() -> List[str]:
         core_path = core_store_path()
         if core_path is None or not Path(core_path).is_file():
             return notes
-        core = EmailAccountStore(config_file=core_path)
+        # AbstractCore's own store, with ITS key (`<config dir>/secrets/sealing.key`), read-only
+        # (never re-sealed from here); a store whose key is in the OS keychain is never opened.
+        core_email = Path(core_path).parent / "email"
+        core = EmailAccountStore(config_file=core_path, vault=SecretVault(core_email, reseal_legacy=False))
         st = core.settings()
         if st.account is None or not core.vault.exists():
+            return notes
+        if core.vault.legacy_keychain():
+            _write_private_json(marker, {"done": True, "at": _now_iso(), "source": "none (abstractcore key in the OS keychain)"})
+            notes.append(
+                "AbstractCore's local email account keeps its key in the OS keychain, which the gateway never reads; "
+                f"connect the mailbox in {SETTINGS_LABEL}."
+            )
+            with _notices_lock:
+                _notices.extend(notes)
             return notes
         ctx = core.context(require_enabled=False)
         gw.connect(st.account, ctx.secret, test=False, registered_address=registered_address(plane) or None)
@@ -1746,6 +1816,46 @@ def import_core_account_once() -> List[str]:
         notes.append(f"AbstractCore's local email account could not be imported ({type(exc).__name__}); connect it in {SETTINGS_LABEL}.")
     with _notices_lock:
         _notices.extend(notes)
+    return notes
+
+
+KEY_MIGRATION_FILE = "secret_key_migration.json"
+
+
+def migrate_keychain_sealed_mailboxes() -> List[str]:
+    """Boot (round 16): every mailbox store still sealed with the old OS-keychain key is marked
+    `needs_reconnect` — WITHOUT reading the keychain (no keychain call, no password prompt; the
+    state itself is read from the sealed file's header, `needs_reconnect`). One audit line
+    `email.secret_key_migrated_to_file` per store, once (a marker in the plane's email folder)."""
+
+    notes: List[str] = []
+    for plane in _all_planes():
+        try:
+            if not needs_reconnect(plane):
+                continue
+            marker = plane.email_dir / KEY_MIGRATION_FILE
+            if marker.exists():
+                continue
+            _write_private_json(marker, {"version": 1, "state": "needs_reconnect", "at": _now_iso()})
+            audit_email_event(
+                "email.secret_key_migrated_to_file",
+                tenant_id=plane.tenant_id,
+                user_id=plane.user_id,
+                actor="gateway",
+                outcome="needs_reconnect",
+                reason=REASON_MAILBOX_NEEDS_RECONNECT,
+                store="mailbox",
+            )
+            notes.append(f"{plane.tenant_id}:{plane.user_id}: {REASON_MAILBOX_NEEDS_RECONNECT}")
+        except Exception:  # noqa: BLE001 - one plane never blocks the others or the boot
+            continue
+    try:
+        vault = _oauth_vault()
+        if vault.retire_legacy_keychain():
+            audit_email_event("secret_key_migrated_to_file", actor="gateway", outcome="reenter", reason=OAUTH_CLIENTS_KEY_MOVED, store="oauth_clients")
+            notes.append(OAUTH_CLIENTS_KEY_MOVED)
+    except Exception:  # noqa: BLE001
+        pass
     return notes
 
 

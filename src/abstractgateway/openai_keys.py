@@ -8,11 +8,14 @@ separate keys are optional, for revoking one app without the others. A key:
 - can be REVEALED again by its owner, and only its owner (`POST /me/openai-keys/{fp}/reveal`,
   one audit line per reveal), while the gateway setting "API keys can be revealed by their owner"
   (`config/core_endpoint.json` `owner_reveal`, default on) is on: the key is then also kept
-  ENCRYPTED AT REST in `<data_dir>/auth/openai_key_secrets/` with AbstractCore's SecretVault —
-  the same sealing as email credentials (AES-256-GCM, key in the OS keychain, a 0600 key file
-  when there is none). Admins see fingerprints, never keys. Turning the setting off erases every
-  sealed copy and makes every key hash-only (show-once) from then on; turning it back on applies
-  to keys made afterwards;
+  ENCRYPTED AT REST in `<data_dir>/auth/openai_key_secrets/` — the same sealing as email
+  credentials (AES-256-GCM with the data folder's key file `<data_dir>/secrets/sealing.key`,
+  security/sealing.py; never the OS keychain). Admins see fingerprints, never keys. Turning the
+  setting off erases every sealed copy and makes every key hash-only (show-once) from then on;
+  turning it back on applies to keys made afterwards. Keys sealed by gateway <= 0.13 with the
+  key in the macOS keychain are never read: the old file is moved aside, their rows say
+  "Reveal unavailable: created before the key moved — create a new key" (`reveal_unavailable`)
+  and Revoke still works;
 - works at `/v1/*` only. Anywhere under `/api/gateway/*` (sign-in included) it answers 401 with
   `ENDPOINT_ONLY`: it never signs in to the console and never acts on runs, files, email or
   workflows;
@@ -32,7 +35,8 @@ key does not rewrite the registry (and invalidate every auth cache) on each requ
     GET    /api/gateway/admin/accounts/{id}/openai-keys        -> {account, keys: [item]}   (admin)
     DELETE /api/gateway/admin/accounts/{id}/openai-keys/{fp}   -> {revoked: item}           (admin)
 
-item = {label, fingerprint, created_at, created_by, last_used_at, last_client, revealable}
+item = {label, fingerprint, created_at, created_by, last_used_at, last_client, revealable,
+        reveal_unavailable (a sentence, only on a key sealed before the key moved)}
 """
 from __future__ import annotations
 
@@ -53,8 +57,10 @@ REVEAL_OFF = ("Revealing API keys is turned off on this gateway: a key is shown 
               "If you lost one, make a new key.")
 NOT_REVEALABLE = ("This key was made while revealing was off, so the gateway keeps only its hash. "
                   "If you lost it, make a new key.")
-STORE_UNAVAILABLE = ("The encrypted key store can't be opened right now (OS keychain locked, or the data "
-                     "folder was moved to another machine): unlock the keychain, or make a new key.")
+STORE_UNAVAILABLE = ("The encrypted key store can't be opened (the data folder's key file secrets/sealing.key is "
+                     "missing or was replaced): restore it from the backup, or make a new key.")
+KEY_MOVED = "Reveal unavailable: created before the key moved \u2014 create a new key"
+MOVED_FILE = ("auth", "openai_key_secrets_moved.json")
 USAGE_FILE = ("auth", "openai_key_usage.json")
 SECRETS_DIR = ("auth", "openai_key_secrets")
 # A key used again from the same address within this many seconds is not rewritten to disk.
@@ -124,13 +130,18 @@ def forget_use(fingerprint: str, *, data_dir: Optional[Path] = None) -> None:
                 pass
 
 
-def _item(key: OpenAIKeyRecord, usage: Dict[str, Dict[str, Any]], *, reveal_on: bool) -> Dict[str, Any]:
+def _item(key: OpenAIKeyRecord, usage: Dict[str, Dict[str, Any]], *, reveal_on: bool,
+          moved: frozenset = frozenset()) -> Dict[str, Any]:
     out = key.public_dict()
     used = usage.get(key.fingerprint) or {}
     out["last_used_at"] = used.get("last_used_at") or None
     out["last_client"] = used.get("last_client") or None
     # Can the owner reveal it now? Only a sealed key, and only while the setting is on.
     out["revealable"] = bool(key.sealed and reveal_on)
+    if key.sealed and key.fingerprint in moved:
+        # Sealed with the old keychain key (never read): the key still works; revoke it or make a new one.
+        out["revealable"] = False
+        out["reveal_unavailable"] = KEY_MOVED
     return out
 
 
@@ -144,15 +155,63 @@ def owner_reveal_on(data_dir: Optional[Path] = None) -> bool:
 
 
 def _vault(data_dir: Optional[Path] = None):
-    # The same sealing as the email credentials and MCP header values: AbstractCore's
-    # SecretVault through the gateway's one mail seam (AES-256-GCM; the key in the OS keychain,
-    # a 0600 key file when there is none). Never a cipher of our own.
-    from .mail.core_mail import SecretVault
+    # The same sealing as the email credentials and MCP header values: the data folder's key
+    # file (security/sealing.py; AES-256-GCM, never the OS keychain).
+    from .security.sealing import sealed_vault
 
-    return SecretVault(Path(data_dir or gateway_data_dir_from_env()).joinpath(*SECRETS_DIR))
+    root = Path(data_dir or gateway_data_dir_from_env())
+    return sealed_vault(root.joinpath(*SECRETS_DIR), data_dir=root, legacy_cause=KEY_MOVED,
+                       legacy_fix="Create a new key; revoking the old one still works.")
 
 
-def _sealed(vault) -> Dict[str, str]:
+def _moved_path(data_dir: Optional[Path] = None) -> Path:
+    return Path(data_dir or gateway_data_dir_from_env()).joinpath(*MOVED_FILE)
+
+
+def moved_fingerprints(data_dir: Optional[Path] = None) -> frozenset:
+    """Keys whose sealed copy was made with the old keychain key (never read): not revealable."""
+    try:
+        doc = json.loads(_moved_path(data_dir).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return frozenset()
+    fps = doc.get("fingerprints") if isinstance(doc, dict) else None
+    return frozenset(str(f) for f in (fps or []) if isinstance(f, str))
+
+
+def _retire_legacy(vault, fingerprints: frozenset, data_dir: Optional[Path] = None) -> bool:
+    """Move a keychain-sealed key store aside (never read) and remember which keys it held
+    (a superset is fine: a row says "Reveal unavailable" only when its key was sealed)."""
+    if not vault.legacy_keychain():
+        return False
+    from .security.sealing import write_private
+
+    path = _moved_path(data_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    known = moved_fingerprints(data_dir) | frozenset(fingerprints)
+    write_private(path, (json.dumps({"version": 1, "at": _now_iso(), "fingerprints": sorted(known)}, indent=2) + "\n").encode("utf-8"))
+    vault.retire_legacy_keychain()
+    from .mail.audit import audit_email_event
+
+    audit_email_event("secret_key_migrated_to_file", actor="gateway", outcome="reveal_unavailable",
+                      reason=KEY_MOVED, store="openai_keys", count=len(known))
+    return True
+
+
+def migrate_legacy_store(data_dir: Optional[Path] = None) -> bool:
+    """Boot (round 16): a key store sealed with the old OS-keychain key is never opened."""
+    with _SEAL_LOCK:
+        vault = _vault(data_dir)
+        if not vault.legacy_keychain():
+            return False
+        fps = frozenset(k.fingerprint for rec in GatewayUserRegistry().list_users() for k in rec.openai_keys)
+        return _retire_legacy(vault, fps, data_dir)
+
+
+def _sealed(vault, live: frozenset = frozenset(), data_dir: Optional[Path] = None) -> Dict[str, str]:
+    if vault.legacy_keychain():
+        # Not migrated at boot (a CLI, a test): never read it; move it aside now.
+        _retire_legacy(vault, live, data_dir)
+        return {}
     if not vault.exists():
         return {}
     payload = vault.load() or {}
@@ -181,7 +240,7 @@ def _seal(fingerprint: str, key: str, live: frozenset, *, data_dir: Optional[Pat
     try:
         with _SEAL_LOCK:
             vault = _vault(data_dir)
-            keys = {fp: k for fp, k in _sealed(vault).items() if fp in live}
+            keys = {fp: k for fp, k in _sealed(vault, live, data_dir).items() if fp in live}
             keys[fingerprint] = key
             _store_sealed(vault, keys)
         return True
@@ -209,6 +268,10 @@ def erase_sealed_keys(data_dir: Optional[Path] = None) -> int:
         vault = _vault(data_dir)
         if vault.exists():
             vault.delete()
+        try:
+            _moved_path(data_dir).unlink()
+        except OSError:
+            pass
     return changed
 
 
@@ -219,7 +282,8 @@ def list_keys(user_id: str, tenant_id: str = "default") -> Optional[List[Dict[st
         return None
     usage = read_usage()
     on = owner_reveal_on()
-    return [_item(k, usage, reveal_on=on) for k in rec.openai_keys]
+    moved = moved_fingerprints()
+    return [_item(k, usage, reveal_on=on, moved=moved) for k in rec.openai_keys]
 
 
 def create_key(user_id: str, tenant_id: str, label: str, *, created_by: str) -> Dict[str, Any]:
@@ -249,11 +313,15 @@ def reveal_key(user_id: str, tenant_id: str, fingerprint: str) -> Dict[str, Any]
         raise OpenAIKeyError(404, "reveal_off", REVEAL_OFF)
     if not mine.sealed:
         raise OpenAIKeyError(404, "not_revealable", NOT_REVEALABLE)
+    if fp in moved_fingerprints():
+        raise OpenAIKeyError(404, "reveal_unavailable_key_moved", KEY_MOVED)
     try:
         with _SEAL_LOCK:
-            key = _sealed(_vault()).get(fp)
-    except Exception:  # noqa: BLE001 - keychain locked / folder moved: say so, never a stack
+            key = _sealed(_vault(), frozenset(reg.openai_key_fingerprints())).get(fp)
+    except Exception:  # noqa: BLE001 - key file missing / replaced: say so, never a stack
         raise OpenAIKeyError(503, "key_store_unavailable", STORE_UNAVAILABLE) from None
+    if not key and fp in moved_fingerprints():
+        raise OpenAIKeyError(404, "reveal_unavailable_key_moved", KEY_MOVED)
     if not key:
         raise OpenAIKeyError(404, "not_revealable", NOT_REVEALABLE)
     return {"key": key, "item": _item(mine, read_usage(), reveal_on=True)}
@@ -262,7 +330,7 @@ def reveal_key(user_id: str, tenant_id: str, fingerprint: str) -> Dict[str, Any]
 def revoke_key(user_id: str, tenant_id: str, fingerprint: str) -> Dict[str, Any]:
     gone = GatewayUserRegistry().revoke_openai_key(user_id=user_id, tenant_id=tenant_id, fingerprint=fingerprint)
     usage = read_usage()
-    out = _item(gone, usage, reveal_on=owner_reveal_on())
+    out = _item(gone, usage, reveal_on=owner_reveal_on(), moved=moved_fingerprints())
     forget_use(gone.fingerprint)
     if gone.sealed:
         try:

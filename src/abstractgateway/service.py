@@ -1021,6 +1021,29 @@ def begin_gateway_boot() -> None:
                     print(f"[WARN] email: {note}", file=sys.stderr, flush=True)
             except Exception:  # noqa: BLE001 - never a boot blocker
                 logging.getLogger("abstractgateway.service").warning("email legacy import failed", exc_info=True)
+            # Round 16: sealed secrets use ONE key file per data folder (secrets/sealing.key,
+            # security/sealing.py), never the OS keychain. Stores sealed by gateway <= 0.13 with
+            # the key in the macOS keychain are NEVER opened (no keychain call, no prompt):
+            # mailboxes are marked needs_reconnect, the other stores are moved aside; one audit
+            # line `…secret_key_migrated_to_file` per store.
+            try:
+                from . import mcp_registry, openai_keys
+                from .mail.accounts import migrate_keychain_sealed_mailboxes
+                from .users import gateway_data_dir_from_env as _seal_data_dir
+
+                for note in migrate_keychain_sealed_mailboxes():
+                    print(f"[WARN] email: {note}", file=sys.stderr, flush=True)
+                if mcp_registry.migrate_legacy_store(_seal_data_dir()):
+                    print(f"[WARN] mcp: {mcp_registry.MCP_HEADERS_KEY_MOVED}", file=sys.stderr, flush=True)
+                if openai_keys.migrate_legacy_store(_seal_data_dir()):
+                    print(
+                        "[WARN] API keys: keys made before this version can no longer be revealed (their sealed copy "
+                        "used the old macOS keychain key); they still work, and Revoke works.",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+            except Exception:  # noqa: BLE001 - never a boot blocker
+                logging.getLogger("abstractgateway.service").warning("sealed-secret key migration failed", exc_info=True)
             # Round 11: older workspace models (pre-round-9 access modes; the round-9 shared
             # workspace) are migrated ONCE at serve start (it would also run at the first read);
             # `_migrated.workspace_policy_v1/_v2` keep the old blocks.

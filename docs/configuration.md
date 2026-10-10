@@ -90,6 +90,15 @@ token hash in `auth/users.json`, and can write the raw bootstrap token to
   one process. `abstractgateway-config status` prints the folder and why it
   was chosen.
   Evidence: `src/abstractgateway/host_paths.py`
+- **The sealing key** `<data dir>/secrets/sealing.key` (0600 in a 0700
+  `secrets/` folder, 32 random bytes, made on first use): ONE key for every
+  secret the gateway keeps encrypted (mailbox credentials, OAuth sign-in apps,
+  MCP header values, revealable API keys). No OS keychain is used, on any OS.
+  There is no setting for it; moving or restoring the data folder keeps it
+  working as long as `secrets/` comes along, and a backup without `secrets/`
+  cannot open those secrets. What it protects:
+  [security.md](./security.md#sealed-secrets-one-key-file-per-data-folder).
+  Evidence: `src/abstractgateway/security/sealing.py`
 - `ABSTRACTGATEWAY_FLOWS_DIR`: workflows directory. When unset, Gateway uses the
   packaged shipped bundle directory, which carries `basic-agent`,
   `coding-agent`, `deep-research`, `co-scientist`, and more

@@ -139,9 +139,8 @@ The trade-off, plainly:
 
 - **Owner reveal on (default).** Each key is also stored encrypted at rest in
   `<data dir>/auth/openai_key_secrets/`, with the same sealing as email
-  passwords: AES-256-GCM through AbstractCore's SecretVault, the encryption key
-  in the OS keychain (a `0600` key file next to it when the host has no
-  keychain). Forgetting a key then costs nothing: reveal it instead of making a
+  passwords: AES-256-GCM under the data folder's key file
+  (`<data dir>/secrets/sealing.key`; never the OS keychain). Forgetting a key then costs nothing: reveal it instead of making a
   new one and reconfiguring every app. This suits a personal or small gateway,
   where the person who can read the data folder is the person who owns the keys.
 - **Owner reveal off (show-once).** An admin turns off **API keys can be
@@ -149,16 +148,19 @@ The trade-off, plainly:
   /api/gateway/admin/core-endpoint {"owner_reveal": false}`). Every stored copy
   is erased at once and the gateway keeps only hashes from then on: a key is
   answered once, by the request that makes it, and a lost key means a new key.
-  This protects keys against a leak of the data folder or a backup (and, with
-  the key-file fallback, against anyone who reads both files). Reveal answers
+  This protects keys against a leak of the data folder or a backup (including
+  one that carries `secrets/sealing.key`). Reveal answers
   `404 reveal_off`. Turning the setting back on applies to keys made afterwards;
   keys made while it was off stay hash-only (`404 not_revealable`).
 
 Each key item says `revealable: true|false`; the status (`GET
-/api/gateway/openai-api`) says `owner_reveal` to everyone. If the keychain is
-locked or the data folder moved to another machine, reveal answers
+/api/gateway/openai-api`) says `owner_reveal` to everyone. If the data folder's
+key file (`secrets/sealing.key`) is missing or was replaced, reveal answers
 `503 key_store_unavailable` (the keys themselves keep working: they are checked
-against their hash). See also [Security](./security.md#openai-api).
+against their hash). Keys sealed by 0.13 with the old macOS keychain key are
+never opened: their item carries `reveal_unavailable: "Reveal unavailable:
+created before the key moved — create a new key"` (`revealable: false`), Reveal
+answers `404 reveal_unavailable_key_moved` with that sentence, and Revoke works. See also [Security](./security.md#openai-api).
 
 Names are unique per account (case-insensitive, up to 80 characters). For
 compatibility, an account's gateway token is still accepted at `/v1`; the page
@@ -326,8 +328,8 @@ Settings live in `<data dir>/config/core_endpoint.json` (owner-only, atomic
 writes). API keys live in the user registry (`users.json`, each account's
 `openai_keys`: name, PBKDF2 hash, fingerprint, creation time, `sealed` when an
 encrypted copy exists); the encrypted copies (owner reveal) are in
-`<data dir>/auth/openai_key_secrets/secret.enc` (`0600`, AES-256-GCM, key in the
-OS keychain or `secret.key` beside it); when each key was last used is kept in
+`<data dir>/auth/openai_key_secrets/secret.enc` (`0600`, AES-256-GCM, key in
+`<data dir>/secrets/sealing.key`); when each key was last used is kept in
 `<data dir>/auth/openai_key_usage.json`. Errors
 of the key routes answer `{"detail": {"reason_code", "message"}}`.
 

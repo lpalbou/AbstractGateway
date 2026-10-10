@@ -891,7 +891,7 @@ fn mailbox_card(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> Vie
 fn connected_view(_cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> View {
     let t0 = *t;
     let text = e.connected_text();
-    let ink = if e.last_error.is_some() {
+    let ink = if e.last_error.is_some() || e.needs_reconnect() {
         t0.warn
     } else {
         t0.text

@@ -7,7 +7,8 @@ Nothing here reaches a real mail service, OAuth provider or the OS keychain:
   is under `example.test`;
 - `SSL_CERT_FILE` points the default trust store at that CA, so accounts connect with
   VERIFIED TLS and no CA file (the CA file is an admin-only setting);
-- `keyring` is an in-memory backend (the macOS Keychain does not follow HOME);
+- `keyring` may not even be imported: the gateway seals with the data folder's key file, and
+  the `memory_keyring` guard fails any test during which something imports it;
 - the legacy `ABSTRACT_EMAIL_*` variables and every `*_KEY` / `*_TOKEN` / `*PASSWORD` are removed;
 - OAuth HTTP may only reach localhost.
 """
@@ -35,38 +36,39 @@ ADMIN_ADDR = "admin@example.test"
 PASSWORDS = {ALICE: "alice-app-password", BOB: "bob-app-password", ADMIN_ADDR: "admin-app-password"}
 
 
-class MemoryKeyring:
-    priority = 1
+class KeychainImportGuard:
+    """A meta-path finder that refuses `keyring` (and records who asked): the gateway seals with
+    the data folder's key file and must never reach an OS keychain (round 16)."""
 
     def __init__(self) -> None:
-        self.items: Dict[tuple, str] = {}
+        self.attempts: list = []
+
+    def find_spec(self, name, path=None, target=None):  # noqa: D401 - importlib protocol
+        if name == "keyring" or name.startswith("keyring."):
+            self.attempts.append(name)
+            raise ImportError(f"{name}: the gateway must never import keyring (tests/email_fixtures.py guard)")
+        return None
 
 
 @pytest.fixture(autouse=True)
-def memory_keyring() -> Iterator[MemoryKeyring]:
-    import keyring
-    from keyring.backend import KeyringBackend
+def memory_keyring() -> Iterator[KeychainImportGuard]:
+    """Historic name (tests import it): no keychain at all now. Any attempt to import `keyring`
+    during the test fails it — nothing in the gateway may reach the OS keychain."""
 
-    mem = MemoryKeyring()
+    import sys
 
-    class _Backend(KeyringBackend):
-        priority = 1
-
-        def get_password(self, service, username):
-            return mem.items.get((service, username))
-
-        def set_password(self, service, username, password):
-            mem.items[(service, username)] = password
-
-        def delete_password(self, service, username):
-            mem.items.pop((service, username), None)
-
-    previous = keyring.get_keyring()
-    keyring.set_keyring(_Backend())
+    guard = KeychainImportGuard()
+    stashed = {k: sys.modules.pop(k) for k in list(sys.modules) if k == "keyring" or k.startswith("keyring.")}
+    sys.meta_path.insert(0, guard)
     try:
-        yield mem
+        yield guard
     finally:
-        keyring.set_keyring(previous)
+        try:
+            sys.meta_path.remove(guard)
+        except ValueError:
+            pass
+        sys.modules.update(stashed)
+    assert not guard.attempts, f"keyring was imported during the test: {guard.attempts}"
 
 
 @pytest.fixture(autouse=True)

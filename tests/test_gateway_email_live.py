@@ -10,7 +10,7 @@ The OS keychain is replaced by an in-memory backend; everything else stays under
 from __future__ import annotations
 
 import os
-from typing import Dict, Iterator
+from typing import Dict
 
 import pytest
 
@@ -33,33 +33,6 @@ pytestmark = [
     pytest.mark.network("opt-in live mailbox test: real IMAP/SMTP of the AbstractFramework test account"),
     pytest.mark.skipif(not all(_ENV[k] for k in _REQUIRED), reason="AF_TEST_EMAIL_* not set (opt-in live test)"),
 ]
-
-
-@pytest.fixture(autouse=True)
-def memory_keyring() -> Iterator[None]:
-    import keyring
-    from keyring.backend import KeyringBackend
-
-    items: Dict[tuple, str] = {}
-
-    class _Backend(KeyringBackend):
-        priority = 1
-
-        def get_password(self, service, username):
-            return items.get((service, username))
-
-        def set_password(self, service, username, password):
-            items[(service, username)] = password
-
-        def delete_password(self, service, username):
-            items.pop((service, username), None)
-
-    previous = keyring.get_keyring()
-    keyring.set_keyring(_Backend())
-    try:
-        yield
-    finally:
-        keyring.set_keyring(previous)
 
 
 def _server(prefix: str) -> dict:

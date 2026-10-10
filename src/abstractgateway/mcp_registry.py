@@ -8,10 +8,13 @@
                                             url?, headers: {<name>: {"fingerprint"}}, description,
                                             archived, last_test{ok, at, message, server_info,
                                             tools[{name, description}]}}
-    <data_dir>/config/mcp_secrets/         the header VALUES, sealed with AbstractCore's
-                                           SecretVault (AES-256-GCM; key in the OS keychain, a
-                                           0600 key file when there is none) — never in the JSON
-                                           file, never returned by the API (fingerprints only).
+    <data_dir>/config/mcp_secrets/         the header VALUES, sealed with the data folder's key
+                                           file (AES-256-GCM, `<data_dir>/secrets/sealing.key`,
+                                           security/sealing.py; never the OS keychain) — never in
+                                           the JSON file, never returned by the API (fingerprints
+                                           only). Values sealed by gateway <= 0.13 with the key in
+                                           the macOS keychain are not read: they are moved aside
+                                           and the admin enters them again.
 
 A server's tools are offered to agent runs only when an admin turned **Enabled for agents** on
 (`enabled_for_agents`), the server is not archived and its last connection test succeeded (the test
@@ -66,10 +69,34 @@ def registry_path(data_dir: Path) -> Path:
     return Path(data_dir) / "config" / REGISTRY_FILENAME
 
 
-def _vault(data_dir: Path) -> Any:
-    from .mail.core_mail import SecretVault
+MCP_HEADERS_KEY_MOVED = (
+    "The MCP header values were sealed with the old macOS keychain key; enter them again "
+    "\u2014 the new key lives in the data folder."
+)
 
-    return SecretVault(Path(data_dir) / "config" / SECRETS_DIRNAME)
+
+def _vault(data_dir: Path) -> Any:
+    from .security.sealing import sealed_vault
+
+    return sealed_vault(
+        Path(data_dir) / "config" / SECRETS_DIRNAME,
+        data_dir=Path(data_dir),
+        legacy_cause=MCP_HEADERS_KEY_MOVED,
+        legacy_fix="Enter the server's header values again (Skills and MCP servers \u2192 MCP servers).",
+    )
+
+
+def migrate_legacy_store(data_dir: Path) -> bool:
+    """Header values sealed with the old OS-keychain key are never read: the file is moved aside
+    (`secret.keychain-old.enc`), one audit line, and the values read as missing."""
+
+    vault = _vault(data_dir)
+    if not vault.retire_legacy_keychain():
+        return False
+    from .mail.audit import audit_email_event
+
+    audit_email_event("secret_key_migrated_to_file", actor="gateway", outcome="reenter", reason=MCP_HEADERS_KEY_MOVED, store="mcp_secrets")
+    return True
 
 
 def fingerprint(value: str) -> str:
@@ -173,6 +200,7 @@ def _write_registry(data_dir: Path, servers: List[Dict[str, Any]]) -> None:
 
 
 def _secrets(data_dir: Path) -> Dict[str, Dict[str, str]]:
+    migrate_legacy_store(data_dir)
     vault = _vault(data_dir)
     if not vault.exists():
         return {}

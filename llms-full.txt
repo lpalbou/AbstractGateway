@@ -363,6 +363,15 @@ token hash in `auth/users.json`, and can write the raw bootstrap token to
   one process. `abstractgateway-config status` prints the folder and why it
   was chosen.
   Evidence: `src/abstractgateway/host_paths.py`
+- **The sealing key** `<data dir>/secrets/sealing.key` (0600 in a 0700
+  `secrets/` folder, 32 random bytes, made on first use): ONE key for every
+  secret the gateway keeps encrypted (mailbox credentials, OAuth sign-in apps,
+  MCP header values, revealable API keys). No OS keychain is used, on any OS.
+  There is no setting for it; moving or restoring the data folder keeps it
+  working as long as `secrets/` comes along, and a backup without `secrets/`
+  cannot open those secrets. What it protects:
+  [security.md](docs/security.md#sealed-secrets-one-key-file-per-data-folder).
+  Evidence: `src/abstractgateway/security/sealing.py`
 - `ABSTRACTGATEWAY_FLOWS_DIR`: workflows directory. When unset, Gateway uses the
   packaged shipped bundle directory, which carries `basic-agent`,
   `coding-agent`, `deep-research`, `co-scientist`, and more
@@ -2117,6 +2126,49 @@ An entity has no token to rotate (its credential is discarded when it is
 created) and cannot be deleted (its name is kept for life); an admin or its
 creator suspends or archives it instead. Details: [api.md](docs/api.md#who-sees-which-account).
 
+### Sealed secrets: one key file per data folder
+
+Every secret the gateway keeps encrypted — each mailbox's password or OAuth
+tokens, the bring-your-own OAuth clients, MCP header values and the named API
+keys kept for owner reveal — is sealed with AES-256-GCM under ONE key per data
+folder:
+
+    <data dir>/secrets/               0700
+    <data dir>/secrets/sealing.key    0600, 32 random bytes (base64), made on first use
+
+The gateway never uses an OS keychain (since 0.14.0): the same file, the same
+code and the same guarantees on macOS, Linux and Windows. Each sealed file is
+bound to its place in the data folder, so a sealed file copied into another
+store does not open, and a data folder restored elsewhere *with* its
+`secrets/` keeps working.
+
+What the key file protects, plainly:
+
+- It protects copies of the data folder taken **without** `secrets/sealing.key`:
+  a synced or shared sub-folder, a file-reading tool, a log or a support bundle
+  that captured one sealed file. Such a copy reveals nothing.
+- It does **not** protect against code running as the gateway's OS user: that
+  code can read the key file, exactly as it could read the same user's keychain
+  items before 0.14.0. It does not protect a copy of the *whole* data folder
+  either (the key travels with it). Protect the data folder like a password.
+- **Backups must include `secrets/`**, or the sealed secrets in them cannot be
+  opened (mailboxes must then be connected again and keys re-made). There is no
+  `abstractgateway backup` command yet: copy the whole data folder, `secrets/`
+  included, while the gateway is stopped or idle, and store that backup as
+  carefully as the folder itself.
+- **Windows:** the 0600 / 0700 modes are best effort (Python maps them to the
+  read-only flag); the data folder's NTFS permissions (your user only, the
+  default under your profile) are what protect the key file there.
+
+Secrets sealed by gateway 0.13 or older with the key in the macOS keychain are
+**never opened** — no keychain call, no password prompt: each such mailbox shows
+"The mailbox credentials were sealed with the old macOS keychain key; connect
+the mailbox again — the new key lives in the data folder." (`mailbox.state`
+`needs_reconnect`), the other stores read as empty (the old file is kept as
+`secret.keychain-old.enc`, never read), and the audit log has one
+`…secret_key_migrated_to_file` line per store. The old keychain items stay in
+the login keychain until you delete them ([email.md](docs/email.md#upgrading-from-013-the-keychain-key)).
+
 ### Per-user email
 
 Each user's mailbox ([email.md](docs/email.md)) lives in that user's own data plane,
@@ -2124,12 +2176,10 @@ resolved from the authenticated principal on every route; no path or body id
 selects another user's account, and entities have none.
 
 - **Credentials** (password or OAuth tokens) are sealed with AES-256-GCM
-  (`<plane>/email/account/email/secret.enc`, 0600 in a 0700 folder); the key is
-  in the OS keychain, or a 0600 key file next to it on hosts without one. They
-  are used in memory at the moment of a connection and never enter run
-  variables, ledgers, events, logs, the audit log or API responses. The
-  encryption protects copies of the data folder, backups and file-reading tools;
-  code running as the gateway's OS user can reach the key.
+  (`<plane>/email/account/email/secret.enc`, 0600 in a 0700 folder) under the
+  data folder's sealing key (see [Sealed secrets](#sealed-secrets-one-key-file-per-data-folder)).
+  They are used in memory at the moment of a connection and never enter run
+  variables, ledgers, events, logs, the audit log or API responses.
 - **TLS** is verified on every IMAP, SMTP and OAuth connection (certificate
   chain and host name); there is no plaintext mode. A private CA file is an
   administrator setting.
@@ -2773,7 +2823,7 @@ All are loaded by `load_gateway_auth_policy_from_env()` (see `src/abstractgatewa
 
 The OpenAI-compatible API at `/v1` is stopped by default. In **Protected** mode a caller's API key is one of their account's named API keys (or, for compatibility, their gateway token), resolved by the security middleware. A named key is checked against a PBKDF2 hash with its fingerprint in the user registry and valid at `/v1` only (anywhere under `/api/gateway/`, sign-in included, it answers 401 and never counts as a guess), obeys its account's OpenAI API switch and Active state, and is revoked one at a time with effect at the next request; making, revealing or revoking one is an audit line (`openai_key_change`: action, name and fingerprint, never the key). Admins see every account's keys (never a key) and can revoke any; the gateway forwards authenticated requests to Core with its own internal credential, so a caller's token never reaches Core, and refused keys count toward the per-address lockout. **Open** mode serves direct local, LAN and VPN clients without a key, never through a proxy or in Internet mode, and Core keeps stored cloud-provider credentials for authenticated callers. **Who can connect** filters on the client address (the socket peer, or `X-Forwarded-For` from a proxy on this machine or a trusted proxy); **Anywhere** requires Internet mode with its acknowledgement and Protected. Request fields that would re-route a provider or carry a credential (`base_url`, `api_key`, `provider`, `headers`, ...) are refused with 400, so a caller cannot make the gateway connect to an address of its choosing. Browser pages without a key are limited to the accepted origins. Every request is one audit-log line naming the account and, for a named key, its name; it records the request and the response with credentials removed (the caller's key, the internal key and fields named like a credential read `[redacted]`), readable by an admin for every request and by each account for its own. See [openai-api.md](docs/openai-api.md).
 
-**Owner reveal and its trade-off.** By default ("API keys can be revealed by their owner", an admin setting on the OpenAI API page) each named key is also stored encrypted at rest, so its owner, and only its owner, can reveal it again (`POST /api/gateway/me/openai-keys/{fingerprint}/reveal`; anyone else, admins included, gets `403 not_owner`; each reveal and each refused attempt is an audit line). The sealing is the email credentials' own: AbstractCore's SecretVault, AES-256-GCM, the encryption key in the OS keychain, or a `0600` key file beside the sealed file (`<data dir>/auth/openai_key_secrets/`) on a host without a keychain. What that protects, honestly: a copy of the sealed file alone (a backup, a synced folder, a file-reading tool) reveals nothing while the key is in the keychain; with the key-file fallback, a copy of the whole folder carries both. Code running as the gateway's OS user can reach the key either way. The alternative is show-once: with the setting off, every stored copy is erased at once and the gateway keeps only hashes, so a leak of the data folder or a backup never yields a usable key, at the cost that a forgotten key must be replaced in every app. Owner reveal suits a personal gateway, where the person who can read the data folder owns the keys anyway; turn it off for a shared or hosted gateway where data-folder leaks are the larger risk.
+**Owner reveal and its trade-off.** By default ("API keys can be revealed by their owner", an admin setting on the OpenAI API page) each named key is also stored encrypted at rest, so its owner, and only its owner, can reveal it again (`POST /api/gateway/me/openai-keys/{fingerprint}/reveal`; anyone else, admins included, gets `403 not_owner`; each reveal and each refused attempt is an audit line). The sealing is the email credentials' own: AES-256-GCM under the data folder's key file (`<data dir>/secrets/sealing.key`; the copies in `<data dir>/auth/openai_key_secrets/`), see [Sealed secrets](#sealed-secrets-one-key-file-per-data-folder). What that protects, honestly: a copy of the data folder without `secrets/` reveals nothing; a copy of the whole folder carries the key, and code running as the gateway's OS user can read it. Keys sealed by 0.13 with the keychain key say "Reveal unavailable: created before the key moved — create a new key" (Revoke still works). The alternative is show-once: with the setting off, every stored copy is erased at once and the gateway keeps only hashes, so a leak of the data folder or a backup never yields a usable key, at the cost that a forgotten key must be replaced in every app. Owner reveal suits a personal gateway, where the person who can read the data folder owns the keys anyway; turn it off for a shared or hosted gateway where data-folder leaks are the larger risk.
 
 ---
 
@@ -2920,9 +2970,8 @@ The trade-off, plainly:
 
 - **Owner reveal on (default).** Each key is also stored encrypted at rest in
   `<data dir>/auth/openai_key_secrets/`, with the same sealing as email
-  passwords: AES-256-GCM through AbstractCore's SecretVault, the encryption key
-  in the OS keychain (a `0600` key file next to it when the host has no
-  keychain). Forgetting a key then costs nothing: reveal it instead of making a
+  passwords: AES-256-GCM under the data folder's key file
+  (`<data dir>/secrets/sealing.key`; never the OS keychain). Forgetting a key then costs nothing: reveal it instead of making a
   new one and reconfiguring every app. This suits a personal or small gateway,
   where the person who can read the data folder is the person who owns the keys.
 - **Owner reveal off (show-once).** An admin turns off **API keys can be
@@ -2930,16 +2979,19 @@ The trade-off, plainly:
   /api/gateway/admin/core-endpoint {"owner_reveal": false}`). Every stored copy
   is erased at once and the gateway keeps only hashes from then on: a key is
   answered once, by the request that makes it, and a lost key means a new key.
-  This protects keys against a leak of the data folder or a backup (and, with
-  the key-file fallback, against anyone who reads both files). Reveal answers
+  This protects keys against a leak of the data folder or a backup (including
+  one that carries `secrets/sealing.key`). Reveal answers
   `404 reveal_off`. Turning the setting back on applies to keys made afterwards;
   keys made while it was off stay hash-only (`404 not_revealable`).
 
 Each key item says `revealable: true|false`; the status (`GET
-/api/gateway/openai-api`) says `owner_reveal` to everyone. If the keychain is
-locked or the data folder moved to another machine, reveal answers
+/api/gateway/openai-api`) says `owner_reveal` to everyone. If the data folder's
+key file (`secrets/sealing.key`) is missing or was replaced, reveal answers
 `503 key_store_unavailable` (the keys themselves keep working: they are checked
-against their hash). See also [Security](docs/security.md#openai-api).
+against their hash). Keys sealed by 0.13 with the old macOS keychain key are
+never opened: their item carries `reveal_unavailable: "Reveal unavailable:
+created before the key moved — create a new key"` (`revealable: false`), Reveal
+answers `404 reveal_unavailable_key_moved` with that sentence, and Revoke works. See also [Security](docs/security.md#openai-api).
 
 Names are unique per account (case-insensitive, up to 80 characters). For
 compatibility, an account's gateway token is still accepted at `/v1`; the page
@@ -3107,8 +3159,8 @@ Settings live in `<data dir>/config/core_endpoint.json` (owner-only, atomic
 writes). API keys live in the user registry (`users.json`, each account's
 `openai_keys`: name, PBKDF2 hash, fingerprint, creation time, `sealed` when an
 encrypted copy exists); the encrypted copies (owner reveal) are in
-`<data dir>/auth/openai_key_secrets/secret.enc` (`0600`, AES-256-GCM, key in the
-OS keychain or `secret.key` beside it); when each key was last used is kept in
+`<data dir>/auth/openai_key_secrets/secret.enc` (`0600`, AES-256-GCM, key in
+`<data dir>/secrets/sealing.key`); when each key was last used is kept in
 `<data dir>/auth/openai_key_usage.json`. Errors
 of the key routes answer `{"detail": {"reason_code", "message"}}`.
 
@@ -6731,7 +6783,7 @@ Administrators (status and the switch only; administrators never read mail):
 
 | Route | Purpose |
 |---|---|
-| `GET /admin/users` | every row carries `email_address` and `mailbox{state: connected \| receive_only \| not_connected \| paused \| unavailable, address, provider, reason}` from the same resolver as `GET /me/email` (so your own row matches your card; `email` stays the raw record field); each human row also carries `email_account: {configured, address, state, admin_enabled, agent_tools_available, capabilities}` (`capabilities`: `{email, email_agent_tools}` as `{value, source: user \| gateway \| built-in}`; `user` = a per-user override) |
+| `GET /admin/users` | every row carries `email_address` and `mailbox{state: connected \| receive_only \| needs_reconnect \| not_connected \| paused \| unavailable, address, provider, reason}` (`needs_reconnect`: sealed with the old macOS keychain key, `reason` says to connect the mailbox again) from the same resolver as `GET /me/email` (so your own row matches your card; `email` stays the raw record field); each human row also carries `email_account: {configured, address, state, admin_enabled, agent_tools_available, capabilities}` (`capabilities`: `{email, email_agent_tools}` as `{value, source: user \| gateway \| built-in}`; `user` = a per-user override) |
 | `GET /admin/users/{user_id}/email` | `configured`, `address`, `auth_kind`, `user_enabled`, `admin_enabled`, `effective_enabled`, `status` (last test / last error), `capabilities` (`{value, source: user \| gateway \| built-in}`), `agent_tools` (`available`, `user_enabled`, `active`), `watcher`, `state` |
 | `PUT /admin/users/{user_id}/email` | `{enabled?, agent_tools?, inherit?: ["email", "email_agent_tools"]}` — per-user capabilities; `enabled: false` = no watcher, no sending, no notifications (settings kept); `agent_tools` = Agent email tools available |
 | `GET /admin/email/capabilities` | `capabilities[{id, label, description, per_user, advanced, default, built_in_default}]`: `email` "Mailboxes for users" (on), `email_agent_tools` "Agent email tools for users" (on) and `email_recovery` "Sign-in by email" (on) |
@@ -8455,6 +8507,7 @@ for a trigger with no clock time (manual, email).
  "schedule_text": "Every day at 08:00 (Europe/Paris) · next Fri 9 Oct 08:00",
  "current_occurrence": {"index": 7, "run_id": "…", "attempt": 1, "status": "running"},   // or null
  "last_occurrence": {"run_id", "index", "status", "attempts", "fired_at", "finished_at"?, "excerpt", "notify"},
+ "last_notification": {"channel": "email", "state": "failed", "at", "sent_at", "code", "cause", "text": "Email result failed — …"},  // or null
  "attention": {"pending_waits": 0, "unread": false, "unseen_count": 0, "cursor": "att1:3", "items": [], "waits": []},
  "legacy": false, "revision": 1, "updated_at": "…",
  "capabilities": ["revise", "pause", "resume", "run_now", "stop_current", "archive", "discuss"],  // archived: ["unarchive", "discuss"]
@@ -8487,6 +8540,15 @@ for a trigger with no clock time (manual, email).
 - `current_occurrence` is the occurrence in progress, `status` `admitted`,
   `running` or `backoff` (waiting to retry), or `null` when none is.
 - `last_occurrence.excerpt` holds the first 280 characters of its answer.
+- `last_notification` is the newest "Email result" notice of this automation
+  (`null` when it never asked for one): `state` `queued`, `sending`, `sent`,
+  `failed` or `unknown`, the typed `code` and `cause` of a failure, and `text`,
+  the one line clients show verbatim ("Email result sent", "Email result
+  failed — <cause>"). A mailbox that must be connected again (sealed with the
+  old macOS keychain key, gateway 0.14) fails such a notice once, with
+  "Email result failed — The mailbox credentials were sealed with the old macOS
+  keychain key; connect the mailbox again — the new key lives in the data
+  folder."; it is never retried.
 - `attention` is described in [Attention](#attention-and-seen); `items` and
   `waits` hold up to 20 entries each.
 - `capabilities` lists what the automation accepts. An archived automation
@@ -9231,7 +9293,8 @@ account is copied once into the gateway settings (the consoles say which account
 | What | Where |
 |---|---|
 | Account settings, policy, limits | `<plane>/email/account/abstractcore.json` |
-| Password / OAuth tokens | `<plane>/email/account/email/secret.enc` (AES-256-GCM; key in the OS keychain, or a 0600 key file when there is none) |
+| Password / OAuth tokens | `<plane>/email/account/email/secret.enc` (AES-256-GCM under the data folder's key `<data_dir>/secrets/sealing.key`; never the OS keychain, [security](docs/security.md#sealed-secrets-one-key-file-per-data-folder)) |
+| The sealing key (every sealed secret) | `<data_dir>/secrets/sealing.key` (0600 in a 0700 folder; back it up with the data folder) |
 | Watcher state | `<plane>/email/watcher.json`; the cursor and received mail in `<runtime data dir>/event_inbox/` |
 | Notification preferences and outbox | `<plane>/email/notifications.json`, `<plane>/email/outbox.sqlite3` (created with the first notice) |
 | What is available to users (defaults + per-user) | `<data_dir>/auth/capabilities.json` |
@@ -9241,6 +9304,37 @@ account is copied once into the gateway settings (the consoles say which account
 
 `<plane>` is `<data_dir>` for the default runtime (single-user gateways and the administrator) and
 `<data_dir>/users/<tenant>/<runtime>` for every other user.
+
+## Upgrading from 0.13: the keychain key
+
+Up to 0.13 the key that sealed mailbox credentials was kept in the macOS keychain (a key file on
+hosts without one). Since 0.14.0 the gateway never uses an OS keychain: one key file per data
+folder, `<data_dir>/secrets/sealing.key`, identical on macOS, Linux and Windows.
+
+- A mailbox sealed with the old **keychain** key is never opened (no keychain call, no password
+  prompt). On the first start of 0.14 it is marked: `GET /api/gateway/me/email` answers
+  `mailbox: {state: "needs_reconnect", reason: "The mailbox credentials were sealed with the old
+  macOS keychain key; connect the mailbox again — the new key lives in the data folder."}`, the
+  Email card (web and terminal console) shows that sentence, the watcher stops reading it, and
+  the audit log has one `email.secret_key_migrated_to_file` line for it. Connect the mailbox
+  again (same address; your recipient rules and limits are kept) and it is sealed under the new
+  key.
+- An "Email result" asked for while the mailbox waits to be reconnected fails **once** with that
+  sentence (never retried); the automation's summary says so in `last_notification`
+  (`text: "Email result failed — <sentence>"`).
+- A mailbox sealed with the old **key file** (`secret.key` beside it, hosts without a keychain) is
+  opened and re-sealed under the new key automatically; nothing to do.
+- The OAuth sign-in app settings (admin) sealed with the keychain key read as not set: enter them
+  again.
+
+The old keychain items (service `abstractcore-email`, one per sealed store) stay in your login
+keychain until you delete them; the gateway no longer uses them. AbstractCore's own local account
+(`abstractcore email connect`) uses the same service name, so delete them only if you do not use
+that, or connect it again afterwards. On macOS, list them, then delete them all in Terminal (each
+`delete` removes one item; the loop stops when none is left):
+
+    security find-generic-password -s abstractcore-email
+    while security delete-generic-password -s abstractcore-email >/dev/null 2>&1; do :; done
 
 ## Migrating from the environment variables
 
@@ -10925,6 +11019,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.14.0] - 2026-10-09
 
 Requires AbstractRuntime with `schedule@2` (the next runtime release). Dependency floors: `AbstractRuntime>=0.10.0` (base, `apple`, `gpu`), `abstractcore>=2.26.0` (base, `embeddings`), `abstractvoice>=0.15.0`. The speech-input row's served hint reaches AbstractCore through the Runtime facade (`config_facade.voice_input_hint`), keeping the gateway's import boundary.
+
+### Security
+
+- **No OS keychain, on any OS** (operator ruling 2026-10-10). Every secret the gateway seals — mailbox passwords and OAuth tokens, the OAuth sign-in apps, MCP header values, the named API keys kept for owner reveal — is now AES-256-GCM under ONE key per data folder, `<data dir>/secrets/sealing.key` (0600 in a 0700 folder, 32 bytes from `os.urandom`, made on first use), the same on macOS, Linux and Windows (Windows: modes best effort, NTFS permissions protect it). AbstractCore 2.26.0's `SecretVault` seals with a key file and never a keychain; the gateway hands it the data folder's key for every store (`security/sealing.py`, `EmailAccountStore(vault=...)`), and no gateway module imports `keyring` (a test fails if one does, and the email test suite fails any test during which `keyring` is imported). What the key file protects — copies of the data folder taken without `secrets/`; not code running as the gateway's user, as before with the keychain — and why backups must include `secrets/`: docs/security.md "Sealed secrets".
+- **Upgrade from 0.13: the keychain is never read** (no keychain call, no password prompt). A mailbox sealed with the old macOS keychain key is marked on boot: `mailbox.state` `needs_reconnect` with "The mailbox credentials were sealed with the old macOS keychain key; connect the mailbox again — the new key lives in the data folder." (`GET /me/email`, `/admin/users`, `/admin/accounts`, the web and terminal Email cards, `notifications_unavailable_reason`), the watcher stops reading it, agent email tools are off for it, and one audit line `email.secret_key_migrated_to_file` per store. Connecting the mailbox again seals it under the new key. Stores sealed with the old per-store key file (`secret.key`) are opened and re-sealed automatically. OAuth sign-in apps and MCP header values sealed with the keychain key read as not set (the old file is kept as `secret.keychain-old.enc`, never read; one `secret_key_migrated_to_file` line each): enter them again.
+- An "Email result" asked for while the mailbox needs reconnecting fails ONCE with that sentence (never retried; `email.notification_failed` audit line). Every automation summary (list, read, create answer) carries `last_notification`: `null`, or `{channel: "email", state, at, sent_at, code, cause, text}` for its newest "Email result" notice, `text` being THE line clients show ("Email result failed — <sentence>", "Email result sent"). The outbox rows carry `subject_ref` (`automation:<id>`, additive column).
+- Named API keys sealed with the old keychain key are never opened: their item carries `reveal_unavailable: "Reveal unavailable: created before the key moved — create a new key"` (`revealable: false`; the web and terminal consoles show it), Reveal answers `404 reveal_unavailable_key_moved`, Revoke works, and new keys are sealed under the data folder's key. The old keychain items can be deleted by hand (`security delete-generic-password -s abstractcore-email`, docs/email.md).
 
 ### Changed
 

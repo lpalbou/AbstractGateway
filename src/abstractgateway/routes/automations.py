@@ -355,7 +355,21 @@ def automation_summary_row(svc: Any, principal: Any, controller: Any, *, owner_z
         if occ.get("finished_at"):
             last["finished_at"] = occ["finished_at"]
         out["last_occurrence"] = last
+    out["last_notification"] = _last_notification(svc, str(controller.run_id))
     return out
+
+
+def _last_notification(svc: Any, automation_id: str) -> Optional[Dict[str, Any]]:
+    """The newest "Email result" notice of this automation from the owner's outbox (round 16):
+    `{channel, state, at, sent_at, code, cause, text}`, `text` = THE line clients show
+    ("Email result failed — <sentence>"); null when it never asked for an email."""
+    try:
+        from ..mail.accounts import plane_for_service_config
+        from ..mail.notifications import last_automation_notification
+
+        return last_automation_notification(plane_for_service_config(svc.config), automation_id)
+    except Exception:  # noqa: BLE001 - a summary never fails on the outbox
+        return None
 
 
 def legacy_summary_row(run: Any, run_store: Any, *, owner_zone: Optional[str] = None) -> Dict[str, Any]:

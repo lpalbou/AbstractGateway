@@ -92,6 +92,7 @@ _STATUS_BY_CODE = {
     "email_oauth_override_refused": 403,
     "email_disabled": 409,
     "email_secret_unavailable": 409,
+    "email_needs_reconnect": 409,
     "email_rate_limited": 429,
 }
 

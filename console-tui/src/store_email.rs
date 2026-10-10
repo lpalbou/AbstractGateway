@@ -147,6 +147,11 @@ pub struct MyEmail {
     pub email_available: Option<bool>,
     /// `oauth_providers`: `(id, available, reason)` for the Google / Microsoft tabs.
     pub oauth_providers: Vec<(String, bool, String)>,
+    /// `mailbox.state` / `mailbox.reason` (the shared mailbox shape): "needs_reconnect" when
+    /// the credentials were sealed with the old macOS keychain key (gateway 0.14), with the
+    /// gateway's sentence saying what to do.
+    pub mailbox_state: String,
+    pub mailbox_reason: String,
 }
 
 /// The reasons the account page shows on an unavailable switch (DESIGN §6),
@@ -287,6 +292,8 @@ impl MyEmail {
                 })
                 .unwrap_or_default(),
             agent_tools_reason: s(&agent, "reason"),
+            mailbox_state: v.get("mailbox").map(|m| s(m, "state")).unwrap_or_default(),
+            mailbox_reason: v.get("mailbox").map(|m| s(m, "reason")).unwrap_or_default(),
             notices: v
                 .get("notices")
                 .and_then(Value::as_array)
@@ -306,6 +313,8 @@ impl MyEmail {
             "not connected"
         } else if !self.admin_enabled {
             "turned off by an administrator"
+        } else if self.needs_reconnect() {
+            "needs reconnecting"
         } else if !self.enabled {
             "off"
         } else if self.last_error.is_some() {
@@ -326,8 +335,16 @@ impl MyEmail {
         }
     }
 
+    /// Sealed with the old macOS keychain key: the mailbox must be connected again.
+    pub fn needs_reconnect(&self) -> bool {
+        self.mailbox_state == "needs_reconnect"
+    }
+
     pub fn credentials_text(&self) -> &'static str {
         match self.secret_storage.as_str() {
+            "sealing-key" => "encrypted, key in the data folder (secrets/sealing.key)",
+            "old-keychain" => "sealed with the old keychain key \u{2014} connect the mailbox again",
+            // A gateway before 0.14.
             "os-keychain" => "encrypted, key in the OS keychain",
             "key-file" => "encrypted, key in a 0600 file",
             _ => "none stored",
@@ -403,6 +420,13 @@ impl MyEmail {
     /// The connected state line: "Connected as me@x.com · Google · checked
     /// 2026-09-30 18:00" (or the recorded error).
     pub fn connected_text(&self) -> String {
+        if self.needs_reconnect() {
+            // The gateway's sentence, verbatim (never a client-side wording).
+            return format!(
+                "Needs reconnecting: {} \u{b7} {}",
+                self.address, self.mailbox_reason
+            );
+        }
         let mut out = format!("Connected as {}", self.address);
         let method = self.method_text();
         if !method.is_empty() {
@@ -1580,5 +1604,37 @@ mod tests {
         let bare = json!({"ok": true, "sent": false, "state": "queued"});
         let out = test_notification_outcome(&Ok(bare)).unwrap_err();
         assert!(!out.contains("queued"), "{out}");
+    }
+
+    #[test]
+    fn a_mailbox_sealed_with_the_old_keychain_key_says_connect_again() {
+        let why = "The mailbox credentials were sealed with the old macOS keychain key; connect the mailbox again \u{2014} the new key lives in the data folder.";
+        let e = MyEmail::from_value(&json!({
+            "configured": true, "enabled": true, "admin_enabled": true, "address": "me@example.test",
+            "secret_storage": "old-keychain",
+            "mailbox": {"state": "needs_reconnect", "address": "me@example.test", "provider": "imap", "reason": why}
+        }));
+        assert!(e.needs_reconnect());
+        assert_eq!(e.state_label(), "needs reconnecting");
+        assert_eq!(
+            e.connected_text(),
+            format!("Needs reconnecting: me@example.test \u{b7} {why}")
+        );
+        assert_eq!(
+            e.credentials_text(),
+            "sealed with the old keychain key \u{2014} connect the mailbox again"
+        );
+        let ok = MyEmail::from_value(&json!({
+            "configured": true, "enabled": true, "admin_enabled": true, "address": "me@example.test",
+            "secret_storage": "sealing-key", "mailbox": {"state": "connected", "address": "me@example.test"}
+        }));
+        assert!(!ok.needs_reconnect());
+        assert!(ok
+            .connected_text()
+            .starts_with("Connected as me@example.test"));
+        assert_eq!(
+            ok.credentials_text(),
+            "encrypted, key in the data folder (secrets/sealing.key)"
+        );
     }
 }

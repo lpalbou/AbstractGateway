@@ -58,6 +58,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from .core_mail import EmailError, EmailRateLimited, OutgoingMessage, guarded_send
 
 from .accounts import (
+    REASON_MAILBOX_NEEDS_RECONNECT,
     EmailPlane,
     SETTINGS_LABEL,
     account_store,
@@ -338,13 +339,20 @@ class NotificationOutbox:
             " to_self INTEGER NOT NULL DEFAULT 1)"
         )
         columns = {r[1] for r in conn.execute("PRAGMA table_info(notices)")}
-        if "recipients_json" not in columns:
+        # recipients_json (round 3); subject_ref (round 16): what a notice is about,
+        # "automation:<id>" for an automation's notices, so its summary can show the last one.
+        for column, ddl in (
+            ("recipients_json", "recipients_json TEXT NOT NULL DEFAULT '[\"self\"]'"),
+            ("subject_ref", "subject_ref TEXT NOT NULL DEFAULT ''"),
+        ):
+            if column in columns:
+                continue
             try:
-                conn.execute("ALTER TABLE notices ADD COLUMN recipients_json TEXT NOT NULL DEFAULT '[\"self\"]'")
+                conn.execute(f"ALTER TABLE notices ADD COLUMN {ddl}")
                 conn.commit()
             except sqlite3.OperationalError:
                 # Another connection may have completed the same migration.
-                if "recipients_json" not in {r[1] for r in conn.execute("PRAGMA table_info(notices)")}:
+                if column not in {r[1] for r in conn.execute("PRAGMA table_info(notices)")}:
                     raise
         conn.execute(
             "CREATE TABLE IF NOT EXISTS sent_messages ("
@@ -361,16 +369,16 @@ class NotificationOutbox:
 
     # -- writes ----------------------------------------------------------------------------
 
-    def enqueue(self, key: str, kind: str, subject: str, text: str, html_body: str = "", *, recipients: Optional[List[str]] = None) -> bool:
+    def enqueue(self, key: str, kind: str, subject: str, text: str, html_body: str = "", *, recipients: Optional[List[str]] = None, subject_ref: str = "") -> bool:
         """Queue one notice. False when this idempotency key was queued before (any state)."""
 
         conn = self._connect()
         try:
             with conn:
                 cur = conn.execute(
-                    "INSERT OR IGNORE INTO notices(idempotency_key, kind, subject, text, html, created_at, recipients_json, state)"
-                    " VALUES (?,?,?,?,?,?,?, 'queued')",
-                    (str(key), str(kind), str(subject), str(text), str(html_body or ""), _now_iso(), json.dumps(recipients or ["self"])),
+                    "INSERT OR IGNORE INTO notices(idempotency_key, kind, subject, text, html, created_at, recipients_json, subject_ref, state)"
+                    " VALUES (?,?,?,?,?,?,?,?, 'queued')",
+                    (str(key), str(kind), str(subject), str(text), str(html_body or ""), _now_iso(), json.dumps(recipients or ["self"]), str(subject_ref or "")),
                 )
                 return cur.rowcount == 1
         finally:
@@ -493,6 +501,20 @@ class NotificationOutbox:
         if not row or not int(row["n"] or 0):
             return None
         return {"count": int(row["n"]), "cause": str(row["cause"] or ""), "resets_at": _iso_from_ts(float(row["ts"] or 0.0))}
+
+    def last_for(self, subject_ref: str, kind: str) -> Optional[Dict[str, Any]]:
+        """The newest notice of `kind` about `subject_ref` (e.g. "automation:<id>"), or None."""
+
+        if not self.path.exists():
+            return None
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT * FROM notices WHERE subject_ref=? AND kind=? ORDER BY rowid DESC LIMIT 1", (str(subject_ref), str(kind))
+            ).fetchone()
+        finally:
+            conn.close()
+        return dict(row) if row else None
 
     def queued_before(self, key: str) -> int:
         """Queued notices other than `key` (the ones a new notice waits behind)."""
@@ -658,7 +680,8 @@ class NotificationOutbox:
                 fix=err.fix,
             )
         try:
-            if err.code not in ("email_not_configured", "email_disabled"):
+            # needs_reconnect is the mailbox's own state (its reason is shown); not a send error.
+            if err.code not in ("email_not_configured", "email_disabled", "email_needs_reconnect"):
                 account_store(self.plane).record_error(err)
         except Exception:  # noqa: BLE001
             pass
@@ -687,7 +710,42 @@ def _collector_path(plane: EmailPlane) -> Path:
 
 def queue_notice(plane: EmailPlane, kind: str, key: str, facts: Dict[str, Any]) -> bool:
     subject, text, html_body = render_notice(kind, facts)
-    return NotificationOutbox(plane).enqueue(key, kind, subject, text, html_body, recipients=facts.get("recipients"))
+    return NotificationOutbox(plane).enqueue(
+        key, kind, subject, text, html_body, recipients=facts.get("recipients"), subject_ref=str(facts.get("subject_ref") or "")
+    )
+
+
+_LAST_NOTIFICATION_WORDS = {
+    "sent": "Email result sent",
+    "queued": "Email result queued",
+    "sending": "Email result sending",
+    "failed": "Email result failed",
+    "unknown": "Email result: outcome unknown",
+}
+
+
+def last_automation_notification(plane: EmailPlane, automation_id: str) -> Optional[Dict[str, Any]]:
+    """The automation summary's `last_notification` (round 16): the newest "Email result" notice
+    of this automation, `{channel: "email", state, at, sent_at, code, cause, text}` — `text` is
+    THE line clients show ("Email result failed \u2014 <cause>", "Email result sent"); None when
+    the automation never asked for an email."""
+
+    row = NotificationOutbox(plane).last_for(f"automation:{automation_id}", "automation_result")
+    if row is None:
+        return None
+    state = str(row.get("state") or "")
+    cause = str(row.get("error_cause") or "").strip()
+    words = _LAST_NOTIFICATION_WORDS.get(state, f"Email result {state}")
+    text = f"{words} \u2014 {cause}" if cause and state in ("failed", "unknown") else words
+    return {
+        "channel": "email",
+        "state": state,
+        "at": str(row.get("created_at") or "") or None,
+        "sent_at": str(row.get("sent_at") or "") or None,
+        "code": str(row.get("error_code") or "") or None,
+        "cause": cause or None,
+        "text": text,
+    }
 
 
 def _iso_from_ts(ts: float) -> str:
@@ -860,6 +918,9 @@ class NotificationCollector:
         first = not state.get("baseline_at")
         prefs = read_preferences(self.plane)
         usable = email_usable(self.plane)
+        # A mailbox sealed with the old keychain key (round 16): an explicit "Email result" is
+        # still queued so it fails ONCE, visibly, with the reconnect sentence (never retried).
+        reconnect = (not usable) and mailbox_unavailable_reason(self.plane) == REASON_MAILBOX_NEEDS_RECONNECT
         att: Dict[str, int] = {str(k): int(v) for k, v in (state.get("attention") or {}).items()}
         host = getattr(self.svc, "host", None)
         run_store = getattr(host, "run_store", None)
@@ -898,8 +959,9 @@ class NotificationCollector:
                         else:
                             # A failure after the retries: the user's "Job failed" switch.
                             wanted = bool(prefs.get("job_failed"))
-                        if usable and wanted:
-                            facts = {"title": title, "model_title": it.get("title"), "ref": f"automation {aid}, occurrence {it.get('index')}"}
+                        if wanted and (usable or (reconnect and kind == "automation_result")):
+                            facts = {"title": title, "model_title": it.get("title"), "ref": f"automation {aid}, occurrence {it.get('index')}",
+                                     "subject_ref": f"automation:{aid}"}
                             if kind == "automation_result":
                                 facts["model_body"] = it.get("email_result", it.get("body"))
                                 facts["recipients"] = it.get("recipients", ["self"])

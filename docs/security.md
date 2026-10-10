@@ -290,6 +290,49 @@ An entity has no token to rotate (its credential is discarded when it is
 created) and cannot be deleted (its name is kept for life); an admin or its
 creator suspends or archives it instead. Details: [api.md](./api.md#who-sees-which-account).
 
+### Sealed secrets: one key file per data folder
+
+Every secret the gateway keeps encrypted — each mailbox's password or OAuth
+tokens, the bring-your-own OAuth clients, MCP header values and the named API
+keys kept for owner reveal — is sealed with AES-256-GCM under ONE key per data
+folder:
+
+    <data dir>/secrets/               0700
+    <data dir>/secrets/sealing.key    0600, 32 random bytes (base64), made on first use
+
+The gateway never uses an OS keychain (since 0.14.0): the same file, the same
+code and the same guarantees on macOS, Linux and Windows. Each sealed file is
+bound to its place in the data folder, so a sealed file copied into another
+store does not open, and a data folder restored elsewhere *with* its
+`secrets/` keeps working.
+
+What the key file protects, plainly:
+
+- It protects copies of the data folder taken **without** `secrets/sealing.key`:
+  a synced or shared sub-folder, a file-reading tool, a log or a support bundle
+  that captured one sealed file. Such a copy reveals nothing.
+- It does **not** protect against code running as the gateway's OS user: that
+  code can read the key file, exactly as it could read the same user's keychain
+  items before 0.14.0. It does not protect a copy of the *whole* data folder
+  either (the key travels with it). Protect the data folder like a password.
+- **Backups must include `secrets/`**, or the sealed secrets in them cannot be
+  opened (mailboxes must then be connected again and keys re-made). There is no
+  `abstractgateway backup` command yet: copy the whole data folder, `secrets/`
+  included, while the gateway is stopped or idle, and store that backup as
+  carefully as the folder itself.
+- **Windows:** the 0600 / 0700 modes are best effort (Python maps them to the
+  read-only flag); the data folder's NTFS permissions (your user only, the
+  default under your profile) are what protect the key file there.
+
+Secrets sealed by gateway 0.13 or older with the key in the macOS keychain are
+**never opened** — no keychain call, no password prompt: each such mailbox shows
+"The mailbox credentials were sealed with the old macOS keychain key; connect
+the mailbox again — the new key lives in the data folder." (`mailbox.state`
+`needs_reconnect`), the other stores read as empty (the old file is kept as
+`secret.keychain-old.enc`, never read), and the audit log has one
+`…secret_key_migrated_to_file` line per store. The old keychain items stay in
+the login keychain until you delete them ([email.md](email.md#upgrading-from-013-the-keychain-key)).
+
 ### Per-user email
 
 Each user's mailbox ([email.md](email.md)) lives in that user's own data plane,
@@ -297,12 +340,10 @@ resolved from the authenticated principal on every route; no path or body id
 selects another user's account, and entities have none.
 
 - **Credentials** (password or OAuth tokens) are sealed with AES-256-GCM
-  (`<plane>/email/account/email/secret.enc`, 0600 in a 0700 folder); the key is
-  in the OS keychain, or a 0600 key file next to it on hosts without one. They
-  are used in memory at the moment of a connection and never enter run
-  variables, ledgers, events, logs, the audit log or API responses. The
-  encryption protects copies of the data folder, backups and file-reading tools;
-  code running as the gateway's OS user can reach the key.
+  (`<plane>/email/account/email/secret.enc`, 0600 in a 0700 folder) under the
+  data folder's sealing key (see [Sealed secrets](#sealed-secrets-one-key-file-per-data-folder)).
+  They are used in memory at the moment of a connection and never enter run
+  variables, ledgers, events, logs, the audit log or API responses.
 - **TLS** is verified on every IMAP, SMTP and OAuth connection (certificate
   chain and host name); there is no plaintext mode. A private CA file is an
   administrator setting.
@@ -946,4 +987,4 @@ All are loaded by `load_gateway_auth_policy_from_env()` (see `src/abstractgatewa
 
 The OpenAI-compatible API at `/v1` is stopped by default. In **Protected** mode a caller's API key is one of their account's named API keys (or, for compatibility, their gateway token), resolved by the security middleware. A named key is checked against a PBKDF2 hash with its fingerprint in the user registry and valid at `/v1` only (anywhere under `/api/gateway/`, sign-in included, it answers 401 and never counts as a guess), obeys its account's OpenAI API switch and Active state, and is revoked one at a time with effect at the next request; making, revealing or revoking one is an audit line (`openai_key_change`: action, name and fingerprint, never the key). Admins see every account's keys (never a key) and can revoke any; the gateway forwards authenticated requests to Core with its own internal credential, so a caller's token never reaches Core, and refused keys count toward the per-address lockout. **Open** mode serves direct local, LAN and VPN clients without a key, never through a proxy or in Internet mode, and Core keeps stored cloud-provider credentials for authenticated callers. **Who can connect** filters on the client address (the socket peer, or `X-Forwarded-For` from a proxy on this machine or a trusted proxy); **Anywhere** requires Internet mode with its acknowledgement and Protected. Request fields that would re-route a provider or carry a credential (`base_url`, `api_key`, `provider`, `headers`, ...) are refused with 400, so a caller cannot make the gateway connect to an address of its choosing. Browser pages without a key are limited to the accepted origins. Every request is one audit-log line naming the account and, for a named key, its name; it records the request and the response with credentials removed (the caller's key, the internal key and fields named like a credential read `[redacted]`), readable by an admin for every request and by each account for its own. See [openai-api.md](./openai-api.md).
 
-**Owner reveal and its trade-off.** By default ("API keys can be revealed by their owner", an admin setting on the OpenAI API page) each named key is also stored encrypted at rest, so its owner, and only its owner, can reveal it again (`POST /api/gateway/me/openai-keys/{fingerprint}/reveal`; anyone else, admins included, gets `403 not_owner`; each reveal and each refused attempt is an audit line). The sealing is the email credentials' own: AbstractCore's SecretVault, AES-256-GCM, the encryption key in the OS keychain, or a `0600` key file beside the sealed file (`<data dir>/auth/openai_key_secrets/`) on a host without a keychain. What that protects, honestly: a copy of the sealed file alone (a backup, a synced folder, a file-reading tool) reveals nothing while the key is in the keychain; with the key-file fallback, a copy of the whole folder carries both. Code running as the gateway's OS user can reach the key either way. The alternative is show-once: with the setting off, every stored copy is erased at once and the gateway keeps only hashes, so a leak of the data folder or a backup never yields a usable key, at the cost that a forgotten key must be replaced in every app. Owner reveal suits a personal gateway, where the person who can read the data folder owns the keys anyway; turn it off for a shared or hosted gateway where data-folder leaks are the larger risk.
+**Owner reveal and its trade-off.** By default ("API keys can be revealed by their owner", an admin setting on the OpenAI API page) each named key is also stored encrypted at rest, so its owner, and only its owner, can reveal it again (`POST /api/gateway/me/openai-keys/{fingerprint}/reveal`; anyone else, admins included, gets `403 not_owner`; each reveal and each refused attempt is an audit line). The sealing is the email credentials' own: AES-256-GCM under the data folder's key file (`<data dir>/secrets/sealing.key`; the copies in `<data dir>/auth/openai_key_secrets/`), see [Sealed secrets](#sealed-secrets-one-key-file-per-data-folder). What that protects, honestly: a copy of the data folder without `secrets/` reveals nothing; a copy of the whole folder carries the key, and code running as the gateway's OS user can read it. Keys sealed by 0.13 with the keychain key say "Reveal unavailable: created before the key moved — create a new key" (Revoke still works). The alternative is show-once: with the setting off, every stored copy is erased at once and the gateway keeps only hashes, so a leak of the data folder or a backup never yields a usable key, at the cost that a forgotten key must be replaced in every app. Owner reveal suits a personal gateway, where the person who can read the data folder owns the keys anyway; turn it off for a shared or hosted gateway where data-folder leaks are the larger risk.

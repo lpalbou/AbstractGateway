@@ -166,7 +166,7 @@ class OpenAIKeyRecord:
     """One named API key of an account (backlog 1000): valid at `/v1/*` only, hashed like a
     gateway token (PBKDF2), identified by `fingerprint` (SHA-256 of the key, 12 hex). The
     registry never holds the key itself: `sealed` says a copy is kept ENCRYPTED in the key
-    store (`abstractgateway.openai_keys`, AbstractCore's SecretVault) so its owner can reveal
+    store (`abstractgateway.openai_keys`, sealed with the data folder key) so its owner can reveal
     it again; a key made while revealing is off is hash-only (`sealed` false, field absent)."""
 
     label: str

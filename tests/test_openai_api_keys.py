@@ -343,8 +343,9 @@ def test_the_key_is_encrypted_at_rest_with_the_email_sealing(gw):
     sealed = (store / "secret.enc").read_text()
     doc = json.loads(sealed)
     assert doc["alg"] == "AES-256-GCM" and key not in sealed
-    # The suite never touches the operator's keychain (conftest: null keyring -> 0600 key file).
-    assert doc["key"] == "file" and (store / "secret.key").exists()
+    # Sealed with the data folder's key file (round 16: never an OS keychain).
+    assert doc["key"] == "sealing-key" and (gw.data / "secrets" / "sealing.key").exists()
+    assert not (store / "secret.key").exists()
     assert oct((store / "secret.enc").stat().st_mode & 0o777) == "0o600"
     assert sealed_fingerprints(gw.data) == {fp}
     # Nowhere else in the data dir in clear (registry, usage file, audit log).

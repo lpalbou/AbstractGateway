@@ -510,6 +510,7 @@ fn account_table_row(
     let state = match r.mailbox.state.as_str() {
         "connected" => "connected",
         "receive_only" => "receive only",
+        "needs_reconnect" => "needs reconnecting",
         "not_connected" => "not connected",
         "paused" => "paused",
         "unavailable" => "mailbox not available",
@@ -554,7 +555,7 @@ fn account_table_row(
             tip: Some("Active  (Space)".into()),
         }
     };
-    let note = if r.mailbox.state == "receive_only" {
+    let note = if r.mailbox.state == "receive_only" || r.mailbox.state == "needs_reconnect" {
         r.mailbox.reason.clone().map(|why| (why, t.warn))
     } else {
         mailbox_detail(r).map(|m| (m, t.text_muted))
@@ -1502,6 +1503,7 @@ pub fn email_cell(r: &AccountRow) -> String {
     let state = match r.mailbox.state.as_str() {
         "connected" => "connected",
         "receive_only" => "receive only",
+        "needs_reconnect" => "needs reconnecting",
         "not_connected" => "not connected",
         "paused" => "paused",
         "unavailable" => "mailbox not available",
@@ -1513,8 +1515,8 @@ pub fn email_cell(r: &AccountRow) -> String {
         (Some(a), "") => a.clone(),
         (Some(a), s) => format!("{a} · {s}"),
     };
-    // Receive only: the reason on the next line (the web's).
-    if r.mailbox.state == "receive_only" {
+    // Receive only / needs reconnecting: the reason on the next line (the web's).
+    if r.mailbox.state == "receive_only" || r.mailbox.state == "needs_reconnect" {
         if let Some(why) = &r.mailbox.reason {
             cell.push('\n');
             cell.push_str(why);

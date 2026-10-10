@@ -59,6 +59,8 @@ dependencies = [
   # unknown provider, per-quant GGUF and repo-scoped cache delete (Models page Delete).
   # 2.25.1: the Linux sandbox reaches an allowed workspace inside a refused folder, and
   # browser_probe serves local pages from a loopback origin scoped to the run's workspaces.
+  # 2.26.0: SecretVault seals with a key FILE and never an OS keychain (no `keyring`
+  # dependency); the gateway passes `<data dir>/secrets/sealing.key` (security/sealing.py).
   "abstractcore>=2.26.0",
   # Imported directly (routes/gateway.py voice listings):
   # abstractvoice.engine_runtime (0.13.0) decides which local voice engines

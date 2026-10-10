@@ -588,7 +588,7 @@ pub const SNIPPET_NOTE_EMPTY: &str =
     "<your key> is filled in when you make or reveal a key under Your API keys.";
 /// The admin setting (Access card).
 pub const OWNER_REVEAL_LABEL: &str = "API keys can be revealed by their owner";
-pub const OWNER_REVEAL_HELP: &str = "On: each person can reveal their own keys again (kept encrypted, with the key in the OS keychain; each reveal is audited). Off: a key is shown once, when it is made, and the gateway keeps only its hash; turning it off erases the stored keys.";
+pub const OWNER_REVEAL_HELP: &str = "On: each person can reveal their own keys again (kept encrypted, with the key in the data folder; each reveal is audited). Off: a key is shown once, when it is made, and the gateway keeps only its hash; turning it off erases the stored keys.";
 
 /// "Key “<label>” made and copied to the clipboard." (the terminal copies
 /// it at once through the engine).
@@ -610,6 +610,12 @@ pub fn snippet_note_key(label: &str) -> String {
 pub fn reveal_refusal(d: &Value, k: &Value) -> Option<String> {
     if d.get("owner_reveal").and_then(Value::as_bool) == Some(false) {
         return Some(REVEAL_OFF_WHY.into());
+    }
+    // The gateway's sentence for a key sealed before the key moved off the keychain (0.14).
+    if let Some(why) = k.get("reveal_unavailable").and_then(Value::as_str) {
+        if !why.is_empty() {
+            return Some(why.to_string());
+        }
     }
     if k.get("revealable").and_then(Value::as_bool) != Some(true) {
         return Some(NOT_REVEALABLE_WHY.into());
@@ -2829,6 +2835,21 @@ mod tests {
                 .replace(' ', "")
                 .contains("http://example.invalid:18781/v1/a/very/long/path/that/wraps"),
             "{out:?}"
+        );
+    }
+
+    #[test]
+    fn a_key_sealed_before_the_key_moved_shows_the_gateway_sentence() {
+        let why = "Reveal unavailable: created before the key moved \u{2014} create a new key";
+        let d = serde_json::json!({"owner_reveal": true});
+        let moved = serde_json::json!({"revealable": false, "reveal_unavailable": why});
+        assert_eq!(reveal_refusal(&d, &moved).as_deref(), Some(why));
+        let fine = serde_json::json!({"revealable": true});
+        assert_eq!(reveal_refusal(&d, &fine), None);
+        let off = serde_json::json!({"owner_reveal": false});
+        assert_eq!(
+            reveal_refusal(&off, &moved).as_deref(),
+            Some(REVEAL_OFF_WHY)
         );
     }
 }

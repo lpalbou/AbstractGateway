@@ -35,7 +35,7 @@ pub const ACTIONS: [&str; 8] = [
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Mailbox {
-    /// "connected" | "not_connected" | "paused" | "unavailable".
+    /// "connected" | "receive_only" | "needs_reconnect" | "not_connected" | "paused" | "unavailable".
     pub state: String,
     pub address: Option<String>,
     pub provider: Option<String>,
@@ -185,6 +185,8 @@ impl AccountRow {
                 None => "Connected".into(),
             },
             "receive_only" => "Receive only — no outgoing server".into(),
+            // Sealed with the old macOS keychain key (gateway 0.14): the reason says what to do.
+            "needs_reconnect" => "Needs reconnecting".into(),
             "not_connected" => "Not connected".into(),
             "paused" => "Paused".into(),
             "unavailable" => "Not available".into(),

@@ -4,6 +4,13 @@
 The console is mouse-first and keyboard-complete. Every screen works with clicks alone — tabs, buttons, row
 actions, switches, choices, dialogs — and every control is still reachable from the keyboard.
 ### Changed
+- **Sealing key moved off the keychain (gateway 0.14).** Your own Email card reads "Needs reconnecting: <address> ·
+  <the gateway's sentence>" (warning colour) when the mailbox was sealed with the old macOS keychain key
+  (`mailbox.state` `needs_reconnect`); the state line says "needs reconnecting", credentials say "encrypted, key in
+  the data folder (secrets/sealing.key)". Accounts / Users: the Email cell says "needs reconnecting" with the reason
+  on the next line. The OpenAI API page shows a key's served `reveal_unavailable` sentence ("Reveal unavailable:
+  created before the key moved — create a new key") as its refusal; the owner-reveal help says the key is in the
+  data folder.
 - **Navigation.** A grouped left rail like the web sidebar on terminals of 120×32 and larger, a one-row tab strip
   with `‹` `›` below that; click a screen, or use `←` / `→` and the screen keys from anywhere outside a text field.
   The header's memory line opens Resources, the identity opens Connection, **✦ Docs** opens the docs assistant.

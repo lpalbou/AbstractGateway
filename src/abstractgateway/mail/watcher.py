@@ -39,7 +39,7 @@ from typing import Any, Callable, Dict, Optional
 
 from .core_mail import EmailError
 
-from .accounts import EmailPlane, account_store, admin_email_enabled, email_context, _read_json, _write_private_json
+from .accounts import EmailPlane, account_store, admin_email_enabled, email_context, _read_json, _write_private_json, needs_reconnect
 from .audit import audit_email_event
 
 DEFAULT_INTERVAL_S = 60.0
@@ -238,6 +238,10 @@ class MailWatcher:
             return self._gate(doc, "needs action", out)
         if settings.account is None:
             return self._gate(doc, "not connected", out)
+        if needs_reconnect(plane):
+            # Sealed with the old keychain key (round 16): never opened, nothing read, no error
+            # written on every poll; the mailbox card says "connect the mailbox again".
+            return self._gate(doc, "needs reconnecting (connect the mailbox again)", out)
         if not settings.enabled:
             return self._gate(doc, "off (turned off by the user)", out)
         if not settings.account.can_read:
