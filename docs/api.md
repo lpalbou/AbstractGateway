@@ -24,7 +24,7 @@ serve:
 | `/api/gateway/admin/users`, `/admin/runtime-reservations` | user accounts and retained runtimes (admin) | [security.md](./security.md#tenant-and-user-isolation) |
 | `/api/gateway/admin/accounts`, `/admin/accounts/{id}/active`, `/admin/accounts/{id}/activity`, `/me/accounts`, `/me/accounts/{id}/activity`, `/me/activity` | the Accounts page: users and entities in one list (admin), your own account and your entities (everyone), the Active switch, activity from the audit log | [below](#accounts-and-activity) |
 | `/api/gateway/admin/runtime-config` | runtime settings (admin) | [configuration.md](./configuration.md) |
-| `/api/gateway/accounts/{me\|account}/preferences` | one account's client preferences: the default workflow per app and the time zone (the account itself, an admin, an entity's creator) | [below](#account-preferences) |
+| `/api/gateway/accounts/{me\|account}/preferences` | one account's client preferences: the default workflow per app, the time zone and the spoken language (the account itself, an admin, an entity's creator) | [below](#account-preferences) |
 | `/api/gateway/workspace/policy`, `/workspace/policy/{account}`, `/sessions/{id}/workspaces`, `/workspace/effective/{account}` (GET and dry-run POST), `POST /workspace/path-check` | workspaces, three levels: the gateway policy = the eligible set (read: everyone; write: admin), one account's default subset (admin, the account itself, an entity's creator; `me` = the caller), one conversation's subset (its owner, or an admin), the effective set the gateway enforces, and the path check run before saving a row (`{path}` → `{path, normalized, absolute, exists, is_dir, valid, sentence}`; any signed-in principal) | [below](#workspaces), [security.md](./security.md#workspaces-three-levels) |
 | `/api/gateway/admin/runtimes`, `?account=<id>[&tenant_id=<t>]` | the runtime inventory (admin); `account` keeps only the planes that account owns and echoes `filter` | [console.md](./console.md#runtimes-of-one-account) |
 | `/api/gateway/network`, `/network/restart` | network exposure, addresses, reverse proxy | [configuration.md](./configuration.md#api-gateway_network_v1) |
@@ -1475,6 +1475,20 @@ STT and listen contract notes:
 - `POST /api/gateway/runs/{run_id}/audio/transcribe` accepts a run-visible
   `audio_artifact` plus optional `language`, `prompt`, `response_format`,
   `temperature`, `format`, `provider`, and `model` hints.
+- The spoken language told to the engine is resolved in one place, in this
+  order: the request's `language` hint (`"auto"` or a supported code; an unknown
+  code is refused with 400 `{"reason": "language_refused", "message": <sentence>,
+  "key": "language"}`), else the caller's account preference `spoken_language`
+  ([Account preferences](#account-preferences)), else auto (the engine detects
+  it). The response carries `language` (what reached the engine: the code or
+  `"auto"`), `language_source` (`"request"`, `"account"` or `"auto"`) and
+  `detected_language` (the ISO 639-1 code the engine reported, or `null`); the
+  transcript artifact's `generation` metadata records the same three facts.
+- `capabilities.contracts.*.voice.stt.languages` lists the codes a request or a
+  preference may name.
+- The OpenAI-compatible `POST /v1/audio/transcriptions` ([openai-api.md](./openai-api.md))
+  follows the same rule: the form's own `language` field wins; a form without one,
+  sent with a gateway account's key, is told that account's `spoken_language`.
 - `capabilities.contracts.flow_editor.voice.stt` and
   `capabilities.contracts.assistant.voice.stt` point to that upload route.
 - `capabilities.contracts.flow_editor.voice.listen` and
@@ -2145,7 +2159,20 @@ else gets 403 with "Only an admin or the account itself can read or change its p
 answers 404. A gateway older than 0.13.1 has no such route (404 Not Found); the Assistant and
 AbstractCode then keep their own choice as before.
 
-Only keys the gateway declares are accepted: `default_workflow` and `time_zone`.
+Only keys the gateway declares are accepted: `default_workflow`, `time_zone` and `spoken_language`.
+
+`spoken_language` is the language spoken to the microphone: `"auto"` or an ISO 639-1 code the speech
+engines support (`en`, `fr`, `de`, `es`, `ru`, `zh`, `it`, `pt`, `ja`, `ko`, `ar`, `hi`, `nl`, `pl`,
+`vi`, `el` — AbstractVoice's list, which the GET serves as `choices`). Every transcription of the
+account that carries no `language` hint of its own is told this language, so short phrases and
+mixed-language speech transcribe reliably and a little faster; `"auto"` (the default; `null` and `""`
+mean the same on a PUT) lets the engine detect the language. The GET's `spoken_language` block is the
+control's whole truth: `{value, label, help, choices: [{value, label}]}` with `value` `"auto"` or the
+code, `label` "Spoken language", the one-sentence `help`, and the choices with their display labels
+("Auto (detected)", "English", "French", …); clients show exactly those. An unknown code is refused
+with 400 `preference_refused`, key `spoken_language`: "spoken_language = 'xx' refused: not a language
+the speech engines support. Choose auto or one of: ar, de, el, en, es, fr, hi, it, ja, ko, nl, pl, pt,
+ru, vi, zh."
 
 `time_zone` is the account's IANA time zone. Daily, weekly and monthly automations are created on it
 ([automations.md](./automations.md#trigger-sources)), and automation summaries show times in it.
@@ -2164,7 +2191,7 @@ gateway's per-app default, which is the admin setting `agents.default_workflow.<
 is never copied into the account. A chosen workflow is stored without a version, so it runs its
 latest published version. The PUT replaces the named interfaces and keeps the others. It is
 refused with 400 `{"detail": {"reason": "preference_refused", "message": <sentence>, "key": <key>}}`
-for an unknown key ("Unknown preference 'theme': this gateway declares default_workflow, time_zone."), an
+for an unknown key ("Unknown preference 'theme': this gateway declares default_workflow, spoken_language, time_zone."), an
 interface that is not an app's, or a workflow the account may not run for that app ("…refused:
 'helper@1.0.0:agent' declares abstractassistant.agent.v1, not abstractcode.agent.v1"). A refused PUT
 changes nothing. The change is audited on the target account's activity ("Preferences changed").
