@@ -113,11 +113,19 @@ def resolve(
 
 
 def detected_language_of(result: Any) -> Optional[str]:
-    """The engine's reported language in a completed transcription child result (the runtime
-    puts it in ``metadata.detected_language``), or None."""
-    meta = result.get("metadata") if isinstance(result, dict) else None
-    value = meta.get("detected_language") if isinstance(meta, dict) else None
-    return str(value).strip().lower() if isinstance(value, str) and value.strip() else None
+    """The engine's reported language in a completed transcription child result, or None. The
+    runtime puts it in the result's ``metadata.detected_language`` (split-server posture) and in
+    the text's own metadata (``text.metadata.detected_language``, what Core's generate() recorded —
+    the in-process posture); either holder answers."""
+    if not isinstance(result, dict):
+        return None
+    text = result.get("text")
+    holders = (result.get("metadata"), text.get("metadata") if isinstance(text, dict) else None)
+    for meta in holders:
+        value = meta.get("detected_language") if isinstance(meta, dict) else None
+        if isinstance(value, str) and value.strip():
+            return value.strip().lower()
+    return None
 
 
 __all__ = [

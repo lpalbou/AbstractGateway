@@ -240,6 +240,18 @@ def test_transcribe_refuses_an_unknown_hint_before_touching_the_engine(gateway, 
     assert calls == []
 
 
+def test_detected_language_is_read_from_either_metadata_holder():
+    """Split-server posture: the runtime copies the engine's report to the result's metadata;
+    in-process posture: it stays in the text's own metadata (Core's generate()). Both answer."""
+    from abstractgateway.spoken_language import detected_language_of
+
+    assert detected_language_of({"metadata": {"detected_language": "FR"}}) == "fr"
+    assert detected_language_of({"metadata": {}, "text": {"content": "x", "metadata": {"detected_language": "de"}}}) == "de"
+    assert detected_language_of({"metadata": {"detected_language": None}, "text": {"metadata": {}}}) is None
+    assert detected_language_of({"content": "x"}) is None
+    assert detected_language_of("not a dict") is None
+
+
 def test_transcribe_without_an_engine_report_answers_null_detected_language(gateway, monkeypatch):
     c, alice = gateway["c"], gateway["alice"]
     calls: list = []
