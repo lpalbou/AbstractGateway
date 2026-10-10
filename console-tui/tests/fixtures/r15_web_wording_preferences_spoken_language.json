@@ -1,0 +1,10 @@
+{
+  "_source": "scripts/extract_web_wording.py (do not edit by hand)",
+  "seam": "GET /accounts/{id}/preferences answered without a spoken_language block (R18 preferences seam).",
+  "saved": "Saved.",
+  "not_saved_prefix": "Not saved. ",
+  "multimodal_saved": "Saved.",
+  "multimodal_not_saved_prefix": "Not saved. ",
+  "multimodal_read_failed_prefix": "Could not read the preferences: ",
+  "multimodal_select_id": "defaults-spoken-language"
+}

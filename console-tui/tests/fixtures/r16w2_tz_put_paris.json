@@ -7,7 +7,8 @@
       "abstractcode.agent.v1": null,
       "abstractassistant.agent.v1": null
     },
-    "time_zone": "Europe/Paris"
+    "time_zone": "Europe/Paris",
+    "spoken_language": "auto"
   },
   "declared": {
     "default_workflow": {
@@ -17,6 +18,10 @@
     "time_zone": {
       "label": "Time zone",
       "help": "Daily, weekly and monthly automations run on this clock. Gateway default follows this computer's time zone."
+    },
+    "spoken_language": {
+      "label": "Spoken language",
+      "help": "The language spoken to the microphone. Auto lets the speech engine detect it; naming it skips detection, so short phrases and mixed-language speech transcribe reliably and a little faster."
     }
   },
   "apps": [
@@ -818,6 +823,81 @@
       "W-SU",
       "WET",
       "Zulu"
+    ]
+  },
+  "spoken_language": {
+    "value": "auto",
+    "label": "Spoken language",
+    "help": "The language spoken to the microphone. Auto lets the speech engine detect it; naming it skips detection, so short phrases and mixed-language speech transcribe reliably and a little faster.",
+    "choices": [
+      {
+        "value": "auto",
+        "label": "Auto (detected)"
+      },
+      {
+        "value": "ar",
+        "label": "Arabic"
+      },
+      {
+        "value": "zh",
+        "label": "Chinese"
+      },
+      {
+        "value": "nl",
+        "label": "Dutch"
+      },
+      {
+        "value": "en",
+        "label": "English"
+      },
+      {
+        "value": "fr",
+        "label": "French"
+      },
+      {
+        "value": "de",
+        "label": "German"
+      },
+      {
+        "value": "el",
+        "label": "Greek"
+      },
+      {
+        "value": "hi",
+        "label": "Hindi"
+      },
+      {
+        "value": "it",
+        "label": "Italian"
+      },
+      {
+        "value": "ja",
+        "label": "Japanese"
+      },
+      {
+        "value": "ko",
+        "label": "Korean"
+      },
+      {
+        "value": "pl",
+        "label": "Polish"
+      },
+      {
+        "value": "pt",
+        "label": "Portuguese"
+      },
+      {
+        "value": "ru",
+        "label": "Russian"
+      },
+      {
+        "value": "es",
+        "label": "Spanish"
+      },
+      {
+        "value": "vi",
+        "label": "Vietnamese"
+      }
     ]
   }
 }

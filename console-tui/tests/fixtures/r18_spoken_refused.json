@@ -1,0 +1,7 @@
+{
+  "detail": {
+    "reason": "preference_refused",
+    "message": "spoken_language = 'xx' refused: not a language the speech engines support. Choose auto or one of: ar, de, el, en, es, fr, hi, it, ja, ko, nl, pl, pt, ru, vi, zh.",
+    "key": "spoken_language"
+  }
+}

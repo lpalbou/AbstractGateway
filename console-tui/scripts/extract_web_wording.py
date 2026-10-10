@@ -215,6 +215,32 @@ def preferences_time_zone_words() -> dict:
 SCREEN_FIXTURES["preferences_time_zone"] = preferences_time_zone_words
 
 
+def preferences_spoken_language_words() -> dict:
+    """R18 Spoken language: the web console's words around the SERVED block (label, help and choices
+    come from the gateway, never from console.py) — the Preferences row (renderAccountPreferencesSpoken)
+    and the Multimodal line (renderDefaultsSpokenLanguage / loadDefaultsSpokenLanguage)."""
+    src = read("console.py")
+    row = need(src, r"function renderAccountPreferencesSpoken\(a, out, saved, body\) \{(.*?)\n    \}\n", "renderAccountPreferencesSpoken", re.S)
+    line = need(src, r"function renderDefaultsSpokenLanguage\(out, saved\) \{(.*?)\n    \}\n", "renderDefaultsSpokenLanguage", re.S)
+    load = need(src, r"async function loadDefaultsSpokenLanguage\(\) \{(.*?)\n    \}\n", "loadDefaultsSpokenLanguage", re.S)
+    if 'JSON.stringify({ spoken_language: next })' not in row or 'JSON.stringify({ spoken_language: next })' not in line:
+        fail("the spoken-language PUT body moved (expected {spoken_language: <value>} in both surfaces).")
+    if 'api("/api/gateway/accounts/me/preferences"' not in load:
+        fail("the Multimodal line no longer reads /accounts/me/preferences.")
+    return {
+        "seam": need(src, r'throw new Error\("(GET /accounts/\{id\}/preferences answered without a spoken_language block \(R18 preferences seam\)\.)"\);', "spoken language seam sentence"),
+        "saved": need(row, r'renderAccountPreferences\(a, answer, \{ iface: "spoken_language", ok: true, text: "([^"]*)" \}\)', "Preferences row Saved."),
+        "not_saved_prefix": need(row, r'note\.textContent = `(Not saved\. )\$\{emailErrorText\(e\)\}`;', "Preferences row Not saved."),
+        "multimodal_saved": need(line, r'renderDefaultsSpokenLanguage\(answer, \{ ok: true, text: "([^"]*)" \}\)', "Multimodal Saved."),
+        "multimodal_not_saved_prefix": need(line, r'note\.textContent = `(Not saved\. )\$\{emailErrorText\(e\)\}`;', "Multimodal Not saved."),
+        "multimodal_read_failed_prefix": need(load, r'err\.textContent = `(Could not read the preferences: )\$\{emailErrorText\(e\)\}`;', "Multimodal read failure"),
+        "multimodal_select_id": need(src, r'<div id="(defaults-spoken-language)-line" class="defaults-spoken-language" aria-live="polite" hidden></div>', "Multimodal line container"),
+    }
+
+
+SCREEN_FIXTURES["preferences_spoken_language"] = preferences_spoken_language_words
+
+
 def workflows_words() -> dict:
     """R15-A Workflows: the page's tooltips, sentences, switches and columns ({n} = the workflow)."""
     src = read("console.py")

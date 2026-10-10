@@ -20,6 +20,14 @@
 //! `{"time_zone": <zone> | null}` at once, "Saved." / "Not saved. <message>"
 //! under the row. An answer without the block shows the web's seam sentence
 //! in place of the row (never a hidden row).
+//!
+//! Round 18 (CONTRACT "Spoken language"): + the account's SPOKEN LANGUAGE,
+//! the row after the time zone — label, help and every option from the
+//! gateway's `spoken_language` block (`value` "auto" | a code, `choices`
+//! with their labels; the console keeps no list), a Select whose pick is
+//! one PUT `{"spoken_language": <value>}` at once, "Saved." / "Not saved.
+//! <message>". The Multimodal screen shows the same control for the
+//! signed-in account (`me`): [`spoken_language_line`].
 
 use abstracttui::prelude::*;
 use serde_json::{json, Value};
@@ -59,6 +67,18 @@ pub const TZ_KEY: &str = "time_zone";
 pub const TZ_SEAM: &str =
     "GET /accounts/{id}/preferences answered without a time_zone block (R16.1 preferences seam).";
 pub const READING: &str = "Reading the preferences...";
+/// The note key of the spoken-language row (round 18).
+pub const SPOKEN_KEY: &str = "spoken_language";
+/// The web's seam sentence for an answer without the `spoken_language` block.
+pub const SPOKEN_SEAM: &str =
+    "GET /accounts/{id}/preferences answered without a spoken_language block (R18 preferences seam).";
+/// The Multimodal screen's own-account control: its route, json slot and write key.
+pub const ME_PATH: &str = "/accounts/me/preferences";
+pub const ME_SLOT: &str = "spoken_language.me";
+pub const ME_WRITE: &str = "spoken_language.me.write";
+/// The Multimodal line's words when the read fails (the web's
+/// `loadDefaultsSpokenLanguage`): "Could not read the preferences: <sentence>".
+pub const ME_READ_FAILED: &str = "Could not read the preferences: ";
 
 /// The route of a row (the web's `accountPreferencesPath`): your own row
 /// is `me`; another tenant's user `<tenant>:<id>`; else the id.
@@ -162,12 +182,87 @@ impl TimeZonePref {
     }
 }
 
+/// The answer's `spoken_language` block (round 18): the control's whole
+/// truth, served — the console keeps no language list of its own.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SpokenLanguagePref {
+    /// "auto" or the stored code (never empty).
+    pub value: String,
+    pub label: String,
+    pub help: String,
+    /// (value, label) in the gateway's order ("auto" = "Auto (detected)" first).
+    pub choices: Vec<(String, String)>,
+}
+
+impl SpokenLanguagePref {
+    /// The options as the web's select lists them: the served choices, then a
+    /// stored code the gateway no longer lists, shown as it is (never swapped).
+    pub fn options(&self) -> Vec<(String, String)> {
+        let mut out = self.choices.clone();
+        if !out.iter().any(|(v, _)| *v == self.value) {
+            out.push((self.value.clone(), self.value.clone()));
+        }
+        out
+    }
+
+    pub fn current_index(&self) -> usize {
+        self.options()
+            .iter()
+            .position(|(v, _)| *v == self.value)
+            .unwrap_or(0)
+    }
+
+    pub fn current_label(&self) -> String {
+        self.options()
+            .into_iter()
+            .nth(self.current_index())
+            .map(|(_, l)| l)
+            .unwrap_or_default()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Prefs {
     pub can_edit: bool,
     pub apps: Vec<PrefApp>,
     /// The time-zone block, or the seam sentence when the answer lacks it.
     pub time_zone: Result<TimeZonePref, String>,
+    /// The spoken-language block, or the seam sentence when the answer lacks it.
+    pub spoken_language: Result<SpokenLanguagePref, String>,
+}
+
+/// The `spoken_language` block, checked like the web (`spokenLanguageBlock`):
+/// a missing block or field is the seam sentence (shown loudly in the row's place).
+pub fn parse_spoken_language(v: &Value) -> Result<SpokenLanguagePref, String> {
+    let b = v
+        .get("spoken_language")
+        .filter(|b| b.is_object())
+        .ok_or(SPOKEN_SEAM)?;
+    let choices = b
+        .get("choices")
+        .and_then(Value::as_array)
+        .filter(|c| !c.is_empty())
+        .ok_or(SPOKEN_SEAM)?;
+    let choices = choices
+        .iter()
+        .map(|c| Some((st(c, "value")?, st(c, "label")?)))
+        .collect::<Option<Vec<_>>>()
+        .ok_or(SPOKEN_SEAM)?;
+    Ok(SpokenLanguagePref {
+        value: st(b, "value")
+            .filter(|x| !x.is_empty())
+            .ok_or(SPOKEN_SEAM)?,
+        label: st(b, "label")
+            .filter(|l| !l.is_empty())
+            .ok_or(SPOKEN_SEAM)?,
+        help: st(b, "help").ok_or(SPOKEN_SEAM)?,
+        choices,
+    })
+}
+
+/// The PUT body of a spoken-language pick ("auto" = the engine detects it).
+pub fn put_spoken_language(value: &str) -> Value {
+    json!({ "spoken_language": value })
 }
 
 /// The `time_zone` block, checked like the web: a missing block or field
@@ -252,6 +347,7 @@ pub fn parse(v: &Value) -> Result<Prefs, String> {
         can_edit: v.get("can_edit").and_then(Value::as_bool) != Some(false),
         apps: out,
         time_zone: parse_time_zone(v),
+        spoken_language: parse_spoken_language(v),
     })
 }
 
@@ -503,7 +599,279 @@ fn body(
                 .build(),
         );
     }
-    tz_row(cx, ctx, wk, path, &prefs, st, width, label_w, col).build()
+    let col = tz_row(cx, ctx, wk, path, &prefs, st, width, label_w, col);
+    spoken_row(cx, ctx, wk, path, &prefs, st, width, label_w, col).build()
+}
+
+/// The spoken-language row (round 18): label (+ the gateway's help as a
+/// tip), a Select over the served choices, the help line and the live state
+/// line — the app rows' model (one PUT at once, reload, "Saved." / "Not saved. …").
+#[allow(clippy::too_many_arguments)]
+fn spoken_row(
+    cx: Scope,
+    ctx: &Ctx,
+    wk: &str,
+    path: &str,
+    prefs: &Prefs,
+    st: St,
+    width: i32,
+    label_w: i32,
+    mut col: Element,
+) -> Element {
+    use super::w::form::sentence;
+    let t = use_theme(cx).get().tokens;
+    let sl = match &prefs.spoken_language {
+        Ok(sl) => sl.clone(),
+        // Loud: the seam sentence in the row's place, in the error tone.
+        Err(e) => return col.child(sentence(&t, e, width, t.error)),
+    };
+    let label_w = label_w.max(abstracttui::text::width(&sl.label) + 2);
+    let control = if prefs.can_edit {
+        let c = ctx.clone();
+        let (wk, path) = (wk.to_string(), path.to_string());
+        let opts = sl.options();
+        let current = sl.value.clone();
+        let label = sl.label.clone();
+        abstracttui::app::select::Select::new(
+            opts.iter()
+                .map(|(_, l)| abstracttui::app::select::SelectOption::new(l.clone()))
+                .collect(),
+        )
+        .value(cx.signal(sl.current_index()))
+        .on_change(move |i| {
+            let Some((value, _)) = opts.get(i) else {
+                return;
+            };
+            if *value == current || st.pending.with_untracked(Option::is_some) {
+                return;
+            }
+            st.pending.set(Some(SPOKEN_KEY.to_string()));
+            st.notes.update(|n| n.retain(|(k, _, _)| k != SPOKEN_KEY));
+            c.store.json.set_write(&wk, Some(WriteState::Pending));
+            let slot = wk.trim_end_matches(".write").to_string();
+            c.send(Cmd::Json(JsonCmd::Send {
+                key: wk.clone(),
+                method: "PUT".into(),
+                path: path.clone(),
+                body: put_spoken_language(value),
+                slow: false,
+                label: label.clone(),
+                reload: vec![(slot, path.clone())],
+                journal: false,
+            }));
+        })
+        .element(cx, &t)
+        .build()
+    } else {
+        sentence(&t, &sl.current_label(), width - label_w, t.text)
+    };
+    // A blank line between the time-zone row and this one (the app rows' rhythm).
+    col = col
+        .child(
+            Element::new()
+                .style(LayoutStyle::line(1).shrink(0.0))
+                .build(),
+        )
+        .child(labelled_row(cx, &t, &sl, label_w, width, control));
+    if !sl.help.is_empty() {
+        col = col.child(sentence(&t, &sl.help, width, t.text_faint));
+    }
+    col.child(dyn_view(LayoutStyle::column().shrink(0.0), move || {
+        let t = abstracttui::app::current_theme().tokens;
+        if st.pending.get().as_deref() == Some(SPOKEN_KEY) {
+            return sentence(&t, "Saving…", width, t.text_muted);
+        }
+        let note = st.notes.with(|n| {
+            n.iter()
+                .find(|(k, _, _)| k == SPOKEN_KEY)
+                .map(|(_, t, tone)| (t.clone(), *tone))
+        });
+        match note {
+            Some((text, tone)) => sentence(
+                &t,
+                &text,
+                width,
+                if tone == Tone::Ok { t.ok } else { t.error },
+            ),
+            None => Element::new().style(LayoutStyle::default().h(0)).build(),
+        }
+    }))
+}
+
+/// One labelled control line: the label (its tip = the gateway's help),
+/// then the control (at most 56 cells wide).
+fn labelled_row(
+    cx: Scope,
+    t: &TokenSet,
+    sl: &SpokenLanguagePref,
+    label_w: i32,
+    width: i32,
+    control: View,
+) -> View {
+    let label = super::w::tip::with_tip(
+        cx,
+        Element::new()
+            .style(
+                LayoutStyle::default()
+                    .width(Dimension::Cells(label_w))
+                    .height(Dimension::Cells(1))
+                    .shrink(0.0),
+            )
+            .child(super::w::paint::fill_line(
+                LayoutStyle::default()
+                    .width(Dimension::Cells(label_w))
+                    .height(Dimension::Cells(1))
+                    .shrink(0.0),
+                vec![super::w::Ink::new(&sl.label, t.text)],
+                None,
+            )),
+        sl.help.clone(),
+    )
+    .build();
+    Element::new()
+        .style(LayoutStyle::row().height(Dimension::Cells(1)).shrink(0.0))
+        .child(label)
+        .child(
+            Element::new()
+                .style(
+                    LayoutStyle::default()
+                        .width(Dimension::Cells((width - label_w).clamp(1, 56)))
+                        .height(Dimension::Cells(1)),
+                )
+                .child(control)
+                .build(),
+        )
+        .build()
+}
+
+/// The Multimodal screen's own-account control (round 18, the web's
+/// `#defaults-spoken-language` line): the SIGNED-IN account's spoken
+/// language, read from `GET /accounts/me/preferences` each time the screen
+/// mounts connected (slot [`ME_SLOT`]); a pick is one PUT
+/// `{"spoken_language": <value>}` with a reload, then "Saved." / "Not
+/// saved. <message>" on the state line. Nothing shows while the first read
+/// is in flight; a failed read or a missing block is said in the error tone.
+pub fn spoken_language_line(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
+    let store = ctx.store;
+    let tt = *t;
+    let note: Signal<Option<(String, Tone)>> = cx.signal(None);
+    let pending = cx.signal(false);
+    {
+        let c = ctx.clone();
+        cx.effect(move || {
+            if !store.conn.with(crate::store::ConnPhase::is_connected) {
+                return;
+            }
+            if store.json.get_untracked(ME_SLOT).ready().is_none() {
+                store.json.set(ME_SLOT, Loadable::Loading);
+            }
+            c.send(Cmd::Json(JsonCmd::get(ME_SLOT, ME_PATH)));
+        });
+    }
+    cx.effect(move || {
+        let wst = store.json.write(ME_WRITE);
+        if !pending.get_untracked() {
+            return;
+        }
+        let out = match wst {
+            Some(WriteState::Done(_)) => (SAVED.to_string(), Tone::Ok),
+            Some(WriteState::Failed(e)) => (refusal(&e), Tone::Error),
+            _ => return,
+        };
+        note.set(Some(out));
+        pending.set(false);
+        store.json.set_write(ME_WRITE, None);
+    });
+    let c = ctx.clone();
+    Element::new()
+        .style(LayoutStyle::column().shrink(0.0))
+        .child(dyn_view_scoped(
+            LayoutStyle::column().shrink(0.0),
+            move |lcx| {
+                use super::w::form::sentence;
+                let t = tt;
+                let width = (super::page_viewport(lcx).get().w - 2).max(20);
+                let sl = match store.json.get(ME_SLOT) {
+                    Loadable::Ready(v) => parse_spoken_language(&v),
+                    Loadable::Failed(e) => Err(format!(
+                        "{ME_READ_FAILED}{}",
+                        super::workspace_chooser::error_sentence(&e)
+                    )),
+                    _ => return Element::new().style(LayoutStyle::default().h(0)).build(),
+                };
+                let can_edit = store
+                    .json
+                    .get_untracked(ME_SLOT)
+                    .ready()
+                    .map(|v| v.get("can_edit").and_then(Value::as_bool) != Some(false))
+                    .unwrap_or(true);
+                let sl = match sl {
+                    Ok(sl) => sl,
+                    Err(e) => return sentence(&t, &e, width, t.error),
+                };
+                let label_w = abstracttui::text::width(&sl.label) + 2;
+                let control = if can_edit {
+                    let c = c.clone();
+                    let opts = sl.options();
+                    let current = sl.value.clone();
+                    let label = sl.label.clone();
+                    abstracttui::app::select::Select::new(
+                        opts.iter()
+                            .map(|(_, l)| abstracttui::app::select::SelectOption::new(l.clone()))
+                            .collect(),
+                    )
+                    .value(lcx.signal(sl.current_index()))
+                    .on_change(move |i| {
+                        let Some((value, _)) = opts.get(i) else {
+                            return;
+                        };
+                        if *value == current || pending.get_untracked() {
+                            return;
+                        }
+                        pending.set(true);
+                        note.set(None);
+                        c.store.json.set_write(ME_WRITE, Some(WriteState::Pending));
+                        c.send(Cmd::Json(JsonCmd::Send {
+                            key: ME_WRITE.into(),
+                            method: "PUT".into(),
+                            path: ME_PATH.into(),
+                            body: put_spoken_language(value),
+                            slow: false,
+                            label: label.clone(),
+                            reload: vec![(ME_SLOT.into(), ME_PATH.into())],
+                            journal: false,
+                        }));
+                    })
+                    .element(lcx, &t)
+                    .build()
+                } else {
+                    sentence(&t, &sl.current_label(), width - label_w, t.text)
+                };
+                labelled_row(lcx, &t, &sl, label_w, width, control)
+            },
+        ))
+        // The state line (its own region: an outcome never rebuilds the Select).
+        .child(dyn_view_scoped(
+            LayoutStyle::column().shrink(0.0),
+            move |ncx| {
+                use super::w::form::sentence;
+                let t = abstracttui::app::current_theme().tokens;
+                let width = (super::page_viewport(ncx).get().w - 2).max(20);
+                if pending.get() {
+                    return sentence(&t, "Saving…", width, t.text_muted);
+                }
+                match note.get() {
+                    Some((text, tone)) => sentence(
+                        &t,
+                        &text,
+                        width,
+                        if tone == Tone::Ok { t.ok } else { t.error },
+                    ),
+                    None => Element::new().style(LayoutStyle::default().h(0)).build(),
+                }
+            },
+        ))
+        .build()
 }
 
 /// The time-zone row (R16.1): label (+ the gateway's help as a tip), a
@@ -720,6 +1088,106 @@ mod tests {
         let p = parse(&v).unwrap();
         assert_eq!(p.time_zone.unwrap_err(), TZ_SEAM);
         assert!(!p.apps.is_empty());
+    }
+
+    fn fx18(name: &str) -> Value {
+        let path = format!(
+            "{}/tests/fixtures/r18_{name}.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        serde_json::from_str(&std::fs::read_to_string(&path).expect(&path)).expect("json")
+    }
+
+    #[test]
+    fn the_spoken_language_block_parses_with_the_served_labels() {
+        let v = fx("prefs_alice_set");
+        let sl = parse(&v).unwrap().spoken_language.unwrap();
+        assert_eq!(sl.label, "Spoken language");
+        assert_eq!(sl.help, v["spoken_language"]["help"].as_str().unwrap());
+        assert_eq!(sl.value, "auto");
+        assert_eq!(
+            sl.choices[0],
+            ("auto".to_string(), "Auto (detected)".to_string())
+        );
+        assert!(sl
+            .choices
+            .contains(&("fr".to_string(), "French".to_string())));
+        // The options ARE the served choices, nothing added.
+        assert_eq!(sl.options(), sl.choices);
+        assert_eq!(
+            sl.options().len(),
+            v["spoken_language"]["choices"].as_array().unwrap().len()
+        );
+        assert_eq!(sl.current_label(), "Auto (detected)");
+        let fr = parse(&fx18("spoken_put_fr"))
+            .unwrap()
+            .spoken_language
+            .unwrap();
+        assert_eq!(fr.value, "fr");
+        assert_eq!(fr.current_label(), "French");
+        assert_eq!(fr.options()[fr.current_index()].0, "fr");
+    }
+
+    #[test]
+    fn a_stored_code_the_gateway_no_longer_lists_shows_as_it_is() {
+        let mut v = fx("prefs_alice_set");
+        v["spoken_language"]["value"] = json!("tlh");
+        let sl = parse_spoken_language(&v).unwrap();
+        assert_eq!(sl.current_label(), "tlh");
+        assert_eq!(sl.options().len(), sl.choices.len() + 1);
+    }
+
+    #[test]
+    fn the_spoken_language_put_body() {
+        assert_eq!(put_spoken_language("fr"), json!({"spoken_language": "fr"}));
+        assert_eq!(
+            put_spoken_language("auto"),
+            json!({"spoken_language": "auto"})
+        );
+    }
+
+    #[test]
+    fn a_missing_spoken_language_block_or_field_is_the_seam_sentence() {
+        let mut v = fx("prefs_alice_set");
+        v.as_object_mut().unwrap().remove("spoken_language");
+        let p = parse(&v).unwrap();
+        assert_eq!(p.spoken_language.unwrap_err(), SPOKEN_SEAM);
+        assert!(p.time_zone.is_ok() && !p.apps.is_empty());
+        for (field, broken) in [
+            ("label", json!(null)),
+            ("value", json!("")),
+            ("help", json!(null)),
+            ("choices", json!([])),
+            ("choices", json!([{"value": "fr"}])),
+        ] {
+            let mut v = fx("prefs_alice_set");
+            v["spoken_language"][field] = broken.clone();
+            assert_eq!(
+                parse_spoken_language(&v).unwrap_err(),
+                SPOKEN_SEAM,
+                "{field} = {broken}"
+            );
+        }
+        assert_eq!(
+            SPOKEN_SEAM,
+            "GET /accounts/{id}/preferences answered without a spoken_language block (R18 preferences seam)."
+        );
+    }
+
+    #[test]
+    fn a_spoken_language_refusal_is_not_saved_then_the_sentence() {
+        let body = fx18("spoken_refused");
+        let e = crate::api::ApiError {
+            kind: crate::api::ApiErrorKind::Http(400),
+            message: body["detail"].to_string(),
+            body: Some(body["detail"].clone()),
+            timed_out: false,
+        };
+        assert_eq!(
+            refusal(&e),
+            format!("Not saved. {}", body["detail"]["message"].as_str().unwrap())
+        );
+        assert!(refusal(&e).starts_with("Not saved. spoken_language = 'xx' refused: "));
     }
 
     #[test]

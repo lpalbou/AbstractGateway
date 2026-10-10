@@ -608,6 +608,11 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 col.build()
             },
         ))
+        // SPOKEN LANGUAGE (round 18): the signed-in account's own preference,
+        // the web's Multimodal line (account_preferences::spoken_language_line).
+        .child(super::account_preferences::spoken_language_line(
+            cx, ctx, &tt,
+        ))
         .child(table_region(cx, ctx, &tt, sel_key))
         // SELECTED-ROW LINE: the full route key and, in words, what the
         // row is FOR or why it cannot run.
