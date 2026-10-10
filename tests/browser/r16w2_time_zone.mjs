@@ -63,7 +63,8 @@ try {
   check(before.preferences && before.preferences.time_zone === null, "nothing stored at first", before.preferences);
   await openModal(page);
   const rows = await page.$$eval("#account-preferences-body [data-account-preference]", (els) => els.map((e) => e.getAttribute("data-account-preference")));
-  check(rows[rows.length - 1] === "time_zone", "the time-zone row comes after the default-workflow rows", rows);
+  // Round 18: the Spoken language row follows the time zone (r18_spoken_language.mjs checks it).
+  check(rows.indexOf("time_zone") === before.apps.length && rows.slice(0, before.apps.length).every((r) => r !== "time_zone"), "the time-zone row comes right after the default-workflow rows", rows);
   check((await page.textContent(`${TZ} .af-tz-picker__label`)).trim() === block.label, "label = the gateway's", block.label);
   check((await page.getAttribute(`${TZ} .af-tz-picker__help`, "data-af-tip")) === block.help, "help = the gateway's sentence, as a kit tooltip");
   const trigger = page.locator(`${TZ} .af-select-trigger`);

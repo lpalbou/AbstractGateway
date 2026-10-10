@@ -1801,6 +1801,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    /* Preferences → Time zone (R16.1): the kit AfTimeZonePicker island reads like the workflow rows. */
 	    .account-preferences-tz .af-tz-picker__label { font-weight: 500; font-size: var(--font-size-base); text-transform: none; letter-spacing: normal; color: var(--text); }
 	    .account-preferences-tz .af-select-trigger { font-weight: 400; }
+	    /* Spoken language (R18): the Multimodal page's own-account line, worded like the Preferences row. */
+	    .defaults-spoken-language { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 14px; min-width: 0; }
+	    .defaults-spoken-language > label { font-weight: 500; font-size: var(--font-size-base); text-transform: none; letter-spacing: normal; color: var(--text); }
+	    .defaults-spoken-language > select { flex: 0 1 auto; min-width: 0; max-width: 360px; }
 	    /* Settings under the per-app defaults (gateway-wide runtime settings). */
 	    .workflows-settings { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
 	    .workflows-settings .af-switch--row { width: 100%; max-width: none; }
@@ -2505,6 +2509,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 		            <thead><tr><th>Route</th><th>Capability</th><th>Provider</th><th>Model</th><th>Weights</th><th>Source</th><th>Status</th><th>Actions</th></tr></thead>
 		            <tbody id="defaults-table"></tbody>
 		          </table>
+	          <!-- Spoken language (R18): the signed-in account's OWN preference, served whole by
+	               GET /api/gateway/accounts/me/preferences (label, help, choices); filled by
+	               renderDefaultsSpokenLanguage. -->
+	          <div id="defaults-spoken-language-line" class="defaults-spoken-language" aria-live="polite" hidden></div>
 	          <div id="defaults-message" class="message"></div>
 	        </section>
 	      </div>
@@ -12871,6 +12879,152 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (!Array.isArray(app.choices)) throw new Error(`GET /accounts/{id}/preferences app ${app.interface} has no choices (R14 preferences seam).`);
       return app;
     }
+    // Spoken language (round 18, R18): the gateway serves the whole control (`spoken_language`:
+    // value "auto" | a code, label, help, choices with their labels). The console keeps no list of
+    // its own; ONE validator and ONE select builder serve the Preferences row and the Multimodal line.
+    function spokenLanguageBlock(out) {
+      const b = out && out.spoken_language;
+      if (!b || typeof b !== "object" || typeof b.value !== "string" || typeof b.label !== "string" || !b.label
+        || typeof b.help !== "string" || !Array.isArray(b.choices) || !b.choices.length) {
+        throw new Error("GET /accounts/{id}/preferences answered without a spoken_language block (R18 preferences seam).");
+      }
+      return b;
+    }
+    function spokenLanguageSelect(block, id) {
+      const sel = document.createElement("select");
+      sel.id = id;
+      for (const c of block.choices) {
+        const o = document.createElement("option");
+        o.value = String(c.value);
+        o.textContent = String(c.label);
+        sel.append(o);
+      }
+      if (!block.choices.some((c) => String(c.value) === block.value)) {
+        // A stored code the speech engines no longer list: shown as it is, never silently swapped.
+        const o = document.createElement("option");
+        o.value = block.value;
+        o.textContent = block.value;
+        sel.append(o);
+      }
+      sel.value = block.value;
+      return sel;
+    }
+    function spokenLanguageNote(saved) {
+      const note = document.createElement("span");
+      note.className = "inline-state";
+      note.setAttribute("role", "status");
+      note.setAttribute("aria-live", "polite");
+      if (saved) {
+        note.textContent = saved.text;
+        note.className = `inline-state ${saved.ok ? "ok" : "error"}`;
+      }
+      return note;
+    }
+    function renderAccountPreferencesSpoken(a, out, saved, body) {
+      const block = spokenLanguageBlock(out);
+      const sid = `account-pref-${a.tenant_id || "default"}-${a.id}-spoken-language`.replace(/[^A-Za-z0-9_-]/g, "-");
+      const row = document.createElement("div");
+      row.className = "agent-default account-preferences-spoken";
+      row.setAttribute("data-account-preference", "spoken_language");
+      const head = document.createElement("div");
+      head.className = "agent-default__head";
+      const label = document.createElement("label");
+      label.className = "agent-default__name";
+      label.htmlFor = sid;
+      label.textContent = block.label;
+      head.append(label, workflowHelpQ(block.label, block.help));
+      const control = document.createElement("div");
+      control.className = "agent-default__control";
+      const sel = spokenLanguageSelect(block, sid);
+      sel.setAttribute("data-account-preference-select", "spoken_language");
+      if (out.can_edit === false) sel.disabled = true;
+      const note = spokenLanguageNote(saved && saved.iface === "spoken_language" ? saved : null);
+      note.setAttribute("data-account-preference-saved", "spoken_language");
+      control.append(sel, note);
+      row.append(head, control);
+      body.append(row);
+      const current = block.value;
+      sel.onchange = async () => {
+        const next = sel.value;
+        sel.disabled = true;
+        sel.setAttribute("aria-busy", "true");
+        try {
+          const answer = await api(accountPreferencesPath(a), { method: "PUT", body: JSON.stringify({ spoken_language: next }) });
+          if (accountsUi.preferencesFor !== a) return; // the dialog moved on meanwhile
+          renderAccountPreferences(a, answer, { iface: "spoken_language", ok: true, text: "Saved." });
+        } catch (e) {
+          sel.value = current;
+          sel.disabled = out.can_edit === false;
+          sel.removeAttribute("aria-busy");
+          note.textContent = `Not saved. ${emailErrorText(e)}`;
+          note.className = "inline-state error";
+        }
+      };
+    }
+    // The Multimodal page's line: the SIGNED-IN account's own spoken language (GET/PUT
+    // /accounts/me/preferences), read each time the capability grid renders. A token drops a
+    // read that a newer read or a change overtook.
+    async function loadDefaultsSpokenLanguage() {
+      const token = (state.spokenLanguageToken = (state.spokenLanguageToken || 0) + 1);
+      let out;
+      try {
+        out = await api("/api/gateway/accounts/me/preferences");
+      } catch (e) {
+        if (token !== state.spokenLanguageToken) return;
+        const line = $("defaults-spoken-language-line");
+        line.textContent = "";
+        const err = document.createElement("span");
+        err.className = "inline-state error";
+        err.textContent = `Could not read the preferences: ${emailErrorText(e)}`;
+        line.append(err);
+        line.hidden = false;
+        return;
+      }
+      if (token !== state.spokenLanguageToken) return;
+      renderDefaultsSpokenLanguage(out, null);
+    }
+    function renderDefaultsSpokenLanguage(out, saved) {
+      const line = $("defaults-spoken-language-line");
+      line.textContent = "";
+      line.hidden = false;
+      let block;
+      try {
+        block = spokenLanguageBlock(out);
+      } catch (e) {
+        const err = document.createElement("span");
+        err.className = "inline-state error";
+        err.textContent = String(e.message || e);
+        line.append(err);
+        return;
+      }
+      const label = document.createElement("label");
+      label.htmlFor = "defaults-spoken-language";
+      label.textContent = block.label;
+      const sel = spokenLanguageSelect(block, "defaults-spoken-language");
+      if (out.can_edit === false) sel.disabled = true;
+      const note = spokenLanguageNote(saved);
+      note.id = "defaults-spoken-language-note";
+      line.append(label, workflowHelpQ(block.label, block.help), sel, note);
+      const current = block.value;
+      sel.onchange = async () => {
+        const next = sel.value;
+        const token = (state.spokenLanguageToken = (state.spokenLanguageToken || 0) + 1);
+        sel.disabled = true;
+        sel.setAttribute("aria-busy", "true");
+        try {
+          const answer = await api("/api/gateway/accounts/me/preferences", { method: "PUT", body: JSON.stringify({ spoken_language: next }) });
+          if (token !== state.spokenLanguageToken) return;
+          renderDefaultsSpokenLanguage(answer, { ok: true, text: "Saved." });
+        } catch (e) {
+          if (token !== state.spokenLanguageToken) return;
+          sel.value = current;
+          sel.disabled = out.can_edit === false;
+          sel.removeAttribute("aria-busy");
+          note.textContent = `Not saved. ${emailErrorText(e)}`;
+          note.className = "inline-state error";
+        }
+      };
+    }
     function renderAccountPreferences(a, out, saved) {
       const body = $("account-preferences-body");
       unmountAccountPreferencesTz();
@@ -12966,6 +13120,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       }
       body.append(list);
       renderAccountPreferencesTz(a, out, saved, body);
+      renderAccountPreferencesSpoken(a, out, saved, body);
     }
     // Time zone (R16.1): the gateway serves the whole picker (`time_zone`: value, gateway_default,
     // label, help, IANA choices); "Gateway default (<zone>)" = null. A change is ONE PUT
@@ -13382,6 +13537,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      renderStoreAuthority("defaults-authority", payload);
 	      renderDefaultRows(rows);
 	      renderSandboxCapabilityOptions();
+	      loadDefaultsSpokenLanguage();
 	      // Weights are probed AFTER the grid paints: a stalled LM Studio socket
 	      // must never hold up the provider/model columns, which is the part the
 	      // operator came for.
