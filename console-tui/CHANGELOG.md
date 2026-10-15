@@ -1,6 +1,6 @@
 # Changelog — abstractgateway-console
 
-## [0.16.0] - 2026-10-09
+## [0.16.0] - 2026-10-15
 The console is mouse-first and keyboard-complete. Every screen works with clicks alone — tabs, buttons, row
 actions, switches, choices, dialogs — and every control is still reachable from the keyboard.
 ### Changed

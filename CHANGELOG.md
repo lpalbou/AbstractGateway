@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.14.0] - 2026-10-09
+## [0.14.0] - 2026-10-15
 
 Requires AbstractRuntime with `schedule@2` (the next runtime release). Dependency floors: `AbstractRuntime>=0.10.0` (base, `apple`, `gpu`), `abstractcore>=2.26.0` (base, `embeddings`), `abstractvoice>=0.15.0`. The speech-input row's served hint reaches AbstractCore through the Runtime facade (`config_facade.voice_input_hint`), keeping the gateway's import boundary.
 
