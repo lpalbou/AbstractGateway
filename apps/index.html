@@ -1434,8 +1434,8 @@ than the installed one (semantic versions, prereleases before their release).</p
   checkout — update it there".</li>
 <li>The button's label and tooltip come from the gateway (<code>update_label</code>,
   <code>update_tip</code> on the row), so the web console and the terminal console show
-  the same words; in the terminal console <code>u</code> updates the selected app, with
-  the tooltip as its confirmation.</li>
+  the same words; in the terminal console <strong>Update to x.y.z</strong> (<code>u</code>) asks with
+  the tooltip as its question.</li>
 <li>When the installer upgrades the framework with no gateway running, it leaves
   the apps' versions in <code>&lt;data dir&gt;/apps-upgrade.pending</code> and the gateway
   brings each installed app UP to that version at its next start; an app you
@@ -1491,6 +1491,11 @@ in its <code>details</code> field (<code>&lt;data dir&gt;/apps/jobs/&lt;job&gt;.
   seconds). After more than 3 crashes in a minute it stops trying and shows
   "crash_loop" with the app's log.</li>
 <li>Each app writes its output to <code>&lt;data dir&gt;/logs/apps/&lt;app&gt;.log</code>.</li>
+<li>Apps that publish workflows (the Flow Editor's <strong>Publish</strong>, the Assistant
+  bringing its own workflow up to date when it starts) do not restart anything
+  on the gateway: the new workflow is swapped in place, so the other apps keep
+  their loaded model, their conversations' prompt caches and their running
+  runs (<a href="../architecture/#publishing-a-workflow">architecture.md</a>).</li>
 <li>Apps always listen on <code>127.0.0.1</code>: browsers reach them through the gateway
   (next section), never directly. Ports: the app's usual port when it is
   free, else the first free port in 3100-3199. The usual ports are the
@@ -1745,7 +1750,7 @@ listen</em>) is <strong>deprecated</strong>: apps always listen on <code>127.0.0
 through the gateway. It accepts only a loopback address; an older saved
 <code>0.0.0.0</code> (or <code>ABSTRACTGATEWAY_APPS_HOST</code>) is ignored with one warning in the
 gateway's log, and clearing it removes the warning. Change them from the Apps page (the toolbar gear, <em>Apps settings</em>), the
-terminal console (Runtimes → <em>Runtime knobs</em> → <em>Edit apps settings</em>) or the
+terminal console (Apps → the ⊛ <em>Apps settings</em> gear) or the
 CLI:</p>
 <div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>apps<span class="w"> </span>config<span class="w"> </span>get<span class="w"> </span><span class="o">[</span>NAME<span class="o">]</span><span class="w"> </span><span class="o">[</span>--json<span class="o">]</span>
 abstractgateway<span class="w"> </span>apps<span class="w"> </span>config<span class="w"> </span><span class="nb">set</span><span class="w"> </span>ports<span class="w"> </span><span class="m">3100</span>-3199<span class="w">     </span><span class="c1"># "" clears back to the default</span>

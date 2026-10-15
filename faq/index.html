@@ -2424,7 +2424,7 @@ reports the watchdog's state. See <a href="../deployment/">deployment.md</a> and
 <h2 id="openai-api">OpenAI API<a class="headerlink" href="#openai-api" title="Permanent link">&para;</a></h2>
 <h3 id="can-i-use-this-gateway-from-an-openai-sdk-or-app">Can I use this gateway from an OpenAI SDK or app?<a class="headerlink" href="#can-i-use-this-gateway-from-an-openai-sdk-or-app" title="Permanent link">&para;</a></h3>
 <p>Yes. An admin turns on the API on the console's <strong>OpenAI API</strong> page. Point the
-SDK at <code>http://&lt;gateway&gt;/v1</code> and use your gateway token as the API key; the
+SDK at <code>http://&lt;gateway&gt;/v1</code> and use an API key from that page (<strong>New key</strong>); the
 model name is <code>provider/model</code> as listed by <code>GET /v1/models</code>. Chat completions
 (with tools, streaming and structured outputs through <code>response_format</code>
 <code>json_object</code> or <code>json_schema</code>) and embeddings are supported. See

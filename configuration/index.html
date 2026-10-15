@@ -1911,6 +1911,15 @@ token hash in <code>auth/users.json</code>, and can write the raw bootstrap toke
   one process. <code>abstractgateway-config status</code> prints the folder and why it
   was chosen.
   Evidence: <code>src/abstractgateway/host_paths.py</code></li>
+<li><strong>The sealing key</strong> <code>&lt;data dir&gt;/secrets/sealing.key</code> (0600 in a 0700
+  <code>secrets/</code> folder, 32 random bytes, made on first use): ONE key for every
+  secret the gateway keeps encrypted (mailbox credentials, OAuth sign-in apps,
+  MCP header values, revealable API keys). No OS keychain is used, on any OS.
+  There is no setting for it; moving or restoring the data folder keeps it
+  working as long as <code>secrets/</code> comes along, and a backup without <code>secrets/</code>
+  cannot open those secrets. What it protects:
+  <a href="../security/#sealed-secrets-one-key-file-per-data-folder">security.md</a>.
+  Evidence: <code>src/abstractgateway/security/sealing.py</code></li>
 <li><code>ABSTRACTGATEWAY_FLOWS_DIR</code>: workflows directory. When unset, Gateway uses the
   packaged shipped bundle directory, which carries <code>basic-agent</code>,
   <code>coding-agent</code>, <code>deep-research</code>, <code>co-scientist</code>, and more
@@ -2006,9 +2015,9 @@ session through <code>/api/gateway/session/login</code>; the raw bearer token sh
 kept in browser storage, and the login response body does not expose the session
 id or CSRF token. One exception: the web
 console keeps the token a person typed at sign-in in session storage (local
-storage with <em>Remember this browser</em>) so the OpenAI API page can show that
-person their own API key without any server route returning a stored token; it
-is removed at sign-out. Session-authenticated writes carry
+storage with <em>Remember this browser</em>); it is removed at sign-out. No server
+route returns a stored token, and the OpenAI API page offers named
+<a href="../openai-api/#api-keys">API keys</a> instead of the token. Session-authenticated writes carry
 <code>X-AbstractGateway-Session</code> plus <code>X-AbstractGateway-CSRF</code>, and
 <code>/api/gateway/session/logout</code> revokes the session. Apps such as AbstractFlow,
 AbstractCode, AbstractAssistant, and AbstractObserver should authenticate as the

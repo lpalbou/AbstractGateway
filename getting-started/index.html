@@ -1425,10 +1425,11 @@ abstractgateway<span class="w"> </span>migrate<span class="w"> </span>--from<spa
 <h2 id="7-optional-use-the-gateway-from-an-openai-sdk">7) (Optional) Use the gateway from an OpenAI SDK<a class="headerlink" href="#7-optional-use-the-gateway-from-an-openai-sdk" title="Permanent link">&para;</a></h2>
 <p>An admin turns on the OpenAI-compatible API on the console's <strong>OpenAI API</strong>
 page (sidebar <strong>Models</strong>). Then any OpenAI SDK reaches this gateway's models
-with your gateway token as the API key:</p>
+with an API key you make on that page (<strong>New key</strong>; one key can serve every
+app, and the page fills it into the examples):</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">openai</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenAI</span>
 
-<span class="n">client</span> <span class="o">=</span> <span class="n">OpenAI</span><span class="p">(</span><span class="n">base_url</span><span class="o">=</span><span class="s2">"http://127.0.0.1:8080/v1"</span><span class="p">,</span> <span class="n">api_key</span><span class="o">=</span><span class="s2">"YOUR_GATEWAY_TOKEN"</span><span class="p">)</span>
+<span class="n">client</span> <span class="o">=</span> <span class="n">OpenAI</span><span class="p">(</span><span class="n">base_url</span><span class="o">=</span><span class="s2">"http://127.0.0.1:8080/v1"</span><span class="p">,</span> <span class="n">api_key</span><span class="o">=</span><span class="s2">"&lt;your key&gt;"</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">client</span><span class="o">.</span><span class="n">models</span><span class="o">.</span><span class="n">list</span><span class="p">())</span>
 </code></pre></div>
 <p>See <a href="../openai-api/">openai-api.md</a> for the supported surface, access

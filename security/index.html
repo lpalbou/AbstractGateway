@@ -804,6 +804,39 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#roles-admin-and-member" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Roles: admin and member
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#who-configures-an-entity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who configures an entity
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sealed-secrets-one-key-file-per-data-folder" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sealed secrets: one key file per data folder
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#per-user-email" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1228,6 +1261,39 @@
     <span class="md-ellipsis">
       
         Who sees which account
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#roles-admin-and-member" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Roles: admin and member
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#who-configures-an-entity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who configures an entity
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sealed-secrets-one-key-file-per-data-folder" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sealed secrets: one key file per data folder
       
     </span>
   </a>
@@ -1733,26 +1799,152 @@ entity's). The console's Accounts page follows the same rule.</p>
 <li>Entity names belong to the whole gateway: creating an entity under a name
   another account already holds (an entity in any runtime, or a user account)
   answers 409 "That name is taken".</li>
-<li>Seeing an entity is not managing it: admin-only entity writes (state, tool
-  policy, prompt, substrate, …) stay admin-only for the entities you created,
-  and only an admin can suspend an entity or rotate a user's token.</li>
+<li>Seeing an entity is not the same as configuring it: its creator configures
+  it (<a href="#who-configures-an-entity">below</a>); its lifecycle acts stay an admin's,
+  and only an admin rotates a user's token.</li>
 <li>A gateway without user accounts is one shared world: every entity is visible.</li>
 </ul>
+<h3 id="roles-admin-and-member">Roles: admin and member<a class="headerlink" href="#roles-admin-and-member" title="Permanent link">&para;</a></h3>
+<p>An account has one of two roles: <strong>admin</strong> (manages the gateway) or
+<strong>member</strong>. A member is a human account (role <code>user</code> on the wire) or an entity
+account (an AI member, created by a human account). There is no viewer,
+read-only or third role: <code>POST /admin/users</code> and <code>PATCH /admin/users/{id}</code>
+refuse any other role with <code>400 unknown_role</code> ("'readonly' is not a role: an
+account is an admin or a member (roles "admin" and "user").").</p>
+<h3 id="who-configures-an-entity">Who configures an entity<a class="headerlink" href="#who-configures-an-entity" title="Permanent link">&para;</a></h3>
+<p>The entity's <strong>creator</strong> configures it, within what the admin authorised; an
+admin always can (operator ruling 2026-10-08). Nobody else: another member
+gets 403 "Only an admin or <entity>'s creator can …" (or 404 when they can't
+see it at all), and the entity itself never changes its own settings.</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Route</th>
+<th>Creator's bound</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Mind (model)</td>
+<td><code>PUT /entities/{name}/substrate</code></td>
+<td>a model the gateway offers for that provider (the list <code>GET /discovery/providers/{provider}/models</code> shows a member); <strong>Gateway default</strong> always</td>
+</tr>
+<tr>
+<td>Voice</td>
+<td><code>PUT /entities/{name}/voice</code></td>
+<td>a voice (and speech model) the gateway offers (<code>GET /voice/voices</code>); the gateway default voice always</td>
+</tr>
+<tr>
+<td>Tools per phase</td>
+<td><code>PUT /entities/{name}/tool-policy</code></td>
+<td>the tier-1 and workspace tools; a tier-2 tool (<code>execute_command</code>) is given only by an admin (keeping or removing it is fine)</td>
+</tr>
+<tr>
+<td>Instructions</td>
+<td><code>PUT /entities/{name}/prompt</code></td>
+<td>—</td>
+</tr>
+<tr>
+<td>Skills</td>
+<td><code>PUT /entities/{name}/skills</code></td>
+<td>the shelf's skills (as at creation)</td>
+</tr>
+<tr>
+<td>Workspaces</td>
+<td><code>PUT /workspace/policy/{entity}</code></td>
+<td>within the admin's eligible workspaces and caps</td>
+</tr>
+<tr>
+<td>Preferences</td>
+<td><code>PUT /accounts/{entity}/preferences</code></td>
+<td>the declared keys</td>
+</tr>
+<tr>
+<td>Archive, unarchive, Active</td>
+<td><code>POST /me/accounts/{id}/archive\|unarchive</code>, <code>PUT /me/accounts/{id}/active</code></td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p>A creator outside the bound gets <code>403</code> with <code>reason_code</code> <code>not_offered</code> or
+<code>admin_only_tool</code> and a sentence that names what is offered ("llama-x isn't a
+lmstudio model this gateway offers. Offered: qwen3-4b, qwen3-30b.").</p>
+<p>An admin always can, wherever the entity lives: on a gateway with user
+accounts a member's entity lives in that member's runtime, and an admin's
+request on <code>/entities/{name}/…</code> (and Accounts' Active, Archive, Unarchive) is
+served by the runtime that holds it, so the console's Manage works on every
+entity the admin's Accounts page lists.</p>
+<p>These stay an admin's: sleep and wake (<code>state</code>), personal time (<code>loop/*</code>,
+<code>personal-grant</code>), the work order and tasks, memory review (<code>candidates</code>), the
+memory index rebuild (<code>reembed</code>), maintenance windows, the capability map and
+host-folder mounts (<code>workspace/mounts</code>).</p>
+<p>The settings routes are one row of the route table (required role
+<code>admin_or_creator</code>); the entity routers decide it once for every such route,
+so no route can forget the check. <code>GET /entities/{name}/access</code> answers
+<code>{can_configure, as: "admin"|"creator"|null, reason, admin_only_tools,
+admin_only}</code> so clients enable their controls from the gateway's answer.
+Every decision is on the request's audit line (<code>entity_settings: {entity,
+setting, actor, as, outcome}</code>), and the entity's own history records who
+changed a setting and as whom (<code>by</code>, <code>as</code> on <code>substrate_changed</code>,
+<code>voice_changed</code>, <code>tool_policy_changed</code>, <code>prompt_overlay_changed</code>,
+<code>skills_selection_changed</code>).</p>
 <p>An entity has no token to rotate (its credential is discarded when it is
-created) and cannot be deleted (its name is kept for life); an admin suspends
-it instead. Details: <a href="../api/#who-sees-which-account">api.md</a>.</p>
+created) and cannot be deleted (its name is kept for life); an admin or its
+creator suspends or archives it instead. Details: <a href="../api/#who-sees-which-account">api.md</a>.</p>
+<h3 id="sealed-secrets-one-key-file-per-data-folder">Sealed secrets: one key file per data folder<a class="headerlink" href="#sealed-secrets-one-key-file-per-data-folder" title="Permanent link">&para;</a></h3>
+<p>Every secret the gateway keeps encrypted — each mailbox's password or OAuth
+tokens, the bring-your-own OAuth clients, MCP header values and the named API
+keys kept for owner reveal — is sealed with AES-256-GCM under ONE key per data
+folder:</p>
+<div class="highlight"><pre><span></span><code>&lt;data dir&gt;/secrets/               0700
+&lt;data dir&gt;/secrets/sealing.key    0600, 32 random bytes (base64), made on first use
+</code></pre></div>
+<p>The gateway never uses an OS keychain (since 0.14.0): the same file, the same
+code and the same guarantees on macOS, Linux and Windows. Each sealed file is
+bound to its place in the data folder, so a sealed file copied into another
+store does not open, and a data folder restored elsewhere <em>with</em> its
+<code>secrets/</code> keeps working.</p>
+<p>What the key file protects, plainly:</p>
+<ul>
+<li>It protects copies of the data folder taken <strong>without</strong> <code>secrets/sealing.key</code>:
+  a synced or shared sub-folder, a file-reading tool, a log or a support bundle
+  that captured one sealed file. Such a copy reveals nothing.</li>
+<li>It does <strong>not</strong> protect against code running as the gateway's OS user: that
+  code can read the key file, exactly as it could read the same user's keychain
+  items before 0.14.0. It does not protect a copy of the <em>whole</em> data folder
+  either (the key travels with it). Protect the data folder like a password.</li>
+<li><strong>Backups must include <code>secrets/</code></strong>, or the sealed secrets in them cannot be
+  opened (mailboxes must then be connected again and keys re-made). There is no
+  <code>abstractgateway backup</code> command yet: copy the whole data folder, <code>secrets/</code>
+  included, while the gateway is stopped or idle, and store that backup as
+  carefully as the folder itself.</li>
+<li><strong>Windows:</strong> the 0600 / 0700 modes are best effort (Python maps them to the
+  read-only flag), so <code>secrets/</code> and the key also get an owner-only ACL
+  (<code>icacls</code>, AbstractCore 2.26); when that cannot be applied, the data folder's
+  NTFS permissions (your user only, the default under your profile) are what
+  protect the key file there.</li>
+</ul>
+<p>Secrets sealed by gateway 0.13 or older with the key in the macOS keychain are
+<strong>never opened</strong> — no keychain call, no password prompt: each such mailbox shows
+"The mailbox credentials were sealed with the old macOS keychain key; connect
+the mailbox again — the new key lives in the data folder." (<code>mailbox.state</code>
+<code>needs_reconnect</code>), the other stores read as empty (the old file is kept as
+<code>secret.keychain-old.enc</code>, never read) and their cards say to enter the values
+again (<code>needs_reconnect</code> on each MCP server row whose header values were lost and
+on each OAuth sign-in provider not entered again), and the audit log has one
+<code>…secret_key_migrated_to_file</code> line per store. The old keychain items stay in
+the login keychain until you delete them (<a href="../email/#upgrading-from-013-the-keychain-key">email.md</a>).</p>
 <h3 id="per-user-email">Per-user email<a class="headerlink" href="#per-user-email" title="Permanent link">&para;</a></h3>
 <p>Each user's mailbox (<a href="../email/">email.md</a>) lives in that user's own data plane,
 resolved from the authenticated principal on every route; no path or body id
 selects another user's account, and entities have none.</p>
 <ul>
 <li><strong>Credentials</strong> (password or OAuth tokens) are sealed with AES-256-GCM
-  (<code>&lt;plane&gt;/email/account/email/secret.enc</code>, 0600 in a 0700 folder); the key is
-  in the OS keychain, or a 0600 key file next to it on hosts without one. They
-  are used in memory at the moment of a connection and never enter run
-  variables, ledgers, events, logs, the audit log or API responses. The
-  encryption protects copies of the data folder, backups and file-reading tools;
-  code running as the gateway's OS user can reach the key.</li>
+  (<code>&lt;plane&gt;/email/account/email/secret.enc</code>, 0600 in a 0700 folder) under the
+  data folder's sealing key (see <a href="#sealed-secrets-one-key-file-per-data-folder">Sealed secrets</a>).
+  They are used in memory at the moment of a connection and never enter run
+  variables, ledgers, events, logs, the audit log or API responses.</li>
 <li><strong>TLS</strong> is verified on every IMAP, SMTP and OAuth connection (certificate
   chain and host name); there is no plaintext mode. A private CA file is an
   administrator setting.</li>
@@ -2349,7 +2541,8 @@ AbstractRuntime <code>workspace_scoped_tools.py</code> (<code>sandbox_stamp</cod
 <li>FAQ: <a href="../faq/">faq.md</a></li>
 </ul>
 <h2 id="openai-api">OpenAI API<a class="headerlink" href="#openai-api" title="Permanent link">&para;</a></h2>
-<p>The OpenAI-compatible API at <code>/v1</code> is stopped by default. In <strong>Protected</strong> mode a caller's API key is their own gateway token, resolved by the security middleware; the gateway forwards authenticated requests to Core with its own internal credential, so a caller's token never reaches Core, and refused keys count toward the per-address lockout. <strong>Open</strong> mode serves direct local, LAN and VPN clients without a key, never through a proxy or in Internet mode, and Core keeps stored cloud-provider credentials for authenticated callers. <strong>Who can connect</strong> filters on the client address (the socket peer, or <code>X-Forwarded-For</code> from a proxy on this machine or a trusted proxy); <strong>Anywhere</strong> requires Internet mode with its acknowledgement and Protected. Request fields that would re-route a provider or carry a credential (<code>base_url</code>, <code>api_key</code>, <code>provider</code>, <code>headers</code>, ...) are refused with 400, so a caller cannot make the gateway connect to an address of its choosing. Browser pages without a key are limited to the accepted origins. Every request is one audit-log line (no prompts or replies). See <a href="../openai-api/">openai-api.md</a>.</p>
+<p>The OpenAI-compatible API at <code>/v1</code> is stopped by default. In <strong>Protected</strong> mode a caller's API key is one of their account's named API keys (or, for compatibility, their gateway token), resolved by the security middleware. A named key is checked against a PBKDF2 hash with its fingerprint in the user registry and valid at <code>/v1</code> only (anywhere under <code>/api/gateway/</code>, sign-in included, it answers 401 and never counts as a guess), obeys its account's OpenAI API switch and Active state, and is revoked one at a time with effect at the next request; making, revealing or revoking one is an audit line (<code>openai_key_change</code>: action, name and fingerprint, never the key). Admins see every account's keys (never a key) and can revoke any; the gateway forwards authenticated requests to Core with its own internal credential, so a caller's token never reaches Core, and refused keys count toward the per-address lockout. <strong>Open</strong> mode serves direct local, LAN and VPN clients without a key, never through a proxy or in Internet mode, and Core keeps stored cloud-provider credentials for authenticated callers. <strong>Who can connect</strong> filters on the client address (the socket peer, or <code>X-Forwarded-For</code> from a proxy on this machine or a trusted proxy); <strong>Anywhere</strong> requires Internet mode with its acknowledgement and Protected. Request fields that would re-route a provider or carry a credential (<code>base_url</code>, <code>api_key</code>, <code>provider</code>, <code>headers</code>, ...) are refused with 400, so a caller cannot make the gateway connect to an address of its choosing. Browser pages without a key are limited to the accepted origins. Every request is one audit-log line naming the account and, for a named key, its name; it records the request and the response with credentials removed (the caller's key, the internal key and fields named like a credential read <code>[redacted]</code>), readable by an admin for every request and by each account for its own. See <a href="../openai-api/">openai-api.md</a>.</p>
+<p><strong>Owner reveal and its trade-off.</strong> By default ("API keys can be revealed by their owner", an admin setting on the OpenAI API page) each named key is also stored encrypted at rest, so its owner, and only its owner, can reveal it again (<code>POST /api/gateway/me/openai-keys/{fingerprint}/reveal</code>; anyone else, admins included, gets <code>403 not_owner</code>; each reveal and each refused attempt is an audit line). The sealing is the email credentials' own: AES-256-GCM under the data folder's key file (<code>&lt;data dir&gt;/secrets/sealing.key</code>; the copies in <code>&lt;data dir&gt;/auth/openai_key_secrets/</code>), see <a href="#sealed-secrets-one-key-file-per-data-folder">Sealed secrets</a>. What that protects, honestly: a copy of the data folder without <code>secrets/</code> reveals nothing; a copy of the whole folder carries the key, and code running as the gateway's OS user can read it. Keys sealed by 0.13 with the keychain key say "Reveal unavailable: created before the key moved — create a new key" (Revoke still works). The alternative is show-once: with the setting off, every stored copy is erased at once and the gateway keeps only hashes, so a leak of the data folder or a backup never yields a usable key, at the cost that a forgotten key must be replaced in every app. Owner reveal suits a personal gateway, where the person who can read the data folder owns the keys anyway; turn it off for a shared or hosted gateway where data-folder leaks are the larger risk.</p>
 
 
 

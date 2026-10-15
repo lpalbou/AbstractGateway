@@ -805,6 +805,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#upgrading-from-013-the-keychain-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Upgrading from 0.13: the keychain key
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#migrating-from-the-environment-variables" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1121,6 +1132,17 @@
     <span class="md-ellipsis">
       
         Where things are stored
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#upgrading-from-013-the-keychain-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Upgrading from 0.13: the keychain key
       
     </span>
   </a>
@@ -1587,7 +1609,11 @@ account is copied once into the gateway settings (the consoles say which account
 </tr>
 <tr>
 <td>Password / OAuth tokens</td>
-<td><code>&lt;plane&gt;/email/account/email/secret.enc</code> (AES-256-GCM; key in the OS keychain, or a 0600 key file when there is none)</td>
+<td><code>&lt;plane&gt;/email/account/email/secret.enc</code> (AES-256-GCM under the data folder's key <code>&lt;data_dir&gt;/secrets/sealing.key</code>; never the OS keychain, <a href="../security/#sealed-secrets-one-key-file-per-data-folder">security</a>)</td>
+</tr>
+<tr>
+<td>The sealing key (every sealed secret)</td>
+<td><code>&lt;data_dir&gt;/secrets/sealing.key</code> (0600 in a 0700 folder; back it up with the data folder)</td>
 </tr>
 <tr>
 <td>Watcher state</td>
@@ -1617,6 +1643,35 @@ account is copied once into the gateway settings (the consoles say which account
 </table>
 <p><code>&lt;plane&gt;</code> is <code>&lt;data_dir&gt;</code> for the default runtime (single-user gateways and the administrator) and
 <code>&lt;data_dir&gt;/users/&lt;tenant&gt;/&lt;runtime&gt;</code> for every other user.</p>
+<h2 id="upgrading-from-013-the-keychain-key">Upgrading from 0.13: the keychain key<a class="headerlink" href="#upgrading-from-013-the-keychain-key" title="Permanent link">&para;</a></h2>
+<p>Up to 0.13 the key that sealed mailbox credentials was kept in the macOS keychain (a key file on
+hosts without one). Since 0.14.0 the gateway never uses an OS keychain: one key file per data
+folder, <code>&lt;data_dir&gt;/secrets/sealing.key</code>, identical on macOS, Linux and Windows.</p>
+<ul>
+<li>A mailbox sealed with the old <strong>keychain</strong> key is never opened (no keychain call, no password
+  prompt). On the first start of 0.14 it is marked: <code>GET /api/gateway/me/email</code> answers
+  <code>mailbox: {state: "needs_reconnect", reason: "The mailbox credentials were sealed with the old
+  macOS keychain key; connect the mailbox again — the new key lives in the data folder."}</code>, the
+  Email card (web and terminal console) shows that sentence, the watcher stops reading it, and
+  the audit log has one <code>email.secret_key_migrated_to_file</code> line for it. Connect the mailbox
+  again (same address; your recipient rules and limits are kept) and it is sealed under the new
+  key.</li>
+<li>An "Email result" asked for while the mailbox waits to be reconnected fails <strong>once</strong> with that
+  sentence (never retried); the automation's summary says so in <code>last_notification</code>
+  (<code>text: "Email result failed — &lt;sentence&gt;"</code>).</li>
+<li>A mailbox sealed with the old <strong>key file</strong> (<code>secret.key</code> beside it, hosts without a keychain) is
+  opened and re-sealed under the new key automatically; nothing to do.</li>
+<li>The OAuth sign-in app settings (admin) sealed with the keychain key read as not set: enter them
+  again.</li>
+</ul>
+<p>The old keychain items (service <code>abstractcore-email</code>, one per sealed store) stay in your login
+keychain until you delete them; the gateway no longer uses them. AbstractCore's own local account
+(<code>abstractcore email connect</code>) uses the same service name, so delete them only if you do not use
+that, or connect it again afterwards. On macOS, list them, then delete them all in Terminal (each
+<code>delete</code> removes one item; the loop stops when none is left):</p>
+<div class="highlight"><pre><span></span><code>security find-generic-password -s abstractcore-email
+while security delete-generic-password -s abstractcore-email &gt;/dev/null 2&gt;&amp;1; do :; done
+</code></pre></div>
 <h2 id="migrating-from-the-environment-variables">Migrating from the environment variables<a class="headerlink" href="#migrating-from-the-environment-variables" title="Permanent link">&para;</a></h2>
 <p>Email is configured per user, never through environment variables. On the first start, a gateway
 that still has the <code>ABSTRACT_EMAIL_*</code> variables (or values saved through the process manager's

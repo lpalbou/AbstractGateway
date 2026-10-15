@@ -699,6 +699,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="1) List bundles (bundle mode)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-a-publish-reloads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What a publish reloads
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -1613,6 +1630,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="1) List bundles (bundle mode)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-a-publish-reloads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What a publish reloads
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -2277,7 +2311,7 @@ serve:</p>
 </tr>
 <tr>
 <td><code>/api/gateway/accounts/{me\|account}/preferences</code></td>
-<td>one account's client preferences: the default workflow per app (the account itself, an admin, an entity's creator)</td>
+<td>one account's client preferences: the default workflow per app and the time zone (the account itself, an admin, an entity's creator)</td>
 <td><a href="#account-preferences">below</a></td>
 </tr>
 <tr>
@@ -2349,8 +2383,17 @@ serve:</p>
 </table>
 <h2 id="openai-api">OpenAI API<a class="headerlink" href="#openai-api" title="Permanent link">&para;</a></h2>
 <p>The OpenAI-compatible API is served at <code>/v1</code> on this Gateway listener
-(<code>/v1/models</code>, <code>/v1/chat/completions</code>, <code>/v1/embeddings</code>, ...); callers use their
-gateway token as the API key. <code>/core/v1</code> answers 308 to <code>/v1</code> (deprecated).
+(<code>/v1/models</code>, <code>/v1/chat/completions</code>, <code>/v1/embeddings</code>, ...); callers use one
+of their account's named API keys (valid at <code>/v1</code> only; the gateway token is
+still accepted there). <code>/core/v1</code> answers 308 to <code>/v1</code> (deprecated).
+API keys: <code>GET/POST /api/gateway/me/openai-keys</code>,
+<code>POST /api/gateway/me/openai-keys/{fingerprint}/reveal</code> (the key's owner only,
+audited; off when an admin turns off owner reveal),
+<code>DELETE /api/gateway/me/openai-keys/{fingerprint}</code>; admins
+<code>GET /api/gateway/admin/accounts/{id}/openai-keys</code> and
+<code>DELETE /api/gateway/admin/accounts/{id}/openai-keys/{fingerprint}</code>. A named key
+sent to any <code>/api/gateway/</code> route answers <code>401</code>
+<code>{"detail": "This is an API key for /v1; sign in with your gateway token.", "reason_code": "openai_api_key"}</code>.
 Status and logs: <code>GET /api/gateway/openai-api[/logs]</code>; admin changes:
 <code>/api/gateway/admin/core-endpoint</code>. See <a href="../openai-api/">openai-api.md</a> for the
 supported surface, access settings and errors.</p>
@@ -2399,6 +2442,41 @@ fixed profile allowlist or the live endpoint model catalog.</p>
 <span class="w">  </span>-F<span class="w"> </span><span class="s2">"reload=true"</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/bundles/upload"</span>
 </code></pre></div>
+<h4 id="what-a-publish-reloads">What a publish reloads<a class="headerlink" href="#what-a-publish-reloads" title="Permanent link">&para;</a></h4>
+<p>Upload, <code>POST /visualflows/{flow_id}/publish</code> and the admin catalog upload and
+promote serve the new workflow by swapping the compiled workflow registry on the
+running runtime: loaded models, session prompt caches and runs in flight are not
+touched (see <a href="../architecture/#publishing-a-workflow">architecture.md</a>). Each
+response carries what it did:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">"reload"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nt">"ok"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"registry_swap"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"services"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"service"</span><span class="p">:</span><span class="w"> </span><span class="s2">"default:default"</span><span class="p">,</span><span class="w"> </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"registry_swap"</span><span class="p">,</span><span class="w"> </span><span class="nt">"duration_ms"</span><span class="p">:</span><span class="w"> </span><span class="mi">14</span><span class="p">,</span><span class="w"> </span><span class="nt">"ok"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">"bundle_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">6</span><span class="p">}],</span>
+<span class="w">  </span><span class="nt">"unchanged_services"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"duration_ms"</span><span class="p">:</span><span class="w"> </span><span class="mi">15</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"sentence"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Workflows updated in place on 1 service in 15 ms. Nothing was restarted: loaded models, prompt caches and running runs were not touched."</span>
+<span class="p">}</span>
+</code></pre></div>
+<ul>
+<li><code>kind</code>: <code>registry_swap</code> (the normal case), <code>service_reload</code> (a service's runtime
+  was rebuilt because its workflows now need a language model, tool execution or
+  the memory store it was started without; its <code>reason</code> says which, and its
+  models and prompt caches start empty) or <code>full_rebuild</code> (only
+  <code>POST /api/gateway/bundles/reload?full=true</code>).</li>
+<li><code>services</code>: the services the reload touched, named <code>&lt;tenant&gt;:&lt;runtime&gt;</code>; a
+  service whose workflows did not change is only counted in
+  <code>unchanged_services</code>. Writing the shared workflow folder reloads every running
+  service; a user's own folder reloads only that user's.</li>
+<li><code>pinned_runs</code> on a service: runs in flight that keep the workflow they started
+  with because their version was replaced in place.</li>
+<li>A service that failed to reload is listed with <code>ok: false</code> and <code>error</code>; the
+  publish route then answers <code>503</code>, the upload route reports it in
+  <code>gateway_reload_error</code>.</li>
+</ul>
+<p><code>POST /api/gateway/bundles/reload</code> answers the host's reload result (<code>bundle_ids</code>,
+<code>count</code>, <code>skipped</code>) with the same <code>reload</code> object. The request's audit log line
+(<code>&lt;data dir&gt;/audit_log.jsonl</code>) records <code>reload: {kind, duration_ms, services}</code>
+next to the request's own <code>duration_ms</code>.</p>
 <h3 id="2-start-a-run">2) Start a run<a class="headerlink" href="#2-start-a-run" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"bundle_id":"my-bundle","input_data":{"prompt":"Hello"}}'</span><span class="w"> </span><span class="se">\</span>
@@ -3115,6 +3193,10 @@ typed waits, attention and operations, is in <a href="../automations/">automatio
 <td><code>{items: [{id, version, label, capabilities, config_schema, event_schema, available, unavailable_reason?}]}</code></td>
 </tr>
 <tr>
+<td><code>POST /api/gateway/automations/schedule-preview</code></td>
+<td><code>{trigger, time_zone, schedule_rule_text, schedule_text, next_run_at, next_run_local, first_run_sentence}</code> (<a href="../automations/#schedule-preview">automations.md</a>)</td>
+</tr>
+<tr>
 <td><code>POST /api/gateway/automations</code></td>
 <td><code>{request_id, title?, target, trigger?, context?, policy?}</code> → <code>{automation_id, revision, summary}</code></td>
 </tr>
@@ -3559,7 +3641,7 @@ and <code>turns[]</code> (<code>run_id</code>, <code>created_at</code>, <code>st
 <span class="w"> </span><span class="nt">"stt"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"route"</span><span class="p">:</span><span class="w"> </span><span class="s2">"input.voice"</span><span class="p">,</span><span class="w"> </span><span class="nt">"configured"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">"provider"</span><span class="p">:</span><span class="w"> </span><span class="s2">"faster-whisper"</span><span class="p">,</span><span class="w"> </span><span class="nt">"model"</span><span class="p">:</span><span class="w"> </span><span class="s2">"large-v3"</span><span class="p">},</span>
 <span class="w"> </span><span class="nt">"source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"capability_defaults"</span><span class="p">}</span>
 </code></pre></div>
-<p>A route the administrator has not set reads <code>{"configured": false, "provider": null, "model": null, "note": "No gateway default is set for …"}</code>. A synthesis or transcription request that names no provider and no model runs exactly these routes, so apps show "Gateway default · supertonic / supertonic-3" from here — never from the voice catalog's engine-side fields. The catalog repeats the answer (<code>gateway_defaults</code>; <code>active_tts_provider</code> / <code>active_stt_provider</code> = the configured routes, absent when unset). <code>/audio/transcribe</code> returns the route that ran (<code>provider</code>, <code>model</code>) and <code>duration_ms</code>; a <code>language</code> hint skips the engine's language detection (faster-whisper large-v3 on an Apple-Silicon CPU: ~25 s → ~9 s for a 4 s clip).</p>
+<p>A route the administrator has not set reads <code>{"configured": false, "provider": null, "model": null, "note": "No gateway default is set for …"}</code>. A synthesis or transcription request that names no provider and no model runs exactly these routes, so apps show "Gateway default · supertonic / supertonic-3" from here — never from the voice catalog's engine-side fields. The catalog repeats the answer (<code>gateway_defaults</code>; <code>active_tts_provider</code> / <code>active_stt_provider</code> = the configured routes, absent when unset). A configured speech-input route can carry AbstractCore's served <code>hint</code> <code>{code, sentence, route}</code>: on Apple silicon, a <code>faster-whisper</code> route runs on the processor, and the hint says that <code>mlx-whisper</code> runs the same model on the Apple GPU (<code>route</code> is what applying the recommendation writes; nothing changes by itself). The sentence names where to act and carries no timings. Apps show <code>hint.sentence</code> verbatim next to the engine line; the console's defaults grid shows the same sentence from the <code>input.voice</code> row's <code>route_hint</code>. <code>/audio/transcribe</code> returns the route that ran (<code>provider</code>, <code>model</code>) and <code>duration_ms</code>; a <code>language</code> hint skips the engine's language detection (faster-whisper large-v3 on an Apple-Silicon CPU: ~25 s → ~9 s for a 4 s clip).</p>
 <p><code>/voice/tts</code> returns a durable audio artifact after synthesis. <code>/voice/tts/stream</code>
 returns JSON Lines stream events for progressive playback when discovery advertises
 <code>capabilities.contracts.assistant.voice.tts.streaming=true</code>; successful streams still
@@ -4371,7 +4453,7 @@ later <code>LLM_CALL.params.prompt_cache_binding</code> used inside real Runtime
 <tbody>
 <tr>
 <td><code>GET /admin/accounts</code></td>
-<td><code>{accounts: [{id, tenant_id, kind: user \| entity, role: admin \| user \| entity, own, email_address, mailbox{state: connected \| receive_only \| not_connected \| paused \| unavailable, address, provider, reason}, runtime_id, active, entity_state, actions{email, logs, workspace, preferences, rotate, manage, delete, suspend: {available, reason}}}]}</code>, sorted admins, users, entities, then id; <code>entities_warning</code> when the entity list could not be read</td>
+<td><code>{accounts: [{id, tenant_id, kind: user \| entity, role: admin \| user \| entity, own, email_address, mailbox{state: connected \| receive_only \| not_connected \| paused \| unavailable, address, provider, reason}, runtime_id, active, entity_state, actions{email, logs, workspace, preferences, rotate, manage, configure, archive, unarchive, suspend: {available, reason}}}]}</code> (role <code>user</code> = a member; an account is an admin or a member), sorted admins, users, entities, then id; <code>entities_warning</code> when the entity list could not be read</td>
 </tr>
 <tr>
 <td><code>PUT /admin/accounts/{id}/active</code></td>
@@ -4387,7 +4469,11 @@ later <code>LLM_CALL.params.prompt_cache_binding</code> used inside real Runtime
 </tr>
 <tr>
 <td><code>GET /me/accounts</code></td>
-<td>any signed-in account: <code>{accounts: [rows], scope: "own"}</code>, the same row shape — your own row plus one row per entity <strong>you</strong> created; actions only an admin can take are unavailable with the reason</td>
+<td>any signed-in account: <code>{accounts: [rows], scope: "own"}</code>, the same row shape — your own row plus one row per entity <strong>you</strong> created; actions only an admin can take are unavailable with the reason. <code>?include_archived=true</code> adds the archived entities you created</td>
+</tr>
+<tr>
+<td><code>POST /me/accounts/{id}/archive</code>, <code>POST /me/accounts/{id}/unarchive</code>, <code>PUT /me/accounts/{id}/active</code></td>
+<td>an entity <strong>you</strong> created: archive it, unarchive it (it comes back inactive) or turn it on or off (<code>{active}</code>); any other id answers 404 like a missing account (<a href="../security/#who-configures-an-entity">who configures an entity</a>)</td>
 </tr>
 <tr>
 <td><code>GET /me/accounts/{id}/activity</code></td>
@@ -4414,8 +4500,11 @@ else sees only themself and the entities they created. Entity rows carry <code>c
   …"): entity names are unique per gateway, so this is the one place a name's existence shows. This
   holds across runtimes: an entity living in another user's runtime, or a user account with that
   name, also answers 409 (<code>POST /entities/{name}/validate</code> reports the same error).</li>
-<li>Visibility is not management: entity writes that are admin-only (state, tool policy, prompt,
-  substrate, …) stay admin-only for the entities you created.</li>
+<li>Visibility is not the same as configuration: the creator of an entity changes its settings (mind,
+  voice, tools per phase, instructions, skills, workspaces, preferences, archive, unarchive, Active)
+  within what the admin authorised; its lifecycle acts (state, personal time, work order, memory
+  review and rebuild, mounts) stay admin-only. <code>GET /entities/{name}/access</code> says what the caller
+  may change: <a href="../security/#who-configures-an-entity">security.md</a>.</li>
 </ul>
 <p>Without user accounts (the single-operator gateway) every entity is visible, as before.</p>
 <p>The email address and mailbox of a row come from the resolver <code>GET /me/email</code> uses. An action that
@@ -4455,11 +4544,11 @@ override them for itself.</p>
 <tbody>
 <tr>
 <td><code>GET /api/gateway/accounts/{account}/preferences</code></td>
-<td><code>{ok, account: "tenant:user", can_edit, preferences: {default_workflow: {&lt;interface&gt;: value \| null}}, declared: {default_workflow: {label, help}}, apps: [row]}</code></td>
+<td><code>{ok, account: "tenant:user", can_edit, preferences: {default_workflow: {&lt;interface&gt;: value \| null}, time_zone: value \| null}, declared: {default_workflow: {label, help}, time_zone: {label, help}}, apps: [row], time_zone: {value, gateway_default, effective, label, help, choices}}</code></td>
 </tr>
 <tr>
 <td><code>PUT /api/gateway/accounts/{account}/preferences</code></td>
-<td><code>{"default_workflow": {&lt;interface&gt;: "bundle:flow" \| "catalog:bundle:flow" \| null}}</code> → the GET answer</td>
+<td><code>{"default_workflow": {&lt;interface&gt;: "bundle:flow" \| "catalog:bundle:flow" \| null}, "time_zone": "Europe/Paris" \| null}</code> (each key optional) → the GET answer</td>
 </tr>
 </tbody>
 </table>
@@ -4469,14 +4558,24 @@ else gets 403 with "Only an admin or the account itself can read or change its p
 "Only an admin or <entity>'s creator can read or change its preferences."). An account that does not exist
 answers 404. A gateway older than 0.13.1 has no such route (404 Not Found); the Assistant and
 AbstractCode then keep their own choice as before.</p>
-<p>Only keys the gateway declares are accepted. Today there is one, <code>default_workflow</code>: one entry per
+<p>Only keys the gateway declares are accepted: <code>default_workflow</code> and <code>time_zone</code>.</p>
+<p><code>time_zone</code> is the account's IANA time zone. Daily, weekly and monthly automations are created on it
+(<a href="../automations/#trigger-sources">automations.md</a>), and automation summaries show times in it.
+<code>null</code> follows the gateway default, which is the time zone of the computer the gateway runs on (the
+OS <code>TZ</code>, else the zone <code>/etc/localtime</code> points to, else <code>/etc/timezone</code>, else <code>UTC</code>). The GET's
+<code>time_zone</code> block gives the stored <code>value</code>, the <code>gateway_default</code>, the <code>effective</code> zone and <code>choices</code>,
+every IANA name the gateway knows; clients offer exactly those. An unknown name is refused with 400
+<code>preference_refused</code>, key <code>time_zone</code>. Changing it never moves a <code>schedule@2</code> automation: each keeps the
+zone it was created with until its trigger is revised. A <code>schedule@1</code>, legacy, email or manual
+automation has no zone of its own, so its summary shows times in the owner's current time zone.</p>
+<p><code>default_workflow</code> is one entry per
 app interface (<code>abstractcode.agent.v1</code>, <code>abstractassistant.agent.v1</code>). <code>null</code> follows the
 gateway's per-app default, which is the admin setting <code>agents.default_workflow.&lt;interface&gt;</code>
 (Workflows → <em>Default workflow per app</em>, <a href="../configuration/#default-agent-workflow">configuration.md</a>); it
 is never copied into the account. A chosen workflow is stored without a version, so it runs its
 latest published version. The PUT replaces the named interfaces and keeps the others. It is
 refused with 400 <code>{"detail": {"reason": "preference_refused", "message": &lt;sentence&gt;, "key": &lt;key&gt;}}</code>
-for an unknown key ("Unknown preference 'theme': this gateway declares default_workflow."), an
+for an unknown key ("Unknown preference 'theme': this gateway declares default_workflow, time_zone."), an
 interface that is not an app's, or a workflow the account may not run for that app ("…refused:
 'helper@1.0.0:agent' declares abstractassistant.agent.v1, not abstractcode.agent.v1"). A refused PUT
 changes nothing. The change is audited on the target account's activity ("Preferences changed").</p>
@@ -4636,7 +4735,7 @@ automations can read and send mail as them.</p>
 <tbody>
 <tr>
 <td><code>GET /admin/users</code></td>
-<td>every row carries <code>email_address</code> and <code>mailbox{state: connected \| receive_only \| not_connected \| paused \| unavailable, address, provider, reason}</code> from the same resolver as <code>GET /me/email</code> (so your own row matches your card; <code>email</code> stays the raw record field); each human row also carries <code>email_account: {configured, address, state, admin_enabled, agent_tools_available, capabilities}</code> (<code>capabilities</code>: <code>{email, email_agent_tools}</code> as <code>{value, source: user \| gateway \| built-in}</code>; <code>user</code> = a per-user override)</td>
+<td>every row carries <code>email_address</code> and <code>mailbox{state: connected \| receive_only \| needs_reconnect \| not_connected \| paused \| unavailable, address, provider, reason}</code> (<code>needs_reconnect</code>: sealed with the old macOS keychain key, <code>reason</code> says to connect the mailbox again) from the same resolver as <code>GET /me/email</code> (so your own row matches your card; <code>email</code> stays the raw record field); each human row also carries <code>email_account: {configured, address, state, admin_enabled, agent_tools_available, capabilities}</code> (<code>capabilities</code>: <code>{email, email_agent_tools}</code> as <code>{value, source: user \| gateway \| built-in}</code>; <code>user</code> = a per-user override)</td>
 </tr>
 <tr>
 <td><code>GET /admin/users/{user_id}/email</code></td>

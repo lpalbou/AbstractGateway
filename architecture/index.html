@@ -749,6 +749,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#publishing-a-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Publishing a workflow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#durable-contract-replay-first" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1061,6 +1072,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#publishing-a-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Publishing a workflow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#durable-contract-replay-first" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1255,7 +1277,7 @@ desktop Assistant, scripts) and <strong>AbstractRuntime</strong>:</p>
     AppsMgr["Apps manager: Node.js, npm installs, app processes"]
     Jobs["Engine installs and model download jobs"]
     HostCtl["Host control: pause, restart, update"]
-    V1["OpenAI API /v1: gateway-token keys, Who can connect, request log"]
+    V1["OpenAI API /v1: named API keys, Who can connect, request log"]
     Watchdog["Event-loop watchdog: exits 75 when the loop is blocked"]
   end
 
@@ -1275,7 +1297,7 @@ desktop Assistant, scripts) and <strong>AbstractRuntime</strong>:</p>
   Asst --&gt;|HTTP, gateway session| Sec
   CLI --&gt;|HTTP or data dir| Sec
   Tray --&gt;|loopback HTTP, ephemeral token| Sec
-  OAI --&gt;|"HTTP /v1, gateway token as API key"| Sec
+  OAI --&gt;|"HTTP /v1, named API key"| Sec
   Sec --&gt; V1
   V1 --&gt;|serving facade| Core
   V1 --&gt;|request log| Data
@@ -1333,7 +1355,8 @@ browser on this computer from one elsewhere on the network
   WorkflowBundles and compiles their VisualFlow JSON with
   <code>abstractruntime.visualflow_compiler</code>. Bundle mode is the only workflow
   source; store VisualFlows through <code>/api/gateway/visualflows/*</code> and publish
-  them as bundles.</li>
+  them as bundles. A publish swaps the compiled workflows onto the running
+  runtime (see <a href="#publishing-a-workflow">Publishing a workflow</a>).</li>
 <li><strong>Workflow catalog</strong> (<code>src/abstractgateway/workflow_catalog.py</code>): shared,
   immutable workflow versions with admin-managed default pointers and ACLs.
   Catalog runs execute in the caller's runtime; the gateway signs the
@@ -1390,8 +1413,10 @@ browser on this computer from one elsewhere on the network
   settings the security middleware reads per request.</li>
 <li><strong>OpenAI API</strong> (<code>src/abstractgateway/core_endpoint.py</code>,
   <code>routes/core_endpoint.py</code>): serves the OpenAI-compatible API at <code>/v1</code> on the
-  gateway listener. The security middleware resolves the caller's gateway
-  token to an account; this layer applies the account's <strong>OpenAI API</strong> switch,
+  gateway listener. The security middleware resolves the caller's API key
+  (a named key from <code>openai_keys.py</code>, found by its fingerprint, or the
+  account's gateway token) to an account and refuses a named key anywhere
+  outside <code>/v1</code>; this layer applies the account's <strong>OpenAI API</strong> switch,
   Open mode (Guest or the chosen account), <em>Who can connect</em> and the request
   log in the audit log, then hands the request to AbstractCore's serving
   routes through AbstractRuntime's serving facade. See
@@ -1463,6 +1488,66 @@ browser on this computer from one elsewhere on the network
   backlog browsing, the backlog exec runner and the process manager. See
   <a href="../maintenance/">maintenance.md</a>.</li>
 </ul>
+<h2 id="publishing-a-workflow">Publishing a workflow<a class="headerlink" href="#publishing-a-workflow" title="Permanent link">&para;</a></h2>
+<p>A service is one data plane: its stores, its runner and one AbstractRuntime
+<code>Runtime</code>, which owns the LLM client and its providers (for an in-process
+engine such as MLX: the loaded weights and the session prompt caches), the
+tool executor, the effect handlers and the memory store. Workflows are only
+the compiled registry the runtime reads. So publishing, promoting or
+uploading a workflow changes the registry and nothing else.</p>
+<div class="highlight"><pre><span></span><code>flowchart LR
+  P["publish / promote / upload"] --&gt; C["compile the changed .flow files&lt;br/&gt;(cached by path, mtime, size)"]
+  C --&gt; Q{"does the runtime serve&lt;br/&gt;everything they need?"}
+  Q --&gt;|yes| S["registry_swap&lt;br/&gt;new registry set on the running runtime"]
+  Q --&gt;|no| R["service_reload&lt;br/&gt;rebuild this service's runtime"]
+  S --&gt; K["models, prompt caches, runs&lt;br/&gt;untouched"]
+</code></pre></div>
+<p>What a reload does (<code>WorkflowBundleGatewayHost.reload_bundles_from_disk</code>):</p>
+<ul>
+<li><strong><code>registry_swap</code></strong> (publish, promote, upload, the agent email tools
+  switched): the bundle files are compiled into a new
+  <code>WorkflowRegistry</code> — only the files whose path, modification time or size
+  changed; every other workflow keeps its compiled object — and
+  <code>runtime.set_workflow_registry(...)</code> puts it on the running runtime. No
+  runtime, LLM client, provider, model weights, prompt cache, tool executor
+  or memory store is created or dropped. A service whose files did not move
+  does nothing. Compilation happens off the event loop and outside the host
+  lock; only the swap itself takes the lock.</li>
+<li><strong><code>service_reload</code></strong>: the new workflows need something this service's
+  runtime was started without — the first LLM, Agent or model-residency
+  workflow on a runtime built without a language model, the first tool
+  workflow on a plain one, or the first <code>memory_kg_*</code> workflow (it opens the
+  memory store). Only this service's runtime is rebuilt; its in-process models
+  and prompt caches start empty, and the reload says so.</li>
+<li><strong><code>full_rebuild</code></strong>: only on request, <code>POST /api/gateway/bundles/reload?full=true</code>
+  (for example after changing the memory store's configuration on disk).</li>
+</ul>
+<p>Archiving a workflow is not a reload either: the file keeps loading and the
+archive record refuses new runs. Changing the default model is not a reload: the console's default routes
+re-point the running client in place (<code>refresh_capability_defaults</code>).</p>
+<p><strong>Runs in flight keep their workflow.</strong> A run ticks the spec it resolved. A new
+version is a new workflow id (<code>bundle@0.0.2:flow</code>), so runs on <code>0.0.1</code> simply
+continue on it while new runs start on <code>0.0.2</code>. When a version is replaced in
+place (drafts, <code>overwrite: true</code>) or removed, every RUNNING or WAITING run of
+it is pinned to the spec it already had and to the whole registry it resolved
+from (<code>_pin_in_flight_runs</code>). Its sub-workflows follow it: a child it starts
+after the overwrite is looked up in that pinned registry (the start-subworkflow
+guard and <code>_PinnableWorkflowRegistry</code>), and a child run inherits its parent's
+pin, so the whole run tree finishes on the version it started on. The pin is
+released when the run ends. Automations store their concrete
+<code>bundle@version:flow</code>, so a republish never changes them; the automation
+controller's spec never changes, so its later occurrences start on what is
+published then. A pinned run resumed by the runtime itself (an event delivered
+to its listener) resumes on its pinned spec too.</p>
+<p><strong>Where it is reported.</strong> Every publish/promote/upload response carries
+<code>reload: {kind, services, duration_ms, sentence}</code> (see
+<a href="../api/#what-a-publish-reloads">api.md</a>), the audit log line of the request
+carries the same <code>reload</code> object next to its <code>duration_ms</code>, and a
+<code>service_reload</code>/<code>full_rebuild</code> writes one warning to the gateway log.</p>
+<p><strong>One service per data directory.</strong> Under user auth the admin's requests own
+the default runtime's service; a caller without a signed-in principal (a
+background thread, a boot step) is given that same service instead of a second
+one built over the same directory.</p>
 <h2 id="durable-contract-replay-first">Durable contract (replay-first)<a class="headerlink" href="#durable-contract-replay-first" title="Permanent link">&para;</a></h2>
 <p>The gateway is <strong>replay-first</strong>:</p>
 <ul>
@@ -1738,6 +1823,10 @@ plus CSRF token. See <a href="../security/">security.md</a>.</p>
 <h2 id="evidence-jump-to-code">Evidence (jump-to-code)<a class="headerlink" href="#evidence-jump-to-code" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Composition root: <code>src/abstractgateway/service.py</code></li>
+<li>Publishing without a rebuild: <code>src/abstractgateway/hosts/bundle_host.py</code>
+  (<code>_compile_workflows</code>, <code>_build_runtime</code>, <code>reload_bundles_from_disk</code>,
+  <code>_pin_in_flight_runs</code>), <code>src/abstractgateway/workflow_reload.py</code>,
+  <code>src/abstractgateway/service.py</code> (<code>reload_gateway_workflow_bundles</code>)</li>
 <li>API surface: <code>src/abstractgateway/routes/</code> (<code>gateway.py</code>, <code>apps.py</code>,
   <code>engines.py</code>, <code>network.py</code>, <code>entities.py</code>)</li>
 <li>Runner: <code>src/abstractgateway/runner.py</code></li>

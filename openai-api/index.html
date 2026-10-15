@@ -856,6 +856,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#api-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API keys
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="API keys">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#reveal-a-key-again" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reveal a key again
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-is-supported" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -953,32 +981,40 @@ SDK or tool that speaks the OpenAI API can use the models this gateway reaches
 (local engines and connected providers) through one address:</p>
 <div class="highlight"><pre><span></span><code>http://&lt;gateway host&gt;:&lt;port&gt;/v1
 </code></pre></div>
-<p>The API key is the caller's own <strong>gateway token</strong>. There is no separate process
-or port: the API follows the gateway's <a href="../configuration/#network-exposure-localhost--local-network--internet">Network</a>
+<p>The API key is one of your account's <strong>API keys</strong>: named keys you make on the
+OpenAI API page, valid at <code>/v1</code> only (see <a href="#api-keys">API keys</a>). One key can
+serve every app; separate keys are optional, for revoking one app without the
+others.
+There is no separate process or port: the API follows the gateway's <a href="../configuration/#network-exposure-localhost--local-network--internet">Network</a>
 setting, and AbstractCore answers each request behind it.</p>
 <h2 id="turn-it-on">Turn it on<a class="headerlink" href="#turn-it-on" title="Permanent link">&para;</a></h2>
 <p>Open the web console, <strong>Models → OpenAI API</strong>. An admin sees five cards; any
 other account sees Status (running or not, the base URL), Connect your app
-(their own key), Docs and Recent requests (their own):</p>
+(their own API keys), Docs and Recent requests (their own):</p>
 <ul>
 <li><strong>Status</strong>: Running or Stopped, the base URL with <strong>Copy</strong>; for an admin, the <strong>Endpoint</strong>
   switch (on: apps can connect; off: apps get 404 and open requests end),
   <strong>Restart</strong> (ends open requests, keeps serving) and <strong>Check setup</strong> (settings,
   AbstractCore's server, whether the gateway listens where <em>Who can connect</em>
   needs it, and how many models <code>/v1/models</code> lists).</li>
-<li><strong>Connect your app</strong>: the base URL and the API key. The key is the token you
-  sign in with, shown masked (<code>••••</code>) with an eye to reveal it and <strong>Copy</strong>. The
-  page fills it in from what this browser kept when you signed in with your
-  token: no gateway route ever returns a stored token. Signed in with a link or
-  an emailed code, the browser has no copy: <strong>New key</strong> makes one. <strong>New key</strong>
-  replaces your gateway token everywhere (the old one stops working) and the
-  gateway shows the new key once; this browser keeps it for the page.</li>
-<li><strong>Access</strong> (admin): <em>Authentication</em>, who requests without a key run as, and
-  <em>Who can connect</em> (below). Changes apply to the next request.</li>
+<li><strong>Connect your app</strong>: the base URL and your <strong>API keys</strong>. <strong>New key</strong> asks for
+  a name (for example "laptop Cursor"), then puts the key on the clipboard at
+  once and keeps it on the page, with <strong>Copy</strong> (it says <em>Copied</em>) and <strong>Hide</strong>,
+  until you press Hide: resizing the window, a refresh of the page's data or
+  visiting another page does not lose it. The list shows each key's name, when
+  it was made, when it was last used and from which address, and its
+  fingerprint, with <strong>Reveal</strong> (eye) and <strong>Copy</strong> to get the key again (see
+  <a href="#reveal-a-key-again">Reveal</a>) and <strong>Revoke</strong>, which asks <strong>Revoke</strong> /
+  <strong>Cancel</strong> and refuses the key from the next request on. With no key yet, the
+  card says so.</li>
+<li><strong>Access</strong> (admin): <em>Authentication</em>, who requests without a key run as,
+  <em>Who can connect</em> (below), and <strong>API keys can be revealed by their owner</strong>
+  (see <a href="#reveal-a-key-again">Reveal</a>). Changes apply to the next request.</li>
 <li><strong>Docs</strong>: what is supported, links to this page and to AbstractCore's server
   docs, and a first request (curl, Python, JavaScript) with your base URL and
-  your key (masked on the page; <strong>Copy example</strong> copies it in clear).</li>
-<li><strong>Recent requests</strong>: time, client (account and address), model, tokens in and
+  your key: <code>&lt;your key&gt;</code> until you make or reveal one, then that key, in clear;
+  <strong>Copy example</strong> copies the example as shown.</li>
+<li><strong>Recent requests</strong>: time, client (account, the API key's name, and address), model, tokens in and
   out, latency and status, newest first, refreshed every 5 s. A row opens to the
   request and the response as recorded (see <a href="#request-log">Request log</a>) with
   <strong>Open in Observer</strong> when the request belongs to a run. An admin sees every
@@ -987,13 +1023,13 @@ other account sees Status (running or not, the base URL), Connect your app
 <h2 id="connect">Connect<a class="headerlink" href="#connect" title="Permanent link">&para;</a></h2>
 <p>Use <code>provider/model</code> as the model name, as listed by <code>GET /v1/models</code>.</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>http://127.0.0.1:8080/v1/chat/completions<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer YOUR_GATEWAY_TOKEN"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;your key&gt;"</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"model": "ollama/qwen3:4b", "messages": [{"role": "user", "content": "Hello"}]}'</span>
 </code></pre></div>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">openai</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenAI</span>
 
-<span class="n">client</span> <span class="o">=</span> <span class="n">OpenAI</span><span class="p">(</span><span class="n">base_url</span><span class="o">=</span><span class="s2">"http://127.0.0.1:8080/v1"</span><span class="p">,</span> <span class="n">api_key</span><span class="o">=</span><span class="s2">"YOUR_GATEWAY_TOKEN"</span><span class="p">)</span>
+<span class="n">client</span> <span class="o">=</span> <span class="n">OpenAI</span><span class="p">(</span><span class="n">base_url</span><span class="o">=</span><span class="s2">"http://127.0.0.1:8080/v1"</span><span class="p">,</span> <span class="n">api_key</span><span class="o">=</span><span class="s2">"&lt;your key&gt;"</span><span class="p">)</span>
 <span class="n">reply</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
     <span class="n">model</span><span class="o">=</span><span class="s2">"ollama/qwen3:4b"</span><span class="p">,</span>
     <span class="n">messages</span><span class="o">=</span><span class="p">[{</span><span class="s2">"role"</span><span class="p">:</span> <span class="s2">"user"</span><span class="p">,</span> <span class="s2">"content"</span><span class="p">:</span> <span class="s2">"Hello"</span><span class="p">}],</span>
@@ -1002,14 +1038,89 @@ other account sees Status (running or not, the base URL), Connect your app
 </code></pre></div>
 <div class="highlight"><pre><span></span><code><span class="k">import</span><span class="w"> </span><span class="nx">OpenAI</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s2">"openai"</span><span class="p">;</span>
 
-<span class="kd">const</span><span class="w"> </span><span class="nx">client</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="ow">new</span><span class="w"> </span><span class="nx">OpenAI</span><span class="p">({</span><span class="w"> </span><span class="nx">baseURL</span><span class="o">:</span><span class="w"> </span><span class="s2">"http://127.0.0.1:8080/v1"</span><span class="p">,</span><span class="w"> </span><span class="nx">apiKey</span><span class="o">:</span><span class="w"> </span><span class="s2">"YOUR_GATEWAY_TOKEN"</span><span class="w"> </span><span class="p">});</span>
+<span class="kd">const</span><span class="w"> </span><span class="nx">client</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="ow">new</span><span class="w"> </span><span class="nx">OpenAI</span><span class="p">({</span><span class="w"> </span><span class="nx">baseURL</span><span class="o">:</span><span class="w"> </span><span class="s2">"http://127.0.0.1:8080/v1"</span><span class="p">,</span><span class="w"> </span><span class="nx">apiKey</span><span class="o">:</span><span class="w"> </span><span class="s2">"&lt;your key&gt;"</span><span class="w"> </span><span class="p">});</span>
 <span class="kd">const</span><span class="w"> </span><span class="nx">reply</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">client</span><span class="p">.</span><span class="nx">chat</span><span class="p">.</span><span class="nx">completions</span><span class="p">.</span><span class="nx">create</span><span class="p">({</span>
 <span class="w">  </span><span class="nx">model</span><span class="o">:</span><span class="w"> </span><span class="s2">"ollama/qwen3:4b"</span><span class="p">,</span>
 <span class="w">  </span><span class="nx">messages</span><span class="o">:</span><span class="w"> </span><span class="p">[{</span><span class="w"> </span><span class="nx">role</span><span class="o">:</span><span class="w"> </span><span class="s2">"user"</span><span class="p">,</span><span class="w"> </span><span class="nx">content</span><span class="o">:</span><span class="w"> </span><span class="s2">"Hello"</span><span class="w"> </span><span class="p">}],</span>
 <span class="p">});</span>
 <span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="nx">reply</span><span class="p">.</span><span class="nx">choices</span><span class="p">[</span><span class="mf">0</span><span class="p">].</span><span class="nx">message</span><span class="p">.</span><span class="nx">content</span><span class="p">);</span>
 </code></pre></div>
-<p>The console fills in your real base URL and the gateway's default text model.</p>
+<p>Tools with command-line flags take the same two values, for example
+<a href="https://aider.chat">aider</a>:</p>
+<div class="highlight"><pre><span></span><code>aider<span class="w"> </span>--openai-api-base<span class="w"> </span>http://127.0.0.1:8080/v1<span class="w"> </span>--openai-api-key<span class="w"> </span><span class="s2">"&lt;your key&gt;"</span><span class="w"> </span>--model<span class="w"> </span>openai/ollama/qwen3:4b
+</code></pre></div>
+<p>The console fills in your real base URL, the gateway's default text model and,
+once you make or reveal a key, that key.</p>
+<h2 id="api-keys">API keys<a class="headerlink" href="#api-keys" title="Permanent link">&para;</a></h2>
+<p>Each account makes its own named keys for this API. One key can serve every
+app; make more only if you want to revoke one app without the others:</p>
+<ul>
+<li><strong>Made with a name</strong> on the OpenAI API page (<strong>New key</strong>) or with
+  <code>POST /api/gateway/me/openai-keys {"label": "laptop Cursor"}</code>, which answers
+  the key (<code>sk-agw-...</code>). The gateway checks keys against their PBKDF2 hash and
+  fingerprint (the first 12 hex digits of the SHA-256) in the account's record;
+  while owner reveal is on (the default) it also keeps the key <strong>encrypted</strong> so
+  you can see it again (below).</li>
+<li><strong>Valid at <code>/v1</code> only.</strong> A key never signs in to the console and never calls
+  the gateway API: anywhere under <code>/api/gateway/</code> (sign-in included) it answers
+  <code>401</code> with <code>This is an API key for /v1; sign in with your gateway token.</code>
+  It cannot touch runs, files, email or workflows.</li>
+<li><strong>Runs as its account.</strong> Requests made with it are that account's: its models
+  and providers, its OpenAI API switch (off: every key of the account answers
+  <code>403 openai_api_off</code>) and its Active state (<code>403 account_inactive</code>).</li>
+<li><strong>Revoked one at a time, immediately.</strong> <strong>Revoke</strong> (or
+  <code>DELETE /api/gateway/me/openai-keys/{fingerprint}</code>) refuses the key from the
+  next request on with <code>401 invalid_api_key</code>; the account's other keys keep
+  working.</li>
+<li><strong>Named in the log.</strong> Each request records the key's name and fingerprint, so
+  <a href="#request-log">Recent requests</a> shows which app called. The key list shows
+  when each key was last used and from which address.</li>
+<li><strong>Admins</strong> see every account's keys (names, dates, fingerprints, never a key)
+  in <strong>Accounts → OpenAI API</strong> and can revoke any of them. An admin account
+  (including the admin account created at first start when user accounts are
+  on) makes its own keys like any other account. Only the operator token a
+  gateway is started with is not an account: signed in with it, the key routes
+  answer <code>409 no_account</code>.</li>
+</ul>
+<h3 id="reveal-a-key-again">Reveal a key again<a class="headerlink" href="#reveal-a-key-again" title="Permanent link">&para;</a></h3>
+<p>A key's owner, and only its owner, can see it again: <strong>Reveal</strong> (eye) on its
+row, or <strong>Copy</strong> to put it straight on the clipboard
+(<code>POST /api/gateway/me/openai-keys/{fingerprint}/reveal</code> → <code>{key, item}</code>).
+Each reveal is an audit line (<code>openai_key_change</code> with <code>action: "reveal"</code>, the
+key's name and fingerprint, never the key); a refused attempt is one too
+(<code>reveal_refused</code>). Anyone else asking for that fingerprint gets
+<code>403 not_owner</code>, admins included: an admin sees names, dates and fingerprints,
+never a key.</p>
+<p>The trade-off, plainly:</p>
+<ul>
+<li><strong>Owner reveal on (default).</strong> Each key is also stored encrypted at rest in
+  <code>&lt;data dir&gt;/auth/openai_key_secrets/</code>, with the same sealing as email
+  passwords: AES-256-GCM under the data folder's key file
+  (<code>&lt;data dir&gt;/secrets/sealing.key</code>; never the OS keychain). Forgetting a key then costs nothing: reveal it instead of making a
+  new one and reconfiguring every app. This suits a personal or small gateway,
+  where the person who can read the data folder is the person who owns the keys.</li>
+<li><strong>Owner reveal off (show-once).</strong> An admin turns off <strong>API keys can be
+  revealed by their owner</strong> on the OpenAI API page (<code>POST
+  /api/gateway/admin/core-endpoint {"owner_reveal": false}</code>). Every stored copy
+  is erased at once and the gateway keeps only hashes from then on: a key is
+  answered once, by the request that makes it, and a lost key means a new key.
+  This protects keys against a leak of the data folder or a backup (including
+  one that carries <code>secrets/sealing.key</code>). Reveal answers
+  <code>404 reveal_off</code>. Turning the setting back on applies to keys made afterwards;
+  keys made while it was off stay hash-only (<code>404 not_revealable</code>).</li>
+</ul>
+<p>Each key item says <code>revealable: true|false</code>; the status (<code>GET
+/api/gateway/openai-api</code>) says <code>owner_reveal</code> to everyone. If the data folder's
+key file (<code>secrets/sealing.key</code>) is missing or was replaced, reveal answers
+<code>503 key_store_unavailable</code> (the keys themselves keep working: they are checked
+against their hash). Keys sealed by 0.13 with the old macOS keychain key are
+never opened: their item carries <code>reveal_unavailable: "Reveal unavailable:
+created before the key moved — create a new key"</code> (<code>revealable: false</code>), Reveal
+answers <code>404 reveal_unavailable_key_moved</code> with that sentence, and Revoke works. See also <a href="../security/#openai-api">Security</a>.</p>
+<p>Names are unique per account (case-insensitive, up to 80 characters). For
+compatibility, an account's gateway token is still accepted at <code>/v1</code>; the page
+offers named keys, so a key pasted into an app can be revoked without changing
+how you sign in.</p>
 <h2 id="what-is-supported">What is supported<a class="headerlink" href="#what-is-supported" title="Permanent link">&para;</a></h2>
 <p>Checked with the official <code>openai</code> Python SDK:</p>
 <table>
@@ -1075,7 +1186,7 @@ provider, send it in the <code>X-AbstractCore-Provider-API-Key</code> header.</p
 <code>parallel_tool_calls</code> and the <code>OpenAI-Organization</code> / <code>OpenAI-Project</code> headers.</p>
 <h3 id="errors">Errors<a class="headerlink" href="#errors" title="Permanent link">&para;</a></h3>
 <p>Every error uses the OpenAI envelope, so SDKs raise their usual exceptions:</p>
-<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"error"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Incorrect API key provided: use your gateway token."</span><span class="p">,</span><span class="w"> </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"invalid_request_error"</span><span class="p">,</span><span class="w"> </span><span class="nt">"param"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w"> </span><span class="nt">"code"</span><span class="p">:</span><span class="w"> </span><span class="s2">"invalid_api_key"</span><span class="p">}}</span>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"error"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Incorrect API key provided: it is not a key of this gateway, or it was revoked. Make a key on the gateway's OpenAI API page."</span><span class="p">,</span><span class="w"> </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"invalid_request_error"</span><span class="p">,</span><span class="w"> </span><span class="nt">"param"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w"> </span><span class="nt">"code"</span><span class="p">:</span><span class="w"> </span><span class="s2">"invalid_api_key"</span><span class="p">}}</span>
 </code></pre></div>
 <table>
 <thead>
@@ -1093,7 +1204,7 @@ provider, send it in the <code>X-AbstractCore-Provider-API-Key</code> header.</p
 </tr>
 <tr>
 <td>401</td>
-<td>missing or wrong key</td>
+<td>missing, wrong or revoked key</td>
 <td><code>invalid_api_key</code></td>
 </tr>
 <tr>
@@ -1121,9 +1232,10 @@ provider, send it in the <code>X-AbstractCore-Provider-API-Key</code> header.</p
 <p>Each response carries <code>x-request-id</code>.</p>
 <h2 id="access">Access<a class="headerlink" href="#access" title="Permanent link">&para;</a></h2>
 <p><strong>Who may use it.</strong> Identities are the gateway's own accounts. A caller's key is
-their gateway token and the request runs as that account. Each account has an
+one of their account's <a href="#api-keys">API keys</a> (or, for compatibility, their
+gateway token) and the request runs as that account. Each account has an
 <strong>OpenAI API</strong> switch (Accounts → the row's <strong>OpenAI API</strong> button, admins): on
-by default for an active account; off, that account's key answers
+by default for an active account; off, every key of that account answers
 <code>403 openai_api_off</code> at <code>/v1</code> (its console sign-in is unchanged). The first time
 the endpoint is turned on, the switch is written on for every active account
 and off for inactive ones. Without a key (Open mode), requests run as the
@@ -1136,13 +1248,13 @@ and whose log shows the requests. Never an admin, and never an account whose
 switch is off. The operator's own token (not an account) is always accepted.</p>
 <p><strong>Authentication</strong></p>
 <ul>
-<li><strong>Protected (API key)</strong> (default): every request sends a gateway token as
-  <code>Authorization: Bearer &lt;token&gt;</code>. The gateway resolves it to the account; the
-  token never reaches AbstractCore. Repeated wrong keys from one address are
+<li><strong>Protected (API key)</strong> (default): every request sends an API key as
+  <code>Authorization: Bearer &lt;key&gt;</code>. The gateway resolves it to the account; the
+  key never reaches AbstractCore. Repeated wrong keys from one address are
   locked out like sign-in attempts.</li>
 <li><strong>Open (no key)</strong>: requests without a key are served, as Guest or the chosen
   account (above). SDKs still require some key value; any text works, for
-  example <code>not-needed</code> (a key that is not a gateway token is served without
+  example <code>not-needed</code> (a key that is not a key of this gateway is served without
   one). Open applies only to direct clients on this machine, your network or
   your VPN: a request through a proxy, in Internet mode, or with proxies
   elsewhere trusted needs a key. As Guest, cloud providers whose keys are stored
@@ -1188,7 +1300,7 @@ may call it.</p>
 <h2 id="request-log">Request log<a class="headerlink" href="#request-log" title="Permanent link">&para;</a></h2>
 <p>Each <code>/v1</code> request writes one line to the gateway's audit log
 (<code>&lt;data dir&gt;/audit_log.jsonl</code>; no other store) with an <code>openai_api</code> object:
-client, model, <code>prompt_tokens</code>, <code>completion_tokens</code>, <code>stream</code>, <code>run_id</code> when the
+client, <code>key_label</code> and <code>key_fingerprint</code> for a named API key, model, <code>prompt_tokens</code>, <code>completion_tokens</code>, <code>stream</code>, <code>run_id</code> when the
 request sent <code>X-AbstractCore-Run-Id</code>, <code>run_as</code> for an Open-mode account, and the
 <code>request</code> and <code>response</code> as they crossed <code>/v1</code>. A streamed answer is recorded
 assembled (content, tool calls, finish reason, usage). Credentials are removed
@@ -1196,7 +1308,8 @@ before the line is written: fields named like a credential (<code>api_key</code>
 <code>authorization</code>, <code>token</code>, <code>password</code>, <code>secret</code>, ...) and every occurrence of the
 caller's key and the internal endpoint key read <code>[redacted]</code>; inline media
 (<code>data:</code> URLs) is replaced by its type and size; a side larger than 256 KB is
-kept to that size and marked truncated. Who reads it: an admin, every request;
+kept to that size and marked truncated. Who reads it: an admin, every request,
+with the full recorded request and response (credentials removed as above);
 anyone else, their own. The log shares the audit log's rotation and retention
 (<code>ABSTRACTGATEWAY_AUDIT_LOG_*</code>); with the audit log off, the card stays empty.</p>
 <h2 id="admin-api">Admin API<a class="headerlink" href="#admin-api" title="Permanent link">&para;</a></h2>
@@ -1214,13 +1327,13 @@ anyone else, their own. The log shares the audit log's rotation and retention
 <td>GET</td>
 <td><code>/api/gateway/openai-api</code></td>
 <td>any account</td>
-<td>status <code>gateway_openai_api_v1</code>: everyone <code>role</code>, <code>writable</code>, <code>enabled</code>, <code>running</code>, <code>base_url</code>, <code>key{own_token, user_id, fingerprint, allowed}</code> (<code>fingerprint</code>: first 12 hex digits of the token's SHA-256, never the token), <code>docs</code>, <code>support</code>, <code>example_model</code> (a text model <code>/v1/models</code> lists; null when stopped); an admin also <code>access</code>, <code>reach</code>, <code>reach_options[]</code>, <code>open_account</code>, <code>open_account_options[]</code>, <code>warnings[]</code>, <code>listener</code>, <code>tailscale</code>, <code>open_requests</code>, <code>legacy_base_url</code></td>
+<td>status <code>gateway_openai_api_v1</code>: everyone <code>role</code>, <code>writable</code>, <code>enabled</code>, <code>running</code>, <code>base_url</code>, <code>key{own_token, user_id, named_keys, fingerprint, allowed}</code> (<code>named_keys</code>: true when the caller's account makes API keys, false for the operator's own token; <code>fingerprint</code>: first 12 hex digits of the gateway token's SHA-256, never the token), <code>docs</code>, <code>support</code>, <code>example_model</code> (a text model <code>/v1/models</code> lists; null when stopped), <code>owner_reveal</code> (may owners reveal their keys); an admin also <code>access</code>, <code>reach</code>, <code>reach_options[]</code>, <code>open_account</code>, <code>open_account_options[]</code>, <code>warnings[]</code>, <code>listener</code>, <code>tailscale</code>, <code>open_requests</code>, <code>legacy_base_url</code></td>
 </tr>
 <tr>
 <td>GET</td>
 <td><code>/api/gateway/openai-api/logs?limit=</code></td>
 <td>any account</td>
-<td><code>{rows[{request_id, ts, client, user_id, ip, method, path, model, prompt_tokens, completion_tokens, stream, duration_ms, status, run_id, observer_path, recorded}], scope}</code>: every request for an admin, the caller's own otherwise</td>
+<td><code>{rows[{request_id, ts, client, user_id, key_label, key_fingerprint, ip, method, path, model, prompt_tokens, completion_tokens, stream, duration_ms, status, run_id, observer_path, recorded}], scope}</code>: every request for an admin, the caller's own otherwise</td>
 </tr>
 <tr>
 <td>GET</td>
@@ -1229,10 +1342,52 @@ anyone else, their own. The log shares the audit log's rotation and retention
 <td><code>{row{..., request, response, user_agent}}</code>, the recorded request and response (redacted); someone else's id answers 404 for a non-admin</td>
 </tr>
 <tr>
+<td>GET</td>
+<td><code>/api/gateway/me/openai-keys</code></td>
+<td>any account</td>
+<td><code>{account, keys[{label, fingerprint, created_at, created_by, last_used_at, last_client, revealable}]}</code>, never a key; <code>409 no_account</code> for the operator's own token</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/gateway/me/openai-keys</code></td>
+<td>any account</td>
+<td><code>{label}</code> → <code>{key, item}</code>; <code>400 label_required</code>/<code>label_too_long</code>, <code>409 label_taken</code></td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/gateway/me/openai-keys/{fingerprint}/reveal</code></td>
+<td>the key's owner</td>
+<td>→ <code>{key, item}</code>, one audit line per reveal; <code>403 not_owner</code> (someone else's key, admins included), <code>404 key_not_found</code>/<code>reveal_off</code>/<code>not_revealable</code>, <code>503 key_store_unavailable</code></td>
+</tr>
+<tr>
+<td>DELETE</td>
+<td><code>/api/gateway/me/openai-keys/{fingerprint}</code></td>
+<td>any account</td>
+<td>revokes one of your keys at once → <code>{revoked}</code>; <code>404 key_not_found</code></td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/gateway/admin/accounts/{id}/openai-keys</code></td>
+<td>admin</td>
+<td>that account's keys (same items)</td>
+</tr>
+<tr>
+<td>DELETE</td>
+<td><code>/api/gateway/admin/accounts/{id}/openai-keys/{fingerprint}</code></td>
+<td>admin</td>
+<td>revokes one of that account's keys at once</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/gateway/admin/accounts/{id}/openai-keys/{fingerprint}/reveal</code></td>
+<td>admin</td>
+<td>always <code>403 not_owner</code>: only a key's owner reveals it</td>
+</tr>
+<tr>
 <td>POST</td>
 <td><code>/api/gateway/admin/core-endpoint</code></td>
 <td>admin</td>
-<td><code>{enabled?, access?: token\|open, reach?: machine\|network\|tailnet\|anywhere, open_account?: guest\|&lt;user id&gt;}</code>; <code>409</code> with the reason when refused</td>
+<td><code>{enabled?, access?: token\|open, reach?: machine\|network\|tailnet\|anywhere, open_account?: guest\|&lt;user id&gt;, owner_reveal?: bool}</code> (<code>owner_reveal: false</code> erases every stored key copy: show-once); <code>409</code> with the reason when refused</td>
 </tr>
 <tr>
 <td>PUT</td>
@@ -1261,13 +1416,20 @@ anyone else, their own. The log shares the audit log's rotation and retention
 </tbody>
 </table>
 <p>Settings live in <code>&lt;data dir&gt;/config/core_endpoint.json</code> (owner-only, atomic
-writes).</p>
+writes). API keys live in the user registry (<code>users.json</code>, each account's
+<code>openai_keys</code>: name, PBKDF2 hash, fingerprint, creation time, <code>sealed</code> when an
+encrypted copy exists); the encrypted copies (owner reveal) are in
+<code>&lt;data dir&gt;/auth/openai_key_secrets/secret.enc</code> (<code>0600</code>, AES-256-GCM, key in
+<code>&lt;data dir&gt;/secrets/sealing.key</code>); when each key was last used is kept in
+<code>&lt;data dir&gt;/auth/openai_key_usage.json</code>. Errors
+of the key routes answer <code>{"detail": {"reason_code", "message"}}</code>.</p>
 <h2 id="moving-from-corev1">Moving from <code>/core/v1</code><a class="headerlink" href="#moving-from-corev1" title="Permanent link">&para;</a></h2>
 <p><code>/core/v1/...</code> answers <code>308 Permanent Redirect</code> to <code>/v1/...</code> (method and body
 kept) and is deprecated: point your apps at <code>/v1</code>. The dedicated endpoint token
-of gateway 0.12.0 is still accepted as a key (deprecated: use gateway tokens);
+of gateway 0.12.0 is still accepted as a key (deprecated: use API keys);
 <code>/api/gateway/admin/core-endpoint/token/rotate</code> still makes a new one (answered
-once), and the reveal route is gone: no route returns a stored token. A 0.12.0 settings file without <em>Who can
+once), and that token's reveal route is gone: no route returns a stored token
+(a named key's owner can reveal their own key, see <a href="#reveal-a-key-again">Reveal</a>). A 0.12.0 settings file without <em>Who can
 connect</em> reads as <strong>Devices on my network</strong>.</p>
 
 

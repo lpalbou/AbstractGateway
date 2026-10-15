@@ -1201,10 +1201,20 @@ surface to create, inspect, verify, and summon it.</p>
 <p>This page uses human words first, API names in parentheses.</p>
 <p>Who can see an entity: an admin sees every entity; anyone else sees only the
 entities they created (recorded as <code>created_by</code> when the entity is created).
-An entity you may not see answers like a missing one (404). In the consoles,
-entities are rows of the <strong>Accounts</strong> table, with an <strong>Active</strong> switch that
-suspends and resumes them; they have no mailbox, no token to rotate and no
-delete. See <a href="../security/#who-sees-which-account">security.md</a> and
+An entity you may not see answers like a missing one (404). An entity is a
+member account (the two roles are admin and member).</p>
+<p>Who configures an entity: its <strong>creator</strong> — mind, voice, tools per phase,
+instructions, skills, workspaces, preferences, archive, unarchive and its
+<strong>Active</strong> switch — within what the admin authorised (the models and voices
+the gateway offers, the workspace caps, no tier-2 tool); an admin always can.
+Another member gets "Only an admin or <entity>'s creator can …", and the
+entity never changes its own settings. Sleep and wake, personal time, the work
+order, memory review and the memory index rebuild stay an admin's. <code>GET
+/api/gateway/entities/{name}/access</code> says what you may change. See
+<a href="../security/#who-configures-an-entity">security.md</a>.</p>
+<p>In the consoles, entities are rows of the <strong>Accounts</strong> table, with an
+<strong>Active</strong> switch that suspends and resumes them; they have no token to rotate
+and no delete. See <a href="../security/#who-sees-which-account">security.md</a> and
 <a href="../console/#accounts">console.md</a>.</p>
 <h2 id="what-an-entity-is">What an entity is<a class="headerlink" href="#what-an-entity-is" title="Permanent link">&para;</a></h2>
 <p>A summoned entity lives in two files at its <strong>home</strong>:</p>
@@ -1331,14 +1341,19 @@ abstractgateway<span class="w"> </span>entity<span class="w"> </span>verify<span
 <td>Its mind: its own choice (<code>provider</code>, <code>model</code>, <code>thinking</code>, <code>speculation</code>; null when it has none), <code>gateway_default</code> (the gateway's text route), <code>effective</code> (what its next visit thinks with) and <code>source</code>: <code>entity</code>, <code>gateway</code>, or <code>unset</code> (the gateway has no text model; <code>note</code> says what to do).</td>
 </tr>
 <tr>
+<td>GET</td>
+<td><code>/api/gateway/entities/{name}/access</code></td>
+<td>May you change its settings? <code>{entity, can_configure, as: "admin" \| "creator" \| null, reason, admin_only_tools: {tools, reason}, admin_only: {available, reason}}</code> — <code>reason</code> is the sentence to show on a control you can't use.</td>
+</tr>
+<tr>
 <td>PUT</td>
 <td><code>/api/gateway/entities/{name}/substrate</code></td>
-<td>Admin. <code>{provider, model, thinking?, speculation?}</code> sets its own mind; <code>{"clear": true}</code> returns it to the gateway default. Each change is recorded in its history (<code>substrate_changed</code>). <code>speculation</code> is MTP: <code>false</code> (off) or <code>{"mode": "native_mtp", "num_draft_tokens": N}</code>.</td>
+<td>An admin or its creator (the creator: a model the gateway offers, else <code>403 not_offered</code> naming the offered models). <code>{provider, model, thinking?, speculation?}</code> sets its own mind; <code>{"clear": true}</code> returns it to the gateway default. Each change is recorded in its history (<code>substrate_changed</code>). <code>speculation</code> is MTP: <code>false</code> (off) or <code>{"mode": "native_mtp", "num_draft_tokens": N}</code>.</td>
 </tr>
 <tr>
 <td>GET/PUT</td>
 <td><code>/api/gateway/entities/{name}/voice</code></td>
-<td>Its voice: <code>{provider, model, voice}</code> or <code>{"clear": true}</code>; unset, it speaks with the gateway's default voice (<code>effective</code>).</td>
+<td>Its voice: <code>{provider, model, voice}</code> or <code>{"clear": true}</code>; unset, it speaks with the gateway's default voice (<code>effective</code>). PUT: an admin or its creator (the creator: a voice the gateway offers, else <code>403 not_offered</code>).</td>
 </tr>
 </tbody>
 </table>
@@ -1408,7 +1423,7 @@ every other lane — default-requested, never trust-bypassed:</p>
 <tr>
 <td>PUT</td>
 <td><code>/api/gateway/entities/{name}/skills</code></td>
-<td>Replace the selection (admin). Marker-first (<code>skills_selection_changed</code>, old/new names+phases — never skill bodies); the response is the resolved view so a typo or blocked skill is visible the moment it is written.</td>
+<td>Replace the selection (an admin or its creator). Marker-first (<code>skills_selection_changed</code>, old/new names+phases — never skill bodies); the response is the resolved view so a typo or blocked skill is visible the moment it is written.</td>
 </tr>
 </tbody>
 </table>

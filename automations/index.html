@@ -756,6 +756,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#schedule-preview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Schedule preview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#list-and-read" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1261,6 +1272,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#schedule-preview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Schedule preview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#list-and-read" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1541,6 +1563,10 @@ never schedules or runs anything itself.</p>
 <td>create an automation (<a href="#create-an-automation">Create</a>)</td>
 </tr>
 <tr>
+<td><code>POST /api/gateway/automations/schedule-preview</code></td>
+<td>what a trigger would do if saved now: its sentence and first run (<a href="#schedule-preview">Schedule preview</a>)</td>
+</tr>
+<tr>
 <td><code>GET /api/gateway/automations</code></td>
 <td>list your automations, older scheduled runs included (<a href="#list-and-read">List and read</a>)</td>
 </tr>
@@ -1673,6 +1699,7 @@ they apply.</p>
 <div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"items"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
 <span class="w">  </span><span class="p">{</span><span class="nt">"id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"schedule"</span><span class="p">,</span><span class="w"> </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Schedule"</span><span class="p">,</span><span class="w"> </span><span class="nt">"capabilities"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"time"</span><span class="p">},</span>
 <span class="w">   </span><span class="nt">"config_schema"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="err">…</span><span class="p">},</span><span class="w"> </span><span class="nt">"event_schema"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="err">…</span><span class="p">},</span><span class="w"> </span><span class="nt">"available"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">},</span>
+<span class="w">  </span><span class="p">{</span><span class="nt">"id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"schedule"</span><span class="p">,</span><span class="w"> </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Schedule"</span><span class="p">,</span><span class="w"> </span><span class="nt">"capabilities"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"time"</span><span class="p">},</span><span class="w"> </span><span class="err">…</span><span class="p">,</span><span class="w"> </span><span class="nt">"available"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">},</span>
 <span class="w">  </span><span class="p">{</span><span class="nt">"id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"manual"</span><span class="p">,</span><span class="w"> </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Manual"</span><span class="p">,</span><span class="w"> </span><span class="nt">"capabilities"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"manual"</span><span class="p">},</span><span class="w"> </span><span class="err">…</span><span class="p">,</span><span class="w"> </span><span class="nt">"available"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">}</span>
 <span class="p">]}</span>
 </code></pre></div>
@@ -1685,10 +1712,33 @@ they apply.</p>
   <code>until</code> is exclusive and must be after <code>start_at</code>; <code>count</code> (1 to 1,000,000)
   caps the number of ticks and needs <code>every</code> when above 1. Without <code>every</code>
   the schedule fires once, at <code>start_at</code>. Ticks missed while the gateway was
-  down coalesce into one occurrence.</li>
-<li><strong><code>manual@1</code></strong> takes <code>{}</code>: the automation runs only when you send
-  <code>automation.run_now</code>.</li>
-<li><strong><code>email.received@1</code></strong> runs on new mail in your own mailbox
+  down coalesce into one occurrence. Existing <code>schedule@1</code> automations keep
+  working unchanged; new automations use <code>schedule@2</code>.</li>
+<li><strong><code>schedule@2</code></strong> adds calendar rules in a time zone. <code>config.kind</code> is one of:</li>
+<li><code>"every"</code>: <code>{every, start_at?, until?, count?}</code>, the fixed UTC interval of
+    <code>schedule@1</code>;</li>
+<li><code>"once"</code>: <code>{start_at}</code>, or <code>{at: "2026-12-24T18:30"}</code>, a wall time in the
+    automation's time zone;</li>
+<li><code>"daily"</code>: <code>{at: "08:00"}</code>;</li>
+<li><code>"weekly"</code>: <code>{days: ["mon", "thu"], at: "08:00"}</code> (any non-empty set of
+    <code>mon</code> … <code>sun</code>);</li>
+<li><code>"monthly"</code>: <code>{day: 1..31 | "last", at: "08:00"}</code>; a day beyond the
+    month's length runs on its last day (day 31 runs on 30 April and on 28 or
+    29 February).</li>
+</ul>
+<p>Calendar rules run on wall time in <code>config.time_zone</code>, an IANA name such as
+  <code>Europe/Paris</code>. When you leave it out, the gateway fills in <strong>your account's
+  time zone</strong> at creation (<a href="../api/#account-preferences">Account preferences</a>);
+  a revision without one keeps the automation's zone. To change it later, send
+  the trigger again with another <code>time_zone</code>. Daylight saving is handled: a
+  daily 08:00 stays at 08:00; a wall time that does not exist on the
+  spring-forward day (02:30) runs at 03:30 that day; a wall time that happens
+  twice on the fall-back day runs once. Missed ticks coalesce and a resume
+  never catches up, as with <code>schedule@1</code>. An unknown zone is refused with 422
+  <code>invalid_definition</code>, field <code>trigger.config.time_zone</code>.
+- <strong><code>manual@1</code></strong> takes <code>{}</code>: the automation runs only when you send
+  <code>automation.run_now</code>.
+- <strong><code>email.received@1</code></strong> runs on new mail in your own mailbox
   (<a href="../email/">email.md</a>): <code>{folder?, uses_model?, every?, max_batch?,
   filter?: {from_in?, from_domain_in?, to_in?, subject_contains?,
   has_attachment?}}</code> (equality, membership and one literal substring; no
@@ -1699,8 +1749,7 @@ they apply.</p>
   before the automation existed, or while it was paused, is not processed. The
   occurrence receives the messages under <code>trigger.emails</code>, marked
   <code>content_trust: "untrusted"</code>. The gateway's mail watcher reads the mailbox
-  only while such an automation is active.</li>
-</ul>
+  only while such an automation is active.</p>
 <p>An automation with <code>"notify": {"channels": ["console", "email"]}</code> emails every
 completed run’s full result, even when the model does not request a notification.
 <code>notify.recipients</code> selects the destinations (default <code>["self"]</code>). Mailbox availability, recipient policy and send limits still apply. The separate
@@ -1743,7 +1792,11 @@ The same <code>request_id</code> with a different request answers 409
   gateway's own registry.</li>
 </ul>
 <p>The concrete workflow (<code>bundle_id@version:flow_id</code>) is stored in the
-definition, so later changes to the default do not move the automation.</p>
+definition, so later changes to the default do not move the automation.
+Publishing a new version of the target does not move it either, and it
+interrupts nothing: a publish swaps the workflow list in place, so the
+controller, its waiting occurrences and the model they use keep running
+(<a href="../architecture/#publishing-a-workflow">architecture.md</a>).</p>
 <p><strong><code>target.input_data</code></strong> is your workflow's input. The gateway applies the
 same protections as for any run: your workspace settings are clamped to the
 operator's workspace policy, the automation gets its own folder under the
@@ -1869,6 +1922,23 @@ editor stores the suggestion in the VisualFlow document as
 <p>Questions the workflow itself asks (Ask User) wait for a person in both modes.
 A change of <code>tool_approval</code> applies from the next occurrence. Discussions
 never inherit the grant: their tools ask as in any chat.</p>
+<h2 id="schedule-preview">Schedule preview<a class="headerlink" href="#schedule-preview" title="Permanent link">&para;</a></h2>
+<p><code>POST /api/gateway/automations/schedule-preview</code> with <code>{"trigger": {source_id,
+source_version, config}}</code> answers what that trigger would do if you saved it
+now. Nothing is stored. The trigger is checked by the same validator as a
+create (same 422 answers) and the time zone is filled in the same way.</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"trigger"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"source_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"schedule"</span><span class="p">,</span><span class="w"> </span><span class="nt">"source_version"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
+<span class="w">             </span><span class="nt">"config"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"daily"</span><span class="p">,</span><span class="w"> </span><span class="nt">"at"</span><span class="p">:</span><span class="w"> </span><span class="s2">"08:00"</span><span class="p">,</span><span class="w"> </span><span class="nt">"time_zone"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Europe/Paris"</span><span class="p">,</span><span class="w"> </span><span class="nt">"start_at"</span><span class="p">:</span><span class="w"> </span><span class="s2">"…"</span><span class="p">,</span><span class="w"> </span><span class="nt">"anchor"</span><span class="p">:</span><span class="w"> </span><span class="s2">"…"</span><span class="p">}},</span>
+<span class="w"> </span><span class="nt">"time_zone"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Europe/Paris"</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"schedule_rule_text"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Every day at 08:00 (Europe/Paris)"</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"schedule_text"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Every day at 08:00 (Europe/Paris) · next Fri 9 Oct 08:00"</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"next_run_at"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-10-09T06:00:00+00:00"</span><span class="p">,</span><span class="w"> </span><span class="nt">"next_run_local"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-10-09T08:00:00+02:00"</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"first_run_sentence"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Runs every day at 08:00 (Europe/Paris), first run Fri 9 Oct 08:00."</span><span class="p">}</span>
+</code></pre></div>
+<p><code>first_run_sentence</code> is the line a schedule dialog shows under its "When"
+fields, e.g. "Runs every 24 hours (UTC), first run now." or "Runs once at Thu
+24 Dec 18:30 (Europe/Paris).". <code>next_run_at</code> and <code>next_run_local</code> are <code>null</code>
+for a trigger with no clock time (manual, email).</p>
 <h2 id="list-and-read">List and read<a class="headerlink" href="#list-and-read" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -1906,8 +1976,13 @@ never inherit the grant: their tools ask as in any chat.</p>
  "trigger": {"binding_id": "…", "source_id": "schedule", "source_version": 1, "config": {…}},
  "context_mode": "independent", "workspace_root": "/…/workspaces/session-automation-…",
  "next_fire_at": "…", "occurrence_count": 6,
+ "next_run_at": "2026-10-09T06:00:00+00:00", "next_run_local": "2026-10-09T08:00:00+02:00",
+ "time_zone": "Europe/Paris",
+ "schedule_rule_text": "Every day at 08:00 (Europe/Paris)",
+ "schedule_text": "Every day at 08:00 (Europe/Paris) · next Fri 9 Oct 08:00",
  "current_occurrence": {"index": 7, "run_id": "…", "attempt": 1, "status": "running"},   // or null
  "last_occurrence": {"run_id", "index", "status", "attempts", "fired_at", "finished_at"?, "excerpt", "notify"},
+ "last_notification": {"channel": "email", "status": "failed", "at", "sent_at", "code", "sentence", "text": "Email result failed — …"},  // or null
  "attention": {"pending_waits": 0, "unread": false, "unseen_count": 0, "cursor": "att1:3", "items": [], "waits": []},
  "legacy": false, "revision": 1, "updated_at": "…",
  "capabilities": ["revise", "pause", "resume", "run_now", "stop_current", "archive", "discuss"],  // archived: ["unarchive", "discuss"]
@@ -1921,9 +1996,34 @@ never inherit the grant: their tools ask as in any chat.</p>
   automation, also while an occurrence is running (a tick missed meanwhile
   runs as soon as the current one ends). It is absent for a manual trigger, a
   finished schedule, and a paused, archived, completed or failed automation.</li>
+<li><code>next_run_at</code> is the same instant as <code>next_fire_at</code> (UTC) and
+  <code>next_run_local</code> the same instant with the offset of <code>time_zone</code>; both are
+  absent when <code>next_fire_at</code> is.</li>
+<li><code>time_zone</code> is a <code>schedule@2</code> automation's zone; for any other trigger it is
+  the owner's account time zone.</li>
+<li><code>schedule_text</code> is the one sentence every client shows for the schedule,
+  verbatim: the rule (<code>schedule_rule_text</code>) and, when a next run exists,
+  " · next <day> <date> <time>" in <code>time_zone</code> (the year is added when it is
+  not the current one). Examples: "Every Mon, Wed and Fri at 07:30
+  (Europe/Paris) · next Mon 12 Oct 07:30", "Monthly on day 31 (or the last
+  day) at 08:00 (Europe/Paris)", "Monthly on the last day at 23:00 (UTC)",
+  "Every 24 hours (UTC) · next Fri 9 Oct 21:53 (Europe/Paris)", "Once at Thu 24 Dec 18:30
+  (Europe/Paris)", "When an email arrives", "Manual runs only". Every clock
+  time is in <code>time_zone</code>; a fixed UTC interval, whose rule says "(UTC)", names
+  the zone after each time it shows unless that zone is UTC. Clients never
+  compute a next run themselves.</li>
 <li><code>current_occurrence</code> is the occurrence in progress, <code>status</code> <code>admitted</code>,
   <code>running</code> or <code>backoff</code> (waiting to retry), or <code>null</code> when none is.</li>
 <li><code>last_occurrence.excerpt</code> holds the first 280 characters of its answer.</li>
+<li><code>last_notification</code> is the newest "Email result" notice of this automation
+  (<code>null</code> when it never asked for one): <code>status</code> <code>queued</code>, <code>sending</code>, <code>sent</code>,
+  <code>failed</code> or <code>unknown</code>, the typed <code>code</code> and <code>sentence</code> of a failure, and <code>text</code>,
+  the one line clients show verbatim ("Email result sent", "Email result
+  failed — <sentence>"). A mailbox that must be connected again (sealed with the
+  old macOS keychain key, gateway 0.14) fails such a notice once, with
+  "Email result failed — The mailbox credentials were sealed with the old macOS
+  keychain key; connect the mailbox again — the new key lives in the data
+  folder."; it is never retried.</li>
 <li><code>attention</code> is described in <a href="#attention-and-seen">Attention</a>; <code>items</code> and
   <code>waits</code> hold up to 20 entries each.</li>
 <li><code>capabilities</code> lists what the automation accepts. An archived automation
@@ -2021,7 +2121,7 @@ with the <code>automation.*</code> types.</p>
 attempt):</p>
 <div class="highlight"><pre><span></span><code>{"run_id": "…", "index": 7, "attempts": 1, "fired_at": "…", "finished_at": "…",
  "status": "completed",   // admitted | running | waiting | backoff | completed | failed | cancelled
- "trigger": {"source_id": "schedule", "summary": "schedule: every 30 minutes (UTC), tick 5"},
+ "trigger": {"source_id": "schedule", "summary": "schedule: Every 30 minutes (UTC), tick 5"},
  "user_turn": "[Trigger schedule@1 · occurrence 7 · fired …]\nTriage my inbox…",
  "answer": "…", "notify": null,
  "failure": {"reason_code": "occurrence_failed", "message": "…", "attempts": 3},   // failed rows only
@@ -2285,10 +2385,11 @@ against a gateway it starts and stops itself:</p>
 </ul>
 <h2 id="limits-in-v1">Limits in v1<a class="headerlink" href="#limits-in-v1" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Schedules are fixed UTC intervals (<code>s</code>, <code>m</code>, <code>h</code>, <code>d</code>, at most <code>366d</code>):
-  no cron expressions, calendar months, time zones or daylight-saving rules.</li>
-<li>The trigger sources are <code>schedule@1</code> and <code>manual@1</code>; there are no external
-  or event triggers.</li>
+<li>Schedules are fixed UTC intervals (<code>s</code>, <code>m</code>, <code>h</code>, <code>d</code>, at most <code>366d</code>) or
+  daily, weekly and monthly rules at a wall time in an IANA time zone
+  (<code>schedule@2</code>); there are no cron expressions.</li>
+<li>The trigger sources are <code>schedule@1</code>, <code>schedule@2</code>, <code>manual@1</code> and
+  <code>email.received@1</code>; there are no other external triggers.</li>
 <li>Occurrences run one at a time, missed ticks coalesce, and a failed
   occurrence never stops the automation. These policies cannot be changed.</li>
 <li>Growing history is the most recent whole turns within the configured token budget (50,000 tokens by default) and is not

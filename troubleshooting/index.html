@@ -1027,6 +1027,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#a-conversation-answers-slowly-after-a-workflow-was-published" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A conversation answers slowly after a workflow was published
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#a-run-stays-running-and-nothing-happens" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1570,6 +1581,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#a-conversation-answers-slowly-after-a-workflow-was-published" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A conversation answers slowly after a workflow was published
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#a-run-stays-running-and-nothing-happens" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2106,6 +2128,22 @@ and set the mode again. See <a href="../security/#network-exposure">security.md<
   upload a bundle with <code>POST /api/gateway/bundles/upload</code>.</li>
 <li>A bundle can be present but not served: the <code>skipped</code> array names it with
   the reason (for example a <code>min_runtime</code> floor or a compile error).</li>
+</ul>
+<h3 id="a-conversation-answers-slowly-after-a-workflow-was-published">A conversation answers slowly after a workflow was published<a class="headerlink" href="#a-conversation-answers-slowly-after-a-workflow-was-published" title="Permanent link">&para;</a></h3>
+<p>A publish swaps the workflow list in place and keeps the loaded model and its
+prompt caches. Read the publish's <code>reload</code> object (in the response, and in the
+request's line of <code>&lt;data dir&gt;/audit_log.jsonl</code>):</p>
+<div class="highlight"><pre><span></span><code>grep<span class="w"> </span>-E<span class="w"> </span><span class="s1">'"/api/gateway/(visualflows/[^"]+/publish|bundles/upload|admin/workflow-catalog/(upload|promote))"'</span><span class="w"> </span>&lt;data<span class="w"> </span>dir&gt;/audit_log.jsonl<span class="w"> </span><span class="p">|</span><span class="w"> </span>tail<span class="w"> </span>-5
+</code></pre></div>
+<ul>
+<li><code>"kind": "registry_swap"</code>: nothing was rebuilt; look elsewhere (the next
+  turn's <code>metadata.prompt_cache</code> in the run ledger says whether the cache was
+  read).</li>
+<li><code>"kind": "service_reload"</code>: that service's runtime was rebuilt because its
+  workflows started needing a language model, tool execution or the memory
+  store it had been started without; its first turn loads the model and fills
+  the cache again. This happens once per new need, not per publish.</li>
+<li><code>"kind": "full_rebuild"</code>: someone called <code>POST /api/gateway/bundles/reload?full=true</code>.</li>
 </ul>
 <h3 id="a-run-stays-running-and-nothing-happens">A run stays RUNNING and nothing happens<a class="headerlink" href="#a-run-stays-running-and-nothing-happens" title="Permanent link">&para;</a></h3>
 <ul>
