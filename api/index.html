@@ -3239,7 +3239,15 @@ typed waits, attention and operations, is in <a href="../automations/">automatio
 (<a href="../automations/#errors">automations.md</a>). An occurrence's wait is answered
 with the <code>resume</code> command above; the answer's shape depends on the wait's
 <code>kind</code> (<a href="../automations/#waits-on-a-person">automations.md</a>).
-<code>GET /api/gateway/runs</code> rows carry <code>session_kind</code>, <code>automation_id</code>, <code>role</code>,
+<strong>Listing behaviour.</strong> Identical <code>GET /api/gateway/runs</code> asks that arrive while one is
+being computed share that one computation (keyed by the caller's runtime folder and the
+exact query string, so two accounts or two filters never share a page); a page is never
+reused once it has landed, so a listing right after an archive, a cancel or a start shows
+it. <code>status=running</code> and <code>status=waiting</code> listings are served from the runtime's active-run
+index (AbstractRuntime 0.10.1 or later; the file-backed store), so they cost milliseconds
+on a store of ten thousand runs; a listing with <code>archived_only=true</code> answers the empty
+page at once when you have archived no session.</p>
+<p><code>GET /api/gateway/runs</code> rows carry <code>session_kind</code>, <code>automation_id</code>, <code>role</code>,
 <code>occurrence_index</code> and <code>legacy</code>, plus <code>workspace_root</code> on turn rows (the folder
 the run works in; absent on sub-runs), accept <code>session_kind=chat,discussion</code>, and
 <code>root_only=true</code> returns conversation turns, one per occurrence
