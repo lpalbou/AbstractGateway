@@ -28,17 +28,19 @@ pure model makes checkable that a pystray generator could not:
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass, field, replace
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .apps import AppEntry
-from .sampler import ModelRow, RunRow, Snapshot, fmt_bytes, fmt_pct
+from .sampler import ACTIVE_STATUSES, AutomationRow, ModelRow, RunRow, Snapshot, fmt_bytes, fmt_pct
 
 APP_NAME = "AbstractGateway"
 DOCS_URL = "https://www.lpalbou.info/AbstractGateway/"
 ISSUES_URL = "https://github.com/lpalbou/abstractgateway/issues"
-MENU_RUN_ROWS = 8  # a menu is a glance; the console is the list
+MENU_RECENT_ROWS = 5  # finished sessions shown; a menu is a glance, the console is the list
+APPROVAL_BODY_MAX = 1500  # the approval dialog shows the arguments in full up to this
 CHUNK = 30  # rows per submenu before a list is split (A–F, G–M, …)
 PATH_SEP = " › "
 
@@ -124,12 +126,17 @@ def model_row_label(row: ModelRow) -> str:
 # and these five read at a glance without needing the word next to them.
 RUN_BADGES = {
     "running": "🟢",
-    "waiting": "🟡",
+    "waiting": "🟡",  # needs a person: an approval or a question
+    "paused": "⏸",
     "completed": "✅",
     "failed": "❌",
     "cancelled": "⚪️",
 }
 RUN_BADGE_UNKNOWN = "◦"
+SCHEDULED_BADGE = "⏱"
+#: The wait kinds a person must act on (GET /host/runs `wait.kind`); an event,
+#: timer, job or sub-run wait is the run working on something.
+ATTENTION_WAIT_KINDS = ("tool_approval", "ask_user")
 
 
 def fmt_duration(seconds: Optional[float]) -> str:
@@ -154,58 +161,112 @@ def workflow_menu_name(workflow_id: str) -> str:
     return name if len(name) <= 34 else name[:33] + "…"
 
 
+def run_group(row: RunRow) -> str:
+    """running | attention | paused | done — the Sessions section a row sits
+    in. Only an approval or a question is "attention": an event, timer, job
+    or sub-run wait is the run working on something and stays under Running;
+    a paused run sits under Running too, with Resume."""
+    if row.status in ACTIVE_STATUSES:
+        if row.wait_kind == "paused":
+            return "paused"
+        if row.status == "waiting" and row.wait_kind in ATTENTION_WAIT_KINDS:
+            return "attention"
+        return "running"
+    return "done"
+
+
+def run_title(row: RunRow) -> str:
+    """The SESSION's title (never the workflow id when the gateway served one)."""
+    return row.title or workflow_menu_name(row.workflow_id)
+
+
 def run_row_label(row: RunRow) -> str:
-    """`✅ coding-agent:coder · 12 steps · 2m 13s` (an active run: `… so far`)."""
+    """`🟢 <title> · step 4 · 2m 10s so far` / `🟡 <title> · approve \\`execute_command\\``
+    / `⏸ <title> · paused · 5m 02s so far` / `✅ <title> · 7 steps · 1m 42s`."""
+    group = run_group(row)
+    title = run_title(row)
+    duration = fmt_duration(row.duration_s)
+    if group == "attention":
+        if row.wait_kind == "tool_approval":
+            ask = f"approve `{row.wait_tool}`" if row.wait_tool else "approve a tool call"
+        else:
+            ask = "a question"
+        return f"{RUN_BADGES['waiting']} {title} · {ask}"
+    if group == "paused":
+        return f"{RUN_BADGES['paused']} {title} · paused" + (f" · {duration} so far" if duration else "")
+    if group == "running":
+        bits = [f"{RUN_BADGES['running']} {title}"]
+        if row.steps:
+            bits.append(f"step {row.steps}")
+        if row.status == "waiting" and row.wait_summary:
+            bits.append(row.wait_summary)
+        if duration:
+            bits.append(f"{duration} so far")
+        return " · ".join(bits)
     badge = RUN_BADGES.get(row.status, RUN_BADGE_UNKNOWN)
-    bits = [f"{badge} {workflow_menu_name(row.workflow_id)}"]
+    bits = [f"{badge} {title}"]
     if row.steps is not None:
         bits.append(f"{row.steps} step" + ("" if row.steps == 1 else "s"))
-    duration = fmt_duration(row.duration_s)
     if duration:
-        bits.append(duration if row.status not in {"running", "waiting"} else f"{duration} so far")
+        bits.append(duration)
     return " · ".join(bits)
 
 
-def run_tally(rows: Sequence[RunRow]) -> str:
-    """What is happening NOW, then the last day. Active runs are not "of the
-    last 24 hours" (one may have started two days ago): they lead, unwindowed."""
-    if not rows:
-        return "No runs in the last 24 hours"
+def recent_tally(rows: Sequence[RunRow]) -> str:
+    """`Recent — 4 done · 1 cancelled` (the finished rows of the last 24 hours)."""
     counts: Dict[str, int] = {}
     for row in rows:
         counts[row.status] = counts.get(row.status, 0) + 1
-    now_words = [f"{counts[st]} {st}" for st in ("running", "waiting") if counts.get(st)]
-    order = ("completed", "failed", "cancelled")
     words = {"completed": "done", "failed": "failed", "cancelled": "cancelled"}
-    past = [f"{counts[st]} {words[st]}" for st in order if counts.get(st)]
-    past += [f"{n} {st}" for st, n in sorted(counts.items()) if st not in order and st not in {"running", "waiting"}]
-    if now_words and past:
-        return f"Now: {' · '.join(now_words)} — last 24 hours: {' · '.join(past)}"
-    if now_words:
-        return f"Now: {' · '.join(now_words)}"
-    return f"Last 24 hours — {' · '.join(past)}"
+    parts = [f"{counts[st]} {words[st]}" for st in ("completed", "failed", "cancelled") if counts.get(st)]
+    parts += [f"{n} {st}" for st, n in sorted(counts.items()) if st not in words]
+    return "Recent — " + (" · ".join(parts) if parts else "none in the last 24 hours")
 
 
-def state_lines(snap: Snapshot, *, update_phase: str = "idle", update_latest: Optional[str] = None) -> Tuple[str, str]:
-    """(header, detail) — the two disabled lines at the top of the menu."""
+def automation_row_label(a: AutomationRow) -> str:
+    """`⏱ <automation title> · Every day at 09:00 · next Fri 9 Oct 09:00` — the
+    schedule words exactly as the gateway serves them (`schedule_text`); a
+    paused schedule says so."""
+    title = a.title or a.automation_id
+    if a.status == "paused":
+        return f"{RUN_BADGES['paused']} {title} · schedule paused" + (f" · {a.schedule_text}" if a.schedule_text else "")
+    return f"{SCHEDULED_BADGE} {title}" + (f" · {a.schedule_text}" if a.schedule_text else "")
+
+
+def approval_dialog(wait: Dict[str, Any], *, title: str) -> Tuple[str, str]:
+    """(dialog title, body) for "Show and approve…": the tool name(s) and
+    their arguments as pretty JSON, in full up to `APPROVAL_BODY_MAX`
+    characters, then "…" and the one line that says where the rest is."""
+    calls = [c for c in (wait.get("tool_calls") or []) if isinstance(c, dict)]
+    names = [str(c.get("name") or "tool call") for c in calls]
+    head = f"{title} asks to run " + (", ".join(names) if names else "a tool") + "."
+    parts = []
+    for c in calls:
+        args = json.dumps(c.get("arguments") or {}, indent=2, ensure_ascii=False, sort_keys=True)
+        parts.append(f"{c.get('name') or 'tool call'} {args}")
+    text = "\n\n".join(parts)
+    if len(text) > APPROVAL_BODY_MAX:
+        text = text[:APPROVAL_BODY_MAX].rstrip() + "…\n(open in Observer for the rest)"
+    if not names:
+        dialog_title = "Approve this tool call?"
+    elif len(names) == 1:
+        dialog_title = f"Approve {names[0]}?"
+    else:
+        dialog_title = f"Approve {names[0]} and {len(names) - 1} more?"
+    return dialog_title, head + ("\n\n" + text if text else "")
+
+
+def state_lines(snap: Snapshot, *, update_phase: str = "idle", update_latest: Optional[str] = None) -> Tuple[str, Optional[str]]:
+    """(header, detail) — ONE disabled line at the top of the menu, and a
+    second only when it carries news (steps in flight, pausing, paused,
+    installing, stopping, unreachable). A running idle gateway has nothing
+    to add: the Models submenu says what is loaded."""
     st = snap.gateway_state
     header = f"{APP_NAME} — {STATE_WORDS.get(st, st.title())}"
+    detail: Optional[str]
     if st == "running":
-        n = len(snap.models)
-        held = _held_bytes(snap)
-        if n == 0:
-            # Never "no models loaded" over live accelerator memory: the process
-            # may hold weights the list cannot attribute (92 GB was measured once).
-            detail = (
-                f"Ready · gateway still holds {fmt_bytes(held)} (no model listed); eject or restart"
-                if held
-                else "Ready · no models loaded"
-            )
-        else:
-            total = f" · {fmt_bytes(snap.models_total_bytes)}" if snap.models_total_bytes else ""
-            detail = f"Ready · {n} model{'s' if n != 1 else ''} loaded{total}"
-        if snap.inflight_ticks > 0:
-            detail = f"Working on {snap.inflight_ticks} step{'s' if snap.inflight_ticks != 1 else ''}" + (f" · {n} model{'s' if n != 1 else ''} loaded" if n else "")
+        n = snap.inflight_ticks
+        detail = f"Working on {n} step{'s' if n != 1 else ''}" if n > 0 else None
     elif st == "pausing":
         n = snap.inflight_ticks
         if snap.step_gate_supported is False:
@@ -213,13 +274,13 @@ def state_lines(snap: Snapshot, *, update_phase: str = "idle", update_latest: Op
         else:
             detail = f"Finishing {n} run{'s' if n != 1 else ''} at the next step, then pausing"
     elif st == "paused":
-        detail = "Still running — workflows wait until you resume"
+        detail = "Paused — sessions wait until you resume"
     elif st in {"starting", "restarting"}:
         detail = "Usually a few seconds"
     elif st == "updating":
-        detail = f"Installing {update_latest or 'the update'} · workflows keep running"
+        detail = f"Installing {update_latest or 'the update'} · sessions keep running"
     elif st == "stopping":
-        detail = "Stopping workflows and the console"
+        detail = "Stopping sessions and the console"
     else:
         detail = "Can't reach it on this computer · retrying"
     return header, detail
@@ -350,11 +411,21 @@ def parse_network(payload: Any) -> NetworkView:
     )
 
 
+#: Where an address reaches, by the gateway's `kind` (GET /network `addresses`).
+ADDRESS_WORDS = {"loopback": "this computer", "lan": "local network", "hostname": "this computer's name", "tailscale": "tailscale", "public": "internet"}
+
+
 def address_label(a: NetworkAddress) -> str:
-    """`http://192.168.1.23:8080 (Wi-Fi)` — the URL is what gets copied, so it
-    leads and is never shortened."""
-    extra = a.interface or a.note
-    return f"{a.url} ({extra})" if extra else a.url
+    """`http://192.168.1.23:8080 · local network (Wi-Fi)` — the URL is what
+    gets copied, so it leads and is never shortened; the words after it say
+    where it reaches."""
+    where = ADDRESS_WORDS.get(str(a.kind or ""), str(a.kind or ""))
+    label = f"{a.url} · {where}" if where else a.url
+    if a.interface:
+        label += f" ({a.interface})"
+    if a.note:
+        label += f" · {a.note}"
+    return label
 
 
 @dataclass(frozen=True)
@@ -434,6 +505,36 @@ def _free_bytes(snap: Snapshot) -> Optional[int]:
 # Below this the "gateway holds" figure is noise (Metal keeps a few MB of
 # shader/library buffers in every process); above it, it is a model or a cache.
 _HELD_NOTEWORTHY_BYTES = 256 * 1024 * 1024
+
+
+def gateway_share_bytes(snap: Snapshot) -> Optional[int]:
+    """What THIS gateway process occupies: its macOS physical footprint (which
+    counts Metal/MLX buffers), else its RSS; None when neither was sampled."""
+    for name in ("process_footprint", "process_rss"):
+        v = getattr(snap, name, None)
+        if isinstance(v, int) and not isinstance(v, bool) and v >= 0:
+            return v
+    return None
+
+
+def gateway_share_words(snap: Snapshot) -> str:
+    """'this gateway 2.6 GB' -- the machine-wide meter alone cannot show an
+    eject: freeing a 16 GB model barely moves a 137 GB machine's gauge when
+    other apps hold most of it (operator 2026-10-16: "unloading a model
+    doesn't completely free the memory" over a gauge that was Safari's)."""
+    share = gateway_share_bytes(snap)
+    return f"this gateway {fmt_bytes(share)}" if share is not None else ""
+
+
+def eject_receipt(name: str, *, before: Optional[int], after: Optional[int], size_bytes: Optional[int]) -> str:
+    """The 'Model ejected' notification body: the gateway's MEASURED footprint
+    before and after when both samples exist ('Qwen… · this gateway 18.4 GB → 2.6 GB'),
+    else the catalog size the old text claimed as 'freed', else the name alone."""
+    if before is not None and after is not None and before >= 0 and after >= 0:
+        return f"{name} · this gateway {fmt_bytes(before)} → {fmt_bytes(after)}"
+    if size_bytes is not None:
+        return f"{name} · freed {fmt_bytes(size_bytes)}"
+    return name
 
 
 def _held_bytes(snap: Snapshot) -> Optional[int]:
@@ -691,15 +792,6 @@ def apps_section(inputs: MenuInputs, *, reachable: bool) -> Node:
     return Node("Apps", children=tuple(items))
 
 
-def network_status_line(nv: NetworkView) -> Optional[str]:
-    """The info line under the status header: `http://127.0.0.1:8080 · localhost only`."""
-    if not nv.available or not nv.copy_hint:
-        return None
-    mode = NETWORK_WORDS.get(str(nv.effective_mode or nv.configured_mode or ""), str(nv.effective_mode or ""))
-    line = f"{nv.copy_hint} · {mode}" if mode else nv.copy_hint
-    return line + (" · restart required" if nv.restart_required else "")
-
-
 def network_section(nv: NetworkView, *, reachable: bool) -> Node:
     label = "Network" + (" — restart required" if nv.restart_required else "")
     if not nv.available:
@@ -725,14 +817,16 @@ def network_section(nv: NetworkView, *, reachable: bool) -> Node:
     return Node(label, children=tuple(items), enabled=reachable)
 
 
-def copy_address_section(nv: NetworkView, base_url: str) -> Node:
+def addresses_section(nv: NetworkView, base_url: str) -> Node:
+    """**Addresses ▸**: one row per address the gateway answers on, each
+    saying where it reaches; a click copies it."""
     if nv.available and nv.addresses:
-        return Node("Copy Address", children=tuple(Node(address_label(a), ("copy_address", a.url)) for a in nv.addresses))
+        return Node("Addresses", children=tuple(Node(address_label(a), ("copy_address", a.url)) for a in nv.addresses))
     # No network route (older gateway) or not read yet: the URL this tray talks to is still an address.
-    kids = [Node(base_url.rstrip("/"), ("copy_address", base_url.rstrip("/")))]
+    kids = [Node(f"{base_url.rstrip('/')} · {ADDRESS_WORDS['loopback']}", ("copy_address", base_url.rstrip("/")))]
     if nv.error:
         kids.append(info(middle_ellipsis(f"Other addresses: {nv.error}", 100)))
-    return Node("Copy Address", children=tuple(kids))
+    return Node("Addresses", children=tuple(kids))
 
 
 AUTOSTART_LABEL = f"Start {APP_NAME} at login"
@@ -767,37 +861,111 @@ def observer_open_available(apps: Sequence[Any]) -> bool:
 
 
 def run_detail_line(row: RunRow) -> str:
-    """The first line of a run's submenu: when it started (local time)."""
+    """The first line of a session's submenu: its state and when it started (local time)."""
     if row.started_at is None:
         return "Start time unknown"
     stamp = time.localtime(row.started_at)
     today = time.localtime()
     when = time.strftime("%H:%M", stamp) if stamp[:3] == today[:3] else time.strftime("%b %d, %H:%M", stamp)
-    word = {"running": "Running", "waiting": "Waiting"}.get(row.status, "Started")
-    return f"{word} · started {when}" if row.status in {"running", "waiting"} else f"Started {when}"
+    group = run_group(row)
+    if group == "done":
+        return f"Started {when}"
+    word = {"running": "Running", "paused": "Paused", "attention": "Waiting"}[group]
+    return f"{word} · started {when}"
 
 
-def workflow_items(snap: Snapshot, *, observer: bool = False) -> Tuple[Node, ...]:
-    rows = snap.runs
-    if snap.runs_error and not rows:
-        return (info("Run list unavailable"), info(middle_ellipsis(str(snap.runs_error), 44)))
-    out: List[Node] = [info(run_tally(rows))]
-    if rows:
+ANOTHER_ACCOUNT_LINE = "Another account's session — act on it from its own app"
+
+
+def run_submenu(row: RunRow, *, observer: bool, reachable: bool) -> Tuple[Node, ...]:
+    """What a session's row opens. Running: Pause · Stop…; paused: Resume ·
+    Stop…; an approval: what is asked, **Show and approve…** (a dialog with
+    the full arguments — never an approve from a bare click), Deny; a
+    question: the question (free-text answers stay in the clients); finished:
+    when it started. Every row: Open in Observer. The commands are greyed on
+    another account's row and say why."""
+    group = run_group(row)
+    can = reachable and row.commandable
+    open_node = Node("Open in Observer", ("open_run_observer", row.run_id), enabled=bool(observer and reachable and row.observer_path))
+    out: List[Node] = []
+    if group == "attention":
+        out.append(info(row.wait_summary or ("approve a tool call" if row.wait_kind == "tool_approval" else "a question")))
+        if row.wait_kind == "tool_approval":
+            out.append(Node("Show and approve…", ("run_approve_show", row.run_id), enabled=can))
+            out.append(Node("Deny", ("run_deny", row.run_id), enabled=can))
+        out.append(open_node)
+    elif group == "paused":
+        out += [info(run_detail_line(row)), open_node, Node("Resume", ("run_resume", row.run_id), enabled=can), Node("Stop…", ("run_stop", row.run_id), enabled=can)]
+    elif group == "running":
+        out += [info(run_detail_line(row)), open_node, Node("Pause", ("run_pause", row.run_id), enabled=can), Node("Stop…", ("run_stop", row.run_id), enabled=can)]
+    else:
+        out += [info(run_detail_line(row)), open_node]
+    if group != "done" and not row.commandable:
+        out.append(info(ANOTHER_ACCOUNT_LINE))
+    return tuple(out)
+
+
+def automation_submenu(a: AutomationRow, *, observer: bool, reachable: bool, observer_path: Optional[str]) -> Tuple[Node, ...]:
+    """A Scheduled row's submenu: the schedule words, Open in Observer (the
+    Automations page), Run now, Pause schedule / Resume schedule — each
+    offered only when the gateway lists the capability."""
+    caps = set(a.capabilities)
+    words = a.schedule_text or ("legacy schedule" if a.legacy else "no schedule words from the gateway")
+    out: List[Node] = [
+        info(f"{a.status.title() or 'Scheduled'} · {words}"),
+        Node("Open in Observer", ("open_automations_observer",), enabled=bool(observer and reachable and observer_path)),
+        Node("Run now", ("auto_run_now", a.automation_id), enabled=reachable and "run_now" in caps),
+    ]
+    if a.status == "paused":
+        out.append(Node("Resume schedule", ("auto_resume", a.automation_id), enabled=reachable and "resume" in caps))
+    else:
+        out.append(Node("Pause schedule", ("auto_pause", a.automation_id), enabled=reachable and "pause" in caps))
+    return tuple(out)
+
+
+def sessions_items(snap: Snapshot, *, observer: bool = False) -> Tuple[Node, ...]:
+    """**Sessions ▸**: Running (running, waiting-for-something and paused
+    rows), Need attention (an approval or a question, only when there is
+    one), Scheduled (the automations, only when there are any), Recent (the
+    last 24 hours, at most `MENU_RECENT_ROWS` rows then ONE line naming the
+    rest), and the console door. Every section header is an information
+    line; nothing is hidden without saying so."""
+    reachable = snap.reachable
+    groups: Dict[str, List[RunRow]] = {"running": [], "attention": [], "paused": [], "done": []}
+    for row in snap.runs:
+        groups[run_group(row)].append(row)
+    out: List[Node] = []
+    if snap.runs_error and not snap.runs:
+        out += [info("Session list unavailable"), info(middle_ellipsis(str(snap.runs_error), 60))]
+    else:
+        running = groups["running"] + groups["paused"]
+        out.append(info(f"Running ({len(running)})" if running else "Running — none"))
+        for row in running:
+            out.append(Node(run_row_label(row), children=run_submenu(row, observer=observer, reachable=reachable)))
+        if groups["attention"]:
+            out.append(SEP)
+            out.append(info(f"Need attention ({len(groups['attention'])})"))
+            for row in groups["attention"]:
+                out.append(Node(run_row_label(row), children=run_submenu(row, observer=observer, reachable=reachable)))
+    scheduled = [a for a in snap.automations if a.status in {"active", "paused"}]
+    if scheduled or snap.automations_error:
         out.append(SEP)
-        # A menu is a glance: the active rows first, then the newest finished
-        # ones, then ONE line naming the rest (the console's Runs tab is the
-        # list; nothing is hidden without saying so). Each run opens a small
-        # submenu: when it started, and "Open in Observer".
-        for row in rows[:MENU_RUN_ROWS]:
-            children = (
-                info(run_detail_line(row)),
-                Node("Open in Observer", ("open_run_observer", row.run_id), enabled=bool(observer and snap.reachable and row.observer_path)),
-            )
-            out.append(Node(run_row_label(row), children=children))
-        if len(rows) > MENU_RUN_ROWS:
-            out.append(info(f"…and {len(rows) - MENU_RUN_ROWS} more"))
+        if scheduled:
+            out.append(info(f"Scheduled ({len(scheduled)})"))
+            for a in scheduled:
+                out.append(Node(automation_row_label(a), children=automation_submenu(a, observer=observer, reachable=reachable, observer_path=snap.observer_automations_path)))
+        else:
+            out.append(info(middle_ellipsis(f"Scheduled unavailable: {snap.automations_error}", 80)))
+    if not (snap.runs_error and not snap.runs):
+        done = groups["done"]
+        out.append(SEP)
+        out.append(info(recent_tally(done)))
+        for row in done[:MENU_RECENT_ROWS]:
+            out.append(Node(run_row_label(row), children=run_submenu(row, observer=observer, reachable=reachable)))
+        if len(done) > MENU_RECENT_ROWS:
+            out.append(info(f"…and {len(done) - MENU_RECENT_ROWS} more"))
     out.append(SEP)
-    out.append(Node("Open Runs in Console", ("open_runs",), enabled=snap.reachable))
+    out.append(Node("Open Sessions in Console", ("open_runs",), enabled=reachable))
     return tuple(out)
 
 
@@ -823,10 +991,9 @@ def build_menu(inputs: MenuInputs) -> Tuple[Node, ...]:
     st = snap.gateway_state
     reachable = st not in {"unreachable", "starting", "restarting", "stopping"}
     header, detail = state_lines(snap, update_phase=inputs.update_phase, update_latest=inputs.update_latest)
-    out: List[Node] = [info(header), info(detail)]
-    net_line = network_status_line(inputs.network)
-    if net_line:
-        out.append(info(net_line))
+    out: List[Node] = [info(header)]
+    if detail:
+        out.append(info(detail))
     if inputs.pending_label:
         out += [SEP, Node(f"Confirm: {inputs.pending_label}", ("confirm_pending",))]
     out.append(SEP)
@@ -835,20 +1002,27 @@ def build_menu(inputs: MenuInputs) -> Tuple[Node, ...]:
     if inputs.tk_available:
         out.append(Node("Show Activity Window…", ("show_activity",)))
     out.append(apps_section(inputs, reachable=reachable))
-    out.append(copy_address_section(inputs.network, inputs.base_url))
+    out.append(addresses_section(inputs.network, inputs.base_url))
     out.append(SEP)
-    out.append(Node("Workflows", children=workflow_items(snap, observer=observer_open_available(inputs.apps)), enabled=reachable))
+    out.append(Node("Sessions", children=sessions_items(snap, observer=observer_open_available(inputs.apps)), enabled=reachable))
+    # The gateway-wide pause (the step gate; the console keeps answering).
     if snap.paused or st == "pausing":
-        out.append(Node("Resume Workflows", ("resume",), enabled=reachable))
+        out.append(Node(f"▶ Resume {APP_NAME}", ("resume",), enabled=reachable))
     else:
-        out.append(Node("Pause Workflows", ("pause",), enabled=reachable))
+        out.append(Node(f"⏸ Pause {APP_NAME}", ("pause",), enabled=reachable))
     out.append(SEP)
+    meters: List[str] = []
     if snap.mem_supported and (snap.mem_used is not None and snap.mem_total):
-        out.append(info(f"Memory   {fmt_bytes(snap.mem_used)} of {fmt_bytes(snap.mem_total)} ({fmt_pct(snap.mem_pct)})"))
+        meters.append(f"Memory {fmt_bytes(snap.mem_used)} of {fmt_bytes(snap.mem_total)} ({fmt_pct(snap.mem_pct)})")
     elif snap.mem_pct is not None:
-        out.append(info(f"Memory   {fmt_pct(snap.mem_pct)}"))
+        meters.append(f"Memory {fmt_pct(snap.mem_pct)}")
+    share = gateway_share_words(snap)
+    if share and meters:
+        meters.append(share)
     if snap.gpu_supported and snap.gpu_pct is not None:
-        out.append(info(f"GPU   {fmt_pct(snap.gpu_pct)} busy"))
+        meters.append(f"GPU {fmt_pct(snap.gpu_pct)} busy")
+    if meters:
+        out.append(info(" · ".join(meters)))
     out.append(models_section(inputs, reachable=reachable))
     out.append(SEP)
     out.append(Node(update_label(inputs.update_phase, inputs.update_latest), ("check_update",), enabled=reachable and inputs.update_phase not in {"checking", "updating"} and not snap.update_job_running))

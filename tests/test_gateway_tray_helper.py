@@ -91,6 +91,9 @@ class _FakeClient:
     def recent_runs(self, limit: int = 0) -> _Res:
         return self._r("recent_runs", _Res(False, 0, None, "unreachable"))
 
+    def automations(self) -> _Res:
+        return self._r("automations", _Res(False, 0, None, "unreachable"))
+
 
 _LIVE = {
     "ok": True,
@@ -192,12 +195,14 @@ def test_menu_copy_per_state_and_tooltip() -> None:
     label = model_row_label(row)
     assert "…" in label and "LM Studio" in label and label.endswith("kept in memory") and "🔒" not in label
 
+    # ONE header line (2026-10-15): an idle running gateway adds nothing — the
+    # Models submenu says what is loaded; a second line only carries news.
     header, detail = state_lines(_snap(models=(row,), models_total_bytes=row.size_bytes))
-    assert header == "AbstractGateway — Running" and detail.startswith("Ready · 1 model loaded")
+    assert header == "AbstractGateway — Running" and detail is None
     _, detail = state_lines(_snap(inflight_ticks=2, models=(row,)))
-    assert detail.startswith("Working on 2 steps")
+    assert detail == "Working on 2 steps"
     header, detail = state_lines(_snap(gateway_state="paused", paused=True))
-    assert header.endswith("Paused") and "Still running" in detail
+    assert header.endswith("Paused") and detail == "Paused — sessions wait until you resume"
     _, detail = state_lines(_snap(gateway_state="pausing", paused=True, inflight_ticks=1, step_gate_supported=False))
     assert "older runtime" in detail
     header, detail = state_lines(_snap(gateway_state="unreachable", reachable=False))
@@ -340,3 +345,15 @@ def test_sampler_reads_the_held_basis_holders_and_eject_diagnostics() -> None:
     snap2 = s2.snapshot()
     assert snap2.device_held_bytes == 7
     assert snap2.device_held_basis == "MLX buffers only (this AbstractCore reports no process-wide figure)"
+
+
+def test_tooltip_names_the_gateways_own_share() -> None:
+    """The icon's tooltip: machine-wide memory, then what THIS gateway occupies (footprint first,
+    RSS on older samples) -- an eject is visible there even when other apps keep the gauge up."""
+    from abstractgateway.tray.app import tooltip_text
+    from abstractgateway.tray.menu_model import fmt_bytes
+
+    tip = tooltip_text(_snap(process_footprint=2_640_000_000))
+    assert tip.splitlines()[1] == f"Memory {fmt_bytes(44_240_000_000)} of {fmt_bytes(68_720_000_000)} · this gateway {fmt_bytes(2_640_000_000)} · GPU 34% busy"
+    assert f"this gateway {fmt_bytes(3_300_000_000)}" in tooltip_text(_snap())  # RSS when no footprint was sampled
+    assert "this gateway" not in tooltip_text(_snap(process_rss=None))

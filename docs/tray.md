@@ -17,28 +17,18 @@ can see what it is doing and act on it in one click:
   it; nothing opens by itself, the menu then offers **Open X**), **Launch
   Assistant** (the desktop app), otherwise the app's name, greyed. See *Apps*
   below.
-- **Workflows** — what is running now, then the last 24 hours. Under a
-  one-line tally (`Now: 2 running · 1 waiting — last 24 hours: 3 done`), the
-  active runs come first — running (🟢), then waiting for a person or an
-  event (🟡) — each with the time elapsed so far, whatever day it started;
-  then the runs that finished in the last 24 hours (✅ completed, ❌ failed,
-  ⚪️ cancelled), newest first, with how long each took. Every row shows the
-  step count and opens a small submenu: when it started, and **Open in
-  Observer** (that run's page in Observer, signed in; a stopped Observer the
-  gateway manages is started first; greyed when Observer is not installed).
-  **Open Runs in Console** at the bottom is the full list. A row is a run
-  someone started — a conversation turn or an automation's occurrence — never
-  a sub-run or an automation's controller; a run whose sub-run is working
-  counts as running. The list is **host-wide** (`GET
-  /api/gateway/host/runs`), not per-principal: memory, GPU and loaded models
-  on this menu describe the machine, and the run list has to describe the
-  same machine. Catalog-published workflows are shown under the name you know
-  them by (their run id encodes scope and tenant in base64) and are not
-  mistaken for the gateway's own bookkeeping runs. Summoned entities' data
-  planes are not listed (the payload names them in `skipped_entity_planes`).
-- **Pause / Resume Workflows** — the one high-level control over all of that:
-  stop new workflow steps from running to free the machine or to look at what
-  is going on (the gateway keeps answering; work queues until you resume).
+- **Addresses** — every address the gateway answers on, each saying where it
+  reaches (`http://127.0.0.1:8080 · this computer`, `http://192.168.1.175:8080
+  · local network (Wi-Fi)`, a `.local` name, a tailscale name, the internet);
+  a click copies it and a notification says what was copied.
+- **Sessions** — what is going on, by the session's **title** (what you
+  asked, or the automation's name — never a workflow id): **Running**, **Need
+  attention**, **Scheduled** and **Recent** (the last 24 hours), each row with
+  its own actions. See *Sessions* below.
+- **Pause / Resume AbstractGateway** — the one gateway-wide control, under
+  Sessions: stop new steps from running to free the machine or to look at
+  what is going on (the console keeps answering; work queues until you
+  resume). While paused the header reads `AbstractGateway — Paused`.
 - **Models** — what is in memory, what can be loaded, and the way to either:
   eject a loaded model, or preload an installed one. See *Models* below.
 - **Show Activity Window** — two live graphs (memory, GPU) and the model list
@@ -52,19 +42,34 @@ can see what it is doing and act on it in one click:
   gateway runs (from `GET /api/gateway/about`).
 
 The menu as shipped (macOS, a machine with 151 installed models; `[…]` is a
-greyed information line, `▸` a submenu, `☐/☑` the check item):
+greyed information line, `▸` a submenu, `☐/☑` the check item). The header is
+ONE line; a second appears only when it carries news (`Working on 2 steps`,
+`Finishing 1 run at the next step, then pausing`, `Paused — sessions wait
+until you resume`, `Installing …`, `Can't reach it on this computer ·
+retrying`):
 
 ```text
 [AbstractGateway — Running]
-[Ready · 1 model loaded · 249 MB]
-[http://127.0.0.1:8080 · localhost only]
 Open Console
+Show Activity Window…
 Apps ▸              Open Observer | Open Continuum | Install Code… | … | Launch Assistant | Manage Apps in Console…
-Copy Address ▸      http://127.0.0.1:8080 | http://192.168.1.23:8080 (Wi-Fi) | http://mymac.local:8080
-Workflows ▸
-Pause Workflows
-[Memory   82.8 GB of 128 GB (65%)]
-[GPU   0% busy]
+Addresses ▸         http://127.0.0.1:8080 · this computer | http://192.168.1.23:8080 · local network (Wi-Fi) | http://mymac.local:8080 · this computer's name
+Sessions ▸
+    [Running (2)]
+    🟢 Refactor the sampler into two lanes · step 4 · 2m 10s so far ▸   [Running · started 14:02] | Open in Observer | Pause | Stop…
+    ⏸ Market study · paused · 5m 02s so far ▸                          [Paused · started 13:58] | Open in Observer | Resume | Stop…
+    [Need attention (2)]
+    🟡 Clean the build folder · approve `execute_command` ▸             [execute_command {"command": "rm -rf build"}] | Show and approve… | Deny | Open in Observer
+    🟡 Plan the trip · a question ▸                                     [Which dates?] | Open in Observer
+    [Scheduled (2)]
+    ⏱ Daily digest · Every day at 09:00 · next Fri 17 Oct 09:00 ▸       [Active · Every day at 09:00 · next Fri 17 Oct 09:00] | Open in Observer | Run now | Pause schedule
+    ⏸ Inbox triage · schedule paused · When an email arrives ▸          [Paused · When an email arrives] | Open in Observer | Run now | Resume schedule
+    [Recent — 4 done · 1 cancelled]
+    ✅ Write the changelog · 7 steps · 1m 42s ▸                         [Started 13:40] | Open in Observer
+    …
+    Open Sessions in Console
+⏸ Pause AbstractGateway
+[Memory 47.0 GB of 128 GB (37%) · GPU 38% busy]
 Models ▸
     [Loaded: 1 · 249 MB · 45.2 GB free]
     ✓ Qwen1.5-0.5B-Chat-4bit · 249 MB · MLX ▸
@@ -144,6 +149,75 @@ Gateway card (pause/resume, update, restart, quit), the memory and GPU meters,
 and the model table with unload buttons. A paused gateway shows a banner on
 every console tab with a *Resume* button.
 
+## Sessions
+
+**Sessions ▸** is the machine's work as a person sees it. A row is a
+**session** — a conversation turn or an automation's occurrence, never a
+sub-run or an automation's controller — under its **title**: the automation's
+name for an occurrence, else the first line of what the person typed (cut at
+60 characters), else the workflow's name (`GET /host/runs` serves it as
+`title` with `title_source`; the Observer's cards use the same text). The list
+is **host-wide**, not per-principal: memory, GPU and loaded models on this menu
+describe the machine, and the session list has to describe the same machine.
+Catalog-published workflows are shown under the name you know them by and are
+not mistaken for the gateway's own bookkeeping runs. Summoned entities' data
+planes are not listed (the payload names them in `skipped_entity_planes`).
+
+Four sections, each under an information line, nothing hidden without saying
+so:
+
+- **Running (N)** — `🟢 <title> · step 4 · 2m 10s so far`, whatever day it
+  started; a run whose sub-run is working counts as running. A row waiting
+  for something that is not a person says what (`waiting for a timer`,
+  `waiting for email.received`, `waiting for a sub-run`) and stays here. A
+  paused session reads `⏸ <title> · paused`. The submenu: when it started,
+  **Open in Observer**, **Pause** (the session stops at its next step; `POST
+  /commands` type `pause`, the whole run tree) or **Resume** (type `resume`),
+  and **Stop…** (asks first; type `cancel`, with the reason "Stopped from the
+  AbstractGateway menu"). `Running — none` when nothing runs.
+- **Need attention (N)** — only an approval or a question, the two waits a
+  person must act on. `🟡 <title> · approve \`execute_command\``: the submenu
+  shows what is asked on one line, then **Show and approve…** — a dialog with
+  the tool name and its arguments in full (pretty JSON, cut at about 1500
+  characters with "open in Observer for the rest"), buttons **Approve** /
+  **Deny** / **Cancel**, Cancel being the default and what Esc does — and
+  **Deny** from the row. An approval is never sent from a bare menu click. The
+  answer is the same `resume` command the Assistant and Code send:
+  `{wait_key, payload: {"approved": true|false}}` on the run that holds the
+  wait (a sub-run's approval belongs to its parent's row; the dialog reads the
+  full arguments from `GET /host/runs/{run_id}/wait`). `🟡 <title> · a
+  question`: the question, one line; free-text answers stay in the clients
+  (the Assistant, Code, the console).
+- **Scheduled (N)** — the automations (`GET /automations`), active and
+  paused: `⏱ <automation title> · Every day at 09:00 · next Fri 17 Oct
+  09:00` — the schedule words exactly as the gateway serves them
+  (`schedule_text`); the tray computes no next run. The submenu: **Open in
+  Observer** (the Automations page), **Run now**, **Pause schedule** /
+  **Resume schedule** (`POST /automations/{id}/commands`, types
+  `automation.run_now`, `automation.pause`, `automation.resume`), each offered
+  only when the automation's `capabilities` list it; the gateway's refusal
+  (an occurrence already running, an archived automation) is shown with its
+  words.
+- **Recent — 4 done · 1 cancelled** — the sessions that finished in the last
+  24 hours (✅ completed, ❌ failed, ⚪️ cancelled), newest first, with the
+  step count and how long each took; five rows, then `…and N more`. The
+  submenu: when it started, **Open in Observer**.
+
+**Open in Observer** opens that session's page (or the Automations page)
+signed in; a stopped Observer the gateway manages is started first; greyed
+when Observer is not installed. **Open Sessions in Console** at the bottom is
+the full list.
+
+Another account's session (the gateway runs several accounts) is listed —
+the machine is busy with it — but its Pause, Stop and approval controls are
+greyed and the row says `Another account's session — act on it from its own
+app`: the tray's commands reach the plane of its own identity (the
+payload's `caller_plane`), never another account's runs.
+
+The section rows are read every 20 seconds (`GET /host/runs`, cached a few
+seconds on the gateway; one run document per row) and right after each
+action. A duration that ticks never rebuilds the menu under the cursor.
+
 ## Models
 
 **Models ▸** leads with what is in memory — a header (`Loaded: N · size ·
@@ -221,8 +295,8 @@ address the gateway listens on. **Manage Apps in Console…** at the bottom
 opens the console's Apps tab (updates, logs, stop, and the full reasons).
 
 The tray talks to its gateway over loopback (`http://127.0.0.1:<port>`) for
-every network mode; the network address in the menu's header and in
-**Copy Address** is for other devices.
+every network mode; the network addresses under **Addresses** are for other
+devices.
 
 A folder called `abstractassistant` in the gateway's working directory (a
 source checkout) resolves as a *namespace package*; it is not an install and
@@ -266,21 +340,20 @@ abstractgateway service uninstall   # disable + stop it
 
 ## Network and addresses
 
-The line under the status header is the address to share and the network
-mode, e.g. `http://127.0.0.1:8080 · localhost only` (`· restart required`
-while a change waits for a restart). **Network ▸** shows what runs now
+**Addresses ▸** lists every address the gateway answers on (loopback, each
+network interface, the machine's `.local` name, a tailscale name, a public
+one) with where it reaches — `http://192.168.1.23:8080 · local network
+(Wi-Fi)` — and copies the one you click. **Network ▸** shows what runs now
 (`Now: local network · 0.0.0.0:8080`) and three choices — **Localhost only**,
 **Local network**, **Internet…** — whose mark is what is *set*. Choosing one
 saves it (`POST /api/gateway/network`); when it needs a restart, **Restart to
-apply** appears (and the headers say *restart required*). **Internet…** first
-shows what exposing the gateway means, with the gateway's own warnings, and
-posts only after you acknowledge it. A refusal (for example sign-in not set up
-for that mode) opens a dialog with the reason and the fix. **Copy Address ▸**
-lists every address the gateway answers on (loopback, each network interface,
-the machine's `.local` name) and copies the one you click.
+apply** appears (and the Network item says *restart required*). **Internet…**
+first shows what exposing the gateway means, with the gateway's own warnings,
+and posts only after you acknowledge it. A refusal (for example sign-in not
+set up for that mode) opens a dialog with the reason and the fix.
 
 A gateway without the network settings route says so in the Network submenu,
-and Copy Address still offers the address the tray talks to.
+and Addresses still offers the address the tray talks to.
 
 ## Menus without submenus
 
@@ -294,9 +367,10 @@ service …`, `apps …`, `models …`).
 
 ## Pause
 
-Pausing is process-wide and **persists across restarts**: a laptop paused to
-get its GPU back does not silently resume after a reboot or an update. While
-paused:
+**⏸ Pause AbstractGateway** (under Sessions) is process-wide and **persists
+across restarts**: a laptop paused to get its GPU back does not silently
+resume after a reboot or an update. One session is paused from its own row
+instead (see *Sessions*). While the gateway is paused:
 
 - no new workflow step starts — runs, schedules and bridge-started work are
   accepted and wait;

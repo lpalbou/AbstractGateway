@@ -12,6 +12,7 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
@@ -129,6 +130,17 @@ class GatewayClient:
             timeout=8.0,
         )
 
+    def automations(self) -> Result:
+        """This principal's automations (`GET /automations`; archived ones are
+        left out): the Sessions menu's Scheduled rows, with the schedule words
+        the gateway serves (`schedule_text`, `next_run_local`)."""
+        return self._request("GET", "/automations?limit=50", timeout=10.0)
+
+    def run_wait(self, run_id: str) -> Result:
+        """One run's pending wait with the tool calls awaiting approval in full
+        (`GET /host/runs/{id}/wait`): what "Show and approve…" shows."""
+        return self._request("GET", f"/host/runs/{urllib.parse.quote(str(run_id), safe='')}/wait", timeout=6.0)
+
     def models_installed(self) -> Result:
         """Every model the local engines hold, with sizes (`models_installed_v1`).
         Walks the HF cache and asks LM Studio/Ollama: slow on a big machine."""
@@ -196,6 +208,34 @@ class GatewayClient:
 
     def resume(self) -> Result:
         return self._request("POST", "/host/resume", body={}, timeout=6.0)
+
+    def run_command(self, run_id: str, type_: str, payload: Optional[Dict[str, Any]] = None) -> Result:
+        """One run command (`POST /commands`: pause | resume | cancel — the
+        route the Assistant and Code use); `pause` and `cancel` reach the
+        whole run tree, a `resume` without `payload` resumes a paused tree."""
+        body: Dict[str, Any] = {
+            "command_id": f"tray-{type_}-{uuid.uuid4().hex}",
+            "run_id": str(run_id),
+            "type": str(type_),
+            "payload": dict(payload or {}),
+            "client_id": "desktop-tray",
+        }
+        return self._request("POST", "/commands", body=body, timeout=10.0)
+
+    def answer_wait(self, run_id: str, wait_key: Optional[str], answer: Dict[str, Any]) -> Result:
+        """Resolve a run's pending wait: `resume` with `{wait_key, payload}` on
+        the WAITING run (a tool approval answers `{"approved": true|false}`)."""
+        payload: Dict[str, Any] = {"payload": dict(answer)}
+        if wait_key:
+            payload["wait_key"] = str(wait_key)
+        return self.run_command(run_id, "resume", payload)
+
+    def automation_command(self, automation_id: str, type_: str) -> Result:
+        """`POST /automations/{id}/commands`: automation.run_now |
+        automation.pause | automation.resume (the gateway refuses at the door
+        what the automation's state rules out, 409)."""
+        body = {"command_id": f"tray-{type_}-{uuid.uuid4().hex}", "type": str(type_), "payload": {}}
+        return self._request("POST", f"/automations/{urllib.parse.quote(str(automation_id), safe='')}/commands", body=body, timeout=10.0)
 
     def unload_model(self, target: Dict[str, Any], *, force: bool = False) -> Result:
         body = dict(target)

@@ -1,18 +1,22 @@
-"""The tray's Workflows submenu, and the menu it lives in (2026-09-06).
+"""The tray's Sessions submenu (Workflows until 2026-10-15), and the menu it
+lives in (2026-09-06).
 
 Operator ruling, three parts:
 
   - ONE door to the console. "Show Activity in Console" and "Open Console"
     opened the same browser at two anchors; a menu that offers the same
     destination twice makes a new user choose between identical things.
-  - A **Workflows** submenu: the last 24 hours of runs with a state badge, the
-    step count and the duration, with Pause/Resume as the one control under it.
+  - A **Sessions** submenu: what runs now, what needs a person, what is
+    scheduled, and the last 24 hours — each row with a state badge, the step
+    count and the duration, with the gateway-wide Pause/Resume under it.
   - No "(needs internet)" / "(on this computer)" suffixes in Help. A menu item
     names what it opens; where it lives is noise the reader steps over.
 
 Pinned here as PURE functions plus the payload folding, so none of it needs a
 display: the labels, the tally, the 24 h window, and the menu signature (a run
-list that changed must rebuild the menu; a duration that ticks must not).
+list that changed must rebuild the menu; a duration that ticks must not). The
+2026-10-15 redesign (titles, waits, automations, per-session actions) has its
+own file, test_gateway_tray_sessions_menu.py.
 """
 
 from __future__ import annotations
@@ -114,12 +118,13 @@ def test_a_run_row_reads_at_a_glance() -> None:
     from abstractgateway.tray.app import RUN_BADGES, run_row_label
     from abstractgateway.tray.sampler import RunRow
 
+    # Without a served title the workflow name stands in (an older gateway).
     done = RunRow("1", "deep-research:main", "completed", 31, 724.0, 1.0)
     assert run_row_label(done) == "✅ deep-research:main · 31 steps · 12m 04s"
 
-    # A run in flight says its duration is not final.
+    # A run in flight says its step and that its duration is not final.
     live = RunRow("2", "coding-agent:coder", "running", 4, 133.0, 1.0)
-    assert run_row_label(live) == "🟢 coding-agent:coder · 4 steps · 2m 13s so far"
+    assert run_row_label(live) == "🟢 coding-agent:coder · step 4 · 2m 13s so far"
 
     # One step is not "1 steps"; a missing step count is simply absent.
     assert "1 step ·" in run_row_label(RunRow("3", "w", "failed", 1, 8.0, 1.0))
@@ -133,7 +138,7 @@ def test_a_run_row_reads_at_a_glance() -> None:
 
     # A state the gateway grows later still renders, with a neutral mark.
     assert run_row_label(RunRow("6", "w", "brand-new-state", None, None, 1.0)).startswith("◦ ")
-    assert set(RUN_BADGES) == {"running", "waiting", "completed", "failed", "cancelled"}
+    assert set(RUN_BADGES) == {"running", "waiting", "paused", "completed", "failed", "cancelled"}
 
 
 def test_durations_are_coarse_on_purpose() -> None:
@@ -145,23 +150,21 @@ def test_durations_are_coarse_on_purpose() -> None:
     assert fmt_duration(3600) == "1h 00m" and fmt_duration(7_845) == "2h 10m"
 
 
-def test_the_tally_leads_with_what_is_happening_now() -> None:
-    from abstractgateway.tray.app import run_tally
+def test_the_recent_tally_counts_the_finished_rows() -> None:
+    """The Recent section header (2026-10-15): what finished in the last 24
+    hours, by outcome. What runs now has its own header (`Running (N)`)."""
+    from abstractgateway.tray.app import recent_tally
     from abstractgateway.tray.sampler import RunRow
 
-    assert run_tally([]) == "No runs in the last 24 hours"
-
+    assert recent_tally([]) == "Recent — none in the last 24 hours"
     rows = [
         RunRow("1", "w", "completed", 1, 1.0, 1.0),
-        RunRow("2", "w", "running", 1, 1.0, 1.0),
         RunRow("3", "w", "failed", 1, 1.0, 1.0),
         RunRow("4", "w", "completed", 1, 1.0, 1.0),
+        RunRow("5", "w", "cancelled", 1, 1.0, 1.0),
     ]
-    # Running first: it is the only line that is about right now — and it is
-    # not "of the last 24 hours" (an active run may be two days old).
-    assert run_tally(rows) == "Now: 1 running — last 24 hours: 2 done · 1 failed"
-    assert run_tally(rows[1:2]) == "Now: 1 running"
-    assert run_tally([rows[0], rows[2]]) == "Last 24 hours — 1 done · 1 failed"
+    assert recent_tally(rows) == "Recent — 2 done · 1 failed · 1 cancelled"
+    assert recent_tally([rows[1]]) == "Recent — 1 failed"
 
 
 # ------------------------------------------------- host-wide, not per-tenant
@@ -294,6 +297,18 @@ def test_a_changed_run_list_rebuilds_the_menu_but_a_ticking_duration_does_not() 
     assert sig((stepped,)) != sig((finished,)), "a finished run is worth a rebuild"
     assert sig((a,)) != sig(()), "runs appearing or vanishing is worth a rebuild"
 
+    # The Sessions rows also READ the title, what a row waits for and whether
+    # this tray may command it (2026-10-15): each is worth a rebuild.
+    import dataclasses
+
+    waiting = dataclasses.replace(a, status="waiting")
+    assert sig((waiting,)) != sig((dataclasses.replace(waiting, wait_kind="tool_approval", wait_summary="execute_command {}"),))
+    assert sig((a,)) != sig((dataclasses.replace(a, title="Refactor the sampler"),))
+    assert sig((a,)) != sig((dataclasses.replace(a, commandable=False),))
+    # A paused run resumed (same status "waiting", the wait kind gone) rebuilds too.
+    paused = dataclasses.replace(waiting, wait_kind="paused", wait_summary="paused")
+    assert sig((paused,)) != sig((waiting,))
+
 
 def test_the_menu_has_one_console_door_a_workflows_section_and_unannotated_help(tmp_path) -> None:
     """The three parts of the ruling, read off the menu as RENDERED.
@@ -350,13 +365,14 @@ def test_the_menu_has_one_console_door_a_workflows_section_and_unannotated_help(
     assert "Open Console" in captured
     assert not any("Show Activity in Console" in t for t in captured)
 
-    # The Workflows section, with the runs and the control under it.
-    assert "Workflows" in captured
-    assert "Now: 1 running — last 24 hours: 1 done" in text
-    assert "🟢 coding-agent:coder · 4 steps" in text
+    # The Sessions section, with the rows and the gateway-wide control under it.
+    assert "Sessions" in captured and "Workflows" not in captured
+    assert "Running (1)" in captured
+    assert "Recent — 1 done" in captured
+    assert "🟢 coding-agent:coder · step 4" in text
     assert "✅ deep-research:main · 31 steps · 12m 04s" in text
-    assert "Open Runs in Console" in captured
-    assert "Pause Workflows" in captured
+    assert "Open Sessions in Console" in captured
+    assert "⏸ Pause AbstractGateway" in captured
 
     # Help names what it opens and nothing else.
     assert "Documentation" in captured and "Report a Problem…" in captured

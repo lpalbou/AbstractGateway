@@ -8,10 +8,10 @@ Cadence (two daemon threads, never the GUI thread):
   Capabilities and step-gate facts (`/host/runner`) refresh every 5 s.
 - SLOW lane, own thread, every 5 s: resident models (`/host/state`) — this
   walks every provider and may reach LM Studio/Ollama over HTTP, so it can
-  never stall the icon or the graphs. The last day's runs (`GET /runs`) ride
-  the same thread on their own 20 s throttle: the Workflows submenu is read at
-  human speed, and a list nobody has the menu open to see is not worth a poll
-  per five seconds.
+  never stall the icon or the graphs. The sessions (`GET /host/runs`) and the
+  automations (`GET /automations`) ride the same thread on their own 20 s
+  throttle: the Sessions submenu is read at human speed, and a list nobody
+  has the menu open to see is not worth a poll per five seconds.
 - Gateway reachability: derived; three consecutive failed fast polls flip the
   state to "unreachable" (one blip never repaints the icon red). Two 401/403
   answers in a row mean the token is dead (a gateway that restarted without
@@ -34,7 +34,7 @@ from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 from .client import GatewayClient
 
 HISTORY_SAMPLES = 120  # 2 minutes at 1 Hz
-RUNS_WINDOW_S = 24 * 3600.0  # "the last day" — the Workflows submenu's horizon
+RUNS_WINDOW_S = 24 * 3600.0  # "the last day" — the Sessions submenu's Recent horizon
 RUNS_LIMIT = 25  # what we ASK for; the window then decides what is shown
 
 
@@ -54,7 +54,7 @@ class ModelRow:
 
 @dataclass(frozen=True)
 class RunRow:
-    """One workflow run, as the Workflows submenu shows it."""
+    """One session (a turn root), as the Sessions submenu shows it."""
 
     run_id: str
     workflow_id: str
@@ -64,6 +64,40 @@ class RunRow:
     started_at: Optional[float]  # epoch seconds
     # `/apps/observer/#run/<id>` (GET /host/runs `observer_path`): "Open in Observer".
     observer_path: Optional[str] = None
+    # The SESSION's title (GET /host/runs `title`): the automation's title, the
+    # first line of what the person typed, else the workflow name; `title_source`
+    # says which (automation | prompt | workflow).
+    title: str = ""
+    title_source: str = ""
+    # What a waiting row waits for (GET /host/runs `wait`): kind = tool_approval |
+    # ask_user | paused | event | other; summary = what is asked, or the
+    # "waiting for …" phrase; tool = the call awaiting approval; wait_run_id =
+    # the run that HOLDS the wait (a sub-run's approval belongs to this, the
+    # parent, row).
+    wait_kind: Optional[str] = None
+    wait_summary: Optional[str] = None
+    wait_tool: Optional[str] = None
+    wait_key: Optional[str] = None
+    wait_run_id: Optional[str] = None
+    # Pause / Stop / approve reach this run: it lives on the plane the tray's
+    # own commands answer for (`caller_plane`). Another account's row is
+    # shown, never commanded.
+    commandable: bool = True
+    plane: str = ""
+
+
+@dataclass(frozen=True)
+class AutomationRow:
+    """One automation (a `GET /automations` summary): the Scheduled rows."""
+
+    automation_id: str
+    title: str
+    status: str  # active | paused | completed | failed | archived
+    # The gateway's words, shown verbatim: "Every day at 09:00 · next Fri 9 Oct 09:00".
+    schedule_text: str = ""
+    next_run_local: Optional[str] = None
+    capabilities: tuple[str, ...] = ()
+    legacy: bool = False
 
 
 @dataclass(frozen=True)
@@ -103,6 +137,11 @@ class Snapshot:
     unauthorized: bool = False
     runs: tuple[RunRow, ...] = ()
     runs_error: Optional[str] = None
+    # The Scheduled rows (`GET /automations`), and the Observer's Automations
+    # page as `GET /host/runs` serves it (`observer_automations_path`).
+    automations: tuple[AutomationRow, ...] = ()
+    automations_error: Optional[str] = None
+    observer_automations_path: Optional[str] = None
     # Accelerator memory THIS gateway process pins (MLX live + cached buffers),
     # independent of what the model list attributes. None when unknown.
     device_held_bytes: Optional[int] = None
@@ -287,7 +326,7 @@ ACTIVE_STATUSES = ("running", "waiting")
 
 
 def run_rows_from_listing(payload: Any, *, now: Optional[float] = None, window_s: float = RUNS_WINDOW_S) -> List[RunRow]:
-    """`GET /host/runs` items → the Workflows submenu's rows: ACTIVE runs
+    """`GET /host/runs` items → the Sessions submenu's rows: ACTIVE runs
     first (running, then waiting), then the finished ones, newest first.
 
     The gateway's `activity` decides what is active: a run whose sub-run is
@@ -307,6 +346,9 @@ def run_rows_from_listing(payload: Any, *, now: Optional[float] = None, window_s
         return []
     clock = time.time() if now is None else float(now)
     cutoff = clock - float(window_s)
+    # The plane this tray's own commands reach (the payload's `caller_plane`;
+    # a gateway without it answers for the default plane).
+    caller_plane = str(payload.get("caller_plane") or "default").strip() or "default"
     rows: List[RunRow] = []
     for item in items:
         if not isinstance(item, dict):
@@ -328,6 +370,8 @@ def run_rows_from_listing(payload: Any, *, now: Optional[float] = None, window_s
                 continue
             duration = (ended - started) if (started is not None and ended is not None and ended >= started) else None
         observer = item.get("observer_path")
+        wait = item.get("wait") if isinstance(item.get("wait"), dict) else {}
+        plane = str(item.get("plane") or "default").strip() or "default"
         rows.append(
             RunRow(
                 run_id=run_id,
@@ -337,11 +381,50 @@ def run_rows_from_listing(payload: Any, *, now: Optional[float] = None, window_s
                 duration_s=duration,
                 started_at=started,
                 observer_path=str(observer) if isinstance(observer, str) and observer.strip() else None,
+                title=str(item.get("title") or "").strip(),
+                title_source=str(item.get("title_source") or "").strip(),
+                wait_kind=(str(wait.get("kind")).strip() or None) if wait.get("kind") else None,
+                wait_summary=(str(wait.get("summary")).strip() or None) if wait.get("summary") else None,
+                wait_tool=(str(wait.get("tool")).strip() or None) if wait.get("tool") else None,
+                wait_key=(str(wait.get("wait_key")).strip() or None) if wait.get("wait_key") else None,
+                wait_run_id=(str(wait.get("run_id")).strip() or None) if wait.get("run_id") else None,
+                commandable=plane == caller_plane,
+                plane=plane,
             )
         )
     order = {"running": 0, "waiting": 1}
     # Stable: the gateway's newest-first order is kept inside each group.
     rows.sort(key=lambda r: order.get(r.status, 2))
+    return rows
+
+
+def automation_rows_from_listing(payload: Any) -> List[AutomationRow]:
+    """`GET /automations` items → the Scheduled rows, in the gateway's order
+    (newest first). The schedule words are taken as served, never computed."""
+    if not isinstance(payload, dict):
+        return []
+    items = payload.get("items")
+    if not isinstance(items, list):
+        return []
+    rows: List[AutomationRow] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        automation_id = str(item.get("automation_id") or "").strip()
+        if not automation_id:
+            continue
+        caps = item.get("capabilities")
+        rows.append(
+            AutomationRow(
+                automation_id=automation_id,
+                title=str(item.get("title") or "").strip(),
+                status=str(item.get("status") or "").strip().lower(),
+                schedule_text=str(item.get("schedule_text") or "").strip(),
+                next_run_local=str(item["next_run_local"]) if item.get("next_run_local") else None,
+                capabilities=tuple(str(c) for c in caps) if isinstance(caps, list) else (),
+                legacy=item.get("legacy") is True,
+            )
+        )
     return rows
 
 
@@ -377,6 +460,9 @@ class Sampler:
             "eject_status": (),
             "runs": [],
             "runs_error": None,
+            "automations": [],
+            "automations_error": None,
+            "observer_automations_path": None,
             "caps": {"restart": False, "shutdown": False, "reason": None, "update_job_running": False},
             "step_gate": None,
             "runner_in_process": None,
@@ -650,25 +736,35 @@ class Sampler:
         self._sample_runs()
 
     def _sample_runs(self) -> None:
-        """The last day's runs, at most every `runs_interval_s`.
+        """The sessions (the last day's runs) and the automations, at most
+        every `runs_interval_s`.
 
-        On the SLOW thread by design: `/runs` reads the run index and one
-        ledger count per row, which is cheap but not free, and nothing on the
-        icon depends on it -- only a submenu a person has to open to read.
+        On the SLOW thread by design: `/host/runs` reads the run index, one
+        run document and one ledger count per row, which is cheap but not
+        free, and nothing on the icon depends on it -- only a submenu a
+        person has to open to read.
         """
         now = time.monotonic()
         if (now - self._last_runs) < self._runs_every:
             return
         self._last_runs = now
         r = self._client.recent_runs(limit=RUNS_LIMIT)
-        self._note_auth(r)
+        a = self._client.automations()
+        self._note_auth(r, a)
         with self._lock:
             if r.ok:
                 self._state["runs"] = run_rows_from_listing(r.data)
                 self._state["runs_error"] = None
+                path = r.data.get("observer_automations_path") if isinstance(r.data, dict) else None
+                self._state["observer_automations_path"] = str(path) if isinstance(path, str) and path.strip() else None
             else:
                 # The rows we already have stay: a blip must not empty the menu.
                 self._state["runs_error"] = r.error or "run list unavailable"
+            if a.ok:
+                self._state["automations"] = automation_rows_from_listing(a.data)
+                self._state["automations_error"] = None
+            else:
+                self._state["automations_error"] = a.error or "automations unavailable"
 
     # -- output --------------------------------------------------------------
 
@@ -727,6 +823,9 @@ class Sampler:
                 unauthorized=bool(self._unauthorized),
                 runs=tuple(s["runs"]),
                 runs_error=s["runs_error"],
+                automations=tuple(s.get("automations") or ()),
+                automations_error=s.get("automations_error"),
+                observer_automations_path=s.get("observer_automations_path"),
                 device_held_bytes=mem.get("held"),
                 process_footprint=mem.get("footprint"),
                 device_held_basis=mem.get("held_basis"),

@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional
 
 from . import platform as plat
 from .client import GatewayClient
-from .menu_model import _held_bytes, eject_lines, held_lines
+from .menu_model import _held_bytes, eject_lines, gateway_share_words, held_lines
 from .sampler import ModelRow, Sampler, Snapshot, fmt_bytes, fmt_pct
 
 APP_NAME = "AbstractGateway"
@@ -226,7 +226,7 @@ class Monitor:
         self.state_lbl.pack(side="left")
         self.console_btn = ttk.Button(head, text="Open Console", style="Tray.TButton", command=self._open_console)
         self.console_btn.pack(side="right")
-        self.pause_btn = ttk.Button(head, text="Pause Workflows", style="Tray.TButton", command=self._toggle_pause)
+        self.pause_btn = ttk.Button(head, text="Pause AbstractGateway", style="Tray.TButton", command=self._toggle_pause)
         self.pause_btn.pack(side="right", padx=(0, 8))
 
         self.banner = tk.Label(outer, text="", bg=pal["bg"], fg=pal["err"], font=("TkDefaultFont", 11), anchor="w", justify="left", wraplength=400)
@@ -384,7 +384,7 @@ class Monitor:
             label = f"Running · {n} model{'s' if n != 1 else ''}" + (f" · {fmt_bytes(snap.models_total_bytes)}" if snap.models_total_bytes else "")
         self.state_lbl.configure(text=label, fg=pal["text"])
         reachable = st not in {"unreachable", "starting", "restarting", "stopping"}
-        self.pause_btn.configure(text="Resume Workflows" if (snap.paused or st == "pausing") else "Pause Workflows")
+        self.pause_btn.configure(text="Resume AbstractGateway" if (snap.paused or st == "pausing") else "Pause AbstractGateway")
         if reachable and not self._busy:
             self.pause_btn.state(["!disabled"])
         else:
@@ -392,7 +392,7 @@ class Monitor:
         if st == "unreachable":
             self.banner.configure(text=f"Can't reach {APP_NAME}. If it's restarting, this clears in a few seconds.")
         elif snap.paused:
-            self.banner.configure(text="Workflows wait until you resume. Entities with their own schedule keep going.", fg=pal["warn"])
+            self.banner.configure(text="Sessions wait until you resume. Entities with their own schedule keep going.", fg=pal["warn"])
         else:
             self.banner.configure(text="")
         if st == "unreachable":
@@ -409,8 +409,7 @@ class Monitor:
             else:
                 self.mem_value.configure(text=fmt_pct(snap.mem_pct))
             self.mem_value.configure(fg=pal["err"] if snap.mem_pct >= 90 else pal["text"])
-            rss = f"this gateway {fmt_bytes(snap.process_rss)}" if snap.process_rss is not None else ""
-            self.mem_sub.configure(text=rss)
+            self.mem_sub.configure(text=gateway_share_words(snap))
             self.mem_graph.draw(snap.mem_history, secondary=snap.process_history, stale=stale)
         else:
             self.mem_value.configure(text="")

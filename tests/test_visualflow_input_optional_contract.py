@@ -7,6 +7,9 @@ the descriptor consumed by every schema-driven workflow UI.
 from __future__ import annotations
 
 import importlib.util
+import json
+import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -110,8 +113,21 @@ def test_actual_assistant_orchestrator_does_not_require_optional_media_inputs() 
     spec = importlib.util.spec_from_file_location("_assistant_input_contract_fixture", source)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    flow = module.managed_assistant_visualflow()
+    # Registered while it executes: a dataclass in the module resolves its
+    # annotations through sys.modules[module.__name__] (AbstractAssistant 0.13.2
+    # declares one), which is None for an unregistered module.
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+        # The orchestrator's chat branch runs this gateway's shipped basic-agent
+        # as a subflow (AbstractAssistant 0.13.2): hand it the real bundle's pins.
+        bundle = Path(__file__).resolve().parents[1] / "flows" / "bundles" / "basic-agent@0.0.5.flow"
+        with zipfile.ZipFile(bundle) as z:
+            agent_flow = json.loads(z.read("flows/81795ea9.json"))
+        agent = module.agent_subflow_from_flow(flow_id="81795ea9", bundle_ref="basic-agent@0.0.5", flow=agent_flow)
+        flow = module.managed_assistant_visualflow(agent)
+    finally:
+        sys.modules.pop(spec.name, None)
     contract = _schema(flow)
     props = contract["input_data_schema"]["properties"]
 

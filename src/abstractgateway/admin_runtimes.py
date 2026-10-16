@@ -538,6 +538,254 @@ def _ledger_len(ledger_store: Any, run_id: str) -> Optional[int]:
         return None
 
 
+# ---------------------------------------------------------------------------
+# The desktop tray's Sessions menu (2026-10-15): a row carries the SESSION's
+# title and, when it waits, WHAT it waits for -- typed from the wait record's
+# structure, never from its text.
+# ---------------------------------------------------------------------------
+
+TITLE_MAX = 60  # a menu row; the Observer's card clamps the same text at 80
+WAIT_SUMMARY_MAX = 120
+#: The wait kinds a person must act on; every other kind stays "running".
+ATTENTION_WAIT_KINDS = ("tool_approval", "ask_user")
+#: Where a turn root keeps the text a person typed: the start `input_data`
+#: keys (`run.vars`), in the order the Observer reads them.
+_PROMPT_KEYS = ("prompt", "message", "task")
+
+
+def _first_line(text: Any, limit: int) -> str:
+    s = str(text or "").strip()
+    line = s.splitlines()[0].strip() if s else ""
+    if len(line) <= limit:
+        return line
+    return line[: max(1, limit - 1)].rstrip() + "…"
+
+
+def _load_run(store: Any, run_id: str) -> Optional[Any]:
+    if store is None or not run_id:
+        return None
+    try:
+        return store.load(run_id)
+    except Exception:
+        return None
+
+
+def _run_vars(run: Any) -> Dict[str, Any]:
+    vars_obj = getattr(run, "vars", None)
+    return vars_obj if isinstance(vars_obj, dict) else {}
+
+
+def _automation_title(store: Any, automation_id: str, cache: Dict[str, Optional[str]]) -> Optional[str]:
+    """`vars._meta.automation.title` of the controller run, loaded once per listing."""
+    if automation_id in cache:
+        return cache[automation_id]
+    controller = _load_run(store, automation_id)
+    meta = _run_vars(controller).get("_meta") if controller is not None else None
+    definition = meta.get("automation") if isinstance(meta, dict) and isinstance(meta.get("automation"), dict) else {}
+    title = definition.get("title")
+    cache[automation_id] = str(title).strip() if isinstance(title, str) and title.strip() else None
+    return cache[automation_id]
+
+
+def run_title(run: Any, row: Dict[str, Any], *, store: Any, controllers: Dict[str, Optional[str]]) -> Tuple[str, str]:
+    """(title, title_source): the automation's title for an occurrence
+    ("automation"); else the first line of the prompt a person typed, cut at
+    `TITLE_MAX` ("prompt"); else the workflow's display label ("workflow").
+    An occurrence's own prompt is never used: it carries the trigger's framing
+    header, not what the person asked (the Observer's rule)."""
+    meta = _run_vars(run).get("_meta")
+    meta = meta if isinstance(meta, dict) else {}
+    occurrence = meta.get("occurrence") if isinstance(meta.get("occurrence"), dict) else None
+    if occurrence is not None:
+        automation_id = str(occurrence.get("automation_id") or "").strip()
+        title = _automation_title(store, automation_id, controllers) if automation_id else None
+        if title:
+            return _first_line(title, TITLE_MAX), "automation"
+    else:
+        vars_obj = _run_vars(run)
+        for key in _PROMPT_KEYS:
+            value = vars_obj.get(key)
+            if isinstance(value, str) and value.strip():
+                line = _first_line(value, TITLE_MAX)
+                if line:
+                    return line, "prompt"
+    label = str(row.get("label") or workflow_display_label(row.get("workflow_id")) or row.get("workflow_id") or "").strip()
+    return (label or str(row.get("run_id") or "")), "workflow"
+
+
+def _wait_reason(run: Any) -> Optional[str]:
+    waiting = getattr(run, "waiting", None)
+    reason = getattr(waiting, "reason", None) if waiting is not None else None
+    if reason is None:
+        return None
+    return str(getattr(reason, "value", None) or reason)
+
+
+def _wait_holder(store: Any, run: Any) -> Any:
+    """The run that holds a waiting root's wait: the root itself, or -- when it
+    waits on its sub-workflow -- the newest-updated waiting descendant, found
+    one `list_children(status=waiting)` per level. A sub-run's approval
+    belongs to the parent row."""
+    from abstractruntime.core.models import RunStatus
+
+    cur = run
+    seen: set = set()
+    for _ in range(_ROOT_WALK_MAX_DEPTH):
+        if _wait_reason(cur) != "subworkflow":
+            return cur
+        rid = str(getattr(cur, "run_id", "") or "")
+        if not rid or rid in seen:
+            return cur
+        seen.add(rid)
+        try:
+            children = list(store.list_children(parent_run_id=rid, status=RunStatus.WAITING) or [])
+        except Exception:
+            return cur
+        waiting = [c for c in children if getattr(c, "waiting", None) is not None]
+        if not waiting:
+            return cur
+        cur = max(waiting, key=lambda c: str(getattr(c, "updated_at", "") or ""))
+    return cur
+
+
+def _tool_calls_of(details: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """`[{name, arguments, call_id?}]` from a tool-approval wait record (the
+    runtime's `details.tool_calls`), arguments in full."""
+    out: List[Dict[str, Any]] = []
+    for call in details.get("tool_calls") or []:
+        if not isinstance(call, dict):
+            continue
+        item: Dict[str, Any] = {
+            "name": str(call.get("name") or ""),
+            "arguments": dict(call.get("arguments")) if isinstance(call.get("arguments"), dict) else {},
+        }
+        call_id = call.get("call_id") or call.get("id")
+        if isinstance(call_id, str) and call_id:
+            item["call_id"] = call_id
+        out.append(item)
+    return out
+
+
+def wait_of_run(holder: Any) -> Dict[str, Any]:
+    """`{kind, summary, tool, wait_key, run_id}` of a waiting run, typed from
+    the wait record's STRUCTURE: `paused` (the run was paused: the runtime's
+    pause flag or `pause:<run_id>` key), `tool_approval` (`details.mode ==
+    "approval_required"`, the TOOL_CALLS approval wait), `ask_user` (any other
+    USER wait), `event`, else `other` (a timer, a job, a sub-run). `summary`
+    is what is asked for the two attention kinds, else the "waiting for …"
+    phrase; `tool` names the first call awaiting approval (`+N` when more);
+    `run_id` is the run that HOLDS the wait."""
+    import json as _json
+
+    from abstractruntime.core.vars import is_paused_vars
+
+    waiting = getattr(holder, "waiting", None)
+    run_id = str(getattr(holder, "run_id", "") or "")
+    wait_key = getattr(waiting, "wait_key", None) if waiting is not None else None
+    wait_key = str(wait_key) if isinstance(wait_key, str) and wait_key else None
+    details = getattr(waiting, "details", None) if waiting is not None else None
+    details = details if isinstance(details, dict) else {}
+    reason = _wait_reason(holder)
+    out: Dict[str, Any] = {"kind": "other", "summary": "", "tool": None, "wait_key": wait_key, "run_id": run_id}
+    if is_paused_vars(_run_vars(holder)) or (wait_key is not None and wait_key == f"pause:{run_id}") or details.get("kind") == "pause":
+        out.update(kind="paused", summary="paused")
+    elif reason == "user" and details.get("mode") == "approval_required":
+        calls = _tool_calls_of(details)
+        names = [c["name"] for c in calls if c.get("name")]
+        tool = (names[0] + (f" +{len(names) - 1}" if len(names) > 1 else "")) if names else None
+        first = calls[0] if calls else {}
+        args = _json.dumps(first.get("arguments") or {}, ensure_ascii=False, sort_keys=True, separators=(", ", ": "))
+        out.update(kind="tool_approval", summary=_first_line(f"{first.get('name') or 'tool call'} {args}", WAIT_SUMMARY_MAX), tool=tool)
+    elif reason == "user":
+        out.update(kind="ask_user", summary=_first_line(getattr(waiting, "prompt", None), WAIT_SUMMARY_MAX) or "a question")
+    elif reason == "event":
+        # The runtime's event key is `evt:<scope>:<scope id>:<name>`; the name is the last part.
+        name = wait_key.split(":", 3)[3] if (wait_key and wait_key.startswith("evt:") and wait_key.count(":") >= 3) else None
+        out.update(kind="event", summary=f"waiting for {name or wait_key or 'an event'}")
+    elif reason == "until":
+        out.update(summary="waiting for a timer")
+    elif reason == "subworkflow":
+        out.update(summary="waiting for a sub-run")
+    elif reason == "job":
+        out.update(summary="waiting for a job")
+    else:
+        out.update(summary=f"waiting for {reason or 'something'}")
+    return out
+
+
+def enrich_host_rows(rows: List[Dict[str, Any]], stores: Dict[str, Any]) -> None:
+    """`title`, `title_source` and (waiting rows) `wait` on the SURVIVING rows
+    of the host listing. Cost: one run-document load per row, one controller
+    load per automation per plane, and for a root waiting on its sub-run one
+    `list_children(status=waiting)` per level down to the wait's holder."""
+    controllers: Dict[str, Dict[str, Optional[str]]] = {}
+    for row in rows:
+        plane = str(row.get("plane") or "")
+        store = stores.get(plane)
+        run = _load_run(store, str(row.get("run_id") or ""))
+        row["title"], row["title_source"] = run_title(run, row, store=store, controllers=controllers.setdefault(plane, {}))
+        if row.get("activity") == "waiting" and run is not None and getattr(run, "waiting", None) is not None:
+            row["wait"] = wait_of_run(_wait_holder(store, run))
+
+
+def _cheap_plane_stores(data_dir: Path, default_run_store: Optional[Any]) -> List[Tuple[str, Any]]:
+    """(plane, run store) for the planes `recent_runs_host_wide` reads: the
+    default plane and every materialized user plane. Entity planes are never
+    opened (see there)."""
+    planes: List[Tuple[str, Any]] = []
+    try:
+        stores = _stores_for_dir(Path(data_dir))
+        planes.append(("default", default_run_store if default_run_store is not None else stores.run_store))
+    except Exception:  # noqa: BLE001 - an unreadable default plane leaves the user planes readable
+        pass
+    users_root = Path(data_dir) / "users"
+    if users_root.exists():
+        try:
+            for tenant_dir in sorted(users_root.iterdir()):
+                if not tenant_dir.is_dir():
+                    continue
+                for rt_dir in sorted(tenant_dir.iterdir()):
+                    runtime_dir = rt_dir / "runtime"
+                    if not runtime_dir.is_dir():
+                        continue
+                    try:
+                        planes.append((f"{tenant_dir.name}/{rt_dir.name}", _stores_for_dir(runtime_dir).run_store))
+                    except Exception:  # noqa: BLE001
+                        continue
+        except OSError:
+            pass
+    return planes
+
+
+def host_run_wait(*, data_dir: Path, run_id: str, default_run_store: Optional[Any] = None) -> Optional[Dict[str, Any]]:
+    """The pending wait of ONE run on this machine, for the tray's approval
+    dialog: `{run_id, plane, waiting: true, kind, summary, tool, wait_key,
+    reason, prompt?, choices?, tool_calls: [{name, arguments, call_id?}]}`
+    with the arguments IN FULL; `{run_id, plane, waiting: false, status}` when
+    the run is not waiting; None when no cheap plane holds it."""
+    rid = str(run_id or "").strip()
+    if not rid:
+        return None
+    for plane, store in _cheap_plane_stores(Path(data_dir), default_run_store):
+        run = _load_run(store, rid)
+        if run is None:
+            continue
+        status = getattr(run, "status", None)
+        status_s = str(getattr(status, "value", None) or status or "")
+        waiting = getattr(run, "waiting", None)
+        if status_s != "waiting" or waiting is None:
+            return {"run_id": rid, "plane": plane, "waiting": False, "status": status_s}
+        out: Dict[str, Any] = {"run_id": rid, "plane": plane, "waiting": True, **wait_of_run(run), "reason": _wait_reason(run)}
+        details = waiting.details if isinstance(getattr(waiting, "details", None), dict) else {}
+        out["tool_calls"] = _tool_calls_of(details) if out["kind"] == "tool_approval" else []
+        if getattr(waiting, "prompt", None):
+            out["prompt"] = str(waiting.prompt)
+        if getattr(waiting, "choices", None):
+            out["choices"] = [str(c) for c in waiting.choices]
+        return out
+    return None
+
+
 def _epoch_or_none(value: Any) -> Optional[float]:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return float(value)
@@ -648,6 +896,9 @@ def recent_runs_host_wide(
     # run we then threw away is the expensive mistake this ordering avoids.
     for row in rows:
         row["ledger_len"] = _ledger_len(ledgers.get(str(row.get("plane"))), str(row.get("run_id") or ""))
+    # The session's title and what a waiting row waits for: on the survivors
+    # only, for the same reason (one document load per row).
+    enrich_host_rows(rows, dict(planes))
     out: Dict[str, Any] = {
         "ok": True,
         "items": rows,

@@ -377,6 +377,19 @@ def _runner_needs_restart(runner: Any) -> bool:
         return False
 
 
+def plane_for_principal(principal: GatewayPrincipal, *, data_dir: Optional[Path] = None) -> Path:
+    """THE folder a principal's service works in: the gateway data folder when user accounts are
+    off or for the operator's default runtime (`_principal_uses_default_runtime`), else
+    `<data>/users/<tenant>/<runtime_id>` — the same rule `get_gateway_service_for_principal`
+    applies. `data_dir` defaults to the configured gateway data folder."""
+    base = Path(data_dir) if data_dir is not None else Path(get_gateway_service().config.data_dir)
+    if not gateway_multi_user_enabled() or _principal_uses_default_runtime(principal):
+        return base
+    tenant = safe_principal_component(principal.tenant_id, default="default")
+    runtime_id = safe_principal_component(principal.runtime_id or principal.user_id, default=principal.user_id or "user")
+    return base / "users" / tenant / runtime_id
+
+
 def get_gateway_service_for_principal(principal: GatewayPrincipal) -> GatewayService:
     if not gateway_multi_user_enabled():
         return get_gateway_service()

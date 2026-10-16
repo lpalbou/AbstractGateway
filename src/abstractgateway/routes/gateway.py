@@ -32,7 +32,7 @@ import time
 import uuid
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List, NamedTuple, NoReturn, Optional, Tuple, Union
+from typing import Any, Dict, List, Literal, NamedTuple, NoReturn, Optional, Tuple, Union
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.encoders import jsonable_encoder
@@ -29225,26 +29225,78 @@ async def host_runs(
 
     Admin because it crosses tenant boundaries, like `/admin/runtimes`. Cached
     for a few seconds: the tray polls it, and so may a console.
+
+    Each item also carries the SESSION's `title` (`title_source`: `automation`
+    = the automation's title for an occurrence, `prompt` = the first line of
+    what the person typed cut at 60 chars, `workflow` = the workflow name) and,
+    for a waiting row, `wait` = `{kind: tool_approval | ask_user | paused |
+    event | other, summary, tool, wait_key, run_id}` where `run_id` is the run
+    that HOLDS the wait (a sub-run's approval belongs to its parent row). The
+    payload's `caller_plane` names the plane the caller's `POST /commands`
+    reach (`plane` of each row says where it lives): a desktop tray greys
+    Pause / Stop / approve on every other plane's row.
     """
-    _require_admin_principal(request)
+    principal = _require_admin_principal(request)
     from ..admin_runtimes import recent_runs_host_wide
 
+    svc = get_gateway_service()
     key = (int(limit), round(float(window_hours), 3))
     now = time.time()
     cached = _HOST_RUNS_CACHE
     if cached["payload"] is not None and cached["key"] == key and (now - float(cached["at"])) < _HOST_RUNS_TTL_S:
-        return dict(cached["payload"])
+        payload = cached["payload"]
+    else:
+        payload = await asyncio.to_thread(
+            recent_runs_host_wide,
+            data_dir=Path(svc.config.data_dir),
+            limit=int(limit),
+            since_epoch=now - (float(window_hours) * 3600.0),
+            default_run_store=getattr(getattr(svc, "host", None), "run_store", None),
+        )
+        _HOST_RUNS_CACHE.update({"at": now, "key": key, "payload": payload})
+    # Per caller, so outside the cache.
+    return {**payload, "caller_plane": _host_runs_caller_plane(svc, principal)}
+
+
+def _host_runs_caller_plane(svc: Any, principal: GatewayPrincipal) -> str:
+    """The `plane` word of `recent_runs_host_wide` for the folder this
+    principal's service works in (`plane_for_principal`): "default" for the
+    listing's data folder, else "<tenant>/<runtime id>"."""
+    from ..service import plane_for_principal
+
+    root = Path(svc.config.data_dir)
+    plane_dir = plane_for_principal(principal, data_dir=root)
+    try:
+        same = plane_dir.resolve() == root.resolve()
+    except OSError:
+        same = plane_dir == root
+    return "default" if same else f"{plane_dir.parent.name}/{plane_dir.name}"
+
+
+@router.get("/host/runs/{run_id}/wait")
+async def host_run_wait_route(request: Request, run_id: str) -> Dict[str, Any]:
+    """The pending wait of one run on this machine, with the tool calls
+    awaiting approval IN FULL (`tool_calls: [{name, arguments, call_id?}]`,
+    plus `kind`, `summary`, `tool`, `wait_key`, `reason`, `prompt?`,
+    `choices?`, `plane`). Admin only: it crosses planes like `GET /host/runs`
+    (the desktop tray's "Show and approve…" reads it). `404 run_not_found`
+    when no cheap plane holds the run (entity planes are never opened here);
+    `409 not_waiting` with the run's `status` when it is not waiting."""
+    _require_admin_principal(request)
+    from ..admin_runtimes import host_run_wait
 
     svc = get_gateway_service()
-    payload = await asyncio.to_thread(
-        recent_runs_host_wide,
+    out = await asyncio.to_thread(
+        host_run_wait,
         data_dir=Path(svc.config.data_dir),
-        limit=int(limit),
-        since_epoch=now - (float(window_hours) * 3600.0),
+        run_id=str(run_id),
         default_run_store=getattr(getattr(svc, "host", None), "run_store", None),
     )
-    _HOST_RUNS_CACHE.update({"at": now, "key": key, "payload": payload})
-    return dict(payload)
+    if out is None:
+        raise HTTPException(status_code=404, detail={"reason_code": "run_not_found", "message": f"run '{run_id}' is on no plane this gateway reads here"})
+    if not out.get("waiting"):
+        raise HTTPException(status_code=409, detail={"reason_code": "not_waiting", "message": f"run '{run_id}' is {out.get('status') or 'not waiting'}, not waiting", "status": out.get("status")})
+    return out
 
 
 @router.get("/host/tray")

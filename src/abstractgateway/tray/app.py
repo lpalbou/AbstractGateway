@@ -33,7 +33,7 @@ from .menu_model import (  # noqa: F401 - re-exported: the copy helpers live wit
     APP_NAME,
     DOCS_URL,
     ISSUES_URL,
-    MENU_RUN_ROWS,
+    MENU_RECENT_ROWS,
     RUN_BADGE_UNKNOWN,
     RUN_BADGES,
     STATE_WORDS,
@@ -43,8 +43,10 @@ from .menu_model import (  # noqa: F401 - re-exported: the copy helpers live wit
     Node,
     fmt_duration,
     model_row_label,
+    recent_tally,
+    run_group,
     run_row_label,
-    run_tally,
+    run_title,
     state_lines,
 )
 from .menu_model import middle_ellipsis as _middle_ellipsis  # noqa: F401
@@ -84,10 +86,16 @@ def _ready_line(ready: bool, *, reason: Optional[str] = None, hint: Optional[str
         pass
 
 
+# How long the eject receipt waits for a sample taken AFTER the unload answered
+# (measured 2026-10-16: the process footprint reads up to ~7 GB for well under
+# a second after `eject_model` returns, then settles; the fast lane is 1 Hz).
+EJECT_RECEIPT_SETTLE_S = 1.6
+
+
 def tooltip_text(snap: Snapshot) -> str:
     st = snap.gateway_state
     if st == "paused":
-        return f"{APP_NAME} — Paused (still running)\nWorkflows wait until you resume"
+        return f"{APP_NAME} — Paused (still running)\nSessions wait until you resume"
     if st == "unreachable":
         return f"{APP_NAME} — Not responding\nRetrying on this computer"
     parts = []
@@ -95,6 +103,9 @@ def tooltip_text(snap: Snapshot) -> str:
         parts.append(f"Memory {fmt_bytes(snap.mem_used)} of {fmt_bytes(snap.mem_total)}")
     elif snap.mem_pct is not None:
         parts.append(f"Memory {fmt_pct(snap.mem_pct)}")
+    share = menu_model.gateway_share_words(snap)
+    if share and parts:
+        parts.append(share)
     if snap.gpu_supported and snap.gpu_pct is not None:
         parts.append(f"GPU {fmt_pct(snap.gpu_pct)} busy")
     line2 = " · ".join(parts) if parts else "Collecting…"
@@ -113,11 +124,18 @@ def menu_signature(snap: Snapshot, *, update_phase: str, pending: Optional[str],
         snap.inflight_ticks > 0,
         min(snap.inflight_ticks, 99),
         tuple((r.key, r.locked, r.size_bytes) for r in snap.models),
-        # The Workflows submenu is built from these; without them the menu
-        # would keep showing the run list it was born with. Durations are
-        # deliberately NOT here — they tick every second and would rebuild the
-        # menu under the operator's cursor (see the module docstring).
-        tuple((r.run_id, r.status, r.steps) for r in snap.runs),
+        # The Sessions submenu is built from these (what it READS: which rows,
+        # their state, step count, title, what they wait for, whether this tray
+        # may command them; the automations' state and schedule words); without
+        # them the menu would keep showing the list it was born with. Durations
+        # are deliberately NOT here — they tick every second and would rebuild
+        # the menu under the operator's cursor (see the module docstring).
+        (
+            tuple((r.run_id, r.status, r.steps, r.title, r.wait_kind, r.wait_summary, r.commandable) for r in snap.runs),
+            tuple((a.automation_id, a.status, a.schedule_text, a.capabilities) for a in snap.automations),
+            snap.runs_error is not None,
+            snap.automations_error is not None,
+        ),
         mem_bucket,
         gpu_bucket,
         mem_total_bucket,
@@ -492,7 +510,7 @@ class TrayApp:
         self._last_state = snap.gateway_state
         if prev is None:
             if snap.gateway_state == "paused":
-                self._notify("Workflows are paused", f"{APP_NAME} is running but workflows wait until you choose Resume Workflows from this icon.")
+                self._notify(f"{APP_NAME} is paused", f"{APP_NAME} is running but sessions wait until you choose Resume {APP_NAME} from this icon.")
             return
         if prev == snap.gateway_state:
             return
@@ -610,6 +628,15 @@ class TrayApp:
             "show_activity": self.show_activity,
             "open_runs": self.open_runs,
             "open_run_observer": self.open_run_observer,
+            "open_automations_observer": self.open_automations_observer,
+            "run_pause": self.run_pause,
+            "run_resume": self.run_resume,
+            "run_stop": self.run_stop,
+            "run_approve_show": self.run_approve_show,
+            "run_deny": self.run_deny,
+            "auto_run_now": self.auto_run_now,
+            "auto_pause": self.auto_pause,
+            "auto_resume": self.auto_resume,
             "pause": self.pause,
             "resume": self.resume,
             "confirm_pending": self._run_pending,
@@ -1169,18 +1196,29 @@ class TrayApp:
         self._bg(_do, "tray-open-console")
 
     def open_runs(self) -> None:
-        """The console's Runtimes tab, where runs actually live."""
+        """Open Sessions in Console: the console's Runtimes tab, where sessions actually live."""
         self.open_console_tab("runtimes")
 
     def open_run_observer(self, run_id: str) -> None:
-        """One run in Observer, signed in: the gateway's app door with the
+        """One session in Observer, signed in: the gateway's app door with the
         run's `observer_path` (GET /host/runs) as the path inside the app.
         A stopped Observer the gateway manages is started first."""
-        row = next((r for r in self.sampler.snapshot().runs if r.run_id == run_id), None)
+        row = self._run_row(run_id)
         path = row.observer_path if row is not None else None
         if not path:
-            self._info("Couldn't open the run in Observer", "This gateway did not give the run's Observer link.", style="warning")
+            self._info("Couldn't open the session in Observer", "This gateway did not give the session's Observer link.", style="warning")
             return
+        self._open_observer_path(path)
+
+    def open_automations_observer(self) -> None:
+        """The Observer's Automations page (GET /host/runs `observer_automations_path`), signed in."""
+        path = self.sampler.snapshot().observer_automations_path
+        if not path:
+            self._info("Couldn't open Observer", "This gateway did not give its Automations page link.", style="warning")
+            return
+        self._open_observer_path(path)
+
+    def _open_observer_path(self, path: str) -> None:
         prefix = "/apps/observer"
         if not path.startswith(prefix + "/"):
             raise ValueError(f"observer_path {path!r} is not an Observer page (GET /host/runs seam)")
@@ -1199,9 +1237,164 @@ class TrayApp:
             if r.ok and isinstance(r.data, dict) and r.data.get("open_url"):
                 self._open_signed_in(str(r.data["open_url"]))
             else:
-                self._info("Couldn't open the run in Observer", r.detail, style="warning")
+                self._info("Couldn't open it in Observer", r.detail, style="warning")
 
         self._bg(_do, "tray-open-run-observer")
+
+    # ------------------------------------------------------------- sessions
+
+    def _run_row(self, run_id: str) -> Optional[RunRow]:
+        return next((r for r in self.sampler.snapshot().runs if r.run_id == run_id), None)
+
+    def _run_name(self, run_id: str) -> str:
+        row = self._run_row(run_id)
+        return run_title(row) if row is not None else run_id
+
+    def run_pause(self, run_id: str) -> None:
+        """Pause ONE session (`POST /commands` type `pause`, the whole run tree); it stops at its next step."""
+        name = self._run_name(run_id)
+
+        def _do() -> None:
+            r = self.client.run_command(run_id, "pause")
+            self.sampler.poke()
+            if r.ok:
+                self._notify(f"Pausing {name}", "It stops at its next step; choose Resume on its row to continue.")
+            else:
+                self._info(f"Couldn't pause {name}", r.detail, style="warning")
+
+        self._bg(_do, "tray-run-pause")
+
+    def run_resume(self, run_id: str) -> None:
+        """Resume ONE paused session (`POST /commands` type `resume` without a payload: the tree)."""
+        name = self._run_name(run_id)
+
+        def _do() -> None:
+            r = self.client.run_command(run_id, "resume")
+            self.sampler.poke()
+            if r.ok:
+                self._notify(f"Resuming {name}", "It continues from where it paused.")
+            else:
+                self._info(f"Couldn't resume {name}", r.detail, style="warning")
+
+        self._bg(_do, "tray-run-resume")
+
+    def run_stop(self, run_id: str) -> None:
+        """Stop ONE session after a confirmation (`POST /commands` type `cancel`, the whole run tree)."""
+        name = self._run_name(run_id)
+
+        def _do() -> None:
+            r = self.client.run_command(run_id, "cancel", {"reason": f"Stopped from the {APP_NAME} menu"})
+            self.sampler.poke()
+            if r.ok:
+                self._notify(f"Stopped {name}", "Its history stays; anything it was doing is cancelled.")
+            else:
+                self._info(f"Couldn't stop {name}", r.detail, style="warning")
+
+        self._confirm(
+            f"stop:{run_id}",
+            f"Stop {_middle_ellipsis(name, 24)}",
+            f"Stop {name}?",
+            "It ends now: what it was doing is cancelled and its history stays. To hold it without ending it, choose Pause instead.",
+            ok_label="Stop",
+            danger=True,
+            action=lambda: self._bg(_do, "tray-run-stop"),
+        )
+
+    def _answer_approval(self, row: RunRow, *, approved: bool, wait_key: Optional[str], tool: Optional[str]) -> None:
+        """The resolution: `resume` with `{wait_key, payload: {approved}}` on the run that HOLDS the wait."""
+        holder = row.wait_run_id or row.run_id
+        name = run_title(row)
+        r = self.client.answer_wait(holder, wait_key, {"approved": bool(approved)})
+        self.sampler.poke()
+        if r.ok:
+            self._notify(("Approved " if approved else "Denied ") + (tool or "the tool call"), f"{name} continues.")
+        else:
+            self._info("Couldn't answer the approval", r.detail, style="warning")
+
+    def run_deny(self, run_id: str) -> None:
+        """Deny the tool call a session waits on, from its row (denying needs no dialog: nothing runs)."""
+        row = self._run_row(run_id)
+        if row is None or row.wait_kind != "tool_approval":
+            self._info("Nothing to deny", "This session no longer waits for an approval.", style="warning")
+            return
+        self._bg(lambda: self._answer_approval(row, approved=False, wait_key=row.wait_key, tool=row.wait_tool), "tray-run-deny")
+
+    def run_approve_show(self, run_id: str) -> None:
+        """Show and approve…: read the pending wait IN FULL (`GET
+        /host/runs/{id}/wait`, off the GUI thread), show the tool name and its
+        arguments in a dialog with Approve / Deny / Cancel, and answer only
+        from that dialog — never from a bare menu click. Without a dialog
+        facility, the two-step menu confirmation (Approve only)."""
+        row = self._run_row(run_id)
+        if row is None or row.wait_kind != "tool_approval":
+            self._info("Nothing to approve", "This session no longer waits for an approval.", style="warning")
+            return
+        name = run_title(row)
+        holder = row.wait_run_id or row.run_id
+
+        def _do() -> None:
+            r = self.client.run_wait(holder)
+            if not (r.ok and isinstance(r.data, dict)):
+                self._info("Couldn't read the approval", r.detail, style="warning")
+                self.sampler.poke()
+                return
+            wait = r.data
+            if wait.get("kind") != "tool_approval":
+                self._info("Nothing to approve", f"{name} no longer waits for an approval.")
+                self.sampler.poke()
+                return
+            wait_key = str(wait.get("wait_key") or row.wait_key or "") or None
+            tool = str(wait.get("tool") or row.wait_tool or "") or None
+            title, body = menu_model.approval_dialog(wait, title=name)
+            choice = dialogs.choose(title, body, ("Approve", "Deny", "Cancel"), default_index=2, cancel_index=2)
+            if choice is None:
+                label = f"Approve {_middle_ellipsis(tool or 'the tool call', 24)}"
+                self._pending = {
+                    "key": f"approve:{holder}",
+                    "label": label,
+                    "deadline": time.monotonic() + TWO_STEP_SECONDS,
+                    "action": lambda: self._bg(lambda: self._answer_approval(row, approved=True, wait_key=wait_key, tool=tool), "tray-run-approve"),
+                }
+                self._notify(title, f"{body[:200]}… Open the menu again and choose “Confirm: {label}” to approve, or Deny on the session's row.")
+                self._force_menu_rebuild()
+                return
+            if choice == 2:
+                return
+            self._answer_approval(row, approved=(choice == 0), wait_key=wait_key, tool=tool)
+
+        self._bg(_do, "tray-run-approve")
+
+    # ---------------------------------------------------------- automations
+
+    def _automation_name(self, automation_id: str) -> str:
+        a = next((x for x in self.sampler.snapshot().automations if x.automation_id == automation_id), None)
+        return (a.title if a is not None and a.title else None) or automation_id
+
+    def _automation_command(self, automation_id: str, type_: str, *, done_title: str, done_body: str, fail_title: str) -> None:
+        def _do() -> None:
+            r = self.client.automation_command(automation_id, type_)
+            self.sampler.poke()
+            if r.ok:
+                self._notify(done_title, done_body)
+            else:
+                self._info(fail_title, r.detail, style="warning")
+
+        self._bg(_do, "tray-automation")
+
+    def auto_run_now(self, automation_id: str) -> None:
+        """`POST /automations/{id}/commands` type `automation.run_now`."""
+        name = self._automation_name(automation_id)
+        self._automation_command(automation_id, "automation.run_now", done_title=f"Running {name} now", done_body="Its schedule is unchanged; the run appears under Running.", fail_title=f"Couldn't run {name} now")
+
+    def auto_pause(self, automation_id: str) -> None:
+        """`POST /automations/{id}/commands` type `automation.pause`."""
+        name = self._automation_name(automation_id)
+        self._automation_command(automation_id, "automation.pause", done_title=f"Paused the schedule of {name}", done_body="It runs again when you choose Resume schedule.", fail_title=f"Couldn't pause {name}")
+
+    def auto_resume(self, automation_id: str) -> None:
+        """`POST /automations/{id}/commands` type `automation.resume`."""
+        name = self._automation_name(automation_id)
+        self._automation_command(automation_id, "automation.resume", done_title=f"Resumed the schedule of {name}", done_body="Its next run is on the schedule again.", fail_title=f"Couldn't resume {name}")
 
     def copy_console_link(self) -> None:
         # The PLAIN URL on purpose: a claim link is a credential and does not
@@ -1229,7 +1422,7 @@ class TrayApp:
             if not self.prefs.data.get("pause_explained"):
                 self.prefs.data["pause_explained"] = True
                 self.prefs.save()
-                self._notify("Workflows paused", f"{APP_NAME} keeps running, but no new workflow steps start until you choose Resume. Messages from Telegram, email and other connected apps still arrive and wait.")
+                self._notify(f"{APP_NAME} paused", f"The console keeps answering, but no session takes a new step until you choose Resume {APP_NAME}. Messages from Telegram, email and other connected apps still arrive and wait.")
 
         self._bg(_do, "tray-pause")
 
@@ -1270,6 +1463,10 @@ class TrayApp:
     def _unload_now(self, row: ModelRow, *, force: bool) -> None:
         self._ejecting.add(row.key)
         self._force_menu_rebuild()
+        # The receipt is MEASURED: this process's footprint before the eject and
+        # after the next sample (the Metal driver returns the pages within a
+        # second of the unload answering; the fast lane samples at 1 Hz).
+        before = menu_model.gateway_share_bytes(self.sampler.snapshot())
         try:
             r = self.client.unload_model(row.target, force=force)
             if not r.ok and r.model_locked and not force:
@@ -1284,8 +1481,9 @@ class TrayApp:
             self._force_menu_rebuild()
         self.sampler.poke()
         if r.ok and not (isinstance(r.data, dict) and r.data.get("success") is False):
-            freed = f" · freed {fmt_bytes(row.size_bytes)}" if row.size_bytes is not None else ""
-            self._notify("Model ejected", f"{row.name}{freed}")
+            time.sleep(EJECT_RECEIPT_SETTLE_S)  # a background thread: wait for a post-eject sample
+            after = menu_model.gateway_share_bytes(self.sampler.snapshot())
+            self._notify("Model ejected", menu_model.eject_receipt(row.name, before=before, after=after, size_bytes=row.size_bytes))
         else:
             self._info(f"Couldn't eject {row.name}", _load_failure_detail(r), style="warning")
 
@@ -1319,7 +1517,7 @@ class TrayApp:
         # Hide instead." There is no Hide any more: the icon is here for as
         # long as the gateway is. Quit is now the only thing that removes it,
         # and saying so plainly is the whole warning.
-        self._confirm("quit", f"Quit {APP_NAME}", f"Quit {APP_NAME}?", f"Workflows stop, this icon disappears, and the console goes offline until you start {APP_NAME} again. To free the GPU without stopping anything, use Pause Workflows instead.", ok_label="Quit", danger=True, action=_do)
+        self._confirm("quit", f"Quit {APP_NAME}", f"Quit {APP_NAME}?", f"Sessions stop, this icon disappears, and the console goes offline until you start {APP_NAME} again. To free the GPU without stopping anything, use Pause {APP_NAME} instead.", ok_label="Quit", danger=True, action=_do)
 
     def force_quit(self) -> None:
         def _do() -> None:

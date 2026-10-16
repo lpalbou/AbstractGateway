@@ -212,10 +212,10 @@ def _fake_items() -> List[Dict[str, Any]]:
 
     # The ORDER a gateway sends is not trusted for the active-first rule.
     return [
-        {"run_id": "done-1", "label": "coding-agent:coder", "status": "completed", "activity": "done", "created_at": iso(7200), "updated_at": iso(7000), "ledger_len": 12, "observer_path": "/apps/observer/#run/done-1"},
-        {"run_id": "occ-1", "label": "daily-digest:main", "status": "running", "activity": "running", "created_at": iso(754), "updated_at": iso(2), "ledger_len": 4, "observer_path": "/apps/observer/#run/occ-1"},
-        {"run_id": "chat-1", "label": "deep-research:main", "status": "waiting", "activity": "running", "created_at": iso(30 * 3600), "updated_at": iso(29 * 3600), "ledger_len": 31, "observer_path": "/apps/observer/#run/chat-1"},
-        {"run_id": "ask-1", "label": "basic-agent:x", "status": "waiting", "activity": "waiting", "created_at": iso(3600), "updated_at": iso(3500), "observer_path": "/apps/observer/#run/ask-1"},
+        {"run_id": "done-1", "label": "coding-agent:coder", "status": "completed", "activity": "done", "created_at": iso(7200), "updated_at": iso(7000), "ledger_len": 12, "observer_path": "/apps/observer/#run/done-1", "title": "Write the changelog", "title_source": "prompt"},
+        {"run_id": "occ-1", "label": "daily-digest:main", "status": "running", "activity": "running", "created_at": iso(754), "updated_at": iso(2), "ledger_len": 4, "observer_path": "/apps/observer/#run/occ-1", "title": "Daily digest", "title_source": "automation"},
+        {"run_id": "chat-1", "label": "deep-research:main", "status": "waiting", "activity": "running", "created_at": iso(30 * 3600), "updated_at": iso(29 * 3600), "ledger_len": 31, "observer_path": "/apps/observer/#run/chat-1", "title": "Compare the three vector stores", "title_source": "prompt"},
+        {"run_id": "ask-1", "label": "basic-agent:x", "status": "waiting", "activity": "waiting", "created_at": iso(3600), "updated_at": iso(3500), "observer_path": "/apps/observer/#run/ask-1", "title": "Plan the trip", "title_source": "prompt", "wait": {"kind": "ask_user", "summary": "Which dates?", "tool": None, "wait_key": "ask:1", "run_id": "ask-1"}},
         {"run_id": "old-1", "label": "coding-agent:coder", "status": "completed", "activity": "done", "created_at": iso(30 * 3600), "updated_at": iso(29 * 3600)},
     ]
 
@@ -279,21 +279,27 @@ def test_the_menu_reads_a_fake_gateway_running_first_with_elapsed_time_and_obser
         app._apps = (AppEntry(id="observer", name="Observer", status="running", source="gateway"),)
         app._apps_fetched = True
         items = _render(app)
-        wf = _sub(items, "Workflows")
+        wf = _sub(items, "Sessions")
         labels = [getattr(i, "text", "") for i in wf if hasattr(i, "text")]
 
-        assert labels[0] == "Now: 2 running · 1 waiting — last 24 hours: 1 done", labels
+        # Section headers (2026-10-15): Running, Need attention, Recent — with
+        # the SESSION's title on every row, never the workflow id.
+        assert labels[0] == "Running (2)", labels
+        assert "Need attention (1)" in labels and "Recent — 1 done" in labels, labels
         runs = [lbl for lbl in labels if lbl[:1] in {"🟢", "🟡", "✅", "❌", "⚪"}]
-        assert runs[0].startswith("🟢 daily-digest:main · 4 steps · 12m ") and runs[0].endswith(" so far"), runs
-        assert runs[1].startswith("🟢 deep-research:main · 31 steps · 30h ") and runs[1].endswith(" so far"), runs
-        assert runs[2].startswith("🟡 basic-agent:x · 1h 00m so far") or runs[2].startswith("🟡 basic-agent:x · 59m"), runs
-        assert runs[3] == "✅ coding-agent:coder · 12 steps · 3m 20s", runs
-        assert "No runs in the last 24 hours" not in labels
+        assert runs[0].startswith("🟢 Daily digest · step 4 · 12m ") and runs[0].endswith(" so far"), runs
+        assert runs[1].startswith("🟢 Compare the three vector stores · step 31 · 30h ") and runs[1].endswith(" so far"), runs
+        assert runs[2] == "🟡 Plan the trip · a question", runs
+        assert runs[3] == "✅ Write the changelog · 12 steps · 3m 20s", runs
+        assert not any("daily-digest:main" in lbl or "basic-agent:x" in lbl for lbl in runs), runs
 
         first = _sub(wf, runs[0])
         assert first[0].text.startswith("Running · started ")
         open_item = next(i for i in first if i.text == "Open in Observer")
         assert open_item.kw.get("enabled", True) is True
+        # A question's row shows the question; free-text answers stay in the clients.
+        asked = _sub(wf, runs[2])
+        assert asked[0].text == "Which dates?" and [i.text for i in asked[1:]] == ["Open in Observer"]
 
         # Clicking it asks the gateway's app door for the run's page inside Observer.
         done = threading.Event()
@@ -308,7 +314,7 @@ def test_the_menu_reads_a_fake_gateway_running_first_with_elapsed_time_and_obser
 
 
 def test_open_in_observer_is_greyed_when_observer_cannot_open(tmp_path: Path) -> None:
-    from abstractgateway.tray.menu_model import observer_open_available, workflow_items
+    from abstractgateway.tray.menu_model import observer_open_available, sessions_items
     from abstractgateway.tray.apps import AppEntry
     from abstractgateway.tray.sampler import RunRow
     from test_gateway_tray_helper import _snap
@@ -319,7 +325,7 @@ def test_open_in_observer_is_greyed_when_observer_cannot_open(tmp_path: Path) ->
     assert observer_open_available((AppEntry(id="observer", name="Observer", status="stopped", source="gateway"),)) is True
 
     def open_node(observer: bool):
-        row = [n for n in workflow_items(snap, observer=observer) if n.children][0]
+        row = [n for n in sessions_items(snap, observer=observer) if n.children][0]
         return next(c for c in row.children if c.label == "Open in Observer")
 
     assert open_node(False).enabled is False

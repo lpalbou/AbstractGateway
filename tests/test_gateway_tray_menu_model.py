@@ -101,8 +101,10 @@ def _find(nodes, label_prefix: str) -> mm.Node:
 def test_top_level_order_matches_the_design() -> None:
     nodes = mm.build_menu(_inputs())
     labels = [n.label for n in nodes if not n.separator]
-    assert labels[:2] == ["AbstractGateway — Running", "Ready · 1 model loaded · 14.7 GB"]
-    order = ["Open Console", "Apps", "Workflows", "Pause Workflows", "Models", "Check for Updates…", "Restart AbstractGateway…", "Start AbstractGateway at login", "Help", "Quit AbstractGateway…"]
+    # ONE header line (2026-10-15): no "Ready · N models loaded" and no grey URL line under it.
+    assert labels[0] == "AbstractGateway — Running" and labels[1] == "Open Console"
+    assert not any(label.startswith("Ready ·") or label.startswith("http://") for label in labels)
+    order = ["Open Console", "Apps", "Addresses", "Sessions", "⏸ Pause AbstractGateway", "Models", "Check for Updates…", "Restart AbstractGateway…", "Start AbstractGateway at login", "Network", "Help", "Quit AbstractGateway…"]
     positions = [labels.index(x) for x in order]
     assert positions == sorted(positions), labels
     assert not any(label.startswith("Loaded Models") for label in labels), "the old flat list is gone"
@@ -130,7 +132,8 @@ def test_models_never_say_no_models_loaded_over_held_gateway_memory() -> None:
     held = _snap(models=(), device_held_bytes=92 * GB)
     nodes = mm.build_menu(_inputs(snap=held))
     labels = [n.label for n in mm.iter_nodes(nodes) if not n.separator]
-    assert "Ready · gateway still holds 92.0 GB (no model listed); eject or restart" in labels
+    # The header no longer carries a models line (2026-10-15); the Models
+    # submenu is where the held memory is named, loudly.
     assert not any("no models loaded" in lab.lower() for lab in labels), labels
     models = [n.label for n in _find(nodes, "Models").children if not n.separator]
     assert models[0].endswith("gateway holds 92.0 GB")
@@ -140,7 +143,7 @@ def test_models_never_say_no_models_loaded_over_held_gateway_memory() -> None:
     for quiet in (None, 32 << 20):
         nodes = mm.build_menu(_inputs(snap=_snap(models=(), device_held_bytes=quiet)))
         labels = [n.label for n in mm.iter_nodes(nodes) if not n.separator]
-        assert "Ready · no models loaded" in labels and "No models loaded" in labels
+        assert "No models loaded" in labels
         assert not any("still holds" in lab for lab in labels)
 
 
@@ -654,7 +657,9 @@ def _net(**over: Any) -> Dict[str, Any]:
 def test_network_line_under_the_status_and_the_radio_submenu() -> None:
     nodes = mm.build_menu(_inputs(network=mm.parse_network(NETWORK_LOCAL)))
     labels = [n.label for n in nodes if not n.separator]
-    assert labels[2] == "http://127.0.0.1:8080 · localhost only"
+    # The grey URL line under the header is gone (2026-10-15): the addresses
+    # live under Addresses ▸, the mode under Network ▸.
+    assert not any(label.startswith("http://") for label in labels)
     net = _find(nodes, "Network")
     kids = [n for n in net.children if not n.separator]
     assert kids[0].label == "Now: localhost only · 127.0.0.1:8080" and kids[0].enabled is False
@@ -674,7 +679,6 @@ def test_network_line_under_the_status_and_the_radio_submenu() -> None:
 def test_a_pending_change_says_restart_required_everywhere_and_offers_the_restart() -> None:
     nv = mm.parse_network(_net(configured={"mode": "lan"}, restart_required=True, warnings=["Other devices on this network can reach the sign-in page."]))
     nodes = mm.build_menu(_inputs(network=nv))
-    assert [n.label for n in nodes if not n.separator][2] == "http://127.0.0.1:8080 · localhost only · restart required"
     net = _find(nodes, "Network — restart required")
     assert _find(net.children, "Local network").checked is True, "the radio shows what is SET; 'Now:' shows what runs"
     assert _find(net.children, "Restart to apply (local network)").action == ("network_restart",)
@@ -687,24 +691,30 @@ def test_auth_not_ok_for_mode_is_shown_with_the_fix() -> None:
     assert _find(net.children, "⚠ Sign-in is not set up for this mode: abstractgateway-config bootstrap-admin").enabled is False
 
 
-def test_copy_address_lists_every_address_url_first() -> None:
+def test_addresses_lists_every_address_url_first_and_says_where_it_reaches() -> None:
+    """Addresses ▸ (was Copy Address, 2026-10-15): the URL leads, never
+    shortened; the words after it say where it reaches (the gateway's
+    `kind`); a click copies it."""
     nodes = mm.build_menu(_inputs(network=mm.parse_network(NETWORK_LOCAL)))
-    copy = _find(nodes, "Copy Address")
-    assert [(n.label, n.action) for n in copy.children] == [
-        ("http://127.0.0.1:8080", ("copy_address", "http://127.0.0.1:8080")),
-        ("http://192.168.1.23:8080 (Wi-Fi)", ("copy_address", "http://192.168.1.23:8080")),
-        ("http://mymac.local:8080", ("copy_address", "http://mymac.local:8080")),
+    assert not any(n.label == "Copy Address" for n in nodes)
+    addresses = _find(nodes, "Addresses")
+    assert [(n.label, n.action) for n in addresses.children] == [
+        ("http://127.0.0.1:8080 · this computer", ("copy_address", "http://127.0.0.1:8080")),
+        ("http://192.168.1.23:8080 · local network (Wi-Fi) · after restart", ("copy_address", "http://192.168.1.23:8080")),
+        ("http://mymac.local:8080 · this computer's name", ("copy_address", "http://mymac.local:8080")),
     ]
+    tail = mm.parse_network(_net(addresses=[{"kind": "tailscale", "url": "http://mac.tail.ts.net:8080"}, {"kind": "public", "url": "http://1.2.3.4:8080"}]))
+    assert [n.label for n in _find(mm.build_menu(_inputs(network=tail)), "Addresses").children] == ["http://mac.tail.ts.net:8080 · tailscale", "http://1.2.3.4:8080 · internet"]
 
 
 def test_without_the_network_route_the_menu_says_so_and_still_copies_this_address() -> None:
     nv = mm.NetworkView(available=False, error="this gateway has no network settings yet")
     nodes = mm.build_menu(_inputs(network=nv, base_url="http://127.0.0.1:18840"))
-    assert [n.label for n in nodes if not n.separator][2] != "http://127.0.0.1:18840 · localhost only"
     assert _find(nodes, "Network").children[0].label == "this gateway has no network settings yet"
-    copy = _find(nodes, "Copy Address")
-    assert copy.children[0].action == ("copy_address", "http://127.0.0.1:18840")
-    assert copy.children[1].label == "Other addresses: this gateway has no network settings yet"
+    addresses = _find(nodes, "Addresses")
+    assert addresses.children[0].label == "http://127.0.0.1:18840 · this computer"
+    assert addresses.children[0].action == ("copy_address", "http://127.0.0.1:18840")
+    assert addresses.children[1].label == "Other addresses: this gateway has no network settings yet"
 
 
 class NetClient(FakeClient):
@@ -838,3 +848,26 @@ def test_held_memory_names_its_basis_its_holders_and_pending_ejects() -> None:
     assert "Will eject mlx/old when the in-flight call ends." in models
     assert models_note_text(loaded) == "Will eject mlx/old when the in-flight call ends."
     assert models_note_text(_snap(models=(_loaded(),))) is None
+
+
+def test_meters_name_the_gateways_own_share_and_the_eject_receipt_is_measured() -> None:
+    """Operator 2026-10-16: 'unloading a model doesn't completely free the memory' -- read off a
+    machine-wide gauge other apps dominate. The meters line and the eject receipt now say what THIS
+    gateway process occupies (footprint first: it counts Metal buffers; RSS when no footprint)."""
+    from abstractgateway.tray.menu_model import eject_receipt, gateway_share_bytes, gateway_share_words, fmt_bytes
+
+    assert gateway_share_bytes(_snap(process_footprint=int(2.6 * GB))) == int(2.6 * GB)
+    assert gateway_share_bytes(_snap()) == 3 * GB  # older snapshots: RSS
+    assert gateway_share_bytes(_snap(process_rss=None)) is None
+    assert gateway_share_words(_snap(process_footprint=int(2.6 * GB))) == f"this gateway {fmt_bytes(int(2.6 * GB))}"
+    assert gateway_share_words(_snap(process_rss=None)) == ""
+
+    # The menu's meters line carries the share between the machine-wide figure and the GPU.
+    line = _find(mm.build_menu(_inputs(snap=_snap(process_footprint=int(2.6 * GB)))), "Memory ").label
+    assert line == f"Memory {fmt_bytes(38 * GB)} of {fmt_bytes(128 * GB)} (29%) · this gateway {fmt_bytes(int(2.6 * GB))} · GPU 35% busy"
+    assert "this gateway" not in _find(mm.build_menu(_inputs(snap=_snap(process_rss=None))), "Memory ").label
+
+    # The receipt: measured when both samples exist, the catalog size otherwise, the name alone last.
+    assert eject_receipt("Qwen", before=int(18.4 * GB), after=int(2.6 * GB), size_bytes=15 * GB) == f"Qwen · this gateway {fmt_bytes(int(18.4 * GB))} → {fmt_bytes(int(2.6 * GB))}"
+    assert eject_receipt("Qwen", before=None, after=int(2.6 * GB), size_bytes=15 * GB) == f"Qwen · freed {fmt_bytes(15 * GB)}"
+    assert eject_receipt("Qwen", before=None, after=None, size_bytes=None) == "Qwen"

@@ -262,6 +262,22 @@ def _occurrence_answer(child: Any, artifact_store: Any) -> Dict[str, Any]:
     return normalize_occurrence_output(child, artifact_store=artifact_store)
 
 
+def context_used_tokens(child: Any) -> Optional[int]:
+    """The token size of the automation session's history as last replayed: the
+    `replayed_tokens` of the history-window receipt the controller froze with the
+    occurrence's inputs (`vars._runtime.session_history`, ADR-0026 — "newest whole
+    turns up to the budget, recorded"; runtime automations/controller.py
+    `prepare_context`). READ, never computed: an occurrence without a receipt
+    (independent context, a run older than the receipt, a legacy wrapper) is None."""
+    vars_ = getattr(child, "vars", None)
+    runtime_ns = vars_.get("_runtime") if isinstance(vars_, dict) else None
+    note = runtime_ns.get("session_history") if isinstance(runtime_ns, dict) else None
+    n = note.get("replayed_tokens") if isinstance(note, dict) else None
+    if isinstance(n, bool) or not isinstance(n, int) or n < 0:
+        return None
+    return n
+
+
 def _attention_block(svc: Any, principal: Any, controller: Any, waits: List[Dict[str, Any]]) -> Dict[str, Any]:
     latest = automation_attention_seq(controller)
     seen = attention_store_for(svc, principal).seen_seq(str(controller.run_id))
@@ -355,6 +371,11 @@ def automation_summary_row(svc: Any, principal: Any, controller: Any, *, owner_z
         if occ.get("finished_at"):
             last["finished_at"] = occ["finished_at"]
         out["last_occurrence"] = last
+        # Observer board (2026-10-15): the context bar's `used` — the history the
+        # last occurrence was handed, as its own run recorded it; null when unrecorded.
+        out["context_used_tokens"] = context_used_tokens(child)
+    else:
+        out["context_used_tokens"] = None
     out["last_notification"] = _last_notification(svc, str(controller.run_id))
     return out
 
@@ -387,6 +408,8 @@ def legacy_summary_row(run: Any, run_store: Any, *, owner_zone: Optional[str] = 
         # No binding exists for a legacy schedule: its root run id stands in.
         "trigger": {"binding_id": str(run.run_id), "source_id": "schedule", "source_version": 1, "config": config},
         "context_mode": legacy["context_mode"],
+        # A legacy wrapper's children record no history-window receipt.
+        "context_used_tokens": None,
         "occurrence_count": len(children),
         "attention": {"pending_waits": 0, "unread": False, "unseen_count": 0, "cursor": format_attention_cursor(0), "items": [], "waits": []},
         "legacy": True,
