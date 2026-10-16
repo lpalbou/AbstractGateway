@@ -886,6 +886,13 @@ def require_runtime_features(runtime: Any) -> None:
             missing.append("the mail watcher's own-automatic-mail guard (EmailInboxFeeder(is_own_sent=...))")
     except ImportError:
         missing.append("the mail watcher (abstractruntime.email.EmailInboxFeeder)")
+    try:
+        from abstractruntime.storage.json_files import JsonFileRunStore
+
+        if not callable(getattr(JsonFileRunStore, "rescan_active_index", None)):
+            missing.append("the active-run index (JsonFileRunStore.rescan_active_index, AbstractRuntime 0.10.1)")
+    except ImportError:
+        missing.append("the JSON run store (abstractruntime.storage.json_files.JsonFileRunStore)")
     if missing:
         try:
             from importlib.metadata import version
