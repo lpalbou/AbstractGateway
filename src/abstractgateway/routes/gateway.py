@@ -9839,11 +9839,6 @@ async def list_runs(
     archive_filter = (bool(root_only) or bool(archived_only)) and not (isinstance(session_id, str) and session_id.strip()) and not (
         isinstance(parent_run_id, str) and parent_run_id.strip()
     )
-    if archive_filter and bool(archived_only) and not archived_map:
-        # NOTHING ARCHIVED: the answer is known before any scan (2026-10-16
-        # adversary G3: this listing used to run the escalating scan twice —
-        # 1,005 → 4,020 rows, 8–10 s under contention — to return 0 rows).
-        return {"items": [], "count": 0, "offset": int(offset), "has_more": False, "archived_sessions": 0}
     # Session purpose (session_kinds.py): turn listings show conversations by
     # default, so a Docs assistant chat never reaches a conversation list.
     from ..session_kinds import SessionKindsUnreadable, docs_qa_migration_done, migrate_docs_qa_sessions, session_kinds as _session_kinds
@@ -9868,6 +9863,10 @@ async def list_runs(
         kinds_map = _session_kinds(svc.config.data_dir)
     except SessionKindsUnreadable as exc:
         raise HTTPException(status_code=500, detail={"reason_code": "session_kinds_unreadable", "message": str(exc)}) from None
+    if archive_filter and bool(archived_only) and not archived_map:
+        # NOTHING ARCHIVED: the answer is known before any scan, after the
+        # filters are validated (an unknown `kind` is still a 400).
+        return {"items": [], "count": 0, "offset": int(offset), "has_more": False, "archived_sessions": 0}
 
     def _kind_of(summary: Dict[str, Any]) -> str:
         return kinds_map.get(str(summary.get("session_id") or ""), "conversation")
@@ -10210,53 +10209,53 @@ async def list_runs(
 
     # SINGLE-FLIGHT (2026-10-16 adversary G2): the Observer's board, the tray,
     # the Assistant and the runner ask this page within the same second;
-    # identical asks IN FLIGHT share one computation. No reuse after it lands
-    # (_RUNS_LIST_TTL_S = 0): a listing right after an archive, a cancel or a
-    # start must show it. Keyed by the caller's store (its plane) and the exact
-    # query string, so two accounts or two filters never share a page.
-    # The caller's runtime folder names the plane (the offloading wrapper keeps the file
-    # store as `_inner`); a store without a folder (sqlite) is keyed by its object, which the
-    # per-principal service cache keeps stable.
+    # identical asks IN FLIGHT share one computation. A page is never reused
+    # once it has landed, and the key carries the gateway's write generation
+    # (bumped by every mutating request), so an ask issued after an archive, a
+    # cancel or a start never joins a computation that began before it. Keyed
+    # by the caller's plane and the exact query string, so two accounts or two
+    # filters never share a page.
     inner = getattr(rs, "_inner", rs)
     plane = getattr(inner, "_base", None) or getattr(rs, "_base", None) or id(rs)
-    key = f"{plane}|{request.url.query}"
+    key = f"{plane}|{http_write_generation()}|{request.url.query}"
     return await _coalesced_runs_listing(key, _collect_items)
 
 
-_RUNS_LIST_TTL_S = 0.0  # > 0 would reuse a landed page for that long: read-after-write would break
-_runs_list_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
-_runs_list_inflight: Dict[str, "asyncio.Future[Dict[str, Any]]"] = {}
+_http_write_generation = 0
+
+
+def note_http_write() -> None:
+    """Called by the app for every mutating request (anything but GET/HEAD/OPTIONS):
+    a listing asked after it never shares an older in-flight computation."""
+    global _http_write_generation
+    _http_write_generation += 1
+
+
+def http_write_generation() -> int:
+    return _http_write_generation
+
+
+_runs_list_inflight: Dict[str, "asyncio.Task[Dict[str, Any]]"] = {}
 
 
 async def _coalesced_runs_listing(key: str, compute: Any) -> Dict[str, Any]:
-    """Share one computation among identical concurrent asks and reuse an
-    answer younger than the TTL. A failure reaches every waiter; the event
-    loop is single-threaded, so the two dicts need no lock."""
-    now = time.monotonic()
-    hit = _runs_list_cache.get(key)
-    if hit is not None and now - hit[0] < _RUNS_LIST_TTL_S:
-        return hit[1]
-    inflight = _runs_list_inflight.get(key)
-    if inflight is not None:
-        return await inflight
-    loop = asyncio.get_running_loop()
-    fut: "asyncio.Future[Dict[str, Any]]" = loop.create_future()
-    _runs_list_inflight[key] = fut
+    """Share one computation among identical concurrent asks. The work runs
+    as ONE task; every waiter awaits a shield of it, so a waiter that goes
+    away (its client disconnected) cancels nobody else, and a failure reaches
+    every waiter. The event loop is single-threaded: the dict needs no lock."""
+    task = _runs_list_inflight.get(key)
+    if task is None:
+        task = asyncio.create_task(asyncio.to_thread(compute))
+        _runs_list_inflight[key] = task
+        task.add_done_callback(lambda t, k=key: _runs_list_inflight.pop(k, None) if _runs_list_inflight.get(k) is t else None)
     try:
-        result = await asyncio.to_thread(compute)
-    except BaseException as e:  # noqa: BLE001 - every waiter must see the failure
-        _runs_list_inflight.pop(key, None)
-        if not fut.done():
-            fut.set_exception(e)
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        # This waiter was cancelled; the shared task keeps running for the others
+        # (and, when nobody is left, finishes unobserved — its result is simply dropped).
+        if not task.done():
+            task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
         raise
-    _runs_list_inflight.pop(key, None)
-    _runs_list_cache[key] = (time.monotonic(), result)
-    if len(_runs_list_cache) > 256:
-        for old_key in sorted(_runs_list_cache, key=lambda k: _runs_list_cache[k][0])[:64]:
-            _runs_list_cache.pop(old_key, None)
-    if not fut.done():
-        fut.set_result(result)
-    return result
 
 
 @router.get("/runs/{run_id}/input_data")

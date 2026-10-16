@@ -66,6 +66,9 @@ def test_archived_only_with_nothing_archived_answers_without_a_scan(tmp_path: Pa
         assert r.status_code == 200, r.text
         assert r.json() == {"items": [], "count": 0, "offset": 0, "has_more": False, "archived_sessions": 0}
         assert counter == {"computed": 0, "asked": 0}, "nothing archived → answered before any computation"
+        # …but only after the filters are validated: an unknown kind is still a 400 (review 2 P2).
+        bad = client.get("/api/gateway/runs?limit=200&root_only=true&archived_only=true&kind=bogus", headers=headers)
+        assert bad.status_code == 400, bad.text
         # The same page with archives present would compute: the plain root listing does.
         r2 = client.get("/api/gateway/runs?limit=200&root_only=true&include_metrics=true", headers=headers)
         assert r2.status_code == 200
@@ -77,12 +80,10 @@ def test_identical_concurrent_listings_share_one_computation_and_a_sequential_on
 
     app, headers = _client(tmp_path, monkeypatch)
     counter = _count_listing_computations(monkeypatch)
-    gw._runs_list_cache.clear()
     with TestClient(app) as client:
         start = client.post("/api/gateway/runs/start", headers=headers, json={"bundle_id": "bundle-coalesce", "flow_id": "root", "input_data": {}})
         assert start.status_code == 200, start.text
         run_id = start.json()["run_id"]
-        gw._runs_list_cache.clear()
         counter["computed"] = counter["asked"] = 0
         url = "/api/gateway/runs?status=running&limit=500"
         results: list = []
@@ -110,3 +111,30 @@ def test_identical_concurrent_listings_share_one_computation_and_a_sequential_on
         assert r3.status_code == 200
         assert counter["computed"] == before + 2
         assert any(str(it.get("run_id")) == run_id for it in r3.json().get("items", [])) or r3.json().get("items") == []
+
+
+def test_a_listing_asked_after_a_write_never_joins_an_older_computation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review 2 P1-4: a GET sent right after a completed archive/cancel/start could join a
+    computation that began before the write and get the old page. The key carries the write
+    generation, bumped by every mutating request."""
+    from abstractgateway.routes import gateway as gw
+
+    app, headers = _client(tmp_path, monkeypatch)
+    counter = _count_listing_computations(monkeypatch)
+    with TestClient(app) as client:
+        start = client.post("/api/gateway/runs/start", headers=headers, json={"bundle_id": "bundle-coalesce", "flow_id": "root", "input_data": {}})
+        assert start.status_code == 200, start.text
+        counter["computed"] = counter["asked"] = 0
+        url = "/api/gateway/runs?status=running&limit=500"
+        results: list = []
+        first = threading.Thread(target=lambda: results.append(client.get(url, headers=headers)))
+        first.start()
+        time.sleep(0.05)  # the first computation is in flight (the spy sleeps 0.25 s)
+        gen_before = gw.http_write_generation()
+        write = client.post("/api/gateway/runs/start", headers=headers, json={"bundle_id": "bundle-coalesce", "flow_id": "root", "input_data": {}})
+        assert write.status_code == 200
+        assert gw.http_write_generation() > gen_before, "a mutating request bumps the generation"
+        after = client.get(url, headers=headers)
+        first.join()
+        assert after.status_code == 200 and results[0].status_code == 200
+        assert counter["computed"] == 2, "the ask after the write computed its own page"

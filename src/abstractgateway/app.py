@@ -241,6 +241,17 @@ app.include_router(triage_router, prefix="/api")
 # it measures time-to-first-byte, not stream lifetime, which is the number
 # the connect investigation needs.
 @app.middleware("http")
+async def _note_mutations(request, call_next):  # noqa: ANN001 - Starlette middleware signature
+    """Every mutating request bumps the runs-listing write generation (routes.gateway):
+    a listing asked after a write never shares an in-flight computation that began before it."""
+    if request.method not in ("GET", "HEAD", "OPTIONS"):
+        from .routes.gateway import note_http_write
+
+        note_http_write()
+    return await call_next(request)
+
+
+@app.middleware("http")
 async def _request_timing(request, call_next):  # noqa: ANN001 - Starlette middleware signature
     import logging
     import os
