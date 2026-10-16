@@ -98,7 +98,7 @@ _role_lock = threading.Lock()
 # 0.9.0: automation.unarchive (an archived automation comes back paused with its history).
 # 0.9.1: streamed speech is never a run wait; close_interrupted_voice_stream for legacy waits.
 # 0.10.0: schedule@2 calendar rules (daily/weekly/monthly in the owner's time zone) and set_occurrence/registry pins.
-ABSTRACTRUNTIME_FLOOR = "0.10.1"
+ABSTRACTRUNTIME_FLOOR = "0.10.2"
 
 
 class LiveDeltaError(RuntimeError):
@@ -893,6 +893,13 @@ def require_runtime_features(runtime: Any) -> None:
             missing.append("the active-run index (JsonFileRunStore.rescan_active_index, AbstractRuntime 0.10.1)")
     except ImportError:
         missing.append("the JSON run store (abstractruntime.storage.json_files.JsonFileRunStore)")
+    try:
+        from abstractruntime.visualflow_compiler.visual import code_executor
+
+        if not callable(getattr(code_executor, "sandbox_import_check", None)):
+            missing.append("standard-library imports in the Code-node sandbox (code_executor.sandbox_import_check, AbstractRuntime 0.10.2)")
+    except ImportError:
+        missing.append("the Code-node executor (abstractruntime.visualflow_compiler.visual.code_executor)")
     if missing:
         try:
             from importlib.metadata import version

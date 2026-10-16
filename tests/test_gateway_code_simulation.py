@@ -71,7 +71,7 @@ def test_visualflow_code_simulation_reports_sandbox_errors(tmp_path: Path, monke
     assert body["ok"] is False
     assert body["success"] is False
     assert body["output"] is None
-    assert "Imports are not allowed" in body["error"]
+    assert "import of 'os' is not allowed in the sandbox" in body["error"]
     assert body["execution"]["permissions"] == "sandbox"
     assert body["diagnostics"]["phase"] == "compile"
 
