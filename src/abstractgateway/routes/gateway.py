@@ -10214,7 +10214,12 @@ async def list_runs(
     # (_RUNS_LIST_TTL_S = 0): a listing right after an archive, a cancel or a
     # start must show it. Keyed by the caller's store (its plane) and the exact
     # query string, so two accounts or two filters never share a page.
-    key = f"{getattr(rs, '_base', '') or id(rs)}|{request.url.query}"
+    # The caller's runtime folder names the plane (the offloading wrapper keeps the file
+    # store as `_inner`); a store without a folder (sqlite) is keyed by its object, which the
+    # per-principal service cache keeps stable.
+    inner = getattr(rs, "_inner", rs)
+    plane = getattr(inner, "_base", None) or getattr(rs, "_base", None) or id(rs)
+    key = f"{plane}|{request.url.query}"
     return await _coalesced_runs_listing(key, _collect_items)
 
 
