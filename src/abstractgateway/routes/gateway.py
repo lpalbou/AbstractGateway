@@ -9839,6 +9839,11 @@ async def list_runs(
     archive_filter = (bool(root_only) or bool(archived_only)) and not (isinstance(session_id, str) and session_id.strip()) and not (
         isinstance(parent_run_id, str) and parent_run_id.strip()
     )
+    if archive_filter and bool(archived_only) and not archived_map:
+        # NOTHING ARCHIVED: the answer is known before any scan (2026-10-16
+        # adversary G3: this listing used to run the escalating scan twice —
+        # 1,005 → 4,020 rows, 8–10 s under contention — to return 0 rows).
+        return {"items": [], "count": 0, "offset": int(offset), "has_more": False, "archived_sessions": 0}
     # Session purpose (session_kinds.py): turn listings show conversations by
     # default, so a Docs assistant chat never reaches a conversation list.
     from ..session_kinds import SessionKindsUnreadable, docs_qa_migration_done, migrate_docs_qa_sessions, session_kinds as _session_kinds
@@ -10203,7 +10208,50 @@ async def list_runs(
             ]
         return out_page
 
-    return await asyncio.to_thread(_collect_items)
+    # SINGLE-FLIGHT + SHORT TTL (2026-10-16 adversary G2): the Observer's board,
+    # the tray, the Assistant and the runner all ask this page within the same
+    # second; identical asks in flight share ONE computation and an answer
+    # younger than _RUNS_LIST_TTL_S is handed out again. Keyed by the caller's
+    # store (its plane) and the exact query string, so two accounts or two
+    # filters never share a page.
+    key = f"{getattr(rs, '_base', '') or id(rs)}|{request.url.query}"
+    return await _coalesced_runs_listing(key, _collect_items)
+
+
+_RUNS_LIST_TTL_S = 1.5
+_runs_list_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
+_runs_list_inflight: Dict[str, "asyncio.Future[Dict[str, Any]]"] = {}
+
+
+async def _coalesced_runs_listing(key: str, compute: Any) -> Dict[str, Any]:
+    """Share one computation among identical concurrent asks and reuse an
+    answer younger than the TTL. A failure reaches every waiter; the event
+    loop is single-threaded, so the two dicts need no lock."""
+    now = time.monotonic()
+    hit = _runs_list_cache.get(key)
+    if hit is not None and now - hit[0] < _RUNS_LIST_TTL_S:
+        return hit[1]
+    inflight = _runs_list_inflight.get(key)
+    if inflight is not None:
+        return await inflight
+    loop = asyncio.get_running_loop()
+    fut: "asyncio.Future[Dict[str, Any]]" = loop.create_future()
+    _runs_list_inflight[key] = fut
+    try:
+        result = await asyncio.to_thread(compute)
+    except BaseException as e:  # noqa: BLE001 - every waiter must see the failure
+        _runs_list_inflight.pop(key, None)
+        if not fut.done():
+            fut.set_exception(e)
+        raise
+    _runs_list_inflight.pop(key, None)
+    _runs_list_cache[key] = (time.monotonic(), result)
+    if len(_runs_list_cache) > 256:
+        for old_key in sorted(_runs_list_cache, key=lambda k: _runs_list_cache[k][0])[:64]:
+            _runs_list_cache.pop(old_key, None)
+    if not fut.done():
+        fut.set_result(result)
+    return result
 
 
 @router.get("/runs/{run_id}/input_data")

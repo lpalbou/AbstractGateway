@@ -907,6 +907,11 @@ def recent_runs_host_wide(
         "has_more": more,
         "planes": [p for p, _ in planes],
     }
+    # The Observer's Automations page (the tray's "Open in Observer" on a
+    # Scheduled row), served like each row's `observer_path`.
+    from .account_activity import observer_automations_path
+
+    out["observer_automations_path"] = observer_automations_path()
     if skipped:
         out["skipped_entity_planes"] = skipped
     if warnings:
