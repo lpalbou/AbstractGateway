@@ -116,6 +116,8 @@ def test_base_install_keeps_remote_light_multimodal_plugins_without_local_infere
 
 
 def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
+    from abstractgateway.live_deltas import ABSTRACTRUNTIME_FLOOR
+
     extras = _pyproject()["project"]["optional-dependencies"]
 
     # Legacy compatibility aliases were removed; keep the user-facing install
@@ -147,7 +149,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "docs" in extras
 
     apple = "\n".join(extras["apple"])
-    assert "AbstractRuntime[apple]>=0.10.0" in apple
+    assert f"AbstractRuntime[apple]>={ABSTRACTRUNTIME_FLOOR}" in apple
     assert "abstractagent[apple]>=0.3.19" in apple
     assert "abstractagent[all-apple]" not in apple
     assert "AbstractMemory[all-apple]>=0.3.0" in apple
@@ -156,7 +158,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "abstractvoice" not in apple
     assert "abstractmusic" not in apple
     gpu = "\n".join(extras["gpu"])
-    assert "AbstractRuntime[gpu]>=0.10.0" in gpu
+    assert f"AbstractRuntime[gpu]>={ABSTRACTRUNTIME_FLOOR}" in gpu
     assert "abstractagent[gpu]>=0.3.19" in gpu
     assert "AbstractMemory[all-gpu]>=0.3.0" in gpu
     assert "abstractcore[" not in gpu

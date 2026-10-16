@@ -10208,17 +10208,17 @@ async def list_runs(
             ]
         return out_page
 
-    # SINGLE-FLIGHT + SHORT TTL (2026-10-16 adversary G2): the Observer's board,
-    # the tray, the Assistant and the runner all ask this page within the same
-    # second; identical asks in flight share ONE computation and an answer
-    # younger than _RUNS_LIST_TTL_S is handed out again. Keyed by the caller's
-    # store (its plane) and the exact query string, so two accounts or two
-    # filters never share a page.
+    # SINGLE-FLIGHT (2026-10-16 adversary G2): the Observer's board, the tray,
+    # the Assistant and the runner ask this page within the same second;
+    # identical asks IN FLIGHT share one computation. No reuse after it lands
+    # (_RUNS_LIST_TTL_S = 0): a listing right after an archive, a cancel or a
+    # start must show it. Keyed by the caller's store (its plane) and the exact
+    # query string, so two accounts or two filters never share a page.
     key = f"{getattr(rs, '_base', '') or id(rs)}|{request.url.query}"
     return await _coalesced_runs_listing(key, _collect_items)
 
 
-_RUNS_LIST_TTL_S = 1.5
+_RUNS_LIST_TTL_S = 0.0  # > 0 would reuse a landed page for that long: read-after-write would break
 _runs_list_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
 _runs_list_inflight: Dict[str, "asyncio.Future[Dict[str, Any]]"] = {}
 
