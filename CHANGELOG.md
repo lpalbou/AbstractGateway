@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.15.0] - 2026-10-16
 
-Requires AbstractRuntime 0.10.2 (the active-run index behind every `GET /runs?status=running|waiting`, and standard-library imports in the Code-node sandbox: `POST /visualflow/code/simulate` and the Code node itself accept `import json`, `re`, `datetime`… and refuse the modules that reach the machine, naming the reason). Dependency floors: `AbstractRuntime>=0.10.2` (base, `apple`, `gpu`).
+Requires AbstractRuntime 0.10.2 (the active-run index behind every `GET /runs?status=running|waiting`, and standard-library imports in the Code-node sandbox: `POST /visualflow/code/simulate` and the Code node itself accept `import json`, `re`, `datetime`… and refuse the modules that reach the machine, naming the reason). Dependency floors: `AbstractRuntime>=0.10.2` (base, `apple`, `gpu`). A Code node body that returns a value JSON cannot carry (a module, a function, a set…) now gets a sandbox error naming the value and its place in the simulate reply, where it used to be an HTTP 500.
 
 ### Added
 

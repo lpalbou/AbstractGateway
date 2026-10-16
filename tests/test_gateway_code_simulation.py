@@ -76,6 +76,35 @@ def test_visualflow_code_simulation_reports_sandbox_errors(tmp_path: Path, monke
     assert body["diagnostics"]["phase"] == "compile"
 
 
+def test_visualflow_code_simulation_names_a_non_json_return_instead_of_a_500(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Operator 2026-10-16 14:37: `return _input, "...", time` (the module, not the string) answered
+    HTTP 500 "Unable to serialize unknown type: <class 'module'>". The sandbox now refuses the value
+    with its place and type, and the simulate reply carries that sentence."""
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        resp = client.post(
+            "/api/gateway/visualflows/code/simulate",
+            headers=headers,
+            json={
+                "code": "import time; os_time = time.ctime()\n\ndef transform(_input):\n    return _input, ' - deterministic code: ', time\n",
+                "input": {"input": None},
+                "function_name": "transform",
+            },
+        )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is False and body["success"] is False and body["output"] is None
+    assert "transform returned a value that cannot be sent as JSON: module 'time' at output[2]" in body["error"]
+    assert body["diagnostics"]["phase"] == "runtime"
+    with client:
+        ok = client.post(
+            "/api/gateway/visualflows/code/simulate",
+            headers=headers,
+            json={"code": "import time; os_time = time.ctime()\n\ndef transform(_input):\n    return _input, ' - deterministic code: ', os_time\n", "input": {"input": None}},
+        ).json()
+    assert ok["ok"] is True and ok["output"][0] == {"input": None} and isinstance(ok["output"][2], str)
+
+
 def test_visualflow_code_simulation_rejects_full_access_without_host_policy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
