@@ -1030,6 +1030,15 @@ Errors on these routes, 401 and 403 included, always have the shape
 ([automations.md](./automations.md#errors)). An occurrence's wait is answered
 with the `resume` command above; the answer's shape depends on the wait's
 `kind` ([automations.md](./automations.md#waits-on-a-person)).
+**Listing behaviour.** Identical `GET /api/gateway/runs` asks that arrive while one is
+being computed share that one computation (keyed by the caller's runtime folder and the
+exact query string, so two accounts or two filters never share a page); a page is never
+reused once it has landed, so a listing right after an archive, a cancel or a start shows
+it. `status=running` and `status=waiting` listings are served from the runtime's active-run
+index (AbstractRuntime 0.10.1 or later; the file-backed store), so they cost milliseconds
+on a store of ten thousand runs; a listing with `archived_only=true` answers the empty
+page at once when you have archived no session.
+
 `GET /api/gateway/runs` rows carry `session_kind`, `automation_id`, `role`,
 `occurrence_index` and `legacy`, plus `workspace_root` on turn rows (the folder
 the run works in; absent on sub-runs), accept `session_kind=chat,discussion`, and
