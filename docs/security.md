@@ -209,8 +209,7 @@ gateway connections are shared by default with all authenticated human and entit
 principals; historical root profiles marked `scope: user` are included. Sharing
 permits use through the gateway, while configuration/deletion stays admin-only
 and raw provider keys stay server-side. Disabled providers remain unavailable.
-Selective per-principal access is deferred to
-[backlog 0935](backlog/proposed/0935_per_principal_provider_access_policy.md).
+Per-principal provider access restrictions are not part of this release.
 The current capability-default cascade uses execution-host
 Core defaults, then the Gateway/root Core config baseline, then the user's
 runtime Core config override under that user's Gateway data plane. A stronger encrypted vault, audit model, and

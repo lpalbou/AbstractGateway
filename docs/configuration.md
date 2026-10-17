@@ -1184,8 +1184,7 @@ connections marked `scope: user` are inherited automatically; no key copying or
 per-account setup is needed. Shared connections
 remain administrator-managed: use does not grant permission to change or delete
 them. Disabled connections remain unavailable and model allowlists still apply.
-Per-principal provider access controls are tracked in
-[backlog 0935](backlog/proposed/0935_per_principal_provider_access_policy.md).
+Per-principal provider access restrictions are not part of this release.
 
 The console **Sandbox** tab reuses this configuration. It tests the selected
 multimodal capability default rather than an ad hoc provider/model pair. Text

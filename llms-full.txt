@@ -1457,8 +1457,7 @@ connections marked `scope: user` are inherited automatically; no key copying or
 per-account setup is needed. Shared connections
 remain administrator-managed: use does not grant permission to change or delete
 them. Disabled connections remain unavailable and model allowlists still apply.
-Per-principal provider access controls are tracked in
-[backlog 0935](docs/backlog/proposed/0935_per_principal_provider_access_policy.md).
+Per-principal provider access restrictions are not part of this release.
 
 The console **Sandbox** tab reuses this configuration. It tests the selected
 multimodal capability default rather than an ad hoc provider/model pair. Text
@@ -2055,8 +2054,7 @@ gateway connections are shared by default with all authenticated human and entit
 principals; historical root profiles marked `scope: user` are included. Sharing
 permits use through the gateway, while configuration/deletion stays admin-only
 and raw provider keys stay server-side. Disabled providers remain unavailable.
-Selective per-principal access is deferred to
-[backlog 0935](docs/backlog/proposed/0935_per_principal_provider_access_policy.md).
+Per-principal provider access restrictions are not part of this release.
 The current capability-default cascade uses execution-host
 Core defaults, then the Gateway/root Core config baseline, then the user's
 runtime Core config override under that user's Gateway data plane. A stronger encrypted vault, audit model, and
@@ -11131,7 +11129,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The console says **Everyone on this gateway**; use stays
   separate from admin-only management. User-private connections, disabled
   providers, model allowlists and server-side credentials keep their boundaries.
-  Future selective provider grants are tracked in backlog 0935.
 
 ## [0.15.0] - 2026-10-16
 

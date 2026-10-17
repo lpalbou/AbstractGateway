@@ -17,7 +17,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The console says **Everyone on this gateway**; use stays
   separate from admin-only management. User-private connections, disabled
   providers, model allowlists and server-side credentials keep their boundaries.
-  Future selective provider grants are tracked in backlog 0935.
 
 ## [0.15.0] - 2026-10-16
 
