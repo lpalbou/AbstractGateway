@@ -1777,8 +1777,13 @@ not collide in a shared provider control plane.</p>
 Connections are stored under the relevant Gateway data plane, expose only
 non-secret metadata and a virtual provider id such as <code>endpoint:office-vllm</code>,
 and inject the raw key only into the transient Runtime provider call. Normal
-users can manage user-scoped connections; Gateway-scoped connections require an
-admin principal. The current capability-default cascade uses execution-host
+users can manage their own private user-scoped connections. Admin-configured
+gateway connections are shared by default with all authenticated human and entity
+principals; historical root profiles marked <code>scope: user</code> are included. Sharing
+permits use through the gateway, while configuration/deletion stays admin-only
+and raw provider keys stay server-side. Disabled providers remain unavailable.
+Per-principal provider access restrictions are not part of this release.
+The current capability-default cascade uses execution-host
 Core defaults, then the Gateway/root Core config baseline, then the user's
 runtime Core config override under that user's Gateway data plane. A stronger encrypted vault, audit model, and
 bridge/delegated-tool propagation policy remain future hardening work.</p>
