@@ -7,7 +7,7 @@ import os
 import re
 import threading
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urlparse
@@ -477,11 +477,24 @@ def profile_id_from_virtual_provider(provider: Any) -> Optional[str]:
 
 
 def effective_endpoint_profiles(*, base_dir: Path, root_base_dir: Optional[Path] = None) -> List[ProviderEndpointProfile]:
+    """Admin/root connections are shared; principal-local overrides stay private.
+
+    Scope on historical root rows may still say 'user' (the old API/console
+    default). Root ownership, rather than that legacy field, determines
+    gateway-wide availability. Normalize the effective view, without rewriting
+    or copying stored secrets. This also keeps shared connections admin-only
+    in CRUD and clients that decide editability from the effective scope.
+    """
     current_store = ProviderEndpointProfileStore(base_dir=base_dir)
     current_profiles = current_store.list_profiles()
     root_profiles: List[ProviderEndpointProfile] = []
-    if root_base_dir is not None and Path(root_base_dir).expanduser().resolve() != Path(base_dir).expanduser().resolve():
-        root_profiles = [p for p in ProviderEndpointProfileStore(base_dir=root_base_dir).list_profiles() if p.scope == "gateway"]
+    root = Path(root_base_dir).expanduser().resolve() if root_base_dir is not None else (current_store.base_dir if current_store.core_backed else None)
+    if root is not None:
+        root = Path(root).expanduser().resolve()
+        if root == current_store.base_dir:
+            current_profiles = [replace(p, scope="gateway") for p in current_profiles]
+        else:
+            root_profiles = [replace(p, scope="gateway") for p in ProviderEndpointProfileStore(base_dir=root).list_profiles()]
 
     by_key: Dict[str, ProviderEndpointProfile] = {}
     for profile in root_profiles + current_profiles:
@@ -549,12 +562,8 @@ def explain_endpoint_profile_miss(provider: Any, *, base_dir: Path, root_base_di
     """A plain-words reason why an endpoint profile did not resolve, when one
     is knowable — or None when the profile simply does not exist.
 
-    The case that matters (release gap 2, delegate order c5863): a profile
-    CREATED single-user carries the silent default scope 'user'; after
-    multi-user auth turns on, per-principal services only inherit ROOT
-    profiles scoped 'gateway', so the profile 'vanishes' with a misleading
-    'not configured' error. Naming the real cause turns a mystery into a
-    one-line fix an admin can apply."""
+    Historical root scope='user' rows are shared too; scope is no longer a
+    reason for a miss. Disabled profiles remain unavailable explicitly."""
     profile_id = profile_id_from_virtual_provider(provider)
     if not profile_id:
         return None
@@ -565,12 +574,6 @@ def explain_endpoint_profile_miss(provider: Any, *, base_dir: Path, root_base_di
             continue
         if not p.enabled:
             return f"endpoint profile {profile_id!r} exists at the gateway root but is disabled — enable it to use it"
-        if p.scope != "gateway":
-            return (
-                f"endpoint profile {profile_id!r} exists at the gateway root but its scope is {p.scope!r} "
-                "(private to the admin's own runtime) — per-user runtimes only inherit profiles scoped "
-                "'gateway'; an admin can share it by setting scope 'gateway' in the console's provider settings"
-            )
     return None
 
 

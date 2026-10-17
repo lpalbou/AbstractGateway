@@ -9853,17 +9853,17 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         familySelect.append(opt);
       }
       familySelect.value = ENDPOINT_FAMILIES.some((item) => item.id === familySelected) ? familySelected : "openai-compatible";
-      const scopeValues = state.principal?.admin ? ["user", "gateway"] : ["user"];
+      const scopeValues = state.principal?.admin ? ["gateway"] : ["user"];
       const scopeSelect = $("endpoint-scope");
       const scopeSelected = scopeSelect.value || "user";
       scopeSelect.textContent = "";
       for (const value of scopeValues) {
         const opt = document.createElement("option");
         opt.value = value;
-        opt.textContent = value === "gateway" ? "Gateway-wide" : "Only me";
+        opt.textContent = value === "gateway" ? "Everyone on this gateway" : "Only me";
         scopeSelect.append(opt);
       }
-      scopeSelect.value = scopeValues.includes(scopeSelected) ? scopeSelected : "user";
+      scopeSelect.value = scopeValues.includes(scopeSelected) ? scopeSelected : scopeValues[0];
       updateEndpointFamilyHints();
       renderProviderPresets();
     }
@@ -9874,7 +9874,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       $("endpoint-name").value = "";
       $("endpoint-description").value = "";
       $("endpoint-provider-family").value = "openai";
-      $("endpoint-scope").value = "user";
+      $("endpoint-scope").value = state.principal?.admin ? "gateway" : "user";
       $("endpoint-base-url").value = "";
       $("endpoint-api-key").value = "";
       $("endpoint-clear-api-key").checked = false;
@@ -9922,7 +9922,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       $("endpoint-name").value = profile.display_name || profile.id || "";
       $("endpoint-description").value = profile.description || "";
       $("endpoint-provider-family").value = profile.provider_family || "openai-compatible";
-      $("endpoint-scope").value = profile.scope || "user";
+      $("endpoint-scope").value = state.principal?.admin ? "gateway" : (profile.scope || "user");
       $("endpoint-base-url").value = profile.base_url || "";
       $("endpoint-api-key").value = "";
       $("endpoint-clear-api-key").checked = false;

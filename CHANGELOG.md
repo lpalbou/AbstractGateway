@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.1] - 2026-10-17
+
+### Fixed
+
+- Admin-configured provider connections are shared by default with every human
+  and entity principal on the gateway. Historical root profiles marked
+  `scope: user` are inherited too. New users can run workflows through the
+  gateway's default endpoint without configuring their own provider or key.
+  Admin setup shares connections even when an older client sends `scope: user`.
+  The console says **Everyone on this gateway**; use stays
+  separate from admin-only management. User-private connections, disabled
+  providers, model allowlists and server-side credentials keep their boundaries.
+  Future selective provider grants are tracked in backlog 0935.
+
 ## [0.15.0] - 2026-10-16
 
 Requires AbstractRuntime 0.10.2 (the active-run index behind every `GET /runs?status=running|waiting`, and standard-library imports in the Code-node sandbox: `POST /visualflow/code/simulate` and the Code node itself accept `import json`, `re`, `datetime`… and refuse the modules that reach the machine, naming the reason). Dependency floors: `AbstractRuntime>=0.10.2` (base, `apple`, `gpu`). A Code node body that returns a value JSON cannot carry (a module, a function, a set…) now gets a sandbox error naming the value and its place in the simulate reply, where it used to be an HTTP 500.

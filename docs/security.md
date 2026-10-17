@@ -204,8 +204,14 @@ Hosted provider secrets are supported through Gateway provider connections.
 Connections are stored under the relevant Gateway data plane, expose only
 non-secret metadata and a virtual provider id such as `endpoint:office-vllm`,
 and inject the raw key only into the transient Runtime provider call. Normal
-users can manage user-scoped connections; Gateway-scoped connections require an
-admin principal. The current capability-default cascade uses execution-host
+users can manage their own private user-scoped connections. Admin-configured
+gateway connections are shared by default with all authenticated human and entity
+principals; historical root profiles marked `scope: user` are included. Sharing
+permits use through the gateway, while configuration/deletion stays admin-only
+and raw provider keys stay server-side. Disabled providers remain unavailable.
+Selective per-principal access is deferred to
+[backlog 0935](backlog/proposed/0935_per_principal_provider_access_policy.md).
+The current capability-default cascade uses execution-host
 Core defaults, then the Gateway/root Core config baseline, then the user's
 runtime Core config override under that user's Gateway data plane. A stronger encrypted vault, audit model, and
 bridge/delegated-tool propagation policy remain future hardening work.

@@ -1174,8 +1174,18 @@ Gateway host resolves virtual providers to the real provider family, base URL,
 and API key for the transient AbstractRuntime call; direct providers use the
 scoped Core config/environment already available to the execution host.
 Workflow JSON and browser storage do not contain the raw secret. Normal users
-can manage user-scoped profiles. Gateway-scoped profiles require an admin
-principal.
+can manage their own private user-scoped profiles. Every enabled connection an
+admin configures is available to all human users and digital users/entities on
+the same gateway. New accounts inherit the gateway's capability defaults until
+they choose their own: a workflow without provider/model overrides uses the
+admin's default endpoint without asking the user to re-enter its URL or API key.
+The console labels admin connections **Everyone on this gateway**. Existing root
+connections marked `scope: user` are inherited automatically; no key copying or
+per-account setup is needed. Shared connections
+remain administrator-managed: use does not grant permission to change or delete
+them. Disabled connections remain unavailable and model allowlists still apply.
+Per-principal provider access controls are tracked in
+[backlog 0935](backlog/proposed/0935_per_principal_provider_access_policy.md).
 
 The console **Sandbox** tab reuses this configuration. It tests the selected
 multimodal capability default rather than an ad hoc provider/model pair. Text

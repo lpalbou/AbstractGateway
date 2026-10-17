@@ -182,10 +182,8 @@ def _resolve_gateway_default_endpoint_profile(
         raise WorkflowBundleError(f"Invalid Gateway provider endpoint profile {provider_s!r}: {exc}") from exc
     if profile is None:
         if provider_s.startswith("endpoint:"):
-            # Name the REAL cause when it is knowable (release gap 2): a
-            # root profile scoped 'user' is invisible to per-user runtimes,
-            # and "not configured" sent operators hunting a config that
-            # existed all along.
+            # Name a disabled root connection when it explains the failure.
+            # Historical root scope='user' connections are inherited too.
             from ..provider_endpoint_profiles import explain_endpoint_profile_miss
 
             reason = explain_endpoint_profile_miss(provider_s, base_dir=data_root, root_base_dir=catalog_root)

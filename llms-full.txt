@@ -1447,8 +1447,18 @@ Gateway host resolves virtual providers to the real provider family, base URL,
 and API key for the transient AbstractRuntime call; direct providers use the
 scoped Core config/environment already available to the execution host.
 Workflow JSON and browser storage do not contain the raw secret. Normal users
-can manage user-scoped profiles. Gateway-scoped profiles require an admin
-principal.
+can manage their own private user-scoped profiles. Every enabled connection an
+admin configures is available to all human users and digital users/entities on
+the same gateway. New accounts inherit the gateway's capability defaults until
+they choose their own: a workflow without provider/model overrides uses the
+admin's default endpoint without asking the user to re-enter its URL or API key.
+The console labels admin connections **Everyone on this gateway**. Existing root
+connections marked `scope: user` are inherited automatically; no key copying or
+per-account setup is needed. Shared connections
+remain administrator-managed: use does not grant permission to change or delete
+them. Disabled connections remain unavailable and model allowlists still apply.
+Per-principal provider access controls are tracked in
+[backlog 0935](docs/backlog/proposed/0935_per_principal_provider_access_policy.md).
 
 The console **Sandbox** tab reuses this configuration. It tests the selected
 multimodal capability default rather than an ad hoc provider/model pair. Text
@@ -2040,8 +2050,14 @@ Hosted provider secrets are supported through Gateway provider connections.
 Connections are stored under the relevant Gateway data plane, expose only
 non-secret metadata and a virtual provider id such as `endpoint:office-vllm`,
 and inject the raw key only into the transient Runtime provider call. Normal
-users can manage user-scoped connections; Gateway-scoped connections require an
-admin principal. The current capability-default cascade uses execution-host
+users can manage their own private user-scoped connections. Admin-configured
+gateway connections are shared by default with all authenticated human and entity
+principals; historical root profiles marked `scope: user` are included. Sharing
+permits use through the gateway, while configuration/deletion stays admin-only
+and raw provider keys stay server-side. Disabled providers remain unavailable.
+Selective per-principal access is deferred to
+[backlog 0935](docs/backlog/proposed/0935_per_principal_provider_access_policy.md).
+The current capability-default cascade uses execution-host
 Core defaults, then the Gateway/root Core config baseline, then the user's
 runtime Core config override under that user's Gateway data plane. A stronger encrypted vault, audit model, and
 bridge/delegated-tool propagation policy remain future hardening work.
@@ -11103,9 +11119,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.1] - 2026-10-17
+
+### Fixed
+
+- Admin-configured provider connections are shared by default with every human
+  and entity principal on the gateway. Historical root profiles marked
+  `scope: user` are inherited too. New users can run workflows through the
+  gateway's default endpoint without configuring their own provider or key.
+  Admin setup shares connections even when an older client sends `scope: user`.
+  The console says **Everyone on this gateway**; use stays
+  separate from admin-only management. User-private connections, disabled
+  providers, model allowlists and server-side credentials keep their boundaries.
+  Future selective provider grants are tracked in backlog 0935.
+
 ## [0.15.0] - 2026-10-16
 
-Requires AbstractRuntime 0.10.2 (the active-run index behind every `GET /runs?status=running|waiting`, and standard-library imports in the Code-node sandbox: `POST /visualflow/code/simulate` and the Code node itself accept `import json`, `re`, `datetime`… and refuse the modules that reach the machine, naming the reason). Dependency floors: `AbstractRuntime>=0.10.2` (base, `apple`, `gpu`).
+Requires AbstractRuntime 0.10.2 (the active-run index behind every `GET /runs?status=running|waiting`, and standard-library imports in the Code-node sandbox: `POST /visualflow/code/simulate` and the Code node itself accept `import json`, `re`, `datetime`… and refuse the modules that reach the machine, naming the reason). Dependency floors: `AbstractRuntime>=0.10.2` (base, `apple`, `gpu`). A Code node body that returns a value JSON cannot carry (a module, a function, a set…) now gets a sandbox error naming the value and its place in the simulate reply, where it used to be an HTTP 500.
 
 ### Added
 

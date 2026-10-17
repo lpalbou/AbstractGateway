@@ -70,6 +70,9 @@ def providers_gateway(tmp_path: Path):
         for body in (
             {"id": "openai", "display_name": "OpenAI", "provider_family": "openai", "api_key": FAKE_KEY, "scope": "gateway", "enabled": True},
             {"id": "lmstudio-lan", "display_name": "LM Studio (studio Mac)", "provider_family": "lmstudio", "base_url": "http://192.168.1.20:1234/v1", "scope": "gateway", "enabled": True},
+            # The Add-connection scenario needs an existing connection. Do not
+            # depend on discovery finding a real Ollama on the operator's Mac.
+            {"id": "ollama-fixture", "display_name": "Ollama fixture", "provider_family": "ollama", "base_url": "http://127.0.0.1:1", "scope": "gateway", "enabled": True},
         ):
             code, out = _call(base, "POST", "/config/provider-endpoint-profiles", admin, body)
             assert code == 200, out
