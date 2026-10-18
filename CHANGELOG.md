@@ -42,6 +42,9 @@ Windows fixes.
   the GPU meter every few seconds, no longer each open a console window for a moment
   (`abstractgateway.stdio_safety.hide_child_consoles`). Started from a terminal, child output still
   goes to that terminal.
+- **The desktop Assistant opens without a console window on Windows**: the gateway starts it with
+  `pythonw.exe` running its entry point; the `abstractassistant.exe` console launcher, started
+  detached, opened an empty console window next to the app.
 
 ### Changed
 
