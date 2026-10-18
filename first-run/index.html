@@ -1236,10 +1236,12 @@ unless you replace them.</p>
 <h3 id="on-a-headless-server">On a headless server<a class="headerlink" href="#on-a-headless-server" title="Permanent link">&para;</a></h3>
 <p>On a machine without a browser (for example a Linux server you reach over SSH),
 run the same guide in the terminal console on that machine:</p>
-<div class="highlight"><pre><span></span><code>cargo<span class="w"> </span>install<span class="w"> </span>abstractgateway-console
-abstractgateway-console<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:8080<span class="w"> </span>--token<span class="w"> </span>&lt;token&gt;
+<div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>console<span class="w">          </span><span class="c1"># finds the console, the gateway and your admin token</span>
 </code></pre></div>
-<p><code>&lt;token&gt;</code> is the admin token <code>abstractgateway serve</code> prints when it starts.</p>
+<p>The installer builds the console next to <code>abstractgateway</code>; without it,
+<code>cargo install abstractgateway-console</code>, then
+<code>abstractgateway-console --url http://127.0.0.1:8080 --token &lt;token&gt;</code> where
+<code>&lt;token&gt;</code> is the admin token <code>abstractgateway serve</code> prints when it starts.</p>
 <p>It opens the setup guide for an admin whose first run is not completed, with
 the same steps through the same gateway routes, and records <strong>Finish</strong> or
 <strong>Skip setup</strong> on the gateway. See

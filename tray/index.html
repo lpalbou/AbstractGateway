@@ -622,6 +622,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#from-a-terminal-abstractgateway-update" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        From a terminal: abstractgateway update
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#other-installs" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1171,6 +1182,17 @@
     <span class="md-ellipsis">
       
         An AbstractFramework installer install
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#from-a-terminal-abstractgateway-update" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        From a terminal: abstractgateway update
       
     </span>
   </a>
@@ -1806,6 +1828,31 @@ terminal does the same thing:</p>
 </ul>
 <div class="highlight"><pre><span></span><code><span class="n">powershell</span> <span class="n">-ExecutionPolicy</span> <span class="n">ByPass</span> <span class="n">-c</span> <span class="s2">"irm https://raw.githubusercontent.com/lpalbou/AbstractFramework/main/scripts/install.ps1 | iex"</span>
 </code></pre></div>
+<h3 id="from-a-terminal-abstractgateway-update">From a terminal: <code>abstractgateway update</code><a class="headerlink" href="#from-a-terminal-abstractgateway-update" title="Permanent link">&para;</a></h3>
+<p>The same update as a shell command, for an installer install (macOS, Linux;
+the one-line install or the double-click installer):</p>
+<div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>update<span class="w"> </span>--check<span class="w">   </span><span class="c1"># what would change; exit 0 up to date, 10 when an update exists</span>
+abstractgateway<span class="w"> </span>update<span class="w">           </span><span class="c1"># show it, ask once, run the installer here</span>
+abstractgateway<span class="w"> </span>update<span class="w"> </span>--yes<span class="w">     </span><span class="c1"># ask nothing (scripts, no terminal)</span>
+abstractgateway<span class="w"> </span>--update<span class="w">         </span><span class="c1"># the same command</span>
+</code></pre></div>
+<p>It prints the installed and the newest release, then <strong>What changes</strong>: every
+package whose installed version differs from the release's (the framework, the
+gateway, the other Python packages of the gateway's environment, the browser
+apps and the terminal apps, each as <code>installed -&gt; new</code>), then <strong>Release notes</strong>:
+the AbstractFramework changelog sections between the two releases, newest
+first (when the changelog cannot be fetched it says so and goes on). <code>--check</code>
+stops there. Otherwise it asks <code>Upgrade now? [Y/n]</code> and runs the sha-checked
+installer in the foreground, its output on your terminal:
+<code>/bin/sh &lt;data folder&gt;/update/install-….sh --yes --no-open --no-modify-path
+--data-dir &lt;data folder&gt;</code>. No <code>--no-start</code> here: the command is not the gateway
+process, so the installer keeps your port, profile and login choices and
+restarts the gateway service itself. The command exits with the installer's
+exit code and ends with the console's address. On Windows it starts the
+PowerShell installer in a new window and exits at once (the running command
+would otherwise hold files the installer replaces). An install the installer
+did not make (a source checkout, a container, a plain pip / uv / pipx install)
+is refused with the command to run instead.</p>
 <p>The newest gateway outside a release is a command-line choice: run the installer
 with <code>--pin latest</code> (see the AbstractFramework install guide).</p>
 <h3 id="other-installs">Other installs<a class="headerlink" href="#other-installs" title="Permanent link">&para;</a></h3>
