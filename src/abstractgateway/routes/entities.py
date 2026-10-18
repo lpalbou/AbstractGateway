@@ -35,7 +35,7 @@ from ..entity_access import (
     require_entity_visible,
 )
 from ..entity_settings_access import entity_settings_guard
-from ..entity_session_tools import managed_visit_http_guard
+from ..entity_session_tools import SessionToolPolicy, managed_visit_http_guard
 from ..entity_seat import (
     cancel_run_tree,
     door_decision,
@@ -1693,6 +1693,10 @@ def _visit_host():
 
 class OpenVisitRequest(BaseModel):
     session_id: Optional[str] = Field(default=None, description="Stable session id (None = minted)")
+    tool_policy: Optional[SessionToolPolicy] = Field(
+        default=None,
+        description="Optional visitor-scoped policy: modes=null inherits the home's tools; modes={} disables all. Omit to retain legacy visit behavior.",
+    )
 
 
 class VisitTurnRequest(BaseModel):
@@ -1740,11 +1744,17 @@ def open_visit(name: str, req: OpenVisitRequest) -> Dict[str, Any]:
     principal = current_gateway_principal()
     visitor = f"person:{principal.user_id}" if principal is not None else "person:operator"
     try:
+        if req.tool_policy is not None:
+            from ..entity_session_tools import open_session
+
+            return open_session(_visit_host(), name, session_id=req.session_id, modes=req.tool_policy.modes)
         return _visit_host().open(name, participants=[visitor], session_id=req.session_id)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     except VisitRefused as e:
         return _visit_refused_response(e)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
 
 @router.post("/{name}/visit/{run_id}/turn")
@@ -1764,7 +1774,21 @@ def visit_close(name: str, run_id: str, req: VisitCloseRequest) -> Dict[str, Any
     from ..entity_visits import VisitRefused
 
     try:
-        out = _visit_host().close(name, run_id, closed_by=req.closed_by, reason=req.reason)
+        host = _visit_host()
+        managed_pause = False
+        if str(req.closed_by).strip().lower() == "pause":
+            from ..entity_session_tools import SESSION_TOOLS_KEY
+
+            _er, run, _wf, _manifest = host._load_visit(name, run_id, need_spec=False)
+            managed_pause = SESSION_TOOLS_KEY in ((run.vars or {}).get("_runtime") or {})
+        if managed_pause:
+            from ..entity_session_tools import end_session
+
+            # An approval wait has no visitor-input wait to resume. End it
+            # without executing the pending batch, retaining this route's queue/task handling.
+            out = end_session(host, name, run_id, reason=req.reason or "Visitor ended this conversation.")
+        else:
+            out = host.close(name, run_id, closed_by=req.closed_by, reason=req.reason)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     except VisitRefused as e:
