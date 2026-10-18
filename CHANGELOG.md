@@ -5,6 +5,48 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.3] - 2026-10-18
+
+Windows fixes.
+
+### Fixed
+
+- **Local engines on Windows x86_64**: llama.cpp and Hugging Face (transformers) are supported
+  engines there, as AbstractCore's `gpu` install setting says, and no longer show "Not for this
+  computer". Which host has which setting now comes from AbstractCore
+  (`abstractcore.utils.install_settings.host_setting`); the gateway adds only the Rosetta check.
+  Windows on ARM, Intel Macs and a Python under Rosetta still have no setting.
+- **Installing Hugging Face on Windows** installs `abstractcore[gpu]` at the installed AbstractCore
+  version with `--torch-backend=auto` (uv), so PyTorch is the CUDA build that matches the NVIDIA
+  driver rather than PyPI's CPU build. The llama.cpp row on Windows points to the AbstractFramework
+  installer, which adds llama.cpp's prebuilt CUDA, Vulkan or CPU build.
+- **vLLM on Windows** says that vLLM has no native Windows build and that it runs in WSL2 or on a
+  Linux machine the gateway can reach.
+- **Workspace files on Windows**: opening or downloading a file from a run's workspace
+  (`GET /runs/{run_id}/workspace/content`) works on Windows; the opened file is still checked to
+  be inside the workspace, now through `GetFinalPathNameByHandleW`, so a junction out of it is
+  refused.
+- **Built-in protected folders on Windows** also cover Credential Manager's folders
+  (`AppData\Roaming\Microsoft\Credentials`, `AppData\Local\Microsoft\Credentials`), the
+  DPAPI keys in `AppData\Roaming\Microsoft\Protect`, and `AppData\Roaming\gcloud`.
+- **`abstractgateway service status` on Windows** names the Run value
+  (`HKCU\...\Run\AbstractGateway`) when nothing is registered, instead of the legacy Startup
+  shortcut.
+- **Console output**: `abstractgateway` and `abstractgateway-config` no longer stop with
+  `UnicodeEncodeError` when their output is piped or redirected on Windows; a character the code
+  page lacks is written as `?`.
+- **Wording**: desktop apps' icons are in the notification area on Windows and the system tray on
+  Linux, not "the menu bar"; the llama.cpp row names the Windows builds.
+- **No console windows on the desktop**: when the gateway or its tray runs without a console
+  (the login entry starts it with `pythonw.exe`), the programs it starts, such as `nvidia-smi` for
+  the GPU meter every few seconds, no longer each open a console window for a moment
+  (`abstractgateway.stdio_safety.hide_child_consoles`). Started from a terminal, child output still
+  goes to that terminal.
+
+### Changed
+
+- Requires `abstractvoice>=0.15.1` (its command-line tools write piped output on Windows).
+
 ## [0.15.2] - 2026-10-18
 
 ### Fixed

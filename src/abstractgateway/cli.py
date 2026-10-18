@@ -726,6 +726,10 @@ def _run_models_command(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> None:
+    from .stdio_safety import hide_child_consoles, safe_stdio
+
+    safe_stdio()
+    hide_child_consoles()  # no console (pythonw, detached): no window per child process
     console_level = _resolve_default_console_level()
     _configure_console_logging(console_level)
     _argv0 = (list(argv) if argv is not None else sys.argv[1:])[:1]

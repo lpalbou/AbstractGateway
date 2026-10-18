@@ -483,7 +483,8 @@ def test_vllm_on_linux_with_cuda_is_a_user_level_wheel(tmp_path) -> None:
 @pytest.mark.parametrize(
     "host",
     [ei.HostFacts(os_id="darwin", arch="x86_64", macos_version=(14, 5)),
-     ei.HostFacts(os_id="darwin", arch="arm64", macos_version=(14, 5), translated=True)],
+     ei.HostFacts(os_id="darwin", arch="arm64", macos_version=(14, 5), translated=True),
+     ei.HostFacts(os_id="windows", arch="arm64")],
 )
 def test_hosts_without_an_install_setting_get_no_bare_engine_install(tmp_path, host, engine) -> None:
     """Ruling 2026-09-29: only `abstractcore`, `abstractcore[apple]`, `abstractcore[gpu]`.
@@ -677,3 +678,38 @@ def test_user_cache_dir_is_the_platform_cache_on_macos_and_windows(tmp_path) -> 
     assert user_cache_dir(system="win32", env={"LOCALAPPDATA": str(tmp_path / "L")}, home=tmp_path) == (
         tmp_path / "L" / "AbstractGateway" / "Cache"
     )
+
+
+WIN = ei.HostFacts(os_id="windows", arch="x86_64", accelerator="cuda")
+
+
+@pytest.mark.parametrize("engine", ["llamacpp", "huggingface"])
+def test_windows_x86_64_is_a_gpu_host_like_abstractcore_says(tmp_path, engine) -> None:
+    """Windows x86_64 carries AbstractCore's gpu setting (abstractcore.utils.install_settings
+    .host_setting): llama.cpp and Hugging Face are supported there, never "Not for this computer"."""
+    from abstractcore.utils.install_settings import host_setting
+
+    inst = _installer(tmp_path, FakeSystem(tmp_path), host=WIN)
+    assert inst.local_setting() == host_setting("windows", "x86_64") == "gpu"
+    assert inst.support(engine) == (True, None)
+
+
+def test_windows_huggingface_installs_the_gpu_setting_with_pytorchs_cuda_build(tmp_path) -> None:
+    # PyPI's Windows PyTorch is the CPU build: uv's --torch-backend=auto takes the CUDA build.
+    plan = _installer(tmp_path, FakeSystem(tmp_path), host=WIN).plan("huggingface")
+    assert plan.available and plan.method == "wheel"
+    assert plan.command_preview == ["/fake/uv", "pip", "install", "--python", "/gw/bin/python",
+                                    "abstractcore[gpu]==<installed>", "--torch-backend=auto"]
+
+
+def test_windows_llamacpp_points_to_the_installer_never_a_bare_package(tmp_path) -> None:
+    plan = _installer(tmp_path, FakeSystem(tmp_path), host=WIN).plan("llamacpp")
+    assert plan.available is False and plan.method == "wheel"
+    assert "AbstractFramework installer" in plan.notes
+    assert plan.command_preview == [ei.WINDOWS_INSTALLER_COMMAND]
+    assert not any("llama-cpp-python" in part for part in plan.command_preview)
+
+
+def test_vllm_on_windows_says_wsl2_or_a_linux_server(tmp_path) -> None:
+    ok, reason = _installer(tmp_path, FakeSystem(tmp_path), host=WIN).support("vllm")
+    assert ok is False and "WSL2" in reason and "no native Windows build" in reason

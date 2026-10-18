@@ -1254,7 +1254,10 @@ for anyone:
 `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.kube`,
 `~/Library/Keychains`, `~/.abstractgateway`, `~/.abstractcode`,
 `~/.abstractassistant`, `~/.abstractcontinuum`, `~/.abstractcore`, and the
-gateway's data folder (except a run's own conversation folder inside it).
+gateway's data folder (except a run's own conversation folder inside it). On
+Windows also `AppData\Roaming\Microsoft\Credentials`,
+`AppData\Local\Microsoft\Credentials`, `AppData\Roaming\Microsoft\Protect` and
+`AppData\Roaming\gcloud` in your user folder.
 
 The same folders are denied to every run's file tools: the gateway gives each
 run (and the runs it starts, scheduled runs included) the folders as

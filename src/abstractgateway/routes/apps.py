@@ -664,7 +664,7 @@ def apps_desktop_handover(request: Request, payload: DesktopHandoverRequest):
             status_code=410,
             headers=headers,
             content={"ok": False, "reason": "handover_expired", "message": "This sign-in code has expired or was already used.",
-                     "hint": "Quit the Assistant and open it again from the gateway console or its menu bar icon."},
+                     "hint": "Quit the Assistant and open it again from the gateway console or its icon (menu bar on macOS, notification area on Windows)."},
         )
     principal, base_url = rec
     try:

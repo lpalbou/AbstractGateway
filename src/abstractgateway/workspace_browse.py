@@ -293,9 +293,44 @@ def open_slice(
     return FileSlice(real, rel_n, ctype, size, rng[0], rng[1], True, fd)
 
 
+def _fd_path_windows(fd: int) -> Optional[str]:
+    """The final path Windows reports for an open descriptor
+    (GetFinalPathNameByHandleW on its handle), or None."""
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    try:
+        handle = msvcrt.get_osfhandle(fd)
+    except OSError:
+        return None
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    fn = kernel32.GetFinalPathNameByHandleW
+    fn.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD]
+    fn.restype = wintypes.DWORD
+    size = 1024
+    while True:
+        buf = ctypes.create_unicode_buffer(size)
+        n = fn(wintypes.HANDLE(handle), buf, size, 0)  # FILE_NAME_NORMALIZED | VOLUME_NAME_DOS
+        if n == 0:
+            return None
+        if n < size:
+            path = buf.value
+            break
+        size = n + 1
+    if path.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + path[8:]
+    if path.startswith("\\\\?\\"):
+        return path[4:]
+    return path
+
+
 def _fd_path(fd: int) -> Optional[str]:
     """The path the kernel reports for an open descriptor (macOS F_GETPATH,
-    Linux /proc/self/fd), or None where neither exists."""
+    Linux /proc/self/fd, Windows GetFinalPathNameByHandleW), or None where
+    none exists."""
+    if os.name == "nt":
+        return _fd_path_windows(fd)
     import fcntl
 
     getpath = getattr(fcntl, "F_GETPATH", None)
@@ -337,9 +372,22 @@ BUILTIN_DENY_HOME_RELPATHS: Tuple[str, ...] = (
 )
 
 
+# Windows keeps the same kind of secrets under the profile's AppData: Credential Manager's
+# stores, the DPAPI master keys that unlock them, and gcloud's configuration.
+BUILTIN_DENY_HOME_RELPATHS_WINDOWS: Tuple[str, ...] = (
+    "AppData/Roaming/Microsoft/Credentials", "AppData/Local/Microsoft/Credentials",
+    "AppData/Roaming/Microsoft/Protect", "AppData/Roaming/gcloud",
+)
+
+
+def _windows_host() -> bool:
+    return os.name == "nt"
+
+
 def builtin_deny_paths(data_root: Path, *, home: Optional[Path] = None) -> List[Path]:
     base = Path(home) if home is not None else Path.home()
-    out = [Path(os.path.realpath(str(base / rel))) for rel in BUILTIN_DENY_HOME_RELPATHS]
+    rels = BUILTIN_DENY_HOME_RELPATHS + (BUILTIN_DENY_HOME_RELPATHS_WINDOWS if _windows_host() else ())
+    out = [Path(os.path.realpath(str(base / rel))) for rel in rels]
     out.append(_real(Path(data_root)))
     return out
 
