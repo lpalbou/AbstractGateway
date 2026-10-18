@@ -340,8 +340,8 @@ def test_collector_emails_automation_results_only_when_the_automation_asks(gatew
     mails = smtp_bodies(smtp)
     assert len(mails) == 2
     subjects = sorted(m["subject"] for m in mails)
-    assert subjects == ["[AbstractFramework] Daily digest: failed", "[AbstractFramework] Daily digest: result"]
-    result = next(m for m in mails if m["subject"].endswith("result"))
+    assert subjects == ["[AbstractFramework] Daily digest failed", "[AbstractFramework] Daily digest finished"]
+    result = next(m for m in mails if m["subject"].endswith("finished"))
     assert "3 invoices arrived" in result["text"] and "model-authored" in result["text"]
     assert all("console only" not in m["text"] for m in mails)
 
@@ -396,13 +396,15 @@ def test_collector_approval_waits_and_jobs_that_asked(gateway, imap, smtp, monke
     NotificationOutbox(plane).deliver()
     subjects = sorted(m["subject"] for m in smtp_bodies(smtp))
     assert subjects == [
-        "[AbstractFramework] Mail triage: needs your action",
-        "[AbstractFramework] Nightly build: failed",
-        "[AbstractFramework] Nightly build: finished",
-        "[AbstractFramework] Research: needs your action",
+        "[AbstractFramework] Mail triage needs your approval: Send an email",
+        "[AbstractFramework] Nightly build failed",
+        "[AbstractFramework] Nightly build finished",
+        "[AbstractFramework] Research asked you a question",
     ]
     approval = next(m for m in smtp_bodies(smtp) if "Mail triage" in m["subject"])
-    assert "send_email" in approval["text"] and "Replying to this email does nothing" in approval["text"]
+    assert "Send an email (send_email)" in approval["text"] and "Replying to this email does nothing" in approval["text"]
+    question = next(m for m in smtp_bodies(smtp) if "Research" in m["subject"])
+    assert "Which folder?" in question["text"] and "Reference: run run-w" in question["text"]
     failed = next(m for m in smtp_bodies(smtp) if m["subject"].endswith("failed"))
     assert "The tool timed out." in failed["text"]
 
@@ -460,7 +462,7 @@ def test_jobs_that_asked_are_mailed_without_any_global_preference(gateway, imap,
     assert NotificationCollector(plane, svc).collect()["queued"] == 2
     NotificationOutbox(plane).deliver()
     subjects = sorted(m["subject"] for m in smtp_bodies(smtp))
-    assert subjects == ["[AbstractFramework] Nightly build: failed", "[AbstractFramework] Nightly build: finished"]
+    assert subjects == ["[AbstractFramework] Nightly build failed", "[AbstractFramework] Nightly build finished"]
     assert all("email me when done" in m["text"] for m in smtp_bodies(smtp))
 
 

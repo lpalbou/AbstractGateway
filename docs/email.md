@@ -288,9 +288,35 @@ time). **Send a test** sits under Notifications in your email settings. Its emai
 link, an unexpected-request security notice, and links to AbstractFramework, GitHub, and contact email,
 in both HTML and plain text. Console links prefer the matching configured browser hostname or an
 existing named console URL; a single configured hostname can replace the local IP fallback. With
-several unmatched hostnames, the recorded console URL is kept. Notification emails use fixed templates; the only
-model-written text is an automation's own `notify` title and body, labelled as such. Replying to a
-notification does nothing.
+several unmatched hostnames, the recorded console URL is kept.
+
+### What a notification contains
+
+Every notification uses one AbstractFramework layout, in HTML and in plain text with the same
+facts and the same links, with no remote images or tracking. Its subject names what happened in
+plain language and never carries an id: `[AbstractFramework] Mail triage needs your approval:
+Send an email`, `… asked you a question`, `… finished`, `… failed`. The body gives, in order:
+
+- **Context**: the workflow or automation's name (the name of the run you started, not the node
+  that is waiting), the occurrence for an automation, who started it, when it started, and when
+  the event happened, in UTC and in your time zone (your account's `time_zone` preference, else
+  the gateway host's zone).
+- **What is asked**: for a tool approval, each tool as a plain-language label with its name and
+  a readable summary of its arguments (the URL of `fetch_url`, the recipient and subject of
+  `send_email`; long values are shortened and shown whole in the console); for a question, the
+  question and its choices as a numbered list; for a finished or failed run or automation, the
+  cause and the fix, and an automation's own `notify` title and body, labelled as model-written.
+- **Buttons**: **Open in the console** opens that exact run in the console (`/apps/observer/#run/<run id>`,
+  signed in through the console when needed); when the run belongs to a session and the
+  AbstractCode app is installed, **Open in AbstractCode** opens that session (`/apps/code/#session=<id>`).
+  Both links are also printed as URLs.
+- **Footer**: why you receive the email (which switch or option), the note that replying does
+  nothing, and a reference line with the run or automation id.
+
+An approval or question is emailed once per wait: when the same approval is issued again at the
+same step (a retried node, a restart), nothing new is sent; a different tool call or a different
+question at that step is a new wait and a new email. Answering stays in the console (and the
+apps): a notification carries no approve or deny link.
 
 ## Sign-in by email
 

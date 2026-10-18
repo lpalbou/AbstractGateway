@@ -5,6 +5,27 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.9] - 2026-10-19
+
+### Changed
+
+- **Notification emails a person can read.** Every notification (approval needed, question,
+  automation result or failure, run finished or failed, test) uses one AbstractFramework layout:
+  inline styles only, no remote images, readable in light and dark mail clients, with a plain-text
+  part carrying the same facts and links. Subjects read `[AbstractFramework] <name> needs your
+  approval: <tool>`, `… asked you a question`, `… finished`, `… failed` and never carry an id (the
+  run or automation id is a reference line at the bottom). The body states the context (the
+  workflow or automation's name — for a sub-run, the name of the run you started —, the
+  occurrence, who started it, when it started, when the event happened in UTC and in your
+  `time_zone` preference), what is asked (each tool as a plain-language label with a readable
+  summary of its arguments; a question with its choices), the cause and fix of a failure, and two
+  buttons: **Open in the console** (that exact run, `/apps/observer/#run/<id>`) and, for a session
+  when the AbstractCode app is installed, **Open in AbstractCode** (`/apps/code/#session=<id>`).
+  Links keep the configured public hostname rule (never a request header).
+- **One email per wait.** An approval or question is queued once per wait — the node and what it
+  asks — instead of once per runtime wait key, so the same approval issued again at the same step
+  (a retry, a restart) sends nothing new. See `docs/email.md` → Notifications.
+
 ## [0.15.8] - 2026-10-18
 
 ### Added
