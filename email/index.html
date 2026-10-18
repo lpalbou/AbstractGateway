@@ -769,6 +769,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Notifications">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-a-notification-contains" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What a notification contains
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1102,6 +1119,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Notifications">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-a-notification-contains" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What a notification contains
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1485,9 +1519,33 @@ time). <strong>Send a test</strong> sits under Notifications in your email setti
 link, an unexpected-request security notice, and links to AbstractFramework, GitHub, and contact email,
 in both HTML and plain text. Console links prefer the matching configured browser hostname or an
 existing named console URL; a single configured hostname can replace the local IP fallback. With
-several unmatched hostnames, the recorded console URL is kept. Notification emails use fixed templates; the only
-model-written text is an automation's own <code>notify</code> title and body, labelled as such. Replying to a
-notification does nothing.</p>
+several unmatched hostnames, the recorded console URL is kept.</p>
+<h3 id="what-a-notification-contains">What a notification contains<a class="headerlink" href="#what-a-notification-contains" title="Permanent link">&para;</a></h3>
+<p>Every notification uses one AbstractFramework layout, in HTML and in plain text with the same
+facts and the same links, with no remote images or tracking. Its subject names what happened in
+plain language and never carries an id: <code>[AbstractFramework] Mail triage needs your approval:
+Send an email</code>, <code>… asked you a question</code>, <code>… finished</code>, <code>… failed</code>. The body gives, in order:</p>
+<ul>
+<li><strong>Context</strong>: the workflow or automation's name (the name of the run you started, not the node
+  that is waiting), the occurrence for an automation, who started it, when it started, and when
+  the event happened, in UTC and in your time zone (your account's <code>time_zone</code> preference, else
+  the gateway host's zone).</li>
+<li><strong>What is asked</strong>: for a tool approval, each tool as a plain-language label with its name and
+  a readable summary of its arguments (the URL of <code>fetch_url</code>, the recipient and subject of
+  <code>send_email</code>; long values are shortened and shown whole in the console); for a question, the
+  question and its choices as a numbered list; for a finished or failed run or automation, the
+  cause and the fix, and an automation's own <code>notify</code> title and body, labelled as model-written.</li>
+<li><strong>Buttons</strong>: <strong>Open in the console</strong> opens that exact run in the console (<code>/apps/observer/#run/&lt;run id&gt;</code>,
+  signed in through the console when needed); when the run belongs to a session and the
+  AbstractCode app is installed, <strong>Open in AbstractCode</strong> opens that session (<code>/apps/code/#session=&lt;id&gt;</code>).
+  Both links are also printed as URLs.</li>
+<li><strong>Footer</strong>: why you receive the email (which switch or option), the note that replying does
+  nothing, and a reference line with the run or automation id.</li>
+</ul>
+<p>An approval or question is emailed once per wait: when the same approval is issued again at the
+same step (a retried node, a restart), nothing new is sent; a different tool call or a different
+question at that step is a new wait and a new email. Answering stays in the console (and the
+apps): a notification carries no approve or deny link.</p>
 <h2 id="sign-in-by-email">Sign-in by email<a class="headerlink" href="#sign-in-by-email" title="Permanent link">&para;</a></h2>
 <p>When at least one account on the gateway has a connected mailbox, the sign-in page offers
 <strong>Forgot your token? Email me a sign-in code</strong>. Enter your Gateway user and select the link: it
