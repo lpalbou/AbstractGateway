@@ -163,9 +163,20 @@ def get_gateway_service() -> GatewayService:
 
 def principal_service_cached(principal: GatewayPrincipal) -> bool:
     """True when this principal's GatewayService already exists (cheap peek —
-    the pre-warm middleware's gate; never constructs anything)."""
-    with _service_lock:
-        return _principal_service_key(principal) in _services_by_principal
+    the pre-warm middleware's gate; never constructs anything).
+
+    Never waits for `_service_lock`: the lock is held for the whole build of
+    a service (a cold first start imports its engines, well over the
+    watchdog's limit), and this peek runs ON the event loop. While a build
+    holds the lock the answer is "not cached": the caller then waits for the
+    build in a worker thread, and the loop keeps answering /api/health."""
+    key = _principal_service_key(principal)
+    if not _service_lock.acquire(blocking=False):
+        return False
+    try:
+        return key in _services_by_principal
+    finally:
+        _service_lock.release()
 
 
 class ServicePrewarmMiddleware:

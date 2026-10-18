@@ -11167,6 +11167,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.4] - 2026-10-18
+
+### Fixed
+
+- A cold first start no longer exits on the event-loop watchdog. The first
+  request of a signed-in caller builds that caller's service in a worker
+  thread, which can take longer than the watchdog's 30 s on a fresh install
+  (the engines import for the first time); the pre-warm check that every
+  `/api/gateway` request runs on the event loop waited for the same lock,
+  so `/api/health` stopped answering and the watchdog exited the gateway with
+  code 75 (a `systemd` service restarted it; a gateway started in the
+  background stayed down, and the installer's apps step then found no
+  gateway). The check now answers at once while a build is in progress.
+  Affects every fresh install and every first start after an upgrade that
+  brings new engine packages.
+
 ## [0.15.3] - 2026-10-18
 
 Windows fixes.
