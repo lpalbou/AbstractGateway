@@ -1766,7 +1766,7 @@ does not implicitly install them.
 - `GET /api/gateway/audio/transcriptions/models`: proxies AbstractCore `/v1/audio/transcriptions/models` when configured.
 - `GET /api/gateway/audio/music/providers`: proxies AbstractCore `/v1/audio/music/providers` when configured.
 - `GET /api/gateway/audio/music/models`: proxies AbstractCore `/v1/audio/music/models` when configured.
-- `GET /api/gateway/vision/provider_models`: proxies AbstractCore `/v1/vision/provider_models` when configured.
+- `GET /api/gateway/vision/provider_models`: proxies AbstractCore `/v1/vision/provider_models` when configured. For `text_to_image` and `image_to_image` it also lists the enabled `openai` / `openai-compatible` endpoint profiles (`endpoint:<id>`) that serve the task: a profile whose models include a known OpenAI image model (`gpt-image-*`, `dall-e-*`), offered with those models only, or one whose `capabilities` declare the task (`image`, `text_to_image`, `image_to_image`), offered with all its models. Selecting one on an image route sends the generation to that endpoint with the profile's base URL and key.
 - `GET /api/gateway/vision/models`: reports locally known/cached AbstractVision model ids when the in-process capability path is available.
 - `GET /api/gateway/vision/adapters`: lists installed compatible vision adapters for a provider/model/task combination through Runtime's discovery facade.
 - `POST /api/gateway/runs/{run_id}/images/generate`: creates a durable Runtime child run for text-to-image and returns an artifact-backed image result. Optional `size`/`width`/`height`, batch `count` / `n`, `seeds`, and ordered `lora_adapters` values are passed through only when the client supplies them. Batch responses also return `image_artifacts` alongside the compatibility `image_artifact`.
@@ -6036,6 +6036,8 @@ Current direct Gateway endpoints:
 - `GET /api/gateway/audio/music/models`
 - `GET /api/gateway/vision/provider_models`
 - `GET /api/gateway/vision/adapters`
+
+`/vision/provider_models` lists AbstractVision's backends and, for `text_to_image` and `image_to_image`, the enabled `openai` / `openai-compatible` endpoint profiles that serve the task (`provider` = `endpoint:<id>`, described in `endpoint_providers`; a profile whose endpoint could not be read is named in `endpoint_provider_errors`). A profile qualifies with a known OpenAI image model (`gpt-image-*`, `dall-e-*`; only those models are listed) or by declaring the task in its `capabilities` (all its models). `?provider=endpoint:<id>` returns that profile's image models.
 
 `/voice/defaults` is the one answer to "which engines speak and listen by default":
 
@@ -11206,9 +11208,25 @@ Windows fixes.
   `pythonw.exe` running its entry point; the `abstractassistant.exe` console launcher, started
   detached, opened an empty console window next to the app.
 
+- **Image routes offer OpenAI-compatible endpoints**: an OpenAI-compatible endpoint connection (`endpoint:<id>`) that serves an image model is now offered for
+  text-to-image and image edits. Before, `GET /api/gateway/vision/provider_models` listed only
+  AbstractVision's own backends, which know one global OpenAI-compatible base URL and none of the
+  gateway's endpoint profiles, so a relay serving `gpt-image-2` was never a candidate in the web console's
+  image routes even though it answered both tasks when called directly. The catalog now adds every enabled
+  `openai` / `openai-compatible` profile whose model list (its allowed models, else what its endpoint
+  reports, probed with the discovery budget) holds a model of a known OpenAI image family (`gpt-image-*`,
+  `dall-e-2` for both tasks, `dall-e-3` for text-to-image), or that declares the task in its
+  `capabilities` (`image`, `text_to_image`, `image_to_image`, ...; every listed model is then offered).
+  Only the image models are listed under the profile; chat models of the same relay are not. A request
+  filtered to an AbstractVision backend carries no endpoint rows, and video and upscale tasks are
+  unchanged. Running the selected route needs AbstractVision 0.3.34 and AbstractRuntime 0.10.3 (required
+  by this release). Tests:
+  `tests/test_endpoint_vision_catalog.py`.
+
 ### Changed
 
-- Requires `abstractvoice>=0.15.1` (its command-line tools write piped output on Windows).
+- Requires `abstractvoice>=0.15.1` (its command-line tools write piped output on Windows) and
+  `AbstractRuntime>=0.10.3` (image routes on endpoint connections).
 
 ## [0.15.2] - 2026-10-18
 
