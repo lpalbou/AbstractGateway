@@ -35,6 +35,7 @@ from ..entity_access import (
     require_entity_visible,
 )
 from ..entity_settings_access import entity_settings_guard
+from ..entity_session_tools import managed_visit_http_guard
 from ..entity_seat import (
     cancel_run_tree,
     door_decision,
@@ -62,7 +63,7 @@ from .gateway import VoiceTTSRequest as GatewayVoiceTTSRequest
 router = APIRouter(
     prefix="/gateway/entities",
     tags=["entities"],
-    dependencies=[Depends(entity_plane_resolver), Depends(entity_name_guard), Depends(entity_settings_guard)],
+    dependencies=[Depends(entity_plane_resolver), Depends(entity_name_guard), Depends(entity_settings_guard), Depends(managed_visit_http_guard)],
 )
 
 

@@ -2027,7 +2027,9 @@ class EntityRegistry:
                 out["notices"] = notices
             return EffectOutcome.completed(out)
 
-        return handler
+        from .entity_session_tools import wrap_entity_tool_handler
+
+        return wrap_entity_tool_handler(handler)
 
     def list_entities(self) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
