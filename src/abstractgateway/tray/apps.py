@@ -55,6 +55,7 @@ WEB_APPS: Tuple[Tuple[str, str, str, str, int, str], ...] = (
     ("code", "Code", "@abstractframework/code", "abstractcode-web", STACK_PORT["code"], "ABSTRACTCODE_GATEWAY_URL"),
     ("entity", "Entity", "@abstractframework/entity", "abstractentity", STACK_PORT["entity"], "ABSTRACTENTITY_GATEWAY_URL"),
     ("flow", "Flow", "@abstractframework/flow", "abstractflow-editor", STACK_PORT["flow"], "ABSTRACTFLOW_GATEWAY_URL"),
+    ("note", "Note", "@abstractframework/note", "abstractnote-web", STACK_PORT["note"], "ABSTRACTNOTE_GATEWAY_URL"),
 )
 ASSISTANT_ID = "assistant"
 ASSISTANT_NAME = "Assistant"

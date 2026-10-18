@@ -1,10 +1,18 @@
 # Apps
 
-The five browser apps (Observer, Continuum, Code, Entity and Flow Editor) can be
+The six browser apps (Observer, Continuum, Code, Entity, Flow Editor and Note) can be
 installed, started, stopped and updated from the gateway: from the console's
 Apps page, from the HTTP API below, or with `abstractgateway apps`. Nobody has
 to open a terminal or install Node.js by hand. The Apps page also lists the
 desktop app, the **Assistant** (see [The Assistant](#the-assistant-a-desktop-app)).
+
+**Note** (`@abstractframework/note`, port 3006) is the AbstractNote web app: capture
+anything, see how it connects and how it changed over time. It needs the `abstractnote`
+Python package installed next to the gateway: the gateway then serves the note read API
+under `/api/gateway/note/`, binds the note tools to each user's own notebook
+(`<plane>/abstractnote/`, auto-approved), and loads the `abstractnote` workflows. Without the
+package the app still installs, but `/api/gateway/note/` answers 404 and the `abstractnote`
+workflows are absent.
 
 On a card, a plain user sees one button for the state the app is in:
 
@@ -130,7 +138,7 @@ in its `details` field (`<data dir>/apps/jobs/<job>.log`).
   (next section), never directly. Ports: the app's usual port when it is
   free, else the first free port in 3100-3199. The usual ports are the
   framework's stack port map (`scripts/start-local.sh`): Observer 3001,
-  Continuum 3002, Code 3003, Entity 3004, Flow 3005.
+  Continuum 3002, Code 3003, Entity 3004, Flow 3005, Note 3006.
 
 ## Apps are served through the gateway
 
@@ -190,10 +198,10 @@ paths, the identity header) is the app-server kit's contract:
 An app can also run without the gateway having started it: the framework's
 development stack (`scripts/start-local.sh`), `npx @abstractframework/observer`,
 a global npm install, a service. The gateway finds such an app by asking the
-usual ports on this machine (3001-3005, then 3000 and 3007) for their start
+usual ports on this machine (3001-3006, then 3000 and 3007) for their start
 page and reading its title
 ("AbstractObserver", "AbstractContinuum", "AbstractCode", "AbstractEntity",
-"AbstractFlow"). None of the apps has an address that says who it is without
+"AbstractFlow", "AbstractNote"). None of the apps has an address that says who it is without
 a gateway sign-in, and the start page is plain HTML, so this costs one short
 local request per port (half a second at most, all ports at once, remembered
 for 5 seconds). The version is read from the `package.json` of the program

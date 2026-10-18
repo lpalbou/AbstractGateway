@@ -109,7 +109,7 @@ DEFAULT_PORT_RANGE = (3100, 3199)
 # THE usual port of each app: the stack port map of `scripts/start-local.sh`
 # (header "Operator port map", same as start.sh), which is what the operator's
 # dev stack runs: observer 3001, continuum 3002, code/web 3003, entity 3004,
-# flow 3005 (root backlog 0859 aligns the standalone launchers on it). ONE
+# flow 3005, note 3006 (root backlog 0859 aligns the standalone launchers on it). ONE
 # table: the managed-launch default port AND the port the external-app probe
 # looks at first. Also the order the apps are listed in (console, tray).
 STACK_PORTS: Tuple[Tuple[str, int], ...] = (
@@ -118,6 +118,7 @@ STACK_PORTS: Tuple[Tuple[str, int], ...] = (
     ("code", 3003),
     ("entity", 3004),
     ("flow", 3005),
+    ("note", 3006),
 )
 STACK_PORT: Dict[str, int] = dict(STACK_PORTS)
 # Older launcher defaults (root backlog 0859: scripts/lib/apps_common.sh ran
@@ -152,6 +153,7 @@ APPS: Tuple[AppSpec, ...] = (
     AppSpec("code", "Code", "@abstractframework/code", "Browser-based coding assistant with durable agent sessions.", STACK_PORT["code"], "abstractcode", "ABSTRACTCODE_GATEWAY_URL", "AbstractCode"),
     AppSpec("entity", "Entity", "@abstractframework/entity", "Create summoned entities, watch their memory graph, talk with them.", STACK_PORT["entity"], "abstractentity", "ABSTRACTENTITY_GATEWAY_URL", "AbstractEntity"),
     AppSpec("flow", "Flow Editor", "@abstractframework/flow", "Visual workflow editor.", STACK_PORT["flow"], "abstractflow", "ABSTRACTFLOW_GATEWAY_URL", "AbstractFlow"),
+    AppSpec("note", "Note", "@abstractframework/note", "Capture anything; see how what you know connects and changes over time.", STACK_PORT["note"], "abstractnote", "ABSTRACTNOTE_GATEWAY_URL", "AbstractNote"),
 )
 APP_BY_ID: Dict[str, AppSpec] = {a.id: a for a in APPS}
 
@@ -160,7 +162,7 @@ APP_BY_ID: Dict[str, AppSpec] = {a.id: a for a in APPS}
 # parser; Continuum since 0.3.1, Flow since its own parser). Flags beat the
 # environment and any settings file an app keeps (Continuum's
 # ~/.abstractcontinuum/settings.json), so the gateway passes flags.
-FLAG_CONFIGURED_APPS = frozenset({"observer", "continuum", "code", "entity", "flow"})
+FLAG_CONFIGURED_APPS = frozenset({"observer", "continuum", "code", "entity", "flow", "note"})
 # The last released version of an app that IGNORES those flags (it reads
 # PORT / HOST / <APP>_GATEWAY_URL only; an unknown flag is skipped, so it
 # would bind its own default port and host). Such an install, or one whose

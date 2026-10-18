@@ -280,7 +280,7 @@ def amgr(tmp_path: Path, home: Path):
 def test_overview_lists_the_assistant_after_the_browser_apps(amgr) -> None:
     m, state, _ = amgr
     ov = m.overview(check_latest=False, caller={"local": True, "same_machine": True, "admin": True})
-    assert [a["id"] for a in ov["apps"]] == ["observer", "continuum", "code", "entity", "flow", "assistant"]
+    assert [a["id"] for a in ov["apps"]] == ["observer", "continuum", "code", "entity", "flow", "note", "assistant"]
     a = ov["apps"][-1]
     assert a["kind"] == "desktop" and a["name"] == "Assistant" and a["url"] is None and a["port"] is None
     assert a["status"] == "not_installed" and a["actions"] == ["install"] and a["install_available"]

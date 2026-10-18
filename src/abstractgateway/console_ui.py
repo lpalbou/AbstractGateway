@@ -1549,6 +1549,7 @@ CONSOLE_UI_JS = r"""
       observer: { mark: "Ob", blurb: "Watch runs live, replay them, steer running work." },
       continuum: { mark: "Cn", blurb: "Your backlog, inbox and long-running processes." },
       entity: { mark: "En", blurb: "Create entities and talk with them as they learn." },
+      note: { mark: "No", blurb: "Capture anything; see how it connects and changes over time." },
       assistant: { mark: "As", blurb: "A menu-bar assistant: chat or talk hands-free." },
     };
     // An app that holds nothing yet on this gateway opens where its first
