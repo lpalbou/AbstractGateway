@@ -2253,6 +2253,10 @@ class AppsManager:
         the installed version starts in its place instead of the old copy
         being listed as started outside the gateway."""
         reaped: List[Dict[str, Any]] = []
+        # Nothing this gateway ever installed, nothing of its own to find: a
+        # fresh data dir boots without touching the usual app ports.
+        if not any((self.apps_root / spec.id).is_dir() for spec in APPS):
+            return reaped
         found = self.external_apps(refresh=True)
         for spec in APPS:
             ext = found.get(spec.id)

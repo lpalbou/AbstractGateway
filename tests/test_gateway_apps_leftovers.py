@@ -44,8 +44,9 @@ class H(http.server.BaseHTTPRequestHandler):
         body = b"<html><head><title>AbstractFlow Visual Editor</title></head></html>"
         self.send_response(200); self.send_header("Content-Type", "text/html"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
     def log_message(self, *a): pass
+srv = http.server.HTTPServer(("127.0.0.1", port), H)   # bound and listening before "listening" is said
 print("listening", flush=True)
-http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
+srv.serve_forever()
 '''
 
 
@@ -137,6 +138,17 @@ def test_a_command_line_under_the_data_dirs_apps_folder_is_this_gateways(manager
     assert manager.leftover(flow) == own
     manager.external_probe = lambda **kw: {"flow": foreign}
     assert manager.leftover(flow, refresh=True) is None
+
+
+def test_a_data_dir_without_apps_never_probes_the_ports(manager: am.AppsManager) -> None:
+    # A gateway that never installed an app has no leftover to find: its boot
+    # must not touch the usual app ports (a test gateway's network guard, a
+    # server with other services there).
+    calls: List[dict] = []
+    manager.external_probe = lambda **kw: calls.append(kw) or {}
+    assert manager.reap_leftovers() == [] and calls == []
+    (manager.apps_root / "flow").mkdir(parents=True)
+    assert manager.reap_leftovers() == [] and len(calls) == 1
 
 
 def test_detection_carries_the_listeners_command_line(leftovers, manager: am.AppsManager) -> None:
