@@ -1062,6 +1062,7 @@ renders.</p>
 <th>Engine</th>
 <th>macOS (Apple silicon)</th>
 <th>Linux</th>
+<th>Windows (x86_64)</th>
 <th>Admin rights?</th>
 </tr>
 </thead>
@@ -1070,17 +1071,20 @@ renders.</p>
 <td><strong>Ollama</strong></td>
 <td>Downloads the signed <code>Ollama-darwin.zip</code> from Ollama's official GitHub release, checks its published SHA-256 and the Developer ID signature (team <code>3MU9H2V9Y9</code>), places <code>Ollama.app</code> in <code>/Applications</code> when your account can write it (an admin account can, with no password) or else in <code>~/Applications</code>, then starts it and waits until <code>http://127.0.0.1:11434/api/version</code> answers</td>
 <td>Ollama's official installer (<code>curl -fsSL https://ollama.com/install.sh \| sh</code>)</td>
-<td>macOS: no. Linux: yes (the installer writes <code>/usr/local</code> and a systemd service)</td>
+<td><code>winget install Ollama.Ollama</code> (per-user)</td>
+<td>macOS: no. Linux: yes (the installer writes <code>/usr/local</code> and a systemd service). Windows: no</td>
 </tr>
 <tr>
 <td><strong>LM Studio</strong></td>
 <td>Downloads the signed disk image from lmstudio.ai, checks the signature (team <code>D65G88RHWN</code>), copies <code>LM Studio.app</code> to <code>/Applications</code> or <code>~/Applications</code>, opens it once and starts its local server (<code>lms server start</code>)</td>
 <td>LM Studio's official installer: the headless daemon and the <code>lms</code> CLI under <code>~/.lmstudio</code></td>
+<td>LM Studio's official PowerShell installer (the <code>lms</code> CLI under <code>~/.lmstudio</code>)</td>
 <td>no</td>
 </tr>
 <tr>
 <td><strong>MLX</strong></td>
 <td><code>abstractcore[apple]</code> at the installed AbstractCore version (MLX as prebuilt wheels) into the gateway's own Python</td>
+<td>not supported</td>
 <td>not supported</td>
 <td>no</td>
 </tr>
@@ -1088,29 +1092,33 @@ renders.</p>
 <td><strong>llama.cpp</strong></td>
 <td><code>abstractcore[apple]</code>, with its llama.cpp taken from upstream's prebuilt Metal wheel (<code>llama-cpp-python</code> 0.3.28); no compiler</td>
 <td><code>abstractcore[gpu]</code> with the prebuilt CPU wheel (0.3.35)</td>
+<td>comes with the AbstractFramework installer, which adds llama.cpp's prebuilt CUDA, Vulkan or CPU build; the row's Install shows that installer's command</td>
 <td>no</td>
 </tr>
 <tr>
 <td><strong>vLLM</strong></td>
 <td>not supported (the row says why; no Install button)</td>
 <td>Linux with an NVIDIA GPU: <code>abstractcore[gpu]</code> into the gateway's Python</td>
+<td>not supported natively (no Windows build): run vLLM in WSL2 or on a Linux machine and point the gateway at that server</td>
 <td>no</td>
 </tr>
 <tr>
 <td><strong>Hugging Face</strong></td>
 <td><code>abstractcore[apple]</code> at the installed AbstractCore version (several GB)</td>
 <td><code>abstractcore[gpu]</code></td>
+<td><code>abstractcore[gpu]</code> at the installed AbstractCore version, with <code>--torch-backend=auto</code> so uv takes PyTorch's CUDA build</td>
 <td>no</td>
 </tr>
 </tbody>
 </table>
 <p>Python engines only ever arrive with one of AbstractCore's install settings (<code>abstractcore[apple]</code>
-on Apple silicon, <code>abstractcore[gpu]</code> on Linux), never as a bare package, so each one installs the
-whole setting (several GB). An Intel Mac, a Python under Rosetta, and Windows have no such setting:
+on Apple silicon, <code>abstractcore[gpu]</code> on Linux and Windows x86_64), never as a bare package, so each
+one installs the whole setting (several GB). An Intel Mac, a Python under Rosetta, and Windows on ARM
+have no such setting:
 their llama.cpp and Hugging Face rows say the engine is not available on this machine with the
 install settings and offer no Install button; use Ollama, LM Studio or a remote provider there.</p>
-<p>On Windows (experimental), Ollama and LM Studio installs use the vendor commands AbstractCore
-plans (winget, the vendor PowerShell installers).</p>
+<p>On Windows, Ollama and LM Studio installs use the vendor commands AbstractCore plans (winget, the
+vendor PowerShell installers).</p>
 <p>Everything the gateway's own Python receives is installed with the gateway's
 <code>abstract*</code> packages pinned to the versions it runs, so an engine install can
 never change the gateway itself.</p>

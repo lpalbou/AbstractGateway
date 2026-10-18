@@ -2352,7 +2352,10 @@ write; the <code>ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE</code> /
 credential and configuration folders of the gateway's user account (<code>~/.ssh</code>,
 <code>~/.aws</code>, <code>~/.gnupg</code>, <code>~/.config/gcloud</code>, <code>~/.kube</code>, <code>~/Library/Keychains</code>,
 <code>~/.abstractgateway</code>, <code>~/.abstractcode</code>, <code>~/.abstractassistant</code>,
-<code>~/.abstractcontinuum</code>, <code>~/.abstractcore</code>) are:</p>
+<code>~/.abstractcontinuum</code>, <code>~/.abstractcore</code>; on Windows also Credential Manager's
+folders <code>AppData\Roaming\Microsoft\Credentials</code> and
+<code>AppData\Local\Microsoft\Credentials</code>, the keys that unlock them in
+<code>AppData\Roaming\Microsoft\Protect</code>, and <code>AppData\Roaming\gcloud</code>) are:</p>
 <ul>
 <li>never listed or served by the workspace browser, for anyone, even when a
   run's folder contains them;</li>

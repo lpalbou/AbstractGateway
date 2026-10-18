@@ -3416,7 +3416,10 @@ for anyone:</p>
 <p><code>~/.ssh</code>, <code>~/.aws</code>, <code>~/.gnupg</code>, <code>~/.config/gcloud</code>, <code>~/.kube</code>,
 <code>~/Library/Keychains</code>, <code>~/.abstractgateway</code>, <code>~/.abstractcode</code>,
 <code>~/.abstractassistant</code>, <code>~/.abstractcontinuum</code>, <code>~/.abstractcore</code>, and the
-gateway's data folder (except a run's own conversation folder inside it).</p>
+gateway's data folder (except a run's own conversation folder inside it). On
+Windows also <code>AppData\Roaming\Microsoft\Credentials</code>,
+<code>AppData\Local\Microsoft\Credentials</code>, <code>AppData\Roaming\Microsoft\Protect</code> and
+<code>AppData\Roaming\gcloud</code> in your user folder.</p>
 <p>The same folders are denied to every run's file tools: the gateway gives each
 run (and the runs it starts, scheduled runs included) the folders as
 <code>workspace_builtin_deny_prefixes</code>, plus one exception,
@@ -3637,7 +3640,7 @@ does not implicitly install them.</p>
 <li><code>GET /api/gateway/audio/transcriptions/models</code>: proxies AbstractCore <code>/v1/audio/transcriptions/models</code> when configured.</li>
 <li><code>GET /api/gateway/audio/music/providers</code>: proxies AbstractCore <code>/v1/audio/music/providers</code> when configured.</li>
 <li><code>GET /api/gateway/audio/music/models</code>: proxies AbstractCore <code>/v1/audio/music/models</code> when configured.</li>
-<li><code>GET /api/gateway/vision/provider_models</code>: proxies AbstractCore <code>/v1/vision/provider_models</code> when configured.</li>
+<li><code>GET /api/gateway/vision/provider_models</code>: proxies AbstractCore <code>/v1/vision/provider_models</code> when configured. For <code>text_to_image</code> and <code>image_to_image</code> it also lists the enabled <code>openai</code> / <code>openai-compatible</code> endpoint profiles (<code>endpoint:&lt;id&gt;</code>) that serve the task: a profile whose models include a known OpenAI image model (<code>gpt-image-*</code>, <code>dall-e-*</code>), offered with those models only, or one whose <code>capabilities</code> declare the task (<code>image</code>, <code>text_to_image</code>, <code>image_to_image</code>), offered with all its models. Selecting one on an image route sends the generation to that endpoint with the profile's base URL and key.</li>
 <li><code>GET /api/gateway/vision/models</code>: reports locally known/cached AbstractVision model ids when the in-process capability path is available.</li>
 <li><code>GET /api/gateway/vision/adapters</code>: lists installed compatible vision adapters for a provider/model/task combination through Runtime's discovery facade.</li>
 <li><code>POST /api/gateway/runs/{run_id}/images/generate</code>: creates a durable Runtime child run for text-to-image and returns an artifact-backed image result. Optional <code>size</code>/<code>width</code>/<code>height</code>, batch <code>count</code> / <code>n</code>, <code>seeds</code>, and ordered <code>lora_adapters</code> values are passed through only when the client supplies them. Batch responses also return <code>image_artifacts</code> alongside the compatibility <code>image_artifact</code>.</li>
