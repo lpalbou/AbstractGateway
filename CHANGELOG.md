@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.5] - 2026-10-18
+
+### Fixed
+
+- Image generation routed to a provider endpoint profile (an OpenAI-compatible
+  relay chosen as the image route, in the console's sandbox or a workflow)
+  reaches that endpoint. Requires AbstractRuntime 0.10.4: its `LLM_CALL`
+  handler no longer rewrites a media output spec's `endpoint:<id>` provider
+  into a bare provider family, and the pooled client's media host carries the
+  gateway's endpoint-profile resolver, so the generation runs in process
+  through the configured endpoint with its stored credential. Nothing asks
+  for a base URL or key that the gateway already holds. Affects every image
+  route set to an endpoint profile.
+
 ## [0.15.4] - 2026-10-18
 
 ### Fixed

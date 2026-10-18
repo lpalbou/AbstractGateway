@@ -99,7 +99,9 @@ _role_lock = threading.Lock()
 # 0.9.1: streamed speech is never a run wait; close_interrupted_voice_stream for legacy waits.
 # 0.10.0: schedule@2 calendar rules (daily/weekly/monthly in the owner's time zone) and set_occurrence/registry pins.
 # 0.10.3: image/video specs on an endpoint connection (`endpoint:<id>`) run in process.
-ABSTRACTRUNTIME_FLOOR = "0.10.3"
+# 0.10.4: a media spec keeps its `endpoint:<id>` provider (the LLM_CALL handler no longer rewrites it)
+#         and the pooled client's media host carries the endpoint-profile resolver.
+ABSTRACTRUNTIME_FLOOR = "0.10.4"
 
 
 class LiveDeltaError(RuntimeError):
