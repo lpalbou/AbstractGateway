@@ -445,7 +445,7 @@ def test_launch_bundle_script_running_and_the_same_machine_rule(amgr, monkeypatc
     state["procs"] = [(99, [state["script"]])]
     n = len(spawned)
     out = m.launch_desktop("assistant", same_machine=True)
-    assert len(spawned) == n and out["already_running"] and "menu bar" in out["message"]
+    assert len(spawned) == n and out["already_running"] and am._tray_area() in out["message"]
     # Running from the bundle: `open -a` brings it forward.
     state["files"] = {BUNDLE}
     state["procs"] = [(98, [f"{BUNDLE}/Contents/MacOS/AbstractAssistant"])]
