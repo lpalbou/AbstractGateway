@@ -5,6 +5,25 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- An OpenAI-compatible endpoint connection (`endpoint:<id>`) that serves an image model is now offered for
+  text-to-image and image edits. Before, `GET /api/gateway/vision/provider_models` listed only
+  AbstractVision's own backends, which know one global OpenAI-compatible base URL and none of the
+  gateway's endpoint profiles, so a relay serving `gpt-image-2` was never a candidate in the web console's
+  image routes even though it answered both tasks when called directly. The catalog now adds every enabled
+  `openai` / `openai-compatible` profile whose model list (its allowed models, else what its endpoint
+  reports, probed with the discovery budget) holds a model of a known OpenAI image family (`gpt-image-*`,
+  `dall-e-2` for both tasks, `dall-e-3` for text-to-image), or that declares the task in its
+  `capabilities` (`image`, `text_to_image`, `image_to_image`, ...; every listed model is then offered).
+  Only the image models are listed under the profile; chat models of the same relay are not. A request
+  filtered to an AbstractVision backend carries no endpoint rows, and video and upscale tasks are
+  unchanged. Running the selected route needs AbstractVision with endpoint-profile routing and
+  AbstractRuntime running endpoint media specs in process (same change set). Tests:
+  `tests/test_endpoint_vision_catalog.py`.
+
 ## [0.15.2] - 2026-10-18
 
 ### Fixed

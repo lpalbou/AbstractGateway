@@ -86,6 +86,12 @@ from ..provider_endpoint_profiles import (
     profile_id_from_virtual_provider,
     resolve_effective_endpoint_profile,
 )
+from ..endpoint_vision_catalog import (
+    endpoint_profile_image_models,
+    merge_endpoint_vision_catalog,
+    profile_is_image_family,
+    wanted_image_tasks,
+)
 from ..provider_connections import (
     builtin_provider_connection_specs,
     builtin_provider_public_row,
@@ -19683,6 +19689,65 @@ async def audio_music_models_catalog(
     )
 
 
+async def _endpoint_profile_vision_entries(
+    request: Request,
+    *,
+    task: Optional[str],
+    provider: Optional[str],
+    discovery: Any,
+) -> tuple[list[tuple[Any, list[str]]], Dict[str, str]]:
+    """The enabled endpoint profiles that are image candidates for `task`.
+
+    `(profile, models)` pairs plus per-profile probe errors. A profile's model
+    list is its `allowed_models`, else what its endpoint reports (probed
+    concurrently with the discovery budget, best effort: a dead endpoint is
+    an error entry, never a failed route). See `endpoint_vision_catalog` for
+    which profiles and models qualify.
+    """
+    if not wanted_image_tasks(task):
+        return [], {}
+    wanted = str(provider or "").strip().lower()
+    current_base, root_base = _gateway_profile_dirs()
+    try:
+        profiles = [
+            p
+            for p in effective_endpoint_profiles(base_dir=current_base, root_base_dir=root_base)
+            if profile_is_image_family(p) and (not wanted or p.virtual_provider_id.lower() == wanted)
+        ]
+    except Exception:
+        return [], {}
+    errors: Dict[str, str] = {}
+
+    async def _models_for(profile: Any) -> list[str]:
+        if profile.allowed_models:
+            return [str(m) for m in profile.allowed_models]
+        if discovery is None:
+            return []
+        try:
+            payload = await asyncio.to_thread(
+                discovery.list_provider_models,
+                profile.provider_family,
+                base_url=profile.base_url or None,
+                provider_api_key=profile.api_key or _request_provider_api_key(request),
+                timeout_s=_provider_models_timeout_s(),
+            )
+        except Exception as e:
+            errors[profile.virtual_provider_id] = str(e)
+            return []
+        if isinstance(payload, dict) and payload.get("error"):
+            errors[profile.virtual_provider_id] = str(payload.get("error"))
+        raw = payload.get("models") if isinstance(payload, dict) else None
+        return [str(m) for m in raw if isinstance(m, str) and m.strip()] if isinstance(raw, list) else []
+
+    model_lists = await asyncio.gather(*[_models_for(p) for p in profiles])
+    entries: list[tuple[Any, list[str]]] = []
+    for profile, models in zip(profiles, model_lists):
+        image_models = endpoint_profile_image_models(profile, models, task=task)
+        if image_models is not None:
+            entries.append((profile, image_models))
+    return entries, errors
+
+
 @router.get("/vision/provider_models")
 async def vision_provider_models_catalog(
     request: Request,
@@ -19697,7 +19762,12 @@ async def vision_provider_models_catalog(
     provider: Optional[str] = Query(default=None, description="Optional image provider/backend filter."),
     providers_only: bool = Query(default=False, description="Return provider names without model lists."),
 ) -> Dict[str, Any]:
-    """List Vision provider model catalogs through the Gateway Runtime discovery facade."""
+    """List Vision provider model catalogs through the Gateway Runtime discovery facade.
+
+    The gateway's endpoint profiles (`endpoint:<id>`) that serve an image task
+    join the AbstractVision rows (`endpoint_vision_catalog`): AbstractVision
+    alone knows one global OpenAI-compatible base URL and none of them.
+    """
     task_value = str(task or "").strip() or None
     valid_vision_tasks = {"text_to_image", "image_to_image", "image_upscale", "text_to_video", "image_to_video"}
     if task_value and task_value not in valid_vision_tasks:
@@ -19706,28 +19776,38 @@ async def vision_provider_models_catalog(
             detail="task must be one of: text_to_image, image_to_image, image_upscale, text_to_video, image_to_video",
         )
     discovery, err = _gateway_abstractcore_discovery_facade()
-    if err or discovery is None:
-        out = _filter_vision_provider_models_response(
-            _runtime_discovery_payload(
-                {
-                    "available": False,
-                    "models": [],
-                    "providers": [],
-                    "available_providers": [],
-                    "models_by_provider": {},
-                    "provider_models": [],
-                    "task": task_value,
-                    "error": err or "Gateway runtime does not expose AbstractCore discovery helpers.",
-                }
-            ),
-            provider=provider,
+    endpoint_provider = str(provider or "").strip().lower().startswith("endpoint:")
+    # A request filtered to an AbstractVision backend gets no endpoint rows.
+    # The endpoint probes run concurrently with the AbstractVision catalog.
+    endpoint_lookup: Optional["asyncio.Future[Any]"] = None
+    if endpoint_provider or not str(provider or "").strip():
+        endpoint_lookup = asyncio.ensure_future(
+            _endpoint_profile_vision_entries(
+                request,
+                task=task_value,
+                provider=provider if endpoint_provider else None,
+                discovery=discovery if not err else None,
+            )
+        )
+
+    async def _respond(out: Dict[str, Any]) -> Dict[str, Any]:
+        endpoint_entries, endpoint_errors = (await endpoint_lookup) if endpoint_lookup is not None else ([], {})
+        if endpoint_provider and not endpoint_entries:
+            out["error"] = endpoint_errors.get(str(provider or "").strip()) or out.get("error")
+        out = merge_endpoint_vision_catalog(
+            out,
+            endpoint_entries,
             providers_only=providers_only,
+            task=task_value,
+            errors=endpoint_errors,
         )
         return _gateway_catalog_response(
             out,
             kind="providers" if providers_only else "models",
             scope="vision",
-            items=_gateway_catalog_provider_items(out, provider_keys=("available_providers",))
+            items=_gateway_catalog_provider_items(
+                out, provider_keys=("available_providers",), detail_keys=("endpoint_providers",)
+            )
             if providers_only
             else _gateway_catalog_model_items(
                 out,
@@ -19741,6 +19821,43 @@ async def vision_provider_models_catalog(
             provider=provider,
             metadata={"providers_only": providers_only},
         )
+
+    if endpoint_provider:
+        # An endpoint profile is not an AbstractVision backend: asking the
+        # facade about it can only answer "unknown provider".
+        return await _respond(
+            {
+                "available": False,
+                "route_available": True,
+                "models": [],
+                "providers": [],
+                "available_providers": [],
+                "models_by_provider": {},
+                "provider_models": [],
+                "task": task_value,
+                "source": "abstractgateway.provider_endpoint_profiles",
+                "error": None,
+            }
+        )
+    if err or discovery is None:
+        return await _respond(
+            _filter_vision_provider_models_response(
+                _runtime_discovery_payload(
+                    {
+                        "available": False,
+                        "models": [],
+                        "providers": [],
+                        "available_providers": [],
+                        "models_by_provider": {},
+                        "provider_models": [],
+                        "task": task_value,
+                        "error": err or "Gateway runtime does not expose AbstractCore discovery helpers.",
+                    }
+                ),
+                provider=provider,
+                providers_only=providers_only,
+            )
+        )
     try:
         payload = await _discovery_to_thread(
             discovery.list_vision_provider_models,
@@ -19751,29 +19868,15 @@ async def vision_provider_models_catalog(
             providers_only=providers_only,
         )
     except Exception as e:
+        if endpoint_lookup is not None:
+            endpoint_lookup.cancel()
         raise HTTPException(status_code=502, detail=str(e)) from e
-    out = _filter_vision_provider_models_response(
-        _runtime_discovery_payload(payload),
-        provider=provider,
-        providers_only=providers_only,
-    )
-    return _gateway_catalog_response(
-        out,
-        kind="providers" if providers_only else "models",
-        scope="vision",
-        items=_gateway_catalog_provider_items(out, provider_keys=("available_providers",))
-        if providers_only
-        else _gateway_catalog_model_items(
-            out,
+    return await _respond(
+        _filter_vision_provider_models_response(
+            _runtime_discovery_payload(payload),
             provider=provider,
-            task=task_value,
-            detail_keys=("models", "provider_models"),
-            map_keys=("models_by_provider",),
-            value_keys=("models",),
-        ),
-        task=task_value,
-        provider=provider,
-        metadata={"providers_only": providers_only},
+            providers_only=providers_only,
+        )
     )
 
 
