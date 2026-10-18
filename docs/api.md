@@ -1099,6 +1099,50 @@ history (every archive and unarchive) are kept in the plane's
 `session.unarchived` audit event. Automations are archived with the
 `automation.archive` command and brought back with `automation.unarchive`.
 
+### Search conversations
+
+`GET /api/gateway/sessions/search?q=<words>` finds the caller's conversations
+by keyword: what was asked, what was answered, and the artifacts of each turn
+(generated images, recordings, videos and music by their generation prompt,
+attachments by their file name). Words and parts of words match, case and
+accents are ignored, and a fuzzy pass forgives a typo. Tool usage, tool
+outputs and intermediate thinking are not indexed.
+
+| Query parameter | Meaning |
+|---|---|
+| `q` | the words to find (1–200 characters, every word required) |
+| `limit` | sessions per answer, 1–50 (default 20) |
+| `archived` | `true` searches archived conversations only; default `false` leaves them out, like `GET /runs?root_only=true` |
+| `session_kind` | as in `GET /runs` (default `chat,discussion`, the kinds indexed; automation sessions are not) |
+| `kind` | `conversation` (default), `docs` or `all`, the session purpose as in `GET /runs` |
+
+The answer is `{query, items, count, fuzzy, kinds, indexing}`. One item per
+session, best first: `{session_id, run_id, prompt, snippet, highlights,
+matched_in, score, created_at, updated_at, session_kind, archived, fuzzy,
+artifact}`; `run_id` is the turn that matched best, `snippet` is the text
+around the first match with `highlights` as `[start, length]` pairs, and
+`matched_in` says where it matched (`question`, `answer` or `artifact`). When
+an artifact matched, `artifact` is `{artifact_id, run_id, kind, content_type,
+name, prompt}` and its bytes are at
+`GET /api/gateway/runs/{artifact.run_id}/artifacts/{artifact_id}/content`.
+`fuzzy` on the answer says whether the index has SQLite's `trigram`
+tokenizer (without it, whole words with prefixes match); `fuzzy` on an item
+marks a hit found by the fuzzy pass. `indexing` is `{complete,
+pending_sessions, turns, errors}`: the index catches up on every call within
+a short time budget, and `complete: false` means older conversations are
+still being read (a first search on a large plane), never a silent partial
+list.
+
+The index is one SQLite file per runtime plane, `conversation_search.sqlite3`
+in that plane's data folder, next to the plane's stores: an account can only
+ever search its own conversations, exactly like `GET /runs`. The file is
+disposable: delete it and the next search rebuilds it, and a schema change
+rebuilds it on its own.
+
+```bash
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/sessions/search?q=survival%20curve&limit=10"
+```
+
 ## Conversation tool choices
 
 Assistant clients use `GET /api/gateway/discovery/tools` and the established
@@ -1107,7 +1151,14 @@ Assistant clients use `GET /api/gateway/discovery/tools` and the established
 `auto_approve_tools` and `require_approval_tools` lists in
 `input_data._runtime.tool_policy`. Omitted restrictions inherit defaults;
 explicit empty allowed-tool lists disable every tool. No additional capability
-probe is required for this contract.
+probe is required for this contract. `GET /api/gateway/tool-policy/capabilities` answers
+`{supported, modes: [off, auto, approve], runtime_floor}` and
+`GET /api/gateway/automations/defaults` answers `{growing_max_tokens}` (the
+history window a growing-context automation keeps).
+`GET /api/gateway/runs/{run_id}/message-stats` gives one of the caller's runs its
+`{wall_time_seconds, input_tokens, output_tokens, tool_calls}`, read from the
+run's ledger (completed effects only; a count the ledger does not carry is
+`null`).
 
 Entity clients discover visit-scoped controls with
 `GET /api/gateway/entities/{name}/session-tools` (`visit_routes: true` advertises

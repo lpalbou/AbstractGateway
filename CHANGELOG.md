@@ -5,6 +5,58 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.7] - 2026-10-18
+
+Requires AbstractRuntime 0.10.6 (`abstractruntime.conversation_search`, named
+automation tool policies, read-aloud recordings tagged under the `voice/`
+artifact space). Dependency floors: `AbstractRuntime>=0.10.6` (base, `apple`,
+`gpu`).
+
+### Added
+
+- `GET /api/gateway/sessions/search?q=…`: keyword search over the caller's conversations: their questions,
+  answers and artifacts (generated media by their prompt, attachments by their file name), with
+  AbstractRuntime's `ConversationSearch` (words and parts of words, case and accents ignored, a typo
+  forgiven). A hit on an artifact carries it (`artifact`), fetchable from its run's content route
+  (`GET /api/gateway/runs/{artifact.run_id}/artifacts/{artifact_id}/content`). One index per runtime
+  plane (`conversation_search.sqlite3` in that plane's data folder, disposable: rebuilt when its schema
+  changes), so an account only ever searches its own conversations. Filtered like
+  `GET /runs?root_only=true` (`session_kind`, `kind`, archived left out unless `archived=true`); one item
+  per session with a snippet and the match positions; `limit` 1–50; the answer carries `count`, `fuzzy`
+  (whether the index has the trigram tokenizer), `kinds` and `indexing` (`complete: false` while older
+  conversations are still being indexed, `pending_sessions`, `turns`, `errors`).
+- `GET /api/gateway/runs/{run_id}/message-stats`: `{wall_time_seconds, input_tokens, output_tokens,
+  tool_calls}` of one of the caller's runs, read from its ledger (completed effects only; a count the
+  ledger does not carry is `null`).
+- Conversation tool choices for Assistant clients: `POST /api/gateway/runs/start` takes
+  `input_data._runtime.tool_policy` `{auto_approve_tools, require_approval_tools}` next to
+  `input_data.tools` / `_runtime.allowed_tools`; the named choices reach the agent's tool schemas and its
+  approval waits. `GET /api/gateway/tool-policy/capabilities` (`{supported, modes, runtime_floor}`) and
+  `GET /api/gateway/automations/defaults` (`{growing_max_tokens}`) say what the gateway supports.
+- Entity visits with per-tool choices: `GET /api/gateway/entities/{name}/session-tools` lists the
+  visit's tools and modes (`off`, `auto`, `approve`; `visit_routes: true`); `POST .../visit/open` takes
+  `tool_policy: {modes: {...}}` (`modes: null` inherits the home's grants, `{}` disables every tool; the
+  choices only narrow the home's grants); `GET .../visit/{run_id}/state`, `PUT .../visit/{run_id}/tool-policy`
+  and `POST .../visit/{run_id}/decision` (`{wait_key, approved}`) read the visit, change the choices
+  between turns and answer the pending approval, which is a durable runtime wait; `POST .../visit/{run_id}/close`
+  with `closed_by: "pause"` ends it without running the pending batch. `POST /entities/{name}/sessions`
+  and `POST .../visit/{run_id}/end` are kept as deprecated aliases.
+- Automations accept `policy.tool_policy` `{auto_approve_tools, require_approval_tools}`, a complete
+  named snapshot that overrides `tool_approval` (AbstractRuntime 0.10.6): unmentioned tools ask, Require
+  wins over Auto, the target's tools remain the ceiling and the messaging and untrusted-input
+  restrictions stay in force. See [docs/automations.md](docs/automations.md).
+- The shipped `abstractassistant-orchestrator` bundle at 0.0.12 (workflow revision 6: a `voice` mode,
+  spoken audio of the words the router writes, through the gateway's `output.voice` engine) and 0.0.13
+  (revision 7: the router follows the run's text provider and model unless the request selects them),
+  built reproducibly from AbstractAssistant's `assistant_workflow.py` by
+  `scripts/build_assistant_orchestrator_bundle.py` with the shipped `basic-agent` as the chat subflow;
+  entrypoints `c53b1579` (default) and `d5d4e5a1` (the legacy id, kept for saved preferences). 0.0.0
+  stays installed for what pins it; a fresh catalog's default pointer names the newest version.
+- Read-aloud recordings have their own `voice/` artifact space (`purpose=voice_playback`,
+  `artifact_space=voice`; earlier streamed recordings are classified from their producer metadata, their
+  ids unchanged): `GET /runs/{run_id}/artifacts` and `GET /sessions/{session_id}/artifacts` leave them out
+  unless `include_voice=true`; `GET /artifacts/search?tags=artifact_space=voice` lists them.
+
 ## [0.15.6] - 2026-10-18
 
 ### Added

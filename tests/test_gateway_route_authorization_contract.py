@@ -324,9 +324,20 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     ("POST", "/api/gateway/entities/{name}/chat/{chat_id}/turn"),
     ("POST", "/api/gateway/entities/{name}/chat/{chat_id}/close"),
     ("POST", "/api/gateway/entities/{name}/visit/open"),
+    # Deprecated alias of visit/open kept for Assistant clients that opened a
+    # visit with per-tool choices through it (routes/session_tools.py): the same
+    # visitor-scoped open, the same entity guards, bound to its caller.
+    ("POST", "/api/gateway/entities/{name}/sessions"),
     ("POST", "/api/gateway/entities/{name}/visit/{run_id}/turn"),
     ("POST", "/api/gateway/entities/{name}/visit/{run_id}/close"),
     ("POST", "/api/gateway/entities/{name}/visit/{run_id}/tick"),
+    # Per-tool choices of a managed visit (routes/session_tools.py): each route
+    # loads the visit and refuses a caller who is not its owner (require_owner),
+    # the choices only narrow the home's grants, and the decision answers the
+    # visit's own pending approval wait. `end` is the deprecated alias of close.
+    ("PUT", "/api/gateway/entities/{name}/visit/{run_id}/tool-policy"),
+    ("POST", "/api/gateway/entities/{name}/visit/{run_id}/decision"),
+    ("POST", "/api/gateway/entities/{name}/visit/{run_id}/end"),
     ("POST", "/api/gateway/entities/meets/open"),
     ("POST", "/api/gateway/entities/meets/{meet_id}/relay"),
     ("POST", "/api/gateway/entities/meets/{meet_id}/close"),

@@ -5816,6 +5816,50 @@ history (every archive and unarchive) are kept in the plane's
 `session.unarchived` audit event. Automations are archived with the
 `automation.archive` command and brought back with `automation.unarchive`.
 
+### Search conversations
+
+`GET /api/gateway/sessions/search?q=<words>` finds the caller's conversations
+by keyword: what was asked, what was answered, and the artifacts of each turn
+(generated images, recordings, videos and music by their generation prompt,
+attachments by their file name). Words and parts of words match, case and
+accents are ignored, and a fuzzy pass forgives a typo. Tool usage, tool
+outputs and intermediate thinking are not indexed.
+
+| Query parameter | Meaning |
+|---|---|
+| `q` | the words to find (1–200 characters, every word required) |
+| `limit` | sessions per answer, 1–50 (default 20) |
+| `archived` | `true` searches archived conversations only; default `false` leaves them out, like `GET /runs?root_only=true` |
+| `session_kind` | as in `GET /runs` (default `chat,discussion`, the kinds indexed; automation sessions are not) |
+| `kind` | `conversation` (default), `docs` or `all`, the session purpose as in `GET /runs` |
+
+The answer is `{query, items, count, fuzzy, kinds, indexing}`. One item per
+session, best first: `{session_id, run_id, prompt, snippet, highlights,
+matched_in, score, created_at, updated_at, session_kind, archived, fuzzy,
+artifact}`; `run_id` is the turn that matched best, `snippet` is the text
+around the first match with `highlights` as `[start, length]` pairs, and
+`matched_in` says where it matched (`question`, `answer` or `artifact`). When
+an artifact matched, `artifact` is `{artifact_id, run_id, kind, content_type,
+name, prompt}` and its bytes are at
+`GET /api/gateway/runs/{artifact.run_id}/artifacts/{artifact_id}/content`.
+`fuzzy` on the answer says whether the index has SQLite's `trigram`
+tokenizer (without it, whole words with prefixes match); `fuzzy` on an item
+marks a hit found by the fuzzy pass. `indexing` is `{complete,
+pending_sessions, turns, errors}`: the index catches up on every call within
+a short time budget, and `complete: false` means older conversations are
+still being read (a first search on a large plane), never a silent partial
+list.
+
+The index is one SQLite file per runtime plane, `conversation_search.sqlite3`
+in that plane's data folder, next to the plane's stores: an account can only
+ever search its own conversations, exactly like `GET /runs`. The file is
+disposable: delete it and the next search rebuilds it, and a schema change
+rebuilds it on its own.
+
+```bash
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/sessions/search?q=survival%20curve&limit=10"
+```
+
 ## Conversation tool choices
 
 Assistant clients use `GET /api/gateway/discovery/tools` and the established
@@ -5824,7 +5868,14 @@ Assistant clients use `GET /api/gateway/discovery/tools` and the established
 `auto_approve_tools` and `require_approval_tools` lists in
 `input_data._runtime.tool_policy`. Omitted restrictions inherit defaults;
 explicit empty allowed-tool lists disable every tool. No additional capability
-probe is required for this contract.
+probe is required for this contract. `GET /api/gateway/tool-policy/capabilities` answers
+`{supported, modes: [off, auto, approve], runtime_floor}` and
+`GET /api/gateway/automations/defaults` answers `{growing_max_tokens}` (the
+history window a growing-context automation keeps).
+`GET /api/gateway/runs/{run_id}/message-stats` gives one of the caller's runs its
+`{wall_time_seconds, input_tokens, output_tokens, tool_calls}`, read from the
+run's ledger (completed effects only; a count the ledger does not carry is
+`null`).
 
 Entity clients discover visit-scoped controls with
 `GET /api/gateway/entities/{name}/session-tools` (`visit_routes: true` advertises
@@ -8242,7 +8293,7 @@ Workflows page and the console TUI show for each bundle.
 | | | Coding agent (chat) | `coder` (`abstractcode.agent.v1`) | Chat version of the coding agent: builds what the prompt asks in the session workspace, checks it each round, and replies with a report. |
 | `deep-research` | 0.1.8 | Deep research | `deep-research`* (`abstractcode.agent.v1`, `abstractresearch.deep.v1`) | Takes a research question, searches the web, has three critics review the draft, and writes a cited report (Markdown, PDF, DOCX). See [deep-research.md](docs/deep-research.md). |
 | `co-scientist` | 0.2.1 | Co-scientist | `co-scientist`* (`abstractresearch.coscientist.v1`) | Takes a research goal, grounds it in web sources, then generates, debates and ranks hypotheses over cycles; returns a research overview. |
-| `abstractassistant-orchestrator` | 0.0.0 | AbstractAssistant Orchestrator | `d5d4e5a1`* (`abstractassistant.agent.v1`) | The menu-bar Assistant's workflow: sends each request to a tools agent or to image, video or music generation, and returns the reply. |
+| `abstractassistant-orchestrator` | 0.0.13 | AbstractAssistant Orchestrator | `c53b1579`* (`abstractassistant.agent.v1`), `d5d4e5a1` (the legacy entrypoint id, kept for saved preferences) | The Assistant's workflow (revision 7): sends each request to the shipped `basic-agent` as a chat subflow or to image, video, music, sound or voice generation, and returns the reply; the router follows the run's text provider and model unless the request selects them. 0.0.12 (revision 6, the same with a router that always uses the pooled default) and 0.0.0 (the editor-published original) stay installed for what pins them. Built from AbstractAssistant's `assistant_workflow.py` by `scripts/build_assistant_orchestrator_bundle.py`. |
 | `docs-qa` | 0.1.2 | Docs Q&A | `docsqa001`* | Answers a question about an app from that app's documentation (its llms.txt), citing it, and says so when the docs do not cover it. History comes from the run's session; also auto-published into the tenant workflow catalog at boot. 0.1.2 changes only the name and description; 0.1.1 and 0.1.0 stay installed for what pins them. |
 | `react-agent` | 0.1.0 | ReAct agent | `react`* (`abstractcode.agent.v1`) | Chat agent (ReAct): reasons step by step and calls tools until it can answer the prompt, then returns the reply. |
 | `codeact-agent` | 0.1.0 | CodeAct agent | `codeact`* (`abstractcode.agent.v1`) | Chat agent (CodeAct): works on the prompt mainly by writing and running Python code, then returns the reply. |
@@ -11269,6 +11320,58 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.15.7] - 2026-10-18
+
+Requires AbstractRuntime 0.10.6 (`abstractruntime.conversation_search`, named
+automation tool policies, read-aloud recordings tagged under the `voice/`
+artifact space). Dependency floors: `AbstractRuntime>=0.10.6` (base, `apple`,
+`gpu`).
+
+### Added
+
+- `GET /api/gateway/sessions/search?q=…`: keyword search over the caller's conversations: their questions,
+  answers and artifacts (generated media by their prompt, attachments by their file name), with
+  AbstractRuntime's `ConversationSearch` (words and parts of words, case and accents ignored, a typo
+  forgiven). A hit on an artifact carries it (`artifact`), fetchable from its run's content route
+  (`GET /api/gateway/runs/{artifact.run_id}/artifacts/{artifact_id}/content`). One index per runtime
+  plane (`conversation_search.sqlite3` in that plane's data folder, disposable: rebuilt when its schema
+  changes), so an account only ever searches its own conversations. Filtered like
+  `GET /runs?root_only=true` (`session_kind`, `kind`, archived left out unless `archived=true`); one item
+  per session with a snippet and the match positions; `limit` 1–50; the answer carries `count`, `fuzzy`
+  (whether the index has the trigram tokenizer), `kinds` and `indexing` (`complete: false` while older
+  conversations are still being indexed, `pending_sessions`, `turns`, `errors`).
+- `GET /api/gateway/runs/{run_id}/message-stats`: `{wall_time_seconds, input_tokens, output_tokens,
+  tool_calls}` of one of the caller's runs, read from its ledger (completed effects only; a count the
+  ledger does not carry is `null`).
+- Conversation tool choices for Assistant clients: `POST /api/gateway/runs/start` takes
+  `input_data._runtime.tool_policy` `{auto_approve_tools, require_approval_tools}` next to
+  `input_data.tools` / `_runtime.allowed_tools`; the named choices reach the agent's tool schemas and its
+  approval waits. `GET /api/gateway/tool-policy/capabilities` (`{supported, modes, runtime_floor}`) and
+  `GET /api/gateway/automations/defaults` (`{growing_max_tokens}`) say what the gateway supports.
+- Entity visits with per-tool choices: `GET /api/gateway/entities/{name}/session-tools` lists the
+  visit's tools and modes (`off`, `auto`, `approve`; `visit_routes: true`); `POST .../visit/open` takes
+  `tool_policy: {modes: {...}}` (`modes: null` inherits the home's grants, `{}` disables every tool; the
+  choices only narrow the home's grants); `GET .../visit/{run_id}/state`, `PUT .../visit/{run_id}/tool-policy`
+  and `POST .../visit/{run_id}/decision` (`{wait_key, approved}`) read the visit, change the choices
+  between turns and answer the pending approval, which is a durable runtime wait; `POST .../visit/{run_id}/close`
+  with `closed_by: "pause"` ends it without running the pending batch. `POST /entities/{name}/sessions`
+  and `POST .../visit/{run_id}/end` are kept as deprecated aliases.
+- Automations accept `policy.tool_policy` `{auto_approve_tools, require_approval_tools}`, a complete
+  named snapshot that overrides `tool_approval` (AbstractRuntime 0.10.6): unmentioned tools ask, Require
+  wins over Auto, the target's tools remain the ceiling and the messaging and untrusted-input
+  restrictions stay in force. See [docs/automations.md](docs/automations.md).
+- The shipped `abstractassistant-orchestrator` bundle at 0.0.12 (workflow revision 6: a `voice` mode,
+  spoken audio of the words the router writes, through the gateway's `output.voice` engine) and 0.0.13
+  (revision 7: the router follows the run's text provider and model unless the request selects them),
+  built reproducibly from AbstractAssistant's `assistant_workflow.py` by
+  `scripts/build_assistant_orchestrator_bundle.py` with the shipped `basic-agent` as the chat subflow;
+  entrypoints `c53b1579` (default) and `d5d4e5a1` (the legacy id, kept for saved preferences). 0.0.0
+  stays installed for what pins it; a fresh catalog's default pointer names the newest version.
+- Read-aloud recordings have their own `voice/` artifact space (`purpose=voice_playback`,
+  `artifact_space=voice`; earlier streamed recordings are classified from their producer metadata, their
+  ids unchanged): `GET /runs/{run_id}/artifacts` and `GET /sessions/{session_id}/artifacts` leave them out
+  unless `include_voice=true`; `GET /artifacts/search?tags=artifact_space=voice` lists them.
 
 ## [0.15.6] - 2026-10-18
 
