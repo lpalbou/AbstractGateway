@@ -89,3 +89,15 @@ def test_console_accounts_in_a_browser(accounts_gateway) -> None:
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     assert out["failures"] == [], out["failures"]
     assert out["checks"] >= 40
+
+
+def test_console_mailbox_configure_in_a_browser(accounts_gateway) -> None:
+    base, admin = accounts_gateway
+    proc = subprocess.run(
+        [require_node(), str(HERE / "browser" / "email_configure.mjs"), base, admin, str(_playwright_modules())],
+        capture_output=True, text=True, timeout=180, check=False,
+    )
+    assert proc.returncode == 0, (proc.stdout[-3000:], proc.stderr[-4000:])
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert out["failures"] == [], out["failures"]
+    assert out["checks"] >= 20

@@ -1639,7 +1639,12 @@ def oauth_finish(plane: EmailPlane, flow_id: str, *, wait_s: float = 0.0, actor:
             _FLOWS.pop(flow_id, None)
         raise
     with _FLOWS_LOCK:
-        _FLOWS.pop(flow_id, None)
+        # Removing the still-live entry claims the commit. Cancellation removes it
+        # under this same lock, so an approval arriving after cancellation cannot
+        # replace the existing mailbox. No provider/network work holds the registry lock.
+        if _FLOWS.get(flow_id) is not entry:
+            raise EmailOAuthFailed("This sign-in was cancelled or expired.", "Start the sign-in again.")
+        _FLOWS.pop(flow_id)
     secret = EmailSecret(
         refresh_token=tokens.refresh_token,
         access_token=tokens.access_token,
@@ -1664,6 +1669,8 @@ def oauth_finish(plane: EmailPlane, flow_id: str, *, wait_s: float = 0.0, actor:
 
 
 def oauth_cancel(plane: EmailPlane, flow_id: str) -> Dict[str, Any]:
+    """Cancel before the finish operation claims its commit. `cancelled: false`
+    means the flow is unknown or already committing; callers must not promise rollback."""
     with _FLOWS_LOCK:
         entry = _FLOWS.get(str(flow_id or ""))
         if entry is None or entry.get("plane_key") != plane.key:

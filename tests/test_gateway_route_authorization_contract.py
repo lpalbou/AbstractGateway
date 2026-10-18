@@ -496,7 +496,7 @@ def test_every_write_route_has_an_explicit_authorization_decision() -> None:
             # routers' guard, matrix in test_r16w6_entity_settings_authz.py); everything else is admin.
             if requirement.required_role == "admin_or_creator":
                 assert path.startswith("/api/gateway/entities/{name}/") and path.rsplit("/", 1)[-1] in {
-                    "substrate", "voice", "tool-policy", "prompt", "skills",
+                    "substrate", "voice", "appearance", "tool-policy", "prompt", "skills",
                 }, f"{method} {path}: admin_or_creator is for an entity's settings only"
             else:
                 assert requirement.required_role == "admin"

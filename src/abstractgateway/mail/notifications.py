@@ -48,12 +48,14 @@ from __future__ import annotations
 import datetime
 import hashlib
 import html
+import ipaddress
 import json
 import sqlite3
 import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from urllib.parse import urlsplit
 
 from .core_mail import EmailError, EmailRateLimited, OutgoingMessage, guarded_send
 
@@ -189,21 +191,103 @@ def preferences_public(plane: EmailPlane) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------------------
 
 
-def _console_link() -> str:
+def _has_named_host(url: str) -> bool:
+    parsed = urlsplit(url)
+    host = parsed.hostname or ""
+    if parsed.scheme not in ("http", "https") or not host or "*" in url or host == "localhost" or host.endswith(".localhost"):
+        return False
+    try:
+        ipaddress.ip_address(host)
+        return False
+    except ValueError:
+        return True
+
+
+def _console_link(origin: str = "") -> str:
+    """Prefer an explicitly configured hostname, matching this browser when possible.
+
+    Never turn an arbitrary Host/Forwarded/Origin header into a link in an email.
+    With several configured names and no match, keep the recorded console URL.
+    """
+    recorded = ""
     try:
         from ..first_run import read_serve_record
         from ..users import gateway_data_dir_from_env
 
         rec = read_serve_record(gateway_data_dir_from_env()) or {}
-        return str(rec.get("console_url") or "")
+        recorded = str(rec.get("console_url") or "")
     except Exception:  # noqa: BLE001
-        return ""
+        pass
+    try:
+        from ..network_exposure import live_reverse_proxy, normalize_origin, proxy_env_facts
+
+        env_origins = proxy_env_facts().get("origins_env")
+        configured = list((env_origins or {}).get("value") or []) + list(live_reverse_proxy().extra_origins)
+        candidates = []
+        for raw in configured:
+            try:
+                normalized = normalize_origin(raw)
+                if not _has_named_host(normalized):
+                    continue
+                if normalized not in candidates:
+                    candidates.append(normalized)
+            except ValueError:
+                continue
+        if origin in candidates:
+            return origin + "/console"
+        if recorded and _has_named_host(recorded):
+            return recorded
+        if len(candidates) == 1:
+            return candidates[0] + "/console"
+    except Exception:  # noqa: BLE001 - unavailable network settings keep the recorded URL
+        pass
+    return recorded
+
+
+def _render_test_notice(console_url: str) -> Tuple[str, str, str]:
+    title = "Email notifications are working"
+    intro = "Your AbstractFramework gateway successfully sent this test notification."
+    why = "You requested this test from Accounts → Email → Send a test."
+    security = (
+        "If you did not request this test, someone else may have access to your gateway account. "
+        "Rotate your gateway sign-in token, change your email password, and contact your gateway administrator."
+    )
+    website = "https://abstractframework.ai"
+    github = "https://github.com/lpalbou/AbstractFramework"
+    contact = "contact@abstractframework.ai"
+    lines = ["AbstractFramework", "", title, "", intro, ""]
+    if console_url:
+        lines.extend([f"Open your console: {console_url}", ""])
+    lines.extend([why, "", "DIDN'T REQUEST THIS?", security, "", f"{website} | GitHub: {github} | Email: {contact}"])
+    link = html.escape(console_url, quote=True)
+    console = (
+        f'<p style="margin:24px 0"><a href="{link}" style="display:inline-block;padding:12px 20px;'
+        'background:#17365d;color:#ffffff;text-decoration:none;border-radius:6px">Open your console</a></p>'
+        f'<p style="overflow-wrap:anywhere;font-size:13px"><a href="{link}">{link}</a></p>'
+    ) if console_url else ""
+    html_body = (
+        '<!doctype html><html><body style="margin:0;padding:24px;background:#f3f5f8;color:#202938;'
+        'font-family:Arial,sans-serif;line-height:1.6">'
+        '<div style="max-width:600px;margin:0 auto;padding:28px;background:#ffffff;border-radius:10px">'
+        '<p style="margin:0 0 12px;color:#17365d;font-weight:bold">AbstractFramework</p>'
+        f'<h1 style="font-size:24px;line-height:1.3">{title}</h1><p>{intro}</p>{console}'
+        f'<p style="font-size:14px;color:#526071">{html.escape(why)}</p>'
+        '<div style="margin:24px 0;padding:16px;border-left:4px solid #b45309;background:#fff8ed">'
+        f'<strong>Didn’t request this?</strong><p style="margin:8px 0 0">{security}</p></div>'
+        '<hr style="border:0;border-top:1px solid #dce1e8;margin:24px 0">'
+        f'<p style="font-size:13px"><a href="{website}">abstractframework.ai</a> · '
+        f'<a href="{github}">GitHub</a> · <a href="mailto:{contact}">{contact}</a></p>'
+        '</div></body></html>'
+    )
+    return f"{SUBJECT_PREFIX} Test notification", "\n".join(lines) + "\n", html_body
 
 
 def render_notice(kind: str, facts: Dict[str, Any]) -> Tuple[str, str, str]:
     """(subject, text, html) for one notice. `facts` holds typed fields; `model_title` /
     `model_body` are the automation's own notify text (model-authored, labelled)."""
 
+    if kind == "test":
+        return _render_test_notice(_console_link(str(facts.get("origin") or "")))
     title = str(facts.get("title") or "").strip() or "Untitled"
     status = {
         "automation_result": "result",
@@ -233,8 +317,6 @@ def render_notice(kind: str, facts: Dict[str, Any]) -> Tuple[str, str, str]:
         lines.append(f"The run “{title}” finished.")
     elif kind == "job_failed":
         lines.append(f"The run “{title}” failed.")
-    elif kind == "test":
-        lines.append("This is a test notification from your AbstractFramework gateway. Email notifications work.")
     cause = str(facts.get("cause") or "").strip()
     fix = str(facts.get("fix") or "").strip()
     if cause:
@@ -805,7 +887,7 @@ def _send_failed_sentence(plane: EmailPlane, code: str, cause: str) -> str:
     return f"Not sent: {cause}." if cause else "Not sent."
 
 
-def send_test_notification(plane: EmailPlane) -> Dict[str, Any]:
+def send_test_notification(plane: EmailPlane, *, origin: str = "") -> Dict[str, Any]:
     """Queue and deliver one test notice now (the click is the request). The answer always
     carries a sentence (`message`) and a `reason_code` (null when sent): no_mailbox |
     mailbox_paused | rate_limited | queued_behind | send_failed; `limit` {window, limit, used,
@@ -831,7 +913,7 @@ def send_test_notification(plane: EmailPlane) -> Dict[str, Any]:
                 "error": {"code": err.code, "cause": err.cause, "fix": err.fix},
             }
     key = idempotency_key("test", plane.key, time.time_ns())
-    queue_notice(plane, "test", key, {"title": "Test"})
+    queue_notice(plane, "test", key, {"title": "Test", "origin": origin})
     outbox = NotificationOutbox(plane)
     result = outbox.deliver()
     row = next((r for r in outbox.rows(limit=50) if r["idempotency_key"] == key), None)

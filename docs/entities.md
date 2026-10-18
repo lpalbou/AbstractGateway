@@ -98,6 +98,7 @@ HTTP (rides the same auth as every `/api/gateway/*` endpoint):
 | GET | `/api/gateway/entities/{name}/access` | May you change its settings? `{entity, can_configure, as: "admin" \| "creator" \| null, reason, admin_only_tools: {tools, reason}, admin_only: {available, reason}}` — `reason` is the sentence to show on a control you can't use. |
 | PUT | `/api/gateway/entities/{name}/substrate` | An admin or its creator (the creator: a model the gateway offers, else `403 not_offered` naming the offered models). `{provider, model, thinking?, speculation?}` sets its own mind; `{"clear": true}` returns it to the gateway default. Each change is recorded in its history (`substrate_changed`). `speculation` is MTP: `false` (off) or `{"mode": "native_mtp", "num_draft_tokens": N}`. |
 | GET/PUT | `/api/gateway/entities/{name}/voice` | Its voice: `{provider, model, voice}` or `{"clear": true}`; unset, it speaks with the gateway's default voice (`effective`). PUT: an admin or its creator (the creator: a voice the gateway offers, else `403 not_offered`). |
+| GET/PUT | `/api/gateway/entities/{name}/appearance` | How apps draw it (the colour and shape of its orb): `{color: "#rrggbb", shape: planet\|kitty\|face\|wave}`, the whole look replaced, or `{"clear": true}`; unset, apps use their own look. Also accepted at creation (`appearance` on `POST /entities`) and returned on each row of the list |
 
 An entity without its own mind thinks with the gateway's text route (the
 console's text default, with its endpoint and reasoning); a request may still

@@ -117,6 +117,7 @@ SETTINGS_ROUTES = [
     ("tool-policy", {"policy": {"visit": ["read_memory", "search_memory"]}}),
     ("prompt", {"overlay": {"operator": "Be brief."}}),
     ("skills", {"skills": []}),
+    ("appearance", {"color": "#22D3EE", "shape": "kitty"}),
 ]
 
 
@@ -307,3 +308,41 @@ def test_the_entity_itself_never_configures_itself_even_if_named_its_own_creator
     alice = GatewayPrincipal(user_id="alice", tenant_id="default", roles=("user",), scopes=(), runtime_id="alice", source="test")
     assert configure_role(alice, {"tenant_id": "default", "user_id": "alice"}) == "creator"
     assert configure_role(alice, None) is None  # a legacy home without a creator: admins only
+
+
+def test_appearance_defaults_merges_validates_clears_and_reaches_the_list(world) -> None:
+    """The look client apps draw (colour + shape of the entity's orb, 2026-10-17)."""
+    c, alice = world["c"], world["alice"]
+    url = "/api/gateway/entities/aster/appearance"
+    assert c.get(url, headers=alice).json() == {"color": None, "shape": None, "source": "default"}
+    assert c.put(url, headers=alice, json={"color": "#22D3EE"}).json() == {"color": "#22d3ee", "shape": None, "source": "entity"}
+    # A PUT replaces the whole look: what is not given is unset.
+    assert c.put(url, headers=alice, json={"color": "#22d3ee", "shape": "wave"}).json()["shape"] == "wave"
+    assert c.put(url, headers=alice, json={"shape": "wave"}).json()["color"] is None
+    c.put(url, headers=alice, json={"color": "#22d3ee", "shape": "wave"})
+    row = next(e for e in c.get("/api/gateway/entities", headers=alice).json()["entities"] if e["slug"] == "aster")
+    assert row["appearance"] == {"color": "#22d3ee", "shape": "wave"}
+    for bad in ({"color": "teal"}, {"shape": "dragon"}, {}, {"clear": True, "shape": "face"}):
+        assert c.put(url, headers=alice, json=bad).status_code == 400, bad
+    assert c.put(url, headers=alice, json={"clear": True}).json()["source"] == "default"
+    row = next(e for e in c.get("/api/gateway/entities", headers=alice).json()["entities"] if e["slug"] == "aster")
+    assert "appearance" not in row
+
+
+def test_appearance_can_be_chosen_at_birth_and_a_bad_one_creates_nothing(world) -> None:
+    c, alice = world["c"], world["alice"]
+    r = c.post("/api/gateway/entities", headers=alice, json={"name": "Vega", "spark": _spark("Vega"), "skills": [], "appearance": {"color": "#f59e0b", "shape": "face"}})
+    assert r.status_code == 201, r.text
+    assert c.get("/api/gateway/entities/vega/appearance", headers=alice).json()["shape"] == "face"
+    r = c.post("/api/gateway/entities", headers=alice, json={"name": "Lyra", "spark": _spark("Lyra"), "skills": [], "appearance": {"shape": "dragon"}})
+    assert r.status_code == 400 and "appearance invalid" in r.text
+    assert c.get("/api/gateway/entities/lyra/appearance", headers=alice).status_code == 404
+
+
+def test_a_bad_field_in_the_file_never_hides_a_good_one(tmp_path) -> None:
+    from abstractgateway.entity_appearance import FILENAME, read_entity_appearance
+
+    (tmp_path / FILENAME).write_text('{"color": "teal", "shape": "kitty", "extra": 1}', encoding="utf-8")
+    assert read_entity_appearance(tmp_path) == {"shape": "kitty"}
+    (tmp_path / FILENAME).write_text("not json", encoding="utf-8")
+    assert read_entity_appearance(tmp_path) == {}

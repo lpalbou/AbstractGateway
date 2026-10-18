@@ -106,6 +106,76 @@ def test_test_notification_goes_to_self_through_own_account(gateway, imap, smtp)
     assert mails[0]["subject"].startswith("[AbstractFramework]")
 
 
+def test_test_email_has_public_console_link_security_notice_and_html(gateway, imap, smtp, monkeypatch) -> None:
+    import email
+    import email.policy
+    from abstractgateway import first_run, network_exposure
+
+    public = "https://gateway.example.org"
+    monkeypatch.setattr(first_run, "read_serve_record", lambda _: {"console_url": "http://127.0.0.1:8081/console"})
+    monkeypatch.setattr(network_exposure, "proxy_env_facts", lambda: {"origins_env": None})
+    monkeypatch.setattr(network_exposure, "live_reverse_proxy", lambda: SimpleNamespace(extra_origins=(public,), trust_proxy=False))
+    _connect(gateway, imap, smtp)
+    response = gateway["client"].post("/api/gateway/me/notifications/test", headers={**gateway["alice"], "Origin": public})
+    assert response.status_code == 200 and response.json()["sent"] is True, response.text
+    text = smtp_bodies(smtp)[0]["text"]
+    assert f"Open your console: {public}/console" in text
+    assert "127.0.0.1" not in text and "Settings → My email" not in text
+    assert "If you did not request this test" in text
+    assert "change your email password" in text and "gateway sign-in token" in text
+    assert "Accounts → Email → Send a test" in text
+    message = email.message_from_bytes(smtp.messages[0]["data"], policy=email.policy.default)
+    html_body = message.get_body(preferencelist=("html",)).get_content()
+    import os
+    from pathlib import Path
+    if os.environ.get("ABSTRACTGATEWAY_EMAIL_PREVIEW"):
+        Path(os.environ["ABSTRACTGATEWAY_EMAIL_PREVIEW"]).write_text(html_body, encoding="utf-8")
+    assert '<h1 style=' in html_body and f'href="{public}/console"' in html_body
+    for link in ("https://abstractframework.ai", "https://github.com/lpalbou/AbstractFramework", "mailto:contact@abstractframework.ai"):
+        assert f'href="{link}"' in html_body
+
+
+@pytest.mark.parametrize(
+    "origins, request_origin, expected",
+    [
+        (["https://gateway.example.org"], "", "https://gateway.example.org/console"),
+        (["https://one.example.org", "https://two.example.org"], "https://two.example.org", "https://two.example.org/console"),
+        (["https://one.example.org", "https://two.example.org"], "https://evil.example", "http://127.0.0.1:8081/console"),
+        (["*", "https://*.example.org", "http://127.0.0.1:8081"], "https://evil.example", "http://127.0.0.1:8081/console"),
+        (["https://gateway.example.org/path", "javascript:alert(1)"], "https://evil.example", "http://127.0.0.1:8081/console"),
+        ([], "https://evil.example", "http://127.0.0.1:8081/console"),
+    ],
+)
+def test_notification_console_url_does_not_trust_arbitrary_origins(monkeypatch, origins, request_origin, expected) -> None:
+    from abstractgateway import first_run, network_exposure
+    from abstractgateway.mail.notifications import _console_link
+
+    monkeypatch.setattr(first_run, "read_serve_record", lambda _: {"console_url": "http://127.0.0.1:8081/console"})
+    monkeypatch.setattr(network_exposure, "proxy_env_facts", lambda: {"origins_env": None})
+    monkeypatch.setattr(network_exposure, "live_reverse_proxy", lambda: SimpleNamespace(extra_origins=origins))
+    assert _console_link(request_origin) == expected
+
+
+def test_notification_keeps_recorded_hostname_over_unrelated_client_origin(monkeypatch) -> None:
+    from abstractgateway import first_run, network_exposure
+    from abstractgateway.mail.notifications import _console_link
+
+    monkeypatch.setattr(first_run, "read_serve_record", lambda _: {"console_url": "https://gateway.example.org/console"})
+    monkeypatch.setattr(network_exposure, "proxy_env_facts", lambda: {"origins_env": None})
+    monkeypatch.setattr(network_exposure, "live_reverse_proxy", lambda: SimpleNamespace(extra_origins=("https://code.example.org",)))
+    assert _console_link() == "https://gateway.example.org/console"
+
+
+def test_notification_uses_explicit_environment_hostname(monkeypatch) -> None:
+    from abstractgateway import first_run, network_exposure
+    from abstractgateway.mail.notifications import _console_link
+
+    monkeypatch.setattr(first_run, "read_serve_record", lambda _: {"console_url": "http://127.0.0.1:8081/console"})
+    monkeypatch.setattr(network_exposure, "proxy_env_facts", lambda: {"origins_env": {"value": ["https://gateway.example.org"]}})
+    monkeypatch.setattr(network_exposure, "live_reverse_proxy", lambda: SimpleNamespace(extra_origins=()))
+    assert _console_link() == "https://gateway.example.org/console"
+
+
 def test_outbox_queues_once_and_sends_once(gateway, imap, smtp) -> None:
     from abstractgateway.mail.notifications import NotificationOutbox, idempotency_key, queue_notice
 

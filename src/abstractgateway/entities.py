@@ -2056,6 +2056,8 @@ class EntityRegistry:
                     ),
                 })
                 continue
+            from .entity_appearance import read_entity_appearance
+
             entry: Dict[str, Any] = {
                 **manifest.to_dict(),
                 # Reachability, not identity (GW-F): rendered from the
@@ -2067,6 +2069,10 @@ class EntityRegistry:
                     "book": (child / BOOK_FILENAME).exists(),
                 },
             }
+            # How clients draw it (colour + shape of its orb); absent when unset.
+            appearance = read_entity_appearance(child)
+            if appearance:
+                entry["appearance"] = appearance
             try:
                 from abstractruntime.identity.life import read_entity_state
 

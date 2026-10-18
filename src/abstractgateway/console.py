@@ -1685,6 +1685,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .account-advanced[open] > summary { margin-bottom: 10px; }
 	    .mailbox-status { margin: 0; font-size: var(--font-size-base); color: var(--text); overflow-wrap: anywhere; }
 	    .mailbox-status::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 999px; background: var(--success); vertical-align: middle; }
+	    .mailbox-status[data-state]::before { background: var(--muted); }
+	    .mailbox-status[data-state="connected"]::before { background: var(--success); }
+	    .mailbox-status[data-state="receive_only"]::before, .mailbox-status[data-state="needs_reconnect"]::before { background: var(--warning); }
 	    .mailbox-actions { justify-content: flex-start; margin-top: 10px; }
 	    .servers-line { margin: 0; color: var(--muted); font-size: var(--font-size-sm); font-family: var(--font-mono); overflow-wrap: anywhere; }
 	    .servers-line .link-button { font-family: var(--font-sans); font-size: var(--font-size-sm); margin-left: 6px; }
@@ -2765,6 +2768,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
                   </div>
                   <div class="af-form__actions mailbox-actions">
                     <button id="my-email-test" class="secondary" type="button">Test</button>
+                    <button id="my-email-configure" class="secondary" type="button" aria-expanded="false" aria-controls="my-email-connect">Configure</button>
                     <button id="my-email-disconnect" class="danger" type="button">Disconnect</button>
                   </div>
                   <div id="my-email-disconnect-confirm" class="inline-confirm" role="group" hidden>
@@ -2774,6 +2778,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
                   </div>
                 </div>
                 <div id="my-email-connect" class="af-tabs">
+                  <div id="my-email-configure-actions" hidden>
+                    <p class="af-form__help">Review or change the connection below. The current connection stays while you edit. For IMAP, re-enter the password; changes are saved after both server checks pass. For Google or Microsoft, sign in again to apply changes. Stored passwords are never displayed.</p>
+                    <button id="my-email-configure-cancel" class="secondary" type="button">Cancel changes</button>
+                  </div>
                   <div class="af-tabs__list" role="tablist" aria-label="How your mailbox signs in">
                     <button id="my-email-tab-imap" class="af-tabs__tab" role="tab" type="button" data-email-tab="imap" aria-controls="my-email-pane-imap" aria-selected="true">IMAP</button>
                     <button id="my-email-tab-google" class="af-tabs__tab" role="tab" type="button" data-email-tab="google" aria-controls="my-email-pane-oauth" aria-selected="false" tabindex="-1">Google</button>
@@ -2840,6 +2848,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
                         <h4 id="my-email-oauth-app-title" class="named-section__title">Sign-in app</h4>
                         <div class="af-form">
                           <p class="af-form__help">Your own sign-in client instead of the gateway&#39;s or the built-in one.</p>
+                          <p class="af-form__help">When changing a personal sign-in app, re-enter its client secret if the provider requires one. Stored secrets are never displayed.</p>
                           <div class="af-form__grid-2">
                             <div class="af-form__field"><label class="af-form__label" for="my-email-oauth-client-id">Client ID</label><input id="my-email-oauth-client-id" autocomplete="off" spellcheck="false"></div>
                             <div class="af-form__field"><label class="af-form__label" for="my-email-oauth-client-secret">Client secret</label><input id="my-email-oauth-client-secret" type="password" autocomplete="new-password"></div>
@@ -7149,7 +7158,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     // Mailbox tabs (DESIGN-v2 §3): IMAP first and the default, then Google, Microsoft.
     const MY_EMAIL_TABS = ["imap", "google", "microsoft"];
     const MY_EMAIL_SERVER_FIELDS = ["my-email-imap-host", "my-email-imap-port", "my-email-imap-security", "my-email-smtp-host", "my-email-smtp-port", "my-email-smtp-security", "my-email-username"];
-    const myEmailUi = { tab: "", discovered: null, discoveredFor: "", oauth: null, edited: new Set(), timer: null, prefilledFor: "", editReg: false, editMailbox: false, base: "", notifyTest: "" };
+    const myEmailUi = { generation: 0, saving: false, tab: "", discovered: null, discoveredFor: "", oauth: null, edited: new Set(), timer: null, prefilledFor: "", editReg: false, editMailbox: false, configuring: false, base: "", notifyTest: "" };
     // ONE account email UI for the signed-in user AND an entity (DESIGN-v3 §3.2): every call goes
     // through the current API base, /me/email (own) or /accounts/<id>/email (an entity's own
     // mailbox, admin or its creator); the payloads and responses are identical (accounts-api §3.1).
@@ -7183,7 +7192,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       myEmailUi.base = next === MY_EMAIL_BASE ? "" : next;
       myEmailApplyVoice(Boolean(myEmailUi.base));
       // Another principal's mailbox: nothing typed or discovered for the previous one carries over.
-      Object.assign(myEmailUi, { tab: "", discovered: null, discoveredFor: "", oauth: null, edited: new Set(), prefilledFor: "", editReg: false, editMailbox: false });
+      Object.assign(myEmailUi, { tab: "", discovered: null, discoveredFor: "", oauth: null, edited: new Set(), prefilledFor: "", editReg: false, editMailbox: false, configuring: false });
       for (const id of MY_EMAIL_TEXT_FIELDS) { const el = $(id); if (el) el.value = ""; }
       for (const id of ["my-email-imap-security", "my-email-smtp-security"]) { const el = $(id); if (el) el.value = "ssl"; }
       state.myEmail = null;
@@ -7253,7 +7262,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const reason = (prov && prov.available === false && !ownClient)
         ? (prov.reason || `No ${name} sign-in client on this gateway: add one under Sign-in app, or ask your admin.`)
         : "";
-      btn.disabled = Boolean(reason) || Boolean(myEmailUi.oauth);
+      btn.disabled = Boolean(reason) || Boolean(myEmailUi.oauth) || Boolean(myEmailUi.cancelling);
       myEmailShow("my-email-oauth-start-reason", reason);
     }
     function myEmailTabKeydown(event) {
@@ -7280,6 +7289,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (document.activeElement !== $("my-email-registered")) myEmailUi.editReg = false;
       // 2. Mailbox: connected status, or the tabs.
       const connected = Boolean(d.configured);
+      $("my-email-status").dataset.state = (d.mailbox && d.mailbox.state) || (connected ? "connected" : "not_connected");
       const mailboxesOff = d.email_available === false;
       myEmailShow("my-email-unavailable", mailboxesOff ? "Your admin turned mailboxes off. Your settings are kept." : "");
       // Sealed with the old macOS keychain key (round 16): the status line says so and the connect
@@ -7287,7 +7297,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const needsReconnect = Boolean(connected && d.mailbox && d.mailbox.state === "needs_reconnect");
       if (needsReconnect && !(d.mailbox.reason)) consoleSeamFailure(new Error("GET …/email: mailbox.state needs_reconnect without a reason (gateway seam)."));
       $("my-email-connected").hidden = !connected;
-      $("my-email-connect").hidden = (connected && !needsReconnect) || mailboxesOff;
+      $("my-email-connect").hidden = (connected && !needsReconnect && !myEmailUi.configuring) || mailboxesOff;
+      $("my-email-configure").disabled = mailboxesOff || myEmailUi.saving;
+      $("my-email-configure").setAttribute("aria-expanded", myEmailUi.configuring ? "true" : "false");
+      $("my-email-configure-actions").hidden = !myEmailUi.configuring || mailboxesOff;
+      $("my-email-connect-go").textContent = myEmailUi.configuring ? "Save changes" : "Connect";
       $("my-email-disconnect-confirm").hidden = true;
       const st = d.status || {};
       if (connected) {
@@ -7302,13 +7316,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         const errText = err ? `${err.cause || err.code}${err.fix ? ` ${err.fix}` : ""}` : "";
         myEmailShow("my-email-status-error", [(receiveOnly || needsReconnect) ? (d.mailbox.reason || "") : "", errText].filter(Boolean).join(" "));
       }
-      if (!connected || needsReconnect) {
+      if (!connected || needsReconnect || myEmailUi.configuring) {
         const want = needsReconnect ? (d.address || d.email_address || "") : (d.email_address || "");
         if (!myEmailVal("my-email-address")) myEmailSet("my-email-address", want);
         if (!myEmailVal("my-email-oauth-address")) myEmailSet("my-email-oauth-address", want);
         if (!myEmailUi.tab) myEmailUi.tab = "imap";
         myEmailSelectTab(myEmailUi.tab);
-        myEmailPrefillServers();
+        if (!myEmailUi.configuring) myEmailPrefillServers();
       }
       myEmailAddressRender();
       // 3. Notifications.
@@ -7427,11 +7441,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (await saveEmailRecipientRules({ [which]: cur.concat([v]) }, ids.state, `${v} added.`)) $(ids.input).value = "";
     }
     async function loadMyEmail() {
+      const base = myEmailApi(), generation = myEmailUi.generation;
       try {
-        renderMyEmail(await api(myEmailApi()));
+        const data = await api(base);
+        if (generation !== myEmailUi.generation || base !== myEmailApi()) return;
+        renderMyEmail(data);
         myEmailMessage("");
       } catch (e) {
-        myEmailMessage(emailErrorText(e), "error");
+        if (generation === myEmailUi.generation && base === myEmailApi()) myEmailMessage(emailErrorText(e), "error");
       }
     }
     async function saveMyEmailAddress() {
@@ -7452,7 +7469,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         state.myEmail = { ...(state.myEmail || {}), email_address: address };
         myEmailUi.editReg = false;
         myEmailAddressRender();
-        inlineState("my-email-message", address ? `Saved: sign-in codes and notifications go to ${address}.` : "Saved: no email address.", "ok", 4000);
+        const nextStep = state.myEmail.email_available === false ? " Mailboxes are turned off for this account." : (state.myEmail.configured ? "" : " Connect your mailbox below to enable email delivery.");
+        inlineState("my-email-message", address ? `Saved email address: ${address}. Mailbox connection unchanged.${nextStep}` : "Saved: no email address. Mailbox connection unchanged.", "ok", 8000);
       } catch (e) {
         myEmailShow("my-email-registered-error", emailErrorText(e));
       } finally {
@@ -7513,6 +7531,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     }
     async function connectMyEmail() {
       const btn = $("my-email-connect-go");
+      if (btn.disabled || myEmailUi.oauth || $("my-email-oauth-start").hasAttribute("aria-busy")) return;
+      const updating = myEmailUi.configuring;
+      const base = myEmailApi(), generation = myEmailUi.generation;
       myEmailShow("my-email-connect-error", "");
       const address = myEmailVal("my-email-address");
       const password = String($("my-email-password").value || "");
@@ -7523,29 +7544,100 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const login = myEmailVal("my-email-username");
       if (!$("my-email-login-field").hidden && login && login !== address) body.username = login;
       const host = (p) => myEmailVal(`my-email-${p}-host`);
+      if (updating && (!host("imap") || !host("smtp"))) { myEmailShow("my-email-connect-error", "Enter both incoming and outgoing mail servers."); return; }
       if (host("imap") && host("smtp")) {
-        body.imap = { host: host("imap"), port: myEmailNum("my-email-imap-port"), security: $("my-email-imap-security").value };
+        body.imap = { host: host("imap"), port: myEmailNum("my-email-imap-port"), security: $("my-email-imap-security").value, folder: myEmailVal("my-email-imap-folder") || "INBOX" };
         body.smtp = { host: host("smtp"), port: myEmailNum("my-email-smtp-port"), security: $("my-email-smtp-security").value };
+        if (state.principal && state.principal.admin) {
+          for (const leg of ["imap", "smtp"]) { const ca = state.myEmail && state.myEmail[leg] && state.myEmail[leg].ca_file; if (ca) body[leg].ca_file = ca; }
+        }
       }
       btn.disabled = true;
+      myEmailUi.saving = true;
       btn.setAttribute("aria-busy", "true");
-      btn.textContent = "Connecting…";
+      btn.textContent = updating ? "Saving…" : "Connecting…";
+      $("my-email-configure-cancel").disabled = true;
+      $("my-email-disconnect").disabled = true;
+      $("my-email-configure").disabled = true;
       try {
-        const out = await api(myEmailApi(), { method: "PUT", body: JSON.stringify(body), slow: true });
+        const out = await api(base, { method: "PUT", body: JSON.stringify(body), slow: true });
+        if (generation !== myEmailUi.generation || base !== myEmailApi()) return;
         $("my-email-password").value = "";
+        myEmailUi.configuring = false;
         await loadMyEmail();
-        myEmailMessage(`Mailbox connected as ${(out && out.address) || address}.`, "ok");
+        if (generation !== myEmailUi.generation || base !== myEmailApi()) return;
+        myEmailMessage(`Mailbox ${updating ? "settings saved" : "connected"} as ${(out && out.address) || address}.`, "ok");
       } catch (e) {
+        if (generation !== myEmailUi.generation || base !== myEmailApi()) return;
         const d = e && e.detail;
         myEmailShow("my-email-connect-error", emailErrorText(e));
         if (d && d.reason_code === "email_discovery_failed") {
           try { $("my-email-imap-host").focus(); } catch {}
         }
       } finally {
-        btn.disabled = false;
-        btn.removeAttribute("aria-busy");
-        btn.textContent = "Connect";
+        if (generation === myEmailUi.generation && base === myEmailApi()) {
+          myEmailUi.saving = false;
+          btn.disabled = false;
+          btn.removeAttribute("aria-busy");
+          btn.textContent = myEmailUi.configuring ? "Save changes" : "Connect";
+          $("my-email-configure-cancel").disabled = false;
+          $("my-email-disconnect").disabled = false;
+          $("my-email-configure").disabled = Boolean(state.myEmail && state.myEmail.email_available === false);
+        }
       }
+    }
+    async function configureMyEmail() {
+      const d = state.myEmail;
+      if (!d || !d.configured || d.email_available === false || myEmailUi.configuring) return;
+      const base = myEmailApi();
+      let gatewayClient = null;
+      if (d.oauth) {
+        try {
+          const clients = await api(`${base}/oauth/clients`);
+          gatewayClient = clients.providers && clients.providers[d.oauth.provider];
+        } catch (e) { myEmailMessage(emailErrorText(e), "error"); return; }
+        if (myEmailApi() !== base || state.myEmail !== d) return;
+      }
+      if (myEmailUi.timer) clearTimeout(myEmailUi.timer);
+      myEmailUi.generation++;
+      Object.assign(myEmailUi, { configuring: true, discovered: null, discoveredFor: "", prefilledFor: d.address, editMailbox: false, editReg: false, edited: new Set(MY_EMAIL_SERVER_FIELDS) });
+      myEmailSet("my-email-address", d.address || "");
+      myEmailSet("my-email-oauth-address", d.address || "");
+      myEmailSet("my-email-password", "");
+      myEmailSet("my-email-username", d.username || "");
+      for (const leg of ["imap", "smtp"]) {
+        const server = d[leg] || {};
+        for (const field of ["host", "port", "security"]) myEmailSet(`my-email-${leg}-${field}`, server[field] || (field === "security" ? "ssl" : ""));
+      }
+      const customLogin = Boolean(d.username && d.username !== d.address);
+      $("my-email-login-field").hidden = !customLogin;
+      $("my-email-login-toggle").setAttribute("aria-expanded", customLogin ? "true" : "false");
+      const personalClient = d.oauth && d.oauth.client_source !== "builtin" && (!gatewayClient || gatewayClient.client_id !== d.oauth.client_id);
+      myEmailSet("my-email-oauth-client-id", personalClient ? d.oauth.client_id : "");
+      myEmailSet("my-email-oauth-client-secret", "");
+      myEmailSet("my-email-oauth-tenant", (d.oauth && d.oauth.tenant) || "");
+      myEmailShow("my-email-connect-error", "");
+      myEmailShow("my-email-servers-source", "");
+      myEmailSelectTab(d.oauth && MY_EMAIL_TABS.includes(d.oauth.provider) ? d.oauth.provider : "imap");
+      renderMyEmail(d);
+      $("my-email-tab-" + myEmailUi.tab).focus();
+    }
+    async function cancelConfigureMyEmail() {
+      if ($("my-email-configure-cancel").disabled) return;
+      const generation = myEmailUi.generation;
+      myEmailUi.cancelling = true;
+      $("my-email-configure-cancel").disabled = true;
+      await cancelMyEmailOAuth();
+      if (generation !== myEmailUi.generation) return;
+      myEmailUi.cancelling = false;
+      $("my-email-configure-cancel").disabled = false;
+      myEmailUi.configuring = false;
+      myEmailUi.editMailbox = false;
+      for (const id of ["my-email-password", "my-email-oauth-client-secret", "my-email-address", "my-email-oauth-address", ...MY_EMAIL_SERVER_FIELDS]) myEmailSet(id, "");
+      myEmailUi.edited = new Set();
+      myEmailShow("my-email-connect-error", "");
+      renderMyEmail(state.myEmail);
+      $("my-email-configure").focus();
     }
     async function testMyEmail() {
       const btn = $("my-email-test");
@@ -7662,6 +7754,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       }, onErr);
     }
     async function startMyEmailOAuth() {
+      if ($("my-email-oauth-start").disabled || myEmailUi.saving) return;
+      const base = myEmailApi();
+      const generation = myEmailUi.generation;
+      const starting = { cancelled: false };
+      myEmailUi.oauthStarting = starting;
       const provider = myEmailUi.tab === "microsoft" ? "microsoft" : "google";
       const body = {
         provider,
@@ -7675,17 +7772,25 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const start = $("my-email-oauth-start");
       start.disabled = true;
       start.setAttribute("aria-busy", "true");
+      $("my-email-configure-cancel").disabled = true;
       let out;
       try {
-        out = await api(myEmailApi("/oauth/start"), { method: "POST", body: JSON.stringify(body), slow: true });
+        out = await api(`${base}/oauth/start`, { method: "POST", body: JSON.stringify(body), slow: true });
       } catch (e) {
+        if (generation !== myEmailUi.generation || base !== myEmailApi()) return;
+        $("my-email-configure-cancel").disabled = false;
         start.removeAttribute("aria-busy");
         myEmailRenderOAuthButton();
         prompt.textContent = emailErrorText(e);
         prompt.className = "inline-state error";
         return;
       }
-      const flow = { id: out.flow_id, cancelled: false };
+      if (starting.cancelled || myEmailApi() !== base) {
+        await api(`${base}/oauth/cancel`, { method: "POST", body: JSON.stringify({ flow_id: out.flow_id }) }).catch(() => {});
+        return;
+      }
+      $("my-email-configure-cancel").disabled = false;
+      const flow = { id: out.flow_id, cancelled: false, base };
       myEmailUi.oauth = flow;
       $("my-email-oauth-cancel").hidden = false;
       prompt.className = "inline-state";
@@ -7695,14 +7800,19 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       while (!flow.cancelled) {
         let res;
         try {
-          res = await api(myEmailApi("/oauth/finish"), { method: "POST", body: JSON.stringify({ flow_id: flow.id, wait_s: 20 }), timeoutMs: 70000 });
+          flow.finishRequest = api(`${base}/oauth/finish`, { method: "POST", body: JSON.stringify({ flow_id: flow.id, wait_s: 20 }), timeoutMs: 70000 });
+          res = await flow.finishRequest;
         } catch (e) {
           if (!flow.cancelled) { prompt.textContent = emailErrorText(e); prompt.className = "inline-state error"; }
           break;
         }
+        if (flow.cancelled || generation !== myEmailUi.generation || myEmailApi() !== base) return;
         if (res && res.pending) continue;
         prompt.textContent = "";
+        myEmailUi.configuring = false;
+        $("my-email-oauth-client-secret").value = "";
         await loadMyEmail();
+        if (generation !== myEmailUi.generation || base !== myEmailApi()) return;
         myEmailMessage(`Mailbox connected as ${res.address}.`, "ok");
         break;
       }
@@ -7715,11 +7825,20 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const flow = myEmailUi.oauth;
       if (!flow) return;
       flow.cancelled = true;
-      try { await api(myEmailApi("/oauth/cancel"), { method: "POST", body: JSON.stringify({ flow_id: flow.id }) }); } catch {}
+      myEmailUi.oauth = null;
       $("my-email-oauth-prompt").textContent = "Sign-in cancelled.";
       $("my-email-oauth-cancel").hidden = true;
-      myEmailUi.oauth = null;
       myEmailRenderOAuthButton();
+      const generation = myEmailUi.generation;
+      try {
+        const result = await api(`${flow.base || myEmailApi()}/oauth/cancel`, { method: "POST", body: JSON.stringify({ flow_id: flow.id }) });
+        if (result.cancelled === false && generation === myEmailUi.generation && !myEmailUi.oauth) {
+          if (flow.finishRequest) await flow.finishRequest.catch(() => {});
+          if (generation !== myEmailUi.generation) return;
+          await loadMyEmail();
+          if (generation === myEmailUi.generation) myEmailMessage("Sign-in could no longer be cancelled. Mailbox status reloaded.", "ok");
+        }
+      } catch (e) { if (generation === myEmailUi.generation) myEmailMessage(emailErrorText(e), "error"); }
     }
     function bindMyEmail() {
       $("my-email-refresh").onclick = loadMyEmail;
@@ -7749,6 +7868,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       $("my-email-oauth-start").onclick = startMyEmailOAuth;
       $("my-email-oauth-cancel").onclick = cancelMyEmailOAuth;
       $("my-email-test").onclick = testMyEmail;
+      $("my-email-configure").onclick = configureMyEmail;
+      $("my-email-configure-cancel").onclick = cancelConfigureMyEmail;
       $("my-email-disconnect").onclick = () => { $("my-email-disconnect-confirm").hidden = false; try { $("my-email-disconnect-cancel").focus(); } catch {} };
       $("my-email-disconnect-cancel").onclick = () => { $("my-email-disconnect-confirm").hidden = true; };
       $("my-email-disconnect-now").onclick = disconnectMyEmail;
@@ -13034,6 +13155,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     function closeAccountEmail() {
       const backdrop = $("account-email-backdrop");
       if (backdrop.hidden) return;
+      myEmailUi.generation++;
+      myEmailUi.saving = false;
+      myEmailUi.cancelling = false;
+      if (myEmailUi.oauthStarting) myEmailUi.oauthStarting.cancelled = true;
+      if (myEmailUi.oauth) cancelMyEmailOAuth();
+      myEmailUi.configuring = false;
+      $("my-email-password").value = "";
+      $("my-email-oauth-client-secret").value = "";
+      for (const id of ["my-email-connect-go", "my-email-configure-cancel", "my-email-configure", "my-email-disconnect", "my-email-oauth-start"]) { $(id).disabled = false; $(id).removeAttribute("aria-busy"); }
       // The account page goes back where it lives (My account), unchanged.
       const section = $("my-email-section");
       if (accountsUi.emailHome && section && section.parentNode === $("account-email-body")) {
@@ -13099,10 +13229,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       wrap.innerHTML = `<div class="af-card__header"><h3 class="af-card__title">Email address</h3></div>`
         + `<div class="af-form"><div class="af-form__field">`
         + `<label class="af-form__label sr-only" for="${fid}">Email address</label>`
-        + `<div class="af-form__inline"><input id="${fid}" type="email" autocomplete="off" spellcheck="false" aria-describedby="${fid}-help ${fid}-state"><button type="button" class="secondary account-email-save">Save</button></div>`
+        + `<div class="af-form__inline"><input id="${fid}" type="email" autocomplete="off" spellcheck="false" aria-describedby="${fid}-help ${fid}-state"><button type="button" class="secondary account-email-save">Save address</button></div>`
         + `<p id="${fid}-help" class="af-form__help">Where ${esc(a.id)}'s sign-in codes and notifications go.</p>`
         + `<p id="${fid}-state" class="inline-state" role="status" aria-live="polite"></p>`
         + `</div></div>`;
+      const addressNote = document.createElement("p");
+      addressNote.className = "af-form__help";
+      addressNote.textContent = "Saving an address does not connect a mailbox or enable email delivery.";
+      wrap.append(addressNote);
       const input = wrap.querySelector("input");
       input.value = a.email_address || "";
       const save = wrap.querySelector(".account-email-save");
@@ -13112,7 +13246,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         try {
           await api(`/api/gateway/admin/users/${encodeURIComponent(a.id)}?tenant_id=${encodeURIComponent(a.tenant_id || "default")}`, { method: "PATCH", body: JSON.stringify({ email: String(input.value || "").trim() }) });
           a.email_address = String(input.value || "").trim() || null;
-          inlineState(`${fid}-state`, a.email_address ? `Saved: ${a.id}'s codes and notifications go to ${a.email_address}.` : `Saved: ${a.id} has no email address.`, "ok", 4000);
+          inlineState(`${fid}-state`, a.email_address ? `Saved email address: ${a.email_address}. Mailbox connection unchanged.` : `Saved: ${a.id} has no email address. Mailbox connection unchanged.`, "ok", 8000);
           refreshUsersOnly();
         } catch (e) {
           inlineState(`${fid}-state`, emailErrorText(e), "error");
@@ -13124,12 +13258,21 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const m = a.mailbox || {};
       const status = document.createElement("p");
       status.className = "mailbox-status account-other-mailbox";
-      status.textContent = m.state === "connected"
-        ? `Mailbox: connected as ${m.address}. You never see anyone's mail.`
-        : m.state === "paused"
-          ? `Mailbox: paused by ${a.id}. You never see anyone's mail.`
-          : `Mailbox: not connected — only ${a.id} can connect a mailbox. You never see anyone's mail.`;
+      status.dataset.state = m.state;
+      const mailboxState = ACCOUNT_MAILBOX_STATE[m.state];
+      if (!mailboxState) throw new Error(`Unknown mailbox state for ${a.id}: ${m.state}`);
+      status.textContent = `Mailbox: ${mailboxState}${m.address ? ` as ${m.address}` : ""}.${m.reason ? ` ${m.reason}` : ""}`;
       wrap.append(status);
+      const setup = document.createElement("div");
+      setup.className = "account-mailbox-setup";
+      const heading = document.createElement("h3");
+      heading.className = "af-card__title";
+      heading.textContent = "Configure this mailbox";
+      const instructions = document.createElement("p");
+      instructions.textContent = (m.state === "unavailable" ? "Mailbox setup is unavailable: resolve the status above before continuing. " : "")
+        + `Only ${a.id}, signed in to their own account, can connect or change this mailbox. Open this console in a private browser window and sign in as ${a.id} with their gateway token. Go to Accounts → their own row → Email → Mailbox. For a new connection, choose IMAP, Google or Microsoft. For an existing connection, use Test to check it or Configure to review and change its settings. Admins cannot connect another user's mailbox or read their mail.`;
+      setup.append(heading, instructions);
+      wrap.append(setup);
       const u = accountUserRecord(a);
       const note = userMailboxNote(u ? u.email_account : null);
       if (note.reset && u) {

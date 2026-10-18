@@ -21,7 +21,8 @@ The settings routes are ONE row of the route table (`security/authorization.py`,
 forgotten. Every decision through the guard is recorded on the request's audit line
 (`entity_settings: {entity, setting, actor, as: admin|creator|null, outcome}`).
 
-Settings (creator-editable): mind (`substrate`), voice, tools per phase (`tool-policy`),
+Settings (creator-editable): mind (`substrate`), voice, appearance (colour and shape in apps),
+tools per phase (`tool-policy`),
 instructions (`prompt`), skills, workspaces (`/workspace/policy/{account}`), preferences
 (`/accounts/{account}/preferences`), archive / unarchive and the Active switch
 (`/me/accounts/{id}/…`). Lifecycle and maintenance acts stay admin-only: sleep/wake (`state`),
@@ -48,6 +49,7 @@ REASON_CODE = "admin_or_creator_required"
 SETTING_VERBS: dict[str, str] = {
     "substrate": "change its mind",
     "voice": "change its voice",
+    "appearance": "change its appearance",
     "tool-policy": "change its tools",
     "prompt": "change its instructions",
     "skills": "change its skills",

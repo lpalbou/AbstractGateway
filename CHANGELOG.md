@@ -5,6 +5,47 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.8] - 2026-10-18
+
+### Added
+
+- **Configure a connected mailbox** in the web console (your own row and an entity's, under
+  Accounts → Email): next to **Test** and **Disconnect**, **Configure** opens the stored connection
+  (address, login, incoming and outgoing servers, IMAP folder) for editing. For IMAP, re-enter the
+  password and **Save changes**: both servers are checked before the replacement is saved, so a
+  failed update keeps the existing connection; for Google or Microsoft, sign in again. Stored
+  passwords and client secrets are never displayed; **Cancel changes** discards the draft. The
+  mailbox's Active setting, folder, recipient rules and limits are kept. A late answer to a save or a
+  sign-in started before the dialog was closed or re-opened never overwrites what is being edited.
+  On another user's row the mailbox status is one of the five words with its diagnostic reason and the
+  dialog says how that user configures it themselves.
+- **Entity appearance**: `GET`/`PUT /api/gateway/entities/{name}/appearance` stores how client apps
+  draw an entity (the colour and shape of its orb: `{color: "#rrggbb", shape: planet | kitty | face | wave}`;
+  `{"clear": true}` returns it to the app's default), changed by an admin or the entity's creator like
+  its voice and mind; `appearance` is also accepted at creation (`POST /entities`) and returned on each
+  row of `GET /entities` when set. Stored as `appearance.json` in the entity's home, presentation only.
+- **Sign in by registered email**: `POST /api/gateway/session/recovery/request` and `/redeem` take the
+  account's registered email address in `user_id` as well as the account id (an address registered on
+  exactly one enabled person account; any other address reads like an unknown account, same answer,
+  same rate limits). The Apple Watch app signs in with it.
+- **The test notification** (**Send a test** under Notifications) now carries a link to the console, a
+  notice saying what to do if you did not request it (rotate your gateway token, change your email
+  password, contact your administrator), and links to AbstractFramework, its GitHub and its contact
+  address, as an HTML part next to the plain text. The console link prefers a configured public
+  hostname (the browser's own origin when it is one of the configured origins, else a single configured
+  one) over the recorded local address; an arbitrary `Origin` header never becomes a link in an email.
+
+### Fixed
+
+- A Google or Microsoft mailbox sign-in cancelled while the provider's approval was pending can no
+  longer replace the existing mailbox when the approval arrives afterwards: the commit is claimed
+  under the same lock that cancellation uses, and a cancelled or expired flow fails with "Start the
+  sign-in again". `POST …/oauth/cancel` answers `cancelled: false` when the flow is already
+  committing, and the console then reloads the mailbox status instead of promising a rollback.
+- Saving an email address (your own, or another user's as an admin) says that the mailbox connection
+  is unchanged, instead of promising that notifications go to that address before a mailbox is
+  connected.
+
 ## [0.15.7] - 2026-10-18
 
 Requires AbstractRuntime 0.10.6 (`abstractruntime.conversation_search`, named

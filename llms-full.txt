@@ -9264,6 +9264,13 @@ You can connect from any of these surfaces; they share the same fields and words
   with the provider.
 - **Terminal console** (`abstractgateway-console`) → **2 Accounts** → `@` on your own row.
 
+In the web console, a connected mailbox offers **Test**, **Configure**, and **Disconnect**.
+**Configure** opens its stored server settings, mailbox address, and login. Edit them and select
+**Save changes**; re-enter the IMAP password, or sign in again on the Google or Microsoft tab.
+Passwords and client secrets are never displayed. For IMAP, both servers must pass their checks
+before the replacement is saved, so a failed update keeps the existing connection. **Cancel changes**
+discards the draft. The mailbox's Active setting, recipient rules, and limits are kept.
+
 In both consoles the IMAP pane shows the incoming (IMAP) and outgoing (SMTP) server, port and
 security. They are filled in with the standard `imap.<domain>` / `smtp.<domain>` values as soon as
 the address has a domain, then replaced by what discovery finds, except a field you edited. There is
@@ -9505,7 +9512,11 @@ x@y.", "Not sent: no mailbox connected.", "Not sent: your mailbox is paused.", "
 limit reached (100 of 100 this hour) — resets at 14:05.", "Queued behind 3 earlier notifications; they
 go out when the limit resets at 14:05." or "Not sent: smtp.x.com refused the message (<cause>)."
 (`message`, with `reason_code` and `limit` for programs; the consoles show reset times in your local
-time). **Send a test** sits under Notifications in your email settings. Notification emails use fixed templates; the only
+time). **Send a test** sits under Notifications in your email settings. Its email includes a console
+link, an unexpected-request security notice, and links to AbstractFramework, GitHub, and contact email,
+in both HTML and plain text. Console links prefer the matching configured browser hostname or an
+existing named console URL; a single configured hostname can replace the local IP fallback. With
+several unmatched hostnames, the recorded console URL is kept. Notification emails use fixed templates; the only
 model-written text is an automation's own `notify` title and body, labelled as such. Replying to a
 notification does nothing.
 
@@ -11320,6 +11331,47 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.15.8] - 2026-10-18
+
+### Added
+
+- **Configure a connected mailbox** in the web console (your own row and an entity's, under
+  Accounts → Email): next to **Test** and **Disconnect**, **Configure** opens the stored connection
+  (address, login, incoming and outgoing servers, IMAP folder) for editing. For IMAP, re-enter the
+  password and **Save changes**: both servers are checked before the replacement is saved, so a
+  failed update keeps the existing connection; for Google or Microsoft, sign in again. Stored
+  passwords and client secrets are never displayed; **Cancel changes** discards the draft. The
+  mailbox's Active setting, folder, recipient rules and limits are kept. A late answer to a save or a
+  sign-in started before the dialog was closed or re-opened never overwrites what is being edited.
+  On another user's row the mailbox status is one of the five words with its diagnostic reason and the
+  dialog says how that user configures it themselves.
+- **Entity appearance**: `GET`/`PUT /api/gateway/entities/{name}/appearance` stores how client apps
+  draw an entity (the colour and shape of its orb: `{color: "#rrggbb", shape: planet | kitty | face | wave}`;
+  `{"clear": true}` returns it to the app's default), changed by an admin or the entity's creator like
+  its voice and mind; `appearance` is also accepted at creation (`POST /entities`) and returned on each
+  row of `GET /entities` when set. Stored as `appearance.json` in the entity's home, presentation only.
+- **Sign in by registered email**: `POST /api/gateway/session/recovery/request` and `/redeem` take the
+  account's registered email address in `user_id` as well as the account id (an address registered on
+  exactly one enabled person account; any other address reads like an unknown account, same answer,
+  same rate limits). The Apple Watch app signs in with it.
+- **The test notification** (**Send a test** under Notifications) now carries a link to the console, a
+  notice saying what to do if you did not request it (rotate your gateway token, change your email
+  password, contact your administrator), and links to AbstractFramework, its GitHub and its contact
+  address, as an HTML part next to the plain text. The console link prefers a configured public
+  hostname (the browser's own origin when it is one of the configured origins, else a single configured
+  one) over the recorded local address; an arbitrary `Origin` header never becomes a link in an email.
+
+### Fixed
+
+- A Google or Microsoft mailbox sign-in cancelled while the provider's approval was pending can no
+  longer replace the existing mailbox when the approval arrives afterwards: the commit is claimed
+  under the same lock that cancellation uses, and a cancelled or expired flow fails with "Start the
+  sign-in again". `POST …/oauth/cancel` answers `cancelled: false` when the flow is already
+  committing, and the console then reloads the mailbox status instead of promising a rollback.
+- Saving an email address (your own, or another user's as an admin) says that the mailbox connection
+  is unchanged, instead of promising that notifications go to that address before a mailbox is
+  connected.
 
 ## [0.15.7] - 2026-10-18
 
@@ -15666,6 +15718,7 @@ HTTP (rides the same auth as every `/api/gateway/*` endpoint):
 | GET | `/api/gateway/entities/{name}/access` | May you change its settings? `{entity, can_configure, as: "admin" \| "creator" \| null, reason, admin_only_tools: {tools, reason}, admin_only: {available, reason}}` — `reason` is the sentence to show on a control you can't use. |
 | PUT | `/api/gateway/entities/{name}/substrate` | An admin or its creator (the creator: a model the gateway offers, else `403 not_offered` naming the offered models). `{provider, model, thinking?, speculation?}` sets its own mind; `{"clear": true}` returns it to the gateway default. Each change is recorded in its history (`substrate_changed`). `speculation` is MTP: `false` (off) or `{"mode": "native_mtp", "num_draft_tokens": N}`. |
 | GET/PUT | `/api/gateway/entities/{name}/voice` | Its voice: `{provider, model, voice}` or `{"clear": true}`; unset, it speaks with the gateway's default voice (`effective`). PUT: an admin or its creator (the creator: a voice the gateway offers, else `403 not_offered`). |
+| GET/PUT | `/api/gateway/entities/{name}/appearance` | How apps draw it (the colour and shape of its orb): `{color: "#rrggbb", shape: planet\|kitty\|face\|wave}`, the whole look replaced, or `{"clear": true}`; unset, apps use their own look. Also accepted at creation (`appearance` on `POST /entities`) and returned on each row of the list |
 
 An entity without its own mind thinks with the gateway's text route (the
 console's text default, with its endpoint and reasoning); a request may still

@@ -741,7 +741,7 @@ async def me_notifications_test(request: Request) -> Any:
     _principal, plane = _self_plane(request)
     from ..mail.notifications import send_test_notification
 
-    return await _call(send_test_notification, plane)
+    return await _call(send_test_notification, plane, origin=str(request.headers.get("origin") or ""))
 
 
 # ---------------------------------------------------------------------------
@@ -865,7 +865,7 @@ async def admin_oauth_clients_put(request: Request, provider: str, body: OAuthCl
 class RecoveryRequestBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    user_id: str = Field(..., min_length=1, max_length=200)
+    user_id: str = Field(..., min_length=1, max_length=200, description="The account id, or the account's registered email address.")
     tenant_id: str = Field(default="default", min_length=1, max_length=200)
     purpose: str = Field(default="sign_in", description="sign_in (default: the code opens a session) | reset_token")
 
@@ -873,7 +873,7 @@ class RecoveryRequestBody(BaseModel):
 class RecoveryRedeemBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    user_id: str = Field(..., min_length=1, max_length=200)
+    user_id: str = Field(..., min_length=1, max_length=200, description="The account id, or the account's registered email address (as in the request).")
     tenant_id: str = Field(default="default", min_length=1, max_length=200)
     purpose: str = Field(default="sign_in", description="sign_in (default) | reset_token")
     code: str = Field(..., min_length=1, max_length=64)
@@ -902,7 +902,8 @@ async def session_recovery_available() -> Dict[str, Any]:
 
 
 _RECOVERY_REQUEST_DESCRIPTION = """Emails a sign-in code (8 digits, single use, 10 minutes) to the account's email
-address, sent through the user's own mailbox. The answer is honest (200 in every case below):
+address, sent through the user's own mailbox. `user_id` is the account id or the account's registered email
+(an address registered on exactly one enabled person account; any other address reads like an unknown account). The answer is honest (200 in every case below):
 
 - sent: `{"sent": true, "to": "l•••@•••", "expires_in_s": 600, "message": "A sign-in code is on its way to l•••@•••. It expires in 10 minutes."}`
   (the mask keeps the first character of the local part, never the domain);
