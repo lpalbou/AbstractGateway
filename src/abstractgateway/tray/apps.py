@@ -257,8 +257,10 @@ def build_app_entries(
             if job and str(job.get("state") or "") in {"queued", "running"}:
                 out.append(AppEntry(app_id, name, "installing", "gateway", str(job.get("message") or "updating"), job_percent=job.get("percent"), found_by=found_by))
             elif row.get("running") and row.get("source") == "external":
-                port = (row.get("external") or {}).get("port") or row.get("port")
-                out.append(AppEntry(app_id, name, "running", "external", f"started outside the gateway on port {port}", url=row.get("url"), found_by=found_by))
+                ext = row.get("external") or {}
+                port = ext.get("port") or row.get("port")
+                detail = str(ext.get("detail") or f"started outside the gateway on port {port}")
+                out.append(AppEntry(app_id, name, "running", "external", detail[:1].lower() + detail[1:], url=row.get("url"), found_by=found_by))
             elif row.get("running"):
                 out.append(AppEntry(app_id, name, "running", "gateway", f"running at {row.get('url')}", url=row.get("url"), found_by=found_by))
             elif st == "starting":

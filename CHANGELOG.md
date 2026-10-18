@@ -5,6 +5,34 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.2] - 2026-10-18
+
+### Fixed
+
+- Browser apps left running by a previous gateway run are now stopped and
+  replaced, not listed as started outside the gateway. When the gateway
+  starts, an app of its own data dir (`<data dir>/apps/…`) still answering on
+  its port is stopped — with its pid file, or found on the port by its command
+  line — and the installed version starts in its place when the app is
+  enabled. `apps launch`, `apps update`, the console's **Running** badge and
+  the tray do the same when such a leftover holds the port, so an upgrade
+  never leaves an older copy serving the app. A process the pid file names
+  that ignores SIGTERM is killed after the stop timeout, and its record is
+  kept until it is gone. A copy running from somewhere else (the development
+  stack, `npx`, a service unit) is still listed as external and left alone;
+  a port whose process this machine cannot identify is now said to be "not
+  started by this gateway" rather than "started outside" it. Rows carry
+  `external.kind` (`leftover`, `foreign`, `unknown`) and `external.detail`
+  says which. Affects everyone whose gateway runs the browser apps, most
+  visibly upgrades on Linux servers.
+- The systemd user unit written by `abstractgateway service install` sets
+  `KillMode=mixed`: the gateway stops its own children in order, and systemd
+  kills whatever is left in the unit's control group when the unit stops or
+  restarts. Re-run `abstractgateway service install` (or the installer) to
+  rewrite the unit.
+- An app that exits while the gateway is shutting down is no longer
+  restarted by its crash supervisor.
+
 ## [0.15.1] - 2026-10-17
 
 ### Fixed

@@ -1935,11 +1935,13 @@ CONSOLE_UI_JS = r"""
           + (!app.installed && desk.install_command ? `<div class="ui-card__techrow is-stacked"><span class="ui-card__techlabel">Install command</span>${appCmdLine(desk.install_command, `Copy the command that installs the ${name}`)}</div>` : "");
       } else if (techOn) {
         const items = [];
-        // Started outside the gateway (the dev stack, npx, a service): the
-        // row offers Open only; this line says where it runs (the badge's
-        // tooltip says why it does not stop from here).
+        // Not started by this gateway: the gateway's row says what it is
+        // (`external.detail`: started outside the gateway — the dev stack,
+        // npx, a service — and the row offers Open only; or left running by
+        // a previous gateway run, which the badge stops). The badge's
+        // tooltip says why it does or does not stop from here.
         const ext = app.source === "external" && app.external ? app.external : null;
-        if (ext) items.push(`<span data-app-external="${esc(app.id)}">Started outside the gateway on port ${esc(ext.port)}</span>`);
+        if (ext) items.push(`<span data-app-external="${esc(app.id)}">${esc(ext.detail || `Not started by this gateway (port ${ext.port})`)}</span>`);
         // R11.3: Stop / Start are the status badge (one control per action).
         const logOpen = !!(appStore.logs.get(app.id) || {}).open;
         if (actions.includes("logs") && admin) items.push(`<button type="button" class="ui-btn is-text" data-app-action="logs" data-app="${esc(app.id)}" aria-expanded="${logOpen ? "true" : "false"}">${logOpen ? "Hide log" : "Show log"}</button>`);

@@ -172,13 +172,22 @@ def _manager(tmp_path: Path, found: Dict[str, am.ExternalApp], *, allowed: bool 
 
 
 def test_an_external_app_is_installed_running_and_open_only(tmp_path: Path) -> None:
-    m = _manager(tmp_path, {"observer": am.ExternalApp("observer", 3001, "http://127.0.0.1:3001/", version="0.1.12", pid=77)})
+    m = _manager(tmp_path, {"observer": am.ExternalApp("observer", 3001, "http://127.0.0.1:3001/", version="0.1.12", pid=77, argv=("node", "/opt/stack/abstractobserver/bin/cli.js"))})
     row = m.app_row(am.APP_BY_ID["observer"])
     assert row["installed"] is True and row["running"] is True and row["status"] == "running"
     assert row["managed"] is False and row["source"] == "external"
     assert row["url"] == "http://127.0.0.1:3001/" and row["port"] == 3001 and row["version"] == "0.1.12"
     assert row["actions"] == ["open"]
-    assert row["external"]["detail"] == "Started outside the gateway on port 3001"
+    assert row["external"]["kind"] == "foreign" and row["external"]["leftover"] is False
+    assert row["external"]["detail"] == "Started outside the gateway on port 3001 (process 77)"
+    assert row["status_control"]["tip"] == am.BADGE_EXTERNAL_TIP
+    # Nothing shows which process holds the port: said as such, never "started outside".
+    m.external_probe = lambda **kw: {"observer": am.ExternalApp("observer", 3001, "http://127.0.0.1:3001/", version="0.1.12")}
+    m.external_apps(refresh=True)
+    row = m.app_row(am.APP_BY_ID["observer"])
+    assert row["external"]["kind"] == "unknown" and row["actions"] == ["open"]
+    assert row["external"]["detail"] == "Not started by this gateway (port 3001; the process holding the port could not be identified)"
+    assert row["status_control"]["tip"] == am.BADGE_UNIDENTIFIED_TIP
     assert row["install_available"] is False and row["install_blocked_reason"] is None
     web = row["interfaces"][0]
     assert web["launch_available"] is True and web["running"] is True
@@ -392,15 +401,18 @@ def test_the_tray_client_uses_the_handshake_url_not_the_network_address(tmp_path
 
 def test_console_card_says_started_outside_only_under_technical_details() -> None:
     """Mission GG's card, kept: an external app shows the Running pill and
-    Open (its row's only action); Technical details adds "Started outside the
-    gateway on port N" (the status badge is disabled, R11.3). Rendered for real by
-    untracked/missionHH/capture_apps.mjs (Playwright, dark 1440)."""
+    Open (its row's only action); Technical details adds the row's
+    `external.detail` ("Started outside the gateway on port N (process P)",
+    or what a leftover of a previous gateway run is; the status badge is
+    disabled for a copy that is not the gateway's, R11.3). Rendered for real
+    by untracked/missionHH/capture_apps.mjs (Playwright, dark 1440)."""
     from abstractgateway.console_ui import CONSOLE_UI_JS
 
     card = CONSOLE_UI_JS[CONSOLE_UI_JS.index("function appCardMarkup(app) {"):CONSOLE_UI_JS.index("function appViewMarkup()")]
     plain, tech = card.split("if (techOn) {", 1)
-    line = "Started outside the gateway on port ${esc(ext.port)}"
+    line = 'data-app-external="${esc(app.id)}">${esc(ext.detail'
     assert line in tech and line not in plain
+    assert "Started outside the gateway" not in card, "the card never composes the sentence: the gateway's row says what the copy is"
     assert 'app.source === "external" && app.external' in tech
     # R11.3: no Stop button at all — the status badge stops (the gateway's
     # status_control); an external row's badge is disabled with its sentence.

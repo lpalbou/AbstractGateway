@@ -24,7 +24,8 @@ Install is (an admin):
 | **Running** (the gateway started it) | stops it (`POST /apps/{id}/stop`) | "Running — click to stop" |
 | **Stopped** (installed, not running) | starts it without opening a tab (`POST /apps/{id}/launch`) | "Stopped — click to start" |
 | **Stopped unexpectedly** / **Keeps crashing** | starts it again | "Stopped unexpectedly — click to start" |
-| **Running**, started outside the gateway | nothing: the badge is disabled | "Started outside the gateway — stop it where it was started" |
+| **Running**, started outside the gateway | nothing: the badge is disabled | "Started outside the gateway — stop it where it was started" (or "Not started by this gateway (its process could not be identified) — …") |
+| **Running**, left by a previous gateway run | `POST /apps/{id}/stop` stops that process | "Running — click to stop" |
 | any badge, for a user who is not an admin | nothing: the badge is disabled | "Only an admin can start or stop apps" |
 | **Starting…** / **Stopping…** / **Not installed** | a plain pill, not a control | — |
 
@@ -206,11 +207,44 @@ served there): the app's server reads the same sign-in cookies whoever
 started it. The gateway does not stop, update or show the
 log of an app it did not start: its **Running** badge is disabled with the
 tooltip "Started outside the gateway — stop it where it was started", and
-**Technical details** says "Started outside the gateway on port 3001" (when a newer version is
-published, the card says "Latest x.y.z · Started outside the gateway — update
-it where it was installed"), and `POST /apps/{id}/stop`
-answers 409 `started_outside_gateway`. Starting the gateway's own copy while
-an outside one runs does nothing (the app is already running).
+**Technical details** says "Started outside the gateway on port 3001 (process
+4242)" (when a newer version is published, the card says "Latest x.y.z ·
+Started outside the gateway — update it where it was installed"), and
+`POST /apps/{id}/stop` answers 409 `started_outside_gateway`. Starting the
+gateway's own copy while an outside one runs does nothing (the app is already
+running).
+
+The row's `external.kind` says what the gateway found on the port, read from
+the command line of the process listening there:
+
+| `external.kind` | What it is | What the gateway does |
+| --- | --- | --- |
+| `leftover` | This data dir's own install (`<data dir>/apps/<app>/<version>/…`), left running by a previous gateway run — for example after a restart that stopped the gateway before it could stop its apps | Stops it and starts the installed version in its place: at boot by itself, and on **Start**, `POST /apps/{id}/launch`, an update, or the **Running** badge (which stops it). `external.detail`: "Left running by a previous gateway run on port 3005 (version 0.8.0, process 857793): stopping or starting the app replaces it with the installed version". |
+| `foreign` | A copy running from somewhere else (a checkout, `npx`, a service unit) | Open only, as above. |
+| `unknown` | This machine does not show which process holds the port (no `lsof`/`ss`, or another user's process) | Open only; the badge's tooltip and `external.detail` say "Not started by this gateway (port 3005; the process holding the port could not be identified)" — never "started outside". |
+
+### Leftovers of a previous gateway run
+
+The gateway starts its apps as children that watch its standard input and
+exit when it goes away, and stops them in its own shutdown; a stop that
+interrupts that (a hard kill, a service manager's timeout, a machine that lost
+power) can leave an app running on its port. When the gateway starts again it
+cleans up before starting anything, in this order:
+
+1. `<data dir>/run/apps/<app>.json` — the pid file of every app it started —
+   names a process whose command line still is that app: SIGTERM, then SIGKILL
+   after the stop timeout (5 s); the record is removed once the process is
+   gone and kept (and the start logged as an error) when it is not.
+2. An app answering on one of the usual ports whose command line runs this
+   data dir's install, with no pid file (the record was lost): stopped the
+   same way. A copy running from anywhere else is left alone.
+3. The release pins in `apps-upgrade.pending`, then the enabled apps start.
+
+`abstractgateway apps list` shows a leftover that is still there as
+"Left running by a previous gateway run … (abstractgateway apps launch <app>
+replaces it)". On Linux the systemd user unit also carries `KillMode=mixed`:
+the gateway stops its children in order, and systemd kills whatever is left
+in the unit's control group when the unit stops or restarts.
 
 ## Who may install
 
