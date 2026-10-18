@@ -1,7 +1,7 @@
 """HTTP → actual orchestrator → real LLM handler/normalizer → artifact HTTP.
 
 The provider generate seam alone is deterministic. 0.0.0 is the wheel asset;
-0.0.12 is the additive canonical revision6 bundle. Both are mandatory assets.
+0.0.12 preserves revision6; 0.0.13 adds canonical router routing. All are mandatory assets.
 """
 import base64
 import json
@@ -28,7 +28,7 @@ def wav_bytes():
 
 WAV = wav_bytes()
 
-@pytest.fixture(params=['0.0.0', '0.0.12'])
+@pytest.fixture(params=['0.0.0', '0.0.12', '0.0.13'])
 def media_gateway(request, tmp_path, monkeypatch):
     from abstractruntime.integrations.abstractcore import factory
     from abstractruntime.integrations.abstractcore.llm_client import _normalize_multimodal_response, _output_runtime_metadata, _resolve_media_artifacts
@@ -200,19 +200,20 @@ def test_optional_source_checkout_reproduces_shipped_bundle():
     builder = load_bundle_builder()
     if not (builder.ASSISTANT / 'abstractassistant/assistant_workflow.py').is_file():
         pytest.skip('Optional maintainer check requires canonical sibling Assistant checkout')
-    artifact = builder.GATEWAY / 'flows/bundles/abstractassistant-orchestrator@0.0.12.flow'
+    artifact = builder.GATEWAY / 'flows/bundles/abstractassistant-orchestrator@0.0.13.flow'
     assert builder.bundle_bytes() == builder.bundle_bytes() == artifact.read_bytes()
 
 
-def test_bundled_revision6_contains_closed_subflows():
+@pytest.mark.parametrize('version,revision', [('0.0.12', 6), ('0.0.13', 7)])
+def test_bundled_revision_contains_closed_subflows(version, revision):
     # Mandatory artifact-only checks also run in a standalone Gateway checkout.
-    artifact = Path(__file__).resolve().parents[1] / 'flows/bundles/abstractassistant-orchestrator@0.0.12.flow'
+    artifact = Path(__file__).resolve().parents[1] / f'flows/bundles/abstractassistant-orchestrator@{version}.flow'
     with zipfile.ZipFile(artifact) as archive:
         manifest = json.loads(archive.read('manifest.json'))
-        assert manifest['metadata']['managed_workflow_revision'] == 6
+        assert manifest['metadata']['managed_workflow_revision'] == revision
         flows = {fid: json.loads(archive.read(path)) for fid, path in manifest['flows'].items()}
     root = flows[manifest['default_entrypoint']]
-    assert 'workflow-revision=6' in root['description']
+    assert f'workflow-revision={revision}' in root['description']
     for flow in flows.values():
         for node in flow['nodes']:
             if node['type'] == 'subflow': assert node['data']['subflowId'] in flows
@@ -246,7 +247,7 @@ def test_versionless_account_choices_survive_entrypoint_upgrade(media_gateway):
         preferences = client.get('/api/gateway/accounts/me/preferences').json()
         effective = next(row for row in preferences['apps'] if row['interface'] == interface)['effective']
         assert effective['available'] is True and effective['flow_id'] == flow
-        assert effective['bundle_version'] == '0.0.12'
+        assert effective['bundle_version'] == version
         # Account preferences are resolved by thin clients; @default means the
         # gateway-wide setting, not this account's client preference.
         response = client.post('/api/gateway/runs/start', json={
@@ -257,7 +258,7 @@ def test_versionless_account_choices_survive_entrypoint_upgrade(media_gateway):
         run_id = response.json()['run_id']
         final = wait_for(lambda: (r if (r := client.get(f'/api/gateway/runs/{run_id}').json()).get('status') in ('completed', 'failed') else None))
         assert final['status'] == 'completed', final
-        assert final['workflow_id'] == f'abstractassistant-orchestrator@0.0.12:{flow}'
+        assert final['workflow_id'] == f'abstractassistant-orchestrator@{version}:{flow}'
 
 
 def test_packaged_chat_subflow_still_runs(media_gateway):

@@ -4,6 +4,7 @@ Only pooled provider transport is replaced. HTTP auth, principal host lookup,
 shipped graph compilation and the real LLM effect's profile resolution remain.
 """
 import json
+from types import SimpleNamespace
 from pathlib import Path
 import shutil
 
@@ -14,11 +15,26 @@ from test_iphone_assistant_tool_declarations import wait_for
 
 @pytest.mark.parametrize('scope', ['user', 'gateway'])
 def test_shared_endpoint_resolves_for_router_and_embedded_agent(tmp_path, monkeypatch, scope):
+    _exercise_endpoint_route(tmp_path, monkeypatch, scope)
+
+
+def test_narrow_runtime_variables_route_phone_router_without_client_model(tmp_path, monkeypatch):
+    _exercise_endpoint_route(tmp_path, monkeypatch, 'gateway', runtime_graph=True, no_client_route=True)
+
+
+def test_explicit_router_selection_wins_over_runtime_defaults(tmp_path, monkeypatch):
+    _exercise_endpoint_route(tmp_path, monkeypatch, 'gateway', runtime_graph=True, no_client_route=True, explicit_override=True)
+
+
+def _exercise_endpoint_route(tmp_path, monkeypatch, scope, *, runtime_graph=False, no_client_route=False, explicit_override=False):
     from abstractruntime.integrations.abstractcore.llm_client import MultiLocalAbstractCoreLLMClient
     from abstractgateway.provider_endpoint_profiles import ProviderEndpointProfileStore
     from abstractgateway.users import GatewayUserRegistry
 
     calls = []
+    expected_profile = 'selected' if explicit_override else 'airelays'
+    expected_model = 'selected-model' if explicit_override else 'phone-test-model'
+    expected_url = 'https://selected.example/v1' if explicit_override else 'https://provider.example/v1'
 
     def generate(self, **kwargs):
         params = kwargs.get('params', {})
@@ -26,18 +42,29 @@ def test_shared_endpoint_resolves_for_router_and_embedded_agent(tmp_path, monkey
         # Fail here if the actual handler ever hands transport an unresolved
         # virtual provider; returning canned success would hide the regression.
         assert params.get('_provider', self._default_provider) == 'openai-compatible'
-        assert params.get('_model', self._default_model) == 'phone-test-model'
-        assert params.get('base_url', self._llm_kwargs.get('base_url')) == 'https://provider.example/v1'
+        assert params.get('_model', self._default_model) == expected_model
+        assert params.get('base_url', self._llm_kwargs.get('base_url')) == expected_url
         assert params.get('provider_api_key', self._llm_kwargs.get('api_key')) == 'fixture-secret'
+        if runtime_graph:
+            assert params['_provider'] == 'openai-compatible'
+            assert params['_model'] == expected_model
+            assert params['_provider_endpoint_profile']['virtual_provider'] == 'endpoint:' + expected_profile
+        if no_client_route:
+            # Stop at the actual provider seam, after graph and profile routing.
+            # This test proves routing, not provider generation or later media.
+            raise RuntimeError('fixture: router transport reached')
         if len(calls) == 1:
             data = {'mode': 'chat', 'media_prompt': '', 'assistant_message': ''}
             return {'content': json.dumps(data), 'data': data, 'tool_calls': []}
         return {'content': 'Endpoint routing works.', 'tool_calls': [], 'finish_reason': 'stop'}
 
     monkeypatch.setattr(MultiLocalAbstractCoreLLMClient, 'generate', generate)
+    # Provider construction may probe model catalogs; keep that transport offline.
+    import abstractcore
+    monkeypatch.setattr(abstractcore, 'create_llm', lambda provider, model, **kw: SimpleNamespace(model=model))
     bundles = tmp_path / 'bundles'
     bundles.mkdir()
-    source = Path(__file__).resolve().parents[1] / 'flows/bundles/abstractassistant-orchestrator@0.0.12.flow'
+    source = Path(__file__).resolve().parents[1] / 'flows/bundles/abstractassistant-orchestrator@0.0.13.flow'
     shutil.copyfile(source, bundles / source.name)
     for key, value in {
         'ABSTRACTGATEWAY_DATA_DIR': str(tmp_path / 'runtime'),
@@ -55,23 +82,42 @@ def test_shared_endpoint_resolves_for_router_and_embedded_agent(tmp_path, monkey
     ProviderEndpointProfileStore(base_dir=tmp_path / 'runtime').upsert_profile(
             profile_id='airelays', provider_family='openai-compatible',
             base_url='https://provider.example/v1', api_key='fixture-secret', scope=scope)
+    if explicit_override:
+        ProviderEndpointProfileStore(base_dir=tmp_path / 'runtime').upsert_profile(
+            profile_id='selected', provider_family='openai-compatible',
+            base_url=expected_url, api_key='fixture-secret', scope='gateway')
+    if runtime_graph:
+        from abstractgateway.core_config import save_gateway_capability_default
+        save_gateway_capability_default('output', 'text', provider='endpoint:airelays',
+                                        model='phone-test-model', base_dir=tmp_path / 'runtime')
     from abstractgateway.app import app
     with TestClient(app) as client:
         _, token = GatewayUserRegistry().create_user(user_id='phone-user', roles=['user'])
         client.headers['Authorization'] = f'Bearer {token}'
         inputs = {'prompt': 'Hello', 'tools': []}
-        # Router has no model input edges and therefore uses the host default;
-        # the embedded agent receives the same selected route explicitly.
-        inputs.update(provider='endpoint:airelays', model='phone-test-model',
-                      _runtime={'provider': 'endpoint:airelays', 'model': 'phone-test-model', 'allowed_tools': []})
+        if not no_client_route:
+            inputs.update(provider='endpoint:airelays', model='phone-test-model',
+                          _runtime={'provider': 'endpoint:airelays', 'model': 'phone-test-model', 'allowed_tools': []})
+        if explicit_override:
+            inputs.update(provider='endpoint:selected', model='selected-model')
         response = client.post('/api/gateway/runs/start', json={
-            'bundle_id': 'abstractassistant-orchestrator', 'bundle_version': '0.0.12',
+            'bundle_id': 'abstractassistant-orchestrator', 'bundle_version': '0.0.13',
             'flow_id': 'c53b1579', 'session_id': 'phone-endpoint-routing',
             'input_data': inputs,
         })
         assert response.status_code == 200, response.text
         root = response.json()['run_id']
         final = wait_for(lambda: (r if (r := client.get(f'/api/gateway/runs/{root}').json()).get('status') in ('completed', 'failed') else None))
+        if no_client_route:
+            assert final['status'] == 'failed', final
+            assert final['current_node'] == 'route_call'
+            assert 'fixture: router transport reached' in str(final)
+            assert calls and all(c['_provider'] == 'openai-compatible' for c in calls)
+            ledger = client.get(f'/api/gateway/runs/{root}/ledger')
+            assert ledger.status_code == 200
+            assert 'fixture-secret' not in ledger.text
+            assert 'fixture-secret' not in json.dumps(final)
+            return
         assert final['status'] == 'completed', final
         assert final['output']['response'] == 'Endpoint routing works.'
         assert len(calls) == 2, 'Both router and real embedded agent must reach resolved provider transport'
