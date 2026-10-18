@@ -5729,6 +5729,33 @@ history (every archive and unarchive) are kept in the plane's
 `session.unarchived` audit event. Automations are archived with the
 `automation.archive` command and brought back with `automation.unarchive`.
 
+## Conversation tool choices
+
+Assistant clients use `GET /api/gateway/discovery/tools` and the established
+`POST /api/gateway/runs/start` contract. Send enabled names in both
+`input_data.tools` and `input_data._runtime.allowed_tools`; put named
+`auto_approve_tools` and `require_approval_tools` lists in
+`input_data._runtime.tool_policy`. Omitted restrictions inherit defaults;
+explicit empty allowed-tool lists disable every tool. No additional capability
+probe is required for this contract.
+
+Entity clients discover visit-scoped controls with
+`GET /api/gateway/entities/{name}/session-tools` (`visit_routes: true` advertises
+the canonical open/close extensions; when absent, use the compatibility aliases). Open through
+`POST /api/gateway/entities/{name}/visit/open` with a stable `session_id` and
+`tool_policy: {"modes": {"read_memory": "approve"}}`. Modes are `off`, `auto`
+and `approve`; an explicit empty map disables all tools and `modes: null`
+inherits the home's grants. Omit `tool_policy` to retain legacy visit behavior.
+These choices apply only to this visit and cannot widen the home's grants.
+
+Use the visit's `/state`, `/tool-policy` and `/decision` routes to read progress,
+change choices between turns and answer the exact pending approval. End through
+`POST .../visit/{run_id}/close` with `{"closed_by":"pause"}`; pending approval
+is cancelled without executing its tools. Managed visits are bound to their
+authenticated owner. `/entities/{name}/sessions` and `/visit/{run_id}/end`
+remain deprecated compatibility aliases. Gateways without entity session-tool
+support still support the established Assistant tool-control contract.
+
 ## Beyond the core
 
 `/api/gateway/*` also includes optional operator/tooling endpoints (reports inbox, triage queue, backlog browsing + exec runner, process manager, file/attachment helpers, embeddings, voice, discovery, …).

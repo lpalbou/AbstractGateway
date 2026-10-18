@@ -39,19 +39,21 @@ def client(monkeypatch):
         yield c
 
 
-def test_real_entity_session_approval_policy_rejoin_end_and_turn_metrics(client):
+@pytest.mark.parametrize("open_route,close_route", [("/visit/open", "/close"), ("/sessions", "/end")])
+def test_real_entity_session_approval_policy_rejoin_end_and_turn_metrics(client, open_route, close_route):
     base = "/api/gateway/entities/session-test"
     options = client.get(base + "/session-tools")
     assert options.status_code == 200, options.text
+    assert options.json()["visit_routes"] is True
     assert "read_memory" in {row["name"] for row in options.json()["items"]}
-    opened = client.post(base + "/sessions", json={"session_id": "phone-session", "tool_policy": {"modes": {"read_memory": "approve"}}})
+    opened = client.post(base + open_route, json={"session_id": "phone-session", "tool_policy": {"modes": {"read_memory": "approve"}}})
     assert opened.status_code == 200, opened.text
     run = opened.json()["run_id"]; path = base + "/visit/" + run
     assert opened.json()["ready_for_input"] and opened.json()["turn_complete"] is False
-    rejoined = client.post(base + "/sessions", json={"session_id": "phone-session", "tool_policy": {"modes": {}}})
+    rejoined = client.post(base + open_route, json={"session_id": "phone-session", "tool_policy": {"modes": {}}})
     assert rejoined.status_code == 200 and rejoined.json()["run_id"] == run
     assert rejoined.json()["tool_policy"]["modes"] == {"read_memory": "approve"}
-    conflict = client.post(base + "/sessions", json={"session_id": "other-session"})
+    conflict = client.post(base + open_route, json={"session_id": "other-session", "tool_policy": {"modes": None}})
     assert conflict.status_code == 409
     turn = client.post(path + "/turn", json={"text": "Read that memory."})
     assert turn.status_code == 200, turn.text
@@ -73,7 +75,7 @@ def test_real_entity_session_approval_policy_rejoin_end_and_turn_metrics(client)
     assert second["turn_n"] == 2 and second["turn_complete"]
     assert second["stats"]["input_tokens"] == 7 and second["stats"]["output_tokens"] == 3
     assert second["stats"]["tool_calls"] == 0
-    ended = client.post(path + "/end")
+    ended = client.post(path + close_route, json={"closed_by": "pause"})
     assert ended.status_code == 200 and ended.json()["status"] == "completed", ended.text
     assert client.get(base + "/visit").json()["open"] is False
 
@@ -130,17 +132,70 @@ def test_existing_turn_and_close_cannot_bypass_managed_session_owner(client):
     assert client.get(path + "/transcript").status_code == 404
 
 
-def test_end_while_waiting_for_approval_cancels_without_running_tools(client):
+@pytest.mark.parametrize("close_route", ["/close", "/end"])
+def test_end_while_waiting_for_approval_cancels_without_running_tools(client, monkeypatch, close_route):
     base = "/api/gateway/entities/session-test"
-    opened = client.post(base + "/sessions", json={"session_id": "end-pending", "tool_policy": {"modes": {"read_memory": "approve"}}})
+    opened = client.post(base + "/visit/open", json={"session_id": "end-pending", "tool_policy": {"modes": {"read_memory": "approve"}}})
     path = base + "/visit/" + opened.json()["run_id"]
     assert client.post(path + "/turn", json={"text": "Read memory"}).status_code == 200
     pending = client.get(path + "/state").json()["pending_wait"]
     assert pending is not None
-    ended = client.post(path + "/end")
+    admissions = []
+    monkeypatch.setattr("abstractgateway.routes.entities._fire_queue_admission", admissions.append)
+    from abstractruntime.core.models import EffectType
+    from abstractgateway.routes.entities import _visit_host
+
+    er, _run, _wf, _manifest = _visit_host()._load_visit("session-test", opened.json()["run_id"], need_spec=False)
+    def unexpected_execution(*args, **kwargs):
+        pytest.fail("Closing an approval wait must not invoke the tool handler.")
+    monkeypatch.setitem(er.runtime._handlers, EffectType.TOOL_CALLS, unexpected_execution)
+    ended = client.post(path + close_route, json={"closed_by": "pause"})
     assert ended.status_code == 200 and ended.json()["status"] == "cancelled", ended.text
     assert client.post(path + "/decision", json={"wait_key": pending["wait_key"], "approved": True}).status_code == 409
     assert client.get(base + "/visit").json()["open"] is False
+    assert admissions == ["session-test"]
+
+
+def test_canonical_open_installs_policy_before_first_tick_and_keeps_null_distinct_from_empty(client, monkeypatch):
+    from abstractgateway.entity_visits import EntityVisitHost
+    from abstractgateway.routes.entities import _visit_host
+
+    policies = []
+    original_drive = EntityVisitHost._drive
+
+    def inspect_first_tick(self, er, wf, run_id, *, max_steps):
+        run = er.run_store.load(run_id)
+        policies.append(copy.deepcopy(run.vars["_runtime"]["entity_session_tools"]["modes"]))
+        return original_drive(self, er, wf, run_id, max_steps=max_steps)
+
+    monkeypatch.setattr(EntityVisitHost, "_drive", inspect_first_tick)
+    base = "/api/gateway/entities/session-test"
+    for session, modes in [("inherit", None), ("deny-all", {})]:
+        response = client.post(base + "/visit/open", json={"session_id": session, "tool_policy": {"modes": modes}})
+        assert response.status_code == 200, response.text
+        actual = response.json()["tool_policy"]["modes"]
+        assert actual == ({} if modes == {} else {row["name"]: "auto" for row in client.get(base + "/session-tools").json()["items"]})
+        assert policies[-1] == actual
+        path = base + "/visit/" + response.json()["run_id"]
+        assert client.post(path + "/close", json={"closed_by": "pause"}).status_code == 200
+    assert client.post(base + "/visit/open", json={"session_id": "invalid", "tool_policy": {"modes": {"nonexistent": "auto"}}}).status_code == 422
+    assert client.post(base + "/visit/open", json={"tool_policy": {"modes": {}}}).status_code == 422
+    assert _visit_host().status("session-test")["open"] is False
+
+
+def test_canonical_rejoin_cannot_take_over_another_principals_managed_visit(client):
+    from abstractgateway.routes.entities import _visit_host
+
+    base = "/api/gateway/entities/session-test"
+    request = {"session_id": "owned", "tool_policy": {"modes": {}}}
+    opened = client.post(base + "/visit/open", json=request)
+    assert opened.status_code == 200, opened.text
+    host = _visit_host()
+    er, run, _wf, _manifest = host._load_visit("session-test", opened.json()["run_id"], need_spec=False)
+    run.vars["_runtime"]["entity_session_tools"]["owner"] = {"tenant_id": "default", "user_id": "someone-else"}
+    er.run_store.save(run)
+    assert client.post(base + "/visit/open", json=request).status_code == 404
+    assert client.post(base + "/visit/" + run.run_id + "/close", json={"closed_by": "pause"}).status_code == 404
 
 
 def test_actual_entity_grant_is_rechecked_at_approval(client):

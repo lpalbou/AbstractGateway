@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from ..entity_access import entity_name_guard, entity_plane_resolver
-from ..entity_session_tools import (decide, end_session, install_policy, normalize_policy, principal_owner,
+from ..entity_session_tools import (SessionToolPolicy, decide, install_policy, normalize_policy,
                                     require_owner, session_state, tool_options)
 from ..entity_visits import VisitRefused
 
@@ -15,9 +15,7 @@ router = APIRouter(prefix="/gateway", tags=["session-tools"],
                    dependencies=[Depends(entity_plane_resolver), Depends(entity_name_guard)])
 
 
-class PolicyRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    modes: Optional[Dict[str, str]] = None
+PolicyRequest = SessionToolPolicy
 
 
 class SessionRequest(BaseModel):
@@ -67,31 +65,20 @@ def conversation_tool_capabilities() -> dict:
 @router.get("/entities/{name}/session-tools")
 def entity_session_tool_options(name: str) -> dict:
     try:
-        return {"supported": True, "transport": "durable-visit", "modes": ["off", "auto", "approve"],
+        return {"supported": True, "transport": "durable-visit", "visit_routes": True,
+                "modes": ["off", "auto", "approve"],
                 "items": tool_options(_host()._registry, name)}
     except (VisitRefused, KeyError, ValueError) as exc:
         return _refused(exc)
 
 
-@router.post("/entities/{name}/sessions")
+@router.post("/entities/{name}/sessions", deprecated=True)
 def open_entity_session(name: str, req: SessionRequest) -> dict:
-    host = _host()
-    try:
-        policy = normalize_policy(req.tool_policy.modes if req.tool_policy else None,
-                                  options=tool_options(host._registry, name))
-        # A retry of the SAME principal's SAME session rejoins. Never take over
-        # another live visit, even if its run id is known to this account.
-        live = host.status(name)
-        if live.get("open") and live.get("session_id") == req.session_id:
-            _er, run, _wf, _manifest = host._load_visit(name, live["run_id"], need_spec=False)
-            require_owner(run)
-            return session_state(host, name, run.run_id)
-        owner = principal_owner()
-        opened = host.open(name, participants=["person:" + owner["user_id"]],
-                           session_id=req.session_id, session_tools=policy)
-        return session_state(host, name, opened["run_id"])
-    except (VisitRefused, KeyError, ValueError) as exc:
-        return _refused(exc)
+    """Compatibility alias; new clients use the existing visit/open route."""
+    from .entities import OpenVisitRequest, open_visit
+
+    return open_visit(name, OpenVisitRequest(session_id=req.session_id,
+                      tool_policy=req.tool_policy or PolicyRequest()))
 
 
 @router.get("/entities/{name}/visit/{run_id}/state")
@@ -135,9 +122,15 @@ def entity_session_decision(name: str, run_id: str, req: DecisionRequest) -> dic
         return _refused(exc)
 
 
-@router.post("/entities/{name}/visit/{run_id}/end")
+@router.post("/entities/{name}/visit/{run_id}/end", deprecated=True)
 def end_entity_session(name: str, run_id: str) -> dict:
+    """Compatibility alias; share close's cancellation and queue admission."""
+    from .entities import VisitCloseRequest, visit_close
+
+    # Preserve the alias's owner check, including visits opened by older clients.
     try:
-        return end_session(_host(), name, run_id)
+        _er, run, _wf, _manifest = _host()._load_visit(name, run_id, need_spec=False)
+        require_owner(run)
     except (VisitRefused, KeyError, ValueError) as exc:
         return _refused(exc)
+    return visit_close(name, run_id, VisitCloseRequest(closed_by="pause"))

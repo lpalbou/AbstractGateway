@@ -9,14 +9,37 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, Dict, Optional
 from fastapi import HTTPException, Request
+from pydantic import BaseModel, ConfigDict
 
 SESSION_TOOLS_KEY = "entity_session_tools"
 MODES = frozenset({"off", "auto", "approve"})
 _approved_batch: ContextVar[Optional[tuple[str, str]]] = ContextVar("entity_approved_batch", default=None)
+
+
+class SessionToolPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    modes: Optional[Dict[str, str]] = None
+
+
+def open_session(host: Any, name: str, *, session_id: Optional[str], modes: Any) -> dict:
+    """Open or rejoin through the existing durable visit host, with a local policy."""
+    if not isinstance(session_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", session_id):
+        raise ValueError("A managed visit needs a session_id of 1–128 letters, digits, underscores or hyphens.")
+    policy = normalize_policy(modes, options=tool_options(host._registry, name))
+    live = host.status(name)
+    if live.get("open") and live.get("session_id") == session_id:
+        _er, run, _wf, _manifest = host._load_visit(name, live["run_id"], need_spec=False)
+        require_owner(run)
+        return session_state(host, name, run.run_id)
+    owner = principal_owner()
+    opened = host.open(name, participants=["person:" + owner["user_id"]],
+                       session_id=session_id, session_tools=policy)
+    return session_state(host, name, opened["run_id"])
 
 
 def principal_owner() -> Dict[str, str]:
@@ -261,7 +284,7 @@ def decide(host: Any, name: str, run_id: str, *, wait_key: str, approved: bool) 
     return session_state(host, name, run_id)
 
 
-def end_session(host: Any, name: str, run_id: str) -> dict:
+def end_session(host: Any, name: str, run_id: str, *, reason: str = "Visitor ended this conversation.") -> dict:
     from abstractruntime.identity.visit_workflow import VISITOR_WAIT_KEY
 
     er, run, _wf, manifest = host._load_visit(name, run_id, need_spec=False)
@@ -270,13 +293,13 @@ def end_session(host: Any, name: str, run_id: str) -> dict:
     if status in ("completed", "failed", "cancelled"):
         return session_state(host, name, run_id)
     if status == "waiting" and run.waiting is not None and run.waiting.wait_key == VISITOR_WAIT_KEY:
-        host.close(name, run_id, closed_by="pause", reason="Visitor ended this conversation.")
+        host.close(name, run_id, closed_by="pause", reason=reason)
     else:
         lease = host._acquire_lease(er)
         try:
             run = er.run_store.load(run_id)
             require_owner(run)
-            state = er.runtime.cancel_run(run_id, reason="Visitor ended this conversation.", cancelled_by="visitor")
+            state = er.runtime.cancel_run(run_id, reason=reason, cancelled_by="visitor")
             host._finalize_terminal(er, manifest, run_id, state)
         finally:
             if lease is not None:
