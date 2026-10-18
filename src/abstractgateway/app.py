@@ -164,6 +164,11 @@ app.add_middleware(InflightRequests)
 
 # Entities routers first: their literal paths (/gateway/entities/...) must win
 # over any parametrized /gateway/... routes in the main gateway router.
+from .routes.session_tools import router as session_tools_router  # noqa: E402
+from .routes.message_stats import router as message_stats_router  # noqa: E402
+
+app.include_router(session_tools_router, prefix="/api")
+app.include_router(message_stats_router, prefix="/api")
 app.include_router(entities_router, prefix="/api")
 app.include_router(entity_replay_router, prefix="/api")
 # Local engines (status, user-level installs, needs_admin/needs_tools jobs,

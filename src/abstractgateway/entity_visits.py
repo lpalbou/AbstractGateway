@@ -672,6 +672,7 @@ class EntityVisitHost:
         *,
         participants: Optional[List[str]] = None,
         session_id: Optional[str] = None,
+        session_tools: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """`participants` here is TRUSTED input: the route derives it from
         the authenticated principal (payload claims are refused at the
@@ -683,6 +684,7 @@ class EntityVisitHost:
             visit_id=f"visit-{secrets.token_hex(6)}",
             session_id=session_id,
             channel_label="operator-visit",
+            session_tools=session_tools,
         )
         out = {
             "run_id": leg["run_id"],
@@ -722,6 +724,7 @@ class EntityVisitHost:
         visit_id: str,
         session_id: Optional[str],
         channel_label: str,
+        session_tools: Optional[Dict[str, Any]] = None,
     ) -> Any:
         """Preflight + start ONE visit leg atomically against concurrent
         opens on the same home (the check->create window closes under a
@@ -736,6 +739,7 @@ class EntityVisitHost:
                 visit_id=visit_id,
                 session_id=session_id,
                 channel_label=channel_label,
+                session_tools=session_tools,
             )
         return pre, leg
 
@@ -954,6 +958,7 @@ class EntityVisitHost:
         visit_id: str,
         session_id: Optional[str],
         channel_label: str,
+        session_tools: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Mint -> start -> stamp -> seed -> drive-to-park for ONE visit leg
         (shared by the operator visit and each side of a two-entity meet).
@@ -1014,9 +1019,14 @@ class EntityVisitHost:
                 visit_id=visit_id,
                 model_info=_mi,
             )
+            initial_vars = _seed_run_vars(er)
+            if session_tools is not None:
+                from .entity_session_tools import install_policy
+
+                install_policy(initial_vars, session_tools)
             run_id = er.runtime.start(
                 workflow=wf,
-                vars=_seed_run_vars(er),
+                vars=initial_vars,
                 actor_id="gateway",
                 session_id=session,
             )
