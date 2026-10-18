@@ -1076,10 +1076,10 @@ Workflows page and the console TUI show for each bundle.</p>
 </tr>
 <tr>
 <td><code>abstractassistant-orchestrator</code></td>
-<td>0.0.0</td>
+<td>0.0.13</td>
 <td>AbstractAssistant Orchestrator</td>
-<td><code>d5d4e5a1</code>* (<code>abstractassistant.agent.v1</code>)</td>
-<td>The menu-bar Assistant's workflow: sends each request to a tools agent or to image, video or music generation, and returns the reply.</td>
+<td><code>c53b1579</code>* (<code>abstractassistant.agent.v1</code>), <code>d5d4e5a1</code> (the legacy entrypoint id, kept for saved preferences)</td>
+<td>The Assistant's workflow (revision 7): sends each request to the shipped <code>basic-agent</code> as a chat subflow or to image, video, music, sound or voice generation, and returns the reply; the router follows the run's text provider and model unless the request selects them. 0.0.12 (revision 6, the same with a router that always uses the pooled default) and 0.0.0 (the editor-published original) stay installed for what pins them. Built from AbstractAssistant's <code>assistant_workflow.py</code> by <code>scripts/build_assistant_orchestrator_bundle.py</code>.</td>
 </tr>
 <tr>
 <td><code>docs-qa</code></td>

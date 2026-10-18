@@ -1832,7 +1832,7 @@ Keys the server owns are dropped: <code>_meta</code>, <code>workspace_read_only<
 </table>
 <p>Anything else under <code>_runtime</code> (for example <code>control</code>, <code>tool_policy</code>,
 <code>agora_agent</code>) is runtime or host state and is dropped. Tool approval is set
-by <code>policy.tool_approval</code>. A workflow's <code>automation_defaults</code> may not carry
+by <code>policy.tool_approval</code> or its named <code>policy.tool_policy</code> override. A workflow's <code>automation_defaults</code> may not carry
 server-owned keys at all: saving the workflow answers 422 with the <code>field</code>.</p>
 <p><strong><code>context.mode</code>.</strong></p>
 <table>
@@ -1862,6 +1862,19 @@ occurrence is retried: <code>max_attempts</code> 1 to 10 (default 3) and <code>b
 <code>{initial: "30s", factor: 2, max: "10m"}</code> by default. <code>serial: true</code>,
 <code>misfire: "coalesce"</code> and <code>failure: "continue"</code> are the only v1 values;
 anything else answers 422 <code>unsupported_feature</code>.</p>
+<p>For per-tool choices, <code>policy.tool_policy</code> accepts
+<code>{auto_approve_tools: ["read_file"], require_approval_tools: ["execute_command"]}</code>.
+This complete snapshot overrides <code>tool_approval</code>; approval is required for unmentioned
+candidate tools, and Require wins when a name appears in both lists. Set tool availability
+with <code>target.input_data.tools</code> and <code>_runtime.allowed_tools</code>, including <code>[]</code> to deny all.
+Existing messaging and untrusted-input restrictions remain authoritative. Omit the snapshot,
+or revise it to <code>null</code>, to use <code>tool_approval</code> again. The installed AbstractRuntime must
+support named automation policies; older versions return 422 for this field.</p>
+<p>Changes use the existing create and revise routes. A revise response acknowledges queued
+work: read the definition until its revision advances before reporting the change as saved
+or starting a run with those permissions. See AbstractRuntime's
+<a href="https://github.com/lpalbou/abstractruntime/blob/main/docs/automations.md#tool-approval">Tool approval</a>
+for the runtime policy rules.</p>
 <p><strong><code>title</code> and <code>trigger</code> may be left out</strong> when the target publishes
 <code>automation_defaults</code> (<a href="#automation-defaults-on-workflows">below</a>): the
 defaults then fill <code>title</code>, <code>trigger</code>, <code>context</code>, and the <code>input_data</code> keys

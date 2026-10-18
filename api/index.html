@@ -1039,8 +1039,30 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#search-conversations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Search conversations
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#conversation-tool-choices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conversation tool choices
+      
+    </span>
+  </a>
   
 </li>
       
@@ -1970,8 +1992,30 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#search-conversations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Search conversations
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#conversation-tool-choices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conversation tool choices
+      
+    </span>
+  </a>
   
 </li>
       
@@ -3024,6 +3068,17 @@ raw bytes or local paths:</p>
 <span class="w">  </span><span class="nt">"filename"</span><span class="p">:</span><span class="w"> </span><span class="s2">"input.png"</span>
 <span class="p">}</span>
 </code></pre></div>
+<p>Streamed read-aloud recordings use the logical <strong><code>voice/</code></strong> artifact space. Normal
+<code>GET /runs/{run_id}/artifacts</code> and <code>GET /sessions/{session_id}/artifacts</code> listings
+exclude these playback recordings; <code>include_voice=true</code> includes them. Filtering occurs
+before pagination and totals. Uploaded recordings and explicitly generated audio files
+remain in the normal listing. Existing streamed recordings are classified from their
+producer metadata without rewriting their saved artifact references.</p>
+<p><code>GET /artifacts/search</code> retains the complete archive. Use <code>tags=artifact_space=voice</code>
+to list the voice space, including historical streamed recordings. Playback and downloads
+continue to use the original artifact IDs. The <code>voice/</code> paths are logical artifact paths;
+bytes remain in the content-addressed artifact store rather than being copied into the
+user's workspace.</p>
 <p>Gateway uses three distinct file-like source terms:</p>
 <ul>
 <li><code>Artifact</code>: a durable runtime-owned payload reference.</li>
@@ -3308,6 +3363,96 @@ history (every archive and unarchive) are kept in the plane's
 <code>session_archive.json</code>; each call writes a <code>session.archived</code> /
 <code>session.unarchived</code> audit event. Automations are archived with the
 <code>automation.archive</code> command and brought back with <code>automation.unarchive</code>.</p>
+<h3 id="search-conversations">Search conversations<a class="headerlink" href="#search-conversations" title="Permanent link">&para;</a></h3>
+<p><code>GET /api/gateway/sessions/search?q=&lt;words&gt;</code> finds the caller's conversations
+by keyword: what was asked, what was answered, and the artifacts of each turn
+(generated images, recordings, videos and music by their generation prompt,
+attachments by their file name). Words and parts of words match, case and
+accents are ignored, and a fuzzy pass forgives a typo. Tool usage, tool
+outputs and intermediate thinking are not indexed.</p>
+<table>
+<thead>
+<tr>
+<th>Query parameter</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>q</code></td>
+<td>the words to find (1–200 characters, every word required)</td>
+</tr>
+<tr>
+<td><code>limit</code></td>
+<td>sessions per answer, 1–50 (default 20)</td>
+</tr>
+<tr>
+<td><code>archived</code></td>
+<td><code>true</code> searches archived conversations only; default <code>false</code> leaves them out, like <code>GET /runs?root_only=true</code></td>
+</tr>
+<tr>
+<td><code>session_kind</code></td>
+<td>as in <code>GET /runs</code> (default <code>chat,discussion</code>, the kinds indexed; automation sessions are not)</td>
+</tr>
+<tr>
+<td><code>kind</code></td>
+<td><code>conversation</code> (default), <code>docs</code> or <code>all</code>, the session purpose as in <code>GET /runs</code></td>
+</tr>
+</tbody>
+</table>
+<p>The answer is <code>{query, items, count, fuzzy, kinds, indexing}</code>. One item per
+session, best first: <code>{session_id, run_id, prompt, snippet, highlights,
+matched_in, score, created_at, updated_at, session_kind, archived, fuzzy,
+artifact}</code>; <code>run_id</code> is the turn that matched best, <code>snippet</code> is the text
+around the first match with <code>highlights</code> as <code>[start, length]</code> pairs, and
+<code>matched_in</code> says where it matched (<code>question</code>, <code>answer</code> or <code>artifact</code>). When
+an artifact matched, <code>artifact</code> is <code>{artifact_id, run_id, kind, content_type,
+name, prompt}</code> and its bytes are at
+<code>GET /api/gateway/runs/{artifact.run_id}/artifacts/{artifact_id}/content</code>.
+<code>fuzzy</code> on the answer says whether the index has SQLite's <code>trigram</code>
+tokenizer (without it, whole words with prefixes match); <code>fuzzy</code> on an item
+marks a hit found by the fuzzy pass. <code>indexing</code> is <code>{complete,
+pending_sessions, turns, errors}</code>: the index catches up on every call within
+a short time budget, and <code>complete: false</code> means older conversations are
+still being read (a first search on a large plane), never a silent partial
+list.</p>
+<p>The index is one SQLite file per runtime plane, <code>conversation_search.sqlite3</code>
+in that plane's data folder, next to the plane's stores: an account can only
+ever search its own conversations, exactly like <code>GET /runs</code>. The file is
+disposable: delete it and the next search rebuilds it, and a schema change
+rebuilds it on its own.</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/sessions/search?q=survival%20curve&amp;limit=10"</span>
+</code></pre></div>
+<h2 id="conversation-tool-choices">Conversation tool choices<a class="headerlink" href="#conversation-tool-choices" title="Permanent link">&para;</a></h2>
+<p>Assistant clients use <code>GET /api/gateway/discovery/tools</code> and the established
+<code>POST /api/gateway/runs/start</code> contract. Send enabled names in both
+<code>input_data.tools</code> and <code>input_data._runtime.allowed_tools</code>; put named
+<code>auto_approve_tools</code> and <code>require_approval_tools</code> lists in
+<code>input_data._runtime.tool_policy</code>. Omitted restrictions inherit defaults;
+explicit empty allowed-tool lists disable every tool. No additional capability
+probe is required for this contract. <code>GET /api/gateway/tool-policy/capabilities</code> answers
+<code>{supported, modes: [off, auto, approve], runtime_floor}</code> and
+<code>GET /api/gateway/automations/defaults</code> answers <code>{growing_max_tokens}</code> (the
+history window a growing-context automation keeps).
+<code>GET /api/gateway/runs/{run_id}/message-stats</code> gives one of the caller's runs its
+<code>{wall_time_seconds, input_tokens, output_tokens, tool_calls}</code>, read from the
+run's ledger (completed effects only; a count the ledger does not carry is
+<code>null</code>).</p>
+<p>Entity clients discover visit-scoped controls with
+<code>GET /api/gateway/entities/{name}/session-tools</code> (<code>visit_routes: true</code> advertises
+the canonical open/close extensions; when absent, use the compatibility aliases). Open through
+<code>POST /api/gateway/entities/{name}/visit/open</code> with a stable <code>session_id</code> and
+<code>tool_policy: {"modes": {"read_memory": "approve"}}</code>. Modes are <code>off</code>, <code>auto</code>
+and <code>approve</code>; an explicit empty map disables all tools and <code>modes: null</code>
+inherits the home's grants. Omit <code>tool_policy</code> to retain legacy visit behavior.
+These choices apply only to this visit and cannot widen the home's grants.</p>
+<p>Use the visit's <code>/state</code>, <code>/tool-policy</code> and <code>/decision</code> routes to read progress,
+change choices between turns and answer the exact pending approval. End through
+<code>POST .../visit/{run_id}/close</code> with <code>{"closed_by":"pause"}</code>; pending approval
+is cancelled without executing its tools. Managed visits are bound to their
+authenticated owner. <code>/entities/{name}/sessions</code> and <code>/visit/{run_id}/end</code>
+remain deprecated compatibility aliases. Gateways without entity session-tool
+support still support the established Assistant tool-control contract.</p>
 <h2 id="beyond-the-core">Beyond the core<a class="headerlink" href="#beyond-the-core" title="Permanent link">&para;</a></h2>
 <p><code>/api/gateway/*</code> also includes optional operator/tooling endpoints (reports inbox, triage queue, backlog browsing + exec runner, process manager, file/attachment helpers, embeddings, voice, discovery, …).<br />
 See: <a href="../maintenance/">maintenance.md</a>.</p>
