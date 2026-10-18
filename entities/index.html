@@ -1355,6 +1355,11 @@ abstractgateway<span class="w"> </span>entity<span class="w"> </span>verify<span
 <td><code>/api/gateway/entities/{name}/voice</code></td>
 <td>Its voice: <code>{provider, model, voice}</code> or <code>{"clear": true}</code>; unset, it speaks with the gateway's default voice (<code>effective</code>). PUT: an admin or its creator (the creator: a voice the gateway offers, else <code>403 not_offered</code>).</td>
 </tr>
+<tr>
+<td>GET/PUT</td>
+<td><code>/api/gateway/entities/{name}/appearance</code></td>
+<td>How apps draw it (the colour and shape of its orb): <code>{color: "#rrggbb", shape: planet\|kitty\|face\|wave}</code>, the whole look replaced, or <code>{"clear": true}</code>; unset, apps use their own look. Also accepted at creation (<code>appearance</code> on <code>POST /entities</code>) and returned on each row of the list</td>
+</tr>
 </tbody>
 </table>
 <p>An entity without its own mind thinks with the gateway's text route (the

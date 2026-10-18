@@ -1214,6 +1214,12 @@ the security model in <a href="../security/#per-user-email">security.md</a>, and
   with the provider.</li>
 <li><strong>Terminal console</strong> (<code>abstractgateway-console</code>) → <strong>2 Accounts</strong> → <code>@</code> on your own row.</li>
 </ul>
+<p>In the web console, a connected mailbox offers <strong>Test</strong>, <strong>Configure</strong>, and <strong>Disconnect</strong>.
+<strong>Configure</strong> opens its stored server settings, mailbox address, and login. Edit them and select
+<strong>Save changes</strong>; re-enter the IMAP password, or sign in again on the Google or Microsoft tab.
+Passwords and client secrets are never displayed. For IMAP, both servers must pass their checks
+before the replacement is saved, so a failed update keeps the existing connection. <strong>Cancel changes</strong>
+discards the draft. The mailbox's Active setting, recipient rules, and limits are kept.</p>
 <p>In both consoles the IMAP pane shows the incoming (IMAP) and outgoing (SMTP) server, port and
 security. They are filled in with the standard <code>imap.&lt;domain&gt;</code> / <code>smtp.&lt;domain&gt;</code> values as soon as
 the address has a domain, then replaced by what discovery finds, except a field you edited. There is
@@ -1475,7 +1481,11 @@ x@y.", "Not sent: no mailbox connected.", "Not sent: your mailbox is paused.", "
 limit reached (100 of 100 this hour) — resets at 14:05.", "Queued behind 3 earlier notifications; they
 go out when the limit resets at 14:05." or "Not sent: smtp.x.com refused the message (<cause>)."
 (<code>message</code>, with <code>reason_code</code> and <code>limit</code> for programs; the consoles show reset times in your local
-time). <strong>Send a test</strong> sits under Notifications in your email settings. Notification emails use fixed templates; the only
+time). <strong>Send a test</strong> sits under Notifications in your email settings. Its email includes a console
+link, an unexpected-request security notice, and links to AbstractFramework, GitHub, and contact email,
+in both HTML and plain text. Console links prefer the matching configured browser hostname or an
+existing named console URL; a single configured hostname can replace the local IP fallback. With
+several unmatched hostnames, the recorded console URL is kept. Notification emails use fixed templates; the only
 model-written text is an automation's own <code>notify</code> title and body, labelled as such. Replying to a
 notification does nothing.</p>
 <h2 id="sign-in-by-email">Sign-in by email<a class="headerlink" href="#sign-in-by-email" title="Permanent link">&para;</a></h2>
