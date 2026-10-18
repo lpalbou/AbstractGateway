@@ -368,8 +368,8 @@ def tool_label(name: Any) -> str:
 
 
 def _argument_rows(arguments: Any) -> List[Tuple[str, str]]:
-    """`[(name, preview)]` of a tool call's arguments; long values are shortened (the console
-    shows them whole)."""
+    """`[(name, value)]` of a tool call's arguments, each value whole (a person decides on what the
+    tool will actually do, so nothing is cut)."""
 
     if isinstance(arguments, str):
         try:

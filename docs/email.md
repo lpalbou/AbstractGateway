@@ -303,7 +303,7 @@ Send an email`, `… asked you a question`, `… finished`, `… failed`. The bo
   the gateway host's zone).
 - **What is asked**: for a tool approval, each tool as a plain-language label with its name and
   a readable summary of its arguments (the URL of `fetch_url`, the recipient and subject of
-  `send_email`; long values are shortened and shown whole in the console); for a question, the
+  `send_email`, each value shown whole); for a question, the
   question and its choices as a numbered list; for a finished or failed run or automation, the
   cause and the fix, and an automation's own `notify` title and body, labelled as model-written.
 - **Buttons**: **Open in the console** opens that exact run in the console (`/apps/observer/#run/<run id>`,
