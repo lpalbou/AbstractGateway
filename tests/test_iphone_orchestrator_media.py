@@ -170,13 +170,43 @@ def test_explicit_voice_route_stores_spoken_audio(media_gateway):
     assert_artifact(client, run_id, expected=WAV, mime='audio/wav')
 
 
-def test_bundled_revision6_is_reproducible_and_contains_closed_subflows():
+def load_bundle_builder():
     import importlib.util
     script = Path(__file__).resolve().parents[1] / 'scripts/build_assistant_orchestrator_bundle.py'
     spec = importlib.util.spec_from_file_location('assistant_bundle_builder', script)
-    builder = importlib.util.module_from_spec(spec); spec.loader.exec_module(builder)
-    artifact = script.parents[1] / 'flows/bundles/abstractassistant-orchestrator@0.0.12.flow'
+    builder = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(builder)
+    return builder
+
+
+def test_builder_import_is_independent_of_assistant_checkout(tmp_path, monkeypatch):
+    import builtins
+    original_import = builtins.__import__
+
+    def without_assistant(name, *args, **kwargs):
+        if name == 'abstractassistant' or name.startswith('abstractassistant.'):
+            raise AssertionError('Gateway consumers must not import AbstractAssistant')
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', without_assistant)
+    builder = load_bundle_builder()
+    monkeypatch.setattr(builder, 'ASSISTANT', tmp_path / 'absent-checkout')
+    with pytest.raises(FileNotFoundError, match='canonical sibling Assistant checkout'):
+        builder.bundle_bytes()
+
+
+def test_optional_source_checkout_reproduces_shipped_bundle():
+    """Maintainer freshness check; only this check needs the sibling source tree."""
+    builder = load_bundle_builder()
+    if not (builder.ASSISTANT / 'abstractassistant/assistant_workflow.py').is_file():
+        pytest.skip('Optional maintainer check requires canonical sibling Assistant checkout')
+    artifact = builder.GATEWAY / 'flows/bundles/abstractassistant-orchestrator@0.0.12.flow'
     assert builder.bundle_bytes() == builder.bundle_bytes() == artifact.read_bytes()
+
+
+def test_bundled_revision6_contains_closed_subflows():
+    # Mandatory artifact-only checks also run in a standalone Gateway checkout.
+    artifact = Path(__file__).resolve().parents[1] / 'flows/bundles/abstractassistant-orchestrator@0.0.12.flow'
     with zipfile.ZipFile(artifact) as archive:
         manifest = json.loads(archive.read('manifest.json'))
         assert manifest['metadata']['managed_workflow_revision'] == 6
