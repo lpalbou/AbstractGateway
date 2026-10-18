@@ -110,10 +110,12 @@ On a machine without a browser (for example a Linux server you reach over SSH),
 run the same guide in the terminal console on that machine:
 
 ```bash
-cargo install abstractgateway-console
-abstractgateway-console --url http://127.0.0.1:8080 --token <token>
+abstractgateway console          # finds the console, the gateway and your admin token
 ```
 
+The installer builds the console next to `abstractgateway`; without it,
+`cargo install abstractgateway-console`, then
+`abstractgateway-console --url http://127.0.0.1:8080 --token <token>` where
 `<token>` is the admin token `abstractgateway serve` prints when it starts.
 
 It opens the setup guide for an admin whose first run is not completed, with
@@ -4302,6 +4304,36 @@ terminal does the same thing:
   powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/lpalbou/AbstractFramework/main/scripts/install.ps1 | iex"
   ```
 
+### From a terminal: `abstractgateway update`
+
+The same update as a shell command, for an installer install (macOS, Linux;
+the one-line install or the double-click installer):
+
+```bash
+abstractgateway update --check   # what would change; exit 0 up to date, 10 when an update exists
+abstractgateway update           # show it, ask once, run the installer here
+abstractgateway update --yes     # ask nothing (scripts, no terminal)
+abstractgateway --update         # the same command
+```
+
+It prints the installed and the newest release, then **What changes**: every
+package whose installed version differs from the release's (the framework, the
+gateway, the other Python packages of the gateway's environment, the browser
+apps and the terminal apps, each as `installed -> new`), then **Release notes**:
+the AbstractFramework changelog sections between the two releases, newest
+first (when the changelog cannot be fetched it says so and goes on). `--check`
+stops there. Otherwise it asks `Upgrade now? [Y/n]` and runs the sha-checked
+installer in the foreground, its output on your terminal:
+`/bin/sh <data folder>/update/install-….sh --yes --no-open --no-modify-path
+--data-dir <data folder>`. No `--no-start` here: the command is not the gateway
+process, so the installer keeps your port, profile and login choices and
+restarts the gateway service itself. The command exits with the installer's
+exit code and ends with the console's address. On Windows it starts the
+PowerShell installer in a new window and exits at once (the running command
+would otherwise hold files the installer replaces). An install the installer
+did not make (a source checkout, a container, a plain pip / uv / pipx install)
+is refused with the command to run instead.
+
 The newest gateway outside a release is a command-line choice: run the installer
 with `--pin latest` (see the AbstractFramework install guide).
 
@@ -7662,14 +7694,26 @@ The terminal console does what the web console does, through the same gateway
 routes, with the same admin rules and confirmations. Use it over SSH on a
 headless server, where it also runs the first-run setup guide.
 
-Install it from crates.io (Rust 1.87 or newer):
+The AbstractFramework installer builds it into the folder that holds
+`abstractgateway`. By hand, install it from crates.io (Rust 1.87 or newer):
 
 ```bash
 cargo install abstractgateway-console
 ```
 
-Connect it to a running gateway with its URL and your token. The admin token
-is printed by `abstractgateway serve` when it starts:
+The quickest way to open it is through the gateway's own command, which finds
+the console (next to `abstractgateway`, then on PATH), the gateway's address
+and your token (`--url` / `--token`, else `ABSTRACTGATEWAY_URL` /
+`ABSTRACTGATEWAY_AUTH_TOKEN`, else the gateway running for this data folder and
+its admin token) and hands the terminal over to it:
+
+```bash
+abstractgateway console                      # same as: abstractgateway --console
+abstractgateway console --url http://10.0.0.5:8080 --token <token>
+```
+
+Or connect it yourself with its URL and your token. The admin token is printed
+by `abstractgateway serve` when it starts:
 
 ```bash
 abstractgateway-console --gateway-url http://127.0.0.1:8080 --token <token>
@@ -9934,6 +9978,9 @@ abstractgateway apps install observer --launch   # Flow, Code, Observer, Continu
 abstractgateway apps open observer               # a one-time signed-in link
 abstractgateway network set lan                  # let your local network reach the gateway
 abstractgateway network restart                  # apply it now
+abstractgateway console                          # the terminal console, signed in
+abstractgateway update --check                   # what the newest AbstractFramework release changes
+abstractgateway update                           # ... and install it (installer installs)
 ```
 
 The gateway installs Node.js when needed, installs the browser apps from npm,
@@ -9998,7 +10045,8 @@ sandbox, network access); **Setup** at the bottom reruns the setup guide. An
 administrator sees every account; anyone else sees their own account and the
 entities they created. The same
 configuration surfaces exist in a terminal through the `abstractgateway-console`
-Rust app (`cargo install abstractgateway-console`). See
+Rust app (the installer builds it; by hand, `cargo install abstractgateway-console`);
+`abstractgateway console` opens it signed in. See
 [docs/console.md](docs/console.md).
 
 Each user can connect their own mailbox (Accounts → **Email** on their own row in the web
@@ -11166,6 +11214,34 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.15.6] - 2026-10-18
+
+### Added
+
+- `abstractgateway update [--check] [--yes]` (also `abstractgateway --update`):
+  upgrade an AbstractFramework installer install from a terminal. It prints the
+  installed and the newest release, every package whose version would change
+  (the framework, the gateway, the Python packages, the browser apps and the
+  terminal apps, as `installed -> new`) and the AbstractFramework changelog
+  sections between the two releases, newest first; `--check` stops there (exit
+  0 up to date, 10 when an update exists). Otherwise it asks once and runs the
+  sha-checked installer in the foreground (`--yes --no-open --no-modify-path
+  --data-dir <data dir>`: the installer keeps the port, profile and login
+  choices and restarts the gateway service itself), exits with the installer's
+  exit code and ends with the console's address. A source checkout, a container
+  or a plain pip / uv / pipx install is refused with the command to run instead.
+  On Windows the PowerShell installer starts in a new window.
+- `abstractgateway console [--url URL] [--token TOKEN]` (also `abstractgateway
+  --console`): opens the terminal console (`abstractgateway-console`, built by
+  the installer next to `abstractgateway`, else found on PATH) signed in, with
+  the gateway address and token resolved like every other verb (flags, the
+  environment, else this data dir's running gateway and its admin token). The
+  token is never printed. Without the console it says who builds it.
+- The release check (`self_update`) now also carries the release's browser-app
+  pins (manifest `npm_apps`) and crate pins (the installer's `AF_CRATE_*`
+  lines), so `update` can list them; `installer_command()` takes the flag set
+  (the gateway's own job keeps `--no-start`).
 
 ## [0.15.5] - 2026-10-18
 

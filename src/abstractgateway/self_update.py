@@ -74,10 +74,17 @@ FRAMEWORK_MANIFEST_PATH = "docs/installers/install-manifest.json"
 INSTALLER_SCRIPT_PATH = "scripts/install.sh"
 INSTALLER_STATE_FILE = "bootstrap.env"
 INSTALLER_UPDATE_FLAGS = ("--yes", "--no-start", "--no-open", "--no-modify-path")
+# `abstractgateway update` (a shell command, not the gateway process): the installer may restart
+# the gateway service itself, so no --no-start.
+INSTALLER_CLI_FLAGS = ("--yes", "--no-open", "--no-modify-path")
+INSTALLER_SCRIPT_PATH_WINDOWS = "scripts/install.ps1"
+ROOT_CHANGELOG_PATH = "CHANGELOG.md"
 INSTALLER_URL = f"{FRAMEWORK_RAW}/{FRAMEWORK_REF}/{INSTALLER_SCRIPT_PATH}"
 INSTALLER_ONE_LINER = f"curl -LsSf {INSTALLER_URL} | sh"
 INSTALLER_ONE_LINER_WINDOWS = f'powershell -ExecutionPolicy ByPass -c "irm {FRAMEWORK_RAW}/{FRAMEWORK_REF}/scripts/install.ps1 | iex"'
 _COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+# The crate pins live in the installer script, not the manifest: AF_CRATE_CONSOLE="name@version".
+_CRATE_PIN_RE = re.compile(r'^AF_CRATE_[A-Z0-9_]+="([^@"\s]+)@([^"\s]+)"\s*$', re.MULTILINE)
 
 
 def _utc_now_iso() -> str:
@@ -602,6 +609,10 @@ def _fetch_framework_release(*, http_get: HttpGet = None, timeout_s: float = CHE
         return {"ok": False, "offline": False, "error": f"the release manifest {manifest_url} has no {exc}"}
     if not script.startswith(b"#!/bin/sh"):
         return {"ok": False, "offline": False, "error": f"{installer_url} is not the installer script"}
+    # The browser apps the release pins (manifest) and the crates it builds (the script's
+    # AF_CRATE_* lines): `abstractgateway update` lists what would change for each of them.
+    npm_apps = {str(a["id"]): str(a["version"]) for a in manifest.get("npm_apps") or [] if isinstance(a, dict) and a.get("id") and a.get("version")}
+    crates = {name: ver for name, ver in _CRATE_PIN_RE.findall(script.decode("utf-8", errors="replace"))}
     return {
         "ok": True,
         "offline": False,
@@ -609,6 +620,8 @@ def _fetch_framework_release(*, http_get: HttpGet = None, timeout_s: float = CHE
         "version": version,
         "gateway_version": gateway_version,
         "python_packages": packages,
+        "npm_apps": npm_apps,
+        "crates": crates,
         "manifest_url": manifest_url,
         "installer_url": installer_url,
         "installer_bytes": script,
@@ -850,11 +863,13 @@ def _diff_versions(before: Dict[str, str], after: Dict[str, str], named: List[st
     return changes, others
 
 
-def installer_command(script: Path, data_dir: str) -> List[str]:
+def installer_command(script: Path, data_dir: str, *, flags: tuple = INSTALLER_UPDATE_FLAGS) -> List[str]:
     """The exact command an Update runs: the checked install.sh, asking nothing (--yes keeps
     start at login as it was), never stopping or restarting the running gateway (--no-start),
-    opening nothing, leaving shell profiles alone, on this gateway's data dir."""
-    return ["/bin/sh", str(script), *INSTALLER_UPDATE_FLAGS, "--data-dir", str(data_dir)]
+    opening nothing, leaving shell profiles alone, on this gateway's data dir. `flags`:
+    `abstractgateway update` passes INSTALLER_CLI_FLAGS (no --no-start: it is not the gateway
+    process, so the installer restarts the service itself)."""
+    return ["/bin/sh", str(script), *flags, "--data-dir", str(data_dir)]
 
 
 def _write_installer_script(folder: Path, data: bytes, sha256: str) -> Path:

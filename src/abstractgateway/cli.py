@@ -732,10 +732,15 @@ def main(argv: list[str] | None = None) -> None:
     hide_child_consoles()  # no console (pythonw, detached): no window per child process
     console_level = _resolve_default_console_level()
     _configure_console_logging(console_level)
-    _argv0 = (list(argv) if argv is not None else sys.argv[1:])[:1]
+    argv = list(argv) if argv is not None else sys.argv[1:]
+    # `abstractgateway --update` / `--console`: the spellings the operator asked for, the
+    # same verbs as `update` / `console` (so --help lists them with the other commands).
+    if argv[:1] in (["--update"], ["--console"]):
+        argv[0] = argv[0][2:]
+    _argv0 = argv[:1]
     if _argv0 not in (
         ["claim"], ["service"], ["models"], ["engines"], ["apps"], ["network"], ["config"],
-        ["--version"], ["-h"], ["--help"],
+        ["update"], ["console"], ["--version"], ["-h"], ["--help"],
     ):
         # The first-run verbs, the models/engines verbs, `config` and the
         # version/help flags never load a model in this process; the
@@ -743,7 +748,11 @@ def main(argv: list[str] | None = None) -> None:
         _reserve_gguf_metal()
     from . import __version__ as _gateway_version
 
-    parser = argparse.ArgumentParser(prog="abstractgateway", description="AbstractGateway (Run Gateway host)")
+    parser = argparse.ArgumentParser(
+        prog="abstractgateway",
+        description="AbstractGateway (Run Gateway host)",
+        epilog="`abstractgateway --update` and `abstractgateway --console` are the same as `update` and `console`.",
+    )
     parser.add_argument("--version", action="version", version=f"abstractgateway {_gateway_version}")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -964,12 +973,30 @@ def main(argv: list[str] | None = None) -> None:
 
     add_apps_subparser(sub)
 
+    # Upgrade this AbstractFramework install (the installer, run here) and the
+    # terminal console, signed in.
+    from .console_cli import add_console_subparser
+    from .update_cli import add_update_subparser
+
+    add_update_subparser(sub)
+    add_console_subparser(sub)
+
     args = parser.parse_args(argv)
 
     if args.cmd == "apps":
         from .apps_cli import run_apps_command
 
         raise SystemExit(run_apps_command(args))
+
+    if args.cmd == "update":
+        from .update_cli import run_update
+
+        raise SystemExit(run_update(args))
+
+    if args.cmd == "console":
+        from .console_cli import run_console
+
+        raise SystemExit(run_console(args))
 
     if args.cmd == "claim":
         from .firstrun_cli import run_claim

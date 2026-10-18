@@ -5,6 +5,34 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.6] - 2026-10-18
+
+### Added
+
+- `abstractgateway update [--check] [--yes]` (also `abstractgateway --update`):
+  upgrade an AbstractFramework installer install from a terminal. It prints the
+  installed and the newest release, every package whose version would change
+  (the framework, the gateway, the Python packages, the browser apps and the
+  terminal apps, as `installed -> new`) and the AbstractFramework changelog
+  sections between the two releases, newest first; `--check` stops there (exit
+  0 up to date, 10 when an update exists). Otherwise it asks once and runs the
+  sha-checked installer in the foreground (`--yes --no-open --no-modify-path
+  --data-dir <data dir>`: the installer keeps the port, profile and login
+  choices and restarts the gateway service itself), exits with the installer's
+  exit code and ends with the console's address. A source checkout, a container
+  or a plain pip / uv / pipx install is refused with the command to run instead.
+  On Windows the PowerShell installer starts in a new window.
+- `abstractgateway console [--url URL] [--token TOKEN]` (also `abstractgateway
+  --console`): opens the terminal console (`abstractgateway-console`, built by
+  the installer next to `abstractgateway`, else found on PATH) signed in, with
+  the gateway address and token resolved like every other verb (flags, the
+  environment, else this data dir's running gateway and its admin token). The
+  token is never printed. Without the console it says who builds it.
+- The release check (`self_update`) now also carries the release's browser-app
+  pins (manifest `npm_apps`) and crate pins (the installer's `AF_CRATE_*`
+  lines), so `update` can list them; `installer_command()` takes the flag set
+  (the gateway's own job keeps `--no-start`).
+
 ## [0.15.5] - 2026-10-18
 
 ### Fixed
