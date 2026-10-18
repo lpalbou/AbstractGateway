@@ -471,6 +471,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Apps started outside the gateway">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#leftovers-of-a-previous-gateway-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Leftovers of a previous gateway run
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1147,6 +1164,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Apps started outside the gateway">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#leftovers-of-a-previous-gateway-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Leftovers of a previous gateway run
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1390,7 +1424,12 @@ Install is (an admin):</p>
 <tr>
 <td><strong>Running</strong>, started outside the gateway</td>
 <td>nothing: the badge is disabled</td>
-<td>"Started outside the gateway — stop it where it was started"</td>
+<td>"Started outside the gateway — stop it where it was started" (or "Not started by this gateway (its process could not be identified) — …")</td>
+</tr>
+<tr>
+<td><strong>Running</strong>, left by a previous gateway run</td>
+<td><code>POST /apps/{id}/stop</code> stops that process</td>
+<td>"Running — click to stop"</td>
 </tr>
 <tr>
 <td>any badge, for a user who is not an admin</td>
@@ -1572,11 +1611,61 @@ served there): the app's server reads the same sign-in cookies whoever
 started it. The gateway does not stop, update or show the
 log of an app it did not start: its <strong>Running</strong> badge is disabled with the
 tooltip "Started outside the gateway — stop it where it was started", and
-<strong>Technical details</strong> says "Started outside the gateway on port 3001" (when a newer version is
-published, the card says "Latest x.y.z · Started outside the gateway — update
-it where it was installed"), and <code>POST /apps/{id}/stop</code>
-answers 409 <code>started_outside_gateway</code>. Starting the gateway's own copy while
-an outside one runs does nothing (the app is already running).</p>
+<strong>Technical details</strong> says "Started outside the gateway on port 3001 (process
+4242)" (when a newer version is published, the card says "Latest x.y.z ·
+Started outside the gateway — update it where it was installed"), and
+<code>POST /apps/{id}/stop</code> answers 409 <code>started_outside_gateway</code>. Starting the
+gateway's own copy while an outside one runs does nothing (the app is already
+running).</p>
+<p>The row's <code>external.kind</code> says what the gateway found on the port, read from
+the command line of the process listening there:</p>
+<table>
+<thead>
+<tr>
+<th><code>external.kind</code></th>
+<th>What it is</th>
+<th>What the gateway does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>leftover</code></td>
+<td>This data dir's own install (<code>&lt;data dir&gt;/apps/&lt;app&gt;/&lt;version&gt;/…</code>), left running by a previous gateway run — for example after a restart that stopped the gateway before it could stop its apps</td>
+<td>Stops it and starts the installed version in its place: at boot by itself, and on <strong>Start</strong>, <code>POST /apps/{id}/launch</code>, an update, or the <strong>Running</strong> badge (which stops it). <code>external.detail</code>: "Left running by a previous gateway run on port 3005 (version 0.8.0, process 857793): stopping or starting the app replaces it with the installed version".</td>
+</tr>
+<tr>
+<td><code>foreign</code></td>
+<td>A copy running from somewhere else (a checkout, <code>npx</code>, a service unit)</td>
+<td>Open only, as above.</td>
+</tr>
+<tr>
+<td><code>unknown</code></td>
+<td>This machine does not show which process holds the port (no <code>lsof</code>/<code>ss</code>, or another user's process)</td>
+<td>Open only; the badge's tooltip and <code>external.detail</code> say "Not started by this gateway (port 3005; the process holding the port could not be identified)" — never "started outside".</td>
+</tr>
+</tbody>
+</table>
+<h3 id="leftovers-of-a-previous-gateway-run">Leftovers of a previous gateway run<a class="headerlink" href="#leftovers-of-a-previous-gateway-run" title="Permanent link">&para;</a></h3>
+<p>The gateway starts its apps as children that watch its standard input and
+exit when it goes away, and stops them in its own shutdown; a stop that
+interrupts that (a hard kill, a service manager's timeout, a machine that lost
+power) can leave an app running on its port. When the gateway starts again it
+cleans up before starting anything, in this order:</p>
+<ol>
+<li><code>&lt;data dir&gt;/run/apps/&lt;app&gt;.json</code> — the pid file of every app it started —
+   names a process whose command line still is that app: SIGTERM, then SIGKILL
+   after the stop timeout (5 s); the record is removed once the process is
+   gone and kept (and the start logged as an error) when it is not.</li>
+<li>An app answering on one of the usual ports whose command line runs this
+   data dir's install, with no pid file (the record was lost): stopped the
+   same way. A copy running from anywhere else is left alone.</li>
+<li>The release pins in <code>apps-upgrade.pending</code>, then the enabled apps start.</li>
+</ol>
+<p><code>abstractgateway apps list</code> shows a leftover that is still there as
+"Left running by a previous gateway run … (abstractgateway apps launch <app>
+replaces it)". On Linux the systemd user unit also carries <code>KillMode=mixed</code>:
+the gateway stops its children in order, and systemd kills whatever is left
+in the unit's control group when the unit stops or restarts.</p>
 <h2 id="who-may-install">Who may install<a class="headerlink" href="#who-may-install" title="Permanent link">&para;</a></h2>
 <p>Installing an app (or Node.js, or a terminal version) runs software on the
 gateway machine, so it follows the gateway's <code>allow_engine_install</code> setting.
