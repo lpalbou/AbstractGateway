@@ -8497,7 +8497,7 @@ Keys the server owns are dropped: `_meta`, `workspace_read_only`, and every
 
 Anything else under `_runtime` (for example `control`, `tool_policy`,
 `agora_agent`) is runtime or host state and is dropped. Tool approval is set
-by `policy.tool_approval`. A workflow's `automation_defaults` may not carry
+by `policy.tool_approval` or its named `policy.tool_policy` override. A workflow's `automation_defaults` may not carry
 server-owned keys at all: saving the workflow answers 422 with the `field`.
 
 **`context.mode`.**
@@ -8513,6 +8513,21 @@ occurrence is retried: `max_attempts` 1 to 10 (default 3) and `backoff`
 `{initial: "30s", factor: 2, max: "10m"}` by default. `serial: true`,
 `misfire: "coalesce"` and `failure: "continue"` are the only v1 values;
 anything else answers 422 `unsupported_feature`.
+
+For per-tool choices, `policy.tool_policy` accepts
+`{auto_approve_tools: ["read_file"], require_approval_tools: ["execute_command"]}`.
+This complete snapshot overrides `tool_approval`; approval is required for unmentioned
+candidate tools, and Require wins when a name appears in both lists. Set tool availability
+with `target.input_data.tools` and `_runtime.allowed_tools`, including `[]` to deny all.
+Existing messaging and untrusted-input restrictions remain authoritative. Omit the snapshot,
+or revise it to `null`, to use `tool_approval` again. The installed AbstractRuntime must
+support named automation policies; older versions return 422 for this field.
+
+Changes use the existing create and revise routes. A revise response acknowledges queued
+work: read the definition until its revision advances before reporting the change as saved
+or starting a run with those permissions. See AbstractRuntime's
+[Tool approval](https://github.com/lpalbou/abstractruntime/blob/main/docs/automations.md#tool-approval)
+for the runtime policy rules.
 
 **`title` and `trigger` may be left out** when the target publishes
 `automation_defaults` ([below](#automation-defaults-on-workflows)): the
