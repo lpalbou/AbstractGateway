@@ -5432,6 +5432,19 @@ raw bytes or local paths:
 }
 ```
 
+Streamed read-aloud recordings use the logical **`voice/`** artifact space. Normal
+`GET /runs/{run_id}/artifacts` and `GET /sessions/{session_id}/artifacts` listings
+exclude these playback recordings; `include_voice=true` includes them. Filtering occurs
+before pagination and totals. Uploaded recordings and explicitly generated audio files
+remain in the normal listing. Existing streamed recordings are classified from their
+producer metadata without rewriting their saved artifact references.
+
+`GET /artifacts/search` retains the complete archive. Use `tags=artifact_space=voice`
+to list the voice space, including historical streamed recordings. Playback and downloads
+continue to use the original artifact IDs. The `voice/` paths are logical artifact paths;
+bytes remain in the content-addressed artifact store rather than being copied into the
+user's workspace.
+
 Gateway uses three distinct file-like source terms:
 
 - `Artifact`: a durable runtime-owned payload reference.

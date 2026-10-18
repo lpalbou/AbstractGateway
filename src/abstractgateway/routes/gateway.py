@@ -5945,10 +5945,13 @@ def _artifact_list_item(meta: Any) -> Optional[ArtifactListItem]:
     artifact_id = str(getattr(meta, "artifact_id", "") or "").strip()
     if not artifact_id:
         return None
-    tags = getattr(meta, "tags", None)
-    tags0 = dict(tags or {}) if isinstance(tags, dict) else {}
+    from ..voice_artifacts import voice_tags
+
+    tags0 = voice_tags(meta)
     ref = _canonical_artifact_ref(meta, tags=tags0)
     envelope = _artifact_envelope_v1(meta)
+    if tags0.get("purpose") == "voice_playback":
+        envelope.update(tags=tags0, filename=tags0["filename"], source_path=tags0["path"])
     return ArtifactListItem(
         artifact_id=artifact_id,
         run_id=str(envelope.get("run_id") or getattr(meta, "run_id", "") or "").strip() or None,
@@ -6471,6 +6474,7 @@ def _artifact_rows_from_store_search(
     order: str = "desc",
     order_by: str = "created_at",
     include_stats: bool = False,
+    include_voice: bool = True,
 ) -> tuple[list[ArtifactListItem], int, Optional[Dict[str, Any]], list[str], bool]:
     scope0 = str(scope or "all").strip().lower() or "all"
     query0 = str(query or "").strip()
@@ -6500,7 +6504,9 @@ def _artifact_rows_from_store_search(
         tags=tag_filter,
     )
     post_filter_needed = bool(
-        query0
+        not include_voice
+        or "artifact_space" in tag_filter
+        or query0
         or artifact_kind_needs_post_filter
         or _artifact_content_type_is_prefix(content_type0)
         or scope0 == "session"
@@ -6514,7 +6520,7 @@ def _artifact_rows_from_store_search(
         rows = [
             item
             for item in rows
-            if _artifact_matches_filters(
+            if (include_voice or item.tags.get("purpose") != "voice_playback") and _artifact_matches_filters(
                 item,
                 query=query0,
                 modality=modality,
@@ -11023,6 +11029,7 @@ async def list_run_artifacts(
     run_id: str,
     limit: int = Query(500, ge=-1, description="Maximum number of artifacts (most recent first); 0 or -1 means unlimited (no server ceiling)."),
     offset: int = Query(0, ge=0, description="Result offset for pagination."),
+    include_voice: bool = Query(False, description="Include read-aloud recordings from the voice/ namespace."),
 ) -> ArtifactListResponse:
     """List artifacts associated with a run."""
     svc = get_gateway_service()
@@ -11047,6 +11054,7 @@ async def list_run_artifacts(
         offset=int(offset),
         limit=effective_limit,
         order="desc",
+        include_voice=bool(include_voice),
     )
     return _artifact_page(
         rows,
@@ -11063,6 +11071,7 @@ async def list_session_artifacts(
     session_id: str,
     limit: int = Query(500, ge=-1, description="Maximum number of artifacts (most recent first); 0 or -1 means unlimited (no server ceiling)."),
     offset: int = Query(0, ge=0, description="Result offset for pagination."),
+    include_voice: bool = Query(False, description="Include read-aloud recordings from the voice/ namespace."),
 ) -> ArtifactListResponse:
     """List artifacts visible to a session for run-start input selection."""
     sid = str(session_id or "").strip()
@@ -11084,6 +11093,7 @@ async def list_session_artifacts(
         offset=int(offset),
         limit=effective_limit,
         order="desc",
+        include_voice=bool(include_voice),
     )
     return _artifact_page(
         rows,
