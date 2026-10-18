@@ -13,8 +13,8 @@ Windows fixes.
 
 - **Local engines on Windows x86_64**: llama.cpp and Hugging Face (transformers) are supported
   engines there, as AbstractCore's `gpu` install setting says, and no longer show "Not for this
-  computer". Which host has which setting now comes from AbstractCore
-  (`abstractcore.utils.install_settings.host_setting`); the gateway adds only the Rosetta check.
+  computer". The gateway's host table (`engines_install.host_setting`) matches AbstractCore's
+  `abstractcore.utils.install_settings.host_setting`, and a test compares the two for every host.
   Windows on ARM, Intel Macs and a Python under Rosetta still have no setting.
 - **Installing Hugging Face on Windows** installs `abstractcore[gpu]` at the installed AbstractCore
   version with `--torch-backend=auto` (uv), so PyTorch is the CUDA build that matches the NVIDIA

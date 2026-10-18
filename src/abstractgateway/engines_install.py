@@ -107,13 +107,31 @@ WINDOWS_INSTALLER_COMMAND = 'powershell -ExecutionPolicy ByPass -c "irm https://
 # `abstractcore[apple]` (Apple silicon) or `abstractcore[gpu]` (GPU machines), never a bare
 # engine package. MLX, llama.cpp, Hugging Face and vLLM rows therefore install this host's
 # setting; a host with no setting (an Intel Mac, Windows on ARM, a Rosetta Python) is told
-# plainly that the engine is not available there. Which host has which setting, and that
-# sentence, are AbstractCore's (`abstractcore.utils.install_settings`): Windows x86_64 is a
-# `gpu` host there, like Linux, so the gateway never keeps a copy that can drift from it.
-def _not_available_here(what: str) -> str:
-    from abstractcore.utils.install_settings import not_available_here
+# plainly that the engine is not available there. `host_setting` and the sentence mirror
+# `abstractcore.utils.install_settings` (the gateway does not import AbstractCore directly,
+# and keeps working on older AbstractCore floors); tests/test_gateway_engines_install.py
+# compares both with AbstractCore's so they cannot drift.
+def host_setting(os_id: Optional[str], arch: Optional[str]) -> Optional[str]:
+    """``apple`` (macOS arm64), ``gpu`` (Linux, Windows x86_64) or None."""
 
-    return not_available_here(what)
+    os_key = str(os_id or "").strip().lower()
+    arch_key = str(arch or "").strip().lower()
+    if os_key == "darwin":
+        return "apple" if arch_key in {"arm64", "aarch64"} else None
+    if os_key == "linux":
+        return "gpu"
+    if os_key in {"windows", "win32"}:
+        return "gpu" if arch_key in {"x86_64", "amd64", "x64"} else None
+    return None
+
+
+def _not_available_here(what: str) -> str:
+    return (
+        f"{what} is not available on this machine with AbstractCore's install settings "
+        "(light: every remote provider; apple: Apple silicon; gpu: NVIDIA or AMD on Linux, NVIDIA on "
+        "Windows x86_64); "
+        "use a remote provider or a local server such as Ollama or LM Studio"
+    )
 
 
 _SETTING_ENGINE_WHAT = {
@@ -926,10 +944,8 @@ class EngineInstaller:
         """This host's AbstractCore local-engine setting: ``apple`` (native Apple silicon),
         ``gpu`` (Linux, Windows x86_64) or None (Intel Mac, a Rosetta Python, Windows on ARM).
 
-        AbstractCore's `host_setting` decides; the gateway adds only what it alone knows: a
-        Python running under Rosetta is not a native Apple silicon Python."""
-
-        from abstractcore.utils.install_settings import host_setting
+        `host_setting` (AbstractCore's table) decides; the gateway adds only what it alone
+        knows: a Python running under Rosetta is not a native Apple silicon Python."""
 
         h = self.host
         if h.os_id == "darwin" and h.translated:

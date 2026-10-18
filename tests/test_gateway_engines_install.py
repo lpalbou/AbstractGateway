@@ -713,3 +713,19 @@ def test_windows_llamacpp_points_to_the_installer_never_a_bare_package(tmp_path)
 def test_vllm_on_windows_says_wsl2_or_a_linux_server(tmp_path) -> None:
     ok, reason = _installer(tmp_path, FakeSystem(tmp_path), host=WIN).support("vllm")
     assert ok is False and "WSL2" in reason and "no native Windows build" in reason
+
+
+@pytest.mark.parametrize(
+    "os_id, arch",
+    [(o, a) for o in ("darwin", "linux", "windows", "win32", "freebsd", "") for a in ("arm64", "aarch64", "x86_64", "amd64", "x64", "")],
+)
+def test_the_gateways_host_table_is_abstractcores(os_id, arch) -> None:
+    """The gateway keeps its own copy (no direct AbstractCore import); it must say what
+    AbstractCore says for every host, or the console calls a supported engine unavailable."""
+    install_settings = pytest.importorskip("abstractcore.utils.install_settings")
+    assert ei.host_setting(os_id, arch) == install_settings.host_setting(os_id, arch)
+
+
+def test_the_gateways_unavailable_sentence_is_abstractcores() -> None:
+    install_settings = pytest.importorskip("abstractcore.utils.install_settings")
+    assert ei._not_available_here("X") == install_settings.not_available_here("X")
