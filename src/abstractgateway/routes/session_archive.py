@@ -125,3 +125,9 @@ async def archive_session_route(request: Request, session_id: str) -> Dict[str, 
 )
 async def unarchive_session_route(request: Request, session_id: str) -> Dict[str, Any]:
     return await _route(request, session_id, False)
+
+
+# Keyword search over the caller's conversations (routes/conversation_search.py) rides this router.
+from .conversation_search import router as _conversation_search_router  # noqa: E402
+
+router.include_router(_conversation_search_router)
