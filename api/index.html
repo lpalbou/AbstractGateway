@@ -1075,6 +1075,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Beyond the core">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#abstractnote-optional" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AbstractNote (optional)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2027,6 +2044,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Beyond the core">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#abstractnote-optional" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AbstractNote (optional)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -3456,6 +3490,16 @@ support still support the established Assistant tool-control contract.</p>
 <h2 id="beyond-the-core">Beyond the core<a class="headerlink" href="#beyond-the-core" title="Permanent link">&para;</a></h2>
 <p><code>/api/gateway/*</code> also includes optional operator/tooling endpoints (reports inbox, triage queue, backlog browsing + exec runner, process manager, file/attachment helpers, embeddings, voice, discovery, …).<br />
 See: <a href="../maintenance/">maintenance.md</a>.</p>
+<h3 id="abstractnote-optional">AbstractNote (optional)<a class="headerlink" href="#abstractnote-optional" title="Permanent link">&para;</a></h3>
+<p>When the <code>abstractnote</code> Python package is installed in the gateway's environment, the gateway
+mounts its note read API under <code>/api/gateway/note/</code> (<code>GET /api/gateway/note/status</code>,
+<code>/notes</code>, <code>/search</code>, <code>/entities/{id}</code>, <code>/graph</code>, <code>/timeline</code>, …). Every route resolves the
+caller's own notebook (<code>abstractnote/</code> under the user's data plane) from the signed-in principal, with the
+same bearer token or app session as every other <code>/api/gateway</code> route; an id from another
+notebook is simply not found (404). The routes, their parameters and answers are documented by
+AbstractNote itself (its <code>docs/api.md</code>, "Note read API"). Without the package the prefix answers
+404 like any unknown path. The same install binds the note tools to each user's notebook and
+loads the <code>abstractnote</code> workflows: see <a href="../apps/">apps.md</a> (the Note app).</p>
 <h2 id="discovery-endpoints-optional">Discovery endpoints (optional)<a class="headerlink" href="#discovery-endpoints-optional" title="Permanent link">&para;</a></h2>
 <p>These exist to help thin clients adapt to the deployed gateway.</p>
 <ul>
