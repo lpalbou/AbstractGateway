@@ -1182,6 +1182,18 @@ support still support the established Assistant tool-control contract.
 `/api/gateway/*` also includes optional operator/tooling endpoints (reports inbox, triage queue, backlog browsing + exec runner, process manager, file/attachment helpers, embeddings, voice, discovery, …).  
 See: [maintenance.md](./maintenance.md).
 
+### AbstractNote (optional)
+
+When the `abstractnote` Python package is installed in the gateway's environment, the gateway
+mounts its note read API under `/api/gateway/note/` (`GET /api/gateway/note/status`,
+`/notes`, `/search`, `/entities/{id}`, `/graph`, `/timeline`, …). Every route resolves the
+caller's own notebook (`abstractnote/` under the user's data plane) from the signed-in principal, with the
+same bearer token or app session as every other `/api/gateway` route; an id from another
+notebook is simply not found (404). The routes, their parameters and answers are documented by
+AbstractNote itself (its `docs/api.md`, "Note read API"). Without the package the prefix answers
+404 like any unknown path. The same install binds the note tools to each user's notebook and
+loads the `abstractnote` workflows: see [apps.md](./apps.md) (the Note app).
+
 ## Discovery endpoints (optional)
 
 These exist to help thin clients adapt to the deployed gateway.

@@ -46,7 +46,7 @@ def test_overview_requires_auth_and_lists_the_apps(env) -> None:
     r = client.get("/api/gateway/apps?latest=false")
     assert r.status_code == 200, r.text
     data = r.json()
-    # The stack order (scripts/start-local.sh port map: 3001..3005), then the
+    # The stack order (scripts/start-local.sh port map: 3001..3006), then the
     # desktop app (mission LL).
     assert [a["id"] for a in data["apps"]] == ["observer", "continuum", "code", "entity", "flow", "note", "assistant"]
     assert [a["kind"] for a in data["apps"]] == ["web"] * 6 + ["desktop"]

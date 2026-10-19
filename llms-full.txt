@@ -3206,11 +3206,22 @@ connect* reads as **Devices on my network**.
 
 # Apps
 
-The five browser apps (Observer, Continuum, Code, Entity and Flow Editor) can be
+The six browser apps (Observer, Continuum, Code, Entity, Flow Editor and Note) can be
 installed, started, stopped and updated from the gateway: from the console's
 Apps page, from the HTTP API below, or with `abstractgateway apps`. Nobody has
 to open a terminal or install Node.js by hand. The Apps page also lists the
 desktop app, the **Assistant** (see [The Assistant](#the-assistant-a-desktop-app)).
+
+**Note** (`@abstractframework/note`, port 3006) is the AbstractNote web app: capture
+anything, see how it connects and how it changed over time. Its server side is the
+`abstractnote` Python package, installed in the same Python environment as the gateway. With
+it, the gateway serves the note read API under `/api/gateway/note/` (see
+[api.md](docs/api.md#abstractnote-optional)), binds the note tools to each user's own notebook
+(`abstractnote/` under the user's data plane, auto-approved: they touch nothing but that
+notebook), and
+loads the `abstractnote` workflows as framework bundles. Without the package the app can still
+be installed and started, but every `/api/gateway/note/` request answers 404 and the
+`abstractnote` workflows are absent: install the package, then restart the gateway.
 
 On a card, a plain user sees one button for the state the app is in:
 
@@ -3336,7 +3347,7 @@ in its `details` field (`<data dir>/apps/jobs/<job>.log`).
   (next section), never directly. Ports: the app's usual port when it is
   free, else the first free port in 3100-3199. The usual ports are the
   framework's stack port map (`scripts/start-local.sh`): Observer 3001,
-  Continuum 3002, Code 3003, Entity 3004, Flow 3005.
+  Continuum 3002, Code 3003, Entity 3004, Flow 3005, Note 3006.
 
 ## Apps are served through the gateway
 
@@ -3396,10 +3407,10 @@ paths, the identity header) is the app-server kit's contract:
 An app can also run without the gateway having started it: the framework's
 development stack (`scripts/start-local.sh`), `npx @abstractframework/observer`,
 a global npm install, a service. The gateway finds such an app by asking the
-usual ports on this machine (3001-3005, then 3000 and 3007) for their start
+usual ports on this machine (3001-3006, then 3000 and 3007) for their start
 page and reading its title
 ("AbstractObserver", "AbstractContinuum", "AbstractCode", "AbstractEntity",
-"AbstractFlow"). None of the apps has an address that says who it is without
+"AbstractFlow", "AbstractNote"). None of the apps has an address that says who it is without
 a gateway sign-in, and the start page is plain HTML, so this costs one short
 local request per port (half a second at most, all ports at once, remembered
 for 5 seconds). The version is read from the `package.json` of the program
@@ -3672,9 +3683,9 @@ open a running one (as themselves).
   reached, the Apps page says so on each app and the Install button is off;
   a job that loses the network fails with "The npm registry
   (registry.npmjs.org) is not reachable…". The gateway does not ship app
-  copies: the five packages are about 6 MB, but four of them need npm
-  dependencies (Flow alone installs to about 130 MB), which would have to
-  ship too.
+  copies: the packages themselves are small (a few MB each), but most of
+  them need npm dependencies (Flow alone installs to about 130 MB), which
+  would have to ship too.
 
 ## Command line
 
@@ -3706,7 +3717,7 @@ admin token on a loopback URL.
 AbstractAssistant (PyPI `abstractassistant`) is the framework's desktop
 companion: a menu-bar app with a chat palette and hands-free voice
 conversations. It is a Python app, not a browser app, so its card
-(`kind: "desktop"`, id `assistant`, after the five browser apps) has no address
+(`kind: "desktop"`, id `assistant`, after the browser apps) has no address
 or port. The full `abstractframework` install already includes it, in the same
 Python environment as the gateway; a gateway-only install may not.
 
@@ -5898,6 +5909,18 @@ support still support the established Assistant tool-control contract.
 
 `/api/gateway/*` also includes optional operator/tooling endpoints (reports inbox, triage queue, backlog browsing + exec runner, process manager, file/attachment helpers, embeddings, voice, discovery, …).
 See: [maintenance.md](docs/maintenance.md).
+
+### AbstractNote (optional)
+
+When the `abstractnote` Python package is installed in the gateway's environment, the gateway
+mounts its note read API under `/api/gateway/note/` (`GET /api/gateway/note/status`,
+`/notes`, `/search`, `/entities/{id}`, `/graph`, `/timeline`, …). Every route resolves the
+caller's own notebook (`abstractnote/` under the user's data plane) from the signed-in principal, with the
+same bearer token or app session as every other `/api/gateway` route; an id from another
+notebook is simply not found (404). The routes, their parameters and answers are documented by
+AbstractNote itself (its `docs/api.md`, "Note read API"). Without the package the prefix answers
+404 like any unknown path. The same install binds the note tools to each user's notebook and
+loads the `abstractnote` workflows: see [apps.md](docs/apps.md) (the Note app).
 
 ## Discovery endpoints (optional)
 
@@ -10117,7 +10140,7 @@ Admins can turn on the [OpenAI API](docs/openai-api.md) on the console's **OpenA
 ### Browser apps, network access and the tray
 
 ```bash
-abstractgateway apps install observer --launch   # Flow, Code, Observer, Continuum, Entity, Assistant
+abstractgateway apps install observer --launch   # Flow, Code, Observer, Continuum, Entity, Note, Assistant
 abstractgateway apps open observer               # a one-time signed-in link
 abstractgateway network set lan                  # let your local network reach the gateway
 abstractgateway network restart                  # apply it now
@@ -10486,7 +10509,7 @@ Related repos:
 | [automations.md](docs/automations.md) | automations: a workflow run on a trigger as a durable controller run; every route with its shapes, the error envelope, tool approval, typed waits and how to answer them, attention and `/seen`, discussions, run lists, legacy schedules, operations (one writer process, restart recovery, boot warm-up, the acceptance script) and the limits of v1 |
 | [openai-api.md](docs/openai-api.md) | the OpenAI-compatible API at `/v1`: connecting apps and SDKs, what is supported, Protected/Open and Who can connect, errors, the request log, moving from `/core/v1` |
 | [console.md](docs/console.md) | the web console at `/console` (the grouped sidebar and every tab, including Accounts and Workflows; responsive layout on phones and tablets) and the `abstractgateway-console` terminal app (its screens and keys) |
-| [apps.md](docs/apps.md) | installing, starting and opening the browser apps (Flow, Code, Observer, Continuum, Entity), Code's terminal app and the desktop Assistant |
+| [apps.md](docs/apps.md) | installing, starting and opening the browser apps (Flow, Code, Observer, Continuum, Entity, Note), Code's terminal app and the desktop Assistant |
 | [engines.md](docs/engines.md) | installing local engines (Ollama, LM Studio, MLX, llama.cpp, vLLM, Hugging Face): what each Install does, when a password or the Apple tools are needed |
 | [model-downloads.md](docs/model-downloads.md) | download jobs: progress, stalls, cancel, end reasons, parent jobs, the event stream |
 | [tray.md](docs/tray.md) | the desktop tray icon: apps, models, pause, start at login, network, restart and update |
@@ -11357,6 +11380,23 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.15.11] - 2026-10-19
+
+### Added
+
+- **AbstractNote seam (optional).** When the `abstractnote` Python package is installed in the
+  gateway's environment, the gateway serves its note read API under `/api/gateway/note/` (same
+  sign-in as every other gateway route, each caller's own notebook), binds the note tools to each
+  user's notebook next to `read_skill` (the host's artifact store is their only attachment source;
+  they are auto-approved, since they touch nothing but that notebook) and loads the `abstractnote`
+  workflows into every user's registry as framework bundles, packed from the installed package
+  under `<data dir>/extensions/abstractnote/`. Without the package nothing changes: the seam
+  (`abstractgateway.abstractnote_seam`) answers "nothing" and never raises, so an absent or broken
+  package cannot keep the gateway from starting. The **Note** browser app
+  (`@abstractframework/note`, port 3006) joins the app catalog, the console's Apps page, the tray
+  and the terminal console. See [docs/apps.md](docs/apps.md) and
+  [docs/api.md](docs/api.md#abstractnote-optional). Contributed with the AbstractNote lane.
 
 ## [0.15.10] - 2026-10-19
 
@@ -14354,7 +14394,7 @@ desktop Assistant, scripts) and **AbstractRuntime**:
 flowchart LR
   subgraph Clients["Clients"]
     Browser["Browser: /console"]
-    AppSrv["Browser app servers on 127.0.0.1<br/>(Flow, Code, Observer, Continuum, Entity)"]
+    AppSrv["Browser app servers on 127.0.0.1<br/>(Flow, Code, Observer, Continuum, Entity, Note)"]
     TUI["Terminal apps: abstractgateway-console, Code"]
     Asst["Desktop Assistant"]
     Tray["Desktop tray helper (separate process)"]

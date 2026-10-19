@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.11] - 2026-10-19
+
+### Added
+
+- **AbstractNote seam (optional).** When the `abstractnote` Python package is installed in the
+  gateway's environment, the gateway serves its note read API under `/api/gateway/note/` (same
+  sign-in as every other gateway route, each caller's own notebook), binds the note tools to each
+  user's notebook next to `read_skill` (the host's artifact store is their only attachment source;
+  they are auto-approved, since they touch nothing but that notebook) and loads the `abstractnote`
+  workflows into every user's registry as framework bundles, packed from the installed package
+  under `<data dir>/extensions/abstractnote/`. Without the package nothing changes: the seam
+  (`abstractgateway.abstractnote_seam`) answers "nothing" and never raises, so an absent or broken
+  package cannot keep the gateway from starting. The **Note** browser app
+  (`@abstractframework/note`, port 3006) joins the app catalog, the console's Apps page, the tray
+  and the terminal console. See [docs/apps.md](docs/apps.md) and
+  [docs/api.md](docs/api.md#abstractnote-optional). Contributed with the AbstractNote lane.
+
 ## [0.15.10] - 2026-10-19
 
 ### Changed

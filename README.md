@@ -75,7 +75,7 @@ Admins can turn on the [OpenAI API](docs/openai-api.md) on the console's **OpenA
 ### Browser apps, network access and the tray
 
 ```bash
-abstractgateway apps install observer --launch   # Flow, Code, Observer, Continuum, Entity, Assistant
+abstractgateway apps install observer --launch   # Flow, Code, Observer, Continuum, Entity, Note, Assistant
 abstractgateway apps open observer               # a one-time signed-in link
 abstractgateway network set lan                  # let your local network reach the gateway
 abstractgateway network restart                  # apply it now
