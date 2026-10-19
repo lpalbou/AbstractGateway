@@ -1076,10 +1076,10 @@ Workflows page and the console TUI show for each bundle.</p>
 </tr>
 <tr>
 <td><code>abstractassistant-orchestrator</code></td>
-<td>0.0.13</td>
+<td>0.0.15</td>
 <td>AbstractAssistant Orchestrator</td>
 <td><code>c53b1579</code>* (<code>abstractassistant.agent.v1</code>), <code>d5d4e5a1</code> (the legacy entrypoint id, kept for saved preferences)</td>
-<td>The Assistant's workflow (revision 7): sends each request to the shipped <code>basic-agent</code> as a chat subflow or to image, video, music, sound or voice generation, and returns the reply; the router follows the run's text provider and model unless the request selects them. 0.0.12 (revision 6, the same with a router that always uses the pooled default) and 0.0.0 (the editor-published original) stay installed for what pins them. Built from AbstractAssistant's <code>assistant_workflow.py</code> by <code>scripts/build_assistant_orchestrator_bundle.py</code>.</td>
+<td>The Assistant's workflow (revision 8): sends each request to the shipped <code>basic-agent</code> as a chat subflow or to image, video, music, sound or voice generation, and returns the reply; the router follows the run's text provider and model unless the request selects them, decides only where a message goes (it neither reads nor appends the conversation's turns), and sends a request for a spoken reading of a named passage or scene to voice, never to audio generation. 0.0.13 (revision 7, the same router but one that read the conversation), 0.0.12 (revision 6, a router that always uses the pooled default) and 0.0.0 (the editor-published original) stay installed for what pins them. Built from AbstractAssistant's <code>assistant_workflow.py</code> by <code>scripts/build_assistant_orchestrator_bundle.py</code>.</td>
 </tr>
 <tr>
 <td><code>docs-qa</code></td>
