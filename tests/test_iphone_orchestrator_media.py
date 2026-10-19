@@ -28,7 +28,7 @@ def wav_bytes():
 
 WAV = wav_bytes()
 
-@pytest.fixture(params=['0.0.0', '0.0.12', '0.0.13'])
+@pytest.fixture(params=['0.0.0', '0.0.12', '0.0.13', '0.0.15'])
 def media_gateway(request, tmp_path, monkeypatch):
     from abstractruntime.integrations.abstractcore import factory
     from abstractruntime.integrations.abstractcore.llm_client import _normalize_multimodal_response, _output_runtime_metadata, _resolve_media_artifacts
@@ -200,11 +200,11 @@ def test_optional_source_checkout_reproduces_shipped_bundle():
     builder = load_bundle_builder()
     if not (builder.ASSISTANT / 'abstractassistant/assistant_workflow.py').is_file():
         pytest.skip('Optional maintainer check requires canonical sibling Assistant checkout')
-    artifact = builder.GATEWAY / 'flows/bundles/abstractassistant-orchestrator@0.0.13.flow'
+    artifact = builder.GATEWAY / 'flows/bundles/abstractassistant-orchestrator@0.0.15.flow'
     assert builder.bundle_bytes() == builder.bundle_bytes() == artifact.read_bytes()
 
 
-@pytest.mark.parametrize('version,revision', [('0.0.12', 6), ('0.0.13', 7)])
+@pytest.mark.parametrize('version,revision', [('0.0.12', 6), ('0.0.13', 7), ('0.0.15', 8)])
 def test_bundled_revision_contains_closed_subflows(version, revision):
     # Mandatory artifact-only checks also run in a standalone Gateway checkout.
     artifact = Path(__file__).resolve().parents[1] / f'flows/bundles/abstractassistant-orchestrator@{version}.flow'

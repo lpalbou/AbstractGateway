@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.10] - 2026-10-19
+
+### Changed
+
+- **Built-in Assistant orchestrator 0.0.15 (workflow revision 8).** The shipped
+  `abstractassistant-orchestrator` bundle is now 0.0.15, built from AbstractAssistant 0.14.3's
+  `assistant_workflow.py`. Two effects for the person using it: the routing decision only decides
+  where a message goes — it neither reads nor appends the conversation's turns —, and a request for a
+  spoken reading of a named passage or scene (a recitation, a dramatic reading) goes to the voice
+  route, never to audio generation. The desktop Assistant 0.14.3 carries the same workflow. 0.0.13
+  (revision 7), 0.0.12 and 0.0.0 stay installed for the clients that pin them; the sdist, wheel and
+  Docker images carry the new bundle. See [docs/shipped-workflows.md](docs/shipped-workflows.md).
+
 ## [0.15.9] - 2026-10-19
 
 ### Changed
