@@ -51,12 +51,15 @@ def test_console_calls_only_the_callers_own_routes() -> None:
     assert "function myEmailApi(sub = \"\") { return `${myEmailUi.base || MY_EMAIL_BASE}${sub}`; }" in html
     assert "mountEmailUi(`/api/gateway/accounts/${encodeURIComponent(a.id)}/email`, `/api/gateway/accounts/${encodeURIComponent(a.id)}/notifications/test`);" in html
     assert "mountEmailUi(MY_EMAIL_BASE);" in html and "myEmailUseBase(MY_EMAIL_BASE);" in html
-    assert 'api(myEmailApi()' in html
+    assert 'const base = myEmailApi()' in html and 'await api(base' in html
     for sub in (
         "/test", "/limits", "/enabled", "/agent-tools", "/address", "/discover", "/notifications",
-        "/folder", "/oauth/start", "/oauth/finish", "/oauth/cancel",
+        "/folder",
     ):
         assert f'api(myEmailApi("{sub}")' in html, sub
+    for sub in ("/oauth/start", "/oauth/finish"):
+        assert f'api(`${{base}}{sub}`' in html, sub
+    assert 'api(`${flow.base || myEmailApi()}/oauth/cancel`' in html
     # No email call bypasses the base (it would hit the signed-in user's mailbox from an entity's modal).
     assert 'api("/api/gateway/me/email' not in html
     assert 'api(myEmailUi.notifyTest || "/api/gateway/me/notifications/test"' in html

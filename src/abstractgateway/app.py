@@ -100,7 +100,7 @@ async def _lifespan(_app: FastAPI):
 app = FastAPI(
     title="AbstractGateway",
     description="Durable Run Gateway for AbstractRuntime (commands + ledger replay/stream).",
-    version="0.15.0",
+    version="0.15.1",
     lifespan=_lifespan,
     docs_url=None,
     redoc_url=None,
@@ -230,6 +230,13 @@ app.include_router(automations_router, prefix="/api")
 # Per-user email (framework backlog 0992): /gateway/me/email*, /me/notifications,
 # /admin/users/{id}/email, the sign-in recovery routes and the legacy /email/* aliases.
 app.include_router(email_router, prefix="/api")
+# AbstractNote's read API (optional, abstractnote_seam.py): /api/gateway/note/..., literal
+# paths, before the parametrized gateway router. Absent when abstractnote is not installed.
+from .abstractnote_seam import note_router  # noqa: E402
+
+_note_router = note_router()
+if _note_router is not None:
+    app.include_router(_note_router, prefix="/api/gateway")
 app.include_router(gateway_router, prefix="/api")
 app.include_router(triage_router, prefix="/api")
 

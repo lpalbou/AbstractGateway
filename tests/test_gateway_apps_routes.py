@@ -48,8 +48,8 @@ def test_overview_requires_auth_and_lists_the_apps(env) -> None:
     data = r.json()
     # The stack order (scripts/start-local.sh port map: 3001..3005), then the
     # desktop app (mission LL).
-    assert [a["id"] for a in data["apps"]] == ["observer", "continuum", "code", "entity", "flow", "assistant"]
-    assert [a["kind"] for a in data["apps"]] == ["web"] * 5 + ["desktop"]
+    assert [a["id"] for a in data["apps"]] == ["observer", "continuum", "code", "entity", "flow", "note", "assistant"]
+    assert [a["kind"] for a in data["apps"]] == ["web"] * 6 + ["desktop"]
     node = data["runtime"]["node"]
     assert set(node) >= {"available", "version", "source", "install_available", "message"}
     row = data["apps"][1]

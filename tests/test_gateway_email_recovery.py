@@ -272,3 +272,20 @@ def test_a_refused_send_is_reported_not_claimed_sent(gateway, imap, smtp) -> Non
     assert "blocked" not in body["message"] and "example.test" not in json.dumps(body)  # never the address
     assert smtp_bodies(smtp) == []
     assert recovery._load()["codes"] == []  # the refused code was dropped
+
+
+def test_registered_email_works_in_place_of_the_account_id(gateway, imap, smtp) -> None:
+    """Sign-in pages accept a user id or the account's registered email (Apple Watch, 2026-10-17)."""
+    from abstractgateway.mail import recovery
+
+    _connect(gateway, imap, smtp)
+    c = _fresh_client(gateway)
+    sent = _request(c, ALICE.upper()).json()
+    assert sent["sent"] is True and sent["to"].startswith("a")
+    code = code_from(smtp_bodies(smtp)[-1]["text"])
+    r = _redeem(c, ALICE, code)
+    assert r.status_code == 200, r.text
+    assert r.json()["principal"]["user_id"] == "alice"
+    # An address nobody registered reads like an unknown account.
+    assert _request(_fresh_client(gateway), "nobody@example.test").json()["reason_code"] == "no_email_address"
+    assert recovery.account_for("alice") == "alice" and recovery.account_for("nobody@example.test") == "nobody@example.test"

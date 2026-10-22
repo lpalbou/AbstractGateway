@@ -219,6 +219,9 @@ flows/bundles/*
 # (scripts/build_basic_agent_bundle.py) checks both. Not in the wheel.
 !flows/bundles/basic-agent@0.0.5.flow
 !flows/bundles/abstractassistant-orchestrator@0.0.0.flow
+!flows/bundles/abstractassistant-orchestrator@0.0.12.flow
+!flows/bundles/abstractassistant-orchestrator@0.0.13.flow
+!flows/bundles/abstractassistant-orchestrator@0.0.15.flow
 !flows/bundles/docs-qa@0.1.1.flow
 !flows/bundles/docs-qa@0.1.2.flow
 !flows/bundles/docs-qa@0.1.0.flow

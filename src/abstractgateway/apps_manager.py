@@ -109,7 +109,7 @@ DEFAULT_PORT_RANGE = (3100, 3199)
 # THE usual port of each app: the stack port map of `scripts/start-local.sh`
 # (header "Operator port map", same as start.sh), which is what the operator's
 # dev stack runs: observer 3001, continuum 3002, code/web 3003, entity 3004,
-# flow 3005 (root backlog 0859 aligns the standalone launchers on it). ONE
+# flow 3005, note 3006 (root backlog 0859 aligns the standalone launchers on it). ONE
 # table: the managed-launch default port AND the port the external-app probe
 # looks at first. Also the order the apps are listed in (console, tray).
 STACK_PORTS: Tuple[Tuple[str, int], ...] = (
@@ -118,6 +118,7 @@ STACK_PORTS: Tuple[Tuple[str, int], ...] = (
     ("code", 3003),
     ("entity", 3004),
     ("flow", 3005),
+    ("note", 3006),
 )
 STACK_PORT: Dict[str, int] = dict(STACK_PORTS)
 # Older launcher defaults (root backlog 0859: scripts/lib/apps_common.sh ran
@@ -152,6 +153,7 @@ APPS: Tuple[AppSpec, ...] = (
     AppSpec("code", "Code", "@abstractframework/code", "Browser-based coding assistant with durable agent sessions.", STACK_PORT["code"], "abstractcode", "ABSTRACTCODE_GATEWAY_URL", "AbstractCode"),
     AppSpec("entity", "Entity", "@abstractframework/entity", "Create summoned entities, watch their memory graph, talk with them.", STACK_PORT["entity"], "abstractentity", "ABSTRACTENTITY_GATEWAY_URL", "AbstractEntity"),
     AppSpec("flow", "Flow Editor", "@abstractframework/flow", "Visual workflow editor.", STACK_PORT["flow"], "abstractflow", "ABSTRACTFLOW_GATEWAY_URL", "AbstractFlow"),
+    AppSpec("note", "Note", "@abstractframework/note", "Capture anything; see how what you know connects and changes over time.", STACK_PORT["note"], "abstractnote", "ABSTRACTNOTE_GATEWAY_URL", "AbstractNote"),
 )
 APP_BY_ID: Dict[str, AppSpec] = {a.id: a for a in APPS}
 
@@ -160,7 +162,7 @@ APP_BY_ID: Dict[str, AppSpec] = {a.id: a for a in APPS}
 # parser; Continuum since 0.3.1, Flow since its own parser). Flags beat the
 # environment and any settings file an app keeps (Continuum's
 # ~/.abstractcontinuum/settings.json), so the gateway passes flags.
-FLAG_CONFIGURED_APPS = frozenset({"observer", "continuum", "code", "entity", "flow"})
+FLAG_CONFIGURED_APPS = frozenset({"observer", "continuum", "code", "entity", "flow", "note"})
 # The last released version of an app that IGNORES those flags (it reads
 # PORT / HOST / <APP>_GATEWAY_URL only; an unknown flag is skipped, so it
 # would bind its own default port and host). Such an install, or one whose
@@ -431,6 +433,7 @@ BADGE_RUNNING_TIP = "Running — click to stop"
 BADGE_STOPPED_TIP = "Stopped — click to start"
 BADGE_QUIT_TIP = "Running — click to quit"
 BADGE_EXTERNAL_TIP = "Started outside the gateway — stop it where it was started"
+BADGE_UNIDENTIFIED_TIP = "Not started by this gateway (its process could not be identified) — stop it where it was started"
 BADGE_ADMIN_TIP = "Only an admin can start or stop apps"
 # Plain-pill labels of the states that are not a control.
 _BADGE_STATES: Dict[str, Tuple[str, str, bool]] = {
@@ -472,14 +475,15 @@ def _start_tip(label: str) -> str:
     return BADGE_STOPPED_TIP if label == "Stopped" else f"{label} — click to start"
 
 
-def browser_status_control(*, status: str, actions: Sequence[str], external: bool, admin: bool) -> Dict[str, Any]:
+def browser_status_control(*, status: str, actions: Sequence[str], external: bool, admin: bool, external_tip: Optional[str] = None) -> Dict[str, Any]:
     """The badge of a browser app's row: Running → stop, Stopped (or crashed)
-    → start; an app started outside the gateway is never stopped from here."""
+    → start; an app started outside the gateway is never stopped from here
+    (`external_tip` says why; BADGE_EXTERNAL_TIP by default)."""
     if status in _BADGE_STATES:
         return status_control(status)
     running = status == "running"
     if external:
-        return status_control(status, action=None, enabled=False, tip=BADGE_EXTERNAL_TIP)
+        return status_control(status, action=None, enabled=False, tip=external_tip or BADGE_EXTERNAL_TIP)
     action = "stop" if running else "launch"
     if not admin:
         return status_control(status, action=action, enabled=False, tip=BADGE_ADMIN_TIP)
@@ -1134,7 +1138,10 @@ class AppProcess:
             if proc is not self.proc:
                 return  # an old process of a restarted app
             self.last_exit_code = code
-            if self._stop_requested:
+            if self._stop_requested or getattr(self.manager, "closing", False):
+                # Stopped on purpose, or the gateway is shutting down (its
+                # service manager may have signalled the app before the
+                # gateway's own stop reached it): never respawned.
                 self.status = "stopped"
                 self.manager.remove_pid_file(self.spec.id)
                 return
@@ -1251,6 +1258,67 @@ def _pid_command(pid: int) -> Optional[str]:
     return out.stdout.strip() or None
 
 
+def _pid_alive(pid: int) -> bool:
+    """Whether a process with this id exists (a zombie counts as gone)."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        import psutil  # optional (AbstractCore's local extras)
+
+        if not psutil.pid_exists(pid):
+            return False
+        try:
+            return psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
+        except psutil.NoSuchProcess:
+            return False
+        except Exception:  # noqa: BLE001 - access denied: it exists
+            return True
+    except ImportError:
+        pass
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _stop_pid(pid: int, *, still_it: Callable[[], bool], timeout_s: float = STOP_TIMEOUT_S) -> bool:
+    """Stop a process the gateway did not spawn in this run (a leftover of a
+    previous one): SIGTERM, wait up to `timeout_s`, then SIGKILL and wait
+    again. `still_it()` is asked right before EACH signal: a pid that no
+    longer runs that app (reused by another program) is never signalled.
+    True when nothing of that app runs under `pid` any more."""
+    signals = [signal.SIGTERM]
+    hard = getattr(signal, "SIGKILL", None)
+    if hard is not None:
+        signals.append(hard)
+    for sig in signals:
+        if not _pid_alive(pid):
+            return True
+        if not still_it():
+            return True
+        try:
+            os.kill(int(pid), sig)
+        except ProcessLookupError:
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+        deadline = _now() + float(timeout_s)
+        while _now() < deadline:
+            if not _pid_alive(pid):
+                return True
+            time.sleep(0.1)
+    return not _pid_alive(pid)
+
+
 # ---------------------------------------------------------------------------
 # Apps started OUTSIDE the gateway
 #
@@ -1279,7 +1347,9 @@ _UI_CONFIG_GATEWAY_RE = re.compile(r'__ABSTRACT_UI_CONFIG__[^<]*?"gateway_url"\s
 
 @dataclass(frozen=True)
 class ExternalApp:
-    """A running app the gateway did not start."""
+    """A running app THIS gateway process did not start: a copy started
+    outside the gateway, or a leftover of a previous gateway run (the
+    manager tells them apart by `argv`: `AppsManager.leftover_kind`)."""
 
     app_id: str
     port: int
@@ -1289,6 +1359,9 @@ class ExternalApp:
     # The gateway the app's page is configured for, when its page says so
     # (Observer and Entity put it in `window.__ABSTRACT_UI_CONFIG__`).
     gateway_url: Optional[str] = None
+    # The command line of the process listening on the port, when this
+    # machine shows it (empty otherwise).
+    argv: Tuple[str, ...] = ()
 
 
 def external_probe_ports() -> List[int]:
@@ -1380,26 +1453,43 @@ def _listener_pids(ports: Sequence[int]) -> Dict[int, int]:
     except Exception:  # noqa: BLE001 - macOS refuses the system-wide list to non-root
         pass
     lsof = shutil.which("lsof") or ("/usr/sbin/lsof" if Path("/usr/sbin/lsof").is_file() else None)
-    if not lsof:
-        return out
-    argv = [lsof, "-nP", "-sTCP:LISTEN", "-Fpn"]
-    for port in sorted(wanted):
-        argv.append(f"-iTCP:{port}")
-    try:
-        cp = subprocess.run(argv, capture_output=True, text=True, timeout=3)
-    except Exception:  # noqa: BLE001
-        return out
-    pid: Optional[int] = None
-    for line in (cp.stdout or "").splitlines():
-        if line.startswith("p"):
-            try:
-                pid = int(line[1:])
-            except ValueError:
-                pid = None
-        elif line.startswith("n") and pid is not None:
-            port_txt = line.rsplit(":", 1)[-1]
+    if lsof:
+        argv = [lsof, "-nP", "-sTCP:LISTEN", "-Fpn"]
+        for port in sorted(wanted):
+            argv.append(f"-iTCP:{port}")
+        try:
+            cp = subprocess.run(argv, capture_output=True, text=True, timeout=3)
+        except Exception:  # noqa: BLE001
+            return out
+        pid: Optional[int] = None
+        for line in (cp.stdout or "").splitlines():
+            if line.startswith("p"):
+                try:
+                    pid = int(line[1:])
+                except ValueError:
+                    pid = None
+            elif line.startswith("n") and pid is not None:
+                port_txt = line.rsplit(":", 1)[-1]
+                if port_txt.isdigit() and int(port_txt) in wanted:
+                    out.setdefault(int(port_txt), pid)
+        if out:
+            return out
+    # Linux without lsof (a minimal server): iproute2's `ss` names this
+    # user's own listeners: `LISTEN 0 511 127.0.0.1:3001 0.0.0.0:* users:(("node",pid=857286,fd=18))`.
+    ss = shutil.which("ss")
+    if ss and sys.platform.startswith("linux"):
+        try:
+            cp = subprocess.run([ss, "-ltnpH"], capture_output=True, text=True, timeout=3)
+        except Exception:  # noqa: BLE001
+            return out
+        for line in (cp.stdout or "").splitlines():
+            m = re.search(r"pid=(\d+)", line)
+            fields = line.split()
+            if not m or len(fields) < 4:
+                continue
+            port_txt = fields[3].rsplit(":", 1)[-1]
             if port_txt.isdigit() and int(port_txt) in wanted:
-                out.setdefault(int(port_txt), pid)
+                out.setdefault(int(port_txt), int(m.group(1)))
     return out
 
 
@@ -1448,6 +1538,7 @@ def detect_external_apps(
     probe: Callable[..., Optional[Tuple[str, str]]] = probe_app_port,
     pids: Callable[[Sequence[int]], Dict[int, int]] = _listener_pids,
     version_of: Callable[[int, AppSpec], Optional[str]] = app_version_from_process,
+    argv_of: Callable[[int], List[str]] = _process_argv,
 ) -> Dict[str, ExternalApp]:
     """app id -> ExternalApp for every app answering on a usual port (the
     first port in priority order wins for an app). Never raises."""
@@ -1479,13 +1570,20 @@ def detect_external_apps(
         spec = APP_BY_ID[app_id]
         pid = pid_by_port.get(port)
         version = None
+        argv: List[str] = []
         if pid:
             try:
                 version = version_of(pid, spec)
             except Exception:  # noqa: BLE001
                 version = None
+            try:
+                argv = [str(a) for a in (argv_of(pid) or [])]
+            except Exception:  # noqa: BLE001
+                argv = []
         gw = _UI_CONFIG_GATEWAY_RE.search(found[port][1])
-        out[app_id] = ExternalApp(app_id, port, f"http://{_connect_host(host)}:{port}/", version=version, pid=pid, gateway_url=gw.group(1) if gw else None)
+        out[app_id] = ExternalApp(
+            app_id, port, f"http://{_connect_host(host)}:{port}/", version=version, pid=pid, gateway_url=gw.group(1) if gw else None, argv=tuple(argv)
+        )
     return out
 
 
@@ -1877,6 +1975,8 @@ class AppsManager:
         self.identity_probe: Callable[..., Optional[Tuple[str, bool]]] = probe_app_identity
         self._mount_cache: Dict[Tuple[str, int], Tuple[float, bool]] = {}
         self._bind_host_warned = False
+        # Set by `stop_all` (gateway shutdown): no crash restart from then on.
+        self.closing = False
 
     # -- paths ---------------------------------------------------------------
     @property
@@ -2046,7 +2146,11 @@ class AppsManager:
     def reap_orphans(self) -> List[Dict[str, Any]]:
         """A previous gateway that died hard may have left an app running
         (its stdin watch normally makes it exit). Stop any process a pid
-        file names whose command line still is that app — never anything else."""
+        file names whose command line still is that app — never anything
+        else: SIGTERM, then SIGKILL when it has not exited after
+        STOP_TIMEOUT_S (`_stop_pid`). The record is removed once the process
+        is gone; one that could not be stopped keeps its record, so the next
+        start tries again and `apps list` still names it."""
         reaped: List[Dict[str, Any]] = []
         d = self.data_dir / "run" / "apps"
         if not d.is_dir():
@@ -2068,17 +2172,100 @@ class AppsManager:
             # pid files end their `cmd` with the app's bin/cli.js.
             bin_js = str(rec.get("bin_js") or (rec.get("cmd") or [""])[-1])
             if cmdline and bin_js and bin_js in cmdline:
-                try:
-                    os.kill(pid, signal.SIGTERM)
-                    for _ in range(30):
-                        time.sleep(0.1)
-                        if _pid_command(pid) is None:
-                            break
-                    reaped.append({"app_id": app_id, "pid": pid})
-                    logger.warning("stopped a leftover %s app process (pid %s) from a previous gateway run", app_id, pid)
-                except Exception:
-                    pass
+                gone = _stop_pid(pid, still_it=lambda: bin_js in (_pid_command(pid) or ""))
+                if not gone:
+                    logger.error("a leftover %s app process (pid %s) from a previous gateway run could not be stopped; its record %s is kept", app_id, pid, f)
+                    continue
+                reaped.append({"app_id": app_id, "pid": pid, "version": rec.get("version")})
+                logger.warning("stopped a leftover %s app process (pid %s, version %s) from a previous gateway run", app_id, pid, rec.get("version"))
             f.unlink(missing_ok=True)
+        return reaped
+
+    # -- leftovers of a previous gateway run found on their port ----------------
+    def runs_this_gateways_install(self, argv: Sequence[str]) -> bool:
+        """Whether a command line runs an app from THIS data dir: one of its
+        words is a path under `<data dir>/apps/` (the app's start script the
+        gateway installed there, or the parent-watch preload it adds). Such a
+        process is the gateway's own — a leftover of a previous run, whoever
+        restarted the gateway — never a copy started outside it."""
+        roots = {str(self.apps_root)}
+        try:
+            roots.add(str(self.apps_root.resolve()))
+        except (OSError, RuntimeError):
+            pass
+        for arg in argv or ():
+            a = str(arg)
+            if not (a.startswith("/") or re.match(r"^[A-Za-z]:[\\/]", a)):
+                continue
+            candidates = [a]
+            try:
+                candidates.append(str(Path(a).resolve()))
+            except (OSError, RuntimeError):
+                pass
+            for cand in candidates:
+                for root in roots:
+                    if cand == root or cand.startswith(root + os.sep) or cand.startswith(root + "/"):
+                        return True
+        return False
+
+    def external_kind(self, ext: ExternalApp) -> str:
+        """What a running app this gateway process did not start is:
+        `leftover` (its command line runs this data dir's install: a previous
+        gateway run left it), `foreign` (its command line is something else:
+        started outside the gateway), `unknown` (this machine does not show
+        which process holds the port, or its command line)."""
+        if ext.pid and ext.argv:
+            return "leftover" if self.runs_this_gateways_install(ext.argv) else "foreign"
+        return "unknown"
+
+    def leftover(self, spec: AppSpec, *, refresh: bool = False) -> Optional[ExternalApp]:
+        """The leftover of a previous gateway run holding `spec`'s port, if any."""
+        ext = self.external_apps(refresh=refresh).get(spec.id)
+        if ext is not None and self.external_kind(ext) == "leftover":
+            return ext
+        return None
+
+    def stop_leftover(self, spec: AppSpec, ext: ExternalApp, *, timeout_s: float = STOP_TIMEOUT_S) -> bool:
+        """Stop a leftover (SIGTERM, then SIGKILL after `timeout_s`); its
+        command line is checked again before each signal. True once nothing
+        of that app runs under its pid; the pid file naming it is removed and
+        the port probe forgets it."""
+        pid = int(ext.pid or 0)
+        if pid <= 0:
+            return False
+        gone = _stop_pid(pid, still_it=lambda: self.runs_this_gateways_install(_process_argv(pid)), timeout_s=timeout_s)
+        if gone:
+            try:
+                rec = json.loads(self.pid_path(spec.id).read_text(encoding="utf-8"))
+                if int(rec.get("pid") or 0) == pid:
+                    self.remove_pid_file(spec.id)
+            except Exception:  # noqa: BLE001 - no record, or not this process's
+                pass
+            logger.warning("stopped a leftover %s app process (pid %s, version %s, port %s) of a previous gateway run", spec.id, pid, ext.version, ext.port)
+        else:
+            logger.error("the leftover %s app process (pid %s, port %s) of a previous gateway run could not be stopped", spec.id, pid, ext.port)
+        with self._external_lock:
+            self._external_cache = None
+        return gone
+
+    def reap_leftovers(self) -> List[Dict[str, Any]]:
+        """Gateway boot, after `reap_orphans`: an app of this data dir that
+        still answers on a usual port without a pid file (the record was
+        lost, or the previous gateway could not write it) is stopped too, so
+        the installed version starts in its place instead of the old copy
+        being listed as started outside the gateway."""
+        reaped: List[Dict[str, Any]] = []
+        # Nothing this gateway ever installed, nothing of its own to find: a
+        # fresh data dir boots without touching the usual app ports.
+        if not any((self.apps_root / spec.id).is_dir() for spec in APPS):
+            return reaped
+        found = self.external_apps(refresh=True)
+        for spec in APPS:
+            ext = found.get(spec.id)
+            if ext is None or self.external_kind(ext) != "leftover":
+                continue
+            gone = self.stop_leftover(spec, ext)
+            reaped.append({"app_id": spec.id, "pid": ext.pid, "version": ext.version, "port": ext.port, "stopped": gone})
         return reaped
 
     # -- network ---------------------------------------------------------------
@@ -2573,11 +2760,15 @@ class AppsManager:
             if node_needed:
                 self._ensure_node(job, _Phase(job, 0.0, web_hi * 0.45))
                 lo = web_hi * 0.45
-            was_running = self._procs.get(spec.id) is not None and self._procs[spec.id].alive()
+            proc_running = self._procs.get(spec.id) is not None and self._procs[spec.id].alive()
+            # A leftover of a previous gateway run on the app's port counts as
+            # running too: an update replaces it with the new version (launch
+            # stops it), instead of leaving the old copy on the port.
+            was_running = proc_running or (update and self.leftover(spec, refresh=True) is not None)
             res = self._install_app(job, spec, version, _Phase(job, lo, web_hi * 0.9 if (launch or was_running) else web_hi))
             if launch or (update and was_running):
                 job.step("launch", f"Starting {spec.name}…")
-                if was_running:
+                if proc_running:
                     self._procs[spec.id].stop()
                 row = self.launch(spec.id, gateway_url=gateway_url)
                 res.update({"url": row.get("url"), "port": row.get("port"), "running": True})
@@ -2656,18 +2847,32 @@ class AppsManager:
             self._external_cache = (_now(), found, exclude)
             return dict(found)
 
-    def _external_running(self, spec: AppSpec) -> Optional[ExternalApp]:
+    def _external_running(self, spec: AppSpec, *, refresh: bool = False) -> Optional[ExternalApp]:
+        """What answers on the app's usual port when this gateway process
+        does not run it. `refresh`: ask the ports now, not the 5-second
+        memory (a start or stop decides on what holds the port NOW)."""
         p = self._procs.get(spec.id)
         if p is not None and p.alive():
             return None
-        return self.external_apps().get(spec.id)
+        return self.external_apps(refresh=refresh).get(spec.id)
 
     def launch(self, app_id: str, *, gateway_url: Optional[str] = None, enable: bool = True, ready_timeout_s: float = READY_TIMEOUT_S) -> Dict[str, Any]:
         spec = spec_for(app_id)
-        if self._external_running(spec) is not None:
-            # Already running, started outside the gateway: nothing to start
-            # (a second copy would only take another port).
-            return self.app_row(spec)
+        ext = self._external_running(spec, refresh=True)
+        if ext is not None:
+            if self.external_kind(ext) == "leftover":
+                # A previous gateway run left this data dir's install running
+                # (possibly an older version): it is the gateway's own, so it
+                # is stopped and the installed version starts in its place.
+                if not self.stop_leftover(spec, ext):
+                    raise LaunchFailed(
+                        f"{spec.name} {ext.version or ''} left running by a previous gateway run (process {ext.pid}, port {ext.port}) could not be stopped, so the installed version cannot take its port.".replace("  ", " "),
+                        hint=f"Stop that process yourself (kill {ext.pid}), then start the app again.",
+                    )
+            else:
+                # Already running, started outside the gateway: nothing to
+                # start (a second copy would only take another port).
+                return self.app_row(spec)
         version = self.installed_version(spec.id)
         if not version:
             raise NotInstalled(f"{spec.name} is not installed yet.", hint="Install it first (the Install button, or `abstractgateway apps install " + spec.id + "`).")
@@ -2697,11 +2902,26 @@ class AppsManager:
 
     def stop(self, app_id: str, *, disable: bool = True) -> Dict[str, Any]:
         spec = spec_for(app_id)
-        ext = self._external_running(spec)
+        ext = self._external_running(spec, refresh=True)
         if ext is not None:
+            kind = self.external_kind(ext)
+            if kind == "leftover":
+                if disable:
+                    self._update_app_state(spec.id, enabled=False)
+                if not self.stop_leftover(spec, ext):
+                    raise LaunchFailed(
+                        f"{spec.name} left running by a previous gateway run (process {ext.pid}, port {ext.port}) could not be stopped.",
+                        hint=f"Stop that process yourself (kill {ext.pid}).",
+                    )
+                return self.app_row(spec)
+            if kind == "foreign":
+                raise StartedOutsideGateway(
+                    f"{spec.name} was started outside the gateway (port {ext.port}, process {ext.pid}), so the gateway cannot stop it.",
+                    hint="Stop it where it was started (its terminal, or the script that started it).",
+                )
             raise StartedOutsideGateway(
-                f"{spec.name} was started outside the gateway (port {ext.port}), so the gateway cannot stop it.",
-                hint="Stop it where it was started (its terminal, or the script that started it).",
+                f"{spec.name} on port {ext.port} was not started by this gateway, and this machine does not show which process holds the port, so the gateway cannot stop it.",
+                hint="Stop it where it was started, or find the process that listens on that port and stop it.",
             )
         if disable:
             self._update_app_state(spec.id, enabled=False)
@@ -2711,7 +2931,10 @@ class AppsManager:
         return self.app_row(spec)
 
     def stop_all(self) -> None:
-        """Gateway shutdown: stop every app, keep their enabled flags."""
+        """Gateway shutdown: stop every app, keep their enabled flags. From
+        here on no app is restarted after a crash (`closing`): an app that
+        exits while the gateway is on its way out is not respawned."""
+        self.closing = True
         for p in list(self._procs.values()):
             try:
                 p.stop()
@@ -2727,6 +2950,7 @@ class AppsManager:
             self.gateway_url = str(gateway_url).rstrip("/")
         outcomes: List[Dict[str, Any]] = []
         self.reap_orphans()
+        self.reap_leftovers()
         outcomes.extend(self.apply_pending_upgrades())
         for spec in APPS:
             if cancel is not None and cancel.is_set():
@@ -3823,12 +4047,42 @@ class AppsManager:
         tui_release: Optional[Dict[str, Any]],
         tui_release_error: Optional[str],
     ) -> Dict[str, Any]:
-        """A running app the gateway did not start: open it, nothing else (no
-        stop, update or log: its process belongs to whoever started it). A
-        newer published version is SHOWN ("Latest x.y.z" + where to update
-        it), never offered: there is no update action on this row."""
+        """A running app THIS gateway process did not start.
+
+        `external.kind` says what it is (`external_kind`):
+        - `leftover`: this data dir's install, left running by a previous
+          gateway run. It is the gateway's own: the badge stops it, and
+          starting or updating the app replaces it with the installed
+          version. Boot stops it by itself (`reap_leftovers`), so it is
+          listed only in the moments before that, or when the port probe
+          found it after boot.
+        - `foreign`: started outside the gateway (the dev stack, `npx`, a
+          service unit): open it, nothing else (no stop, update or log: its
+          process belongs to whoever started it). A newer published version
+          is SHOWN ("Latest x.y.z" + where to update it), never offered.
+        - `unknown`: this machine does not show which process holds the
+          port, so the gateway cannot tell; treated like `foreign`, worded
+          as what it is."""
         job = self.jobs.active_for(f"app:{spec.id}")
-        ext_update = bool(ext.version and latest and version_newer(latest, ext.version))
+        kind = self.external_kind(ext)
+        leftover = kind == "leftover"
+        ext_update = bool(not leftover and ext.version and latest and version_newer(latest, ext.version))
+        if leftover:
+            detail = (
+                f"Left running by a previous gateway run on port {ext.port} (version {ext.version or 'unknown'}, process {ext.pid}): "
+                "stopping or starting the app replaces it with the installed version"
+            )
+        elif kind == "foreign":
+            detail = f"Started outside the gateway on port {ext.port} (process {ext.pid})"
+        else:
+            detail = f"Not started by this gateway (port {ext.port}; the process holding the port could not be identified)"
+        actions = ["open", "stop"] if leftover else ["open"]
+        admin = bool((caller or {}).get("admin", True))
+        if leftover:
+            # Its badge stops it like any app of the gateway's (R11.3).
+            control = browser_status_control(status="running", actions=actions, external=False, admin=admin)
+        else:
+            control = browser_status_control(status="running", actions=actions, external=True, admin=admin, external_tip=BADGE_EXTERNAL_TIP if kind == "foreign" else BADGE_UNIDENTIFIED_TIP)
         row: Dict[str, Any] = {
             "id": spec.id,
             "name": spec.name,
@@ -3846,11 +4100,14 @@ class AppsManager:
             "managed": False,
             "source": "external",
             "external": {
+                "kind": kind,
+                "leftover": leftover,
                 "port": ext.port,
                 "pid": ext.pid,
                 "version": ext.version,
                 "gateway_url": ext.gateway_url,
-                "detail": f"Started outside the gateway on port {ext.port}",
+                "command": " ".join(ext.argv) if ext.argv else None,
+                "detail": detail,
             },
             "managed_version": managed_version,
             "enabled": bool(self.app_state(spec.id).get("enabled")),
@@ -3866,11 +4123,12 @@ class AppsManager:
             "install_available": False,
             "install_blocked_reason": None,
             "install_parts": ["web"],
-            "actions": ["open"],
-            # R11.3: the badge says Running, disabled: its process is not the gateway's.
-            "status_control": browser_status_control(status="running", actions=["open"], external=True, admin=bool((caller or {}).get("admin", True))),
+            "actions": actions,
+            # R11.3: the badge says Running; disabled when its process is not
+            # the gateway's, a stop control for the gateway's own leftover.
+            "status_control": control,
             "active_job": job.to_dict() if job is not None else None,
-            "log_path": None,
+            "log_path": str(self.app_log_path(spec.id)) if leftover else None,
             # Counted on THIS gateway: unknown when the app's page says it
             # talks to another one.
             "content_summary": self.content_summary(spec, app_gateway_url=ext.gateway_url),

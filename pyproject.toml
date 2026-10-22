@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "abstractgateway"
-version = "0.15.0"
+version = "0.15.1"
 description = "AbstractGateway: deployable Run Gateway host for AbstractRuntime (commands + ledger)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -166,6 +166,7 @@ packages = ["src/abstractgateway"]
 "flows/bundles/abstractassistant-orchestrator@0.0.0.flow" = "abstractgateway/flows/bundles/abstractassistant-orchestrator@0.0.0.flow"
 "flows/bundles/abstractassistant-orchestrator@0.0.12.flow" = "abstractgateway/flows/bundles/abstractassistant-orchestrator@0.0.12.flow"
 "flows/bundles/abstractassistant-orchestrator@0.0.13.flow" = "abstractgateway/flows/bundles/abstractassistant-orchestrator@0.0.13.flow"
+"flows/bundles/abstractassistant-orchestrator@0.0.15.flow" = "abstractgateway/flows/bundles/abstractassistant-orchestrator@0.0.15.flow"
 "flows/bundles/deep-research@0.1.8.flow" = "abstractgateway/flows/bundles/deep-research@0.1.8.flow"
 # Out-of-box flagship workflows: a fresh install serves a proven coder
 # (coding-agent:coder — abstractcode-tui's default agent when installed),
@@ -203,6 +204,7 @@ exclude = [
 "flows/bundles/abstractassistant-orchestrator@0.0.0.flow" = "flows/bundles/abstractassistant-orchestrator@0.0.0.flow"
 "flows/bundles/abstractassistant-orchestrator@0.0.12.flow" = "flows/bundles/abstractassistant-orchestrator@0.0.12.flow"
 "flows/bundles/abstractassistant-orchestrator@0.0.13.flow" = "flows/bundles/abstractassistant-orchestrator@0.0.13.flow"
+"flows/bundles/abstractassistant-orchestrator@0.0.15.flow" = "flows/bundles/abstractassistant-orchestrator@0.0.15.flow"
 "flows/bundles/deep-research@0.1.8.flow" = "flows/bundles/deep-research@0.1.8.flow"
 "flows/bundles/coding-agent@0.2.8.flow" = "flows/bundles/coding-agent@0.2.8.flow"
 "flows/bundles/co-scientist@0.2.1.flow" = "flows/bundles/co-scientist@0.2.1.flow"

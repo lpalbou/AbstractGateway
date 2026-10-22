@@ -481,7 +481,7 @@ def test_every_row_has_a_web_interface_and_only_code_a_terminal_one(mgr) -> None
     ov = m.overview(check_latest=False, caller={"local": True, "admin": True, "gateway_url": "http://127.0.0.1:18890"})
     kinds = {a["id"]: [i["kind"] for i in a["interfaces"]] for a in ov["apps"]}
     # The desktop app (mission LL) has no browser or terminal interface.
-    assert kinds == {"flow": ["web"], "code": ["web", "tui"], "observer": ["web"], "continuum": ["web"], "entity": ["web"], "assistant": []}
+    assert kinds == {"flow": ["web"], "code": ["web", "tui"], "observer": ["web"], "continuum": ["web"], "entity": ["web"], "note": ["web"], "assistant": []}
     for a in ov["apps"]:
         if a["kind"] != "web":
             continue

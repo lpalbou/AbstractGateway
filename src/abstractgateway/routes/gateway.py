@@ -82,6 +82,7 @@ from ..provider_endpoint_profiles import (
     normalize_api_key,
     normalize_base_url,
     normalize_provider_family,
+    normalize_scope,
     profile_id_from_virtual_provider,
     resolve_effective_endpoint_profile,
 )
@@ -25932,7 +25933,7 @@ class _GatewayProviderEndpointProfileCreateRequest(BaseModel):
     provider_family: str = Field(default="openai-compatible", min_length=1, max_length=80)
     base_url: Optional[str] = Field(default=None, max_length=2048)
     api_key: Optional[str] = Field(default=None, max_length=65536)
-    scope: str = Field(default="user", description="user or gateway. Gateway scope requires an admin principal.")
+    scope: str = Field(default="user", description="Admin connections are gateway-wide; ordinary users can create private user-scoped connections only.")
     capabilities: List[str] = Field(default_factory=lambda: ["text"])
     allowed_models: List[str] = Field(default_factory=list)
     enabled: bool = True
@@ -25947,7 +25948,7 @@ class _GatewayProviderEndpointProfileUpdateRequest(BaseModel):
     base_url: Optional[str] = Field(default=None, max_length=2048)
     api_key: Optional[str] = Field(default=None, max_length=65536)
     clear_api_key: bool = False
-    scope: Optional[str] = Field(default=None, description="user or gateway. Gateway scope requires an admin principal.")
+    scope: Optional[str] = Field(default=None, description="Admin connections are gateway-wide; ordinary users can manage their own user-scoped connections only.")
     capabilities: Optional[List[str]] = None
     allowed_models: Optional[List[str]] = None
     enabled: Optional[bool] = None
@@ -27413,20 +27414,13 @@ async def provider_endpoint_profiles_get(request: Request) -> Dict[str, Any]:
 async def provider_endpoint_profiles_create(request: Request, req: _GatewayProviderEndpointProfileCreateRequest) -> Dict[str, Any]:
     principal = _principal_from_request(request)
     current_base, root_base = _gateway_profile_dirs()
-    # Scope default that survives a later multi-user switch (release gap 2):
-    # when an ADMIN creates a profile WITHOUT naming a scope and the write
-    # would land at the gateway root anyway (single-user layout, or the
-    # admin on the default runtime), default to 'gateway' — the silent
-    # 'user' default made the profile vanish from every per-user runtime
-    # the day multi-user auth turned on. An explicit scope always wins.
-    effective_scope = req.scope
-    if (
-        "scope" not in req.model_fields_set
-        and principal.is_admin()
-        and Path(current_base).expanduser().resolve() == Path(root_base).expanduser().resolve()
-    ):
-        effective_scope = "gateway"
     try:
+        # Admin-configured connections serve the whole gateway, even when the
+        # admin has a private runtime or an older console sends scope='user'.
+        # Selective principal grants are deferred to backlog 0935.
+        effective_scope = normalize_scope(req.scope)
+        if principal.is_admin():
+            effective_scope = "gateway"
         store = _endpoint_profile_store_for_scope(scope=effective_scope, principal=principal, current_base_dir=current_base, root_base_dir=root_base)
         profile = store.upsert_profile(
             profile_id=req.id,
@@ -27762,19 +27756,22 @@ async def provider_endpoint_profiles_update(request: Request, profile_id: str, r
     if existing.scope == "gateway" and not principal.is_admin():
         raise HTTPException(status_code=403, detail="Admin principal required for gateway-scoped endpoint profiles")
     try:
+        requested_scope = normalize_scope(requested_scope)
+        if principal.is_admin():
+            requested_scope = "gateway"
         store = _endpoint_profile_store_for_scope(scope=requested_scope, principal=principal, current_base_dir=current_base, root_base_dir=root_base)
         profile = store.upsert_profile(
             profile_id=profile_id,
-            display_name=req.display_name,
-            description=req.description,
-            provider_family=req.provider_family,
-            base_url=req.base_url,
-            api_key=req.api_key,
+            display_name=req.display_name if req.display_name is not None else existing.display_name,
+            description=req.description if req.description is not None else existing.description,
+            provider_family=req.provider_family if req.provider_family is not None else existing.provider_family,
+            base_url=req.base_url if req.base_url is not None else existing.base_url,
+            api_key=req.api_key if req.api_key is not None else (None if req.clear_api_key else existing.api_key),
             clear_api_key=req.clear_api_key,
             scope=requested_scope,
-            capabilities=req.capabilities,
-            allowed_models=req.allowed_models,
-            enabled=req.enabled,
+            capabilities=req.capabilities if req.capabilities is not None else existing.capabilities,
+            allowed_models=req.allowed_models if req.allowed_models is not None else existing.allowed_models,
+            enabled=req.enabled if req.enabled is not None else existing.enabled,
         )
         if existing.scope != requested_scope:
             old_store = _endpoint_profile_store_for_scope(scope=existing.scope, principal=principal, current_base_dir=current_base, root_base_dir=root_base)

@@ -759,7 +759,7 @@ def test_reap_orphans_matches_the_recorded_bin_js_not_the_last_argv_word(manager
         manager.write_pid_file("continuum", pid=stranger.pid, port=1, cmd=["node", str(bin_js), "--gateway-url", url], version="0.3.1", bin_js=str(bin_js))
         assert manager.reap_orphans() == [] and stranger.poll() is None
         manager.write_pid_file("continuum", pid=orphan.pid, port=1, cmd=["node", str(bin_js), "--gateway-url", url], version="0.3.1", bin_js=str(bin_js))
-        assert manager.reap_orphans() == [{"app_id": "continuum", "pid": orphan.pid}]
+        assert manager.reap_orphans() == [{"app_id": "continuum", "pid": orphan.pid, "version": "0.3.1"}]
         assert orphan.wait(timeout=5) is not None
     finally:
         for p in (stranger, orphan):

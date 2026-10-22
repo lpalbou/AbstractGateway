@@ -39,7 +39,7 @@ ENTRY = 'c53b1579'
 LEGACY_ENTRY = 'd5d4e5a1'
 
 
-def bundle_bytes(version: str = '0.0.13') -> bytes:
+def bundle_bytes(version: str = '0.0.15') -> bytes:
     import io
     canonical = canonical_workflow()
     basic_path = GATEWAY / 'flows/bundles/basic-agent.flow'
@@ -88,7 +88,7 @@ def build_bundle(version: str, out_dir: Path) -> Path:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--version', default='0.0.13')
+    parser.add_argument('--version', default='0.0.15')
     parser.add_argument('--out', type=Path, default=GATEWAY / 'flows/bundles')
     args = parser.parse_args()
     print(build_bundle(args.version, args.out))

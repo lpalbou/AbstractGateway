@@ -333,6 +333,12 @@ def render_systemd_unit(*, exe_argv: Sequence[str], host: str, port: int, data_d
         "Restart=on-failure\n"
         "RestartSec=5\n"
         "TimeoutStopSec=150\n"
+        # The gateway stops its own children (the browser apps, entity loops,
+        # download jobs) in its shutdown; `mixed` leaves that order to it
+        # (SIGTERM to the gateway only) and has systemd SIGKILL whatever is
+        # left in the unit's control group at the end, so no child of a
+        # previous run outlives a stop or restart of the unit.
+        "KillMode=mixed\n"
         "\n"
         "[Install]\n"
         "WantedBy=default.target\n"

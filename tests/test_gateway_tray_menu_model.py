@@ -267,7 +267,7 @@ def test_app_rows_cover_every_state_and_the_six_apps_in_order() -> None:
     )
     globals_found = {"entity": {"found_by": ["path:/usr/local/bin/abstractentity"], "launch": ["/usr/local/bin/abstractentity"]}}
     entries = tray_apps.build_app_entries(payload, None, globals_found=globals_found, assistant={"found_by": ["bundle:/Applications/AbstractAssistant.app"], "launch": ["open", "-a", "/Applications/AbstractAssistant.app"], "source": "bundle"}, local_running={})
-    assert [e.name for e in entries] == ["Observer", "Continuum", "Code", "Entity", "Flow", "Assistant"]
+    assert [e.name for e in entries] == ["Observer", "Continuum", "Code", "Entity", "Flow", "Note", "Assistant"]
     apps = _find(mm.build_menu(_inputs(apps=entries)), "Apps")
     labels = [n.label for n in apps.children if not n.separator]
     assert labels == [
@@ -276,6 +276,7 @@ def test_app_rows_cover_every_state_and_the_six_apps_in_order() -> None:
         "Code — starting…",
         "Open Entity",
         "Open Flow",
+        "Note",
         "Launch Assistant",
         mm.INSTALLS_OFF_LINE,
         "Manage Apps in Console…",
@@ -291,8 +292,8 @@ def test_not_installed_apps_offer_install_and_a_missing_list_is_named() -> None:
     entries = tray_apps.build_app_entries(_apps_payload(), None, globals_found={}, assistant={}, local_running={})
     apps = _find(mm.build_menu(_inputs(apps=entries)), "Apps")
     labels = [n.label for n in apps.children if not n.separator]
-    assert labels[:5] == ["Install Observer…", "Install Continuum…", "Install Code…", "Install Entity…", "Install Flow…"]
-    assert labels[5] == "Assistant" and mm.INSTALLS_OFF_LINE not in labels
+    assert labels[:6] == ["Install Observer…", "Install Continuum…", "Install Code…", "Install Entity…", "Install Flow…", "Install Note…"]
+    assert labels[6] == "Assistant" and mm.INSTALLS_OFF_LINE not in labels
     down = tray_apps.build_app_entries(None, "unreachable: connection refused", globals_found={}, assistant={}, local_running={})
     assert all(e.status == "unknown" and "connection refused" in e.detail for e in down[:5])
     # The menu names the apps it could not read, greyed, without the error.
@@ -330,7 +331,7 @@ def test_external_apps_open_through_the_gateway_and_a_blocked_install_is_one_bot
     apps = _find(mm.build_menu(_inputs(apps=entries)), "Apps")
     labels = [n.label for n in apps.children if not n.separator]
     assert labels == [
-        "Open Observer", "Open Continuum", "Open Code", "Open Code in Terminal", "Open Entity", "Flow",
+        "Open Observer", "Open Continuum", "Open Code", "Open Code in Terminal", "Open Entity", "Flow", "Note",
         "Launch Assistant", "Installs are off for this gateway · Console → Apps", "Manage Apps in Console…",
     ]
     actions = {n.label: n.action for n in apps.children if n.action}

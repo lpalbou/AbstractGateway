@@ -182,10 +182,8 @@ def _resolve_gateway_default_endpoint_profile(
         raise WorkflowBundleError(f"Invalid Gateway provider endpoint profile {provider_s!r}: {exc}") from exc
     if profile is None:
         if provider_s.startswith("endpoint:"):
-            # Name the REAL cause when it is knowable (release gap 2): a
-            # root profile scoped 'user' is invisible to per-user runtimes,
-            # and "not configured" sent operators hunting a config that
-            # existed all along.
+            # Name a disabled root connection when it explains the failure.
+            # Historical root scope='user' connections are inherited too.
             from ..provider_endpoint_profiles import explain_endpoint_profile_miss
 
             reason = explain_endpoint_profile_miss(provider_s, base_dir=data_root, root_base_dir=catalog_root)
@@ -1446,6 +1444,14 @@ class WorkflowBundleGatewayHost:
             for p in WorkflowBundleGatewayHost._bundle_paths_from_dir(framework_base):
                 _load_bundle_path(p, source_scope="private", source_kind="framework")
 
+        # AbstractNote's workflows (optional, abstractnote_seam.py): a framework bundle in every
+        # plane's private registry, so `bundle_id: "abstractnote"` starts and automates like
+        # basic-agent. [] when abstractnote is not installed.
+        from ..abstractnote_seam import note_bundle_paths
+
+        for p in note_bundle_paths(Path(catalog_root)):
+            _load_bundle_path(p, source_scope="private", source_kind="framework")
+
         if catalog_base is not None and catalog_base.exists() and catalog_base.is_dir():
             for p in sorted([p for p in catalog_base.glob("*.flow") if p.is_file()]):
                 _load_bundle_path(
@@ -1823,6 +1829,15 @@ class WorkflowBundleGatewayHost:
                 return read_skill_body(str(name or ""), data_dir=Path(data_root), max_chars=int(max_chars or 16000))
 
             gateway_tool_map.setdefault("read_skill", _gateway_read_skill)
+            # AbstractNote (optional, abstractnote_seam.py): the note tools bound to THIS plane's
+            # notebook, the host's artifact store as their only attachment source, the plane's
+            # account stamped on captures. {} when abstractnote is not installed.
+            from ..abstractnote_seam import note_auto_approve_names, note_tool_map
+
+            for _note_tool_name, _note_tool in note_tool_map(
+                data_root=Path(data_root), artifact_store=artifact_store, account=catalog_user
+            ).items():
+                gateway_tool_map.setdefault(_note_tool_name, _note_tool)
             # Tools of MCP servers an admin enabled for agents (mcp_run_tools.py): routed by name,
             # UNDER the approval gate below, the registry re-read at every call.
             from ..mcp_run_tools import McpRoutingToolExecutor
@@ -1836,7 +1851,13 @@ class WorkflowBundleGatewayHost:
                 try:
                     from abstractruntime.integrations.abstractcore.tool_executor import ApprovalToolExecutor, ToolApprovalPolicy
 
-                    tool_executor = ApprovalToolExecutor(delegate=base_executor, policy=ToolApprovalPolicy())
+                    approval_policy = ToolApprovalPolicy()
+                    # The note tools touch only the caller's own notebook: auto-approved, so a
+                    # capture never parks on an approval wait. Extended AFTER default
+                    # construction so the default caution list (and its per-call refiner, e.g.
+                    # send_email to the user's own address) stays exactly as it is.
+                    approval_policy.auto_approve_tools |= set(note_auto_approve_names())
+                    tool_executor = ApprovalToolExecutor(delegate=base_executor, policy=approval_policy)
                 except Exception:
                     tool_executor = base_executor
             elif tool_mode in {"delegated", "delegate", "job"}:

@@ -219,6 +219,27 @@ def recovery_available() -> bool:
     return False
 
 
+def account_for(identifier: str, tenant_id: str = "default") -> str:
+    """The account a sign-in names: an account id as given, or, for an email address, the id of
+    the ONE enabled person account whose registered email it is (sign-in pages accept either;
+    the Apple Watch app 2026-10-17). An unknown or shared address is returned unchanged, so it
+    reads exactly like an unknown account: same honest answer, same rate limits."""
+
+    ident = str(identifier or "").strip()
+    if "@" not in ident:
+        return ident
+    from ..users import GatewayUserRegistry
+
+    tenant0 = str(tenant_id or "default").strip() or "default"
+    want = ident.lower()
+    matches = [
+        rec.user_id
+        for rec in GatewayUserRegistry().list_users()
+        if rec.tenant_id == tenant0 and rec.enabled and rec.principal_kind != "entity" and str(rec.email or "").lower() == want
+    ]
+    return matches[0] if len(matches) == 1 else ident
+
+
 def _eligible_principal(user_id: str, tenant_id: str):
     from ..security.sessions import principal_barred_from_shared_runtime
     from ..users import GatewayUserRegistry
@@ -265,7 +286,7 @@ def request_code(*, user_id: str, tenant_id: str = "default", purpose: str = "si
     purpose0 = str(purpose or "").strip() or "sign_in"
     if purpose0 not in PURPOSES:
         raise ValueError(f"purpose must be one of: {', '.join(PURPOSES)}")
-    args = {"user_id": str(user_id or ""), "tenant_id": str(tenant_id or "default"), "purpose": purpose0, "client_ip": str(client_ip or "unknown")}
+    args = {"user_id": account_for(str(user_id or ""), str(tenant_id or "default")), "tenant_id": str(tenant_id or "default"), "purpose": purpose0, "client_ip": str(client_ip or "unknown")}
     # The rate check runs first, before any account lookup or thread: a flood of requests costs
     # a file update each, never a thread each, and an unknown account is counted like a real one.
     refused = _rate_admit(**args)
@@ -416,7 +437,7 @@ def redeem_code(*, user_id: str, tenant_id: str = "default", purpose: str, code:
 
     purpose0 = str(purpose or "").strip()
     tenant0 = str(tenant_id or "default").strip() or "default"
-    user0 = str(user_id or "").strip()
+    user0 = account_for(str(user_id or "").strip(), tenant0)
     account_key = f"{tenant0}:{user0}"
     base = {"tenant_id": tenant0, "user_id": user0, "purpose": purpose0, "client_ip": str(client_ip or "unknown")}
     if purpose0 not in PURPOSES:

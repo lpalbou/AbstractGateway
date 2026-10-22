@@ -62,6 +62,26 @@ def test_wrong_password_names_cause_and_fix_and_stores_nothing(gateway, imap, sm
     assert c.get("/api/gateway/me/email", headers=gateway["alice"]).json()["configured"] is False
 
 
+def test_failed_configuration_keeps_existing_mailbox(gateway, imap, smtp) -> None:
+    c, headers = gateway["client"], gateway["alice"]
+    body = connect_body(ALICE, imap, smtp)
+    assert c.put("/api/gateway/me/email", headers=headers, json=body).status_code == 200
+    assert c.put("/api/gateway/me/email/folder", headers=headers, json={"folder": "Archive"}).status_code == 200
+    assert c.put("/api/gateway/me/email/enabled", headers=headers, json={"enabled": False}).status_code == 200
+    before = c.get("/api/gateway/me/email", headers=headers).json()
+    broken = {**body, "password": "wrong-password"}
+    broken["imap"] = {**body["imap"], "folder": "Draft"}
+    assert c.put("/api/gateway/me/email", headers=headers, json=broken).status_code == 422
+    after = c.get("/api/gateway/me/email", headers=headers).json()
+    for field in ("configured", "address", "imap", "smtp", "enabled", "policy", "limits"):
+        assert after[field] == before[field], field
+    # Both a failed replacement and a successful replacement keep the paused state.
+    body["imap"]["folder"] = "INBOX"
+    assert c.put("/api/gateway/me/email", headers=headers, json=body).status_code == 200
+    after = c.get("/api/gateway/me/email", headers=headers).json()
+    assert after["imap"]["folder"] == "INBOX" and after["enabled"] is False
+
+
 def test_user_reaches_only_their_own_account(gateway, imap, smtp) -> None:
     c = gateway["client"]
     assert c.put("/api/gateway/me/email", headers=gateway["alice"], json=connect_body(ALICE, imap, smtp)).status_code == 200

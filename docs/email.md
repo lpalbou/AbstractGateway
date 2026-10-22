@@ -36,6 +36,13 @@ You can connect from any of these surfaces; they share the same fields and words
   with the provider.
 - **Terminal console** (`abstractgateway-console`) → **2 Accounts** → `@` on your own row.
 
+In the web console, a connected mailbox offers **Test**, **Configure**, and **Disconnect**.
+**Configure** opens its stored server settings, mailbox address, and login. Edit them and select
+**Save changes**; re-enter the IMAP password, or sign in again on the Google or Microsoft tab.
+Passwords and client secrets are never displayed. For IMAP, both servers must pass their checks
+before the replacement is saved, so a failed update keeps the existing connection. **Cancel changes**
+discards the draft. The mailbox's Active setting, recipient rules, and limits are kept.
+
 In both consoles the IMAP pane shows the incoming (IMAP) and outgoing (SMTP) server, port and
 security. They are filled in with the standard `imap.<domain>` / `smtp.<domain>` values as soon as
 the address has a domain, then replaced by what discovery finds, except a field you edited. There is
@@ -277,7 +284,11 @@ x@y.", "Not sent: no mailbox connected.", "Not sent: your mailbox is paused.", "
 limit reached (100 of 100 this hour) — resets at 14:05.", "Queued behind 3 earlier notifications; they
 go out when the limit resets at 14:05." or "Not sent: smtp.x.com refused the message (<cause>)."
 (`message`, with `reason_code` and `limit` for programs; the consoles show reset times in your local
-time). **Send a test** sits under Notifications in your email settings. Notification emails use fixed templates; the only
+time). **Send a test** sits under Notifications in your email settings. Its email includes a console
+link, an unexpected-request security notice, and links to AbstractFramework, GitHub, and contact email,
+in both HTML and plain text. Console links prefer the matching configured browser hostname or an
+existing named console URL; a single configured hostname can replace the local IP fallback. With
+several unmatched hostnames, the recorded console URL is kept. Notification emails use fixed templates; the only
 model-written text is an automation's own `notify` title and body, labelled as such. Replying to a
 notification does nothing.
 

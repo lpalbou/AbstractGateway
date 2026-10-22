@@ -177,7 +177,11 @@ def _list(args: argparse.Namespace, t: Any) -> int:
         if a.get("last_error") and not a.get("running"):
             print(f"{'':<10} {a['last_error']}")
         if a.get("source") == "external" and isinstance(a.get("external"), dict):
-            print(f"{'':<10} {a['external'].get('detail') or 'started outside the gateway'} (open only: stop it where it was started)")
+            ext = a["external"]
+            if ext.get("kind") == "leftover":
+                print(f"{'':<10} {ext.get('detail') or 'left running by a previous gateway run'} (abstractgateway apps launch {a['id']} replaces it)")
+            else:
+                print(f"{'':<10} {ext.get('detail') or 'started outside the gateway'} (open only: stop it where it was started)")
         for i in a.get("interfaces") or []:
             if isinstance(i, dict) and i.get("kind") == "tui":
                 print(f"{'':<10} {_tui_line(i, a['id'])}")

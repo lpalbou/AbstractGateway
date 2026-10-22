@@ -204,7 +204,7 @@ try {
     await page.route(/\/api\/gateway\/admin\/accounts(\?.*)?$/, async (route) => {
       let res, j;
       try { res = await route.fetch(); j = await res.json(); } catch { return; }
-      for (const r of j.accounts) if (r.id === "alice") r.mailbox = { state: "receive_only", address: "alice@fastmail.com", provider: "imap", reason: REASON };
+      for (const r of j.accounts) if (r.id === "alice") r.mailbox = otherMailbox;
       route.fulfill({ response: res, body: JSON.stringify(j) }).catch(() => {});
     });
     await page.route(/\/api\/gateway\/me\/email$/, async (route) => {
@@ -214,6 +214,7 @@ try {
       Object.assign(j, { configured: true, address: "admin@example.org", auth_kind: "password", imap: { host: "imap.example.org", port: 993, security: "ssl" }, smtp: null, send_capable: false, mailbox: { state: "receive_only", address: "admin@example.org", provider: "imap", reason: REASON } });
       route.fulfill({ response: res, body: JSON.stringify(j) }).catch(() => {});
     });
+    let otherMailbox = { state: "receive_only", address: "alice@fastmail.com", provider: "imap", reason: REASON };
     await page.goto(`${BASE}/console`);
     await page.fill("#login-user", "admin");
     await page.fill("#login-token", ADMIN);
@@ -224,6 +225,35 @@ try {
     await page.waitForSelector("tr[data-user='alice']");
     const cell = (await page.textContent("tr[data-user='alice'] td.accounts-col-email")).replace(/\s+/g, " ");
     check(cell.includes("alice@fastmail.com · receive only") && cell.includes(REASON) && !cell.includes("connected"), "receive-only mailbox: 'address · receive only' + the API's sentence in the row", cell);
+    for (const [state, word] of Object.entries({ receive_only: "receive only", needs_reconnect: "needs reconnecting", unavailable: "mailbox not available", not_connected: "not connected", paused: "paused", connected: "connected" })) {
+      const reason = state === "connected" || state === "not_connected" ? null : `Diagnostic for ${state}.`;
+      otherMailbox = { state, address: state === "not_connected" ? null : "alice@fastmail.com", provider: "imap", reason };
+      const refreshed = page.waitForResponse((r) => /\/api\/gateway\/admin\/accounts(\?.*)?$/.test(r.url()));
+      await page.click("#accounts-show-archived");
+      await refreshed;
+      await page.waitForFunction((word) => document.querySelector("tr[data-user='alice'] td.accounts-col-email").textContent.includes(word), word);
+      await page.click("tr[data-user='alice'] button[data-action='email']");
+      await page.waitForSelector("#account-email-backdrop:not([hidden]) .account-other-mailbox");
+      const view = await page.evaluate(() => {
+        const root = document.getElementById("account-email-body");
+        const status = root.querySelector(".account-other-mailbox");
+        return { text: status.textContent, dot: getComputedStyle(status, "::before").backgroundColor, state: status.dataset.state, instructions: root.querySelector(".account-mailbox-setup").textContent, password: !!root.querySelector("input[type=password]") };
+      });
+      check(view.state === state && view.text.startsWith(`Mailbox: ${word}`) && (!reason || view.text.includes(reason)), `other mailbox ${state}: accurate status and reason`, view);
+      check(!view.password && view.instructions.includes("private browser window") && view.instructions.includes("gateway token") && view.instructions.includes("Accounts → their own row → Email → Mailbox") && view.instructions.includes("IMAP, Google or Microsoft"), `other mailbox ${state}: usable owner setup path, no credential form`, view);
+      const green = await page.evaluate(() => { const el = document.createElement("p"); el.className = "mailbox-status"; el.dataset.state = "connected"; document.body.append(el); const color = getComputedStyle(el, "::before").backgroundColor; el.remove(); return color; });
+      check((view.dot === green) === (state === "connected"), `other mailbox ${state}: success indicator only when connected`, view.dot);
+      if (state === "not_connected") {
+        if (process.env.ABSTRACTGATEWAY_TEST_SCREENSHOT) await page.screenshot({ path: process.env.ABSTRACTGATEWAY_TEST_SCREENSHOT });
+        await page.fill("#account-email-body input[type=email]", "alice+updated@fastmail.com");
+        await page.click("#account-email-body .account-email-save");
+        await page.waitForFunction(() => document.querySelector("#account-email-body .inline-state").textContent.includes("Saved email address:"));
+        const result = await page.textContent("#account-email-body .inline-state");
+        check(result.includes("alice+updated@fastmail.com") && result.includes("Mailbox connection unchanged.") && !result.includes("notifications go to"), "saving address does not promise a connection or delivery", result);
+        check((await page.textContent("#account-email-body .account-other-mailbox")).startsWith("Mailbox: not connected"), "saving address keeps mailbox disconnected");
+      }
+      await page.keyboard.press("Escape");
+    }
     await page.click("tr[data-user='admin'] button[data-action='email']");
     await page.waitForSelector("#account-email-backdrop:not([hidden]) #my-email-section");
     await page.waitForFunction(() => document.getElementById("my-email-status").textContent.length > 0, null, { timeout: 10000 }).catch(() => {});

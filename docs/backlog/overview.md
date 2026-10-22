@@ -22,7 +22,7 @@ can trust without importing local gateway packages.
 ## Counts
 
 - Planned: 4
-- Proposed: 40
+- Proposed: 41
 - Completed: 24
 - Deprecated: 1
 - Recurrent: 0
@@ -108,6 +108,7 @@ relevant.
 
 | Item | Promotion criteria |
 | --- | --- |
+| [0935_per_principal_provider_access_policy.md](proposed/0935_per_principal_provider_access_policy.md) | Admin-selected provider access for human and entity principals. Promote when prioritized and policy/revocation semantics are settled; enabled admin providers stay shared by default until then. |
 | [2026-05-09_abstractflow_draft_spaces_and_ephemeral_runs.md](proposed/2026-05-09_abstractflow_draft_spaces_and_ephemeral_runs.md) | Remaining optional hardening: draft-bundle cleanup and default memory-scope isolation; run-tree purge is implemented. |
 | [2026-05-13_shared_identity_context.md](proposed/2026-05-13_shared_identity_context.md) | Promote when shared identity/session context becomes an active Gateway contract decision instead of exploratory design work. Related: `0062`, `0064`. |
 | [0055_gateway_provider_backend_readiness_truth_for_thin_clients.md](proposed/0055_gateway_provider_backend_readiness_truth_for_thin_clients.md) | Promote when Runtime/Core can supply selected backend/provider/model and stable degraded-state truth for Gateway to relay to thin clients. |
@@ -175,6 +176,11 @@ relevant.
 | [deprecated/2026-05-20_gateway_runtime_owned_run_truth_and_core_boundary.md](deprecated/2026-05-20_gateway_runtime_owned_run_truth_and_core_boundary.md) | Superseded by completed Runtime-owned media/discovery/control-plane work plus the narrower planned cleanup for workspace, comms, and Telegram. |
 
 ## Planning Notes
+
+- 2026-10-17: filed proposed 0935 for administrator-managed per-principal provider
+  access. Current behavior is shared access to enabled admin-configured gateway
+  providers. Counts checked against every lifecycle directory: 4 planned,
+  41 proposed, 24 completed, 1 deprecated, 0 recurrent.
 
 - 2026-09-27: 0928 (Automations v1 gateway slice) completed and UNRELEASED. The release raises
   `AbstractRuntime>=` and `live_deltas.ABSTRACTRUNTIME_FLOOR` to the runtime release carrying automations (review 52 W1;

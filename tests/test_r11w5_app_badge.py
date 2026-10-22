@@ -106,7 +106,7 @@ def test_every_overview_row_carries_its_badge(world) -> None:
 def test_browser_rows_running_stopped_external_and_non_admin(world) -> None:
     _managed(world, "flow", running=True)
     _managed(world, "code", running=False)
-    world.m.external_probe = lambda **kw: {"observer": am.ExternalApp("observer", 3001, "http://127.0.0.1:3001/", version="0.1.12", pid=77)}
+    world.m.external_probe = lambda **kw: {"observer": am.ExternalApp("observer", 3001, "http://127.0.0.1:3001/", version="0.1.12", pid=77, argv=("node", "/opt/stack/abstractobserver/bin/cli.js"))}
     ov = world.m.overview(caller=CALLER)
     f, c, o = _row(ov, "flow")["status_control"], _row(ov, "code")["status_control"], _row(ov, "observer")["status_control"]
     assert (f["label"], f["action"], f["enabled"], f["tip"]) == ("Running", "stop", True, RUN_TIP)
@@ -138,7 +138,7 @@ def test_route_badge_click_stop_then_start(client, world, monkeypatch: pytest.Mo
 
 def test_route_external_stop_is_refused(client, world) -> None:
     world.net.pypi("0.13.0")
-    world.m.external_probe = lambda **kw: {"observer": am.ExternalApp("observer", 3001, "http://127.0.0.1:3001/", version="0.1.12", pid=77)}
+    world.m.external_probe = lambda **kw: {"observer": am.ExternalApp("observer", 3001, "http://127.0.0.1:3001/", version="0.1.12", pid=77, argv=("node", "/opt/stack/abstractobserver/bin/cli.js"))}
     r = client.post("/api/gateway/apps/observer/stop", json={})
     assert r.status_code == 409 and r.json()["reason"] == "started_outside_gateway"
 

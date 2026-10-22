@@ -142,6 +142,10 @@ class CreateEntityRequest(BaseModel):
         description="Embedding dimension for the pin; None = probed from the resolved embedder "
         "(memory locks it at first write when unknowable)",
     )
+    appearance: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Optional look in client apps at BIRTH: {color: '#RRGGBB', shape: planet|kitty|face|wave}",
+    )
     skills: Optional[List[Dict[str, Any]]] = Field(
         default=None,
         description="Optional skills selection at BIRTH (c2838: a birth can carry teaching from "
@@ -166,6 +170,14 @@ def create_entity(req: CreateEntityRequest) -> Dict[str, Any]:
     from ..entity_skills import DEFAULT_ENTITY_SKILL, validate_skills_selection
 
     birth_skills: Optional[List[Dict[str, Any]]] = None
+    birth_appearance: Optional[Dict[str, str]] = None
+    if req.appearance:
+        from ..entity_appearance import normalize_appearance
+
+        try:
+            birth_appearance = normalize_appearance(req.appearance.get("color"), req.appearance.get("shape"))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"appearance invalid: {e}")
     skills_request = req.skills if req.skills is not None else [{"name": DEFAULT_ENTITY_SKILL}]
     try:
         birth_skills = validate_skills_selection(skills_request)
@@ -207,6 +219,18 @@ def create_entity(req: CreateEntityRequest) -> Dict[str, Any]:
         status = 409 if "DIFFERENT" in detail or "already" in detail.lower() else 400
         raise HTTPException(status_code=status, detail=detail)
     out = result.to_dict()
+
+    # Birth look: written after the home exists; like birth skills, the created entity stands if
+    # this fails (a labeled warning; PUT /{name}/appearance can set it later).
+    if birth_appearance:
+        try:
+            from ..entity_appearance import write_entity_appearance
+
+            registry = _registry()
+            write_entity_appearance(registry.entities_dir / registry.manifest_for(req.name).slug, birth_appearance)
+            out["appearance"] = birth_appearance
+        except Exception as e:  # noqa: BLE001
+            out.setdefault("warnings", []).append(f"appearance not saved: {e}")
 
     # Birth teaching: selection + marker land AFTER the home exists. The
     # created entity STANDS even if this half fails — the failure surfaces
@@ -5217,6 +5241,52 @@ class PutVoiceRequest(BaseModel):
     speed: Optional[float] = Field(default=None, gt=0)
     quality_preset: Optional[str] = Field(default=None, max_length=32)
     clear: bool = Field(default=False, description="true = remove the choice; the entity falls back down the chain")
+
+
+class PutAppearanceRequest(BaseModel):
+    color: Optional[str] = Field(default=None, description="#RRGGBB")
+    shape: Optional[str] = Field(default=None, description="planet | kitty | face | wave")
+    clear: bool = Field(default=False, description="Back to the client's default look")
+
+
+@router.get("/{name}/appearance")
+def get_entity_appearance(name: str) -> Dict[str, Any]:
+    """How client apps draw the entity: `{color, shape, source}`; source "entity" when it has its
+    own look, "default" when unset (both null: the client draws its own default)."""
+    from ..entity_appearance import read_entity_appearance
+
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    stored = read_entity_appearance(registry.entities_dir / manifest.slug)
+    return {"color": stored.get("color"), "shape": stored.get("shape"), "source": "entity" if stored else "default"}
+
+
+@router.put("/{name}/appearance")
+def put_entity_appearance(name: str, req: PutAppearanceRequest) -> Dict[str, Any]:
+    """Set (the whole look: what is not given is unset) or clear the entity's look. Admin or its
+    creator."""
+    from ..entity_appearance import clear_entity_appearance, normalize_appearance, write_entity_appearance
+
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    home_dir = registry.entities_dir / manifest.slug
+    if req.clear:
+        if req.color or req.shape:
+            raise HTTPException(status_code=400, detail="clear=true takes no other fields")
+        clear_entity_appearance(home_dir)
+    else:
+        try:
+            given = normalize_appearance(req.color, req.shape)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        write_entity_appearance(home_dir, given)
+    return get_entity_appearance(name)
 
 
 @router.get("/{name}/voice")

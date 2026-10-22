@@ -5,6 +5,57 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `GET /api/gateway/sessions/search?q=…`: keyword search over the caller's conversations: their questions,
+  answers and artifacts (generated media by their prompt, attachments by their file name), with
+  AbstractRuntime's `ConversationSearch` (words and parts of words, case and accents ignored, a typo
+  forgiven). A hit on an artifact carries it (`artifact`), fetchable from its run's content route. One index per runtime plane, in that plane's data folder, so an account only ever
+  searches its own conversations. Filtered like `GET /runs?root_only=true` (session kinds, conversations,
+  archived left out unless `archived=true`); one item per session with a snippet and the match positions;
+  `indexing.complete: false` while older conversations are still being indexed.
+
+### Fixed
+
+- Browser apps left running by a previous gateway run are now stopped and
+  replaced, not listed as started outside the gateway. When the gateway
+  starts, an app of its own data dir (`<data dir>/apps/…`) still answering on
+  its port is stopped — with its pid file, or found on the port by its command
+  line — and the installed version starts in its place when the app is
+  enabled. `apps launch`, `apps update`, the console's **Running** badge and
+  the tray do the same when such a leftover holds the port, so an upgrade
+  never leaves an older copy serving the app. A process the pid file names
+  that ignores SIGTERM is killed after the stop timeout, and its record is
+  kept until it is gone. A copy running from somewhere else (the development
+  stack, `npx`, a service unit) is still listed as external and left alone;
+  a port whose process this machine cannot identify is now said to be "not
+  started by this gateway" rather than "started outside" it. Rows carry
+  `external.kind` (`leftover`, `foreign`, `unknown`) and `external.detail`
+  says which. Affects everyone whose gateway runs the browser apps, most
+  visibly upgrades on Linux servers.
+- The systemd user unit written by `abstractgateway service install` sets
+  `KillMode=mixed`: the gateway stops its own children in order, and systemd
+  kills whatever is left in the unit's control group when the unit stops or
+  restarts. Re-run `abstractgateway service install` (or the installer) to
+  rewrite the unit.
+- An app that exits while the gateway is shutting down is no longer
+  restarted by its crash supervisor.
+
+## [0.15.1] - 2026-10-17
+
+### Fixed
+
+- Admin-configured provider connections are shared by default with every human
+  and entity principal on the gateway. Historical root profiles marked
+  `scope: user` are inherited too. New users can run workflows through the
+  gateway's default endpoint without configuring their own provider or key.
+  Admin setup shares connections even when an older client sends `scope: user`.
+  The console says **Everyone on this gateway**; use stays
+  separate from admin-only management. User-private connections, disabled
+  providers, model allowlists and server-side credentials keep their boundaries.
+
 ## [0.15.0] - 2026-10-16
 
 Requires AbstractRuntime 0.10.2 (the active-run index behind every `GET /runs?status=running|waiting`, and standard-library imports in the Code-node sandbox: `POST /visualflow/code/simulate` and the Code node itself accept `import json`, `re`, `datetime`… and refuse the modules that reach the machine, naming the reason). Dependency floors: `AbstractRuntime>=0.10.2` (base, `apple`, `gpu`). A Code node body that returns a value JSON cannot carry (a module, a function, a set…) now gets a sandbox error naming the value and its place in the simulate reply, where it used to be an HTTP 500.

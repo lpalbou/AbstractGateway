@@ -185,11 +185,15 @@ default and your browser remembers it.
 - **Email** opens a dialog. On your own row it holds your email settings: your
   email address, your mailbox, the **Job failed** and **Approval needed**
   notifications, **Agent email tools** and **Recipients and limits** ([email.md](./email.md)).
+  A connected mailbox offers **Test / Configure / Disconnect**. **Configure** opens its saved
+  connection settings; for IMAP, **Save changes** tests both servers before replacing the
+  connection, and **Cancel changes** discards the draft. IMAP updates require re-entering the password.
   An administrator's own row adds one sentence: the address also receives the
   administrator's sign-in codes and notifications, and the mailbox serves the
   administrator's own agents. On another user's row it holds only that user's
-  **Email address** (with Save) and a read-only mailbox line ("Mailbox: not
-  connected — only alice can connect a mailbox. You never see anyone's mail.").
+  **Email address** (with **Save address**), its mailbox status and diagnostic reason, and
+  instructions to sign in as that user to configure the mailbox. Saving an address leaves
+  the mailbox connection unchanged.
   On an entity's row it holds the same email settings as your own, for the
   entity's own mailbox (an entity is an AI user: its agents read and send from
   it, and notifications about its runs go to its address); the administrator
@@ -670,9 +674,12 @@ when switched off:
 - The app's local address, the `npx @abstractframework/<app>` line, and the
   log of a finished install.
 - For an app started outside the gateway (the development stack, `npx`, a
-  service): "Started outside the gateway on port 3001" instead of Stop,
-  Start, Show log and Update; the card shows the Running pill and **Open**
-  like any running app ([apps.md](./apps.md#apps-started-outside-the-gateway)).
+  service): "Started outside the gateway on port 3001 (process 4242)" instead
+  of Stop, Start, Show log and Update; the card shows the Running pill and
+  **Open** like any running app. An app left running by a previous gateway run
+  says so instead, and its Running badge stops it; a port whose process cannot
+  be identified says "Not started by this gateway"
+  ([apps.md](./apps.md#apps-started-outside-the-gateway)).
 
 Installing, starting, stopping and updating need an admin; other users see the
 buttons disabled with the reason on hover.

@@ -331,6 +331,7 @@ pub fn app_blurb(row: &AppRow) -> String {
         "observer" => "Watch runs live, replay them, steer running work.",
         "continuum" => "Your backlog, inbox and long-running processes.",
         "entity" => "Create entities and talk with them as they learn.",
+        "note" => "Capture anything; see how it connects and changes over time.",
         "assistant" => "A menu-bar assistant: chat or talk hands-free.",
         _ => return row.description.clone(),
     }

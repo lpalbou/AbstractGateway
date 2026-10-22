@@ -78,7 +78,8 @@ def test_disabled_endpoint_profile_fails_loud(tmp_path: Path) -> None:
         reg._resolve_entity_provider("endpoint:ovh-provider")
 
 
-def test_root_scoped_profile_visible_to_per_principal_registry(tmp_path: Path) -> None:
+@pytest.mark.parametrize("scope", ["gateway", "user"])
+def test_root_scoped_profile_visible_to_per_principal_registry(tmp_path: Path, scope: str) -> None:
     """agency c753: under user auth the registry data_dir is a per-principal
     runtime root, but gateway-scoped endpoint profiles live at the gateway
     ROOT. A registry whose data_dir != root_data_dir must still resolve a
@@ -92,7 +93,7 @@ def test_root_scoped_profile_visible_to_per_principal_registry(tmp_path: Path) -
         provider_family="openai-compatible",
         base_url="https://ovh.example/v1",
         api_key="sk-secret",
-        scope="gateway",
+        scope=scope,
     )
 
     reg = EntityRegistry(
@@ -101,6 +102,7 @@ def test_root_scoped_profile_visible_to_per_principal_registry(tmp_path: Path) -
     provider, kwargs = reg._resolve_entity_provider("endpoint:ovh-provider")
     assert provider == "openai-compatible"
     assert kwargs["base_url"] == "https://ovh.example/v1"
+    assert kwargs["api_key"] == "sk-secret"
 
     # Without the root threaded (the pre-c753 bug), the per-principal registry
     # cannot see the root-scoped profile and refuses loud.

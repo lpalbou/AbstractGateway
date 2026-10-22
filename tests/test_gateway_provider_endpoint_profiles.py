@@ -975,13 +975,8 @@ def test_bundle_host_resolves_endpoint_profiles_for_runtime_without_exposing_sec
     assert resolved["api_key_set"] is True
 
 
-def test_per_principal_resolution_inherits_gateway_scope_and_explains_user_scope(tmp_path: Path) -> None:
-    """Release gap 2 (delegate order c5863), the repro pinned both ways.
-
-    A per-user runtime inherits ROOT profiles only when they are scoped
-    'gateway'. A root profile scoped 'user' (the silent creation default
-    before the fix) must not resolve — but the miss must EXPLAIN itself in
-    plain words instead of the misleading 'not configured'."""
+def test_per_principal_resolution_inherits_all_admin_root_profiles(tmp_path: Path) -> None:
+    """Admin root configuration is shared, including historical scope=user rows."""
     from abstractgateway.provider_endpoint_profiles import (
         ProviderEndpointProfileStore,
         explain_endpoint_profile_miss,
@@ -1005,11 +1000,11 @@ def test_per_principal_resolution_inherits_gateway_scope_and_explains_user_scope
 
     # Gateway-scoped: inherited by the per-user runtime.
     assert resolve_effective_endpoint_profile("endpoint:shared-ovh", base_dir=per_user, root_base_dir=root) is not None
-    # User-scoped at the root: not inherited (admin-private), and the miss
-    # names the real cause + the fix.
-    assert resolve_effective_endpoint_profile("endpoint:private-ovh", base_dir=per_user, root_base_dir=root) is None
-    reason = explain_endpoint_profile_miss("endpoint:private-ovh", base_dir=per_user, root_base_dir=root)
-    assert reason and "scope" in reason and "gateway" in reason
+    inherited = resolve_effective_endpoint_profile("endpoint:private-ovh", base_dir=per_user, root_base_dir=root)
+    assert inherited is not None and inherited.scope == "gateway"
+    assert inherited.api_key == "k"
+    assert store.get_profile("private-ovh").scope == "user", "reads must not rewrite stored profiles"
+    assert explain_endpoint_profile_miss("endpoint:private-ovh", base_dir=per_user, root_base_dir=root) is None
     # A genuinely unknown profile has no explanation (honest None).
     assert explain_endpoint_profile_miss("endpoint:nope", base_dir=per_user, root_base_dir=root) is None
     # Single-user layout (root == current): no explanation lane at all.
@@ -1020,7 +1015,7 @@ def test_admin_profile_creation_defaults_to_gateway_scope_on_the_root(tmp_path: 
     """The migration hazard cured at the source: an admin creating a profile
     WITHOUT naming a scope, on a single-user layout, gets scope 'gateway' —
     so the profile survives a later multi-user switch. An explicit 'user'
-    choice still wins."""
+    choice from an older console is also shared."""
     headers = {"Authorization": "Bearer admin-token"}
     with _app_client(tmp_path, monkeypatch) as client:
         r1 = client.post(
@@ -1048,7 +1043,7 @@ def test_admin_profile_creation_defaults_to_gateway_scope_on_the_root(tmp_path: 
             },
         )
         assert r2.status_code == 200, r2.text
-        assert r2.json()["profile"]["scope"] == "user"
+        assert r2.json()["profile"]["scope"] == "gateway"
 
 
 def test_tools_only_executor_gets_endpoint_profile_resolver(tmp_path: Path) -> None:
