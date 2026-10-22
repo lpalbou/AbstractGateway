@@ -21,7 +21,7 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 4
+- Planned: 5
 - Proposed: 41
 - Completed: 24
 - Deprecated: 1
@@ -97,8 +97,11 @@ relevant.
 
 ## Planned Items
 
+Priority P1: user-scoped MCP credentials and access (0936), requested after the shared RAGnarok demo.
+
 | Item | Acceptance summary |
 | --- | --- |
+| [0936_mcp_user_credentials_and_access.md](planned/0936_mcp_user_credentials_and_access.md) | Admin-approved servers and user grants, optional shared tokens, personal token overrides, per-user activation and connection status across Assistant clients. |
 | [0233_real_run_cancellation.md](planned/0233_real_run_cancellation.md) | Cancel aborts the in-flight generation (cross-package; see the framework-root master item). |
 | [0929_automations_v2_external_event_admission.md](planned/0929_automations_v2_external_event_admission.md) | Automations v2: authenticated, idempotent external event admission into the runtime's durable inbox, event-kind trigger sources exposed, terminal-run chaining reconciled across restarts. Requires 0928 and the runtime v2 inbox. |
 | [0930_console_automations_inventory_and_controls.md](planned/0930_console_automations_inventory_and_controls.md) | Phase after v1: console lists automations, pauses/resumes/archives them with visible outcomes, and labels legacy schedules distinctly. Requires 0928. |

@@ -9526,13 +9526,32 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        if (!providers.length && catalog.useConfiguredProviderFallback) providers = configuredProviderOptions();
 	        state.providerModels.set(cacheKey, providers);
 	      }
-	      return state.providerModels.get(cacheKey) || [];
+          // Named endpoint profiles are gateway-owned connection definitions, not
+          // built-in modality plugins. Offer them here; selecting one performs
+          // authenticated, task-filtered discovery without generating anything.
+          const providers = [...(state.providerModels.get(cacheKey) || [])];
+          for (const profile of state.endpointProfiles || []) {
+            const id = providerValueForEndpointProfile(profile);
+            if (profile.enabled === false || !id.startsWith("endpoint:") ||
+                !["openai", "openai-compatible"].includes(profile.provider_family)) continue;
+            state.providerLabels.set(id, `${profile.display_name || profile.id} (${id})`);
+            if (!providers.includes(id)) providers.push(id);
+          }
+          return providers;
 	    }
 	    async function fetchDefaultModels(provider, row) {
 	      if (!provider) return [];
 	      const catalog = defaultCatalogForRow(row || {});
 	      if (catalog.discovery === false) return [];  // see fetchDefaultProviders
-	      const path = catalog.modelPath(provider);
+          // Vision has its own metadata-aware remote catalog (including models
+          // absent from the language-model registry, e.g. gpt-image-2).
+          // Other modalities reuse the existing profile-aware route filter.
+          const path = String(provider).startsWith("endpoint:") &&
+            !catalog.modelPath(provider).includes("/vision/provider_models") &&
+            !catalog.modelPath(provider).includes("/discovery/providers/")
+            ? withQuery(`/api/gateway/discovery/providers/${encodeURIComponent(provider)}/models`,
+                        { capability_route: defaultRowKey(row || {}) })
+            : catalog.modelPath(provider);
 	      const cacheKey = `models::${catalog.scope}::${provider}::${path}`;
 	      // The in-flight PROMISE is cached so two openers share one request.
 	      // A REJECTED promise must never survive that: cached, it re-throws

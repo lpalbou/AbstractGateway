@@ -88,6 +88,10 @@ SKILLS_MCP_CSS = r"""
 .skmcp-lead { margin: 0 0 14px; padding: 10px 12px; border-left: 3px solid var(--info, var(--accent)); background: color-mix(in srgb, var(--info, var(--accent)) 8%, transparent); border-radius: var(--radius-sm); font-size: var(--font-size-base); line-height: 1.45; }
 .skmcp-files { margin: 0; padding-left: 18px; font-size: var(--font-size-md); columns: 2; }
 .skmcp-files code { font-size: var(--font-size-md); }
+.skmcp-secret { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.skmcp-secret input { min-width: 0; flex: 1; }
+.skmcp-secret button { flex: none; width: 44px; height: 44px; padding: 10px; }
+.skmcp-secret svg { width: 20px; height: 20px; }
 .skmcp-headers { display: flex; flex-direction: column; gap: 8px; }
 .skmcp-header-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) auto; gap: 8px; align-items: center; }
 .skmcp-test { margin-top: 4px; padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid var(--line-soft); font-size: var(--font-size-base); }
@@ -479,7 +483,8 @@ SKILLS_MCP_JS = r"""
         const saved = h.saved && savedHeaders[h.name];
         const ph = saved ? `Saved · fingerprint ${saved.fingerprint}; type to replace` : "Value";
         return `<div class="skmcp-header-row" data-mcp-header="${i}"><input type="text" aria-label="Header name" placeholder="Name, e.g. Authorization" value="${esc(h.name)}" data-mcp-header-name="${i}" autocomplete="off" spellcheck="false">`
-          + `<input type="password" aria-label="Header value" placeholder="${esc(ph)}" value="${esc(h.value || "")}" data-mcp-header-value="${i}" autocomplete="new-password">`
+          + `<div class="skmcp-secret"><input type="password" aria-label="Header value" placeholder="${esc(ph)}" value="${esc(h.value || "")}" data-mcp-header-value="${i}" autocomplete="new-password">`
+          + `<button type="button" class="secondary" data-mcp-header-visibility="${i}" aria-label="Show header value" title="Show header value" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/><path data-eye-slash d="m3 3 18 18" style="display:none"/></svg></button></div>`
           + `<button type="button" class="secondary" data-mcp-header-remove="${i}" aria-label="Remove this header">Remove</button></div>`;
       }).join("");
       const args = (m.args || []).join("\n");
@@ -734,6 +739,17 @@ SKILLS_MCP_JS = r"""
         if (!t || !skmcp.mcpModal) return;
         if (mcpAgentsClick(t)) return;
         if (t.dataset.mcpHow) { mcpModalCollect(); skmcp.mcpModal.transport = t.dataset.mcpHow; renderMcpModal(); const b = $(`mcp-how-${t.dataset.mcpHow}`); if (b) b.focus(); }
+        else if (t.dataset.mcpHeaderVisibility !== undefined) {
+          const input = document.querySelector(`[data-mcp-header-value="${t.dataset.mcpHeaderVisibility}"]`);
+          if (!input) return;
+          const reveal = input.type === "password";
+          input.type = reveal ? "text" : "password";
+          t.setAttribute("aria-pressed", String(reveal));
+          t.setAttribute("aria-label", reveal ? "Hide header value" : "Show header value");
+          t.title = reveal ? "Hide header value" : "Show header value";
+          t.querySelector("[data-eye-slash]").style.display = reveal ? "" : "none";
+          t.querySelector("[data-eye-slash]").removeAttribute("hidden");
+        }
         else if (t.dataset.mcpHeaderAdd) { mcpModalCollect(); skmcp.mcpModal.headers.push({ name: "", value: "", saved: false }); renderMcpModal(); }
         else if (t.dataset.mcpHeaderRemove) { mcpModalCollect(); skmcp.mcpModal.headers.splice(Number(t.dataset.mcpHeaderRemove), 1); renderMcpModal(); }
       };

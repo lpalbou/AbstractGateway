@@ -17742,6 +17742,18 @@ def _filter_vision_provider_models_response(
     provider: Optional[str],
     providers_only: bool,
 ) -> Dict[str, Any]:
+    # Cached MLX weights are not proof that this execution host can run MLX.
+    # Only prune a LOCAL catalog; a remote Core may itself be on Apple Silicon.
+    source = str(response.get("upstream_source") or response.get("source") or "")
+    if source == "abstractvision.local" and platform.system() != "Darwin":
+        response = dict(response)
+        apple_only = {"mlx-gen", "mflux"}
+        for field in ("providers", "available_providers"):
+            response[field] = [p for p in response.get(field) or [] if str(p).lower() not in apple_only]
+        response["models"] = [m for m in response.get("models") or []
+                              if isinstance(m, dict) and str(m.get("provider") or m.get("owned_by") or "").lower() not in apple_only]
+        response["models_by_provider"] = {p: v for p, v in (response.get("models_by_provider") or {}).items()
+                                          if str(p).lower() not in apple_only}
     wanted = str(provider or "").strip().lower()
     items = response.get("models")
     models = [dict(x) for x in items if isinstance(x, dict)] if isinstance(items, list) else []
@@ -19751,17 +19763,46 @@ async def vision_provider_models_catalog(
             provider=provider,
             metadata={"providers_only": providers_only},
         )
+    # Endpoint profiles carry their own destination and credentials. Keep their
+    # public identity while asking the existing vision catalog about that remote
+    # endpoint; generic LLM capability filtering misses image-only model ids.
+    profile = _resolve_endpoint_profile_for_request(request, str(provider or "")) if provider else None
+    if str(provider or "").startswith("endpoint:") and profile is None:
+        raise HTTPException(status_code=404, detail="Endpoint profile is unavailable or disabled")
+    if profile is not None and profile.provider_family not in {"openai", "openai-compatible"}:
+        raise HTTPException(status_code=400, detail="Vision discovery requires an OpenAI-compatible endpoint")
+    routed_provider = profile.provider_family if profile is not None else provider
     try:
         payload = await _discovery_to_thread(
             discovery.list_vision_provider_models,
             task=task_value,
-            base_url=base_url,
-            provider_api_key=_request_provider_api_key(request),
-            provider=provider,
-            providers_only=providers_only,
+            base_url=(profile.base_url or None) if profile is not None else base_url,
+            provider_api_key=profile.api_key if profile is not None else _request_provider_api_key(request),
+            provider=routed_provider,
+            providers_only=False if profile is not None else providers_only,
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
+    if profile is not None:
+        payload = dict(payload) if isinstance(payload, dict) else {}
+        from ..endpoint_vision_catalog import endpoint_vision_model
+
+        rows = []
+        allowed = set(profile.allowed_models or [])
+        for item in payload.get("models") or []:
+            if not isinstance(item, dict):
+                continue
+            model = endpoint_vision_model(item, task_value, profile.provider_family)
+            if not model or (allowed and model not in allowed):
+                continue
+            rows.append({**item, "id": model, "model": model, "routed_model": model,
+                         "provider": profile.virtual_provider_id})
+        payload.update(
+            models=rows,
+            models_by_provider=_vision_models_by_provider(rows),
+            providers=[profile.virtual_provider_id] if rows else [],
+            available_providers=[profile.virtual_provider_id] if rows else [],
+        )
     out = _filter_vision_provider_models_response(
         _runtime_discovery_payload(payload),
         provider=provider,

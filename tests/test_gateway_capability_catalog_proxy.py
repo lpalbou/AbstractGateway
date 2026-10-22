@@ -1139,3 +1139,57 @@ def test_a_providers_openai_key_reaches_the_voice_catalog(tmp_path: Path, monkey
             assert seen[-1] == "sk-rotated"
         finally:
             client.delete(f"{profiles}/my-openai", headers=headers)
+
+
+def test_vision_endpoint_profile_uses_saved_connection_and_allowlist(tmp_path, monkeypatch):
+    from abstractgateway.provider_endpoint_profiles import ProviderEndpointProfile
+    import abstractgateway.routes.gateway as routes
+    calls = []
+    profile = ProviderEndpointProfile(id="airelays", display_name="AI Relays",
+                                     base_url="http://127.0.0.1:8317/v1", api_key="private-test-key",
+                                     allowed_models=("gpt-image-2",))
+    monkeypatch.setattr(routes, "_resolve_endpoint_profile_for_request", lambda request, name: profile)
+
+    class Discovery:
+        def list_vision_provider_models(self, **kwargs):
+            calls.append(kwargs)
+            return {"models": [
+                {"provider": "openai-compatible", "model": "gpt-image-2", "tasks": ["text_to_image"]},
+                {"provider": "openai-compatible", "model": "other-image"}],
+                "providers": ["openai-compatible"], "available_providers": ["openai-compatible"]}
+
+    _patch_discovery_facade(monkeypatch, facade=Discovery())
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        response = client.get('/api/gateway/vision/provider_models?provider=endpoint:airelays&task=text_to_image&base_url=http://wrong.invalid', headers=headers)
+    assert response.status_code == 200, response.text
+    assert calls == [{"task": "text_to_image", "base_url": profile.base_url,
+                      "provider_api_key": profile.api_key, "provider": "openai-compatible", "providers_only": False}]
+    data = response.json()
+    assert data['models_by_provider'] == {'endpoint:airelays': ['gpt-image-2']}
+    assert data['items'][0]['provider'] == 'endpoint:airelays'
+    assert 'private-test-key' not in response.text
+
+
+def test_vision_disabled_profile_is_not_probed(tmp_path, monkeypatch):
+    import abstractgateway.routes.gateway as routes
+    monkeypatch.setattr(routes, '_resolve_endpoint_profile_for_request', lambda *args: None)
+    class Discovery:
+        def list_vision_provider_models(self, **kwargs):
+            pytest.fail('Unavailable endpoint must not be probed')
+    _patch_discovery_facade(monkeypatch, facade=Discovery())
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        response = client.get('/api/gateway/vision/provider_models?provider=endpoint:disabled', headers=headers)
+    assert response.status_code == 404
+
+
+@pytest.mark.parametrize('source,expected', [('abstractvision.local', ['huggingface']), ('abstractcore.remote', ['mlx-gen', 'mflux', 'huggingface'])])
+def test_vision_linux_hides_apple_local_engines_only(monkeypatch, source, expected):
+    import abstractgateway.routes.gateway as routes
+    monkeypatch.setattr(routes.platform, 'system', lambda: 'Linux')
+    payload = {'source': source, 'providers': ['mlx-gen', 'mflux', 'huggingface'],
+               'available_providers': ['mlx-gen', 'mflux', 'huggingface'],
+               'models_by_provider': {'mlx-gen': ['flux'], 'mflux': ['flux'], 'huggingface': ['flux']}}
+    result = routes._filter_vision_provider_models_response(payload, provider=None, providers_only=True)
+    assert result['providers'] == expected
