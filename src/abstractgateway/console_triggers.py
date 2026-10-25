@@ -451,7 +451,7 @@ TRIGGERS_JS = r"""
         const slot = $("triggers-all-slot");
         slot.hidden = !trgAdmin();
         if (trgAdmin()) {
-          const sw = afSwitchCreate({ id: "triggers-all", label: "All accounts", checked: false, small: true });
+          const sw = afSwitchCreate({ id: "triggers-all", label: "All accounts", description: "Admin view: every account's connections, with who owns each. Connections belong to one person; off shows only yours.", checked: false, small: true });
           slot.append(...sw.nodes);
           afSwitchBind(sw.button, async (next) => { trg.all = next; trg.expanded = {}; trg.rows = null; await loadTriggers(); return next; }, (e) => trgMessage(trgErr(e), "error"));
         }

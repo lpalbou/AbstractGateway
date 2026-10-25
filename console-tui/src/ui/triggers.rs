@@ -1574,7 +1574,7 @@ fn body(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu) -> View {
         let c = ctx.clone();
         let toggle = Toggle::bound(tu.all)
             .label(ALL)
-            .tip("Every account's connections  (a)")
+            .tip("Admin view: every account's connections, with who owns each; off shows only yours  (a)")
             .on_change(move |v| set_all(&c, tu, v))
             .view(cx, &t);
         col = col.child(
