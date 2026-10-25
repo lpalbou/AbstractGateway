@@ -40,7 +40,6 @@ TRIGGERS_CSS = r"""
 .trg-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
 .trg-table th { text-align: left; white-space: nowrap; }
 .trg-table td { vertical-align: top; padding-top: 10px; padding-bottom: 10px; overflow-wrap: anywhere; }
-.trg-table th.trg-col-source { width: 22%; }
 .trg-table th.trg-col-name { width: auto; }
 .trg-table th.trg-col-account { width: 14%; }
 .trg-table th.trg-col-status { width: 8.5rem; }
@@ -143,9 +142,17 @@ TRIGGERS_JS = r"""
       }
       return out;
     }
+    // The trigger as the person reads it (the same words as Flow's trigger choices): "When <name> has a
+    // new item", "When <name> is called", "When mail arrives in <mailbox>"; never `source_id@version`.
+    function trgTriggerPhrase(row, sources) {
+      const name = String(row.label || row.connection_id || "");
+      if (row.source_id === "feed.item") return `When ${name} has a new item`;
+      if (row.source_id === "webhook.received") return `When ${name} is called`;
+      return trgSourceLabel(row, sources);
+    }
     function trgSourceLabel(row, sources) {
       const s = (sources || []).find((x) => x.id === row.source_id && Number(x.version) === Number(row.source_version));
-      return s ? String(s.label || s.id) : `${row.source_id} v${row.source_version}`;
+      return s ? String(s.label || s.id) : String(row.source_id);
     }
     function trgPrincipalText(p) {
       // The store's owner string is "<tenant>:<user>" (W2 principal_key); the default tenant is implied.
@@ -171,10 +178,6 @@ TRIGGERS_JS = r"""
       connected: ["Active", "is-ok"], receive_only: ["Read-only", "is-ok"], paused: ["Paused", "is-muted"],
       needs_reconnect: ["Needs reconnecting", "is-warn"], unavailable: ["Unavailable", "is-muted"], not_connected: ["Not connected", "is-muted"],
     };
-    function trgMailboxSourceLabel(sources) {
-      const s = (sources || []).find((x) => x && x.available && x.connection_provider === "email_accounts");
-      return s ? String(s.label || s.id) : "When an email arrives";
-    }
     function trgMailboxStatusChip(m) {
       if (!m.enabled) return `<span class="trg-chip is-muted">Off</span>`;
       const st = String((m.mailbox && m.mailbox.state) || "").trim();
@@ -184,15 +187,13 @@ TRIGGERS_JS = r"""
     }
     function mailboxRowsMarkup(items, opts) {
       const o = opts || {};
-      const label = esc(trgMailboxSourceLabel(o.sources));
       return (items || []).filter((m) => m && m.configured).map((m) => {
         const id = esc(m.account_id);
         const w = m.watcher || {};
         const last = w.last_poll ? `checked ${trgAgo(w.last_poll, o.now) || w.last_poll}` : "Never";
-        const name = m.primary ? `${m.address || m.account_id} (primary)` : `${m.account_id}${m.address ? ` · ${m.address}` : ""}`;
+        const name = m.primary ? `${m.address || m.account_id} (primary)` : m.account_id;
         return `<tr class="trg-row trg-row--mailbox" data-trg-mailbox="${id}">`
-          + `<td class="trg-source">${label}<span class="trg-sub trg-mono">mailbox ${id}${m.can_send ? "" : " · read-only"}</span></td>`
-          + `<td class="trg-name-cell"><span class="trg-name">${esc(name)}</span><span class="trg-sub trg-fold">Last check: ${esc(last)}</span></td>`
+          + `<td class="trg-name-cell"><span class="trg-name">${esc(name)}</span><span class="trg-sub">When mail arrives in ${esc(m.address || m.account_id)}${m.can_send ? "" : " · read-only"}</span><span class="trg-sub trg-fold">Last check: ${esc(last)}</span></td>`
           + `<td class="trg-status">${trgMailboxStatusChip(m)}</td>`
           + `<td class="trg-last">${esc(last)}</td>`
           + `<td class="trg-actions-cell"><div class="trg-actions"><button type="button" class="link-button" data-trg-mailbox-manage="${id}" data-af-tip="Mailboxes are managed with your account">Manage under Account → My email</button></div></td></tr>`;
@@ -200,7 +201,7 @@ TRIGGERS_JS = r"""
     }
     function triggersRowsMarkup(rows, opts) {
       const o = opts || {};
-      const cols = o.all ? 6 : 5;
+      const cols = o.all ? 5 : 4;
       const list = rows || [];
       const mail = !o.all ? mailboxRowsMarkup(o.mailboxes, o) : "";
       if (!list.length && mail) return mail;
@@ -210,7 +211,7 @@ TRIGGERS_JS = r"""
       return list.map((r) => {
         const id = esc(r.connection_id);
         const label = esc(r.label || r.connection_id);
-        const source = esc(trgSourceLabel(r, o.sources));
+        const phrase = esc(trgTriggerPhrase(r, o.sources));
         const last = r.last_event_at ? trgAgo(r.last_event_at, o.now) || esc(r.last_event_at) : "Never";
         const open = !!(o.expanded && o.expanded[r.connection_id]);
         const owner = o.all ? trgPrincipalText(r.principal) : "";
@@ -220,8 +221,7 @@ TRIGGERS_JS = r"""
           `<button type="button" class="secondary" data-trg-delete="${id}" data-af-tip="Delete ${label}">Delete</button>`,
         ];
         let html = `<tr class="trg-row" data-trg-row="${id}">`
-          + `<td class="trg-source">${source}<span class="trg-sub trg-mono">${esc(r.source_id)} v${esc(r.source_version)}</span></td>`
-          + `<td class="trg-name-cell"><span class="trg-name">${label}</span><span class="trg-sub trg-fold">Last event: ${esc(last)}</span>${trgFireLine(o.fire && o.fire[r.connection_id])}</td>`
+          + `<td class="trg-name-cell"><span class="trg-name">${label}</span><span class="trg-sub">${phrase}</span><span class="trg-sub trg-fold">Last event: ${esc(last)}</span>${trgFireLine(o.fire && o.fire[r.connection_id])}</td>`
           + (o.all ? `<td class="trg-account">${owner ? esc(owner) : `<span class="trg-sub">owner not reported</span>`}</td>` : "")
           + `<td class="trg-status">${trgStatusChip(r.status)}</td>`
           + `<td class="trg-last">${esc(last)}</td>`
@@ -327,7 +327,7 @@ TRIGGERS_JS = r"""
       const body = $("triggers-table");
       if (!body) return;
       $("triggers-account-head").hidden = !trg.all;
-      const cols = trg.all ? 6 : 5;
+      const cols = trg.all ? 5 : 4;
       if (trg.error) { body.innerHTML = `<tr><td colspan="${cols}" class="trg-empty">Could not list the connections: ${esc(trg.error)}</td></tr>`; return; }
       if (!trg.rows) { body.innerHTML = `<tr><td colspan="${cols}" class="trg-empty">Reading the connections...</td></tr>`; return; }
       body.innerHTML = triggersRowsMarkup(trg.rows, { all: trg.all, sources: trg.sources || [], expanded: trg.expanded, fire: trg.fire, mailboxes: trg.mailboxes || [] });
@@ -373,7 +373,7 @@ TRIGGERS_JS = r"""
       const confirmRow = document.createElement("tr");
       confirmRow.className = "row-confirm";
       const td = document.createElement("td");
-      td.colSpan = trg.all ? 6 : 5;
+      td.colSpan = trg.all ? 5 : 4;
       const box = document.createElement("div");
       box.className = "inline-confirm";
       box.setAttribute("role", "group");
@@ -537,7 +537,7 @@ TRIGGERS_JS = r"""
       const s = sources.find((x) => `${x.id}@${x.version}` === m.sourceKey) || null;
       const options = sources.map((x) => `<option value="${esc(`${x.id}@${x.version}`)}"${s && x === s ? " selected" : ""}>${esc(x.label || x.id)}</option>`).join("");
       let html = `<div class="trg-form">`
-        + `<div class="trg-field"><label for="trg-f-source">Source</label><select id="trg-f-source" data-trg-source><option value="">Choose a source…</option>${options}</select></div>`
+        + `<div class="trg-field"><label for="trg-f-source">What to listen to</label><select id="trg-f-source" data-trg-source><option value="">Choose…</option>${options}</select></div>`
         + `<div class="trg-field"><label for="trg-f-label">Name *</label><input id="trg-f-label" type="text" autocomplete="off" data-trg-label value="${esc(m.label || "")}" placeholder="Release feed, Orders webhook…"><p class="trg-help">How you find it in Flow and in your automations.</p></div>`;
       if (s) html += triggerFormMarkup(m.fields);
       body.innerHTML = html + `</div>`;

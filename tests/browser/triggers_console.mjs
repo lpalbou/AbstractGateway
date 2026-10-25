@@ -31,11 +31,11 @@ const SOURCES = {
     { id: "schedule", version: 2, label: "Schedule", available: true, needs_connection: false, connection_schema: {}, config_schema: { type: "object" }, event_schema: {}, capabilities: { kind: "time" } },
     { id: "email.received", version: 1, label: "When an email arrives", available: true, needs_connection: true, connection_provider: "email_accounts", config_schema: { type: "object" }, event_schema: {}, capabilities: { kind: "event" },
       connection_schema: { type: "object", properties: { account: { type: "string", default: "self", description: "the mailbox: a mail account id of the user ('self': the primary mailbox)" } } } },
-    { id: "feed.item", version: 1, label: "Feed item", available: true, needs_connection: true, config_schema: { type: "object" }, event_schema: {}, capabilities: { kind: "event" },
+    { id: "feed.item", version: 1, label: "When a feed has a new item", available: true, needs_connection: true, config_schema: { type: "object" }, event_schema: {}, capabilities: { kind: "event" },
       connection_schema: { type: "object", required: ["url"], properties: {
         url: { type: "string", title: "Feed address", description: "An RSS or Atom address.", pattern: "^https?://", examples: ["https://example.org/feed.xml"] },
         every_minutes: { type: "integer", title: "Check every (minutes)", default: 15, minimum: 5 } } } },
-    { id: "webhook.received", version: 1, label: "Webhook received", available: true, needs_connection: true, config_schema: { type: "object" }, event_schema: {}, capabilities: { kind: "event" },
+    { id: "webhook.received", version: 1, label: "When a webhook is called", available: true, needs_connection: true, config_schema: { type: "object" }, event_schema: {}, capabilities: { kind: "event" },
       connection_schema: { type: "object", additionalProperties: false, properties: {
         subject_path: { type: "string", description: "dotted path in a JSON body for the event subject (default: the webhook id)" },
         tolerance_s: { type: "integer", minimum: 60, maximum: 3600, default: 300 },
@@ -207,7 +207,7 @@ try {
     await page.waitForSelector('#triggers-table [data-trg-row="conn_feed1"]', { timeout: 30000 });
     check((await page.textContent("#page-title")).trim() === "Triggers", `${tag}: page title`);
     const feedRow = page.locator('[data-trg-row="conn_feed1"]');
-    check((await feedRow.textContent()).includes("Feed item"), `${tag}: source label from the descriptor`);
+    check((await feedRow.textContent()).includes("When Release notes feed has a new item") && !(await feedRow.textContent()).includes("feed.item"), `${tag}: the trigger in words, never an id`);
     check((await feedRow.textContent()).includes("Release notes feed"), `${tag}: name`);
     check((await page.locator('[data-trg-row="conn_mail1"]').textContent()).includes("Never"), `${tag}: never-fired connection says Never`);
     await noSideScroll(page, `${tag} list`);
@@ -231,7 +231,7 @@ try {
     if (w === 1440 && theme === "light") {
       // Create a feed connection: the form comes from connection_schema.
       check(await page.locator('[data-trg-mailbox="default"]').count() === 1, "mailbox row listed");
-      check((await page.textContent('[data-trg-mailbox="default"]')).includes("When an email arrives"), "mailbox row: source");
+      check((await page.textContent('[data-trg-mailbox="default"]')).includes("When mail arrives in admin@example.org"), "mailbox row: the trigger in words");
       check((await page.textContent('[data-trg-mailbox="default"]')).includes("Manage under Account → My email"), "mailbox row: link");
       await page.click("#triggers-new");
       await page.waitForSelector("#trigger-modal-backdrop:not([hidden]) [data-trg-source]");

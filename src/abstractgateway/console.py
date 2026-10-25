@@ -2315,7 +2315,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       <div id="tab-triggers" class="tab-panel">
         <!-- TRIGGERS (root backlog 1041, console_triggers.py): this person's trigger connections. -->
         <section id="triggers-section" class="session-only trg-page">
-          <p class="section-note trg-purpose">A connection is one place events come from: this mailbox, this feed, this webhook. Create it once here; your automations and flows can then listen to it.</p>
+          <p class="section-note trg-purpose">A connection is something of yours the gateway listens to: a mailbox, a feed, a webhook address. Flows and automations use it by name.</p>
           <div class="trg-toolbar">
             <span id="triggers-all-slot" class="workflows-switch" hidden></span>
             <span class="trg-spacer"></span>
@@ -2325,7 +2325,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           <div id="triggers-message" class="message trg-message" role="status" aria-live="polite"></div>
           <div class="table-scroll workflows-scroll">
             <table class="trg-table" data-ui-no-stack>
-              <thead><tr><th class="trg-col-source">Source</th><th class="trg-col-name">Name</th><th id="triggers-account-head" class="trg-col-account" hidden>Account</th><th class="trg-col-status">Status</th><th class="trg-col-last trg-th-last">Last event</th><th class="trg-col-actions"><span class="sr-only">Actions</span></th></tr></thead>
+              <thead><tr><th class="trg-col-name">Name</th><th id="triggers-account-head" class="trg-col-account" hidden>Account</th><th class="trg-col-status">Status</th><th class="trg-col-last trg-th-last">Last event</th><th class="trg-col-actions"><span class="sr-only">Actions</span></th></tr></thead>
               <tbody id="triggers-table"></tbody>
             </table>
           </div>

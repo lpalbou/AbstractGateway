@@ -27,7 +27,7 @@ const TRG_FIELD_LABELS = { subject_path: "Subject (path in the JSON body)", tole
 const TRG_MAILBOX_STATE = { connected: ["Active", "is-ok"], receive_only: ["Read-only", "is-ok"], paused: ["Paused", "is-muted"], needs_reconnect: ["Needs reconnecting", "is-warn"], unavailable: ["Unavailable", "is-muted"], not_connected: ["Not connected", "is-muted"] };
 """
 
-ROW_FNS = ("trgAgo", "trgSourceLabel", "trgMailboxSourceLabel", "trgMailboxStatusChip", "mailboxRowsMarkup", "trgPrincipalText", "trgStatusChip", "trgFireLine", "trgCopyRow",
+ROW_FNS = ("trgAgo", "trgSourceLabel", "trgTriggerPhrase", "trgMailboxStatusChip", "mailboxRowsMarkup", "trgPrincipalText", "trgStatusChip", "trgFireLine", "trgCopyRow",
            "triggerEventsMarkup", "triggerDetailMarkup", "triggersRowsMarkup")
 
 SOURCES = [
@@ -86,7 +86,7 @@ console.log(JSON.stringify(out));
     r = {x["k"]: x["html"] for x in _node(harness)}
     mine = r["mine"]
     c1 = mine[mine.index('data-trg-row="c1"') : mine.index('data-trg-row="c2"')]
-    assert "Feed item" in c1 and "feed.item v1" in c1
+    assert "When Release &lt;feed&gt; has a new item" in c1 and "feed.item" not in c1.replace('data-trg', '')
     assert "Release &lt;feed&gt;" in c1 and "<feed>" not in c1
     assert '<span class="trg-chip is-ok">Active</span>' in c1
     assert "3 min ago" in c1
@@ -98,14 +98,14 @@ console.log(JSON.stringify(out));
     assert '<span class="trg-chip is-muted">Paused</span>' in c2 and "Never" in c2
     c3 = mine[mine.index('data-trg-row="c3"') :]
     # An unknown source keeps its id; an unknown status is shown as the gateway says it.
-    assert "gone.source v3" in c3 and '<span class="trg-chip is-warn">weird</span>' in c3
+    assert "gone.source" in c3 and '<span class="trg-chip is-warn">weird</span>' in c3
     assert "Test not sent: connection is paused" in c3
     # The account column only in the admin's all-accounts view.
     assert "trg-account" not in mine
     allv = r["all"]
     assert allv.count('class="trg-account"') == 3 and ">bob<" in allv and "owner not reported" in allv
-    assert "No connection yet." in r["empty"] and 'colspan="5"' in r["empty"]
-    assert "No account has a connection yet." in r["emptyAll"] and 'colspan="6"' in r["emptyAll"]
+    assert "No connection yet." in r["empty"] and 'colspan="4"' in r["empty"]
+    assert "No account has a connection yet." in r["emptyAll"] and 'colspan="5"' in r["emptyAll"]
     opened = r["open"]
     assert 'aria-expanded="true"' in opened and 'data-trg-detail="c2"' in opened
     # A webhook row's detail: its address with a copy button.
@@ -215,7 +215,7 @@ def test_routes_are_the_connections_contract() -> None:
 
 def test_mailbox_sources_are_rows_not_new_connections() -> None:
     source = _console_script()
-    harness = HELPERS + _fns(source, "trgConnectableSources", "trgAgo", "trgMailboxSourceLabel", "trgMailboxStatusChip", "mailboxRowsMarkup") + """
+    harness = HELPERS + _fns(source, "trgConnectableSources", "trgAgo", "trgMailboxStatusChip", "mailboxRowsMarkup") + """
 const SOURCES = [
   {id: "email.received", version: 1, label: "When an email arrives", available: true, needs_connection: true, connection_provider: "email_accounts", connection_schema: {type: "object"}},
   {id: "webhook.received", version: 1, label: "When a webhook is called", available: true, needs_connection: true, connection_provider: "trigger_connections", connection_schema: {type: "object", properties: {}}},
@@ -231,7 +231,7 @@ console.log(JSON.stringify([trgConnectableSources(SOURCES).map((s) => s.id), mai
     assert ids == ["webhook.received"]  # the mailbox source is never offered in New connection
     assert rows.count('class="trg-row trg-row--mailbox"') == 2  # configured mailboxes only
     work = rows[rows.index('data-trg-mailbox="work"'):]
-    assert "When an email arrives" in work and "work · me@work.example" in work and "read-only" in work
+    assert '<span class="trg-name">work</span>' in work and "When mail arrives in me@work.example · read-only" in work
     assert '<span class="trg-chip is-ok">Read-only</span>' in work and "checked 1 min ago" in work
     assert 'data-trg-mailbox-manage="work"' in work and "Manage under Account → My email" in work
     assert "me@example.org (primary)" in rows
