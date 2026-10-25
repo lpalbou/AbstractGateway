@@ -142,6 +142,16 @@ def test_one_bad_message_is_passed_after_three_polls(gateway, imap, smtp, monkey
         return real_get(self, uid, **kw)
 
     monkeypatch.setattr(EmailClient, "get", flaky_get)
+    real_get_many = EmailClient.get_many
+
+    def flaky_get_many(self, uids, **kw):
+        # The server refuses the batch FETCH that holds the bad message: the watcher then reads
+        # one by one (same connection), so only that message fails.
+        if bad in [int(u) for u in uids]:
+            raise EmailProtocolError("The IMAP server refused the FETCH command.", "Retry.")
+        return real_get_many(self, uids, **kw)
+
+    monkeypatch.setattr(EmailClient, "get_many", flaky_get_many)
     for _ in range(2):
         assert w.poll_once(force=True)["new"] == 0
     out = w.poll_once(force=True)
