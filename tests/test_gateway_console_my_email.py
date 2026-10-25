@@ -60,8 +60,15 @@ def test_console_calls_only_the_callers_own_routes() -> None:
     for sub in ("/oauth/start", "/oauth/finish"):
         assert f'api(`${{base}}{sub}`' in html, sub
     assert 'api(`${flow.base || myEmailApi()}/oauth/cancel`' in html
-    # No email call bypasses the base (it would hit the signed-in user's mailbox from an entity's modal).
-    assert 'api("/api/gateway/me/email' not in html
+    # No email call bypasses the base (it would hit the signed-in user's mailbox from an entity's modal),
+    # except the caller's OWN further-mailbox routes (backlog 1044): the Triggers page's mailbox rows and
+    # the Further mailboxes card, which exists only on the caller's own page (never an entity's).
+    import re as _re
+
+    direct = sorted(set(_re.findall(r'api\("(/api/gateway/me/email[^"]*)"', html)))
+    assert direct == ["/api/gateway/me/email/accounts", "/api/gateway/me/email/oauth/clients"], direct
+    assert "function mbxOwnPage() { return !myEmailUi.base; }" in html
+    assert "card.hidden = !mbxOwnPage();\n      if (!mbxOwnPage()) return;" in html
     assert 'api(myEmailUi.notifyTest || "/api/gateway/me/notifications/test"' in html
     # Recipient rules save through the API base they were rendered with (own or an entity's).
     assert 'const RECIPIENT_RULES_BASE = "/api/gateway/me/email";' in html
