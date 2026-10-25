@@ -208,3 +208,44 @@ def test_routes_are_in_the_openapi_document() -> None:
     for path in ("/api/gateway/me/events", "/api/gateway/me/events/stream", "/api/gateway/me/events/notifications"):
         assert path in paths, path
     assert "Last-Event-ID" in paths["/api/gateway/me/events/stream"]["get"]["description"]
+
+
+def test_client_channels_report_and_the_dedupe_rule(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from abstractgateway.events_stream import already_notified
+    from abstractgateway.tray.client import device_id
+
+    client = _client(tmp_path, monkeypatch)
+    with client:
+        alice = _create_user(client, "alice")
+        key = "automation:completed:a:1"
+        mac = device_id()
+
+        def report(channel: str, device: str = mac, outcome: str = "sent"):
+            return client.post("/api/gateway/me/events/notifications", headers=alice,
+                               json={"channel": channel, "outcome": outcome, "record_key": key, "device": device})
+
+        assert report("tray").status_code == 200
+        events = _events(client, alice)["events"]
+        # The Assistant on the same Mac: the tray already showed it, so it stays silent...
+        assert already_notified(events, record_key=key, channel="assistant", device=mac) is True
+        # ...but not on another device, not against its own channel, not for another record.
+        assert already_notified(events, record_key=key, channel="assistant", device="other-mac") is False
+        assert already_notified(events, record_key=key, channel="tray", device=mac) is False
+        assert already_notified(events, record_key="automation:completed:a:2", channel="assistant", device=mac) is False
+        # Older than a minute: notify again.
+        later = time.time() + 61
+        assert already_notified(events, record_key=key, channel="assistant", device=mac, now=later) is False
+
+        for channel in ("assistant", "code", "watch"):
+            r = report(channel, device="watch-1" if channel == "watch" else mac)
+            assert r.status_code == 200 and r.json()["created"] is True, (channel, r.text)
+        assert report("assistant").json()["created"] is False  # idempotent per (channel, record)
+        sent = [e["data"] for e in _events(client, alice)["events"] if e["type"] == "notification.sent"]
+        assert sorted(d["channel"] for d in sent) == ["assistant", "code", "tray", "watch"]
+        assert all(d["record_key"] == key and d["notice"] == f"attention:{key}" for d in sent)
+        assert {d["channel"]: d["device"] for d in sent}["watch"] == "watch-1"
+        failed = report("code", outcome="failed")
+        assert failed.status_code == 200
+        assert _events(client, alice)["events"][-1]["type"] == "notification.failed"
+        for bad in ("push", "console", "email", ""):
+            assert report(bad).status_code == 422, bad

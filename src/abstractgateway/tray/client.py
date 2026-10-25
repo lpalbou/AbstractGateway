@@ -162,7 +162,7 @@ class GatewayClient:
     def report_notification(self, record_key: str, *, outcome: str, error: Optional[str] = None) -> Result:
         """Record that the tray showed (or could not show) a notice: `notification.sent|failed`
         with `channel: "tray"` in this principal's stream."""
-        body: Dict[str, Any] = {"channel": "tray", "outcome": str(outcome), "record_key": str(record_key)}
+        body: Dict[str, Any] = {"channel": "tray", "outcome": str(outcome), "record_key": str(record_key), "device": device_id()}
         if error:
             body["error"] = str(error)[:400]
         return self._request("POST", "/me/events/notifications", body=body, timeout=6.0)
@@ -295,6 +295,15 @@ class GatewayClient:
         gateway refuse an installer other than the one shown in the confirmation."""
         body = {"installer_sha256": installer_sha256} if installer_sha256 else {}
         return self._request("POST", "/host/update/start", body=body, timeout=15.0)
+
+
+def device_id() -> str:
+    """This machine's opaque id for the notification dedupe rule (sha256 of the host name, 16
+    hex): the Assistant and Code on the same Mac compute the same value."""
+    import hashlib
+    import platform
+
+    return hashlib.sha256(str(platform.node() or "unknown").strip().lower().encode("utf-8")).hexdigest()[:16]
 
 
 def _parse_json(raw: bytes) -> Any:

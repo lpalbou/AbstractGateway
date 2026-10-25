@@ -170,6 +170,22 @@ curl -sN "http://127.0.0.1:8080/api/gateway/me/events/stream?heartbeat_s=15" \
 Each event is `id: <sequence>`, `event: <type>`, `data: <the event JSON>`; reconnecting with the last
 `id` you read gets exactly what came after it.
 
+### Showing a notification without doubling the tray
+
+An app that notifies (the Assistant desktop, Code) follows one rule so an approval is announced
+once per machine: on `attention.raised`, wait a moment, read the last events, and stay silent if a
+`notification.sent` for the same `record_key` from another channel with the same `device` is less
+than a minute old. Otherwise notify, then report it:
+
+```bash
+curl -s -X POST "http://127.0.0.1:8080/api/gateway/me/events/notifications" \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"channel":"assistant","outcome":"sent","record_key":"<record_key>","device":"<this machine id>"}'
+```
+
+The machine id is the first 16 hex characters of the sha256 of the lower-cased host name (what
+the gateway tray sends). `channel` is one of `tray`, `assistant`, `code`, `watch`.
+
 ## Trying it by hand without a model or a mailbox
 
 The console's **Triggers** page has **Test** on each connection: it appends a synthetic event

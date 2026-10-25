@@ -54,7 +54,11 @@ EVENT_TYPES = frozenset(
         "run.finished",
     }
 )
-CHANNELS = frozenset({"console", "email", "tray"})
+CHANNELS = frozenset({"console", "email", "tray", "assistant", "code", "watch"})
+# The client channels that report what they showed (POST /me/events/notifications).
+CLIENT_CHANNELS = ("tray", "assistant", "code", "watch")
+# Dedupe window of the client notification rule (`already_notified`).
+NOTIFY_DEDUPE_S = 60.0
 TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 # Boot repair window: runs updated this long before the newest stream event are re-checked.
 REBUILD_MARGIN_S = 600.0
@@ -475,6 +479,36 @@ def record_notification(
     return created
 
 
+def already_notified(
+    events: Iterable[Mapping[str, Any]],
+    *,
+    record_key: str,
+    channel: str,
+    device: Optional[str],
+    now: Optional[float] = None,
+    window_s: float = NOTIFY_DEDUPE_S,
+) -> bool:
+    """The client dedupe rule: before showing an OS notification for `record_key`, an app stays
+    silent when the stream already holds a `notification.sent` for that record from ANOTHER client
+    channel on the SAME device within the last `window_s` seconds (the tray is the default notifier;
+    an app notifies only when no tray, or other app, reported). Pure: give it recent events."""
+    import time as _time
+
+    clock = float(now if now is not None else _time.time())
+    for ev in events:
+        if ev.get("type") != "notification.sent":
+            continue
+        data = ev.get("data") if isinstance(ev.get("data"), Mapping) else {}
+        if data.get("record_key") != record_key or data.get("channel") == channel:
+            continue
+        if data.get("channel") not in CLIENT_CHANNELS or not device or data.get("device") != device:
+            continue
+        at = _epoch(ev.get("time"))
+        if at is not None and 0 <= clock - at <= float(window_s):
+            return True
+    return False
+
+
 def rebuild_attention(stream: UserEventStream, run_store: Any, ledger_store: Any) -> Dict[str, int]:
     """Repair a crash between an attention record and its stream event: items above the stream's
     per-automation floor are (re)appended. A stream that never recorded a floor takes the current
@@ -670,8 +704,11 @@ def latest_wait_record(ledger_store: Any, run: Any) -> Optional[Dict[str, Any]]:
 __all__ = [
     "CHANNELS",
     "EVENT_TYPES",
+    "CLIENT_CHANNELS",
+    "NOTIFY_DEDUPE_S",
     "SPEC_VERSION",
     "UserEventStream",
+    "already_notified",
     "attention_from_record",
     "is_pointer_run",
     "plane_owner",

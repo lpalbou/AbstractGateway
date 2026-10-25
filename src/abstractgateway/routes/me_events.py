@@ -164,19 +164,29 @@ async def stream_my_events(
 
 
 class NotificationReport(BaseModel):
-    channel: Literal["tray"] = Field(..., description="The client channel that showed (or failed to show) the notice.")
+    channel: Literal["tray", "assistant", "code", "watch"] = Field(
+        ..., description="The client channel that showed (or failed to show) the notice."
+    )
     outcome: Literal["sent", "failed"]
     record_key: str = Field(..., min_length=1, max_length=400, description="The attention record the notice was about.")
+    device: Optional[str] = Field(
+        None, min_length=1, max_length=200,
+        description="An opaque id of the machine the notice was shown on (the dedupe rule compares it).",
+    )
     error: Optional[str] = Field(None, max_length=400)
 
 
 @router.post("/events/notifications")
 async def report_notification(request: Request, body: NotificationReport) -> Dict[str, Any]:
-    """A client channel (the desktop tray) records the notice it showed as
-    `notification.sent|failed {channel, notice, record_key}` in the caller's own stream.
-    Idempotent per (channel, record_key)."""
+    """A client channel (tray, assistant, code, watch) records the notice it showed as
+    `notification.sent|failed {channel, notice, record_key, device?}` in the caller's own stream.
+    Idempotent per (channel, record_key). Dedupe rule for apps: before notifying, stay silent when
+    a `notification.sent` for the record from another channel on the same device is under a
+    minute old (the tray is the default notifier)."""
     stream = _my_stream(request)
     data: Dict[str, Any] = {"record_key": body.record_key}
+    if body.device:
+        data["device"] = body.device
     if body.error:
         data["error"] = body.error
     created = await asyncio.to_thread(
