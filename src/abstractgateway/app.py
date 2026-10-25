@@ -227,6 +227,11 @@ app.include_router(start_at_login_router, prefix="/api")
 # Automations v1 façade (routes/automations.py): literal /gateway/automations...
 # and /gateway/trigger-sources paths, before the parametrized gateway router.
 app.include_router(automations_router, prefix="/api")
+# Triggers (routes/triggers.py, framework backlog 1041/1042): /gateway/triggers/... literal
+# paths (connections, the public signed webhook ingress), before the parametrized gateway router.
+from .routes.triggers import router as triggers_router  # noqa: E402
+
+app.include_router(triggers_router, prefix="/api")
 # Per-user email (framework backlog 0992): /gateway/me/email*, /me/notifications,
 # /admin/users/{id}/email, the sign-in recovery routes and the legacy /email/* aliases.
 app.include_router(email_router, prefix="/api")

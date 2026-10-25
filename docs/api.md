@@ -1114,6 +1114,53 @@ history (every archive and unarchive) are kept in the plane's
 `session.unarchived` audit event. Automations are archived with the
 `automation.archive` command and brought back with `automation.unarchive`.
 
+## Triggers
+
+A trigger **connection** is one account's instance of a trigger source: a webhook endpoint
+with its signing secret, a feed URL. Automations bind it by id
+(`trigger.config.connection_id`); each connection has one inbox stream,
+`trigger:<connection_id>`, that its events are appended to and its automations read.
+
+### Webhook ingress (`POST /api/gateway/triggers/webhooks/{connection_id}`)
+
+The one public route of the family: it carries **no bearer token**. The
+[Standard Webhooks](https://www.standardwebhooks.com/) signature with the connection's secret
+is the auth, so any external system (n8n, Zapier, GitHub, Stripe, a script) can call it once it
+knows the address and the secret.
+
+- Headers: `webhook-id` (unique per message), `webhook-timestamp` (Unix seconds),
+  `webhook-signature` = `v1,<base64 HMAC-SHA256(secret, "<webhook-id>.<webhook-timestamp>.<body>")>`
+  (several space-separated signatures are accepted; the secret is `whsec_<base64 key>`).
+- `202 {accepted: true, connection_id, webhook_id, seq, woken}`: one event appended to the
+  connection's stream (CloudEvents names: `id` and `subject` = the webhook id, `data` = the JSON
+  body, or `{body, content_type}` for a non-JSON body, `abstracttrust: "untrusted"`), the
+  automations bound to it woken.
+- Refusals, each with `{"detail": {"reason_code", "message"}}`, recorded on the connection
+  (`last_error`) and on the request's audit line (`webhook` {connection_id, outcome,
+  reason_code}, never the body): `401 webhook_unsigned` (a header missing), `401
+  webhook_signature_invalid`, `404 connection_not_found` (unknown id, or not a webhook
+  connection), `409 connection_disabled`, `409 webhook_stale` (timestamp more than 5 minutes from
+  the gateway's clock), `409 webhook_replayed` (this webhook-id was already accepted: nothing is
+  appended twice), `413 webhook_too_large` (body over 512 KiB), `429 webhook_rate_limited`
+  (60 calls a minute per connection, 120 per client address; `Retry-After`).
+- The origin allowlist does not apply (the signature decides). Making the gateway reachable from
+  the internet (Tailscale Funnel, a reverse proxy) is the operator's choice.
+
+```bash
+SECRET='whsec_...'           # shown once when the connection is created
+CID='tc_...'                 # the connection id
+BODY='{"event":"order.paid","order":42}'
+WID="msg_$(openssl rand -hex 8)"; TS="$(date +%s)"
+KEY_HEX="$(printf '%s' "${SECRET#whsec_}" | base64 -d | xxd -p -c 256)"
+SIG="$(printf '%s' "$WID.$TS.$BODY" | openssl dgst -sha256 -mac HMAC -macopt "hexkey:$KEY_HEX" -binary | base64)"
+curl -sS -H "Content-Type: application/json" \
+  -H "webhook-id: $WID" -H "webhook-timestamp: $TS" -H "webhook-signature: v1,$SIG" \
+  -d "$BODY" "$BASE_URL/api/gateway/triggers/webhooks/$CID"
+```
+
+Evidence: `src/abstractgateway/routes/triggers.py` (`receive_webhook`),
+`src/abstractgateway/trigger_connections.py` (lookup across accounts, verification, rate limit).
+
 ## Conversation tool choices
 
 Assistant clients use `GET /api/gateway/discovery/tools` and the established

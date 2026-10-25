@@ -1066,7 +1066,18 @@ class GatewaySecurityMiddleware:
         if method in {"GET", "HEAD"} and p == "/api/gateway/about":
             # Versions and project links only: no paths, no secrets.
             return True
+        if self._signed_webhook_path(p, method):
+            return True
         return False
+
+    @staticmethod
+    def _signed_webhook_path(path: str, method: str) -> bool:
+        """The trigger webhook ingress (routes/triggers.py, framework backlog 1042): the
+        Standard Webhooks signature with the connection's secret is the auth (no bearer token,
+        no origin allowlist); rate limited and body capped in the route."""
+        p = path.rstrip("/")
+        prefix = "/api/gateway/triggers/webhooks/"
+        return method == "POST" and p.startswith(prefix) and "/" not in p[len(prefix):] and bool(p[len(prefix):])
 
     def _route_authorization_requirement(self, path: str, method: str) -> Optional[dict[str, str]]:
         requirement = gateway_route_authorization_requirement(path, method)
@@ -1264,7 +1275,7 @@ class GatewaySecurityMiddleware:
         try:
             # Origin checks (only when Origin is present).
             origin = self._header(scope, "origin")
-            if origin is not None and not self._origin_accepted(scope, origin):
+            if origin is not None and not self._signed_webhook_path(path, method) and not self._origin_accepted(scope, origin):
                 await self._reject(_send_wrapped, status=403, detail="Forbidden (origin not allowed)")
                 return
 

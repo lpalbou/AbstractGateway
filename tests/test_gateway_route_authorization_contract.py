@@ -246,6 +246,9 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     ("POST", "/api/gateway/automations/{automation_id}/discuss"),
     # R16.1: a stateless preview of the caller's own trigger (nothing stored).
     ("POST", "/api/gateway/automations/schedule-preview"),
+    # The public trigger webhook ingress (PUBLIC_WRITES below): signature-authenticated,
+    # no principal; it writes only the connection's own inbox stream.
+    ("POST", "/api/gateway/triggers/webhooks/{connection_id}"),
     ("POST", "/api/gateway/runs/{run_id}/chat"),
     ("POST", "/api/gateway/runs/{run_id}/chat_threads"),
     ("POST", "/api/gateway/runs/{run_id}/summary"),
@@ -431,6 +434,12 @@ PUBLIC_WRITES = {
     ("POST", "/api/gateway/session/recovery/request"),
     ("POST", "/api/gateway/session/recovery/redeem"),
     ("GET", "/api/gateway/session/recovery"),
+    # Trigger webhook ingress (framework backlog 1042; see
+    # test_gateway_trigger_webhooks.py): the Standard Webhooks signature with the
+    # connection's sealed secret IS the auth (401 unsigned / bad signature, 409 stale
+    # or replayed id), rate limited per connection and client address, body capped;
+    # it only appends to that connection's inbox stream and wakes its automations.
+    ("POST", "/api/gateway/triggers/webhooks/{connection_id}"),
 }
 
 

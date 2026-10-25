@@ -606,6 +606,18 @@ remembered session (30 days) of the user who clicked Open. See
 [apps.md](./apps.md) and
 [architecture.md](./architecture.md#desktop-assistant-hand-over).
 
+### Trigger webhooks: signed, not signed in
+
+`POST /api/gateway/triggers/webhooks/{connection_id}` is the one public write
+that is not a sign-in step: an external system delivers an event to a trigger
+connection without a gateway token. The Standard Webhooks signature with the
+connection's secret (sealed with the data folder's key, shown to its owner once)
+is the auth: an unsigned or tampered call is 401, a timestamp more than five
+minutes off or a webhook id already accepted is 409, a body over 512 KiB is 413,
+and calls are limited per connection and per client address (429). It can only
+append to that connection's inbox stream and wake the automations bound to it;
+the event body reaches them as untrusted data. See [api.md](./api.md#triggers).
+
 ## Workspaces: three levels
 
 Thin clients (browser apps, bridges, the Assistant) start runs whose file tools

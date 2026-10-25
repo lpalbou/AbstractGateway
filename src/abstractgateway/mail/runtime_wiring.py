@@ -10,7 +10,9 @@ rebuilt runtime is never left without its account:
   of use (recipient policy, send limits, the user's and the admin's switches);
 - `runtime.set_email_binding(...)`: the account automation occurrences are bound to (None while
   the account is not connected or email is turned off), refreshed by the email worker and by
-  the settings routes.
+  the settings routes;
+- `runtime.set_trigger_connection_store(...)`: the plane's trigger connections
+  (`trigger_connections.py`), stored beside the event inbox.
 
 Root runs are bound at the door (`bundle_host.start_run`): client-supplied email keys are
 popped, then `_runtime.email_account` is SET from the runtime's binding.
@@ -86,6 +88,11 @@ def wire_runtime_email(runtime: Any, plane: EmailPlane) -> None:
     runtime.set_event_inbox(JsonFileEventInbox(plane.runtime_data_dir / "event_inbox"))
     runtime.set_email_context_resolver(make_email_resolver(plane))
     refresh_runtime_binding(runtime, plane)
+    # The plane's trigger connections (framework backlog 1040/1041): webhook and feed
+    # connections live beside the event inbox their feeders append to.
+    from ..trigger_connections import wire_runtime_connections
+
+    wire_runtime_connections(runtime, plane.runtime_data_dir)
 
 
 def refresh_cached_service_binding(plane: EmailPlane) -> None:
