@@ -72,7 +72,7 @@ MAILBOXES_JS = r"""
       return !!(g && (g.configured || g.builtin_available));
     }
     const MBX_STATE = {
-      connected: "Connected", receive_only: "Read-only: watched by your automations, never sends", paused: "Paused",
+      connected: "Connected", receive_only: "Connected", paused: "Paused",
       needs_reconnect: "Needs reconnecting", unavailable: "Mailboxes are turned off for this account", not_connected: "Not connected",
     };
     const MBX_ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
@@ -88,11 +88,11 @@ MAILBOXES_JS = r"""
       const o = opts || {};
       const id = esc(m.account_id);
       const w = m.watcher || {};
-      const sub = [m.address ? esc(m.address) : "", m.folder ? `folder ${esc(m.folder)}` : "", m.can_send ? "reads and sends" : "read-only"].filter(Boolean).join(" · ");
+      const sub = [m.address ? esc(m.address) : "", m.can_send ? "" : "read-only"].filter(Boolean).join(" · ");
       const note = o.note && o.note[m.account_id];
       let html = `<li class="mbx-row" data-mbx-row="${id}">`
         + `<div class="mbx-row__head"><span class="mbx-row__name">${id}</span><span class="mbx-row__sub">${sub}</span></div>`
-        + `<p class="mbx-row__sub">${esc(mbxStateText(m))}${w.last_poll ? ` · last checked ${esc(String(w.last_poll).replace("T", " ").slice(0, 16))}` : ""}</p>`
+        + `<p class="mbx-row__sub">${esc(mbxStateText(m))}${w.last_poll ? ` · checked ${esc(trgAgo(w.last_poll) || "")}` : ""}</p>`
         + `<div class="mbx-row__actions"><span data-mbx-switch="${id}"></span>`
         + `<button type="button" class="secondary" data-mbx-test="${id}">Test</button>`
         + `<button type="button" class="secondary" data-mbx-delete="${id}">Delete</button></div>`;
@@ -115,10 +115,10 @@ MAILBOXES_JS = r"""
     // The PUT body of a read-only mailbox (IMAP only), or the problem sentences.
     function mailboxConnectBody(v) {
       const problems = [];
-      const id = String(v.id || "").trim();
-      if (!id) problems.push("Name is required.");
-      else if (id === "default") problems.push("“default” is your primary mailbox: choose another name.");
-      else if (!MBX_ID_RE.test(id)) problems.push("Name: 1 to 32 lowercase letters, digits, - or _, starting with a letter or digit.");
+      const id = mailboxIdFromName(v.id);
+      if (!String(v.id || "").trim()) problems.push("Name is required.");
+      else if (!id) problems.push("Name: use at least one letter or digit.");
+      else if (id === "default") problems.push("“Default” is your primary mailbox: choose another name.");
       const address = String(v.address || "").trim();
       if (!address || !address.includes("@")) problems.push("Address is required.");
       const host = String(v.host || "").trim();
@@ -158,12 +158,13 @@ MAILBOXES_JS = r"""
     async function startMailboxOAuth(provider) {
       if (mbx.oauth) return;
       const err = $("my-mailbox-error");
-      const id = String($("my-mailbox-id").value || "").trim();
+      const name = String($("my-mailbox-id").value || "").trim();
+      const id = mailboxIdFromName(name);
       const address = String($("my-mailbox-address").value || "").trim();
       const problems = [];
-      if (!id) problems.push("Name is required.");
-      else if (id === "default") problems.push("“default” is your primary mailbox: choose another name.");
-      else if (!MBX_ID_RE.test(id)) problems.push("Name: 1 to 32 lowercase letters, digits, - or _, starting with a letter or digit.");
+      if (!name) problems.push("Name is required.");
+      else if (!id) problems.push("Name: use at least one letter or digit.");
+      else if (id === "default") problems.push("“Default” is your primary mailbox: choose another name.");
       if (!address || !address.includes("@")) problems.push("Address is required.");
       if (problems.length) { err.textContent = problems.join(" "); err.hidden = false; return; }
       err.hidden = true;
@@ -210,6 +211,15 @@ MAILBOXES_JS = r"""
       $("my-mailbox-state").textContent = "Sign-in cancelled.";
       await api(`${flow.base}/cancel`, { method: "POST", body: JSON.stringify({ flow_id: flow.id }) }).catch(() => {});
     }
+    // UX #16: a free-text name ("Work inbox"); the id automations use is derived ("work-inbox").
+    function mailboxIdFromName(name) {
+      return String(name || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32).replace(/-+$/g, "");
+    }
+    function mbxRenderIdHint() {
+      const id = mailboxIdFromName($("my-mailbox-id").value);
+      $("my-mailbox-id-help").textContent = id ? `Automations name it ${id}.` : "A name you recognise, e.g. Work inbox.";
+    }
     async function loadMyMailboxes() {
       const card = $("my-mailboxes-card");
       if (!card) throw new Error("The account email UI has no #my-mailboxes-card (console_mailboxes.py).");
@@ -225,6 +235,7 @@ MAILBOXES_JS = r"""
         mbx.error = emailErrorText(e);
       }
       renderMyMailboxes();
+      if (mbx.openAddOnLoad) { mbx.openAddOnLoad = false; mbxShowForm(true); }
     }
     function renderMyMailboxes() {
       const list = $("my-mailboxes-list");
@@ -282,6 +293,7 @@ MAILBOXES_JS = r"""
     function mbxShowForm(show) {
       mbx.adding = !!show;
       $("my-mailbox-form").hidden = !mbx.adding;
+      $("my-mailbox-add").hidden = mbx.adding;  // UX #16: no Add button above its own open form
       $("my-mailbox-add").setAttribute("aria-expanded", mbx.adding ? "true" : "false");
       if (mbx.adding) { try { $("my-mailbox-id").focus(); } catch {} }
     }
@@ -317,6 +329,7 @@ MAILBOXES_JS = r"""
       $("my-mailbox-microsoft").onclick = () => startMailboxOAuth("microsoft");
       $("my-mailbox-google-cancel").onclick = () => cancelMailboxGoogle();
       $("my-mailbox-imap-host").oninput = mbxRenderHelp;
+      $("my-mailbox-id").oninput = mbxRenderIdHint;
       $("my-mailbox-address").oninput = mbxRenderHelp;
       $("my-mailboxes-list").onclick = (e) => {
         const t = e.target && e.target.closest ? e.target.closest("button") : null;
@@ -332,14 +345,14 @@ MAILBOXES_JS = r"""
 MAILBOXES_HTML = r"""
               <section id="my-mailboxes-card" class="af-card account-card" aria-labelledby="my-mailboxes-title" hidden>
                 <div class="af-card__header">
-                  <h3 id="my-mailboxes-title" class="af-card__title">Further mailboxes</h3>
+                  <h3 id="my-mailboxes-title" class="af-card__title">Other mailboxes</h3>
                   <p class="af-card__desc">Other mailboxes your automations can watch ("When an email arrives"). Read-only: they are never used to send.</p>
                 </div>
                 <div id="my-mailboxes-list"></div>
                 <p id="my-mailbox-state" class="inline-state" role="status" aria-live="polite"></p>
-                <div class="af-form__actions"><button id="my-mailbox-add" class="secondary" type="button" aria-expanded="false" aria-controls="my-mailbox-form">Add a mailbox (read-only)</button></div>
+                <div class="af-form__actions"><button id="my-mailbox-add" class="secondary" type="button" aria-expanded="false" aria-controls="my-mailbox-form">Add a mailbox</button></div>
                 <div id="my-mailbox-form" class="mbx-form" hidden>
-                  <div class="af-form__field"><label class="af-form__label" for="my-mailbox-id">Name</label><input id="my-mailbox-id" autocomplete="off" spellcheck="false" placeholder="work" aria-describedby="my-mailbox-id-help"><p id="my-mailbox-id-help" class="af-form__help">How automations name it: lowercase letters, digits, - or _.</p></div>
+                  <div class="af-form__field"><label class="af-form__label" for="my-mailbox-id">Name</label><input id="my-mailbox-id" autocomplete="off" spellcheck="false" placeholder="Work inbox" aria-describedby="my-mailbox-id-help"><p id="my-mailbox-id-help" class="af-form__help">A name you recognise, e.g. Work inbox.</p></div>
                   <div class="af-form__field"><label class="af-form__label" for="my-mailbox-address">Address</label><input id="my-mailbox-address" type="email" autocomplete="off" spellcheck="false"></div>
                   <div class="af-form__field"><label class="af-form__label" for="my-mailbox-imap-host">IMAP server</label><input id="my-mailbox-imap-host" autocomplete="off" spellcheck="false" placeholder="imap.example.com"></div>
                   <div class="af-form__field"><label class="af-form__label" for="my-mailbox-imap-port">Port</label><input id="my-mailbox-imap-port" inputmode="numeric" placeholder="993"></div>

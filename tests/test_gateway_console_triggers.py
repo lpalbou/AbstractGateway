@@ -108,7 +108,10 @@ console.log(JSON.stringify(out));
     assert "trg-account" not in mine
     allv = r["all"]
     assert allv.count('class="trg-account"') == 3 and ">bob<" in allv and "owner not reported" in allv
-    assert "No connection yet." in r["empty"] and 'colspan="4"' in r["empty"]
+    # UX #14: never a dead end.
+    assert "Nothing to listen to yet." in r["empty"] and 'colspan="4"' in r["empty"]
+    for b in ('data-trg-empty="mailbox">Add a mailbox (My email)', 'data-trg-empty="feed.item">Add a feed', 'data-trg-empty="webhook.received">Add a webhook'):
+        assert b in r["empty"], b
     assert "No account has a connection yet." in r["emptyAll"] and 'colspan="5"' in r["emptyAll"]
     opened = r["open"]
     assert 'aria-expanded="true"' in opened and 'data-trg-detail="c2"' in opened
@@ -120,24 +123,29 @@ console.log(JSON.stringify(out));
 
 def test_recent_events_newest_first_capped_and_escaped() -> None:
     source = _console_script()
-    harness = HELPERS + _fns(source, "trgAgo", "triggerEventsMarkup") + """
+    harness = HELPERS + _fns(source, "trgAgo", "trgWhen", "triggerEventSentence", "triggerEventsMarkup") + """
 const events = [];
 for (let i = 1; i <= 25; i += 1) {
-  events.push({ specversion: "1.0", id: `evt-${i}`, type: "abstractframework.feed.item", source: "trigger:c1", subject: i === 25 ? "<b>Title</b>" : `item ${i}`,
-    time: "2026-10-25T11:00:00Z", datacontenttype: "application/json", data: i === 24 ? { test: true } : { title: `t${i}` }, sequence: i, connectionid: "c1" });
+  events.push({ specversion: "1.0", id: `evt-${i}`, type: "abstract.feed.item.v1", source: "trigger:c1", subject: `item ${i}`,
+    time: new Date(Date.now() - (25 - i) * 60000).toISOString(), datacontenttype: "application/json",
+    data: i === 24 ? { test: true } : { title: i === 25 ? "<b>Title</b>" : `t${i}` }, sequence: i, connectionid: "c1" });
 }
-console.log(JSON.stringify([triggerEventsMarkup(events), triggerEventsMarkup([])]));
+const hook = {type: "abstract.webhook.received.v1", subject: "msg_console_1", data: {body: {}}, sequence: 1, id: "h1"};
+const now = Date.parse("2026-10-25T15:00:00");
+console.log(JSON.stringify([triggerEventsMarkup(events), triggerEventsMarkup([]), triggerEventSentence(hook),
+  trgWhen("2026-10-25T14:59:30", now), trgWhen("2026-10-25T09:00:00", now), trgWhen("2026-10-24T09:00:00", now)]));
 """
-    full, empty = _node(harness)
-    seqs = [int(s) for s in re.findall(r'<span class="trg-seq">#(\d+)</span>', full)]
-    assert seqs == list(range(25, 5, -1))  # newest first, the last 20
-    assert "&lt;b&gt;Title&lt;/b&gt;" in full and "<b>Title</b>" not in full
-    first = full[: full.index('data-trg-event="evt-24"')]
-    assert "test" not in first.split("<pre>")[0].replace("abstractframework", "")
+    full, empty, hook, recent, today, before = _node(harness)
+    ids = re.findall(r'data-trg-event="evt-(\d+)"', full)
+    assert [int(i) for i in ids] == list(range(25, 5, -1))  # newest first, the last 20
+    # UX #10: sentences, the JSON behind Details.
+    assert "New item: &lt;b&gt;Title&lt;/b&gt; · just now" in full and "<b>Title</b>" not in full
     item24 = full[full.index('data-trg-event="evt-24"') : full.index('data-trg-event="evt-23"')]
-    assert '<span class="trg-chip is-muted">test</span>' in item24
-    # Each event expands to its whole JSON.
-    assert "&quot;connectionid&quot;: &quot;c1&quot;" in full
+    assert '<span class="trg-event__line">Test event · ' in item24
+    assert "<summary>Details</summary>" in full and "&quot;connectionid&quot;: &quot;c1&quot;" in full
+    assert "abstract.feed.item.v1" not in full.split("<details>")[0]
+    assert hook == "Call received"
+    assert (recent, today, before) == ("just now", "09:00", "Oct 24 · 09:00")
     assert empty == '<p class="trg-empty">No event yet. Send a test event to see one here.</p>'
 
 
@@ -241,7 +249,7 @@ console.log(JSON.stringify([trgConnectableSources(SOURCES).map((s) => s.id), mai
     # The same three states with the mailbox's own switch (no used_by reported here: "Listening").
     assert '<span class="trg-doing">Listening</span>' in work and "checked 1 min ago" in work
     assert 'data-trg-mailbox-use="work"' in work and ">Listening</span>" in work and 'aria-checked="true"' in work
-    assert 'data-trg-mailbox-manage="work"' in work and "Manage under Account → My email" in work
+    assert 'data-trg-mailbox-manage="work"' in work and "Manage in My email" in work
     assert "me@example.org (primary)" in rows
 
 
@@ -315,25 +323,28 @@ console.log(JSON.stringify([sig]));
 
 def test_read_only_mailbox_body_and_rows() -> None:
     source = _console_script()
-    harness = HELPERS + _fns(source, "mailboxConnectBody", "mbxFurther", "mbxStateText", "mailboxDeleteQuestion", "mailboxRowMarkup", "mailboxesMarkup") + """
+    harness = HELPERS + _fns(source, "mailboxIdFromName", "mailboxConnectBody", "mbxFurther", "mbxStateText", "mailboxDeleteQuestion", "mailboxRowMarkup", "mailboxesMarkup") + """
 const MBX_ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const MBX_STATE = { connected: "Connected", receive_only: "Read-only: watched by your automations, never sends", paused: "Paused", needs_reconnect: "Needs reconnecting", unavailable: "Mailboxes are turned off for this account", not_connected: "Not connected" };
 const good = mailboxConnectBody({id: "abstractframework", address: "lpalbou@abstractframework.ai", host: "imap.example.ai", port: "993", security: "ssl", username: "", password: "pw"});
-const bad = mailboxConnectBody({id: "Default!", address: "x", host: "", port: "99a", password: ""});
+const bad = mailboxConnectBody({id: "!!!", address: "x", host: "", port: "99a", password: ""});
+const named = mailboxConnectBody({id: "Work Inbox (é)", address: "a@b.c", host: "h", password: "p"});
 const reserved = mailboxConnectBody({id: "default", address: "a@b.c", host: "h", password: "p"});
 const items = [
   {account_id: "default", primary: true, configured: true, enabled: true},
   {account_id: "abstractframework", primary: false, configured: true, address: "lpalbou@abstractframework.ai", folder: "INBOX", can_send: false, enabled: true, mailbox: {state: "receive_only"}, watcher: {}},
 ];
-console.log(JSON.stringify([good, bad.problems, reserved.problems, mailboxesMarkup(items, {note: {}, confirm: "abstractframework"}), mailboxesMarkup([items[0]], {})]));
+console.log(JSON.stringify([good, bad.problems, reserved.problems, mailboxesMarkup(items, {note: {}, confirm: "abstractframework"}), mailboxesMarkup([items[0]], {}), named.id]));
 """
-    good, bad, reserved, rows, empty = _node(harness)
+    good, bad, reserved, rows, empty, named = _node(harness)
+    assert named == "work-inbox-e"  # UX #16: a free-text name, the id derived
     assert good == {"id": "abstractframework", "problems": [], "body": {
         "address": "lpalbou@abstractframework.ai", "password": "pw", "username": "",
         "imap": {"host": "imap.example.ai", "security": "ssl", "port": 993}, "send": False, "test": True}}
-    assert bad == ["Name: 1 to 32 lowercase letters, digits, - or _, starting with a letter or digit.", "Address is required.",
+    assert bad == ["Name: use at least one letter or digit.", "Address is required.",
                    "IMAP server is required.", "Port must be a number.", "Password is required."]
-    assert reserved == ["“default” is your primary mailbox: choose another name."]
+    assert reserved == ["“Default” is your primary mailbox: choose another name."]
+    assert "folder" not in rows and rows.count("read-only") == 1
     assert 'data-mbx-row="abstractframework"' in rows and "read-only" in rows and 'data-mbx-switch="abstractframework"' in rows
     assert 'data-mbx-test="abstractframework"' in rows and 'data-mbx-delete-now="abstractframework"' in rows
     assert "Delete the mailbox abstractframework (lpalbou@abstractframework.ai)?" in rows
@@ -344,7 +355,8 @@ def test_my_email_has_the_further_mailboxes_card() -> None:
     html = gateway_console_html()
     sec = html[html.index('id="my-email-section"'):]
     card = sec[sec.index('id="my-mailboxes-card"'): sec.index('aria-labelledby="my-email-notify-title"')]
-    for el in ('>Add a mailbox (read-only)</button>', 'id="my-mailbox-id"', 'id="my-mailbox-imap-host"', 'id="my-mailbox-imap-port"',
+    assert ">Other mailboxes</h3>" in card
+    for el in ('>Add a mailbox</button>', 'id="my-mailbox-id"', 'id="my-mailbox-imap-host"', 'id="my-mailbox-imap-port"',
                'id="my-mailbox-username"', 'id="my-mailbox-password"', '>Add mailbox</button>'):
         assert el in card, el
     source = _console_script()

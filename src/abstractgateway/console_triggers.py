@@ -54,6 +54,12 @@ TRIGGERS_CSS = r"""
 .trg-duration select { max-width: 12rem; }
 .trg-more > summary { cursor: pointer; color: var(--muted); min-height: 28px; }
 .trg-warn-line { margin: 0; color: var(--warning, #c77700); }
+.trg-event { display: flex; flex-direction: column; gap: 2px; padding: 4px 0; }
+.trg-event > details > summary { cursor: pointer; color: var(--muted); font-size: var(--font-size-md); }
+.trg-empty__title { margin: 0 0 8px; font-weight: 600; color: var(--text); }
+.trg-empty__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.trg-next { margin: 0; padding: 8px 10px; border-left: 3px solid var(--info, var(--accent)); background: color-mix(in srgb, var(--info, var(--accent)) 8%, transparent); border-radius: var(--radius-sm); }
+.trg-hints { margin: 6px 0 0; padding-left: 18px; font-size: var(--font-size-md); color: var(--muted); }
 .trg-advanced > summary { cursor: pointer; color: var(--muted); min-height: 24px; }
 .trg-table th.trg-col-last { width: 9rem; }
 .trg-table th.trg-col-actions { width: 15rem; }
@@ -323,10 +329,10 @@ TRIGGERS_JS = r"""
         const last = w.last_poll ? `checked ${trgAgo(w.last_poll, o.now) || w.last_poll}` : "Never";
         const name = m.primary ? `${m.address || m.account_id} (primary)` : m.account_id;
         return `<tr class="trg-row trg-row--mailbox" data-trg-mailbox="${id}">`
-          + `<td class="trg-name-cell"><span class="trg-name">${esc(name)}</span><span class="trg-sub">When mail arrives in ${esc(m.address || m.account_id)}${m.can_send ? "" : " · read-only"}</span><span class="trg-sub trg-fold">Last check: ${esc(last)}</span></td>`
+          + `<td class="trg-name-cell"><span class="trg-name">${esc(name)}</span><span class="trg-sub">When mail arrives in ${esc(m.address || m.account_id)}${m.can_send ? "" : " · read-only"}</span><span class="trg-sub trg-fold">${esc(last.charAt(0).toUpperCase() + last.slice(1))}</span></td>`
           + `<td class="trg-status">${trgMailboxStatusCell(m, o.automations)}</td>`
           + `<td class="trg-last">${esc(last)}</td>`
-          + `<td class="trg-actions-cell"><div class="trg-actions"><button type="button" class="link-button" data-trg-mailbox-manage="${id}" data-af-tip="Mailboxes are managed with your account">Manage under Account → My email</button></div></td></tr>`;
+          + `<td class="trg-actions-cell"><div class="trg-actions"><button type="button" class="link-button" data-trg-mailbox-manage="${id}" data-af-tip="Your mailboxes are managed in My email">Manage in My email</button></div></td></tr>`;
       }).join("");
     }
     function triggersRowsMarkup(rows, opts) {
@@ -335,6 +341,12 @@ TRIGGERS_JS = r"""
       const list = rows || [];
       const mail = !o.all ? mailboxRowsMarkup(o.mailboxes, o) : "";
       if (!list.length && mail) return mail;
+      if (!list.length && !o.all) {
+        return `<tr><td colspan="${cols}" class="trg-empty"><p class="trg-empty__title">Nothing to listen to yet.</p>`
+          + `<div class="trg-empty__actions"><button type="button" class="secondary" data-trg-empty="mailbox">Add a mailbox (My email)</button>`
+          + `<button type="button" class="secondary" data-trg-empty="feed.item">Add a feed</button>`
+          + `<button type="button" class="secondary" data-trg-empty="webhook.received">Add a webhook</button></div></td></tr>`;
+      }
       if (!list.length) {
         return `<tr><td colspan="${cols}" class="trg-empty">${o.all ? "No account has a connection yet." : "No connection yet. Create one to let your automations listen to a mailbox, a feed or a webhook."}</td></tr>`;
       }
@@ -379,15 +391,34 @@ TRIGGERS_JS = r"""
       html += triggerEventsMarkup(d.events || []);
       return html + `</div>`;
     }
+    // UX #10: an event as a sentence ("Test event", "New item: Release 0.13", "Call received").
+    function triggerEventSentence(e) {
+      const d = e && e.data && typeof e.data === "object" ? e.data : {};
+      const type = String((e && e.type) || "");
+      if (d.test === true) return "Test event";
+      if (type.includes("feed")) return `New item: ${d.title || e.subject || "untitled"}`;
+      if (type.includes("webhook")) return "Call received";
+      if (type.includes("email")) return `New mail: ${e.subject || d.subject || "no subject"}`;
+      return e.subject ? `${type || "Event"}: ${e.subject}` : (type || "Event");
+    }
+    // "just now" / "12 min ago" within the hour, else "09:00" today, else "Oct 24 · 09:00".
+    function trgWhen(iso, nowMs) {
+      const t = Date.parse(String(iso || ""));
+      if (!Number.isFinite(t)) return "";
+      const now = nowMs || Date.now();
+      if (now - t < 3600 * 1000) return trgAgo(iso, now);
+      const d = new Date(t), n = new Date(now);
+      const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+      if (d.toDateString() === n.toDateString()) return hm;
+      return `${d.toLocaleString("en", { month: "short" })} ${d.getDate()} · ${hm}`;
+    }
     function triggerEventsMarkup(events) {
       const list = (events || []).slice().sort((a, b) => Number(b.sequence || 0) - Number(a.sequence || 0)).slice(0, TRG_EVENTS_LIMIT);
       if (!list.length) return `<p class="trg-empty">No event yet. Send a test event to see one here.</p>`;
       const items = list.map((e) => {
-        const test = e && e.data && typeof e.data === "object" && e.data.test === true;
-        const when = e.time ? `<span class="trg-sub" style="display:inline">${esc(trgAgo(e.time) || e.time)}</span>` : "";
-        return `<li><details data-trg-event="${esc(e.id || "")}"><summary><span class="trg-seq">#${esc(e.sequence)}</span>`
-          + `<span>${esc(e.type || "event")}</span>${e.subject ? `<span>${esc(e.subject)}</span>` : ""}${test ? `<span class="trg-chip is-muted">test</span>` : ""}${when}</summary>`
-          + `<pre>${esc(JSON.stringify(e, null, 2))}</pre></details></li>`;
+        const when = e.time ? trgWhen(e.time) : "";
+        return `<li class="trg-event" data-trg-event="${esc(e.id || "")}"><span class="trg-event__line">${esc(triggerEventSentence(e))}${when ? ` · ${esc(when)}` : ""}</span>`
+          + `<details><summary>Details</summary><pre>${esc(JSON.stringify(e, null, 2))}</pre></details></li>`;
       }).join("");
       return `<ul class="trg-events">${items}</ul>`;
     }
@@ -701,6 +732,7 @@ TRIGGERS_JS = r"""
           html += `<p class="trg-once trg-field--wide">The signing secret is shown once. Copy it now: the gateway keeps it sealed and never shows it again.</p>`
             + trgCopyRow("Signing secret", c.secret, "created:secret");
         }
+        html += `<p class="trg-next trg-field--wide">Next: in Flow, + → When something arrives → ${esc(c.label || c.connection_id)}.</p>`;
         if (c.ingress_url && c.secret) html += webhookSetupMarkup(c, trg.hookTest);
         if (!c.ingress_url && !c.secret) html += `<p class="trg-help trg-field--wide">Your automations and flows can now listen to it.</p>`;
         body.innerHTML = html + `</div>`;
@@ -718,12 +750,23 @@ TRIGGERS_JS = r"""
       const s = sources.find((x) => `${x.id}@${x.version}` === m.sourceKey) || null;
       const options = sources.map((x) => `<option value="${esc(`${x.id}@${x.version}`)}"${s && x === s ? " selected" : ""}>${esc(x.label || x.id)}</option>`).join("");
       let html = `<div class="trg-form">`
-        + `<div class="trg-field"><label for="trg-f-source">What to listen to</label><select id="trg-f-source" data-trg-source><option value="">Choose…</option>${options}</select></div>`
+        + `<div class="trg-field"><label for="trg-f-source">What to listen to</label><select id="trg-f-source" data-trg-source><option value="">Choose…</option>${options}</select>${trgSourceHintsMarkup(sources, s)}</div>`
         + `<div class="trg-field"><label for="trg-f-label">Name *</label><input id="trg-f-label" type="text" autocomplete="off" data-trg-label value="${esc(m.label || "")}" placeholder="Release feed, Orders webhook…">${m.errors && m.errors.__name ? `<p class="trg-field-error" role="alert">${esc(m.errors.__name)}</p>` : ""}<p class="trg-help">How you find it in Flow and in your automations.</p></div>`;
       if (s) html += triggerFormMarkup(m.fields, m.values, m.errors);
       body.innerHTML = html + `</div>`;
       note.textContent = m.problem || "";
-      actions.innerHTML = s ? `<button type="button" data-trg-create="1"${m.saving ? " disabled" : ""}>Create</button>` : "";
+      actions.innerHTML = `<button type="button" class="secondary" data-trg-cancel="1">Cancel</button>`
+        + (s ? `<button type="button" data-trg-create="1"${m.saving ? " disabled" : ""}>Create</button>` : "");
+    }
+    // UX #18: one line per option, what it listens to.
+    const TRG_SOURCE_HINTS = {
+      "feed.item": "Runs when a feed (RSS or Atom) publishes a new item.",
+      "webhook.received": "Runs when another service (GitHub, Zapier…) calls an address you give it.",
+    };
+    function trgSourceHintsMarkup(sources, chosen) {
+      if (chosen) return TRG_SOURCE_HINTS[chosen.id] ? `<p class="trg-help">${esc(TRG_SOURCE_HINTS[chosen.id])}</p>` : "";
+      const lines = sources.filter((x) => TRG_SOURCE_HINTS[x.id]).map((x) => `<li><strong>${esc(x.label || x.id)}</strong> — ${esc(TRG_SOURCE_HINTS[x.id])}</li>`).join("");
+      return lines ? `<ul class="trg-hints">${lines}</ul>` : "";
     }
     async function openTriggerModal(sourceId) {
       closeTriggerModal();
@@ -928,6 +971,8 @@ TRIGGERS_JS = r"""
         else if (t.dataset.trgDelete) confirmDeleteTrigger(t.dataset.trgDelete);
         else if (t.dataset.trgCopy) trgCopy(t.dataset.trgCopy);
         else if (t.dataset.trgMailboxManage) openMyEmailFromTriggers();
+        else if (t.dataset.trgEmpty === "mailbox") { mbx.openAddOnLoad = true; openMyEmailFromTriggers(); }
+        else if (t.dataset.trgEmpty) openTriggerModal(t.dataset.trgEmpty);
         else if (t.dataset.trgAlways) {
           const row = (trg.rows || []).find((x) => x.connection_id === t.dataset.trgAlways);
           if (row) { t.setAttribute("aria-busy", "true"); setTriggerAlwaysListen(row.connection_id, !row.always_listen); }
@@ -954,6 +999,17 @@ TRIGGERS_JS = r"""
         trg.modal.problem = "";
         renderTriggerModal();
       };
+      // A field being corrected loses its refusal (UX #12: the text stays, the red goes once you edit it).
+      $("trigger-modal-body").oninput = (e) => {
+        const t = e.target;
+        const key = t && t.dataset ? (t.dataset.trgField || t.dataset.trgDurN || (t.dataset.trgLabel !== undefined ? "__name" : "")) : "";
+        if (!key || !trg.modal || !trg.modal.errors || !trg.modal.errors[key]) return;
+        delete trg.modal.errors[key];
+        t.removeAttribute("aria-invalid");
+        const box = t.closest ? t.closest(".trg-field") : null;
+        const msg = box && box.querySelector(".trg-field-error");
+        if (msg) msg.remove();
+      };
       $("trigger-modal-body").onclick = (e) => {
         const t = e.target && e.target.closest ? e.target.closest("button") : null;
         if (t && t.dataset.trgCopy) trgCopy(t.dataset.trgCopy);
@@ -964,6 +1020,7 @@ TRIGGERS_JS = r"""
         const t = e.target && e.target.closest ? e.target.closest("button") : null;
         if (!t) return;
         if (t.dataset.trgCreate) createTriggerConnection();
+        else if (t.dataset.trgCancel) closeTriggerModal();
         else if (t.dataset.trgDone) closeTriggerModal();
       };
     }

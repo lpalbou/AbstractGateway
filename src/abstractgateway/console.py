@@ -13408,7 +13408,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       closeAccountEmail();
       const body = $("account-email-body");
       body.textContent = "";
-      $("account-email-title").textContent = `Email — ${a.id}`;
+      // UX #5: your own is "My email" (one name for one place); another account's stays "Email — <id>".
+      $("account-email-title").textContent = accountIsOwn(a) ? "My email" : `Email — ${a.id}`;
       // The signed-in user's own email UI, moved into the modal and pointed at `base`.
       const mountEmailUi = (base, notifyTest = "") => {
         const section = $("my-email-section");

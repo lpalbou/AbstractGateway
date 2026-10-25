@@ -226,8 +226,9 @@ try {
     // Events: expand, 3 events newest first, the JSON behind a disclosure.
     await feedRow.locator("[data-trg-events]").click();
     await page.waitForSelector('[data-trg-detail="conn_feed1"] [data-trg-event]');
-    const seqs = await page.$$eval('[data-trg-detail="conn_feed1"] .trg-seq', (els) => els.map((e) => e.textContent));
-    check(JSON.stringify(seqs) === JSON.stringify(["#3", "#2", "#1"]), `${tag}: events newest first`, seqs);
+    const ids = await page.$$eval('[data-trg-detail="conn_feed1"] [data-trg-event]', (els) => els.map((e) => e.dataset.trgEvent));
+    check(JSON.stringify(ids) === JSON.stringify(["evt_feed_3", "evt_feed_2", "evt_feed_1"]), `${tag}: events newest first`, ids);
+    check((await page.textContent('[data-trg-event="evt_feed_3"] .trg-event__line')).startsWith("New item: Release 0.13 · "), `${tag}: an event reads as a sentence`);
     await page.locator('[data-trg-event="evt_feed_3"] summary').click();
     check((await page.locator('[data-trg-event="evt_feed_3"] pre').textContent()).includes('"title": "Release 0.13"'), `${tag}: event JSON expands`);
     // Test: a visible result in the row, and the event appears in the expanded list.
@@ -235,7 +236,7 @@ try {
     await page.waitForSelector('[data-trg-row="conn_feed1"] .trg-fire.is-ok');
     check((await page.locator('[data-trg-row="conn_feed1"] .trg-fire').textContent()).trim() === "Test event #4 sent.", `${tag}: test result shown`);
     await page.waitForSelector('[data-trg-event="evt_test_4"]');
-    check((await page.locator('[data-trg-event="evt_test_4"] summary').textContent()).includes("test"), `${tag}: test event listed with its chip`);
+    check((await page.locator('[data-trg-event="evt_test_4"] .trg-event__line').textContent()).startsWith("Test event · "), `${tag}: test event listed in words`);
     check((await page.locator('[data-trg-row="conn_feed1"] td.trg-last').textContent()).trim() === "just now" || w < 1024, `${tag}: last event refreshed`);
     if (w === 1440) await shot(page, `triggers-list-events-${tag}`);
     else await shot(page, `triggers-list-${tag}`);
@@ -264,7 +265,7 @@ try {
       await page.waitForFunction(() => (document.querySelector('[data-trg-row="conn_feed1"]') || {}).textContent.includes("Listening · used by 2"));
       check(await page.locator('[data-trg-mailbox="default"]').count() === 1, "mailbox row listed");
       check((await page.textContent('[data-trg-mailbox="default"]')).includes("When mail arrives in admin@example.org"), "mailbox row: the trigger in words");
-      check((await page.textContent('[data-trg-mailbox="default"]')).includes("Manage under Account → My email"), "mailbox row: link");
+      check((await page.textContent('[data-trg-mailbox="default"]')).includes("Manage in My email"), "mailbox row: link");
       await page.click("#triggers-new");
       await page.waitForSelector("#trigger-modal-backdrop:not([hidden]) [data-trg-source]");
       const opts = await page.$$eval("#trg-f-source option", (els) => els.map((e) => e.value));
@@ -282,6 +283,7 @@ try {
       await shotEl(page, "#trigger-modal-backdrop .af-modal", "triggers-create-feed-1440-light");
       await page.click("[data-trg-create]");
       await page.waitForSelector("[data-trg-done]");
+      check((await page.textContent("#trigger-modal-body")).includes("Next: in Flow, + → When something arrives → Changelog."), "created: the next step");
       check(JSON.stringify(store.lastCreate) === JSON.stringify({ source_id: "feed.item", source_version: 1, label: "Changelog", config: { url: "https://example.org/changelog.xml", every_minutes: 15 } }), "create: the POST body", store.lastCreate);
       check(await page.locator("[data-trg-value='created:secret']").count() === 0, "create: no secret for a feed");
       await page.click("[data-trg-done]");
@@ -308,7 +310,7 @@ try {
       check(clip === "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw" || clip === "unreadable", "webhook: copy puts the secret on the clipboard", clip);
       const curl = await page.textContent("[data-trg-value='created:curl']");
       check(curl.includes(`SECRET='${SECRET}'`) && curl.includes("/api/gateway/triggers/webhooks/conn_new4") && curl.includes("openssl dgst -sha256 -mac HMAC"), "setup: signed call with the real address and secret", curl);
-      check((await page.textContent("#trigger-modal-body")).includes("paste the webhook address as the webhook URL"), "setup: GitHub/Zapier recipe");
+      check((await page.textContent("#trigger-modal-body")).includes("GitHub can't reach this computer yet. Turn on internet access under Network first."), "setup: a local address says GitHub can't reach it");
       await page.click("[data-trg-hook-test]");
       await page.waitForSelector("[data-trg-hook-result] .trg-fire");
       const result = await page.textContent("[data-trg-hook-result]");
