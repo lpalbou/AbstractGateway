@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 ### Added
+- **My email → Notifications → Devices (the web's card).** Your own page lists the Apple Watches and iPhones that get
+  alerts from this gateway while their app is closed (`GET /me/push/devices`, framework backlog 1049): *name · Apple
+  Watch* or *iPhone*, *Registered … · last alert …* (or *no alert yet*), and the last error in words. Nothing to
+  configure: an app registers itself at sign-in. An entity's page has no Devices.
 - **Triggers: Choose a well-known feed (the web's list).** New connection → Feed starts with the gateway's feed
   catalogue (`GET /triggers/feeds/catalog`): category headings, each feed with its site as the hint, then **Another
   address**. A pick fills the Name (unless you wrote your own) and the Feed address; a template (subreddit, YouTube

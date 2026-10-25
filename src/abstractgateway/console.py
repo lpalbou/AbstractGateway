@@ -155,6 +155,7 @@ def _console_owned_sources() -> Tuple[str, str, str, str]:
     from .console_skills_mcp import SKILLS_MCP_CSS, SKILLS_MCP_JS
     from .console_themes import KIT_THEME_CSS
     from .console_mailboxes import MAILBOXES_CSS, MAILBOXES_JS
+    from .console_push import PUSH_DEVICES_CSS, PUSH_DEVICES_JS
     from .console_triggers import TRIGGERS_CSS, TRIGGERS_JS
     from .console_ui import CONSOLE_UI_CSS, CONSOLE_UI_JS
     from .console_workspaces import ACCOUNTS_CSS, WORKSPACES_CSS, WORKSPACES_JS
@@ -162,8 +163,8 @@ def _console_owned_sources() -> Tuple[str, str, str, str]:
     return (
         _strip_html_comments(_CONSOLE_HTML_TEMPLATE),
         _strip_css_comments(KIT_THEME_CSS),
-        _strip_css_comments(CONSOLE_UI_CSS + CATALOG_CSS + SKILLS_MCP_CSS + TRIGGERS_CSS + MAILBOXES_CSS + ACCOUNTS_CSS + WORKSPACES_CSS),
-        _strip_js_line_comments(CONSOLE_UI_JS + CATALOG_JS + SKILLS_MCP_JS + TRIGGERS_JS + MAILBOXES_JS + WORKSPACES_JS),
+        _strip_css_comments(CONSOLE_UI_CSS + CATALOG_CSS + SKILLS_MCP_CSS + TRIGGERS_CSS + MAILBOXES_CSS + PUSH_DEVICES_CSS + ACCOUNTS_CSS + WORKSPACES_CSS),
+        _strip_js_line_comments(CONSOLE_UI_JS + CATALOG_JS + SKILLS_MCP_JS + TRIGGERS_JS + MAILBOXES_JS + PUSH_DEVICES_JS + WORKSPACES_JS),
     )
 
 
@@ -214,6 +215,7 @@ def gateway_console_html() -> str:
     can re-enter the template or end the host script early."""
     from .console_islands import ISLANDS_CSS, ISLANDS_JS
     from .console_mailboxes import MAILBOX_SHEET_HTML, MAILBOXES_HTML
+    from .console_push import PUSH_DEVICES_HTML
     from .console_themes import KIT_THEME_SPECS
 
     template, theme_css, ui_css, ui_js = _console_owned_sources()
@@ -261,6 +263,8 @@ def gateway_console_html() -> str:
         # Account → My email: further mailboxes (console_mailboxes.py).
         ("<!--__MY_MAILBOXES_HTML__-->", MAILBOXES_HTML),
         ("<!--__MAILBOX_SHEET_HTML__-->", MAILBOX_SHEET_HTML),
+        # My email → Notifications → Devices: the watches and iPhones that get pushes (console_push.py).
+        ("<!--__MY_PUSH_DEVICES_HTML__-->", PUSH_DEVICES_HTML),
         ("/*__AF_CONSOLE_ISLANDS_JS__*/", islands_js),
         ("/*__ABSTRACTCORE_FRAGMENT_CSS__*/", css.replace("</style", "<\\/style")),
         ("<!--__ABSTRACTCORE_ENGINES_HTML__-->", engines_body),
@@ -2861,6 +2865,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
                 </div>
                 <p class="notify-test-row"><button id="my-email-notify-test" class="secondary small" type="button">Send a test</button> <span id="my-email-notify-test-state" class="inline-state" role="status" aria-live="polite"></span></p>
               </section>
+<!--__MY_PUSH_DEVICES_HTML__-->
                 </div>
                 <div id="my-email-pane-agents" class="af-tabs__panel" role="tabpanel" aria-labelledby="my-email-sec-agents" hidden>
               <section class="af-card account-card" aria-labelledby="my-email-tools-title">
@@ -7609,6 +7614,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         renderMyEmail(data);
         myEmailMessage("");
         loadMyMailboxes();  // console_mailboxes.py: further mailboxes (own account only)
+        loadMyPushDevices();  // console_push.py: the watches and iPhones that get pushes (own account only)
       } catch (e) {
         if (generation === myEmailUi.generation && base === myEmailApi()) myEmailMessage(emailErrorText(e), "error");
       }

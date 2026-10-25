@@ -23,7 +23,8 @@
 //! **Notifications** — **Email address** (one field with its own inline
 //! Save, the only Save on the page; asked ONCE: with none saved and no
 //! mailbox, one sentence points at Mailboxes), the two switches "Job
-//! failed" and "Approval needed", and "Send a test".
+//! failed" and "Approval needed", and "Send a test"; on your own page, the
+//! **Devices** that get pushes (see `devices`).
 //!
 //! **Agents** — **Agent email tools** (one switch, with the reason when
 //! unavailable) and **Recipients and limits**: who your agents may send to,
@@ -47,7 +48,9 @@ use crate::store::{ConnPhase, Loadable};
 use crate::worker::operator::{EmailAction, OpCmd};
 use crate::worker::Cmd;
 
+mod devices;
 mod others;
+pub use devices::{push_devices, PushDevice, DEVICES, DEVICES_HELP, K_DEVICES, NO_DEVICES};
 pub use others::{
     other_mailboxes, OtherMailbox, ADD_MAILBOX, K_ACCOUNTS, K_ACCOUNTS_WRITE, WRITE_HELP,
 };
@@ -438,6 +441,7 @@ fn open_for(cx: Scope, ctx: &Ctx, entity: Option<String>) {
             // Your own page: the other mailboxes (an entity has only its own).
             if entity.is_none() {
                 others::install(mcx, &ctx2, p);
+                devices::install(&ctx2);
             }
             // Seed the typed fields ONCE from the first answer (a republish
             // after a write never overwrites what the person is typing).
@@ -746,15 +750,22 @@ fn page_body(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> View {
             .child(gap());
     }
     // The web's tabs are the page's sections, in the same order.
-    col.child(section(&t0, SECTIONS[0], p.wrap_w))
+    let col = col
+        .child(section(&t0, SECTIONS[0], p.wrap_w))
         .child(mailbox_card(cx, ctx, &t0, e, p))
         .child(gap())
         .child(section(&t0, SECTIONS[1], p.wrap_w))
         .child(address_card(cx, ctx, &t0, e, p))
         .child(gap())
         .child(notifications_card(cx, ctx, &t0, e, p))
-        .child(gap())
-        .child(section(&t0, SECTIONS[2], p.wrap_w))
+        .child(gap());
+    // Your own page: the watches and iPhones that get pushes (an entity has none).
+    let col = if p.entity.get_untracked().is_none() {
+        col.child(devices::section(cx, ctx, &t0, p)).child(gap())
+    } else {
+        col
+    };
+    col.child(section(&t0, SECTIONS[2], p.wrap_w))
         .child(agent_tools_card(cx, ctx, &t0, e, p))
         .child(gap())
         .child(advanced_card(cx, ctx, &t0, e, p))
