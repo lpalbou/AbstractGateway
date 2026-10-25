@@ -66,9 +66,12 @@ def test_console_calls_only_the_callers_own_routes() -> None:
     import re as _re
 
     direct = sorted(set(_re.findall(r'api\("(/api/gateway/me/email[^"]*)"', html)))
-    assert direct == ["/api/gateway/me/email/accounts", "/api/gateway/me/email/oauth/clients"], direct
+    assert direct == ["/api/gateway/me/email/accounts"], direct
     assert "function mbxOwnPage() { return !myEmailUi.base; }" in html
-    assert "card.hidden = !mbxOwnPage();\n      if (!mbxOwnPage()) return;" in html
+    # An entity's email page lists its own mailbox only: the other-mailbox routes are the caller's own.
+    assert "if (!mbxOwnPage()) { mbx.items = []; renderMyMailboxes(); return; }" in html
+    # The primary mailbox goes through the base (own or an entity's), never a fixed /me route.
+    assert 'return key === "__primary" ? myEmailApi(sub || "")' in html
     assert 'api(myEmailUi.notifyTest || "/api/gateway/me/notifications/test"' in html
     # Recipient rules save through the API base they were rendered with (own or an entity's).
     assert 'const RECIPIENT_RULES_BASE = "/api/gateway/me/email";' in html

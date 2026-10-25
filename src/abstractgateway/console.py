@@ -213,7 +213,7 @@ def gateway_console_html() -> str:
     so nothing in the fragment -- braces, `$`, a `</script>` in a string --
     can re-enter the template or end the host script early."""
     from .console_islands import ISLANDS_CSS, ISLANDS_JS
-    from .console_mailboxes import MAILBOXES_HTML
+    from .console_mailboxes import MAILBOX_SHEET_HTML, MAILBOXES_HTML
     from .console_themes import KIT_THEME_SPECS
 
     template, theme_css, ui_css, ui_js = _console_owned_sources()
@@ -260,6 +260,7 @@ def gateway_console_html() -> str:
         ("/*__CONSOLE_UI_JS__*/", ui_js),
         # Account → My email: further mailboxes (console_mailboxes.py).
         ("<!--__MY_MAILBOXES_HTML__-->", MAILBOXES_HTML),
+        ("<!--__MAILBOX_SHEET_HTML__-->", MAILBOX_SHEET_HTML),
         ("/*__AF_CONSOLE_ISLANDS_JS__*/", islands_js),
         ("/*__ABSTRACTCORE_FRAGMENT_CSS__*/", css.replace("</style", "<\\/style")),
         ("<!--__ABSTRACTCORE_ENGINES_HTML__-->", engines_body),
@@ -2814,24 +2815,34 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                <p id="email-caps-message" class="inline-state" role="status" aria-live="polite"></p>
 	              </section>
 	            </section>
-            <!-- The user's account page (DESIGN §6). Cards, in order: Email address
-                 (the one inline Save) → Mailbox (tabs Google / Microsoft / Other, or the
-                 connected status) → Notifications (two switches) → Agent email tools →
-                 Advanced. Switches apply at once; no other Save button. -->
+            <!-- The user's account page: header "My email" + the address, then tabs Mailboxes
+                 (one list; Add mailbox and the primary's Settings open dialogs) | Notifications |
+                 Agents. Switches apply at once; the one inline Save is the email address. -->
             <div id="my-email-section" class="session-only account-page hidden">
-              <div class="account-page__head">
-                <h2 class="section-title"><span class="section-icon" aria-hidden="true">✉</span><span>My email address and mailbox</span></h2>
+              <div class="account-page__head my-email-head">
+                <h2 class="section-title"><span class="section-icon" aria-hidden="true">✉</span><span id="my-email-title">My email</span></h2>
+                <p id="my-email-who" class="my-email-who"></p>
                 <button id="my-email-refresh" class="secondary icon-only" type="button" data-af-tip="Reload your email address and mailbox" aria-label="Reload my email address and mailbox"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
               </div>
               <p id="my-email-message" class="inline-state" role="status" aria-live="polite"></p>
               <p id="my-email-notices" class="af-form__help" hidden></p>
+              <div class="af-tabs my-email-tabs">
+                <div class="af-tabs__list" role="tablist" aria-label="My email">
+                  <button id="my-email-sec-mailboxes" class="af-tabs__tab" role="tab" type="button" aria-controls="my-email-pane-mailboxes" aria-selected="true">Mailboxes</button>
+                  <button id="my-email-sec-notifications" class="af-tabs__tab" role="tab" type="button" aria-controls="my-email-pane-notifications" aria-selected="false" tabindex="-1">Notifications</button>
+                  <button id="my-email-sec-agents" class="af-tabs__tab" role="tab" type="button" aria-controls="my-email-pane-agents" aria-selected="false" tabindex="-1">Agents</button>
+                </div>
+                <div id="my-email-pane-mailboxes" class="af-tabs__panel" role="tabpanel" aria-labelledby="my-email-sec-mailboxes">
+<!--__MY_MAILBOXES_HTML__-->
+                </div>
+                <div id="my-email-pane-notifications" class="af-tabs__panel" role="tabpanel" aria-labelledby="my-email-sec-notifications" hidden>
               <section class="af-card account-card" aria-labelledby="my-email-registered-title">
                 <div class="af-card__header"><h3 id="my-email-registered-title" class="af-card__title">Your email address</h3></div>
                 <div class="af-form">
                   <div class="af-form__field">
                     <label class="af-form__label sr-only" for="my-email-registered">Your email address</label>
                     <!-- DESIGN-v2 §11: ONE editable address field on screen at a time. -->
-                    <p id="my-email-registered-view" class="address-view"><span id="my-email-registered-text" class="muted">Not set yet — connecting a mailbox below sets it.</span> <button id="my-email-registered-change" class="link-button" type="button">Set it now</button></p>
+                    <p id="my-email-registered-view" class="address-view"><span id="my-email-registered-text" class="muted">Not set yet — connecting a mailbox (Mailboxes tab) sets it.</span> <button id="my-email-registered-change" class="link-button" type="button">Set it now</button></p>
                     <div id="my-email-registered-edit" class="af-form__inline" hidden>
                       <input id="my-email-registered" type="email" autocomplete="email" spellcheck="false" aria-describedby="my-email-registered-help my-email-registered-error">
                       <button id="my-email-registered-save" class="secondary" type="button">Save</button>
@@ -2842,116 +2853,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
                   </div>
                 </div>
               </section>
-              <section class="af-card account-card" aria-labelledby="my-email-mailbox-title">
-                <div class="af-card__header">
-                  <h3 id="my-email-mailbox-title" class="af-card__title">Mailbox</h3>
-                  <p id="my-email-mailbox-desc" class="af-card__desc">Lets your agents and automations read and send mail as you. Your admin never sees your mail.</p>
-                </div>
-                <p id="my-email-unavailable" class="af-form__error" hidden></p>
-                <div id="my-email-connected" hidden>
-                  <p id="my-email-status" class="mailbox-status"></p>
-                  <p id="my-email-status-error" class="af-form__error" hidden></p>
-                  <div class="switch-list mailbox-active">
-                    <button type="button" role="switch" id="my-email-enabled" class="af-switch af-switch--row" aria-checked="false" aria-describedby="my-email-enabled-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Active</span><span class="af-switch__desc" id="my-email-enabled-desc">Off pauses watching, sending and notifications; your settings are kept.</span></span></button><span id="my-email-enabled-reason" class="af-switch__reason" hidden></span>
-                  </div>
-                  <div class="af-form__actions mailbox-actions">
-                    <button id="my-email-test" class="secondary" type="button">Test</button>
-                    <button id="my-email-configure" class="secondary" type="button" aria-expanded="false" aria-controls="my-email-connect">Configure</button>
-                    <button id="my-email-disconnect" class="danger" type="button">Disconnect</button>
-                  </div>
-                  <div id="my-email-disconnect-confirm" class="inline-confirm" role="group" hidden>
-                    <span>Disconnect this mailbox? Your agents lose email until you connect again. Policy and limits are kept.</span>
-                    <button id="my-email-disconnect-now" class="danger" type="button">Disconnect</button>
-                    <button id="my-email-disconnect-cancel" class="secondary" type="button">Cancel</button>
-                  </div>
-                </div>
-                <div id="my-email-connect" class="af-tabs">
-                  <div id="my-email-configure-actions" hidden>
-                    <p class="af-form__help">Review or change the connection below. The current connection stays while you edit. For IMAP, re-enter the password; changes are saved after both server checks pass. For Google or Microsoft, sign in again to apply changes. Stored passwords are never displayed.</p>
-                    <button id="my-email-configure-cancel" class="secondary" type="button">Cancel changes</button>
-                  </div>
-                  <div class="af-tabs__list" role="tablist" aria-label="How your mailbox signs in">
-                    <button id="my-email-tab-imap" class="af-tabs__tab" role="tab" type="button" data-email-tab="imap" aria-controls="my-email-pane-imap" aria-selected="true">IMAP</button>
-                    <button id="my-email-tab-google" class="af-tabs__tab" role="tab" type="button" data-email-tab="google" aria-controls="my-email-pane-oauth" aria-selected="false" tabindex="-1">Google</button>
-                    <button id="my-email-tab-microsoft" class="af-tabs__tab" role="tab" type="button" data-email-tab="microsoft" aria-controls="my-email-pane-oauth" aria-selected="false" tabindex="-1">Microsoft</button>
-                  </div>
-                  <div id="my-email-pane-imap" class="af-tabs__panel" role="tabpanel" aria-labelledby="my-email-tab-imap">
-                    <div class="af-form">
-                      <p class="address-line mailbox-address-line" hidden><span class="mailbox-address-line__text"></span> <button class="link-button mailbox-address-other" type="button">Use a different account</button></p>
-                      <div class="af-form__field mailbox-address-field">
-                        <label class="af-form__label" for="my-email-address">Mailbox address</label>
-                        <input id="my-email-address" type="email" autocomplete="email" spellcheck="false" aria-describedby="my-email-address-help">
-                        <p id="my-email-address-help" class="af-form__help">The account your agents read and send from — usually your own address.</p>
-                      </div>
-                      <div class="af-form__field">
-                        <label class="af-form__label" for="my-email-password">Password</label>
-                        <input id="my-email-password" type="password" autocomplete="new-password" aria-describedby="my-email-password-help">
-                        <p id="my-email-password-help" class="af-form__help">Use an app password if your provider needs one.</p>
-                      </div>
-                      <fieldset class="mail-server-row">
-                        <legend class="af-form__label">Incoming mail (IMAP)</legend>
-                        <div class="mail-server-row__fields">
-                          <div class="af-form__field mail-server-row__host"><label class="af-form__label mail-server-row__caption" for="my-email-imap-host">Server</label><input id="my-email-imap-host" autocomplete="off" spellcheck="false"></div>
-                          <div class="af-form__field mail-server-row__port"><label class="af-form__label mail-server-row__caption" for="my-email-imap-port">Port</label><input id="my-email-imap-port" inputmode="numeric"></div>
-                          <div class="af-form__field mail-server-row__sec"><label class="af-form__label mail-server-row__caption" for="my-email-imap-security">Security</label><select id="my-email-imap-security"><option value="ssl">SSL</option><option value="starttls">STARTTLS</option></select></div>
-                        </div>
-                      </fieldset>
-                      <fieldset class="mail-server-row">
-                        <legend class="af-form__label">Outgoing mail (SMTP)</legend>
-                        <div class="mail-server-row__fields">
-                          <div class="af-form__field mail-server-row__host"><label class="af-form__label mail-server-row__caption" for="my-email-smtp-host">Server</label><input id="my-email-smtp-host" autocomplete="off" spellcheck="false"></div>
-                          <div class="af-form__field mail-server-row__port"><label class="af-form__label mail-server-row__caption" for="my-email-smtp-port">Port</label><input id="my-email-smtp-port" inputmode="numeric"></div>
-                          <div class="af-form__field mail-server-row__sec"><label class="af-form__label mail-server-row__caption" for="my-email-smtp-security">Security</label><select id="my-email-smtp-security"><option value="ssl">SSL</option><option value="starttls">STARTTLS</option></select></div>
-                        </div>
-                      </fieldset>
-                      <p id="my-email-servers-source" class="af-form__help servers-source" role="status" aria-live="polite" hidden></p>
-                      <p class="login-toggle"><button id="my-email-login-toggle" class="link-button" type="button" aria-expanded="false" aria-controls="my-email-login-field">My provider uses a different login name</button></p>
-                      <div id="my-email-login-field" class="af-form__field" hidden>
-                        <label class="af-form__label" for="my-email-username">Login</label>
-                        <input id="my-email-username" autocomplete="off" spellcheck="false" aria-describedby="my-email-username-help">
-                        <p id="my-email-username-help" class="af-form__help">The name your provider asks for at sign-in, when it is not the mailbox address.</p>
-                      </div>
-                      <p id="my-email-connect-error" class="af-form__error" role="alert" hidden></p>
-                      <div class="af-form__actions">
-                        <button id="my-email-connect-go" type="button">Connect</button>
-                      </div>
-                    </div>
-                  </div>
-                  <div id="my-email-pane-oauth" class="af-tabs__panel" role="tabpanel" aria-labelledby="my-email-tab-google" hidden>
-                    <div class="af-form">
-                      <p class="address-line mailbox-address-line" hidden><span class="mailbox-address-line__text"></span> <button class="link-button mailbox-address-other" type="button">Use a different account</button></p>
-                      <div class="af-form__field mailbox-address-field">
-                        <label class="af-form__label" for="my-email-oauth-address">Mailbox address</label>
-                        <input id="my-email-oauth-address" type="email" autocomplete="email" spellcheck="false" aria-describedby="my-email-oauth-address-help">
-                        <p id="my-email-oauth-address-help" class="af-form__help">The account you sign in with; it pre-fills the sign-in page.</p>
-                      </div>
-                      <div class="af-form__actions">
-                        <button id="my-email-oauth-cancel" class="secondary" type="button" hidden>Cancel sign-in</button>
-                        <button id="my-email-oauth-start" type="button" aria-describedby="my-email-oauth-start-reason">Sign in with Google</button>
-                      </div>
-                      <p id="my-email-oauth-start-reason" class="af-form__help" hidden></p>
-                      <p id="my-email-oauth-prompt" class="inline-state" role="status" aria-live="polite"></p>
-                      <!-- R15 D1 (no "Advanced" anywhere): a visible, content-named section. -->
-                      <section id="my-email-oauth-advanced" class="named-section" aria-labelledby="my-email-oauth-app-title">
-                        <h4 id="my-email-oauth-app-title" class="named-section__title">Sign-in app</h4>
-                        <div class="af-form">
-                          <p class="af-form__help">Your own sign-in client instead of the gateway&#39;s or the built-in one.</p>
-                          <p class="af-form__help">When changing a personal sign-in app, re-enter its client secret if the provider requires one. Stored secrets are never displayed.</p>
-                          <div class="af-form__grid-2">
-                            <div class="af-form__field"><label class="af-form__label" for="my-email-oauth-client-id">Client ID</label><input id="my-email-oauth-client-id" autocomplete="off" spellcheck="false"></div>
-                            <div class="af-form__field"><label class="af-form__label" for="my-email-oauth-client-secret">Client secret</label><input id="my-email-oauth-client-secret" type="password" autocomplete="new-password"></div>
-                          </div>
-                          <div class="af-form__grid-2 email-ms-only">
-                            <div class="af-form__field"><label class="af-form__label" for="my-email-oauth-tenant">Tenant</label><input id="my-email-oauth-tenant" autocomplete="off" spellcheck="false"><p class="af-form__help">Empty = any Microsoft account (common).</p></div>
-                            <div class="af-form__field"><label class="af-form__label" for="my-email-oauth-flow">Sign-in flow</label><select id="my-email-oauth-flow"><option value="">Code in any browser (default)</option><option value="loopback">Browser on the gateway&#39;s computer</option></select></div>
-                          </div>
-                        </div>
-                      </section>
-                    </div>
-                  </div>
-                </div>
-              </section>
-<!--__MY_MAILBOXES_HTML__-->
               <section class="af-card account-card" aria-labelledby="my-email-notify-title">
                 <div class="af-card__header"><h3 id="my-email-notify-title" class="af-card__title">Notifications</h3></div>
                 <div class="switch-list">
@@ -2960,6 +2861,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
                 </div>
                 <p class="notify-test-row"><button id="my-email-notify-test" class="secondary small" type="button">Send a test</button> <span id="my-email-notify-test-state" class="inline-state" role="status" aria-live="polite"></span></p>
               </section>
+                </div>
+                <div id="my-email-pane-agents" class="af-tabs__panel" role="tabpanel" aria-labelledby="my-email-sec-agents" hidden>
               <section class="af-card account-card" aria-labelledby="my-email-tools-title">
                 <div class="af-card__header"><h3 id="my-email-tools-title" class="af-card__title">Agent email tools</h3></div>
                 <div class="switch-list">
@@ -3013,6 +2916,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
                   <p id="my-email-folder-help" class="af-form__help">The folder automations watch for new mail.</p>
                 </div>
               </section>
+                </div>
+              </div>
             </div>
 	            <section id="entities-list-section" class="session-only">
 	              <div class="section-head">
@@ -3368,6 +3273,128 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     </div>
   </div>
   <!-- OpenAI API (round 5): the account's "OpenAI API" switch, in the same af-modal as Email. -->
+<!--__MAILBOX_SHEET_HTML__-->
+  <div id="mailbox-settings-backdrop" class="af-modal-backdrop" hidden>
+    <div class="af-modal" role="dialog" aria-modal="true" aria-labelledby="mailbox-settings-title">
+      <div class="af-modal__header">
+        <h2 id="mailbox-settings-title" class="af-modal__title">Mailbox settings</h2>
+        <button id="mailbox-settings-close" class="af-modal__close" type="button" aria-label="Close" data-af-tip="Close">×</button>
+      </div>
+      <div id="mailbox-settings-body" class="af-modal__body">
+              <div id="my-email-primary-settings">
+              <section class="af-card account-card" aria-labelledby="my-email-mailbox-title">
+                <div class="af-card__header">
+                  <h3 id="my-email-mailbox-title" class="af-card__title">Mailbox</h3>
+                  <p id="my-email-mailbox-desc" class="af-card__desc">Lets your agents and automations read and send mail as you. Your admin never sees your mail.</p>
+                </div>
+                <p id="my-email-unavailable" class="af-form__error" hidden></p>
+                <div id="my-email-connected" hidden>
+                  <p id="my-email-status" class="mailbox-status"></p>
+                  <p id="my-email-status-error" class="af-form__error" hidden></p>
+                  <div class="switch-list mailbox-active">
+                    <button type="button" role="switch" id="my-email-enabled" class="af-switch af-switch--row" aria-checked="false" aria-describedby="my-email-enabled-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Active</span><span class="af-switch__desc" id="my-email-enabled-desc">Off pauses watching, sending and notifications; your settings are kept.</span></span></button><span id="my-email-enabled-reason" class="af-switch__reason" hidden></span>
+                  </div>
+                  <div class="af-form__actions mailbox-actions">
+                    <button id="my-email-test" class="secondary" type="button">Test</button>
+                    <button id="my-email-configure" class="secondary" type="button" aria-expanded="false" aria-controls="my-email-connect">Configure</button>
+                    <button id="my-email-disconnect" class="danger" type="button">Disconnect</button>
+                  </div>
+                  <div id="my-email-disconnect-confirm" class="inline-confirm" role="group" hidden>
+                    <span>Disconnect this mailbox? Your agents lose email until you connect again. Policy and limits are kept.</span>
+                    <button id="my-email-disconnect-now" class="danger" type="button">Disconnect</button>
+                    <button id="my-email-disconnect-cancel" class="secondary" type="button">Cancel</button>
+                  </div>
+                </div>
+                <div id="my-email-connect" class="af-tabs">
+                  <div id="my-email-configure-actions" hidden>
+                    <p class="af-form__help">Review or change the connection below. The current connection stays while you edit. For IMAP, re-enter the password; changes are saved after both server checks pass. For Google or Microsoft, sign in again to apply changes. Stored passwords are never displayed.</p>
+                    <button id="my-email-configure-cancel" class="secondary" type="button">Cancel changes</button>
+                  </div>
+                  <div class="af-tabs__list" role="tablist" aria-label="How your mailbox signs in">
+                    <button id="my-email-tab-imap" class="af-tabs__tab" role="tab" type="button" data-email-tab="imap" aria-controls="my-email-pane-imap" aria-selected="true">IMAP</button>
+                    <button id="my-email-tab-google" class="af-tabs__tab" role="tab" type="button" data-email-tab="google" aria-controls="my-email-pane-oauth" aria-selected="false" tabindex="-1">Google</button>
+                    <button id="my-email-tab-microsoft" class="af-tabs__tab" role="tab" type="button" data-email-tab="microsoft" aria-controls="my-email-pane-oauth" aria-selected="false" tabindex="-1">Microsoft</button>
+                  </div>
+                  <div id="my-email-pane-imap" class="af-tabs__panel" role="tabpanel" aria-labelledby="my-email-tab-imap">
+                    <div class="af-form">
+                      <p class="address-line mailbox-address-line" hidden><span class="mailbox-address-line__text"></span> <button class="link-button mailbox-address-other" type="button">Use a different account</button></p>
+                      <div class="af-form__field mailbox-address-field">
+                        <label class="af-form__label" for="my-email-address">Mailbox address</label>
+                        <input id="my-email-address" type="email" autocomplete="email" spellcheck="false" aria-describedby="my-email-address-help">
+                        <p id="my-email-address-help" class="af-form__help">The account your agents read and send from — usually your own address.</p>
+                      </div>
+                      <div class="af-form__field">
+                        <label class="af-form__label" for="my-email-password">Password</label>
+                        <input id="my-email-password" type="password" autocomplete="new-password" aria-describedby="my-email-password-help">
+                        <p id="my-email-password-help" class="af-form__help">Use an app password if your provider needs one.</p>
+                      </div>
+                      <fieldset class="mail-server-row">
+                        <legend class="af-form__label">Incoming mail (IMAP)</legend>
+                        <div class="mail-server-row__fields">
+                          <div class="af-form__field mail-server-row__host"><label class="af-form__label mail-server-row__caption" for="my-email-imap-host">Server</label><input id="my-email-imap-host" autocomplete="off" spellcheck="false"></div>
+                          <div class="af-form__field mail-server-row__port"><label class="af-form__label mail-server-row__caption" for="my-email-imap-port">Port</label><input id="my-email-imap-port" inputmode="numeric"></div>
+                          <div class="af-form__field mail-server-row__sec"><label class="af-form__label mail-server-row__caption" for="my-email-imap-security">Security</label><select id="my-email-imap-security"><option value="ssl">SSL</option><option value="starttls">STARTTLS</option></select></div>
+                        </div>
+                      </fieldset>
+                      <fieldset class="mail-server-row">
+                        <legend class="af-form__label">Outgoing mail (SMTP)</legend>
+                        <div class="mail-server-row__fields">
+                          <div class="af-form__field mail-server-row__host"><label class="af-form__label mail-server-row__caption" for="my-email-smtp-host">Server</label><input id="my-email-smtp-host" autocomplete="off" spellcheck="false"></div>
+                          <div class="af-form__field mail-server-row__port"><label class="af-form__label mail-server-row__caption" for="my-email-smtp-port">Port</label><input id="my-email-smtp-port" inputmode="numeric"></div>
+                          <div class="af-form__field mail-server-row__sec"><label class="af-form__label mail-server-row__caption" for="my-email-smtp-security">Security</label><select id="my-email-smtp-security"><option value="ssl">SSL</option><option value="starttls">STARTTLS</option></select></div>
+                        </div>
+                      </fieldset>
+                      <p id="my-email-servers-source" class="af-form__help servers-source" role="status" aria-live="polite" hidden></p>
+                      <p class="login-toggle"><button id="my-email-login-toggle" class="link-button" type="button" aria-expanded="false" aria-controls="my-email-login-field">My provider uses a different login name</button></p>
+                      <div id="my-email-login-field" class="af-form__field" hidden>
+                        <label class="af-form__label" for="my-email-username">Login</label>
+                        <input id="my-email-username" autocomplete="off" spellcheck="false" aria-describedby="my-email-username-help">
+                        <p id="my-email-username-help" class="af-form__help">The name your provider asks for at sign-in, when it is not the mailbox address.</p>
+                      </div>
+                      <p id="my-email-connect-error" class="af-form__error" role="alert" hidden></p>
+                      <div class="af-form__actions">
+                        <button id="my-email-connect-go" type="button">Connect</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div id="my-email-pane-oauth" class="af-tabs__panel" role="tabpanel" aria-labelledby="my-email-tab-google" hidden>
+                    <div class="af-form">
+                      <p class="address-line mailbox-address-line" hidden><span class="mailbox-address-line__text"></span> <button class="link-button mailbox-address-other" type="button">Use a different account</button></p>
+                      <div class="af-form__field mailbox-address-field">
+                        <label class="af-form__label" for="my-email-oauth-address">Mailbox address</label>
+                        <input id="my-email-oauth-address" type="email" autocomplete="email" spellcheck="false" aria-describedby="my-email-oauth-address-help">
+                        <p id="my-email-oauth-address-help" class="af-form__help">The account you sign in with; it pre-fills the sign-in page.</p>
+                      </div>
+                      <div class="af-form__actions">
+                        <button id="my-email-oauth-cancel" class="secondary" type="button" hidden>Cancel sign-in</button>
+                        <button id="my-email-oauth-start" type="button" aria-describedby="my-email-oauth-start-reason">Sign in with Google</button>
+                      </div>
+                      <p id="my-email-oauth-start-reason" class="af-form__help" hidden></p>
+                      <p id="my-email-oauth-prompt" class="inline-state" role="status" aria-live="polite"></p>
+                      <!-- R15 D1 (no "Advanced" anywhere): a visible, content-named section. -->
+                      <section id="my-email-oauth-advanced" class="named-section" aria-labelledby="my-email-oauth-app-title">
+                        <h4 id="my-email-oauth-app-title" class="named-section__title">Sign-in app</h4>
+                        <div class="af-form">
+                          <p class="af-form__help">Your own sign-in client instead of the gateway&#39;s or the built-in one.</p>
+                          <p class="af-form__help">When changing a personal sign-in app, re-enter its client secret if the provider requires one. Stored secrets are never displayed.</p>
+                          <div class="af-form__grid-2">
+                            <div class="af-form__field"><label class="af-form__label" for="my-email-oauth-client-id">Client ID</label><input id="my-email-oauth-client-id" autocomplete="off" spellcheck="false"></div>
+                            <div class="af-form__field"><label class="af-form__label" for="my-email-oauth-client-secret">Client secret</label><input id="my-email-oauth-client-secret" type="password" autocomplete="new-password"></div>
+                          </div>
+                          <div class="af-form__grid-2 email-ms-only">
+                            <div class="af-form__field"><label class="af-form__label" for="my-email-oauth-tenant">Tenant</label><input id="my-email-oauth-tenant" autocomplete="off" spellcheck="false"><p class="af-form__help">Empty = any Microsoft account (common).</p></div>
+                            <div class="af-form__field"><label class="af-form__label" for="my-email-oauth-flow">Sign-in flow</label><select id="my-email-oauth-flow"><option value="">Code in any browser (default)</option><option value="loopback">Browser on the gateway&#39;s computer</option></select></div>
+                          </div>
+                        </div>
+                      </section>
+                    </div>
+                  </div>
+                </div>
+              </section>
+              </div>
+      </div>
+    </div>
+  </div>
   <div id="account-openai-backdrop" class="af-modal-backdrop" hidden>
     <div class="af-modal" role="dialog" aria-modal="true" aria-labelledby="account-openai-title">
       <div class="af-modal__header">
@@ -7341,7 +7368,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const editMailbox = myEmailUi.editMailbox && !editReg;
       $("my-email-registered-edit").hidden = !editReg;
       $("my-email-registered-view").hidden = editReg;
-      $("my-email-registered-text").textContent = reg ? reg : "Not set yet — connecting a mailbox below sets it.";
+      $("my-email-registered-text").textContent = reg ? reg : "Not set yet — connecting a mailbox (Mailboxes tab) sets it.";
       $("my-email-registered-text").classList.toggle("muted", !reg);
       $("my-email-registered-change").textContent = reg ? "Change" : "Set it now";
       const mailboxField = editMailbox || (!reg && !editReg);
@@ -13380,6 +13407,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     function closeAccountEmail() {
       const backdrop = $("account-email-backdrop");
       if (backdrop.hidden) return;
+      closeMailboxSheet();
+      closePrimaryMailboxSettings();
       myEmailUi.generation++;
       myEmailUi.saving = false;
       myEmailUi.cancelling = false;
@@ -13421,6 +13450,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         section.classList.remove("hidden");
         section.classList.add("in-modal");
         body.append(section);
+        myEmailShowSection("mailboxes");
         loadMyEmail();
       };
       if (a.kind === "entity") {
@@ -13432,12 +13462,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         body.append(p);
         mountEmailUi(`/api/gateway/accounts/${encodeURIComponent(a.id)}/email`, `/api/gateway/accounts/${encodeURIComponent(a.id)}/notifications/test`);
       } else if (accountIsOwn(a)) {
-        if (a.role === "admin") {
-          const p = document.createElement("p");
-          p.className = "account-modal-lead";
-          p.textContent = "You are also a user of this gateway: this address receives your sign-in codes and notifications, and your mailbox serves your own agents.";
-          body.append(p);
-        }
+        // A compact header says who this is (console_mailboxes.py); no banner.
         mountEmailUi(MY_EMAIL_BASE);
       } else {
         body.append(accountOtherEmailCard(a));

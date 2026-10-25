@@ -1521,7 +1521,9 @@ Core catalog proxy settings:
 Most-used:
 - `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands]`
   (`--no-tray`: no menu bar / tray icon for this run, for a test or scratch
-  gateway next to your usual one; `--watchdog-seconds N`, default 30, `0` = off:
+  gateway next to your usual one; a start with `--host 127.0.0.1`, a `--port`
+  other than the configured one and `--print-token` is treated as a test
+  gateway and shows no icon either; `--watchdog-seconds N`, default 30, `0` = off:
   a gateway whose event loop stays blocked for N seconds writes the blocked
   stacks to its log and exits with code 75 so its service manager restarts it,
   see [deployment.md](./deployment.md); `--unsandboxed-commands`, off by

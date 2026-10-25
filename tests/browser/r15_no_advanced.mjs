@@ -27,6 +27,14 @@ function check(ok, what, detail) {
 
 async function open(browser, theme) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 1600 }, deviceScaleFactor: 1, colorScheme: theme });
+  // A connected primary mailbox (over the real answer), so its Settings editor can be opened.
+  await ctx.route((u) => u.pathname === "/api/gateway/me/email", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const real = await (await route.fetch()).json();
+    return route.fulfill({ json: { ...real, configured: true, address: "admin@example.org", enabled: true, auth_kind: "password",
+      imap: { host: "imap.example.org", port: 993, security: "ssl", folder: "INBOX" }, smtp: { host: "smtp.example.org", port: 465, security: "ssl" },
+      mailbox: { state: "connected", address: "admin@example.org", provider: "imap", reason: null } } });
+  });
   await ctx.addInitScript((t) => { try { localStorage.setItem("abstractgateway_ui_settings_v1", JSON.stringify({ theme: t })); } catch {} }, theme);
   const page = await ctx.newPage();
   page.on("pageerror", (e) => failures.push(`pageerror@${theme}: ${e.message}`));
@@ -60,15 +68,26 @@ try {
     await page.click("#users-table tr[data-user='admin'] button[data-action='email']");
     await page.waitForFunction(() => !document.getElementById("account-email-backdrop").hidden, null, { timeout: 15000 });
     await page.waitForTimeout(800);
+    // My email → Agents tab: Recipients and limits, a visible named section.
+    await page.click("#my-email-sec-agents");
+    await page.waitForTimeout(200);
     check(await visibleTitle(page, "#my-email-limits-title", "Recipients and limits"), `${theme} Email: "Recipients and limits" visible`);
     check(await page.evaluate(() => document.getElementById("my-email-imap-folder").checkVisibility() && document.getElementById("my-email-per-hour").checkVisibility()), `${theme} Email: limits and watch folder visible`);
-    // The Sign-in app section belongs to the Google/Microsoft tabs.
+    await noAdvanced(page, "Email modal", theme);
+    await shot(page, "email", theme);
+    // The Sign-in app section belongs to the Google/Microsoft tabs of the primary's Settings editor.
+    await page.click("#my-email-sec-mailboxes");
+    await page.waitForSelector('[data-mbx-row="__primary"] .mbx-menu > summary', { timeout: 15000 });
+    await page.click('[data-mbx-row="__primary"] .mbx-menu > summary');
+    await page.click('[data-mbx-settings="__primary"]');
+    await page.waitForSelector("#mailbox-settings-backdrop:not([hidden]) #my-email-configure", { timeout: 15000 });
+    await page.click("#my-email-configure");
     await page.click("[data-email-tab='google']").catch(() => {});
     await page.waitForTimeout(300);
     check(await visibleTitle(page, "#my-email-oauth-app-title", "Sign-in app"), `${theme} Email: "Sign-in app" visible`);
     check(await page.evaluate(() => document.getElementById("my-email-oauth-client-id").checkVisibility()), `${theme} Email: Client ID visible`);
-    await noAdvanced(page, "Email modal", theme);
-    await shot(page, "email", theme);
+    await noAdvanced(page, "Mailbox settings", theme);
+    await page.click("#mailbox-settings-close");
     await page.keyboard.press("Escape");
     await page.waitForTimeout(300);
     // Create user.

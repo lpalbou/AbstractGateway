@@ -169,7 +169,7 @@ def test_gateway_split_api_runner_two_process_restart_smoke(tmp_path: Path, monk
             api_env = dict(base_env)
             api_env["ABSTRACTGATEWAY_RUNNER"] = "0"
             return subprocess.Popen(
-                [sys.executable, "-m", "abstractgateway.cli", "serve", "--no-runner", "--host", "127.0.0.1", "--port", str(port)],
+                [sys.executable, "-m", "abstractgateway.cli", "serve", "--no-runner", "--host", "127.0.0.1", "--port", str(port), "--no-tray"],
                 env=api_env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,

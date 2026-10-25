@@ -48,7 +48,15 @@ try {
     await page.keyboard.press("Escape");
     await page.evaluate(() => { document.body.classList.remove("nav-open"); document.getElementById("tab-button-users").click(); });
     await page.click(`tr[data-user='${target === "castor" ? "castor" : "admin"}'] button[data-action='email']`);
-    await page.waitForSelector("#my-email-connected", { state: "visible" });
+    // My email → Mailboxes → the primary's "…" → Settings: the full editor in its own dialog.
+    const openSettings = async () => {
+      await page.waitForSelector('[data-mbx-row="__primary"] .mbx-menu > summary');
+      await page.click('[data-mbx-row="__primary"] .mbx-menu > summary');
+      await page.click('[data-mbx-settings="__primary"]');
+      await page.waitForSelector("#my-email-connected", { state: "visible" });
+    };
+    const closeAll = async () => { await page.click("#mailbox-settings-close"); await page.click("#account-email-close"); };
+    await openSettings();
     const actions = await page.locator(".mailbox-actions button").allTextContents();
     check(JSON.stringify(actions) === JSON.stringify(["Test", "Configure", "Disconnect"]), `${target}: actions`, actions);
     await page.click("#my-email-configure");
@@ -60,9 +68,9 @@ try {
       await page.waitForSelector("#my-email-oauth-cancel", { state: "visible" });
       await page.click("#my-email-configure-cancel");
       while (!releaseCancel) await new Promise((r) => setTimeout(r, 10));
-      await page.click("#account-email-close");
+      await closeAll();
       await page.click("tr[data-user='admin'] button[data-action='email']");
-      await page.waitForSelector("#my-email-configure", { state: "visible" });
+      await openSettings();
       await page.click("#my-email-configure");
       await page.waitForSelector("#my-email-configure-actions", { state: "visible" });
       await page.fill("#my-email-oauth-client-secret", "fresh-client-secret");
@@ -113,9 +121,9 @@ try {
       releaseUpdate = null;
       await page.click("#my-email-connect-go");
       while (!releaseUpdate) await new Promise((r) => setTimeout(r, 10));
-      await page.click("#account-email-close");
+      await closeAll();
       await page.click("tr[data-user='admin'] button[data-action='email']");
-      await page.waitForSelector("#my-email-configure", { state: "visible" });
+      await openSettings();
       await page.click("#my-email-configure");
       await page.fill("#my-email-password", "fresh-draft");
       await page.fill("#my-email-imap-host", "fresh-draft.example.org");

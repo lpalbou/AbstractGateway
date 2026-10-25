@@ -89,6 +89,26 @@ async function mockRoutes(ctx, store) {
   await ctx.route("**/api/gateway/me/email/oauth/clients", (route) => route.fulfill({ json: { providers: {
     google: { configured: false, client_id: "", client_secret_set: false, tenant: "", builtin_available: true, needs_reconnect: null },
     microsoft: { configured: false, client_id: "", client_secret_set: false, tenant: "", builtin_available: false, needs_reconnect: null } } } }));
+  // My email: the primary connected (over the real answer), and the provider lookup by domain.
+  await ctx.route((u) => u.pathname === "/api/gateway/me/email", async (route) => {
+    if (route.request().method() !== "GET") return route.fulfill({ status: 405, json: {} });
+    const real = await (await route.fetch()).json();
+    return route.fulfill({ json: { ...real, configured: true, address: "admin@example.org", email_address: "admin@example.org", enabled: true, auth_kind: "password", username: "",
+      imap: { host: "imap.example.org", port: 993, security: "ssl", folder: "INBOX" }, smtp: { host: "smtp.example.org", port: 465, security: "ssl" },
+      mailbox: { state: "connected", address: "admin@example.org", provider: "imap", reason: null } } });
+  });
+  await ctx.route((u) => u.pathname === "/api/gateway/me/email/autodiscover", (route) => {
+    const address = new URL(route.request().url()).searchParams.get("address").toLowerCase();
+    store.requests.push(`GET autodiscover ${address}`);
+    const domain = address.split("@")[1];
+    const legs = (i, o, sec = "ssl", port = 465) => ({ imap: { host: i, port: 993, security: "ssl" }, smtp: o ? { host: o, port, security: sec } : null });
+    const known = {
+      "gmail.com": { provider: "google", display_name: "Gmail", ...legs("imap.gmail.com", "smtp.gmail.com"), sign_in: ["oauth", "app_password"], oauth_available: true, app_password_url: "https://myaccount.google.com/apppasswords", source: "preset" },
+      "fastmail.com": { provider: "fastmail", display_name: "Fastmail", ...legs("imap.fastmail.com", "smtp.fastmail.com"), sign_in: ["app_password"], oauth_available: false, source: "preset" },
+      "outlook.com": { provider: "microsoft", display_name: "Outlook / Microsoft 365", ...legs("outlook.office365.com", "smtp.office365.com", "starttls", 587), sign_in: ["oauth"], oauth_available: false, source: "preset" },
+    }[domain] || { provider: "other", display_name: domain, imap: { host: "", port: 993, security: "ssl" }, smtp: null, sign_in: ["password"], oauth_available: false, source: "none" };
+    return route.fulfill({ json: { address, login: address, ...known } });
+  });
   // Further mailboxes (Account → My email): never a real IMAP sign-in in this test.
   await ctx.route("**/api/gateway/me/email/accounts**", async (route) => {
     const req = route.request();
@@ -101,7 +121,7 @@ async function mockRoutes(ctx, store) {
       const b = JSON.parse(req.postData() || "{}");
       store.lastMailboxPut = { id, body: b };
       if (b.imap && b.imap.host === "imap.gmail.com") return route.fulfill({ status: 400, json: { detail: { reason_code: "email_auth_failed", message: "IMAP sign-in failed: [AUTHENTICATIONFAILED] Invalid credentials" } } });
-      const row = { account_id: id, primary: false, configured: true, address: b.address, can_read: true, can_send: false, enabled: true, folder: "INBOX", mailbox: { state: "receive_only" }, watcher: { state: "idle" } };
+      const row = { account_id: id, primary: false, configured: true, address: b.address, name: b.name, can_read: true, can_send: !!b.send, enabled: true, folder: "INBOX", mailbox: { state: b.send ? "connected" : "receive_only", provider: "imap" }, watcher: { state: "idle" } };
       store.mailboxes = store.mailboxes.filter((m) => m.account_id !== id).concat([row]);
       return route.fulfill({ json: { ok: true, ...row } });
     }
@@ -344,47 +364,111 @@ try {
       check((await page.textContent('[data-trg-row="conn_bob1"]')).includes("bob"), "all accounts: owner shown");
       await shot(page, "triggers-all-accounts-1440-light");
       await page.click("#triggers-all");
-      // Manage under Account → My email: the further-mailboxes card, add lpalbou@abstractframework.ai read-only.
+      // Manage → My email: a compact header, tabs Mailboxes | Notifications | Agents, each fits at 1440×900.
       await page.waitForSelector('[data-trg-mailbox="default"]');
       await page.click('[data-trg-mailbox-manage="default"]');
-      await page.waitForSelector("#my-mailboxes-card:not([hidden])", { timeout: 30000 });
+      await page.waitForSelector('#my-mailboxes-list [data-mbx-row="__primary"]', { timeout: 30000 });
+      check((await page.textContent("#account-email-title")).trim() === "My email", "my email: title");
+      check(await page.locator("#account-email-body .account-modal-lead, #account-email-body .af-callout").count() === 0, "my email: no banner");
+      const tabs = await page.$$eval(".my-email-tabs [role=tab]", (els) => els.map((e) => e.textContent.trim()));
+      check(JSON.stringify(tabs) === JSON.stringify(["Mailboxes", "Notifications", "Agents"]), "my email: three tabs", tabs);
+      const fits = () => page.evaluate(() => { const b = document.getElementById("account-email-body"); return b.scrollHeight - b.clientHeight; });
+      for (const t of ["mailboxes", "notifications", "agents"]) {
+        await page.click(`#my-email-sec-${t}`);
+        await page.waitForSelector(`#my-email-pane-${t}:not([hidden])`);
+        await page.waitForTimeout(150);
+        check((await fits()) <= 1, `my email: ${t} fits without scrolling at 1440×900`, await fits());
+        await shotEl(page, "#account-email-backdrop .af-modal", `my-email-tab-${t}-1440-light`);
+      }
+      await page.click("#my-email-sec-mailboxes");
+      const primaryRow = (await page.textContent('[data-mbx-row="__primary"]')).replace(/\s+/g, " ");
+      check(primaryRow.includes("admin@example.org · connected") && primaryRow.includes("Sends as you"), "mailboxes: primary row one line + badge", primaryRow);
+      check(!(await page.textContent("#my-mailboxes-list")).includes("INBOX"), "mailboxes: no folder repeated");
+      // Add mailbox: the form in a dialog; step 1 is one field.
       await page.click("#my-mailbox-add");
-      check(await page.locator("#my-mailbox-google:not([hidden])").count() === 1, "Sign in with Google offered (built-in client)");
-      // Gmail: provider-aware help, before and after a refused sign-in.
-      await page.fill("#my-mailbox-id", "personal");
-      await page.fill("#my-mailbox-address", "someone@gmail.com");
-      await page.fill("#my-mailbox-imap-host", "imap.gmail.com");
-      await page.fill("#my-mailbox-password", "account-password");
-      check((await page.textContent("#my-mailbox-provider-help")).startsWith("Gmail refuses account passwords."), "Gmail help shown while typing");
-      await page.click("#my-mailbox-add-go");
-      await page.waitForSelector("#my-mailbox-error:not([hidden])");
-      check((await page.textContent("#my-mailbox-error")) === "Not added. Gmail refuses account passwords. Create an app password and paste it here, or Sign in with Google.", "Gmail refusal: provider-aware help", await page.textContent("#my-mailbox-error"));
-      const link = page.locator('#my-mailbox-error a');
-      check((await link.getAttribute("href")) === "https://myaccount.google.com/apppasswords" && (await link.getAttribute("target")) === "_blank", "Gmail refusal: a direct link in a new tab");
-      await shotEl(page, "#my-mailboxes-card", "my-email-gmail-help-1440-light");
-      await page.fill("#my-mailbox-id", "abstractframework");
-      await page.fill("#my-mailbox-address", "lpalbou@abstractframework.ai");
-      await page.fill("#my-mailbox-imap-host", "imap.abstractframework.ai");
-      await page.fill("#my-mailbox-imap-port", "993");
-      await page.fill("#my-mailbox-password", "app-password");
-      await shotEl(page, "#my-mailboxes-card", "my-email-add-mailbox-1440-light");
-      await page.click("#my-mailbox-add-go");
-      await page.waitForSelector('[data-mbx-row="abstractframework"]');
-      check(JSON.stringify(store.lastMailboxPut) === JSON.stringify({ id: "abstractframework", body: { address: "lpalbou@abstractframework.ai", password: "app-password", username: "", imap: { host: "imap.abstractframework.ai", security: "ssl", port: 993 }, send: false, test: true } }), "add mailbox: read-only PUT body", store.lastMailboxPut);
-      check((await page.textContent('[data-mbx-row="abstractframework"]')).includes("read-only"), "mailbox row: read-only");
-      await page.click('[data-mbx-row="abstractframework"] [data-mbx-test]');
-      await page.waitForSelector('[data-mbx-row="abstractframework"] .mbx-row__state.is-ok');
-      const sw = page.locator('#my-mailbox-enabled-abstractframework');
-      check((await sw.getAttribute("role")) === "switch" && (await sw.textContent()).includes("Use this mailbox"), "mailbox switch: feature-labelled");
+      await page.waitForSelector("#mailbox-sheet-backdrop:not([hidden]) #mbs-address");
+      check((await page.textContent("#mailbox-sheet-title")).trim() === "Add mailbox", "form: title");
+      check(await page.evaluate(() => document.activeElement && document.activeElement.id) === "mbs-address", "form: Email address has focus");
+      check(await page.locator("#mailbox-sheet-body input").count() === 1 && await page.locator("#mailbox-sheet-go").isHidden(), "form: step 1 is one field, no action yet");
+      await shotEl(page, "#mailbox-sheet-backdrop .af-modal", "mailbox-form-empty-1440-light");
+      // Gmail: found, Sign in with Google first.
+      await page.fill("#mbs-address", "someone@gmail.com");
+      await page.waitForSelector('[data-mbs-oauth="google"]');
+      check((await page.textContent("[data-mbs-found]")).trim() === "Gmail · Sign in with Google, or use an app password", "form: Gmail found line");
+      check(await page.locator("#mbs-password").count() === 0 && await page.locator("details.mbs-servers[open]").count() === 0, "form: Gmail — sign-in, no password, servers collapsed");
+      await shotEl(page, "#mailbox-sheet-backdrop .af-modal", "mailbox-form-gmail-1440-light");
+      // The app-password way, refused: the error inline in red, the text kept, the direct link.
+      await page.click("[data-mbs-use-password]");
+      await page.fill("#mbs-password", "account-password");
+      await page.click("#mailbox-sheet-go");
+      await page.waitForSelector('#mailbox-sheet-body .mbs-error[role="alert"]');
+      check((await page.textContent('#mailbox-sheet-body .mbs-error[role="alert"]')).startsWith("Not connected. Gmail refuses account passwords."), "form: Gmail refusal says what to do");
+      const link = page.locator('#mailbox-sheet-body .mbs-error a');
+      check((await link.getAttribute("href")) === "https://myaccount.google.com/apppasswords" && (await link.getAttribute("target")) === "_blank", "form: refusal links the app-password page");
+      check(await page.inputValue("#mbs-password") === "account-password" && await page.inputValue("#mbs-address") === "someone@gmail.com", "form: the text is kept");
+      const red = await page.$eval('#mailbox-sheet-body .mbs-error[role="alert"]', (el) => getComputedStyle(el).color);
+      check(red !== await page.$eval("#mbs-address", (el) => getComputedStyle(el).color), "form: the error is coloured", red);
+      await shotEl(page, "#mailbox-sheet-backdrop .af-modal", "mailbox-form-error-1440-light");
+      // Microsoft without a sign-in client here: said plainly, no password, no action.
+      await page.fill("#mbs-address", "me@outlook.com");
+      await page.waitForSelector("[data-mbs-oauth-missing]");
+      check((await page.textContent("[data-mbs-oauth-missing]")).trim() === "Microsoft mailboxes need Sign in with Microsoft; ask your gateway admin to register a Microsoft sign-in client.", "form: Microsoft needs its sign-in");
+      check(await page.locator("#mbs-password").count() === 0 && await page.locator("#mailbox-sheet-go").isHidden(), "form: Microsoft — no password, no action");
+      // Unknown provider: Server settings open, to fill in.
+      await page.fill("#mbs-address", "me@unknown.example");
+      await page.waitForSelector("details.mbs-servers[open] #mbs-imap-host");
+      check((await page.textContent("[data-mbs-found]")).trim() === "We could not find this provider's settings; enter them below.", "form: unknown provider line");
+      check(await page.inputValue("#mbs-login") === "me@unknown.example", "form: Sign-in name prefilled with the address");
+      await shotEl(page, "#mailbox-sheet-backdrop .af-modal", "mailbox-form-unknown-1440-light");
+      // Fastmail: an app password; Read and send off; Server settings collapsed and prefilled.
+      await page.fill("#mbs-address", "me@fastmail.com");
+      await page.waitForFunction(() => (document.querySelector("[data-mbs-found]") || {}).textContent === "Fastmail · use an app password");
+      check(await page.inputValue("#mbs-password") === "", "form: another address starts the password afresh");
+      check(await page.getAttribute("#mbs-send", "aria-checked") === "false" && (await page.textContent("#mbs-send")).includes("Read and send"), "form: Read and send, off by default");
+      check(await page.locator("details.mbs-servers:not([open])").count() === 1 && await page.inputValue("#mbs-imap-host") === "imap.fastmail.com", "form: Server settings collapsed, prefilled");
+      const order = await page.$$eval("#mailbox-sheet-body label, #mailbox-sheet-body summary, #mailbox-sheet-body [role=switch]", (els) => els.map((e) => (e.getAttribute("role") === "switch" ? e.querySelector(".af-switch__label").textContent : e.textContent).trim()));
+      check(JSON.stringify(order) === JSON.stringify(["Email address", "Password", "Read and send", "Server settings", "Incoming server (IMAP)", "Port", "Security", "Sign-in name"]), "form: field order", order);
+      await page.fill("#mbs-password", "app-password");
+      await shotEl(page, "#mailbox-sheet-backdrop .af-modal", "mailbox-form-fastmail-1440-light");
+      await page.click("#mailbox-sheet-go");
+      await page.waitForSelector('[data-mbx-row="me-fastmail-com"]');
+      check(await page.locator("#mailbox-sheet-backdrop").isHidden(), "form: closes after adding");
+      check(JSON.stringify(store.lastMailboxPut) === JSON.stringify({ id: "me-fastmail-com", body: { address: "me@fastmail.com", password: "app-password", test: true, imap: { host: "imap.fastmail.com", security: "ssl", port: 993 }, send: false, name: "me@fastmail.com" } }), "form: the PUT body (no name asked: the address)", store.lastMailboxPut);
+      const row = (await page.textContent('[data-mbx-row="me-fastmail-com"] .mbx-row__line')).replace(/\s+/g, " ").trim();
+      check(row === "me@fastmail.com · connected, reads only", "mailboxes: the added row, one line", row);
+      // The row: Active switch, "…" menu Test / Settings / Remove.
+      const sw = page.locator("#my-mailbox-active-me-fastmail-com");
+      check((await sw.getAttribute("role")) === "switch" && (await sw.textContent()).includes("Active"), "row: Active switch");
       await sw.click();
-      await page.waitForFunction(() => document.getElementById("my-mailbox-enabled-abstractframework") && document.getElementById("my-mailbox-enabled-abstractframework").getAttribute("aria-checked") === "false");
-      check(store.requests.includes("PUT /api/gateway/me/email/accounts/abstractframework/enabled"), "mailbox switch: PUT enabled");
-      await shotEl(page, "#my-mailboxes-card", "my-email-further-mailboxes-1440-light");
-      await page.click('[data-mbx-row="abstractframework"] [data-mbx-delete]');
-      check((await page.textContent('[data-mbx-row="abstractframework"]')).includes("Delete the mailbox abstractframework (lpalbou@abstractframework.ai)?"), "mailbox delete: asks first");
-      await page.click('[data-mbx-delete-now="abstractframework"]');
-      await page.waitForFunction(() => !document.querySelector('[data-mbx-row="abstractframework"]'));
-      check(store.requests.includes("DELETE /api/gateway/me/email/accounts/abstractframework"), "mailbox delete: DELETE");
+      await page.waitForFunction(() => { const b = document.getElementById("my-mailbox-active-me-fastmail-com"); return b && b.getAttribute("aria-checked") === "false"; });
+      check(store.requests.includes("PUT /api/gateway/me/email/accounts/me-fastmail-com/enabled"), "row: Active PUTs enabled");
+      await page.click('[data-mbx-row="me-fastmail-com"] .mbx-menu > summary');
+      const menu = await page.$$eval('[data-mbx-row="me-fastmail-com"] .mbx-menu__list button', (els) => els.map((e) => e.textContent.trim()));
+      check(JSON.stringify(menu) === JSON.stringify(["Test", "Settings", "Remove"]), "row: menu", menu);
+      await page.click('[data-mbx-row="me-fastmail-com"] [data-mbx-test]');
+      await page.waitForSelector('[data-mbx-row="me-fastmail-com"] .mbx-row__note.is-ok');
+      await shotEl(page, "#account-email-backdrop .af-modal", "my-email-mailboxes-two-1440-light");
+      await page.click('[data-mbx-row="me-fastmail-com"] .mbx-menu > summary');
+      await page.click('[data-mbx-row="me-fastmail-com"] [data-mbx-delete]');
+      check((await page.textContent('[data-mbx-row="me-fastmail-com"]')).includes("Remove me@fastmail.com?"), "row: Remove asks first");
+      await page.click('[data-mbx-delete-now="me-fastmail-com"]');
+      await page.waitForFunction(() => !document.querySelector('[data-mbx-row="me-fastmail-com"]'));
+      check(store.requests.includes("DELETE /api/gateway/me/email/accounts/me-fastmail-com"), "row: Remove DELETEs");
+    }
+    if (w === 390) {
+      // Phone width: the tabs and the mailbox form in one column, nothing wider than the screen.
+      await page.waitForSelector('[data-trg-mailbox="default"]');
+      await page.click('[data-trg-mailbox-manage="default"]');
+      await page.waitForSelector('#my-mailboxes-list [data-mbx-row="__primary"]', { timeout: 30000 });
+      await noSideScroll(page, "my email 390");
+      await shotEl(page, "#account-email-backdrop .af-modal", "my-email-tab-mailboxes-390-light");
+      await page.click("#my-mailbox-add");
+      await page.fill("#mbs-address", "me@unknown.example");
+      await page.waitForSelector("details.mbs-servers[open] #mbs-imap-host");
+      await noSideScroll(page, "mailbox form 390");
+      const widths = await page.$$eval("#mailbox-sheet-body input", (els) => els.map((e) => Math.round(e.getBoundingClientRect().right)));
+      check(widths.every((r) => r <= 390), "mailbox form 390: every field inside the screen", widths);
+      await shotEl(page, "#mailbox-sheet-backdrop .af-modal", "mailbox-form-unknown-390-light");
     }
     await ctx.close();
   }

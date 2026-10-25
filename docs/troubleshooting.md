@@ -419,6 +419,7 @@ Choose **Use the gateway's own folder** in Continuum or the console, or run
 | `dev_reload` | start without `--reload` |
 | `runner_only` | the tray belongs to the process that serves the console |
 | `no_tray_flag` | the gateway was started with `serve --no-tray`; start it without the flag |
+| `test_gateway` | the gateway was started the way tests start one (`--host 127.0.0.1 --port <not the configured port> --print-token`); start it on its configured port, or without `--print-token` |
 
 GNOME needs the AppIndicator extension. If the helper started and then
 disappeared, read `<data dir>/logs/tray.log`; `GET /api/gateway/host/tray`

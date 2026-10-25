@@ -483,6 +483,7 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
     record_serve_context(
         base_url=base_url, data_dir=data_dir, version=version, reload=reload, runner_only=False,
         no_tray=bool(getattr(args, "no_tray", False)),
+        no_tray_reason=getattr(args, "no_tray_reason", None),
     )
 
     if reload:
@@ -555,7 +556,7 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
     # NO SETTING TO READ (operator ruling 2026-09-06): while `serve` runs on a
     # desktop that can hold an icon, the icon is there. What is left in
     # `tray_decision` is only what this machine can or cannot do.
-    decision = tray_decision(reload=False, runner_only=False, no_tray=bool(getattr(args, "no_tray", False)))
+    decision = tray_decision(reload=False, runner_only=False, no_tray=bool(getattr(args, "no_tray", False)), no_tray_reason=getattr(args, "no_tray_reason", None))
     if decision.start:
         # Spawn AFTER the listener is bound (a second `serve` on a busy port
         # must never point a tray at the FIRST gateway with the wrong token
@@ -1057,6 +1058,9 @@ def main(argv: list[str] | None = None) -> None:
         from .network_exposure import prepare_serve_bind, record_serve_bind
 
         _serve_data_dir = resolve_data_dir().path
+        # A hermetic test gateway never puts an icon on the person's desktop: the
+        # explicit `--no-tray`, or the test start shape (tray_supervisor.hermetic_start_reason).
+        _cli_host, _cli_port = getattr(args, "host", None) or None, getattr(args, "port", None)
         _bind = prepare_serve_bind(
             cli_host=getattr(args, "host", None) or None,
             cli_port=getattr(args, "port", None),
@@ -1065,6 +1069,21 @@ def main(argv: list[str] | None = None) -> None:
         args.host, args.port = _bind.host, _bind.port
         for _msg in _bind.messages:
             _stderr(_msg)
+        if not getattr(args, "no_tray", False):
+            from .network_exposure import DEFAULT_PORT
+            from .runtime_config import resolve_network_setting
+            from .tray_supervisor import hermetic_start_reason
+
+            try:
+                _setting = resolve_network_setting(_serve_data_dir)
+                _configured_port = int(_setting["port"]) if _setting.get("port_source") == "stored" else DEFAULT_PORT
+            except Exception:
+                _configured_port = DEFAULT_PORT
+            _why = hermetic_start_reason(cli_host=_cli_host, cli_port=_cli_port, print_token=getattr(args, "print_token", None), configured_port=_configured_port)
+            if _why:
+                args.no_tray = True
+                args.no_tray_reason = _why
+                _stderr(f"Desktop tray: not started ({_why}; pass --no-tray to say so explicitly)")
         record_serve_bind(_serve_data_dir, _bind)
         _apply_backlog_launch_flags(args, _serve_data_dir)
         # The bind host decides host-safety defaults inside the app (engine

@@ -1,232 +1,180 @@
-"""Account → My email: further mailboxes, read-only (root backlog 1044).
+"""My email (Accounts → your row → Email): the Mailboxes tab and the ONE mailbox form.
 
-The primary mailbox is the "Mailbox" card above (PUT /me/email). This card lists the person's
-OTHER mailboxes and adds one: a read-only mailbox (IMAP only, `send: false`) that automations can
-watch ("When an email arrives" with that mailbox) and that never sends.
+Operator rework (2026-10-25): the dialog has a compact header ("My email" + the address) and three
+tabs, **Mailboxes** | **Notifications** | **Agents** (console.py moves the existing cards into them).
 
-- List: GET /api/gateway/me/email/accounts → `{items: [{account_id, primary, configured, address,
-  can_read, can_send, enabled, folder, mailbox: {state, reason}, watcher: {state, last_poll, …}}]}`;
-  the non-primary, configured ones are rows: name, address, state, a **Use this mailbox** switch
-  (PUT …/{id}/enabled `{enabled}`), **Test** (POST …/{id}/test) and **Delete** (DELETE …/{id}, after
-  an inline question).
-- Add a mailbox (read-only): name (the mailbox id: 1-32 of a-z, 0-9, `_`, `-`), address, IMAP
-  server, port, security, login (optional), password → PUT /api/gateway/me/email/accounts/{id}
-  `{address, password, username, imap: {host, port, security}, send: false, test: true}` (the gateway
-  signs in first and stores nothing on a failed test).
+- **Mailboxes**: one list — the primary mailbox first (badge "Sends as you"), then the others; each
+  row is ONE line "address · provider · state", an **Active** switch and a "…" menu (Test, Settings,
+  Remove). **Add mailbox** opens the mailbox form as a dialog, never inline. The primary's **Settings**
+  opens the full editor (stored servers, folder, Google/Microsoft client, Test, Disconnect) in its own
+  dialog, `#mailbox-settings-backdrop` (console.py holds its markup).
+- **The mailbox form** (one component for the primary "Connect" and for another mailbox "Add
+  mailbox"): step 1 is one field, **Email address**; `GET /me/email/autodiscover?address=` answers
+  `{provider, display_name, imap, smtp|null, login, sign_in[], oauth_available, app_password_url?,
+  source}` and one line says what was found. Step 2: **Sign in with Google/Microsoft** when the
+  gateway has that client, else a **Password** with the provider's app-password link. **Server
+  settings** (IMAP server/port/security, outgoing server when sending, **Sign-in name** prefilled with
+  the address) stay collapsed unless nothing was found. **Read and send** (another mailbox only, off
+  by default) appears only when the provider has an outgoing server. No name is asked: the id is
+  derived from the address.
 
-Shown for your own account only (the routes are `/me/email/accounts`; an entity's email page does
-not offer it). Spliced into the console script scope (console.py _console_owned_sources): `api`,
-`esc`, `$`, `state`, `afSwitchCreate`, `afSwitchBind`, `emailErrorText`, `myEmailUi` are the
-console's own.
+Routes: primary = the email UI's base (`myEmailApi()`: `/me/email`, or an entity's own `/accounts/<id>/email`):
+PUT base, POST base/test, PUT base/enabled, DELETE base, base/oauth/start|finish|cancel. Others (own account
+only): GET /me/email/accounts, PUT|DELETE /me/email/accounts/{id} (`send`), POST …/test, PUT …/enabled,
+…/oauth/start|finish|cancel. Spliced into the console script scope: `api`, `esc`, `$`, `state`, `afSwitchCreate`,
+`afSwitchBind`, `emailErrorText`, `myEmailUi`, `myEmailApi`, `loadMyEmail`, `bindAccountModal`, `trgAgo`,
+`trgLoadingMarkup` are the console's own.
 """
 
 from __future__ import annotations
 
 MAILBOXES_CSS = r"""
-/* ---- Account → My email: further mailboxes (console_mailboxes.py) ---- */
-.mbx-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-.mbx-row { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); }
-.mbx-row__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
-.mbx-row__name { font-weight: 600; }
-.mbx-row__sub { color: var(--muted); font-size: var(--af-helper-size, var(--font-size-md)); }
-.mbx-row__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.mbx-row__state.is-failed { color: var(--error, #d6336c); }
-.mbx-row__state.is-ok { color: var(--success, #2f9e44); }
+/* ---- My email: tabs, the mailbox list and the mailbox form (console_mailboxes.py) ---- */
+.my-email-head { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; margin-bottom: 4px; }
+.my-email-head h2 { margin: 0; }
+.my-email-who { margin: 0; color: var(--muted); font-size: var(--font-size-md); flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.my-email-tabs .af-tabs__panel { padding-top: 14px; display: flex; flex-direction: column; gap: 14px; }
+.my-email-tabs .af-tabs__panel[hidden], #mailbox-sheet-go[hidden] { display: none; }
+/* Agents tab: Always allowed and Always denied side by side when there is room (the tab fits at 1440×900) */
+@media (min-width: 1024px) {
+  .my-email-tabs .recipient-rules { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px 24px; align-items: start; }
+  .my-email-tabs .recipient-rules > .advanced-sentence, .my-email-tabs .recipient-rules > .af-form__help { grid-column: 1 / -1; }
+}
+.mbx-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.mbx-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; padding: 10px 2px; border-top: 1px solid var(--line-soft); }
+.mbx-row:first-child { border-top: 0; }
+.mbx-row__line { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
+.mbx-row__line strong { font-weight: 600; }
+.mbx-row__line .mbx-sub { color: var(--muted); }
+.mbx-badge { display: inline-flex; align-items: center; padding: 0 8px; margin-left: 6px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--info, var(--accent)) 50%, transparent); color: var(--info, var(--accent)); font-size: var(--font-size-sm); white-space: nowrap; }
+.mbx-row__actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.mbx-row__note { flex-basis: 100%; margin: 0; font-size: var(--font-size-md); }
+.mbx-row__note.is-ok { color: var(--success, #2f9e44); }
+.mbx-row__note.is-failed { color: var(--error, #d6336c); }
+.mbx-row .inline-confirm { flex-basis: 100%; }
+.mbx-menu { position: relative; }
+.mbx-menu > summary { list-style: none; cursor: pointer; min-width: 44px; min-height: 36px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--ui-border-1, var(--line)); border-radius: var(--radius-md); }
+.mbx-menu > summary::-webkit-details-marker { display: none; }
+.mbx-menu__list { position: absolute; right: 0; z-index: 5; display: flex; flex-direction: column; min-width: 10rem; margin-top: 4px; padding: 4px; border: 1px solid var(--ui-border-1, var(--line)); border-radius: var(--radius-md); background: var(--bg-primary, var(--bg)); box-shadow: 0 6px 18px rgba(0, 0, 0, .12); }
+.mbx-menu__list > button { justify-content: flex-start; text-align: left; border: 0; background: transparent; color: var(--text); min-height: 36px; }
+.mbx-menu__list > button:hover { background: var(--ui-surface-2, var(--bg-secondary)); }
 .mbx-empty { color: var(--muted); margin: 0; }
-.mbx-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px 16px; margin-top: 8px; }
-.mbx-form .af-form__field { min-width: 0; }
-.mbx-form .mbx-wide { grid-column: 1 / -1; }
-.mbx-form input, .mbx-form select { width: 100%; box-sizing: border-box; }
-@media (max-width: 767.98px) { .mbx-form { grid-template-columns: minmax(0, 1fr); } }
+.mbx-add-row { display: flex; justify-content: flex-start; }
+/* the mailbox form (a dialog): one column, generous spacing */
+.mbs { display: flex; flex-direction: column; gap: 16px; max-width: 34rem; }
+.mbs .af-form__field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.mbs input, .mbs select { width: 100%; box-sizing: border-box; }
+.mbs-found { margin: 0; font-size: var(--font-size-md); color: var(--muted); min-height: 1.2em; }
+.mbs-found.is-ok { color: var(--text); }
+.mbs-signin { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.mbs-error { margin: 0; color: var(--error, #d6336c); font-size: var(--font-size-md); }
+.mbs input[aria-invalid="true"] { border-color: var(--error, #d6336c); }
+.mbs-servers > summary { cursor: pointer; color: var(--muted); min-height: 28px; }
+.mbs-servers[open] > summary { margin-bottom: 10px; }
+.mbs-servers__grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr); gap: 10px 12px; }
+.mbs-servers__wide { grid-column: 1 / -1; }
+#mailbox-settings-body .account-card { border: 0; padding: 0; background: transparent; box-shadow: none; }
+#mailbox-settings-body .account-card > .af-card__header { display: none; }
+.mbs-actions { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+@media (max-width: 767.98px) { .mbs-servers__grid { grid-template-columns: minmax(0, 1fr); } .mbx-row__actions { flex-basis: 100%; } }
 """
 
 MAILBOXES_JS = r"""
-    // ---- Account → My email: further mailboxes, read-only (console_mailboxes.py) ----
-    const mbx = { items: null, error: "", adding: false, saving: false, confirm: "", note: {}, switches: {}, google: false, microsoft: false, oauth: null };
+    // ---- My email: the Mailboxes tab and the one mailbox form (console_mailboxes.py) ----
+    const mbx = { items: null, error: "", confirm: "", note: {}, sheet: null, release: null, settingsRelease: null, rendering: false, oauth: null, timer: null, openAddOnLoad: false, tab: "mailboxes" };
     // Providers that refuse account passwords over IMAP (operator ruling: a direct link, never a menu path).
     const MBX_PROVIDERS = {
       google: { name: "Gmail", url: "https://myaccount.google.com/apppasswords", signIn: "Sign in with Google" },
       microsoft: { name: "Outlook", url: "https://account.live.com/proofs/manage/additional", signIn: "Sign in with Microsoft" },
     };
-    function mailboxProvider(host, address) {
-      const h = String(host || "").trim().toLowerCase();
-      const a = String(address || "").trim().toLowerCase();
-      if (h === "imap.gmail.com" || h.endsWith(".gmail.com") || h.endsWith("googlemail.com") || /@(gmail|googlemail)\.com$/.test(a)) return "google";
-      if (h === "outlook.office365.com" || h === "imap-mail.outlook.com" || h.endsWith(".outlook.com") || /@(outlook|hotmail|live|msn)\.[a-z.]+$/.test(a)) return "microsoft";
-      return "";
-    }
-    // The help as HTML: "<Name> refuses account passwords. <a>Create an app password</a> and paste it here[, or Sign in with …]."
-    function mailboxProviderHelpHtml(provider, signInAvailable) {
-      const p = MBX_PROVIDERS[provider];
-      if (!p) return "";
-      return `${esc(p.name)} refuses account passwords. <a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">Create an app password</a> and paste it here${signInAvailable ? `, or ${esc(p.signIn)}` : ""}.`;
-    }
-    function mailboxProviderHelp(host, address) {
-      const provider = mailboxProvider(host, address);
-      return provider ? mailboxProviderHelpHtml(provider, !!mbx[provider]) : "";
-    }
-    // "Sign in with Google" is offered when the gateway has a Google client (its own or the built-in one).
-    function mbxGoogleAvailable(clients) { return mbxClientAvailable(clients, "google"); }
-    function mbxClientAvailable(clients, provider) {
-      const g = clients && clients.providers && clients.providers[provider];
-      return !!(g && (g.configured || g.builtin_available));
-    }
     const MBX_STATE = {
-      connected: "Connected", receive_only: "Connected", paused: "Paused",
-      needs_reconnect: "Needs reconnecting", unavailable: "Mailboxes are turned off for this account", not_connected: "Not connected",
+      connected: "connected", receive_only: "connected, reads only", paused: "paused",
+      needs_reconnect: "needs reconnecting", unavailable: "turned off by your admin", not_connected: "not connected",
     };
-    const MBX_ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
     function mbxOwnPage() { return !myEmailUi.base; }
     function mbxFurther(items) { return (items || []).filter((m) => m && !m.primary && m.configured); }
-    function mbxStateText(m) {
-      if (!m.enabled) return "Not in use: automations do not watch it.";
-      const st = String((m.mailbox && m.mailbox.state) || "");
-      const reason = m.mailbox && m.mailbox.reason ? ` ${m.mailbox.reason}` : "";
-      return `${MBX_STATE[st] || st || "unknown"}${MBX_STATE[st] ? "" : reason}`;
+    // The provider's help as HTML: "<Name> refuses account passwords. <a>Create an app password</a> and paste it here[, or Sign in with …]."
+    function mailboxProviderHelpHtml(provider, signInAvailable, url) {
+      const p = MBX_PROVIDERS[provider];
+      if (!p) return "";
+      return `${esc(p.name)} refuses account passwords. <a href="${esc(url || p.url)}" target="_blank" rel="noopener noreferrer">Create an app password</a> and paste it here${signInAvailable ? `, or ${esc(p.signIn)}` : ""}.`;
     }
-    function mailboxRowMarkup(m, opts) {
+    // The one line under Email address, from the autodiscover answer.
+    function mailboxFoundLine(d) {
+      if (!d) return "";
+      if (d.source === "none" || !(d.imap && d.imap.host)) return "We could not find this provider's settings; enter them below.";
+      const name = d.display_name || d.provider || "";
+      const p = MBX_PROVIDERS[d.provider];
+      const ways = Array.isArray(d.sign_in) ? d.sign_in : ["password"];
+      if (p && d.oauth_available && ways.includes("oauth")) return ways.includes("app_password") ? `${name} · ${p.signIn}, or use an app password` : `${name} · ${p.signIn}`;
+      if (ways.includes("app_password") && !ways.includes("password")) return `${name} · use an app password`;
+      if (p && !ways.includes("password")) return `${name} · needs ${p.signIn}`;
+      return `${name} · password sign-in`;
+    }
+    // The id another mailbox is stored under, derived from its address (no name is asked).
+    function mailboxIdFromAddress(address, taken) {
+      const base = String(address || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 28).replace(/-+$/g, "") || "mailbox";
+      const used = new Set((taken || []).map(String));
+      used.add("default");
+      if (!used.has(base)) return base;
+      for (let i = 2; i < 100; i += 1) if (!used.has(`${base}-${i}`)) return `${base}-${i}`;
+      return `${base}-${Date.now() % 1000}`;
+    }
+    // ---- the Mailboxes list: the primary first ("Sends as you"), then the others; one line each ----
+    // The provider's name for a row; a password mailbox the gateway reports as plain "imap" names none.
+    const MBX_PROVIDER_NAMES = { google: "Gmail", microsoft: "Outlook", yahoo: "Yahoo Mail", icloud: "iCloud Mail", fastmail: "Fastmail" };
+    function mbxProviderWord(provider) {
+      return MBX_PROVIDER_NAMES[provider] || "";
+    }
+    function mbxRowMarkup(row, opts) {
       const o = opts || {};
-      const id = esc(m.account_id);
-      const w = m.watcher || {};
-      const sub = [m.address ? esc(m.address) : "", m.can_send ? "" : "read-only"].filter(Boolean).join(" · ");
-      const note = o.note && o.note[m.account_id];
-      let html = `<li class="mbx-row" data-mbx-row="${id}">`
-        + `<div class="mbx-row__head"><span class="mbx-row__name">${id}</span><span class="mbx-row__sub">${sub}</span></div>`
-        + `<p class="mbx-row__sub">${esc(mbxStateText(m))}${w.last_poll ? ` · checked ${esc(trgAgo(w.last_poll) || "")}` : ""}</p>`
-        + `<div class="mbx-row__actions"><span data-mbx-switch="${id}"></span>`
-        + `<button type="button" class="secondary" data-mbx-test="${id}">Test</button>`
-        + `<button type="button" class="secondary" data-mbx-delete="${id}">Delete</button></div>`;
-      if (note) html += `<p class="mbx-row__state ${note.ok ? "is-ok" : "is-failed"}" role="status">${esc(note.text)}</p>`;
-      if (o.confirm === m.account_id) {
-        html += `<div class="inline-confirm" role="group"><span>${esc(mailboxDeleteQuestion(m))}</span>`
-          + `<button type="button" class="danger" data-mbx-delete-now="${id}">Delete</button>`
-          + `<button type="button" class="secondary" data-mbx-delete-cancel="${id}">Cancel</button></div>`;
+      const key = esc(row.key);
+      const parts = [`<strong>${esc(row.name || row.address || row.key)}</strong>`];
+      const provider = mbxProviderWord(row.provider);
+      if (provider) parts.push(`<span class="mbx-sub">${esc(provider)}</span>`);
+      parts.push(`<span class="mbx-sub">${esc(row.enabled === false ? "not in use" : (MBX_STATE[row.state] || row.state || "unknown"))}</span>`);
+      const note = o.note && o.note[row.key];
+      let html = `<li class="mbx-row" data-mbx-row="${key}"><span class="mbx-row__line">${parts.join(" · ")}${row.primary ? `<span class="mbx-badge">Sends as you</span>` : ""}</span>`
+        + `<span class="mbx-row__actions"><span data-mbx-switch="${key}"></span>`
+        + `<details class="mbx-menu"><summary aria-label="More for ${esc(row.address || row.key)}">…</summary><div class="mbx-menu__list">`
+        + `<button type="button" data-mbx-test="${key}">Test</button><button type="button" data-mbx-settings="${key}">Settings</button><button type="button" data-mbx-delete="${key}">Remove</button>`
+        + `</div></details></span>`;
+      if (note) html += `<p class="mbx-row__note ${note.ok ? "is-ok" : "is-failed"}" role="status">${esc(note.text)}</p>`;
+      if (o.confirm === row.key) {
+        html += `<div class="inline-confirm" role="group"><span>${esc(mailboxRemoveQuestion(row))}</span>`
+          + `<button type="button" class="danger" data-mbx-delete-now="${key}">Remove</button>`
+          + `<button type="button" class="secondary" data-mbx-delete-cancel="${key}">Cancel</button></div>`;
       }
       return html + `</li>`;
     }
-    function mailboxDeleteQuestion(m) {
-      return `Delete the mailbox ${m.account_id}${m.address ? ` (${m.address})` : ""}? Its stored password and its read position are removed; automations that watch it stop.`;
+    function mailboxRemoveQuestion(row) {
+      return row.primary
+        ? `Remove ${row.address || "this mailbox"}? Your agents lose email until you connect one again. Policy and limits are kept.`
+        : `Remove ${row.address || row.key}? Its stored password and read position are removed; automations that watch it stop.`;
     }
-    function mailboxesMarkup(items, opts) {
-      const list = mbxFurther(items);
-      if (!list.length) return `<p class="mbx-empty">No further mailbox yet.</p>`;
-      return `<ul class="mbx-list">${list.map((m) => mailboxRowMarkup(m, opts)).join("")}</ul>`;
-    }
-    // The PUT body of a read-only mailbox (IMAP only), or the problem sentences.
-    function mailboxConnectBody(v) {
-      const problems = [];
-      const id = mailboxIdFromName(v.id);
-      if (!String(v.id || "").trim()) problems.push("Name is required.");
-      else if (!id) problems.push("Name: use at least one letter or digit.");
-      else if (id === "default") problems.push("“Default” is your primary mailbox: choose another name.");
-      const address = String(v.address || "").trim();
-      if (!address || !address.includes("@")) problems.push("Address is required.");
-      const host = String(v.host || "").trim();
-      if (!host) problems.push("IMAP server is required.");
-      const port = String(v.port || "").trim();
-      if (port && !/^[0-9]{1,5}$/.test(port)) problems.push("Port must be a number.");
-      if (!String(v.password || "")) problems.push("Password is required.");
-      if (problems.length) return { problems };
-      const imap = { host, security: v.security === "starttls" ? "starttls" : "ssl" };
-      if (port) imap.port = Number(port);
-      return { id, body: { address, password: String(v.password), username: String(v.username || "").trim(), imap, send: false, test: true }, problems: [] };
-    }
-    async function loadMailboxOAuthClients() {
-      try {
-        const clients = await api("/api/gateway/me/email/oauth/clients");
-        mbx.google = mbxClientAvailable(clients, "google");
-        mbx.microsoft = mbxClientAvailable(clients, "microsoft");
-      } catch {
-        mbx.google = false;
-        mbx.microsoft = false;
+    // The rows: the primary from the email UI's answer (GET base), the others from /me/email/accounts.
+    function mbxRows(primary, items) {
+      const rows = [];
+      const d = primary || {};
+      if (d.configured) {
+        rows.push({ key: "__primary", primary: true, address: d.address, provider: (d.oauth && d.oauth.provider) || (d.mailbox && d.mailbox.provider) || "", state: (d.mailbox && d.mailbox.state) || "connected", enabled: d.enabled !== false });
       }
-      $("my-mailbox-google").hidden = !mbx.google;
-      $("my-mailbox-microsoft").hidden = !mbx.microsoft;
-      // A registered sign-in client makes its button the first choice; Add mailbox (password) steps back.
-      $("my-mailbox-add-go").classList.toggle("secondary", mbx.google || mbx.microsoft);
-      mbxRenderHelp();
-    }
-    function mbxRenderHelp() {
-      const help = mailboxProviderHelp($("my-mailbox-imap-host").value, $("my-mailbox-address").value);
-      const el = $("my-mailbox-provider-help");
-      el.innerHTML = help;
-      el.hidden = !help;
-    }
-    // Sign in with Google for a further mailbox: /me/email/accounts/{id}/oauth/start|finish|cancel, the
-    // primary's /me/email/oauth/* shape (device code or a link on the gateway's computer).
-    async function startMailboxGoogle() { return startMailboxOAuth("google"); }
-    async function startMailboxOAuth(provider) {
-      if (mbx.oauth) return;
-      const err = $("my-mailbox-error");
-      const name = String($("my-mailbox-id").value || "").trim();
-      const id = mailboxIdFromName(name);
-      const address = String($("my-mailbox-address").value || "").trim();
-      const problems = [];
-      if (!name) problems.push("Name is required.");
-      else if (!id) problems.push("Name: use at least one letter or digit.");
-      else if (id === "default") problems.push("“Default” is your primary mailbox: choose another name.");
-      if (!address || !address.includes("@")) problems.push("Address is required.");
-      if (problems.length) { err.textContent = problems.join(" "); err.hidden = false; return; }
-      err.hidden = true;
-      const base = `/api/gateway/me/email/accounts/${encodeURIComponent(id)}/oauth`;
-      const prompt = $("my-mailbox-state");
-      let out;
-      try {
-        out = await api(`${base}/start`, { method: "POST", body: JSON.stringify({ provider, address }), slow: true });
-      } catch (e) {
-        err.textContent = `Not signed in: ${emailErrorText(e)}`;
-        err.hidden = false;
-        return;
+      for (const m of mbxFurther(items)) {
+        rows.push({ key: m.account_id, primary: false, name: m.name && m.name !== m.address ? `${m.name} (${m.address})` : "", address: m.address, provider: (m.mailbox && m.mailbox.provider) || "", state: (m.mailbox && m.mailbox.state) || "", enabled: !!m.enabled });
       }
-      const flow = { id: out.flow_id, base, cancelled: false };
-      mbx.oauth = flow;
-      $("my-mailbox-google-cancel").hidden = false;
-      prompt.textContent = out.flow === "device"
-        ? `Open ${out.verification_uri} in any browser and enter the code ${out.user_code}. Waiting for you to approve…`
-        : `Open this link in a browser on the gateway's computer: ${out.authorization_url} — waiting for the sign-in…`;
-      while (!flow.cancelled) {
-        let res;
-        try {
-          res = await api(`${base}/finish`, { method: "POST", body: JSON.stringify({ flow_id: flow.id, wait_s: 20 }), timeoutMs: 70000 });
-        } catch (e) {
-          if (!flow.cancelled) { err.textContent = `Not signed in: ${emailErrorText(e)}`; err.hidden = false; prompt.textContent = ""; }
-          break;
-        }
-        if (flow.cancelled) break;
-        if (res && res.pending) continue;
-        prompt.textContent = `Added ${id}: signed in with ${provider === "microsoft" ? "Microsoft" : "Google"} as ${res.address || address}.`;
-        mbxShowForm(false);
-        await loadMyMailboxes();
-        break;
-      }
-      if (mbx.oauth === flow) mbx.oauth = null;
-      $("my-mailbox-google-cancel").hidden = true;
+      return rows;
     }
-    async function cancelMailboxGoogle() {
-      const flow = mbx.oauth;
-      if (!flow) return;
-      flow.cancelled = true;
-      mbx.oauth = null;
-      $("my-mailbox-google-cancel").hidden = true;
-      $("my-mailbox-state").textContent = "Sign-in cancelled.";
-      await api(`${flow.base}/cancel`, { method: "POST", body: JSON.stringify({ flow_id: flow.id }) }).catch(() => {});
-    }
-    // UX #16: a free-text name ("Work inbox"); the id automations use is derived ("work-inbox").
-    function mailboxIdFromName(name) {
-      return String(name || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
-        .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32).replace(/-+$/g, "");
-    }
-    function mbxRenderIdHint() {
-      const id = mailboxIdFromName($("my-mailbox-id").value);
-      $("my-mailbox-id-help").textContent = id ? `Automations name it ${id}.` : "A name you recognise, e.g. Work inbox.";
+    function mailboxesMarkup(rows, opts) {
+      if (!rows.length) return `<p class="mbx-empty">No mailbox yet. Add one so your agents and automations can read your mail.</p>`;
+      return `<ul class="mbx-list">${rows.map((r) => mbxRowMarkup(r, opts)).join("")}</ul>`;
     }
     async function loadMyMailboxes() {
       const card = $("my-mailboxes-card");
       if (!card) throw new Error("The account email UI has no #my-mailboxes-card (console_mailboxes.py).");
-      card.hidden = !mbxOwnPage();
-      if (!mbxOwnPage()) return;
+      mbxRenderHeader();
+      if (!(state.myEmail && state.myEmail.configured)) closePrimaryMailboxSettings();  // disconnected: nothing to configure
       if (!mbx.items || mbx.error) { mbx.items = null; mbx.error = ""; renderMyMailboxes(); }  // the loading state, never an empty list
-      loadMailboxOAuthClients();
+      if (!mbxOwnPage()) { mbx.items = []; renderMyMailboxes(); return; }  // an entity: its own mailbox only (the others are /me routes)
       try {
         const out = await api("/api/gateway/me/email/accounts");
         if (!out || !Array.isArray(out.items)) throw new Error("the gateway's answer has no items list.");
@@ -236,133 +184,427 @@ MAILBOXES_JS = r"""
         mbx.error = emailErrorText(e);
       }
       renderMyMailboxes();
-      if (mbx.openAddOnLoad) { mbx.openAddOnLoad = false; mbxShowForm(true); }
+      if (mbx.openAddOnLoad) { mbx.openAddOnLoad = false; openMailboxSheet({ target: state.myEmail && state.myEmail.configured ? "other" : "primary" }); }
+    }
+    function mbxRenderHeader() {
+      const d = state.myEmail || {};
+      const who = $("my-email-who");
+      if (who) who.textContent = d.email_address || d.address || "";
+      const title = $("my-email-title");
+      if (title) title.textContent = mbxOwnPage() ? "My email" : "Email";
     }
     function renderMyMailboxes() {
       const list = $("my-mailboxes-list");
       if (mbx.error) { list.innerHTML = `<p class="af-form__error">Could not list your mailboxes: ${esc(mbx.error)}</p>`; return; }
-      if (!mbx.items) { list.innerHTML = `<p class="mbx-empty">${trgLoadingMarkup("Reading your mailboxes...")}</p>`; return; }
-      list.innerHTML = mailboxesMarkup(mbx.items, { note: mbx.note, confirm: mbx.confirm });
-      for (const m of mbxFurther(mbx.items)) {
-        const slot = list.querySelector(`[data-mbx-switch="${CSS.escape(m.account_id)}"]`);
+      if (!mbx.items || !state.myEmail) { list.innerHTML = `<p class="mbx-empty">${trgLoadingMarkup("Reading your mailboxes...")}</p>`; return; }
+      const rows = mbxRows(state.myEmail, mbx.items);
+      list.innerHTML = mailboxesMarkup(rows, { note: mbx.note, confirm: mbx.confirm });
+      for (const r of rows) {
+        const slot = list.querySelector(`[data-mbx-switch="${CSS.escape(r.key)}"]`);
         if (!slot) continue;
-        const sw = afSwitchCreate({ id: `my-mailbox-enabled-${m.account_id}`, label: "Use this mailbox", checked: !!m.enabled, small: true });
+        const sw = afSwitchCreate({ id: `my-mailbox-active-${r.key}`, label: "Active", checked: !!r.enabled, small: true });
         slot.append(...sw.nodes);
         afSwitchBind(sw.button, async (next) => {
-          await api(`/api/gateway/me/email/accounts/${encodeURIComponent(m.account_id)}/enabled`, { method: "PUT", body: JSON.stringify({ enabled: next }) });
-          await loadMyMailboxes();
+          await api(mbxRoute(r.key, "/enabled"), { method: "PUT", body: JSON.stringify({ enabled: next }) });
+          await mbxReload(r.key);
           return next;
-        }, (e) => { mbx.note[m.account_id] = { ok: false, text: `Not saved: ${emailErrorText(e)}` }; renderMyMailboxes(); });
+        }, (e) => { mbx.note[r.key] = { ok: false, text: `Not saved: ${emailErrorText(e)}` }; renderMyMailboxes(); });
       }
+      $("my-mailbox-add").hidden = state.myEmail && state.myEmail.email_available === false;
     }
-    function mbxFormValues() {
-      return {
-        id: $("my-mailbox-id").value, address: $("my-mailbox-address").value, host: $("my-mailbox-imap-host").value,
-        port: $("my-mailbox-imap-port").value, security: $("my-mailbox-imap-security").value,
-        username: $("my-mailbox-username").value, password: $("my-mailbox-password").value,
-      };
+    // A row's route: the primary through the email UI's base (own or an entity's), the others by id.
+    function mbxRoute(key, sub) {
+      return key === "__primary" ? myEmailApi(sub || "") : `/api/gateway/me/email/accounts/${encodeURIComponent(key)}${sub || ""}`;
     }
-    async function addMyMailbox() {
-      if (mbx.saving) return;
-      const err = $("my-mailbox-error");
-      const out = mailboxConnectBody(mbxFormValues());
-      if (out.problems.length) { err.textContent = out.problems.join(" "); err.hidden = false; return; }
-      err.hidden = true;
-      mbx.saving = true;
-      const go = $("my-mailbox-add-go");
-      go.disabled = true;
-      go.setAttribute("aria-busy", "true");
-      $("my-mailbox-state").textContent = "Signing in to the mailbox...";
-      try {
-        await api(`/api/gateway/me/email/accounts/${encodeURIComponent(out.id)}`, { method: "PUT", body: JSON.stringify(out.body), slow: true });
-        $("my-mailbox-state").textContent = `Added ${out.id}: read-only, ready for your automations.`;
-        $("my-mailbox-password").value = "";
-        mbxShowForm(false);
-        await loadMyMailboxes();
-      } catch (e) {
-        $("my-mailbox-state").textContent = "";
-        const help = mailboxProviderHelp(out.body.imap.host, out.body.address);
-        if (help) err.innerHTML = `Not added. ${help}`;
-        else err.textContent = `Not added: ${emailErrorText(e)}`;
-        err.hidden = false;
-      } finally {
-        mbx.saving = false;
-        go.disabled = false;
-        go.removeAttribute("aria-busy");
-      }
+    async function mbxReload(key) {
+      if (key === "__primary") await loadMyEmail();
+      else await loadMyMailboxes();
     }
-    function mbxShowForm(show) {
-      mbx.adding = !!show;
-      $("my-mailbox-form").hidden = !mbx.adding;
-      $("my-mailbox-add").hidden = mbx.adding;  // UX #16: no Add button above its own open form
-      $("my-mailbox-add").setAttribute("aria-expanded", mbx.adding ? "true" : "false");
-      if (mbx.adding) { try { $("my-mailbox-id").focus(); } catch {} }
-    }
-    async function testMyMailbox(id) {
-      mbx.note[id] = { ok: true, text: "Signing in..." };
+    async function testMyMailbox(key) {
+      mbx.note[key] = { ok: true, text: "Signing in..." };
       renderMyMailboxes();
       try {
-        const out = await api(`/api/gateway/me/email/accounts/${encodeURIComponent(id)}/test`, { method: "POST", body: "{}", slow: true });
-        const ok = !out || out.ok !== false;
-        mbx.note[id] = { ok, text: ok ? "Signed in: the mailbox answers." : `Test failed: ${(out && (out.message || out.error)) || "the gateway did not say why."}` };
+        const out = await api(mbxRoute(key, "/test"), { method: "POST", body: "{}", slow: true });
+        const failed = ["imap", "smtp"].map((k) => out && out[k]).filter((l) => l && l.ok === false);
+        const ok = !failed.length && !(out && out.ok === false);
+        mbx.note[key] = { ok, text: ok ? "It answered: the mailbox works." : `Test failed: ${failed.length ? `${failed[0].cause}${failed[0].fix ? ` ${failed[0].fix}` : ""}` : ((out && (out.message || out.error)) || "the gateway did not say why.")}` };
       } catch (e) {
-        mbx.note[id] = { ok: false, text: `Test failed: ${emailErrorText(e)}` };
+        mbx.note[key] = { ok: false, text: `Test failed: ${emailErrorText(e)}` };
       }
       renderMyMailboxes();
     }
-    async function deleteMyMailbox(id) {
+    async function removeMyMailbox(key) {
       try {
-        await api(`/api/gateway/me/email/accounts/${encodeURIComponent(id)}`, { method: "DELETE" });
+        await api(mbxRoute(key), { method: "DELETE" });
         mbx.confirm = "";
-        delete mbx.note[id];
-        $("my-mailbox-state").textContent = `Deleted the mailbox ${id}.`;
+        delete mbx.note[key];
+        await mbxReload(key);
         await loadMyMailboxes();
       } catch (e) {
-        mbx.note[id] = { ok: false, text: `Not deleted: ${emailErrorText(e)}` };
+        mbx.note[key] = { ok: false, text: `Not removed: ${emailErrorText(e)}` };
         renderMyMailboxes();
       }
     }
+    // ---- the mailbox form (a dialog): Email address → Sign in / Password → Server settings ----
+    // st: {target: "primary"|"other", id, address, found, finding, usePassword, password, login, imap, smtp,
+    //      serversOpen, send, errors, problem, saving}
+    function mailboxSheetMarkup(st) {
+      const e = st.errors || {};
+      const err = (k) => e[k] ? `<p class="mbs-error" role="alert">${esc(e[k])}</p>` : "";
+      const inv = (k) => e[k] ? ' aria-invalid="true"' : "";
+      const d = st.found;
+      let html = `<div class="mbs">`
+        + `<div class="af-form__field"><label class="af-form__label" for="mbs-address">Email address</label>`
+        + `<input id="mbs-address" type="text" inputmode="email" autocomplete="email" spellcheck="false" autofocus data-mbs="address" value="${esc(st.address || "")}"${st.lockAddress ? " readonly" : ""}${inv("address")}>`
+        + `<p class="mbs-found${d && d.source !== "none" ? " is-ok" : ""}" data-mbs-found role="status">${esc(st.finding ? "Looking up your provider..." : mailboxFoundLine(d))}</p>${err("address")}</div>`;
+      if (d) {
+        const p = MBX_PROVIDERS[d.provider];
+        const passwordOk = !Array.isArray(d.sign_in) || d.sign_in.includes("password") || d.sign_in.includes("app_password");
+        if (p && !d.oauth_available && !passwordOk) {
+          // The provider only accepts its own sign-in, and this gateway has no client for it: said plainly.
+          const who = d.provider === "microsoft" ? "Microsoft" : "Google";
+          html += `<p class="mbs-error" role="status" data-mbs-oauth-missing>${esc(who)} mailboxes need ${esc(p.signIn)}; ask your gateway admin to register a ${esc(who)} sign-in client.</p>`;
+        } else if (p && d.oauth_available && !st.usePassword) {
+          html += `<div class="mbs-signin"><button type="button" data-mbs-oauth="${esc(d.provider)}">${esc(p.signIn)}</button>`
+            + (passwordOk ? `<button type="button" class="link-button" data-mbs-use-password="1">Use an app password instead</button>` : "") + `</div>`;
+        } else {
+          const ways = Array.isArray(d.sign_in) ? d.sign_in : [];
+          const appOnly = ways.includes("app_password") && !ways.includes("password");
+          const help = st.problemHtml ? "" : p ? mailboxProviderHelpHtml(d.provider, !!d.oauth_available, d.app_password_url)
+            : appOnly ? `${esc(d.display_name || "This provider")} needs an app password${d.app_password_url ? `: <a href="${esc(d.app_password_url)}" target="_blank" rel="noopener noreferrer">Create an app password</a> and paste it here` : " (create one in your account's security settings)"}.`
+            : "";
+          html += `<div class="af-form__field"><label class="af-form__label" for="mbs-password">Password</label>`
+            + `<input id="mbs-password" type="password" autocomplete="new-password" data-mbs="password" value="${esc(st.password || "")}"${inv("password")}>`
+            + (help ? `<p class="af-form__help" data-mbs-help>${help}</p>` : `<p class="af-form__help">Use an app password if your provider needs one. Stored encrypted, never shown.</p>`)
+            + `${err("password")}</div>`;
+        }
+        if (st.target === "other" && d.smtp && d.smtp.host) {
+          html += `<div data-mbs-send-slot></div>`;
+        }
+        const im = st.imap || {}, sm = st.smtp || {};
+        const showSmtp = st.target === "primary" || st.send;
+        html += `<details class="mbs-servers"${st.serversOpen ? " open" : ""}><summary>Server settings</summary><div class="mbs-servers__grid">`
+          + `<div class="af-form__field"><label class="af-form__label" for="mbs-imap-host">Incoming server (IMAP)</label><input id="mbs-imap-host" data-mbs="imap.host" autocomplete="off" spellcheck="false" value="${esc(im.host || "")}"${inv("imap.host")}>${err("imap.host")}</div>`
+          + `<div class="af-form__field"><label class="af-form__label" for="mbs-imap-port">Port</label><input id="mbs-imap-port" data-mbs="imap.port" inputmode="numeric" value="${esc(im.port || "")}"></div>`
+          + `<div class="af-form__field"><label class="af-form__label" for="mbs-imap-security">Security</label><select id="mbs-imap-security" data-mbs="imap.security"><option value="ssl"${im.security !== "starttls" ? " selected" : ""}>SSL</option><option value="starttls"${im.security === "starttls" ? " selected" : ""}>STARTTLS</option></select></div>`
+          + (showSmtp
+            ? `<div class="af-form__field"><label class="af-form__label" for="mbs-smtp-host">Outgoing server (SMTP)</label><input id="mbs-smtp-host" data-mbs="smtp.host" autocomplete="off" spellcheck="false" value="${esc(sm.host || "")}"${inv("smtp.host")}>${err("smtp.host")}</div>`
+              + `<div class="af-form__field"><label class="af-form__label" for="mbs-smtp-port">Port</label><input id="mbs-smtp-port" data-mbs="smtp.port" inputmode="numeric" value="${esc(sm.port || "")}"></div>`
+              + `<div class="af-form__field"><label class="af-form__label" for="mbs-smtp-security">Security</label><select id="mbs-smtp-security" data-mbs="smtp.security"><option value="ssl"${sm.security !== "starttls" ? " selected" : ""}>SSL</option><option value="starttls"${sm.security === "starttls" ? " selected" : ""}>STARTTLS</option></select></div>`
+            : "")
+          + `<div class="af-form__field mbs-servers__wide"><label class="af-form__label" for="mbs-login">Sign-in name</label><input id="mbs-login" data-mbs="login" autocomplete="off" spellcheck="false" value="${esc(st.login || st.address || "")}"></div>`
+          + `</div></details>`;
+      }
+      if (st.problem) html += `<p class="mbs-error" role="alert">${st.problemHtml ? st.problem : esc(st.problem)}</p>`;
+      return html + `</div>`;
+    }
+    // The connect body (password sign-in), or field errors.
+    function mailboxSheetBody(st) {
+      const errors = {};
+      const address = String(st.address || "").trim();
+      if (!address || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address)) errors.address = "Enter the full email address, e.g. name@example.com.";
+      if (!String(st.password || "")) errors.password = "Enter the password (or an app password).";
+      const im = st.imap || {}, sm = st.smtp || {};
+      if (!String(im.host || "").trim()) errors["imap.host"] = "Enter the incoming server (Server settings).";
+      const sending = st.target === "primary" || st.send;
+      if (st.target === "primary" && String(im.host || "").trim() && !String(sm.host || "").trim()) errors["smtp.host"] = "Enter the outgoing server too.";
+      if (Object.keys(errors).length) return { errors };
+      const leg = (l) => {
+        const out = { host: String(l.host || "").trim(), security: l.security === "starttls" ? "starttls" : "ssl" };
+        if (String(l.port || "").trim()) out.port = Number(l.port);
+        return out;
+      };
+      const body = { address, password: String(st.password), test: true, imap: leg(im) };
+      const login = String(st.login || "").trim();
+      if (login && login.toLowerCase() !== address.toLowerCase()) body.username = login;
+      if (sending && String(sm.host || "").trim()) body.smtp = leg(sm);
+      if (st.target === "other") { body.send = !!st.send; body.name = address; }
+      return { body, errors: {} };
+    }
+    function openMailboxSheet(opts) {
+      const o = opts || {};
+      closeMailboxSheet();
+      const d = state.myEmail || {};
+      const primary = o.target === "primary";
+      const address = primary ? (o.settings ? (d.address || "") : (d.email_address || "")) : (o.address || "");
+      mbx.sheet = {
+        target: primary ? "primary" : "other", id: o.id || "", address, lockAddress: !!(o.settings && !primary), found: null, finding: false,
+        usePassword: false, password: "", login: "", imap: {}, smtp: {}, serversOpen: false, send: false, errors: {}, problem: "", saving: false,
+      };
+      $("mailbox-sheet-title").textContent = primary ? (o.settings ? "Mailbox settings" : "Connect your mailbox") : (o.settings ? "Mailbox settings" : "Add mailbox");
+      $("mailbox-sheet-go").textContent = primary ? "Connect" : (o.settings ? "Save" : "Add mailbox");
+      renderMailboxSheet();
+      const backdrop = $("mailbox-sheet-backdrop");
+      backdrop.hidden = false;
+      mbx.release = bindAccountModal(backdrop, closeMailboxSheet);
+      try { $("mbs-address").focus(); } catch {}
+      if (address) discoverMailbox(address);
+    }
+    function closeMailboxSheet() {
+      const backdrop = $("mailbox-sheet-backdrop");
+      if (!backdrop || backdrop.hidden) return;
+      if (mbx.oauth) cancelMailboxOAuth();
+      backdrop.hidden = true;
+      $("mailbox-sheet-body").textContent = "";
+      const release = mbx.release;
+      mbx.release = null;
+      if (release) release();
+      mbx.sheet = null;
+    }
+    function mbxCollectSheet() {
+      const st = mbx.sheet;
+      if (!st) return;
+      for (const el of Array.from(document.querySelectorAll("#mailbox-sheet-body [data-mbs]"))) {
+        const k = el.dataset.mbs;
+        const [a, b] = k.split(".");
+        if (b) { st[a] = Object.assign({}, st[a] || {}); st[a][b] = el.value; } else st[a] = el.value;
+      }
+      const open = document.querySelector("#mailbox-sheet-body details.mbs-servers");
+      if (open) st.serversOpen = open.open;
+    }
+    function renderMailboxSheet() {
+      const st = mbx.sheet;
+      if (!st) return;
+      // Re-rendering replaces the fields: keep the focused one (and its caret), and ignore the blur
+      // the replacement itself fires.
+      const active = document.activeElement;
+      const keep = active && active.id && active.closest && active.closest("#mailbox-sheet-body") ? { id: active.id, a: active.selectionStart, b: active.selectionEnd } : null;
+      mbx.rendering = true;
+      try { $("mailbox-sheet-body").innerHTML = mailboxSheetMarkup(st); } finally { mbx.rendering = false; }
+      if (keep && $(keep.id)) {
+        const el = $(keep.id);
+        try { el.focus(); if (keep.a != null && el.setSelectionRange) el.setSelectionRange(keep.a, keep.b); } catch {}
+      }
+      const slot = document.querySelector("#mailbox-sheet-body [data-mbs-send-slot]");
+      if (slot) {
+        const sw = afSwitchCreate({ id: "mbs-send", label: "Read and send", description: "Off: automations read this mailbox and it never sends.", checked: !!st.send, small: true });
+        slot.append(...sw.nodes);
+        afSwitchBind(sw.button, async (next) => { mbxCollectSheet(); st.send = next; renderMailboxSheet(); return next; }, () => {});
+      }
+      const d = st.found;
+      const passwordOk = d && (!Array.isArray(d.sign_in) || d.sign_in.includes("password") || d.sign_in.includes("app_password"));
+      const oauthOnly = d && MBX_PROVIDERS[d.provider] && ((d.oauth_available && !st.usePassword) || !passwordOk);
+      $("mailbox-sheet-go").hidden = !d || oauthOnly;
+      $("mailbox-sheet-go").disabled = !!st.saving;
+    }
+    async function discoverMailbox(address) {
+      const st = mbx.sheet;
+      if (!st) return;
+      const a = String(address || "").trim();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(a)) return;
+      if (st.found && st.found.address === a.toLowerCase()) return;
+      st.finding = true;
+      st.address = a;
+      renderMailboxSheet();
+      let d;
+      try {
+        d = await api(`/api/gateway/me/email/autodiscover?address=${encodeURIComponent(a)}`);
+      } catch (e) {
+        d = { address: a.toLowerCase(), provider: "other", display_name: a.split("@")[1], imap: { host: "", port: 993, security: "ssl" }, smtp: null, login: a, sign_in: ["password"], oauth_available: false, source: "none" };
+      }
+      if (mbx.sheet !== st || String(st.address).trim().toLowerCase() !== String(d.address || a).toLowerCase()) return;
+      st.finding = false;
+      if (st.found && st.found.address !== d.address) { st.password = ""; st.usePassword = false; st.send = false; }  // another address: start step 2 afresh
+      st.found = d;
+      st.imap = Object.assign({}, d.imap || {});
+      st.smtp = Object.assign({}, d.smtp || {});
+      st.login = d.login || a;
+      st.serversOpen = d.source === "none" || !(d.imap && d.imap.host);
+      st.errors = {};
+      st.problem = "";
+      renderMailboxSheet();
+    }
+    async function submitMailboxSheet() {
+      const st = mbx.sheet;
+      if (!st || st.saving) return;
+      mbxCollectSheet();
+      const { body, errors } = mailboxSheetBody(st);
+      st.errors = errors;
+      st.problem = "";
+      st.problemHtml = false;
+      if (Object.keys(errors).length) {
+        if (errors["imap.host"] || errors["smtp.host"]) st.serversOpen = true;
+        renderMailboxSheet();
+        return;
+      }
+      const taken = (mbx.items || []).map((m) => m.account_id);
+      const id = st.target === "primary" ? "" : (st.id || mailboxIdFromAddress(st.address, taken));
+      st.saving = true;
+      renderMailboxSheet();
+      $("mailbox-sheet-note").textContent = "Signing in to the mailbox...";
+      try {
+        await api(st.target === "primary" ? myEmailApi() : `/api/gateway/me/email/accounts/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(body), slow: true });
+        $("mailbox-sheet-note").textContent = "";
+        const target = st.target;
+        closeMailboxSheet();
+        if (target === "primary") await loadMyEmail(); else await loadMyMailboxes();
+      } catch (e) {
+        st.saving = false;
+        $("mailbox-sheet-note").textContent = "";
+        const p = st.found && MBX_PROVIDERS[st.found.provider];
+        if (p) { st.problem = `Not connected. ${mailboxProviderHelpHtml(st.found.provider, !!st.found.oauth_available, st.found.app_password_url)}`; st.problemHtml = true; }
+        else st.problem = `Not connected: ${emailErrorText(e)}`;
+        renderMailboxSheet();
+      }
+    }
+    // Sign in with Google / Microsoft: base/oauth/start|finish|cancel (the primary's base, or the other mailbox's).
+    async function startMailboxOAuth(provider) {
+      const st = mbx.sheet;
+      if (!st || mbx.oauth) return;
+      mbxCollectSheet();
+      const taken = (mbx.items || []).map((m) => m.account_id);
+      const base = st.target === "primary" ? myEmailApi("/oauth") : `/api/gateway/me/email/accounts/${encodeURIComponent(st.id || mailboxIdFromAddress(st.address, taken))}/oauth`;
+      const note = $("mailbox-sheet-note");
+      let out;
+      try {
+        out = await api(`${base}/start`, { method: "POST", body: JSON.stringify({ provider, address: String(st.address || "").trim() }), slow: true });
+      } catch (e) {
+        st.problem = `Not signed in: ${emailErrorText(e)}`;
+        st.problemHtml = false;
+        renderMailboxSheet();
+        return;
+      }
+      const flow = { id: out.flow_id, base, cancelled: false };
+      mbx.oauth = flow;
+      note.textContent = out.flow === "device"
+        ? `Open ${out.verification_uri} in any browser and enter the code ${out.user_code}. Waiting for you to approve...`
+        : `Open this link in a browser on the gateway's computer: ${out.authorization_url} — waiting for the sign-in...`;
+      while (!flow.cancelled) {
+        let res;
+        try {
+          res = await api(`${base}/finish`, { method: "POST", body: JSON.stringify({ flow_id: flow.id, wait_s: 20 }), timeoutMs: 70000 });
+        } catch (e) {
+          if (!flow.cancelled && mbx.sheet === st) { st.problem = `Not signed in: ${emailErrorText(e)}`; st.problemHtml = false; note.textContent = ""; renderMailboxSheet(); }
+          break;
+        }
+        if (flow.cancelled) break;
+        if (res && res.pending) continue;
+        note.textContent = "";
+        if (mbx.oauth === flow) mbx.oauth = null;
+        const target = st.target;
+        closeMailboxSheet();
+        if (target === "primary") await loadMyEmail(); else await loadMyMailboxes();
+        return;
+      }
+      if (mbx.oauth === flow) mbx.oauth = null;
+    }
+    async function cancelMailboxOAuth() {
+      const flow = mbx.oauth;
+      if (!flow) return;
+      flow.cancelled = true;
+      mbx.oauth = null;
+      await api(`${flow.base}/cancel`, { method: "POST", body: JSON.stringify({ flow_id: flow.id }) }).catch(() => {});
+    }
+    // ---- the primary's Settings: the full editor (stored servers, folder, Google/Microsoft client, Test,
+    // Disconnect) in its own dialog; a primary not connected yet opens the mailbox form instead ----
+    function openPrimaryMailboxSettings() {
+      if (!(state.myEmail && state.myEmail.configured)) { openMailboxSheet({ target: "primary" }); return; }
+      const backdrop = $("mailbox-settings-backdrop");
+      if (!backdrop.hidden) return;
+      backdrop.hidden = false;
+      mbx.settingsRelease = bindAccountModal(backdrop, closePrimaryMailboxSettings);
+    }
+    function closePrimaryMailboxSettings() {
+      const backdrop = $("mailbox-settings-backdrop");
+      if (!backdrop || backdrop.hidden) return;
+      backdrop.hidden = true;
+      const release = mbx.settingsRelease;
+      mbx.settingsRelease = null;
+      if (release) release();
+    }
+    // ---- the tabs: Mailboxes | Notifications | Agents ----
+    const MY_EMAIL_SECTIONS = ["mailboxes", "notifications", "agents"];
+    function myEmailShowSection(name) {
+      mbx.tab = MY_EMAIL_SECTIONS.includes(name) ? name : "mailboxes";
+      for (const s of MY_EMAIL_SECTIONS) {
+        const on = s === mbx.tab;
+        $(`my-email-sec-${s}`).setAttribute("aria-selected", on ? "true" : "false");
+        $(`my-email-sec-${s}`).tabIndex = on ? 0 : -1;
+        $(`my-email-pane-${s}`).hidden = !on;
+      }
+    }
     function bindMyMailboxes() {
-      $("my-mailbox-add").onclick = () => mbxShowForm(!mbx.adding);
-      $("my-mailbox-add-cancel").onclick = () => mbxShowForm(false);
-      $("my-mailbox-add-go").onclick = () => addMyMailbox();
-      $("my-mailbox-google").onclick = () => startMailboxOAuth("google");
-      $("my-mailbox-microsoft").onclick = () => startMailboxOAuth("microsoft");
-      $("my-mailbox-google-cancel").onclick = () => cancelMailboxGoogle();
-      $("my-mailbox-imap-host").oninput = mbxRenderHelp;
-      $("my-mailbox-id").oninput = mbxRenderIdHint;
-      $("my-mailbox-address").oninput = mbxRenderHelp;
+      for (const s of MY_EMAIL_SECTIONS) {
+        const t = $(`my-email-sec-${s}`);
+        t.onclick = () => myEmailShowSection(s);
+        t.onkeydown = (e) => {
+          if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+          e.preventDefault();
+          const i = MY_EMAIL_SECTIONS.indexOf(s);
+          const next = MY_EMAIL_SECTIONS[(i + (e.key === "ArrowRight" ? 1 : MY_EMAIL_SECTIONS.length - 1)) % MY_EMAIL_SECTIONS.length];
+          myEmailShowSection(next);
+          $(`my-email-sec-${next}`).focus();
+        };
+      }
+      $("my-mailbox-add").onclick = () => openMailboxSheet({ target: state.myEmail && state.myEmail.configured ? "other" : "primary" });
       $("my-mailboxes-list").onclick = (e) => {
         const t = e.target && e.target.closest ? e.target.closest("button") : null;
         if (!t) return;
+        const menu = t.closest(".mbx-menu");
+        if (menu) menu.open = false;
         if (t.dataset.mbxTest) testMyMailbox(t.dataset.mbxTest);
+        else if (t.dataset.mbxSettings) {
+          const key = t.dataset.mbxSettings;
+          const m = (mbx.items || []).find((x) => x.account_id === key);
+          if (key === "__primary") openPrimaryMailboxSettings();
+          else openMailboxSheet({ target: "other", settings: true, id: key, address: m ? m.address : "" });
+        }
         else if (t.dataset.mbxDelete) { mbx.confirm = t.dataset.mbxDelete; renderMyMailboxes(); }
         else if (t.dataset.mbxDeleteCancel) { mbx.confirm = ""; renderMyMailboxes(); }
-        else if (t.dataset.mbxDeleteNow) deleteMyMailbox(t.dataset.mbxDeleteNow);
+        else if (t.dataset.mbxDeleteNow) removeMyMailbox(t.dataset.mbxDeleteNow);
+      };
+      $("mailbox-settings-close").onclick = closePrimaryMailboxSettings;
+      $("mailbox-sheet-close").onclick = closeMailboxSheet;
+      $("mailbox-sheet-cancel").onclick = closeMailboxSheet;
+      $("mailbox-sheet-go").onclick = () => submitMailboxSheet();
+      const body = $("mailbox-sheet-body");
+      body.oninput = (e) => {
+        const t = e.target;
+        if (!t || !t.dataset || !mbx.sheet) return;
+        const k = t.dataset.mbs;
+        if (mbx.sheet.errors && mbx.sheet.errors[k]) {
+          delete mbx.sheet.errors[k];
+          t.removeAttribute("aria-invalid");
+          const box = t.closest(".af-form__field");
+          const msg = box && box.querySelector(".mbs-error");
+          if (msg) msg.remove();
+        }
+        if (k === "address") {
+          if (mbx.timer) clearTimeout(mbx.timer);
+          mbx.sheet.address = t.value;
+          mbx.timer = setTimeout(() => discoverMailbox(t.value), 600);
+        }
+      };
+      body.addEventListener("focusout", (e) => { const t = e.target; if (!mbx.rendering && t && t.dataset && t.dataset.mbs === "address") discoverMailbox(t.value); });
+      body.onclick = (e) => {
+        const t = e.target && e.target.closest ? e.target.closest("button") : null;
+        if (!t || !mbx.sheet) return;
+        if (t.dataset.mbsOauth) startMailboxOAuth(t.dataset.mbsOauth);
+        else if (t.dataset.mbsUsePassword) { mbxCollectSheet(); mbx.sheet.usePassword = true; renderMailboxSheet(); try { $("mbs-password").focus(); } catch {} }
       };
     }
 """
 
 MAILBOXES_HTML = r"""
-              <section id="my-mailboxes-card" class="af-card account-card" aria-labelledby="my-mailboxes-title" hidden>
-                <div class="af-card__header">
-                  <h3 id="my-mailboxes-title" class="af-card__title">Other mailboxes</h3>
-                  <p class="af-card__desc">Other mailboxes your automations can watch ("When an email arrives"). Read-only: they are never used to send.</p>
-                </div>
+              <section id="my-mailboxes-card" class="af-card account-card" aria-labelledby="my-mailboxes-title">
+                <div class="af-card__header"><h3 id="my-mailboxes-title" class="af-card__title">Mailboxes</h3></div>
                 <div id="my-mailboxes-list"></div>
-                <p id="my-mailbox-state" class="inline-state" role="status" aria-live="polite"></p>
-                <div class="af-form__actions"><button id="my-mailbox-add" class="secondary" type="button" aria-expanded="false" aria-controls="my-mailbox-form">Add a mailbox</button></div>
-                <div id="my-mailbox-form" class="mbx-form" hidden>
-                  <div class="af-form__field"><label class="af-form__label" for="my-mailbox-id">Name</label><input id="my-mailbox-id" autocomplete="off" spellcheck="false" placeholder="Work inbox" aria-describedby="my-mailbox-id-help"><p id="my-mailbox-id-help" class="af-form__help">A name you recognise, e.g. Work inbox.</p></div>
-                  <div class="af-form__field"><label class="af-form__label" for="my-mailbox-address">Address</label><input id="my-mailbox-address" type="email" autocomplete="off" spellcheck="false"></div>
-                  <div class="af-form__field"><label class="af-form__label" for="my-mailbox-imap-host">IMAP server</label><input id="my-mailbox-imap-host" autocomplete="off" spellcheck="false" placeholder="imap.example.com"></div>
-                  <div class="af-form__field"><label class="af-form__label" for="my-mailbox-imap-port">Port</label><input id="my-mailbox-imap-port" inputmode="numeric" placeholder="993"></div>
-                  <div class="af-form__field"><label class="af-form__label" for="my-mailbox-imap-security">Security</label><select id="my-mailbox-imap-security"><option value="ssl">SSL</option><option value="starttls">STARTTLS</option></select></div>
-                  <div class="af-form__field"><label class="af-form__label" for="my-mailbox-username">Login</label><input id="my-mailbox-username" autocomplete="off" spellcheck="false" aria-describedby="my-mailbox-username-help"><p id="my-mailbox-username-help" class="af-form__help">Empty: the address.</p></div>
-                  <div class="af-form__field mbx-wide"><label class="af-form__label" for="my-mailbox-password">Password</label><input id="my-mailbox-password" type="password" autocomplete="new-password" aria-describedby="my-mailbox-password-help"><p id="my-mailbox-password-help" class="af-form__help">Use an app password if your provider needs one. Stored encrypted, never shown.</p></div>
-                  <p id="my-mailbox-provider-help" class="af-form__help mbx-wide" hidden></p>
-                  <p id="my-mailbox-error" class="af-form__error mbx-wide" role="alert" hidden></p>
-                  <div class="af-form__actions mbx-wide"><button id="my-mailbox-google" type="button" hidden>Sign in with Google</button><button id="my-mailbox-microsoft" type="button" hidden>Sign in with Microsoft</button><button id="my-mailbox-google-cancel" class="secondary" type="button" hidden>Cancel sign-in</button><button id="my-mailbox-add-cancel" class="secondary" type="button">Cancel</button><button id="my-mailbox-add-go" type="button">Add mailbox</button></div>
-                </div>
+                <div class="mbx-add-row"><button id="my-mailbox-add" class="secondary" type="button">Add mailbox</button></div>
               </section>
+"""
+
+MAILBOX_SHEET_HTML = r"""
+  <div id="mailbox-sheet-backdrop" class="af-modal-backdrop" hidden>
+    <div class="af-modal" role="dialog" aria-modal="true" aria-labelledby="mailbox-sheet-title">
+      <div class="af-modal__header">
+        <h2 id="mailbox-sheet-title" class="af-modal__title">Add mailbox</h2>
+        <button id="mailbox-sheet-close" class="af-modal__close" type="button" aria-label="Close" data-af-tip="Close">×</button>
+      </div>
+      <div id="mailbox-sheet-body" class="af-modal__body"></div>
+      <div class="af-modal__footer">
+        <p id="mailbox-sheet-note" class="af-modal__footer-note" role="status" aria-live="polite"></p>
+        <div class="mbs-actions"><button id="mailbox-sheet-cancel" class="secondary" type="button">Cancel</button><button id="mailbox-sheet-go" type="button" hidden>Add mailbox</button></div>
+      </div>
+    </div>
+  </div>
 """

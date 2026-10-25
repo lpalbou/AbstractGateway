@@ -122,23 +122,31 @@ def test_users_table_and_create_user_follow_design() -> None:
 
 
 def test_account_page_order_and_single_save() -> None:
+    """My email (operator rework 2026-10-25): a compact header, then three tabs — Mailboxes (one list
+    + Add mailbox, the mailbox form in its own dialog), Notifications (your address + the two
+    switches), Agents (agent email tools + recipients and limits). No banner; one inline Save."""
     html = _html()
     page = _slice(html, '<div id="my-email-section"', '<section id="entities-list-section"')
-    order = [page.index(k) for k in ('id="my-email-registered-title"', 'id="my-email-mailbox-title"', 'id="my-email-notify-title"', 'id="my-email-tools-title"', 'id="my-email-advanced"')]
-    assert order == sorted(order)
-    # Exactly one Save: the Email address field's inline one.
-    assert re.findall(r">Save<", page) == [">Save<"]
-    # DESIGN-v2 §3: IMAP first (and the default), then Google, Microsoft.
-    tabs = re.findall(r'role="tab" type="button" data-email-tab="([a-z]+)"', page)
-    assert tabs == ["imap", "google", "microsoft"], tabs
-    assert re.search(r'id="my-email-tab-imap"[^>]*aria-selected="true"', page)
-    assert ">Connect</button>" in page and page.count('id="my-email-connect-go"') == 1
-    assert "Use an app password if your provider needs one." in page
-    assert "Disconnect this mailbox? Your agents lose email until you connect again. Policy and limits are kept." in page
-    # Servers always visible (no disclosure); no User name / Display name fields; a Login only behind a small link.
-    assert 'id="my-email-servers"' not in page and "Display name" not in page
-    assert re.search(r'id="my-email-login-field" class="af-form__field" hidden', page)
-    assert "My provider uses a different login name" in page
+    assert '<span id="my-email-title">My email</span>' in page and 'id="my-email-who"' in page
+    tabs = re.findall(r'<button id="my-email-sec-([a-z]+)" class="af-tabs__tab" role="tab"', page)
+    assert tabs == ["mailboxes", "notifications", "agents"], tabs
+    mailboxes = _slice(page, 'id="my-email-pane-mailboxes"', 'id="my-email-pane-notifications"')
+    notifications = _slice(page, 'id="my-email-pane-notifications"', 'id="my-email-pane-agents"')
+    agents = page[page.index('id="my-email-pane-agents"'):]
+    assert 'id="my-mailboxes-list"' in mailboxes and ">Add mailbox</button>" in mailboxes
+    assert 'id="my-email-registered-title"' in notifications and 'id="my-email-notify-title"' in notifications
+    assert notifications.index('id="my-email-registered-title"') < notifications.index('id="my-email-notify-title"')
+    assert 'id="my-email-tools-title"' in agents and 'id="my-email-advanced"' in agents
+    # Never an inline form: Add mailbox opens the mailbox form, the primary's Settings its full
+    # editor, each in its own dialog outside the tabs.
+    assert 'id="my-email-connect"' not in page and 'id="my-email-imap-host"' not in page
+    assert 'id="mailbox-sheet-backdrop" class="af-modal-backdrop" hidden' in html
+    settings = _slice(html, '<div id="mailbox-settings-backdrop" class="af-modal-backdrop" hidden>', "\n  <div id=")
+    assert 'id="my-email-connected"' in settings and 'id="my-email-configure"' in settings and 'id="my-email-disconnect"' in settings
+    # Exactly one Save in the visible tabs: the Email address field's inline one.
+    visible = mailboxes + notifications + agents
+    assert re.findall(r">Save<", visible) == [">Save<"]
+    assert "You are also a user of this gateway" not in html
 
 
 def test_runtimes_note_says_what_a_runtime_is() -> None:

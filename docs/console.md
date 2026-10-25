@@ -183,15 +183,20 @@ default and your browser remembers it.
 - **Active** for an entity: off suspends it (it stops acting and its gateway
   credential is switched off) after "Suspend castor? It stops acting until you
   turn Active back on."; on resumes it in the state it had before.
-- **Email** opens a dialog. On your own row it holds your email settings: your
-  email address, your mailbox, the **Job failed** and **Approval needed**
-  notifications, **Agent email tools** and **Recipients and limits** ([email.md](./email.md)).
-  A connected mailbox offers **Test / Configure / Disconnect**. **Configure** opens its saved
-  connection settings; for IMAP, **Save changes** tests both servers before replacing the
-  connection, and **Cancel changes** discards the draft. IMAP updates require re-entering the password.
-  An administrator's own row adds one sentence: the address also receives the
-  administrator's sign-in codes and notifications, and the mailbox serves the
-  administrator's own agents. On another user's row it holds only that user's
+- **Email** opens a dialog. On your own row it is **My email**: a compact header
+  (your address) and three tabs ([email.md](./email.md)). **Mailboxes**: one list,
+  your primary mailbox first (badge *Sends as you*), then your other mailboxes;
+  each row is one line, *address · provider · state*, with an **Active** switch
+  and a **…** menu (**Test**, **Settings**, **Remove**); **Add mailbox** opens the
+  mailbox form ([below](#the-mailbox-form)) in its own dialog. **Notifications**:
+  your email address (the one inline **Save**), **Job failed** and **Approval
+  needed**. **Agents**: **Agent email tools** and **Recipients and limits**.
+  The primary's **Settings** opens its full editor in a dialog, **Mailbox
+  settings**: **Test / Configure / Disconnect**; **Configure** opens its saved
+  connection settings (servers, folder, the Google or Microsoft sign-in app); for
+  IMAP, **Save changes** tests both servers before replacing the connection, and
+  **Cancel changes** discards the draft. IMAP updates require re-entering the
+  password. On another user's row it holds only that user's
   **Email address** (with **Save address**), its mailbox status and diagnostic reason, and
   instructions to sign in as that user to configure the mailbox. Saving an address leaves
   the mailbox connection unchanged.
@@ -442,8 +447,8 @@ email)**, **Add a feed** and **Add a webhook**.
   to use it*; off it says *Paused*. Whether an automation uses it never moves
   the switch. **When nothing uses it** (collapsed, per connection) has **Keep
   fetching even when nothing uses it**. A mailbox row shows the same states with
-  the same **Listening** switch (it is the mailbox's *Use this mailbox* switch in
-  My email). A problem the gateway recorded shows in red under the row, for
+  the same **Listening** switch (it is the mailbox's **Active** switch in
+  My email → Mailboxes). A problem the gateway recorded shows in red under the row, for
   example *Can't read the feed: the address answered 404 (not found). Check the
   feed address.*
 - **Events** opens the 20 most recent events under the row, each a sentence
@@ -487,28 +492,42 @@ Routes: `GET /api/gateway/trigger-sources`, `GET|POST /api/gateway/triggers/conn
 that use a connection), and the public `POST /api/gateway/triggers/webhooks/{connection_id}` (the
 signed test call).
 
-#### Other mailboxes
+#### The mailbox form
 
-In **My email** (Accounts → your row → Email), the **Other mailboxes** card
-lists your other mailboxes and adds one with **Add a mailbox**: a name you
-recognise (*Work inbox*; automations refer to it as *work-inbox*, shown under
-the field), the address, the IMAP server, port and security, the login (empty:
-the address) and the password. The gateway signs in first and stores nothing
-when that fails. Gmail and Outlook refuse account passwords over IMAP: for
-their servers or addresses the form says so with a direct link, **Create an app
-password** (opens [Google's](https://myaccount.google.com/apppasswords) or
-[Microsoft's](https://account.live.com/proofs/manage/additional) page in a new
-tab), to paste here. When the gateway has a Google or Microsoft sign-in client,
-**Sign in with Google** / **Sign in with Microsoft** come first and add the
-mailbox through the provider's sign-in instead
-(`POST /api/gateway/me/email/accounts/{mailbox_id}/oauth/start|finish|cancel`,
-the same steps as the primary mailbox). Another mailbox is read-only:
-automations can watch it (*When mail arrives in …*), and it never sends. Each one
-has a **Use this mailbox** switch (automations watch it only while it is on),
-**Test** (signs in again) and **Delete** (asks first; its stored password and
-read position are removed). Routes: `GET /api/gateway/me/email/accounts`,
-`PUT|DELETE /api/gateway/me/email/accounts/{mailbox_id}` (`send: false`), `POST
-…/{mailbox_id}/test`, `PUT …/{mailbox_id}/enabled`.
+One form connects your primary mailbox (**Connect**) and adds another one
+(**Add mailbox**), in a dialog, one column:
+
+1. **Email address** (the only field at first). The gateway looks the provider
+   up (`GET /api/gateway/me/email/autodiscover?address=`) and one line says what
+   it found: *Gmail · Sign in with Google, or use an app password*, *Fastmail ·
+   use an app password*, *example.org · password sign-in*, or *We could not find
+   this provider's settings; enter them below.*
+2. **Sign in with Google** / **Sign in with Microsoft** when the gateway has that
+   sign-in client (Google also offers **Use an app password instead**); otherwise
+   a **Password**, with the provider's help and a direct **Create an app
+   password** link ([Google's](https://myaccount.google.com/apppasswords),
+   [Microsoft's](https://account.live.com/proofs/manage/additional), or the one
+   the lookup names) when the provider refuses account passwords. A provider that
+   only accepts its own sign-in, on a gateway without that client, is said
+   plainly: *Microsoft mailboxes need Sign in with Microsoft; ask your gateway
+   admin to register a Microsoft sign-in client.*
+3. **Read and send** (another mailbox only, off by default, shown only when the
+   provider has an outgoing server). Off: automations read it and it never sends.
+   Your primary mailbox always sends.
+4. **Server settings** (collapsed, prefilled from the lookup; open by itself
+   only when nothing was found): incoming server, port and security, the
+   outgoing server when the mailbox sends, and **Sign-in name** (prefilled with
+   the address).
+
+No name is asked: another mailbox is named by its address, and its id is
+derived from it (`me@fastmail.com` → `me-fastmail-com`). The gateway signs in
+first and stores nothing when that fails; the refusal shows in red in the form
+with everything you typed kept. Routes: the primary through `PUT
+/api/gateway/me/email` (and `…/oauth/start|finish|cancel`); another mailbox
+through `GET /api/gateway/me/email/accounts`, `PUT|DELETE
+/api/gateway/me/email/accounts/{mailbox_id}` (`send`, `name`), `POST
+…/{mailbox_id}/test`, `PUT …/{mailbox_id}/enabled` and
+`…/{mailbox_id}/oauth/start|finish|cancel`.
 
 ### Memory figures on Resources
 

@@ -18,9 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the text kept; optional settings under **More options**; **Cancel** and a hint per option; the next step after
   creating; a webhook's test call says *It worked: <name> received the call*; a local webhook address says GitHub can't
   reach it yet, with **Open Network**.
-- **My email.** Your own email dialog is titled **My email**; its **Other mailboxes** card adds a mailbox from a name
-  you recognise (the id is derived), shows one *read-only* and relative times, and hides **Add a mailbox** while its
-  form is open.
+- **My email.** Your own email dialog is titled **My email** (see *Changed* for its tabs and the mailbox form).
 - **Triggers: what each connection is doing.** The **Listening** switch is yours and the only control (`PUT
   /api/gateway/triggers/connections/{id}` with `paused`); rows say *Listening · used by N automations*, *Listening ·
   nothing uses it yet, so nothing is fetched until an automation does* or *Paused*. **When nothing uses it** (collapsed) has **Keep
@@ -41,6 +39,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A test gateway never shows a tray icon: besides `serve --no-tray`, a start with `--host 127.0.0.1`, a `--port`
+  other than the configured one and `--print-token` (the hermetic test shape) starts no tray and says why in one
+  line (tray reason `test_gateway`). The test harnesses that start `serve` pass `--no-tray`.
+- **My email, reorganised.** A compact header (*My email* and your address) and three tabs: **Mailboxes** (one list,
+  your primary mailbox first with *Sends as you*, each row one line *address · provider · state* with an **Active**
+  switch and a **…** menu: Test, Settings, Remove), **Notifications** (your address, Job failed, Approval needed) and
+  **Agents** (agent email tools, recipients and limits). No banner; each tab fits a 1440×900 screen. The primary's
+  **Settings** opens its full editor (servers, folder, sign-in app, Test, Disconnect) in a **Mailbox settings** dialog.
+- **One mailbox form, address first.** **Connect** (your primary) and **Add mailbox** (another one) open the same
+  dialog: **Email address** alone, then one line saying what the gateway found (`GET /me/email/autodiscover`), then
+  **Sign in with Google/Microsoft** when the gateway has that client or a **Password** with the provider's direct
+  app-password link; a Microsoft-only mailbox on a gateway without a Microsoft client is said plainly. **Read and
+  send** (another mailbox, off by default) only when the provider can send; **Server settings** collapsed and
+  prefilled (open by itself when nothing was found), with **Sign-in name** prefilled with the address. No name is
+  asked: another mailbox is named by its address. Refusals show in red in the form with what you typed kept.
 - Tray notifications name where to go: "<automation title> has a new result — open it in the Assistant.",
   "<title> failed after its retries — see Automations in the Assistant.", "A conversation waits for your approval —
   open the Assistant." The title is read from `GET /automations/{id}` when the menu has not listed it yet.

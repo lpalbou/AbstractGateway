@@ -90,7 +90,7 @@ EntityRegistry(data_dir=data, embedder_factory=lambda: _Embedder(), users_regist
 def _start(port: int, env: dict, log: Path) -> subprocess.Popen:
     out = open(log, "ab")
     proc = subprocess.Popen(
-        [sys.executable, "-m", "abstractgateway", "serve", "--host", "127.0.0.1", "--port", str(port), "--print-token"],
+        [sys.executable, "-m", "abstractgateway", "serve", "--host", "127.0.0.1", "--port", str(port), "--print-token", "--no-tray"],
         env=env, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
     )
     base = f"http://127.0.0.1:{port}"

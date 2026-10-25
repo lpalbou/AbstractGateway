@@ -1794,7 +1794,9 @@ Core catalog proxy settings:
 Most-used:
 - `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands]`
   (`--no-tray`: no menu bar / tray icon for this run, for a test or scratch
-  gateway next to your usual one; `--watchdog-seconds N`, default 30, `0` = off:
+  gateway next to your usual one; a start with `--host 127.0.0.1`, a `--port`
+  other than the configured one and `--print-token` is treated as a test
+  gateway and shows no icon either; `--watchdog-seconds N`, default 30, `0` = off:
   a gateway whose event loop stays blocked for N seconds writes the blocked
   stacks to its log and exits with code 75 so its service manager restarts it,
   see [deployment.md](docs/deployment.md); `--unsandboxed-commands`, off by
@@ -3989,6 +3991,7 @@ reasons:
 | `serve --reload` (development) | not started (the app runs in uvicorn's reloader child) |
 | A runner-only process (`abstractgateway runner`) | not started; the tray belongs to the process that serves the console |
 | `serve --no-tray` (a test or scratch gateway next to your usual one) | not started for this run (reason `no_tray_flag`) |
+| A test gateway start: `--host 127.0.0.1`, a `--port` other than the configured one (the network setting's, else 8080) and `--print-token` | not started (reason `test_gateway`), said in one line at start |
 | Otherwise | started; `Desktop tray: started (pid …)` |
 
 The console's **Resources → Gateway** card reports which of these applies, as
@@ -5874,7 +5877,8 @@ automation reads it (`used_by` > 0) or `always_listen` is on, "idle" otherwise, 
 `paused` is on (or the status is disabled). Feed connections (`feed.item@1`) are polled by the
 gateway itself from each account's worker loop (every 15 seconds it fetches the LISTENING
 connections whose `every` has elapsed; 15 minutes by default; the first poll after an idle spell is
-a baseline); a webhook to an idle connection answers 409 `not_listening` and stores nothing.
+a baseline). A webhook call is accepted and stored whether or not something listens yet; only
+a paused (or disabled) connection refuses it.
 
 A row: `{connection_id, principal ("<tenant>:<user>"), source_id, source_version (integer), label,
 status ("active" | "disabled" | "error"), listening ("listening" | "idle" | "paused"), used_by (integer:
@@ -5912,8 +5916,8 @@ knows the address and the secret.
   (`last_error`) and on the request's audit line (`webhook` {connection_id, outcome,
   reason_code}, never the body): `401 webhook_unsigned` (a header missing), `401
   webhook_signature_invalid`, `404 connection_not_found` (unknown id, or not a webhook
-  connection), `409 connection_disabled` (disabled or paused), `409 not_listening` (no automation
-  listens and `always_listen` is off: nothing stored), `409 webhook_stale` (timestamp outside the connection's
+  connection), `409 connection_disabled` (disabled or paused; an idle connection accepts
+  the call), `409 webhook_stale` (timestamp outside the connection's
   window: 5 minutes by default, `tolerance_s` 60..3600), `409 webhook_replayed` (this webhook-id was
   already accepted: nothing is appended twice; **senders should treat it as delivered**, a
   Standard Webhooks retry reuses the id), `413 webhook_too_large` (body over 512 KiB), `415
@@ -7194,9 +7198,10 @@ Your email address and mailbox (`/api/gateway/me/...`, every signed-in human):
 | `PUT /me/email/limits` | `{per_hour, per_day}` |
 | `PUT /me/email/folder` | `{folder}` — the folder your mailbox is read from (empty = INBOX); the connection is kept and nothing is tested; 404 `email_not_configured` without a mailbox |
 | `PUT /me/email/enabled` | `{enabled}` — "Use this mailbox" (off keeps the settings; stops watching, sending and notifications); `tools_reloaded` |
+| `GET /me/email/autodiscover?address=` | everything a mailbox form needs from an address alone: `{address, provider: google \| microsoft \| yahoo \| icloud \| fastmail \| other, display_name ("Gmail", …; the domain for other), imap: {host, port, security: ssl \| starttls}, smtp: {host, port, security} \| null, login (the address, or the provider's login form), sign_in: ["oauth" \| "password" \| "app_password"] (what the provider accepts), oauth_available (this gateway has a sign-in client for it), app_password_url? (Google, Yahoo, iCloud), source: preset \| autoconfig \| srv \| none}`. Resolution: AbstractCore's provider table (and MX pointing at a known provider) → the domain's autoconfig file and the Thunderbird ISPDB (3 s each) → DNS SRV (`_imaps._tcp`, `_submission(s)._tcp`, then `_imap._tcp` with STARTTLS) → `none` (empty IMAP host, no SMTP); an IMAP server alone is enough (a further mailbox reads only). Cached per domain for a day. 400 `email_invalid_settings` for a non-address |
 | `GET /me/email/accounts` | every mailbox of yours: `{items: [{account_id, primary, account_ref, configured, address, can_read, can_send, enabled, folder, mailbox{state, address, provider, reason}, watcher{state, last_poll, last_error, received}}]}`; the primary (`default`, the one `PUT /me/email` connects and runs are bound to) always first, further mailboxes once connected. `GET /me/email` carries the same list as `accounts` |
 | `GET /me/email/accounts/{mailbox_id}` | one of them; 404 `email_not_configured` for an id you have not connected |
-| `PUT /me/email/accounts/{mailbox_id}` | connect a further mailbox (`mailbox_id`: 1-32 of `a-z 0-9 _ -`; 400 `email_invalid_settings` otherwise): the `PUT /me/email` body plus `send` (default `false`). `send: false` stores IMAP only: a **read-only** mailbox (`can_send: false`, `mailbox.state: receive_only`) that automations can watch and that refuses sends; `send: true` also stores and tests SMTP. `mailbox_id: default` is the primary and behaves like `PUT /me/email`. Never changes your email address. Answers the mailbox's row |
+| `PUT /me/email/accounts/{mailbox_id}` | connect a further mailbox (`mailbox_id`: 1-32 of `a-z 0-9 _ -`; 400 `email_invalid_settings` otherwise): the `PUT /me/email` body plus `send` (default `false`) and `name` (optional, at most 120 characters: the mailbox's name in your lists, answered as `name` in its row; the login, `username`, defaults to the address). `send: false` stores IMAP only: a **read-only** mailbox (`can_send: false`, `mailbox.state: receive_only`) that automations can watch and that refuses sends; `send: true` also stores and tests SMTP. `mailbox_id: default` is the primary and behaves like `PUT /me/email`. Never changes your email address. Answers the mailbox's row |
 | `POST /me/email/accounts/{mailbox_id}/test` | `{imap, smtp, ok, message}` for that mailbox |
 | `PUT /me/email/accounts/{mailbox_id}/enabled` | `{enabled}` — "Use this mailbox" for that mailbox (off: not watched) |
 | `DELETE /me/email/accounts/{mailbox_id}` | disconnect it (credentials and cursor deleted) → `{account_id, disconnected, accounts}` |
@@ -7687,74 +7692,87 @@ The **Triggers** page (sidebar *Work*, `/console#triggers`) lists your trigger
 mailbox, a feed, a webhook address; flows and automations use it by name. You
 create feeds and webhooks here, once, and every automation of yours can use
 them (AbstractFlow's automation dialog offers them). Your **mailboxes** are
-listed here too (*When mail arrives in …*); you add and manage them under
-**Accounts → your row → Email**, which the row's link opens.
+listed here too (*When mail arrives in …*); you add and manage them in **My
+email** (Accounts → your row → Email), which the row's link opens. With nothing
+yet, the page says *Nothing to listen to yet.* with **Add a mailbox (My
+email)**, **Add a feed** and **Add a webhook**.
 
 - Each row is named by your label (for example *bbc-feed* or *My GitHub hook*),
   with the trigger under it in the same words as AbstractFlow: *When bbc-feed has
   a new item*, *When My GitHub hook is called*, *When mail arrives in
-  me@example.org*; then what it is doing, in words, and **Last event**. The
-  **Listening** switch is yours and the only control: on (the default for a new
-  connection) it says *Listening · used by 2 automations*, or *Listening ·
-  nothing uses it yet, so nothing is fetched until an automation does*; off it
-  says *Paused*. Whether an automation uses it never moves the switch.
-  **When nothing uses it** (collapsed, per connection) has **Keep fetching even
-  when nothing uses it**. A mailbox row shows the same states with its own **Use this
-  mailbox** switch (the same one as on the Email card). **Events** opens the 20 most recent events under the row; each
-  one expands to its full JSON (the CloudEvents envelope your flow receives as
-  `input_data.event`). **Test** sends a test event (`data.test: true`) and says
-  the result in the row ("Test event #12 sent."); it also appears in the events.
-  **Delete** asks under the row first: automations that listen to a deleted
-  connection stop receiving its events.
+  me@example.org*; then what it is doing, and **Last event**. The **Listening**
+  switch is yours and the only control: on (the default for a new connection) it
+  says *Listening · used by Release digest* (the names of your active
+  automations that use it, up to three, then *+N*) or *Waiting for an automation
+  to use it*; off it says *Paused*. Whether an automation uses it never moves
+  the switch. **When nothing uses it** (collapsed, per connection) has **Keep
+  fetching even when nothing uses it**. A mailbox row shows the same states with
+  the same **Listening** switch (it is the mailbox's *Use this mailbox* switch in
+  My email). A problem the gateway recorded shows in red under the row, for
+  example *Can't read the feed: the address answered 404 (not found). Check the
+  feed address.*
+- **Events** opens the 20 most recent events under the row, each a sentence
+  (*Test event · just now*, *New item: Release 0.13 · 09:00*, *Call received ·
+  09:00*) with its full JSON behind **Details** (the CloudEvents envelope your
+  flow receives as `input_data.event`). **Test** sends a test event and says the
+  result in the row. **Delete** asks under the row first: automations that
+  listen to a deleted connection stop receiving its events.
 - **New connection** opens a dialog: pick **What to listen to** (a feed or a
-  webhook; never a mailbox), give it a name, and fill the source's own settings, each with its
-  label and help (for a webhook: *Subject (path in the JSON body)* and
-  *Accepted clock skew (seconds)*). A webhook's signing secret is generated by
-  the gateway, so the form never asks for it.
+  webhook, each with a one-line hint; never a mailbox), give it a name, and fill
+  its settings: a feed asks for its address, **Check every** *[15] [minutes]*
+  and **When added** (*Ignore what is already there* or *Also deliver the latest
+  items*); a webhook asks for nothing else. Optional settings (a webhook's
+  *Subject (path in the JSON body)* and *Accepted clock skew (seconds)*, a feed's
+  items per check) are under **More options**. A refusal shows in red beside its
+  field and keeps what you typed. **Cancel** closes the dialog. After **Create**
+  the dialog says the next step: *Next: in Flow, + → When something arrives →
+  <name>.*
 - A **webhook** connection then shows a setup panel: its address and its
   signing secret, shown **once** with copy buttons (the gateway keeps the secret
-  sealed and never shows it again); a ready-to-copy signed call (bash with
-  `openssl`) with your real address and secret filled in; the two-line recipe
-  for GitHub, Zapier and other services (paste the address as the webhook URL,
-  the secret as the signing secret, JSON as the content type); and **Send a
-  signed test call**, which signs a sample body in the browser (HMAC-SHA256,
-  Standard Webhooks) and posts it to the address, then shows the HTTP status
-  and the event it created. Signing in the browser needs `https` or
-  `localhost`; elsewhere use the command. The address stays visible under the
-  row (Events).
+  sealed and never shows it again); the GitHub / Zapier recipe (paste the
+  address as the webhook URL, the secret as the signing secret, JSON as the
+  content type), or, when the address is only reachable from this computer or
+  its network, *GitHub can't reach this computer yet. Turn on internet access
+  under Network first.* with **Open Network**; a ready-to-copy signed call (bash
+  with `openssl`) with your real address and secret; and **Send a signed test
+  call**, which signs a sample body in the browser (HMAC-SHA256, Standard
+  Webhooks), posts it to the address and says *It worked: <name> received the
+  call · see it under Events.* (or why it was refused). Signing in the browser
+  needs `https` or `localhost`; elsewhere use the command.
 - Administrators get an **All accounts** switch: every account's connections,
   with an Account column.
 - `/console#triggers?new=<source_id>` opens the dialog on that source (AbstractFlow's
   *New connection…* link uses it).
 
 Routes: `GET /api/gateway/trigger-sources`, `GET|POST /api/gateway/triggers/connections`
-(`?all=true` for an administrator), `DELETE /api/gateway/triggers/connections/{id}`,
-`GET /api/gateway/triggers/connections/{id}/events?after=<seq>&limit=`,
+(`?all=true` for an administrator), `PUT|DELETE /api/gateway/triggers/connections/{id}`
+(`paused`, `always_listen`), `GET /api/gateway/triggers/connections/{id}/events?after=<seq>&limit=`,
 `POST /api/gateway/triggers/connections/{id}/test-fire`, `GET /api/gateway/me/email/accounts`
-(the mailbox rows), and the public `POST /api/gateway/triggers/webhooks/{connection_id}` (the
+(the mailbox rows), `GET /api/gateway/automations?status=active` (the names of the automations
+that use a connection), and the public `POST /api/gateway/triggers/webhooks/{connection_id}` (the
 signed test call).
 
-#### Further mailboxes
+#### Other mailboxes
 
-Under **Accounts → your row → Email**, the **Further mailboxes** card lists your
-other mailboxes and adds one with **Add a mailbox (read-only)**: a name (how
-automations refer to it: lowercase letters, digits, `-` or `_`), the address,
-the IMAP server, port and security, the login (empty: the address) and the
-password. The gateway signs in first and stores nothing when that fails.
-Gmail and Outlook refuse account passwords over IMAP: for their servers or
-addresses the form says so with a direct link, **Create an app password**
-(opens [Google's](https://myaccount.google.com/apppasswords) or
+In **My email** (Accounts → your row → Email), the **Other mailboxes** card
+lists your other mailboxes and adds one with **Add a mailbox**: a name you
+recognise (*Work inbox*; automations refer to it as *work-inbox*, shown under
+the field), the address, the IMAP server, port and security, the login (empty:
+the address) and the password. The gateway signs in first and stores nothing
+when that fails. Gmail and Outlook refuse account passwords over IMAP: for
+their servers or addresses the form says so with a direct link, **Create an app
+password** (opens [Google's](https://myaccount.google.com/apppasswords) or
 [Microsoft's](https://account.live.com/proofs/manage/additional) page in a new
 tab), to paste here. When the gateway has a Google or Microsoft sign-in client,
 **Sign in with Google** / **Sign in with Microsoft** come first and add the
 mailbox through the provider's sign-in instead
 (`POST /api/gateway/me/email/accounts/{mailbox_id}/oauth/start|finish|cancel`,
-the same steps as the primary mailbox). A further mailbox is read-only: automations can watch it (*When an email
-arrives*), and it never sends. Each one has a **Use this mailbox** switch
-(automations watch it only while it is on), **Test** (signs in again) and
-**Delete** (asks first; its stored password and read position are removed).
-Routes: `GET /api/gateway/me/email/accounts`, `PUT|DELETE
-/api/gateway/me/email/accounts/{mailbox_id}` (`send: false`), `POST
+the same steps as the primary mailbox). Another mailbox is read-only:
+automations can watch it (*When mail arrives in …*), and it never sends. Each one
+has a **Use this mailbox** switch (automations watch it only while it is on),
+**Test** (signs in again) and **Delete** (asks first; its stored password and
+read position are removed). Routes: `GET /api/gateway/me/email/accounts`,
+`PUT|DELETE /api/gateway/me/email/accounts/{mailbox_id}` (`send: false`), `POST
 …/{mailbox_id}/test`, `PUT …/{mailbox_id}/enabled`.
 
 ### Memory figures on Resources
@@ -11577,6 +11595,7 @@ Choose **Use the gateway's own folder** in Continuum or the console, or run
 | `dev_reload` | start without `--reload` |
 | `runner_only` | the tray belongs to the process that serves the console |
 | `no_tray_flag` | the gateway was started with `serve --no-tray`; start it without the flag |
+| `test_gateway` | the gateway was started the way tests start one (`--host 127.0.0.1 --port <not the configured port> --print-token`); start it on its configured port, or without `--print-token` |
 
 GNOME needs the AppIndicator extension. If the helper started and then
 disappeared, read `<data dir>/logs/tray.log`; `GET /api/gateway/host/tray`
@@ -11695,6 +11714,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mailbox autodiscovery from an address.** `GET /api/gateway/me/email/autodiscover?address=` answers the provider (google, microsoft, yahoo, icloud, fastmail or other) and its name, the IMAP and SMTP servers, the login, how one signs in (`oauth`, `password`, `app_password`, and whether this gateway can do the OAuth sign-in), the provider's app-password page and where the answer came from (preset, autoconfig, srv or none), through AbstractCore's discovery cached per domain for a day. `PUT /me/email/accounts/{mailbox_id}` accepts an optional `name` for the mailbox; the login defaults to the address.
+- **Triggers page, UX review.** Unused connections read *Waiting for an automation to use it*; used ones *Listening ·
+  used by Release digest* (your automations' names); one **Listening** switch label on every row; recorded problems in
+  red (*Can't read the feed: the address answered 404 (not found). Check the feed address.*); events as sentences with
+  the JSON behind **Details**; *Nothing to listen to yet.* with **Add a mailbox (My email)** · **Add a feed** · **Add a
+  webhook**; the feed form asks **Check every** *[15] [minutes]* and **When added**; refusals in red beside their field
+  with the text kept; optional settings under **More options**; **Cancel** and a hint per option; the next step after
+  creating; a webhook's test call says *It worked: <name> received the call*; a local webhook address says GitHub can't
+  reach it yet, with **Open Network**.
+- **My email.** Your own email dialog is titled **My email**; its **Other mailboxes** card adds a mailbox from a name
+  you recognise (the id is derived), shows one *read-only* and relative times, and hides **Add a mailbox** while its
+  form is open.
 - **Triggers: what each connection is doing.** The **Listening** switch is yours and the only control (`PUT
   /api/gateway/triggers/connections/{id}` with `paused`); rows say *Listening · used by N automations*, *Listening ·
   nothing uses it yet, so nothing is fetched until an automation does* or *Paused*. **When nothing uses it** (collapsed) has **Keep
@@ -11727,7 +11758,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Connections listen only while something uses them.** Connection rows carry `listening` (listening | idle | paused), `used_by` (the active automations reading it), `paused` and `always_listen`; `PUT /api/gateway/triggers/connections/{id}` accepts `paused` and `always_listen`. Idle feeds are not fetched, and a webhook to an idle connection answers 409 `not_listening` without storing anything (a paused one: 409 `connection_disabled`).
+- **Connections listen only while something uses them.** Connection rows carry `listening` (listening | idle | paused), `used_by` (the active automations reading it), `paused` and `always_listen`; `PUT /api/gateway/triggers/connections/{id}` accepts `paused` and `always_listen`. Idle feeds are not fetched; a webhook call to an idle connection is accepted and stored (only a paused one answers 409 `connection_disabled`).
 
 - **Sign in with Google (or Microsoft) for further mailboxes.** `POST /api/gateway/me/email/accounts/{mailbox_id}/oauth/start|poll|finish|cancel` take the primary mailbox's OAuth2 bodies and answers, plus `send` (default false: read-only, IMAP with XOAUTH2 only); the tokens are sealed in that mailbox's own store and a sign-in belongs to the user and the mailbox it was started for. A password refused by Gmail's servers now says "Gmail refuses account passwords: use an app password or Sign in with Google."
 
@@ -16042,7 +16073,8 @@ gateway with `abstractgateway serve` on a desktop session. The icon has no
 on/off setting: while the gateway serves a desktop that can show it, it is
 there. The boot log says `Desktop tray: started (pid …)` or names the reason
 it is absent (`missing_dependency`, `headless`, `dev_reload`, `runner_only`,
-`no_tray_flag` for `serve --no-tray`);
+`no_tray_flag` for `serve --no-tray`, `test_gateway` for a test start on
+another loopback port with `--print-token`);
 the console's **Resources** tab shows the same. On Linux the GTK/AppIndicator
 bindings are needed; GNOME also needs the AppIndicator extension. Details:
 [tray.md](docs/tray.md) and

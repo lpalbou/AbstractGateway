@@ -148,7 +148,7 @@ try {
     await signIn(page, "admin", ADMIN);
     // Sidebar (DESIGN-v2 §1): four groups in order, Setup at the bottom opens the guide.
     const nav = await page.evaluate(() => Array.from(document.querySelectorAll("#console-nav .af-nav-group")).map((g) => [g.querySelector(".af-nav-group__caption").textContent.trim(), Array.from(g.querySelectorAll(".tab-button")).map((b) => b.id.replace("tab-button-", ""))]));
-    check(JSON.stringify(nav) === JSON.stringify([["Accounts", ["users"]], ["Work", ["workflows", "skills", "runtimes", "apps"]], ["Models", ["providers", "openai", "catalog", "defaults"]], ["System", ["models", "sandbox", "network"]]]), "sidebar groups in order", nav);
+    check(JSON.stringify(nav) === JSON.stringify([["Accounts", ["users"]], ["Work", ["workflows", "triggers", "skills", "runtimes", "apps"]], ["Models", ["providers", "openai", "catalog", "defaults"]], ["System", ["models", "sandbox", "network"]]]), "sidebar groups in order", nav);
     check((await page.locator("#topbar-static #open-setup, #af-topbar-root [id*=setup]").count()) === 0, "no Setup button in the top bar");
     await page.click("#open-setup");
     await page.waitForSelector("#first-run-backdrop:not(.hidden)", { timeout: 10000 });
@@ -239,41 +239,34 @@ try {
     check(await page.locator("#my-email-section").isHidden(), "admin's account page lives in the modal, not on the page");
     await page.click("tr[data-user='admin'] button[data-action='email']");
     await page.waitForSelector("#account-email-backdrop:not([hidden]) #my-email-section");
-    check((await page.textContent("#account-email-body .account-modal-lead")).startsWith("You are also a user of this gateway"), "admin's own row adds the one sentence");
-    // IMAP pane (§3): first + default; no User name / Display name; servers visible and pre-filled
-    // at once, then replaced by discovery `defaults` unless edited.
-    const tabs = await page.$$eval("#my-email-connect [role=tab]", (ts) => ts.map((t) => [t.textContent.trim(), t.getAttribute("aria-selected")]));
-    check(JSON.stringify(tabs) === JSON.stringify([["IMAP", "true"], ["Google", "false"], ["Microsoft", "false"]]), "IMAP first and default", tabs);
-    const editableAddr = () => page.evaluate(() => ["my-email-registered", "my-email-address", "my-email-oauth-address"].filter((id) => document.getElementById(id).checkVisibility()));
-    let vis = await editableAddr();
-    check(JSON.stringify(vis) === JSON.stringify(["my-email-address"]) && (await page.textContent("#my-email-registered-text")).startsWith("Not set yet"), "no address yet: the mailbox address is the ONE address field", vis);
+    // Operator rework 2026-10-25: a compact header, no banner; tabs Mailboxes | Notifications | Agents.
+    check(await page.locator("#account-email-body .account-modal-lead").count() === 0, "admin's own row: no banner");
+    const tabs = await page.$$eval(".my-email-tabs [role=tab]", (ts) => ts.map((t) => [t.textContent.trim(), t.getAttribute("aria-selected")]));
+    check(JSON.stringify(tabs) === JSON.stringify([["Mailboxes", "true"], ["Notifications", "false"], ["Agents", "false"]]), "My email tabs, Mailboxes first", tabs);
+    await page.waitForFunction(() => document.getElementById("my-mailboxes-list").textContent.trim().startsWith("No mailbox yet."), null, { timeout: 10000 }).catch(() => {});
+    check((await page.textContent("#my-mailboxes-list")).trim().startsWith("No mailbox yet."), "no mailbox yet: said in the Mailboxes tab", await page.textContent("#my-mailboxes-list"));
+    // Notifications tab: the address card (the one inline Save).
+    await page.click("#my-email-sec-notifications");
+    check((await page.textContent("#my-email-registered-text")).startsWith("Not set yet"), "no address yet");
     await page.click("#my-email-registered-change");
-    vis = await editableAddr();
-    check(JSON.stringify(vis) === JSON.stringify(["my-email-registered"]) && (await page.locator("#my-email-pane-imap .mailbox-address-line").isVisible()), "editing card 1 folds the mailbox field to its read-only line", vis);
     await page.fill("#my-email-registered", "admin@example.net");
     await page.click("#my-email-registered-save");
     await page.waitForFunction(() => document.getElementById("my-email-registered-text").textContent === "admin@example.net", null, { timeout: 10000 });
-    vis = await editableAddr();
-    const line = (await page.textContent("#my-email-pane-imap .mailbox-address-line")).trim();
-    check(vis.length === 0 && line === "Mailbox account: admin@example.net Use a different account", "address set: read-only lines, no editable address field", { vis, line });
-    await page.click("#my-email-pane-imap .mailbox-address-other");
-    vis = await editableAddr();
-    check(JSON.stringify(vis) === JSON.stringify(["my-email-address"]) && (await page.inputValue("#my-email-address")) === "admin@example.net", "Use a different account reveals the prefilled mailbox field, alone", vis);
-    check(await page.evaluate(() => !document.getElementById("my-email-display-name") && document.getElementById("my-email-login-field").hidden && !Array.from(document.querySelectorAll("#my-email-pane-imap label")).some((l) => /user name|display name/i.test(l.textContent))), "no User name / Display name fields");
-    await page.route("**/api/gateway/me/email/discover", async (route) => {
-      await new Promise((r) => setTimeout(r, 600));
-      await route.fulfill({ contentType: "application/json", body: JSON.stringify({ found: true, defaults: { imap: { host: "mail.example.org", port: 993, security: "ssl" }, smtp: { host: "mail.example.org", port: 587, security: "starttls" }, login: "me@example.org", source: "discovered", provider: null, message: "Settings found for example.org." } }) });
-    });
-    await page.fill("#my-email-address", "me@example.org");
-    const instant = await page.evaluate(() => ["imap-host", "imap-port", "imap-security", "smtp-host", "smtp-port", "smtp-security"].map((k) => document.getElementById(`my-email-${k}`).value).concat(document.getElementById("my-email-servers-source").textContent));
-    check(JSON.stringify(instant) === JSON.stringify(["imap.example.org", "993", "ssl", "smtp.example.org", "465", "ssl", "Standard settings for example.org — change them if your provider uses others."]), "servers pre-filled instantly with the standard values", instant);
-    await page.fill("#my-email-imap-port", "1993");
-    await page.waitForFunction(() => document.getElementById("my-email-servers-source").textContent === "Settings found for example.org.", null, { timeout: 10000 });
-    const after = await page.evaluate(() => ["imap-host", "imap-port", "smtp-host", "smtp-port", "smtp-security"].map((k) => document.getElementById(`my-email-${k}`).value));
-    check(JSON.stringify(after) === JSON.stringify(["mail.example.org", "1993", "mail.example.org", "587", "starttls"]), "discovery replaces the pre-fill, never an edited field", after);
-    await page.unroute("**/api/gateway/me/email/discover");
-    const rowCols = await page.evaluate(() => getComputedStyle(document.querySelector("#my-email-pane-imap .mail-server-row__fields")).gridTemplateColumns.split(" ").length);
+    // Mailboxes → Add mailbox: the one mailbox form (the primary: Connect), prefilled with that address.
+    await page.route((u) => u.pathname === "/api/gateway/me/email/autodiscover", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ address: "admin@example.net", provider: "other", display_name: "example.net", imap: { host: "mail.example.net", port: 993, security: "ssl" }, smtp: { host: "mail.example.net", port: 587, security: "starttls" }, login: "admin@example.net", sign_in: ["password"], oauth_available: false, source: "autoconfig" }) }));
+    await page.click("#my-email-sec-mailboxes");
+    await page.click("#my-mailbox-add");
+    await page.waitForSelector("#mailbox-sheet-backdrop:not([hidden]) [data-mbs-found].is-ok", { timeout: 10000 });
+    check((await page.textContent("#mailbox-sheet-title")).trim() === "Connect your mailbox" && (await page.textContent("#mailbox-sheet-go")).trim() === "Connect", "the primary: Connect", await page.textContent("#mailbox-sheet-title"));
+    check(await page.inputValue("#mbs-address") === "admin@example.net" && (await page.textContent("[data-mbs-found]")).trim() === "example.net · password sign-in", "address prefilled, provider found");
+    check(await page.locator("#mbs-send").count() === 0, "the primary always sends: no Read and send switch");
+    await page.click("details.mbs-servers > summary");
+    const serverVals = await page.evaluate(() => ["imap-host", "imap-port", "smtp-host", "smtp-port", "smtp-security", "login"].map((k) => document.getElementById(`mbs-${k}`).value));
+    check(JSON.stringify(serverVals) === JSON.stringify(["mail.example.net", "993", "mail.example.net", "587", "starttls", "admin@example.net"]), "Server settings prefilled from the lookup", serverVals);
+    const rowCols = await page.evaluate(() => getComputedStyle(document.querySelector("#mailbox-sheet-body .mbs-servers__grid")).gridTemplateColumns.split(" ").length);
     check(rowCols === 3, "Server · Port · Security on one row at 1440 px", rowCols);
+    await page.click("#mailbox-sheet-cancel");
+    await page.click("#my-email-sec-notifications");
     // Send a test: always the API's sentence, never a state name.
     await page.click("#my-email-notify-test");
     await page.waitForFunction(() => { const t = document.getElementById("my-email-notify-test-state").textContent; return t && t !== "Sending…"; }, null, { timeout: 20000 });
@@ -388,8 +381,14 @@ try {
     await page.waitForSelector("#account-email-backdrop:not([hidden]) #my-email-section");
     const sheet = await page.evaluate(() => { const r = document.querySelector("#account-email-backdrop .af-modal").getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) }; });
     check(sheet.w === 390 && sheet.h >= 800, "email modal is a full-screen sheet on phones", sheet);
-    const cols = await page.evaluate(() => getComputedStyle(document.querySelector("#my-email-pane-imap .mail-server-row__fields")).gridTemplateColumns.split(" ").length);
-    check(cols === 2, "server rows wrap on phones (server full width, port + security)", cols);
+    await page.route((u) => u.pathname === "/api/gateway/me/email/autodiscover", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ address: "me@unknown.example", provider: "other", display_name: "unknown.example", imap: { host: "", port: 993, security: "ssl" }, smtp: null, login: "me@unknown.example", sign_in: ["password"], oauth_available: false, source: "none" }) }));
+    await page.click("#my-mailbox-add");
+    await page.fill("#mbs-address", "me@unknown.example");
+    await page.waitForSelector("details.mbs-servers[open]", { timeout: 10000 });
+    const cols = await page.evaluate(() => getComputedStyle(document.querySelector("#mailbox-sheet-body .mbs-servers__grid")).gridTemplateColumns.split(" ").length);
+    check(cols === 1, "the mailbox form is one column on phones", cols);
+    await fontFloor(page, "#mailbox-sheet-backdrop", "mailbox form (touch)");
+    await page.click("#mailbox-sheet-cancel");
     await labelScale(page, "#account-email-body", "email modal (phone)");
     await fontFloor(page, "#account-email-backdrop", "email modal (touch)");
     await page.keyboard.press("Escape");
@@ -420,9 +419,14 @@ try {
     await page.waitForSelector("tr[data-user='alice'] button[data-action='email']", { timeout: 10000 });
     await page.click("tr[data-user='alice'] button[data-action='email']");
     await page.waitForSelector("#account-email-backdrop:not([hidden]) #my-email-section", { timeout: 10000 });
-    await page.waitForSelector("#my-email-connected", { state: "visible", timeout: 10000 });
+    // Mailboxes: the primary row, one line; its "…" → Settings opens the full editor in a dialog.
+    await page.waitForSelector('#my-mailboxes-list [data-mbx-row="__primary"]', { timeout: 10000 });
+    const primaryLine = (await page.textContent('[data-mbx-row="__primary"] .mbx-row__line')).replace(/\s+/g, " ").trim();
+    check(primaryLine === "alice@fastmail.com · connectedSends as you", "the primary row: address · state + Sends as you", primaryLine);
+    await page.click('[data-mbx-row="__primary"] .mbx-menu > summary');
+    await page.click('[data-mbx-settings="__primary"]');
+    await page.waitForSelector("#mailbox-settings-backdrop:not([hidden]) #my-email-connected", { state: "visible", timeout: 10000 });
     const status = (await page.textContent("#my-email-status")).trim();
-    check(status.startsWith("Connected as alice@fastmail.com · IMAP"), "connected status line", status);
     // RBAC: a user sees the Accounts table scoped to themself (GET /me/accounts), no admin tools.
     await page.waitForSelector("#users-table tr.accounts-row", { timeout: 10000 });
     const mine = await page.evaluate(() => ({ rows: Array.from(document.querySelectorAll("#users-table tr.accounts-row")).map((t) => t.dataset.user), createUser: document.getElementById("open-create-user").checkVisibility(), caps: document.getElementById("email-caps-section").checkVisibility(), createEntity: document.getElementById("accounts-create-entity").checkVisibility() }));
@@ -430,17 +434,18 @@ try {
     check((await page.getAttribute("#my-email-enabled", "aria-checked")) === "true" && (await page.textContent("#my-email-enabled .af-switch__label")) === "Active", "Active switch in the connected mailbox card");
     check(await page.locator("#my-email-oauth-cancel").isHidden(), "Cancel sign-in hidden when no sign-in is pending");
     check(await page.locator("#my-email-connect").isHidden(), "no form fields in the connected view");
+    await page.click("#my-email-disconnect");
+    check((await page.textContent("#my-email-disconnect-confirm")).includes("Disconnect this mailbox?"), "inline disconnect confirmation");
+    await page.click("#my-email-disconnect-cancel");
+    await page.click("#mailbox-settings-close");
     const nf = await page.evaluate(() => ["my-email-notify-job-failed", "my-email-notify-approval"].map((id) => [document.getElementById(id).getAttribute("aria-disabled"), document.getElementById(id).getAttribute("aria-checked")]));
     check(nf.every(([d, c]) => d === null && c === "true"), "notification switches available and on by default", nf);
     check((await page.inputValue("#my-email-registered")) === "alice@fastmail.com", "email address field");
-    await page.evaluate(() => { document.getElementById("my-email-advanced").open = true; });
+    await page.click("#my-email-sec-agents");
     await page.fill("#my-email-imap-folder", "Archive");
     await page.locator("#my-email-imap-folder").blur();
     await page.waitForFunction(() => document.getElementById("my-email-folder-state").textContent.trim() !== "", null, { timeout: 10000 });
     check((await page.textContent("#my-email-folder-state")).trim() === "Saved", "Folder auto-saves", await page.textContent("#my-email-folder-state"));
-    await page.click("#my-email-disconnect");
-    check((await page.textContent("#my-email-disconnect-confirm")).includes("Disconnect this mailbox?"), "inline disconnect confirmation");
-    await page.click("#my-email-disconnect-cancel");
     await ctx.close();
   }
   // ---------------------------------------------------------------- bob: a user without an address (adversary pass 2, F1/F5/F6)
@@ -457,8 +462,9 @@ try {
     check(await page.evaluate(() => !document.getElementById("my-workspace-policy-section") && !document.getElementById("tab-button-workspaces")), "no workspace policy on the account page and no Workspaces entry");
     await page.click("tr[data-user='bob'] button[data-action='email']");
     await page.waitForSelector("#account-email-backdrop:not([hidden]) #my-email-section", { timeout: 10000 });
+    await page.click("#my-email-sec-notifications");
     const card = await page.evaluate(() => ({ title: document.getElementById("account-email-title").textContent, text: document.getElementById("my-email-registered-text").textContent, link: document.getElementById("my-email-registered-change").textContent, shown: document.getElementById("my-email-registered-view").checkVisibility() }));
-    check(card.title === "Email — bob" && card.shown && card.text === "Not set yet — connecting a mailbox below sets it." && card.link === "Set it now", "bob's Email modal: the address card is never empty", card);
+    check(card.title === "My email" && card.shown && card.text === "Not set yet — connecting a mailbox (Mailboxes tab) sets it." && card.link === "Set it now", "bob's Email modal: the address card is never empty", card);
     await page.keyboard.press("Escape");
     await page.waitForSelector("#account-email-backdrop[hidden]", { state: "attached", timeout: 5000 });
     check(await page.locator("#my-email-section").isHidden(), "closing the modal does not put the section back on the page");

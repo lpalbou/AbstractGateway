@@ -319,49 +319,6 @@ console.log(JSON.stringify([sig]));
     assert sig == f"v1,{want}"
 
 
-def test_read_only_mailbox_body_and_rows() -> None:
-    source = _console_script()
-    harness = HELPERS + _fns(source, "mailboxIdFromName", "mailboxConnectBody", "mbxFurther", "mbxStateText", "mailboxDeleteQuestion", "mailboxRowMarkup", "mailboxesMarkup") + """
-const MBX_ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
-const MBX_STATE = { connected: "Connected", receive_only: "Read-only: watched by your automations, never sends", paused: "Paused", needs_reconnect: "Needs reconnecting", unavailable: "Mailboxes are turned off for this account", not_connected: "Not connected" };
-const good = mailboxConnectBody({id: "abstractframework", address: "lpalbou@abstractframework.ai", host: "imap.example.ai", port: "993", security: "ssl", username: "", password: "pw"});
-const bad = mailboxConnectBody({id: "!!!", address: "x", host: "", port: "99a", password: ""});
-const named = mailboxConnectBody({id: "Work Inbox (é)", address: "a@b.c", host: "h", password: "p"});
-const reserved = mailboxConnectBody({id: "default", address: "a@b.c", host: "h", password: "p"});
-const items = [
-  {account_id: "default", primary: true, configured: true, enabled: true},
-  {account_id: "abstractframework", primary: false, configured: true, address: "lpalbou@abstractframework.ai", folder: "INBOX", can_send: false, enabled: true, mailbox: {state: "receive_only"}, watcher: {}},
-];
-console.log(JSON.stringify([good, bad.problems, reserved.problems, mailboxesMarkup(items, {note: {}, confirm: "abstractframework"}), mailboxesMarkup([items[0]], {}), named.id]));
-"""
-    good, bad, reserved, rows, empty, named = _node(harness)
-    assert named == "work-inbox-e"  # UX #16: a free-text name, the id derived
-    assert good == {"id": "abstractframework", "problems": [], "body": {
-        "address": "lpalbou@abstractframework.ai", "password": "pw", "username": "",
-        "imap": {"host": "imap.example.ai", "security": "ssl", "port": 993}, "send": False, "test": True}}
-    assert bad == ["Name: use at least one letter or digit.", "Address is required.",
-                   "IMAP server is required.", "Port must be a number.", "Password is required."]
-    assert reserved == ["“Default” is your primary mailbox: choose another name."]
-    assert "folder" not in rows and rows.count("read-only") == 1
-    assert 'data-mbx-row="abstractframework"' in rows and "read-only" in rows and 'data-mbx-switch="abstractframework"' in rows
-    assert 'data-mbx-test="abstractframework"' in rows and 'data-mbx-delete-now="abstractframework"' in rows
-    assert "Delete the mailbox abstractframework (lpalbou@abstractframework.ai)?" in rows
-    assert empty == '<p class="mbx-empty">No further mailbox yet.</p>'
-
-
-def test_my_email_has_the_further_mailboxes_card() -> None:
-    html = gateway_console_html()
-    sec = html[html.index('id="my-email-section"'):]
-    card = sec[sec.index('id="my-mailboxes-card"'): sec.index('aria-labelledby="my-email-notify-title"')]
-    assert ">Other mailboxes</h3>" in card
-    for el in ('>Add a mailbox</button>', 'id="my-mailbox-id"', 'id="my-mailbox-imap-host"', 'id="my-mailbox-imap-port"',
-               'id="my-mailbox-username"', 'id="my-mailbox-password"', '>Add mailbox</button>'):
-        assert el in card, el
-    source = _console_script()
-    assert "loadMyMailboxes();" in _slice_function(source, "loadMyEmail")
-    assert "bindMyMailboxes();" in source
-
-
 def test_rows_say_what_a_connection_is_doing_with_a_listening_toggle() -> None:
     source = _console_script()
     harness = HELPERS + _fns(source, "trgUsedBy", "trgListeningWords", "trgUserNames", "trgConnectionUsers", "trgDoingText", "trgListenSwitch", "trgAdvancedMarkup", "trgStatusChip", "trgStatusCell") + """
@@ -402,46 +359,6 @@ console.log(JSON.stringify(rows.map((r) => [trgDoingText(r), trgStatusCell(r)]).
     assert "A connection only fetches while an automation uses it; pause it to stop even then." in panel
     assert 'JSON.stringify({ paused })' in _slice_function(source, "setTriggerPaused")
     assert 'JSON.stringify({ always_listen: on })' in _slice_function(source, "setTriggerAlwaysListen")
-
-
-def test_gmail_help_and_google_sign_in_offer() -> None:
-    source = _console_script()
-    harness = HELPERS + _fns(source, "mailboxProvider", "mailboxProviderHelpHtml", "mbxClientAvailable", "mbxGoogleAvailable") + """
-const MBX_PROVIDERS = {
-  google: { name: "Gmail", url: "https://myaccount.google.com/apppasswords", signIn: "Sign in with Google" },
-  microsoft: { name: "Outlook", url: "https://account.live.com/proofs/manage/additional", signIn: "Sign in with Microsoft" },
-};
-console.log(JSON.stringify([
-  mailboxProvider("imap.gmail.com", "x@abstractframework.ai"), mailboxProvider("", "me@gmail.com"),
-  mailboxProvider("outlook.office365.com", ""), mailboxProvider("", "me@hotmail.com"), mailboxProvider("imap.fastmail.com", "me@fastmail.com"),
-  mailboxProviderHelpHtml("google", true), mailboxProviderHelpHtml("google", false), mailboxProviderHelpHtml("microsoft", true),
-  mbxGoogleAvailable({providers: {google: {configured: false, builtin_available: true}}}),
-  mbxClientAvailable({providers: {microsoft: {configured: true, builtin_available: false}}}, "microsoft"),
-  mbxClientAvailable({providers: {google: {configured: false, builtin_available: false}}}, "google"),
-  mbxClientAvailable({}, "google"),
-]));
-"""
-    out = _node(harness)
-    assert out[:5] == ["google", "google", "microsoft", "microsoft", ""]
-    g_signin, g_plain, ms = out[5], out[6], out[7]
-    # A direct link that opens in a new tab; never a menu path.
-    assert g_signin == ('Gmail refuses account passwords. <a href="https://myaccount.google.com/apppasswords" target="_blank" '
-                        'rel="noopener noreferrer">Create an app password</a> and paste it here, or Sign in with Google.')
-    assert g_plain.endswith("</a> and paste it here.") and "Sign in" not in g_plain
-    assert ms == ('Outlook refuses account passwords. <a href="https://account.live.com/proofs/manage/additional" target="_blank" '
-                  'rel="noopener noreferrer">Create an app password</a> and paste it here, or Sign in with Microsoft.')
-    assert "→" not in g_signin and "Security" not in g_signin
-    assert out[8:] == [True, True, False, False]
-    html = gateway_console_html()
-    card = html[html.index('id="my-mailboxes-card"'):]
-    actions = card[card.index('<button id="my-mailbox-google"'):]
-    # The sign-in buttons come first.
-    assert actions.index("Sign in with Google") < actions.index(">Add mailbox</button>")
-    assert '<button id="my-mailbox-microsoft" type="button" hidden>Sign in with Microsoft</button>' in card
-    start = _slice_function(source, "startMailboxOAuth")
-    assert "/api/gateway/me/email/accounts/${encodeURIComponent(id)}/oauth" in start and "`${base}/start`" in start and "`${base}/finish`" in start
-    assert "JSON.stringify({ provider, address })" in start
-    assert "err.innerHTML = `Not added. ${help}`" in _slice_function(source, "addMyMailbox")
 
 
 def test_ux_errors_feed_form_refusals_and_more_options() -> None:
@@ -509,3 +426,115 @@ console.log(JSON.stringify(out));
     assert 'trgLoadingMarkup("Reading the events...")' in _slice_function(source, "triggerDetailMarkup")
     assert 'trgLoadingMarkup("Reading your mailboxes...")' in _slice_function(source, "renderMyMailboxes")
     assert "renderMyMailboxes(); }  // the loading state" in _slice_function(source, "loadMyMailboxes") or "renderMyMailboxes(); }" in _slice_function(source, "loadMyMailboxes")
+
+
+MBX_HELPERS = """
+const MBX_PROVIDERS = {
+  google: { name: "Gmail", url: "https://myaccount.google.com/apppasswords", signIn: "Sign in with Google" },
+  microsoft: { name: "Outlook", url: "https://account.live.com/proofs/manage/additional", signIn: "Sign in with Microsoft" },
+};
+const MBX_PROVIDER_NAMES = { google: "Gmail", microsoft: "Outlook", yahoo: "Yahoo Mail", icloud: "iCloud Mail", fastmail: "Fastmail" };
+const MBX_STATE = { connected: "connected", receive_only: "connected, reads only", paused: "paused", needs_reconnect: "needs reconnecting", unavailable: "turned off by your admin", not_connected: "not connected" };
+"""
+GMAIL = {"address": "someone@gmail.com", "provider": "google", "display_name": "Gmail", "imap": {"host": "imap.gmail.com", "port": 993, "security": "ssl"},
+         "smtp": {"host": "smtp.gmail.com", "port": 465, "security": "ssl"}, "login": "someone@gmail.com", "sign_in": ["oauth", "app_password"],
+         "oauth_available": True, "app_password_url": "https://myaccount.google.com/apppasswords", "source": "preset"}
+FASTMAIL = {"address": "me@fastmail.com", "provider": "fastmail", "display_name": "Fastmail", "imap": {"host": "imap.fastmail.com", "port": 993, "security": "ssl"},
+            "smtp": {"host": "smtp.fastmail.com", "port": 465, "security": "ssl"}, "login": "me@fastmail.com", "sign_in": ["app_password"], "oauth_available": False, "source": "preset"}
+AUTOCONF = {"address": "me@example.org", "provider": "other", "display_name": "example.org", "imap": {"host": "mail.example.org", "port": 993, "security": "ssl"},
+            "smtp": {"host": "mail.example.org", "port": 465, "security": "ssl"}, "login": "me@example.org", "sign_in": ["password"], "oauth_available": False, "source": "autoconfig"}
+NONE = {"address": "me@unknown.example", "provider": "other", "display_name": "unknown.example", "imap": {"host": "", "port": 993, "security": "ssl"},
+        "smtp": None, "login": "me@unknown.example", "sign_in": ["password"], "oauth_available": False, "source": "none"}
+MS_ONLY = {"address": "me@outlook.com", "provider": "microsoft", "display_name": "Outlook / Microsoft 365", "imap": {"host": "outlook.office365.com", "port": 993, "security": "ssl"},
+           "smtp": {"host": "smtp.office365.com", "port": 587, "security": "starttls"}, "login": "me@outlook.com", "sign_in": ["oauth"], "oauth_available": False, "source": "preset"}
+
+
+def test_the_mailbox_form_order_and_derived_defaults() -> None:
+    """One form for the primary and the other mailboxes: Email address first; the provider found; Sign in
+    or Password; Server settings collapsed unless nothing was found; Sign-in name prefilled with the
+    address; Read and send only for another mailbox with an outgoing server; no Name asked."""
+    source = _console_script()
+    harness = HELPERS + MBX_HELPERS + _fns(source, "mailboxProviderHelpHtml", "mailboxFoundLine", "mailboxSheetMarkup", "mailboxSheetBody", "mailboxIdFromAddress") + f"""
+const st = (target, found, extra) => Object.assign({{target, address: found ? found.address : "", found, imap: found ? found.imap : {{}}, smtp: found ? (found.smtp || {{}}) : {{}}, login: found ? found.login : "", serversOpen: !!(found && found.source === "none"), errors: {{}}}}, extra || {{}});
+const G = {json.dumps(GMAIL)}, F = {json.dumps(FASTMAIL)}, N = {json.dumps(NONE)}, M = {json.dumps(MS_ONLY)}, A = {json.dumps(AUTOCONF)};
+const MO = Object.assign({{}}, M, {{oauth_available: true}});
+console.log(JSON.stringify([
+  mailboxSheetMarkup(st("other", null)),
+  mailboxSheetMarkup(st("other", G)), mailboxSheetMarkup(st("other", G, {{usePassword: true}})),
+  mailboxSheetMarkup(st("other", F)), mailboxSheetMarkup(st("primary", F)), mailboxSheetMarkup(st("other", N)), mailboxSheetMarkup(st("other", M)),
+  [mailboxFoundLine(G), mailboxFoundLine(F), mailboxFoundLine(A), mailboxFoundLine(N), mailboxFoundLine(M), mailboxFoundLine(MO)],
+  mailboxSheetMarkup(st("other", MO)),
+  mailboxSheetBody(st("other", F, {{password: "pw"}})), mailboxSheetBody(st("primary", F, {{password: "pw", login: "custom"}})),
+  mailboxSheetBody(st("other", N, {{password: ""}})).errors,
+  mailboxSheetMarkup(st("other", F, {{password: "x", errors: {{password: "Enter the password (or an app password)."}}}})),
+  [mailboxIdFromAddress("Lpalbou@AbstractFramework.ai", []), mailboxIdFromAddress("a@b.co", ["a-b-co"]), mailboxIdFromAddress("default@x", [])],
+]));
+"""
+    (empty, g_oauth, g_pw, f_other, f_primary, none, ms_only, lines, ms_oauth, f_body, p_body, n_errors, f_err, ids) = _node(harness)
+    # Step 1: one field, Email address (autofocus); nothing else before an address is looked up.
+    assert 'for="mbs-address">Email address</label>' in empty and "autofocus" in empty
+    assert "mbs-password" not in empty and "Server settings" not in empty and "Name" not in empty
+    # Gmail with a client: one primary sign-in button (and the app-password fallback link), no password field.
+    assert 'data-mbs-oauth="google">Sign in with Google</button>' in g_oauth and "mbs-password" not in g_oauth
+    assert "Use an app password instead" in g_oauth
+    assert '<a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener noreferrer">Create an app password</a>' in g_pw
+    # Field order: Email address, then Password, then Server settings (collapsed), Sign-in name prefilled inside.
+    order = [f_other.index(k) for k in ('id="mbs-address"', 'id="mbs-password"', "<summary>Server settings</summary>", 'id="mbs-login"')]
+    assert order == sorted(order)
+    assert '<details class="mbs-servers">' in f_other and 'id="mbs-login" data-mbs="login" autocomplete="off" spellcheck="false" value="me@fastmail.com"' in f_other
+    assert 'value="imap.fastmail.com"' in f_other
+    # Read and send: another mailbox with an outgoing server only; never for the primary (it always sends).
+    assert "data-mbs-send-slot" in f_other and "data-mbs-send-slot" not in f_primary and "data-mbs-send-slot" not in none
+    assert 'id="mbs-smtp-host"' in f_primary and 'id="mbs-smtp-host"' not in f_other
+    # Nothing found: Server settings open.
+    assert '<details class="mbs-servers" open>' in none
+    # A provider that only accepts its own sign-in, without a client here: said plainly, no password.
+    assert "Microsoft mailboxes need Sign in with Microsoft; ask your gateway admin to register a Microsoft sign-in client." in ms_only
+    assert "mbs-password" not in ms_only
+    assert lines == ["Gmail · Sign in with Google, or use an app password", "Fastmail · use an app password", "example.org · password sign-in",
+                     "We could not find this provider's settings; enter them below.", "Outlook / Microsoft 365 · needs Sign in with Microsoft",
+                     "Outlook / Microsoft 365 · Sign in with Microsoft"]
+    # Microsoft with a client: the sign-in button only (it takes no app password).
+    assert 'data-mbs-oauth="microsoft">Sign in with Microsoft</button>' in ms_oauth and "app password" not in ms_oauth
+    # An app-password-only provider without a known link still says so.
+    assert "Fastmail needs an app password (create one in your account's security settings)." in f_other
+    # Bodies: no name asked (it defaults to the address); read-only by default; the primary has both legs.
+    assert f_body["body"] == {"address": "me@fastmail.com", "password": "pw", "test": True,
+                              "imap": {"host": "imap.fastmail.com", "security": "ssl", "port": 993}, "send": False, "name": "me@fastmail.com"}
+    assert p_body["body"]["smtp"] == {"host": "smtp.fastmail.com", "security": "ssl", "port": 465} and p_body["body"]["username"] == "custom"
+    assert "send" not in p_body["body"] and "name" not in p_body["body"]
+    assert set(n_errors) == {"password", "imap.host"}
+    # Errors inline in red, the text kept.
+    assert '<p class="mbs-error" role="alert">Enter the password (or an app password).</p>' in f_err and 'value="x"' in f_err and 'aria-invalid="true"' in f_err
+    assert ids == ["lpalbou-abstractframework-ai", "a-b-co-2", "default-x"]
+
+
+def test_my_email_mailboxes_tab_one_list() -> None:
+    source = _console_script()
+    harness = HELPERS + MBX_HELPERS + _fns(source, "mbxProviderWord", "mailboxRemoveQuestion", "mbxRowMarkup", "mbxFurther", "mbxRows", "mailboxesMarkup") + """
+const primary = {configured: true, address: "me@gmail.com", enabled: true, oauth: {provider: "google"}, mailbox: {state: "connected"}};
+const items = [
+  {account_id: "default", primary: true, configured: true, address: "me@gmail.com"},
+  {account_id: "work", primary: false, configured: true, address: "me@work.example", name: "me@work.example", can_send: false, enabled: true, folder: "INBOX", mailbox: {state: "receive_only", provider: "fastmail"}},
+  {account_id: "old", primary: false, configured: false},
+];
+console.log(JSON.stringify([mailboxesMarkup(mbxRows(primary, items), {note: {}, confirm: "work"}), mailboxesMarkup(mbxRows({configured: false}, []), {})]));
+"""
+    html, empty = _node(harness)
+    rows = re.findall(r'data-mbx-row="([^"]+)"', html)
+    assert rows == ["__primary", "work"]  # the primary first, then the others (configured only)
+    first = html[: html.index('data-mbx-row="work"')]
+    assert '<strong>me@gmail.com</strong> · <span class="mbx-sub">Gmail</span> · <span class="mbx-sub">connected</span><span class="mbx-badge">Sends as you</span>' in first
+    work = html[html.index('data-mbx-row="work"'):]
+    assert '<strong>me@work.example</strong> · <span class="mbx-sub">Fastmail</span> · <span class="mbx-sub">connected, reads only</span>' in work
+    assert "folder" not in html and "INBOX" not in html
+    assert html.count("reads only") == 1 and "read-only" not in html and "Sends as you" not in work
+    for b in ('data-mbx-test="work">Test</button>', 'data-mbx-settings="work">Settings</button>', 'data-mbx-delete="work">Remove</button>'):
+        assert b in work, b
+    assert '<details class="mbx-menu"><summary aria-label="More for me@work.example">…</summary>' in work
+    assert "Remove me@work.example? Its stored password and read position are removed" in work
+    assert empty.startswith('<p class="mbx-empty">No mailbox yet.')
+    page = gateway_console_html()
+    card = page[page.index('id="my-mailboxes-card"'):]
+    assert '>Mailboxes</h3>' in card and '<button id="my-mailbox-add" class="secondary" type="button">Add mailbox</button>' in card
+

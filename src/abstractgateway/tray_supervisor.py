@@ -169,6 +169,7 @@ def tray_decision(
     reload: bool = False,
     runner_only: bool = False,
     no_tray: bool = False,
+    no_tray_reason: Optional[str] = None,
     platform: str = sys.platform,
     env: Optional[Mapping[str, str]] = None,
     dependencies: Optional[tuple[bool, Optional[str]]] = None,
@@ -184,7 +185,11 @@ def tray_decision(
         return TrayDecision(False, "runner_only", "the tray belongs to the process that serves the console")
     if no_tray:
         # The one launch choice (a test or scratch gateway beside the usual
-        # one): said at start, never a stored setting.
+        # one): said at start, never a stored setting. `no_tray_reason` names a
+        # start recognised as a test gateway without the flag
+        # (`hermetic_start_reason`).
+        if no_tray_reason:
+            return TrayDecision(False, "test_gateway", no_tray_reason)
         return TrayDecision(False, "no_tray_flag", "started with --no-tray")
     if reload:
         return TrayDecision(False, "dev_reload", "`serve --reload` re-imports the app in a child that never runs main(); start without --reload")
@@ -462,9 +467,27 @@ _serve_context: Dict[str, Any] = {}
 
 
 def record_serve_context(
-    *, base_url: str, data_dir: Path, version: str, reload: bool, runner_only: bool, no_tray: bool = False
+    *, base_url: str, data_dir: Path, version: str, reload: bool, runner_only: bool, no_tray: bool = False,
+    no_tray_reason: Optional[str] = None,
 ) -> None:
-    _serve_context.update({"base_url": str(base_url), "data_dir": Path(data_dir), "version": str(version), "reload": bool(reload), "runner_only": bool(runner_only), "no_tray": bool(no_tray)})
+    _serve_context.update({"base_url": str(base_url), "data_dir": Path(data_dir), "version": str(version), "reload": bool(reload), "runner_only": bool(runner_only), "no_tray": bool(no_tray), "no_tray_reason": no_tray_reason})
+
+
+def hermetic_start_reason(*, cli_host: Optional[str], cli_port: Optional[int], print_token: Optional[bool], configured_port: int) -> Optional[str]:
+    """Why this `serve` is a test gateway that must not put an icon on the desktop, else None.
+
+    The shape every hermetic test start has: `--host 127.0.0.1`, a `--port` other than this
+    machine's configured one (the network setting's, else 8080) and an explicit `--print-token`
+    (a harness reads the token from the output). A person starting a second gateway that way
+    gets no icon either; `serve` says so in one line."""
+    if str(cli_host or "").strip() != "127.0.0.1" or cli_port is None or print_token is not True:
+        return None
+    if int(cli_port) == int(configured_port):
+        return None
+    return (
+        f"a test gateway start (--host 127.0.0.1 --port {int(cli_port)} --print-token, not the configured port "
+        f"{int(configured_port)}): no icon on this desktop"
+    )
 
 
 def serve_context() -> Dict[str, Any]:
@@ -476,7 +499,7 @@ def tray_overview() -> Dict[str, Any]:
     if it were started now. No setting: there is none."""
     ctx = serve_context()
     if ctx:
-        decision = tray_decision(reload=bool(ctx.get("reload")), runner_only=bool(ctx.get("runner_only")), no_tray=bool(ctx.get("no_tray")))
+        decision = tray_decision(reload=bool(ctx.get("reload")), runner_only=bool(ctx.get("runner_only")), no_tray=bool(ctx.get("no_tray")), no_tray_reason=ctx.get("no_tray_reason"))
     else:
         decision = TrayDecision(False, "not_serving", "this process was not started by `abstractgateway serve`")
     deps_ok, deps_problem = tray_dependencies_available()

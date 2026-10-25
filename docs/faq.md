@@ -409,7 +409,8 @@ gateway with `abstractgateway serve` on a desktop session. The icon has no
 on/off setting: while the gateway serves a desktop that can show it, it is
 there. The boot log says `Desktop tray: started (pid …)` or names the reason
 it is absent (`missing_dependency`, `headless`, `dev_reload`, `runner_only`,
-`no_tray_flag` for `serve --no-tray`);
+`no_tray_flag` for `serve --no-tray`, `test_gateway` for a test start on
+another loopback port with `--print-token`);
 the console's **Resources** tab shows the same. On Linux the GTK/AppIndicator
 bindings are needed; GNOME also needs the AppIndicator extension. Details:
 [tray.md](./tray.md) and
