@@ -303,6 +303,24 @@ try {
       check(JSON.stringify(whenAdded) === JSON.stringify([["Ignore what is already there", true], ["Also deliver the latest items", false]]), "create: When added is a choice in words", whenAdded);
       const feedForm = await page.textContent("#trigger-modal-body");
       check(!feedForm.includes("Not editable here") && !feedForm.includes("enumNames") && !feedForm.includes("(skip)") && !feedForm.includes("s, m, h or d"), "create: no raw JSON, no restated values", feedForm);
+      // The well-known feeds (the gateway's own GET /triggers/feeds/catalog, not routed here).
+      await page.waitForSelector("#trg-f-catalog optgroup", { state: "attached" });
+      const groups = await page.$$eval("#trg-f-catalog optgroup", (els) => els.map((e) => e.label));
+      check(["World news", "Technology", "Science", "Business and finance", "Fill in your own"].every((g) => groups.includes(g)), "create: well-known feeds grouped by category", groups);
+      const labels = await page.$$eval("#trigger-modal-body .trg-field > label", (els) => els.map((e) => e.textContent));
+      check(labels.indexOf("Choose a well-known feed") >= 0 && labels.indexOf("Choose a well-known feed") < labels.indexOf("Feed address *"), "create: the picker comes before the address", labels);
+      await page.selectOption("#trg-f-catalog", "bbc-world");
+      check((await page.inputValue("#trg-f-label")) === "BBC News · World" && (await page.inputValue("#trg-f-url")) === "https://feeds.bbci.co.uk/news/world/rss.xml", "pick: the name and the address fill in");
+      check((await page.textContent("[data-trg-catalog-about]")).includes("bbc.co.uk"), "pick: the site is named");
+      await shotEl(page, "#trigger-modal-backdrop .af-modal", "triggers-create-feed-picked-1440-light");
+      await page.selectOption("#trg-f-catalog", "github-releases");
+      await page.waitForSelector("#trg-f-feed-param");
+      await page.type("#trg-f-feed-param", "python/cpython");
+      check((await page.inputValue("#trg-f-url")) === "https://github.com/python/cpython/releases.atom" && (await page.inputValue("#trg-f-label")) === "GitHub · python/cpython releases", "template: the value builds the address and the name");
+      await shotEl(page, "#trigger-modal-backdrop .af-modal", "triggers-create-feed-template-1440-light");
+      await page.fill("#trg-f-label", "CPython releases");
+      await page.selectOption("#trg-f-catalog", "__another");
+      check((await page.inputValue("#trg-f-url")) === "" && (await page.inputValue("#trg-f-label")) === "CPython releases" && (await page.locator("#trg-f-feed-param").count()) === 0, "Another address: the free field, the person's name kept");
       await page.selectOption("#trg-f-initial_items", { label: "Also deliver the latest items" });
       await page.fill("#trg-f-label", "Changelog");
       await page.fill("#trg-f-url", "not a url");

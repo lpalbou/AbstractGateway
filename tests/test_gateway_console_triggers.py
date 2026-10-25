@@ -627,3 +627,74 @@ def test_mailbox_access_controls_are_wired_to_the_access_route() -> None:
     assert "if (st.target === \"other\") start.write = !!st.write;" in _slice_function(source, "startMailboxOAuth")
     assert 'write: !primary && !!o.write' in _slice_function(source, "openMailboxSheet")
     assert 'm.access === "write"' in _slice_function(source, "bindMyMailboxes")
+
+
+# ---- the feed catalogue in New connection → Feed (GET /triggers/feeds/catalog) ----
+
+def test_feed_catalog_picker_fills_the_name_and_the_address() -> None:
+    from abstractgateway.feed_catalog import shipped_catalog
+
+    source = _console_script()
+    assert 'api("/api/gateway/triggers/feeds/catalog")' in _slice_function(source, "loadFeedCatalog")
+    assert "trgCatalogMarkup(m)" in _slice_function(source, "renderTriggerModal")
+    assert "trgCheckFeedParam(m, byField)" in _slice_function(source, "createTriggerConnection")
+    feeds = [dict(f, source="shipped") for f in shipped_catalog()["feeds"]]
+    harness = HELPERS + _fns(source, "trgCatalogFeed", "trgSiteName", "trgFeedAddress", "trgFeedName", "trgFeedParamProblem",
+                             "trgCatalogMarkup", "pickCatalogFeed", "trgFeedParamTyped", "trgCheckFeedParam") + """
+const TRG_FEED_SOURCE = "feed.item";
+const TRG_ANOTHER_ADDRESS = "__another";
+const trg = { feedCatalog: { feeds: FEEDS }, modal: null };
+const els = { "trg-f-label": { value: "" }, "trg-f-url": { value: "", dataset: { trgField: "url" } }, "trg-f-feed-param": { value: "" } };
+const $ = (id) => els[id] || null;
+globalThis.document = { querySelectorAll: () => [els["trg-f-url"]] };
+const trgModalValues = () => ({ url: els["trg-f-url"].value });
+let rendered = 0;
+function renderTriggerModal() { rendered += 1; els["trg-f-label"].value = trg.modal.label; els["trg-f-url"].value = trg.modal.values.url || ""; els["trg-f-feed-param"].value = trg.modal.feedParam || ""; }
+trg.modal = { feedPick: "", feedParam: "", autoName: "", autoUrl: "", values: {}, errors: {} };
+const out = {};
+out.empty = trgCatalogMarkup(trg.modal);
+pickCatalogFeed("bbc-world");
+out.picked = [els["trg-f-label"].value, els["trg-f-url"].value, trgCatalogMarkup(trg.modal)];
+els["trg-f-label"].value = "My world news";
+pickCatalogFeed("hacker-news");
+out.ownName = [els["trg-f-label"].value, els["trg-f-url"].value];
+els["trg-f-label"].value = "";
+pickCatalogFeed("reddit-subreddit");
+out.template = [els["trg-f-label"].value, els["trg-f-url"].value, trgCatalogMarkup(trg.modal)];
+els["trg-f-feed-param"].value = "Python"; trgFeedParamTyped("Python");
+out.typed = [els["trg-f-label"].value, els["trg-f-url"].value];
+let byField = { url: "Feed address is required." };
+trg.modal.values = { url: "" }; els["trg-f-feed-param"].value = ""; trg.modal.feedParam = "";
+trgCheckFeedParam(trg.modal, byField); out.missing = byField;
+byField = {}; els["trg-f-feed-param"].value = "no spaces allowed"; trg.modal.values = { url: "https://www.reddit.com/r/no spaces allowed/.rss" };
+trgCheckFeedParam(trg.modal, byField); out.badForm = byField;
+byField = {}; els["trg-f-feed-param"].value = ""; trg.modal.values = { url: "https://example.org/typed-by-me.xml" };
+trgCheckFeedParam(trg.modal, byField); out.ownAddress = byField;
+pickCatalogFeed("__another");
+out.another = [els["trg-f-label"].value, els["trg-f-url"].value, trgCatalogMarkup(trg.modal)];
+trg.feedCatalog = { feeds: [], error: "HTTP 500" };
+out.failed = trgCatalogMarkup(trg.modal);
+console.log(JSON.stringify([out]));
+""".replace("FEEDS", json.dumps(feeds))
+    (r,) = _node(harness)
+    empty = r["empty"]
+    assert '<label for="trg-f-catalog">Choose a well-known feed</label>' in empty
+    for group in ("World news", "Technology", "Science", "Business and finance", "Fill in your own"):
+        assert f'<optgroup label="{group}">' in empty
+    assert '<option value="bbc-world">BBC News · World — bbc.co.uk</option>' in empty
+    assert '<option value="reddit-subreddit">Reddit · A subreddit…</option>' in empty
+    assert empty.index('value="__another">Another address</option>') > empty.index("Fill in your own")
+    name, url, markup = r["picked"]
+    assert (name, url) == ("BBC News · World", "https://feeds.bbci.co.uk/news/world/rss.xml")
+    assert '<option value="bbc-world" selected>' in markup and "World headlines from the BBC." in markup and 'href="https://www.bbc.co.uk/news"' in markup
+    assert r["ownName"] == ["My world news", "https://news.ycombinator.com/rss"]  # a name the person wrote is kept
+    name, url, markup = r["template"]
+    assert (name, url) == ("Reddit · A subreddit", "")
+    assert '<label for="trg-f-feed-param">Subreddit (the name after r/) *</label>' in markup and 'placeholder="python"' in markup
+    assert r["typed"] == ["Reddit · r/Python", "https://www.reddit.com/r/Python/.rss"]
+    assert r["missing"] == {"__feed_param": "Subreddit (the name after r/) is required."}
+    assert r["badForm"] == {"__feed_param": "Subreddit (the name after r/): not the expected form (e.g. python)."}
+    assert r["ownAddress"] == {}  # an address typed over the template stands on its own
+    name, url, markup = r["another"]
+    assert (name, url) == ("", "") and 'value="__another" selected' in markup and "trg-f-feed-param" not in markup
+    assert "Could not read the well-known feeds (HTTP 500). Type the feed address below." in r["failed"]

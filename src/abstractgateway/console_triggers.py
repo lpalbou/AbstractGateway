@@ -125,7 +125,7 @@ TRIGGERS_JS = r"""
     // ---- Triggers page (console_triggers.py, root backlog 1041) ----
     const trg = {
       opened: false, all: false, rows: null, error: "", sources: null, sourcesError: "", mailboxes: null, mailboxesError: "", hookTest: null,
-      expanded: {}, fire: {}, modal: null, release: null, pendingNew: "",
+      expanded: {}, fire: {}, modal: null, release: null, pendingNew: "", feedCatalog: null,
     };
     const TRG_EVENTS_LIMIT = 20;
     const TRG_STATUS = { active: ["Active", "is-ok"], paused: ["Paused", "is-muted"], error: ["Error", "is-err"], failed: ["Error", "is-err"], disabled: ["Off", "is-muted"] };
@@ -742,6 +742,149 @@ TRIGGERS_JS = r"""
       if (!f) return null;
       return { [f.key]: trgFieldHint(f) || `${f.label}: ${trgErr(e)}` };
     }
+    // ---- the feed catalogue (New connection → Feed): well-known public feeds to choose from
+    // (GET /triggers/feeds/catalog: the shipped list merged with the gateway's own
+    // <data_dir>/catalog/feeds.json). A pick fills the name and the address, both still editable;
+    // a template asks for its one value and builds the address; Another address is the free field.
+    const TRG_FEED_SOURCE = "feed.item";
+    const TRG_ANOTHER_ADDRESS = "__another";
+    async function loadFeedCatalog() {
+      if (trg.feedCatalog && !trg.feedCatalog.error) return;
+      try {
+        const out = await api("/api/gateway/triggers/feeds/catalog");
+        trg.feedCatalog = { feeds: Array.isArray(out && out.feeds) ? out.feeds : [] };
+      } catch (e) {
+        trg.feedCatalog = { feeds: [], error: trgErr(e) };
+      }
+    }
+    function trgCatalogFeed(id) {
+      return ((trg.feedCatalog && trg.feedCatalog.feeds) || []).find((f) => f.id === id) || null;
+    }
+    function trgSiteName(url) {
+      try { return new URL(String(url)).hostname.replace(/^www\./, ""); } catch { return ""; }
+    }
+    function trgFeedAddress(feed, value) {
+      const ph = feed.placeholder || {};
+      return feed.template ? String(feed.url).split(`{${ph.key}}`).join(value) : String(feed.url);
+    }
+    function trgFeedName(feed, value) {
+      const ph = feed.placeholder || {};
+      return feed.template && value && feed.name_template ? String(feed.name_template).split(`{${ph.key}}`).join(value) : String(feed.name);
+    }
+    function trgFeedParamProblem(feed, value) {
+      const ph = feed.placeholder || {};
+      const label = ph.label || ph.key || "This value";
+      if (!value) return `${label} is required.`;
+      let ok = true;
+      try { ok = !ph.pattern || new RegExp(ph.pattern, "u").test(value); } catch { ok = true; }
+      return ok ? "" : `${label}: not the expected form (e.g. ${ph.example || ""}).`;
+    }
+    function trgCatalogMarkup(m) {
+      const cat = trg.feedCatalog;
+      if (!cat) return `<div class="trg-field trg-field--wide"><p class="trg-help">Reading the well-known feeds...</p></div>`;
+      if (cat.error) return `<div class="trg-field trg-field--wide"><p class="trg-help">Could not read the well-known feeds (${esc(cat.error)}). Type the feed address below.</p></div>`;
+      if (!cat.feeds.length) return "";
+      const groups = new Map();
+      for (const f of cat.feeds) {
+        const c = String(f.category || "Other");
+        if (!groups.has(c)) groups.set(c, []);
+        groups.get(c).push(f);
+      }
+      const option = (f) => `<option value="${esc(f.id)}"${m.feedPick === f.id ? " selected" : ""}>${esc(f.name)}${f.template ? "…" : ` — ${esc(trgSiteName(f.site || f.url))}`}</option>`;
+      const groupsHtml = Array.from(groups).map(([c, list]) => `<optgroup label="${esc(c)}">${list.map(option).join("")}</optgroup>`).join("");
+      const picked = trgCatalogFeed(m.feedPick);
+      let html = `<div class="trg-field trg-field--wide"><label for="trg-f-catalog">Choose a well-known feed</label>`
+        + `<select id="trg-f-catalog" data-trg-catalog><option value="">Choose…</option>${groupsHtml}`
+        + `<option value="${TRG_ANOTHER_ADDRESS}"${m.feedPick === TRG_ANOTHER_ADDRESS ? " selected" : ""}>Another address</option></select>`;
+      if (picked) {
+        const site = picked.site ? ` · <a href="${esc(picked.site)}" target="_blank" rel="noopener noreferrer">${esc(trgSiteName(picked.site))}</a>` : "";
+        html += `<p class="trg-help" data-trg-catalog-about>${esc(picked.description || "")}${site}</p>`;
+      } else if (m.feedPick !== TRG_ANOTHER_ADDRESS) {
+        html += `<p class="trg-help">Pick one to fill in the name and the address, or choose Another address and type it.</p>`;
+      }
+      html += `</div>`;
+      if (picked && picked.template) {
+        const ph = picked.placeholder || {};
+        const err = m.errors && m.errors.__feed_param;
+        html += `<div class="trg-field trg-field--wide"><label for="trg-f-feed-param">${esc(ph.label || ph.key)} *</label>`
+          + `<input id="trg-f-feed-param" type="text" autocomplete="off" data-trg-feed-param value="${esc(m.feedParam || "")}" placeholder="${esc(ph.example || "")}"${err ? ' aria-invalid="true"' : ""}>`
+          + `${err ? `<p class="trg-field-error" role="alert">${esc(err)}</p>` : ""}</div>`;
+      }
+      return html;
+    }
+    // Re-render the open dialog keeping what is typed (name, settings, the template's value).
+    function trgRenderKeeping() {
+      const m = trg.modal;
+      if (!m) return;
+      const label = $("trg-f-label");
+      if (label) m.label = String(label.value || "");
+      const param = $("trg-f-feed-param");
+      if (param) m.feedParam = String(param.value || "");
+      if (document.querySelector("#trigger-modal-body [data-trg-field]")) m.values = trgModalValues();
+      renderTriggerModal();
+    }
+    // A pick fills the name (unless the person wrote their own) and the address (unless they
+    // typed one); Another address empties an address the catalogue filled and focuses the field.
+    function pickCatalogFeed(id) {
+      const m = trg.modal;
+      m.values = trgModalValues();
+      const typed = String($("trg-f-label").value || "");
+      const nameIsOurs = !typed.trim() || typed === m.autoName;
+      const url = String(m.values.url || "");
+      const urlIsOurs = !url.trim() || url === m.autoUrl;
+      const feed = trgCatalogFeed(id);
+      m.feedPick = id;
+      m.feedParam = "";
+      m.errors = {};
+      m.problem = "";
+      m.label = typed;
+      if (feed) {
+        const name = trgFeedName(feed, "");
+        if (nameIsOurs) { m.label = name; m.autoName = name; }
+        const address = feed.template ? "" : feed.url;
+        if (urlIsOurs || !feed.template) { m.values.url = address; m.autoUrl = address; }
+      } else {
+        if (nameIsOurs) { m.label = ""; m.autoName = ""; }
+        if (urlIsOurs) { m.values.url = ""; m.autoUrl = ""; }
+      }
+      renderTriggerModal();
+      const focus = feed && feed.template ? $("trg-f-feed-param") : (id === TRG_ANOTHER_ADDRESS ? $("trg-f-url") : null);
+      if (focus) { try { focus.focus(); } catch {} }
+    }
+    // Typing a template's value builds the address (and the name, while it is the catalogue's).
+    function trgFeedParamTyped(value) {
+      const m = trg.modal;
+      const feed = trgCatalogFeed(m.feedPick);
+      if (!feed || !feed.template) return;
+      const v = String(value || "").trim();
+      m.feedParam = v;
+      const urlEl = $("trg-f-url");
+      if (urlEl && (!urlEl.value.trim() || urlEl.value === m.autoUrl)) {
+        const address = v ? trgFeedAddress(feed, v) : "";
+        urlEl.value = address;
+        m.autoUrl = address;
+      }
+      const nameEl = $("trg-f-label");
+      if (nameEl && (!nameEl.value.trim() || nameEl.value === m.autoName)) {
+        const name = trgFeedName(feed, v);
+        nameEl.value = name;
+        m.autoName = name;
+      }
+    }
+    // Create with a template chosen: its value is required and of the expected form while the
+    // address is still the one it built (an address the person typed over it stands on its own).
+    function trgCheckFeedParam(m, byField) {
+      const feed = trgCatalogFeed(m.feedPick);
+      if (!feed || !feed.template) return;
+      const param = $("trg-f-feed-param");
+      m.feedParam = String(param ? param.value : m.feedParam || "").trim();
+      const url = String((m.values && m.values.url) || "").trim();
+      if (url && url !== trgFeedAddress(feed, m.feedParam)) return;
+      const problem = trgFeedParamProblem(feed, m.feedParam);
+      if (!problem) return;
+      byField.__feed_param = problem;
+      delete byField.url;
+    }
     function closeTriggerModal() {
       const backdrop = $("trigger-modal-backdrop");
       if (backdrop.hidden) return;
@@ -785,6 +928,7 @@ TRIGGERS_JS = r"""
       const options = sources.map((x) => `<option value="${esc(`${x.id}@${x.version}`)}"${s && x === s ? " selected" : ""}>${esc(x.label || x.id)}</option>`).join("");
       let html = `<div class="trg-form">`
         + `<div class="trg-field"><label for="trg-f-source">What to listen to</label><select id="trg-f-source" data-trg-source><option value="">Choose…</option>${options}</select>${trgSourceHintsMarkup(sources, s)}</div>`
+        + (s && s.id === TRG_FEED_SOURCE ? trgCatalogMarkup(m) : "")
         + `<div class="trg-field"><label for="trg-f-label">Name *</label><input id="trg-f-label" type="text" autocomplete="off" data-trg-label value="${esc(m.label || "")}" placeholder="Release feed, Orders webhook…">${m.errors && m.errors.__name ? `<p class="trg-field-error" role="alert">${esc(m.errors.__name)}</p>` : ""}<p class="trg-help">How you find it in Flow and in your automations.</p></div>`;
       if (s) html += triggerFormMarkup(m.fields, m.values, m.errors);
       body.innerHTML = html + `</div>`;
@@ -822,7 +966,8 @@ TRIGGERS_JS = r"""
       }
       const pick = sources.find((x) => x.id === sourceId || `${x.id}@${x.version}` === sourceId) || (sources.length === 1 ? sources[0] : null);
       trg.hookTest = null;
-      trg.modal = { sources, sourceKey: pick ? `${pick.id}@${pick.version}` : "", fields: pick ? triggerFormFields(pick.connection_schema) : [], label: "", problem: "", saving: false, created: null };
+      if (pick && pick.id === TRG_FEED_SOURCE) await loadFeedCatalog();
+      trg.modal = { sources, sourceKey: pick ? `${pick.id}@${pick.version}` : "", fields: pick ? triggerFormFields(pick.connection_schema) : [], label: "", problem: "", saving: false, created: null, feedPick: "", feedParam: "", autoName: "", autoUrl: "" };
       renderTriggerModal();
     }
     function trgModalValues() {
@@ -844,6 +989,7 @@ TRIGGERS_JS = r"""
       m.values = trgModalValues();
       const { config, byField } = triggerConfigFromValues(m.fields, m.values);
       if (!m.label) byField.__name = "Name is required.";
+      trgCheckFeedParam(m, byField);
       m.errors = byField;
       m.problem = "";
       if (Object.keys(byField).length) { renderTriggerModal(); return; }
@@ -1022,6 +1168,7 @@ TRIGGERS_JS = r"""
       $("trigger-modal-close").onclick = closeTriggerModal;
       $("trigger-modal-body").onchange = (e) => {
         const t = e.target;
+        if (t && trg.modal && t.dataset.trgCatalog !== undefined) { pickCatalogFeed(t.value); return; }
         if (!t || !trg.modal || t.dataset.trgSource === undefined) return;
         trg.modal.label = String($("trg-f-label").value || "");
         trg.modal.sourceKey = t.value;
@@ -1030,12 +1177,18 @@ TRIGGERS_JS = r"""
         trg.modal.values = {};
         trg.modal.errors = {};
         trg.modal.problem = "";
+        Object.assign(trg.modal, { feedPick: "", feedParam: "", autoName: "", autoUrl: "" });
         renderTriggerModal();
+        if (s && s.id === TRG_FEED_SOURCE && (!trg.feedCatalog || trg.feedCatalog.error)) {
+          const modal = trg.modal;
+          loadFeedCatalog().then(() => { if (trg.modal === modal && !modal.created) trgRenderKeeping(); });
+        }
       };
       // A field being corrected loses its refusal (UX #12: the text stays, the red goes once you edit it).
       $("trigger-modal-body").oninput = (e) => {
         const t = e.target;
-        const key = t && t.dataset ? (t.dataset.trgField || t.dataset.trgDurN || (t.dataset.trgLabel !== undefined ? "__name" : "")) : "";
+        if (t && trg.modal && t.dataset.trgFeedParam !== undefined) trgFeedParamTyped(t.value);
+        const key = t && t.dataset ? (t.dataset.trgField || t.dataset.trgDurN || (t.dataset.trgLabel !== undefined ? "__name" : "") || (t.dataset.trgFeedParam !== undefined ? "__feed_param" : "")) : "";
         if (!key || !trg.modal || !trg.modal.errors || !trg.modal.errors[key]) return;
         delete trg.modal.errors[key];
         t.removeAttribute("aria-invalid");

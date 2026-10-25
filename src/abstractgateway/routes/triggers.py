@@ -13,6 +13,11 @@ list and by id on the others):
     GET    /triggers/connections/{id}/events[?after=&limit=]  {events: [CloudEvents + sequence], next_after}
     POST   /triggers/connections/{id}/test-fire          {event_id, sequence, woken}
 
+Feed catalogue (any signed-in principal; `feed_catalog.py`):
+
+    GET    /triggers/feeds/catalog                       {version, feeds: [entry + source: shipped|custom]}
+                                                         (+ custom_path, problems for an admin)
+
 row = {connection_id, principal, source_id, source_version (int), label, status, listening
 (listening|idle|paused), used_by (int), paused, always_listen, created_at,
 updated_at, last_event_at (str|null), last_error (obj|null), config_public (object, never a
@@ -34,6 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Query, Request
@@ -156,6 +162,28 @@ async def receive_webhook(connection_id: str, request: Request) -> JSONResponse:
                 "event_id": verdict.get("event_id"), "seq": int(verdict.get("seq") or 0), "woken": int(verdict.get("woken") or 0)}
     _audit(request, connection_id=connection_id, outcome="accepted", webhook_id=accepted["webhook_id"], seq=accepted["seq"])
     return JSONResponse(status_code=202, content=accepted)
+
+
+# ---------------------------------------------------------------------------------------
+# Feed catalogue: the well-known feeds New connection → Feed proposes
+# ---------------------------------------------------------------------------------------
+
+
+@router.get("/feeds/catalog", summary="Well-known public feeds to choose from (shipped + the gateway's custom file)")
+async def feed_catalog(request: Request) -> Any:
+    """`{version, feeds}`: the shipped catalogue merged with `<data_dir>/catalog/feeds.json` when
+    present (same id replaces, a new id adds, `disabled: true` hides). Each entry: `id, name, url,
+    site, category, language, description, source` ("shipped" | "custom"); a template also has
+    `template: true`, `placeholder {key, label, example, pattern?}` and maybe `name_template`.
+    An admin also gets `custom_path` (where the custom file lives) and `problems` (entries skipped)."""
+    principal = _principal(request)
+    from .. import feed_catalog as fc
+    from ..users import gateway_data_dir_from_env
+
+    out = await asyncio.to_thread(fc.load_catalog, Path(gateway_data_dir_from_env()))
+    if not principal.is_admin():
+        out = {"version": out["version"], "feeds": out["feeds"]}
+    return out
 
 
 # ---------------------------------------------------------------------------------------
