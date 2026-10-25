@@ -28,6 +28,7 @@ from typing import Any, Callable, Dict, List, Optional
 from ..apps_manager import app_launch_config
 from . import apps as tray_apps, dialogs, menu_model, platform as plat
 from .client import GatewayClient, Result
+from .events import AttentionLedger, AttentionNotice, EventFollower, is_automation_event
 from .icons import icon_signature, master_size_for_platform, render_icon
 from .menu_model import (  # noqa: F401 - re-exported: the copy helpers live with the pure menu model
     APP_NAME,
@@ -92,7 +93,24 @@ def _ready_line(ready: bool, *, reason: Optional[str] = None, hint: Optional[str
 EJECT_RECEIPT_SETTLE_S = 1.6
 
 
-def tooltip_text(snap: Snapshot) -> str:
+def attention_words(unseen: int) -> str:
+    """The badge, in words: attention items raised and not yet seen (backlog 1046)."""
+    n = int(unseen or 0)
+    if n <= 0:
+        return ""
+    return "1 update from your automations" if n == 1 else f"{n} updates from your automations"
+
+
+def tooltip_text(snap: Snapshot, *, attention_unseen: int = 0) -> str:
+    badge = attention_words(attention_unseen)
+    text = _tooltip_body(snap)
+    if badge:
+        head, _, rest = text.partition("\n")
+        text = f"{head}\n{badge}" + (f"\n{rest}" if rest else "")
+    return text[:120]
+
+
+def _tooltip_body(snap: Snapshot) -> str:
     st = snap.gateway_state
     if st == "paused":
         return f"{APP_NAME} — Paused (still running)\nSessions wait until you resume"
@@ -288,6 +306,10 @@ class TrayApp:
         self._network_busy = False
         self._npm_root: Optional[str] = None
         self._npm_root_at = -1e9
+        # The person's event stream (backlog 1046, tray/events.py): OS notifications per live
+        # attention.raised, the badge (raised minus seen), event-driven automation refresh.
+        self._attention = AttentionLedger()
+        self._events = EventFollower(self.client, on_event=self._on_user_event, on_state=self._on_events_state)
 
     # ------------------------------------------------------------------ run
 
@@ -323,6 +345,7 @@ class TrayApp:
         self._menu_has_menu = bool(getattr(self._icon, "HAS_MENU", True))
         self.sampler.add_listener(self._on_snapshot)
         self.sampler.start()
+        self._events.start()
         threading.Thread(target=self._watchdog, name="tray-watchdog", daemon=True).start()
         threading.Thread(target=self._stdin_watch, name="tray-stdin", daemon=True).start()
         threading.Thread(target=self._extras_loop, name="tray-extras", daemon=True).start()
@@ -426,6 +449,7 @@ class TrayApp:
         if self._stopping:
             return
         self._stopping = True
+        self._events.stop()
         try:
             if self._icon is not None:
                 self._icon.stop()
@@ -478,7 +502,7 @@ class TrayApp:
                 if len(self._icon_cache) > 256:
                     self._icon_cache.clear()
                 self._icon_cache[sig] = image
-        title = tooltip_text(snap)
+        title = tooltip_text(snap, attention_unseen=self._attention.unseen)
         # Menu (rebuilt only on coarse changes; value-only changes are
         # additionally rate-limited off macOS, where a rebuild closes an
         # open menu under the cursor)
@@ -543,6 +567,55 @@ class TrayApp:
                 self._notify("Memory is almost full", "Ejecting a model or closing other apps will help. The menu's Models list shows what is using it.")
         else:
             self._mem_high_since = None
+
+    # ------------------------------------------------------- event stream
+
+    def _on_events_state(self, state: str) -> None:
+        """`live`: automation rows refresh on events; `unsupported` (an older gateway) or
+        `unauthorized`: back to the sampler's poll. `connecting` changes nothing (a reconnect
+        resumes from Last-Event-ID, so no event is lost)."""
+        if state == "live":
+            self.sampler.set_events_live(True)
+        elif state in ("unsupported", "unauthorized"):
+            self.sampler.set_events_live(False)
+
+    def _on_user_event(self, event: Dict[str, Any], live: bool) -> None:
+        """Events thread: fold the badge; refresh the automations on automation events; one
+        OS notification per LIVE attention.raised (history read at start is never re-shown)."""
+        notice = self._attention.apply(event)
+        if is_automation_event(event):
+            self.sampler.mark_automations_dirty()
+        if live and notice is not None:
+            self._show_attention(notice)
+
+    def attention_notice_text(self, notice: AttentionNotice) -> tuple:
+        """(title, message) for one attention item; the automation's own title when known."""
+        snap = self._snap
+        name = ""
+        for row in (snap.automations if snap is not None else ()) or ():
+            if getattr(row, "automation_id", None) == notice.automation_id:
+                name = str(getattr(row, "title", "") or "")
+                break
+        name = name or "An automation"
+        if notice.kind == "failure":
+            return f"{name} failed", "It failed after its retries. Open the console to see what happened."
+        return name, "It has a result for you. Open the console to read it."
+
+    def _show_attention(self, notice: AttentionNotice) -> None:
+        title, message = self.attention_notice_text(notice)
+        shown = self._icon is not None and bool(getattr(self._icon, "HAS_NOTIFICATION", False))
+        error = None
+        if shown:
+            try:
+                self._icon.notify(message, title)
+            except Exception as exc:  # noqa: BLE001
+                shown, error = False, f"{type(exc).__name__}: {exc}"
+        else:
+            error = "this desktop's tray cannot show notifications"
+        if notice.record_key:
+            r = self.client.report_notification(notice.record_key, outcome="sent" if shown else "failed", error=error)
+            if not r.ok:
+                logger.debug("tray: notification report failed: %s", r.detail)
 
     def _notify(self, title: str, message: str) -> None:
         try:

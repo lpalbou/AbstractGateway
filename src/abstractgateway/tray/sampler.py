@@ -36,6 +36,10 @@ from .client import GatewayClient
 HISTORY_SAMPLES = 120  # 2 minutes at 1 Hz
 RUNS_WINDOW_S = 24 * 3600.0  # "the last day" — the Sessions submenu's Recent horizon
 RUNS_LIMIT = 25  # what we ASK for; the window then decides what is shown
+# With the event stream live (tray/events.py) the automations are refetched when an
+# automation-shaped event arrives; this slow reconciliation catches what no event announces
+# (an automation created, renamed or deleted in the console).
+AUTOMATIONS_RECONCILE_S = 300.0
 
 
 @dataclass(frozen=True)
@@ -472,6 +476,9 @@ class Sampler:
         self._last_slow = 0.0
         self._last_runner = 0.0
         self._last_runs = 0.0
+        self._last_automations = 0.0
+        self._automations_dirty = True
+        self._events_live = False
         self._slow_thread: Optional[threading.Thread] = None
         self._slow_wake = threading.Event()
         self._live_supported: Optional[bool] = None  # GET /host/metrics/live exists on this gateway?
@@ -500,7 +507,19 @@ class Sampler:
         """Ask for an immediate resample (after an action)."""
         self._last_runner = 0.0
         self._last_runs = 0.0
+        self._automations_dirty = True
         self._wake.set()
+        self._slow_wake.set()
+
+    def set_events_live(self, live: bool) -> None:
+        """The event stream is (not) followed: event-driven automation refresh, or the 20 s poll."""
+        self._events_live = bool(live)
+        if not live:
+            self._automations_dirty = True
+
+    def mark_automations_dirty(self) -> None:
+        """An automation-shaped event arrived: refetch `/automations` on the next slow pass."""
+        self._automations_dirty = True
         self._slow_wake.set()
 
     @property
@@ -745,25 +764,42 @@ class Sampler:
         person has to open to read.
         """
         now = time.monotonic()
-        if (now - self._last_runs) < self._runs_every:
+        if (now - self._last_runs) >= self._runs_every:
+            self._last_runs = now
+            r = self._client.recent_runs(limit=RUNS_LIMIT)
+            self._note_auth(r)
+            with self._lock:
+                if r.ok:
+                    self._state["runs"] = run_rows_from_listing(r.data)
+                    self._state["runs_error"] = None
+                    path = r.data.get("observer_automations_path") if isinstance(r.data, dict) else None
+                    self._state["observer_automations_path"] = str(path) if isinstance(path, str) and path.strip() else None
+                else:
+                    # The rows we already have stay: a blip must not empty the menu.
+                    self._state["runs_error"] = r.error or "run list unavailable"
+        self._sample_automations(now)
+
+    def automations_due(self, now: float) -> bool:
+        """Event stream live: on an automation event, or the slow reconciliation. Not live (an
+        older gateway, a broken stream): every runs interval, as before the stream existed."""
+        if self._automations_dirty:
+            return True
+        every = AUTOMATIONS_RECONCILE_S if self._events_live else self._runs_every
+        return (now - self._last_automations) >= every
+
+    def _sample_automations(self, now: float) -> None:
+        if not self.automations_due(now):
             return
-        self._last_runs = now
-        r = self._client.recent_runs(limit=RUNS_LIMIT)
+        self._automations_dirty = False
+        self._last_automations = now
         a = self._client.automations()
-        self._note_auth(r, a)
+        self._note_auth(a)
         with self._lock:
-            if r.ok:
-                self._state["runs"] = run_rows_from_listing(r.data)
-                self._state["runs_error"] = None
-                path = r.data.get("observer_automations_path") if isinstance(r.data, dict) else None
-                self._state["observer_automations_path"] = str(path) if isinstance(path, str) and path.strip() else None
-            else:
-                # The rows we already have stay: a blip must not empty the menu.
-                self._state["runs_error"] = r.error or "run list unavailable"
             if a.ok:
                 self._state["automations"] = automation_rows_from_listing(a.data)
                 self._state["automations_error"] = None
             else:
+                self._automations_dirty = True  # retry on the next pass
                 self._state["automations_error"] = a.error or "automations unavailable"
 
     # -- output --------------------------------------------------------------

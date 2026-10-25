@@ -214,9 +214,34 @@ greyed and the row says `Another account's session — act on it from its own
 app`: the tray's commands reach the plane of its own identity (the
 payload's `caller_plane`), never another account's runs.
 
-The section rows are read every 20 seconds (`GET /host/runs`, cached a few
+The session rows are read every 20 seconds (`GET /host/runs`, cached a few
 seconds on the gateway; one run document per row) and right after each
-action. A duration that ticks never rebuilds the menu under the cursor.
+action. A duration that ticks never rebuilds the menu under the cursor. The
+**Scheduled** rows follow your event stream instead (below): they are read
+again when an automation event arrives, after each action, and every 5
+minutes to catch an automation created or renamed elsewhere; on a gateway
+without the event stream they keep the 20-second read.
+
+## Automation notifications
+
+The tray follows your event stream (`GET /api/gateway/me/events/stream`,
+[api.md](./api.md#your-event-stream-apigatewaymeevents)): it reads what
+happened before it started, then stays connected and picks up where it left
+off after a break (`Last-Event-ID`), so nothing is missed and nothing is shown
+twice.
+
+- **A notification per automation item.** When an automation has something
+  for you (its occurrence asked to notify, or it failed after its retries),
+  the tray shows one notification: `<automation title>` · *It has a result
+  for you. Open the console to read it.*, or `<automation title> failed` ·
+  *It failed after its retries. Open the console to see what happened.* Items
+  that existed before the tray started are not shown again.
+- **The count.** The icon's tooltip says how many such items you have not
+  seen yet (`2 updates from your automations`); seeing them in a client (the
+  console, the Assistant, the watch) lowers it.
+- **Delivery is recorded.** Each notification shown (or that this desktop
+  cannot show) is written to your stream as `notification.sent` /
+  `notification.failed` with `channel: "tray"`.
 
 ## Models
 

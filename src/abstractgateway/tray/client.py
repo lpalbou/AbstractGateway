@@ -14,7 +14,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 
 @dataclass
@@ -135,6 +135,37 @@ class GatewayClient:
         left out): the Sessions menu's Scheduled rows, with the schedule words
         the gateway serves (`schedule_text`, `next_run_local`)."""
         return self._request("GET", "/automations?limit=50", timeout=10.0)
+
+    def my_events(self, *, after: int = 0, limit: int = 1000) -> Result:
+        """A page of this principal's event stream (`GET /me/events`, backlog 1046)."""
+        return self._request("GET", f"/me/events?after={int(after)}&limit={int(limit)}", timeout=10.0)
+
+    def open_event_stream(self, *, after: int = 0, heartbeat_s: float = 15.0, read_timeout_s: float = 60.0) -> Tuple[Any, int]:
+        """Open `GET /me/events/stream` (SSE). Returns `(response, status)`: a readable response
+        (`readline()`, `close()`) on success, `(None, status)` otherwise (0 = unreachable). A
+        silence longer than `read_timeout_s` (four missed heartbeats) breaks the read."""
+        url = f"{self.base_url}{self.api_prefix}/me/events/stream?heartbeat_s={float(heartbeat_s)}"
+        headers = {"Accept": "text/event-stream", "User-Agent": "abstractgateway-tray"}
+        if self._token:
+            headers["Authorization"] = f"Bearer {self._token}"
+        if int(after) > 0:
+            headers["Last-Event-ID"] = str(int(after))
+        req = urllib.request.Request(url, method="GET", headers=headers)
+        try:
+            resp = urllib.request.urlopen(req, timeout=float(read_timeout_s))  # noqa: S310 - loopback URL from the parent
+        except urllib.error.HTTPError as exc:
+            return None, int(exc.code)
+        except Exception:  # noqa: BLE001 - unreachable, reset
+            return None, 0
+        return resp, int(getattr(resp, "status", 200) or 200)
+
+    def report_notification(self, record_key: str, *, outcome: str, error: Optional[str] = None) -> Result:
+        """Record that the tray showed (or could not show) a notice: `notification.sent|failed`
+        with `channel: "tray"` in this principal's stream."""
+        body: Dict[str, Any] = {"channel": "tray", "outcome": str(outcome), "record_key": str(record_key)}
+        if error:
+            body["error"] = str(error)[:400]
+        return self._request("POST", "/me/events/notifications", body=body, timeout=6.0)
 
     def run_wait(self, run_id: str) -> Result:
         """One run's pending wait with the tool calls awaiting approval in full

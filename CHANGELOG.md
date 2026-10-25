@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `after` is 0, `: keep-alive` every `heartbeat_s`, the `after` semantics of `/runs/{id}/ledger/stream`): the
   caller's own stream only, in the caller's own plane. `POST /api/gateway/me/events/notifications` lets a client
   channel (the tray) record `notification.sent|failed`. Documented in api.md and the OpenAPI document.
+- The desktop tray follows the person's event stream (`tray/events.py`): one OS notification per new
+  `attention.raised` (the automation's title, a failure said as such), recorded back as `notification.sent|failed`
+  with `channel: "tray"`; the tooltip counts the items raised and not yet seen; the Scheduled rows are refetched
+  on automation events (and every 5 minutes) instead of the 20-second `GET /automations` poll, which stays for a
+  gateway without the stream. Reconnects resume from `Last-Event-ID`.
 
 - Console **Triggers** page (backlog 1041, `/console#triggers`): your trigger connections (Source, Name,
   Status, Last event) with **Events** (the 20 most recent events, each expandable to its JSON), **Test** (sends a
