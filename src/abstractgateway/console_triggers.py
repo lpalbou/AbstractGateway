@@ -79,6 +79,10 @@ TRIGGERS_CSS = r"""
 .trg-help { margin: 0; color: var(--muted); font-size: var(--af-helper-size, var(--font-size-md)); line-height: 1.4; }
 .trg-once { margin: 0; padding: 10px 12px; border-left: 3px solid var(--warning, var(--accent)); background: color-mix(in srgb, var(--warning, var(--accent)) 9%, transparent); border-radius: var(--radius-sm); font-size: var(--font-size-base); line-height: 1.45; }
 .trg-footer-actions { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+.trg-setup { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); }
+.trg-setup p { margin: 0; }
+.trg-code { flex: 1 1 260px; min-width: 0; margin: 0; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--ui-surface-2, var(--bg-secondary)); font-family: var(--font-mono); font-size: var(--font-size-md); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 22rem; overflow: auto; }
+.trg-row--mailbox .link-button { white-space: normal; text-align: right; }
 @media (max-width: 1023.98px) {
   .trg-table .trg-th-last, .trg-table td.trg-last { display: none; }
   .trg-fold { display: block; }
@@ -98,7 +102,7 @@ TRIGGERS_CSS = r"""
 TRIGGERS_JS = r"""
     // ---- Triggers page (console_triggers.py, root backlog 1041) ----
     const trg = {
-      opened: false, all: false, rows: null, error: "", sources: null, sourcesError: "",
+      opened: false, all: false, rows: null, error: "", sources: null, sourcesError: "", mailboxes: null, mailboxesError: "", hookTest: null,
       expanded: {}, fire: {}, modal: null, release: null, pendingNew: "",
     };
     const TRG_EVENTS_LIMIT = 20;
@@ -126,6 +130,9 @@ TRIGGERS_JS = r"""
         if (!s || !s.available) continue;
         if (typeof s.needs_connection !== "boolean") { missing.push(`${s.id}@${s.version}`); continue; }
         if (!s.needs_connection) continue;
+        // A mailbox-backed source (`connection_provider: "email_accounts"`, email received) reads the
+        // person's mail accounts: its mailboxes are listed as rows, managed under Account → My email.
+        if (s.connection_provider === "email_accounts") continue;
         if (!s.connection_schema || typeof s.connection_schema !== "object" || Array.isArray(s.connection_schema)) {
           throw new Error(`Trigger source ${s.id}@${s.version} needs a connection but serves no connection_schema object.`);
         }
@@ -158,10 +165,45 @@ TRIGGERS_JS = r"""
       if (fire.ok) return `<span class="trg-fire is-ok" role="status">Test event #${esc(fire.sequence)} sent.</span>`;
       return `<span class="trg-fire is-failed" role="status">Test not sent: ${esc(fire.message || "")}</span>`;
     }
+    // The person's mailboxes as rows (source "When an email arrives"): an email trigger reads a mail
+    // account, created and managed under Account → My email (GET /me/email/accounts).
+    const TRG_MAILBOX_STATE = {
+      connected: ["Active", "is-ok"], receive_only: ["Read-only", "is-ok"], paused: ["Paused", "is-muted"],
+      needs_reconnect: ["Needs reconnecting", "is-warn"], unavailable: ["Unavailable", "is-muted"], not_connected: ["Not connected", "is-muted"],
+    };
+    function trgMailboxSourceLabel(sources) {
+      const s = (sources || []).find((x) => x && x.available && x.connection_provider === "email_accounts");
+      return s ? String(s.label || s.id) : "When an email arrives";
+    }
+    function trgMailboxStatusChip(m) {
+      if (!m.enabled) return `<span class="trg-chip is-muted">Off</span>`;
+      const st = String((m.mailbox && m.mailbox.state) || "").trim();
+      const known = TRG_MAILBOX_STATE[st];
+      if (known) return `<span class="trg-chip ${known[1]}">${esc(known[0])}</span>`;
+      return `<span class="trg-chip is-warn">${esc(st || "unknown")}</span>`;
+    }
+    function mailboxRowsMarkup(items, opts) {
+      const o = opts || {};
+      const label = esc(trgMailboxSourceLabel(o.sources));
+      return (items || []).filter((m) => m && m.configured).map((m) => {
+        const id = esc(m.account_id);
+        const w = m.watcher || {};
+        const last = w.last_poll ? `checked ${trgAgo(w.last_poll, o.now) || w.last_poll}` : "Never";
+        const name = m.primary ? `${m.address || m.account_id} (primary)` : `${m.account_id}${m.address ? ` · ${m.address}` : ""}`;
+        return `<tr class="trg-row trg-row--mailbox" data-trg-mailbox="${id}">`
+          + `<td class="trg-source">${label}<span class="trg-sub trg-mono">mailbox ${id}${m.can_send ? "" : " · read-only"}</span></td>`
+          + `<td class="trg-name-cell"><span class="trg-name">${esc(name)}</span><span class="trg-sub trg-fold">Last check: ${esc(last)}</span></td>`
+          + `<td class="trg-status">${trgMailboxStatusChip(m)}</td>`
+          + `<td class="trg-last">${esc(last)}</td>`
+          + `<td class="trg-actions-cell"><div class="trg-actions"><button type="button" class="link-button" data-trg-mailbox-manage="${id}" data-af-tip="Mailboxes are managed with your account">Manage under Account → My email</button></div></td></tr>`;
+      }).join("");
+    }
     function triggersRowsMarkup(rows, opts) {
       const o = opts || {};
       const cols = o.all ? 6 : 5;
       const list = rows || [];
+      const mail = !o.all ? mailboxRowsMarkup(o.mailboxes, o) : "";
+      if (!list.length && mail) return mail;
       if (!list.length) {
         return `<tr><td colspan="${cols}" class="trg-empty">${o.all ? "No account has a connection yet." : "No connection yet. Create one to let your automations listen to a mailbox, a feed or a webhook."}</td></tr>`;
       }
@@ -186,7 +228,7 @@ TRIGGERS_JS = r"""
           + `<td class="trg-actions-cell"><div class="trg-actions">${acts.join("")}</div></td></tr>`;
         if (open) html += `<tr class="trg-detail" data-trg-detail="${id}"><td colspan="${cols}">${triggerDetailMarkup(r, o.expanded[r.connection_id])}</td></tr>`;
         return html;
-      }).join("");
+      }).join("") + mail;
     }
     function trgCopyRow(label, value, key) {
       return `<div class="trg-field trg-field--wide"><span class="trg-label">${esc(label)}</span>`
@@ -259,9 +301,27 @@ TRIGGERS_JS = r"""
       } catch (e) {
         trg.error = trgErr(e);
       }
+      if (!trg.all) await loadTriggerMailboxes();
       renderTriggers();
       for (const id of Object.keys(trg.expanded)) loadTriggerEvents(id);
       if (trg.pendingNew) { const want = trg.pendingNew; trg.pendingNew = ""; openTriggerModal(want); }
+    }
+    async function loadTriggerMailboxes() {
+      try {
+        const out = await api("/api/gateway/me/email/accounts");
+        if (!out || !Array.isArray(out.items)) throw new Error("the gateway's answer has no items list.");
+        trg.mailboxes = out.items;
+        trg.mailboxesError = "";
+      } catch (e) {
+        trg.mailboxes = [];
+        trg.mailboxesError = trgErr(e);
+      }
+    }
+    // Account → My email: the Accounts page and your own row's Email dialog (where mailboxes live).
+    function openMyEmailFromTriggers() {
+      const p = state.principal || {};
+      $("tab-button-users").click();
+      openAccountEmail({ id: String(p.user_id || ""), tenant_id: String(p.tenant_id || "default"), kind: "human", role: p.admin ? "admin" : "user" });
     }
     function renderTriggers() {
       const body = $("triggers-table");
@@ -270,8 +330,9 @@ TRIGGERS_JS = r"""
       const cols = trg.all ? 6 : 5;
       if (trg.error) { body.innerHTML = `<tr><td colspan="${cols}" class="trg-empty">Could not list the connections: ${esc(trg.error)}</td></tr>`; return; }
       if (!trg.rows) { body.innerHTML = `<tr><td colspan="${cols}" class="trg-empty">Reading the connections...</td></tr>`; return; }
-      body.innerHTML = triggersRowsMarkup(trg.rows, { all: trg.all, sources: trg.sources || [], expanded: trg.expanded, fire: trg.fire });
+      body.innerHTML = triggersRowsMarkup(trg.rows, { all: trg.all, sources: trg.sources || [], expanded: trg.expanded, fire: trg.fire, mailboxes: trg.mailboxes || [] });
       if (trg.sourcesError) trgMessage(`Could not read the trigger sources: ${trg.sourcesError}`, "error");
+      else if (!trg.all && trg.mailboxesError) trgMessage(`Could not read your mailboxes: ${trg.mailboxesError}`, "error");
     }
     async function loadTriggerEvents(id) {
       if (!trg.expanded[id]) return;
@@ -353,18 +414,40 @@ TRIGGERS_JS = r"""
     // ---- the create dialog: the form engine for a source's `connection_schema` (the JSON Schema
     // subset Flow renders for `config_schema`).
     const TRG_FORM_KEYWORDS = new Set(["type", "title", "description", "enum", "default", "pattern", "format", "minimum", "maximum", "minLength", "maxLength", "examples", "writeOnly"]);
+    // Labels for the settings of the shipped sources whose schemas carry no `title`.
+    const TRG_FIELD_LABELS = {
+      subject_path: "Subject (path in the JSON body)",
+      tolerance_s: "Accepted clock skew (seconds)",
+      url: "Feed address",
+      every: "Check every",
+      max_items: "Items per check (at most)",
+      initial_items: "Items already in the feed",
+    };
+    function trgHumanize(key) {
+      const words = String(key).replace(/_/g, " ").trim();
+      return words ? words.charAt(0).toUpperCase() + words.slice(1) : String(key);
+    }
+    function trgSentence(text) {
+      const t = String(text || "").trim();
+      return t ? t.charAt(0).toUpperCase() + t.slice(1) : "";
+    }
     function triggerFormFields(schema) {
       const props = schema && typeof schema.properties === "object" && schema.properties ? schema.properties : {};
       const required = new Set(Array.isArray(schema && schema.required) ? schema.required : []);
-      return Object.keys(props).map((key) => {
+      return Object.keys(props).filter((key) => {
+        // A secret the gateway generates (`x-secret`) is never typed here: it is shown once after Create.
+        const p = props[key];
+        return !(p && typeof p === "object" && p["x-secret"] === true);
+      }).map((key) => {
         const p = props[key] && typeof props[key] === "object" ? props[key] : {};
         let kind = "readonly";
-        if (!Object.keys(p).some((k) => !TRG_FORM_KEYWORDS.has(k))) {
+        if (!Object.keys(p).some((k) => !TRG_FORM_KEYWORDS.has(k) && !k.startsWith("x-"))) {
           if (Array.isArray(p.enum)) kind = "enum";
           else if (p.type === "string") kind = (p.format === "password" || p.writeOnly === true) ? "password" : "string";
           else if (p.type === "integer" || p.type === "number" || p.type === "boolean") kind = p.type;
         }
-        return { key, kind, label: String(p.title || key), description: String(p.description || ""), required: required.has(key), schema: p };
+        const label = String(p.title || TRG_FIELD_LABELS[key] || trgHumanize(key));
+        return { key, kind, label, description: trgSentence(p.description), required: required.has(key), schema: p };
       });
     }
     function triggerFormMarkup(fields) {
@@ -437,6 +520,7 @@ TRIGGERS_JS = r"""
           html += `<p class="trg-once trg-field--wide">The signing secret is shown once. Copy it now: the gateway keeps it sealed and never shows it again.</p>`
             + trgCopyRow("Signing secret", c.secret, "created:secret");
         }
+        if (c.ingress_url && c.secret) html += webhookSetupMarkup(c, trg.hookTest);
         if (!c.ingress_url && !c.secret) html += `<p class="trg-help trg-field--wide">Your automations and flows can now listen to it.</p>`;
         body.innerHTML = html + `</div>`;
         note.textContent = "";
@@ -454,7 +538,7 @@ TRIGGERS_JS = r"""
       const options = sources.map((x) => `<option value="${esc(`${x.id}@${x.version}`)}"${s && x === s ? " selected" : ""}>${esc(x.label || x.id)}</option>`).join("");
       let html = `<div class="trg-form">`
         + `<div class="trg-field"><label for="trg-f-source">Source</label><select id="trg-f-source" data-trg-source><option value="">Choose a source…</option>${options}</select></div>`
-        + `<div class="trg-field"><label for="trg-f-label">Name *</label><input id="trg-f-label" type="text" autocomplete="off" data-trg-label value="${esc(m.label || "")}" placeholder="Work mailbox, Release feed…"><p class="trg-help">How you find it in Flow and in your automations.</p></div>`;
+        + `<div class="trg-field"><label for="trg-f-label">Name *</label><input id="trg-f-label" type="text" autocomplete="off" data-trg-label value="${esc(m.label || "")}" placeholder="Release feed, Orders webhook…"><p class="trg-help">How you find it in Flow and in your automations.</p></div>`;
       if (s) html += triggerFormMarkup(m.fields);
       body.innerHTML = html + `</div>`;
       note.textContent = m.problem || "";
@@ -479,6 +563,7 @@ TRIGGERS_JS = r"""
         return;
       }
       const pick = sources.find((x) => x.id === sourceId || `${x.id}@${x.version}` === sourceId) || (sources.length === 1 ? sources[0] : null);
+      trg.hookTest = null;
       trg.modal = { sources, sourceKey: pick ? `${pick.id}@${pick.version}` : "", fields: pick ? triggerFormFields(pick.connection_schema) : [], label: "", problem: "", saving: false, created: null };
       renderTriggerModal();
     }
@@ -511,6 +596,94 @@ TRIGGERS_JS = r"""
         renderTriggerModal();
       }
     }
+    // ---- the webhook setup panel (after Create): a signed call with the REAL address and secret, the
+    // GitHub / Zapier recipe, and a signed test call made in the browser (WebCrypto HMAC-SHA256).
+    function webhookCurlExample(ingressUrl, secret) {
+      return [
+        `SECRET='${secret}'`,
+        `URL='${ingressUrl}'`,
+        `KEY=$(printf %s "\${SECRET#whsec_}" | base64 -d | xxd -p -c 256)`,
+        `ID=msg_$(date +%s); TS=$(date +%s); BODY='{"hello": "world"}'`,
+        `SIG=$(printf %s "$ID.$TS.$BODY" | openssl dgst -sha256 -mac HMAC -macopt hexkey:$KEY -binary | base64)`,
+        `curl -sS -X POST "$URL" -H "webhook-id: $ID" -H "webhook-timestamp: $TS" \\`,
+        `  -H "webhook-signature: v1,$SIG" -H "Content-Type: application/json" --data "$BODY"`,
+      ].join("\n");
+    }
+    function webhookTestResultMarkup(t) {
+      if (!t) return "";
+      if (t.pending) return `<p class="trg-help" role="status">Sending a signed test call...</p>`;
+      if (t.error) return `<p class="message error" role="status">${esc(t.error)}</p>`;
+      const ok = t.status >= 200 && t.status < 300;
+      let html = `<p class="trg-fire ${ok ? "is-ok" : "is-failed"}" role="status">HTTP ${esc(t.status)}${t.reason ? ` · ${esc(t.reason)}` : ""}</p>`;
+      if (t.event) html += `<details open><summary>The event it created (#${esc(t.event.sequence)})</summary><pre class="trg-code">${esc(JSON.stringify(t.event, null, 2))}</pre></details>`;
+      return html;
+    }
+    function webhookSetupMarkup(c, test) {
+      return `<section class="trg-field trg-field--wide trg-setup" aria-labelledby="trg-setup-title">`
+        + `<h3 id="trg-setup-title" class="trg-detail__head">Set up the sender</h3>`
+        + `<p class="trg-help">GitHub, Zapier and other services: paste the webhook address as the webhook URL, the signing secret as the secret, and choose JSON as the content type.</p>`
+        + `<p class="trg-help">Any other sender signs each call per Standard Webhooks. From a shell (bash, openssl):</p>`
+        + `<div class="trg-copy-row"><pre class="trg-code" data-trg-value="created:curl">${esc(webhookCurlExample(c.ingress_url, c.secret))}</pre>`
+        + `<button type="button" class="secondary" data-trg-copy="created:curl" aria-label="Copy the signed call">Copy</button></div>`
+        + `<p><button type="button" class="secondary" data-trg-hook-test="1">Send a signed test call</button></p>`
+        + `<div data-trg-hook-result>${webhookTestResultMarkup(test)}</div>`
+        + `</section>`;
+    }
+    function trgB64ToBytes(b64) {
+      const bin = atob(b64);
+      const out = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
+      return out;
+    }
+    function trgBytesToB64(bytes) {
+      let bin = "";
+      for (const b of new Uint8Array(bytes)) bin += String.fromCharCode(b);
+      return btoa(bin);
+    }
+    // The Standard Webhooks signature of one call: base64 HMAC-SHA256 of "<id>.<timestamp>.<body>",
+    // keyed with the secret's base64 part.
+    async function webhookSignature(secret, id, ts, body) {
+      const subtle = typeof crypto !== "undefined" && crypto && crypto.subtle;
+      if (!subtle) throw new Error("This browser cannot sign here (signing needs https or localhost): use the command above.");
+      const key = await subtle.importKey("raw", trgB64ToBytes(String(secret).replace(/^whsec_/, "")), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+      const sig = await subtle.sign("HMAC", key, new TextEncoder().encode(`${id}.${ts}.${body}`));
+      return `v1,${trgBytesToB64(sig)}`;
+    }
+    function trgIngressPath(url) {
+      try { return new URL(String(url), location.href).pathname; } catch { return String(url); }
+    }
+    async function sendSignedTestCall() {
+      const c = trg.modal && trg.modal.created;
+      if (!c || !c.ingress_url || !c.secret) return;
+      const box = () => document.querySelector("[data-trg-hook-result]");
+      const show = () => { const el = box(); if (el) el.innerHTML = webhookTestResultMarkup(trg.hookTest); };
+      trg.hookTest = { pending: true };
+      show();
+      try {
+        const ts = Math.floor(Date.now() / 1000);
+        const id = `msg_console_${ts}_${Math.random().toString(36).slice(2, 8)}`;
+        const body = JSON.stringify({ test: true, from: "console", sent_at: new Date(ts * 1000).toISOString() });
+        const signature = await webhookSignature(c.secret, id, ts, body);
+        const res = await fetch(trgIngressPath(c.ingress_url), {
+          method: "POST", credentials: "omit",
+          headers: { "Content-Type": "application/json", "webhook-id": id, "webhook-timestamp": String(ts), "webhook-signature": signature },
+          body,
+        });
+        const answer = await res.json().catch(() => ({}));
+        const detail = answer && answer.detail;
+        const reason = (detail && (detail.reason_code || detail.message)) || "";
+        let event = null;
+        if (res.ok) {
+          const out = await api(`/api/gateway/triggers/connections/${encodeURIComponent(c.connection_id)}/events?limit=1`);
+          event = out && Array.isArray(out.events) && out.events.length ? out.events[out.events.length - 1] : null;
+        }
+        trg.hookTest = { status: res.status, reason, event };
+        loadTriggers();
+      } catch (e) {
+        trg.hookTest = { error: `Test call not sent: ${trgErr(e)}` };
+      }
+      show();
+    }
     async function trgCopy(key) {
       const el = document.querySelector(`[data-trg-value="${CSS.escape(key)}"]`);
       if (!el) return;
@@ -535,6 +708,7 @@ TRIGGERS_JS = r"""
         else if (t.dataset.trgTest) testFireTrigger(t.dataset.trgTest);
         else if (t.dataset.trgDelete) confirmDeleteTrigger(t.dataset.trgDelete);
         else if (t.dataset.trgCopy) trgCopy(t.dataset.trgCopy);
+        else if (t.dataset.trgMailboxManage) openMyEmailFromTriggers();
       };
       $("trigger-modal-close").onclick = closeTriggerModal;
       $("trigger-modal-body").onchange = (e) => {
@@ -550,6 +724,7 @@ TRIGGERS_JS = r"""
       $("trigger-modal-body").onclick = (e) => {
         const t = e.target && e.target.closest ? e.target.closest("button") : null;
         if (t && t.dataset.trgCopy) trgCopy(t.dataset.trgCopy);
+        else if (t && t.dataset.trgHookTest) sendSignedTestCall();
       };
       $("trigger-modal-actions").onclick = (e) => {
         const t = e.target && e.target.closest ? e.target.closest("button") : null;

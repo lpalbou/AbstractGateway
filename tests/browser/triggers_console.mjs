@@ -10,6 +10,7 @@
 // Prints one JSON line: {"failures": [...], "checks": N, "shots": [...]}.
 import { createRequire } from "node:module";
 import fs from "node:fs";
+import crypto from "node:crypto";
 import path from "node:path";
 
 const [BASE, ADMIN, PW, SHOTS] = process.argv.slice(2);
@@ -28,14 +29,17 @@ function check(ok, what, detail) {
 const SOURCES = {
   items: [
     { id: "schedule", version: 2, label: "Schedule", available: true, needs_connection: false, connection_schema: {}, config_schema: { type: "object" }, event_schema: {}, capabilities: { kind: "time" } },
-    { id: "email.received", version: 1, label: "Email received", available: true, needs_connection: true, config_schema: { type: "object" }, event_schema: {}, capabilities: { kind: "event" },
-      connection_schema: { type: "object", required: ["account"], properties: { account: { type: "string", title: "Mailbox", description: "The mailbox to read (self = your own address).", default: "self" } } } },
+    { id: "email.received", version: 1, label: "When an email arrives", available: true, needs_connection: true, connection_provider: "email_accounts", config_schema: { type: "object" }, event_schema: {}, capabilities: { kind: "event" },
+      connection_schema: { type: "object", properties: { account: { type: "string", default: "self", description: "the mailbox: a mail account id of the user ('self': the primary mailbox)" } } } },
     { id: "feed.item", version: 1, label: "Feed item", available: true, needs_connection: true, config_schema: { type: "object" }, event_schema: {}, capabilities: { kind: "event" },
       connection_schema: { type: "object", required: ["url"], properties: {
         url: { type: "string", title: "Feed address", description: "An RSS or Atom address.", pattern: "^https?://", examples: ["https://example.org/feed.xml"] },
         every_minutes: { type: "integer", title: "Check every (minutes)", default: 15, minimum: 5 } } } },
     { id: "webhook.received", version: 1, label: "Webhook received", available: true, needs_connection: true, config_schema: { type: "object" }, event_schema: {}, capabilities: { kind: "event" },
-      connection_schema: { type: "object", properties: { subject_path: { type: "string", title: "Subject from", description: "Optional JSON path in the body used as the event subject, e.g. repository.full_name." } } } },
+      connection_schema: { type: "object", additionalProperties: false, properties: {
+        subject_path: { type: "string", description: "dotted path in a JSON body for the event subject (default: the webhook id)" },
+        tolerance_s: { type: "integer", minimum: 60, maximum: 3600, default: 300 },
+        secret: { type: "string", "x-secret": true, description: "whsec_<base64>; generated when omitted" } } } },
   ],
 };
 
@@ -57,11 +61,53 @@ function fakeStore() {
         data: { title: `Release 0.1${i}`, link: `https://example.org/releases/0.1${i}` }, connectionid: "conn_feed1", sequence: i, dedupekey: `guid-${i}`, abstracttrust: "external" })),
     },
     requests: [],
+    mailboxes: [
+      { account_id: "default", primary: true, configured: true, address: "admin@example.org", can_read: true, can_send: true, enabled: true, folder: "INBOX", mailbox: { state: "connected" }, watcher: { state: "idle", last_poll: iso(120000) } },
+    ],
   };
   return s;
 }
 
+const SECRET = "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw";
 async function mockRoutes(ctx, store) {
+  // The signed ingress: verified here exactly as Standard Webhooks says (the gateway's own check).
+  await ctx.route("**/api/gateway/triggers/webhooks/**", async (route) => {
+    const req = route.request();
+    const h = req.headers();
+    const id = h["webhook-id"], ts = h["webhook-timestamp"], sig = String(h["webhook-signature"] || "");
+    const body = req.postData() || "";
+    store.requests.push(`INGRESS ${new URL(req.url()).pathname}`);
+    const want = "v1," + crypto.createHmac("sha256", Buffer.from(SECRET.slice(6), "base64")).update(`${id}.${ts}.${body}`).digest("base64");
+    if (!id || !ts || sig !== want) return route.fulfill({ status: 401, json: { detail: { reason_code: "webhook_signature_invalid", message: "bad signature" } } });
+    const cid = new URL(req.url()).pathname.split("/").pop();
+    store.seq += 1;
+    const ev = { specversion: "1.0", id: `evt_hook_${store.seq}`, type: "abstract.webhook.received.v1", source: `abstract://triggers/connections/${cid}`, subject: id, time: new Date().toISOString(),
+      data: { webhook_id: id, content_type: "application/json", body: JSON.parse(body) }, connectionid: cid, sequence: store.seq, abstracttrust: "untrusted" };
+    (store.events[cid] = store.events[cid] || []).push(ev);
+    return route.fulfill({ status: 202, json: { accepted: true, event_id: ev.id, seq: ev.sequence, woken: 0 } });
+  });
+  // Further mailboxes (Account → My email): never a real IMAP sign-in in this test.
+  await ctx.route("**/api/gateway/me/email/accounts**", async (route) => {
+    const req = route.request();
+    const url = new URL(req.url());
+    const parts = url.pathname.split("/").filter(Boolean); // api gateway me email accounts [id] [test|enabled]
+    const id = parts[5], sub = parts[6], method = req.method();
+    store.requests.push(`${method} ${url.pathname}`);
+    if (!id) return route.fulfill({ json: { items: store.mailboxes } });
+    if (method === "PUT" && !sub) {
+      const b = JSON.parse(req.postData() || "{}");
+      store.lastMailboxPut = { id, body: b };
+      const row = { account_id: id, primary: false, configured: true, address: b.address, can_read: true, can_send: false, enabled: true, folder: "INBOX", mailbox: { state: "receive_only" }, watcher: { state: "idle" } };
+      store.mailboxes = store.mailboxes.filter((m) => m.account_id !== id).concat([row]);
+      return route.fulfill({ json: { ok: true, ...row } });
+    }
+    const m = store.mailboxes.find((x) => x.account_id === id);
+    if (!m) return route.fulfill({ status: 404, json: { detail: { message: "No such mailbox." } } });
+    if (sub === "enabled") { m.enabled = !!JSON.parse(req.postData() || "{}").enabled; return route.fulfill({ json: { ok: true, ...m } }); }
+    if (sub === "test") return route.fulfill({ json: { ok: true } });
+    if (method === "DELETE") { store.mailboxes = store.mailboxes.filter((x) => x.account_id !== id); return route.fulfill({ json: { ok: true } }); }
+    return route.fulfill({ status: 405, json: {} });
+  });
   await ctx.route("**/api/gateway/trigger-sources", (route) => route.fulfill({ json: SOURCES }));
   await ctx.route("**/api/gateway/triggers/connections**", async (route) => {
     const req = route.request();
@@ -83,7 +129,7 @@ async function mockRoutes(ctx, store) {
       if (body.source_id === "webhook.received") row.ingress_url = `${BASE}/api/gateway/triggers/webhooks/${cid}`;
       store.rows.push(row);
       store.lastCreate = body;
-      return route.fulfill({ json: Object.assign({}, row, body.source_id === "webhook.received" ? { secret: "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw" } : {}) });
+      return route.fulfill({ json: Object.assign({}, row, body.source_id === "webhook.received" ? { secret: SECRET } : {}) });
     }
     const row = store.rows.concat(store.others).find((r) => r.connection_id === id);
     if (!row) return route.fulfill({ status: 404, json: { detail: { message: "No such connection." } } });
@@ -184,10 +230,13 @@ try {
 
     if (w === 1440 && theme === "light") {
       // Create a feed connection: the form comes from connection_schema.
+      check(await page.locator('[data-trg-mailbox="default"]').count() === 1, "mailbox row listed");
+      check((await page.textContent('[data-trg-mailbox="default"]')).includes("When an email arrives"), "mailbox row: source");
+      check((await page.textContent('[data-trg-mailbox="default"]')).includes("Manage under Account → My email"), "mailbox row: link");
       await page.click("#triggers-new");
       await page.waitForSelector("#trigger-modal-backdrop:not([hidden]) [data-trg-source]");
       const opts = await page.$$eval("#trg-f-source option", (els) => els.map((e) => e.value));
-      check(JSON.stringify(opts) === JSON.stringify(["", "email.received@1", "feed.item@1", "webhook.received@1"]), "create: only sources that need a connection", opts);
+      check(JSON.stringify(opts) === JSON.stringify(["", "feed.item@1", "webhook.received@1"]), "create: connection sources only, never the mailbox source", opts);
       await page.selectOption("#trg-f-source", "feed.item@1");
       await page.waitForSelector("#trg-f-url");
       check((await page.inputValue("#trg-f-every_minutes")) === "15", "create: schema default prefilled");
@@ -207,6 +256,11 @@ try {
       await page.click("#triggers-new");
       await page.waitForSelector("#trg-f-source");
       await page.selectOption("#trg-f-source", "webhook.received@1");
+      await page.waitForSelector("#trg-f-tolerance_s");
+      const form = await page.textContent("#trigger-modal-body");
+      check(form.includes("Subject (path in the JSON body)") && form.includes("Accepted clock skew (seconds)"), "webhook form: human labels", form);
+      check(!form.includes("subject_path") && !form.includes("Not editable here") && await page.locator("#trg-f-secret").count() === 0, "webhook form: no raw keys, no secret field");
+      await shotEl(page, "#trigger-modal-backdrop .af-modal", "triggers-create-webhook-1440-light");
       await page.fill("#trg-f-label", "GitHub pushes");
       await page.click("[data-trg-create]");
       await page.waitForSelector("[data-trg-value='created:secret']");
@@ -217,6 +271,14 @@ try {
       await page.waitForTimeout(200);
       const clip = await page.evaluate(() => navigator.clipboard.readText().catch(() => "unreadable"));
       check(clip === "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw" || clip === "unreadable", "webhook: copy puts the secret on the clipboard", clip);
+      const curl = await page.textContent("[data-trg-value='created:curl']");
+      check(curl.includes(`SECRET='${SECRET}'`) && curl.includes("/api/gateway/triggers/webhooks/conn_new4") && curl.includes("openssl dgst -sha256 -mac HMAC"), "setup: signed call with the real address and secret", curl);
+      check((await page.textContent("#trigger-modal-body")).includes("paste the webhook address as the webhook URL"), "setup: GitHub/Zapier recipe");
+      await page.click("[data-trg-hook-test]");
+      await page.waitForSelector("[data-trg-hook-result] .trg-fire");
+      const result = await page.textContent("[data-trg-hook-result]");
+      check(result.includes("HTTP 202") && result.includes("The event it created"), "signed test call: 202 and the event", result);
+      check(store.requests.some((r) => r === "INGRESS /api/gateway/triggers/webhooks/conn_new4"), "signed test call reached the ingress");
       await shotEl(page, "#trigger-modal-backdrop .af-modal", "triggers-webhook-secret-once-1440-light");
       await page.click("[data-trg-done]");
       // The secret is gone once the dialog closes: the row's detail shows the address only.
@@ -244,6 +306,35 @@ try {
       check(await page.locator("#triggers-account-head").isVisible(), "all accounts: Account column");
       check((await page.textContent('[data-trg-row="conn_bob1"]')).includes("bob"), "all accounts: owner shown");
       await shot(page, "triggers-all-accounts-1440-light");
+      await page.click("#triggers-all");
+      // Manage under Account → My email: the further-mailboxes card, add lpalbou@abstractframework.ai read-only.
+      await page.waitForSelector('[data-trg-mailbox="default"]');
+      await page.click('[data-trg-mailbox-manage="default"]');
+      await page.waitForSelector("#my-mailboxes-card:not([hidden])", { timeout: 30000 });
+      await page.click("#my-mailbox-add");
+      await page.fill("#my-mailbox-id", "abstractframework");
+      await page.fill("#my-mailbox-address", "lpalbou@abstractframework.ai");
+      await page.fill("#my-mailbox-imap-host", "imap.abstractframework.ai");
+      await page.fill("#my-mailbox-imap-port", "993");
+      await page.fill("#my-mailbox-password", "app-password");
+      await shotEl(page, "#my-mailboxes-card", "my-email-add-mailbox-1440-light");
+      await page.click("#my-mailbox-add-go");
+      await page.waitForSelector('[data-mbx-row="abstractframework"]');
+      check(JSON.stringify(store.lastMailboxPut) === JSON.stringify({ id: "abstractframework", body: { address: "lpalbou@abstractframework.ai", password: "app-password", username: "", imap: { host: "imap.abstractframework.ai", security: "ssl", port: 993 }, send: false, test: true } }), "add mailbox: read-only PUT body", store.lastMailboxPut);
+      check((await page.textContent('[data-mbx-row="abstractframework"]')).includes("read-only"), "mailbox row: read-only");
+      await page.click('[data-mbx-row="abstractframework"] [data-mbx-test]');
+      await page.waitForSelector('[data-mbx-row="abstractframework"] .mbx-row__state.is-ok');
+      const sw = page.locator('#my-mailbox-enabled-abstractframework');
+      check((await sw.getAttribute("role")) === "switch" && (await sw.textContent()).includes("Use this mailbox"), "mailbox switch: feature-labelled");
+      await sw.click();
+      await page.waitForFunction(() => document.getElementById("my-mailbox-enabled-abstractframework") && document.getElementById("my-mailbox-enabled-abstractframework").getAttribute("aria-checked") === "false");
+      check(store.requests.includes("PUT /api/gateway/me/email/accounts/abstractframework/enabled"), "mailbox switch: PUT enabled");
+      await shotEl(page, "#my-mailboxes-card", "my-email-further-mailboxes-1440-light");
+      await page.click('[data-mbx-row="abstractframework"] [data-mbx-delete]');
+      check((await page.textContent('[data-mbx-row="abstractframework"]')).includes("Delete the mailbox abstractframework (lpalbou@abstractframework.ai)?"), "mailbox delete: asks first");
+      await page.click('[data-mbx-delete-now="abstractframework"]');
+      await page.waitForFunction(() => !document.querySelector('[data-mbx-row="abstractframework"]'));
+      check(store.requests.includes("DELETE /api/gateway/me/email/accounts/abstractframework"), "mailbox delete: DELETE");
     }
     await ctx.close();
   }

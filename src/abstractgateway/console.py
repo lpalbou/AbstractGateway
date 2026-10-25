@@ -154,6 +154,7 @@ def _console_owned_sources() -> Tuple[str, str, str, str]:
     from .console_catalog import CATALOG_CSS, CATALOG_JS
     from .console_skills_mcp import SKILLS_MCP_CSS, SKILLS_MCP_JS
     from .console_themes import KIT_THEME_CSS
+    from .console_mailboxes import MAILBOXES_CSS, MAILBOXES_JS
     from .console_triggers import TRIGGERS_CSS, TRIGGERS_JS
     from .console_ui import CONSOLE_UI_CSS, CONSOLE_UI_JS
     from .console_workspaces import ACCOUNTS_CSS, WORKSPACES_CSS, WORKSPACES_JS
@@ -161,8 +162,8 @@ def _console_owned_sources() -> Tuple[str, str, str, str]:
     return (
         _strip_html_comments(_CONSOLE_HTML_TEMPLATE),
         _strip_css_comments(KIT_THEME_CSS),
-        _strip_css_comments(CONSOLE_UI_CSS + CATALOG_CSS + SKILLS_MCP_CSS + TRIGGERS_CSS + ACCOUNTS_CSS + WORKSPACES_CSS),
-        _strip_js_line_comments(CONSOLE_UI_JS + CATALOG_JS + SKILLS_MCP_JS + TRIGGERS_JS + WORKSPACES_JS),
+        _strip_css_comments(CONSOLE_UI_CSS + CATALOG_CSS + SKILLS_MCP_CSS + TRIGGERS_CSS + MAILBOXES_CSS + ACCOUNTS_CSS + WORKSPACES_CSS),
+        _strip_js_line_comments(CONSOLE_UI_JS + CATALOG_JS + SKILLS_MCP_JS + TRIGGERS_JS + MAILBOXES_JS + WORKSPACES_JS),
     )
 
 
@@ -212,6 +213,7 @@ def gateway_console_html() -> str:
     so nothing in the fragment -- braces, `$`, a `</script>` in a string --
     can re-enter the template or end the host script early."""
     from .console_islands import ISLANDS_CSS, ISLANDS_JS
+    from .console_mailboxes import MAILBOXES_HTML
     from .console_themes import KIT_THEME_SPECS
 
     template, theme_css, ui_css, ui_js = _console_owned_sources()
@@ -256,6 +258,8 @@ def gateway_console_html() -> str:
         # same sheet, same script scope.
         ("/*__CONSOLE_UI_CSS__*/", ui_css),
         ("/*__CONSOLE_UI_JS__*/", ui_js),
+        # Account → My email: further mailboxes (console_mailboxes.py).
+        ("<!--__MY_MAILBOXES_HTML__-->", MAILBOXES_HTML),
         ("/*__AF_CONSOLE_ISLANDS_JS__*/", islands_js),
         ("/*__ABSTRACTCORE_FRAGMENT_CSS__*/", css.replace("</style", "<\\/style")),
         ("<!--__ABSTRACTCORE_ENGINES_HTML__-->", engines_body),
@@ -2946,6 +2950,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
                   </div>
                 </div>
               </section>
+<!--__MY_MAILBOXES_HTML__-->
               <section class="af-card account-card" aria-labelledby="my-email-notify-title">
                 <div class="af-card__header"><h3 id="my-email-notify-title" class="af-card__title">Notifications</h3></div>
                 <div class="switch-list">
@@ -7575,6 +7580,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         if (generation !== myEmailUi.generation || base !== myEmailApi()) return;
         renderMyEmail(data);
         myEmailMessage("");
+        loadMyMailboxes();  // console_mailboxes.py: further mailboxes (own account only)
       } catch (e) {
         if (generation === myEmailUi.generation && base === myEmailApi()) myEmailMessage(emailErrorText(e), "error");
       }
@@ -16057,6 +16063,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("tab-button-runtimes").onclick = () => { runtimesClearFilter(); setActiveTab("runtimes"); loadRuntimes(); };
 	    bindSkillsMcpPage();
 	    bindTriggersPage();
+	    bindMyMailboxes();
 	    $("tab-button-workflows").onclick = () => { setActiveTab("workflows"); mountWorkflowSwitches(); loadWorkflows(); if (state.principal && state.principal.admin) mountAgentDefaults("workflows", $("agent-defaults-root")); };
 	    $("workflows-refresh").onclick = () => loadWorkflows();
 	    $("app-settings-close").onclick = () => appSettingsModalClose();

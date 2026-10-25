@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Further mailboxes in the console.** Accounts → your row → Email has a **Further mailboxes** card: **Add a mailbox
+  (read-only)** (name, address, IMAP server, port, security, login, password; the gateway signs in before storing),
+  and per mailbox a **Use this mailbox** switch, **Test** and **Delete** (asks first). A further mailbox is IMAP only:
+  automations can watch it, it never sends.
+- **Webhook setup panel.** After creating a webhook connection, the console shows the address and the one-time secret
+  with copy buttons, a ready-to-copy signed call (bash, `openssl`) with the real address and secret, the GitHub/Zapier
+  recipe, and **Send a signed test call** (signed in the browser, posted to the ingress; the HTTP status and the event
+  it created are shown).
+
+### Changed
+
+- **Triggers page: mailboxes are rows, not connections.** "When an email arrives" is no longer offered in **New
+  connection**; your mailboxes are listed as rows of that source with **Manage under Account → My email**.
+- **Readable connection forms.** Settings show labels and help ("Subject (path in the JSON body)", "Accepted clock skew
+  (seconds)"); a secret the gateway generates is never asked for.
+
 ## [0.16.0] - 2026-10-25
 
 ### Added

@@ -23,9 +23,11 @@ const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCA
 const TRG_EVENTS_LIMIT = 20;
 const TRG_STATUS = { active: ["Active", "is-ok"], paused: ["Paused", "is-muted"], error: ["Error", "is-err"], failed: ["Error", "is-err"], disabled: ["Off", "is-muted"] };
 const TRG_FORM_KEYWORDS = new Set(["type", "title", "description", "enum", "default", "pattern", "format", "minimum", "maximum", "minLength", "maxLength", "examples", "writeOnly"]);
+const TRG_FIELD_LABELS = { subject_path: "Subject (path in the JSON body)", tolerance_s: "Accepted clock skew (seconds)", url: "Feed address", every: "Check every", max_items: "Items per check (at most)", initial_items: "Items already in the feed" };
+const TRG_MAILBOX_STATE = { connected: ["Active", "is-ok"], receive_only: ["Read-only", "is-ok"], paused: ["Paused", "is-muted"], needs_reconnect: ["Needs reconnecting", "is-warn"], unavailable: ["Unavailable", "is-muted"], not_connected: ["Not connected", "is-muted"] };
 """
 
-ROW_FNS = ("trgAgo", "trgSourceLabel", "trgPrincipalText", "trgStatusChip", "trgFireLine", "trgCopyRow",
+ROW_FNS = ("trgAgo", "trgSourceLabel", "trgMailboxSourceLabel", "trgMailboxStatusChip", "mailboxRowsMarkup", "trgPrincipalText", "trgStatusChip", "trgFireLine", "trgCopyRow",
            "triggerEventsMarkup", "triggerDetailMarkup", "triggersRowsMarkup")
 
 SOURCES = [
@@ -154,7 +156,7 @@ console.log(JSON.stringify([out]));
 
 def test_connection_form_engine() -> None:
     source = _console_script()
-    harness = HELPERS + _fns(source, "triggerFormFields", "triggerFormMarkup", "triggerConfigFromValues") + """
+    harness = HELPERS + _fns(source, "trgHumanize", "trgSentence", "triggerFormFields", "triggerFormMarkup", "triggerConfigFromValues") + """
 const schema = { type: "object", required: ["url", "kind"], properties: {
   url: { type: "string", title: "Feed address", pattern: "^https?://", examples: ["https://example.org/feed.xml"] },
   token: { type: "string", title: "Token", format: "password" },
@@ -180,7 +182,7 @@ console.log(JSON.stringify([{ kinds, html, good, bad }]));
     assert 'type="password"' in html and "never-shown" not in html  # a default secret is never prefilled
     assert 'value="15"' in html and "Not editable here" in html
     assert r["good"] == {"config": {"url": "https://example.org/f", "token": "abc", "every_minutes": 30, "ratio": 0.5, "include_body": True, "kind": "atom"}, "problems": []}
-    assert r["bad"]["problems"] == ["Feed address does not have the expected form.", "Every (minutes) must be a whole number.", "ratio must be a number.", "kind is required."]
+    assert r["bad"]["problems"] == ["Feed address does not have the expected form.", "Every (minutes) must be a whole number.", "Ratio must be a number.", "Kind is required."]
 
 
 def test_delete_question_and_hash_link() -> None:
@@ -207,3 +209,126 @@ def test_routes_are_the_connections_contract() -> None:
     assert 'api("/api/gateway/triggers/connections", { method: "POST", body: JSON.stringify({ source_id: s.id, source_version: s.version, label: m.label, config }) })' in create
     modal = _slice_function(source, "renderTriggerModal")
     assert "The signing secret is shown once." in modal and '"created:secret"' in modal and "c.ingress_url" in modal
+
+
+# ---- operator round (2026-10-25): mailboxes as rows, readable webhook form, setup panel ----
+
+def test_mailbox_sources_are_rows_not_new_connections() -> None:
+    source = _console_script()
+    harness = HELPERS + _fns(source, "trgConnectableSources", "trgAgo", "trgMailboxSourceLabel", "trgMailboxStatusChip", "mailboxRowsMarkup") + """
+const SOURCES = [
+  {id: "email.received", version: 1, label: "When an email arrives", available: true, needs_connection: true, connection_provider: "email_accounts", connection_schema: {type: "object"}},
+  {id: "webhook.received", version: 1, label: "When a webhook is called", available: true, needs_connection: true, connection_provider: "trigger_connections", connection_schema: {type: "object", properties: {}}},
+];
+const items = [
+  {account_id: "default", primary: true, configured: true, address: "me@example.org", can_send: true, enabled: true, mailbox: {state: "connected"}, watcher: {}},
+  {account_id: "work", primary: false, configured: true, address: "me@work.example", can_send: false, enabled: true, mailbox: {state: "receive_only"}, watcher: {last_poll: "2026-10-25T11:59:00Z"}},
+  {account_id: "old", primary: false, configured: false, address: null, can_send: false, enabled: false, mailbox: {state: "not_connected"}, watcher: {}},
+];
+console.log(JSON.stringify([trgConnectableSources(SOURCES).map((s) => s.id), mailboxRowsMarkup(items, {sources: SOURCES, now: Date.parse("2026-10-25T12:00:00Z")})]));
+"""
+    ids, rows = _node(harness)
+    assert ids == ["webhook.received"]  # the mailbox source is never offered in New connection
+    assert rows.count('class="trg-row trg-row--mailbox"') == 2  # configured mailboxes only
+    work = rows[rows.index('data-trg-mailbox="work"'):]
+    assert "When an email arrives" in work and "work · me@work.example" in work and "read-only" in work
+    assert '<span class="trg-chip is-ok">Read-only</span>' in work and "checked 1 min ago" in work
+    assert 'data-trg-mailbox-manage="work"' in work and "Manage under Account → My email" in work
+    assert "me@example.org (primary)" in rows
+
+
+def test_webhook_form_is_readable_and_hides_the_generated_secret() -> None:
+    source = _console_script()
+    harness = HELPERS + _fns(source, "trgHumanize", "trgSentence", "triggerFormFields", "triggerFormMarkup") + """
+const schema = {type: "object", additionalProperties: false, properties: {
+  subject_path: {type: "string", description: "dotted path in a JSON body for the event subject (default: the webhook id)"},
+  tolerance_s: {type: "integer", minimum: 60, maximum: 3600, default: 300},
+  secret: {type: "string", "x-secret": true, description: "whsec_<base64>; generated when omitted"},
+  some_other_key: {type: "string"},
+}};
+const fields = triggerFormFields(schema);
+console.log(JSON.stringify([fields.map((f) => [f.key, f.kind, f.label, f.description]), triggerFormMarkup(fields)]));
+"""
+    fields, html = _node(harness)
+    assert fields == [
+        ["subject_path", "string", "Subject (path in the JSON body)", "Dotted path in a JSON body for the event subject (default: the webhook id)"],
+        ["tolerance_s", "integer", "Accepted clock skew (seconds)", ""],
+        ["some_other_key", "string", "Some other key", ""],
+    ]
+    assert "secret" not in html and "Not editable here" not in html
+    assert ">Subject (path in the JSON body)</label>" in html and 'value="300"' in html
+
+
+def test_webhook_setup_panel_has_the_real_address_and_secret() -> None:
+    source = _console_script()
+    harness = HELPERS + _fns(source, "webhookCurlExample", "webhookTestResultMarkup", "webhookSetupMarkup") + """
+const c = {connection_id: "conn_1", ingress_url: "http://127.0.0.1:8080/api/gateway/triggers/webhooks/conn_1", secret: "whsec_c2VjcmV0"};
+console.log(JSON.stringify([webhookCurlExample(c.ingress_url, c.secret), webhookSetupMarkup(c, null),
+  webhookSetupMarkup(c, {status: 202, reason: "", event: {sequence: 3, type: "abstract.webhook.received.v1"}}),
+  webhookSetupMarkup(c, {status: 401, reason: "webhook_signature_invalid"})]));
+"""
+    curl, panel, ok, refused = _node(harness)
+    assert "SECRET='whsec_c2VjcmV0'" in curl and "URL='http://127.0.0.1:8080/api/gateway/triggers/webhooks/conn_1'" in curl
+    assert 'KEY=$(printf %s "${SECRET#whsec_}" | base64 -d | xxd -p -c 256)' in curl
+    assert "openssl dgst -sha256 -mac HMAC -macopt hexkey:$KEY -binary | base64" in curl
+    assert '-H "webhook-signature: v1,$SIG"' in curl
+    assert "paste the webhook address as the webhook URL, the signing secret as the secret, and choose JSON" in panel
+    assert 'data-trg-hook-test="1"' in panel and ">Send a signed test call</button>" in panel
+    assert 'data-trg-copy="created:curl"' in panel
+    assert "HTTP 202" in ok and "The event it created (#3)" in ok
+    assert "HTTP 401 · webhook_signature_invalid" in refused and "is-failed" in refused
+
+
+def test_webhook_signature_matches_standard_webhooks() -> None:
+    """The browser's signature equals the Standard Webhooks HMAC (computed here in Python)."""
+    import base64
+    import hashlib
+    import hmac
+
+    source = _console_script()
+    harness = _fns(source, "trgB64ToBytes", "trgBytesToB64", "webhookSignature") + """
+const sig = await webhookSignature("whsec_" + Buffer.from("0123456789abcdef0123456789abcdef").toString("base64"), "msg_1", 1761390000, '{"a":1}');
+console.log(JSON.stringify([sig]));
+"""
+    (sig,) = _node(harness)
+    want = base64.b64encode(hmac.new(b"0123456789abcdef0123456789abcdef", b'msg_1.1761390000.{"a":1}', hashlib.sha256).digest()).decode()
+    assert sig == f"v1,{want}"
+
+
+def test_read_only_mailbox_body_and_rows() -> None:
+    source = _console_script()
+    harness = HELPERS + _fns(source, "mailboxConnectBody", "mbxFurther", "mbxStateText", "mailboxDeleteQuestion", "mailboxRowMarkup", "mailboxesMarkup") + """
+const MBX_ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+const MBX_STATE = { connected: "Connected", receive_only: "Read-only: watched by your automations, never sends", paused: "Paused", needs_reconnect: "Needs reconnecting", unavailable: "Mailboxes are turned off for this account", not_connected: "Not connected" };
+const good = mailboxConnectBody({id: "abstractframework", address: "lpalbou@abstractframework.ai", host: "imap.example.ai", port: "993", security: "ssl", username: "", password: "pw"});
+const bad = mailboxConnectBody({id: "Default!", address: "x", host: "", port: "99a", password: ""});
+const reserved = mailboxConnectBody({id: "default", address: "a@b.c", host: "h", password: "p"});
+const items = [
+  {account_id: "default", primary: true, configured: true, enabled: true},
+  {account_id: "abstractframework", primary: false, configured: true, address: "lpalbou@abstractframework.ai", folder: "INBOX", can_send: false, enabled: true, mailbox: {state: "receive_only"}, watcher: {}},
+];
+console.log(JSON.stringify([good, bad.problems, reserved.problems, mailboxesMarkup(items, {note: {}, confirm: "abstractframework"}), mailboxesMarkup([items[0]], {})]));
+"""
+    good, bad, reserved, rows, empty = _node(harness)
+    assert good == {"id": "abstractframework", "problems": [], "body": {
+        "address": "lpalbou@abstractframework.ai", "password": "pw", "username": "",
+        "imap": {"host": "imap.example.ai", "security": "ssl", "port": 993}, "send": False, "test": True}}
+    assert bad == ["Name: 1 to 32 lowercase letters, digits, - or _, starting with a letter or digit.", "Address is required.",
+                   "IMAP server is required.", "Port must be a number.", "Password is required."]
+    assert reserved == ["“default” is your primary mailbox: choose another name."]
+    assert 'data-mbx-row="abstractframework"' in rows and "read-only" in rows and 'data-mbx-switch="abstractframework"' in rows
+    assert 'data-mbx-test="abstractframework"' in rows and 'data-mbx-delete-now="abstractframework"' in rows
+    assert "Delete the mailbox abstractframework (lpalbou@abstractframework.ai)?" in rows
+    assert empty == '<p class="mbx-empty">No further mailbox yet.</p>'
+
+
+def test_my_email_has_the_further_mailboxes_card() -> None:
+    html = gateway_console_html()
+    sec = html[html.index('id="my-email-section"'):]
+    card = sec[sec.index('id="my-mailboxes-card"'): sec.index('aria-labelledby="my-email-notify-title"')]
+    for el in ('>Add a mailbox (read-only)</button>', 'id="my-mailbox-id"', 'id="my-mailbox-imap-host"', 'id="my-mailbox-imap-port"',
+               'id="my-mailbox-username"', 'id="my-mailbox-password"', '>Add mailbox</button>'):
+        assert el in card, el
+    source = _console_script()
+    assert "loadMyMailboxes();" in _slice_function(source, "loadMyEmail")
+    assert "bindMyMailboxes();" in source
