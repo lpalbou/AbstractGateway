@@ -42,6 +42,7 @@ pub fn nav_tip(i: usize) -> &'static str {
         super::SCREEN_USERS => "People who use this gateway and the entities that act on it",
         super::SCREEN_WORKFLOWS => "Bundles, versions, import and export",
         super::SCREEN_SKILLS => "Skills agents can load, and the MCP tool servers this gateway knows",
+        super::SCREEN_TRIGGERS => super::triggers::NAV_TIP,
         super::SCREEN_RUNTIMES => "Each user's data plane: runs, flows, sessions and memory",
         super::SCREEN_APPS => "Browser apps (Flow, Code, Observer...): install, start, open",
         super::SCREEN_PROVIDERS => {

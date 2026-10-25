@@ -77,7 +77,7 @@ KEYS: Tab focus · Enter activate · Ctrl+N next step · Ctrl+P / Esc back
       (in a text field Esc first releases the caret) ·
       ← / → previous/next screen (outside text fields) ·
       ] / [ next/back (outside text fields) ·
-      1-9, 0, H T N S I screens (browse) ·
+      1-9, 0, V H T N S I screens (browse) ·
       Ctrl+G setup guide (browse: reopen; guide: go to any step, leave,
       or Skip setup) ·
       r refresh · F1 About · ? keys · Ctrl+T light/dark · F2 docs assistant (signed in) ·
@@ -88,8 +88,9 @@ KEYS: Tab focus · Enter activate · Ctrl+N next step · Ctrl+P / Esc back
 SCREENS (click one in the rail or the tab strip, or press its key):
   1 Connection (sign in to the gateway)
   ACCOUNTS  2 Accounts (users and entities in one table)
-  WORK      3 Workflows · 4 Skills & MCP · 5 Runtimes · 6 Apps (browser
-            apps, the desktop Assistant, Node.js)
+  WORK      3 Workflows · V Triggers (mailboxes, feeds and webhooks that
+            can start your automations) · 4 Skills & MCP · 5 Runtimes ·
+            6 Apps (browser apps, the desktop Assistant, Node.js)
   MODELS    7 Providers (local engines and remote providers) ·
             8 OpenAI API · 9 Models (browse, download, delete models on
             the gateway host) · 0 Multimodal (which model serves which
@@ -597,6 +598,9 @@ mod help_screen_keys_tests {
                 "--help lacks `{key} {label}`"
             );
         }
-        assert!(flat.contains("1-9, 0, H T N S I screens"), "the KEYS line");
+        assert!(
+            flat.contains("1-9, 0, V H T N S I screens"),
+            "the KEYS line"
+        );
     }
 }

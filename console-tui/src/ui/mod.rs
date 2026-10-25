@@ -43,6 +43,8 @@ pub mod shell;
 /// Skills & MCP (WORK): the skills shelf and the MCP servers registry.
 pub mod skills_mcp;
 pub mod switch;
+/// Triggers (WORK, root backlog 1041): the person's trigger connections.
+pub mod triggers;
 pub mod users;
 pub mod util;
 /// Round 15: the shared mouse-first widget layer (DESIGN-TUI.md §4).
@@ -69,7 +71,7 @@ use crate::worker::Cmd;
 use abstractcore_console::screens::Remote;
 use util::{line, span, span_bold};
 
-pub const SCREENS: [&str; 16] = [
+pub const SCREENS: [&str; 17] = [
     "Connection",
     // Local engines + remote connections + the available providers
     // (round 7: the Engines screen merged in, the web's Providers page).
@@ -106,6 +108,8 @@ pub const SCREENS: [&str; 16] = [
     "About",
     // Skills agents can load and the MCP tool servers (ui/skills_mcp.rs).
     "Skills & MCP",
+    // Root backlog 1041: the trigger connections (ui/triggers.rs).
+    "Triggers",
     // Round 14: no Workspaces screen — workspaces live on Accounts
     // (ui/workspace_chooser.rs); the old `W` key opens Accounts.
 ];
@@ -140,6 +144,8 @@ pub const SCREEN_OPENAI: usize = 13;
 pub const SCREEN_ABOUT: usize = 14;
 /// The Skills & MCP page (round 7, R7-W1).
 pub const SCREEN_SKILLS: usize = 15;
+/// The Triggers page (root backlog 1041).
+pub const SCREEN_TRIGGERS: usize = 16;
 /// The key the round-8 Workspaces screen used: since round 14 the
 /// workspaces live on Accounts ("Eligible workspaces", a row's `w`), and
 /// this key opens Accounts (muscle memory keeps working).
@@ -151,10 +157,11 @@ pub const WORKSPACES_KEY: char = 'W';
 /// SYSTEM (Resources, Sandbox, Network), then Setup and About at the
 /// bottom. The `SCREEN_*` indexes stay stable ids (the wizard, tests and
 /// the refresh table key on them); this is only the display/jump order.
-pub const NAV_ORDER: [usize; 15] = [
+pub const NAV_ORDER: [usize; 16] = [
     SCREEN_CONNECTION,
     SCREEN_USERS,
     SCREEN_WORKFLOWS,
+    SCREEN_TRIGGERS,
     SCREEN_SKILLS,
     SCREEN_RUNTIMES,
     SCREEN_APPS,
@@ -181,6 +188,7 @@ pub const NAV_GROUPS: [(&str, &[usize]); 4] = [
         "WORK",
         &[
             SCREEN_WORKFLOWS,
+            SCREEN_TRIGGERS,
             SCREEN_SKILLS,
             SCREEN_RUNTIMES,
             SCREEN_APPS,
@@ -212,7 +220,7 @@ pub fn nav_pos(i: usize) -> usize {
 }
 
 /// The keys listed in the footer for the screen jumps.
-pub const SCREEN_KEYS_HINT: &str = "1-9,0,H,T,N,S,I";
+pub const SCREEN_KEYS_HINT: &str = "1-9,0,V,H,T,N,S,I";
 
 /// The first-run wizard, in the web guide's order (`console.py`
 /// `FIRST_RUN_STEPS` = welcome → engines → model → apps → done), mapped
@@ -246,6 +254,8 @@ pub fn screen_key(i: usize) -> Option<char> {
         SCREEN_USERS => Some('2'),
         SCREEN_WORKFLOWS => Some('3'),
         SCREEN_SKILLS => Some('4'),
+        // Digits are spent: V (eVents) for Triggers.
+        SCREEN_TRIGGERS => Some('V'),
         SCREEN_RUNTIMES => Some('5'),
         SCREEN_APPS => Some('6'),
         SCREEN_PROVIDERS => Some('7'),
@@ -272,7 +282,7 @@ pub fn screen_title(i: usize) -> String {
 /// Stable PageHost page ids, parallel to `SCREENS`. `ui.screen: usize`
 /// stays the source of truth (the wizard gate reads indexes); a two-way
 /// equality-guarded bridge keeps PageHost's string `active` in lockstep.
-pub const SCREEN_IDS: [&str; 16] = [
+pub const SCREEN_IDS: [&str; 17] = [
     "connection",
     "providers",
     "routes",
@@ -291,6 +301,7 @@ pub const SCREEN_IDS: [&str; 16] = [
     "openai",
     "about",
     "skills",
+    "triggers",
 ];
 
 /// Durable per-screen UI state (Copy: all signals).
@@ -795,6 +806,7 @@ impl Ctx {
             SCREEN_OPENAI => openai_api::refresh(self),
             SCREEN_ABOUT => about::refresh(self),
             SCREEN_SKILLS => skills_mcp::refresh(self),
+            SCREEN_TRIGGERS => triggers::refresh(self),
             _ => {}
         }
     }
@@ -1672,6 +1684,7 @@ fn screen_view(gcx: Scope, c: &Ctx, i: usize, t: &TokenSet) -> View {
         SCREEN_OPENAI => openai_api::view(gcx, c, t),
         SCREEN_ABOUT => about::page(gcx, c, t),
         SCREEN_SKILLS => skills_mcp::screen(c, gcx),
+        SCREEN_TRIGGERS => triggers::screen(c, gcx),
         _ => unreachable!("screen {i} has no page"),
     }
 }
@@ -2314,6 +2327,7 @@ pub fn screen_hint_pairs(ctx: &Ctx) -> Vec<(String, String)> {
         // footer_hints_stay_in_lockstep_with_screens.
         SCREEN_WORKFLOWS => pairs.extend(workflows::hints(&ctx_hints)),
         SCREEN_SKILLS => pairs.extend(skills_mcp::hints(&ctx_hints)),
+        SCREEN_TRIGGERS => pairs.extend(triggers::hints(&ctx_hints)),
         SCREEN_REVIEW => pairs.extend(sandbox::hints(&ctx_hints)), // R15 arm
         SCREEN_MODELS => pairs.extend(models::hints(&ctx_hints)),  // R15 arm
         // The shared screens publish their own verbs.
@@ -2336,6 +2350,7 @@ pub fn screen_hint_pairs(ctx: &Ctx) -> Vec<(String, String)> {
         SCREEN_USERS => users::ADMIN_KEYS,
         SCREEN_WORKFLOWS => workflows::ADMIN_KEYS,
         SCREEN_SKILLS => skills_mcp::ADMIN_KEYS,
+        SCREEN_TRIGGERS => triggers::ADMIN_KEYS,
         SCREEN_MODELS => models::ADMIN_KEYS,
         SCREEN_WELCOME => &["a", "D"],
         SCREEN_CATALOG => catalog::ADMIN_KEYS,
@@ -2437,6 +2452,7 @@ mod nav_tests {
                 "1 Connection",
                 "2 Accounts",
                 "3 Workflows",
+                "V Triggers",
                 "4 Skills & MCP",
                 "5 Runtimes",
                 "6 Apps",
@@ -2497,6 +2513,6 @@ mod nav_tests {
             .iter()
             .filter_map(|m| screen_key(*m))
             .collect();
-        assert_eq!(keys, ['3', '4', '5', '6']);
+        assert_eq!(keys, ['3', 'V', '4', '5', '6']);
     }
 }

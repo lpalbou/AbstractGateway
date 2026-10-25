@@ -622,7 +622,7 @@ fn pagehost_browse_navigation_digits_and_chords() {
             .notice
             .get_untracked()
             .unwrap_or_default()
-            .contains("screen jumps (1-9,0,H,T,N,S,I) work in browse mode"),
+            .contains("screen jumps (1-9,0,V,H,T,N,S,I) work in browse mode"),
         "wizard digit refusal carries its reason"
     );
 }

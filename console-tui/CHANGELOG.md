@@ -1,5 +1,13 @@
 # Changelog — abstractgateway-console
 
+## [Unreleased]
+### Added
+- **Triggers** (WORK, key **V**; root backlog 1041): the web console's Triggers page — your trigger connections
+  (Source, Name, Status, Last event; an Account column with **All accounts** for administrators), per row **Events**
+  (the 20 most recent events with their JSON; a webhook's address with Copy), **Test** (the result in the row's note)
+  and **Delete** (after the web's question); **New connection** renders the source's `connection_schema` and shows a
+  webhook's address and one-time signing secret once, with Copy. Same routes and words as the web page.
+
 ## [0.16.0] - 2026-10-15
 The console is mouse-first and keyboard-complete. Every screen works with clicks alone — tabs, buttons, row
 actions, switches, choices, dialogs — and every control is still reachable from the keyboard.

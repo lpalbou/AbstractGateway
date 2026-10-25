@@ -13,7 +13,8 @@ row and tab can be clicked, and every one of them has a key.
 
 - **Screens** in the web console's sidebar order and groups, each with a fixed
   key: **1** Connection (the terminal's sign-in); ACCOUNTS **2** Accounts;
-  WORK **3** Workflows, **4** Skills & MCP, **5** Runtimes, **6** Apps;
+  WORK **3** Workflows, **V** Triggers, **4** Skills & MCP, **5** Runtimes,
+  **6** Apps;
   MODELS **7** Providers, **8** OpenAI API, **9** Models, **0** Multimodal;
   SYSTEM **H** Resources, **T** Sandbox, **N** Network; then **S** Setup and
   **I** About. A grouped rail lists them on terminals of 120×32 and larger, a

@@ -35,6 +35,7 @@ The sidebar groups the tabs in four sections, in this order:
 |---|---|---|
 | Accounts | **Accounts** | every user and entity in one table: the **Active** switch, email, a link to each account's runtimes, activity (Logs), workspaces, token rotation, entity management, the administrator's **Eligible workspaces** and **Email for everyone** switches ([below](#accounts)) |
 | Work | **Workflows** | the workflow bundles on this gateway, shared by the gateway or your own (name, what each does, version, source, the apps that use it, availability to users), import, export, open in AbstractFlow, archive, the default workflow for each app and the **Streamed replies** setting ([below](#workflows)) |
+| Work | **Triggers** | your trigger connections (a mailbox, a feed, a webhook) that automations and flows listen to: recent events, a test event, delete, **New connection** from the source's settings; administrators see **All accounts** ([below](#triggers)) |
 | Work | **Skills & MCP** | administrators: **Skills** — the skills shelf setting and every skill (curated and imported, **Show archived**) with View, Export and Archive, import a `.zip` or folder, Duplicate to edit a curated one; **MCP servers** — whether agents are offered tools, an **Enabled for agents** switch per server, add, edit, test and archive ([configuration.md](./configuration.md#skills-shelf)) |
 | Work | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches; `#runtimes?account=<id>` lists one account's runtimes ([below](#runtimes-of-one-account)) |
 | Work | **Apps** | the browser apps, Code's terminal app and the desktop Assistant (below), no settings disclosures: the toolbar gear opens **Apps settings** and the gear beside Continuum's Open opens **Continuum settings** (backlog folder, exec runner, process manager), each a dialog whose rows apply on their own |
@@ -800,7 +801,7 @@ you can click.
 - **Keys.** `?` (or the **?** button at the right end of the status bar)
   lists every key of the current screen, each next to the control it
   presses, with **Quit the console**. Screens: **1** Connection, **2** Accounts,
-  **3** Workflows, **4** Skills & MCP, **5** Runtimes, **6** Apps,
+  **3** Workflows, **V** Triggers, **4** Skills & MCP, **5** Runtimes, **6** Apps,
   **7** Providers, **8** OpenAI API, **9** Models, **0** Multimodal,
   **H** Resources, **T** Sandbox, **N** Network, **S** Setup, **I** About
   (`W` opens Accounts). Also `Tab` / `Shift+Tab` focus, `Enter` press,
@@ -919,6 +920,16 @@ you can click.
   **Other workflow types** and **Settings** with the **Streamed replies**
   switch. **⚠ Broken workflows** lists versions the gateway could not load,
   with the reason and an **Archive** button.
+
+- **V Triggers** is the web page's table: Source, Name, Status, Last event
+  (an Account column with **All accounts**, `a`, administrators) and, per
+  row, **Events** (`e`, also `Enter`: a dialog with the 20 most recent
+  events, newest first, each followed by its JSON; a webhook's address with
+  **Copy**), **Test** (`t`: the row's note says "Test event #N sent.") and
+  **Delete** (`d`, after the web's question). **New connection** (`n`) is a
+  dialog: Source (the sources that need a connection), Name, and the
+  source's settings; a webhook's address and signing secret are then shown
+  once, each with **Copy**. **Refresh** reads the list again.
 
 - **4 Skills & MCP** has **[Skills] [MCP servers]** in its head (`[` / `]`
   switch them).
