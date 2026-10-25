@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Durable `emit_event` reached only the mailboxes of the newest 200 active runs (`run_scan_limit`): past that,
+  a parked automation's `events_mailbox` silently missed events. Delivery now goes through the run store's
+  mailbox index (AbstractRuntime `list_mailbox_runs`), every running or waiting declarer, however many.
+- On a file store with more than 200 waiting runs the scheduler could sleep through a due wake (its deadline
+  horizon came from the same 200-run window). The horizon now comes from the store's `next_wait_deadline`
+  over every waiting run (backlog 1046).
 - Browser apps left running by a previous gateway run are now stopped and
   replaced, not listed as started outside the gateway. When the gateway
   starts, an app of its own data dir (`<data dir>/apps/…`) still answering on

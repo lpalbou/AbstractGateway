@@ -222,8 +222,19 @@ def test_due_deadline_wakes_a_quiet_store(tmp_path: Path):
     assert r._scan_pass_due() is True
 
 
+class _WindowOnlyStore:
+    """A store WITHOUT `next_wait_deadline`: the runner falls back to the
+    recency window it is handed (the shapes below)."""
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+
+    def list_runs(self, **kw):
+        return self._inner.list_runs(**kw)
+
+
 def test_note_next_due_handles_horizon_shapes(tmp_path: Path):
-    r = _runner(tmp_path, JsonFileRunStore(tmp_path))
+    r = _runner(tmp_path, _WindowOnlyStore(JsonFileRunStore(tmp_path)))
 
     r._note_next_due([])
     assert r._next_due_epoch is None  # no deadlines: sleep on the fingerprint

@@ -157,7 +157,10 @@ browser on this computer from one elsewhere on the network
 - **Runner** (`src/abstractgateway/runner.py`): polls the durable command
   inbox, applies commands and ticks RUNNING runs. A filesystem lock
   (`gateway_runner.lock`) prevents double-ticking when API and runner run as
-  separate processes; lock state is reported on `GET /api/health`.
+  separate processes; lock state is reported on `GET /api/health`. On a file
+  store the scheduling pass sleeps until the earliest wait deadline, which it
+  asks the run store for (`next_wait_deadline`, every waiting run), so a wake
+  parked behind hundreds of automations still fires on time.
 - **Runtime settings** (`src/abstractgateway/runtime_config.py`): one store,
   `<data dir>/config/runtime_config.json`, for the settings the consoles, the
   tray and the CLI change: network exposure, `apps.*`, `allow_engine_install`,

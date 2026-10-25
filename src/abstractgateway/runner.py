@@ -1422,7 +1422,32 @@ class GatewayRunner:
     def _note_next_due(self, waiting_runs: Any) -> None:
         """Record the earliest FUTURE wait deadline as an epoch timestamp so
         the scan gate wakes for it by TIME (a deadline passing changes no
-        bytes on disk — the fingerprint alone would sleep through it)."""
+        bytes on disk — the fingerprint alone would sleep through it).
+
+        The store's `next_wait_deadline()` (MailboxQueryableRunStore, backlog
+        1046) is authoritative: it sees EVERY waiting run. `waiting_runs` is a
+        recency window capped at `run_scan_limit`; past the cap the earliest
+        deadline could sit outside it and the gate slept through a wake
+        (design round-1 F3: 300 parked automations, one due reminder). The
+        window is only the fallback for a store without the method."""
+        next_deadline = getattr(self.run_store, "next_wait_deadline", None)
+        if callable(next_deadline):
+            now = time.time()
+            try:
+                until = next_deadline()
+            except Exception:
+                logger.exception("GatewayRunner: next_wait_deadline failed; scanning periodically")
+                self._next_due_epoch = now + max(0.05, float(self._cfg.scan_gate_idle_interval_s))
+                return
+            if not until:
+                self._next_due_epoch = None
+                return
+            epoch = _epoch_from_iso(str(until))
+            if epoch is None:
+                self._next_due_epoch = now + max(0.05, float(self._cfg.scan_gate_idle_interval_s))
+            else:
+                self._next_due_epoch = now if epoch <= now else epoch
+            return
         horizon: Optional[float] = None
         truncated = False
         try:
@@ -2400,20 +2425,27 @@ class GatewayRunner:
         `event_id` (bridge adversary F4): a crash-replayed emit with the same
         event_id lands at most once per inbox — the at-least-once transport
         composes into exactly-once delivery when the producer sets stable ids."""
-        list_runs = getattr(self.run_store, "list_runs", None)
-        if not callable(list_runs):
-            return 0
-
-        limit = int(self._cfg.run_scan_limit)
+        # Every active run declaring the mailbox, through the store's mailbox
+        # index (backlog 1046, design round-1 F3). The old lookup took the
+        # newest `run_scan_limit` RUNNING + WAITING runs: past 200 active runs
+        # a parked automation's mailbox silently missed durable events.
         candidates: list[Any] = []
-        try:
-            candidates.extend(list_runs(status=RunStatus.RUNNING, limit=limit) or [])
-        except Exception:
-            pass
-        try:
-            candidates.extend(list_runs(status=RunStatus.WAITING, limit=limit) or [])
-        except Exception:
-            pass
+        lookup = getattr(self.run_store, "list_mailbox_runs", None)
+        if callable(lookup):
+            candidates.extend(lookup(names=[name]) or [])
+        else:
+            list_runs = getattr(self.run_store, "list_runs", None)
+            if not callable(list_runs):
+                return 0
+            logger.warning(
+                "GatewayRunner: run store %s has no list_mailbox_runs; durable fan-out scans active runs",
+                type(self.run_store).__name__,
+            )
+            for st in (RunStatus.RUNNING, RunStatus.WAITING):
+                try:
+                    candidates.extend(list_runs(status=st, limit=1_000_000) or [])
+                except Exception:
+                    logger.exception("GatewayRunner: durable fan-out scan failed (status=%s)", st)
 
         def _declares_mailbox(vars_obj: Any) -> bool:
             if not isinstance(vars_obj, dict):

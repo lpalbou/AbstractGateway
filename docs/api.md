@@ -1025,7 +1025,12 @@ curl -sS -H "$AUTH" -H "Content-Type: application/json" \
   "$BASE_URL/api/gateway/commands"
 ```
 
-Evidence: `src/abstractgateway/runner.py` (`_apply_emit_event`).
+With `"durable": true` in the payload the envelope is also appended (with a per-run `seq`, deduplicated by
+`event_id`) to the `events_inbox` of every running or waiting run that declares the event name as its
+`events_mailbox`, however many runs are parked: the lookup goes through the run store's mailbox index, never
+through a window of the newest runs. The answer counts both: `{"resumed": n, "appended": m}`.
+
+Evidence: `src/abstractgateway/runner.py` (`_apply_emit_event`, `_deliver_durable_event`).
 
 ## Automations
 
