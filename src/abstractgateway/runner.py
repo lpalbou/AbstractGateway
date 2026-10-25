@@ -582,6 +582,26 @@ class GatewayRunner:
                 self._save_open_waits()
         return out
 
+    def _stream_wake_cancelled(self, automation_id: str) -> None:
+        """`wake.cancelled` when the archived automation is a wake that never fired (1045)."""
+        stream = self._user_stream
+        if stream is None:
+            return
+        from .wakes_host import wake_cancel_event
+
+        try:
+            event = wake_cancel_event(self.run_store, automation_id)
+            if event is not None:
+                stream.append(
+                    "wake.cancelled",
+                    event_id=f"wake.cancelled:{automation_id}",
+                    subject=str(automation_id),
+                    source=f"/abstractgateway/automations/{automation_id}",
+                    data=event["data"],
+                )
+        except Exception:
+            logger.exception("GatewayRunner: wake.cancelled for %s failed", automation_id)
+
     def _drain_user_stream(self) -> None:
         """Loop thread: boot repair once, then the attention records queued by the ledger hook."""
         stream = self._user_stream
@@ -2197,6 +2217,8 @@ class GatewayRunner:
             result.get("status"),
             result.get("duplicate"),
         )
+        if result.get("status") == "applied" and not result.get("duplicate") and typ == "automation.archive":
+            self._stream_wake_cancelled(automation_id)
         if result.get("status") == "applied" and not result.get("duplicate"):
             for listener in list(self._automation_command_listeners):
                 try:

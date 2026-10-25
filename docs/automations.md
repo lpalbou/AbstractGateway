@@ -666,6 +666,26 @@ discussion session is refused (400); a session whose discussion cannot be
 resolved answers 409 `session_attribution_failed`. These answers come from
 `/runs/start` and use its ordinary error shape.
 
+## Wakes: work a run schedules for later
+
+A run can ask for work later: an agent's `schedule_run` tool (or the `SCHEDULE_RUN` effect of a
+flow) with `after_s`, `at` or `on` (a trigger), and a `task` or a `note` ("ping me in 5 minutes
+about X"). AbstractRuntime plans it (at most the caller's tools, never `schedule_run` itself, a
+note gets none); the gateway creates it as a **one-shot automation** owned by the run's account:
+
+- it runs the session's own workflow (its turn root's bundle and flow, same provider and model),
+  under the gateway's workspace guard and built-in tool deny for the session it will run in;
+- by default the new run is a turn of the **caller's session** (`mode: same_session`), with the
+  `[Trigger schedule@2 · occurrence 1 · …]` header, so the conversation shows it and the model's
+  replay sees it; `mode: independent` runs it in the automation's own session;
+- your event stream records `wake.scheduled {automation_id, session_id, origin_run_id, at | on}`,
+  then, when it fires, `trigger.event` and the new run's `run.started` (origin `kind: "agent"`);
+- cancel = archive the automation (`automation.archive`) before it fires: `wake.cancelled` is
+  recorded and nothing runs. It is listed with your other automations meanwhile.
+
+Evidence: `src/abstractgateway/wakes_host.py` (`GatewayScheduleRun`, wired on every runtime the
+host builds), `src/abstractgateway/runner.py` (`_stream_wake_cancelled`).
+
 ## Automations in run lists
 
 `GET /api/gateway/runs` rows carry the fields that say how a run belongs to an

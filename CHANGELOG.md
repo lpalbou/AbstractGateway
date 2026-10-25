@@ -30,6 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prompt_ref}` (nothing copied: the prompt is read from the run), and its end `attention.seen {kind, run_id,
   wait_key, step_id, outcome: answered|approved|denied|timed_out|cancelled|failed}`; idempotent ids, open waits
   repaired at boot. The tray announces each one and counts them with the automation items.
+- `schedule_run` host (backlog 1045, `wakes_host.py`): every runtime the gateway builds registers the
+  `SCHEDULE_RUN` handler. A wake becomes a one-shot automation owned by the plane's account that runs the
+  session's own workflow (same provider and model) in the caller's session, under the gateway's workspace guard
+  and built-in tool deny; `wake.scheduled` is written to the owner's event stream, and archiving it before it
+  fires writes `wake.cancelled`. A session whose workflow is not a bundle workflow is refused with a sentence.
 
 - Console **Triggers** page (backlog 1041, `/console#triggers`): your trigger connections (Source, Name,
   Status, Last event) with **Events** (the 20 most recent events, each expandable to its JSON), **Test** (sends a

@@ -2106,6 +2106,12 @@ class WorkflowBundleGatewayHost:
         from ..automation_workspace_resolver import wire_occurrence_workspaces
 
         wire_occurrence_workspaces(runtime, data_dir=data_root, root_data_dir=catalog_root, tenant_id=catalog_tenant, user_id=catalog_user)
+        # SCHEDULE_RUN (framework backlog 1045): this plane creates the wakes its runs ask for
+        # (one-shot automations in the caller's session) and records them in the owner's event
+        # stream (wakes_host.py). Fails loudly on a runtime without the seam.
+        from ..wakes_host import wire_schedule_run
+
+        wire_schedule_run(runtime, data_dir=Path(data_root), root_data_dir=Path(catalog_root), tenant=email_plane.tenant_id, user=email_plane.user_id)
 
         _install_catalog_subworkflow_guard(
             runtime=runtime,
