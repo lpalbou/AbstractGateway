@@ -312,6 +312,47 @@ def mailboxes_public(plane: EmailPlane) -> List[Dict[str, Any]]:
     return [mailbox_summary(p) for p in mailbox_planes(plane)]
 
 
+# The folders of a mailbox, for a folder picker (Flow's "Move to folder"): RFC 6154 special-use
+# attributes and INBOX named by role; cached per mailbox for a minute.
+FOLDERS_CACHE_S = 60.0
+_SPECIAL_USE = {"\\sent": "sent", "\\trash": "trash", "\\drafts": "drafts", "\\junk": "junk", "\\archive": "archive"}
+_FOLDERS_CACHE: Dict[str, tuple] = {}
+_FOLDERS_LOCK = threading.Lock()
+
+
+def mailbox_folders(plane: EmailPlane, *, now: Optional[float] = None) -> Dict[str, Any]:
+    """`{folders: [{name, special: inbox|sent|trash|drafts|junk|archive|null, messages}]}` of the
+    mailbox `plane` addresses: one connection (LIST, then EXAMINE per folder for its message
+    count), folders that cannot be opened (`\\Noselect`) left out, cached 60 s per mailbox.
+    Typed EmailErrors (not connected, turned off, the server refusing)."""
+    at = time.time() if now is None else float(now)
+    key = f"{plane.root}#{plane.account_id}"
+    with _FOLDERS_LOCK:
+        hit = _FOLDERS_CACHE.get(key)
+    if hit is not None and hit[0] > at:
+        return {"folders": [dict(f) for f in hit[1]]}
+    client = email_context(plane).client()
+    folders: List[Dict[str, Any]] = []
+    with client.session():
+        for row in client.list_folders():
+            flags = {str(f).lower() for f in row.get("flags") or ()}
+            if "\\noselect" in flags or "\\nonexistent" in flags:
+                continue
+            name = str(row.get("name") or "")
+            special = "inbox" if name.upper() == "INBOX" else next((v for k, v in _SPECIAL_USE.items() if k in flags), None)
+            entry: Dict[str, Any] = {"name": name, "special": special}
+            try:
+                entry["messages"] = int(client.folder_state(name).get("exists") or 0)
+            except EmailError:
+                pass  # listed without a count (the server refused to open it)
+            folders.append(entry)
+    order = {"inbox": 0}
+    folders.sort(key=lambda f: (order.get(f["special"], 1), f["name"].lower()))
+    with _FOLDERS_LOCK:
+        _FOLDERS_CACHE[key] = (at + FOLDERS_CACHE_S, [dict(f) for f in folders])
+    return {"folders": folders}
+
+
 def validate_trigger_account(plane: EmailPlane, trigger: Any) -> Optional[str]:
     """Host check of an `email.received@1` binding's `config.account` at automation create /
     revise time (framework backlog 1044; the runtime adapter stays pure). `self`, `default` and

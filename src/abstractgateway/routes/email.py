@@ -30,6 +30,7 @@ user makes so their agents and automations can read and send mail as them.
     GET    /me/email/accounts            every mailbox of mine: [{account_id, primary, address, can_read,
                                          can_send, enabled, folder, mailbox, watcher}] (backlog 1044)
     GET    /me/email/accounts/{mailbox_id}        one of them (404 email_not_configured when unknown)
+    GET    /me/email/folders, /me/email/accounts/{mailbox_id}/folders   {folders: [{name, special, messages}]}
     PUT    /me/email/accounts/{mailbox_id}        connect a further mailbox (test, then store); `send: false`
                                          (the default) = read-only, IMAP only; `default` = PUT /me/email
     POST   /me/email/accounts/{mailbox_id}/test   sign in with the stored mailbox
@@ -575,6 +576,26 @@ async def me_email_autodiscover(request: Request, address: str = Query(..., min_
 async def me_email_accounts(request: Request) -> Any:
     _principal, plane = _self_plane(request)
     return await _call(lambda: {"items": mail_accounts.mailboxes_public(plane)})
+
+
+@router.get(
+    "/me/email/folders",
+    summary="The folders of my primary mailbox (folder picker)",
+    description="`{folders: [{name, special: inbox|sent|trash|drafts|junk|archive|null, messages}]}`: INBOX first, then by "
+    "name; `special` from the server's RFC 6154 special-use attributes; folders that cannot be opened are left out; "
+    "`messages` is absent when the server refused to open a folder. One connection; cached 60 s. 404 "
+    "`email_not_configured` without a mailbox, 409 `email_disabled` while it is turned off.",
+)
+async def me_email_folders(request: Request) -> Any:
+    _principal, plane = _self_plane(request)
+    return await _call(mail_accounts.mailbox_folders, plane.primary)
+
+
+@router.get("/me/email/accounts/{mailbox_id}/folders", summary="The folders of one of my mailboxes (folder picker)",
+            description="Like GET /me/email/folders for mailbox `mailbox_id`; 404 `email_not_configured` for a mailbox that is not yours.")
+async def me_email_account_folders(request: Request, mailbox_id: str) -> Any:
+    _principal, plane = _self_plane(request)
+    return await _call(lambda: mail_accounts.mailbox_folders(_mailbox(plane, mailbox_id)))
 
 
 @router.get("/me/email/accounts/{mailbox_id}", summary="One of my mailboxes")
@@ -1315,7 +1336,7 @@ async def legacy_email_send(request: Request, body: LegacySendBody) -> Any:
 
 _MIRRORED_PREFIXES = ("/me/email", "/me/notifications")
 # Further mailboxes (framework backlog 1044) are a user feature: an entity has one mailbox, its own.
-_NOT_MIRRORED_PREFIXES = ("/me/email/accounts", "/me/email/autodiscover")
+_NOT_MIRRORED_PREFIXES = ("/me/email/accounts", "/me/email/autodiscover", "/me/email/folders")
 
 
 def _mirror_entity_routes() -> List[str]:

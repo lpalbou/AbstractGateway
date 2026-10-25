@@ -335,3 +335,51 @@ def test_a_password_connect_to_gmail_answers_the_gmail_sentence(gateway, monkeyp
     detail = r.json()["detail"]
     assert detail["message"] == mail_accounts.GMAIL_PASSWORD_REFUSED and detail["step"] == "imap"
     assert gateway["client"].get(f"/api/gateway/me/email/accounts/{WORK}", headers=gateway["alice"]).status_code == 404
+
+
+def test_folder_picker_lists_folders_with_roles_and_counts(gateway, imap, imap_bob, smtp) -> None:
+    from abstractgateway.mail import accounts as mail_accounts
+
+    c = gateway["client"]
+    _connect_primary(gateway, imap, smtp)
+    assert _connect_work(gateway, imap_bob).status_code == 200
+    imap.add_message("INBOX", message("one"))
+    imap.add_message("INBOX", message("two"))
+    imap_bob.add_message("INBOX", message("to work", to=BOB))
+    mail_accounts._FOLDERS_CACHE.clear()
+    r = c.get("/api/gateway/me/email/folders", headers=gateway["alice"])
+    assert r.status_code == 200, r.text
+    assert r.json() == {"folders": [{"name": "INBOX", "special": "inbox", "messages": 2}, {"name": "Sent", "special": "sent", "messages": 0}]}
+    work = c.get(f"/api/gateway/me/email/accounts/{WORK}/folders", headers=gateway["alice"]).json()
+    assert work["folders"][0] == {"name": "INBOX", "special": "inbox", "messages": 1}
+    # Cached a minute: a second call opens no connection.
+    logins = len(imap.logins)
+    assert c.get("/api/gateway/me/email/folders", headers=gateway["alice"]).json()["folders"][0]["messages"] == 2
+    assert len(imap.logins) == logins
+    # Not the caller's mailbox: 404; nobody signed in: 401.
+    assert c.get(f"/api/gateway/me/email/accounts/{WORK}/folders", headers=gateway["bob"]).status_code == 404
+    assert c.get("/api/gateway/me/email/folders").status_code == 401
+    assert c.get("/api/gateway/me/email/folders", headers=gateway["bob"]).status_code == 404  # bob has no mailbox
+
+
+def test_folder_roles_come_from_special_use(ca, tokens, monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from abstractcore.comms.email import EmailAccount, EmailClient, EmailSecret, ImapSettings
+    from abstractcore.testing.mailserver import FakeImapServer
+
+    from abstractgateway.mail import accounts as mail_accounts
+
+    server = FakeImapServer(ca, users=dict(PASSWORDS), security="ssl", tokens=tokens, folders=("INBOX", "Sent", "Bin", "Archive"), trash="Bin")
+    try:
+        acct = EmailAccount.build(address=ALICE, imap=ImapSettings.build("localhost", port=server.port, security="ssl"))
+        client = EmailClient(acct, EmailSecret(PASSWORDS[ALICE]), timeout=10)
+        monkeypatch.setattr(mail_accounts, "email_context", lambda _plane: SimpleNamespace(client=lambda: client))
+        monkeypatch.setattr(mail_accounts, "_FOLDERS_CACHE", {})
+        out = mail_accounts.mailbox_folders(SimpleNamespace(root="r", account_id="t"))
+        assert [(f["name"], f["special"]) for f in out["folders"]] == [("INBOX", "inbox"), ("Archive", None), ("Bin", "trash"), ("Sent", "sent")]
+        logins = len(server.logins)
+        mail_accounts.mailbox_folders(SimpleNamespace(root="r", account_id="t"), now=__import__("time").time() + 61)
+        assert len(server.logins) == logins + 1  # the cache lasts a minute
+    finally:
+        server.close()

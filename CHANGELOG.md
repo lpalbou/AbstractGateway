@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Folder picker: `GET /api/gateway/me/email/folders` and `GET /api/gateway/me/email/accounts/{mailbox_id}/folders` list a mailbox's folders with their role (`special`: inbox, sent, trash, drafts, junk, archive) and message count, on one connection, cached 60 s; another account's mailbox answers 404.
 - Flows publish to a channel: every runtime the gateway builds registers the `PUBLISH_EVENT` handler
   (`publish_host.py`), so a flow's *Publish to channel* step lands on the run owner's event stream (and raises
   attention with `alert: true`). Needs AbstractRuntime 0.12.0: the dependency floor moves to `>=0.12.0` in the
