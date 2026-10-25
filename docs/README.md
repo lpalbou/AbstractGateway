@@ -29,8 +29,8 @@ Related repos:
 |---|---|
 | [first-run.md](./first-run.md) | the zero-configuration start on your own machine: one-time sign-in link, first-run guide, start at login |
 | [getting-started.md](./getting-started.md) | explicit setup: bundles, starting and scheduling runs, split API/runner, file vs SQLite stores |
-| [architecture.md](./architecture.md) | components, diagrams, the replay-first durable contract, live replies, the workspace guard, the desktop hand-over, deployment shapes |
-| [api.md](./api.md) | the client contract with curl examples: the gateway default workflow (`@default`), live replies, a run's workspace folder, durable commands, the automation routes, discovery, media, models, host state, `/about`; map of every route family |
+| [architecture.md](./architecture.md) | components, diagrams, the replay-first durable contract, automations, triggers, events and attention, live replies, the workspace guard, the desktop hand-over, deployment shapes |
+| [api.md](./api.md) | the client contract with curl examples: the gateway default workflow (`@default`), live replies, a run's workspace folder, durable commands, the automation routes, trigger connections and the signed webhook ingress, your event stream (`/me/events`, its vocabulary and the one-notification-per-machine rule), discovery, media, models, host state, `/about`; map of every route family |
 | [configuration.md](./configuration.md) | every setting: runtime settings, network exposure (detected addresses, Tailscale), apps, default agent workflows, stream replies, skills shelf, backlog, workspace policy, capability defaults, environment variables, CLI flags |
 | [faq.md](./faq.md) | recurring questions and limits |
 | [troubleshooting.md](./troubleshooting.md) | symptoms, causes and fixes: sign-in, network modes, runs, installs, downloads, tray, login service |
@@ -39,15 +39,15 @@ Related repos:
 
 | Page | Read it for |
 |---|---|
-| [email.md](./email.md) | per-user email: connecting your own mailbox (password or OAuth2), recipient policy and send limits, automations on new mail, email notifications, account recovery by email, the administrator switch, migration from the retired environment variables |
-| [automations.md](./automations.md) | automations: a workflow run on a trigger as a durable controller run; every route with its shapes, the error envelope, tool approval, typed waits and how to answer them, attention and `/seen`, discussions, run lists, legacy schedules, operations (one writer process, restart recovery, boot warm-up, the acceptance script) and the limits of v1 |
+| [email.md](./email.md) | per-user email: connecting your own mailbox and further read-only mailboxes (password or OAuth2), recipient policy and send limits, automations on new mail, email notifications, account recovery by email, the administrator switch, migration from the retired environment variables |
+| [automations.md](./automations.md) | automations: a workflow run on a trigger as a durable controller run; every route with its shapes, the error envelope, tool approval, typed waits and how to answer them, attention and `/seen`, wakes an agent schedules (`schedule_run`), discussions, run lists, legacy schedules, operations (one writer process, restart recovery, boot warm-up, the acceptance script) and the limits of v1 |
 | [events-examples.md](./events-examples.md) | events and triggers, three end-to-end examples with the exact commands: watch a mailbox and tell me when something important arrives, a digest of a news feed, run a flow when an external system calls my webhook (signed curl); following your event stream |
 | [openai-api.md](./openai-api.md) | the OpenAI-compatible API at `/v1`: connecting apps and SDKs, what is supported, Protected/Open and Who can connect, errors, the request log, moving from `/core/v1` |
-| [console.md](./console.md) | the web console at `/console` (the grouped sidebar and every tab, including Accounts and Workflows; responsive layout on phones and tablets) and the `abstractgateway-console` terminal app (its screens and keys) |
+| [console.md](./console.md) | the web console at `/console` (the grouped sidebar and every tab, including Accounts, Workflows and Triggers; responsive layout on phones and tablets) and the `abstractgateway-console` terminal app (its screens and keys) |
 | [apps.md](./apps.md) | installing, starting and opening the browser apps (Flow, Code, Observer, Continuum, Entity), Code's terminal app and the desktop Assistant |
 | [engines.md](./engines.md) | installing local engines (Ollama, LM Studio, MLX, llama.cpp, vLLM, Hugging Face): what each Install does, when a password or the Apple tools are needed |
 | [model-downloads.md](./model-downloads.md) | download jobs: progress, stalls, cancel, end reasons, parent jobs, the event stream |
-| [tray.md](./tray.md) | the desktop tray icon: apps, models, pause, start at login, network, restart and update |
+| [tray.md](./tray.md) | the desktop tray icon: sessions, automation and approval notifications, apps, models, pause, start at login, network, restart and update |
 | [security.md](./security.md) | user accounts, who sees which account and entity, sessions, origins, network exposure, callers on this computer, the Assistant's sign-in, workspace scope and the built-in deny list, limits, audit log |
 | [deployment.md](./deployment.md) | Docker images, Compose, provider variables, single machine without Docker |
 | [shipped-workflows.md](./shipped-workflows.md) | the workflows a fresh install serves (coding agent, deep research, co-scientist, …) and managing the registry |

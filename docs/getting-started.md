@@ -166,6 +166,11 @@ and pause, resume, run now or archive it with
 asking by default (creating the automation is the consent). See
 [automations.md](./automations.md).
 
+An automation can also start on new mail, a feed item or a signed webhook
+call, and you can follow what needs you on your event stream
+(`GET /api/gateway/me/events/stream`): see
+[events-examples.md](./events-examples.md).
+
 For a plain **scheduled parent run** without these controls, use `POST /api/gateway/runs/schedule`:
 
 ```bash

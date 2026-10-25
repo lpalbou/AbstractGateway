@@ -170,7 +170,25 @@ Rare transport answers keep the same shape with `not_found` (unknown path),
   before the automation existed, or while it was paused, is not processed. The
   occurrence receives the messages under `trigger.emails`, marked
   `content_trust: "untrusted"`. The gateway's mail watcher reads the mailbox
-  only while such an automation is active.
+  only while such an automation is active. With several mailboxes,
+  `"account": "<mailbox_id>"` chooses the one to watch (no value = your
+  primary mailbox; see [email.md](./email.md#several-mailboxes)).
+- **`feed.item@1`** runs when a feed you follow (RSS 2.0 or Atom 1.0) has new
+  items. The automation names one of your **trigger connections**
+  (`connection_id`); the connection holds the feed URL and how often it is
+  read (`every`, default `15m`, at least `60s`). The items of one read become
+  one run, under `input_data.event.data.events`, marked untrusted.
+- **`webhook.received@1`** runs when an external system calls your signed
+  webhook address (`POST /api/gateway/triggers/webhooks/{connection_id}`,
+  [Standard Webhooks](https://www.standardwebhooks.com/) signature). The
+  automation names the webhook connection; each call becomes one event of the
+  run's `input_data.event` (`event.data.events[0].data.body`, the webhook id as
+  its `subject`), marked untrusted.
+
+Trigger connections are yours alone: create them with the
+[connections API](./api.md#trigger-connections) or the console's **Triggers**
+page, and see [events-examples.md](./events-examples.md) for a feed digest and
+a signed webhook call end to end.
 
 An automation with `"notify": {"channels": ["console", "email"]}` emails every
 completed run’s full result, even when the model does not request a notification.
@@ -806,8 +824,9 @@ python scripts/accept_automations_v1.py --data-dir /tmp/automation-acceptance
 - Schedules are fixed UTC intervals (`s`, `m`, `h`, `d`, at most `366d`) or
   daily, weekly and monthly rules at a wall time in an IANA time zone
   (`schedule@2`); there are no cron expressions.
-- The trigger sources are `schedule@1`, `schedule@2`, `manual@1` and
-  `email.received@1`; there are no other external triggers.
+- The trigger sources are `schedule@1`, `schedule@2`, `manual@1`,
+  `email.received@1`, `feed.item@1` and `webhook.received@1`, plus sources
+  installed by other packages.
 - Occurrences run one at a time, missed ticks coalesce, and a failed
   occurrence never stops the automation. These policies cannot be changed.
 - Growing history is the most recent whole turns within the configured token budget (50,000 tokens by default) and is not

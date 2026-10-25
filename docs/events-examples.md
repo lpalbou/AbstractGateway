@@ -1,6 +1,6 @@
 # Events and triggers: examples
 
-Three end-to-end examples of the events-and-attention track (framework backlog 1048): something
+Three end-to-end examples of events and attention: something
 happens outside (a mail, a feed post, a call to a webhook), an automation runs a workflow on it, the
 workflow's model decides whether you need to know, and you are told on your event stream, in the
 gateway tray, the Assistant, Code and the watch.
@@ -129,36 +129,122 @@ wrote a digest, `attention.raised`.
 
 ## 3. Run this flow when an external system calls my webhook
 
-Create the connection; the answer shows the secret ONCE and the address to give the sender:
+A webhook is an address on your gateway that another system calls (an HTTP `POST`) when something
+happens on its side. Each call that carries a valid signature starts one run of your flow, with the
+call's JSON body as input. Nobody without the secret can start it.
 
-```bash
-curl -sS -X POST http://127.0.0.1:8080/api/gateway/triggers/connections \
-  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-  -d '{"source_id": "webhook.received", "source_version": 1, "label": "Orders", "config": {}}' \
-  | jq '{connection_id, ingress_url, secret}'
+### 3a. Set it up
+
+1. **Create the webhook connection.** In the web console, open **Triggers** (sidebar, *Work*) and
+   press **New connection**. Under **Source** choose **When a webhook is called**, type a **Name**
+   (for example `Orders`), and press **Create**.
+2. **Copy the address and the secret.** The dialog shows the **Webhook address**
+   (`https://<your gateway>/api/gateway/triggers/webhooks/<connection id>`) and the **Signing
+   secret** (`whsec_…`), each with a copy button. The secret is shown **once**: store it where the sender
+   will read it (a password manager, the sender's settings). The address stays visible later under
+   the connection's row (**Events**).
+3. **Let your flow receive the event.** In AbstractFlow, open the flow, select its **On Flow Start**
+   node and press **Add trigger event** (Properties). The node gets an `event` output and a
+   **Trigger event** node is wired to it. Save the flow.
+4. **Attach the webhook to the flow.** In AbstractFlow, open the **Flow Library**, select the flow,
+   and press the edit button next to **Automation**. Set **Trigger** to **When a webhook is
+   called**, pick your connection under **Connection** (press **Refresh connections** if you just
+   created it), and press **Save**. Then **Publish** the flow.
+5. **Create the automation.** One request creates it from the flow's saved defaults (the trigger,
+   the connection, the title and the inputs come from step 4):
+
+   ```bash
+   curl -sS -X POST http://127.0.0.1:8080/api/gateway/automations \
+     -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+     -d '{"request_id": "orders-webhook-1", "title": "Orders webhook",
+          "target": {"bundle_ref": "<your bundle>@<version>", "flow_id": "<flow id>"}}'
+   ```
+
+   Without AbstractFlow, put the trigger in the same request:
+   `"trigger": {"source_id": "webhook.received", "source_version": 1, "config": {}, "connection_id": "<connection id>"}`
+   instead.
+
+What the flow receives: each call is one event under `event.data.events`, oldest first; the JSON
+body is at `event.data.events[0].data.body` and the sender's message id at
+`event.data.events[0].subject`. For a call whose body is `{"order": 42, "state": "payment_refused"}`
+the run's `event` input reads (other envelope fields left out):
+
+```json
+{
+  "specversion": "1.0",
+  "type": "abstract.webhook.received.v1",
+  "data": {
+    "count": 1,
+    "events": [
+      {
+        "subject": "msg_1761390000",
+        "data": {
+          "webhook_id": "msg_1761390000",
+          "content_type": "application/json",
+          "body": {"order": 42, "state": "payment_refused"}
+        }
+      }
+    ]
+  }
+}
 ```
 
-Bind an automation to it (as in example 2, with `"source_id": "webhook.received"` and the
-`connection_id`). The sender signs each call per [Standard Webhooks](https://www.standardwebhooks.com/):
-`webhook-signature: v1,<base64 HMAC-SHA256 of "<webhook-id>.<webhook-timestamp>.<body>">`, keyed with
-the secret's base64 part. From a shell (no bearer token: the signature is the authentication):
+A body that is not JSON arrives as `body_text`. The body is written by someone else: the gateway marks
+it untrusted, so a run treats it as data, never as instructions.
+
+### 3b. Try it
+
+Paste this block in a terminal, after setting `CID` (the last part of the address) and `SECRET`
+(the `whsec_…` value). It sends one signed call, exactly as a sender does:
 
 ```bash
-CID=<connection_id>; SECRET=<secret>
-KEY=$(printf %s "${SECRET#whsec_}" | base64 -d | xxd -p -c 256)
-ID=msg_$(date +%s); TS=$(date +%s); BODY='{"order": 42, "state": "payment_refused"}'
-SIG=$(printf %s "$ID.$TS.$BODY" | openssl dgst -sha256 -mac HMAC -macopt hexkey:$KEY -binary | base64)
-curl -sS -X POST "http://127.0.0.1:8080/api/gateway/triggers/webhooks/$CID" \
+CID="tc_REPLACE_ME"
+SECRET="whsec_REPLACE_ME"
+GATEWAY="http://127.0.0.1:8080"
+
+BODY='{"order": 42, "state": "payment_refused"}'
+ID="msg_$(date +%s)"
+TS="$(date +%s)"
+KEY="$(printf %s "${SECRET#whsec_}" | base64 -d | xxd -p -c 256)"
+SIG="$(printf %s "$ID.$TS.$BODY" | openssl dgst -sha256 -mac HMAC -macopt "hexkey:$KEY" -binary | base64)"
+
+curl -sS -X POST "$GATEWAY/api/gateway/triggers/webhooks/$CID" \
+  -H "Content-Type: application/json" \
   -H "webhook-id: $ID" -H "webhook-timestamp: $TS" -H "webhook-signature: v1,$SIG" \
-  -H "Content-Type: application/json" --data "$BODY"
+  --data "$BODY"
 ```
 
-Answers: `202` accepted (`{accepted, event_id, seq, woken}`); `401 webhook_signature_invalid` for a
-body that is not the one signed (or a wrong secret), `401 webhook_unsigned` without the headers;
-`409 webhook_stale` outside the 5-minute window; `409 webhook_replayed` for an id already accepted (a
-sender retrying a call that succeeded gets 409: treat it as delivered); `404` for an unknown connection.
-The occurrence runs with the body at `event.data.events[0].data.body` and the webhook id as
-`event.data.events[0].subject`.
+No bearer token: the signature is the authentication. What you should see:
+
+- the answer `202` with `{"accepted": true, "connection_id": "…", "webhook_id": "msg_…", "event_id": "…", "seq": …, "woken": 1}`
+  (`woken` counts the automations the call woke);
+- in the console, **Triggers** → the connection's **Events**: the call, its body under `data.body`;
+- on your event stream (`GET /api/gateway/me/events`): `trigger.event`, then `run.started` and
+  `run.finished` of the run the call started;
+- in the desktop tray: a notification when that run has something for you (its flow ends with
+  `notify`) or fails; a run that only does its work stays quiet.
+
+The other answers: `401 webhook_signature_invalid` (the body is not the one signed, or the secret is
+wrong), `401 webhook_unsigned` (a `webhook-*` header is missing), `409 webhook_stale` (the timestamp
+is more than 5 minutes away from the gateway's clock), `409 webhook_replayed` (this `webhook-id` was
+already accepted: a retry of a delivered call; treat it as delivered), `404` (unknown connection).
+Run the block again for a second call: it uses a new id.
+
+### Which services can call it directly
+
+The gateway accepts the [Standard Webhooks](https://www.standardwebhooks.com/) format: the headers
+`webhook-id`, `webhook-timestamp` and `webhook-signature` (`v1,<base64 HMAC-SHA256 of
+"<id>.<timestamp>.<body>">`, keyed with the secret). Any sender that implements it can call the
+address directly, as can your own scripts and automation tools that compute an HMAC (as in 3b).
+
+- **Services built on Svix** (for example Clerk and Resend) sign the same way but name the headers
+  `svix-id`, `svix-timestamp` and `svix-signature`. The gateway reads only the `webhook-*` names, so
+  these need a small relay that renames the three headers and forwards the body unchanged.
+- **GitHub** (Settings → Webhooks → Add webhook: Payload URL, Content type `application/json`,
+  Secret) signs differently: one `X-Hub-Signature-256` header, an HMAC-SHA256 of the body alone with
+  the secret as typed. The gateway does not accept that header, so a GitHub webhook pointed at the
+  address answers `401 webhook_unsigned`. Use a relay that verifies GitHub's signature and re-signs
+  the call in the Standard Webhooks format with your connection's secret.
 
 ## Following your stream live
 

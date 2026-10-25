@@ -425,6 +425,19 @@ disappeared, read `<data dir>/logs/tray.log`; `GET /api/gateway/host/tray`
 reports its exit code, and `POST /api/gateway/host/tray/show` (admin) starts
 it again. See [tray.md](./tray.md).
 
+### The tray shows no notification for an automation result or an approval
+
+- The tray announces what arrives on your event stream after it started;
+  items that existed before are counted in the tooltip, not announced again.
+- On Linux and Windows, notifications depend on the desktop: when the tray
+  cannot show one it records `notification.failed {channel: "tray"}` in your
+  stream (`GET /api/gateway/me/events`), with the reason.
+- An automation raises attention only when its run asks to notify, fails after
+  its retries, or waits for you ([automations.md](./automations.md#attention-and-seen)).
+- The Assistant and Code stay silent when the tray on the same computer already
+  announced the item in the last minute
+  ([api.md](./api.md#report-a-notice-a-client-showed-post-apigatewaymeeventsnotifications)).
+
 ### The Assistant opened from the console is not signed in
 
 - It was already running: a running Assistant receives no sign-in code. Quit

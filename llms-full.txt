@@ -2451,6 +2451,19 @@ remembered session (30 days) of the user who clicked Open. See
 [apps.md](docs/apps.md) and
 [architecture.md](docs/architecture.md#desktop-assistant-hand-over).
 
+### Trigger webhooks: signed, not signed in
+
+`POST /api/gateway/triggers/webhooks/{connection_id}` is the one public write
+that is not a sign-in step: an external system delivers an event to a trigger
+connection without a gateway token. The Standard Webhooks signature with the
+connection's secret (sealed with the data folder's key, shown to its owner once)
+is the auth: an unsigned or tampered call is 401, a timestamp more than five
+minutes off (the connection's window) or a webhook id already accepted is 409 (a
+sender treats a replayed id as delivered), a body over 512 KiB is 413,
+and calls are limited per connection and per client address (429). It can only
+append to that connection's inbox stream and wake the automations bound to it;
+the event body reaches them as untrusted data. See [api.md](docs/api.md#triggers).
+
 ## Workspaces: three levels
 
 Thin clients (browser apps, bridges, the Assistant) start runs whose file tools
@@ -3198,11 +3211,19 @@ connect* reads as **Devices on my network**.
 
 # Apps
 
-The five browser apps (Observer, Continuum, Code, Entity and Flow Editor) can be
+The six browser apps (Observer, Continuum, Code, Entity, Flow Editor and Note) can be
 installed, started, stopped and updated from the gateway: from the console's
 Apps page, from the HTTP API below, or with `abstractgateway apps`. Nobody has
 to open a terminal or install Node.js by hand. The Apps page also lists the
 desktop app, the **Assistant** (see [The Assistant](#the-assistant-a-desktop-app)).
+
+**Note** (`@abstractframework/note`, port 3006) is the AbstractNote web app: capture
+anything, see how it connects and how it changed over time. It needs the `abstractnote`
+Python package installed next to the gateway: the gateway then serves the note read API
+under `/api/gateway/note/`, binds the note tools to each user's own notebook
+(`<plane>/abstractnote/`, auto-approved), and loads the `abstractnote` workflows. Without the
+package the app still installs, but `/api/gateway/note/` answers 404 and the `abstractnote`
+workflows are absent.
 
 On a card, a plain user sees one button for the state the app is in:
 
@@ -3328,7 +3349,7 @@ in its `details` field (`<data dir>/apps/jobs/<job>.log`).
   (next section), never directly. Ports: the app's usual port when it is
   free, else the first free port in 3100-3199. The usual ports are the
   framework's stack port map (`scripts/start-local.sh`): Observer 3001,
-  Continuum 3002, Code 3003, Entity 3004, Flow 3005.
+  Continuum 3002, Code 3003, Entity 3004, Flow 3005, Note 3006.
 
 ## Apps are served through the gateway
 
@@ -3388,10 +3409,10 @@ paths, the identity header) is the app-server kit's contract:
 An app can also run without the gateway having started it: the framework's
 development stack (`scripts/start-local.sh`), `npx @abstractframework/observer`,
 a global npm install, a service. The gateway finds such an app by asking the
-usual ports on this machine (3001-3005, then 3000 and 3007) for their start
+usual ports on this machine (3001-3006, then 3000 and 3007) for their start
 page and reading its title
 ("AbstractObserver", "AbstractContinuum", "AbstractCode", "AbstractEntity",
-"AbstractFlow"). None of the apps has an address that says who it is without
+"AbstractFlow", "AbstractNote"). None of the apps has an address that says who it is without
 a gateway sign-in, and the start page is plain HTML, so this costs one short
 local request per port (half a second at most, all ports at once, remembered
 for 5 seconds). The version is read from the `package.json` of the program
@@ -4044,9 +4065,37 @@ greyed and the row says `Another account's session — act on it from its own
 app`: the tray's commands reach the plane of its own identity (the
 payload's `caller_plane`), never another account's runs.
 
-The section rows are read every 20 seconds (`GET /host/runs`, cached a few
+The session rows are read every 20 seconds (`GET /host/runs`, cached a few
 seconds on the gateway; one run document per row) and right after each
-action. A duration that ticks never rebuilds the menu under the cursor.
+action. A duration that ticks never rebuilds the menu under the cursor. The
+**Scheduled** rows follow your event stream instead (below): they are read
+again when an automation event arrives, after each action, and every 5
+minutes to catch an automation created or renamed elsewhere; on a gateway
+without the event stream they keep the 20-second read.
+
+## Automation notifications
+
+The tray follows your event stream (`GET /api/gateway/me/events/stream`,
+[api.md](docs/api.md#your-event-stream-apigatewaymeevents)): it reads what
+happened before it started, then stays connected and picks up where it left
+off after a break (`Last-Event-ID`), so nothing is missed and nothing is shown
+twice.
+
+- **A notification per automation item.** When an automation has something
+  for you (its occurrence asked to notify, or it failed after its retries),
+  the tray shows one notification: `<automation title>` · *It has a result
+  for you. Open the console to read it.*, or `<automation title> failed` ·
+  *It failed after its retries. Open the console to see what happened.* Items
+  that existed before the tray started are not shown again.
+- **A notification per wait on you.** A session that stops for your approval
+  (*Approval needed*) or your answer (*A question for you*) is announced once.
+- **The count.** The icon's tooltip says how many things wait for you
+  (`2 things waiting for you`): automation items not yet seen and sessions
+  waiting on you; seeing an item in a client (the console, the Assistant, the
+  watch) or answering the wait lowers it.
+- **Delivery is recorded.** Each notification shown (or that this desktop
+  cannot show) is written to your stream as `notification.sent` /
+  `notification.failed` with `channel: "tray"`.
 
 ## Models
 
@@ -4716,6 +4765,7 @@ serve:
 | `/api/gateway/backlog/*`, `/reports/*`, `/triage/*`, `/processes` | operator tooling | [maintenance.md](docs/maintenance.md) |
 | `/api/gateway/entities/*` | summoned entities | [entities.md](docs/entities.md) |
 | `/api/gateway/automations*`, `/api/gateway/trigger-sources` | automations: recurring workflows, their occurrences and attention | [automations.md](docs/automations.md) |
+| `/api/gateway/me/events`, `/me/events/stream`, `/me/events/notifications` | your own event stream: what happened for you outside the steps of a run (catch-up, SSE) | [below](#your-event-stream-apigatewaymeevents) |
 
 ## OpenAI API
 
@@ -4856,6 +4906,16 @@ source: "gateway_default" | "client", interface}`. The same object is kept in
 the run's inputs as `input_data.workflow_selection` (written by the gateway;
 a value sent by the client is replaced), so `GET /runs/{run_id}/input_data`
 tells a restored conversation how its workflow was chosen.
+
+Every run also records who started it, in the run's inputs as
+`input_data._meta.origin` and on `GET /runs/{run_id}` as `origin`:
+`{kind, actor, client, ref}`. A run started through `POST /runs/start` is
+`kind: "person"` with `actor` = the calling account, `"<tenant>:<user>"`, and `client` =
+the request's `interface` (null when it names none); the wrapper run of
+`POST /runs/schedule` is `kind: "system"` with the same `actor`. The gateway
+writes it; an origin sent by the client is replaced. Runs started before this
+field existed answer `origin: null`. The run's `actor_id` stays `"gateway"`
+(it marks the runs this gateway's runner ticks); the person is `origin.actor`.
 
 Evidence: request/response models live in `src/abstractgateway/routes/gateway.py` (`StartRunRequest`, `start_run`).
 
@@ -5693,7 +5753,12 @@ curl -sS -H "$AUTH" -H "Content-Type: application/json" \
   "$BASE_URL/api/gateway/commands"
 ```
 
-Evidence: `src/abstractgateway/runner.py` (`_apply_emit_event`).
+With `"durable": true` in the payload the envelope is also appended (with a per-run `seq`, deduplicated by
+`event_id`) to the `events_inbox` of every running or waiting run that declares the event name as its
+`events_mailbox`, however many runs are parked: the lookup goes through the run store's mailbox index, never
+through a window of the newest runs. The answer counts both: `{"resumed": n, "appended": m}`.
+
+Evidence: `src/abstractgateway/runner.py` (`_apply_emit_event`, `_deliver_durable_event`).
 
 ## Automations
 
@@ -5776,6 +5841,182 @@ history (every archive and unarchive) are kept in the plane's
 `session_archive.json`; each call writes a `session.archived` /
 `session.unarchived` audit event. Automations are archived with the
 `automation.archive` command and brought back with `automation.unarchive`.
+
+## Triggers
+
+A trigger **connection** is one account's instance of a trigger source: a webhook endpoint
+with its signing secret, a feed URL. Automations bind it by id
+(`trigger.config.connection_id`); each connection has one inbox stream,
+`trigger:<connection_id>`, that its events are appended to and its automations read.
+
+### Trigger connections
+
+The caller's own connections, in the caller's own runtime plane (another account's connection
+answers 404 like an unknown one). An administrator also lists every account's with `all=true` and
+may read, test and revoke any by id.
+
+| Route | Answer |
+|---|---|
+| `GET /api/gateway/triggers/connections?source_id=&all=` | `{connections: [row]}`, oldest first; `all=true` is admin only (403 `admin_required`) |
+| `POST /api/gateway/triggers/connections` | `{source_id, source_version, label?, config}` → 201: the row at top level, plus the one-time `secret` (a webhook's signing secret `whsec_…`, generated when `config` gives none; never shown again) and, for a webhook, `ingress_url`. 422 `unknown_trigger_source` / `invalid_connection` (a source that takes no trigger connection, a mailbox source, a config its `connection_schema` refuses) |
+| `GET /api/gateway/triggers/connections/{id}` | the row |
+| `PUT /api/gateway/triggers/connections/{id}` | `{label?, config?, status?: active \| disabled}` → the row (a new `config` is validated whole; secret fields left out keep their sealed value) |
+| `DELETE /api/gateway/triggers/connections/{id}` | `{deleted: true, connection_id}` (its past events stay until the inbox retention removes them) |
+| `GET /api/gateway/triggers/connections/{id}/events?after=&limit=` | `{events: [CloudEvents JSON + sequence + recordedtime], next_after}`; without `after` the newest `limit` (default 50, at most 500), oldest first; with `after` the next `limit` after that sequence |
+| `POST /api/gateway/triggers/connections/{id}/test-fire` | `{event_id, sequence, woken}`: a synthetic `{data: {test: true}}` event appended to the connection's stream like a real one (bound automations admit it) |
+
+Feed connections (`feed.item@1`) are polled by the gateway itself, from each account's worker
+loop (every 15 seconds it fetches the connections whose `every` has elapsed; 15 minutes by
+default), whether or not an automation listens yet, so their events show here.
+
+A row: `{connection_id, principal ("<tenant>:<user>"), source_id, source_version (integer), label,
+status ("active" | "disabled" | "error"), created_at, updated_at, last_event_at (string or null),
+last_error (object or null), config_public (object; never a secret), secret_fields, stream
+("trigger:<id>"), ingress_url (webhooks)}`. Errors: `{"detail": {"reason_code", "message",
+"field"?}}`. Request and response models are in the OpenAPI schema (`/openapi.json`, tag
+`triggers`).
+
+```bash
+curl -sS -X POST -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"source_id":"webhook.received","source_version":1,"label":"Shop orders","config":{}}' \
+  "$BASE_URL/api/gateway/triggers/connections"     # -> connection_id, secret (once), ingress_url
+```
+
+### Webhook ingress (`POST /api/gateway/triggers/webhooks/{connection_id}`)
+
+The one public route of the family: it carries **no bearer token**. The
+[Standard Webhooks](https://www.standardwebhooks.com/) signature with the connection's secret
+is the auth, so any external system (n8n, Zapier, GitHub, Stripe, a script) can call it once it
+knows the address and the secret.
+
+- Headers: `webhook-id` (unique per message), `webhook-timestamp` (Unix seconds),
+  `webhook-signature` = `v1,<base64 HMAC-SHA256(secret, "<webhook-id>.<webhook-timestamp>.<body>")>`
+  (several space-separated signatures are accepted; the secret is `whsec_<base64 key>`).
+- Verification and the append are AbstractRuntime's `webhook.received@1`
+  (`abstractruntime.triggers.append_webhook_event`).
+- `202 {accepted: true, connection_id, webhook_id, event_id, seq, woken}`: one event appended to
+  the connection's stream (CloudEvents names: `subject` and `dedupekey` = the webhook id, `data` =
+  `{webhook_id, content_type, body}` with the parsed JSON body, or `{webhook_id, content_type,
+  body_text}` for UTF-8 text; `abstracttrust: "untrusted"`), the automations bound to it woken.
+  An occurrence reads it as `input_data.event.data.events[i].data.body` (one occurrence per batch
+  of events that arrived together).
+- Refusals, each with `{"detail": {"reason_code", "message"}}`, recorded on the connection
+  (`last_error`) and on the request's audit line (`webhook` {connection_id, outcome,
+  reason_code}, never the body): `401 webhook_unsigned` (a header missing), `401
+  webhook_signature_invalid`, `404 connection_not_found` (unknown id, or not a webhook
+  connection), `409 connection_disabled`, `409 webhook_stale` (timestamp outside the connection's
+  window: 5 minutes by default, `tolerance_s` 60..3600), `409 webhook_replayed` (this webhook-id was
+  already accepted: nothing is appended twice; **senders should treat it as delivered**, a
+  Standard Webhooks retry reuses the id), `413 webhook_too_large` (body over 512 KiB), `415
+  webhook_unsupported_body` (neither JSON nor UTF-8 text), `429 webhook_rate_limited` (60 calls a
+  minute per connection, 120 per client address; `Retry-After`).
+- The origin allowlist does not apply (the signature decides). Making the gateway reachable from
+  the internet (Tailscale Funnel, a reverse proxy) is the operator's choice.
+
+```bash
+SECRET='whsec_...'           # shown once when the connection is created
+CID='tc_...'                 # the connection id
+BODY='{"event":"order.paid","order":42}'
+WID="msg_$(openssl rand -hex 8)"; TS="$(date +%s)"
+KEY_HEX="$(printf '%s' "${SECRET#whsec_}" | base64 -d | xxd -p -c 256)"
+SIG="$(printf '%s' "$WID.$TS.$BODY" | openssl dgst -sha256 -mac HMAC -macopt "hexkey:$KEY_HEX" -binary | base64)"
+curl -sS -H "Content-Type: application/json" \
+  -H "webhook-id: $WID" -H "webhook-timestamp: $TS" -H "webhook-signature: v1,$SIG" \
+  -d "$BODY" "$BASE_URL/api/gateway/triggers/webhooks/$CID"
+# 202: delivered. 409 webhook_replayed on a retry with the same webhook-id: also delivered.
+```
+
+Senders: the Standard Webhooks headers (`webhook-id`, `webhook-timestamp`, `webhook-signature`)
+are the only ones read. Services that sign with other headers (GitHub's `X-Hub-Signature-256`,
+Svix's `svix-*` names) need a relay that re-signs or renames. The step-by-step setup (console,
+Flow, the automation) and a copy-paste signed call are in
+[events-examples.md](docs/events-examples.md#3-run-this-flow-when-an-external-system-calls-my-webhook).
+
+Evidence: `src/abstractgateway/routes/triggers.py` (`receive_webhook`),
+`src/abstractgateway/trigger_connections.py` (lookup across accounts, rate limit),
+AbstractRuntime `triggers/webhook.py` (verification, event mapping).
+
+## Your event stream (`/api/gateway/me/events`)
+
+One ordered stream per person, `user:<tenant>:<user>`, holding what happened **for you** that is
+not a step of a run (a step stays in its run's ledger). Every client reads the same stream: a
+page to catch up, an SSE tail to stay live. Each event uses the CloudEvents 1.0 attribute names:
+
+```json
+{"specversion": "1.0", "id": "run.started:9f2c…", "type": "run.started",
+ "source": "/abstractgateway/runs", "subject": "9f2c…", "time": "2026-10-25T12:00:00+00:00",
+ "data": {"run_id": "9f2c…", "session_id": "s1", "origin": {"kind": "person", "actor": "alice", "client": null, "ref": {}}},
+ "sequence": 12}
+```
+
+`sequence` is your stream's own gapless counter (1, 2, …): it is the cursor. `id` is stable: an
+event written twice (a retry, a repair after a crash) is stored once.
+
+| `type` | `data` | written when |
+|---|---|---|
+| `run.started` | `{run_id, session_id, origin}` | a run of a session (a person's run, an automation occurrence) is saved running; never a child run or an automation's controller |
+| `run.finished` | `{run_id, session_id, origin, status}` | that run is saved `completed`, `failed` or `cancelled` |
+| `trigger.event` | `{automation_id, occurrence_index, event_id, source_id, source_version, fired_at, run_id, session_id}` | an automation's occurrence starts (before its `run.started`) |
+| `attention.raised` | `{record_key, automation_id, run_id, index, kind, seq, channels}` | an automation records an attention item (`notify` or final failure); `record_key` names the ledger record, no title or body is copied |
+| `attention.seen` | `{automation_id, seq}` | your seen cursor of an automation moves (`POST /automations/{id}/seen`) |
+| `attention.raised` (a wait) | `{kind: "approval" \| "question", wait_kind, run_id, session_id, wait_key, step_id, record_key, prompt_ref}` | a run parks on a person: a tool call awaiting approval, a question (`ask_user`, or an event wait with a prompt or choices); `prompt_ref` is the run (`GET /api/gateway/runs/{run_id}` carries the prompt and the calls awaiting approval) — nothing is copied |
+| `attention.seen` (a wait) | `{kind, run_id, wait_key, step_id, outcome}` | that wait ends: `answered`, `approved`, `denied`, `timed_out`, `cancelled` or `failed` |
+| `notification.sent`, `notification.failed` | `{channel, notice, …}` | a notice reached a channel or could not: `console` (the item is listed), `email` (the outbox sent it, or failed with `code`, `cause`), `tray` (the desktop tray showed it) |
+| `wake.scheduled` | `{automation_id, session_id, origin_run_id, at \| on}` | a run asked for work later (`schedule_run`, the `SCHEDULE_RUN` effect): the gateway created a one-shot automation that will run in the caller's session |
+| `wake.cancelled` | `{automation_id, session_id, origin_run_id}` | that automation was archived before it fired: nothing runs |
+
+What needs you = the `attention.raised` items without their `attention.seen`: an automation item is
+seen once a `attention.seen` of its automation has a `seq` at or above it; a wait is seen by the
+`attention.seen` with the same `run_id`, `wait_key` and `step_id`.
+
+Older events go after 90 days or beyond the newest 10,000 (their `sequence` is never reused).
+
+### Catch up: `GET /api/gateway/me/events?after=<sequence>&limit=<n>`
+
+Events with `sequence > after`, oldest first (`limit` 1–1000, default 100). Answer:
+`{stream, events: [...], next_after, head, more}`: send `next_after` as the next `after`; `head`
+is the newest sequence; `more` says a further page exists.
+
+```bash
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/me/events?after=0&limit=100"
+```
+
+### Stay live: `GET /api/gateway/me/events/stream?after=<sequence>&heartbeat_s=15`
+
+Server-sent events, the same `after` semantics as `/runs/{run_id}/ledger/stream`: the catch-up
+from `after`, then each new event as it is written. Each frame is
+`id: <sequence>` / `event: <type>` / `data: <event JSON>`; a `: keep-alive` comment every
+`heartbeat_s` seconds (0.1–60, default 15). A reconnecting client sends `Last-Event-ID` (browsers
+do it on their own) and receives exactly the events after it; an explicit `after` wins over the
+header. The stream does not end on its own.
+
+```bash
+curl -sS -N -H "$AUTH" -H "Last-Event-ID: 12" "$BASE_URL/api/gateway/me/events/stream"
+```
+
+### Report a notice a client showed: `POST /api/gateway/me/events/notifications`
+
+`{channel: "tray" | "assistant" | "code" | "watch", outcome: "sent" | "failed", record_key,
+device?, error?}` records `notification.sent|failed {channel, notice: "attention:<record_key>",
+record_key, device?}` in your stream (once per channel and record; any other channel is 422). The
+desktop tray, the Assistant, the Code apps and the watch call it after each notification they show.
+`device` is an opaque id of the machine (the tray sends the first 16 hex characters of the
+sha256 of the lower-cased host name; an app on the same machine sends the same value).
+
+**One notification per machine.** Before an app shows an OS notification for an attention item,
+it reads the recent stream and stays silent when it holds a `notification.sent` for the same
+`record_key` from **another** client channel with the **same** `device`, less than **60 seconds**
+old. The gateway tray is the default notifier (it notifies at once); the Assistant and Code notify
+only when no tray, or other app, reported on that machine. A watch has its own `device`, so it
+always notifies. Reference implementation: `events_stream.already_notified(events, record_key=,
+channel=, device=)`.
+
+There is no parameter naming a person: every route reads and writes the caller's own stream in
+the caller's own plane, so two accounts never see each other's events.
+
+Evidence: `src/abstractgateway/events_stream.py` (vocabulary, writers, boot repair),
+`src/abstractgateway/routes/me_events.py`, `src/abstractgateway/runner.py` (`_stream_run`,
+`_drain_user_stream`).
 
 ## Conversation tool choices
 
@@ -6944,6 +7185,12 @@ Your email address and mailbox (`/api/gateway/me/...`, every signed-in human):
 | `PUT /me/email/limits` | `{per_hour, per_day}` |
 | `PUT /me/email/folder` | `{folder}` — the folder your mailbox is read from (empty = INBOX); the connection is kept and nothing is tested; 404 `email_not_configured` without a mailbox |
 | `PUT /me/email/enabled` | `{enabled}` — "Use this mailbox" (off keeps the settings; stops watching, sending and notifications); `tools_reloaded` |
+| `GET /me/email/accounts` | every mailbox of yours: `{items: [{account_id, primary, account_ref, configured, address, can_read, can_send, enabled, folder, mailbox{state, address, provider, reason}, watcher{state, last_poll, last_error, received}}]}`; the primary (`default`, the one `PUT /me/email` connects and runs are bound to) always first, further mailboxes once connected. `GET /me/email` carries the same list as `accounts` |
+| `GET /me/email/accounts/{mailbox_id}` | one of them; 404 `email_not_configured` for an id you have not connected |
+| `PUT /me/email/accounts/{mailbox_id}` | connect a further mailbox (`mailbox_id`: 1-32 of `a-z 0-9 _ -`; 400 `email_invalid_settings` otherwise): the `PUT /me/email` body plus `send` (default `false`). `send: false` stores IMAP only: a **read-only** mailbox (`can_send: false`, `mailbox.state: receive_only`) that automations can watch and that refuses sends; `send: true` also stores and tests SMTP. `mailbox_id: default` is the primary and behaves like `PUT /me/email`. Never changes your email address. Answers the mailbox's row |
+| `POST /me/email/accounts/{mailbox_id}/test` | `{imap, smtp, ok, message}` for that mailbox |
+| `PUT /me/email/accounts/{mailbox_id}/enabled` | `{enabled}` — "Use this mailbox" for that mailbox (off: not watched) |
+| `DELETE /me/email/accounts/{mailbox_id}` | disconnect it (credentials and cursor deleted) → `{account_id, disconnected, accounts}` |
 | `PUT /me/email/agent-tools` | `{enabled}` — your agents' email tools (default off; 409 `email_disabled` while "Agent email tools for users" is off for you; active only with a connected, allowed mailbox); reloads your workflows so toolsets follow (`tools_reloaded`) |
 | `GET /me/email/oauth/clients` | which providers have a gateway OAuth client (no secrets) |
 | `POST /me/email/oauth/start` | `{address, provider: google \| microsoft, client_id?, client_secret?, tenant?, flow?: device \| loopback}` → device code (`user_code`, `verification_uri`) or `authorization_url`. `token_endpoint`, `authorization_endpoint`, `device_authorization_endpoint` and `scopes` are accepted only from an administrator with `provider: "custom"` (own client id); otherwise 403 `email_oauth_override_refused` |
@@ -7038,6 +7285,7 @@ The sidebar groups the tabs in four sections, in this order:
 |---|---|---|
 | Accounts | **Accounts** | every user and entity in one table: the **Active** switch, email, a link to each account's runtimes, activity (Logs), workspaces, token rotation, entity management, the administrator's **Eligible workspaces** and **Email for everyone** switches ([below](#accounts)) |
 | Work | **Workflows** | the workflow bundles on this gateway, shared by the gateway or your own (name, what each does, version, source, the apps that use it, availability to users), import, export, open in AbstractFlow, archive, the default workflow for each app and the **Streamed replies** setting ([below](#workflows)) |
+| Work | **Triggers** | your trigger connections (a mailbox, a feed, a webhook) that automations and flows listen to: recent events, a test event, delete, **New connection** from the source's settings; administrators see **All accounts** ([below](#triggers)) |
 | Work | **Skills & MCP** | administrators: **Skills** — the skills shelf setting and every skill (curated and imported, **Show archived**) with View, Export and Archive, import a `.zip` or folder, Duplicate to edit a curated one; **MCP servers** — whether agents are offered tools, an **Enabled for agents** switch per server, add, edit, test and archive ([configuration.md](docs/configuration.md#skills-shelf)) |
 | Work | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches; `#runtimes?account=<id>` lists one account's runtimes ([below](#runtimes-of-one-account)) |
 | Work | **Apps** | the browser apps, Code's terminal app and the desktop Assistant (below), no settings disclosures: the toolbar gear opens **Apps settings** and the gear beside Continuum's Open opens **Continuum settings** (backlog folder, exec runner, process manager), each a dialog whose rows apply on their own |
@@ -7422,6 +7670,40 @@ does not have this setting says so. The same setting is in the terminal console
 (Runtimes → *Runtime knobs* → *Edit stream replies*) and in
 `abstractgateway config set agents.streaming_default true|false`.
 
+### Triggers
+
+The **Triggers** page (sidebar *Work*, `/console#triggers`) lists your trigger
+**connections**: the places events come from that your automations and flows can
+listen to. A trigger *source* is a type (email received, feed item, webhook
+received); a *connection* is yours: this mailbox, this feed address, this
+webhook. You create it once here and every automation of yours can use it
+(AbstractFlow's *Automation defaults* dialog offers your connections for the
+sources that need one).
+
+- The table shows each connection's **Source**, **Name**, **Status** and
+  **Last event**. **Events** opens the 20 most recent events under the row; each
+  one expands to its full JSON (the CloudEvents envelope your flow receives as
+  `input_data.event`). **Test** sends a test event (`data.test: true`) and says
+  the result in the row ("Test event #12 sent."); it also appears in the events.
+  **Delete** asks under the row first: automations that listen to a deleted
+  connection stop receiving its events.
+- **New connection** opens a dialog: pick one of the sources that need a
+  connection, give it a name, and fill the source's own settings (the form comes
+  from the source's `connection_schema`).
+- A **webhook** connection answers with its address and a signing secret. The
+  secret is shown **once**, in that dialog, with a copy button: the gateway keeps
+  it sealed and never shows it again. The address stays visible under the row
+  (Events). Senders sign each request per Standard Webhooks.
+- Administrators get an **All accounts** switch: every account's connections,
+  with an Account column.
+- `/console#triggers?new=<source_id>` opens the dialog on that source (AbstractFlow's
+  *New connection…* link uses it).
+
+Routes: `GET /api/gateway/trigger-sources`, `GET|POST /api/gateway/triggers/connections`
+(`?all=true` for an administrator), `DELETE /api/gateway/triggers/connections/{id}`,
+`GET /api/gateway/triggers/connections/{id}/events?after=<seq>&limit=`,
+`POST /api/gateway/triggers/connections/{id}/test-fire`.
+
 ### Memory figures on Resources
 
 The accelerator meter shows the larger of two figures and names it: the
@@ -7769,7 +8051,7 @@ you can click.
 - **Keys.** `?` (or the **?** button at the right end of the status bar)
   lists every key of the current screen, each next to the control it
   presses, with **Quit the console**. Screens: **1** Connection, **2** Accounts,
-  **3** Workflows, **4** Skills & MCP, **5** Runtimes, **6** Apps,
+  **3** Workflows, **V** Triggers, **4** Skills & MCP, **5** Runtimes, **6** Apps,
   **7** Providers, **8** OpenAI API, **9** Models, **0** Multimodal,
   **H** Resources, **T** Sandbox, **N** Network, **S** Setup, **I** About
   (`W` opens Accounts). Also `Tab` / `Shift+Tab` focus, `Enter` press,
@@ -7888,6 +8170,16 @@ you can click.
   **Other workflow types** and **Settings** with the **Streamed replies**
   switch. **⚠ Broken workflows** lists versions the gateway could not load,
   with the reason and an **Archive** button.
+
+- **V Triggers** is the web page's table: Source, Name, Status, Last event
+  (an Account column with **All accounts**, `a`, administrators) and, per
+  row, **Events** (`e`, also `Enter`: a dialog with the 20 most recent
+  events, newest first, each followed by its JSON; a webhook's address with
+  **Copy**), **Test** (`t`: the row's note says "Test event #N sent.") and
+  **Delete** (`d`, after the web's question). **New connection** (`n`) is a
+  dialog: Source (the sources that need a connection), Name, and the
+  source's settings; a webhook's address and signing secret are then shown
+  once, each with **Copy**. **Refresh** reads the list again.
 
 - **4 Skills & MCP** has **[Skills] [MCP servers]** in its head (`[` / `]`
   switch them).
@@ -8476,7 +8768,25 @@ Rare transport answers keep the same shape with `not_found` (unknown path),
   before the automation existed, or while it was paused, is not processed. The
   occurrence receives the messages under `trigger.emails`, marked
   `content_trust: "untrusted"`. The gateway's mail watcher reads the mailbox
-  only while such an automation is active.
+  only while such an automation is active. With several mailboxes,
+  `"account": "<mailbox_id>"` chooses the one to watch (no value = your
+  primary mailbox; see [email.md](docs/email.md#several-mailboxes)).
+- **`feed.item@1`** runs when a feed you follow (RSS 2.0 or Atom 1.0) has new
+  items. The automation names one of your **trigger connections**
+  (`connection_id`); the connection holds the feed URL and how often it is
+  read (`every`, default `15m`, at least `60s`). The items of one read become
+  one run, under `input_data.event.data.events`, marked untrusted.
+- **`webhook.received@1`** runs when an external system calls your signed
+  webhook address (`POST /api/gateway/triggers/webhooks/{connection_id}`,
+  [Standard Webhooks](https://www.standardwebhooks.com/) signature). The
+  automation names the webhook connection; each call becomes one event of the
+  run's `input_data.event` (`event.data.events[0].data.body`, the webhook id as
+  its `subject`), marked untrusted.
+
+Trigger connections are yours alone: create them with the
+[connections API](docs/api.md#trigger-connections) or the console's **Triggers**
+page, and see [events-examples.md](docs/events-examples.md) for a feed digest and
+a signed webhook call end to end.
 
 An automation with `"notify": {"channels": ["console", "email"]}` emails every
 completed run’s full result, even when the model does not request a notification.
@@ -8619,6 +8929,17 @@ editor stores the suggestion in the VisualFlow document as
   `automation_defaults` keyed by entrypoint flow id.
 - At creation the defaults are checked again with the same rules; invalid
   published defaults answer 422 with the offending `field`.
+- A trigger whose source listens to a **connection** (`needs_connection` with
+  the `trigger_connections` provider: `webhook.received@1`, `feed.item@1`)
+  carries `"connection_id": "<id>"` in `trigger` (or in `trigger.config`);
+  it is required for those sources (422 `connection_required`) and refused for
+  the others. A connection belongs to one person: an automation created from
+  defaults that name someone else's connection is refused with 422
+  `connection_not_yours` ("choose one of your own connections"), and a request
+  naming a connection that is not yours answers 404 `connection_not_found`.
+  The automation stores it as `trigger.config.connection_id`. Connections are
+  managed with the [connections API](docs/api.md#trigger-connections) and the
+  console's Triggers page.
 
 ## Tool approval and consent
 
@@ -8972,6 +9293,26 @@ discussion session is refused (400); a session whose discussion cannot be
 resolved answers 409 `session_attribution_failed`. These answers come from
 `/runs/start` and use its ordinary error shape.
 
+## Wakes: work a run schedules for later
+
+A run can ask for work later: an agent's `schedule_run` tool (or the `SCHEDULE_RUN` effect of a
+flow) with `after_s`, `at` or `on` (a trigger), and a `task` or a `note` ("ping me in 5 minutes
+about X"). AbstractRuntime plans it (at most the caller's tools, never `schedule_run` itself, a
+note gets none); the gateway creates it as a **one-shot automation** owned by the run's account:
+
+- it runs the session's own workflow (its turn root's bundle and flow, same provider and model),
+  under the gateway's workspace guard and built-in tool deny for the session it will run in;
+- by default the new run is a turn of the **caller's session** (`mode: same_session`), with the
+  `[Trigger schedule@2 · occurrence 1 · …]` header, so the conversation shows it and the model's
+  replay sees it; `mode: independent` runs it in the automation's own session;
+- your event stream records `wake.scheduled {automation_id, session_id, origin_run_id, at | on}`,
+  then, when it fires, `trigger.event` and the new run's `run.started` (origin `kind: "agent"`);
+- cancel = archive the automation (`automation.archive`) before it fires: `wake.cancelled` is
+  recorded and nothing runs. It is listed with your other automations meanwhile.
+
+Evidence: `src/abstractgateway/wakes_host.py` (`GatewayScheduleRun`, wired on every runtime the
+host builds), `src/abstractgateway/runner.py` (`_stream_wake_cancelled`).
+
 ## Automations in run lists
 
 `GET /api/gateway/runs` rows carry the fields that say how a run belongs to an
@@ -9081,8 +9422,9 @@ python scripts/accept_automations_v1.py --data-dir /tmp/automation-acceptance
 - Schedules are fixed UTC intervals (`s`, `m`, `h`, `d`, at most `366d`) or
   daily, weekly and monthly rules at a wall time in an IANA time zone
   (`schedule@2`); there are no cron expressions.
-- The trigger sources are `schedule@1`, `schedule@2`, `manual@1` and
-  `email.received@1`; there are no other external triggers.
+- The trigger sources are `schedule@1`, `schedule@2`, `manual@1`,
+  `email.received@1`, `feed.item@1` and `webhook.received@1`, plus sources
+  installed by other packages.
 - Occurrences run one at a time, missed ticks coalesce, and a failed
   occurrence never stops the automation. These policies cannot be changed.
 - Growing history is the most recent whole turns within the configured token budget (50,000 tokens by default) and is not
@@ -9122,7 +9464,7 @@ that omit it retain the 50,000-token default.
 
 ## docs/email.md
 
-# Email: one user, one runtime, one mailbox
+# Email: your address and your mailboxes
 
 Two things carry the word "email", and the gateway names them differently everywhere:
 
@@ -9336,10 +9678,35 @@ curl -sS -X PUT -H "$AUTH" "$BASE_URL/api/gateway/me/email/policy" \
 curl -sS -X PUT -H "$AUTH" "$BASE_URL/api/gateway/me/email/limits" -d '{"per_hour": 100, "per_day": 1000}'
 ```
 
+## Several mailboxes
+
+Besides your primary mailbox you can connect further ones, each with an
+id of your choice (`work`, `support`: 1 to 32 lowercase letters, digits, `_` or `-`):
+
+```bash
+curl -sS -X PUT -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"address":"me@work.example","password":"app-password"}' \
+  "$BASE_URL/api/gateway/me/email/accounts/work"
+```
+
+- A further mailbox is **read-only** unless you ask for sending (`"send": true`): only its incoming
+  server (IMAP) is stored and tested, it shows `can_send: false`, and anything bound to it that
+  tries to send is refused ("This account has no SMTP (send) settings.").
+- `GET /me/email/accounts` lists them all with `can_read` / `can_send`, the primary (id `default`)
+  first. Your email address, notifications and Agent email tools switch stay yours, not per mailbox;
+  runs and notifications keep using the primary mailbox.
+- An automation watches one mailbox: `email.received@1` with `"account": "<mailbox_id>"` (`self`,
+  `default` or no value = the primary). The gateway refuses, when the automation is saved, a
+  mailbox you have not connected (`email_account_not_found`) or one without IMAP
+  (`email_account_cannot_read`). Each mailbox has its own watcher, cursor and status, and is read
+  only while an automation watches it.
+- A single-mailbox install needs no migration: the existing mailbox is the primary, id `default`,
+  its files where they were.
+
 ## Automations on new mail
 
-The mail watcher reads your mailbox only while at least one of your automations is active on the
-`email.received@1` trigger, checking every 60 seconds. It is read-only (IMAP `EXAMINE` and
+The mail watcher reads a mailbox only while at least one of your automations is active on the
+`email.received@1` trigger for that mailbox, checking every 60 seconds. It is read-only (IMAP `EXAMINE` and
 `BODY.PEEK`), keeps a durable cursor, survives a server rebuilding the folder (UIDVALIDITY change:
 it re-reads by date and passes messages it already has), and moves the cursor past a message only
 after that message is durably stored in your runtime's event inbox. A message that cannot be read
@@ -9504,6 +9871,7 @@ account is copied once into the gateway settings (the consoles say which account
 | Password / OAuth tokens | `<plane>/email/account/email/secret.enc` (AES-256-GCM under the data folder's key `<data_dir>/secrets/sealing.key`; never the OS keychain, [security](docs/security.md#sealed-secrets-one-key-file-per-data-folder)) |
 | The sealing key (every sealed secret) | `<data_dir>/secrets/sealing.key` (0600 in a 0700 folder; back it up with the data folder) |
 | Watcher state | `<plane>/email/watcher.json`; the cursor and received mail in `<runtime data dir>/event_inbox/` |
+| A further mailbox `<id>` | `<plane>/email/accounts/<id>/abstractcore.json`, its credentials in `…/accounts/<id>/email/secret.enc`, its watcher state in `…/accounts/<id>/watcher.json`; its mail in the same event inbox, stream `email:<tenant>:<user>:<id>:<folder>` |
 | Notification preferences and outbox | `<plane>/email/notifications.json`, `<plane>/email/outbox.sqlite3` (created with the first notice) |
 | What is available to users (defaults + per-user) | `<data_dir>/auth/capabilities.json` |
 | Agent email tools choice | `<plane>/email/agent_tools.json` |
@@ -10189,10 +10557,18 @@ model. Details: [docs/api.md](docs/api.md) and [docs/faq.md](docs/faq.md).
     agent workflow for that interface; every start answers `resolved_workflow`
   - `input_data._runtime.stream: true` also sends the model's reply live
     (`llm.delta` frames on the ledger stream)
-- Clients create **automations**: a workflow run on a trigger (a fixed UTC
-  interval such as every 2 minutes, or only when asked), each run readable as a
-  chat turn, quiet unless a run asks for attention or fails:
-  `/api/gateway/automations*` ([docs/automations.md](docs/automations.md))
+- Clients create **automations**: a workflow run on a trigger (an interval,
+  a daily or weekly time, new mail in one of your mailboxes, a feed item, a
+  signed webhook call, or only when asked), each run readable as a chat turn,
+  quiet unless a run asks for attention or fails:
+  `/api/gateway/automations*` ([docs/automations.md](docs/automations.md));
+  feeds and webhooks are **trigger connections** (`/api/gateway/triggers/*`,
+  the console's Triggers page)
+- Clients **follow what needs the person** on one stream per account: run
+  starts and ends, automation results, approvals and questions waiting, wakes
+  an agent scheduled with `schedule_run`, notifications shown:
+  `GET /api/gateway/me/events` (catch-up) and `/me/events/stream` (SSE)
+  ([docs/events-examples.md](docs/events-examples.md))
 - Clients **act** by submitting durable commands: `POST /api/gateway/commands`
   - supported types: `pause|resume|cancel|conclude|emit_event|update_schedule|compact_memory|inject_guidance`,
     plus the `automation.*` commands for an automation
@@ -10285,6 +10661,7 @@ Published docs site: https://www.lpalbou.info/AbstractGateway/
 - Architecture: [docs/architecture.md](docs/architecture.md)
 - API overview: [docs/api.md](docs/api.md)
 - Automations: [docs/automations.md](docs/automations.md)
+- Events and triggers, examples: [docs/events-examples.md](docs/events-examples.md)
 - Email: [docs/email.md](docs/email.md)
 - Configuration: [docs/configuration.md](docs/configuration.md)
 - Consoles: [docs/console.md](docs/console.md)
@@ -10338,8 +10715,8 @@ Related repos:
 |---|---|
 | [first-run.md](docs/first-run.md) | the zero-configuration start on your own machine: one-time sign-in link, first-run guide, start at login |
 | [getting-started.md](docs/getting-started.md) | explicit setup: bundles, starting and scheduling runs, split API/runner, file vs SQLite stores |
-| [architecture.md](docs/architecture.md) | components, diagrams, the replay-first durable contract, live replies, the workspace guard, the desktop hand-over, deployment shapes |
-| [api.md](docs/api.md) | the client contract with curl examples: the gateway default workflow (`@default`), live replies, a run's workspace folder, durable commands, the automation routes, discovery, media, models, host state, `/about`; map of every route family |
+| [architecture.md](docs/architecture.md) | components, diagrams, the replay-first durable contract, automations, triggers, events and attention, live replies, the workspace guard, the desktop hand-over, deployment shapes |
+| [api.md](docs/api.md) | the client contract with curl examples: the gateway default workflow (`@default`), live replies, a run's workspace folder, durable commands, the automation routes, trigger connections and the signed webhook ingress, your event stream (`/me/events`, its vocabulary and the one-notification-per-machine rule), discovery, media, models, host state, `/about`; map of every route family |
 | [configuration.md](docs/configuration.md) | every setting: runtime settings, network exposure (detected addresses, Tailscale), apps, default agent workflows, stream replies, skills shelf, backlog, workspace policy, capability defaults, environment variables, CLI flags |
 | [faq.md](docs/faq.md) | recurring questions and limits |
 | [troubleshooting.md](docs/troubleshooting.md) | symptoms, causes and fixes: sign-in, network modes, runs, installs, downloads, tray, login service |
@@ -10348,14 +10725,15 @@ Related repos:
 
 | Page | Read it for |
 |---|---|
-| [email.md](docs/email.md) | per-user email: connecting your own mailbox (password or OAuth2), recipient policy and send limits, automations on new mail, email notifications, account recovery by email, the administrator switch, migration from the retired environment variables |
-| [automations.md](docs/automations.md) | automations: a workflow run on a trigger as a durable controller run; every route with its shapes, the error envelope, tool approval, typed waits and how to answer them, attention and `/seen`, discussions, run lists, legacy schedules, operations (one writer process, restart recovery, boot warm-up, the acceptance script) and the limits of v1 |
+| [email.md](docs/email.md) | per-user email: connecting your own mailbox and further read-only mailboxes (password or OAuth2), recipient policy and send limits, automations on new mail, email notifications, account recovery by email, the administrator switch, migration from the retired environment variables |
+| [automations.md](docs/automations.md) | automations: a workflow run on a trigger as a durable controller run; every route with its shapes, the error envelope, tool approval, typed waits and how to answer them, attention and `/seen`, wakes an agent schedules (`schedule_run`), discussions, run lists, legacy schedules, operations (one writer process, restart recovery, boot warm-up, the acceptance script) and the limits of v1 |
+| [events-examples.md](docs/events-examples.md) | events and triggers, three end-to-end examples with the exact commands: watch a mailbox and tell me when something important arrives, a digest of a news feed, run a flow when an external system calls my webhook (signed curl); following your event stream |
 | [openai-api.md](docs/openai-api.md) | the OpenAI-compatible API at `/v1`: connecting apps and SDKs, what is supported, Protected/Open and Who can connect, errors, the request log, moving from `/core/v1` |
-| [console.md](docs/console.md) | the web console at `/console` (the grouped sidebar and every tab, including Accounts and Workflows; responsive layout on phones and tablets) and the `abstractgateway-console` terminal app (its screens and keys) |
+| [console.md](docs/console.md) | the web console at `/console` (the grouped sidebar and every tab, including Accounts, Workflows and Triggers; responsive layout on phones and tablets) and the `abstractgateway-console` terminal app (its screens and keys) |
 | [apps.md](docs/apps.md) | installing, starting and opening the browser apps (Flow, Code, Observer, Continuum, Entity), Code's terminal app and the desktop Assistant |
 | [engines.md](docs/engines.md) | installing local engines (Ollama, LM Studio, MLX, llama.cpp, vLLM, Hugging Face): what each Install does, when a password or the Apple tools are needed |
 | [model-downloads.md](docs/model-downloads.md) | download jobs: progress, stalls, cancel, end reasons, parent jobs, the event stream |
-| [tray.md](docs/tray.md) | the desktop tray icon: apps, models, pause, start at login, network, restart and update |
+| [tray.md](docs/tray.md) | the desktop tray icon: sessions, automation and approval notifications, apps, models, pause, start at login, network, restart and update |
 | [security.md](docs/security.md) | user accounts, who sees which account and entity, sessions, origins, network exposure, callers on this computer, the Assistant's sign-in, workspace scope and the built-in deny list, limits, audit log |
 | [deployment.md](docs/deployment.md) | Docker images, Compose, provider variables, single machine without Docker |
 | [shipped-workflows.md](docs/shipped-workflows.md) | the workflows a fresh install serves (coding agent, deep research, co-scientist, …) and managing the registry |
@@ -10555,6 +10933,11 @@ and pause, resume, run now or archive it with
 `POST /api/gateway/automations/{automation_id}/commands`. Tools run without
 asking by default (creating the automation is the consent). See
 [automations.md](docs/automations.md).
+
+An automation can also start on new mail, a feed item or a signed webhook
+call, and you can follow what needs you on your event stream
+(`GET /api/gateway/me/events/stream`): see
+[events-examples.md](docs/events-examples.md).
 
 For a plain **scheduled parent run** without these controls, use `POST /api/gateway/runs/schedule`:
 
@@ -11129,6 +11512,19 @@ disappeared, read `<data dir>/logs/tray.log`; `GET /api/gateway/host/tray`
 reports its exit code, and `POST /api/gateway/host/tray/show` (admin) starts
 it again. See [tray.md](docs/tray.md).
 
+### The tray shows no notification for an automation result or an approval
+
+- The tray announces what arrives on your event stream after it started;
+  items that existed before are counted in the tooltip, not announced again.
+- On Linux and Windows, notifications depend on the desktop: when the tray
+  cannot show one it records `notification.failed {channel: "tray"}` in your
+  stream (`GET /api/gateway/me/events`), with the reason.
+- An automation raises attention only when its run asks to notify, fails after
+  its retries, or waits for you ([automations.md](docs/automations.md#attention-and-seen)).
+- The Assistant and Code stay silent when the tray on the same computer already
+  announced the item in the last minute
+  ([api.md](docs/api.md#report-a-notice-a-client-showed-post-apigatewaymeeventsnotifications)).
+
 ### The Assistant opened from the console is not signed in
 
 - It was already running: a running Assistant receives no sign-in code. Quit
@@ -11226,8 +11622,111 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `docs/events-examples.md`: the webhook as two walkthroughs, set it up (console Triggers, Flow's trigger event
+  and Automation dialog, the automation) and try it (a copy-paste signed call, what appears under Events, on
+  `/me/events` and in the tray), with which senders can call the address directly. The ingress reads the
+  Standard Webhooks headers only: GitHub (`X-Hub-Signature-256`) and Svix-named headers (`svix-*`) need a relay
+  for now; accepting them is a follow-up.
+
+- Events and triggers: examples (backlog 1048, `docs/events-examples.md`): watch a mailbox and tell me when
+  something important arrives, a digest of a news feed, run a flow when an external system calls my webhook
+  (the Standard Webhooks signing as shell commands), following your event stream; each one a hermetic
+  end-to-end test under `tests/e2e_events/` (`python -m pytest tests -q -k e2e_events`): the real app and
+  runner, a scripted model double deciding through the flow's LLM node, AbstractCore's fake mail servers, a
+  recorded Python Insider RSS (plus a live variant run with `--allow-network`), the gateway tray following
+  the stream over HTTP on a scratch port.
+- Per-user event stream (backlog 1046, `events_stream.py`): one durable, ordered stream per person
+  (`user:<tenant>:<user>`, the runtime's `JsonFileEventInbox` in the plane's data folder) holding only what is
+  not a step of a run, in CloudEvents 1.0 names (`{specversion, id, type, source, subject?, time, data,
+  sequence}`): `trigger.event`, `attention.raised` (the ledger `record_key`, never a body), `attention.seen`,
+  `notification.sent|failed` (console, email), and the pointers `run.started|finished {run_id, session_id,
+  origin}` written after the run store save, idempotent by id and rebuilt at boot after a crash in between.
+- `GET /api/gateway/me/events?after=<sequence>&limit=` (catch-up page `{stream, events, next_after, head, more}`)
+  and `GET /api/gateway/me/events/stream` (SSE: `id` = sequence, `event` = type, `Last-Event-ID` honoured when
+  `after` is 0, `: keep-alive` every `heartbeat_s`, the `after` semantics of `/runs/{id}/ledger/stream`): the
+  caller's own stream only, in the caller's own plane. `POST /api/gateway/me/events/notifications` lets a client
+  channel (the tray) record `notification.sent|failed`. Documented in api.md and the OpenAPI document.
+- The desktop tray follows the person's event stream (`tray/events.py`): one OS notification per new
+  `attention.raised` (the automation's title, a failure said as such), recorded back as `notification.sent|failed`
+  with `channel: "tray"`; the tooltip counts the items raised and not yet seen; the Scheduled rows are refetched
+  on automation events (and every 5 minutes) instead of the 20-second `GET /automations` poll, which stays for a
+  gateway without the stream. Reconnects resume from `Last-Event-ID`.
+- The per-user stream carries the waits on a person: a run that stops for a tool approval or a question
+  writes `attention.raised {kind: approval|question, run_id, session_id, wait_key, step_id, record_key,
+  prompt_ref}` (nothing copied: the prompt is read from the run), and its end `attention.seen {kind, run_id,
+  wait_key, step_id, outcome: answered|approved|denied|timed_out|cancelled|failed}`; idempotent ids, open waits
+  repaired at boot. The tray announces each one and counts them with the automation items.
+- `schedule_run` host (backlog 1045, `wakes_host.py`): every runtime the gateway builds registers the
+  `SCHEDULE_RUN` handler. A wake becomes a one-shot automation owned by the plane's account that runs the
+  session's own workflow (same provider and model) in the caller's session, under the gateway's workspace guard
+  and built-in tool deny; `wake.scheduled` is written to the owner's event stream, and archiving it before it
+  fires writes `wake.cancelled`. A session whose workflow is not a bundle workflow is refused with a sentence.
+- `POST /api/gateway/me/events/notifications` accepts the channels `tray`, `assistant`, `code` and `watch`
+  (422 otherwise) and an optional `device`; documented dedupe rule so an approval is notified once per machine
+  (an app stays silent when another channel on the same device reported `notification.sent` for the record in
+  the last minute; reference `events_stream.already_notified`). The tray sends its machine id.
+
+- Console **Triggers** page (backlog 1041, `/console#triggers`): your trigger connections (Source, Name,
+  Status, Last event) with **Events** (the 20 most recent events, each expandable to its JSON), **Test** (sends a
+  test event, the result said in the row) and **Delete** (confirmed under the row); **New connection** renders the
+  chosen source's `connection_schema` as a form; a webhook connection's address and one-time signing secret are
+  shown once with copy buttons; administrators switch on **All accounts**. `#triggers?new=<source_id>` opens the
+  dialog on a source. The terminal console has the same page (key **V**).
+- Run origin (backlog 1038): every run started through `POST /runs/start` records who started it,
+  `input_data._meta.origin = {kind: "person", actor: "<tenant>:<user>", client: <request interface>, ref: {}}`,
+  and the `POST /runs/schedule` wrapper `kind: "system"`. The gateway writes it (a client-sent origin is
+  replaced); `GET /runs/{run_id}` answers it as `origin` (null for older runs).
+- Webhook ingress for trigger connections (backlog 1042): `POST /api/gateway/triggers/webhooks/{connection_id}`,
+  public (no bearer token): the Standard Webhooks signature (`webhook-id`, `webhook-timestamp`,
+  `webhook-signature`, HMAC-SHA256 with the connection's sealed secret, verified by AbstractRuntime's
+  `webhook.received@1`) is the auth. A signed call appends one
+  CloudEvents-shaped event to the connection's inbox stream `trigger:<connection_id>` and wakes the automations
+  bound to it; unsigned or tampered calls answer 401, a timestamp outside the connection's window (5 minutes by
+  default) or a replayed webhook-id 409 (to be treated as delivered), an unknown connection 404, a body over 512 KiB
+  413, a body neither JSON nor UTF-8 text 415, more than 60 calls a minute per connection
+  (120 per client address) 429. Refusals are recorded on the connection and the audit line. Every runtime the
+  gateway builds now gets its plane's trigger connection store (`<runtime data dir>/triggers/connections/`).
+- Agents can schedule a later run (backlog 1045 wiring): the gateway's ReAct tool registry offers AbstractAgent's
+  `schedule_run` beside `delegate_agent` (a run gets it when its allowlist names it). An AbstractAgent without the tool
+  keeps every other builtin and logs that `schedule_run` is not offered.
+- Feed connections are polled (backlog 1043): each account's worker loop calls AbstractRuntime's
+  `poll_feed_connections` over the plane's connection store (the one store its runtime was wired with) and wakes the
+  automations that received items. Nothing polls at import.
+- Trigger connections API (backlog 1041): `GET/POST /api/gateway/triggers/connections`,
+  `GET/PUT/DELETE /api/gateway/triggers/connections/{id}`, `GET …/{id}/events?after=&limit=` (CloudEvents JSON with
+  `sequence`), `POST …/{id}/test-fire`. The caller's own connections in their runtime plane (another account's id
+  answers 404); an administrator lists every account's with `all=true` and may read, test and revoke any. Rows carry
+  `config_public` (never a secret); creating a webhook connection answers its signing secret once and its
+  `ingress_url`. Automations: `trigger.connection_id` is accepted in a workflow's `automation_defaults` (required for a
+  connection source, refused for the others) and in a request, stored as `trigger.config.connection_id`; a connection
+  that is not the owner's is refused (404 `connection_not_found`, or 422 `connection_not_yours` when it came from a
+  shared workflow's defaults).
+- Several mailboxes per user, read-only at minimum (backlog 1044): `GET /api/gateway/me/email/accounts` lists every
+  mailbox of the caller with `can_read` / `can_send` (also as `accounts` in `GET /me/email`);
+  `PUT|GET|DELETE /me/email/accounts/{mailbox_id}`, `POST …/{mailbox_id}/test`, `PUT …/{mailbox_id}/enabled`. A further
+  mailbox stores IMAP only unless `send: true` (read-only: sends refused). Each mailbox has its own watcher, cursor and
+  inbox stream `email:<tenant>:<user>:<mailbox_id>:<folder>`, read only while an automation watches it, and wakes only
+  those automations. `email.received@1` bindings name a mailbox with `account: <mailbox_id>`, checked by the gateway when
+  the automation is created or revised (422 `email_account_not_found` / `email_account_cannot_read`). A run bound to a
+  further mailbox resolves that mailbox. Existing installs migrate without action: the mailbox they have is the primary,
+  id `default`, its files unchanged.
+- `GET /api/gateway/sessions/search?q=…`: keyword search over the caller's conversations: their questions,
+  answers and artifacts (generated media by their prompt, attachments by their file name), with
+  AbstractRuntime's `ConversationSearch` (words and parts of words, case and accents ignored, a typo
+  forgiven). A hit on an artifact carries it (`artifact`), fetchable from its run's content route. One index per runtime plane, in that plane's data folder, so an account only ever
+  searches its own conversations. Filtered like `GET /runs?root_only=true` (session kinds, conversations,
+  archived left out unless `archived=true`); one item per session with a snippet and the match positions;
+  `indexing.complete: false` while older conversations are still being indexed.
+
 ### Fixed
 
+- Durable `emit_event` reaches every running or waiting run that declares the event's mailbox, however many
+  runs are active (it reached the newest 200 only), through the run store's mailbox index (AbstractRuntime
+  `list_mailbox_runs`).
+- On a file store with more than 200 waiting runs, a due wake fires on time: the scheduler's next deadline comes
+  from the store's `next_wait_deadline` over every waiting run (backlog 1046).
 - Browser apps left running by a previous gateway run are now stopped and
   replaced, not listed as started outside the gateway. When the gateway
   starts, an app of its own data dir (`<data dir>/apps/…`) still answering on
@@ -13929,6 +14428,290 @@ Thank you to everyone who reports issues, improves documentation, and contribute
 
 ---
 
+## docs/events-examples.md
+
+# Events and triggers: examples
+
+Three end-to-end examples of events and attention: something
+happens outside (a mail, a feed post, a call to a webhook), an automation runs a workflow on it, the
+workflow's model decides whether you need to know, and you are told on your event stream, in the
+gateway tray, the Assistant, Code and the watch.
+
+Each example is also a hermetic test under `tests/e2e_events/` (scratch data folder and HOME, no
+provider, fake mail servers, nothing on port 8080):
+
+```bash
+cd abstractgateway
+python -m pytest tests -q -k e2e_events                    # the three examples
+python -m pytest tests/e2e_events -q --allow-network      # + the live Python Insider feed
+```
+
+## The pieces
+
+- A **trigger connection** is one instance of a source that needs your settings: a feed URL
+  (`feed.item@1`), a webhook secret (`webhook.received@1`). A mailbox is the connection of
+  `email.received@1` (`config.account`; `self` is your primary mailbox). Connections are yours: list,
+  create, test-fire and delete them with `/api/gateway/triggers/connections` or the console's
+  **Triggers** page (`/console#triggers`).
+- An **automation** binds a workflow to a trigger (`POST /api/gateway/automations`, or Flow's
+  Automation dialog). Each occurrence runs the workflow with the trigger's event: as
+  `input_data.event` (CloudEvents 1.0: `type`, `subject`, `time`, `data`) and, for a string `prompt`,
+  framed as untrusted content appended to it. Connection sources deliver a batch:
+  `event.data.count` and `event.data.events[i].data`.
+- **Attention**: an occurrence whose output carries `notify: {title, body}` (or `notify: true`) raises
+  an attention item; one that fails after its retries raises a failure item. Ordinary results are
+  quiet.
+- **Your event stream** (`GET /api/gateway/me/events?after=<sequence>`, live:
+  `GET /api/gateway/me/events/stream`) carries `trigger.event`, `run.started`, `run.finished`,
+  `attention.raised`, `attention.seen` and `notification.sent|failed`. The tray, the Assistant (desktop
+  and watch) and Code follow it.
+
+The workflow the examples use, "judge", is three nodes (its JSON is `judge_flow()` in
+`tests/e2e_events/e2e_support.py`; build the same in Flow):
+
+```
+On Flow Start (prompt) ──▶ LLM Call  prompt ◀── start.prompt
+                                     system  "If it needs the person's attention, answer a short title
+                                              and a body; otherwise an empty title and body."
+                                     response schema {title: string, body: string}
+                           ──▶ On Flow End  notify ◀── LLM data
+                                            response ◀── LLM response
+```
+
+The model decides; an empty title and body is quiet, anything else raises attention. No keyword
+rule is involved.
+
+In the commands below, replace `<token>` with your gateway token (the console's **Account** page)
+and `http://127.0.0.1:8080` with your gateway's address. `jq` reads the answers.
+
+## 1. Watch a mailbox and tell me when something important arrives
+
+Connect the mailbox (a further read-only mailbox is `PUT /api/gateway/me/email/accounts/<id>`, IMAP
+only; see [email.md](docs/email.md)):
+
+```bash
+curl -sS -X PUT http://127.0.0.1:8080/api/gateway/me/email \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"address": "me@example.org", "password": "<app password>",
+       "imap": {"host": "imap.example.org", "port": 993, "security": "ssl"},
+       "smtp": {"host": "smtp.example.org", "port": 587, "security": "starttls"}}'
+```
+
+Create the automation on new mail, running your judge workflow:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8080/api/gateway/automations \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"request_id": "mailbox-watch-1", "title": "Mailbox watch",
+       "target": {"bundle_ref": "<your bundle>@<version>", "flow_id": "judge",
+                  "input_data": {"prompt": "A new mail arrived. Tell me only if it needs me today."}},
+       "trigger": {"source_id": "email.received", "source_version": 1,
+                   "config": {"uses_model": true, "every": "60s"}},
+       "context": {"mode": "independent"}}' | jq .automation_id
+```
+
+The mailbox is read from the moment the automation exists (mail already there is history). When a
+mail arrives, one occurrence runs with it framed in its prompt; when the model says it matters, the
+attention item lands on your stream:
+
+```bash
+curl -sS "http://127.0.0.1:8080/api/gateway/me/events?after=0&limit=100" \
+  -H "Authorization: Bearer <token>" | jq '.events[] | select(.type == "attention.raised")'
+```
+
+and the gateway tray shows one notification ("Mailbox watch — It has a result for you"), recorded on
+the stream as `notification.sent {channel: "tray"}`. Opening the automation marks it seen
+(`attention.seen`), which lowers every badge.
+
+A second mailbox (`config.account: "<id>"`) is accepted by the gateway but not yet by AbstractRuntime's
+`email.received@1` (it reads only `self` today); that form is a pending test in
+`tests/e2e_events/test_e2e_mailbox_watch.py`.
+
+## 2. A digest of a news feed
+
+```bash
+CID=$(curl -sS -X POST http://127.0.0.1:8080/api/gateway/triggers/connections \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"source_id": "feed.item", "source_version": 1, "label": "Python Insider",
+       "config": {"url": "https://blog.python.org/feeds/posts/default", "every": "1h",
+                  "initial_items": "deliver", "max_items": 5}}' | jq -r .connection_id)
+
+curl -sS -X POST http://127.0.0.1:8080/api/gateway/automations \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d "{\"request_id\": \"feed-digest-1\", \"title\": \"Python news digest\",
+       \"target\": {\"bundle_ref\": \"<your bundle>@<version>\", \"flow_id\": \"judge\",
+                    \"input_data\": {\"prompt\": \"New posts on a feed I follow. Write me a short digest if any of them matters.\"}},
+       \"trigger\": {\"source_id\": \"feed.item\", \"source_version\": 1, \"config\": {}, \"connection_id\": \"$CID\"},
+       \"context\": {\"mode\": \"independent\"}}" | jq .automation_id
+```
+
+The gateway polls each feed at its `every` (at least 60 s; 15 minutes by default), with conditional
+GET. `initial_items: "deliver"` makes the posts already there the first digest (`"skip"`, the default,
+starts from the next post). All new posts of one poll are ONE occurrence: `event.data.count` and each
+post at `event.data.events[i].data` (`title`, `link`, `summary`, `published`). See the posts the
+connection received:
+
+```bash
+curl -sS "http://127.0.0.1:8080/api/gateway/triggers/connections/$CID/events?limit=20" \
+  -H "Authorization: Bearer <token>" | jq '.events[].data.title'
+```
+
+On your stream: `trigger.event`, `run.started`, `run.finished` for the occurrence and, when the model
+wrote a digest, `attention.raised`.
+
+## 3. Run this flow when an external system calls my webhook
+
+A webhook is an address on your gateway that another system calls (an HTTP `POST`) when something
+happens on its side. Each call that carries a valid signature starts one run of your flow, with the
+call's JSON body as input. Nobody without the secret can start it.
+
+### 3a. Set it up
+
+1. **Create the webhook connection.** In the web console, open **Triggers** (sidebar, *Work*) and
+   press **New connection**. Under **Source** choose **When a webhook is called**, type a **Name**
+   (for example `Orders`), and press **Create**.
+2. **Copy the address and the secret.** The dialog shows the **Webhook address**
+   (`https://<your gateway>/api/gateway/triggers/webhooks/<connection id>`) and the **Signing
+   secret** (`whsec_…`), each with a copy button. The secret is shown **once**: store it where the sender
+   will read it (a password manager, the sender's settings). The address stays visible later under
+   the connection's row (**Events**).
+3. **Let your flow receive the event.** In AbstractFlow, open the flow, select its **On Flow Start**
+   node and press **Add trigger event** (Properties). The node gets an `event` output and a
+   **Trigger event** node is wired to it. Save the flow.
+4. **Attach the webhook to the flow.** In AbstractFlow, open the **Flow Library**, select the flow,
+   and press the edit button next to **Automation**. Set **Trigger** to **When a webhook is
+   called**, pick your connection under **Connection** (press **Refresh connections** if you just
+   created it), and press **Save**. Then **Publish** the flow.
+5. **Create the automation.** One request creates it from the flow's saved defaults (the trigger,
+   the connection, the title and the inputs come from step 4):
+
+   ```bash
+   curl -sS -X POST http://127.0.0.1:8080/api/gateway/automations \
+     -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+     -d '{"request_id": "orders-webhook-1", "title": "Orders webhook",
+          "target": {"bundle_ref": "<your bundle>@<version>", "flow_id": "<flow id>"}}'
+   ```
+
+   Without AbstractFlow, put the trigger in the same request:
+   `"trigger": {"source_id": "webhook.received", "source_version": 1, "config": {}, "connection_id": "<connection id>"}`
+   instead.
+
+What the flow receives: each call is one event under `event.data.events`, oldest first; the JSON
+body is at `event.data.events[0].data.body` and the sender's message id at
+`event.data.events[0].subject`. For a call whose body is `{"order": 42, "state": "payment_refused"}`
+the run's `event` input reads (other envelope fields left out):
+
+```json
+{
+  "specversion": "1.0",
+  "type": "abstract.webhook.received.v1",
+  "data": {
+    "count": 1,
+    "events": [
+      {
+        "subject": "msg_1761390000",
+        "data": {
+          "webhook_id": "msg_1761390000",
+          "content_type": "application/json",
+          "body": {"order": 42, "state": "payment_refused"}
+        }
+      }
+    ]
+  }
+}
+```
+
+A body that is not JSON arrives as `body_text`. The body is written by someone else: the gateway marks
+it untrusted, so a run treats it as data, never as instructions.
+
+### 3b. Try it
+
+Paste this block in a terminal, after setting `CID` (the last part of the address) and `SECRET`
+(the `whsec_…` value). It sends one signed call, exactly as a sender does:
+
+```bash
+CID="tc_REPLACE_ME"
+SECRET="whsec_REPLACE_ME"
+GATEWAY="http://127.0.0.1:8080"
+
+BODY='{"order": 42, "state": "payment_refused"}'
+ID="msg_$(date +%s)"
+TS="$(date +%s)"
+KEY="$(printf %s "${SECRET#whsec_}" | base64 -d | xxd -p -c 256)"
+SIG="$(printf %s "$ID.$TS.$BODY" | openssl dgst -sha256 -mac HMAC -macopt "hexkey:$KEY" -binary | base64)"
+
+curl -sS -X POST "$GATEWAY/api/gateway/triggers/webhooks/$CID" \
+  -H "Content-Type: application/json" \
+  -H "webhook-id: $ID" -H "webhook-timestamp: $TS" -H "webhook-signature: v1,$SIG" \
+  --data "$BODY"
+```
+
+No bearer token: the signature is the authentication. What you should see:
+
+- the answer `202` with `{"accepted": true, "connection_id": "…", "webhook_id": "msg_…", "event_id": "…", "seq": …, "woken": 1}`
+  (`woken` counts the automations the call woke);
+- in the console, **Triggers** → the connection's **Events**: the call, its body under `data.body`;
+- on your event stream (`GET /api/gateway/me/events`): `trigger.event`, then `run.started` and
+  `run.finished` of the run the call started;
+- in the desktop tray: a notification when that run has something for you (its flow ends with
+  `notify`) or fails; a run that only does its work stays quiet.
+
+The other answers: `401 webhook_signature_invalid` (the body is not the one signed, or the secret is
+wrong), `401 webhook_unsigned` (a `webhook-*` header is missing), `409 webhook_stale` (the timestamp
+is more than 5 minutes away from the gateway's clock), `409 webhook_replayed` (this `webhook-id` was
+already accepted: a retry of a delivered call; treat it as delivered), `404` (unknown connection).
+Run the block again for a second call: it uses a new id.
+
+### Which services can call it directly
+
+The gateway accepts the [Standard Webhooks](https://www.standardwebhooks.com/) format: the headers
+`webhook-id`, `webhook-timestamp` and `webhook-signature` (`v1,<base64 HMAC-SHA256 of
+"<id>.<timestamp>.<body>">`, keyed with the secret). Any sender that implements it can call the
+address directly, as can your own scripts and automation tools that compute an HMAC (as in 3b).
+
+- **Services built on Svix** (for example Clerk and Resend) sign the same way but name the headers
+  `svix-id`, `svix-timestamp` and `svix-signature`. The gateway reads only the `webhook-*` names, so
+  these need a small relay that renames the three headers and forwards the body unchanged.
+- **GitHub** (Settings → Webhooks → Add webhook: Payload URL, Content type `application/json`,
+  Secret) signs differently: one `X-Hub-Signature-256` header, an HMAC-SHA256 of the body alone with
+  the secret as typed. The gateway does not accept that header, so a GitHub webhook pointed at the
+  address answers `401 webhook_unsigned`. Use a relay that verifies GitHub's signature and re-signs
+  the call in the Standard Webhooks format with your connection's secret.
+
+## Following your stream live
+
+```bash
+curl -sN "http://127.0.0.1:8080/api/gateway/me/events/stream?heartbeat_s=15" \
+  -H "Authorization: Bearer <token>" -H "Last-Event-ID: <last sequence you read>"
+```
+
+Each event is `id: <sequence>`, `event: <type>`, `data: <the event JSON>`; reconnecting with the last
+`id` you read gets exactly what came after it.
+
+### Showing a notification without doubling the tray
+
+An app that notifies (the Assistant desktop, Code) follows one rule so an approval is announced
+once per machine: on `attention.raised`, wait a moment, read the last events, and stay silent if a
+`notification.sent` for the same `record_key` from another channel with the same `device` is less
+than a minute old. Otherwise notify, then report it:
+
+```bash
+curl -s -X POST "http://127.0.0.1:8080/api/gateway/me/events/notifications" \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"channel":"assistant","outcome":"sent","record_key":"<record_key>","device":"<this machine id>"}'
+```
+
+The machine id is the first 16 hex characters of the sha256 of the lower-cased host name (what
+the gateway tray sends). `channel` is one of `tray`, `assistant`, `code`, `watch`.
+
+## Trying it by hand without a model or a mailbox
+
+The console's **Triggers** page has **Test** on each connection: it appends a synthetic event
+(`data.test: true`) and wakes the bound automations, so an automation, its occurrence and your stream
+can be checked before any real mail, post or call.
+
+---
+
 ## docs/architecture.md
 
 # AbstractGateway — Architecture
@@ -14090,7 +14873,23 @@ browser on this computer from one elsewhere on the network
 - **Runner** (`src/abstractgateway/runner.py`): polls the durable command
   inbox, applies commands and ticks RUNNING runs. A filesystem lock
   (`gateway_runner.lock`) prevents double-ticking when API and runner run as
-  separate processes; lock state is reported on `GET /api/health`.
+  separate processes; lock state is reported on `GET /api/health`. On a file
+  store the scheduling pass sleeps until the earliest wait deadline, which it
+  asks the run store for (`next_wait_deadline`, every waiting run), so a wake
+  parked behind hundreds of automations still fires on time.
+- **Per-user event stream** (`src/abstractgateway/events_stream.py`, backlog
+  1046): one ordered, durable stream per person, `user:<tenant>:<user>`, in
+  the plane's data folder (`<data dir>/events/users/<sha256>/`, the runtime's
+  `JsonFileEventInbox`). It holds only what is not a step of a run:
+  `trigger.event`, `wake.scheduled|cancelled`, `attention.raised|seen`,
+  `notification.sent|failed` and the pointers `run.started|finished
+  {run_id, session_id, origin}`, in CloudEvents 1.0 attribute names. The
+  runner writes the pointers after the run store save (ids like
+  `run.started:<run_id>`, so a repeat appends nothing) and the attention
+  events from the `automation.completed` records it observes (the ledger
+  `record_key`, never a body); a boot pass rebuilds what a crash between a
+  save and its append lost. The seen-cursor store writes `attention.seen`,
+  the email outbox `notification.sent|failed`.
 - **Runtime settings** (`src/abstractgateway/runtime_config.py`): one store,
   `<data dir>/config/runtime_config.json`, for the settings the consoles, the
   tray and the CLI change: network exposure, `apps.*`, `allow_engine_install`,
@@ -14397,6 +15196,90 @@ flowchart LR
   children indexes at startup (`stores.py`).
 
 See [automations.md](docs/automations.md) for the HTTP contract and operations.
+
+## Triggers, events and attention
+
+Things that happen outside a run start work, and what needs a person reaches
+them through one stream per account:
+
+- **Trigger connections** are one account's instances of a trigger source (a
+  feed URL, a webhook address with its signing secret; mailboxes are the email
+  accounts). Each has an inbox stream, `trigger:<connection_id>`, that the
+  feed poller and the public webhook ingress append to and the bound
+  automations read.
+- **Run origin**: every run records who or what started it,
+  `_meta.origin {kind: person | trigger | agent | system, actor, client, ref}`.
+- **Wakes**: a run's `schedule_run` call becomes a one-shot automation that runs
+  later as a new turn of the caller's session (`wakes_host.py`).
+- **The per-user event stream** (`events_stream.py`) holds what is not a step
+  of a run: run pointers, trigger events, wakes, attention raised and seen
+  (automation items and waits on a person) and notification outcomes. Clients
+  read it with `GET /api/gateway/me/events` and follow it over SSE
+  (`/me/events/stream`); the desktop tray turns attention into OS
+  notifications.
+
+```mermaid
+flowchart LR
+  subgraph Outside["Outside the gateway"]
+    Sender["External system<br/>(signed webhook call)"]
+    Feed["RSS / Atom feed"]
+    Mail["Your mailboxes (IMAP)"]
+  end
+
+  subgraph GW["AbstractGateway (one plane per account)"]
+    Ingress["POST /triggers/webhooks/{id}<br/>signature = auth"]
+    Poller["Plane worker:<br/>feed poller, mail watcher"]
+    TInbox[("Event inbox<br/>trigger:&lt;id&gt;, email:…")]
+    Runner["GatewayRunner<br/>ticks, ledger observer"]
+    Wakes["schedule_run host<br/>(one-shot automation)"]
+    Outbox[("Email outbox")]
+    UStream[("User stream<br/>user:&lt;tenant&gt;:&lt;user&gt;")]
+    Me["GET /me/events<br/>GET /me/events/stream (SSE)<br/>POST /me/events/notifications"]
+  end
+
+  subgraph RT["AbstractRuntime"]
+    Ctl["Automation controller"]
+    Occ["Occurrence = new run<br/>(origin: trigger / agent)"]
+    Run["Any run<br/>(asks a person, schedules a wake)"]
+  end
+
+  subgraph Clients["Clients"]
+    Tray["Desktop tray<br/>(default notifier)"]
+    Apps["Assistant, Code, watch, console"]
+  end
+
+  Sender --> Ingress --> TInbox
+  Feed --> Poller
+  Mail --> Poller
+  Poller --> TInbox
+  TInbox -->|wake| Ctl
+  Ctl -->|admit| Occ
+  Run -->|SCHEDULE_RUN| Wakes --> Ctl
+  Runner -->|run.started / finished, trigger.event,<br/>attention.raised / seen| UStream
+  Wakes -->|wake.scheduled| UStream
+  Outbox -->|notification.sent / failed| UStream
+  UStream --> Me
+  Me --> Tray
+  Me --> Apps
+  Tray -->|notification.sent (tray)| Me
+```
+
+- **Pointers, not copies.** The stream never holds a step of a run, a prompt
+  or a result body: `attention.raised` carries the ledger `record_key` or the
+  run id, and a client reads the content from the run or the automation.
+- **Ordered and resumable.** Each account's stream has its own gapless
+  `sequence`; the SSE `id` is that sequence, so a client reconnecting with
+  `Last-Event-ID` misses nothing. Event ids are stable, so a repeated write is
+  stored once, and the runner repairs at start what a crash between a save and
+  its stream write left out.
+- **One notification per machine.** The tray announces each attention item;
+  an app on the same computer stays silent when the tray reported it in the
+  last minute.
+
+See [api.md](docs/api.md#your-event-stream-apigatewaymeevents) for the event
+vocabulary and the routes, [api.md](docs/api.md#triggers) for trigger
+connections and the webhook ingress, and
+[events-examples.md](docs/events-examples.md) for end-to-end examples.
 
 ## Live replies (token deltas)
 
@@ -14822,9 +15705,35 @@ or while it waits for a person. See [automations.md](docs/automations.md#attenti
 
 ### Can an automation run daily at 08:00?
 
-Not in v1. Schedules are fixed UTC intervals ("every 24 hours" from a start
-time), with no cron expressions, time zones or daylight-saving rules. See
-[automations.md](docs/automations.md#limits-in-v1).
+Yes. The `schedule@2` trigger runs daily, weekly or monthly rules at a wall
+time in an IANA time zone (`{"kind": "daily", "at": "08:00", "time_zone":
+"Europe/Paris"}`), daylight saving included; there are no cron expressions.
+See [automations.md](docs/automations.md#trigger-sources).
+
+### Can something other than a schedule start an automation?
+
+Yes: new mail in one of your mailboxes (`email.received@1`), new items in a
+feed (`feed.item@1`) and a signed call to your webhook address
+(`webhook.received@1`). The feed and the webhook are trigger connections you
+create on the console's **Triggers** page. See
+[events-examples.md](docs/events-examples.md).
+
+### How do my apps learn that something needs me?
+
+Every account has one event stream: `GET /api/gateway/me/events` to catch up
+and `GET /api/gateway/me/events/stream` (server-sent events) to stay live. It
+announces runs starting and finishing, automation results, failures, a session
+waiting for your approval or your answer, scheduled wakes, and which
+notifications were shown where. What needs you is each `attention.raised` without
+its `attention.seen`. The desktop tray follows it and shows one notification per
+item. See [api.md](docs/api.md#your-event-stream-apigatewaymeevents).
+
+### Can an agent remind me later?
+
+Yes, when its workflow offers the `schedule_run` tool: "remind me in 5
+minutes about X" becomes a one-time automation that runs later as a new turn
+of the same conversation, with at most the agent's own tools. Archive the
+automation to cancel it. See [automations.md](docs/automations.md#wakes-work-a-run-schedules-for-later).
 
 ### What does growing context do?
 

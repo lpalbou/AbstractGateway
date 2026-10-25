@@ -1199,6 +1199,12 @@ curl -sS -H "Content-Type: application/json" \
 # 202: delivered. 409 webhook_replayed on a retry with the same webhook-id: also delivered.
 ```
 
+Senders: the Standard Webhooks headers (`webhook-id`, `webhook-timestamp`, `webhook-signature`)
+are the only ones read. Services that sign with other headers (GitHub's `X-Hub-Signature-256`,
+Svix's `svix-*` names) need a relay that re-signs or renames. The step-by-step setup (console,
+Flow, the automation) and a copy-paste signed call are in
+[events-examples.md](./events-examples.md#3-run-this-flow-when-an-external-system-calls-my-webhook).
+
 Evidence: `src/abstractgateway/routes/triggers.py` (`receive_webhook`),
 `src/abstractgateway/trigger_connections.py` (lookup across accounts, rate limit),
 AbstractRuntime `triggers/webhook.py` (verification, event mapping).
@@ -2452,7 +2458,7 @@ Your email address and mailbox (`/api/gateway/me/...`, every signed-in human):
 | `PUT /me/email/limits` | `{per_hour, per_day}` |
 | `PUT /me/email/folder` | `{folder}` — the folder your mailbox is read from (empty = INBOX); the connection is kept and nothing is tested; 404 `email_not_configured` without a mailbox |
 | `PUT /me/email/enabled` | `{enabled}` — "Use this mailbox" (off keeps the settings; stops watching, sending and notifications); `tools_reloaded` |
-| `GET /me/email/accounts` | every mailbox of yours (framework backlog 1044): `{items: [{account_id, primary, account_ref, configured, address, can_read, can_send, enabled, folder, mailbox{state, address, provider, reason}, watcher{state, last_poll, last_error, received}}]}`; the primary (`default`, the one `PUT /me/email` connects and runs are bound to) always first, further mailboxes once connected. `GET /me/email` carries the same list as `accounts` |
+| `GET /me/email/accounts` | every mailbox of yours: `{items: [{account_id, primary, account_ref, configured, address, can_read, can_send, enabled, folder, mailbox{state, address, provider, reason}, watcher{state, last_poll, last_error, received}}]}`; the primary (`default`, the one `PUT /me/email` connects and runs are bound to) always first, further mailboxes once connected. `GET /me/email` carries the same list as `accounts` |
 | `GET /me/email/accounts/{mailbox_id}` | one of them; 404 `email_not_configured` for an id you have not connected |
 | `PUT /me/email/accounts/{mailbox_id}` | connect a further mailbox (`mailbox_id`: 1-32 of `a-z 0-9 _ -`; 400 `email_invalid_settings` otherwise): the `PUT /me/email` body plus `send` (default `false`). `send: false` stores IMAP only: a **read-only** mailbox (`can_send: false`, `mailbox.state: receive_only`) that automations can watch and that refuses sends; `send: true` also stores and tests SMTP. `mailbox_id: default` is the primary and behaves like `PUT /me/email`. Never changes your email address. Answers the mailbox's row |
 | `POST /me/email/accounts/{mailbox_id}/test` | `{imap, smtp, ok, message}` for that mailbox |

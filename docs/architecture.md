@@ -481,6 +481,90 @@ flowchart LR
 
 See [automations.md](./automations.md) for the HTTP contract and operations.
 
+## Triggers, events and attention
+
+Things that happen outside a run start work, and what needs a person reaches
+them through one stream per account:
+
+- **Trigger connections** are one account's instances of a trigger source (a
+  feed URL, a webhook address with its signing secret; mailboxes are the email
+  accounts). Each has an inbox stream, `trigger:<connection_id>`, that the
+  feed poller and the public webhook ingress append to and the bound
+  automations read.
+- **Run origin**: every run records who or what started it,
+  `_meta.origin {kind: person | trigger | agent | system, actor, client, ref}`.
+- **Wakes**: a run's `schedule_run` call becomes a one-shot automation that runs
+  later as a new turn of the caller's session (`wakes_host.py`).
+- **The per-user event stream** (`events_stream.py`) holds what is not a step
+  of a run: run pointers, trigger events, wakes, attention raised and seen
+  (automation items and waits on a person) and notification outcomes. Clients
+  read it with `GET /api/gateway/me/events` and follow it over SSE
+  (`/me/events/stream`); the desktop tray turns attention into OS
+  notifications.
+
+```mermaid
+flowchart LR
+  subgraph Outside["Outside the gateway"]
+    Sender["External system<br/>(signed webhook call)"]
+    Feed["RSS / Atom feed"]
+    Mail["Your mailboxes (IMAP)"]
+  end
+
+  subgraph GW["AbstractGateway (one plane per account)"]
+    Ingress["POST /triggers/webhooks/{id}<br/>signature = auth"]
+    Poller["Plane worker:<br/>feed poller, mail watcher"]
+    TInbox[("Event inbox<br/>trigger:&lt;id&gt;, email:…")]
+    Runner["GatewayRunner<br/>ticks, ledger observer"]
+    Wakes["schedule_run host<br/>(one-shot automation)"]
+    Outbox[("Email outbox")]
+    UStream[("User stream<br/>user:&lt;tenant&gt;:&lt;user&gt;")]
+    Me["GET /me/events<br/>GET /me/events/stream (SSE)<br/>POST /me/events/notifications"]
+  end
+
+  subgraph RT["AbstractRuntime"]
+    Ctl["Automation controller"]
+    Occ["Occurrence = new run<br/>(origin: trigger / agent)"]
+    Run["Any run<br/>(asks a person, schedules a wake)"]
+  end
+
+  subgraph Clients["Clients"]
+    Tray["Desktop tray<br/>(default notifier)"]
+    Apps["Assistant, Code, watch, console"]
+  end
+
+  Sender --> Ingress --> TInbox
+  Feed --> Poller
+  Mail --> Poller
+  Poller --> TInbox
+  TInbox -->|wake| Ctl
+  Ctl -->|admit| Occ
+  Run -->|SCHEDULE_RUN| Wakes --> Ctl
+  Runner -->|run.started / finished, trigger.event,<br/>attention.raised / seen| UStream
+  Wakes -->|wake.scheduled| UStream
+  Outbox -->|notification.sent / failed| UStream
+  UStream --> Me
+  Me --> Tray
+  Me --> Apps
+  Tray -->|notification.sent (tray)| Me
+```
+
+- **Pointers, not copies.** The stream never holds a step of a run, a prompt
+  or a result body: `attention.raised` carries the ledger `record_key` or the
+  run id, and a client reads the content from the run or the automation.
+- **Ordered and resumable.** Each account's stream has its own gapless
+  `sequence`; the SSE `id` is that sequence, so a client reconnecting with
+  `Last-Event-ID` misses nothing. Event ids are stable, so a repeated write is
+  stored once, and the runner repairs at start what a crash between a save and
+  its stream write left out.
+- **One notification per machine.** The tray announces each attention item;
+  an app on the same computer stays silent when the tray reported it in the
+  last minute.
+
+See [api.md](./api.md#your-event-stream-apigatewaymeevents) for the event
+vocabulary and the routes, [api.md](./api.md#triggers) for trigger
+connections and the webhook ingress, and
+[events-examples.md](./events-examples.md) for end-to-end examples.
+
 ## Live replies (token deltas)
 
 A run started with `input_data._runtime.stream: true` (or, for an interactive

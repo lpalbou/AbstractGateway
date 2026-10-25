@@ -277,10 +277,18 @@ model. Details: [docs/api.md](docs/api.md) and [docs/faq.md](docs/faq.md).
     agent workflow for that interface; every start answers `resolved_workflow`
   - `input_data._runtime.stream: true` also sends the model's reply live
     (`llm.delta` frames on the ledger stream)
-- Clients create **automations**: a workflow run on a trigger (a fixed UTC
-  interval such as every 2 minutes, or only when asked), each run readable as a
-  chat turn, quiet unless a run asks for attention or fails:
-  `/api/gateway/automations*` ([docs/automations.md](docs/automations.md))
+- Clients create **automations**: a workflow run on a trigger (an interval,
+  a daily or weekly time, new mail in one of your mailboxes, a feed item, a
+  signed webhook call, or only when asked), each run readable as a chat turn,
+  quiet unless a run asks for attention or fails:
+  `/api/gateway/automations*` ([docs/automations.md](docs/automations.md));
+  feeds and webhooks are **trigger connections** (`/api/gateway/triggers/*`,
+  the console's Triggers page)
+- Clients **follow what needs the person** on one stream per account: run
+  starts and ends, automation results, approvals and questions waiting, wakes
+  an agent scheduled with `schedule_run`, notifications shown:
+  `GET /api/gateway/me/events` (catch-up) and `/me/events/stream` (SSE)
+  ([docs/events-examples.md](docs/events-examples.md))
 - Clients **act** by submitting durable commands: `POST /api/gateway/commands`
   - supported types: `pause|resume|cancel|conclude|emit_event|update_schedule|compact_memory|inject_guidance`,
     plus the `automation.*` commands for an automation
@@ -373,6 +381,7 @@ Published docs site: https://www.lpalbou.info/AbstractGateway/
 - Architecture: [docs/architecture.md](docs/architecture.md)
 - API overview: [docs/api.md](docs/api.md)
 - Automations: [docs/automations.md](docs/automations.md)
+- Events and triggers, examples: [docs/events-examples.md](docs/events-examples.md)
 - Email: [docs/email.md](docs/email.md)
 - Configuration: [docs/configuration.md](docs/configuration.md)
 - Consoles: [docs/console.md](docs/console.md)

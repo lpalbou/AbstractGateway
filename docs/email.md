@@ -1,4 +1,4 @@
-# Email: one user, one runtime, one mailbox
+# Email: your address and your mailboxes
 
 Two things carry the word "email", and the gateway names them differently everywhere:
 
@@ -214,7 +214,7 @@ curl -sS -X PUT -H "$AUTH" "$BASE_URL/api/gateway/me/email/limits" -d '{"per_hou
 
 ## Several mailboxes
 
-Besides your primary mailbox you can connect further ones (framework backlog 1044), each with an
+Besides your primary mailbox you can connect further ones, each with an
 id of your choice (`work`, `support`: 1 to 32 lowercase letters, digits, `_` or `-`):
 
 ```bash

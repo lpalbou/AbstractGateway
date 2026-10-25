@@ -193,9 +193,35 @@ or while it waits for a person. See [automations.md](./automations.md#attention-
 
 ### Can an automation run daily at 08:00?
 
-Not in v1. Schedules are fixed UTC intervals ("every 24 hours" from a start
-time), with no cron expressions, time zones or daylight-saving rules. See
-[automations.md](./automations.md#limits-in-v1).
+Yes. The `schedule@2` trigger runs daily, weekly or monthly rules at a wall
+time in an IANA time zone (`{"kind": "daily", "at": "08:00", "time_zone":
+"Europe/Paris"}`), daylight saving included; there are no cron expressions.
+See [automations.md](./automations.md#trigger-sources).
+
+### Can something other than a schedule start an automation?
+
+Yes: new mail in one of your mailboxes (`email.received@1`), new items in a
+feed (`feed.item@1`) and a signed call to your webhook address
+(`webhook.received@1`). The feed and the webhook are trigger connections you
+create on the console's **Triggers** page. See
+[events-examples.md](./events-examples.md).
+
+### How do my apps learn that something needs me?
+
+Every account has one event stream: `GET /api/gateway/me/events` to catch up
+and `GET /api/gateway/me/events/stream` (server-sent events) to stay live. It
+announces runs starting and finishing, automation results, failures, a session
+waiting for your approval or your answer, scheduled wakes, and which
+notifications were shown where. What needs you is each `attention.raised` without
+its `attention.seen`. The desktop tray follows it and shows one notification per
+item. See [api.md](./api.md#your-event-stream-apigatewaymeevents).
+
+### Can an agent remind me later?
+
+Yes, when its workflow offers the `schedule_run` tool: "remind me in 5
+minutes about X" becomes a one-time automation that runs later as a new turn
+of the same conversation, with at most the agent's own tools. Archive the
+automation to cancel it. See [automations.md](./automations.md#wakes-work-a-run-schedules-for-later).
 
 ### What does growing context do?
 

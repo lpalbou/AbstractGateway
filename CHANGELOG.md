@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `docs/events-examples.md`: the webhook as two walkthroughs, set it up (console Triggers, Flow's trigger event
+  and Automation dialog, the automation) and try it (a copy-paste signed call, what appears under Events, on
+  `/me/events` and in the tray), with which senders can call the address directly. The ingress reads the
+  Standard Webhooks headers only: GitHub (`X-Hub-Signature-256`) and Svix-named headers (`svix-*`) need a relay
+  for now; accepting them is a follow-up.
+
 - Events and triggers: examples (backlog 1048, `docs/events-examples.md`): watch a mailbox and tell me when
   something important arrives, a digest of a news feed, run a flow when an external system calls my webhook
   (the Standard Webhooks signing as shell commands), following your event stream; each one a hermetic
@@ -101,12 +107,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Durable `emit_event` reached only the mailboxes of the newest 200 active runs (`run_scan_limit`): past that,
-  a parked automation's `events_mailbox` silently missed events. Delivery now goes through the run store's
-  mailbox index (AbstractRuntime `list_mailbox_runs`), every running or waiting declarer, however many.
-- On a file store with more than 200 waiting runs the scheduler could sleep through a due wake (its deadline
-  horizon came from the same 200-run window). The horizon now comes from the store's `next_wait_deadline`
-  over every waiting run (backlog 1046).
+- Durable `emit_event` reaches every running or waiting run that declares the event's mailbox, however many
+  runs are active (it reached the newest 200 only), through the run store's mailbox index (AbstractRuntime
+  `list_mailbox_runs`).
+- On a file store with more than 200 waiting runs, a due wake fires on time: the scheduler's next deadline comes
+  from the store's `next_wait_deadline` over every waiting run (backlog 1046).
 - Browser apps left running by a previous gateway run are now stopped and
   replaced, not listed as started outside the gateway. When the gateway
   starts, an app of its own data dir (`<data dir>/apps/…`) still answering on
