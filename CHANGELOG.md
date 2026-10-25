@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Triggers page, UX review.** Unused connections read *Waiting for an automation to use it*; used ones *Listening ·
+  used by Release digest* (your automations' names); one **Listening** switch label on every row; recorded problems in
+  red (*Can't read the feed: the address answered 404 (not found). Check the feed address.*); events as sentences with
+  the JSON behind **Details**; *Nothing to listen to yet.* with **Add a mailbox (My email)** · **Add a feed** · **Add a
+  webhook**; the feed form asks **Check every** *[15] [minutes]* and **When added**; refusals in red beside their field
+  with the text kept; optional settings under **More options**; **Cancel** and a hint per option; the next step after
+  creating; a webhook's test call says *It worked: <name> received the call*; a local webhook address says GitHub can't
+  reach it yet, with **Open Network**.
+- **My email.** Your own email dialog is titled **My email**; its **Other mailboxes** card adds a mailbox from a name
+  you recognise (the id is derived), shows one *read-only* and relative times, and hides **Add a mailbox** while its
+  form is open.
 - **Triggers: what each connection is doing.** The **Listening** switch is yours and the only control (`PUT
   /api/gateway/triggers/connections/{id}` with `paused`); rows say *Listening · used by N automations*, *Listening ·
   nothing uses it yet, so nothing is fetched until an automation does* or *Paused*. **When nothing uses it** (collapsed) has **Keep
