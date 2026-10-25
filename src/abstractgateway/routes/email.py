@@ -26,6 +26,7 @@ user makes so their agents and automations can read and send mail as them.
     POST   /me/email/oauth/poll          {flow_id}          -> pending | connected
     POST   /me/email/oauth/finish        {flow_id, wait_s}  wait up to 60 s for the approval
     POST   /me/email/oauth/cancel        {flow_id}
+    GET    /me/email/autodiscover?address=  provider, servers, login and sign-in methods from an address alone
     GET    /me/email/accounts            every mailbox of mine: [{account_id, primary, address, can_read,
                                          can_send, enabled, folder, mailbox, watcher}] (backlog 1044)
     GET    /me/email/accounts/{mailbox_id}        one of them (404 email_not_configured when unknown)
@@ -246,6 +247,9 @@ class MailboxConnectBody(ConnectBody):
         },
     )
 
+    name: Optional[str] = Field(
+        None, max_length=120, description="The mailbox's name in your lists (\"Work\"); optional. Login defaults to the address."
+    )
     send: bool = Field(
         False,
         description="Also store an outgoing server (SMTP: given, discovered or the domain's standard one) so runs bound "
@@ -546,6 +550,21 @@ def _mailbox(plane: EmailPlane, mailbox_id: str) -> EmailPlane:
 
 
 @router.get(
+    "/me/email/autodiscover",
+    summary="Everything a mailbox form needs from an email address alone",
+    description="`{address, provider: google|microsoft|yahoo|icloud|fastmail|other, display_name, imap: {host, port, "
+    "security: ssl|starttls}, smtp: {host, port, security} | null, login, sign_in: [oauth|password|app_password], "
+    "oauth_available, app_password_url?, source: preset|autoconfig|srv|none}`. AbstractCore's deterministic discovery "
+    "(its provider table, the domain's autoconfig file and the Thunderbird ISPDB at 3 s each, DNS SRV, MX matched to a "
+    "known host), cached per domain for a day. `source: none`: nothing found (empty IMAP host, no SMTP). 400 "
+    "`email_invalid_settings` for a non-address.",
+)
+async def me_email_autodiscover(request: Request, address: str = Query(..., min_length=3, max_length=254)) -> Any:
+    _self_plane(request)
+    return await _call(mail_accounts.autodiscover, address)
+
+
+@router.get(
     "/me/email/accounts",
     summary="My mailboxes (the primary first)",
     description="`{items: [{account_id, primary, account_ref, configured, address, can_read, can_send, enabled, folder, "
@@ -591,6 +610,9 @@ async def me_email_account_put(request: Request, mailbox_id: str, body: MailboxC
             actor=_actor(principal),
             send=bool(body.send),
         )
+        if not target.is_primary and body.name is not None:
+            mail_accounts.set_mailbox_name(target, body.name)
+            out = mail_accounts.mailbox_summary(target)
         if target.is_primary:
             out = mail_accounts.mailbox_summary(target)
         _reload_my_toolsets(principal, plane)
@@ -1293,7 +1315,7 @@ async def legacy_email_send(request: Request, body: LegacySendBody) -> Any:
 
 _MIRRORED_PREFIXES = ("/me/email", "/me/notifications")
 # Further mailboxes (framework backlog 1044) are a user feature: an entity has one mailbox, its own.
-_NOT_MIRRORED_PREFIXES = ("/me/email/accounts",)
+_NOT_MIRRORED_PREFIXES = ("/me/email/accounts", "/me/email/autodiscover")
 
 
 def _mirror_entity_routes() -> List[str]:

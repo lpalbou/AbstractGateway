@@ -254,6 +254,27 @@ def require_mailbox(plane: EmailPlane, account_id: str) -> EmailPlane:
     return plane.for_account(account_id)
 
 
+MAILBOX_NAME_MAX = 120
+
+
+def _mailbox_meta_path(plane: EmailPlane) -> Path:
+    return plane.mailbox_dir / "mailbox.json"
+
+
+def mailbox_name(plane: EmailPlane) -> Optional[str]:
+    """The name the user gave a further mailbox ("Work"), or None."""
+    name = _read_json(_mailbox_meta_path(plane)).get("name")
+    return str(name) if isinstance(name, str) and name.strip() else None
+
+
+def set_mailbox_name(plane: EmailPlane, name: Optional[str]) -> None:
+    """Store (or clear with None / "") a further mailbox's name: one line, at most 120 characters."""
+    text = str(name or "").strip()
+    if len(text) > MAILBOX_NAME_MAX or any(c in text for c in "\r\n"):
+        raise EmailInvalidSettings(f"A mailbox name is one line of at most {MAILBOX_NAME_MAX} characters.", "Shorten the name.")
+    _write_private_json(_mailbox_meta_path(plane), {"version": 1, "name": text or None})
+
+
 def mailbox_summary(plane: EmailPlane) -> Dict[str, Any]:
     """One mailbox of the user, the shape `GET /me/email/accounts` lists (never a secret)."""
 
@@ -272,6 +293,7 @@ def mailbox_summary(plane: EmailPlane) -> Dict[str, Any]:
     return {
         "account_id": plane.account_id,
         "primary": plane.is_primary,
+        "name": None if plane.is_primary else mailbox_name(plane),
         "account_ref": plane.account_ref,
         "configured": bool(pub.get("configured")),
         "address": str(pub.get("address") or "") or None,
@@ -1211,6 +1233,137 @@ def discover(address: str, **kwargs: Any) -> Dict[str, Any]:
         raise EmailInvalidSettings(
             f"{str(address or '').strip()!r} is not a valid email address.", "Give the mailbox's address as name@example.com."
         ) from None
+
+
+# ---------------------------------------------------------------------------------------
+# Autodiscover for the "address first" mailbox form (GET /me/email/autodiscover)
+# ---------------------------------------------------------------------------------------
+
+AUTODISCOVER_TIMEOUT_S = 3.0
+AUTODISCOVER_CACHE_S = 24 * 3600.0
+# Which provider a mailbox is, decided by its IMAP host (a structured value, never text).
+_PROVIDER_BY_IMAP_HOST: Dict[str, str] = {
+    "imap.gmail.com": "google",
+    "outlook.office365.com": "microsoft",
+    "imap-mail.outlook.com": "microsoft",
+    "imap.mail.yahoo.com": "yahoo",
+    "imap.mail.me.com": "icloud",
+    "imap.fastmail.com": "fastmail",
+}
+_PROVIDER_NAMES = {"google": "Gmail", "microsoft": "Outlook / Microsoft 365", "yahoo": "Yahoo Mail", "icloud": "iCloud Mail", "fastmail": "Fastmail"}
+# How each provider lets a mail client sign in. Google and Microsoft: OAuth (when this gateway has
+# a sign-in client for it); Google also an app password (it refuses the account password);
+# Yahoo, iCloud and Fastmail: an app password; any other provider: the mailbox password.
+_SIGN_IN = {"google": ["oauth", "app_password"], "microsoft": ["oauth"], "yahoo": ["app_password"], "icloud": ["app_password"],
+            "fastmail": ["app_password"]}
+# Direct links to the provider's app-password page (only those this gateway is sure of).
+_APP_PASSWORD_URLS = {
+    "google": "https://myaccount.google.com/apppasswords",
+    "yahoo": "https://login.yahoo.com/account/security",
+    "icloud": "https://account.apple.com/account/manage",
+}
+# discover_servers' step -> the answer's `source`.
+_SOURCE_OF_STEP = {"known": "preset", "mx": "preset", "autoconfig": "autoconfig", "ispdb": "autoconfig", "srv": "srv"}
+# The network seams of AbstractCore's discovery (tests replace them; None = the real network).
+AUTODISCOVER_NET: Dict[str, Any] = {"http_get": None, "resolve_srv": None, "resolve_mx": None}
+_AUTODISCOVER_CACHE: Dict[str, tuple] = {}
+_AUTODISCOVER_LOCK = threading.Lock()
+
+
+def _discovered_for(address: str, *, now: float) -> Dict[str, Any]:
+    """AbstractCore's discovery for `address`, cached per DOMAIN for a day (the login form is
+    re-derived for each address: the address, or its local part)."""
+    local, _, domain = address.partition("@")
+    domain = domain.lower()
+    with _AUTODISCOVER_LOCK:
+        hit = _AUTODISCOVER_CACHE.get(domain)
+    if hit is not None and hit[0] > now:
+        cached, cached_address = hit[1], hit[2]
+        username = str(cached.get("username") or cached_address)
+        if username == cached_address:
+            username = address
+        elif username == cached_address.partition("@")[0]:
+            username = local
+        return {**cached, "address": address, "username": username}
+    kwargs = {k: v for k, v in AUTODISCOVER_NET.items() if v is not None}
+    found = discover_servers(address, timeout=AUTODISCOVER_TIMEOUT_S, **kwargs)
+    with _AUTODISCOVER_LOCK:
+        _AUTODISCOVER_CACHE[domain] = (now + AUTODISCOVER_CACHE_S, dict(found), address)
+    return found
+
+
+def _autodiscover_legs(found: Dict[str, Any]) -> tuple:
+    """(imap, smtp, source) from a discovery result. A read-only mailbox needs IMAP alone, so an
+    answer that found only IMAP (discovery's partial result) is used too, with the step that
+    found it as its source."""
+    if found.get("found"):
+        return found.get("imap"), found.get("smtp"), _SOURCE_OF_STEP.get(str(found.get("source") or ""), "none")
+    imap = found.get("imap") if isinstance(found.get("imap"), dict) and str(found["imap"].get("host") or "") else None
+    if imap is None:
+        return None, None, "none"
+    step = next((str(r.get("step")) for r in found.get("tried") or [] if r.get("result") in ("found", "partial")), "")
+    smtp = found.get("smtp") if isinstance(found.get("smtp"), dict) and str(found["smtp"].get("host") or "") else None
+    return imap, smtp, _SOURCE_OF_STEP.get(step, "none")
+
+
+def _imap_starttls_srv(domain: str) -> tuple:
+    """RFC 6186 `_imap._tcp.<domain>` (IMAP with STARTTLS), which AbstractCore's discovery does
+    not query: (imap leg | None, source)."""
+    if "." not in domain:
+        return None, "none"
+    resolve = AUTODISCOVER_NET.get("resolve_srv")
+    if resolve is None:
+        from abstractcore.comms.email.discovery import resolve_srv_default as resolve
+    try:
+        records = resolve(f"_imap._tcp.{domain}", AUTODISCOVER_TIMEOUT_S)
+    except Exception:  # noqa: BLE001 - no record, no answer
+        return None, "none"
+    usable = sorted((r for r in records or [] if str(r[3] or "").strip(".") and 1 <= int(r[2]) <= 65535),
+                    key=lambda r: (int(r[0]), -int(r[1])))
+    if not usable:
+        return None, "none"
+    best = usable[0]
+    return {"host": str(best[3]).rstrip(".").lower(), "port": int(best[2]), "security": "starttls"}, "srv"
+
+
+def autodiscover(address: str, *, now: Optional[float] = None) -> Dict[str, Any]:
+    """What the "address first" mailbox form needs from an address alone:
+    `{address, provider, display_name, imap, smtp|null, login, sign_in, app_password_url?, source}`.
+
+    Resolution is AbstractCore's deterministic discovery (`discover_servers`, the one the primary
+    form's `POST /me/email/discover` uses): its built-in provider table, then the domain's own
+    autoconfig file and the Thunderbird ISPDB (3 s per step), then DNS SRV, then MX matched to a
+    known host; cached per domain for a day. `source`: preset (the table, or MX pointing at a known
+    provider) | autoconfig | srv | none (nothing found: empty IMAP host, no SMTP). A non-address
+    is a typed 400."""
+    text = str(address or "").strip()
+    try:
+        text = normalize_address(text)
+        found = _discovered_for(text, now=time.time() if now is None else float(now))
+    except ValueError:
+        raise EmailInvalidSettings(f"{text!r} is not a valid email address.", "Give the mailbox's address as name@example.com.") from None
+    imap, smtp, source = _autodiscover_legs(found)
+    if imap is None:
+        imap, source = _imap_starttls_srv(text.partition("@")[2])
+    host = str((imap or {}).get("host") or "").lower()
+    provider = _PROVIDER_BY_IMAP_HOST.get(host) or (str(found.get("provider")) if found.get("provider") in _PROVIDER_NAMES else "other")
+    sign_in = list(_SIGN_IN.get(provider, ["password"]))
+    available = {row["id"] for row in oauth_providers_for_users() if row.get("available")}
+    out: Dict[str, Any] = {
+        "address": text,
+        "provider": provider,
+        "display_name": _PROVIDER_NAMES.get(provider) or text.partition("@")[2],
+        "imap": dict(imap) if imap else {"host": "", "port": 993, "security": "ssl"},
+        "smtp": dict(smtp) if smtp else None,
+        "login": str(found.get("username") or text),
+        "sign_in": sign_in,
+        # "oauth" is what the provider accepts; whether THIS gateway has a sign-in client for it:
+        "oauth_available": "oauth" in sign_in and provider in available,
+        "source": source,
+    }
+    if provider in _APP_PASSWORD_URLS and "app_password" in sign_in:
+        out["app_password_url"] = _APP_PASSWORD_URLS[provider]
+    return out
 
 
 def _no_host(leg: Optional[Dict[str, Any]]) -> bool:
