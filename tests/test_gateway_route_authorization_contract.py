@@ -272,6 +272,10 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     ("PUT", "/api/gateway/triggers/connections/{connection_id}"),
     ("DELETE", "/api/gateway/triggers/connections/{connection_id}"),
     ("POST", "/api/gateway/triggers/connections/{connection_id}/test-fire"),
+    # Sample inputs (Flow's Run on a triggered flow): a READ despite the POST: it builds the
+    # inputs from the caller's OWN mailbox / connections (another account's: 404), moves no
+    # cursor and stores nothing but the artifacts holding message bodies.
+    ("POST", "/api/gateway/triggers/sample"),
     ("POST", "/api/gateway/runs/{run_id}/chat"),
     ("POST", "/api/gateway/runs/{run_id}/chat_threads"),
     ("POST", "/api/gateway/runs/{run_id}/summary"),

@@ -278,3 +278,27 @@ or a phone sends its own device id, so it always notifies.
 The console's **Triggers** page has **Test** on each connection: it appends a synthetic event
 (`data.test: true`) and wakes the bound automations, so an automation, its occurrence and your stream
 can be checked before any real mail, post or call.
+
+## Test a triggered flow with real data
+
+You do not have to wait for the trigger to see what a flow does with it. **Run** on a flow that an
+automation triggers (Flow's Run dialog) asks the gateway for a sample built from your own data, the
+exact inputs a real occurrence would receive, and starts a normal run with them:
+
+```bash
+curl -sS -X POST -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"trigger":{"source_id":"email.received","source_version":1,"config":{"account":"self"}},"count":20}' \
+  "$BASE_URL/api/gateway/triggers/sample"
+# {"inputs": {"messages": [...], "mailbox": "me@example.com", "event": {..., "abstracttest": true}},
+#  "truncated": false, "count": 20, "summary": "Last 20 messages of me@example.com"}
+```
+
+- **Mailbox** (`email.received@1`): the newest messages that pass the trigger's filters, read-only
+  (nothing marked read, the watcher's cursor untouched), at most 20 seconds of reading.
+- **Feed** (`feed.item@1`): the latest items of the connection's feed (one fetch, nothing stored).
+- **Webhook** (`webhook.received@1`): the last calls the connection received, or one sample call
+  when it has not received any yet.
+- **Schedule**: one occurrence as if it fired now.
+
+The event carries `abstracttest: true`, so a flow can tell a test run from a real one. The sample is
+yours only: another account's mailbox or connection answers 404. Reference: [api.md](./api.md#sample-inputs-post-apigatewaytriggerssample).

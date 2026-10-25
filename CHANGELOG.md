@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Run a triggered flow with real data.** `POST /api/gateway/triggers/sample` `{trigger, count?}` answers the inputs a real occurrence of that trigger would receive (`inputs` with `event`, `truncated`, `count`, and a `summary` such as "Last 100 messages of me@example.com"), built read-only from the caller's own mailbox, feed or webhook connection through AbstractRuntime's `sample_occurrence_inputs` (count 1..500, a mailbox read for at most 20 s; another account's mailbox or connection: 404). Flow's Run dialog starts a normal run with them.
 - **Mailbox autodiscovery from an address.** `GET /api/gateway/me/email/autodiscover?address=` answers the provider (google, microsoft, yahoo, icloud, fastmail or other) and its name, the IMAP and SMTP servers, the login, how one signs in (`oauth`, `password`, `app_password`, and whether this gateway can do the OAuth sign-in), the provider's app-password page and where the answer came from (preset, autoconfig, srv or none), through AbstractCore's discovery cached per domain for a day. `PUT /me/email/accounts/{mailbox_id}` accepts an optional `name` for the mailbox; the login defaults to the address.
 - **Triggers page, UX review.** Unused connections read *Waiting for an automation to use it*; used ones *Listening ·
   used by Release digest* (your automations' names); one **Listening** switch label on every row; recorded problems in

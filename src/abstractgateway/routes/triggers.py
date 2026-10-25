@@ -448,3 +448,112 @@ async def connection_test_fire(request: Request, connection_id: str) -> Any:
         return {"event_id": result.event_id, "sequence": int(result.seq), "woken": len(woken)}
 
     return await asyncio.to_thread(run)
+
+
+# ---------------------------------------------------------------------------------------
+# Sample inputs: run a triggered flow as if its trigger fired (Flow's Run dialog)
+# ---------------------------------------------------------------------------------------
+
+SAMPLE_COUNT_MAX = 500
+SAMPLE_CAP_S = 20.0
+_SAMPLE_ERROR_STATUS = {"invalid_sample": 422, "connection_not_found": 404, "email_not_configured": 409, "sample_unavailable": 503}
+
+
+class SampleBody(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"examples": [{"trigger": {"source_id": "email.received", "source_version": 1, "config": {"account": "self"}}, "count": 100}]},
+    )
+
+    trigger: Dict[str, Any] = Field(..., description="{source_id, source_version, config}: the binding an automation would use")
+    count: int = Field(100, ge=1, le=SAMPLE_COUNT_MAX, description="How many items (messages, feed items, webhook calls), newest first")
+
+
+def _sample_summary(svc: Any, source_id: str, inputs: Dict[str, Any], *, count: int, truncated: bool, trigger: Dict[str, Any]) -> str:
+    """One sentence saying what the sample holds ("Last 100 messages of test@abstractframework.ai")."""
+    if source_id == "email.received":
+        mailbox = str(inputs.get("mailbox") or "")
+        if "@" not in mailbox:
+            from ..mail.accounts import DEFAULT_ACCOUNT_ID, account_store, plane_for_service_config
+
+            account = str((trigger.get("config") or {}).get("account") or "").strip()
+            plane = plane_for_service_config(svc.config)
+            plane = plane.primary if account in ("", "self", DEFAULT_ACCOUNT_ID) else plane.for_account(account)
+            try:
+                acct = account_store(plane).settings().account
+                mailbox = str(getattr(acct, "address", "") or mailbox)
+            except Exception:  # noqa: BLE001 - the sentence falls back to the mailbox id
+                pass
+        text = f"Last {count} message{'s' if count != 1 else ''} of {mailbox or 'your mailbox'}"
+    elif source_id == "feed.item":
+        feed = inputs.get("feed") if isinstance(inputs.get("feed"), dict) else {}
+        text = f"Latest {count} item{'s' if count != 1 else ''} of {feed.get('title') or feed.get('url') or 'the feed'}"
+    elif source_id == "webhook.received":
+        events = ((inputs.get("event") or {}).get("data") or {}).get("events") or []
+        if events and events[0].get("sample_call"):
+            text = "A sample call (this connection has not received one yet)"
+        else:
+            text = f"Last {count} call{'s' if count != 1 else ''} received by this webhook"
+    elif source_id == "schedule":
+        text = "One occurrence, as if the schedule fired now"
+    else:
+        text = "One run, as if it was started by hand"
+    return text + (f" (stopped after {int(SAMPLE_CAP_S)} s)" if truncated else "")
+
+
+def _sample(svc: Any, principal: Any, body: SampleBody) -> Any:
+    from abstractruntime.automations.samples import SampleError, resolved_sample_inputs, sample_occurrence_inputs
+
+    from .automations import _check_email_account, _check_trigger_connection
+    from ..automation_errors import AutomationError
+
+    trigger = dict(body.trigger or {})
+    source_id, version = trigger.get("source_id"), trigger.get("source_version")
+    if not isinstance(source_id, str) or not source_id.strip() or isinstance(version, bool) or not isinstance(version, int):
+        return JSONResponse(status_code=422, content={"detail": {"reason_code": "invalid_sample",
+                                                                 "message": "trigger needs source_id (string) and source_version (integer)", "field": "trigger"}})
+    try:
+        # The same host checks as an automation's creation: the mailbox and the connection must be
+        # the caller's (an unknown or foreign one answers 404).
+        _check_email_account(svc, trigger, field="trigger.config.account")
+        trigger = _check_trigger_connection(svc, principal, trigger, from_defaults=False, field="trigger.connection_id")
+    except AutomationError as e:
+        detail = dict(e.detail) if isinstance(e.detail, dict) else {"reason_code": "invalid_sample", "message": str(e.detail)}
+        status = 404 if detail.get("reason_code") in ("email_account_not_found", "connection_not_found") else e.status_code
+        return JSONResponse(status_code=status, content={"detail": detail})
+    runtime = svc.host.runtime
+    try:
+        sample = sample_occurrence_inputs(runtime, source_id, int(version), dict(trigger.get("config") or {}), count=int(body.count),
+                                          principal=tc.principal_key(principal), email_budget_s=SAMPLE_CAP_S)
+        inputs = resolved_sample_inputs(sample, artifact_store=getattr(runtime, "artifact_store", None))
+    except SampleError as e:
+        return JSONResponse(status_code=_SAMPLE_ERROR_STATUS.get(e.reason_code, 422), content={"detail": {"reason_code": e.reason_code, "message": str(e)}})
+    count = int(sample.get("count") or 0)
+    return {
+        "inputs": inputs,
+        "truncated": bool(sample.get("truncated")),
+        "count": count,
+        "source": sample.get("source"),
+        "summary": _sample_summary(svc, source_id, inputs, count=count, truncated=bool(sample.get("truncated")), trigger=trigger),
+    }
+
+
+@router.post("/sample", summary="The inputs a triggered flow would receive, from real data (Run as if the trigger fired)")
+async def sample_trigger_inputs(request: Request, body: SampleBody) -> Any:
+    """`{inputs, truncated, count, source, summary}`: the flat named inputs plus `event` that a real
+    occurrence of `trigger` would receive, built read-only from the caller's own data (AbstractRuntime's
+    `sample_occurrence_inputs`): the newest `count` messages of the bound mailbox (its filters applied;
+    no cursor moves, nothing is marked read), the latest feed items of the connection, the last webhook
+    calls stored for it (or one documented sample call), `scheduled_at` = now. A mailbox is read for
+    at most 20 s (`truncated: true` then). Nothing is stored except the artifacts holding message
+    bodies. 404 `email_account_not_found` / `connection_not_found` (not the caller's), 409
+    `email_not_configured`, 422 `invalid_sample`, 503 `sample_unavailable`, 504 `sample_timeout`."""
+    from ..service import get_gateway_service
+
+    principal = _principal(request)
+    svc = get_gateway_service()
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_sample, svc, principal, body), timeout=SAMPLE_CAP_S + 10.0)
+    except asyncio.TimeoutError:
+        return JSONResponse(status_code=504, content={"detail": {"reason_code": "sample_timeout",
+                                                                 "message": "Reading the sample took too long; try a smaller count."}})

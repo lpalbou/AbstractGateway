@@ -1161,6 +1161,36 @@ curl -sS -X POST -H "$AUTH" -H "Content-Type: application/json" \
   "$BASE_URL/api/gateway/triggers/connections"     # -> connection_id, secret (once), ingress_url
 ```
 
+### Sample inputs (`POST /api/gateway/triggers/sample`)
+
+What a triggered flow would receive, from your own real data, so **Run** on a flow that an
+automation triggers behaves as if the trigger fired (Flow's Run dialog calls it, then starts a
+normal run with `inputs`).
+
+- Body: `{trigger: {source_id, source_version, config}, count?: 1..500 (default 100)}`: the binding
+  an automation would use (`trigger.connection_id` accepted as at creation).
+- Answer: `{inputs, truncated, count, source, summary}`. `inputs` are the flat named inputs plus
+  `event` a real occurrence receives (`messages` + `mailbox`, `items` + `feed`, `calls`,
+  `scheduled_at` + `occurrence`), bodies included; the event carries `abstracttest: true`.
+  `summary` is one sentence: "Last 100 messages of me@example.com", "Latest 20 items of Python
+  Insider", "Last 3 calls received by this webhook", "A sample call (this connection has not
+  received one yet)".
+- Read-only: the newest messages of the bound mailbox (its filters applied; nothing marked read, no
+  watcher cursor moved), the latest items of the feed connection, the last calls stored for the
+  webhook connection; nothing is stored except the artifacts holding message bodies. A mailbox is
+  read for at most 20 seconds (`truncated: true` then). Your own test reads your mailbox whether or
+  not "Agent email tools" is on.
+- Errors (`{"detail": {"reason_code", "message"}}`): 404 `email_account_not_found` /
+  `connection_not_found` (not one of yours), 409 `email_not_configured` (no usable mailbox), 422
+  `invalid_sample` (unknown source, bad config, bad count), 503 `sample_unavailable` (the feed could
+  not be read), 504 `sample_timeout`.
+
+```bash
+curl -sS -X POST -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"trigger":{"source_id":"email.received","source_version":1,"config":{"account":"self"}},"count":20}' \
+  "$BASE_URL/api/gateway/triggers/sample"
+```
+
 ### Webhook ingress (`POST /api/gateway/triggers/webhooks/{connection_id}`)
 
 The one public route of the family: it carries **no bearer token**. The
