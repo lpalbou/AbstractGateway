@@ -962,7 +962,9 @@ you can click.
   with the reason and an **Archive** button.
 
 - **V Triggers** is the web page's table: Name (your label, the trigger in words
-  under it), Status, Last event (an Account column with **All accounts**, `a`,
+  under it), Status (what it is doing, in the web's words), the **Listening**
+  switch (`l`; `k` toggles **Keep fetching even when nothing uses it**; a
+  mailbox row's switch is **Use this mailbox**), Last event (an Account column with **All accounts**, `a`,
   administrators), your mailboxes as rows with **Manage under Account → My
   email** (opens your email dialog) and, per connection **Events** (`e`, also `Enter`: a dialog with the 20 most recent
   events, newest first, each followed by its JSON; a webhook's address with

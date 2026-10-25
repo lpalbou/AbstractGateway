@@ -51,6 +51,10 @@ pub const WEBHOOK_SHELL: &str =
     "Any other sender signs each call per Standard Webhooks. From a shell (bash, openssl):";
 /// The mailbox rows' link (the web's words).
 pub const MANAGE_MAILBOX: &str = "Manage under Account → My email";
+/// The line under the list (the web's).
+pub const LISTEN_HELP: &str =
+    "A connection only fetches while an automation uses it; pause it to stop even then.";
+pub const K_PAUSE: &str = "triggers.pause";
 pub const K_MAILBOXES: &str = "triggers.mailboxes";
 const MAILBOXES_PATH: &str = "/me/email/accounts";
 pub const NEW: &str = "New connection";
@@ -131,6 +135,42 @@ pub struct ConnRow {
     pub ingress_url: Option<String>,
     /// The owner string `"<tenant>:<user>"` (All accounts view).
     pub principal: Option<String>,
+    /// Runtime state: paused by its owner (None: a gateway that does not report it).
+    pub paused: Option<bool>,
+    /// Keep fetching even when nothing uses it (Advanced).
+    pub always_listen: Option<bool>,
+    /// How many automations use it (None: not reported).
+    pub used_by: Option<i64>,
+}
+
+/// The operator's three states, in the web's words: the Listening switch (`paused`) is the
+/// person's and the only control; whether an automation uses it never moves the switch.
+pub fn listening_words(paused: bool, used_by: Option<i64>, always_listen: bool) -> String {
+    if paused {
+        return "Paused".into();
+    }
+    match used_by {
+        None => "Listening".into(),
+        Some(n) if n > 0 => format!(
+            "Listening · used by {n} automation{}",
+            if n == 1 { "" } else { "s" }
+        ),
+        Some(_) if always_listen => {
+            "Listening · nothing uses it yet; fetching anyway (Keep fetching even when nothing uses it)"
+                .into()
+        }
+        Some(_) => "Listening · nothing uses it yet, so nothing is fetched until an automation does".into(),
+    }
+}
+
+/// What a connection is doing, in the web's words (None: not reported by the gateway).
+pub fn doing_text(r: &ConnRow) -> Option<String> {
+    let paused = r.paused?;
+    Some(listening_words(
+        paused,
+        r.used_by,
+        r.always_listen == Some(true),
+    ))
 }
 
 fn st(v: &Value, k: &str) -> Option<String> {
@@ -171,9 +211,20 @@ pub fn rows_from(v: &Value) -> Result<Vec<ConnRow>, String> {
                 last_event_at: st(r, "last_event_at").filter(|s| !s.is_empty()),
                 ingress_url: st(r, "ingress_url").filter(|s| !s.is_empty()),
                 principal,
+                paused: r.get("paused").and_then(Value::as_bool),
+                always_listen: r.get("always_listen").and_then(Value::as_bool),
+                used_by: used_by_of(r),
             })
         })
         .collect()
+}
+
+fn used_by_of(v: &Value) -> Option<i64> {
+    match v.get("used_by") {
+        Some(Value::Array(a)) => Some(a.len() as i64),
+        Some(x) => x.as_i64(),
+        None => None,
+    }
 }
 
 /// The owner as the web shows it (the default tenant implied).
@@ -444,6 +495,7 @@ pub struct MailboxRow {
     pub enabled: bool,
     pub state: String,
     pub last_poll: Option<String>,
+    pub used_by: Option<i64>,
 }
 
 pub fn mailboxes_from(v: &Value) -> Result<Vec<MailboxRow>, String> {
@@ -465,6 +517,7 @@ pub fn mailboxes_from(v: &Value) -> Result<Vec<MailboxRow>, String> {
                 .and_then(|b| st(b, "state"))
                 .unwrap_or_default(),
             last_poll: m.get("watcher").and_then(|w| st(w, "last_poll")),
+            used_by: used_by_of(m),
         })
         .collect())
 }
@@ -739,6 +792,8 @@ pub fn hints(ctx: &Ctx) -> Vec<(&'static str, &'static str)> {
         ("Enter/e", "Events"),
         ("t", "Test"),
         ("d", "Delete"),
+        ("l", "Listening"),
+        ("k", "Keep fetching even when nothing uses it"),
         ("n", NEW),
         ("a", ALL),
         ("r", "refresh"),
@@ -867,6 +922,8 @@ fn handle_key(cx: Scope, ctx: &Ctx, tu: Tu, key: Key) -> bool {
         Key::Char('e') => row_action(cx, ctx, tu, "events"),
         Key::Char('t') => row_action(cx, ctx, tu, "test"),
         Key::Char('d') => row_action(cx, ctx, tu, "delete"),
+        Key::Char('l') => toggle_listening(ctx, tu),
+        Key::Char('k') => toggle_always_listen(ctx, tu),
         _ => return false,
     }
     true
@@ -975,7 +1032,58 @@ fn body(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu) -> View {
             table(gcx, pcx, &c, tu, &t, width, vp.h)
         },
     ))
+    .child(sentence(&t, LISTEN_HELP, width, t.text_muted))
     .build()
+}
+
+/// The Listening switch (`l`): pause or resume the selected connection
+/// (`PUT /triggers/connections/{id}` `{paused}`), then read the list again.
+fn toggle_listening(ctx: &Ctx, tu: Tu) {
+    let Some(r) = selected(ctx, tu) else { return };
+    let Some(paused) = r.paused else { return };
+    let all = tu.all.get_untracked();
+    ctx.store.json.set_write(K_PAUSE, Some(WriteState::Pending));
+    ctx.send(Cmd::Json(JsonCmd::Send {
+        key: K_PAUSE.into(),
+        method: "PUT".into(),
+        path: conn_path(&r.id),
+        body: json!({ "paused": !paused }),
+        slow: false,
+        label: format!("{} {}", if paused { "Resume" } else { "Pause" }, r.label),
+        reload: vec![(K_LIST.into(), list_path(all))],
+        journal: true,
+    }));
+}
+
+/// A mailbox row's switch: "Use this mailbox" (`PUT /me/email/accounts/{id}/enabled`).
+fn set_mailbox_in_use(ctx: &Ctx, id: &str, enabled: bool) {
+    ctx.send(Cmd::Json(JsonCmd::Send {
+        key: K_PAUSE.into(),
+        method: "PUT".into(),
+        path: format!("/me/email/accounts/{}/enabled", crate::api::urlencode(id)),
+        body: json!({ "enabled": enabled }),
+        slow: false,
+        label: format!("Use this mailbox: {id}"),
+        reload: vec![(K_MAILBOXES.into(), MAILBOXES_PATH.into())],
+        journal: true,
+    }));
+}
+
+/// Advanced (`k`): keep fetching even when nothing uses the selected connection.
+fn toggle_always_listen(ctx: &Ctx, tu: Tu) {
+    let Some(r) = selected(ctx, tu) else { return };
+    let Some(on) = r.always_listen else { return };
+    let all = tu.all.get_untracked();
+    ctx.send(Cmd::Json(JsonCmd::Send {
+        key: K_PAUSE.into(),
+        method: "PUT".into(),
+        path: conn_path(&r.id),
+        body: json!({ "always_listen": !on }),
+        slow: false,
+        label: format!("Keep fetching even when nothing uses it: {}", r.label),
+        reload: vec![(K_LIST.into(), list_path(all))],
+        journal: true,
+    }));
 }
 
 fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, page_h: i32) -> View {
@@ -1023,7 +1131,8 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
     if all {
         cols.push(Col::new("Account", ColW::Fit { min: 8, max: 18 }));
     }
-    cols.push(Col::new("Status", ColW::Fit { min: 6, max: 10 }));
+    cols.push(Col::new("Status", ColW::Fit { min: 6, max: 30 }));
+    cols.push(Col::new("Listening", ColW::Fit { min: 4, max: 12 }));
     if !narrow {
         cols.push(Col::new("Last event", ColW::Fit { min: 10, max: 12 }));
     }
@@ -1045,7 +1154,35 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
             if all {
                 cells.push(Cell::text(owner_text(r.principal.as_deref()), t.text));
             }
-            cells.push(Cell::text(word, ink));
+            match doing_text(r) {
+                Some(d) => cells.push(Cell::Lines(
+                    if r.status.trim().eq_ignore_ascii_case("active") {
+                        vec![vec![Ink::new(d, t.text)]]
+                    } else {
+                        vec![vec![Ink::new(word, ink)], vec![Ink::new(d, t.text)]]
+                    },
+                )),
+                None => cells.push(Cell::Lines(vec![
+                    vec![Ink::new(word, ink)],
+                    vec![Ink::new(
+                        "listening state not reported (update the gateway)",
+                        t.text_muted,
+                    )],
+                ])),
+            }
+            cells.push(match r.paused {
+                Some(p) => Cell::Toggle {
+                    id: "listen",
+                    on: !p,
+                    refused: None,
+                    tip: Some(format!(
+                        "{} {}  (l)",
+                        if p { "Resume" } else { "Pause" },
+                        r.label
+                    )),
+                },
+                None => Cell::text("—", t.text_muted),
+            });
             if !narrow {
                 cells.push(Cell::text(last_event_text(r, now), t.text));
             }
@@ -1086,7 +1223,23 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
                         vec![Ink::new(m.name(), t.text).bold()],
                         vec![Ink::new(m.phrase(), t.text_muted)],
                     ]),
-                    Cell::text(word, ink),
+                    {
+                        let words = listening_words(!m.enabled, m.used_by, false);
+                        if tone == "warn" {
+                            Cell::Lines(vec![
+                                vec![Ink::new(word, ink)],
+                                vec![Ink::new(words, t.text)],
+                            ])
+                        } else {
+                            Cell::text(words, t.text)
+                        }
+                    },
+                    Cell::Toggle {
+                        id: "use",
+                        on: m.enabled,
+                        refused: None,
+                        tip: Some(format!("Use this mailbox: {}", m.name())),
+                    },
                 ];
                 if !narrow {
                     cells.push(Cell::text(last.clone(), t.text));
@@ -1114,7 +1267,8 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
         });
     }
     let (ca, ce) = (ctx.clone(), ctx.clone());
-    let (ka, ke) = (keys.clone(), keys);
+    let (ka, ke, kt) = (keys.clone(), keys.clone(), keys);
+    let ct = ctx.clone();
     DataTable::new(cols, table_rows, sel)
         .width(width)
         .max_rows((page_h - 9).max(4))
@@ -1131,6 +1285,16 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
                 tu.sel.set(p);
             }
             row_action(pcx, &ca, tu, id);
+        })
+        .on_toggle(move |key, _id, want| {
+            if let Some(id) = key.strip_prefix("mailbox:") {
+                set_mailbox_in_use(&ct, id, want);
+                return;
+            }
+            if let Some(p) = kt.iter().position(|x| x == key) {
+                tu.sel.set(p);
+                toggle_listening(&ct, tu);
+            }
         })
         .on_activate(move |key| {
             if key.starts_with("mailbox:") {

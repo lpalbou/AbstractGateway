@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 ### Changed
+- **Triggers: the Listening switch.** Each connection says what it is doing (*Listening · used by N automations*,
+  *Listening · nothing uses it yet, so nothing is fetched until an automation does*, *Paused*) with a **Listening**
+  switch (`l`), the person's only control; `k` toggles **Keep fetching even when nothing uses it**. Mailbox rows show
+  the same states with their **Use this mailbox** switch. The web's line under the list is shown too.
 - **Triggers speaks the web page's words.** Rows are named by your label with the trigger under it ("When bbc-feed
   has a new item", "When My GitHub hook is called"); your mailboxes are rows ("When mail arrives in …") with **Manage
   under Account → My email**, and the mailbox source is no longer offered in **New connection** ("What to listen

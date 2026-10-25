@@ -570,3 +570,66 @@ fn readable_webhook_form_and_mailbox_manage_click() {
         "the email dialog opens:\n{s}"
     );
 }
+
+#[test]
+fn rows_say_what_a_connection_is_doing_and_the_listening_switch_pauses_it() {
+    let mut l = list();
+    l["connections"][0]["paused"] = json!(false);
+    l["connections"][0]["always_listen"] = json!(false);
+    l["connections"][0]["listening"] = json!("listening");
+    l["connections"][0]["used_by"] = json!(2);
+    l["connections"][1]["paused"] = json!(false);
+    l["connections"][1]["always_listen"] = json!(false);
+    l["connections"][1]["listening"] = json!("idle");
+    l["connections"][1]["used_by"] = json!([]);
+    let rows = rows_from(&l).unwrap();
+    assert_eq!(
+        triggers::doing_text(&rows[0]).as_deref(),
+        Some("Listening · used by 2 automations")
+    );
+    assert_eq!(
+        triggers::doing_text(&rows[1]).as_deref(),
+        Some("Listening · nothing uses it yet, so nothing is fetched until an automation does")
+    );
+    let mut eager = rows[1].clone();
+    eager.always_listen = Some(true);
+    assert_eq!(
+        triggers::doing_text(&eager).as_deref(),
+        Some("Listening · nothing uses it yet; fetching anyway (Keep fetching even when nothing uses it)")
+    );
+    let mut paused = rows[0].clone();
+    paused.paused = Some(true);
+    assert_eq!(triggers::doing_text(&paused).as_deref(), Some("Paused"));
+    let old = rows_from(&list()).unwrap();
+    assert_eq!(triggers::doing_text(&old[0]), None);
+
+    let mut h = page(true);
+    h.store.json.set(K_LIST, Loadable::Ready(l));
+    let s = h.turns(3);
+    for w in [
+        "Listening · used by 2",
+        "Listening · nothing uses it",
+        "until an automation does",
+        "A connection only fetches while an automation uses it; pause it to stop even then.",
+    ] {
+        assert!(s.contains(w), "{w:?} missing:\n{s}");
+    }
+    h.sent();
+    // `l` on the selected (first) row pauses it.
+    h.key(b"l");
+    let cmds = json_cmds(&mut h);
+    assert!(
+        cmds.iter().any(|c| matches!(c, JsonCmd::Send { method, path, body, .. }
+            if method == "PUT" && path == "/triggers/connections/conn_feed1" && *body == json!({"paused": true}))),
+        "{cmds:?}"
+    );
+    // `k` (Advanced): keep fetching even when nothing uses it.
+    h.key(b"k");
+    let cmds = json_cmds(&mut h);
+    assert!(
+        cmds.iter()
+            .any(|c| matches!(c, JsonCmd::Send { method, body, .. }
+            if method == "PUT" && *body == json!({"always_listen": true}))),
+        "{cmds:?}"
+    );
+}
