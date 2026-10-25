@@ -441,7 +441,13 @@ fn click_new_connection_creates_and_shows_the_secret_once() {
         s.contains("Name is required.") && s.contains("Feed address is required."),
         "{s}"
     );
-    assert!(json_cmds(&mut h).is_empty());
+    // Nothing is written; the dialog only read the well-known feeds.
+    let cmds = json_cmds(&mut h);
+    assert!(
+        cmds.iter()
+            .all(|c| matches!(c, JsonCmd::Get { path, .. } if path == triggers::CATALOG_PATH)),
+        "{cmds:?}"
+    );
     // Fill the name and the address (the first inputs after their labels).
     h.click_right_of("Name *", 30);
     h.type_text("Changelog");
@@ -758,4 +764,226 @@ fn the_list_waits_for_connections_and_mailboxes_and_the_dialog_has_cancel_and_hi
         !s2.contains("What to listen to"),
         "Cancel closes the dialog:\n{s2}"
     );
+}
+
+// ------------------------------------------- the well-known feeds (picker)
+
+/// The SHIPPED catalogue, as the route serves it (parity with the web).
+fn catalog() -> Value {
+    serde_json::from_str(include_str!("../../src/abstractgateway/assets/feeds.json")).unwrap()
+}
+
+#[test]
+fn feed_catalog_folds_match_the_web() {
+    let feeds = triggers::catalog_from(&catalog()).unwrap();
+    assert!(feeds.len() >= 15);
+    let rows = triggers::catalog_rows(&feeds);
+    assert_eq!(rows[0], triggers::CatalogRow::Heading("World news".into()));
+    assert_eq!(rows.last(), Some(&triggers::CatalogRow::Another));
+    let headings: Vec<String> = rows
+        .iter()
+        .filter_map(|r| match r {
+            triggers::CatalogRow::Heading(c) => Some(c.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        headings,
+        [
+            "World news",
+            "Technology",
+            "Science",
+            "Business and finance",
+            "Fill in your own"
+        ]
+    );
+    let bbc = triggers::catalog_option(&rows[1], &feeds);
+    assert_eq!(
+        (bbc.label.as_str(), bbc.hint.as_deref()),
+        ("BBC News · World", Some("bbc.co.uk"))
+    );
+    assert!(triggers::catalog_option(&rows[0], &feeds).disabled);
+    // Every shipped template's pattern is in the subset the terminal checks.
+    for f in feeds.iter().filter(|f| f.placeholder.is_some()) {
+        let p = f.placeholder.as_ref().unwrap();
+        let pat = p.pattern.as_deref().unwrap();
+        assert_eq!(
+            triggers::pattern_match(pat, &p.example),
+            Some(true),
+            "{}",
+            f.id
+        );
+        assert_eq!(
+            triggers::pattern_match(pat, "has space"),
+            Some(false),
+            "{}",
+            f.id
+        );
+        assert_eq!(triggers::feed_param_problem(f, &p.example), None);
+    }
+    let gh = feeds.iter().find(|f| f.id == "github-releases").unwrap();
+    assert_eq!(
+        triggers::feed_address(gh, "python/cpython"),
+        "https://github.com/python/cpython/releases.atom"
+    );
+    assert_eq!(
+        triggers::feed_name(gh, "python/cpython"),
+        "GitHub · python/cpython releases"
+    );
+    assert_eq!(
+        triggers::feed_name(gh, ""),
+        "GitHub · Releases of a repository"
+    );
+    assert_eq!(
+        triggers::feed_param_problem(gh, "nope").as_deref(),
+        Some("Repository (owner/name): not the expected form (e.g. python/cpython).")
+    );
+    assert_eq!(
+        triggers::feed_param_problem(gh, "").as_deref(),
+        Some("Repository (owner/name) is required.")
+    );
+    assert_eq!(
+        triggers::pattern_match("^UC[A-Za-z0-9_-]{22}$", "UCshort"),
+        Some(false)
+    );
+    assert_eq!(triggers::pattern_match("^(a|b)$", "a"), None);
+    assert_eq!(
+        triggers::site_name("https://www.bbc.co.uk/news"),
+        "bbc.co.uk"
+    );
+}
+
+fn feed_dialog() -> r8w4::Harness {
+    let mut h = page(false);
+    h.store
+        .json
+        .set(triggers::K_CATALOG, Loadable::Ready(catalog()));
+    h.click_text("New connection");
+    h.turns(3);
+    h
+}
+
+fn create_post(h: &mut r8w4::Harness) -> Option<Value> {
+    json_cmds(h).into_iter().find_map(|c| match c {
+        JsonCmd::Send {
+            method, path, body, ..
+        } if method == "POST" && path == "/triggers/connections" => Some(body),
+        _ => None,
+    })
+}
+
+#[test]
+fn picking_a_well_known_feed_fills_the_name_and_the_address() {
+    let mut h = feed_dialog();
+    let s = h.turns(2);
+    assert!(
+        s.contains(triggers::CATALOG_LABEL) && s.contains("Choose…"),
+        "{s}"
+    );
+    assert!(
+        s.contains("Pick one to fill in the name and the address"),
+        "{s}"
+    );
+    let at = |s: &str, a: &str, b: &str| s.find(a).unwrap_or(usize::MAX) < s.find(b).unwrap_or(0);
+    assert!(
+        at(&s, triggers::CATALOG_LABEL, "Feed address *"),
+        "the picker comes before the address:\n{s}"
+    );
+    assert!(
+        json_cmds(&mut h).is_empty(),
+        "the catalogue was ready: nothing read again"
+    );
+    // Open the picker: the categories and the feeds with their site.
+    let open = h.click_text("Choose…");
+    assert!(
+        open.contains("— World news —")
+            && open.contains("BBC News · World")
+            && open.contains("bbc.co.uk"),
+        "{open}"
+    );
+    h.type_text("B");
+    let s = h.key(b"\r");
+    assert!(
+        s.contains("BBC News · World") && s.contains("https://feeds.bbci.co.uk/news/world/rss.xml"),
+        "{s}"
+    );
+    assert!(
+        s.contains("World headlines from the BBC. · bbc.co.uk"),
+        "{s}"
+    );
+    h.click_after("Feed address *", "Create");
+    let body = create_post(&mut h).expect("a POST");
+    assert_eq!(body["label"], "BBC News · World");
+    assert_eq!(
+        body["config"]["url"],
+        "https://feeds.bbci.co.uk/news/world/rss.xml"
+    );
+}
+
+#[test]
+fn a_template_asks_for_its_value_and_builds_the_address() {
+    let mut h = feed_dialog();
+    h.click_text("Choose…");
+    h.type_text("G");
+    let s = h.key(b"\r");
+    assert!(
+        s.contains("Repository (owner/name) *") && s.contains("python/cpython"),
+        "the value's field, its example:\n{s}"
+    );
+    // Create with no value: its sentence, nothing sent.
+    h.click_after("Feed address *", "Create");
+    let s = h.turns(2);
+    assert!(
+        s.contains("Repository (owner/name) is required.")
+            && !s.contains("Feed address is required."),
+        "{s}"
+    );
+    assert!(create_post(&mut h).is_none());
+    h.click_right_of("Repository (owner/name) *", 30);
+    h.type_text("python/cpython");
+    let s = h.turns(3);
+    assert!(
+        s.contains("https://github.com/python/cpython/releases.atom"),
+        "{s}"
+    );
+    assert!(s.contains("GitHub · python/cpython releases"), "{s}");
+    h.click_after("Feed address *", "Create");
+    let body = create_post(&mut h).expect("a POST");
+    assert_eq!(body["label"], "GitHub · python/cpython releases");
+    assert_eq!(
+        body["config"]["url"],
+        "https://github.com/python/cpython/releases.atom"
+    );
+}
+
+#[test]
+fn another_address_keeps_the_free_field_and_the_persons_name() {
+    let mut h = feed_dialog();
+    // The person's own name first: a pick keeps it and fills the address.
+    h.click_right_of("Name *", 30);
+    h.type_text("Tech links");
+    h.click_text("Choose…");
+    h.type_text("H");
+    let s = h.key(b"\r");
+    assert!(
+        s.contains("Tech links") && s.contains("https://news.ycombinator.com/rss"),
+        "{s}"
+    );
+    h.click_text("Hacker News · Front page");
+    h.type_text("An");
+    let s = h.key(b"\r");
+    assert!(
+        s.contains(triggers::ANOTHER_ADDRESS) && s.contains("Tech links"),
+        "{s}"
+    );
+    assert!(
+        !s.contains("https://news.ycombinator.com/rss"),
+        "the picker's address is emptied:\n{s}"
+    );
+    h.click_right_of("Feed address *", 30);
+    h.type_text("https://example.org/feed.xml");
+    h.click_after("Feed address *", "Create");
+    let body = create_post(&mut h).expect("a POST");
+    assert_eq!(body["label"], "Tech links");
+    assert_eq!(body["config"]["url"], "https://example.org/feed.xml");
 }

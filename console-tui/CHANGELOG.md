@@ -1,6 +1,12 @@
 # Changelog — abstractgateway-console
 
 ## [Unreleased]
+### Added
+- **Triggers: Choose a well-known feed (the web's list).** New connection → Feed starts with the gateway's feed
+  catalogue (`GET /triggers/feeds/catalog`): category headings, each feed with its site as the hint, then **Another
+  address**. A pick fills the Name (unless you wrote your own) and the Feed address; a template (subreddit, YouTube
+  channel, GitHub releases) asks for its one value, builds the address as you type and refuses a value of the wrong
+  form beside Create (*Repository (owner/name): not the expected form (e.g. python/cpython).*).
 ### Changed
 - **Another mailbox: Read only or Read and write (the web's words).** My email → Mailboxes (your own page) lists your
   other mailboxes, one line each — *address · provider · state · Read only* or *· Read and write* — with an **Active**

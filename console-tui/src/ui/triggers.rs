@@ -92,6 +92,18 @@ pub const K_CREATE: &str = "triggers.create";
 
 const SOURCES_PATH: &str = "/trigger-sources";
 
+/// The well-known feeds New connection → Feed proposes (the web's picker):
+/// the shipped catalogue merged with the gateway's own
+/// `<data_dir>/catalog/feeds.json`.
+pub const K_CATALOG: &str = "triggers.feeds";
+pub const CATALOG_PATH: &str = "/triggers/feeds/catalog";
+pub const FEED_SOURCE: &str = "feed.item";
+pub const CATALOG_LABEL: &str = "Choose a well-known feed";
+pub const CATALOG_HELP: &str =
+    "Pick one to fill in the name and the address, or choose Another address and type it.";
+pub const CATALOG_LOADING: &str = "Reading the well-known feeds...";
+pub const ANOTHER_ADDRESS: &str = "Another address";
+
 /// The list route (`?all=true`: an admin's All accounts view).
 pub fn list_path(all: bool) -> String {
     if all {
@@ -1044,6 +1056,258 @@ pub fn create_body(s: &SourceDesc, label: &str, config: Value) -> Value {
     json!({"source_id": s.id, "source_version": s.version, "label": label, "config": config})
 }
 
+// ----------------------------------------------------- the feed catalogue
+
+/// One well-known feed (`GET /triggers/feeds/catalog`, `feeds[]`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct CatalogFeed {
+    pub id: String,
+    pub name: String,
+    pub url: String,
+    pub site: String,
+    pub category: String,
+    pub description: String,
+    /// A template's one value (`template: true`): the address holds `{key}`.
+    pub placeholder: Option<Placeholder>,
+    pub name_template: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Placeholder {
+    pub key: String,
+    pub label: String,
+    pub example: String,
+    pub pattern: Option<String>,
+}
+
+/// The catalogue's feeds; an entry without id, name or url is skipped.
+pub fn catalog_from(v: &Value) -> Result<Vec<CatalogFeed>, String> {
+    let items = v
+        .get("feeds")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "the gateway's answer has no feeds list.".to_string())?;
+    Ok(items
+        .iter()
+        .filter_map(|f| {
+            let placeholder = if f.get("template").and_then(Value::as_bool) == Some(true) {
+                let p = f.get("placeholder")?;
+                Some(Placeholder {
+                    key: st(p, "key")?,
+                    label: st(p, "label").unwrap_or_else(|| "Value".into()),
+                    example: st(p, "example").unwrap_or_default(),
+                    pattern: st(p, "pattern"),
+                })
+            } else {
+                None
+            };
+            Some(CatalogFeed {
+                id: st(f, "id")?,
+                name: st(f, "name")?,
+                url: st(f, "url")?,
+                site: st(f, "site").unwrap_or_default(),
+                category: st(f, "category").unwrap_or_else(|| "Other".into()),
+                description: st(f, "description").unwrap_or_default(),
+                placeholder,
+                name_template: st(f, "name_template"),
+            })
+        })
+        .collect())
+}
+
+/// One row of the picker: a category heading (not choosable), a feed
+/// (its index in the catalogue), or Another address (the free field).
+#[derive(Clone, Debug, PartialEq)]
+pub enum CatalogRow {
+    Heading(String),
+    Feed(usize),
+    Another,
+}
+
+/// The picker's rows: grouped by category in the catalogue's order, then
+/// Another address (the web's optgroups + its last option).
+pub fn catalog_rows(feeds: &[CatalogFeed]) -> Vec<CatalogRow> {
+    let mut cats: Vec<&str> = Vec::new();
+    for f in feeds {
+        if !cats.contains(&f.category.as_str()) {
+            cats.push(&f.category);
+        }
+    }
+    let mut rows = Vec::new();
+    for c in cats {
+        rows.push(CatalogRow::Heading(c.to_string()));
+        for (i, f) in feeds.iter().enumerate() {
+            if f.category == c {
+                rows.push(CatalogRow::Feed(i));
+            }
+        }
+    }
+    rows.push(CatalogRow::Another);
+    rows
+}
+
+/// A row's option: the feed's name with its site as the hint (a template
+/// ends with "…": it asks for one value).
+pub fn catalog_option(row: &CatalogRow, feeds: &[CatalogFeed]) -> SelectOption {
+    match row {
+        CatalogRow::Heading(c) => {
+            SelectOption::keyed(format!("#{c}"), format!("— {c} —")).disabled(true)
+        }
+        CatalogRow::Feed(i) => {
+            let f = &feeds[*i];
+            if f.placeholder.is_some() {
+                SelectOption::keyed(f.id.clone(), format!("{}…", f.name))
+            } else {
+                SelectOption::keyed(f.id.clone(), f.name.clone())
+                    .hint(site_name(if f.site.is_empty() { &f.url } else { &f.site }))
+            }
+        }
+        CatalogRow::Another => SelectOption::keyed("__another", ANOTHER_ADDRESS),
+    }
+}
+
+/// `https://www.bbc.co.uk/news` → `bbc.co.uk` (the web's `trgSiteName`).
+pub fn site_name(url: &str) -> String {
+    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    host.strip_prefix("www.").unwrap_or(host).to_string()
+}
+
+/// The address of `f` (a template's `{key}` replaced by `value`).
+pub fn feed_address(f: &CatalogFeed, value: &str) -> String {
+    match &f.placeholder {
+        Some(p) => f.url.replace(&format!("{{{}}}", p.key), value),
+        None => f.url.clone(),
+    }
+}
+
+/// The name a pick fills in (a template's `name_template` once its value is typed).
+pub fn feed_name(f: &CatalogFeed, value: &str) -> String {
+    match (&f.placeholder, &f.name_template) {
+        (Some(p), Some(nt)) if !value.is_empty() => nt.replace(&format!("{{{}}}", p.key), value),
+        _ => f.name.clone(),
+    }
+}
+
+/// Why a template's value is refused (the web's `trgFeedParamProblem`).
+pub fn feed_param_problem(f: &CatalogFeed, value: &str) -> Option<String> {
+    let p = f.placeholder.as_ref()?;
+    if value.is_empty() {
+        return Some(format!("{} is required.", p.label));
+    }
+    let ok = p
+        .pattern
+        .as_deref()
+        .and_then(|pat| pattern_match(pat, value))
+        .unwrap_or(true);
+    (!ok).then(|| format!("{}: not the expected form (e.g. {}).", p.label, p.example))
+}
+
+/// An anchored pattern of the catalogue's subset — literals, `[...]`
+/// classes (ranges), `{n}` / `{m,n}` / `+` / `*` / `?` — matched whole.
+/// None when the pattern uses anything else (left unchecked).
+pub fn pattern_match(pattern: &str, value: &str) -> Option<bool> {
+    #[derive(Debug)]
+    enum Atom {
+        Lit(char),
+        Class(Vec<(char, char)>),
+    }
+    let body = pattern.strip_prefix('^')?.strip_suffix('$')?;
+    let chars: Vec<char> = body.chars().collect();
+    let mut atoms: Vec<(Atom, usize, usize)> = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let atom = match chars[i] {
+            '[' => {
+                let mut set = Vec::new();
+                i += 1;
+                while i < chars.len() && chars[i] != ']' {
+                    let mut c = chars[i];
+                    if c == '\\' {
+                        i += 1;
+                        c = *chars.get(i)?;
+                    }
+                    if chars.get(i + 1) == Some(&'-') && chars.get(i + 2).is_some_and(|n| *n != ']')
+                    {
+                        set.push((c, chars[i + 2]));
+                        i += 3;
+                    } else {
+                        set.push((c, c));
+                        i += 1;
+                    }
+                }
+                if i >= chars.len() || set.is_empty() {
+                    return None;
+                }
+                i += 1;
+                Atom::Class(set)
+            }
+            '\\' => {
+                let c = *chars.get(i + 1)?;
+                if c.is_ascii_alphanumeric() {
+                    return None; // \d, \w ...: not in the subset
+                }
+                i += 2;
+                Atom::Lit(c)
+            }
+            c if "(){}|*+?.$^".contains(c) => return None,
+            c => {
+                i += 1;
+                Atom::Lit(c)
+            }
+        };
+        let (lo, hi) = match chars.get(i) {
+            Some('+') => {
+                i += 1;
+                (1, usize::MAX)
+            }
+            Some('*') => {
+                i += 1;
+                (0, usize::MAX)
+            }
+            Some('?') => {
+                i += 1;
+                (0, 1)
+            }
+            Some('{') => {
+                let end = chars[i..].iter().position(|c| *c == '}')? + i;
+                let inner: String = chars[i + 1..end].iter().collect();
+                i = end + 1;
+                match inner.split_once(',') {
+                    Some((a, b)) => (
+                        a.trim().parse().ok()?,
+                        if b.trim().is_empty() {
+                            usize::MAX
+                        } else {
+                            b.trim().parse().ok()?
+                        },
+                    ),
+                    None => {
+                        let n = inner.trim().parse().ok()?;
+                        (n, n)
+                    }
+                }
+            }
+            _ => (1, 1),
+        };
+        atoms.push((atom, lo, hi));
+    }
+    fn hit(a: &Atom, c: char) -> bool {
+        match a {
+            Atom::Lit(l) => *l == c,
+            Atom::Class(set) => set.iter().any(|(lo, hi)| *lo <= c && c <= *hi),
+        }
+    }
+    fn go(atoms: &[(Atom, usize, usize)], v: &[char]) -> bool {
+        let Some(((a, lo, hi), rest)) = atoms.split_first() else {
+            return v.is_empty();
+        };
+        let most = v.iter().take_while(|c| hit(a, **c)).count().min(*hi);
+        (*lo..=most).rev().any(|n| n >= *lo && go(rest, &v[n..]))
+    }
+    let v: Vec<char> = value.chars().collect();
+    Some(go(&atoms, &v))
+}
+
 // ------------------------------------------------------------------- page
 
 #[derive(Clone, Copy)]
@@ -1762,10 +2026,23 @@ type FieldValues = Rc<RefCell<Vec<(String, Box<dyn Fn() -> String>)>>>;
 
 /// New connection: source, name, the source's settings; then (webhooks)
 /// the address and the one-time secret.
+/// The feed the picker's row `k` names (None: a heading, Another address, none yet).
+fn picked_feed(ctx: &Ctx, k: usize) -> Option<CatalogFeed> {
+    let got = ctx.store.json.get_untracked(K_CATALOG);
+    let feeds = catalog_from(got.ready()?).ok()?;
+    match catalog_rows(&feeds).get(k)? {
+        CatalogRow::Feed(i) => feeds.get(*i).cloned(),
+        _ => None,
+    }
+}
+
 fn open_create(cx: Scope, ctx: &Ctx, tu: Tu) {
     let _ = tu;
     if ctx.store.json.get_untracked(K_SOURCES).ready().is_none() {
         ctx.send(Cmd::Json(JsonCmd::get(K_SOURCES, SOURCES_PATH)));
+    }
+    if ctx.store.json.get_untracked(K_CATALOG).ready().is_none() {
+        ctx.send(Cmd::Json(JsonCmd::get(K_CATALOG, CATALOG_PATH)));
     }
     ctx.store.json.set_write(K_CREATE, None);
     let c = ctx.clone();
@@ -1776,6 +2053,38 @@ fn open_create(cx: Scope, ctx: &Ctx, tu: Tu) {
             let name = mcx.signal(String::new());
             let note = mcx.signal(String::new());
             let values: FieldValues = Rc::new(RefCell::new(Vec::new()));
+            // The well-known feed picked (an index into `catalog_rows`; out of
+            // range = none yet), a template's value, the feed address (shared
+            // with the address field), and what the picker last filled in.
+            let feed_pick = mcx.signal(usize::MAX);
+            let feed_param = mcx.signal(String::new());
+            let url_sig = mcx.signal(String::new());
+            let auto: Rc<RefCell<(String, String)>> = Rc::new(RefCell::new(Default::default()));
+            {
+                // Typing a template's value builds the address (and the name,
+                // while it is the picker's) — the web's `trgFeedParamTyped`.
+                let (c, auto) = (c.clone(), auto.clone());
+                mcx.effect(move || {
+                    let v = feed_param.get().trim().to_string();
+                    let Some(f) = picked_feed(&c, feed_pick.get_untracked()) else {
+                        return;
+                    };
+                    if f.placeholder.is_none() {
+                        return;
+                    }
+                    let mut a = auto.borrow_mut();
+                    let url_now = url_sig.get_untracked();
+                    if url_now.trim().is_empty() || url_now == a.1 {
+                        a.1 = if v.is_empty() { String::new() } else { feed_address(&f, &v) };
+                        url_sig.set(a.1.clone());
+                    }
+                    let name_now = name.get_untracked();
+                    if name_now.trim().is_empty() || name_now == a.0 {
+                        a.0 = feed_name(&f, &v);
+                        name.set(a.0.clone());
+                    }
+                });
+            }
             let c2 = c.clone();
             let close2 = close.clone();
             let close_cancel = close.clone();
@@ -1893,6 +2202,113 @@ fn open_create(cx: Scope, ctx: &Ctx, tu: Tu) {
                         super::kit::sentence_indent(&t, hint, w, label_w as usize, t.text_faint)
                     }));
                 }
+                // The well-known feeds (the web's "Choose a well-known feed").
+                {
+                    let (pick_sources, c4, auto) = (sources.clone(), c2.clone(), auto.clone());
+                    col = col.child(dyn_view_scoped(LayoutStyle::column().gap(0).shrink(0.0), move |pcx| {
+                        let t = use_theme(pcx).get().tokens;
+                        let i = src_idx.get().min(pick_sources.len() - 1);
+                        if pick_sources[i].id != FEED_SOURCE {
+                            return Element::new().style(LayoutStyle::default().h(0)).build();
+                        }
+                        let feeds = match c4.store.json.get(K_CATALOG) {
+                            Loadable::Ready(v) => catalog_from(&v),
+                            Loadable::Failed(e) => Err(refusal(&e)),
+                            _ => return super::kit::sentence_indent(&t, CATALOG_LOADING, w, label_w as usize, t.text_faint),
+                        };
+                        let feeds = match feeds {
+                            Ok(f) if !f.is_empty() => f,
+                            Ok(_) => return Element::new().style(LayoutStyle::default().h(0)).build(),
+                            Err(e) => {
+                                let text = format!("Could not read the well-known feeds ({e}). Type the feed address below.");
+                                return super::kit::sentence_indent(&t, &text, w, label_w as usize, t.text_faint);
+                            }
+                        };
+                        let rows = catalog_rows(&feeds);
+                        let options = rows.iter().map(|r| catalog_option(r, &feeds)).collect();
+                        let (rows2, feeds2, auto2) = (rows.clone(), feeds.clone(), auto.clone());
+                        let select = Select::new(options)
+                            .value(feed_pick)
+                            .placeholder("Choose…")
+                            .max_visible(12)
+                            .layout(LayoutStyle::default().w(field_w).h(1))
+                            .on_change(move |k| {
+                                let mut a = auto2.borrow_mut();
+                                let typed = name.get_untracked();
+                                let name_ours = typed.trim().is_empty() || typed == a.0;
+                                let url_now = url_sig.get_untracked();
+                                let url_ours = url_now.trim().is_empty() || url_now == a.1;
+                                feed_param.set(String::new());
+                                note.set(String::new());
+                                match rows2.get(k) {
+                                    Some(CatalogRow::Feed(fi)) => {
+                                        let f = &feeds2[*fi];
+                                        if name_ours {
+                                            a.0 = feed_name(f, "");
+                                            name.set(a.0.clone());
+                                        }
+                                        if f.placeholder.is_none() || url_ours {
+                                            a.1 = if f.placeholder.is_some() { String::new() } else { f.url.clone() };
+                                            url_sig.set(a.1.clone());
+                                        }
+                                    }
+                                    _ => {
+                                        if name_ours {
+                                            a.0.clear();
+                                            name.set(String::new());
+                                        }
+                                        if url_ours {
+                                            a.1.clear();
+                                            url_sig.set(String::new());
+                                        }
+                                    }
+                                }
+                            })
+                            .element(pcx, &t)
+                            .build();
+                        let mut pc = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
+                        pc = pc.child(super::w::field_row(&t, CATALOG_LABEL, label_w, select));
+                        let (rows3, feeds3) = (rows.clone(), feeds.clone());
+                        pc = pc.child(dyn_view_scoped(LayoutStyle::column().gap(0).shrink(0.0), move |hcx| {
+                            let t = use_theme(hcx).get().tokens;
+                            let mut hc = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
+                            match rows3.get(feed_pick.get()) {
+                                Some(CatalogRow::Feed(fi)) => {
+                                    let f = &feeds3[*fi];
+                                    let about = if f.site.is_empty() {
+                                        f.description.clone()
+                                    } else {
+                                        format!("{} · {}", f.description, site_name(&f.site))
+                                    };
+                                    hc = hc.child(super::kit::sentence_indent(&t, &about, w, label_w as usize, t.text_faint));
+                                    if let Some(p) = &f.placeholder {
+                                        hc = hc.child(super::w::field_row(
+                                            &t,
+                                            &format!("{} *", p.label),
+                                            label_w,
+                                            super::w::caret_tracked(
+                                                hcx,
+                                                caret,
+                                                TextInput::new()
+                                                    .value(feed_param)
+                                                    .placeholder(&p.example)
+                                                    .layout(LayoutStyle::default().w(field_w).h(1))
+                                                    .element(hcx, &t),
+                                            )
+                                            .build(),
+                                        ));
+                                    }
+                                }
+                                Some(CatalogRow::Another) => {}
+                                _ => {
+                                    hc = hc.child(super::kit::sentence_indent(&t, CATALOG_HELP, w, label_w as usize, t.text_faint));
+                                }
+                            }
+                            hc.build()
+                        }));
+                        pc.build()
+                    }));
+                }
                 col = col.child(super::w::field_row(
                     &t,
                     "Name *",
@@ -2003,7 +2419,12 @@ fn open_create(cx: Scope, ctx: &Ctx, tu: Tu) {
                                 t.text_faint,
                             ),
                             _ => {
-                                let sig = fcx.signal(initial_value(&f));
+                                // A feed's address is the picker's too (it fills it in).
+                                let sig = if f.key == "url" && sources[i].id == FEED_SOURCE {
+                                    url_sig
+                                } else {
+                                    fcx.signal(initial_value(&f))
+                                };
                                 vals.borrow_mut()
                                     .push((f.key.clone(), Box::new(move || sig.get_untracked())));
                                 let ph = f
@@ -2094,6 +2515,20 @@ fn open_create(cx: Scope, ctx: &Ctx, tu: Tu) {
                                 config_from(&form_fields(&s.connection_schema), &raw);
                             if label.is_empty() {
                                 problems.insert(0, "Name is required.".into());
+                            }
+                            // A template's value: required and of its form while the
+                            // address is still the one it built (the web's trgCheckFeedParam).
+                            if s.id == FEED_SOURCE {
+                                if let Some(f) = picked_feed(&c3, feed_pick.get_untracked()) {
+                                    let v = feed_param.get_untracked().trim().to_string();
+                                    let url = config.get("url").and_then(Value::as_str).unwrap_or("").to_string();
+                                    if f.placeholder.is_some() && (url.is_empty() || url == feed_address(&f, &v)) {
+                                        if let Some(p) = feed_param_problem(&f, &v) {
+                                            problems.retain(|x| !x.starts_with("Feed address is required"));
+                                            problems.push(p);
+                                        }
+                                    }
+                                }
                             }
                             if !problems.is_empty() {
                                 note.set(problems.join(" "));
