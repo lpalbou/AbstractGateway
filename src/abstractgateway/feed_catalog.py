@@ -12,12 +12,15 @@ Two layers, merged by `id`:
 
 Shape (`{"version": 1, "feeds": [entry]}`), one entry:
 
-    {"id", "name", "url", "site", "category", "language", "description"}
+    {"id", "name", "url", "site", "category", "language", "description", "check_every"}
     + for a template (an address the person completes):
     "template": true, "placeholder": {"key", "label", "example", "pattern"?}, "name_template"?
 
 A template's `url` holds `{<key>}` exactly once; the console asks for the value in one field
-(checked against `pattern` when given) and builds the address. The served list
+(checked against `pattern` when given) and builds the address. `check_every` is the recommended
+interval between two reads, in the feed source's duration form (`^[1-9][0-9]*[smhd]$`, at least
+60 s): a pick prefills the connection's Check every with it (still editable). A custom entry may
+omit it (the form keeps its default). The served list
 (`GET /api/gateway/triggers/feeds/catalog`) carries `source: "shipped" | "custom"` per entry.
 """
 
@@ -33,10 +36,26 @@ from urllib.parse import urlparse
 CATALOG_VERSION = 1
 CUSTOM_RELATIVE_PATH = Path("catalog") / "feeds.json"
 DEFAULT_CUSTOM_CATEGORY = "My feeds"
-SHIPPED_REQUIRED = ("id", "name", "url", "site", "category", "language", "description")
+SHIPPED_REQUIRED = ("id", "name", "url", "site", "category", "language", "description", "check_every")
 CUSTOM_REQUIRED = ("id", "name", "url")
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+# The runtime feed source's `every` (abstractruntime.triggers.protocol.parse_duration, MIN_EVERY).
+_DURATION_RE = re.compile(r"^([1-9][0-9]*)([smhd])$")
+_DURATION_S = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+MIN_CHECK_EVERY_S = 60
+MAX_CHECK_EVERY_S = 366 * 86400
+
+
+def check_every_problem(value: Any) -> Optional[str]:
+    """Why `value` is not a check interval the feed source accepts (None when it is)."""
+    m = _DURATION_RE.match(value) if isinstance(value, str) else None
+    if not m:
+        return "check_every must be a number and a unit (s, m, h or d), for example 15m"
+    seconds = int(m.group(1)) * _DURATION_S[m.group(2)]
+    if not MIN_CHECK_EVERY_S <= seconds <= MAX_CHECK_EVERY_S:
+        return "check_every must be at least 60s and at most 366d"
+    return None
 
 
 def shipped_catalog() -> Dict[str, Any]:
@@ -65,6 +84,10 @@ def entry_problems(entry: Any, *, shipped: bool) -> List[str]:
     for key in ("site", "category", "language", "description", "name_template"):
         if key in entry and not isinstance(entry[key], str):
             out.append(f"{eid}: {key} must be a string")
+    if "check_every" in entry:
+        bad_every = check_every_problem(entry["check_every"])
+        if bad_every:
+            out.append(f"{eid}: {bad_every}")
     url = entry.get("url")
     if isinstance(url, str) and url.strip():
         parsed = urlparse(url)

@@ -640,7 +640,7 @@ def test_feed_catalog_picker_fills_the_name_and_the_address() -> None:
     assert "trgCheckFeedParam(m, byField)" in _slice_function(source, "createTriggerConnection")
     feeds = [dict(f, source="shipped") for f in shipped_catalog()["feeds"]]
     harness = HELPERS + _fns(source, "trgCatalogFeed", "trgSiteName", "trgFeedAddress", "trgFeedName", "trgFeedParamProblem",
-                             "trgCatalogMarkup", "pickCatalogFeed", "trgFeedParamTyped", "trgCheckFeedParam") + """
+                             "trgCatalogMarkup", "pickCatalogFeed", "trgPickEvery", "trgFeedParamTyped", "trgCheckFeedParam") + """
 const TRG_FEED_SOURCE = "feed.item";
 const TRG_ANOTHER_ADDRESS = "__another";
 const trg = { feedCatalog: { feeds: FEEDS }, modal: null };
@@ -698,3 +698,64 @@ console.log(JSON.stringify([out]));
     name, url, markup = r["another"]
     assert (name, url) == ("", "") and 'value="__another" selected' in markup and "trg-f-feed-param" not in markup
     assert "Could not read the well-known feeds (HTTP 500). Type the feed address below." in r["failed"]
+
+
+def test_feed_catalog_pick_prefills_check_every_with_the_recommended_interval() -> None:
+    """A pick sets Check every (number + unit) to the feed's `check_every` with "Recommended for this
+    feed" under it; a value changed before any pick is overwritten, one changed after a pick is kept;
+    a custom feed without `check_every` (or Another address) leaves the form default."""
+    from abstractgateway.feed_catalog import shipped_catalog
+
+    source = _console_script()
+    assert "trgPickEvery(m, feed);" in _slice_function(source, "pickCatalogFeed")
+    assert "triggerFormMarkup(m.fields, m.values, m.errors, trgFieldNotes(m))" in _slice_function(source, "renderTriggerModal")
+    assert "autoEvery: null, everyRecommended: false" in _slice_function(source, "openTriggerModal")
+    feeds = [dict(f, source="shipped") for f in shipped_catalog()["feeds"]]
+    feeds.append({"id": "mine", "name": "Mine", "url": "https://example.org/feed.xml", "category": "My feeds", "source": "custom"})
+    harness = HELPERS + _fns(source, "trgHumanize", "trgSentence", "triggerFormFields", "trgIsDuration", "trgEnumNames", "trgControlSaysIt",
+                             "trgFieldMarkup", "triggerFormMarkup", "trgCatalogFeed", "trgFeedName", "pickCatalogFeed", "trgPickEvery",
+                             "trgFieldNotes") + """
+const TRG_ANOTHER_ADDRESS = "__another";
+const TRG_EVERY_RECOMMENDED = "Recommended for this feed";
+const trg = { feedCatalog: { feeds: FEEDS }, modal: null };
+const fields = triggerFormFields({type: "object", required: ["url"], properties: {
+  url: {type: "string", format: "uri", title: "Feed address"},
+  every: {type: "string", format: "duration", pattern: "^[1-9][0-9]*[smhd]$", default: "15m", title: "Check every"}}});
+const els = { "trg-f-label": { value: "" }, "trg-f-url": { value: "" }, every: { value: "15m" } };
+const $ = (id) => els[id] || null;
+const trgModalValues = () => ({ url: els["trg-f-url"].value, every: els.every.value });
+let markup = "";
+function renderTriggerModal() {
+  const m = trg.modal;
+  els["trg-f-label"].value = m.label; els["trg-f-url"].value = m.values.url || "";
+  els.every.value = m.values.every === undefined ? "15m" : m.values.every;
+  markup = triggerFormMarkup(m.fields, m.values, m.errors, trgFieldNotes(m));
+}
+const fresh = () => ({ fields, feedPick: "", feedParam: "", autoName: "", autoUrl: "", autoEvery: null, everyRecommended: false, values: {}, errors: {} });
+const out = {};
+const step = (name) => { out[name] = [els.every.value, markup]; };
+trg.modal = fresh();
+els.every.value = "2h"; pickCatalogFeed("arxiv-cs-ai"); step("beforeAnyPick");
+pickCatalogFeed("hacker-news"); step("unchanged");
+els.every.value = "45m"; pickCatalogFeed("nature"); step("changedAfterPick");
+pickCatalogFeed("__another"); step("anotherKeeps");
+trg.modal = fresh(); els.every.value = "15m";
+pickCatalogFeed("mine"); step("customDefault");
+pickCatalogFeed("youtube-channel"); step("template");
+pickCatalogFeed("mine"); step("backToDefault");
+console.log(JSON.stringify([out]));
+""".replace("FEEDS", json.dumps(feeds))
+    (r,) = _node(harness)
+    note = '<p class="trg-help" data-trg-note="every">Recommended for this feed</p>'
+    hours = '<option value="h" selected>hours</option>'
+    every, markup = r["beforeAnyPick"]
+    assert every == "12h" and note in markup and 'data-trg-dur-n="every" value="12"' in markup and hours in markup
+    every, markup = r["unchanged"]
+    assert every == "10m" and note in markup and 'value="10"' in markup and '<option value="m" selected>minutes</option>' in markup
+    every, markup = r["changedAfterPick"]
+    assert every == "45m" and note not in markup and 'value="45"' in markup
+    assert r["anotherKeeps"][0] == "45m" and note not in r["anotherKeeps"][1]
+    assert r["customDefault"][0] == "15m" and note not in r["customDefault"][1]
+    every, markup = r["template"]
+    assert every == "1h" and note in markup and 'value="1"' in markup and hours in markup
+    assert r["backToDefault"][0] == "15m" and note not in r["backToDefault"][1]

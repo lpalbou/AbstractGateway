@@ -660,11 +660,12 @@ TRIGGERS_JS = r"""
     function trgIsDuration(f) {
       return f.kind === "string" && (f.schema.format === "duration" || f.schema.pattern === "^[1-9][0-9]*[smhd]$");
     }
-    function trgFieldMarkup(f, values, errors) {
+    function trgFieldMarkup(f, values, errors, notes) {
       const id = `trg-f-${f.key.replace(/[^A-Za-z0-9_-]/g, "-")}`;
       const label = `<label for="${id}">${esc(f.label)}${f.required ? " *" : ""}</label>`;
       const help = f.description && !trgControlSaysIt(f) ? `<p class="trg-help">${esc(f.description)}</p>` : "";
       const err = errors && errors[f.key] ? `<p class="trg-field-error" role="alert">${esc(errors[f.key])}</p>` : "";
+      const note = notes && notes[f.key] ? `<p class="trg-help" data-trg-note="${esc(f.key)}">${esc(notes[f.key])}</p>` : "";
       const dflt = f.schema.default;
       const has = values && values[f.key] !== undefined;
       const cur = has ? String(values[f.key]) : (dflt === undefined ? "" : (typeof dflt === "string" ? dflt : JSON.stringify(dflt)));
@@ -692,15 +693,15 @@ TRIGGERS_JS = r"""
       } else {
         control = `<pre class="trg-help">Not editable here: ${esc(JSON.stringify(f.schema))}</pre>`;
       }
-      return `<div class="trg-field trg-field--wide">${label}${control}${err}${help}</div>`;
+      return `<div class="trg-field trg-field--wide">${label}${control}${err}${note}${help}</div>`;
     }
-    function triggerFormMarkup(fields, values, errors) {
+    function triggerFormMarkup(fields, values, errors, notes) {
       const main = fields.filter((f) => f.required || !TRG_MORE_FIELDS.has(f.key));
       const more = fields.filter((f) => !f.required && TRG_MORE_FIELDS.has(f.key));
-      let html = main.map((f) => trgFieldMarkup(f, values, errors)).join("");
+      let html = main.map((f) => trgFieldMarkup(f, values, errors, notes)).join("");
       if (more.length) {
         const open = more.some((f) => errors && errors[f.key]) ? " open" : "";
-        html += `<details class="trg-more trg-field--wide"${open}><summary>More options</summary>${more.map((f) => trgFieldMarkup(f, values, errors)).join("")}</details>`;
+        html += `<details class="trg-more trg-field--wide"${open}><summary>More options</summary>${more.map((f) => trgFieldMarkup(f, values, errors, notes)).join("")}</details>`;
       }
       return html;
     }
@@ -744,10 +745,12 @@ TRIGGERS_JS = r"""
     }
     // ---- the feed catalogue (New connection → Feed): well-known public feeds to choose from
     // (GET /triggers/feeds/catalog: the shipped list merged with the gateway's own
-    // <data_dir>/catalog/feeds.json). A pick fills the name and the address, both still editable;
-    // a template asks for its one value and builds the address; Another address is the free field.
+    // <data_dir>/catalog/feeds.json). A pick fills the name, the address and Check every (the
+    // feed's `check_every`), all still editable; a template asks for its one value and builds the
+    // address; Another address is the free field.
     const TRG_FEED_SOURCE = "feed.item";
     const TRG_ANOTHER_ADDRESS = "__another";
+    const TRG_EVERY_RECOMMENDED = "Recommended for this feed";
     async function loadFeedCatalog() {
       if (trg.feedCatalog && !trg.feedCatalog.error) return;
       try {
@@ -824,7 +827,8 @@ TRIGGERS_JS = r"""
       renderTriggerModal();
     }
     // A pick fills the name (unless the person wrote their own) and the address (unless they
-    // typed one); Another address empties an address the catalogue filled and focuses the field.
+    // typed one) and Check every (trgPickEvery); Another address empties an address the catalogue
+    // filled and focuses the field.
     function pickCatalogFeed(id) {
       const m = trg.modal;
       m.values = trgModalValues();
@@ -847,9 +851,30 @@ TRIGGERS_JS = r"""
         if (nameIsOurs) { m.label = ""; m.autoName = ""; }
         if (urlIsOurs) { m.values.url = ""; m.autoUrl = ""; }
       }
+      trgPickEvery(m, feed);
       renderTriggerModal();
       const focus = feed && feed.template ? $("trg-f-feed-param") : (id === TRG_ANOTHER_ADDRESS ? $("trg-f-url") : null);
       if (focus) { try { focus.focus(); } catch {} }
+    }
+    // A pick sets Check every to the feed's recommended interval (`check_every`; the form default
+    // when it has none) unless the person changed it since the last pick (`m.autoEvery`: what the
+    // last pick left there; null = no pick yet, so a value set before any pick is overwritten).
+    function trgPickEvery(m, feed) {
+      const now = m.values.every === undefined ? undefined : String(m.values.every);
+      const ours = m.autoEvery == null || now === undefined || now === m.autoEvery;
+      m.everyRecommended = false;
+      if (!ours) return;
+      const rec = feed && typeof feed.check_every === "string" && /^[1-9][0-9]*[smhd]$/.test(feed.check_every) ? feed.check_every : "";
+      const field = (m.fields || []).find((f) => f.key === "every");
+      const dflt = field && typeof field.schema.default === "string" ? field.schema.default : "";
+      if (rec) m.values.every = rec;
+      else delete m.values.every;
+      m.autoEvery = rec || dflt;
+      m.everyRecommended = !!rec;
+    }
+    // "Recommended for this feed" under Check every while it holds the picked feed's interval.
+    function trgFieldNotes(m) {
+      return m.everyRecommended && m.values && m.values.every === m.autoEvery ? { every: TRG_EVERY_RECOMMENDED } : {};
     }
     // Typing a template's value builds the address (and the name, while it is the catalogue's).
     function trgFeedParamTyped(value) {
@@ -930,7 +955,7 @@ TRIGGERS_JS = r"""
         + `<div class="trg-field"><label for="trg-f-source">What to listen to</label><select id="trg-f-source" data-trg-source><option value="">Choose…</option>${options}</select>${trgSourceHintsMarkup(sources, s)}</div>`
         + (s && s.id === TRG_FEED_SOURCE ? trgCatalogMarkup(m) : "")
         + `<div class="trg-field"><label for="trg-f-label">Name *</label><input id="trg-f-label" type="text" autocomplete="off" data-trg-label value="${esc(m.label || "")}" placeholder="Release feed, Orders webhook…">${m.errors && m.errors.__name ? `<p class="trg-field-error" role="alert">${esc(m.errors.__name)}</p>` : ""}<p class="trg-help">How you find it in Flow and in your automations.</p></div>`;
-      if (s) html += triggerFormMarkup(m.fields, m.values, m.errors);
+      if (s) html += triggerFormMarkup(m.fields, m.values, m.errors, trgFieldNotes(m));
       body.innerHTML = html + `</div>`;
       note.textContent = m.problem || "";
       actions.innerHTML = `<button type="button" class="secondary" data-trg-cancel="1">Cancel</button>`
@@ -967,7 +992,7 @@ TRIGGERS_JS = r"""
       const pick = sources.find((x) => x.id === sourceId || `${x.id}@${x.version}` === sourceId) || (sources.length === 1 ? sources[0] : null);
       trg.hookTest = null;
       if (pick && pick.id === TRG_FEED_SOURCE) await loadFeedCatalog();
-      trg.modal = { sources, sourceKey: pick ? `${pick.id}@${pick.version}` : "", fields: pick ? triggerFormFields(pick.connection_schema) : [], label: "", problem: "", saving: false, created: null, feedPick: "", feedParam: "", autoName: "", autoUrl: "" };
+      trg.modal = { sources, sourceKey: pick ? `${pick.id}@${pick.version}` : "", fields: pick ? triggerFormFields(pick.connection_schema) : [], label: "", problem: "", saving: false, created: null, feedPick: "", feedParam: "", autoName: "", autoUrl: "", autoEvery: null, everyRecommended: false };
       renderTriggerModal();
     }
     function trgModalValues() {

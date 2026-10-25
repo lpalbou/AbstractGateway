@@ -103,6 +103,8 @@ pub const CATALOG_HELP: &str =
     "Pick one to fill in the name and the address, or choose Another address and type it.";
 pub const CATALOG_LOADING: &str = "Reading the well-known feeds...";
 pub const ANOTHER_ADDRESS: &str = "Another address";
+/// Under Check every after a pick filled it with the feed's `check_every`.
+pub const EVERY_RECOMMENDED: &str = "Recommended for this feed";
 
 /// The list route (`?all=true`: an admin's All accounts view).
 pub fn list_path(all: bool) -> String {
@@ -725,6 +727,39 @@ pub fn duration_parts(raw: &str) -> (String, usize) {
     }
 }
 
+/// ("15", minutes) → "15m"; an empty number → "" (not set).
+pub fn duration_value(num: &str, unit: usize) -> String {
+    let num = num.trim();
+    if num.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "{num}{}",
+            DURATION_UNITS[unit.min(DURATION_UNITS.len() - 1)].0
+        )
+    }
+}
+
+/// Check every after a pick (the web's `trgPickEvery`): `Some((value, recommended))` while the
+/// field is the picker's — no pick yet (`auto` is `None`: a value set before any pick is
+/// overwritten) or it still holds what the last pick left (`auto`) — else `None` (the person
+/// changed it after a pick: it stands). The value is the feed's `check_every`, or `default` (the
+/// form's) when the feed has none.
+pub fn every_after_pick(
+    current: &str,
+    auto: Option<&str>,
+    check_every: Option<&str>,
+    default: &str,
+) -> Option<(String, bool)> {
+    if auto.is_some_and(|a| a != current) {
+        return None;
+    }
+    Some(match check_every {
+        Some(c) => (c.to_string(), true),
+        None => (default.to_string(), false),
+    })
+}
+
 /// An enum's shown names: the schema's `enumNames` (same length), else `None`.
 pub fn enum_names(f: &FormField) -> Option<Vec<String>> {
     let vals = f.schema.get("enum").and_then(Value::as_array)?;
@@ -1070,6 +1105,9 @@ pub struct CatalogFeed {
     /// A template's one value (`template: true`): the address holds `{key}`.
     pub placeholder: Option<Placeholder>,
     pub name_template: Option<String>,
+    /// The recommended interval (`check_every`, e.g. "15m"; a pick prefills Check every with
+    /// it). `None` when absent or not a duration (a custom entry may omit it).
+    pub check_every: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1109,6 +1147,7 @@ pub fn catalog_from(v: &Value) -> Result<Vec<CatalogFeed>, String> {
                 description: st(f, "description").unwrap_or_default(),
                 placeholder,
                 name_template: st(f, "name_template"),
+                check_every: st(f, "check_every").filter(|c| !duration_parts(c).0.is_empty()),
             })
         })
         .collect())
@@ -2060,6 +2099,13 @@ fn open_create(cx: Scope, ctx: &Ctx, tu: Tu) {
             let feed_param = mcx.signal(String::new());
             let url_sig = mcx.signal(String::new());
             let auto: Rc<RefCell<(String, String)>> = Rc::new(RefCell::new(Default::default()));
+            // A feed's Check every, shared by the picker and the field (the web's
+            // `trgPickEvery`): number, unit, (what the last pick left there, None = no pick
+            // yet; seeded with the form default), and whether it is the feed's recommendation.
+            let every_n = mcx.signal(String::new());
+            let every_u = mcx.signal(1usize);
+            let every_state: Rc<RefCell<(Option<String>, bool)>> = Rc::new(RefCell::new((None, false)));
+            let every_rec = mcx.signal(false);
             {
                 // Typing a template's value builds the address (and the name,
                 // while it is the picker's) — the web's `trgFeedParamTyped`.
@@ -2204,7 +2250,7 @@ fn open_create(cx: Scope, ctx: &Ctx, tu: Tu) {
                 }
                 // The well-known feeds (the web's "Choose a well-known feed").
                 {
-                    let (pick_sources, c4, auto) = (sources.clone(), c2.clone(), auto.clone());
+                    let (pick_sources, c4, auto, every_state) = (sources.clone(), c2.clone(), auto.clone(), every_state.clone());
                     col = col.child(dyn_view_scoped(LayoutStyle::column().gap(0).shrink(0.0), move |pcx| {
                         let t = use_theme(pcx).get().tokens;
                         let i = src_idx.get().min(pick_sources.len() - 1);
@@ -2227,12 +2273,34 @@ fn open_create(cx: Scope, ctx: &Ctx, tu: Tu) {
                         let rows = catalog_rows(&feeds);
                         let options = rows.iter().map(|r| catalog_option(r, &feeds)).collect();
                         let (rows2, feeds2, auto2) = (rows.clone(), feeds.clone(), auto.clone());
+                        let every_default = form_fields(&pick_sources[i].connection_schema)
+                            .iter()
+                            .find(|f| f.key == "every" && is_duration(f))
+                            .map(initial_value)
+                            .unwrap_or_default();
+                        let every_state2 = every_state.clone();
                         let select = Select::new(options)
                             .value(feed_pick)
                             .placeholder("Choose…")
                             .max_visible(12)
                             .layout(LayoutStyle::default().w(field_w).h(1))
                             .on_change(move |k| {
+                                // Check every: the feed's recommendation unless the person
+                                // changed it since the last pick (state released before the sets).
+                                let recommended = match rows2.get(k) {
+                                    Some(CatalogRow::Feed(fi)) => feeds2[*fi].check_every.clone(),
+                                    _ => None,
+                                };
+                                let now = duration_value(&every_n.get_untracked(), every_u.get_untracked());
+                                let after = every_after_pick(&now, every_state2.borrow().0.as_deref(), recommended.as_deref(), &every_default);
+                                every_rec.set(false);
+                                if let Some((v, rec)) = after {
+                                    every_state2.borrow_mut().0 = Some(v.clone());
+                                    let (n, u) = duration_parts(&v);
+                                    every_n.set(n);
+                                    every_u.set(u);
+                                    every_rec.set(rec);
+                                }
                                 let mut a = auto2.borrow_mut();
                                 let typed = name.get_untracked();
                                 let name_ours = typed.trim().is_empty() || typed == a.0;
@@ -2333,6 +2401,7 @@ fn open_create(cx: Scope, ctx: &Ctx, tu: Tu) {
                 ));
                 let vals = values.clone();
                 let field_sources = sources.clone();
+                let every_state = every_state.clone();
                 col = col.child(dyn_view_scoped(LayoutStyle::column().gap(0), move |fcx| {
                     let t = use_theme(fcx).get().tokens;
                     let sources = &field_sources;
@@ -2341,6 +2410,8 @@ fn open_create(cx: Scope, ctx: &Ctx, tu: Tu) {
                     let mut fc = Element::new().style(LayoutStyle::column().gap(0));
                     for f in form_fields(&sources[i].connection_schema) {
                         let label = format!("{}{}", f.label, if f.required { " *" } else { "" });
+                        // A feed's Check every is the picker's too (it prefills it).
+                        let feed_every = f.key == "every" && sources[i].id == FEED_SOURCE && is_duration(&f);
                         let control = match f.kind {
                             "enum" | "boolean" => {
                                 let opts = choice_options(&f);
@@ -2367,21 +2438,20 @@ fn open_create(cx: Scope, ctx: &Ctx, tu: Tu) {
                             "string" if is_duration(&f) => {
                                 // Check every [15] [minutes] (the web's control).
                                 let (n0, u0) = duration_parts(&initial_value(&f));
-                                let n = fcx.signal(n0);
-                                let u = fcx.signal(u0);
+                                let (n, u) = if feed_every {
+                                    // Seeded once with the form default (released before the sets).
+                                    let seed = !std::mem::replace(&mut every_state.borrow_mut().1, true);
+                                    if seed {
+                                        every_n.set_if_changed(n0);
+                                        every_u.set_if_changed(u0);
+                                    }
+                                    (every_n, every_u)
+                                } else {
+                                    (fcx.signal(n0), fcx.signal(u0))
+                                };
                                 vals.borrow_mut().push((
                                     f.key.clone(),
-                                    Box::new(move || {
-                                        let num = n.get_untracked().trim().to_string();
-                                        if num.is_empty() {
-                                            String::new()
-                                        } else {
-                                            format!(
-                                                "{num}{}",
-                                                DURATION_UNITS[u.get_untracked().min(3)].0
-                                            )
-                                        }
-                                    }),
+                                    Box::new(move || duration_value(&n.get_untracked(), u.get_untracked())),
                                 ));
                                 Element::new()
                                     .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
@@ -2449,6 +2519,19 @@ fn open_create(cx: Scope, ctx: &Ctx, tu: Tu) {
                             }
                         };
                         fc = fc.child(super::w::field_row(&t, &label, label_w, control));
+                        if feed_every {
+                            // "Recommended for this feed" while it holds the pick's interval.
+                            let es = every_state.clone();
+                            fc = fc.child(dyn_view(LayoutStyle::column().shrink(0.0), move || {
+                                let t = abstracttui::app::current_theme().tokens;
+                                let now = duration_value(&every_n.get(), every_u.get());
+                                if every_rec.get() && es.borrow().0.as_deref() == Some(now.as_str()) {
+                                    super::kit::sentence_indent(&t, EVERY_RECOMMENDED, w, label_w as usize, t.text_faint)
+                                } else {
+                                    Element::new().style(LayoutStyle::default().h(0)).build()
+                                }
+                            }));
+                        }
                         if description_shown(&f) {
                             fc = fc.child(super::kit::sentence_indent(
                                 &t,

@@ -987,3 +987,151 @@ fn another_address_keeps_the_free_field_and_the_persons_name() {
     assert_eq!(body["label"], "Tech links");
     assert_eq!(body["config"]["url"], "https://example.org/feed.xml");
 }
+
+// ------------------------- a pick prefills Check every (the feed's check_every)
+
+/// The New connection dialog with the runtime's feed schema (`every`, a duration) and the
+/// shipped catalogue plus one custom feed without `check_every`.
+fn every_dialog() -> r8w4::Harness {
+    let mut h = harness((150, 40), Mount::Page(triggers::screen));
+    h.identity("alice", false);
+    h.store.json.set(
+        K_SOURCES,
+        Loadable::Ready(json!({"items": [
+            {"id": "feed.item", "version": 1, "label": "Feed item", "available": true, "needs_connection": true,
+             "connection_schema": {"type": "object", "required": ["url"], "properties": {
+                "url": {"type": "string", "format": "uri", "title": "Feed address"},
+                "every": {"type": "string", "format": "duration", "pattern": "^[1-9][0-9]*[smhd]$", "default": "15m", "title": "Check every"}}}}
+        ]})),
+    );
+    h.store.json.set(K_LIST, Loadable::Ready(list()));
+    h.store.json.set(K_MAILBOXES, Loadable::Ready(mailboxes()));
+    let mut cat = catalog();
+    cat["feeds"].as_array_mut().unwrap().push(json!({
+        "id": "mine", "name": "Mine", "url": "https://example.org/feed.xml", "category": "My feeds", "source": "custom"}));
+    h.store.json.set(triggers::K_CATALOG, Loadable::Ready(cat));
+    h.turns(3);
+    h.sent();
+    h.click_text("New connection");
+    h.turns(3);
+    h
+}
+
+#[test]
+fn every_after_pick_follows_the_web() {
+    use triggers::every_after_pick as pick;
+    // No pick yet: whatever the field holds is overwritten.
+    assert_eq!(
+        pick("2h", None, Some("12h"), "15m"),
+        Some(("12h".into(), true))
+    );
+    // Still what the last pick left: the next feed's interval (or the default).
+    assert_eq!(
+        pick("12h", Some("12h"), Some("10m"), "15m"),
+        Some(("10m".into(), true))
+    );
+    assert_eq!(
+        pick("10m", Some("10m"), None, "15m"),
+        Some(("15m".into(), false))
+    );
+    // Changed after a pick: it stands.
+    assert_eq!(pick("45m", Some("10m"), Some("6h"), "15m"), None);
+    assert_eq!(triggers::duration_value("12", 2), "12h");
+    assert_eq!(triggers::duration_value(" ", 2), "");
+    let feeds = triggers::catalog_from(&catalog()).unwrap();
+    assert!(
+        feeds.iter().all(|f| f.check_every.is_some()),
+        "every shipped entry"
+    );
+    let hn = feeds.iter().find(|f| f.id == "hacker-news").unwrap();
+    assert_eq!(hn.check_every.as_deref(), Some("10m"));
+    let odd = triggers::catalog_from(&json!({"feeds": [
+        {"id": "a", "name": "A", "url": "https://e.org/a"},
+        {"id": "b", "name": "B", "url": "https://e.org/b", "check_every": "soon"}]}))
+    .unwrap();
+    assert_eq!(
+        (odd[0].check_every.clone(), odd[1].check_every.clone()),
+        (None, None)
+    );
+}
+
+#[test]
+fn picking_a_feed_prefills_check_every_and_keeps_a_later_change() {
+    let mut h = every_dialog();
+    let s = h.turns(2);
+    assert!(s.contains("Check every") && s.contains("minutes"), "{s}");
+    assert!(!s.contains(triggers::EVERY_RECOMMENDED), "{s}");
+    // Changed before any pick (15 hours): the pick overwrites it with arXiv's 12 hours.
+    h.click_text("minutes");
+    h.type_text("h");
+    let s = h.key(b"\r");
+    assert!(s.contains("hours") && !s.contains("minutes"), "{s}");
+    h.click_text("Choose…");
+    h.type_text("arX");
+    let s = h.key(b"\r");
+    let every_line = |s: &str| {
+        s.lines()
+            .find(|l| l.contains("Check every"))
+            .unwrap_or("")
+            .to_string()
+    };
+    assert!(
+        every_line(&s).contains("12") && every_line(&s).contains("hours"),
+        "{s}"
+    );
+    assert!(s.contains(triggers::EVERY_RECOMMENDED), "{s}");
+    // Changed after the pick (12 days): the next pick keeps it, without the note.
+    h.click_text("hours");
+    h.type_text("d");
+    let s = h.key(b"\r");
+    assert!(every_line(&s).contains("days"), "{s}");
+    assert!(!s.contains(triggers::EVERY_RECOMMENDED), "{s}");
+    h.click_text("arXiv · Artificial");
+    h.type_text("Nature");
+    let s = h.key(b"\r");
+    assert!(s.contains("https://www.nature.com/nature.rss"), "{s}");
+    assert!(
+        every_line(&s).contains("12") && every_line(&s).contains("days"),
+        "{s}"
+    );
+    assert!(!s.contains(triggers::EVERY_RECOMMENDED), "{s}");
+    h.click_after("Feed address *", "Create");
+    let body = create_post(&mut h).expect("a POST");
+    assert_eq!(body["config"]["every"], "12d");
+}
+
+#[test]
+fn a_feed_without_check_every_leaves_the_form_default() {
+    let mut h = every_dialog();
+    h.click_text("Choose…");
+    h.type_text("Mine");
+    let s = h.key(b"\r");
+    assert!(s.contains("https://example.org/feed.xml"), "{s}");
+    assert!(!s.contains(triggers::EVERY_RECOMMENDED), "{s}");
+    h.click_text("Mine");
+    h.type_text("Y");
+    let s = h.key(b"\r");
+    let every_line = |s: &str| {
+        s.lines()
+            .find(|l| l.contains("Check every"))
+            .unwrap_or("")
+            .to_string()
+    };
+    assert!(every_line(&s).contains("▐1 "), "{s}");
+    assert!(
+        every_line(&s).contains("hours") && s.contains(triggers::EVERY_RECOMMENDED),
+        "{s}"
+    );
+    h.click_text("YouTube · A channel");
+    h.type_text("Mine");
+    let s = h.key(b"\r");
+    assert!(
+        every_line(&s).contains("15") && every_line(&s).contains("minutes"),
+        "{s}"
+    );
+    assert!(!s.contains(triggers::EVERY_RECOMMENDED), "{s}");
+    h.click_after("Feed address *", "Create");
+    let body = create_post(&mut h).expect("a POST");
+    assert_eq!(body["config"]["every"], "15m");
+    assert_eq!(body["config"]["url"], "https://example.org/feed.xml");
+}

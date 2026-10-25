@@ -181,6 +181,10 @@ Rare transport answers keep the same shape with `not_found` (unknown path),
   **New connection** proposes well-known public feeds (news, technology,
   science, business, a subreddit, a YouTube channel, GitHub releases) and
   accepts any other address ([console.md](./console.md#triggers)).
+  A pick also sets **Check every** to the feed's recommended interval (its
+  `check_every`: 10m for Hacker News, 15m for news and finance, 30m for
+  technology sites, 6h for science magazines and journals, 12h for arXiv),
+  still editable; a custom catalogue entry may omit it and keep the default.
 - **`webhook.received@1`** runs when an external system calls your signed
   webhook address (`POST /api/gateway/triggers/webhooks/{connection_id}`,
   [Standard Webhooks](https://www.standardwebhooks.com/) signature). The

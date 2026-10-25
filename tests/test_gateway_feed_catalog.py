@@ -50,6 +50,31 @@ def test_shipped_catalog_is_well_formed() -> None:
     assert {f["category"] for f in feeds} >= {"World news", "Technology", "Science", "Business and finance"}
 
 
+def test_every_shipped_entry_recommends_an_interval_the_runtime_accepts() -> None:
+    """`check_every` (prefilled into the connection's Check every) is on every shipped entry, and
+    the runtime feed source parses it (its own duration form, at least MIN_EVERY)."""
+    from abstractruntime.triggers.feed import MIN_EVERY
+    from abstractruntime.triggers.protocol import parse_duration
+
+    by_id = {}
+    for f in _shipped()["feeds"]:
+        assert "check_every" in f, f["id"]
+        assert parse_duration(f["check_every"], field="config.every") >= MIN_EVERY, f["id"]
+        by_id[f["id"]] = f["check_every"]
+    assert by_id["bbc-world"] == "15m" and by_id["bbc-business"] == "15m"
+    assert by_id["hacker-news"] == "10m" and by_id["the-verge"] == "30m"
+    assert by_id["nature"] == "6h" and by_id["arxiv-cs-ai"] == "12h"
+    assert (by_id["reddit-subreddit"], by_id["youtube-channel"], by_id["github-releases"]) == ("15m", "1h", "1h")
+    good = _shipped()["feeds"][0]
+    assert fc.entry_problems({k: v for k, v in good.items() if k != "check_every"}, shipped=True)  # shipped: required
+    for bad in ("15", "0m", "30s", "1w", 15, "400d"):
+        assert fc.entry_problems({**good, "check_every": bad}, shipped=True), bad
+        assert fc.entry_problems({"id": "mine", "name": "Mine", "url": "https://example.org/f.xml", "check_every": bad}, shipped=False), bad
+    custom = {"id": "mine", "name": "Mine", "url": "https://example.org/f.xml"}
+    assert fc.entry_problems(custom, shipped=False) == []  # a custom entry may omit it
+    assert fc.entry_problems({**custom, "check_every": "2h"}, shipped=False) == []
+
+
 def test_entry_problems_catches_what_the_console_relies_on() -> None:
     good = _shipped()["feeds"][0]
     assert fc.entry_problems({**good, "url": "http://example.org/feed"}, shipped=True)  # shipped = https only
@@ -128,6 +153,7 @@ def test_route_serves_the_merged_catalog_to_any_signed_in_principal(gw) -> None:
     assert body["version"] == 1 and "custom_path" not in body and "problems" not in body
     shipped_ids = [f["id"] for f in _shipped()["feeds"]]
     assert [f["id"] for f in body["feeds"]] == shipped_ids and {f["source"] for f in body["feeds"]} == {"shipped"}
+    assert [f["check_every"] for f in body["feeds"]] == [f["check_every"] for f in _shipped()["feeds"]]
     custom = data_dir / "catalog" / "feeds.json"
     custom.parent.mkdir(parents=True, exist_ok=True)
     custom.write_text(json.dumps({"feeds": [
