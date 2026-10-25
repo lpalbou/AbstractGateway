@@ -380,7 +380,14 @@ fn open_for(cx: Scope, ctx: &Ctx, entity: Option<String>) {
             _ => None,
         })
         .unwrap_or_default();
-    let title = format!("Email — {}", entity.clone().unwrap_or(own_id));
+    // UX #5: your own is "My email"; an entity's stays "Email — <id>".
+    let title = match entity.clone() {
+        Some(e) => format!("Email — {e}"),
+        None => {
+            let _ = own_id;
+            "My email".to_string()
+        }
+    };
     super::w::FormModal::new(title.clone()).size(100, 60).open(
         ctx,
         cx,

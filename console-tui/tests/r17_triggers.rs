@@ -185,14 +185,18 @@ fn events_newest_first_capped_and_test_result_words() {
         .collect();
     let lines = event_lines(&events, 0);
     assert_eq!(lines.len(), 20);
+    assert!(lines[0].0.starts_with("Test event · "), "{}", lines[0].0);
+    // Newest first, the last 20 (#25 … #6); sentences, not ids.
     assert!(
-        lines[0]
-            .0
-            .starts_with("#25  abstractframework.feed.item  item 25  test"),
+        lines[1].0.starts_with("New item: item 24"),
         "{}",
-        lines[0].0
+        lines[1].0
     );
-    assert!(lines[19].0.starts_with("#6 "), "{}", lines[19].0);
+    assert!(
+        lines[19].0.starts_with("New item: item 6"),
+        "{}",
+        lines[19].0
+    );
     assert!(lines[0].1.contains("\"sequence\": 25"));
     assert_eq!(
         test_result(&WriteState::Done(json!({"event_id": "e9", "sequence": 9}))),
@@ -298,7 +302,7 @@ fn the_page_shows_the_webs_words() {
         "admin@example.org (primary)",
         "When mail arrives in admin@example.org",
         "When mail arrives in me@work.example · read-only",
-        "Manage under Account → My email",
+        "Manage in My email",
         "Paused",
         "Events",
         "Test",
@@ -328,10 +332,7 @@ fn click_events_reads_the_route_and_shows_the_json() {
         s.contains("Webhook address") && s.contains("/api/gateway/triggers/webhooks/conn_hook1"),
         "{s}"
     );
-    assert!(
-        s.contains("#4  abstractframework.trigger.test  Test event  test"),
-        "{s}"
-    );
+    assert!(s.contains("│Test event "), "{s}");
     assert!(s.contains("\"id\": \"evt_1\""), "{s}");
 }
 
@@ -472,7 +473,7 @@ fn click_new_connection_creates_and_shows_the_secret_once() {
         "{s}"
     );
     assert!(
-        s.contains("Set up the sender") && s.contains("paste the webhook address"),
+        s.contains("Set up the sender") && s.contains("GitHub can't reach this computer yet"),
         "{s}"
     );
     assert!(s.contains("SECRET='whsec_abc123'"), "{s}");
@@ -589,13 +590,13 @@ fn rows_say_what_a_connection_is_doing_and_the_listening_switch_pauses_it() {
     );
     assert_eq!(
         triggers::doing_text(&rows[1]).as_deref(),
-        Some("Listening · nothing uses it yet, so nothing is fetched until an automation does")
+        Some("Waiting for an automation to use it")
     );
     let mut eager = rows[1].clone();
     eager.always_listen = Some(true);
     assert_eq!(
         triggers::doing_text(&eager).as_deref(),
-        Some("Listening · nothing uses it yet; fetching anyway (Keep fetching even when nothing uses it)")
+        Some("Listening · kept on even when nothing uses it")
     );
     let mut paused = rows[0].clone();
     paused.paused = Some(true);
@@ -608,8 +609,7 @@ fn rows_say_what_a_connection_is_doing_and_the_listening_switch_pauses_it() {
     let s = h.turns(3);
     for w in [
         "Listening · used by 2",
-        "Listening · nothing uses it",
-        "until an automation does",
+        "Waiting for an automation to",
         "A connection only fetches while an automation uses it; pause it to stop even then.",
     ] {
         assert!(s.contains(w), "{w:?} missing:\n{s}");
@@ -631,5 +631,40 @@ fn rows_say_what_a_connection_is_doing_and_the_listening_switch_pauses_it() {
             .any(|c| matches!(c, JsonCmd::Send { method, body, .. }
             if method == "PUT" && *body == json!({"always_listen": true}))),
         "{cmds:?}"
+    );
+}
+
+#[test]
+fn ux_review_words_errors_names_and_local_address() {
+    let mut l = list();
+    l["connections"][0]["paused"] = json!(false);
+    l["connections"][0]["always_listen"] = json!(false);
+    l["connections"][0]["used_by"] = json!(5);
+    l["connections"][0]["last_error"] = json!({"code": "feed_http_404", "cause": "The feed answered HTTP 404.", "fix": "Check the feed address."});
+    let rows = rows_from(&l).unwrap();
+    let autos = json!({"items": (1..=5).map(|i| json!({"title": format!("Auto {i}"), "status": "active",
+        "trigger": {"source_id": "feed.item", "config": {"connection_id": "conn_feed1"}}})).collect::<Vec<_>>()});
+    let names = triggers::connection_users(&rows[0], &autos);
+    assert_eq!(
+        triggers::doing_text_with(&rows[0], &names).as_deref(),
+        Some("Listening · used by Auto 1, Auto 2, Auto 3 +2")
+    );
+    assert_eq!(
+        triggers::error_text(&rows[0]).as_deref(),
+        Some("Can't read the feed: the address answered 404 (not found). Check the feed address.")
+    );
+    assert!(triggers::local_address("http://127.0.0.1:8080/x"));
+    assert!(triggers::local_address("http://192.168.1.4/x"));
+    assert!(!triggers::local_address("https://gw.example.net/x"));
+    assert_eq!(
+        triggers::next_step("bbc-feed"),
+        "Next: in Flow, + → When something arrives → bbc-feed."
+    );
+    let mut h = page(true);
+    h.store.json.set(K_LIST, Loadable::Ready(l));
+    let s = h.turns(3);
+    assert!(
+        s.contains("Can't read the feed: the address answered 404"),
+        "{s}"
     );
 }

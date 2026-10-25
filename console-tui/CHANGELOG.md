@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 ### Changed
+- **Triggers after the UX review (the web's words).** *Waiting for an automation to use it* / *Listening · used by
+  Release digest* (your active automations' names, up to three then +N); recorded problems in red under the row (*Can't
+  read the feed: the address answered 404 (not found). Check the feed address.*); events as sentences (*Test event ·
+  just now*, *New item: … · 09:00*, *Call received*) with the JSON under them; *Nothing to listen to yet.* with how to
+  add one; *When added: Ignore what is already there / Also deliver the latest items*; the next step after creating;
+  a local webhook address says GitHub can't reach this computer yet; mailbox rows' link **Manage in My email**; your
+  own email dialog is titled **My email**.
 - **Triggers: the Listening switch.** Each connection says what it is doing (*Listening · used by N automations*,
   *Listening · nothing uses it yet, so nothing is fetched until an automation does*, *Paused*) with a **Listening**
   switch (`l`), the person's only control; `k` toggles **Keep fetching even when nothing uses it**. Mailbox rows show

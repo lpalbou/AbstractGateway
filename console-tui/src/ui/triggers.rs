@@ -50,18 +50,20 @@ pub const WEBHOOK_RECIPE: &str = "GitHub, Zapier and other services: paste the w
 pub const WEBHOOK_SHELL: &str =
     "Any other sender signs each call per Standard Webhooks. From a shell (bash, openssl):";
 /// The mailbox rows' link (the web's words).
-pub const MANAGE_MAILBOX: &str = "Manage under Account → My email";
+pub const MANAGE_MAILBOX: &str = "Manage in My email";
 /// The line under the list (the web's).
 pub const LISTEN_HELP: &str =
     "A connection only fetches while an automation uses it; pause it to stop even then.";
 pub const K_PAUSE: &str = "triggers.pause";
 pub const K_MAILBOXES: &str = "triggers.mailboxes";
+pub const K_AUTOS: &str = "triggers.automations";
+const AUTOS_PATH: &str = "/automations?status=active&limit=200";
 const MAILBOXES_PATH: &str = "/me/email/accounts";
 pub const NEW: &str = "New connection";
 pub const REFRESH: &str = "Refresh";
 pub const REFRESH_TIP: &str = "Read the connections again";
 pub const ALL: &str = "All accounts";
-pub const EMPTY: &str = "No connection yet. Create one to let your automations listen to a mailbox, a feed or a webhook.";
+pub const EMPTY: &str = "Nothing to listen to yet. Press n to add a feed or a webhook; add a mailbox in My email (Accounts, @).";
 pub const EMPTY_ALL: &str = "No account has a connection yet.";
 pub const LOADING: &str = "Reading the connections...";
 pub const EVENTS_EMPTY: &str = "No event yet. Send a test event to see one here.";
@@ -141,13 +143,35 @@ pub struct ConnRow {
     pub always_listen: Option<bool>,
     /// How many automations use it (None: not reported).
     pub used_by: Option<i64>,
+    /// The problem the gateway recorded (`{code, cause, fix}`).
+    pub last_error: Option<Value>,
 }
 
 /// The operator's three states, in the web's words: the Listening switch (`paused`) is the
 /// person's and the only control; whether an automation uses it never moves the switch.
-pub fn listening_words(paused: bool, used_by: Option<i64>, always_listen: bool) -> String {
+pub fn listening_words(
+    paused: bool,
+    used_by: Option<i64>,
+    always_listen: bool,
+    names: &[String],
+) -> String {
     if paused {
         return "Paused".into();
+    }
+    // UX #8: names, not counts, up to 3 then "+N".
+    if !names.is_empty() {
+        let count = (used_by.unwrap_or(0) as usize).max(names.len());
+        let shown: Vec<&str> = names.iter().take(3).map(String::as_str).collect();
+        let more = count - shown.len();
+        return format!(
+            "Listening · used by {}{}",
+            shown.join(", "),
+            if more > 0 {
+                format!(" +{more}")
+            } else {
+                String::new()
+            }
+        );
     }
     match used_by {
         None => "Listening".into(),
@@ -155,22 +179,128 @@ pub fn listening_words(paused: bool, used_by: Option<i64>, always_listen: bool) 
             "Listening · used by {n} automation{}",
             if n == 1 { "" } else { "s" }
         ),
-        Some(_) if always_listen => {
-            "Listening · nothing uses it yet; fetching anyway (Keep fetching even when nothing uses it)"
-                .into()
-        }
-        Some(_) => "Listening · nothing uses it yet, so nothing is fetched until an automation does".into(),
+        Some(_) if always_listen => "Listening · kept on even when nothing uses it".into(),
+        Some(_) => "Waiting for an automation to use it".into(),
     }
 }
 
 /// What a connection is doing, in the web's words (None: not reported by the gateway).
 pub fn doing_text(r: &ConnRow) -> Option<String> {
+    doing_text_with(r, &[])
+}
+
+/// [`doing_text`] with the names of the active automations that use it.
+pub fn doing_text_with(r: &ConnRow, names: &[String]) -> Option<String> {
     let paused = r.paused?;
     Some(listening_words(
         paused,
         r.used_by,
         r.always_listen == Some(true),
+        names,
     ))
+}
+
+/// The titles of your active automations whose trigger matches (`GET /automations?status=active`).
+pub fn automation_users(autos: &Value, matches: impl Fn(&Value) -> bool) -> Vec<String> {
+    autos
+        .get("items")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter(|a| a.get("status").and_then(Value::as_str) == Some("active"))
+                .filter(|a| a.get("trigger").is_some_and(&matches))
+                .map(|a| {
+                    st(a, "title")
+                        .filter(|t| !t.is_empty())
+                        .unwrap_or_else(|| "an automation".into())
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub fn connection_users(r: &ConnRow, autos: &Value) -> Vec<String> {
+    automation_users(autos, |t| {
+        t.get("config")
+            .and_then(|c| c.get("connection_id"))
+            .and_then(Value::as_str)
+            == Some(r.id.as_str())
+    })
+}
+
+pub fn mailbox_users(m: &MailboxRow, autos: &Value) -> Vec<String> {
+    automation_users(autos, |t| {
+        if t.get("source_id").and_then(Value::as_str) != Some("email.received") {
+            return false;
+        }
+        let account = t
+            .get("config")
+            .and_then(|c| c.get("account"))
+            .and_then(Value::as_str)
+            .unwrap_or("self");
+        account == m.id || (account == "self" && m.primary)
+    })
+}
+
+/// UX #9: the stored error (`last_error {code, cause, fix}`), in the web's words.
+pub fn error_text(r: &ConnRow) -> Option<String> {
+    let e = r.last_error.as_ref()?;
+    let code = st(e, "code").unwrap_or_default();
+    let cause = st(e, "cause")
+        .or_else(|| st(e, "message"))
+        .unwrap_or_default();
+    let fix = st(e, "fix").unwrap_or_default();
+    if r.source_id == "feed.item" || code.starts_with("feed_") {
+        if let Some(i) = cause.find("HTTP ") {
+            let n: String = cause[i + 5..].chars().take(3).collect();
+            let words = match n.as_str() {
+                "400" => " (bad request)",
+                "401" => " (unauthorized)",
+                "403" => " (forbidden)",
+                "404" => " (not found)",
+                "410" => " (gone)",
+                "429" => " (too many requests)",
+                "500" => " (server error)",
+                "502" => " (bad gateway)",
+                "503" => " (unavailable)",
+                _ => "",
+            };
+            return Some(format!(
+                "Can't read the feed: the address answered {n}{words}. Check the feed address."
+            ));
+        }
+        if code == "feed_unreachable" {
+            return Some(
+                "Can't read the feed: it could not be reached. Check the address and the network."
+                    .into(),
+            );
+        }
+        if code == "feed_unreadable" {
+            return Some("Can't read the feed: the address does not answer with an RSS or Atom feed. Check the feed address.".into());
+        }
+        return Some(
+            format!("Can't read the feed: {cause} {fix}")
+                .trim()
+                .to_string(),
+        );
+    }
+    if code.starts_with("webhook_") {
+        let why = if code.contains("signature") {
+            "the signature did not match the signing secret."
+        } else if code.contains("unsigned") {
+            "the call was not signed."
+        } else if code.contains("stale") {
+            "its time stamp is too far from now."
+        } else if code.contains("replayed") {
+            "this call was already received."
+        } else {
+            "the gateway did not say why."
+        };
+        return Some(format!("Last call refused: {why}"));
+    }
+    let out = format!("{cause} {fix}").trim().to_string();
+    (!out.is_empty()).then_some(out)
 }
 
 fn st(v: &Value, k: &str) -> Option<String> {
@@ -214,6 +344,7 @@ pub fn rows_from(v: &Value) -> Result<Vec<ConnRow>, String> {
                 paused: r.get("paused").and_then(Value::as_bool),
                 always_listen: r.get("always_listen").and_then(Value::as_bool),
                 used_by: used_by_of(r),
+                last_error: r.get("last_error").filter(|e| e.is_object()).cloned(),
             })
         })
         .collect()
@@ -358,6 +489,48 @@ pub fn row_actions(r: &ConnRow) -> Vec<Action> {
     ]
 }
 
+pub const LOCAL_WEBHOOK: &str =
+    "GitHub can't reach this computer yet. Turn on internet access under Network first.";
+
+/// UX #17: what to do after creating a connection.
+pub fn next_step(label: &str) -> String {
+    format!("Next: in Flow, + → When something arrives → {label}.")
+}
+
+/// UX #15: an address only this computer (or its network) can reach.
+pub fn local_address(url: &str) -> bool {
+    let rest = url.split("://").nth(1).unwrap_or(url);
+    let hostport = rest.split('/').next().unwrap_or("");
+    let host = if hostport.starts_with('[') {
+        hostport
+            .trim_start_matches('[')
+            .split(']')
+            .next()
+            .unwrap_or("")
+            .to_string()
+    } else {
+        hostport.split(':').next().unwrap_or("").to_lowercase()
+    };
+    if host == "localhost"
+        || host == "::1"
+        || host == "0.0.0.0"
+        || host.ends_with(".local")
+        || host.ends_with(".localhost")
+    {
+        return true;
+    }
+    let parts: Vec<u32> = host.split('.').filter_map(|x| x.parse().ok()).collect();
+    if parts.len() != 4 {
+        return false;
+    }
+    let (a, b) = (parts[0], parts[1]);
+    a == 127
+        || a == 10
+        || (a == 192 && b == 168)
+        || (a == 172 && (16..=31).contains(&b))
+        || (a == 169 && b == 254)
+}
+
 /// A mailbox row's one action (the web's link).
 pub fn mailbox_actions() -> Vec<Action> {
     vec![Action::label("manage", MANAGE_MAILBOX).tooltip("Mailboxes are managed with your account")]
@@ -372,34 +545,69 @@ pub fn panel_actions() -> Vec<Action> {
 }
 
 /// One event's summary line (`#seq type subject [test] when`) and its JSON.
+/// UX #10: an event as a sentence ("Test event", "New item: <title>", "Call received").
+pub fn event_sentence(e: &Value) -> String {
+    let d = e.get("data").cloned().unwrap_or(Value::Null);
+    let ty = st(e, "type").unwrap_or_default();
+    let subject = st(e, "subject").filter(|s| !s.is_empty());
+    if d.get("test").and_then(Value::as_bool) == Some(true) {
+        return "Test event".into();
+    }
+    if ty.contains("feed") {
+        let title = st(&d, "title")
+            .or(subject)
+            .unwrap_or_else(|| "untitled".into());
+        return format!("New item: {title}");
+    }
+    if ty.contains("webhook") {
+        return "Call received".into();
+    }
+    if ty.contains("email") {
+        return format!(
+            "New mail: {}",
+            subject.unwrap_or_else(|| "no subject".into())
+        );
+    }
+    match subject {
+        Some(s) => format!("{}: {s}", if ty.is_empty() { "Event" } else { &ty }),
+        None => {
+            if ty.is_empty() {
+                "Event".into()
+            } else {
+                ty
+            }
+        }
+    }
+}
+
+/// "just now" / "12 min ago" within the hour, else "09:00" today, else "2026-10-24 · 09:00".
+pub fn event_when(iso: &str, now_s: i64) -> String {
+    let Some(t) = crate::localtime::parse_iso_epoch(iso) else {
+        return iso.to_string();
+    };
+    if now_s - t < 3600 {
+        return ago(iso, now_s).unwrap_or_default();
+    }
+    let (day, hm) = crate::localtime::local_parts(iso).unwrap_or_default();
+    if day == crate::localtime::local_today() {
+        hm
+    } else {
+        format!("{day} · {hm}")
+    }
+}
+
+/// One event's sentence line (with its time) and its JSON (shown under it, the web's Details).
 pub fn event_lines(events: &[Value], now_s: i64) -> Vec<(String, String)> {
     let mut list: Vec<&Value> = events.iter().collect();
     list.sort_by_key(|e| std::cmp::Reverse(e.get("sequence").and_then(Value::as_i64).unwrap_or(0)));
     list.into_iter()
         .take(EVENTS_LIMIT)
         .map(|e| {
-            let mut parts = vec![format!(
-                "#{}",
-                e.get("sequence").map(|s| s.to_string()).unwrap_or_default()
-            )];
-            parts.push(st(e, "type").unwrap_or_else(|| "event".into()));
-            if let Some(s) = st(e, "subject").filter(|s| !s.is_empty()) {
-                parts.push(s);
-            }
-            if e.get("data")
-                .and_then(|d| d.get("test"))
-                .and_then(Value::as_bool)
-                == Some(true)
-            {
-                parts.push("test".into());
-            }
+            let mut line = event_sentence(e);
             if let Some(t) = st(e, "time") {
-                parts.push(ago(&t, now_s).unwrap_or(t));
+                line = format!("{line} · {}", event_when(&t, now_s));
             }
-            (
-                parts.join("  "),
-                serde_json::to_string_pretty(e).unwrap_or_default(),
-            )
+            (line, serde_json::to_string_pretty(e).unwrap_or_default())
         })
         .collect()
 }
@@ -462,7 +670,7 @@ pub fn field_label(key: &str) -> String {
         "url" => "Feed address".into(),
         "every" => "Check every".into(),
         "max_items" => "Items per check (at most)".into(),
-        "initial_items" => "Items already in the feed".into(),
+        "initial_items" => "When added".into(),
         other => sentence_case(&other.replace('_', " ")),
     }
 }
@@ -635,10 +843,14 @@ pub fn choice_options(f: &FormField) -> Vec<(String, String)> {
         out.push(("false".into(), "No".into()));
     } else if let Some(vals) = f.schema.get("enum").and_then(Value::as_array) {
         for v in vals {
-            let shown = v
-                .as_str()
-                .map(str::to_string)
-                .unwrap_or_else(|| v.to_string());
+            let shown = match (f.key.as_str(), v.as_str()) {
+                ("initial_items", Some("skip")) => "Ignore what is already there".to_string(),
+                ("initial_items", Some("deliver")) => "Also deliver the latest items".to_string(),
+                _ => v
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| v.to_string()),
+            };
             out.push((v.to_string(), shown));
         }
     }
@@ -780,6 +992,7 @@ pub fn refresh(ctx: &Ctx) {
     ctx.send(Cmd::Json(JsonCmd::get(K_LIST, list_path(all))));
     if !all {
         ctx.send(Cmd::Json(JsonCmd::get(K_MAILBOXES, MAILBOXES_PATH)));
+        ctx.send(Cmd::Json(JsonCmd::get(K_AUTOS, AUTOS_PATH)));
     }
 }
 
@@ -1125,6 +1338,11 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
         Loadable::Ready(v) => v,
         _ => Value::Null,
     };
+    // Your active automations (own view): the names of what uses each connection.
+    let autos = match (all, ctx.store.json.get(K_AUTOS)) {
+        (false, Loadable::Ready(v)) => v,
+        _ => Value::Null,
+    };
     let now = now_s();
     let narrow = width < 100;
     let mut cols = vec![Col::new("Name", ColW::Flex { weight: 1, min: 16 })];
@@ -1147,14 +1365,18 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
                 "warn" => t.warn,
                 _ => t.text_muted,
             };
-            let mut cells = vec![Cell::Lines(vec![
+            let mut name_lines = vec![
                 vec![Ink::new(r.label.clone(), t.text).bold()],
                 vec![Ink::new(trigger_phrase(r, &sources), t.text_muted)],
-            ])];
+            ];
+            if let Some(e) = error_text(r) {
+                name_lines.push(vec![Ink::new(e, t.error)]);
+            }
+            let mut cells = vec![Cell::Lines(name_lines)];
             if all {
                 cells.push(Cell::text(owner_text(r.principal.as_deref()), t.text));
             }
-            match doing_text(r) {
+            match doing_text_with(r, &connection_users(r, &autos)) {
                 Some(d) => cells.push(Cell::Lines(
                     if r.status.trim().eq_ignore_ascii_case("active") {
                         vec![vec![Ink::new(d, t.text)]]
@@ -1224,7 +1446,9 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
                         vec![Ink::new(m.phrase(), t.text_muted)],
                     ]),
                     {
-                        let words = listening_words(!m.enabled, m.used_by, false);
+                        let users = mailbox_users(&m, &autos);
+                        let used = autos.is_object().then_some(users.len() as i64);
+                        let words = listening_words(!m.enabled, used, false, &users);
                         if tone == "warn" {
                             Cell::Lines(vec![
                                 vec![Ink::new(word, ink)],
@@ -1238,7 +1462,7 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
                         id: "use",
                         on: m.enabled,
                         refused: None,
-                        tip: Some(format!("Use this mailbox: {}", m.name())),
+                        tip: Some(format!("Listening: {}", m.name())),
                     },
                 ];
                 if !narrow {
@@ -1246,7 +1470,7 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
                 }
                 cells.push(Cell::Actions(mailbox_actions()));
                 let key = format!("mailbox:{}", m.id);
-                let note = narrow.then(|| (format!("Last check: {last}"), t.text_muted));
+                let note = narrow.then(|| (last.clone(), t.text_muted));
                 table_rows.push(WRow::new(key.clone(), cells).note(note));
                 keys.push(key);
             }
@@ -1436,7 +1660,12 @@ fn open_create(cx: Scope, ctx: &Ctx, tu: Tu) {
                     }
                     if let (Some(u), Some(s)) = (&url, &secret) {
                         col = col.child(super::w::form::section(&t, "Set up the sender"));
-                        col = col.child(sentence(&t, WEBHOOK_RECIPE, w, t.text_muted));
+                        // UX #15: a local address cannot be reached by GitHub.
+                        col = col.child(if local_address(u) {
+                            sentence(&t, LOCAL_WEBHOOK, w, t.warn)
+                        } else {
+                            sentence(&t, WEBHOOK_RECIPE, w, t.text_muted)
+                        });
                         col = col.child(sentence(&t, WEBHOOK_SHELL, w, t.text_muted));
                         col = col.child(copy_row(
                             gcx,
@@ -1450,6 +1679,8 @@ fn open_create(cx: Scope, ctx: &Ctx, tu: Tu) {
                     if url.is_none() && secret.is_none() {
                         col = col.child(sentence(&t, CREATED_HELP, w, t.text_muted));
                     }
+                    // UX #17: the next step.
+                    col = col.child(sentence(&t, &next_step(&label), w, t.accent));
                     let (store, close3) = (c2.store, close2.clone());
                     col = col.child(
                         Element::new()

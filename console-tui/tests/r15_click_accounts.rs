@@ -246,7 +246,7 @@ fn clicks_on_the_own_rows_actions_open_or_say_why() {
     // The own row: Email = your own mailbox form; Archive refused (why).
     let mut h = page();
     let s = click_row(&mut h, "admin", "@");
-    assert!(opened(&s, "Email — admin"), "{s}");
+    assert!(opened(&s, "My email"), "{s}");
     // This fixture's own row has no OpenAI API switch: faint, and a click
     // says why (nothing opens).
     let mut h = page();
