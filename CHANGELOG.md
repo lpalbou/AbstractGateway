@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sequence}`): `trigger.event`, `attention.raised` (the ledger `record_key`, never a body), `attention.seen`,
   `notification.sent|failed` (console, email), and the pointers `run.started|finished {run_id, session_id,
   origin}` written after the run store save, idempotent by id and rebuilt at boot after a crash in between.
+- `GET /api/gateway/me/events?after=<sequence>&limit=` (catch-up page `{stream, events, next_after, head, more}`)
+  and `GET /api/gateway/me/events/stream` (SSE: `id` = sequence, `event` = type, `Last-Event-ID` honoured when
+  `after` is 0, `: keep-alive` every `heartbeat_s`, the `after` semantics of `/runs/{id}/ledger/stream`): the
+  caller's own stream only, in the caller's own plane. `POST /api/gateway/me/events/notifications` lets a client
+  channel (the tray) record `notification.sent|failed`. Documented in api.md and the OpenAPI document.
 
 - Console **Triggers** page (backlog 1041, `/console#triggers`): your trigger connections (Source, Name,
   Status, Last event) with **Events** (the 20 most recent events, each expandable to its JSON), **Test** (sends a

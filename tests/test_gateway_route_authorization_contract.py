@@ -143,6 +143,9 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     # Reveal (round 16 keys fix): the caller's OWN key only, audited; another account's
     # fingerprint answers 403 not_owner (admins included).
     ("POST", "/api/gateway/me/openai-keys/{fingerprint}/reveal"),
+    # The caller's own event stream (backlog 1046): a client channel (the tray) records the
+    # notice it showed, in the caller's own stream only (no parameter names another person).
+    ("POST", "/api/gateway/me/events/notifications"),
     ("PUT", "/api/gateway/me/email"),
     ("DELETE", "/api/gateway/me/email"),
     ("POST", "/api/gateway/me/email/test"),

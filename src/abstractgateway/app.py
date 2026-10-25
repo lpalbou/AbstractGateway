@@ -235,6 +235,11 @@ app.include_router(triggers_router, prefix="/api")
 # Per-user email (framework backlog 0992): /gateway/me/email*, /me/notifications,
 # /admin/users/{id}/email, the sign-in recovery routes and the legacy /email/* aliases.
 app.include_router(email_router, prefix="/api")
+# The caller's own event stream (framework backlog 1046): /gateway/me/events (catch-up),
+# /gateway/me/events/stream (SSE), /gateway/me/events/notifications; literal paths.
+from .routes.me_events import router as me_events_router  # noqa: E402
+
+app.include_router(me_events_router, prefix="/api")
 # AbstractNote's read API (optional, abstractnote_seam.py): /api/gateway/note/..., literal
 # paths, before the parametrized gateway router. Absent when abstractnote is not installed.
 from .abstractnote_seam import note_router  # noqa: E402

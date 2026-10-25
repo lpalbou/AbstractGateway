@@ -38,6 +38,7 @@ serve:
 | `/api/gateway/backlog/*`, `/reports/*`, `/triage/*`, `/processes` | operator tooling | [maintenance.md](./maintenance.md) |
 | `/api/gateway/entities/*` | summoned entities | [entities.md](./entities.md) |
 | `/api/gateway/automations*`, `/api/gateway/trigger-sources` | automations: recurring workflows, their occurrences and attention | [automations.md](./automations.md) |
+| `/api/gateway/me/events`, `/me/events/stream`, `/me/events/notifications` | your own event stream: what happened for you outside the steps of a run (catch-up, SSE) | [below](#your-event-stream-apigatewaymeevents) |
 
 ## OpenAI API
 
@@ -1160,6 +1161,70 @@ curl -sS -H "Content-Type: application/json" \
 
 Evidence: `src/abstractgateway/routes/triggers.py` (`receive_webhook`),
 `src/abstractgateway/trigger_connections.py` (lookup across accounts, verification, rate limit).
+
+## Your event stream (`/api/gateway/me/events`)
+
+One ordered stream per person, `user:<tenant>:<user>`, holding what happened **for you** that is
+not a step of a run (a step stays in its run's ledger). Every client reads the same stream: a
+page to catch up, an SSE tail to stay live. Each event uses the CloudEvents 1.0 attribute names:
+
+```json
+{"specversion": "1.0", "id": "run.started:9f2c…", "type": "run.started",
+ "source": "/abstractgateway/runs", "subject": "9f2c…", "time": "2026-10-25T12:00:00+00:00",
+ "data": {"run_id": "9f2c…", "session_id": "s1", "origin": {"kind": "person", "actor": "alice", "client": null, "ref": {}}},
+ "sequence": 12}
+```
+
+`sequence` is your stream's own gapless counter (1, 2, …): it is the cursor. `id` is stable: an
+event written twice (a retry, a repair after a crash) is stored once.
+
+| `type` | `data` | written when |
+|---|---|---|
+| `run.started` | `{run_id, session_id, origin}` | a run of a session (a person's run, an automation occurrence) is saved running; never a child run or an automation's controller |
+| `run.finished` | `{run_id, session_id, origin, status}` | that run is saved `completed`, `failed` or `cancelled` |
+| `trigger.event` | `{automation_id, occurrence_index, event_id, source_id, source_version, fired_at, run_id, session_id}` | an automation's occurrence starts (before its `run.started`) |
+| `attention.raised` | `{record_key, automation_id, run_id, index, kind, seq, channels}` | an automation records an attention item (`notify` or final failure); `record_key` names the ledger record, no title or body is copied |
+| `attention.seen` | `{automation_id, seq}` | your seen cursor of an automation moves (`POST /automations/{id}/seen`) |
+| `notification.sent`, `notification.failed` | `{channel, notice, …}` | a notice reached a channel or could not: `console` (the item is listed), `email` (the outbox sent it, or failed with `code`, `cause`), `tray` (the desktop tray showed it) |
+| `wake.scheduled`, `wake.cancelled` | reserved for `schedule_run` (backlog 1045) | |
+
+Older events go after 90 days or beyond the newest 10,000 (their `sequence` is never reused).
+
+### Catch up: `GET /api/gateway/me/events?after=<sequence>&limit=<n>`
+
+Events with `sequence > after`, oldest first (`limit` 1–1000, default 100). Answer:
+`{stream, events: [...], next_after, head, more}`: send `next_after` as the next `after`; `head`
+is the newest sequence; `more` says a further page exists.
+
+```bash
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/me/events?after=0&limit=100"
+```
+
+### Stay live: `GET /api/gateway/me/events/stream?after=<sequence>&heartbeat_s=15`
+
+Server-sent events, the same `after` semantics as `/runs/{run_id}/ledger/stream`: the catch-up
+from `after`, then each new event as it is written. Each frame is
+`id: <sequence>` / `event: <type>` / `data: <event JSON>`; a `: keep-alive` comment every
+`heartbeat_s` seconds (0.1–60, default 15). A reconnecting client sends `Last-Event-ID` (browsers
+do it on their own) and receives exactly the events after it; an explicit `after` wins over the
+header. The stream does not end on its own.
+
+```bash
+curl -sS -N -H "$AUTH" -H "Last-Event-ID: 12" "$BASE_URL/api/gateway/me/events/stream"
+```
+
+### Report a notice a client showed: `POST /api/gateway/me/events/notifications`
+
+`{channel: "tray", outcome: "sent" | "failed", record_key, error?}` records
+`notification.sent|failed {channel: "tray", notice: "attention:<record_key>", record_key}` in
+your stream (once per channel and record). The desktop tray calls it after each notification.
+
+There is no parameter naming a person: every route reads and writes the caller's own stream in
+the caller's own plane, so two accounts never see each other's events.
+
+Evidence: `src/abstractgateway/events_stream.py` (vocabulary, writers, boot repair),
+`src/abstractgateway/routes/me_events.py`, `src/abstractgateway/runner.py` (`_stream_run`,
+`_drain_user_stream`).
 
 ## Conversation tool choices
 
