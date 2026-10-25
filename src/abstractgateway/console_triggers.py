@@ -42,7 +42,9 @@ TRIGGERS_CSS = r"""
 .trg-table td { vertical-align: top; padding-top: 10px; padding-bottom: 10px; overflow-wrap: anywhere; }
 .trg-table th.trg-col-name { width: auto; }
 .trg-table th.trg-col-account { width: 14%; }
-.trg-table th.trg-col-status { width: 8.5rem; }
+.trg-table th.trg-col-status { width: 15rem; }
+.trg-doing { display: block; font-size: var(--font-size-md); margin: 2px 0 4px; }
+.trg-table td.trg-status .af-switch { margin-top: 2px; }
 .trg-table th.trg-col-last { width: 9rem; }
 .trg-table th.trg-col-actions { width: 15rem; }
 .trg-name { font-weight: 600; }
@@ -166,6 +168,43 @@ TRIGGERS_JS = r"""
       if (known) return `<span class="trg-chip ${known[1]}">${esc(known[0])}</span>`;
       return `<span class="trg-chip is-warn">${esc(key || "unknown")}</span>`;
     }
+    // What a connection is doing, in words (runtime `paused` / `listening` / `used_by`): it fetches
+    // only while an automation uses it, and a person can pause it even then.
+    function trgUsedBy(r) {
+      if (Array.isArray(r.used_by)) return r.used_by.length;
+      return typeof r.used_by === "number" ? r.used_by : 0;
+    }
+    function trgDoingText(r) {
+      if (typeof r.paused !== "boolean") return "";
+      if (r.paused) return "Paused";
+      if (r.listening) {
+        const n = trgUsedBy(r);
+        return `Listening · used by ${n} automation${n === 1 ? "" : "s"}`;
+      }
+      return "Idle · nothing uses it yet (nothing is fetched or stored)";
+    }
+    function trgListenSwitch(r) {
+      const id = esc(r.connection_id);
+      const on = !r.paused;
+      return `<button type="button" role="switch" class="af-switch af-switch--sm" aria-checked="${on ? "true" : "false"}" data-trg-listen="${id}" data-af-tip="${on ? "Pause" : "Resume"} ${esc(r.label || r.connection_id)}">`
+        + `<span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Listening</span></span></button>`;
+    }
+    function trgStatusCell(r) {
+      const doing = trgDoingText(r);
+      if (!doing) return `${trgStatusChip(r.status)}<span class="trg-sub">listening state not reported (update the gateway)</span>`;
+      const st = String(r.status || "").toLowerCase();
+      const chip = st && st !== "active" ? trgStatusChip(r.status) : "";
+      return `${chip}<span class="trg-doing" data-trg-doing="${esc(r.connection_id)}">${esc(doing)}</span>${trgListenSwitch(r)}`;
+    }
+    async function setTriggerPaused(id, paused) {
+      try {
+        await api(`/api/gateway/triggers/connections/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ paused }) });
+        await loadTriggers();
+      } catch (e) {
+        trgMessage(`${paused ? "Not paused" : "Not resumed"}: ${trgErr(e)}`, "error");
+        renderTriggers();
+      }
+    }
     function trgFireLine(fire) {
       if (!fire) return "";
       if (fire.pending) return `<span class="trg-fire" role="status">Sending a test event...</span>`;
@@ -223,7 +262,7 @@ TRIGGERS_JS = r"""
         let html = `<tr class="trg-row" data-trg-row="${id}">`
           + `<td class="trg-name-cell"><span class="trg-name">${label}</span><span class="trg-sub">${phrase}</span><span class="trg-sub trg-fold">Last event: ${esc(last)}</span>${trgFireLine(o.fire && o.fire[r.connection_id])}</td>`
           + (o.all ? `<td class="trg-account">${owner ? esc(owner) : `<span class="trg-sub">owner not reported</span>`}</td>` : "")
-          + `<td class="trg-status">${trgStatusChip(r.status)}</td>`
+          + `<td class="trg-status">${trgStatusCell(r)}</td>`
           + `<td class="trg-last">${esc(last)}</td>`
           + `<td class="trg-actions-cell"><div class="trg-actions">${acts.join("")}</div></td></tr>`;
         if (open) html += `<tr class="trg-detail" data-trg-detail="${id}"><td colspan="${cols}">${triggerDetailMarkup(r, o.expanded[r.connection_id])}</td></tr>`;
@@ -709,6 +748,10 @@ TRIGGERS_JS = r"""
         else if (t.dataset.trgDelete) confirmDeleteTrigger(t.dataset.trgDelete);
         else if (t.dataset.trgCopy) trgCopy(t.dataset.trgCopy);
         else if (t.dataset.trgMailboxManage) openMyEmailFromTriggers();
+        else if (t.dataset.trgListen) {
+          const row = (trg.rows || []).find((x) => x.connection_id === t.dataset.trgListen);
+          if (row) { t.setAttribute("aria-busy", "true"); setTriggerPaused(row.connection_id, !row.paused); }
+        }
       };
       $("trigger-modal-close").onclick = closeTriggerModal;
       $("trigger-modal-body").onchange = (e) => {

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Triggers: what each connection is doing.** Rows say *Listening · used by N automations*, *Idle · nothing uses it
+  yet (nothing is fetched or stored)* or *Paused*, with a **Listening** switch that pauses and resumes the connection
+  (`PUT /api/gateway/triggers/connections/{id}` with `paused`); a line under the list explains that a connection only
+  fetches while an automation uses it.
+- **Further mailboxes: Gmail help and Sign in with Google.** For `imap.gmail.com` or a Gmail address the form explains
+  that Gmail refuses account passwords and points to an app password; **Sign in with Google** adds the mailbox through
+  `/me/email/accounts/{mailbox_id}/oauth/*` when the gateway has a Google sign-in client.
 - **Further mailboxes in the console.** Accounts → your row → Email has a **Further mailboxes** card: **Add a mailbox
   (read-only)** (name, address, IMAP server, port, security, login, password; the gateway signs in before storing),
   and per mailbox a **Use this mailbox** switch, **Test** and **Delete** (asks first). A further mailbox is IMAP only:

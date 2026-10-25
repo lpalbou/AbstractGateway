@@ -433,7 +433,11 @@ listed here too (*When mail arrives in …*); you add and manage them under
 - Each row is named by your label (for example *bbc-feed* or *My GitHub hook*),
   with the trigger under it in the same words as AbstractFlow: *When bbc-feed has
   a new item*, *When My GitHub hook is called*, *When mail arrives in
-  me@example.org*; then **Status** and **Last event**. **Events** opens the 20 most recent events under the row; each
+  me@example.org*; then what it is doing, in words: *Listening · used by 2
+  automations*, *Idle · nothing uses it yet (nothing is fetched or stored)* or
+  *Paused*, with a **Listening** switch that pauses or resumes it, and **Last
+  event**. A connection only fetches while an automation uses it; pause it to
+  stop even then (the line under the list says so). **Events** opens the 20 most recent events under the row; each
   one expands to its full JSON (the CloudEvents envelope your flow receives as
   `input_data.event`). **Test** sends a test event (`data.test: true`) and says
   the result in the row ("Test event #12 sent."); it also appears in the events.
@@ -473,8 +477,13 @@ Under **Accounts → your row → Email**, the **Further mailboxes** card lists 
 other mailboxes and adds one with **Add a mailbox (read-only)**: a name (how
 automations refer to it: lowercase letters, digits, `-` or `_`), the address,
 the IMAP server, port and security, the login (empty: the address) and the
-password. The gateway signs in first and stores nothing when that fails. A
-further mailbox is read-only: automations can watch it (*When an email
+password. The gateway signs in first and stores nothing when that fails.
+Gmail refuses account passwords over IMAP: the form says so for `imap.gmail.com`
+or a Gmail address and points to an app password (Google Account → Security →
+2-Step Verification → App passwords). **Sign in with Google** adds the mailbox
+through Google's sign-in instead (offered when the gateway has a Google sign-in
+client; `POST /api/gateway/me/email/accounts/{mailbox_id}/oauth/start|finish|cancel`,
+the same steps as the primary mailbox). A further mailbox is read-only: automations can watch it (*When an email
 arrives*), and it never sends. Each one has a **Use this mailbox** switch
 (automations watch it only while it is on), **Test** (signs in again) and
 **Delete** (asks first; its stored password and read position are removed).

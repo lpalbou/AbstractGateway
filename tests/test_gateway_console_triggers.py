@@ -27,7 +27,7 @@ const TRG_FIELD_LABELS = { subject_path: "Subject (path in the JSON body)", tole
 const TRG_MAILBOX_STATE = { connected: ["Active", "is-ok"], receive_only: ["Read-only", "is-ok"], paused: ["Paused", "is-muted"], needs_reconnect: ["Needs reconnecting", "is-warn"], unavailable: ["Unavailable", "is-muted"], not_connected: ["Not connected", "is-muted"] };
 """
 
-ROW_FNS = ("trgAgo", "trgSourceLabel", "trgTriggerPhrase", "trgMailboxStatusChip", "mailboxRowsMarkup", "trgPrincipalText", "trgStatusChip", "trgFireLine", "trgCopyRow",
+ROW_FNS = ("trgAgo", "trgSourceLabel", "trgTriggerPhrase", "trgUsedBy", "trgDoingText", "trgListenSwitch", "trgStatusCell", "trgMailboxStatusChip", "mailboxRowsMarkup", "trgPrincipalText", "trgStatusChip", "trgFireLine", "trgCopyRow",
            "triggerEventsMarkup", "triggerDetailMarkup", "triggersRowsMarkup")
 
 SOURCES = [
@@ -332,3 +332,56 @@ def test_my_email_has_the_further_mailboxes_card() -> None:
     source = _console_script()
     assert "loadMyMailboxes();" in _slice_function(source, "loadMyEmail")
     assert "bindMyMailboxes();" in source
+
+
+def test_rows_say_what_a_connection_is_doing_with_a_listening_toggle() -> None:
+    source = _console_script()
+    harness = HELPERS + _fns(source, "trgUsedBy", "trgDoingText", "trgListenSwitch", "trgStatusChip", "trgStatusCell") + """
+const rows = [
+  {connection_id: "a", label: "bbc-feed", status: "active", paused: false, listening: true, used_by: 2},
+  {connection_id: "b", label: "hook", status: "active", paused: false, listening: true, used_by: ["auto_1"]},
+  {connection_id: "c", label: "idle", status: "active", paused: false, listening: false, used_by: 0},
+  {connection_id: "d", label: "stopped", status: "active", paused: true, listening: false, used_by: 3},
+  {connection_id: "e", label: "old gateway", status: "active"},
+];
+console.log(JSON.stringify(rows.map((r) => [trgDoingText(r), trgStatusCell(r)])));
+"""
+    out = _node(harness)
+    assert [d for d, _ in out] == [
+        "Listening · used by 2 automations", "Listening · used by 1 automation",
+        "Idle · nothing uses it yet (nothing is fetched or stored)", "Paused", ""]
+    on, paused, old = out[0][1], out[3][1], out[4][1]
+    assert 'role="switch"' in on and 'aria-checked="true"' in on and ">Listening</span>" in on and 'data-trg-listen="a"' in on
+    assert 'aria-checked="false"' in paused
+    assert "listening state not reported (update the gateway)" in old and 'role="switch"' not in old
+    for _, cell in out:
+        assert " on<" not in cell and " off<" not in cell
+    html = gateway_console_html()
+    panel = html[html.index('id="tab-triggers"'): html.index('id="tab-skills"')]
+    assert "A connection only fetches while an automation uses it; pause it to stop even then." in panel
+    assert 'JSON.stringify({ paused })' in _slice_function(source, "setTriggerPaused")
+
+
+def test_gmail_help_and_google_sign_in_offer() -> None:
+    source = _console_script()
+    harness = _fns(source, "mailboxProviderHelp", "mbxGoogleAvailable") + """
+const MBX_GMAIL_HELP = "Gmail refuses account passwords. Use an app password (Google Account → Security → 2-Step Verification → App passwords), or Sign in with Google below.";
+console.log(JSON.stringify([
+  mailboxProviderHelp("imap.gmail.com", "x@abstractframework.ai"), mailboxProviderHelp("", "me@gmail.com"),
+  mailboxProviderHelp("imap.fastmail.com", "me@fastmail.com"),
+  mbxGoogleAvailable({providers: {google: {configured: false, builtin_available: true}}}),
+  mbxGoogleAvailable({providers: {google: {configured: true, builtin_available: false}}}),
+  mbxGoogleAvailable({providers: {google: {configured: false, builtin_available: false}}}),
+  mbxGoogleAvailable({}),
+]));
+"""
+    a, b, c, g1, g2, g3, g4 = _node(harness)
+    assert a == b and a.startswith("Gmail refuses account passwords. Use an app password")
+    assert c == ""
+    assert (g1, g2, g3, g4) == (True, True, False, False)
+    html = gateway_console_html()
+    card = html[html.index('id="my-mailboxes-card"'):]
+    assert '<button id="my-mailbox-google" class="secondary" type="button" hidden>Sign in with Google</button>' in card
+    start = _slice_function(source, "startMailboxGoogle")
+    assert "/api/gateway/me/email/accounts/${encodeURIComponent(id)}/oauth" in start and "`${base}/start`" in start and "`${base}/finish`" in start
+    assert "Not added. ${help}" in _slice_function(source, "addMyMailbox")

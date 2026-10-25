@@ -50,8 +50,8 @@ function fakeStore() {
   const s = {
     seq: 3, n: 2,
     rows: [
-      { connection_id: "conn_feed1", source_id: "feed.item", source_version: 1, label: "Release notes feed", status: "active", created_at: iso(86400000), last_event_at: iso(240000), config_public: { url: "https://example.org/releases.xml", every_minutes: 15 }, principal: "default:admin" },
-      { connection_id: "conn_mail1", source_id: "email.received", source_version: 1, label: "My mailbox", status: "active", created_at: iso(86400000 * 3), last_event_at: null, config_public: { account: "self" }, principal: "default:admin" },
+      { connection_id: "conn_feed1", source_id: "feed.item", source_version: 1, label: "Release notes feed", status: "active", created_at: iso(86400000), last_event_at: iso(240000), config_public: { url: "https://example.org/releases.xml", every_minutes: 15 }, principal: "default:admin", paused: false, listening: true, used_by: 2 },
+      { connection_id: "conn_mail1", source_id: "email.received", source_version: 1, label: "My mailbox", status: "active", created_at: iso(86400000 * 3), last_event_at: null, config_public: { account: "self" }, principal: "default:admin", paused: false, listening: false, used_by: 0 },
     ],
     others: [
       { connection_id: "conn_bob1", source_id: "webhook.received", source_version: 1, label: "Bob's CI hook", status: "paused", created_at: iso(3600000), last_event_at: iso(3600000), config_public: {}, ingress_url: `${BASE}/api/gateway/triggers/webhooks/conn_bob1`, principal: "default:bob" },
@@ -86,6 +86,9 @@ async function mockRoutes(ctx, store) {
     (store.events[cid] = store.events[cid] || []).push(ev);
     return route.fulfill({ status: 202, json: { accepted: true, event_id: ev.id, seq: ev.sequence, woken: 0 } });
   });
+  await ctx.route("**/api/gateway/me/email/oauth/clients", (route) => route.fulfill({ json: { providers: {
+    google: { configured: false, client_id: "", client_secret_set: false, tenant: "", builtin_available: true, needs_reconnect: null },
+    microsoft: { configured: false, client_id: "", client_secret_set: false, tenant: "", builtin_available: false, needs_reconnect: null } } } }));
   // Further mailboxes (Account → My email): never a real IMAP sign-in in this test.
   await ctx.route("**/api/gateway/me/email/accounts**", async (route) => {
     const req = route.request();
@@ -97,6 +100,7 @@ async function mockRoutes(ctx, store) {
     if (method === "PUT" && !sub) {
       const b = JSON.parse(req.postData() || "{}");
       store.lastMailboxPut = { id, body: b };
+      if (b.imap && b.imap.host === "imap.gmail.com") return route.fulfill({ status: 400, json: { detail: { reason_code: "email_auth_failed", message: "IMAP sign-in failed: [AUTHENTICATIONFAILED] Invalid credentials" } } });
       const row = { account_id: id, primary: false, configured: true, address: b.address, can_read: true, can_send: false, enabled: true, folder: "INBOX", mailbox: { state: "receive_only" }, watcher: { state: "idle" } };
       store.mailboxes = store.mailboxes.filter((m) => m.account_id !== id).concat([row]);
       return route.fulfill({ json: { ok: true, ...row } });
@@ -133,6 +137,12 @@ async function mockRoutes(ctx, store) {
     }
     const row = store.rows.concat(store.others).find((r) => r.connection_id === id);
     if (!row) return route.fulfill({ status: 404, json: { detail: { message: "No such connection." } } });
+    if (method === "PUT" && !sub) {
+      const b = JSON.parse(req.postData() || "{}");
+      store.lastConnPut = { id, body: b };
+      if (typeof b.paused === "boolean") { row.paused = b.paused; row.listening = !b.paused && (row.used_by || 0) > 0; }
+      return route.fulfill({ json: row });
+    }
     if (method === "DELETE" && !sub) {
       store.rows = store.rows.filter((r) => r.connection_id !== id);
       return route.fulfill({ json: { deleted: true } });
@@ -230,6 +240,16 @@ try {
 
     if (w === 1440 && theme === "light") {
       // Create a feed connection: the form comes from connection_schema.
+      check((await page.textContent('[data-trg-row="conn_feed1"]')).includes("Listening · used by 2 automations"), "row: listening in words");
+      check((await page.textContent('[data-trg-row="conn_mail1"]')).includes("Idle · nothing uses it yet (nothing is fetched or stored)"), "row: idle in words");
+      check((await page.textContent("#tab-triggers")).includes("A connection only fetches while an automation uses it; pause it to stop even then."), "help line under the list");
+      await page.click('[data-trg-listen="conn_feed1"]');
+      await page.waitForFunction(() => (document.querySelector('[data-trg-row="conn_feed1"]') || {}).textContent.includes("Paused"));
+      check(JSON.stringify(store.lastConnPut) === JSON.stringify({ id: "conn_feed1", body: { paused: true } }), "Listening toggle: PUT {paused: true}", store.lastConnPut);
+      check((await page.getAttribute('[data-trg-listen="conn_feed1"]', "aria-checked")) === "false", "Listening toggle shows its state");
+      await shot(page, "triggers-listening-1440-light");
+      await page.click('[data-trg-listen="conn_feed1"]');
+      await page.waitForFunction(() => (document.querySelector('[data-trg-row="conn_feed1"]') || {}).textContent.includes("Listening · used by 2"));
       check(await page.locator('[data-trg-mailbox="default"]').count() === 1, "mailbox row listed");
       check((await page.textContent('[data-trg-mailbox="default"]')).includes("When mail arrives in admin@example.org"), "mailbox row: the trigger in words");
       check((await page.textContent('[data-trg-mailbox="default"]')).includes("Manage under Account → My email"), "mailbox row: link");
@@ -312,6 +332,17 @@ try {
       await page.click('[data-trg-mailbox-manage="default"]');
       await page.waitForSelector("#my-mailboxes-card:not([hidden])", { timeout: 30000 });
       await page.click("#my-mailbox-add");
+      check(await page.locator("#my-mailbox-google:not([hidden])").count() === 1, "Sign in with Google offered (built-in client)");
+      // Gmail: provider-aware help, before and after a refused sign-in.
+      await page.fill("#my-mailbox-id", "personal");
+      await page.fill("#my-mailbox-address", "someone@gmail.com");
+      await page.fill("#my-mailbox-imap-host", "imap.gmail.com");
+      await page.fill("#my-mailbox-password", "account-password");
+      check((await page.textContent("#my-mailbox-provider-help")).startsWith("Gmail refuses account passwords."), "Gmail help shown while typing");
+      await page.click("#my-mailbox-add-go");
+      await page.waitForSelector("#my-mailbox-error:not([hidden])");
+      check((await page.textContent("#my-mailbox-error")).startsWith("Not added. Gmail refuses account passwords. Use an app password"), "Gmail refusal: provider-aware help", await page.textContent("#my-mailbox-error"));
+      await shotEl(page, "#my-mailboxes-card", "my-email-gmail-help-1440-light");
       await page.fill("#my-mailbox-id", "abstractframework");
       await page.fill("#my-mailbox-address", "lpalbou@abstractframework.ai");
       await page.fill("#my-mailbox-imap-host", "imap.abstractframework.ai");
