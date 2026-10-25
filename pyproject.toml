@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "abstractgateway"
-version = "0.15.1"
+version = "0.16.0"
 description = "AbstractGateway: deployable Run Gateway host for AbstractRuntime (commands + ledger)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -36,7 +36,10 @@ dependencies = [
   # archive contract the Accounts/session archive routes rely on.
   # 0.9.1: streamed speech is never a run wait (close_interrupted_voice_stream at boot) and
   # browser_probe local targets carry the run's sandbox stamp.
-  "AbstractRuntime>=0.10.2",
+  # 0.11.0: trigger connections (feed, webhook), the CloudEvents trigger envelope, run origin,
+  # SCHEDULE_RUN (Runtime.set_schedule_run_handler), several mailboxes per user (email.received@1
+  # account ids), and the run stores' mailbox index + wait-deadline queries.
+  "AbstractRuntime>=0.11.0",
   # Floor only (no extras; Runtime chooses them). The gateway relies on
   # AbstractCore 2.16.1 (abstractcore.utils.identity for the About rows,
   # process-wide model residency and eject semantics, host-job download

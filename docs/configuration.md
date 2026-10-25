@@ -39,10 +39,10 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.8.5` (per-user email: run binding, event inbox, `email.received@1`, the email facade; the automatic-mail loop guard, in-process media children, and pause stopping an automation's retries)
-- `abstractcore>=2.24.0` (mail, media capabilities, and request-scoped authentication for the managed OpenAI-compatible endpoint)
-- `abstractvoice>=0.13.0` (the voice listings import `abstractvoice.engine_runtime`)
-- `abstractagent>=0.3.18` (Python execution inside the run's command sandbox, round 12)
+- `AbstractRuntime>=0.11.0` (trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
+- `abstractcore>=2.26.0` (mail, media capabilities, and request-scoped authentication for the managed OpenAI-compatible endpoint)
+- `abstractvoice>=0.15.0` (the voice listings import `abstractvoice.engine_runtime`)
+- `abstractagent>=0.3.19` (Python execution inside the run's command sandbox, round 12)
 - `AbstractMemory[lancedb]>=0.3.0`
 
 Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
