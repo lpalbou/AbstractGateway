@@ -778,6 +778,8 @@ pub struct MailboxRow {
     pub label: Option<String>,
     pub address: Option<String>,
     pub can_send: bool,
+    /// "read" (Read only) | "write" (Read and write): `access`, else from `can_write`.
+    pub access: String,
     pub enabled: bool,
     pub state: String,
     pub last_poll: Option<String>,
@@ -798,6 +800,7 @@ pub fn mailboxes_from(v: &Value) -> Result<Vec<MailboxRow>, String> {
             label: st(m, "name").filter(|a| !a.is_empty()),
             address: st(m, "address").filter(|a| !a.is_empty()),
             can_send: m.get("can_send").and_then(Value::as_bool) == Some(true),
+            access: crate::store::email::mailbox_access(m).to_string(),
             enabled: m.get("enabled").and_then(Value::as_bool) == Some(true),
             state: m
                 .get("mailbox")
@@ -817,11 +820,12 @@ impl MailboxRow {
             .or_else(|| self.address.clone())
             .unwrap_or_else(|| self.id.clone())
     }
+    /// "When mail arrives in <address> · Read only" / "· Read and write" (the web's words).
     pub fn phrase(&self) -> String {
         format!(
-            "When mail arrives in {}{}",
+            "When mail arrives in {} · {}",
             self.address.as_deref().unwrap_or(&self.id),
-            if self.can_send { "" } else { " · read-only" }
+            crate::store::email::access_words(&self.access)
         )
     }
     /// The web's status words (`TRG_MAILBOX_STATE`).
@@ -831,7 +835,8 @@ impl MailboxRow {
         }
         match self.state.as_str() {
             "connected" => ("Active".into(), "ok"),
-            "receive_only" => ("Read-only".into(), "ok"),
+            // Read and write, but no outgoing server: it can't send.
+            "receive_only" => ("Can't send".into(), "warn"),
             "paused" => ("Paused".into(), "muted"),
             "needs_reconnect" => ("Needs reconnecting".into(), "warn"),
             "unavailable" => ("Unavailable".into(), "muted"),

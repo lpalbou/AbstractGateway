@@ -997,6 +997,105 @@ pub fn imap_connect_body(
     Ok(body)
 }
 
+/// The two access words of a mailbox (the web's words): another mailbox is
+/// "Read only" (the default) or "Read and write"; the primary is always the latter.
+pub const ACCESS_READ: &str = "Read only";
+pub const ACCESS_WRITE: &str = "Read and write";
+
+/// A mailbox's access from its `GET /me/email/accounts` item: `access` when the
+/// gateway says it, else `"write"` when it `can_write`, else `"read"`. The primary
+/// mailbox is always read and write.
+pub fn mailbox_access(m: &Value) -> &'static str {
+    if b(m, "primary") == Some(true) {
+        return "write";
+    }
+    match m.get("access").and_then(Value::as_str) {
+        Some("write") => "write",
+        Some(_) => "read",
+        None if b(m, "can_write") == Some(true) => "write",
+        None => "read",
+    }
+}
+
+/// "Read only" | "Read and write" for an access value.
+pub fn access_words(access: &str) -> &'static str {
+    if access == "write" {
+        ACCESS_WRITE
+    } else {
+        ACCESS_READ
+    }
+}
+
+/// The id another mailbox is stored under, derived from its address exactly as
+/// the web does (`mailboxIdFromAddress`): lowercase, runs of anything but a-z/0-9
+/// become "-", "-" trimmed, the first 28 characters, a trailing "-" trimmed,
+/// "mailbox" when nothing is left; a taken id (or "default") gets -2, -3, …
+pub fn mailbox_id_from_address(address: &str, taken: &[String]) -> String {
+    let lower = address.to_lowercase();
+    let mut slug = String::new();
+    let mut dash = false;
+    for c in lower.chars() {
+        if c.is_ascii_lowercase() || c.is_ascii_digit() {
+            slug.push(c);
+            dash = false;
+        } else if !dash {
+            slug.push('-');
+            dash = true;
+        }
+    }
+    let cut: String = slug.trim_matches('-').chars().take(28).collect();
+    let mut base = cut.trim_end_matches('-').to_string();
+    if base.is_empty() {
+        base = "mailbox".into();
+    }
+    let used = |id: &str| id == "default" || taken.iter().any(|t| t == id);
+    if !used(&base) {
+        return base;
+    }
+    for i in 2..100 {
+        let id = format!("{base}-{i}");
+        if !used(&id) {
+            return id;
+        }
+    }
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() % 1000)
+        .unwrap_or(0);
+    format!("{base}-{ms}")
+}
+
+/// The "Add mailbox" body for another mailbox (`PUT /me/email/accounts/{id}`, test
+/// then store): the password connect body, the outgoing server only when it is
+/// read and write, `write`, and the address as its name.
+pub fn add_mailbox_body(
+    address: &str,
+    password: &str,
+    sv: &ServerSettings,
+    login: Option<&str>,
+    write: bool,
+) -> Result<Value, String> {
+    if !address.trim().is_empty() && address_domain(address).is_none() {
+        return Err("Enter the full email address, e.g. name@example.com.".into());
+    }
+    // Read only: no outgoing server at all (its hidden fields are never checked).
+    let read_only;
+    let sv = if write {
+        sv
+    } else {
+        read_only = ServerSettings {
+            smtp_host: String::new(),
+            smtp_port: String::new(),
+            ..sv.clone()
+        };
+        &read_only
+    };
+    let mut body = imap_connect_body(address, password, sv, login)?;
+    body["write"] = json!(write);
+    body["name"] = json!(address.trim());
+    Ok(body)
+}
+
 /// The sentence "Send a test" shows (DESIGN-v2 §3/§6
 /// `POST /me/notifications/test`): the API's `message`, always — `Ok` when
 /// it was sent, `Err` (the reason) when not. Never a bare state name.

@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 ### Changed
+- **Another mailbox: Read only or Read and write (the web's words).** My email → Mailboxes (your own page) lists your
+  other mailboxes, one line each — *address · provider · state · Read only* or *· Read and write* — with an **Active**
+  switch (`PUT /me/email/accounts/{id}/enabled`) and a **Read and write** switch (`PUT /me/email/accounts/{id}/access
+  {write}`); the primary says *Read and write · Sends as you* and has no access switch. **Add mailbox** connects
+  another mailbox by password: Email address, Password, **Read and write** (off by default: *Off: automations read this
+  mailbox and never change it or send from it. On: they can mark, move, label, delete and send as it.*), Server
+  settings (the outgoing server only when Read and write is on), Sign-in name, ONE **Add mailbox** (`PUT
+  /me/email/accounts/{id}` with `write`, the id derived from the address as the web does). A refused write is the
+  page's status line with the gateway's cause. Google/Microsoft sign-in of another mailbox stays on the web. Triggers'
+  mailbox rows say *When mail arrives in <address> · Read only* / *· Read and write* (was *· read-only*), and the
+  `receive_only` state reads **Can't send** (warning colour).
 - **Triggers after the UX review (the web's words).** *Waiting for an automation to use it* / *Listening · used by
   Release digest* (your active automations' names, up to three then +N); recorded problems in red under the row (*Can't
   read the feed: the address answered 404 (not found). Check the feed address.*); events as sentences (*Test event ·

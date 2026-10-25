@@ -14,8 +14,11 @@
 //! 3. **Server settings** (Ctrl+O; open by themselves when nothing was
 //!    found): both servers and the **Sign-in name**, prefilled with the
 //!    address (sent only when changed). ONE Connect (save + test).
-//!    Connected: one status line, the **Active** switch, Test and
-//!    Disconnect (inline confirmation).
+//!    Connected: one status line, "Read and write · Sends as you" (your
+//!    own page), the **Active** switch, Test and Disconnect (inline
+//!    confirmation).
+//! 4. Your own page only: your OTHER mailboxes, one line each with Active
+//!    and Read and write, then **Add mailbox** (see `others`).
 //!
 //! **Notifications** — **Email address** (one field with its own inline
 //! Save, the only Save on the page; asked ONCE: with none saved and no
@@ -43,6 +46,11 @@ use crate::store::email::{
 use crate::store::{ConnPhase, Loadable};
 use crate::worker::operator::{EmailAction, OpCmd};
 use crate::worker::Cmd;
+
+mod others;
+pub use others::{
+    other_mailboxes, OtherMailbox, ADD_MAILBOX, K_ACCOUNTS, K_ACCOUNTS_WRITE, WRITE_HELP,
+};
 
 /// The mailbox form's sign-in ways, after the Email address (the web's
 /// mailbox form, step 2): a password (the default), or the provider's own
@@ -84,6 +92,12 @@ fn toggle_servers(store: crate::store::Store, p: Page) -> Option<bool> {
         .op
         .my_email
         .with_untracked(|e| e.ready().map(|e| !e.configured).unwrap_or(false));
+    // Connected, with "Add mailbox" open: that form's Server settings.
+    if !connectable && p.add.open.get_untracked() {
+        let hide = p.add.servers_shown.get_untracked();
+        p.add.servers_shown.set(!hide);
+        return Some(hide);
+    }
     if connectable && p.tab.get_untracked() == TAB_IMAP {
         let hide = p.servers_shown.get_untracked();
         p.servers_shown.set(!hide);
@@ -143,6 +157,8 @@ struct Page {
     sw_approval: Signal<bool>,
     sw_tools: Signal<bool>,
     sw_use: Signal<bool>,
+    /// "Add mailbox" (another mailbox; your own page only).
+    add: others::AddForm,
     /// Width available for wrapped helper text.
     wrap_w: usize,
 }
@@ -413,11 +429,16 @@ fn open_for(cx: Scope, ctx: &Ctx, entity: Option<String>) {
                 sw_approval: mcx.signal(true),
                 sw_tools: mcx.signal(false),
                 sw_use: mcx.signal(true),
+                add: others::AddForm::new(mcx),
                 // Modal inner width: the modal (≤ 100) minus its margin,
                 // border and padding, minus the scrollbar.
                 wrap_w: (vw.min(100) - 8).max(20) as usize,
             };
             install_done(mcx, &ctx2, p);
+            // Your own page: the other mailboxes (an entity has only its own).
+            if entity.is_none() {
+                others::install(mcx, &ctx2, p);
+            }
             // Seed the typed fields ONCE from the first answer (a republish
             // after a write never overwrites what the person is typing).
             let ctx_seed = ctx2.clone();
@@ -477,6 +498,18 @@ fn open_for(cx: Scope, ctx: &Ctx, entity: Option<String>) {
             // standard values — field by field, never over an edited one.
             mcx.effect(move || {
                 if let Some((addr, Loadable::Ready(d))) = store.op.email_discovery.get() {
+                    // "Add mailbox"'s own address: its servers, never the primary form's.
+                    if p.add.open.get_untracked()
+                        && addr
+                            .trim()
+                            .eq_ignore_ascii_case(p.add.address.get_untracked().trim())
+                    {
+                        match &d.defaults {
+                            Some(def) => p.add.servers.fill(def),
+                            None => p.add.servers_shown.set(true),
+                        }
+                        return;
+                    }
                     let typed = p.other_address.get_untracked();
                     if addr.trim().eq_ignore_ascii_case(typed.trim()) {
                         match &d.defaults {
@@ -864,8 +897,13 @@ fn mailbox_card(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> Vie
             ))
             .build();
     }
+    let own = p.entity.with_untracked(Option::is_none);
     if e.configured {
-        return col.child(connected_view(cx, ctx, &t0, e, p)).build();
+        col = col.child(connected_view(cx, ctx, &t0, e, p));
+        if own {
+            col = col.child(others::section(cx, ctx, &t0, p, true));
+        }
+        return col.build();
     }
     // The web's mailbox form, in its order: 1. Email address (and one line
     // saying what the lookup found), 2. the sign-in way, 3. Server settings.
@@ -884,7 +922,7 @@ fn mailbox_card(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> Vie
                     .element(cx, &t)
                     .build(),
             ))
-            .child(found_line(ctx.store, &t, p));
+            .child(found_line(ctx.store, &t, p, p.other_address));
     }
     // Password | Google | Microsoft: a Segmented (one Tab stop per segment).
     {
@@ -902,7 +940,7 @@ fn mailbox_card(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> Vie
     }
     let ctx_tab = ctx.clone();
     let e_tab = e.clone();
-    col.child(dyn_view_scoped(
+    col = col.child(dyn_view_scoped(
         LayoutStyle::column().gap(0).shrink(0.0),
         move |tcx| {
             let t = t0;
@@ -918,8 +956,13 @@ fn mailbox_card(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> Vie
                 ),
             }
         },
-    ))
-    .build()
+    ));
+    // Other mailboxes connected before the primary: listed, never added here
+    // (this form connects the primary first).
+    if own {
+        col = col.child(others::section(cx, ctx, &t0, p, false));
+    }
+    col.build()
 }
 
 fn connected_view(_cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> View {
@@ -933,6 +976,13 @@ fn connected_view(_cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> 
     let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
     for l in wrap_text(&text, p.wrap_w) {
         col = col.child(line(vec![span(l, ink)]));
+    }
+    // The primary is always read and write (no access switch): the web's row words.
+    if p.entity.with_untracked(Option::is_none) {
+        col = col.child(line(vec![
+            span(crate::store::email::ACCESS_WRITE, t0.text_muted),
+            span(format!("  {}", others::SENDS_AS_YOU), t0.info),
+        ]));
     }
     if e.mailboxes_off() {
         col = col.child(helper(
@@ -1033,11 +1083,11 @@ fn connected_view(_cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> 
 /// The one line under the Email address: what the lookup found (the
 /// standard values the moment the address has a domain, then the
 /// gateway's discovery), or that nothing was found.
-fn found_line(store: crate::store::Store, t: &TokenSet, p: Page) -> View {
+fn found_line(store: crate::store::Store, t: &TokenSet, p: Page, address: Signal<String>) -> View {
     let t0 = *t;
     dyn_view_scoped(LayoutStyle::column().gap(0).shrink(0.0), move |_| {
         let t = t0;
-        let typed = p.other_address.get();
+        let typed = address.get();
         let Some(domain) = address_domain(&typed) else {
             return helper(&t, MAILBOX_ADDRESS_HELP, p.wrap_w);
         };
@@ -1116,7 +1166,7 @@ fn imap_tab(cx: Scope, ctx: &Ctx, t: &TokenSet, p: Page) -> View {
                 }
                 Element::new()
                     .style(LayoutStyle::column().gap(0).shrink(0.0))
-                    .child(server_rows(lcx, &t, p))
+                    .child(server_rows(lcx, &t, p.servers, p.wrap_w, true))
                     .child(field(
                         &t,
                         "Sign-in name",
@@ -1171,11 +1221,11 @@ fn imap_tab(cx: Scope, ctx: &Ctx, t: &TokenSet, p: Page) -> View {
 
 const SECURITY: &[(&str, &str)] = &[("ssl", "SSL"), ("starttls", "STARTTLS")];
 
-/// Incoming / outgoing servers, pre-filled (inside Server settings).
-fn server_rows(cx: Scope, t: &TokenSet, p: Page) -> View {
+/// Incoming / outgoing servers, pre-filled (inside Server settings); the
+/// outgoing one only when `smtp` (another mailbox: only when Read and write).
+fn server_rows(cx: Scope, t: &TokenSet, sv: ServerSignals, wrap_w: usize, smtp: bool) -> View {
     let t0 = *t;
-    let sv = p.servers;
-    let host_w = (p.wrap_w as i32 - 22).clamp(12, 34);
+    let host_w = (wrap_w as i32 - 22).clamp(12, 34);
     let leg = |title: &'static str,
                host: Signal<String>,
                port: Signal<String>,
@@ -1210,7 +1260,7 @@ fn server_rows(cx: Scope, t: &TokenSet, p: Page) -> View {
             ))
             .build()
     };
-    Element::new()
+    let col = Element::new()
         .style(LayoutStyle::column().gap(0).shrink(0.0))
         .child(leg(
             "Incoming server (IMAP)",
@@ -1218,15 +1268,18 @@ fn server_rows(cx: Scope, t: &TokenSet, p: Page) -> View {
             sv.imap_port,
             sv.imap_security,
             (E_IMAP_HOST, E_IMAP_PORT, E_IMAP_SEC),
-        ))
-        .child(leg(
-            "Outgoing server (SMTP)",
-            sv.smtp_host,
-            sv.smtp_port,
-            sv.smtp_security,
-            (E_SMTP_HOST, E_SMTP_PORT, E_SMTP_SEC),
-        ))
-        .build()
+        ));
+    if !smtp {
+        return col.build();
+    }
+    col.child(leg(
+        "Outgoing server (SMTP)",
+        sv.smtp_host,
+        sv.smtp_port,
+        sv.smtp_security,
+        (E_SMTP_HOST, E_SMTP_PORT, E_SMTP_SEC),
+    ))
+    .build()
 }
 
 /// The address a Google / Microsoft sign-in starts with: the one typed in

@@ -68,9 +68,14 @@ fn rows_sources_and_words() {
     );
     assert_eq!(
         mb[1].phrase(),
-        "When mail arrives in me@work.example · read-only"
+        "When mail arrives in me@work.example · Read only"
     );
-    assert_eq!(mb[1].status(), ("Read-only".to_string(), "ok"));
+    assert_eq!(
+        mb[0].phrase(),
+        "When mail arrives in admin@example.org · Read and write"
+    );
+    // receive_only now means read and write without an outgoing server.
+    assert_eq!(mb[1].status(), ("Can't send".to_string(), "warn"));
     assert_eq!(
         src.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
         ["feed.item", "webhook.received"]
@@ -301,7 +306,9 @@ fn the_page_shows_the_webs_words() {
         "CI hook",
         "admin@example.org",
         "When mail arrives in admin@example.org",
-        "When mail arrives in me@work.example · read-only",
+        "When mail arrives in me@work.example · Read only",
+        "When mail arrives in admin@example.org · Read and write",
+        "Can't send",
         "Manage in My email",
         "Paused",
         "Events",
