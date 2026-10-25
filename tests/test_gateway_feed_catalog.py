@@ -29,7 +29,7 @@ def test_shipped_catalog_is_well_formed() -> None:
     doc = _shipped()
     assert doc["version"] == 1
     feeds = doc["feeds"]
-    assert 15 <= len(feeds) <= 25
+    assert 15 <= len(feeds) <= 30
     ids = [f["id"] for f in feeds]
     assert len(ids) == len(set(ids)), "ids must be unique"
     for f in feeds:

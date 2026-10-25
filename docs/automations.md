@@ -173,7 +173,7 @@ Rare transport answers keep the same shape with `not_found` (unknown path),
   only while such an automation is active. With several mailboxes,
   `"account": "<mailbox_id>"` chooses the one to watch (no value = your
   primary mailbox; see [email.md](./email.md#several-mailboxes)).
-- **`feed.item@1`** runs when a feed you follow (RSS 2.0 or Atom 1.0) has new
+- **`feed.item@1`** runs when a feed you follow (RSS 2.0, RSS 1.0 (RDF) or Atom 1.0) has new
   items. The automation names one of your **trigger connections**
   (`connection_id`); the connection holds the feed URL and how often it is
   read (`every`, default `15m`, at least `60s`). The items of one read become
