@@ -694,6 +694,9 @@ TRIGGERS_JS = r"""
       if (t.error) return `<p class="message error" role="status">${esc(t.error)}</p>`;
       const ok = t.status >= 200 && t.status < 300;
       let html = `<p class="trg-fire ${ok ? "is-ok" : "is-failed"}" role="status">HTTP ${esc(t.status)}${t.reason ? ` · ${esc(t.reason)}` : ""}</p>`;
+      if (String(t.reason || "").includes("not_listening")) {
+        html += `<p class="trg-help">Nothing uses this webhook yet, so the gateway does not accept calls for it. Bind an automation to it, or turn on "Keep fetching even when nothing uses it" under Advanced on its row.</p>`;
+      }
       if (t.event) html += `<details open><summary>The event it created (#${esc(t.event.sequence)})</summary><pre class="trg-code">${esc(JSON.stringify(t.event, null, 2))}</pre></details>`;
       return html;
     }

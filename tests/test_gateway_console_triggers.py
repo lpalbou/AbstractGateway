@@ -267,9 +267,11 @@ def test_webhook_setup_panel_has_the_real_address_and_secret() -> None:
 const c = {connection_id: "conn_1", ingress_url: "http://127.0.0.1:8080/api/gateway/triggers/webhooks/conn_1", secret: "whsec_c2VjcmV0"};
 console.log(JSON.stringify([webhookCurlExample(c.ingress_url, c.secret), webhookSetupMarkup(c, null),
   webhookSetupMarkup(c, {status: 202, reason: "", event: {sequence: 3, type: "abstract.webhook.received.v1"}}),
-  webhookSetupMarkup(c, {status: 401, reason: "webhook_signature_invalid"})]));
+  webhookSetupMarkup(c, {status: 401, reason: "webhook_signature_invalid"}),
+  webhookSetupMarkup(c, {status: 409, reason: "not_listening"})]));
 """
-    curl, panel, ok, refused = _node(harness)
+    curl, panel, ok, refused, idle = _node(harness)
+    assert "HTTP 409 · not_listening" in idle and "Nothing uses this webhook yet" in idle and "Keep fetching even when nothing uses it" in idle
     assert "SECRET='whsec_c2VjcmV0'" in curl and "URL='http://127.0.0.1:8080/api/gateway/triggers/webhooks/conn_1'" in curl
     assert 'KEY=$(printf %s "${SECRET#whsec_}" | base64 -d | xxd -p -c 256)' in curl
     assert "openssl dgst -sha256 -mac HMAC -macopt hexkey:$KEY -binary | base64" in curl
