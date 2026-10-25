@@ -1043,8 +1043,9 @@ typed waits, attention and operations, is in [automations.md](./automations.md).
 | Route | Answer |
 |---|---|
 | `GET /api/gateway/trigger-sources` | `{items: [{id, version, label, capabilities, config_schema, event_schema, available, unavailable_reason?}]}` |
+| `GET /api/gateway/automations/defaults` | `{growing_max_tokens}`: the gateway's default history budget of a growing automation (50,000 tokens), used when a definition sets no `context.growing.max_tokens`; the one value clients show for "the default" |
 | `POST /api/gateway/automations/schedule-preview` | `{trigger, time_zone, schedule_rule_text, schedule_text, next_run_at, next_run_local, first_run_sentence}` ([automations.md](./automations.md#schedule-preview)) |
-| `POST /api/gateway/automations` | `{request_id, title?, target, trigger?, context?, policy?}` → `{automation_id, revision, summary}` |
+| `POST /api/gateway/automations` | `{request_id, title?, target, trigger?, context?, policy?}` → `{automation_id, revision, summary}`; `context` = `{mode, growing?: {max_tokens}}` |
 | `GET /api/gateway/automations?status=&archived_only=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, archived_automations}` (older scheduled runs on the last page, `legacy: true`). Archived automations are left out unless `archived_only=true` (only them) or `status` names `archived`; `archived_automations` counts yours |
 | `GET /api/gateway/automations/{automation_id}` | `{definition, active_revision, summary}` |
 | `PATCH /api/gateway/automations/{automation_id}` | `{command_id, expected_revision?, changes}` → `{command_id, accepted, duplicate, seq}` |

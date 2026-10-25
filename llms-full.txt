@@ -5770,8 +5770,9 @@ typed waits, attention and operations, is in [automations.md](docs/automations.m
 | Route | Answer |
 |---|---|
 | `GET /api/gateway/trigger-sources` | `{items: [{id, version, label, capabilities, config_schema, event_schema, available, unavailable_reason?}]}` |
+| `GET /api/gateway/automations/defaults` | `{growing_max_tokens}`: the gateway's default history budget of a growing automation (50,000 tokens), used when a definition sets no `context.growing.max_tokens`; the one value clients show for "the default" |
 | `POST /api/gateway/automations/schedule-preview` | `{trigger, time_zone, schedule_rule_text, schedule_text, next_run_at, next_run_local, first_run_sentence}` ([automations.md](docs/automations.md#schedule-preview)) |
-| `POST /api/gateway/automations` | `{request_id, title?, target, trigger?, context?, policy?}` → `{automation_id, revision, summary}` |
+| `POST /api/gateway/automations` | `{request_id, title?, target, trigger?, context?, policy?}` → `{automation_id, revision, summary}`; `context` = `{mode, growing?: {max_tokens}}` |
 | `GET /api/gateway/automations?status=&archived_only=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, archived_automations}` (older scheduled runs on the last page, `legacy: true`). Archived automations are left out unless `archived_only=true` (only them) or `status` names `archived`; `archived_automations` counts yours |
 | `GET /api/gateway/automations/{automation_id}` | `{definition, active_revision, summary}` |
 | `PATCH /api/gateway/automations/{automation_id}` | `{command_id, expected_revision?, changes}` → `{command_id, accepted, duplicate, seq}` |
@@ -8953,6 +8954,11 @@ editor stores the suggestion in the VisualFlow document as
   120 characters, or a trigger config its source refuses answer 422 with
   `reason_code` and `field`. `context` defaults to `{"mode": "independent"}`
   and `input_data` to `{}`.
+- A growing workflow can carry its history budget:
+  `"context": {"mode": "growing", "growing": {"max_tokens": 20000}}`
+  (a positive whole number; refused for the independent mode). It is stored,
+  published, and copied into every automation created from the defaults.
+  Without it, the gateway's default applies (below).
 - `PUT` with `"automation_defaults": null` removes it; leaving the field out
   keeps it. `PUT` and `GET` return the stored value.
 - Publishing writes it into the bundle manifest as
@@ -9490,7 +9496,9 @@ already admitted occurrences retain their history for retries. History retains w
 including the newest turn even when that turn alone exceeds the budget.
 
 The API field is `context.growing.max_tokens`, a positive integer. Existing definitions
-that omit it retain the 50,000-token default.
+that omit it retain the gateway's default, which `GET /api/gateway/automations/defaults`
+serves as `{"growing_max_tokens": 50000}`: clients show and pre-fill that value rather than a
+number of their own.
 
 ---
 
@@ -11675,6 +11683,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.16.0] - 2026-10-25
 
 ### Added
+
+- Workflow `automation_defaults` accept `context.growing.max_tokens` (a positive whole number, growing mode
+  only): stored, published, and copied into the automations created from them. `GET /api/gateway/automations/defaults`
+  (`{growing_max_tokens}`, the gateway's default budget) is documented as the value clients show.
 
 - `docs/events-examples.md`: the webhook as two walkthroughs, set it up (console Triggers, Flow's trigger event
   and Automation dialog, the automation) and try it (a copy-paste signed call, what appears under Events, on

@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Workflow `automation_defaults` accept `context.growing.max_tokens` (a positive whole number, growing mode
+  only): stored, published, and copied into the automations created from them. `GET /api/gateway/automations/defaults`
+  (`{growing_max_tokens}`, the gateway's default budget) is documented as the value clients show.
+
 - `docs/events-examples.md`: the webhook as two walkthroughs, set it up (console Triggers, Flow's trigger event
   and Automation dialog, the automation) and try it (a copy-paste signed call, what appears under Events, on
   `/me/events` and in the tray), with which senders can call the address directly. The ingress reads the

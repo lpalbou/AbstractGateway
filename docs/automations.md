@@ -323,6 +323,11 @@ editor stores the suggestion in the VisualFlow document as
   120 characters, or a trigger config its source refuses answer 422 with
   `reason_code` and `field`. `context` defaults to `{"mode": "independent"}`
   and `input_data` to `{}`.
+- A growing workflow can carry its history budget:
+  `"context": {"mode": "growing", "growing": {"max_tokens": 20000}}`
+  (a positive whole number; refused for the independent mode). It is stored,
+  published, and copied into every automation created from the defaults.
+  Without it, the gateway's default applies (below).
 - `PUT` with `"automation_defaults": null` removes it; leaving the field out
   keeps it. `PUT` and `GET` return the stored value.
 - Publishing writes it into the bundle manifest as
@@ -860,4 +865,6 @@ already admitted occurrences retain their history for retries. History retains w
 including the newest turn even when that turn alone exceeds the budget.
 
 The API field is `context.growing.max_tokens`, a positive integer. Existing definitions
-that omit it retain the 50,000-token default.
+that omit it retain the gateway's default, which `GET /api/gateway/automations/defaults`
+serves as `{"growing_max_tokens": 50000}`: clients show and pre-fill that value rather than a
+number of their own.

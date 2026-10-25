@@ -5,7 +5,9 @@ A runnable flow may carry the defaults of the automations created from it:
     automation_defaults = {schema_version: 1, title?: str,
                            trigger: {source_id, source_version: int, config: object,
                                      connection_id?: str},
-                           context: {mode: "independent"|"growing"}, input_data: object}
+                           context: {mode: "independent"|"growing",
+                                     growing?: {max_tokens: positive int}  (growing mode only)},
+                           input_data: object}
 
 No binding_id, credentials or instantiated ids: those are server-owned and
 minted when an automation is created. The one exception is `trigger.connection_id`
@@ -37,7 +39,8 @@ TITLE_MAX = 120
 
 _TOP_KEYS = frozenset({"schema_version", "title", "trigger", "context", "input_data"})
 _TRIGGER_KEYS = frozenset({"source_id", "source_version", "config", "connection_id"})
-_CONTEXT_KEYS = frozenset({"mode"})
+_CONTEXT_KEYS = frozenset({"mode", "growing"})
+_GROWING_KEYS = frozenset({"max_tokens"})
 
 
 #: The `_runtime` keys a client may set in an automation's target input
@@ -136,6 +139,30 @@ def _structural(raw: Any) -> Dict[str, Any]:
     if mode not in CONTEXT_MODES:
         raise AutomationDefaultsError(f"context.mode must be one of {'|'.join(CONTEXT_MODES)}", field="automation_defaults.context.mode")
     out["context"] = {"mode": mode}
+    if "growing" in context:
+        # The growing history budget of automations created from the flow (AbstractRuntime
+        # `validate_context` takes `growing.max_tokens`); absent = the gateway's default
+        # (`GET /api/gateway/automations/defaults` -> growing_max_tokens).
+        growing = context["growing"]
+        if mode != "growing":
+            raise AutomationDefaultsError(
+                "context.growing applies to the growing mode only", field="automation_defaults.context.growing"
+            )
+        if not isinstance(growing, Mapping):
+            raise AutomationDefaultsError("context.growing must be an object", field="automation_defaults.context.growing")
+        unknown = sorted(k for k in growing if k not in _GROWING_KEYS)
+        if unknown:
+            raise AutomationDefaultsError(
+                f"unknown context.growing field(s) {unknown}", field=f"automation_defaults.context.growing.{unknown[0]}"
+            )
+        if "max_tokens" in growing:
+            limit = growing["max_tokens"]
+            if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+                raise AutomationDefaultsError(
+                    "context.growing.max_tokens must be a positive whole number of tokens",
+                    field="automation_defaults.context.growing.max_tokens",
+                )
+            out["context"]["growing"] = {"max_tokens": int(limit)}
 
     input_data = raw.get("input_data", {})
     if not isinstance(input_data, Mapping):
