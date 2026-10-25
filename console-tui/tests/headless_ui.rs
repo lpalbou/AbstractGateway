@@ -9223,10 +9223,17 @@ fn my_email_page_reads_in_the_design_order_with_the_design_words() {
         s.find(needle)
             .unwrap_or_else(|| panic!("{needle:?} missing:\n{s}"))
     };
-    // Email address → Mailbox → Notifications → Agent email tools → Advanced.
-    assert!(at("│Email address") < at("│Mailbox"), "{s}");
-    assert!(at("│Mailbox") < at("│Notifications"), "{s}");
-    assert!(at("│Notifications") < at("●─ Agent email tools"), "{s}");
+    // The web's tabs as sections: Mailboxes → Notifications (Email address,
+    // the two switches) → Agents (Agent email tools, Recipients and limits).
+    assert!(at("│Mailboxes") < at("Connected as me@example.test"), "{s}");
+    assert!(
+        at("Connected as me@example.test") < at("│Notifications"),
+        "{s}"
+    );
+    assert!(at("│Notifications") < at("│Email address"), "{s}");
+    assert!(at("│Email address") < at("━● Job failed"), "{s}");
+    assert!(at("━● Job failed") < at("│Agents"), "{s}");
+    assert!(at("│Agents") < at("●─ Agent email tools"), "{s}");
     assert!(
         at("●─ Agent email tools") < at("│Recipients and limits"),
         "{s}"
@@ -9367,82 +9374,85 @@ fn my_email_asks_the_address_once_when_none_is_saved() {
     v["email_address"] = json!("");
     let s = open_my_email(&mut h, &v);
     assert!(
-        s.contains("Your email address is the mailbox you connect below"),
+        s.contains("Your email address is the mailbox you connect under Mailboxes"),
         "{s}"
     );
-    assert!(s.contains("Mailbox address"), "the one address field:\n{s}");
-    assert!(!s.contains("Mailbox account:"), "{s}");
     assert_eq!(
         s.matches("Email address").count(),
-        0,
-        "no separate Email address field:\n{s}"
+        1,
+        "the mailbox form's Email address is the one address field:\n{s}"
+    );
+    assert!(
+        !s.contains("Mailbox address") && !s.contains("Mailbox account:"),
+        "{s}"
     );
 }
 
-/// DESIGN-v2 §3: IMAP is the first tab and the default; its server fields
-/// are always shown, filled with the standard values for the address's
-/// domain at once, then with discovery's `defaults` — never over an edit.
+/// The web's mailbox form, in its order: Email address (and the one line
+/// saying what was found) → the sign-in way (Password | Google |
+/// Microsoft) → Password → Server settings (collapsed: both servers, then
+/// the Sign-in name prefilled with the address) → Connect.
 #[test]
-fn my_email_imap_tab_is_first_default_and_shows_prefilled_servers() {
+fn my_email_form_reads_address_then_sign_in_then_server_settings() {
     use abstractgateway_console::store::email::Discovery;
     use abstractgateway_console::worker::operator::EmailAction;
     let mut h = harness_sized(Size::new(140, 70));
     let s = open_my_email(&mut h, &my_email_not_connected());
-    let tabs = s
-        .lines()
-        .find(|l| l.contains("IMAP") && l.contains("Google") && l.contains("Microsoft"))
-        .unwrap_or_else(|| panic!("the three tabs on one line:\n{s}"));
+    let row = |s: &str, f: &dyn Fn(&str) -> bool| {
+        s.lines()
+            .position(f)
+            .unwrap_or_else(|| panic!("a row is missing:\n{s}"))
+    };
+    let addr = row(&s, &|l: &str| {
+        l.contains("Email address") && l.contains("me@fastmail.test")
+    });
+    let ways = row(&s, &|l: &str| {
+        l.contains("Password") && l.contains("Google") && l.contains("Microsoft")
+    });
+    let pw = row(&s, &|l: &str| l.contains("Password") && l.contains('▐'));
+    let servers = row(&s, &|l: &str| l.contains("Server settings"));
+    let connect = row(&s, &|l: &str| l.contains("│ Connect "));
     assert!(
-        tabs.find("IMAP") < tabs.find("Google") && tabs.find("Google") < tabs.find("Microsoft"),
-        "IMAP first: {tabs}"
+        addr < ways && ways < pw && pw < servers && servers < connect,
+        "order {addr} {ways} {pw} {servers} {connect}:\n{s}"
     );
-    assert!(!s.contains("Other"), "no Other tab:\n{s}");
+    let tabs = s.lines().nth(ways).unwrap();
+    assert!(
+        tabs.find("Password") < tabs.find("Google") && tabs.find("Google") < tabs.find("Microsoft"),
+        "Password first: {tabs}"
+    );
     assert!(
         !s.contains("Sign in with Google"),
-        "IMAP is the default pane:\n{s}"
+        "the password way is the default:\n{s}"
     );
-    // The address is asked ONCE: your email address is set, so the mailbox
-    // signs in as it — one line, and the web's "Use a different account"
-    // link (Ctrl+U) reveals the field for another account.
     assert!(
-        s.contains("Mailbox account: me@fastmail.test") && s.contains("Use a different account"),
+        s.contains(
+            "Standard settings for fastmail.test — change them if your provider uses others."
+        ),
         "{s}"
     );
+    // Server settings start collapsed.
     assert!(
-        !s.contains("Mailbox address"),
-        "no second address field:\n{s}"
+        !s.contains("Incoming server (IMAP)") && !s.contains("Sign-in name"),
+        "{s}"
     );
-    h.key(b"\x15"); // Ctrl+U
-    let revealed = h.turns(2);
-    assert!(revealed.contains("Mailbox address"), "{revealed}");
-    assert!(!revealed.contains("Mailbox account:"), "{revealed}");
-    h.key(b"\x15");
+    for banned in [
+        "Mailbox address",
+        "Mailbox account:",
+        "Use a different account",
+        "My provider uses a different login name",
+        "Login",
+        "User name",
+        "Display name",
+        "IMAP  Google",
+    ] {
+        assert!(!s.contains(banned), "{banned:?} is gone:\n{s}");
+    }
+    // Ctrl+O shows them, prefilled: the servers, then the Sign-in name.
+    h.key(b"\x0f");
     let s = h.turns(2);
-    assert!(s.contains("Mailbox account: me@fastmail.test"), "{s}");
-    // The link does the same by mouse (R15 FC1: no key-only control).
-    let s = click_on(&mut h, "Use a different account");
-    let s = if s.contains("Mailbox address") {
-        s
-    } else {
-        h.turns(2)
-    };
     assert!(
-        s.contains("Mailbox address"),
-        "the link reveals the field:\n{s}"
-    );
-    let s = click_on(&mut h, "Use a different account");
-    let s = if s.contains("Mailbox account: me@fastmail.test") {
-        s
-    } else {
-        h.turns(2)
-    };
-    assert!(
-        s.contains("Mailbox account: me@fastmail.test"),
-        "and back:\n{s}"
-    );
-    // Every field visible, pre-filled with the standard values.
-    assert!(
-        s.contains("Incoming mail (IMAP)") && s.contains("Outgoing mail (SMTP)"),
+        s.contains("Incoming server (IMAP)") && s.contains("Outgoing server (SMTP)"),
         "{s}"
     );
     assert!(
@@ -9450,23 +9460,33 @@ fn my_email_imap_tab_is_first_default_and_shows_prefilled_servers() {
         "{s}"
     );
     assert!(s.contains("993") && s.contains("465"), "{s}");
+    let sign_in = s
+        .lines()
+        .find(|l| l.contains("Sign-in name") && l.contains('▐'))
+        .unwrap_or_else(|| panic!("the Sign-in name field:\n{s}"));
+    assert!(sign_in.contains("me@fastmail.test"), "prefilled: {sign_in}");
     assert!(
-        s.contains(
-            "Standard settings for fastmail.test — change them if your provider uses others."
-        ),
+        s.find("Outgoing server (SMTP)") < s.find("Sign-in name"),
         "{s}"
     );
-    // Never a user name, a display name, or an Edit/Hide disclosure.
-    for banned in [
-        "User name",
-        "Display name",
-        "Server settings",
-        " Edit ",
-        "Hide",
-    ] {
-        assert!(!s.contains(banned), "{banned:?} is gone:\n{s}");
-    }
-    assert!(s.contains("My provider uses a different login name"), "{s}");
+    // The link does the same by mouse (R15 FC1: no key-only control).
+    let s = click_on(&mut h, "Server settings");
+    let s = if s.contains("Incoming server (IMAP)") {
+        h.turns(2)
+    } else {
+        s
+    };
+    assert!(
+        !s.contains("Incoming server (IMAP)"),
+        "a click hides them:\n{s}"
+    );
+    let s = click_on(&mut h, "Server settings");
+    let s = if s.contains("Incoming server (IMAP)") {
+        s
+    } else {
+        h.turns(2)
+    };
+    assert!(s.contains("Incoming server (IMAP)"), "and shows them:\n{s}");
     use abstractgateway_console::worker::operator::OpCmd;
     match h.find_cmd(|c| {
         is_op(c, |o| {
@@ -9485,7 +9505,7 @@ fn my_email_imap_tab_is_first_default_and_shows_prefilled_servers() {
         })) => {
             assert_eq!(a, "me@fastmail.test")
         }
-        other => panic!("the IMAP pane looks the servers up, got {other:?}"),
+        other => panic!("the form looks the servers up, got {other:?}"),
     }
     // Discovery's defaults replace the standard values; its sentence shows.
     h.store.op.email_discovery.set(Some((
@@ -9504,7 +9524,8 @@ fn my_email_imap_tab_is_first_default_and_shows_prefilled_servers() {
     assert!(s.contains("Settings found for fastmail.test."), "{s}");
     assert!(s.contains("smtp.fastmail.com") && s.contains("587"), "{s}");
     assert!(s.contains("STARTTLS"), "{s}");
-    // Connect sends the servers shown; no username, no display name.
+    // Connect sends the servers shown; no username (the sign-in name was
+    // not changed), no display name.
     let pw_row = s
         .lines()
         .position(|l| l.contains("Password") && l.contains('▐'))
@@ -9540,13 +9561,62 @@ fn my_email_imap_tab_is_first_default_and_shows_prefilled_servers() {
     }
 }
 
+/// The form follows what the lookup found: a Gmail address on a gateway
+/// with a Google sign-in client opens on Sign in with Google; nothing
+/// found opens Server settings by themselves.
+#[test]
+fn my_email_form_follows_what_the_lookup_found() {
+    use abstractgateway_console::store::email::{Discovery, DISCOVERY_NO_DEFAULTS};
+    let mut h = harness_sized(Size::new(140, 70));
+    let mut v = my_email_not_connected();
+    v["registered_address"] = json!("me@gmail.com");
+    let s = open_my_email(&mut h, &v);
+    assert!(!s.contains("Sign in with Google"), "{s}");
+    h.store.op.email_discovery.set(Some((
+        "me@gmail.com".into(),
+        Loadable::Ready(Discovery::from_value(&json!({
+            "address": "me@gmail.com", "found": true,
+            "defaults": {
+                "imap": {"host": "imap.gmail.com", "port": 993, "security": "ssl"},
+                "smtp": {"host": "smtp.gmail.com", "port": 465, "security": "ssl"},
+                "login": "me@gmail.com", "source": "discovered",
+                "message": "Settings found for gmail.com."
+            }
+        }))),
+    )));
+    let s = h.turns(3);
+    assert!(
+        s.contains("Sign in with Google"),
+        "Google's sign-in, picked by itself:\n{s}"
+    );
+    let mut h = harness_sized(Size::new(140, 70));
+    let mut v = my_email_not_connected();
+    v["registered_address"] = json!("me@unknown.test");
+    let s = open_my_email(&mut h, &v);
+    assert!(!s.contains("Incoming server (IMAP)"), "{s}");
+    h.store.op.email_discovery.set(Some((
+        "me@unknown.test".into(),
+        Loadable::Ready(Discovery::from_value(
+            &json!({"address": "me@unknown.test", "found": false}),
+        )),
+    )));
+    let s = h.turns(3);
+    assert!(s.contains(&DISCOVERY_NO_DEFAULTS[..60]), "{s}");
+    assert!(
+        s.contains("Incoming server (IMAP)") && s.contains("Sign-in name"),
+        "nothing found: Server settings open:\n{s}"
+    );
+}
+
 /// An edited server field survives discovery's answer; a reply without
 /// `defaults` says so (no silent fallback to older fields).
 #[test]
 fn my_email_discovery_never_overwrites_an_edit_and_missing_defaults_are_said() {
     use abstractgateway_console::store::email::{Discovery, DISCOVERY_NO_DEFAULTS};
     let mut h = harness_sized(Size::new(140, 70));
-    let s = open_my_email(&mut h, &my_email_not_connected());
+    open_my_email(&mut h, &my_email_not_connected());
+    h.key(b"\x0f"); // Server settings
+    let s = h.turns(2);
     // Edit the IMAP server: click it, clear, type.
     let (row, l) = s
         .lines()
@@ -9602,76 +9672,43 @@ fn my_email_discovery_never_overwrites_an_edit_and_missing_defaults_are_said() {
     assert!(s.contains(&DISCOVERY_NO_DEFAULTS[..60]), "{s}");
 }
 
-/// The web's "My provider uses a different login name" link (Ctrl+O)
-/// reveals ONE Login field (never shown by default); Connect sends
-/// `username` only when it was changed there.
+/// The Sign-in name (inside Server settings, prefilled with the address)
+/// is sent as `username` only when it was changed.
 #[test]
-fn my_email_different_login_is_a_link_and_sends_username_only_when_edited() {
+fn my_email_sign_in_name_is_sent_only_when_changed() {
     use abstractgateway_console::worker::operator::EmailAction;
     let mut h = harness_sized(Size::new(140, 70));
     let s = open_my_email(&mut h, &my_email_not_connected());
-    assert!(!s.contains("Login "), "{s}");
-    // By mouse: the link reveals the field, a second click hides it.
-    let s = click_on(&mut h, "My provider uses a different login name");
-    let s = if s.contains("Login ") { s } else { h.turns(2) };
-    assert!(
-        s.lines().any(|l| l.contains("Login") && l.contains('▐')),
-        "the link reveals Login:\n{s}"
-    );
-    let s = click_on(&mut h, "My provider uses a different login name");
-    let s = if s.lines().any(|l| l.contains("Login") && l.contains('▐')) {
-        h.turns(2)
-    } else {
-        s
-    };
-    assert!(
-        !s.lines().any(|l| l.contains("Login") && l.contains('▐')),
-        "a second click hides it:\n{s}"
-    );
+    assert!(!s.contains("Sign-in name"), "{s}");
     h.key(b"\x0f"); // Ctrl+O
     let s = h.turns(2);
-    let (row, l) = s
-        .lines()
-        .enumerate()
-        .find(|(_, l)| l.contains("Login") && l.contains('▐'))
-        .unwrap_or_else(|| panic!("the Login field:\n{s}"));
-    assert!(l.contains("me@fastmail.test"), "prefilled: {l}");
-    let _ = row;
-    // Ctrl+O again hides it; once more shows it (the caret in it).
-    h.key(b"\x0f");
-    let s = h.turns(2);
-    assert!(
-        s.contains("My provider uses a different login name")
-            && !s.lines().any(|l| l.contains("Login") && l.contains('▐')),
-        "{s}"
-    );
-    h.key(b"\x0f");
-    h.turns(2);
-    // The Login field has the caret (autofocus): type a different login.
+    let click_field = |h: &mut Harness, s: &str, label: &str| {
+        let row = s
+            .lines()
+            .position(|l| l.contains(label) && l.contains('▐'))
+            .unwrap_or_else(|| panic!("the {label} field:\n{s}"));
+        let l = s.lines().nth(row).unwrap();
+        let col = l[..l.find('▐').unwrap()].chars().count();
+        h.key(
+            format!(
+                "\x1b[<0;{};{}M\x1b[<0;{};{}m",
+                col + 3,
+                row + 1,
+                col + 3,
+                row + 1
+            )
+            .as_bytes(),
+        );
+        h.turns(1);
+    };
+    click_field(&mut h, &s, "Sign-in name");
     h.key(b"\x1b[F");
     for _ in 0..40 {
         h.key(b"\x7f");
     }
     h.type_text("me");
-    h.turns(1);
     let s = h.turns(2);
-    let pw_row = s
-        .lines()
-        .position(|l| l.contains("Password") && l.contains('▐'))
-        .expect("password row");
-    let pw_line = s.lines().nth(pw_row).unwrap();
-    let pw_col = pw_line[..pw_line.find('▐').unwrap()].chars().count();
-    h.key(
-        format!(
-            "\x1b[<0;{};{}M\x1b[<0;{};{}m",
-            pw_col + 3,
-            pw_row + 1,
-            pw_col + 3,
-            pw_row + 1
-        )
-        .as_bytes(),
-    );
-    h.turns(1);
+    click_field(&mut h, &s, "Password");
     h.type_text("pw");
     let s = h.turns(2);
     let _ = h.drain_cmds();
@@ -9685,9 +9722,9 @@ fn my_email_different_login_is_a_link_and_sends_username_only_when_edited() {
     }
 }
 
-/// Active sits in the Mailbox card (not Advanced); "Send a test" shows the
-/// gateway's sentence; a different mailbox account is said under the
-/// address; the admin reads the one sentence at the top.
+/// Active sits in the Mailboxes section (not Advanced); "Send a test" shows
+/// the gateway's sentence; a different mailbox account is said under the
+/// address; no banner on your own page.
 #[test]
 fn my_email_active_in_the_mailbox_card_and_test_says_the_api_sentence() {
     use abstractgateway_console::worker::operator::EmailAction;
@@ -9699,12 +9736,15 @@ fn my_email_active_in_the_mailbox_card_and_test_says_the_api_sentence() {
         s.find(needle)
             .unwrap_or_else(|| panic!("{needle:?} missing:\n{s}"))
     };
-    assert!(s.contains("You are also a user of this gateway"), "{s}");
+    assert!(
+        !s.contains("You are also a user of this gateway"),
+        "no banner:\n{s}"
+    );
     assert!(
         s.contains("Your mailbox is a different account: me@example.test."),
         "{s}"
     );
-    assert!(at("│Mailbox") < at("━● Active"), "{s}");
+    assert!(at("│Mailboxes") < at("━● Active"), "{s}");
     assert!(at("━● Active") < at("│Notifications"), "{s}");
     assert!(
         s.contains("Off pauses watching, sending and notifications"),

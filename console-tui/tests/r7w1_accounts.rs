@@ -413,12 +413,12 @@ fn live_logs_and_entity_email() {
     h.until_text("Email — castor");
     h.until_text("castor is an AI user: this mailbox is its own.");
     h.shoot("live-accounts-entity-email");
-    // IMAP: the address pre-fills the standard servers for its domain;
+    // The mailbox form: the address pre-fills the standard servers for its domain;
     // Connect goes to the entity's mirror route and the gateway's refusal
     // (no network on the scratch gateway) is said as it is.
-    h.click_right_of("Mailbox address", 20);
+    h.click_right_of("Email address", 20);
     h.type_text("castor@example.test");
-    h.until_text("imap.example.test");
+    h.until_text("Standard settings for example.test");
     h.shoot("live-accounts-entity-email-imap");
     h.click_right_of("Password", 20);
     h.type_text("app-password");

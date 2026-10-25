@@ -1,7 +1,7 @@
-//! The account email page asks the address ONCE (adversary G10): no saved
-//! address → the IMAP pane's Mailbox address is the only address field; a
-//! saved address → "Mailbox account: x@y — use a different account
-//! (Ctrl+U)". `ROUND2_SHOTS_DIR=<dir> cargo test --test round2_shots_email_once -- --ignored`.
+//! The account email page asks the address ONCE (adversary G10): the
+//! mailbox form's Email address is the only address field (prefilled with a
+//! saved address); Ctrl+O shows Server settings.
+//! `ROUND2_SHOTS_DIR=<dir> cargo test --test round2_shots_email_once -- --ignored`.
 
 mod r2email;
 
@@ -64,7 +64,7 @@ fn capture_address_asked_once() {
         h.shoot("email-once-no-address");
         let mut h = page(size, &not_connected("alice@fastmail.test"));
         h.shoot("email-once-address-set");
-        h.key(b"\x15"); // Ctrl+U
-        h.shoot("email-once-different-account");
+        h.key(b"\x0f"); // Ctrl+O: Server settings
+        h.shoot("email-once-server-settings");
     }
 }

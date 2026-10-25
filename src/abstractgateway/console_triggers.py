@@ -308,7 +308,7 @@ TRIGGERS_JS = r"""
       if (known) return `<span class="trg-chip ${known[1]}">${esc(known[0])}</span>`;
       return `<span class="trg-chip is-warn">${esc(st || "unknown")}</span>`;
     }
-    // A mailbox row: the same three states, with the mailbox's own "Use this mailbox" switch.
+    // A mailbox row: the same three states, with the mailbox's own Active switch (My email → Mailboxes).
     function trgMailboxStatusCell(m, automations) {
       const users = trgMailboxUsers(m, automations);
       const words = trgListeningWords(!m.enabled, automations ? users.length : null, false, users);

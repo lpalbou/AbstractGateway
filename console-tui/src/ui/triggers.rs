@@ -1281,7 +1281,7 @@ fn toggle_listening(ctx: &Ctx, tu: Tu) {
     }));
 }
 
-/// A mailbox row's switch: "Use this mailbox" (`PUT /me/email/accounts/{id}/enabled`).
+/// A mailbox row's switch: the mailbox's **Active** (My email → Mailboxes; `PUT /me/email/accounts/{id}/enabled`).
 fn set_mailbox_in_use(ctx: &Ctx, id: &str, enabled: bool) {
     ctx.send(Cmd::Json(JsonCmd::Send {
         key: K_PAUSE.into(),
@@ -1289,7 +1289,7 @@ fn set_mailbox_in_use(ctx: &Ctx, id: &str, enabled: bool) {
         path: format!("/me/email/accounts/{}/enabled", crate::api::urlencode(id)),
         body: json!({ "enabled": enabled }),
         slow: false,
-        label: format!("Use this mailbox: {id}"),
+        label: format!("Mailbox active: {id}"),
         reload: vec![(K_MAILBOXES.into(), MAILBOXES_PATH.into())],
         journal: true,
     }));

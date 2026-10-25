@@ -1,29 +1,30 @@
 //! "My email" — the caller's own account page for email (DESIGN §6; web:
-//! the gateway console's "My account"). Opened with `@` on the Users
-//! screen, open to every signed-in human. Top to bottom, the words of the
-//! web console:
+//! the gateway console's My email dialog). Opened with `@` on the Users
+//! screen, open to every signed-in human. The web's three tabs are the
+//! page's three sections, in the same order (no banner on your own page;
+//! an entity's says whose mailbox it is):
 //!
-//! 1. **Email address** — one field with its own inline Save (the only
-//!    Save on the page): where sign-in codes and notifications go. The
-//!    address is asked ONCE: with none saved and no mailbox, this field is
-//!    replaced by one sentence and the IMAP pane's Mailbox address is the
-//!    only address field (connecting makes it your email address); with one
-//!    saved, the IMAP pane says "Mailbox account: x@y — use a different
-//!    account (Ctrl+U)" and Ctrl+U reveals the Mailbox address field.
-//! 2. **Mailbox** — not connected: tabs IMAP (first, default) | Google |
-//!    Microsoft (DESIGN-v2 §3). IMAP shows every field: the mailbox
-//!    address, the password and both servers, pre-filled with the standard
-//!    values the moment the address has a domain, then with the gateway's
-//!    discovery `defaults` — never over a field the person edited. No user
-//!    name or display name; Ctrl+O reveals one Login field for the few
-//!    providers that sign in with another name. ONE Connect (save + test).
-//!    Connected: one status line, the **Active** switch, Test and Disconnect
-//!    (inline confirmation).
-//! 3. **Notifications** — two switches, "Job failed" and "Approval needed",
-//!    and "Send a test", whose result is the gateway's sentence.
-//! 4. **Agent email tools** — one switch, with the reason when unavailable.
-//! 5. **Advanced** (folded) — compact sentences: who your agents may send
-//!    to, "Send at most N per hour and N per day.", the watched folder.
+//! **Mailboxes** — not connected: the web's mailbox form, in its order:
+//! 1. **Email address**, and one line saying what the lookup found (the
+//!    standard values the moment the address has a domain, then the
+//!    gateway's discovery — never over a field the person edited);
+//! 2. the sign-in way: **Password** (default) | **Google** | **Microsoft**,
+//!    picked by itself when the incoming server is Google's or Microsoft's
+//!    and this gateway has that sign-in client;
+//! 3. **Server settings** (Ctrl+O; open by themselves when nothing was
+//!    found): both servers and the **Sign-in name**, prefilled with the
+//!    address (sent only when changed). ONE Connect (save + test).
+//!    Connected: one status line, the **Active** switch, Test and
+//!    Disconnect (inline confirmation).
+//!
+//! **Notifications** — **Email address** (one field with its own inline
+//! Save, the only Save on the page; asked ONCE: with none saved and no
+//! mailbox, one sentence points at Mailboxes), the two switches "Job
+//! failed" and "Approval needed", and "Send a test".
+//!
+//! **Agents** — **Agent email tools** (one switch, with the reason when
+//! unavailable) and **Recipients and limits**: who your agents may send to,
+//! "Send at most N per hour and N per day.", the watched folder.
 //!
 //! Switches apply at once (worker write law: write → verify by GET →
 //! journal); the status line under the page names the new state. The
@@ -43,69 +44,52 @@ use crate::store::{ConnPhase, Loadable};
 use crate::worker::operator::{EmailAction, OpCmd};
 use crate::worker::Cmd;
 
-/// The Mailbox card's tabs (DESIGN-v2 §3): IMAP first and the default.
-pub const TABS: [&str; 3] = ["IMAP", "Google", "Microsoft"];
+/// The mailbox form's sign-in ways, after the Email address (the web's
+/// mailbox form, step 2): a password (the default), or the provider's own
+/// sign-in — picked by itself when the address is a Google or Microsoft
+/// mailbox and this gateway has that sign-in client.
+pub const TABS: [&str; 3] = ["Password", "Google", "Microsoft"];
 const TAB_IMAP: usize = 0;
+/// The page's three sections, top to bottom (the web's My email tabs).
+pub const SECTIONS: [&str; 3] = ["Mailboxes", "Notifications", "Agents"];
 
 pub const ADDRESS_HELP: &str = "Where sign-in codes and notifications go.";
 /// Shown instead of the Email address field while none is saved and no
 /// mailbox is connected (the mailbox address becomes it).
 pub const ADDRESS_FROM_MAILBOX: &str =
-    "Your email address is the mailbox you connect below: sign-in codes and notifications go there.";
+    "Your email address is the mailbox you connect under Mailboxes: sign-in codes and notifications go there.";
 pub const MAILBOX_ADDRESS_HELP: &str =
-    "The account your agents read and send from \u{2014} usually your own address.";
-/// The admin's own page opens with this sentence (DESIGN-v2 §2.3).
-pub const ADMIN_SENTENCE: &str = "You are also a user of this gateway: this address receives your sign-in codes and notifications, and your mailbox serves your own agents.";
-pub const DIFFERENT_LOGIN: &str = "My provider uses a different login name";
-pub const LOGIN_HELP: &str =
-    "The name your provider signs you in with, when it is not your address.";
-/// The accelerator of the "My provider uses a different login name" link.
-pub const LOGIN_KEY_LABEL: &str = "Ctrl+O";
-/// The accelerator of the "Use a different account" link (the Mailbox
-/// address field when your email address is already set).
-pub const OTHER_ACCOUNT_KEY_LABEL: &str = "Ctrl+U";
-/// The web's link beside the mailbox account line.
-pub const USE_DIFFERENT_ACCOUNT: &str = "Use a different account";
+    "The mailbox your agents read and send from \u{2014} usually your own address.";
+/// The link (and its accelerator) that shows the servers and the sign-in
+/// name: collapsed unless the lookup found nothing.
+pub const SERVER_SETTINGS: &str = "Server settings";
+pub const SERVER_SETTINGS_KEY_LABEL: &str = "Ctrl+O";
+pub const SIGN_IN_NAME_HELP: &str =
+    "The name your provider signs you in with; usually your address.";
 
-/// The IMAP pane's line when your email address is set: the mailbox signs
-/// in as that address unless you choose another account (the web's words).
-pub fn mailbox_account_line(address: &str) -> String {
-    format!("Mailbox account: {address}")
+/// Which sign-in way an incoming server belongs to (a structured value,
+/// the gateway's own table): Google or Microsoft, else the password.
+pub fn sign_in_tab_for_host(host: &str) -> usize {
+    match host.trim().to_ascii_lowercase().as_str() {
+        "imap.gmail.com" => 1,
+        "outlook.office365.com" | "imap-mail.outlook.com" => 2,
+        _ => TAB_IMAP,
+    }
 }
 
-/// Show / hide the Login field (the link, or Ctrl+O). Returns whether it
-/// was hidden by this call (`None`: not applicable here).
-fn toggle_login(store: crate::store::Store, p: Page) -> Option<bool> {
+/// Show / hide Server settings (the link, or Ctrl+O). Returns whether they
+/// were hidden by this call (`None`: not applicable here).
+fn toggle_servers(store: crate::store::Store, p: Page) -> Option<bool> {
     let connectable = store
         .op
         .my_email
         .with_untracked(|e| e.ready().map(|e| !e.configured).unwrap_or(false));
     if connectable && p.tab.get_untracked() == TAB_IMAP {
-        let hide = p.login_shown.get_untracked();
-        p.login_shown.set(!hide);
+        let hide = p.servers_shown.get_untracked();
+        p.servers_shown.set(!hide);
         return Some(hide);
     }
     None
-}
-
-/// Show / hide the Mailbox address field for another account (the link,
-/// or Ctrl+U) — only when your email address is set.
-fn toggle_other_account(store: crate::store::Store, p: Page) {
-    let saved = store.op.my_email.with_untracked(|e| {
-        e.ready()
-            .filter(|e| !e.configured)
-            .map(|e| e.email_address().trim().to_string())
-            .unwrap_or_default()
-    });
-    if !saved.is_empty() && p.tab.get_untracked() == TAB_IMAP {
-        let show = !p.other_account.get_untracked();
-        if !show {
-            // Back to your email address: the hidden field must not keep a
-            // different account it no longer shows.
-            p.other_address.set(saved);
-        }
-        p.other_account.set(show);
-    }
 }
 pub const ACTIVE_HELP: &str =
     "Off pauses watching, sending and notifications; your settings are kept.";
@@ -135,11 +119,9 @@ struct Page {
     other_address: Signal<String>,
     password: Signal<String>,
     servers: ServerSignals,
-    /// The Login field is shown (Ctrl+O).
-    login_shown: Signal<bool>,
-    /// The Mailbox address field is shown although your email address is
-    /// set (Ctrl+U, "use a different account").
-    other_account: Signal<bool>,
+    /// Server settings (servers + Sign-in name) are shown (Ctrl+O, or by
+    /// themselves when the lookup found nothing).
+    servers_shown: Signal<bool>,
     /// Bumped per address edit: only the newest arms the discovery call.
     addr_gen: Signal<u64>,
     /// The last "Send a test" sentence, shown under the button.
@@ -413,8 +395,7 @@ fn open_for(cx: Scope, ctx: &Ctx, entity: Option<String>) {
                 other_address: mcx.signal(String::new()),
                 password: mcx.signal(String::new()),
                 servers: ServerSignals::new(mcx),
-                login_shown: mcx.signal(false),
-                other_account: mcx.signal(false),
+                servers_shown: mcx.signal(false),
                 addr_gen: mcx.signal(0),
                 test_result: mcx.signal(None),
                 confirm_disconnect: mcx.signal(false),
@@ -498,8 +479,31 @@ fn open_for(cx: Scope, ctx: &Ctx, entity: Option<String>) {
                 if let Some((addr, Loadable::Ready(d))) = store.op.email_discovery.get() {
                     let typed = p.other_address.get_untracked();
                     if addr.trim().eq_ignore_ascii_case(typed.trim()) {
-                        if let Some(def) = &d.defaults {
-                            p.servers.fill(def);
+                        match &d.defaults {
+                            Some(def) => {
+                                p.servers.fill(def);
+                                // Step 2 follows what was found: the provider's
+                                // sign-in when this gateway has its client.
+                                let tab = sign_in_tab_for_host(&def.imap.host);
+                                let ok = tab != TAB_IMAP
+                                    && store.op.my_email.with_untracked(|e| {
+                                        e.ready()
+                                            .and_then(|e| {
+                                                e.oauth_provider(if tab == 1 {
+                                                    "google"
+                                                } else {
+                                                    "microsoft"
+                                                })
+                                            })
+                                            .map(|(ok, _)| ok)
+                                            .unwrap_or(false)
+                                    });
+                                if ok {
+                                    p.tab.set(tab);
+                                }
+                            }
+                            // Nothing found: Server settings open, to fill in.
+                            None => p.servers_shown.set(true),
                         }
                     }
                 }
@@ -532,23 +536,16 @@ fn open_for(cx: Scope, ctx: &Ctx, entity: Option<String>) {
                         page_id_c.set(ectx.current());
                     }
                 })
-                // "My provider uses a different login name": the link on the
-                // IMAP pane of a mailbox not connected yet; Ctrl+O is its
-                // accelerator.
+                // "Server settings": the link on the password way of a
+                // mailbox not connected yet; Ctrl+O is its accelerator.
                 .shortcut(KeyChord::new(Mods::CTRL, Key::Char('o')), move |ectx| {
-                    // Hiding disposes the focused Login field: anchor the
+                    // Hiding disposes a focused server field: anchor the
                     // focus on the page so the keys (Ctrl+O again) stay live.
-                    if toggle_login(store, p) == Some(true) {
+                    if toggle_servers(store, p) == Some(true) {
                         if let Some(id) = page_id.get() {
                             ectx.request_focus(id);
                         }
                     }
-                })
-                // "Use a different account": the link beside the mailbox
-                // account line (only when your email address is set); Ctrl+U
-                // is its accelerator.
-                .shortcut(KeyChord::new(Mods::CTRL, Key::Char('u')), move |_| {
-                    toggle_other_account(store, p)
                 })
                 .child(
                     Scroll::new(body)
@@ -708,26 +705,38 @@ fn cycle_w(
 fn page_body(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> View {
     let t0 = *t;
     let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
-    // The admin is also a user of the gateway: one sentence says what this
-    // page is to them (DESIGN-v2 §2.3).
+    // An entity's page says whose mailbox it is; your own has no banner (the
+    // web's compact header).
     if let Some(id) = p.entity.get_untracked() {
         col = col
             .child(helper(&t0, &entity_lead(&id), p.wrap_w))
             .child(gap());
-    } else if ctx.store.conn.with_untracked(ConnPhase::is_admin) {
-        col = col
-            .child(helper(&t0, ADMIN_SENTENCE, p.wrap_w))
-            .child(gap());
     }
-    col.child(address_card(cx, ctx, &t0, e, p))
-        .child(gap())
+    // The web's tabs are the page's sections, in the same order.
+    col.child(section(&t0, SECTIONS[0], p.wrap_w))
         .child(mailbox_card(cx, ctx, &t0, e, p))
+        .child(gap())
+        .child(section(&t0, SECTIONS[1], p.wrap_w))
+        .child(address_card(cx, ctx, &t0, e, p))
         .child(gap())
         .child(notifications_card(cx, ctx, &t0, e, p))
         .child(gap())
+        .child(section(&t0, SECTIONS[2], p.wrap_w))
         .child(agent_tools_card(cx, ctx, &t0, e, p))
         .child(gap())
         .child(advanced_card(cx, ctx, &t0, e, p))
+        .build()
+}
+
+/// A section title (one of [`SECTIONS`]) over a rule.
+fn section(t: &TokenSet, text: &str, w: usize) -> View {
+    Element::new()
+        .style(LayoutStyle::column().gap(0).shrink(0.0))
+        .child(line(vec![span_bold(text.to_string(), t.accent)]))
+        .child(line(vec![span(
+            "\u{2500}".repeat(w.clamp(10, 60)),
+            t.text_faint,
+        )]))
         .build()
 }
 
@@ -834,7 +843,6 @@ fn mailbox_card(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> Vie
     let t0 = *t;
     let mut col = Element::new()
         .style(LayoutStyle::column().gap(0).shrink(0.0))
-        .child(heading(&t0, "Mailbox"))
         .child(helper(
             &t0,
             if p.entity.with_untracked(Option::is_some) {
@@ -859,7 +867,26 @@ fn mailbox_card(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> Vie
     if e.configured {
         return col.child(connected_view(cx, ctx, &t0, e, p)).build();
     }
-    // IMAP | Google | Microsoft: a Segmented (one Tab stop per segment).
+    // The web's mailbox form, in its order: 1. Email address (and one line
+    // saying what the lookup found), 2. the sign-in way, 3. Server settings.
+    {
+        let t = t0;
+        let w = (p.wrap_w as i32 - 22).clamp(16, 40);
+        let ctx_addr = ctx.clone();
+        let ctx_disc = ctx.clone();
+        col = col
+            .child(field(
+                &t,
+                "Email address",
+                input(p.other_address, w, false)
+                    .on_change(move |a| address_changed(&ctx_addr, p, a))
+                    .on_submit(move |a| discover(&ctx_disc, a))
+                    .element(cx, &t)
+                    .build(),
+            ))
+            .child(found_line(ctx.store, &t, p));
+    }
+    // Password | Google | Microsoft: a Segmented (one Tab stop per segment).
     {
         let ctx = ctx.clone();
         col = col.child(
@@ -1003,132 +1030,75 @@ fn connected_view(_cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> 
     .build()
 }
 
+/// The one line under the Email address: what the lookup found (the
+/// standard values the moment the address has a domain, then the
+/// gateway's discovery), or that nothing was found.
+fn found_line(store: crate::store::Store, t: &TokenSet, p: Page) -> View {
+    let t0 = *t;
+    dyn_view_scoped(LayoutStyle::column().gap(0).shrink(0.0), move |_| {
+        let t = t0;
+        let typed = p.other_address.get();
+        let Some(domain) = address_domain(&typed) else {
+            return helper(&t, MAILBOX_ADDRESS_HELP, p.wrap_w);
+        };
+        let standard = || {
+            ServerDefaults::standard(&typed)
+                .map(|d| d.message)
+                .unwrap_or_default()
+        };
+        match store.op.email_discovery.get() {
+            Some((addr, state)) if addr.trim().eq_ignore_ascii_case(typed.trim()) => match state {
+                Loadable::Ready(d) => match &d.defaults {
+                    Some(def) if !def.message.is_empty() => helper(&t, &def.message, p.wrap_w),
+                    Some(_) => helper(&t, &standard(), p.wrap_w),
+                    None => line(vec![span(DISCOVERY_NO_DEFAULTS, t.warn)]),
+                },
+                Loadable::Failed(err) => helper(
+                    &t,
+                    &format!(
+                        "{} (Couldn't look up the servers for {domain}: {}.)",
+                        standard(),
+                        crate::store::email::email_error_text(&err).trim_end_matches('.')
+                    ),
+                    p.wrap_w,
+                ),
+                _ => line(vec![span(
+                    format!("\u{25cc} looking up the servers for {domain}\u{2026}"),
+                    t.info,
+                )]),
+            },
+            _ => helper(&t, &standard(), p.wrap_w),
+        }
+    })
+}
+
+/// The password way: Password, then Server settings (collapsed: the
+/// servers and the Sign-in name, prefilled), then ONE Connect (save + test).
 fn imap_tab(cx: Scope, ctx: &Ctx, t: &TokenSet, p: Page) -> View {
     let t0 = *t;
-    let store = ctx.store;
     let w = (p.wrap_w as i32 - 22).clamp(16, 40);
-    let ctx_addr = ctx.clone();
-    let ctx_disc = ctx.clone();
     let ctx_connect = ctx.clone();
-    let saved = store.op.my_email.with_untracked(|e| {
-        e.ready()
-            .map(|e| e.email_address().trim().to_string())
-            .unwrap_or_default()
-    });
-    let has_saved = !saved.is_empty();
     Element::new()
         .style(LayoutStyle::column().gap(0).shrink(0.0))
-        .child(dyn_view_scoped(
-            LayoutStyle::column().gap(0).shrink(0.0),
-            move |acx| {
-                let t = t0;
-                // Your email address is set: the mailbox signs in as it
-                // unless you ask for another account (Ctrl+U).
-                if !saved.is_empty() && !p.other_account.get() {
-                    return helper(&t, &mailbox_account_line(&saved), p.wrap_w);
-                }
-                let ctx_addr = ctx_addr.clone();
-                let ctx_disc = ctx_disc.clone();
-                Element::new()
-                    .style(LayoutStyle::column().gap(0).shrink(0.0))
-                    .child(field(
-                        &t,
-                        "Mailbox address",
-                        input(p.other_address, w, false)
-                            .on_change(move |a| address_changed(&ctx_addr, p, a))
-                            .on_submit(move |a| discover(&ctx_disc, a))
-                            .element(acx, &t)
-                            .build(),
-                    ))
-                    .child(helper(&t, MAILBOX_ADDRESS_HELP, p.wrap_w))
-                    .build()
-            },
-        ))
-        // The web's "Use a different account" link: stable (outside the
-        // region above), so the focus stays on it while it toggles.
-        .child(if !has_saved {
-            Element::new().style(LayoutStyle::default().h(0)).build()
-        } else {
-            let store_u = ctx.store;
-            super::w::action::button(
-                cx,
-                &t0,
-                &super::w::Action::link("other_account", USE_DIFFERENT_ACCOUNT).tooltip(format!(
-                    "{USE_DIFFERENT_ACCOUNT}  ({OTHER_ACCOUNT_KEY_LABEL})"
-                )),
-                super::w::action::On::Page,
-                true,
-                move || toggle_other_account(store_u, p),
-            )
-        })
         .child(field(
             &t0,
             "Password",
             input(p.password, w, true).element(cx, &t0).build(),
         ))
         .child(helper(&t0, PASSWORD_HELP, p.wrap_w))
-        .child(server_rows(cx, &t0, p))
-        // Where the values come from: one muted sentence.
-        .child(dyn_view_scoped(
-            LayoutStyle::column().gap(0).shrink(0.0),
-            move |_| {
-                let t = t0;
-                let typed = p.other_address.get();
-                let Some(domain) = address_domain(&typed) else {
-                    return helper(
-                        &t,
-                        "Type the mailbox address: its servers fill in by themselves.",
-                        p.wrap_w,
-                    );
-                };
-                let standard = || {
-                    ServerDefaults::standard(&typed)
-                        .map(|d| d.message)
-                        .unwrap_or_default()
-                };
-                match store.op.email_discovery.get() {
-                    Some((addr, state)) if addr.trim().eq_ignore_ascii_case(typed.trim()) => {
-                        match state {
-                            Loadable::Ready(d) => match &d.defaults {
-                                Some(def) if !def.message.is_empty() => {
-                                    helper(&t, &def.message, p.wrap_w)
-                                }
-                                Some(_) => helper(&t, &standard(), p.wrap_w),
-                                None => line(vec![span(DISCOVERY_NO_DEFAULTS, t.warn)]),
-                            },
-                            Loadable::Failed(err) => helper(
-                                &t,
-                                &format!(
-                                    "{} (Couldn't look up the servers for {domain}: {}.)",
-                                    standard(),
-                                    crate::store::email::email_error_text(&err)
-                                        .trim_end_matches('.')
-                                ),
-                                p.wrap_w,
-                            ),
-                            _ => line(vec![span(
-                                format!("\u{25cc} looking up the servers for {domain}\u{2026}"),
-                                t.info,
-                            )]),
-                        }
-                    }
-                    _ => helper(&t, &standard(), p.wrap_w),
-                }
-            },
-        ))
-        // The different login: the web's link (Ctrl+O), stable so the
-        // focus stays on it; it reveals or hides the Login field below.
+        // "Server settings": the web's disclosure (Ctrl+O), stable so the
+        // focus stays on it while it toggles.
         .child({
             let store_o = ctx.store;
             super::w::action::button(
                 cx,
                 &t0,
-                &super::w::Action::link("different_login", DIFFERENT_LOGIN)
-                    .tooltip(format!("{DIFFERENT_LOGIN}  ({LOGIN_KEY_LABEL})")),
+                &super::w::Action::link("server_settings", SERVER_SETTINGS)
+                    .tooltip(format!("{SERVER_SETTINGS}  ({SERVER_SETTINGS_KEY_LABEL})")),
                 super::w::action::On::Page,
                 true,
                 move || {
-                    toggle_login(store_o, p);
+                    toggle_servers(store_o, p);
                 },
             )
         })
@@ -1136,7 +1106,7 @@ fn imap_tab(cx: Scope, ctx: &Ctx, t: &TokenSet, p: Page) -> View {
             LayoutStyle::column().gap(0).shrink(0.0),
             move |lcx| {
                 let t = t0;
-                if !p.login_shown.get() {
+                if !p.servers_shown.get() {
                     return Element::new().style(LayoutStyle::default().h(0)).build();
                 }
                 if p.servers.login.with_untracked(String::is_empty) {
@@ -1146,16 +1116,16 @@ fn imap_tab(cx: Scope, ctx: &Ctx, t: &TokenSet, p: Page) -> View {
                 }
                 Element::new()
                     .style(LayoutStyle::column().gap(0).shrink(0.0))
+                    .child(server_rows(lcx, &t, p))
                     .child(field(
                         &t,
-                        "Login",
+                        "Sign-in name",
                         input(p.servers.login, w, false)
                             .on_change(move |_| p.servers.mark(E_LOGIN))
                             .element(lcx, &t)
-                            .autofocus()
                             .build(),
                     ))
-                    .child(helper(&t, LOGIN_HELP, p.wrap_w))
+                    .child(helper(&t, SIGN_IN_NAME_HELP, p.wrap_w))
                     .build()
             },
         ))
@@ -1171,8 +1141,9 @@ fn imap_tab(cx: Scope, ctx: &Ctx, t: &TokenSet, p: Page) -> View {
                             return;
                         }
                         let address = p.other_address.get_untracked();
-                        let login = (p.login_shown.get_untracked()
-                            && p.servers.edited.get_untracked() & E_LOGIN != 0)
+                        // The sign-in name only when the person changed it
+                        // (otherwise the address signs in).
+                        let login = (p.servers.edited.get_untracked() & E_LOGIN != 0)
                             .then(|| p.servers.login.get_untracked());
                         let body = imap_connect_body(
                             &address,
@@ -1200,7 +1171,7 @@ fn imap_tab(cx: Scope, ctx: &Ctx, t: &TokenSet, p: Page) -> View {
 
 const SECURITY: &[(&str, &str)] = &[("ssl", "SSL"), ("starttls", "STARTTLS")];
 
-/// Incoming / outgoing servers: always visible, pre-filled (no disclosure).
+/// Incoming / outgoing servers, pre-filled (inside Server settings).
 fn server_rows(cx: Scope, t: &TokenSet, p: Page) -> View {
     let t0 = *t;
     let sv = p.servers;
@@ -1242,20 +1213,31 @@ fn server_rows(cx: Scope, t: &TokenSet, p: Page) -> View {
     Element::new()
         .style(LayoutStyle::column().gap(0).shrink(0.0))
         .child(leg(
-            "Incoming mail (IMAP)",
+            "Incoming server (IMAP)",
             sv.imap_host,
             sv.imap_port,
             sv.imap_security,
             (E_IMAP_HOST, E_IMAP_PORT, E_IMAP_SEC),
         ))
         .child(leg(
-            "Outgoing mail (SMTP)",
+            "Outgoing server (SMTP)",
             sv.smtp_host,
             sv.smtp_port,
             sv.smtp_security,
             (E_SMTP_HOST, E_SMTP_PORT, E_SMTP_SEC),
         ))
         .build()
+}
+
+/// The address a Google / Microsoft sign-in starts with: the one typed in
+/// the form, else your email address.
+fn oauth_address(p: Page) -> String {
+    let typed = p.other_address.get_untracked().trim().to_string();
+    if typed.is_empty() {
+        p.address.get_untracked().trim().to_string()
+    } else {
+        typed
+    }
 }
 
 fn oauth_tab(
@@ -1287,11 +1269,11 @@ fn oauth_tab(
     let ctx_start = ctx.clone();
     let ctx_cancel = ctx.clone();
     let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
-    let hint = p.address.get_untracked();
+    let hint = oauth_address(p);
     if !hint.is_empty() {
         col = col.child(helper(
             &t0,
-            &format!("Signs in as {hint} (your email address; the provider may ask for another)."),
+            &format!("Signs in as {hint} (the provider may ask for another)."),
             p.wrap_w,
         ));
     }
@@ -1315,7 +1297,7 @@ fn oauth_tab(
                             }
                             let body = json!({
                                 "provider": provider,
-                                "address": p.address.get_untracked().trim(),
+                                "address": oauth_address(p),
                                 "client_id": p.client_id.get_untracked().trim(),
                                 "client_secret": p.client_secret.get_untracked(),
                                 "tenant": p.tenant.get_untracked().trim(),
@@ -1446,7 +1428,6 @@ fn notifications_card(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) 
     };
     Element::new()
         .style(LayoutStyle::column().gap(0).shrink(0.0))
-        .child(heading(&t0, "Notifications"))
         .child(row("job_failed", "Job failed", JOB_FAILED_HELP, p.sw_job))
         .child(row(
             "approval_needed",

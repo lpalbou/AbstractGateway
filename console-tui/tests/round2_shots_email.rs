@@ -125,20 +125,20 @@ pub fn seed_discovery(h: &mut Harness) {
 fn capture_email_after() {
     use abstractgateway_console::ui::my_email;
     for size in SIZES {
-        // Not connected: IMAP (default), servers pre-filled (standard).
+        // Not connected: Email address, then Password (default), Server settings collapsed.
         let mut h = email_page(size, &my_email_not_connected());
         h.shoot("email-not-connected");
         // Discovery's defaults replace them; the source sentence.
         seed_discovery(&mut h);
         h.shoot("email-imap-discovered");
-        // Ctrl+O: the one Login field.
+        // Ctrl+O: Server settings (the servers, then the Sign-in name).
         h.key(b"\x0f");
-        h.shoot("email-imap-different-login");
-        // Connected: Active in the Mailbox card, the different-account line.
+        h.shoot("email-imap-server-settings");
+        // Connected: Active under Mailboxes, the different-account line.
         let mut h = email_page(size, &my_email_connected());
         h.shoot("email-connected");
         // Send a test: the gateway's sentence (rate limited).
-        for _ in 0..12 {
+        for _ in 0..30 {
             if h.turns(1).contains("Send a test") {
                 break;
             }
@@ -164,10 +164,9 @@ fn capture_email_after() {
         )));
         h.turns(3);
         h.shoot("email-test-rate-limited");
-        h.wheel_down(20);
-        h.click_text("Advanced ▸");
-        h.wheel_down(20);
-        h.shoot("email-connected-advanced");
+        // The Agents section (R15 D1: Recipients and limits is a visible section).
+        h.wheel_down(40);
+        h.shoot("email-connected-agents");
         // Another user's email (Accounts, admin): address only.
         let mut h = harness(Size::new(size.0, size.1));
         h.admin();

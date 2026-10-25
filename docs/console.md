@@ -940,15 +940,19 @@ you can click.
   **Manage**, the mind, voice, tools per phase and instructions (the gateway's
   `GET /entities/{name}/access` decides; anyone else reads the gateway's
   sentence "Only an admin or <entity>'s creator can change its settings.").
-- **Email** (`@`): on your own row, **Email — <you>** with your **Email
-  address**, your **Mailbox** ([IMAP] [Google] [Microsoft]; the IMAP pane
-  shows the incoming and outgoing servers, filled in as soon as the address has
-  a domain; the links **My provider uses a different login name** (`Ctrl+O`)
-  and, when your address is already set, **Use a different account**
-  (`Ctrl+U`) reveal the Login and Mailbox address fields), once connected the mailbox's **Active** switch, Test and
-  Disconnect, the **Job failed** and **Approval needed** notifications with
-  **Send a test**, the **Agent email tools** switch and **Recipients and
-  limits** (recipient rules, send limits, folder) — see [email.md](./email.md).
+- **Email** (`@`): on your own row, **My email**, the web's three tabs as
+  three sections of one page. **Mailboxes**: not connected yet, the web's
+  mailbox form in its order — **Email address** and the line saying what was
+  found, the sign-in way (**Password** | **Google** | **Microsoft**; Google or
+  Microsoft picked by itself when the address is theirs and the gateway has
+  that sign-in client), **Password**, **Server settings** (`Ctrl+O`, or the
+  link; open by themselves when nothing was found: both servers, then the
+  **Sign-in name** prefilled with the address) and **Connect**; once
+  connected, the mailbox's **Active** switch, Test and Disconnect.
+  **Notifications**: your **Email address**, **Job failed** and **Approval
+  needed** with **Send a test**. **Agents**: the **Agent email tools** switch
+  and **Recipients and limits** (recipient rules, send limits, folder) — see
+  [email.md](./email.md).
   On another user's row, their **Email address** with **Save** ("Saved:
   <id>'s codes and notifications go to <address>.") and a read-only mailbox
   line; on an entity's row, the entity's own mailbox form.
@@ -999,7 +1003,7 @@ you can click.
 - **V Triggers** is the web page's table: Name (your label, the trigger in words
   under it), Status (what it is doing, in the web's words), the **Listening**
   switch (`l`; `k` toggles **Keep fetching even when nothing uses it**; a
-  mailbox row's switch is **Use this mailbox**), Last event (an Account column with **All accounts**, `a`,
+  mailbox row's switch is the mailbox's **Active**), Last event (an Account column with **All accounts**, `a`,
   administrators), your mailboxes as rows with **Manage under Account → My
   email** (opens your email dialog) and, per connection **Events** (`e`, also `Enter`: a dialog with the 20 most recent
   events, newest first, each followed by its JSON; a webhook's address with
