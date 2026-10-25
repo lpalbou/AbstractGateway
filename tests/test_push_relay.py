@@ -27,7 +27,7 @@ from abstractgateway.push.relay import (
     token_tag,
 )
 
-TOPIC = "ai.abstractframework.assistant.watch"
+TOPIC = "ai.abstractframework.assistant.watchkitapp"
 TOKEN = "c" * 64
 T0 = 1_800_000_000.0
 

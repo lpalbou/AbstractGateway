@@ -30,7 +30,7 @@ SCHEMA_VERSION = 1
 DEVICE_TTL_S = 7 * 86400.0
 # Watch-first (backlog 1049): a watch registration refreshed this recently takes the alerts.
 WATCH_FRESH_S = 86400.0
-PACKAGED_TOPICS = ("ai.abstractframework.assistant.watch", "ai.abstractframework.assistant.iphone")
+PACKAGED_TOPICS = ("ai.abstractframework.assistant", "ai.abstractframework.assistant.watchkitapp")
 APPS = ("watch", "phone")
 OUTBOX_CAP = 5000
 OUTBOX_KEEP_S = 7 * 86400.0

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Push: the packaged app topics are the merged AbstractAssistant family, `ai.abstractframework.assistant` (iPhone) and `ai.abstractframework.assistant.watchkitapp` (its watch companion); the old `.watch` and `.iphone` ids are no longer accepted.
+
 ### Added
 
 - **Triggers: Handled by and Use in a flow.** Every row of the console's Triggers page (feeds, webhooks and

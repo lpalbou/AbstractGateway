@@ -72,7 +72,7 @@ the gateway:
 pip install "abstractgateway[push-relay]"
 abstractgateway push-relay \
   --apns-key-file AuthKey_ABC123DEFG.p8 --key-id ABC123DEFG --team-id TEAM123456 \
-  --topic com.example.assistant.watch --topic com.example.assistant.iphone \
+  --topic com.example.assistant --topic com.example.assistant.watchkitapp \
   --listen 127.0.0.1:8095
 ```
 
@@ -86,8 +86,8 @@ The `push-relay` extra adds the HTTP/2 client Apple requires (`httpx[http2]`) an
 for the provider token. A gateway that only sends to a relay needs neither.
 
 Then point your gateway at it with `--push-relay https://your-relay.example`. A gateway accepts
-registrations for the two packaged apps (`ai.abstractframework.assistant.watch`,
-`ai.abstractframework.assistant.iphone`) and for the topics your relay lists at `GET /v1/info`.
+registrations for the two packaged apps (`ai.abstractframework.assistant`, the iPhone app,
+and `ai.abstractframework.assistant.watchkitapp`, its watch companion) and for the topics your relay lists at `GET /v1/info`.
 
 The relay is stateless: it stores nothing, keeps its rate limits in memory and reuses its signed
 provider token for at most 40 minutes. Limits: 30 alerts an hour and 300 a day per device token,
@@ -98,7 +98,7 @@ provider token for at most 40 minutes. Limits: 30 alerts an hour and 300 a day p
 The relay accepts no text. A request is exactly:
 
 ```json
-{"topic": "ai.abstractframework.assistant.watch", "env": "production",
+{"topic": "ai.abstractframework.assistant.watchkitapp", "env": "production",
  "token": "<APNs device token>", "kind": "approval",
  "collapse": "<32 hex>", "seq": 42, "reg": "<16-32 hex>"}
 ```

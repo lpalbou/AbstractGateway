@@ -12,8 +12,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 TOKEN_A = "a" * 64
 TOKEN_B = "b" * 64
 REG = "0123456789abcdef"
-WATCH_TOPIC = "ai.abstractframework.assistant.watch"
-PHONE_TOPIC = "ai.abstractframework.assistant.iphone"
+WATCH_TOPIC = "ai.abstractframework.assistant.watchkitapp"
+PHONE_TOPIC = "ai.abstractframework.assistant"
 
 
 class FakeRelay:
