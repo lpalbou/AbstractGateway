@@ -1792,7 +1792,7 @@ Core catalog proxy settings:
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands]`
+- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off]`
   (`--no-tray`: no menu bar / tray icon for this run, for a test or scratch
   gateway next to your usual one; a start with `--host 127.0.0.1`, a `--port`
   other than the configured one and `--print-token` is treated as a test
@@ -1805,6 +1805,11 @@ Most-used:
   unsandboxed instead of refusing them. It is audited at boot and shown on the
   console. The split `abstractgateway runner` takes the same flag. See
   [security.md](docs/security.md#command-sandbox))
+  `serve --push-relay <URL|off>` (default `off`, no environment variable): the
+  relay this gateway sends Apple push requests to for the watch and iPhone
+  apps; the split `abstractgateway runner` takes it too. See [push.md](docs/push.md)
+- `abstractgateway push-relay --apns-key-file F --key-id K --team-id T --topic BUNDLE_ID … [--listen HOST:PORT]`:
+  run the stateless Apple push relay with your own key (extra `push-relay`; [push.md](docs/push.md#run-your-own-relay))
   (host/port default to the [network exposure](#network-exposure-localhost--local-network--internet)
   setting; with none stored, `--host` defaults to `127.0.0.1` when no auth is
   configured, else `0.0.0.0`, and `--port` to `8080`. Explicit flags override the setting.)
@@ -4774,6 +4779,7 @@ serve:
 | `/api/gateway/entities/*` | summoned entities | [entities.md](docs/entities.md) |
 | `/api/gateway/automations*`, `/api/gateway/trigger-sources` | automations: recurring workflows, their occurrences and attention | [automations.md](docs/automations.md) |
 | `/api/gateway/me/events`, `/me/events/stream`, `/me/events/notifications` | your own event stream: what happened for you outside the steps of a run (catch-up, SSE) | [below](#your-event-stream-apigatewaymeevents) |
+| `/api/gateway/me/push/devices` | the watches and iPhones that get your alerts while their app is closed (Apple push) | [below](#push-devices-apigatewaymepushdevices), [push.md](docs/push.md) |
 
 ## OpenAI API
 
@@ -6034,7 +6040,7 @@ event written twice (a retry, a repair after a crash) is stored once.
 | `attention.seen` | `{automation_id, seq}` | your seen cursor of an automation moves (`POST /automations/{id}/seen`) |
 | `attention.raised` (a wait) | `{kind: "approval" \| "question", wait_kind, run_id, session_id, wait_key, step_id, record_key, prompt_ref}` | a run parks on a person: a tool call awaiting approval, a question (`ask_user`, or an event wait with a prompt or choices); `prompt_ref` is the run (`GET /api/gateway/runs/{run_id}` carries the prompt and the calls awaiting approval) — nothing is copied |
 | `attention.seen` (a wait) | `{kind, run_id, wait_key, step_id, outcome}` | that wait ends: `answered`, `approved`, `denied`, `timed_out`, `cancelled` or `failed` |
-| `notification.sent`, `notification.failed` | `{channel, notice, …}` | a notice reached a channel or could not: `console` (the item is listed), `email` (the outbox sent it, or failed with `code`, `cause`), `tray` (the desktop tray showed it) |
+| `notification.sent`, `notification.failed` | `{channel, notice, …}` | a notice reached a channel or could not: `console` (the item is listed), `email` (the outbox sent it, or failed with `code`, `cause`), `tray` (the desktop tray showed it), `watch` / `phone` with `via: "push"` (Apple accepted the push, or an approval or question could not be pushed within an hour; see [push.md](docs/push.md)) |
 | `wake.scheduled` | `{automation_id, session_id, origin_run_id, at \| on}` | a run asked for work later (`schedule_run`, the `SCHEDULE_RUN` effect): the gateway created a one-shot automation that will run in the caller's session |
 | `wake.cancelled` | `{automation_id, session_id, origin_run_id}` | that automation was archived before it fired: nothing runs |
 | your own type (`orders.paid`, default `<channel>.message`), with `channel` | `{title, body?, …your data}` | a flow published it to you (the `PUBLISH_EVENT` effect, `{channel, type?, title, body?, subject?, data?, alert?}`); id `publish:<run_id>:<step_id>` |
@@ -6112,6 +6118,51 @@ the caller's own plane, so two accounts never see each other's events.
 Evidence: `src/abstractgateway/events_stream.py` (vocabulary, writers, boot repair),
 `src/abstractgateway/routes/me_events.py`, `src/abstractgateway/runner.py` (`_stream_run`,
 `_drain_user_stream`).
+
+A closed app on a watch or an iPhone learns about new attention items through Apple push: see
+[Push devices](#push-devices-apigatewaymepushdevices) and [push.md](docs/push.md).
+
+## Push devices (`/api/gateway/me/push/devices`)
+
+The AbstractAssistant apps register here so they get your alerts while closed
+([push.md](docs/push.md)). Like `/me/events`, every route acts on the caller's own account; a browser
+session's `PUT` and `DELETE` carry the CSRF header.
+
+### Register or refresh: `PUT /api/gateway/me/push/devices/{device_id}`
+
+```json
+{"token": "<APNs device token, 64-200 hex>", "topic": "ai.abstractframework.assistant.watch",
+ "env": "production", "app": "watch", "reg": "<16-32 hex, new at every sign-in>", "name": "Wrist"}
+```
+
+`device_id` is the app's own opaque id (letters, digits, `.`, `_`, `:`, `-`, at most 200);
+`env` is `production` or `sandbox`; `app` is `watch` or `phone`; `name` (optional, at most 60) is
+shown in the console. Any other field is 422. `topic` must be one of the packaged apps
+(`ai.abstractframework.assistant.watch`, `ai.abstractframework.assistant.iphone`) or a topic the
+relay lists at `GET <relay>/v1/info`. Answer: `{ok: true, relay: "on" | "off" | "unreachable"}`
+(`off`: this gateway runs with `--push-relay off`). The apps call it at every sign-in, when their
+token changes and at most daily; a registration expires 7 days after its last refresh. The same
+token registered by another account on this gateway moves to the caller.
+
+### Sign out: `DELETE /api/gateway/me/push/devices/{device_id}`
+
+`{ok: true, deleted: true | false}` (your own registrations only; deleting twice is not an error).
+
+### Your devices: `GET /api/gateway/me/push/devices`
+
+```json
+[{"device_id": "4f1c9a0b2d3e4f56", "app": "watch", "name": "Wrist",
+  "refreshed_at": "2026-10-25T12:00:00+00:00", "last_sent_at": "2026-10-25T12:05:00+00:00",
+  "last_error": null}]
+```
+
+Oldest registration first; tokens are never returned.
+
+```bash
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/me/push/devices"
+```
+
+Evidence: `src/abstractgateway/routes/push.py`, `src/abstractgateway/push/store.py`.
 
 ## Conversation tool choices
 
@@ -10999,6 +11050,7 @@ Related repos:
 | [email.md](docs/email.md) | per-user email: connecting your own mailbox and further read-only mailboxes (password or OAuth2), recipient policy and send limits, automations on new mail, email notifications, account recovery by email, the administrator switch, migration from the retired environment variables |
 | [automations.md](docs/automations.md) | automations: a workflow run on a trigger as a durable controller run; every route with its shapes, the error envelope, tool approval, typed waits and how to answer them, attention and `/seen`, wakes an agent schedules (`schedule_run`), discussions, run lists, legacy schedules, operations (one writer process, restart recovery, boot warm-up, the acceptance script) and the limits of v1 |
 | [events-examples.md](docs/events-examples.md) | events and triggers, three end-to-end examples with the exact commands: watch a mailbox and tell me when something important arrives, a digest of a news feed, run a flow when an external system calls my webhook (signed curl); following your event stream |
+| [push.md](docs/push.md) | alerts on the Apple Watch and iPhone while the app is closed: nothing to configure for people, the `--push-relay` flag, running your own relay with your own Apple key, what the relay and Apple see, the fixed messages |
 | [openai-api.md](docs/openai-api.md) | the OpenAI-compatible API at `/v1`: connecting apps and SDKs, what is supported, Protected/Open and Who can connect, errors, the request log, moving from `/core/v1` |
 | [console.md](docs/console.md) | the web console at `/console` (the grouped sidebar and every tab, including Accounts, Workflows and Triggers; responsive layout on phones and tablets) and the `abstractgateway-console` terminal app (its screens and keys) |
 | [apps.md](docs/apps.md) | installing, starting and opening the browser apps (Flow, Code, Observer, Continuum, Entity), Code's terminal app and the desktop Assistant |
@@ -11896,6 +11948,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Alerts on the Apple Watch and iPhone while the app is closed** (Apple push). The apps register at sign-in with
+  `PUT /api/gateway/me/push/devices/{device_id}` `{token, topic, env, app, reg, name?}` (`DELETE` at sign-out,
+  `GET /api/gateway/me/push/devices` lists yours, never with the token; a registration expires 7 days after its last
+  refresh; a token registered by another account on the same gateway moves to the latest one). A push dispatcher,
+  in the process that runs the runner, turns `attention.raised` (approval, question, a published alert, an
+  automation's result or failure) into a request to a push relay that carries no text — `{topic, env, token, kind,
+  collapse, seq, reg}` — skips what was answered before it left, retries for an hour, prefers a recently registered
+  watch over the phone, and records `notification.sent|failed` with channel `watch`/`phone` and `via: "push"`.
+  `abstractgateway serve --push-relay <URL|off>` (and `runner`) names the relay; the default is `off` (no thread, no
+  connection). `abstractgateway push-relay --apns-key-file … --key-id … --team-id … --topic …` runs the stateless relay
+  with your own Apple key: fixed localized messages, HTTP/2 to Apple, per-token and per-IP limits, `GET /v1/info`;
+  install the `push-relay` extra (`httpx[http2]`, `cryptography`) for it. State lives in `<data dir>/push/`. The web
+  and terminal consoles list your devices under My email → Notifications → **Devices**. See `docs/push.md`.
 - **Well-known feeds for a new feed connection.** The console's Triggers → New connection → Feed starts with **Choose a well-known feed**: 21 open RSS/Atom feeds grouped by category (World news: BBC, The Guardian, NPR, The New York Times, Al Jazeera, Deutsche Welle, Le Monde; Technology: Ars Technica, The Verge, Hacker News, TechCrunch, WIRED; Science: MIT Technology Review, arXiv cs.AI, Quanta Magazine, New Scientist, NASA; Business and finance: BBC Business, The Guardian Business, CNBC, MarketWatch), plus three you complete (a subreddit, a YouTube channel, a GitHub repository's releases). A pick fills in the name and the address, both editable; **Another address** keeps the free field. The catalogue ships as `abstractgateway/assets/feeds.json` and merges with `<data dir>/catalog/feeds.json` when present (same `id` replaces, a new `id` adds, `"disabled": true` hides); `GET /api/gateway/triggers/feeds/catalog` serves the merged list with `source: shipped | custom` (an administrator also gets `custom_path` and `problems`). The terminal console offers the same list. `scripts/check_feed_catalog.py` re-checks every address live with the runtime's feed reader.
 - Folder picker: `GET /api/gateway/me/email/folders` and `GET /api/gateway/me/email/accounts/{mailbox_id}/folders` list a mailbox's folders with their role (`special`: inbox, sent, trash, drafts, junk, archive) and message count, on one connection, cached 60 s; another account's mailbox answers 404.
 - Flows publish to a channel: every runtime the gateway builds registers the `PUBLISH_EVENT` handler
@@ -14844,6 +14909,8 @@ python -m pytest tests/e2e_events -q --allow-network      # + the live Python In
   `GET /api/gateway/me/events/stream`) carries `trigger.event`, `run.started`, `run.finished`,
   `attention.raised`, `attention.seen` and `notification.sent|failed`. The tray, the Assistant (desktop
   and watch) and Code follow it.
+  A closed watch or iPhone app learns about new attention items through Apple push
+  ([push.md](docs/push.md)).
 
 The workflow the examples use, "judge", is three nodes (its JSON is `judge_flow()` in
 `tests/e2e_events/e2e_support.py`; build the same in Flow):
@@ -15161,6 +15228,151 @@ curl -sS -X POST -H "$AUTH" -H "Content-Type: application/json" \
 
 The event carries `abstracttest: true`, so a flow can tell a test run from a real one. The sample is
 yours only: another account's mailbox or connection answers 404. Reference: [api.md](docs/api.md#sample-inputs-post-apigatewaytriggerssample).
+
+---
+
+## docs/push.md
+
+# Push to the watch and the iPhone
+
+When something needs you — an approval, a question, a published alert, an automation's result or
+failure — the AbstractAssistant apps on your Apple Watch and iPhone show it within seconds, even
+when the app is closed. This page explains how that works, the one flag the gateway operator sets,
+how to run your own relay with your own Apple key, and exactly what leaves your gateway.
+
+It builds on [your event stream](docs/api.md#your-event-stream-apigatewaymeevents): a push is only a
+hint that the stream holds something new; the app reads the real event from your gateway. For the
+other notification paths (the desktop tray, email) see [tray.md](docs/tray.md) and
+[email.md](docs/email.md).
+
+## For people: nothing to configure
+
+Sign in to the AbstractAssistant app on your watch or iPhone and allow notifications. The app
+registers itself with your gateway at sign-in and refreshes the registration at least once a week;
+signing out removes it. The system's notification permission for the app is the only switch.
+
+You can see the devices that get your alerts in the console: **My email → Notifications →
+Devices** (web and terminal console) lists each watch or iPhone with its name, when it last
+registered, the last alert sent, and the last error in plain words.
+
+What you get:
+
+| Something waits for you | Alert | Level |
+|---|---|---|
+| a run asks for your approval | Approval needed | time-sensitive |
+| a run asks you a question | Question | time-sensitive |
+| a flow published an alert to you | the publication's title | passive |
+| an automation has a result | *<automation> has a result* | passive |
+| an automation failed | *<automation> failed* | passive |
+
+An approval that is answered before the push leaves (on another device, in the console) is never
+pushed. A watch registered in the last 24 hours takes the alerts; otherwise the iPhone does, so
+your wrist rings once. A registration not refreshed for 7 days expires.
+
+## For the operator: one flag
+
+```bash
+abstractgateway serve --push-relay https://push.example.org
+```
+
+`--push-relay <URL|off>` names the relay this gateway sends push requests to. The default is `off`;
+the packaged default becomes the publisher's relay once it is live. There is no environment
+variable.
+
+- With `off`, the gateway runs no push dispatcher at all: no thread, no outbound connection.
+- With a relay but no registered device, the dispatcher does no work and opens no connection. The
+  gateway contacts the relay only once a device has registered.
+- In the split layout (`serve --no-runner` plus `abstractgateway runner`), give the flag to both
+  processes: the runner process sends, the API process answers the device registrations.
+
+Delivery is retried for an hour (after 2 s, 10 s, 60 s, 5 min, then every 15 min). An approval or
+a question that could not be delivered in that hour is recorded as `notification.failed` in your
+event stream; each delivered alert is recorded as `notification.sent` with channel `watch` or
+`phone` and `via: "push"`. A relay outage writes at most one log line per hour.
+
+State lives in the data folder of each account (`<data dir>/push/`, private files):
+`devices.json` (the registrations), `cursor.json` (the last event read; the first start begins at
+the newest event, so history is never pushed) and `outbox.sqlite3` (one row per alert and device,
+at most 5,000, finished rows kept 7 days). `<gateway data dir>/push/token_owners.json` records which
+account holds each device token: when another account signs in on the same app, the token moves
+to it.
+
+## Run your own relay
+
+Apple only delivers notifications signed with the app publisher's key, so a self-hosted gateway
+cannot talk to Apple directly. The relay is the small service that holds that key. It ships with
+the gateway:
+
+```bash
+pip install "abstractgateway[push-relay]"
+abstractgateway push-relay \
+  --apns-key-file AuthKey_ABC123DEFG.p8 --key-id ABC123DEFG --team-id TEAM123456 \
+  --topic com.example.assistant.watch --topic com.example.assistant.iphone \
+  --listen 127.0.0.1:8095
+```
+
+- `--apns-key-file`, `--key-id`, `--team-id`: the APNs authentication key (`.p8`) from your Apple
+  developer account, its Key ID and your Team ID.
+- `--topic`: the bundle ids of the apps you build and sign; any other topic is refused.
+- `--listen` (default `127.0.0.1:8095`): put a TLS reverse proxy in front of it, and pass
+  `--forwarded-allow-ips` with the proxy's address so the per-IP limit sees the caller.
+
+The `push-relay` extra adds the HTTP/2 client Apple requires (`httpx[http2]`) and `cryptography`
+for the provider token. A gateway that only sends to a relay needs neither.
+
+Then point your gateway at it with `--push-relay https://your-relay.example`. A gateway accepts
+registrations for the two packaged apps (`ai.abstractframework.assistant.watch`,
+`ai.abstractframework.assistant.iphone`) and for the topics your relay lists at `GET /v1/info`.
+
+The relay is stateless: it stores nothing, keeps its rate limits in memory and reuses its signed
+provider token for at most 40 minutes. Limits: 30 alerts an hour and 300 a day per device token,
+600 requests an hour per source address.
+
+## Privacy: what the relay and Apple see
+
+The relay accepts no text. A request is exactly:
+
+```json
+{"topic": "ai.abstractframework.assistant.watch", "env": "production",
+ "token": "<APNs device token>", "kind": "approval",
+ "collapse": "<32 hex>", "seq": 42, "reg": "<16-32 hex>"}
+```
+
+- `kind` is one of `approval`, `question`, `notify`, `result`, `failure`.
+- `collapse` is `sha256("attention:" + record_key)` cut to 32 hex characters: an opaque id that
+  lets the system replace a notification instead of showing it twice. Run ids and record keys never
+  leave the gateway.
+- `seq` is the event's number in your stream, so the app can fetch exactly that event.
+- `reg` is a handle the app chose at sign-in; an alert meant for an earlier sign-in shows as
+  *From an earlier sign-in*.
+
+The relay and Apple therefore see the device token, the app, the kind of alert, the event number
+and the time — never a title, a name, a prompt or any content. The relay's logs hold
+`sha256(token)` cut to 12 characters, never a token. The relay also sees your gateway's IP address,
+and only once a device has registered.
+
+### The fixed messages
+
+The relay builds the notification itself, always the same localized message per kind
+(`title-loc-key: push.<kind>.title`, `loc-key: push.<kind>.body`), so a device token in the wrong
+hands can never carry words under the app's name. The app's notification service extension then
+fetches the event from your gateway and replaces the generic text with the real one (the name of
+the automation, the title of the publication). If the fetch times out, the generic text stays.
+
+The APNs request: `apns-push-type: alert`, `apns-priority` 10 for approvals and questions and 5
+otherwise, `apns-collapse-id` = `collapse`, expiry after 24 hours, and the body
+`{aps: {alert: {title-loc-key, loc-key}, sound: "default", mutable-content: 1,
+interruption-level: "time-sensitive" | "passive", thread-id: <kind>}, s: <seq>, r: <reg>}`.
+
+## Reference
+
+- Routes: [api.md, Push devices](docs/api.md#push-devices-apigatewaymepushdevices).
+- Relay answers: 200 `{status: sent}`; 200 `{status: gone, since_ms}` when the token is no longer
+  valid (the gateway removes a registration only when Apple's time is later than its last
+  refresh); 200 `{status: rejected, reason}`; 429 or 503 `{status: retry, after_s}`; 400
+  `{status: invalid, reason}` for a malformed request (413 past 1 KB).
+- Evidence: `src/abstractgateway/push/` (`dispatcher.py`, `store.py`, `relay.py`, `settings.py`),
+  `src/abstractgateway/routes/push.py`, `src/abstractgateway/console_push.py`.
 
 ---
 

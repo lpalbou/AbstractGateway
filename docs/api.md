@@ -39,6 +39,7 @@ serve:
 | `/api/gateway/entities/*` | summoned entities | [entities.md](./entities.md) |
 | `/api/gateway/automations*`, `/api/gateway/trigger-sources` | automations: recurring workflows, their occurrences and attention | [automations.md](./automations.md) |
 | `/api/gateway/me/events`, `/me/events/stream`, `/me/events/notifications` | your own event stream: what happened for you outside the steps of a run (catch-up, SSE) | [below](#your-event-stream-apigatewaymeevents) |
+| `/api/gateway/me/push/devices` | the watches and iPhones that get your alerts while their app is closed (Apple push) | [below](#push-devices-apigatewaymepushdevices), [push.md](./push.md) |
 
 ## OpenAI API
 
@@ -1299,7 +1300,7 @@ event written twice (a retry, a repair after a crash) is stored once.
 | `attention.seen` | `{automation_id, seq}` | your seen cursor of an automation moves (`POST /automations/{id}/seen`) |
 | `attention.raised` (a wait) | `{kind: "approval" \| "question", wait_kind, run_id, session_id, wait_key, step_id, record_key, prompt_ref}` | a run parks on a person: a tool call awaiting approval, a question (`ask_user`, or an event wait with a prompt or choices); `prompt_ref` is the run (`GET /api/gateway/runs/{run_id}` carries the prompt and the calls awaiting approval) — nothing is copied |
 | `attention.seen` (a wait) | `{kind, run_id, wait_key, step_id, outcome}` | that wait ends: `answered`, `approved`, `denied`, `timed_out`, `cancelled` or `failed` |
-| `notification.sent`, `notification.failed` | `{channel, notice, …}` | a notice reached a channel or could not: `console` (the item is listed), `email` (the outbox sent it, or failed with `code`, `cause`), `tray` (the desktop tray showed it) |
+| `notification.sent`, `notification.failed` | `{channel, notice, …}` | a notice reached a channel or could not: `console` (the item is listed), `email` (the outbox sent it, or failed with `code`, `cause`), `tray` (the desktop tray showed it), `watch` / `phone` with `via: "push"` (Apple accepted the push, or an approval or question could not be pushed within an hour; see [push.md](./push.md)) |
 | `wake.scheduled` | `{automation_id, session_id, origin_run_id, at \| on}` | a run asked for work later (`schedule_run`, the `SCHEDULE_RUN` effect): the gateway created a one-shot automation that will run in the caller's session |
 | `wake.cancelled` | `{automation_id, session_id, origin_run_id}` | that automation was archived before it fired: nothing runs |
 | your own type (`orders.paid`, default `<channel>.message`), with `channel` | `{title, body?, …your data}` | a flow published it to you (the `PUBLISH_EVENT` effect, `{channel, type?, title, body?, subject?, data?, alert?}`); id `publish:<run_id>:<step_id>` |
@@ -1377,6 +1378,51 @@ the caller's own plane, so two accounts never see each other's events.
 Evidence: `src/abstractgateway/events_stream.py` (vocabulary, writers, boot repair),
 `src/abstractgateway/routes/me_events.py`, `src/abstractgateway/runner.py` (`_stream_run`,
 `_drain_user_stream`).
+
+A closed app on a watch or an iPhone learns about new attention items through Apple push: see
+[Push devices](#push-devices-apigatewaymepushdevices) and [push.md](./push.md).
+
+## Push devices (`/api/gateway/me/push/devices`)
+
+The AbstractAssistant apps register here so they get your alerts while closed
+([push.md](./push.md)). Like `/me/events`, every route acts on the caller's own account; a browser
+session's `PUT` and `DELETE` carry the CSRF header.
+
+### Register or refresh: `PUT /api/gateway/me/push/devices/{device_id}`
+
+```json
+{"token": "<APNs device token, 64-200 hex>", "topic": "ai.abstractframework.assistant.watch",
+ "env": "production", "app": "watch", "reg": "<16-32 hex, new at every sign-in>", "name": "Wrist"}
+```
+
+`device_id` is the app's own opaque id (letters, digits, `.`, `_`, `:`, `-`, at most 200);
+`env` is `production` or `sandbox`; `app` is `watch` or `phone`; `name` (optional, at most 60) is
+shown in the console. Any other field is 422. `topic` must be one of the packaged apps
+(`ai.abstractframework.assistant.watch`, `ai.abstractframework.assistant.iphone`) or a topic the
+relay lists at `GET <relay>/v1/info`. Answer: `{ok: true, relay: "on" | "off" | "unreachable"}`
+(`off`: this gateway runs with `--push-relay off`). The apps call it at every sign-in, when their
+token changes and at most daily; a registration expires 7 days after its last refresh. The same
+token registered by another account on this gateway moves to the caller.
+
+### Sign out: `DELETE /api/gateway/me/push/devices/{device_id}`
+
+`{ok: true, deleted: true | false}` (your own registrations only; deleting twice is not an error).
+
+### Your devices: `GET /api/gateway/me/push/devices`
+
+```json
+[{"device_id": "4f1c9a0b2d3e4f56", "app": "watch", "name": "Wrist",
+  "refreshed_at": "2026-10-25T12:00:00+00:00", "last_sent_at": "2026-10-25T12:05:00+00:00",
+  "last_error": null}]
+```
+
+Oldest registration first; tokens are never returned.
+
+```bash
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/me/push/devices"
+```
+
+Evidence: `src/abstractgateway/routes/push.py`, `src/abstractgateway/push/store.py`.
 
 ## Conversation tool choices
 

@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Alerts on the Apple Watch and iPhone while the app is closed** (Apple push). The apps register at sign-in with
+  `PUT /api/gateway/me/push/devices/{device_id}` `{token, topic, env, app, reg, name?}` (`DELETE` at sign-out,
+  `GET /api/gateway/me/push/devices` lists yours, never with the token; a registration expires 7 days after its last
+  refresh; a token registered by another account on the same gateway moves to the latest one). A push dispatcher,
+  in the process that runs the runner, turns `attention.raised` (approval, question, a published alert, an
+  automation's result or failure) into a request to a push relay that carries no text — `{topic, env, token, kind,
+  collapse, seq, reg}` — skips what was answered before it left, retries for an hour, prefers a recently registered
+  watch over the phone, and records `notification.sent|failed` with channel `watch`/`phone` and `via: "push"`.
+  `abstractgateway serve --push-relay <URL|off>` (and `runner`) names the relay; the default is `off` (no thread, no
+  connection). `abstractgateway push-relay --apns-key-file … --key-id … --team-id … --topic …` runs the stateless relay
+  with your own Apple key: fixed localized messages, HTTP/2 to Apple, per-token and per-IP limits, `GET /v1/info`;
+  install the `push-relay` extra (`httpx[http2]`, `cryptography`) for it. State lives in `<data dir>/push/`. The web
+  and terminal consoles list your devices under My email → Notifications → **Devices**. See `docs/push.md`.
 - **Well-known feeds for a new feed connection.** The console's Triggers → New connection → Feed starts with **Choose a well-known feed**: 21 open RSS/Atom feeds grouped by category (World news: BBC, The Guardian, NPR, The New York Times, Al Jazeera, Deutsche Welle, Le Monde; Technology: Ars Technica, The Verge, Hacker News, TechCrunch, WIRED; Science: MIT Technology Review, arXiv cs.AI, Quanta Magazine, New Scientist, NASA; Business and finance: BBC Business, The Guardian Business, CNBC, MarketWatch), plus three you complete (a subreddit, a YouTube channel, a GitHub repository's releases). A pick fills in the name and the address, both editable; **Another address** keeps the free field. The catalogue ships as `abstractgateway/assets/feeds.json` and merges with `<data dir>/catalog/feeds.json` when present (same `id` replaces, a new `id` adds, `"disabled": true` hides); `GET /api/gateway/triggers/feeds/catalog` serves the merged list with `source: shipped | custom` (an administrator also gets `custom_path` and `problems`). The terminal console offers the same list. `scripts/check_feed_catalog.py` re-checks every address live with the runtime's feed reader.
 - Folder picker: `GET /api/gateway/me/email/folders` and `GET /api/gateway/me/email/accounts/{mailbox_id}/folders` list a mailbox's folders with their role (`special`: inbox, sent, trash, drafts, junk, archive) and message count, on one connection, cached 60 s; another account's mailbox answers 404.
 - Flows publish to a channel: every runtime the gateway builds registers the `PUBLISH_EVENT` handler

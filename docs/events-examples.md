@@ -33,6 +33,8 @@ python -m pytest tests/e2e_events -q --allow-network      # + the live Python In
   `GET /api/gateway/me/events/stream`) carries `trigger.event`, `run.started`, `run.finished`,
   `attention.raised`, `attention.seen` and `notification.sent|failed`. The tray, the Assistant (desktop
   and watch) and Code follow it.
+  A closed watch or iPhone app learns about new attention items through Apple push
+  ([push.md](./push.md)).
 
 The workflow the examples use, "judge", is three nodes (its JSON is `judge_flow()` in
 `tests/e2e_events/e2e_support.py`; build the same in Flow):

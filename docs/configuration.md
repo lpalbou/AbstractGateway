@@ -1519,7 +1519,7 @@ Core catalog proxy settings:
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands]`
+- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off]`
   (`--no-tray`: no menu bar / tray icon for this run, for a test or scratch
   gateway next to your usual one; a start with `--host 127.0.0.1`, a `--port`
   other than the configured one and `--print-token` is treated as a test
@@ -1532,6 +1532,11 @@ Most-used:
   unsandboxed instead of refusing them. It is audited at boot and shown on the
   console. The split `abstractgateway runner` takes the same flag. See
   [security.md](./security.md#command-sandbox))
+  `serve --push-relay <URL|off>` (default `off`, no environment variable): the
+  relay this gateway sends Apple push requests to for the watch and iPhone
+  apps; the split `abstractgateway runner` takes it too. See [push.md](./push.md)
+- `abstractgateway push-relay --apns-key-file F --key-id K --team-id T --topic BUNDLE_ID … [--listen HOST:PORT]`:
+  run the stateless Apple push relay with your own key (extra `push-relay`; [push.md](./push.md#run-your-own-relay))
   (host/port default to the [network exposure](#network-exposure-localhost--local-network--internet)
   setting; with none stored, `--host` defaults to `127.0.0.1` when no auth is
   configured, else `0.0.0.0`, and `--port` to `8080`. Explicit flags override the setting.)
