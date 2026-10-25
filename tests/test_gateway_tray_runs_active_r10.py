@@ -279,7 +279,7 @@ def test_the_menu_reads_a_fake_gateway_running_first_with_elapsed_time_and_obser
         app._apps = (AppEntry(id="observer", name="Observer", status="running", source="gateway"),)
         app._apps_fetched = True
         items = _render(app)
-        wf = _sub(items, "Sessions")
+        wf = _sub(items, "Conversations")
         labels = [getattr(i, "text", "") for i in wf if hasattr(i, "text")]
 
         # Section headers (2026-10-15): Running, Need attention, Recent — with

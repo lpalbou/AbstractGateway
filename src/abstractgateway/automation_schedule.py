@@ -216,6 +216,35 @@ def rule_text(trigger: Any, zone: str, *, now: Optional[datetime.datetime] = Non
     return f"{head} at {at} ({zone}){_bounds(config, zone, now)}"
 
 
+def trigger_text(
+    trigger: Any,
+    *,
+    rule: str,
+    connection_label: Optional[str] = None,
+    mailbox_address: Optional[str] = None,
+    source_label: Optional[str] = None,
+) -> str:
+    """The trigger of ANY automation in words, the one line clients show: the schedule sentence
+    (``rule``), "By hand", "When mail arrives in <address>", "When <feed> has a new item",
+    "When <webhook> is called", else "When <source label>"."""
+    if not isinstance(trigger, Mapping):
+        return ""
+    source = str(trigger.get("source_id") or "")
+    if source == "schedule":
+        return rule
+    if source == "manual":
+        return "By hand"
+    if source == "email.received":
+        return f"When mail arrives in {mailbox_address}" if mailbox_address else "When mail arrives"
+    if source == "feed.item":
+        return f"When {connection_label} has a new item" if connection_label else "When the feed has a new item"
+    if source == "webhook.received":
+        return f"When {connection_label} is called" if connection_label else "When the webhook is called"
+    if source_label:
+        return source_label if source_label.lower().startswith("when ") else f"When {source_label[:1].lower()}{source_label[1:]}"
+    return rule or f"{source}@{trigger.get('source_version')}"
+
+
 def schedule_fields(trigger: Any, next_fire_at: Optional[str], owner_zone: str, *, now: Optional[datetime.datetime] = None) -> Dict[str, Any]:
     """The summary's schedule block: ``time_zone``, ``schedule_rule_text``, ``schedule_text`` and,
     when a next run exists, ``next_run_at`` + ``next_run_local``."""

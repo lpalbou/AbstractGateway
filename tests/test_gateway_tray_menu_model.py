@@ -104,7 +104,7 @@ def test_top_level_order_matches_the_design() -> None:
     # ONE header line (2026-10-15): no "Ready · N models loaded" and no grey URL line under it.
     assert labels[0] == "AbstractGateway — Running" and labels[1] == "Open Console"
     assert not any(label.startswith("Ready ·") or label.startswith("http://") for label in labels)
-    order = ["Open Console", "Apps", "Addresses", "Sessions", "⏸ Pause AbstractGateway", "Models", "Check for Updates…", "Restart AbstractGateway…", "Start AbstractGateway at login", "Network", "Help", "Quit AbstractGateway…"]
+    order = ["Open Console", "Apps", "Addresses", "Conversations", "⏸ Pause AbstractGateway", "Models", "Check for Updates…", "Restart AbstractGateway…", "Start AbstractGateway at login", "Network", "Help", "Quit AbstractGateway…"]
     positions = [labels.index(x) for x in order]
     assert positions == sorted(positions), labels
     assert not any(label.startswith("Loaded Models") for label in labels), "the old flat list is gone"

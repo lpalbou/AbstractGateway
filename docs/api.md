@@ -230,7 +230,8 @@ What the default is for each interface (readable without admin rights):
 ```
 
 and every entrypoint row carries `is_agent_default` and
-`agent_default_interfaces`. These are different from `default_bundle_id`
+`agent_default_interfaces`, and `triggerable` (the flow publishes automation defaults with a
+trigger: a picker that runs automations lists it even when it declares no interface). These are different from `default_bundle_id`
 (the bundle a bare `flow_id` falls back to), from a catalog record's
 `is_default` (its default version) and from a bundle's `default_entrypoint`.
 

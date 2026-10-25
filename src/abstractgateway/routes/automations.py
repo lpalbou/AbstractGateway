@@ -317,6 +317,43 @@ def principal_time_zone(svc: Any, principal: Any) -> str:
     return owner_time_zone(root_data_dir, tenant_id=tenant, user_id=user or "admin")
 
 
+def _trigger_text(svc: Any, principal: Any, trigger: Any, rule: str) -> str:
+    """`automation_schedule.trigger_text` with the owner's names looked up: the connection's label
+    (trigger connections), the watched mailbox's address (several mailboxes), the source's label."""
+    from ..automation_schedule import trigger_text
+
+    if not isinstance(trigger, dict):
+        return rule
+    source = str(trigger.get("source_id") or "")
+    config = trigger.get("config") if isinstance(trigger.get("config"), dict) else {}
+    connection_label = mailbox_address = source_label = None
+    try:
+        if source in ("feed.item", "webhook.received") or config.get("connection_id"):
+            from abstractruntime.triggers.connections import connection_principal
+
+            store = getattr(svc.host.runtime, "trigger_connection_store", None)
+            cid = config.get("connection_id")
+            if store is not None and isinstance(cid, str) and cid:
+                tenant, user = _principal_tuple(principal)
+                conn = store.get(cid, principal=connection_principal(tenant, user))
+                connection_label = str(getattr(conn, "label", "") or "").strip() or None
+        elif source == "email.received":
+            from ..mail.accounts import account_store, mailbox_ids, plane_for_service_config
+
+            plane = plane_for_service_config(svc.config)
+            account = str(config.get("account") or "").strip()
+            mailbox = plane.primary if account in ("", "self", "default") else (plane.for_account(account) if account in mailbox_ids(plane) else None)
+            if mailbox is not None:
+                mailbox_address = str(account_store(mailbox).public().get("address") or "").strip() or None
+        elif source not in ("schedule", "manual"):
+            from abstractruntime.triggers.registry import get_trigger_adapter
+
+            source_label = str((get_trigger_adapter(source, trigger.get("source_version")).descriptor or {}).get("label") or "") or None
+    except Exception:  # noqa: BLE001 - a missing name falls back to the generic sentence, never a broken row
+        logger.debug("trigger_text lookup failed", exc_info=True)
+    return trigger_text(trigger, rule=rule, connection_label=connection_label, mailbox_address=mailbox_address, source_label=source_label)
+
+
 def automation_summary_row(svc: Any, principal: Any, controller: Any, *, owner_zone: Optional[str] = None) -> Dict[str, Any]:
     """Contract F `AutomationSummary` of one controller run."""
     runtime = svc.host.runtime
@@ -350,6 +387,9 @@ def automation_summary_row(svc: Any, principal: Any, controller: Any, *, owner_z
         del out["next_fire_at"]
     # R16.1 A4: the served next run + THE sentence every client shows (never computed client-side).
     out.update(schedule_fields(base["trigger"], out.get("next_fire_at"), owner_zone or principal_time_zone(svc, principal)))
+    # The trigger in words for EVERY automation (UX review #2): the schedule sentence, "By hand",
+    # "When mail arrives in <address>", "When <feed> has a new item", "When <webhook> is called".
+    out["trigger_text"] = _trigger_text(svc, principal, base["trigger"], str(out.get("schedule_rule_text") or ""))
     if status == "paused":
         # Why the GATEWAY paused it (e.g. its workflow was made unavailable, DESIGN-v3 §13.4).
         reason = pause_reason(svc.config.data_dir, str(controller.run_id))
@@ -429,6 +469,7 @@ def legacy_summary_row(run: Any, run_store: Any, *, owner_zone: Optional[str] = 
 
         owner_zone = host_time_zone()
     out.update(schedule_fields(out["trigger"], out.get("next_fire_at"), owner_zone))
+    out["trigger_text"] = out.get("schedule_rule_text") or ""
     if children:
         # The wrapper's latest child is its last occurrence (index = ordinal).
         child = children[-1]

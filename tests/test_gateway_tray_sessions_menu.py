@@ -8,7 +8,7 @@ What a person at the menu gets, pinned without a display:
   Need attention (an approval: what is asked, **Show and approve…**, Deny; a
   question: the question, free-text answers stay in the clients), Scheduled
   (the automations with the gateway's own schedule words, Run now, Pause /
-  Resume schedule), Recent (last 24 h, ≤5 rows then "…and N more").
+  Resume), Recent (last 24 h, ≤5 rows then "…and N more").
 - Rows carry the SESSION's title (the served `title`), never the workflow id.
 - Every action goes through the gateway's run command / wait-resolution /
   automation command routes, and an approval is NEVER sent from a bare menu
@@ -115,7 +115,7 @@ def test_the_tray_never_computes_a_next_run() -> None:
     for needle in ("timedelta", "next_fire_at", "croniter", "strptime"):
         assert needle not in src, needle
     assert mm.automation_row_label(DAILY) == "⏱ Daily digest · Every day at 09:00 · next Fri 17 Oct 09:00"
-    assert mm.automation_row_label(TRIAGE) == "⏸ Inbox triage · schedule paused · When an email arrives"
+    assert mm.automation_row_label(TRIAGE) == "⏸ Inbox triage · paused · When an email arrives"
 
 
 # ------------------------------------------------------------- the labels
@@ -142,7 +142,7 @@ def test_the_header_is_one_line_unless_there_is_news() -> None:
     labels = lambda snap: [n.label for n in mm.build_menu(mm.MenuInputs(snap=snap)) if not n.separator][:2]  # noqa: E731
     assert labels(_snap()) == ["AbstractGateway — Running", "Open Console"]
     assert labels(_snap(inflight_ticks=3)) == ["AbstractGateway — Running", "Working on 3 steps"]
-    assert labels(_snap(gateway_state="paused", paused=True)) == ["AbstractGateway — Paused", "Paused — sessions wait until you resume"]
+    assert labels(_snap(gateway_state="paused", paused=True)) == ["AbstractGateway — Paused", "Paused — conversations wait until you resume"]
     assert labels(_snap(gateway_state="pausing", paused=True, inflight_ticks=1)) == ["AbstractGateway — Pausing…", "Finishing 1 run at the next step, then pausing"]
     assert labels(_snap(gateway_state="unreachable", reachable=False)) == ["AbstractGateway — Not responding", "Can't reach it on this computer · retrying"]
     # The meters are ONE line -- machine-wide, then what this gateway process occupies (2026-10-16).
@@ -173,7 +173,7 @@ def test_sections_in_order_with_headers_and_the_empty_cases() -> None:
     assert labels[4] == "Need attention (2)" and labels[5:7] == [mm.run_row_label(APPROVAL), mm.run_row_label(QUESTION)]
     assert labels[7] == "Scheduled (2)" and labels[8:10] == [mm.automation_row_label(DAILY), mm.automation_row_label(TRIAGE)]
     assert labels[10] == "Recent — 1 done" and labels[11] == mm.run_row_label(DONE)
-    assert labels[-1] == "Open Sessions in Console"
+    assert labels[-1] == "Open Conversations in Console"
     # Every header is an information line, every row a submenu.
     nodes = _sessions(full)
     assert all(n.enabled is False for n in nodes if n.label in {"Running (3)", "Need attention (2)", "Scheduled (2)", "Recent — 1 done"})
@@ -181,7 +181,7 @@ def test_sections_in_order_with_headers_and_the_empty_cases() -> None:
 
     # Empty: Running says none; Need attention and Scheduled are absent, not "(0)".
     empty = _labels(_sessions(_snap()))
-    assert empty == ["Running — none", "Recent — none in the last 24 hours", "Open Sessions in Console"]
+    assert empty == ["Running — none", "Recent — none in the last 24 hours", "Open Conversations in Console"]
 
     # Recent is a glance: five rows then ONE line naming the rest.
     many = tuple(dataclasses.replace(DONE, run_id=f"d{i}", title=f"Job {i}") for i in range(8))
@@ -190,7 +190,7 @@ def test_sections_in_order_with_headers_and_the_empty_cases() -> None:
 
     # A failed run list says so and keeps the console door; a failed automations read says so under Scheduled.
     down = _labels(_sessions(_snap(runs=(), runs_error="HTTP 500", automations_error="HTTP 503")))
-    assert down[:2] == ["Session list unavailable", "HTTP 500"] and "Scheduled unavailable: HTTP 503" in down and down[-1] == "Open Sessions in Console"
+    assert down[:2] == ["Conversation list unavailable", "HTTP 500"] and "Scheduled unavailable: HTTP 503" in down and down[-1] == "Open Conversations in Console"
     # Completed / archived automations are not "scheduled".
     gone = _labels(_sessions(_snap(automations=(dataclasses.replace(DAILY, status="completed"),))))
     assert not any(label.startswith("Scheduled") for label in gone)
@@ -236,16 +236,16 @@ def test_each_row_kind_opens_the_right_submenu() -> None:
         ("Active · Every day at 09:00 · next Fri 17 Oct 09:00", None, False),
         ("Open in Observer", ("open_automations_observer",), True),
         ("Run now", ("auto_run_now", "a1"), True),
-        ("Pause schedule", ("auto_pause", "a1"), True),
+        ("Pause", ("auto_pause", "a1"), True),
     ]
     triage = sub("⏸ Inbox triage")
-    assert triage[2:] == [("Run now", ("auto_run_now", "a2"), True), ("Resume schedule", ("auto_resume", "a2"), True)]
+    assert triage[2:] == [("Run now", ("auto_run_now", "a2"), True), ("Resume", ("auto_resume", "a2"), True)]
 
     # The gateway's capabilities gate the automation actions; Observer's page link gates "Open in Observer".
     legacy = AutomationRow("a3", "Old wrapper", "active", "", None, ("legacy",), legacy=True)
     nodes2 = _sessions(_snap(automations=(legacy,)), observer=False)
     old = [(c.label, c.enabled) for c in _row_node(nodes2, "⏱ Old wrapper").children]
-    assert old == [("Active · legacy schedule", False), ("Open in Observer", False), ("Run now", False), ("Pause schedule", False)]
+    assert old == [("Active · legacy schedule", False), ("Open in Observer", False), ("Run now", False), ("Pause", False)]
 
     # Unreachable gateway: nothing is clickable but the rows still read.
     down = _sessions(_snap(gateway_state="unreachable", reachable=False, runs=(RUNNING, APPROVAL)))
@@ -416,9 +416,9 @@ def test_automation_actions_go_through_the_automation_commands_route(tray) -> No
     tray.dispatch(("auto_run_now", "a1"))
     assert tray.client.calls[-1] == ("automation", "a1", "automation.run_now") and tray.events[-1][1] == "Running Daily digest now"
     tray.dispatch(("auto_pause", "a1"))
-    assert tray.client.calls[-1] == ("automation", "a1", "automation.pause") and tray.events[-1][1] == "Paused the schedule of Daily digest"
+    assert tray.client.calls[-1] == ("automation", "a1", "automation.pause") and tray.events[-1][1] == "Paused Daily digest"
     tray.dispatch(("auto_resume", "a2"))
-    assert tray.client.calls[-1] == ("automation", "a2", "automation.resume") and tray.events[-1][1] == "Resumed the schedule of Inbox triage"
+    assert tray.client.calls[-1] == ("automation", "a2", "automation.resume") and tray.events[-1][1] == "Resumed Inbox triage"
     tray.client.command = Result(False, 409, {"error": {"reason_code": "automation_busy", "message": "An occurrence is already running or waiting to run."}}, error="automation_busy")
     tray.dispatch(("auto_run_now", "a1"))
     assert tray.events[-1][0] == "info" and "already running" in tray.events[-1][2]

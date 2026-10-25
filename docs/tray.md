@@ -21,12 +21,12 @@ can see what it is doing and act on it in one click:
   reaches (`http://127.0.0.1:8080 · this computer`, `http://192.168.1.175:8080
   · local network (Wi-Fi)`, a `.local` name, a tailscale name, the internet);
   a click copies it and a notification says what was copied.
-- **Sessions** — what is going on, by the session's **title** (what you
+- **Conversations** — what is going on, by the conversation's **title** (what you
   asked, or the automation's name — never a workflow id): **Running**, **Need
   attention**, **Scheduled** and **Recent** (the last 24 hours), each row with
-  its own actions. See *Sessions* below.
+  its own actions. See *Conversations* below.
 - **Pause / Resume AbstractGateway** — the one gateway-wide control, under
-  Sessions: stop new steps from running to free the machine or to look at
+  Conversations: stop new steps from running to free the machine or to look at
   what is going on (the console keeps answering; work queues until you
   resume). While paused the header reads `AbstractGateway — Paused`.
 - **Models** — what is in memory, what can be loaded, and the way to either:
@@ -44,7 +44,7 @@ can see what it is doing and act on it in one click:
 The menu as shipped (macOS, a machine with 151 installed models; `[…]` is a
 greyed information line, `▸` a submenu, `☐/☑` the check item). The header is
 ONE line; a second appears only when it carries news (`Working on 2 steps`,
-`Finishing 1 run at the next step, then pausing`, `Paused — sessions wait
+`Finishing 1 run at the next step, then pausing`, `Paused — conversations wait
 until you resume`, `Installing …`, `Can't reach it on this computer ·
 retrying`):
 
@@ -54,20 +54,21 @@ Open Console
 Show Activity Window…
 Apps ▸              Open Observer | Open Continuum | Install Code… | … | Launch Assistant | Manage Apps in Console…
 Addresses ▸         http://127.0.0.1:8080 · this computer | http://192.168.1.23:8080 · local network (Wi-Fi) | http://mymac.local:8080 · this computer's name
-Sessions ▸
+Conversations ▸
     [Running (2)]
     🟢 Refactor the sampler into two lanes · step 4 · 2m 10s so far ▸   [Running · started 14:02] | Open in Observer | Pause | Stop…
     ⏸ Market study · paused · 5m 02s so far ▸                          [Paused · started 13:58] | Open in Observer | Resume | Stop…
     [Need attention (2)]
     🟡 Clean the build folder · approve `execute_command` ▸             [execute_command {"command": "rm -rf build"}] | Show and approve… | Deny | Open in Observer
     🟡 Plan the trip · a question ▸                                     [Which dates?] | Open in Observer
-    [Scheduled (2)]
-    ⏱ Daily digest · Every day at 09:00 · next Fri 17 Oct 09:00 ▸       [Active · Every day at 09:00 · next Fri 17 Oct 09:00] | Open in Observer | Run now | Pause schedule
-    ⏸ Inbox triage · schedule paused · When an email arrives ▸          [Paused · When an email arrives] | Open in Observer | Run now | Resume schedule
+    [Scheduled (3)]
+    ⏱ Daily digest · Every day at 09:00 · next Fri 17 Oct 09:00 ▸       [Active · Every day at 09:00 · next Fri 17 Oct 09:00] | Open in Observer | Run now | Pause
+    ⏱ Python news · When Python news has a new item ▸                   [Active · When Python news has a new item] | Open in Observer | Run now | Pause
+    ⏸ Inbox triage · paused · When mail arrives in me@example.org ▸     [Paused · When mail arrives in me@example.org] | Open in Observer | Run now | Resume
     [Recent — 4 done · 1 cancelled]
     ✅ Write the changelog · 7 steps · 1m 42s ▸                         [Started 13:40] | Open in Observer
     …
-    Open Sessions in Console
+    Open Conversations in Console
 ⏸ Pause AbstractGateway
 [Memory 47.0 GB of 128 GB (37%) · GPU 38% busy]
 Models ▸
@@ -150,16 +151,16 @@ Gateway card (pause/resume, update, restart, quit), the memory and GPU meters,
 and the model table with unload buttons. A paused gateway shows a banner on
 every console tab with a *Resume* button.
 
-## Sessions
+## Conversations
 
-**Sessions ▸** is the machine's work as a person sees it. A row is a
-**session** — a conversation turn or an automation's occurrence, never a
+**Conversations ▸** is the machine's work as a person sees it. A row is a
+**conversation** — a conversation turn or an automation's occurrence, never a
 sub-run or an automation's controller — under its **title**: the automation's
 name for an occurrence, else the first line of what the person typed (cut at
 60 characters), else the workflow's name (`GET /host/runs` serves it as
 `title` with `title_source`; the Observer's cards use the same text). The list
 is **host-wide**, not per-principal: memory, GPU and loaded models on this menu
-describe the machine, and the session list has to describe the same machine.
+describe the machine, and the conversation list has to describe the same machine.
 Catalog-published workflows are shown under the name you know them by and are
 not mistaken for the gateway's own bookkeeping runs. Summoned entities' data
 planes are not listed (the payload names them in `skipped_entity_planes`).
@@ -171,8 +172,8 @@ so:
   started; a run whose sub-run is working counts as running. A row waiting
   for something that is not a person says what (`waiting for a timer`,
   `waiting for email.received`, `waiting for a sub-run`) and stays here. A
-  paused session reads `⏸ <title> · paused`. The submenu: when it started,
-  **Open in Observer**, **Pause** (the session stops at its next step; `POST
+  paused conversation reads `⏸ <title> · paused`. The submenu: when it started,
+  **Open in Observer**, **Pause** (the conversation stops at its next step; `POST
   /commands` type `pause`, the whole run tree) or **Resume** (type `resume`),
   and **Stop…** (asks first; type `cancel`, with the reason "Stopped from the
   AbstractGateway menu"). `Running — none` when nothing runs.
@@ -191,31 +192,32 @@ so:
   (the Assistant, Code, the console).
 - **Scheduled (N)** — the automations (`GET /automations`), active and
   paused: `⏱ <automation title> · Every day at 09:00 · next Fri 17 Oct
-  09:00` — the schedule words exactly as the gateway serves them
-  (`schedule_text`); the tray computes no next run. The submenu: **Open in
-  Observer** (the Automations page), **Run now**, **Pause schedule** /
-  **Resume schedule** (`POST /automations/{id}/commands`, types
+  09:00`, `⏱ <title> · When Python news has a new item` — the trigger in the
+  gateway's words (`trigger_text`, with the next run from `schedule_text` for a
+  schedule); the tray computes no next run. The submenu: **Open in
+  Observer** (the Automations page), **Run now**, **Pause** /
+  **Resume** (`POST /automations/{id}/commands`, types
   `automation.run_now`, `automation.pause`, `automation.resume`), each offered
   only when the automation's `capabilities` list it; the gateway's refusal
   (an occurrence already running, an archived automation) is shown with its
   words.
-- **Recent — 4 done · 1 cancelled** — the sessions that finished in the last
+- **Recent — 4 done · 1 cancelled** — the conversations that finished in the last
   24 hours (✅ completed, ❌ failed, ⚪️ cancelled), newest first, with the
   step count and how long each took; five rows, then `…and N more`. The
   submenu: when it started, **Open in Observer**.
 
-**Open in Observer** opens that session's page (or the Automations page)
+**Open in Observer** opens that conversation's page (or the Automations page)
 signed in; a stopped Observer the gateway manages is started first; greyed
-when Observer is not installed. **Open Sessions in Console** at the bottom is
+when Observer is not installed. **Open Conversations in Console** at the bottom is
 the full list.
 
-Another account's session (the gateway runs several accounts) is listed —
+Another account's conversation (the gateway runs several accounts) is listed —
 the machine is busy with it — but its Pause, Stop and approval controls are
-greyed and the row says `Another account's session — act on it from its own
+greyed and the row says `Another account's conversation — act on it from its own
 app`: the tray's commands reach the plane of its own identity (the
 payload's `caller_plane`), never another account's runs.
 
-The session rows are read every 20 seconds (`GET /host/runs`, cached a few
+The conversation rows are read every 20 seconds (`GET /host/runs`, cached a few
 seconds on the gateway; one run document per row) and right after each
 action. A duration that ticks never rebuilds the menu under the cursor. The
 **Scheduled** rows follow your event stream instead (below): they are read
@@ -399,10 +401,10 @@ service …`, `apps …`, `models …`).
 
 ## Pause
 
-**⏸ Pause AbstractGateway** (under Sessions) is process-wide and **persists
+**⏸ Pause AbstractGateway** (under Conversations) is process-wide and **persists
 across restarts**: a laptop paused to get its GPU back does not silently
-resume after a reboot or an update. One session is paused from its own row
-instead (see *Sessions*). While the gateway is paused:
+resume after a reboot or an update. One conversation is paused from its own row
+instead (see *Conversations*). While the gateway is paused:
 
 - no new workflow step starts — runs, schedules and bridge-started work are
   accepted and wait;

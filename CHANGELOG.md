@@ -55,6 +55,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Every automation's trigger in words: summaries carry `trigger_text` ("When Python news has a new item", "When mail
+  arrives in me@example.org", "When Orders is called", "By hand", or the schedule sentence) next to the unchanged
+  `schedule_text`/`schedule_rule_text`; the tray shows it on its rows and submenus and says **Pause** / **Resume**.
+  `GET /api/gateway/bundles` entrypoints carry `triggerable` (automation defaults with a trigger). The tray's menu
+  says **Conversations ▸**, **Open Conversations in Console** and "Paused — conversations wait until you resume".
 - A test gateway never shows a tray icon: besides `serve --no-tray`, a start with `--host 127.0.0.1`, a `--port`
   other than the configured one and `--print-token` (the hermetic test shape) starts no tray and says why in one
   line (tray reason `test_gateway`). The test harnesses that start `serve` pass `--no-tray`.

@@ -392,7 +392,7 @@ class Monitor:
         if st == "unreachable":
             self.banner.configure(text=f"Can't reach {APP_NAME}. If it's restarting, this clears in a few seconds.")
         elif snap.paused:
-            self.banner.configure(text="Sessions wait until you resume. Entities with their own schedule keep going.", fg=pal["warn"])
+            self.banner.configure(text="Conversations wait until you resume. Entities with their own schedule keep going.", fg=pal["warn"])
         else:
             self.banner.configure(text="")
         if st == "unreachable":

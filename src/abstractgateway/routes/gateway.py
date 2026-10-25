@@ -8073,6 +8073,9 @@ async def list_bundles(
             metadata_obj = metadata if isinstance(metadata, dict) else {}
             entrypoints = getattr(man, "entrypoints", None) or []
             eps: list[Dict[str, Any]] = []
+            # A flow that publishes automation defaults with a trigger is runnable as an
+            # automation even without an interface: pickers list it (`triggerable`).
+            ep_defaults = manifest_automation_defaults(man) or {}
             for ep in entrypoints:
                 fid = str(getattr(ep, "flow_id", "") or "").strip()
                 if not fid:
@@ -8087,6 +8090,7 @@ async def list_bundles(
                         "name": getattr(ep, "name", None),
                         "description": getattr(ep, "description", "") or "",
                         "interfaces": list(getattr(ep, "interfaces", None) or []),
+                        "triggerable": bool(isinstance(ep_defaults.get(fid), dict) and ep_defaults[fid].get("trigger")),
                         "workflow_id": f"{bid}@{exact_version}:{fid}",
                         # The gateway default for an agent interface (the
                         # agents.default_workflow setting) — not the same as

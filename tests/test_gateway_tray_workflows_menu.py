@@ -366,12 +366,12 @@ def test_the_menu_has_one_console_door_a_workflows_section_and_unannotated_help(
     assert not any("Show Activity in Console" in t for t in captured)
 
     # The Sessions section, with the rows and the gateway-wide control under it.
-    assert "Sessions" in captured and "Workflows" not in captured
+    assert "Conversations" in captured and "Workflows" not in captured
     assert "Running (1)" in captured
     assert "Recent — 1 done" in captured
     assert "🟢 coding-agent:coder · step 4" in text
     assert "✅ deep-research:main · 31 steps · 12m 04s" in text
-    assert "Open Sessions in Console" in captured
+    assert "Open Conversations in Console" in captured
     assert "⏸ Pause AbstractGateway" in captured
 
     # Help names what it opens and nothing else.

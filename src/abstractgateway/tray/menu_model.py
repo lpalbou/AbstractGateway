@@ -223,14 +223,26 @@ def recent_tally(rows: Sequence[RunRow]) -> str:
     return "Recent — " + (" · ".join(parts) if parts else "none in the last 24 hours")
 
 
+def automation_words(a: AutomationRow) -> str:
+    """The trigger in the gateway's words (`trigger_text`: "When Python news has a new item", "By
+    hand", the schedule sentence), with the next run when the gateway serves one (`schedule_text`
+    starts with the same sentence); `schedule_text` alone from an older gateway."""
+    if a.trigger_text:
+        if a.schedule_text and a.schedule_text.startswith(a.trigger_text):
+            return a.schedule_text
+        return a.trigger_text
+    return a.schedule_text
+
+
 def automation_row_label(a: AutomationRow) -> str:
-    """`⏱ <automation title> · Every day at 09:00 · next Fri 9 Oct 09:00` — the
-    schedule words exactly as the gateway serves them (`schedule_text`); a
-    paused schedule says so."""
+    """`⏱ <automation title> · Every day at 09:00 · next Fri 9 Oct 09:00` or `⏱ <title> · When
+    Python news has a new item` — the trigger words exactly as the gateway serves them; a paused
+    automation says so."""
     title = a.title or a.automation_id
+    words = automation_words(a)
     if a.status == "paused":
-        return f"{RUN_BADGES['paused']} {title} · schedule paused" + (f" · {a.schedule_text}" if a.schedule_text else "")
-    return f"{SCHEDULED_BADGE} {title}" + (f" · {a.schedule_text}" if a.schedule_text else "")
+        return f"{RUN_BADGES['paused']} {title} · paused" + (f" · {words}" if words else "")
+    return f"{SCHEDULED_BADGE} {title}" + (f" · {words}" if words else "")
 
 
 def approval_dialog(wait: Dict[str, Any], *, title: str) -> Tuple[str, str]:
@@ -274,13 +286,13 @@ def state_lines(snap: Snapshot, *, update_phase: str = "idle", update_latest: Op
         else:
             detail = f"Finishing {n} run{'s' if n != 1 else ''} at the next step, then pausing"
     elif st == "paused":
-        detail = "Paused — sessions wait until you resume"
+        detail = "Paused — conversations wait until you resume"
     elif st in {"starting", "restarting"}:
         detail = "Usually a few seconds"
     elif st == "updating":
-        detail = f"Installing {update_latest or 'the update'} · sessions keep running"
+        detail = f"Installing {update_latest or 'the update'} · conversations keep running"
     elif st == "stopping":
-        detail = "Stopping sessions and the console"
+        detail = "Stopping conversations and the console"
     else:
         detail = "Can't reach it on this computer · retrying"
     return header, detail
@@ -874,7 +886,7 @@ def run_detail_line(row: RunRow) -> str:
     return f"{word} · started {when}"
 
 
-ANOTHER_ACCOUNT_LINE = "Another account's session — act on it from its own app"
+ANOTHER_ACCOUNT_LINE = "Another account's conversation — act on it from its own app"
 
 
 def run_submenu(row: RunRow, *, observer: bool, reachable: bool) -> Tuple[Node, ...]:
@@ -907,19 +919,19 @@ def run_submenu(row: RunRow, *, observer: bool, reachable: bool) -> Tuple[Node, 
 
 def automation_submenu(a: AutomationRow, *, observer: bool, reachable: bool, observer_path: Optional[str]) -> Tuple[Node, ...]:
     """A Scheduled row's submenu: the schedule words, Open in Observer (the
-    Automations page), Run now, Pause schedule / Resume schedule — each
-    offered only when the gateway lists the capability."""
+    Automations page), Run now, Pause / Resume — each offered only when the
+    gateway lists the capability."""
     caps = set(a.capabilities)
-    words = a.schedule_text or ("legacy schedule" if a.legacy else "no schedule words from the gateway")
+    words = automation_words(a) or ("legacy schedule" if a.legacy else "no trigger words from the gateway")
     out: List[Node] = [
         info(f"{a.status.title() or 'Scheduled'} · {words}"),
         Node("Open in Observer", ("open_automations_observer",), enabled=bool(observer and reachable and observer_path)),
         Node("Run now", ("auto_run_now", a.automation_id), enabled=reachable and "run_now" in caps),
     ]
     if a.status == "paused":
-        out.append(Node("Resume schedule", ("auto_resume", a.automation_id), enabled=reachable and "resume" in caps))
+        out.append(Node("Resume", ("auto_resume", a.automation_id), enabled=reachable and "resume" in caps))
     else:
-        out.append(Node("Pause schedule", ("auto_pause", a.automation_id), enabled=reachable and "pause" in caps))
+        out.append(Node("Pause", ("auto_pause", a.automation_id), enabled=reachable and "pause" in caps))
     return tuple(out)
 
 
@@ -936,7 +948,7 @@ def sessions_items(snap: Snapshot, *, observer: bool = False) -> Tuple[Node, ...
         groups[run_group(row)].append(row)
     out: List[Node] = []
     if snap.runs_error and not snap.runs:
-        out += [info("Session list unavailable"), info(middle_ellipsis(str(snap.runs_error), 60))]
+        out += [info("Conversation list unavailable"), info(middle_ellipsis(str(snap.runs_error), 60))]
     else:
         running = groups["running"] + groups["paused"]
         out.append(info(f"Running ({len(running)})" if running else "Running — none"))
@@ -965,7 +977,7 @@ def sessions_items(snap: Snapshot, *, observer: bool = False) -> Tuple[Node, ...
         if len(done) > MENU_RECENT_ROWS:
             out.append(info(f"…and {len(done) - MENU_RECENT_ROWS} more"))
     out.append(SEP)
-    out.append(Node("Open Sessions in Console", ("open_runs",), enabled=reachable))
+    out.append(Node("Open Conversations in Console", ("open_runs",), enabled=reachable))
     return tuple(out)
 
 
@@ -1004,7 +1016,7 @@ def build_menu(inputs: MenuInputs) -> Tuple[Node, ...]:
     out.append(apps_section(inputs, reachable=reachable))
     out.append(addresses_section(inputs.network, inputs.base_url))
     out.append(SEP)
-    out.append(Node("Sessions", children=sessions_items(snap, observer=observer_open_available(inputs.apps)), enabled=reachable))
+    out.append(Node("Conversations", children=sessions_items(snap, observer=observer_open_available(inputs.apps)), enabled=reachable))
     # The gateway-wide pause (the step gate; the console keeps answering).
     if snap.paused or st == "pausing":
         out.append(Node(f"▶ Resume {APP_NAME}", ("resume",), enabled=reachable))

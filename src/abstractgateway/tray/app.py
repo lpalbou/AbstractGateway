@@ -113,7 +113,7 @@ def tooltip_text(snap: Snapshot, *, attention_unseen: int = 0) -> str:
 def _tooltip_body(snap: Snapshot) -> str:
     st = snap.gateway_state
     if st == "paused":
-        return f"{APP_NAME} — Paused (still running)\nSessions wait until you resume"
+        return f"{APP_NAME} — Paused (still running)\nConversations wait until you resume"
     if st == "unreachable":
         return f"{APP_NAME} — Not responding\nRetrying on this computer"
     parts = []
@@ -150,7 +150,7 @@ def menu_signature(snap: Snapshot, *, update_phase: str, pending: Optional[str],
         # the menu under the operator's cursor (see the module docstring).
         (
             tuple((r.run_id, r.status, r.steps, r.title, r.wait_kind, r.wait_summary, r.commandable) for r in snap.runs),
-            tuple((a.automation_id, a.status, a.schedule_text, a.capabilities) for a in snap.automations),
+            tuple((a.automation_id, a.status, a.schedule_text, a.trigger_text, a.capabilities) for a in snap.automations),
             snap.runs_error is not None,
             snap.automations_error is not None,
         ),
@@ -534,7 +534,7 @@ class TrayApp:
         self._last_state = snap.gateway_state
         if prev is None:
             if snap.gateway_state == "paused":
-                self._notify(f"{APP_NAME} is paused", f"{APP_NAME} is running but sessions wait until you choose Resume {APP_NAME} from this icon.")
+                self._notify(f"{APP_NAME} is paused", f"{APP_NAME} is running but conversations wait until you choose Resume {APP_NAME} from this icon.")
             return
         if prev == snap.gateway_state:
             return
@@ -1300,7 +1300,7 @@ class TrayApp:
         row = self._run_row(run_id)
         path = row.observer_path if row is not None else None
         if not path:
-            self._info("Couldn't open the session in Observer", "This gateway did not give the session's Observer link.", style="warning")
+            self._info("Couldn't open the conversation in Observer", "This gateway did not give the conversation's Observer link.", style="warning")
             return
         self._open_observer_path(path)
 
@@ -1409,7 +1409,7 @@ class TrayApp:
         """Deny the tool call a session waits on, from its row (denying needs no dialog: nothing runs)."""
         row = self._run_row(run_id)
         if row is None or row.wait_kind != "tool_approval":
-            self._info("Nothing to deny", "This session no longer waits for an approval.", style="warning")
+            self._info("Nothing to deny", "This conversation no longer waits for an approval.", style="warning")
             return
         self._bg(lambda: self._answer_approval(row, approved=False, wait_key=row.wait_key, tool=row.wait_tool), "tray-run-deny")
 
@@ -1421,7 +1421,7 @@ class TrayApp:
         facility, the two-step menu confirmation (Approve only)."""
         row = self._run_row(run_id)
         if row is None or row.wait_kind != "tool_approval":
-            self._info("Nothing to approve", "This session no longer waits for an approval.", style="warning")
+            self._info("Nothing to approve", "This conversation no longer waits for an approval.", style="warning")
             return
         name = run_title(row)
         holder = row.wait_run_id or row.run_id
@@ -1449,7 +1449,7 @@ class TrayApp:
                     "deadline": time.monotonic() + TWO_STEP_SECONDS,
                     "action": lambda: self._bg(lambda: self._answer_approval(row, approved=True, wait_key=wait_key, tool=tool), "tray-run-approve"),
                 }
-                self._notify(title, f"{body[:200]}… Open the menu again and choose “Confirm: {label}” to approve, or Deny on the session's row.")
+                self._notify(title, f"{body[:200]}… Open the menu again and choose “Confirm: {label}” to approve, or Deny on the conversation's row.")
                 self._force_menu_rebuild()
                 return
             if choice == 2:
@@ -1483,12 +1483,12 @@ class TrayApp:
     def auto_pause(self, automation_id: str) -> None:
         """`POST /automations/{id}/commands` type `automation.pause`."""
         name = self._automation_name(automation_id)
-        self._automation_command(automation_id, "automation.pause", done_title=f"Paused the schedule of {name}", done_body="It runs again when you choose Resume schedule.", fail_title=f"Couldn't pause {name}")
+        self._automation_command(automation_id, "automation.pause", done_title=f"Paused {name}", done_body="It runs again when you choose Resume.", fail_title=f"Couldn't pause {name}")
 
     def auto_resume(self, automation_id: str) -> None:
         """`POST /automations/{id}/commands` type `automation.resume`."""
         name = self._automation_name(automation_id)
-        self._automation_command(automation_id, "automation.resume", done_title=f"Resumed the schedule of {name}", done_body="Its next run is on the schedule again.", fail_title=f"Couldn't resume {name}")
+        self._automation_command(automation_id, "automation.resume", done_title=f"Resumed {name}", done_body="It runs again on its trigger.", fail_title=f"Couldn't resume {name}")
 
     def copy_console_link(self) -> None:
         # The PLAIN URL on purpose: a claim link is a credential and does not
@@ -1516,7 +1516,7 @@ class TrayApp:
             if not self.prefs.data.get("pause_explained"):
                 self.prefs.data["pause_explained"] = True
                 self.prefs.save()
-                self._notify(f"{APP_NAME} paused", f"The console keeps answering, but no session takes a new step until you choose Resume {APP_NAME}. Messages from Telegram, email and other connected apps still arrive and wait.")
+                self._notify(f"{APP_NAME} paused", f"The console keeps answering, but no conversation takes a new step until you choose Resume {APP_NAME}. Messages from Telegram, email and other connected apps still arrive and wait.")
 
         self._bg(_do, "tray-pause")
 
@@ -1611,7 +1611,7 @@ class TrayApp:
         # Hide instead." There is no Hide any more: the icon is here for as
         # long as the gateway is. Quit is now the only thing that removes it,
         # and saying so plainly is the whole warning.
-        self._confirm("quit", f"Quit {APP_NAME}", f"Quit {APP_NAME}?", f"Sessions stop, this icon disappears, and the console goes offline until you start {APP_NAME} again. To free the GPU without stopping anything, use Pause {APP_NAME} instead.", ok_label="Quit", danger=True, action=_do)
+        self._confirm("quit", f"Quit {APP_NAME}", f"Quit {APP_NAME}?", f"Conversations stop, this icon disappears, and the console goes offline until you start {APP_NAME} again. To free the GPU without stopping anything, use Pause {APP_NAME} instead.", ok_label="Quit", danger=True, action=_do)
 
     def force_quit(self) -> None:
         def _do() -> None:

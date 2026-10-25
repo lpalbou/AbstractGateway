@@ -202,7 +202,7 @@ def test_menu_copy_per_state_and_tooltip() -> None:
     _, detail = state_lines(_snap(inflight_ticks=2, models=(row,)))
     assert detail == "Working on 2 steps"
     header, detail = state_lines(_snap(gateway_state="paused", paused=True))
-    assert header.endswith("Paused") and detail == "Paused — sessions wait until you resume"
+    assert header.endswith("Paused") and detail == "Paused — conversations wait until you resume"
     _, detail = state_lines(_snap(gateway_state="pausing", paused=True, inflight_ticks=1, step_gate_supported=False))
     assert "older runtime" in detail
     header, detail = state_lines(_snap(gateway_state="unreachable", reachable=False))

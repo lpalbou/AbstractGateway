@@ -102,6 +102,9 @@ class AutomationRow:
     next_run_local: Optional[str] = None
     capabilities: tuple[str, ...] = ()
     legacy: bool = False
+    # The trigger of ANY automation in words (`trigger_text`): "When Python news has a new item",
+    # "By hand", the schedule sentence. Older gateways serve only `schedule_text`.
+    trigger_text: str = ""
 
 
 @dataclass(frozen=True)
@@ -424,6 +427,7 @@ def automation_rows_from_listing(payload: Any) -> List[AutomationRow]:
                 title=str(item.get("title") or "").strip(),
                 status=str(item.get("status") or "").strip().lower(),
                 schedule_text=str(item.get("schedule_text") or "").strip(),
+                trigger_text=str(item.get("trigger_text") or "").strip(),
                 next_run_local=str(item["next_run_local"]) if item.get("next_run_local") else None,
                 capabilities=tuple(str(c) for c in caps) if isinstance(caps, list) else (),
                 legacy=item.get("legacy") is True,

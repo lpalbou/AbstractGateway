@@ -430,6 +430,7 @@ for a trigger with no clock time (manual, email).
  "time_zone": "Europe/Paris",
  "schedule_rule_text": "Every day at 08:00 (Europe/Paris)",
  "schedule_text": "Every day at 08:00 (Europe/Paris) · next Fri 9 Oct 08:00",
+ "trigger_text": "Every day at 08:00 (Europe/Paris)",
  "current_occurrence": {"index": 7, "run_id": "…", "attempt": 1, "status": "running"},   // or null
  "last_occurrence": {"run_id", "index", "status", "attempts", "fired_at", "finished_at"?, "excerpt", "notify"},
  "last_notification": {"channel": "email", "status": "failed", "at", "sent_at", "code", "sentence", "text": "Email result failed — …"},  // or null
@@ -451,6 +452,11 @@ for a trigger with no clock time (manual, email).
   absent when `next_fire_at` is.
 - `time_zone` is a `schedule@2` automation's zone; for any other trigger it is
   the owner's account time zone.
+- `trigger_text` is the trigger of ANY automation in words, the line a client
+  shows next to the title: the schedule sentence (`schedule_rule_text`) for a
+  schedule, "By hand", "When mail arrives in <address>" (the watched mailbox),
+  "When <connection name> has a new item" (a feed), "When <connection name> is
+  called" (a webhook), else "When <the source's label>".
 - `schedule_text` is the one sentence every client shows for the schedule,
   verbatim: the rule (`schedule_rule_text`) and, when a next run exists,
   " · next <day> <date> <time>" in `time_zone` (the year is added when it is
