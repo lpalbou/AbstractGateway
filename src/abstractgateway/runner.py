@@ -442,6 +442,12 @@ class GatewayRunner:
         self._stream_started: set = set()
         self._stream_lock = threading.Lock()
         self._stream_queue: List[Any] = []
+        # Interactive waits (a run parked on a person): run_id -> the open wait
+        # item {run_id, wait_key, step_id, kind, ...}, mirrored in the stream
+        # state (`open_waits`) so a restart resolves what closed meanwhile.
+        # `_waits_lock` serializes every stream-state write of this runner.
+        self._open_waits: Dict[str, Dict[str, Any]] = {}
+        self._waits_lock = threading.RLock()
 
     def attach_user_stream(self, stream: Any) -> None:
         """The stream run pointers / attention events of this plane go to."""
@@ -460,6 +466,8 @@ class GatewayRunner:
         from .events_stream import TERMINAL_STATUSES, record_run
 
         rid = str(getattr(run, "run_id", "") or "")
+        if rid in self._open_waits:
+            self._resolve_wait_if_closed(run)
         st = getattr(run, "status", None)
         terminal = str(getattr(st, "value", st) or "").lower() in TERMINAL_STATUSES
         if not terminal and rid in self._stream_started:
@@ -475,6 +483,105 @@ class GatewayRunner:
             elif len(self._stream_started) < 50_000:
                 self._stream_started.add(rid)
 
+    def _save_open_waits(self) -> None:
+        stream = self._user_stream
+        if stream is None:
+            return
+        with self._waits_lock:
+            state = stream.state()
+            state["open_waits"] = {k: dict(v) for k, v in self._open_waits.items()}
+            stream.set_state(state)
+
+    def _resolve_wait_if_closed(self, run: Any) -> None:
+        """attention.seen for the run's open wait once the run no longer waits on it."""
+        from .events_stream import still_waiting_on, wait_outcome, record_wait_seen
+
+        stream = self._user_stream
+        rid = str(getattr(run, "run_id", "") or "")
+        with self._waits_lock:
+            item = self._open_waits.get(rid)
+            if stream is None or item is None or still_waiting_on(run, item):
+                return
+            try:
+                record_wait_seen(stream, item, outcome=wait_outcome(run, item))
+            except Exception:
+                logger.exception("GatewayRunner: attention.seen for the wait of %s failed (boot repair will retry)", rid)
+                return
+            self._open_waits.pop(rid, None)
+            self._save_open_waits()
+
+    def _raise_wait(self, item: Dict[str, Any]) -> None:
+        """attention.raised for a run that just parked on a person (loop thread)."""
+        from .events_stream import TERMINAL_STATUSES, record_wait_raised, record_wait_seen, still_waiting_on, wait_outcome
+
+        stream = self._user_stream
+        if stream is None:
+            return
+        rid = str(item["run_id"])
+        run = self.run_store.load(rid)
+        session_id = getattr(run, "session_id", None) if run is not None else None
+        with self._waits_lock:
+            prev = self._open_waits.get(rid)
+            if prev is not None and (prev["wait_key"], prev["step_id"]) != (item["wait_key"], item["step_id"]):
+                record_wait_seen(stream, prev, outcome="answered")  # the run asked again: the last one was answered
+            record_wait_raised(stream, item, session_id=session_id)
+            self._open_waits[rid] = {**item, "session_id": session_id}
+            self._save_open_waits()
+        # Already resolved before this pass (the record is appended BEFORE the run's
+        # WAITING save, so a RUNNING run here is ambiguous and is left to its next tick).
+        st = getattr(getattr(run, "status", None), "value", getattr(run, "status", None)) if run is not None else "cancelled"
+        if run is None or str(st).lower() in TERMINAL_STATUSES or (str(st).lower() == "waiting" and not still_waiting_on(run, item)):
+            self._resolve_wait_if_closed(run) if run is not None else self._close_missing_wait(rid)
+
+    def _close_missing_wait(self, rid: str) -> None:
+        from .events_stream import record_wait_seen
+
+        with self._waits_lock:
+            item = self._open_waits.pop(rid, None)
+            if item is not None and self._user_stream is not None:
+                record_wait_seen(self._user_stream, item, outcome="cancelled")
+                self._save_open_waits()
+
+    def _rebuild_waits(self) -> Dict[str, int]:
+        """Boot repair for waits: open waits that closed while down get attention.seen; runs
+        parked on a person without an open wait get attention.raised (step from their ledger)."""
+        from abstractruntime.automations.attention import wait_kind
+
+        from .events_stream import latest_wait_record, record_wait_raised
+
+        stream = self._user_stream
+        out = {"raised": 0, "seen": 0}
+        if stream is None:
+            return out
+        with self._waits_lock:
+            stored = stream.state().get("open_waits")
+            self._open_waits = {str(k): dict(v) for k, v in dict(stored or {}).items()}
+        for rid in list(self._open_waits):
+            run = self.run_store.load(rid)
+            before = len(self._open_waits)
+            if run is None:
+                self._close_missing_wait(rid)
+            else:
+                self._resolve_wait_if_closed(run)
+            out["seen"] += before - len(self._open_waits)
+        if stream.head() <= 0 and stored is None:
+            return out  # a new stream takes no history
+        list_runs = getattr(self.run_store, "list_runs", None)
+        waiting = list_runs(status=RunStatus.WAITING, limit=1_000_000) if callable(list_runs) else []
+        for run in waiting or []:
+            rid = str(getattr(run, "run_id", "") or "")
+            if rid in self._open_waits or getattr(run, "actor_id", None) != "gateway" or wait_kind(run) is None:
+                continue
+            item = latest_wait_record(self.ledger_store, run)
+            if item is None:
+                continue
+            with self._waits_lock:
+                if record_wait_raised(stream, item, session_id=getattr(run, "session_id", None)):
+                    out["raised"] += 1
+                self._open_waits[rid] = {**item, "session_id": getattr(run, "session_id", None)}
+                self._save_open_waits()
+        return out
+
     def _drain_user_stream(self) -> None:
         """Loop thread: boot repair once, then the attention records queued by the ledger hook."""
         stream = self._user_stream
@@ -486,10 +593,12 @@ class GatewayRunner:
 
             try:
                 rebuilt = rebuild_run_pointers(stream, self.run_store)
-                attention = rebuild_attention(stream, self.run_store, self.ledger_store)
+                with self._waits_lock:
+                    attention = rebuild_attention(stream, self.run_store, self.ledger_store)
+                waits = self._rebuild_waits()
                 stream.prune()
-                if rebuilt.get("appended") or attention.get("appended"):
-                    logger.info("GatewayRunner: user stream repaired (runs %s, attention %s)", rebuilt, attention)
+                if rebuilt.get("appended") or attention.get("appended") or any(waits.values()):
+                    logger.info("GatewayRunner: user stream repaired (runs %s, attention %s, waits %s)", rebuilt, attention, waits)
             except Exception:
                 logger.exception("GatewayRunner: user stream boot repair failed")
         with self._stream_lock:
@@ -498,9 +607,13 @@ class GatewayRunner:
             return
         from .events_stream import record_attention_raised
 
-        for item in queued:
+        for kind, item in queued:
             try:
-                record_attention_raised(stream, item)
+                if kind == "wait":
+                    self._raise_wait(item)
+                else:
+                    with self._waits_lock:
+                        record_attention_raised(stream, item)
             except Exception:
                 logger.exception("GatewayRunner: attention.raised for %s failed (boot repair will retry)", item.get("record_key"))
 
@@ -695,7 +808,14 @@ class GatewayRunner:
                     item = attention_from_record(record)
                     if item is not None:
                         with self._stream_lock:
-                            self._stream_queue.append(item)
+                            self._stream_queue.append(("automation", item))
+                if isinstance(record.get("result"), dict) and isinstance(record["result"].get("wait"), dict):
+                    from .events_stream import wait_attention_from_record
+
+                    witem = wait_attention_from_record(record)
+                    if witem is not None:
+                        with self._stream_lock:
+                            self._stream_queue.append(("wait", witem))
             except Exception:
                 logger.debug("GatewayRunner: attention parse failed", exc_info=True)
         self._wake.set()

@@ -65,7 +65,9 @@ def test_each_principal_reads_only_their_own_stream(tmp_path: Path, monkeypatch:
         a_page, b_page = _events(client, alice), _events(client, bob)
         assert a_page["stream"] == "user:default:alice" and b_page["stream"] == "user:default:bob"
         assert [e["type"] for e in a_page["events"]] == ["run.started", "run.finished"]
-        assert a_page["events"][0]["data"]["origin"]["actor"] == "alice"
+        # The pointer carries the run's recorded origin (backlog 1038), exactly as the run answers it.
+        recorded = client.get(f"/api/gateway/runs/{a_run}", headers=alice).json()["origin"]
+        assert a_page["events"][0]["data"]["origin"] == recorded and recorded["kind"] == "person"
         assert b_run not in json.dumps(a_page) and a_run not in json.dumps(b_page)
 
         # Cursor semantics: after = last consumed sequence; paging with limit.

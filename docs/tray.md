@@ -236,9 +236,12 @@ twice.
   for you. Open the console to read it.*, or `<automation title> failed` ·
   *It failed after its retries. Open the console to see what happened.* Items
   that existed before the tray started are not shown again.
-- **The count.** The icon's tooltip says how many such items you have not
-  seen yet (`2 updates from your automations`); seeing them in a client (the
-  console, the Assistant, the watch) lowers it.
+- **A notification per wait on you.** A session that stops for your approval
+  (*Approval needed*) or your answer (*A question for you*) is announced once.
+- **The count.** The icon's tooltip says how many things wait for you
+  (`2 things waiting for you`): automation items not yet seen and sessions
+  waiting on you; seeing an item in a client (the console, the Assistant, the
+  watch) or answering the wait lowers it.
 - **Delivery is recorded.** Each notification shown (or that this desktop
   cannot show) is written to your stream as `notification.sent` /
   `notification.failed` with `channel: "tray"`.

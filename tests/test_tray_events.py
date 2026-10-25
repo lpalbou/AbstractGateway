@@ -116,7 +116,7 @@ def test_tray_follows_the_stream_notifies_live_attention_and_records_it(tmp_path
             _wait(lambda: tray._events.state == "live" and tray._events.cursor == 3)
             assert tray._attention.unseen == 1  # badge from history
             assert tray._icon.shown == []  # history is never re-shown
-            assert "1 update from your automations" in tooltip_text(_snap_stub(), attention_unseen=tray._attention.unseen)
+            assert "1 thing waiting for you" in tooltip_text(_snap_stub(), attention_unseen=tray._attention.unseen)
 
             stream.append("attention.raised", event_id="r3", data=_raised("auto2", 1)["data"])  # live
             _wait(lambda: len(tray._icon.shown) == 1)
@@ -143,3 +143,20 @@ def _snap_stub():
     from abstractgateway.tray.sampler import Sampler
 
     return Sampler(client=None).snapshot()  # type: ignore[arg-type]
+
+
+def test_badge_counts_waits_on_a_person_until_each_is_resolved() -> None:
+    ledger = AttentionLedger()
+    w1 = {"kind": "question", "run_id": "r1", "wait_key": "user:r1:ask", "step_id": "s1", "record_key": "k1", "session_id": "S"}
+    w2 = {"kind": "approval", "run_id": "r2", "wait_key": "approve:r2", "step_id": "s9", "record_key": "k2"}
+    n1 = ledger.apply({"type": "attention.raised", "sequence": 1, "data": w1})
+    assert n1 is not None and n1.kind == "question" and n1.run_id == "r1" and n1.record_key == "k1"
+    ledger.apply({"type": "attention.raised", "sequence": 2, "data": w2})
+    ledger.apply(_raised("auto", 1))
+    assert ledger.unseen == 3
+    ledger.apply({"type": "attention.seen", "sequence": 4, "data": {**w1, "outcome": "answered"}})
+    assert ledger.unseen == 2
+    assert ledger.apply({"type": "attention.raised", "sequence": 5, "data": w1}) is None  # a replay never re-raises
+    ledger.apply({"type": "attention.seen", "sequence": 6, "data": {**w2, "outcome": "denied"}})
+    ledger.apply(_seen("auto", 1))
+    assert ledger.unseen == 0

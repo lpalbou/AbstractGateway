@@ -1193,8 +1193,14 @@ event written twice (a retry, a repair after a crash) is stored once.
 | `trigger.event` | `{automation_id, occurrence_index, event_id, source_id, source_version, fired_at, run_id, session_id}` | an automation's occurrence starts (before its `run.started`) |
 | `attention.raised` | `{record_key, automation_id, run_id, index, kind, seq, channels}` | an automation records an attention item (`notify` or final failure); `record_key` names the ledger record, no title or body is copied |
 | `attention.seen` | `{automation_id, seq}` | your seen cursor of an automation moves (`POST /automations/{id}/seen`) |
+| `attention.raised` (a wait) | `{kind: "approval" \| "question", wait_kind, run_id, session_id, wait_key, step_id, record_key, prompt_ref}` | a run parks on a person: a tool call awaiting approval, a question (`ask_user`, or an event wait with a prompt or choices); `prompt_ref` is the run (`GET /api/gateway/runs/{run_id}` carries the prompt and the calls awaiting approval) — nothing is copied |
+| `attention.seen` (a wait) | `{kind, run_id, wait_key, step_id, outcome}` | that wait ends: `answered`, `approved`, `denied`, `timed_out`, `cancelled` or `failed` |
 | `notification.sent`, `notification.failed` | `{channel, notice, …}` | a notice reached a channel or could not: `console` (the item is listed), `email` (the outbox sent it, or failed with `code`, `cause`), `tray` (the desktop tray showed it) |
 | `wake.scheduled`, `wake.cancelled` | reserved for `schedule_run` (backlog 1045) | |
+
+What needs you = the `attention.raised` items without their `attention.seen`: an automation item is
+seen once a `attention.seen` of its automation has a `seq` at or above it; a wait is seen by the
+`attention.seen` with the same `run_id`, `wait_key` and `step_id`.
 
 Older events go after 90 days or beyond the newest 10,000 (their `sequence` is never reused).
 

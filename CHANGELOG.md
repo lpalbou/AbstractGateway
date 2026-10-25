@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with `channel: "tray"`; the tooltip counts the items raised and not yet seen; the Scheduled rows are refetched
   on automation events (and every 5 minutes) instead of the 20-second `GET /automations` poll, which stays for a
   gateway without the stream. Reconnects resume from `Last-Event-ID`.
+- The per-user stream carries the waits on a person: a run that stops for a tool approval or a question
+  writes `attention.raised {kind: approval|question, run_id, session_id, wait_key, step_id, record_key,
+  prompt_ref}` (nothing copied: the prompt is read from the run), and its end `attention.seen {kind, run_id,
+  wait_key, step_id, outcome: answered|approved|denied|timed_out|cancelled|failed}`; idempotent ids, open waits
+  repaired at boot. The tray announces each one and counts them with the automation items.
 
 - Console **Triggers** page (backlog 1041, `/console#triggers`): your trigger connections (Source, Name,
   Status, Last event) with **Events** (the 20 most recent events, each expandable to its JSON), **Test** (sends a

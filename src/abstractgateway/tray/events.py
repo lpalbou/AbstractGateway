@@ -35,21 +35,49 @@ class AttentionNotice:
 
     record_key: str
     automation_id: str
-    kind: str
+    kind: str  # notify | failure (an automation item) | approval | question (a run waiting on you)
     seq: int
+    run_id: str = ""
+    session_id: str = ""
+
+
+WAIT_KINDS = frozenset({"approval", "question"})
 
 
 class AttentionLedger:
-    """Raised minus seen, per automation, from the stream (pure)."""
+    """Raised minus seen, from the stream (pure): automation items per automation (a seen cursor
+    covers every seq below it) and waits on a person per (run, wait_key, step) (each one is seen
+    when it is resolved)."""
 
     def __init__(self) -> None:
         self._raised: Dict[str, Set[int]] = {}
         self._seen: Dict[str, int] = {}
+        self._waits: Set[Tuple[str, str, str]] = set()
+        self._waits_seen: Set[Tuple[str, str, str]] = set()
+
+    def _apply_wait(self, typ: Any, data: Dict[str, Any]) -> Optional[AttentionNotice]:
+        key = (str(data.get("run_id") or ""), str(data.get("wait_key") or ""), str(data.get("step_id") or ""))
+        if not key[0]:
+            return None
+        if typ == "attention.raised":
+            if key in self._waits_seen:
+                return None
+            self._waits.add(key)
+            return AttentionNotice(
+                str(data.get("record_key") or ""), "", str(data.get("kind")), 0,
+                run_id=key[0], session_id=str(data.get("session_id") or ""),
+            )
+        if typ == "attention.seen":
+            self._waits.discard(key)
+            self._waits_seen.add(key)
+        return None
 
     def apply(self, event: Dict[str, Any]) -> Optional[AttentionNotice]:
         """Fold one event; returns the notice when it raised an unseen item."""
         typ = event.get("type")
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        if data.get("kind") in WAIT_KINDS:
+            return self._apply_wait(typ, data)
         aid = str(data.get("automation_id") or "")
         if not aid:
             return None
@@ -66,12 +94,10 @@ class AttentionLedger:
             self._raised[aid] = {s for s in self._raised.get(aid, set()) if s > self._seen[aid]}
         return None
 
-    def is_unseen(self, notice: AttentionNotice) -> bool:
-        return notice.seq > self._seen.get(notice.automation_id, 0)
-
     @property
     def unseen(self) -> int:
-        return sum(len([s for s in seqs if s > self._seen.get(aid, 0)]) for aid, seqs in self._raised.items())
+        items = sum(len([s for s in seqs if s > self._seen.get(aid, 0)]) for aid, seqs in self._raised.items())
+        return items + len(self._waits)
 
 
 class SseParser:

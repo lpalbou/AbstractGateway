@@ -518,6 +518,155 @@ def rebuild_attention(stream: UserEventStream, run_store: Any, ledger_store: Any
     return out
 
 
+# ---------------------------------------------------------------------------------------------
+# Interactive waits: a run parked on a person (an approval, a question)
+# ---------------------------------------------------------------------------------------------
+
+WAIT_KIND_WORDS = {"tool_approval": "approval", "ask_user": "question", "event": "question"}
+
+
+def wait_attention_from_record(record: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    """`{run_id, wait_key, step_id, kind, wait_kind, record_key, result_key}` from the ledger record
+    of a step that parked its run on a PERSON (the structure of `automations.attention.wait_kind`:
+    a USER wait that is not a pause, or an EVENT wait with a prompt or choices; never a controller's
+    wake). No prompt, no tool arguments: the client reads the wait from the run."""
+    if not isinstance(record, Mapping):
+        return None
+    result = record.get("result")
+    wait = result.get("wait") if isinstance(result, Mapping) else None
+    if not isinstance(wait, Mapping):
+        return None
+    run_id = str(record.get("run_id") or "")
+    step_id = str(record.get("step_id") or "")
+    key = str(wait.get("wait_key") or "")
+    if not run_id or not step_id or not key:
+        return None
+    if key.startswith("automation:") and key.endswith(":wake"):
+        return None
+    reason = str(wait.get("reason") or "").lower()
+    details = wait.get("details") if isinstance(wait.get("details"), Mapping) else {}
+    if reason == "user":
+        if key == f"pause:{run_id}" or details.get("kind") == "pause":
+            return None
+        wait_kind = "tool_approval" if details.get("mode") == "approval_required" else "ask_user"
+    elif reason == "event":
+        if not (wait.get("prompt") or wait.get("choices")):
+            return None
+        wait_kind = "event"
+    else:
+        return None
+    return {
+        "run_id": run_id,
+        "wait_key": key,
+        "step_id": step_id,
+        "kind": WAIT_KIND_WORDS[wait_kind],
+        "wait_kind": wait_kind,
+        "record_key": str(record.get("idempotency_key") or "") or f"step:{run_id}:{step_id}",
+        "result_key": wait.get("result_key"),
+    }
+
+
+def _wait_event_id(prefix: str, item: Mapping[str, Any]) -> str:
+    return f"{prefix}:{item['run_id']}:{item['wait_key']}:{item['step_id']}"
+
+
+def record_wait_raised(stream: UserEventStream, item: Mapping[str, Any], *, session_id: Optional[str]) -> bool:
+    """`attention.raised {kind: approval|question, run_id, session_id, wait_key, step_id,
+    record_key, prompt_ref}`: the client fetches the prompt (and the calls awaiting approval) from
+    `prompt_ref`, the run."""
+    rid = str(item["run_id"])
+    _e, created = stream.append(
+        "attention.raised",
+        event_id=_wait_event_id("attention.raised", item),
+        subject=rid,
+        source="/abstractgateway/runs",
+        data={
+            "kind": item["kind"],
+            "wait_kind": item.get("wait_kind"),
+            "run_id": rid,
+            "session_id": session_id,
+            "wait_key": item["wait_key"],
+            "step_id": item["step_id"],
+            "record_key": item.get("record_key"),
+            "prompt_ref": f"/api/gateway/runs/{rid}",
+        },
+    )
+    return created
+
+
+def _get_path(obj: Any, path: Any) -> Any:
+    cur = obj
+    for part in str(path or "").split("."):
+        if not part:
+            continue
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(part)
+    return cur
+
+
+def wait_outcome(run: Any, item: Mapping[str, Any]) -> str:
+    """How an open wait ended: cancelled | failed | timed_out | approved | denied | answered."""
+    st = _status(run) if run is not None else "cancelled"
+    if run is None or st == "cancelled":
+        return "cancelled"
+    payload = _get_path(_vars(run), item.get("result_key")) if item.get("result_key") else None
+    if isinstance(payload, dict):
+        if payload.get("timed_out") is True:
+            return "timed_out"
+        if item.get("wait_kind") == "tool_approval" and isinstance(payload.get("approved"), bool):
+            return "approved" if payload["approved"] else "denied"
+    if st == "failed":
+        return "failed"
+    return "answered"
+
+
+def record_wait_seen(stream: UserEventStream, item: Mapping[str, Any], *, outcome: str) -> bool:
+    """`attention.seen {kind, run_id, wait_key, step_id, outcome}` once the wait is resolved."""
+    rid = str(item["run_id"])
+    _e, created = stream.append(
+        "attention.seen",
+        event_id=_wait_event_id("attention.seen", item),
+        subject=rid,
+        source="/abstractgateway/runs",
+        data={"kind": item["kind"], "run_id": rid, "wait_key": item["wait_key"], "step_id": item["step_id"], "outcome": str(outcome)},
+    )
+    return created
+
+
+def still_waiting_on(run: Any, item: Mapping[str, Any]) -> bool:
+    """The run is still parked on this wait (same key, still on a person)."""
+    if run is None or _status(run) != "waiting":
+        return False
+    waiting = getattr(run, "waiting", None)
+    if waiting is None or str(getattr(waiting, "wait_key", "") or "") != str(item.get("wait_key")):
+        return False
+    try:
+        from abstractruntime.automations.attention import wait_kind
+
+        return wait_kind(run) is not None
+    except Exception:
+        return False
+
+
+def latest_wait_record(ledger_store: Any, run: Any) -> Optional[Dict[str, Any]]:
+    """The wait item of the run's CURRENT wait, from its newest ledger record naming it (the boot
+    repair's step_id source)."""
+    waiting = getattr(run, "waiting", None)
+    key = str(getattr(waiting, "wait_key", "") or "")
+    if not key:
+        return None
+    try:
+        records = list(ledger_store.list(str(run.run_id)) or [])
+    except Exception:
+        return None
+    for rec in reversed(records):
+        item = wait_attention_from_record(rec) if isinstance(rec, Mapping) else None
+        if item is not None and item["wait_key"] == key:
+            return item
+    return None
+
+
 __all__ = [
     "CHANNELS",
     "EVENT_TYPES",
@@ -534,6 +683,8 @@ __all__ = [
     "record_run",
     "record_run_finished",
     "record_run_started",
+    "record_wait_raised",
+    "record_wait_seen",
     "run_origin",
     "stream_for",
     "stream_name",

@@ -98,7 +98,7 @@ def attention_words(unseen: int) -> str:
     n = int(unseen or 0)
     if n <= 0:
         return ""
-    return "1 update from your automations" if n == 1 else f"{n} updates from your automations"
+    return "1 thing waiting for you" if n == 1 else f"{n} things waiting for you"
 
 
 def tooltip_text(snap: Snapshot, *, attention_unseen: int = 0) -> str:
@@ -596,6 +596,10 @@ class TrayApp:
             if getattr(row, "automation_id", None) == notice.automation_id:
                 name = str(getattr(row, "title", "") or "")
                 break
+        if notice.kind == "approval":
+            return "Approval needed", "A session waits for your approval. Open it to approve or deny."
+        if notice.kind == "question":
+            return "A question for you", "A session waits for your answer. Open it to reply."
         name = name or "An automation"
         if notice.kind == "failure":
             return f"{name} failed", "It failed after its retries. Open the console to see what happened."
