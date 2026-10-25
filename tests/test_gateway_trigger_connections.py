@@ -77,6 +77,8 @@ def _assert_row_contract(row: dict) -> None:
     for key in ("created_at", "last_event_at"):
         assert row[key] is None or isinstance(row[key], str)
     assert isinstance(row["config_public"], dict) and isinstance(row["principal"], str)
+    assert row["listening"] in ("listening", "idle", "paused") and isinstance(row["used_by"], int)
+    assert isinstance(row["paused"], bool) and isinstance(row["always_listen"], bool)
 
 
 def test_crud_is_principal_scoped_and_rows_keep_the_contract(gw) -> None:
@@ -129,6 +131,8 @@ def test_test_fire_and_a_real_webhook_show_in_the_events(gw) -> None:
     fire = c.post(f"{BASE}/{cid}/test-fire", headers=alice, json={})
     assert fire.status_code == 200, fire.text
     assert fire.json()["event_id"] and fire.json()["sequence"] >= 1
+    assert (created["listening"], created["used_by"], created["always_listen"]) == ("idle", 0, False)
+    assert c.put(f"{BASE}/{cid}", headers=alice, json={"always_listen": True}).json()["listening"] == "listening"
     body = b'{"order": 42}'
     assert c.post(f"/api/gateway/triggers/webhooks/{cid}", content=body, headers=_sign(created["secret"], body, "w-1")).status_code == 202
 

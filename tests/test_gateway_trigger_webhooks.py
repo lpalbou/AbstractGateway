@@ -64,7 +64,9 @@ def _alice_connection_and_automation():
     from automations_fixtures import controller_run
 
     svc = get_gateway_service_for_principal(_principal("alice"))
-    conn = tc.store_for_service(svc).create(principal="default:alice", source_id="webhook.received", source_version=1, config={"secret": SECRET})
+    # always_listen: the refusal tests below outlive the fixture automation (woken, it fails on its fake target).
+    conn = tc.store_for_service(svc).create(principal="default:alice", source_id="webhook.received", source_version=1,
+                                            config={"secret": SECRET}, always_listen=True)
     run = controller_run(title="On webhook")
     run.vars["_meta"]["automation"]["trigger"] = {"binding_id": "b1", "source_id": "webhook.received", "source_version": 1,
                                                   "config": {"connection_id": conn.connection_id}}
@@ -210,3 +212,43 @@ def test_a_connection_of_another_source_is_not_a_webhook_endpoint(gateway) -> No
     body = b"{}"
     r = client.post(f"/api/gateway/triggers/webhooks/{feed.connection_id}", content=body, headers=_sign(body, wid="f1", ts=int(time.time())))
     assert (r.status_code, r.json()["detail"]["reason_code"]) == (404, "connection_not_found")
+
+
+def test_a_connection_nothing_listens_to_refuses_and_stores_nothing(gateway) -> None:
+    """Fed only while something listens (AbstractRuntime c823622): no automation and Always listen
+    off -> 409 not_listening, nothing stored; a paused connection -> 409 connection_disabled."""
+    client, alice, _bob = gateway
+    from abstractgateway import trigger_connections as tc
+    from abstractgateway.service import get_gateway_service_for_principal
+
+    svc = get_gateway_service_for_principal(_principal("alice"))
+    conn = tc.store_for_service(svc).create(principal="default:alice", source_id="webhook.received", source_version=1, config={"secret": SECRET})
+    url = f"/api/gateway/triggers/webhooks/{conn.connection_id}"
+    body = b"{}"
+    r = client.post(url, content=body, headers=_sign(body, wid="i1", ts=int(time.time())))
+    assert (r.status_code, r.json()["detail"]["reason_code"]) == (409, "not_listening")
+    assert svc.host.runtime.event_inbox.read(stream=f"trigger:{conn.connection_id}") == []
+    row = client.get(f"/api/gateway/triggers/connections/{conn.connection_id}", headers=alice).json()
+    assert (row["listening"], row["used_by"], row["always_listen"], row["paused"]) == ("idle", 0, False, False)
+
+    on = client.put(f"/api/gateway/triggers/connections/{conn.connection_id}", headers=alice, json={"always_listen": True}).json()
+    assert (on["listening"], on["always_listen"]) == ("listening", True)
+    assert client.post(url, content=body, headers=_sign(body, wid="i2", ts=int(time.time()))).status_code == 202
+
+    paused = client.put(f"/api/gateway/triggers/connections/{conn.connection_id}", headers=alice, json={"paused": True}).json()
+    assert (paused["listening"], paused["paused"]) == ("paused", True)
+    r = client.post(url, content=body, headers=_sign(body, wid="i3", ts=int(time.time())))
+    assert (r.status_code, r.json()["detail"]["reason_code"]) == (409, "connection_disabled")
+    bad = client.put(f"/api/gateway/triggers/connections/{conn.connection_id}", headers=alice, json={"paused": "yes"})
+    assert bad.status_code == 422
+
+
+def test_a_bound_automation_makes_the_connection_listen(gateway) -> None:
+    client, alice, _bob = gateway
+    from abstractgateway import trigger_connections as tc
+    from abstractgateway.service import get_gateway_service_for_principal
+
+    svc, conn, _aid = _alice_connection_and_automation()
+    tc.store_for_service(svc).update(conn.connection_id, principal="default:alice", always_listen=False)
+    row = client.get(f"/api/gateway/triggers/connections/{conn.connection_id}", headers=alice).json()
+    assert (row["listening"], row["used_by"]) == ("listening", 1)

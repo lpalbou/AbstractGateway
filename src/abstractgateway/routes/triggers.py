@@ -8,12 +8,13 @@ list and by id on the others):
     POST   /triggers/connections                         {source_id, source_version, label?, config}
                                                          -> row + one-time `secret` (+ `ingress_url`)
     GET    /triggers/connections/{id}                    row
-    PUT    /triggers/connections/{id}                    {label?, config?, status?: active|disabled} -> row
+    PUT    /triggers/connections/{id}                    {label?, config?, status?: active|disabled, paused?, always_listen?} -> row
     DELETE /triggers/connections/{id}                    {deleted: true, connection_id}
     GET    /triggers/connections/{id}/events[?after=&limit=]  {events: [CloudEvents + sequence], next_after}
     POST   /triggers/connections/{id}/test-fire          {event_id, sequence, woken}
 
-row = {connection_id, principal, source_id, source_version (int), label, status, created_at,
+row = {connection_id, principal, source_id, source_version (int), label, status, listening
+(listening|idle|paused), used_by (int), paused, always_listen, created_at,
 updated_at, last_event_at (str|null), last_error (obj|null), config_public (object, never a
 secret), secret_fields, stream, ingress_url? (webhooks)}.
 
@@ -37,7 +38,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from .. import trigger_connections as tc
 
@@ -55,7 +56,8 @@ _REFUSALS: Dict[str, tuple] = {
     "bad_signature": (401, "webhook_signature_invalid", "The webhook signature does not match this connection's secret."),
     "stale": (409, "webhook_stale", "webhook-timestamp is outside this connection's window (5 minutes by default) of the gateway's clock."),
     "replayed_id": (409, "webhook_replayed", "This webhook-id was already accepted for this connection: treat it as delivered."),
-    "connection_disabled": (409, "connection_disabled", "This webhook connection is disabled."),
+    "connection_disabled": (409, "connection_disabled", "This webhook connection is disabled or paused."),
+    "not_listening": (409, "not_listening", "Nothing listens to this webhook connection yet: bind an automation to it, or switch on Always listen."),
     "too_large": (413, "webhook_too_large", "The body is too large."),
     "unsupported_body": (415, "webhook_unsupported_body", "The body must be JSON or UTF-8 text."),
 }
@@ -105,7 +107,8 @@ def _accept(located: Any, *, body: bytes, headers: Dict[str, str]) -> Dict[str, 
     inbox = runtime.event_inbox
     if inbox is None:
         raise RuntimeError("the connection's runtime has no event inbox (mail/runtime_wiring.wire_runtime_email)")
-    verdict = append_webhook_event(inbox, located.connection, body, headers, store=located.store, max_body_bytes=tc.WEBHOOK_MAX_BODY_BYTES)
+    verdict = append_webhook_event(inbox, located.connection, body, headers, store=located.store, max_body_bytes=tc.WEBHOOK_MAX_BODY_BYTES,
+                                   runtime=runtime)
     if verdict.get("status") != "appended":
         return dict(verdict)
     woken = wake_stream_consumers(runtime, located.connection.stream)
@@ -124,7 +127,8 @@ async def receive_webhook(connection_id: str, request: Request) -> JSONResponse:
     Verification and the append are AbstractRuntime's (`abstractruntime.triggers.append_webhook_event`).
     202 `{accepted, connection_id, webhook_id, event_id, seq, woken}`; 401 `webhook_unsigned` /
     `webhook_signature_invalid`; 404 `connection_not_found` (unknown, or not a webhook
-    connection); 409 `connection_disabled`, `webhook_stale` (timestamp outside the connection's
+    connection); 409 `connection_disabled` (disabled or paused), `not_listening` (no automation
+    listens and Always listen is off: nothing stored), `webhook_stale` (timestamp outside the connection's
     window, 5 minutes by default), `webhook_replayed` (this webhook-id was already accepted: the
     sender should treat it as delivered); 413 `webhook_too_large`; 415 `webhook_unsupported_body`;
     429 `webhook_rate_limited` (Retry-After)."""
@@ -194,6 +198,8 @@ class UpdateConnectionBody(BaseModel):
     label: Optional[str] = None
     config: Optional[Dict[str, Any]] = Field(None, description="Replaces the config (validated whole); secret fields left out keep their sealed value")
     status: Optional[str] = Field(None, description="active | disabled")
+    paused: Optional[StrictBool] = Field(None, description="Stop feeding this connection whatever listens (feeds are not fetched; webhooks answer 409)")
+    always_listen: Optional[StrictBool] = Field(None, description="Feed it even while no automation listens (events show under Events)")
 
 
 def _principal(request: Request) -> Any:
@@ -220,8 +226,14 @@ def ingress_url(request: Request, connection_id: str) -> str:
     return f"{str(request.base_url).rstrip('/')}/api/gateway/triggers/webhooks/{connection_id}"
 
 
-def connection_row(conn: Any, request: Request) -> Dict[str, Any]:
-    """The one row shape (console page, Flow's connection selector, the TUI): never a secret."""
+def connection_row(conn: Any, request: Request, runtime: Any) -> Dict[str, Any]:
+    """The one row shape (console page, Flow's connection selector, the TUI): never a secret.
+    `listening` ("listening" | "idle" | "paused") and `used_by` (active automations reading the
+    stream) are AbstractRuntime's `connection_usage` on the plane's runtime: a connection is fed
+    only while something listens (or `always_listen`); `paused` stops it whatever listens."""
+    from abstractruntime.triggers.connections import connection_usage
+
+    usage = connection_usage(runtime, conn)
     row: Dict[str, Any] = {
         "connection_id": conn.connection_id,
         "principal": conn.principal,
@@ -229,6 +241,10 @@ def connection_row(conn: Any, request: Request) -> Dict[str, Any]:
         "source_version": int(conn.source_version),
         "label": str(conn.label or "") or conn.connection_id,
         "status": str(conn.status or "active"),
+        "listening": str(usage["listening"]),
+        "used_by": int(usage["used_by"]),
+        "paused": bool(getattr(conn, "paused", False)),
+        "always_listen": bool(getattr(conn, "always_listen", False)),
         "created_at": conn.created_at or None,
         "updated_at": conn.updated_at or None,
         "last_event_at": conn.last_event_at or None,
@@ -265,13 +281,20 @@ def _not_found(connection_id: str) -> JSONResponse:
 
 
 def _all_connections(source_id: Optional[str]) -> list:
+    """`[(connection, its plane's runtime)]` across every account's plane, oldest first."""
+    from ..service import get_gateway_service_for_principal
+
     out, seen = [], set()
-    for _principal_of_plane, data_dir in tc._candidate_planes():
-        for conn in tc.store_for_data_dir(data_dir).list(source_id=source_id):
+    for principal_of_plane, data_dir in tc._candidate_planes():
+        conns = tc.store_for_data_dir(data_dir).list(source_id=source_id)
+        if not conns:
+            continue
+        runtime = get_gateway_service_for_principal(principal_of_plane).host.runtime
+        for conn in conns:
             if conn.connection_id not in seen:
                 seen.add(conn.connection_id)
-                out.append(conn)
-    return sorted(out, key=lambda c: (c.created_at, c.connection_id))
+                out.append((conn, runtime))
+    return sorted(out, key=lambda pair: (pair[0].created_at, pair[0].connection_id))
 
 
 @router.get("/connections", summary="My trigger connections (an admin: every account's with all=true)")
@@ -287,11 +310,11 @@ async def list_connections(
 
     def run() -> Dict[str, Any]:
         if all:
-            conns = _all_connections(source_id)
+            pairs = _all_connections(source_id)
         else:
-            _svc, store = _own_store(principal)
-            conns = store.list(principal=tc.principal_key(principal), source_id=source_id)
-        return {"connections": [connection_row(c, request) for c in conns]}
+            svc, store = _own_store(principal)
+            pairs = [(c, svc.host.runtime) for c in store.list(principal=tc.principal_key(principal), source_id=source_id)]
+        return {"connections": [connection_row(c, request, runtime) for c, runtime in pairs]}
 
     return await asyncio.to_thread(run)
 
@@ -305,14 +328,14 @@ async def create_connection(request: Request, body: CreateConnectionBody) -> Any
     from abstractruntime.triggers.connections import TriggerConnectionError
 
     def run() -> Any:
-        _svc, store = _own_store(principal)
+        svc, store = _own_store(principal)
         try:
             conn = store.create(principal=tc.principal_key(principal), source_id=body.source_id, source_version=int(body.source_version),
                                 config=dict(body.config or {}), label=body.label)
             secrets = store.secrets(conn.connection_id, principal=tc.principal_key(principal)) if conn.secret_ref else {}
         except TriggerConnectionError as exc:
             return _connection_error(exc)
-        out = connection_row(conn, request)
+        out = connection_row(conn, request, svc.host.runtime)
         if isinstance(secrets.get("secret"), str):
             out["secret"] = secrets["secret"]
         return JSONResponse(status_code=201, content=out)
@@ -324,7 +347,7 @@ async def create_connection(request: Request, body: CreateConnectionBody) -> Any
 async def get_connection(request: Request, connection_id: str) -> Any:
     principal = _principal(request)
     found = await asyncio.to_thread(_resolve, principal, connection_id)
-    return _not_found(connection_id) if found is None else connection_row(found[2], request)
+    return _not_found(connection_id) if found is None else connection_row(found[2], request, found[0].host.runtime)
 
 
 @router.put("/connections/{connection_id}", summary="Change a trigger connection's label, config or status")
@@ -336,15 +359,16 @@ async def update_connection(request: Request, connection_id: str, body: UpdateCo
         found = _resolve(principal, connection_id)
         if found is None:
             return _not_found(connection_id)
-        _svc, store, conn = found
+        svc, store, conn = found
         if body.status is not None and body.status not in ("active", "disabled"):
             return JSONResponse(status_code=422, content={"detail": {"reason_code": "invalid_connection",
                                                                      "message": "status must be active or disabled", "field": "status"}})
         try:
-            conn = store.update(conn.connection_id, principal=conn.principal, config=body.config, label=body.label, status=body.status)
+            conn = store.update(conn.connection_id, principal=conn.principal, config=body.config, label=body.label, status=body.status,
+                                paused=body.paused, always_listen=body.always_listen)
         except TriggerConnectionError as exc:
             return _connection_error(exc)
-        return connection_row(conn, request)
+        return connection_row(conn, request, svc.host.runtime)
 
     return await asyncio.to_thread(run)
 

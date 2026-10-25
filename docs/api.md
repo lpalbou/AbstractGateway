@@ -1134,17 +1134,21 @@ may read, test and revoke any by id.
 | `GET /api/gateway/triggers/connections?source_id=&all=` | `{connections: [row]}`, oldest first; `all=true` is admin only (403 `admin_required`) |
 | `POST /api/gateway/triggers/connections` | `{source_id, source_version, label?, config}` → 201: the row at top level, plus the one-time `secret` (a webhook's signing secret `whsec_…`, generated when `config` gives none; never shown again) and, for a webhook, `ingress_url`. 422 `unknown_trigger_source` / `invalid_connection` (a source that takes no trigger connection, a mailbox source, a config its `connection_schema` refuses) |
 | `GET /api/gateway/triggers/connections/{id}` | the row |
-| `PUT /api/gateway/triggers/connections/{id}` | `{label?, config?, status?: active \| disabled}` → the row (a new `config` is validated whole; secret fields left out keep their sealed value) |
+| `PUT /api/gateway/triggers/connections/{id}` | `{label?, config?, status?: active \| disabled, paused?: bool, always_listen?: bool}` → the row (a new `config` is validated whole; secret fields left out keep their sealed value) |
 | `DELETE /api/gateway/triggers/connections/{id}` | `{deleted: true, connection_id}` (its past events stay until the inbox retention removes them) |
 | `GET /api/gateway/triggers/connections/{id}/events?after=&limit=` | `{events: [CloudEvents JSON + sequence + recordedtime], next_after}`; without `after` the newest `limit` (default 50, at most 500), oldest first; with `after` the next `limit` after that sequence |
 | `POST /api/gateway/triggers/connections/{id}/test-fire` | `{event_id, sequence, woken}`: a synthetic `{data: {test: true}}` event appended to the connection's stream like a real one (bound automations admit it) |
 
-Feed connections (`feed.item@1`) are polled by the gateway itself, from each account's worker
-loop (every 15 seconds it fetches the connections whose `every` has elapsed; 15 minutes by
-default), whether or not an automation listens yet, so their events show here.
+A connection is fed only while something listens: `listening` is "listening" when an active
+automation reads it (`used_by` > 0) or `always_listen` is on, "idle" otherwise, "paused" when
+`paused` is on (or the status is disabled). Feed connections (`feed.item@1`) are polled by the
+gateway itself from each account's worker loop (every 15 seconds it fetches the LISTENING
+connections whose `every` has elapsed; 15 minutes by default; the first poll after an idle spell is
+a baseline); a webhook to an idle connection answers 409 `not_listening` and stores nothing.
 
 A row: `{connection_id, principal ("<tenant>:<user>"), source_id, source_version (integer), label,
-status ("active" | "disabled" | "error"), created_at, updated_at, last_event_at (string or null),
+status ("active" | "disabled" | "error"), listening ("listening" | "idle" | "paused"), used_by (integer:
+the active automations reading it), paused, always_listen, created_at, updated_at, last_event_at (string or null),
 last_error (object or null), config_public (object; never a secret), secret_fields, stream
 ("trigger:<id>"), ingress_url (webhooks)}`. Errors: `{"detail": {"reason_code", "message",
 "field"?}}`. Request and response models are in the OpenAPI schema (`/openapi.json`, tag
@@ -1178,7 +1182,8 @@ knows the address and the secret.
   (`last_error`) and on the request's audit line (`webhook` {connection_id, outcome,
   reason_code}, never the body): `401 webhook_unsigned` (a header missing), `401
   webhook_signature_invalid`, `404 connection_not_found` (unknown id, or not a webhook
-  connection), `409 connection_disabled`, `409 webhook_stale` (timestamp outside the connection's
+  connection), `409 connection_disabled` (disabled or paused), `409 not_listening` (no automation
+  listens and `always_listen` is off: nothing stored), `409 webhook_stale` (timestamp outside the connection's
   window: 5 minutes by default, `tolerance_s` 60..3600), `409 webhook_replayed` (this webhook-id was
   already accepted: nothing is appended twice; **senders should treat it as delivered**, a
   Standard Webhooks retry reuses the id), `413 webhook_too_large` (body over 512 KiB), `415
