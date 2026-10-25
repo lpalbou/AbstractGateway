@@ -177,7 +177,10 @@ Rare transport answers keep the same shape with `not_found` (unknown path),
   items. The automation names one of your **trigger connections**
   (`connection_id`); the connection holds the feed URL and how often it is
   read (`every`, default `15m`, at least `60s`). The items of one read become
-  one run, under `input_data.event.data.events`, marked untrusted.
+  one run, under `input_data.event.data.events`, marked untrusted. The console's
+  **New connection** proposes well-known public feeds (news, technology,
+  science, business, a subreddit, a YouTube channel, GitHub releases) and
+  accepts any other address ([console.md](./console.md#triggers)).
 - **`webhook.received@1`** runs when an external system calls your signed
   webhook address (`POST /api/gateway/triggers/webhooks/{connection_id}`,
   [Standard Webhooks](https://www.standardwebhooks.com/) signature). The

@@ -478,6 +478,34 @@ email)**, **Add a feed** and **Add a webhook**.
   field and keeps what you typed. **Cancel** closes the dialog. After **Create**
   the dialog says the next step: *Next: in Flow, + → When something arrives →
   <name>.*
+- For a feed, **Choose a well-known feed** comes first: public feeds grouped by
+  category (World news, Technology, Science, Business and finance), each with its
+  site. Picking one fills in the **Name** and the **Feed address**; both stay
+  editable, and a name you wrote yourself is kept. Under **Fill in your own**,
+  *Reddit · A subreddit*, *YouTube · A channel* and *GitHub · Releases of a
+  repository* ask for one value (the subreddit, the channel id starting with `UC`,
+  `owner/name`) and build the address as you type. **Another address** is the free
+  field for any RSS or Atom address. X (Twitter) has no open feed, so it is not
+  offered.
+- The list is the gateway's catalogue merged with your own file
+  `<data dir>/catalog/feeds.json`, when it exists (the data dir: on macOS
+  `~/Library/Application Support/AbstractGateway` by default;
+  `abstractgateway-config status` prints yours, see
+  [configuration.md](./configuration.md#paths--workflow-source)): an entry with a shipped `id`
+  replaces it, a new `id` adds a feed (`category` defaults to *My feeds*), and
+  `"disabled": true` hides a shipped one. For example:
+
+  ```json
+  {"feeds": [
+    {"id": "python-insider", "name": "Python Insider", "url": "https://blog.python.org/feeds/posts/default", "category": "Technology"},
+    {"id": "lemonde-une", "disabled": true}]}
+  ```
+
+  A custom entry needs `id` (lowercase letters, digits, `.`, `_`, `-`), `name`
+  and an `http` or `https` `url`; `site`, `category`, `language` and
+  `description` are optional. The file is read on each request, so an edit shows
+  the next time the dialog opens; an entry it cannot use is skipped and named in
+  the route's `problems` for an administrator ([api.md](./api.md#feed-catalogue)).
 - A **webhook** connection then shows a setup panel: its address and its
   signing secret, shown **once** with copy buttons (the gateway keeps the secret
   sealed and never shows it again); the GitHub / Zapier recipe (paste the
@@ -495,7 +523,7 @@ email)**, **Add a feed** and **Add a webhook**.
 - `/console#triggers?new=<source_id>` opens the dialog on that source (AbstractFlow's
   *New connection…* link uses it).
 
-Routes: `GET /api/gateway/trigger-sources`, `GET|POST /api/gateway/triggers/connections`
+Routes: `GET /api/gateway/trigger-sources`, `GET /api/gateway/triggers/feeds/catalog`, `GET|POST /api/gateway/triggers/connections`
 (`?all=true` for an administrator), `PUT|DELETE /api/gateway/triggers/connections/{id}`
 (`paused`, `always_listen`), `GET /api/gateway/triggers/connections/{id}/events?after=<seq>&limit=`,
 `POST /api/gateway/triggers/connections/{id}/test-fire`, `GET /api/gateway/me/email/accounts`
@@ -1028,7 +1056,10 @@ you can click.
   events, newest first, each followed by its JSON; a webhook's address with
   **Copy**), **Test** (`t`: the row's note says "Test event #N sent.") and
   **Delete** (`d`, after the web's question). **New connection** (`n`) is a
-  dialog: What to listen to (a feed or a webhook), Name, and the source's
+  dialog: What to listen to (a feed or a webhook), for a feed **Choose a
+  well-known feed** (the web's list: category headings, each feed with its site,
+  then **Another address**; a pick fills the Name and the Feed address, a
+  template asks for its one value and builds the address), Name, and the source's
   settings with their labels (a generated secret is never asked for); a
   webhook's address and signing secret are then shown once, each with
   **Copy**, with the GitHub/Zapier recipe and the signed call (bash,

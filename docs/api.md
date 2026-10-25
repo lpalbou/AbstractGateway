@@ -1162,6 +1162,33 @@ curl -sS -X POST -H "$AUTH" -H "Content-Type: application/json" \
   "$BASE_URL/api/gateway/triggers/connections"     # -> connection_id, secret (once), ingress_url
 ```
 
+### Feed catalogue
+
+`GET /api/gateway/triggers/feeds/catalog` (any signed-in account) lists the well-known public feeds
+the console proposes for a new feed connection: the catalogue shipped with the gateway merged with
+`<data dir>/catalog/feeds.json` when that file exists (an entry with a shipped `id` replaces it, a
+new `id` adds a feed, `"disabled": true` hides a shipped one).
+
+```json
+{"version": 1, "feeds": [
+  {"id": "bbc-world", "name": "BBC News · World", "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
+   "site": "https://www.bbc.co.uk/news", "category": "World news", "language": "en",
+   "description": "World headlines from the BBC.", "source": "shipped"},
+  {"id": "github-releases", "name": "GitHub · Releases of a repository",
+   "url": "https://github.com/{repository}/releases.atom", "template": true,
+   "name_template": "GitHub · {repository} releases",
+   "placeholder": {"key": "repository", "label": "Repository (owner/name)", "example": "python/cpython",
+                   "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
+   "site": "https://github.com", "category": "Fill in your own", "language": "en",
+   "description": "New releases of one public GitHub repository.", "source": "shipped"}]}
+```
+
+`source` is `shipped` or `custom`. A template (`template: true`) holds `{<placeholder.key>}` once
+in its `url`: the client asks for that value (checked against `pattern` when given) and creates the
+connection with the built address. An administrator also gets `custom_path` (where the custom file
+lives) and `problems` (custom entries that were skipped, and why). Creating the connection is the
+ordinary `POST /api/gateway/triggers/connections` with the chosen `url`.
+
 ### Sample inputs (`POST /api/gateway/triggers/sample`)
 
 What a triggered flow would receive, from your own real data, so **Run** on a flow that an
