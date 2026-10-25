@@ -1132,18 +1132,24 @@ knows the address and the secret.
 - Headers: `webhook-id` (unique per message), `webhook-timestamp` (Unix seconds),
   `webhook-signature` = `v1,<base64 HMAC-SHA256(secret, "<webhook-id>.<webhook-timestamp>.<body>")>`
   (several space-separated signatures are accepted; the secret is `whsec_<base64 key>`).
-- `202 {accepted: true, connection_id, webhook_id, seq, woken}`: one event appended to the
-  connection's stream (CloudEvents names: `id` and `subject` = the webhook id, `data` = the JSON
-  body, or `{body, content_type}` for a non-JSON body, `abstracttrust: "untrusted"`), the
-  automations bound to it woken.
+- Verification and the append are AbstractRuntime's `webhook.received@1`
+  (`abstractruntime.triggers.append_webhook_event`).
+- `202 {accepted: true, connection_id, webhook_id, event_id, seq, woken}`: one event appended to
+  the connection's stream (CloudEvents names: `subject` and `dedupekey` = the webhook id, `data` =
+  `{webhook_id, content_type, body}` with the parsed JSON body, or `{webhook_id, content_type,
+  body_text}` for UTF-8 text; `abstracttrust: "untrusted"`), the automations bound to it woken.
+  An occurrence reads it as `input_data.event.data.events[i].data.body` (one occurrence per batch
+  of events that arrived together).
 - Refusals, each with `{"detail": {"reason_code", "message"}}`, recorded on the connection
   (`last_error`) and on the request's audit line (`webhook` {connection_id, outcome,
   reason_code}, never the body): `401 webhook_unsigned` (a header missing), `401
   webhook_signature_invalid`, `404 connection_not_found` (unknown id, or not a webhook
-  connection), `409 connection_disabled`, `409 webhook_stale` (timestamp more than 5 minutes from
-  the gateway's clock), `409 webhook_replayed` (this webhook-id was already accepted: nothing is
-  appended twice), `413 webhook_too_large` (body over 512 KiB), `429 webhook_rate_limited`
-  (60 calls a minute per connection, 120 per client address; `Retry-After`).
+  connection), `409 connection_disabled`, `409 webhook_stale` (timestamp outside the connection's
+  window: 5 minutes by default, `tolerance_s` 60..3600), `409 webhook_replayed` (this webhook-id was
+  already accepted: nothing is appended twice; **senders should treat it as delivered**, a
+  Standard Webhooks retry reuses the id), `413 webhook_too_large` (body over 512 KiB), `415
+  webhook_unsupported_body` (neither JSON nor UTF-8 text), `429 webhook_rate_limited` (60 calls a
+  minute per connection, 120 per client address; `Retry-After`).
 - The origin allowlist does not apply (the signature decides). Making the gateway reachable from
   the internet (Tailscale Funnel, a reverse proxy) is the operator's choice.
 
@@ -1157,10 +1163,12 @@ SIG="$(printf '%s' "$WID.$TS.$BODY" | openssl dgst -sha256 -mac HMAC -macopt "he
 curl -sS -H "Content-Type: application/json" \
   -H "webhook-id: $WID" -H "webhook-timestamp: $TS" -H "webhook-signature: v1,$SIG" \
   -d "$BODY" "$BASE_URL/api/gateway/triggers/webhooks/$CID"
+# 202: delivered. 409 webhook_replayed on a retry with the same webhook-id: also delivered.
 ```
 
 Evidence: `src/abstractgateway/routes/triggers.py` (`receive_webhook`),
-`src/abstractgateway/trigger_connections.py` (lookup across accounts, verification, rate limit).
+`src/abstractgateway/trigger_connections.py` (lookup across accounts, rate limit),
+AbstractRuntime `triggers/webhook.py` (verification, event mapping).
 
 ## Your event stream (`/api/gateway/me/events`)
 

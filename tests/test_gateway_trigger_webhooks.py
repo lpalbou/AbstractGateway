@@ -1,6 +1,7 @@
 """The public webhook ingress (framework backlog 1042): `POST /api/gateway/triggers/webhooks/{id}`.
 
-No bearer token: the Standard Webhooks signature with the connection's secret is the auth. A
+No bearer token: the Standard Webhooks signature with the connection's secret is the auth
+(verified and appended by AbstractRuntime's `webhook.received@1`, `append_webhook_event`). A
 signed call appends one CloudEvents-shaped event to the connection's stream
 `trigger:<connection_id>` and wakes the automation bound to it; a tampered signature (401), a
 timestamp outside the window (409), a replayed webhook-id (409), an unknown connection (404), an
@@ -21,33 +22,9 @@ from typing import Any, Dict
 import pytest
 from fastapi.testclient import TestClient
 
-from abstractruntime.triggers.connection_events import ConnectionEventAdapter
-
 from test_gateway_principal_isolation_matrix import _client, _create_user
 
 SECRET = "whsec_" + base64.b64encode(b"0123456789abcdef0123456789abcdef").decode()
-
-
-class FakeWebhookAdapter(ConnectionEventAdapter):
-    """A connection-bound source standing in for `webhook.received@1` (the runtime's own lands
-    with framework backlog 1042's runtime half): a connection holds one sealed `secret`."""
-
-    descriptor: Dict[str, Any] = {
-        "id": "test.webhook",
-        "version": 1,
-        "label": "Test webhook",
-        "config_schema": ConnectionEventAdapter.binding_config_schema(),
-        "event_schema": ConnectionEventAdapter.batch_event_schema(),
-        "capabilities": {"kind": "event", "content_trust": "untrusted"},
-        "needs_connection": True,
-        "connection_schema": {"type": "object", "properties": {"secret": {"type": "string", "x-secret": True}}},
-    }
-
-    def validate_connection(self, config, *, now):
-        return dict(config)
-
-    def connection_secrets(self, config):
-        return {"secret": SECRET}
 
 
 def _sign(body: bytes, *, wid: str, ts: int, secret: str = SECRET) -> Dict[str, str]:
@@ -64,11 +41,8 @@ def _principal(user_id: str):
 
 @pytest.fixture()
 def gateway(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    from abstractruntime.triggers import registry
     from abstractgateway import trigger_connections as tc
 
-    monkeypatch.setitem(registry.BUILTIN_TRIGGER_SOURCES, "test.webhook", f"{__name__}:FakeWebhookAdapter")
-    registry.reset_trigger_registry()
     tc.webhook_rate_limiter.reset()
     monkeypatch.setenv("ABSTRACTGATEWAY_AUDIT_LOG", "1")
     client = _client(tmp_path, monkeypatch)
@@ -76,7 +50,6 @@ def gateway(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         alice = _create_user(client, "alice")
         bob = _create_user(client, "bob")
         yield client, alice, bob
-    registry.reset_trigger_registry()
     tc.webhook_rate_limiter.reset()
 
 
@@ -91,9 +64,9 @@ def _alice_connection_and_automation():
     from automations_fixtures import controller_run
 
     svc = get_gateway_service_for_principal(_principal("alice"))
-    conn = tc.store_for_service(svc).create(principal="default:alice", source_id="test.webhook", source_version=1, config={})
+    conn = tc.store_for_service(svc).create(principal="default:alice", source_id="webhook.received", source_version=1, config={"secret": SECRET})
     run = controller_run(title="On webhook")
-    run.vars["_meta"]["automation"]["trigger"] = {"binding_id": "b1", "source_id": "test.webhook", "source_version": 1,
+    run.vars["_meta"]["automation"]["trigger"] = {"binding_id": "b1", "source_id": "webhook.received", "source_version": 1,
                                                   "config": {"connection_id": conn.connection_id}}
     run.status = RunStatus.WAITING
     run.waiting = WaitState(reason=WaitReason.EVENT, wait_key=wake_wait_key(run.run_id))
@@ -113,8 +86,10 @@ def test_a_signed_call_appends_one_event_and_wakes_the_bound_automation(gateway)
 
     [event] = svc.host.runtime.event_inbox.read(stream=f"trigger:{conn.connection_id}")
     payload = event["payload"]
-    assert payload["data"] == {"action": "opened", "number": 7}
-    assert payload["id"] == wid and payload["subject"] == wid and payload["dedupekey"] == wid
+    assert payload["data"] == {"webhook_id": wid, "content_type": "application/json", "body": {"action": "opened", "number": 7}}
+    assert payload["subject"] == wid and payload["dedupekey"] == wid
+    assert out["event_id"] == f"trigger:{conn.connection_id}:{payload['id']}"
+    assert payload["type"] == "abstract.webhook.received.v1"
     assert payload["specversion"] == "1.0" and payload["connectionid"] == conn.connection_id
     assert payload["abstracttrust"] == "untrusted"
     from abstractruntime.core.models import RunStatus
@@ -139,7 +114,7 @@ def test_refusals_tampered_stale_replayed_unknown_and_unsigned(gateway) -> None:
     tampered = _sign(body, wid="w1", ts=now)
     r = client.post(url, content=b'{"ok": false}', headers=tampered)
     assert (r.status_code, r.json()["detail"]["reason_code"]) == (401, "webhook_signature_invalid")
-    assert tc_store_get(svc, conn.connection_id).last_error["code"] == "webhook_signature_invalid"
+    assert tc_store_get(svc, conn.connection_id).last_error["code"] == "webhook_bad_signature"
 
     wrong_secret = _sign(body, wid="w1", ts=now, secret="whsec_" + base64.b64encode(b"x" * 32).decode())
     assert client.post(url, content=body, headers=wrong_secret).status_code == 401
@@ -210,8 +185,28 @@ def test_body_cap_and_rate_limit(gateway, monkeypatch: pytest.MonkeyPatch) -> No
     assert codes == [202, 202, 429]
 
 
-def test_non_json_body_is_kept_as_text() -> None:
-    from abstractgateway.trigger_connections import webhook_event_data
+def test_a_non_json_text_body_is_kept_as_text_and_binary_is_refused(gateway) -> None:
+    client, _alice, _bob = gateway
+    svc, conn, _aid = _alice_connection_and_automation()
+    url = f"/api/gateway/triggers/webhooks/{conn.connection_id}"
+    body = b"a=1&b=2"
+    h = {**_sign(body, wid="t1", ts=int(time.time())), "content-type": "application/x-www-form-urlencoded"}
+    assert client.post(url, content=body, headers=h).status_code == 202
+    [event] = svc.host.runtime.event_inbox.read(stream=f"trigger:{conn.connection_id}")
+    assert event["payload"]["data"]["body_text"] == "a=1&b=2"
+    raw = b"\xff\xfe\x00"
+    r = client.post(url, content=raw, headers={**_sign(raw, wid="t2", ts=int(time.time())), "content-type": "application/octet-stream"})
+    assert (r.status_code, r.json()["detail"]["reason_code"]) == (415, "webhook_unsupported_body")
 
-    assert webhook_event_data(b"a=1&b=2", "application/x-www-form-urlencoded") == {"body": "a=1&b=2", "content_type": "application/x-www-form-urlencoded"}
-    assert webhook_event_data(b"[1,2]", "application/json") == {"body": [1, 2]}
+
+def test_a_connection_of_another_source_is_not_a_webhook_endpoint(gateway) -> None:
+    client, _alice, _bob = gateway
+    from abstractgateway import trigger_connections as tc
+    from abstractgateway.service import get_gateway_service_for_principal
+
+    svc = get_gateway_service_for_principal(_principal("alice"))
+    feed = tc.store_for_service(svc).create(principal="default:alice", source_id="feed.item", source_version=1,
+                                            config={"url": "https://example.test/feed.xml"})
+    body = b"{}"
+    r = client.post(f"/api/gateway/triggers/webhooks/{feed.connection_id}", content=body, headers=_sign(body, wid="f1", ts=int(time.time())))
+    assert (r.status_code, r.json()["detail"]["reason_code"]) == (404, "connection_not_found")

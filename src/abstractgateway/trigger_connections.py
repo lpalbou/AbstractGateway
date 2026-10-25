@@ -42,8 +42,6 @@ WEBHOOK_MAX_BODY_BYTES = 512 * 1024
 WEBHOOK_RATE_PER_CONNECTION = 60
 WEBHOOK_RATE_PER_ADDRESS = 120
 WEBHOOK_RATE_WINDOW_S = 60.0
-# Standard Webhooks: a timestamp more than this many seconds from now is stale (replay window).
-WEBHOOK_TOLERANCE_S = 300
 
 
 def principal_key(principal: GatewayPrincipal) -> str:
@@ -130,104 +128,6 @@ def locate_connection(connection_id: str) -> Optional[LocatedConnection]:
 
 
 # ---------------------------------------------------------------------------------------
-# Standard Webhooks verification and the append (STUB until AbstractRuntime ships
-# `verify_standard_webhook` / `append_webhook_event` in `abstractruntime.triggers`; the gateway
-# then calls those and this block goes)
-# ---------------------------------------------------------------------------------------
-
-
-class WebhookRefused(Exception):
-    """A refused webhook request: HTTP `status`, wire `reason_code`, a sentence."""
-
-    def __init__(self, status: int, reason_code: str, message: str) -> None:
-        super().__init__(message)
-        self.status = int(status)
-        self.reason_code = reason_code
-
-    def to_detail(self) -> Dict[str, Any]:
-        return {"reason_code": self.reason_code, "message": str(self)}
-
-
-def _secret_key(secret: str) -> bytes:
-    import base64
-
-    raw = secret[len("whsec_"):] if secret.startswith("whsec_") else secret
-    try:
-        return base64.b64decode(raw, validate=True)
-    except Exception:  # noqa: BLE001 - a non-base64 secret is used as its bytes
-        return raw.encode("utf-8")
-
-
-def verify_standard_webhook(*, secret: str, headers: Any, body: bytes, now: Optional[float] = None, tolerance_s: int = WEBHOOK_TOLERANCE_S) -> Tuple[str, int]:
-    """Standard Webhooks (v1, HMAC-SHA256): `webhook-signature` is one or more space-separated
-    `v1,<base64 HMAC(secret, "<webhook-id>.<webhook-timestamp>.<body>")>`. Returns
-    `(webhook_id, timestamp)`. Raises WebhookRefused: 401 `webhook_unsigned` (a header missing),
-    401 `webhook_signature_invalid`, 409 `webhook_stale` (timestamp outside the window)."""
-    import base64
-    import hashlib
-    import hmac
-
-    wid = str(headers.get("webhook-id") or "").strip()
-    ts_raw = str(headers.get("webhook-timestamp") or "").strip()
-    sig_raw = str(headers.get("webhook-signature") or "").strip()
-    if not wid or not ts_raw or not sig_raw:
-        raise WebhookRefused(401, "webhook_unsigned", "webhook-id, webhook-timestamp and webhook-signature are required.")
-    try:
-        ts = int(ts_raw)
-    except ValueError:
-        raise WebhookRefused(401, "webhook_signature_invalid", "webhook-timestamp must be Unix seconds.") from None
-    signed = wid.encode("utf-8") + b"." + ts_raw.encode("utf-8") + b"." + bytes(body)
-    expected = base64.b64encode(hmac.new(_secret_key(secret), signed, hashlib.sha256).digest()).decode("ascii")
-    ok = False
-    for part in sig_raw.split():
-        version, _, value = part.partition(",")
-        if version == "v1" and hmac.compare_digest(value.strip(), expected):
-            ok = True
-    if not ok:
-        raise WebhookRefused(401, "webhook_signature_invalid", "The webhook signature does not match this connection's secret.")
-    at = time.time() if now is None else float(now)
-    if abs(at - ts) > int(tolerance_s):
-        raise WebhookRefused(409, "webhook_stale", f"webhook-timestamp is more than {int(tolerance_s)} s from the gateway's clock.")
-    return wid, ts
-
-
-def webhook_event_data(body: bytes, content_type: str) -> Dict[str, Any]:
-    """The CloudEvents `data` of a webhook body: the JSON object itself, other JSON values as
-    `{"body": value}`, anything else as `{"body": <text>, "content_type": ...}`."""
-    import json
-
-    text = bytes(body).decode("utf-8", errors="replace")
-    if "json" in str(content_type or "").lower() or text.lstrip()[:1] in ("{", "["):
-        try:
-            value = json.loads(text)
-        except ValueError:
-            value = None
-        else:
-            return dict(value) if isinstance(value, dict) else {"body": value}
-    return {"body": text, "content_type": str(content_type or "") or None}
-
-
-def append_webhook_event(inbox: Any, located: "LocatedConnection", *, webhook_id: str, timestamp: int, body: bytes, content_type: str) -> Any:
-    """Append the webhook to the connection's stream (deduplicated on the webhook id).
-    Returns the inbox AppendResult, or None when the id was already appended."""
-    import datetime as _dt
-
-    from abstractruntime.triggers.connections import append_connection_event
-
-    return append_connection_event(
-        inbox,
-        located.connection,
-        event_id=webhook_id,
-        data=webhook_event_data(body, content_type),
-        time=_dt.datetime.fromtimestamp(int(timestamp), tz=_dt.timezone.utc).isoformat(),
-        subject=webhook_id,
-        dedupekey=webhook_id,
-        trust="untrusted",
-        store=located.store,
-    )
-
-
-# ---------------------------------------------------------------------------------------
 # Rate limit
 # ---------------------------------------------------------------------------------------
 
@@ -283,12 +183,7 @@ __all__ = [
     "WEBHOOK_RATE_PER_ADDRESS",
     "WEBHOOK_RATE_PER_CONNECTION",
     "WEBHOOK_RATE_WINDOW_S",
-    "WEBHOOK_TOLERANCE_S",
     "WebhookRateLimiter",
-    "WebhookRefused",
-    "append_webhook_event",
-    "verify_standard_webhook",
-    "webhook_event_data",
     "locate_connection",
     "principal_key",
     "store_for_data_dir",

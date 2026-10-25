@@ -21,11 +21,24 @@ from fastapi.responses import JSONResponse
 
 from .. import trigger_connections as tc
 
+WEBHOOK_SOURCE_ID = "webhook.received"
+
 router = APIRouter(prefix="/gateway/triggers", tags=["triggers"])
 logger = logging.getLogger(__name__)
 
-# The connection secret the webhook signature is checked with.
-WEBHOOK_SECRET_FIELD = "secret"
+# AbstractRuntime's verdict (`append_webhook_event` reason) -> (HTTP status, wire reason_code, sentence).
+# A stale timestamp is 409 like a replayed id (the request may be genuine, it is just not fresh);
+# a missing or wrong signature is 401.
+_REFUSALS: Dict[str, tuple] = {
+    "missing_headers": (401, "webhook_unsigned", "webhook-id, webhook-timestamp and webhook-signature are required."),
+    "bad_timestamp": (401, "webhook_signature_invalid", "webhook-timestamp must be Unix seconds."),
+    "bad_signature": (401, "webhook_signature_invalid", "The webhook signature does not match this connection's secret."),
+    "stale": (409, "webhook_stale", "webhook-timestamp is outside this connection's window (5 minutes by default) of the gateway's clock."),
+    "replayed_id": (409, "webhook_replayed", "This webhook-id was already accepted for this connection: treat it as delivered."),
+    "connection_disabled": (409, "connection_disabled", "This webhook connection is disabled."),
+    "too_large": (413, "webhook_too_large", "The body is too large."),
+    "unsupported_body": (415, "webhook_unsupported_body", "The body must be JSON or UTF-8 text."),
+}
 
 
 def _refuse(status: int, reason_code: str, message: str, *, headers: Optional[Dict[str, str]] = None) -> JSONResponse:
@@ -58,20 +71,12 @@ async def _read_capped(request: Request, cap: int) -> Optional[bytes]:
     return b"".join(chunks)
 
 
-def _record_refusal(located: Any, reason_code: str, message: str) -> None:
-    """A refused, signed-for request is recorded on its connection (`last_error`)."""
-    try:
-        import datetime as _dt
-
-        at = _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat()
-        located.store.record_event(located.connection.connection_id, error={"code": reason_code, "message": message, "at": at})
-    except Exception:  # noqa: BLE001
-        logger.warning("could not record a webhook refusal", exc_info=True)
-
-
-def _accept(located: Any, *, webhook_id: str, timestamp: int, body: bytes, content_type: str) -> Dict[str, Any]:
-    """Append (deduplicated) and wake the bound automations; runs off the event loop."""
+def _accept(located: Any, *, body: bytes, headers: Dict[str, str]) -> Dict[str, Any]:
+    """Verify + append through AbstractRuntime (`append_webhook_event`: Standard Webhooks, deduplicated
+    on the webhook id, refusals recorded on the connection), then wake the bound automations. Runs
+    off the event loop. Returns the runtime's verdict dict plus `woken`."""
     from abstractruntime.email import wake_stream_consumers
+    from abstractruntime.triggers import append_webhook_event
 
     from ..service import get_gateway_service_for_principal
 
@@ -80,29 +85,28 @@ def _accept(located: Any, *, webhook_id: str, timestamp: int, body: bytes, conte
     inbox = runtime.event_inbox
     if inbox is None:
         raise RuntimeError("the connection's runtime has no event inbox (mail/runtime_wiring.wire_runtime_email)")
-    stream = located.connection.stream
-    # Deduplicated on the webhook id (the event's `dedupekey`): a replay appends nothing.
-    result = tc.append_webhook_event(inbox, located, webhook_id=webhook_id, timestamp=timestamp, body=body, content_type=content_type)
-    if result is None or getattr(result, "duplicate", False):
-        raise tc.WebhookRefused(409, "webhook_replayed", "This webhook-id was already accepted for this connection.")
-    woken = wake_stream_consumers(runtime, stream)
+    verdict = append_webhook_event(inbox, located.connection, body, headers, store=located.store, max_body_bytes=tc.WEBHOOK_MAX_BODY_BYTES)
+    if verdict.get("status") != "appended":
+        return dict(verdict)
+    woken = wake_stream_consumers(runtime, located.connection.stream)
     for automation_id in woken:
         try:
             svc.runner.nudge(str(automation_id))
         except Exception:  # noqa: BLE001 - the runner's poll ticks it anyway
             pass
-    return {"accepted": True, "connection_id": located.connection.connection_id, "webhook_id": webhook_id,
-            "seq": int(getattr(result, "seq", 0) or 0), "woken": len(woken)}
+    return {**verdict, "woken": len(woken)}
 
 
 @router.post("/webhooks/{connection_id}", status_code=202)
 async def receive_webhook(connection_id: str, request: Request) -> JSONResponse:
     """Receive one signed webhook for a trigger connection (public: the signature is the auth).
 
-    202 `{accepted, connection_id, webhook_id, seq, woken}`; 401 `webhook_unsigned` /
+    Verification and the append are AbstractRuntime's (`abstractruntime.triggers.append_webhook_event`).
+    202 `{accepted, connection_id, webhook_id, event_id, seq, woken}`; 401 `webhook_unsigned` /
     `webhook_signature_invalid`; 404 `connection_not_found` (unknown, or not a webhook
-    connection); 409 `connection_disabled`, `webhook_stale` (timestamp outside the 5-minute
-    window), `webhook_replayed` (this webhook-id was already accepted); 413 `webhook_too_large`;
+    connection); 409 `connection_disabled`, `webhook_stale` (timestamp outside the connection's
+    window, 5 minutes by default), `webhook_replayed` (this webhook-id was already accepted: the
+    sender should treat it as delivered); 413 `webhook_too_large`; 415 `webhook_unsupported_body`;
     429 `webhook_rate_limited` (Retry-After)."""
     address = str(getattr(getattr(request, "client", None), "host", "") or "")
     wait = tc.webhook_rate_limiter.check(connection_id=str(connection_id), address=address)
@@ -114,29 +118,19 @@ async def receive_webhook(connection_id: str, request: Request) -> JSONResponse:
         _audit(request, connection_id=connection_id, outcome="refused", reason_code="webhook_too_large")
         return _refuse(413, "webhook_too_large", f"The body exceeds {tc.WEBHOOK_MAX_BODY_BYTES} bytes.")
     located = await asyncio.to_thread(tc.locate_connection, str(connection_id))
-    secret = None
-    if located is not None:
-        try:
-            secret = (await asyncio.to_thread(located.store.secrets, located.connection.connection_id, principal=None)).get(WEBHOOK_SECRET_FIELD)
-        except Exception:  # noqa: BLE001 - an unreadable secret refuses like an unknown connection
-            logger.warning("webhook connection %s: secret unreadable", connection_id, exc_info=True)
-            secret = None
-    if located is None or not secret:
+    if located is None or located.connection.source_id != WEBHOOK_SOURCE_ID:
         _audit(request, connection_id=connection_id, outcome="refused", reason_code="connection_not_found")
         return _refuse(404, "connection_not_found", "No webhook connection with this id.")
-    if located.connection.status == "disabled":
-        _audit(request, connection_id=connection_id, outcome="refused", reason_code="connection_disabled")
-        return _refuse(409, "connection_disabled", "This webhook connection is disabled.")
-    try:
-        webhook_id, timestamp = tc.verify_standard_webhook(secret=str(secret), headers=request.headers, body=body)
-        accepted = await asyncio.to_thread(
-            _accept, located, webhook_id=webhook_id, timestamp=timestamp, body=body,
-            content_type=str(request.headers.get("content-type") or ""),
+    headers = {k.lower(): v for k, v in request.headers.items()}
+    verdict = await asyncio.to_thread(_accept, located, body=body, headers=headers)
+    if verdict.get("status") != "appended":
+        status, reason_code, message = _REFUSALS.get(
+            str(verdict.get("reason") or ""), (int(verdict.get("http_status") or 400), f"webhook_{verdict.get('reason')}", "The webhook was refused.")
         )
-    except tc.WebhookRefused as refused:
-        await asyncio.to_thread(_record_refusal, located, refused.reason_code, str(refused))
-        _audit(request, connection_id=connection_id, outcome="refused", reason_code=refused.reason_code,
-               webhook_id=str(request.headers.get("webhook-id") or "")[:200] or None)
-        return _refuse(refused.status, refused.reason_code, str(refused))
+        _audit(request, connection_id=connection_id, outcome="refused", reason_code=reason_code,
+               webhook_id=str(verdict.get("webhook_id") or "")[:200] or None)
+        return _refuse(status, reason_code, message)
+    accepted = {"accepted": True, "connection_id": located.connection.connection_id, "webhook_id": verdict.get("webhook_id"),
+                "event_id": verdict.get("event_id"), "seq": int(verdict.get("seq") or 0), "woken": int(verdict.get("woken") or 0)}
     _audit(request, connection_id=connection_id, outcome="accepted", webhook_id=accepted["webhook_id"], seq=accepted["seq"])
     return JSONResponse(status_code=202, content=accepted)

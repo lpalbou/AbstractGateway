@@ -613,7 +613,8 @@ that is not a sign-in step: an external system delivers an event to a trigger
 connection without a gateway token. The Standard Webhooks signature with the
 connection's secret (sealed with the data folder's key, shown to its owner once)
 is the auth: an unsigned or tampered call is 401, a timestamp more than five
-minutes off or a webhook id already accepted is 409, a body over 512 KiB is 413,
+minutes off (the connection's window) or a webhook id already accepted is 409 (a
+sender treats a replayed id as delivered), a body over 512 KiB is 413,
 and calls are limited per connection and per client address (429). It can only
 append to that connection's inbox stream and wake the automations bound to it;
 the event body reaches them as untrusted data. See [api.md](./api.md#triggers).

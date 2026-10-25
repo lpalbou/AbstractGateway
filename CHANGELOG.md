@@ -38,10 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replaced); `GET /runs/{run_id}` answers it as `origin` (null for older runs).
 - Webhook ingress for trigger connections (backlog 1042): `POST /api/gateway/triggers/webhooks/{connection_id}`,
   public (no bearer token): the Standard Webhooks signature (`webhook-id`, `webhook-timestamp`,
-  `webhook-signature`, HMAC-SHA256 with the connection's sealed secret) is the auth. A signed call appends one
+  `webhook-signature`, HMAC-SHA256 with the connection's sealed secret, verified by AbstractRuntime's
+  `webhook.received@1`) is the auth. A signed call appends one
   CloudEvents-shaped event to the connection's inbox stream `trigger:<connection_id>` and wakes the automations
-  bound to it; unsigned or tampered calls answer 401, a timestamp outside the 5-minute window or a replayed
-  webhook-id 409, an unknown connection 404, a body over 512 KiB 413, more than 60 calls a minute per connection
+  bound to it; unsigned or tampered calls answer 401, a timestamp outside the connection's window (5 minutes by
+  default) or a replayed webhook-id 409 (to be treated as delivered), an unknown connection 404, a body over 512 KiB
+  413, a body neither JSON nor UTF-8 text 415, more than 60 calls a minute per connection
   (120 per client address) 429. Refusals are recorded on the connection and the audit line. Every runtime the
   gateway builds now gets its plane's trigger connection store (`<runtime data dir>/triggers/connections/`).
 - Several mailboxes per user, read-only at minimum (backlog 1044): `GET /api/gateway/me/email/accounts` lists every
