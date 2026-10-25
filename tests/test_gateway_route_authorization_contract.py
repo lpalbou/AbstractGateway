@@ -147,6 +147,11 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     # notice it showed, in the caller's own stream only (no parameter names another person).
     ("POST", "/api/gateway/me/events/notifications"),
     ("POST", "/api/gateway/me/events/seen"),
+    # Apple push (backlog 1049): the caller registers or forgets ITS OWN devices; the plane and the
+    # principal come from the request (a device of another principal is never touched; a token the
+    # caller registers leaves other registrations because the caller holds that token).
+    ("PUT", "/api/gateway/me/push/devices/{device_id}"),
+    ("DELETE", "/api/gateway/me/push/devices/{device_id}"),
     ("PUT", "/api/gateway/me/email"),
     ("DELETE", "/api/gateway/me/email"),
     ("POST", "/api/gateway/me/email/test"),
