@@ -3822,8 +3822,9 @@ CONSOLE_UI_JS = r"""
       return {
         docs: p ? { open: !!assistantState.open, onToggle: () => toggleAssistant(), label: "Docs assistant" } : null,
         appearance: { onOpen: openAppearance, label: "Appearance" },
-        about: islands.about,
+        about: null, // Gateway About includes host update controls.
         extras: [
+          { id: "gateway-about-open", label: "About AbstractGateway", icon: "info", onClick: openGatewayAbout },
           warmingExtra(islands.warming),
           // R10.3: no address here any more — the top bar's left of the
           // cluster carries the memory/compute widget (#topbar-resources);

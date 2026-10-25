@@ -25,14 +25,15 @@ Two paths, one per way of installing:
   extras), compared with PyPI's newest gateway. A uv tool pinned to an exact version is not
   upgradable in place (uv keeps the pin); the reason says how to reinstall.
 
-Honesty first: an editable checkout, a Docker image, a conda env or an unknown launcher
+Editable checkouts can switch to published PyPI packages without modifying source files.
+A Docker image, a conda env or an unknown launcher
 answer ``upgradable: false`` with the reason and the command a human would run instead.
 Offline is a first-class outcome, not an error. ``update_overview()["update"]`` is the ONE
 rendering every client shows (the version line, the hint, the action and its confirmation
 text), so the tray and both consoles say the same thing.
 
-Nothing here restarts the process — a finished upgrade sets ``restart_recommended`` and the
-caller (tray / console) offers the restart.
+A finished upgrade sets ``restart_recommended``. With ``auto_restart=True``, the
+worker requests a graceful relaunch after a successful install; otherwise the caller offers it.
 """
 
 from __future__ import annotations
@@ -405,12 +406,17 @@ def detect_install(
 
     direct = _direct_url_info()
     if isinstance(direct, dict) and isinstance(direct.get("dir_info"), dict) and direct["dir_info"].get("editable"):
+        # Switch this environment to the published wheel; never pull or modify the checkout.
+        supported = not (_in_docker() or environ.get("ABSTRACTGATEWAY_CONTAINER") or _externally_managed(pfx, base_prefix)) and bool(_dist_installed("pip") or shutil.which("uv"))
+        cmd = [exe, "-m", "pip", "--isolated", "install", "--index-url", "https://pypi.org/simple", "--no-cache-dir", "--upgrade", spec]
+        if not _dist_installed("pip") and shutil.which("uv"):
+            cmd = [str(shutil.which("uv")), "--no-config", "--no-cache", "pip", "install", "--python", exe, "--index-url", "https://pypi.org/simple", "--upgrade", spec]
         return info(
             "editable",
-            upgradable=False,
-            reason="installed from a source checkout (editable install): update it with `git pull` and reinstall",
-            command=None,
-            display=None,
+            upgradable=supported,
+            reason=None if supported else "This environment cannot install releases in place.",
+            command=cmd if supported else None,
+            display=" ".join(cmd) if supported else None,
         )
     if isinstance(direct, dict) and str(direct.get("url") or "").startswith("file:"):
         return info(
@@ -746,6 +752,7 @@ class _Job:
     error: Optional[str] = None
     log: Deque[str] = field(default_factory=lambda: deque(maxlen=LOG_TAIL_LINES))
     restart_recommended: bool = False
+    restart_error: Optional[str] = None
     version_before: Optional[str] = None
     version_after: Optional[str] = None
     # installer runs: the script, the release before/after and what moved ({name, from, to}
@@ -767,6 +774,7 @@ class _Job:
             "error": self.error,
             "log_tail": list(self.log),
             "restart_recommended": bool(self.restart_recommended),
+            "restart_error": self.restart_error,
             "version_before": self.version_before,
             "version_after": self.version_after,
             "installer": dict(self.installer) if self.installer else None,
@@ -933,10 +941,16 @@ def start_update(
     installer_sha256: Optional[str] = None,
     fetch_release: Any = None,
     snapshot: Any = None,
+    auto_restart: bool = False,
 ) -> Dict[str, Any]:
     """Launch the upgrade in the background. `runner(command, on_line) -> exit_code` and
     `snapshot(python) -> {name: version}` are injectable for tests. `installer_sha256` (the
     confirmation's) refuses to run an installer other than the one the admin reviewed."""
+    if auto_restart:
+        from . import host_control
+        capabilities = host_control.control_capabilities()
+        if not capabilities.get("restart"):
+            raise UpdateNotPossible(capabilities.get("reason") or "Automatic restart is unavailable.")
     # One start at a time, and the busy check BEFORE any preparation: preparing an installer
     # run writes a script, which must never happen while another run executes one.
     if not _start_lock.acquire(blocking=False):
@@ -945,12 +959,12 @@ def start_update(
         with _job_lock:
             if _job.state == "running":
                 raise UpdateJobBusy("an update is already running")
-        return _start_update_locked(info=info, runner=runner, installer_sha256=installer_sha256, fetch_release=fetch_release, snapshot=snapshot)
+        return _start_update_locked(info=info, runner=runner, installer_sha256=installer_sha256, fetch_release=fetch_release, snapshot=snapshot, auto_restart=auto_restart)
     finally:
         _start_lock.release()
 
 
-def _start_update_locked(*, info: Optional[InstallInfo], runner: Any, installer_sha256: Optional[str], fetch_release: Any, snapshot: Any) -> Dict[str, Any]:
+def _start_update_locked(*, info: Optional[InstallInfo], runner: Any, installer_sha256: Optional[str], fetch_release: Any, snapshot: Any, auto_restart: bool = False) -> Dict[str, Any]:
     global _job, _job_thread
     inst = info or detect_install()
     if not inst.upgradable:
@@ -993,6 +1007,11 @@ def _start_update_locked(*, info: Optional[InstallInfo], runner: Any, installer_
         # Subprocess-only hygiene (not gateway knobs): never block on a
         # prompt (private index credentials), never spam a progress bar or colors
         # into the log, never let pip nag about itself.
+        if inst.kind == "editable":
+            # The published index is the sole source, even when the shell configures
+            # a private index, local wheel directory or offline package-manager mode.
+            env = {key: value for key, value in env.items() if not key.startswith(("PIP_", "UV_"))}
+            env["PIP_CONFIG_FILE"] = os.devnull
         env.setdefault("PIP_NO_INPUT", "1")
         env.setdefault("PIP_PROGRESS_BAR", "off")
         env.setdefault("PIP_DISABLE_PIP_VERSION_CHECK", "1")
@@ -1094,7 +1113,18 @@ def _start_update_locked(*, info: Optional[InstallInfo], runner: Any, installer_
                 job.state = "failed"
                 job.error = f"the update command exited with code {code}"
 
-    _job_thread = threading.Thread(target=_work, name="gateway-self-update", daemon=True)
+    def _work_and_restart() -> None:
+        _work()
+        if auto_restart and job.state == "succeeded" and job.restart_recommended:
+            try:
+                from . import host_control
+                host_control.request_restart(by="online-update", reason="Update installed; automatic relaunch")
+            except Exception as exc:
+                with _job_lock:
+                    job.restart_error = str(exc)
+                    job.log.append(f"Installed successfully, but automatic restart failed: {exc}")
+
+    _job_thread = threading.Thread(target=_work_and_restart, name="gateway-self-update", daemon=True)
     _job_thread.start()
     return job_status()
 
@@ -1209,6 +1239,8 @@ def update_view(inst: InstallInfo, check: Optional[Dict[str, Any]], job: Dict[st
         hint = f"installed with the {FRAMEWORK_NAME} installer; to update, run in PowerShell: {inst.display_command}"
     elif installer:
         hint = f"installed with the {FRAMEWORK_NAME} installer; Update runs it again (the same script as the one-line install)"
+    elif inst.kind == "editable":
+        hint = "Updates install the published PyPI release in this environment. Your source checkout is left untouched."
     elif inst.kind:
         hint = f"installed with {inst.kind}"
     if status == "available":
@@ -1231,6 +1263,8 @@ def update_view(inst: InstallInfo, check: Optional[Dict[str, Any]], job: Dict[st
             }
         else:
             confirm = f"AbstractGateway {chk.get('latest')} is available (you have {inst.version}). Installing takes a minute or two; workflows keep running until you restart."
+            if inst.kind == "editable":
+                confirm += " This replaces the editable installation with the published PyPI package; your checkout files are not changed."
             action = {
                 "label": f"Update to {chk.get('latest')}",
                 "confirm": confirm,

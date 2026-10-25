@@ -357,6 +357,8 @@ class Element {{
       ).has(name),
     }};
   }}
+  querySelectorAll(selector) {{ return selector === "details[data-direction]" ? this.children.filter(c => c.dataset.direction) : []; }}
+  querySelector(selector) {{ if (selector === "tbody") return this._tbody || (this._tbody = new Element("tbody")); return null; }}
   // Attributes (the sign-in card and the switches set aria-busy /
   // aria-invalid / aria-checked through them).
   setAttribute(name, value) {{ (this._attrs || (this._attrs = {{}}))[name] = String(value); }}
@@ -948,7 +950,7 @@ await context.renderDefaults({{
 // state rather than a dead end, so the row is shown and savable. Hiding it let
 // the store hold a scene3d route (the TUI writes all 24) that this grid could
 // neither show nor clear.
-if (!el("defaults-table").children.some((child) => String(child.innerHTML || "").includes("scene3d"))) {{
+if (!el("defaults-table").children.flatMap(card => card.querySelector("tbody").children).some((child) => String(child.innerHTML || "").includes("scene3d"))) {{
   throw new Error("scene3d defaults must be visible in the Gateway Console");
 }}
 // THE ROUTE HIERARCHY, NOT HIDDEN ROWS (operator question 2026-08-01:
@@ -958,17 +960,18 @@ if (!el("defaults-table").children.some((child) => String(child.innerHTML || "")
 // (`_resolved_vision_backend`, `_vision_route_defaults`) — and it is the
 // row a fresh install seeds. They are shown as parents now: grouped,
 // labeled for what they serve, and benign when the task rows cover them.
-const defaultRowsHtml = el("defaults-table").children.map((child) => String(child.innerHTML || ""));
-const imageParentIdx = defaultRowsHtml.findIndex((html) => html.includes("<code>output.image</code>"));
+const defaultNodes = el("defaults-table").children.flatMap(card => card.querySelector("tbody").children);
+const defaultRowsHtml = defaultNodes.map((child) => String(child.innerHTML || ""));
+const imageParentIdx = defaultRowsHtml.findIndex((html) => html.includes('data-route="output.image"'));
 if (imageParentIdx < 0) {{
   throw new Error("the output.image parent row must be shown — it is what a fresh install seeds and what advertising reads");
 }}
-if (!defaultRowsHtml[imageParentIdx].includes("any image task (fallback)")) {{
+if (!defaultRowsHtml[imageParentIdx].includes("Default for all image tasks")) {{
   throw new Error("the parent row must say what it is for, or it reads as a duplicate key");
 }}
 for (const [offset, task] of [".text_to_image", ".image_to_image", ".image_upscale"].entries()) {{
   const html = defaultRowsHtml[imageParentIdx + 1 + offset] || "";
-  if (!html.includes("capability-route-task") || !html.includes("<code>" + task + "</code>")) {{
+  if (!html.includes("capability-modality") || !html.includes('data-route="output.image' + task + '"')) {{
     throw new Error("task row " + task + " must render indented immediately under its output.image parent");
   }}
 }}
@@ -982,7 +985,7 @@ if (!upscaleHtml.includes("inherited ← output.image")) {{
 if (upscaleHtml.includes(">not configured<")) {{
   throw new Error("an inherited task row must not also claim to be unconfigured");
 }}
-const videoParentIdx = defaultRowsHtml.findIndex((html) => html.includes("<code>output.video</code>"));
+const videoParentIdx = defaultRowsHtml.findIndex((html) => html.includes('data-route="output.video"'));
 if (videoParentIdx < 0) {{
   throw new Error("the output.video parent row must be shown");
 }}
@@ -997,14 +1000,14 @@ if (defaultRowsHtml[videoParentIdx].includes(">not configured<")) {{
 // ...and it stays SETTABLE: one value for every video task is the simple
 // path, so the row must not be dressed read-only the way a derived or
 // covered-by-input.text row is.
-const videoParentNode = el("defaults-table").children[videoParentIdx];
+const videoParentNode = defaultNodes[videoParentIdx];
 if (String(videoParentNode.className || "").includes("capability-derived")) {{
   throw new Error("a covered parent must stay editable — setting it is the one-value-for-every-task path");
 }}
-if (!el("defaults-table").children.some((child) => String(child.innerHTML || "").includes("derived"))) {{
+if (!el("defaults-table").children.flatMap(card => card.querySelector("tbody").children).some((child) => String(child.innerHTML || "").includes("derived"))) {{
   throw new Error("output.text should render as derived from input.text (one vocabulary across every console: 'derived <- input.text' / 'covered by input.text', matching both TUIs)");
 }}
-if (!el("defaults-table").children.some((child) => String(child.innerHTML || "").includes("covered"))) {{
+if (!el("defaults-table").children.flatMap(card => card.querySelector("tbody").children).some((child) => String(child.innerHTML || "").includes("covered"))) {{
   throw new Error("input.image should render as covered by a vision-capable input.text model");
 }}
 // THE SANDBOX CHAT IS THE KIT ISLAND (islands mountSandboxChat). The node VM

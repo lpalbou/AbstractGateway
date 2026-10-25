@@ -29484,6 +29484,7 @@ async def host_update_check(request: Request) -> Dict[str, Any]:
 
 
 class _HostUpdateStartRequest(BaseModel):
+    auto_restart: bool = False
     # The sha256 of the installer the admin reviewed (the action's `installer_sha256`): the
     # update refuses to run another one. Required for an installer install (409 "check again
     # first" without it); package installs (pip, pipx, uv) ignore it.
@@ -29502,7 +29503,7 @@ async def host_update_start(request: Request, req: Optional[_HostUpdateStartRequ
     sha = req.installer_sha256 if req else None
 
     def _run() -> Dict[str, Any]:
-        self_update.start_update(installer_sha256=sha)
+        self_update.start_update(installer_sha256=sha, auto_restart=bool(req and req.auto_restart))
         return self_update.update_overview(check=False)
 
     try:

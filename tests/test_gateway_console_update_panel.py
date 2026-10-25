@@ -23,7 +23,7 @@ def _functions() -> str:
 
     html = gateway_console_html()
     render = html[html.index("function renderGatewayUpdate(upd) {"):html.index("async function loadGatewayHost() {")]
-    start = html[html.index("async function startGatewayUpdate() {"):html.index("function _pollGatewayUpdate() {")]
+    start = html[html.index("async function startGatewayUpdate(options = {}) {"):html.index("function _pollGatewayUpdate() {")]
     return render + "\n" + start
 
 

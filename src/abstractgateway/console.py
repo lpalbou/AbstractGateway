@@ -1066,7 +1066,25 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	       from Create entity) and sits earlier in the DOM, so with the same z-index it was painted
 	       UNDER the dialog that asked (the Summon confirm was invisible; adversary F4). */
 	    #confirm-backdrop { z-index: calc(var(--z-connect-modal, 1000) + 50) !important; }
-	    .modal-backdrop {
+
+        .modal.gateway-about { width: min(820px, 100%); padding: 26px; box-sizing: border-box; }
+        .gateway-about h2, .gateway-about h3 { margin: 0 0 10px; }
+        .modal.gateway-about h2 { font-size: 24px; }
+        .modal.gateway-about h3 { font-size: 18px; }
+        .gateway-about p { line-height: 1.6; color: var(--text-secondary); }
+        .gateway-about section { margin-top: 20px; padding: 20px; border: 1px solid var(--ui-border-1); border-radius: 14px; background: var(--ui-surface-1); }
+        .gateway-about-resources { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 10px; }
+        .gateway-about-resources a { display: block; padding: 16px; border: 1px solid var(--ui-border-1); border-radius: 10px; color: var(--text-primary); text-decoration: none; }
+        .gateway-about-resources a:hover { border-color: var(--info); background: var(--ui-surface-2); }
+        .gateway-about-resources small { display: block; margin-top: 5px; color: var(--text-secondary); line-height: 1.5; }
+        .gateway-about .about-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px; }
+        .about-release-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 18px 0; }
+        .gateway-about .state-pill.warn { color: var(--warning); background: color-mix(in srgb, var(--warning) 10%, transparent); border-color: color-mix(in srgb, var(--warning) 30%, transparent); }
+        .gateway-about .state-pill { font-weight: 650; padding: 5px 12px; }
+        .gateway-about .about-actions button { min-height: 40px; border-radius: 10px; }
+        .gateway-about #gateway-about-hint { font-size: 12px; }
+        .gateway-about pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; }
+    .modal-backdrop {
 	      position: fixed;
 	      inset: 0;
       /* Above the nav drawer and the assistant drawer (kit --z-drawer 900):
@@ -1254,6 +1272,54 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .capability-route-task { padding-left: 18px; }
 	    .capability-route-task::before { content: "└"; position: absolute; margin-left: -14px; opacity: 0.55; }
 	    tr.capability-task-row td:first-child { position: relative; }
+        /* Capability directions are chapter breaks, not another data row. */
+
+        .capability-cards { display: grid; gap: 18px; }
+        .capability-card { border: 1px solid var(--ui-border-2); border-radius: 16px; overflow: hidden; background: var(--ui-surface-1); }
+        .capability-card > summary { display: flex; align-items: center; gap: 14px; padding: 20px; cursor: pointer; list-style: none; }
+        .capability-card > summary::-webkit-details-marker { display: none; }
+        .capability-card > summary:hover { background: var(--ui-surface-2); }
+        .capability-card > summary:focus-visible { outline: 2px solid var(--info); outline-offset: -3px; }
+        .capability-card[open] > summary { border-bottom: 1px solid var(--ui-border-1); }
+        .capability-chevron { color: var(--text-secondary); transition: transform .15s; }
+        .capability-card:not([open]) .capability-chevron { transform: rotate(-90deg); }
+        .capability-card-body { padding: 0 12px 12px; }
+        .capability-card[data-direction="output"] .capability-section-mark { color: #87baff; background: rgba(135,186,255,.1); }
+        .capability-card[data-direction="embedding"] .capability-section-mark { color: #c0a8f4; background: rgba(192,168,244,.1); }
+        .capability-modality { display: inline-flex; gap: 10px; align-items: center; font-weight: 500; }
+        .capability-modality-icon { display: inline-flex; color: #70d5bb; padding: 7px; border-radius: 9px; background: rgba(112,213,187,.07); }
+        .capability-modality-icon svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+        [data-direction="output"] .capability-modality-icon { color: #87baff; background: rgba(135,186,255,.07); }
+        [data-direction="embedding"] .capability-modality-icon { color: #c0a8f4; background: rgba(192,168,244,.07); }
+        .capability-task-row .capability-modality { margin-left: 12px; font-size: 12px; }
+        @media (max-width: 600px) { .capability-card > summary { padding: 14px; } .capability-section-count { display: none; } .capability-chevron { margin-left: auto; } }
+        .capability-table { border-collapse: separate; border-spacing: 0; }
+        .capability-table thead th { font-size: 11px; letter-spacing: .08em; color: var(--text-secondary); padding: 12px 10px; }
+        .capability-table tbody td { padding: 13px 10px; vertical-align: middle; }
+        .capability-table tbody tr:not(.capability-section):hover td { background: color-mix(in srgb, var(--text-primary) 3%, transparent); }
+        .capability-table .capability-section th { padding: 26px 10px 12px; text-align: left; border-bottom: 1px solid var(--ui-border-1); }
+        .capability-table .capability-section:first-child th { padding-top: 12px; }
+        .capability-section-heading { display: flex; align-items: center; gap: 12px; }
+        .capability-section-mark { display: grid; place-items: center; flex: 0 0 34px; width: 34px; height: 34px; border-radius: 10px; font-size: 20px; color: #70d5bb; background: rgba(112,213,187,.10); }
+        .capability-section[data-direction="output"] .capability-section-mark { color: #87baff; background: rgba(135,186,255,.10); }
+        .capability-section[data-direction="embedding"] .capability-section-mark { color: #c0a8f4; background: rgba(192,168,244,.10); }
+        .capability-section-title { color: var(--text-primary); font-size: 16px; font-weight: 650; letter-spacing: 0; text-transform: none; }
+        .capability-section-description { display: block; margin-top: 3px; font-size: 12px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--text-secondary); }
+        .capability-section-count { margin-left: auto; font-size: 12px; font-weight: 400; color: var(--text-secondary); letter-spacing: 0; text-transform: none; }
+        .capability-table .capability-name-cell { font-weight: 550; }
+        .capability-table .capability-name-cell .muted { display: block; font-size: 12px; font-weight: 400; margin-top: 4px; }
+        .capability-table .capability-route-cell code { color: var(--text-secondary); background: transparent; border: 0; padding: 0; font-size: 11px; }
+        .capability-table .capability-task-row .capability-name-cell { font-weight: 400; }
+        .capability-table .capability-task-row td { padding-top: 10px; padding-bottom: 10px; }
+        .capability-table .capability-task-row td:first-child { border-left: 2px solid rgba(135,186,255,.22); }
+        .capability-provider-name { display: block; font-weight: 500; }
+        .capability-provider-id { display: block; margin-top: 3px; font-size: 11px; color: var(--text-secondary); overflow-wrap: anywhere; }
+        .capability-table .weights-reason { font-size: 12px; line-height: 1.4; max-width: 20ch; }
+        .capability-table .state-pill { font-size: 11px; }
+        .capability-table td.actions { white-space: nowrap; }
+        .capability-table.ui-stacked:not(#ui-none) > tbody > tr.capability-section { display: block; padding: 20px 0 0; border: 0; }
+        .capability-table.ui-stacked .capability-section th { display: block; width: 100%; box-sizing: border-box; padding: 12px; }
+        .capability-table.ui-stacked .capability-section-count { display: none; }
 	    .default-config-form, .provider-config-form { display: grid; gap: 12px; margin-top: 16px; }
 	    .provider-modal .provider-config-form {
 	      grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2072,9 +2138,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      </div>
 	    </nav>
 	    <div class="shell_sidebar_foot">
-	      <button id="open-setup" class="shell_setup af-nav-footer__button session-only hidden" type="button" title="Run the setup guide again: engines, default models, apps, network. Keeps your current choices unless you replace them." aria-describedby="open-setup-help"><span class="shell_nav_icon" aria-hidden="true">⚑</span><span>Setup</span></button>
+	      <button id="open-setup" class="shell_setup af-nav-footer__button session-only hidden" type="button" title="Run the setup guide again: engines, default models, apps, network. Keeps your current choices unless you replace them." aria-describedby="open-setup-help"><span class="shell_nav_icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m4 20 12-12 4 4L8 24M14 10l4 4M5 3v6M2 6h6M18 1v4M16 3h4"/></svg></span><span>Wizard</span></button>
 	      <span id="open-setup-help" class="sr-only">Run the setup guide again: engines, default models, apps, network. Keeps your current choices unless you replace them.</span>
-	      <label class="ui-switch" title="Show commands, route ids and other technical details"><input id="sidebar-advanced" type="checkbox"><span>Technical details</span></label>
 	    </div>
 	  </aside>
 	  <div id="nav-backdrop" class="shell_nav_backdrop" aria-hidden="true"></div>
@@ -2504,10 +2569,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	               their own model is not a gap, and saying so in red is a false
 	               alarm nobody can clear. See `renderAvailabilityBanner`. -->
 	          <div id="defaults-availability" class="message hidden"></div>
-		          <table class="capability-table">
-		            <thead><tr><th>Route</th><th>Capability</th><th>Provider</th><th>Model</th><th>Weights</th><th>Source</th><th>Status</th><th>Actions</th></tr></thead>
-		            <tbody id="defaults-table"></tbody>
-		          </table>
+          <div id="defaults-table" class="capability-cards"></div>
 	          <div id="defaults-message" class="message"></div>
 	        </section>
 	      </div>
@@ -2950,7 +3012,36 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	  </main>
 	  </div><!-- /shell_main -->
 	  </div><!-- /shell -->
-	  <div id="default-modal-backdrop" class="modal-backdrop hidden" role="presentation">
+
+  <div id="gateway-about-backdrop" class="modal-backdrop hidden" role="presentation">
+    <div class="modal gateway-about" role="dialog" aria-modal="true" aria-labelledby="gateway-about-title">
+      <div style="display:flex;justify-content:space-between;gap:16px;align-items:center">
+        <h2 id="gateway-about-title">About AbstractGateway</h2>
+        <button type="button" class="secondary" id="gateway-about-close" aria-label="Close About">×</button>
+      </div>
+      <p>A shared home for your agents, tools and AI providers — across your apps and devices.</p>
+      <div id="gateway-about-versions"></div>
+      <p>Created by <strong>Laurent-Philippe Albou, PhD</strong> · <a href="mailto:contact@abstractframework.ai">Contact</a> · MIT License</p>
+      <section>
+        <h3>Gateway &amp; Web Console</h3>
+        <p>Check online for published releases. Install an update and relaunch in one step.</p>
+        <p>The web console is included with AbstractGateway. Updating the gateway updates both on this host.</p>
+        <div class="about-release-row"><span id="gateway-about-update-badge" class="state-pill">Not checked</span><span id="gateway-about-status" role="status" aria-live="polite">Sign in as an administrator to check for updates.</span></div>
+        <p id="gateway-about-hint"></p>
+        <div class="about-actions">
+          <button type="button" class="secondary" id="gateway-about-check">Check for updates</button>
+          <button type="button" id="gateway-about-install" class="hidden">Update</button>
+          <button type="button" class="secondary hidden" id="gateway-about-restart">Restart gateway</button>
+          <button type="button" class="secondary" id="gateway-about-refresh">Reload console</button>
+        </div>
+        <p id="gateway-about-message" role="status" aria-live="polite"></p>
+        <details id="gateway-about-log-box" class="hidden"><summary>Update details</summary><pre id="gateway-about-log"></pre></details>
+      </section>
+      <section><h3>Resources</h3><div id="gateway-about-resources" class="gateway-about-resources"></div></section>
+      <p style="font-size:12px">© 2023–2026 Laurent-Philippe Albou, PhD. Released under the MIT License.</p>
+    </div>
+  </div>
+  <div id="default-modal-backdrop" class="modal-backdrop hidden" role="presentation">
 	    <div class="modal flow-modal default-modal" role="dialog" aria-modal="true" aria-labelledby="default-modal-title">
 	      <div class="modal-header">
 	        <h2 id="default-modal-title">Configure capability default</h2>
@@ -12050,7 +12141,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // (host pause / desktop tray / restart / update). Reads render
 	    // for every signed-in user; mutations are admin-gated at render time.
 	    function _gwFmtWhen(iso) { try { const d = new Date(iso); return isNaN(d) ? String(iso || "") : d.toLocaleString(); } catch { return String(iso || ""); } }
-	    function _gwMsg(text, kind) { const msg = $("gateway-host-message"); if (!msg) return; msg.textContent = text || ""; msg.className = kind ? `message ${kind}` : "message"; }
+	    function _gwMsg(text, kind) { const aboutMsg = $("gateway-about-message"); if (aboutMsg) aboutMsg.textContent = text || ""; const msg = $("gateway-host-message"); if (!msg) return; msg.textContent = text || ""; msg.className = kind ? `message ${kind}` : "message"; }
 	    function renderPausedBanner(runner) {
 	      const el = $("paused-banner");
 	      if (!el) return;
@@ -12124,8 +12215,64 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // The gateway renders the update state ONCE (`update`: status, line, hint, action with
 	    // its command, source and confirmation) for the web console, the terminal console and
 	    // the tray; this panel shows it and the job's log.
-	    function renderGatewayUpdate(upd) {
+
+        function renderGatewayAboutUpdate() {
+          const admin = !!(state.principal && state.principal.admin);
+          $("gateway-about-check").classList.toggle("hidden", !admin);
+          const upd = admin ? state.hostUpdate : null;
+          const view = (upd && upd.update) || {};
+          const job = (upd && upd.job) || {};
+          const statusLabels = {available:"Update available",up_to_date:"Up to date",running:"Installing",installed:"Installed",failed:"Update failed",offline:"Offline",not_checked:"Not checked",not_possible:"Update available",error:"Check failed",no_change:"No change"};
+          const badge = $("gateway-about-update-badge");
+          badge.textContent = statusLabels[view.status] || "Not checked";
+          badge.className = "state-pill " + (view.status === "up_to_date" || view.status === "installed" ? "ok" : view.status === "available" ? "warn" : view.status === "failed" || view.status === "error" ? "error" : "");
+          $("gateway-about-status").textContent = admin ? (view.line || "Check for the latest release for this installation.") : "Sign in as an administrator to check for updates.";
+          $("gateway-about-hint").textContent = view.hint || "";
+          const install = $("gateway-about-install");
+          install.classList.toggle("hidden", !(admin && view.action && view.status === "available") || job.state === "running");
+          install.textContent = view.action ? "Update & relaunch" : "Update";
+          $("gateway-about-check").disabled = job.state === "running";
+          $("gateway-about-restart").classList.toggle("hidden", !(admin && job.restart_recommended));
+          $("gateway-about-log-box").classList.toggle("hidden", !admin || !job.command && !(job.log_tail || []).length && !job.error);
+          $("gateway-about-log").textContent = [job.state === "running" ? "Updating…" : "", ...(job.log_tail || []), job.error || ""].filter(Boolean).join("\\n");
+          if (job.state === "failed") $("gateway-about-log-box").open = true;
+        }
+        async function openGatewayAbout() {
+          const identity = islands.about && islands.about.identity;
+          if (!identity) return;
+          $("gateway-about-versions").textContent = "AbstractGateway " + GATEWAY_ABOUT.version + " · Console included" + (GATEWAY_ABOUT.framework ? " · AbstractFramework " + GATEWAY_ABOUT.framework : "");
+          const links = [
+            ["Documentation", "Setup, configuration and API guides.", identity.docs],
+            ["Releases", "Release history and available versions.", identity.repo + "/releases"],
+            ["Report an issue", "Bugs, questions and feature requests.", identity.issues],
+            ["Source code", "Explore and contribute to AbstractGateway.", identity.repo],
+            ["Website", "Explore AbstractFramework.", identity.website],
+            ["Feedback", "Share your ideas and experience.", identity.feedback]
+          ];
+          $("gateway-about-resources").innerHTML = links.map(([title, detail, url]) => `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer"><strong>${esc(title)} ↗</strong><small>${esc(detail)}</small></a>`).join("");
+          const close = () => { _closeModal("gateway-about-backdrop"); $("gateway-about-open")?.focus(); };
+          $("gateway-about-close").onclick = close;
+          $("gateway-about-refresh").onclick = () => window.location.reload();
+          $("gateway-about-check").onclick = async () => {
+            $("gateway-about-check").disabled = true;
+            $("gateway-about-status").textContent = "Checking for updates…";
+            await checkGatewayUpdate();
+            renderGatewayAboutUpdate();
+          };
+          $("gateway-about-install").onclick = () => startGatewayUpdate({ autoRestart: true });
+          $("gateway-about-restart").onclick = restartGateway;
+          $("gateway-about-message").textContent = "";
+          renderGatewayAboutUpdate();
+          _openModal("gateway-about-backdrop", close);
+          $("gateway-about-close").focus();
+          if (state.principal && state.principal.admin) {
+            try { renderGatewayUpdate(await api("/api/gateway/host/update")); if (state.hostUpdate?.job?.state === "running") _pollGatewayUpdate(); }
+            catch (e) { $("gateway-about-message").textContent = String(e.message || e); }
+          }
+        }
+    function renderGatewayUpdate(upd) {
 	      state.hostUpdate = upd || null;
+          if (typeof renderGatewayAboutUpdate === "function") renderGatewayAboutUpdate();
 	      const el = $("gateway-host-version"); if (!el || !upd) return;
 	      const view = upd.update || {}; const job = upd.job || {};
 	      let text = String(view.line || upd.current || "?");
@@ -12238,17 +12385,20 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      catch (e) { _gwMsg(String(e.message || e), "error"); }
 	      finally { btn.disabled = false; }
 	    }
-	    async function startGatewayUpdate() {
+	    async function startGatewayUpdate(options = {}) {
 	      const upd = state.hostUpdate || {}; const action = (upd.update && upd.update.action) || null;
 	      if (!action) return;
-	      const ok = await confirmAction({ title: "Update available", message: action.confirm, confirmLabel: "Update now" });
+	      const ok = await confirmAction({ title: "Update available", message: action.confirm + (options.autoRestart ? " The gateway will relaunch automatically when installation completes; this page will reconnect." : ""), confirmLabel: options.autoRestart ? "Update & relaunch" : "Update now" });
 	      if (!ok) return;
 	      const body = action.installer_sha256 ? { installer_sha256: action.installer_sha256 } : {};
+          if (options.autoRestart) { body.auto_restart = true; state.updateReconnectUntil = Date.now() + 2400000; }
 	      try { renderGatewayUpdate(await api("/api/gateway/host/update/start", { method: "POST", body: JSON.stringify(body) })); _gwMsg(""); _pollGatewayUpdate(); }
 	      catch (e) {
 	        // Refused (the installer changed, one already runs, check again first): the offer
 	        // is stale, so drop it like the tray does; the next step is a new check.
-	        if (upd.update) upd.update.action = null;
+	        state.updateReconnectUntil = 0;
+            if (upd.update) upd.update.action = null;
+            if (typeof renderGatewayAboutUpdate === "function") renderGatewayAboutUpdate();
 	        $("gateway-host-update-start").classList.add("hidden");
 	        _gwMsg(`${String(e.message || e)}. Check now to check again.`, "error");
 	      }
@@ -12257,7 +12407,17 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (typeof setTimeout === "undefined") return;
 	      setTimeout(async () => {
 	        if (!state.principal) return;
-	        try { const upd = await api("/api/gateway/host/update"); renderGatewayUpdate(upd); if (upd.job && upd.job.state === "running") _pollGatewayUpdate(); } catch {}
+	        try {
+            const upd = await api("/api/gateway/host/update");
+            renderGatewayUpdate(upd);
+            if (state.updateReconnectUntil && upd.job?.state === "idle") { state.updateReconnectUntil = 0; window.location.reload(); return; }
+            if (upd.job?.state === "failed" || upd.job?.state === "succeeded_no_change" || upd.job?.restart_error) state.updateReconnectUntil = 0;
+            if (upd.job?.restart_error) _gwMsg("Update installed, but automatic restart failed: " + upd.job.restart_error, "error");
+            if (upd.job?.state === "running" || state.updateReconnectUntil > Date.now()) _pollGatewayUpdate();
+          } catch (e) {
+            if (state.updateReconnectUntil > Date.now()) { _gwMsg("Gateway is restarting. Reconnecting…"); _pollGatewayUpdate(); }
+            else if (state.updateReconnectUntil) { state.updateReconnectUntil = 0; _gwMsg("Could not reconnect. Reload the console when the gateway is ready.", "error"); }
+          }
 	      }, 3000);
 	    }
 	    // Paused must be visible on EVERY tab: a light 15s poll while signed in
@@ -13552,13 +13712,58 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // Split out of renderDefaults so a download's progress can repaint the
 	    // grid without re-deriving the coverage/alias decorations (which cost a
 	    // model-discovery round trip per row).
-	    function renderDefaultRows(rows) {
+
+        function capabilityRouteLabel(row) {
+          const modality = defaultRowKindModality(row).modality;
+          const key = defaultRowKey(row);
+          const task = defaultRowParentKey(row) ? key.split(".").pop() : "";
+          const paths = {
+            text: '<path d="M4 5h16M12 5v14M8 19h8"/>',
+            image: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1"/><path d="m3 17 6-6 4 4 3-3 5 5"/>',
+            video: '<rect x="3" y="5" width="13" height="14" rx="3"/><path d="m16 10 5-3v10l-5-3"/>',
+            voice: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/>',
+            sound: '<path d="M4 9v6M8 5v14M12 2v20M16 5v14M20 9v6"/>',
+            music: '<path d="M9 18V5l11-2v13M9 8l11-2"/><ellipse cx="6" cy="18" rx="3" ry="2"/><ellipse cx="17" cy="16" rx="3" ry="2"/>',
+            scene3d: '<path d="m12 2 9 5v10l-9 5-9-5V7l9-5Zm0 10 9-5M12 12 3 7m9 5v10"/>'
+          };
+          const names = {text:"Text",image:"Image",video:"Video",voice:"Voice",sound:"Sound",music:"Music",scene3d:"3D scene"};
+          const tasks = {text_to_image:["Text → image","Generate an image from a text description."],image_to_image:["Image → image","Edit or transform an existing image."],image_upscale:["Upscale","Restore detail or increase image resolution."],text_to_video:["Text → video","Generate a video from a text description."],image_to_video:["Image → video","Animate an image into a video."]};
+          const label = task ? (tasks[task]?.[0] || task.replaceAll("_"," ")) : (names[modality] || modality);
+          const direction = defaultRowKindModality(row).kind;
+          const tip = task ? (tasks[task]?.[1] || defaultRowCapability(row)) : direction === "embedding" ? `Represent ${label.toLowerCase()} as vectors for search and retrieval.` : `${direction === "input" ? "Understand" : "Create"} ${label.toLowerCase()}.`;
+          return `<span class="capability-modality" data-route="${esc(key)}" tabindex="0" data-af-tip="${esc(tip)}" aria-label="${esc(label + ": " + tip)}"><span class="capability-modality-icon" aria-hidden="true">${svgIcon(task === "image_upscale" ? '<path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5M8 8l-5-5m13 5 5-5M8 16l-5 5m13-5 5 5"/>' : paths[modality] || paths.text)}</span><span>${esc(label)}</span></span>`;
+        }
+    function renderDefaultRows(rows) {
 	      const payload = { source: state.defaultsSource || "" };
-	      const tbody = $("defaults-table");
-	      tbody.textContent = "";
-	      for (const row of groupDefaultRowsByHierarchy(rows)) {
+	      const cards = $("defaults-table");
+          const expanded = new Map([...cards.querySelectorAll("details[data-direction]")].map(card => [card.dataset.direction, card.open]));
+          cards.textContent = "";
+          let tbody = null;
+          const orderedRows = groupDefaultRowsByHierarchy(rows);
+          const directions = [...new Set(orderedRows.map(row => defaultRowKindModality(row).kind))];
+          const directionOrder = ["input", "output", "embedding", ...directions.filter(k => !["input", "output", "embedding"].includes(k))];
+          let previousDirection = null;
+	      for (const row of directionOrder.flatMap(kind => orderedRows.filter(row => defaultRowKindModality(row).kind === kind))) {
 	        const key = defaultRowKey(row);
 	        if (!key || key === ".") continue;
+            const direction = defaultRowKindModality(row).kind;
+            if (direction !== previousDirection) {
+              const labels = {
+                input: ["↓", "Inputs", "What your agents can understand"],
+                output: ["↑", "Outputs", "What your agents can create"],
+                embedding: ["◇", "Embeddings", "Models for search and retrieval"],
+              };
+              const [mark, title, description] = labels[direction] || ["◇", direction || "Other capabilities", "Additional routes"];
+              const count = orderedRows.filter(item => defaultRowKindModality(item).kind === direction).length;
+              const section = document.createElement("details");
+              section.className = "capability-card";
+              section.dataset.direction = direction;
+              section.open = expanded.get(direction) ?? (direction === "input");
+              section.innerHTML = `<summary><span class="capability-section-mark" aria-hidden="true">${mark}</span><span><span class="capability-section-title">${esc(title)}</span><span class="capability-section-description">${esc(description)}</span></span><span class="capability-section-count">${count} capabilities</span><span class="capability-chevron" aria-hidden="true">⌄</span></summary><div class="capability-card-body"><table class="capability-table"><thead><tr><th>Modality</th><th>Provider</th><th>Model</th><th>Weights</th><th>Source</th><th>Status</th><th>Actions</th></tr></thead><tbody></tbody></table></div>`;
+              cards.append(section);
+              tbody = section.querySelector("tbody");
+              previousDirection = direction;
+            }
 	        const parentKey = defaultRowParentKey(row);
 	        const configured = defaultRowConfigured(row);
 	        const status = defaultRowStatus(row);
@@ -13575,12 +13780,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        // the tooltip and in every write path), and the parent says in words
 	        // what it is FOR — "any image task" — so the grid answers "why do we
 	        // have output.image AND output.image.text_to_image" on sight.
-	        const routeCell = parentKey
-	          ? `<span class="capability-route capability-route-task" title="${esc(key)}"><code>${esc(key.slice(parentKey.length))}</code></span>`
-	          : `<span class="capability-route"><code>${esc(key)}</code></span>`;
-	        const capabilityCell = defaultRowIsTaskParent(row)
-	          ? `${esc(defaultRowCapability(row))} <span class="muted">— any ${esc(defaultRowKindModality(row).modality)} task (fallback)</span>`
-	          : esc(defaultRowCapability(row));
+	        const routeCell = capabilityRouteLabel(row);
 	        // The stored reasoning effort is VISIBLE on the grid, not only inside
 	        // the edit modal (console-TUI parity: its route row says
 	        // "· reasoning high"). Text routes only — the field exists nowhere
@@ -13589,10 +13789,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          isTextGenerationDefault(row) && defaultReasoningValue(row)
 	            ? ` <span class="badge" title="Default reasoning effort for this route (edit via Configure)">reasoning ${esc(defaultReasoningValue(row))}</span>`
 	            : "";
+            const providerLabel = state.providerLabels.get(row.provider) || row.provider || "";
+            const providerName = providerLabel.replace(/\\s*\\([^)]*\\)$/, "");
+            const providerCell = row.provider
+              ? `<span class="capability-provider-name">${esc(providerName)}</span>${providerName !== row.provider ? `<span class="capability-provider-id">${esc(row.provider)}</span>` : ""}`
+              : `<span class="muted">—</span>`;
 	        tr.innerHTML = `
 	          <td class="capability-route-cell">${routeCell}</td>
-	          <td class="capability-name-cell">${capabilityCell}</td>
-	          <td>${row.provider ? esc(state.providerLabels.get(row.provider) || row.provider) : "-"}</td>
+	          <td>${providerCell}</td>
 	          <td>${row.model ? `<span class="ui-ellip" title="${esc(row.model)}">${esc(row.model)}</span>` + reasoningBadge : "-"}</td>
 	          <td class="capability-weights-cell">${weightsCellMarkup(row)}</td>
 	          <td class="capability-source-cell">${source ? `<span class="capability-source">${esc(source)}</span>` : "-"}</td>
@@ -13671,10 +13875,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        tr.append(actions);
 	        tbody.append(tr);
 	      }
-	      if (!tbody.children.length) {
-	        const tr = document.createElement("tr");
-	        tr.innerHTML = `<td colspan="8" class="empty">No capability routes were returned by Gateway.</td>`;
-	        tbody.append(tr);
+	      if (!cards.children.length) {
+            cards.textContent = "No capability routes were returned by Gateway.";
 	      }
 	    }
 	    function sandboxRouteMode(key) {

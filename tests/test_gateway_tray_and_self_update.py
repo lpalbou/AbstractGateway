@@ -111,9 +111,11 @@ def test_detect_install_classifies_editable_docker_pipx_uv_and_pip(tmp_path: Pat
     monkeypatch.setattr(self_update, "_in_docker", lambda: False)
     monkeypatch.setattr(self_update.shutil, "which", lambda name: f"/bin/{name}")
 
+    monkeypatch.setattr(self_update, "_dist_installed", lambda name: True)
     _fake_direct_url(monkeypatch, {"dir_info": {"editable": True}, "url": "file:///src"})
     info = self_update.detect_install(executable="/py", prefix="/venv", env={}, data_dir=tmp_path / "no-installer")
-    assert info.kind == "editable" and info.upgradable is False and "git pull" in str(info.reason)
+    assert info.kind == "editable" and info.upgradable is True
+    assert info.command == ["/py", "-m", "pip", "--isolated", "install", "--index-url", "https://pypi.org/simple", "--no-cache-dir", "--upgrade", "abstractgateway[apple]"]
 
     _fake_direct_url(monkeypatch, None)
     monkeypatch.setattr(self_update, "_in_docker", lambda: True)
