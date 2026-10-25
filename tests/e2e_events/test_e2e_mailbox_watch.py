@@ -14,12 +14,8 @@ arrives".
 
 Hermetic: AbstractCore's fake IMAP/SMTP servers (example.test addresses, a throwaway CA), the
 scripted model double, a scratch data folder and HOME. The live run between the operator's own two
-mailboxes is described in docs/events-examples.md.
-
-The SECOND-mailbox form (`config.account: "second"`) is accepted by the gateway (backlog 1044) but
-refused by AbstractRuntime's `email.received@1` config validation (`account must be 'self'`,
-`abstractruntime/triggers/email_received.py`); that test is a strict xfail until the runtime accepts
-mailbox ids — it turns red (XPASS) the day it does, so the marker cannot outlive the fix."""
+mailboxes is described in docs/events-examples.md. The SECOND-mailbox form (`config.account: "second"`)
+is accepted by the gateway (backlog 1044) and by AbstractRuntime's `email.received@1` (runtime f88a216)."""
 
 from __future__ import annotations
 
@@ -128,7 +124,6 @@ def test_an_important_mail_reaches_the_tray(live, imap, smtp) -> None:
     _watch_and_reach_the_tray(client, model, account="self", server=imap, address=ADMIN_ADDR)
 
 
-@pytest.mark.xfail(strict=True, reason="seam W1: AbstractRuntime's email.received@1 refuses config.account other than 'self'")
 def test_an_important_mail_in_the_second_mailbox_reaches_the_tray(live, imap, imap_bob, smtp) -> None:
     client, model = live
     assert client.put("/api/gateway/me/email", headers=HEADERS, json=connect_body(ADMIN_ADDR, imap, smtp)).status_code == 200
