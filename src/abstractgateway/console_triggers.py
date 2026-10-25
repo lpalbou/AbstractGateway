@@ -78,6 +78,11 @@ TRIGGERS_CSS = r"""
 .trg-fire.is-ok { color: var(--success, #2f9e44); }
 .trg-fire.is-failed { color: var(--error, #d6336c); }
 .trg-empty { padding: 14px 2px; color: var(--muted); }
+.trg-empty.is-error { color: var(--error, #d6336c); }
+.trg-loading { display: inline-flex; align-items: center; gap: 8px; }
+.trg-spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid color-mix(in srgb, currentColor 25%, transparent); border-top-color: currentColor; animation: trg-spin .8s linear infinite; flex: none; }
+@keyframes trg-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .trg-spinner { animation: none; } }
 .trg-detail > td { padding: 4px 10px 14px; border-top: 0; }
 .trg-detail__box { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: var(--ui-surface-1, transparent); }
 .trg-detail__head { margin: 0; font-weight: 600; font-size: var(--font-size-base); }
@@ -386,7 +391,7 @@ TRIGGERS_JS = r"""
           + `<p class="trg-help">Senders sign each request with this connection's secret (Standard Webhooks). The secret was shown once, when the connection was created.</p>`;
       }
       html += `<p class="trg-detail__head">Recent events</p>`;
-      if (d.loading) return html + `<p class="trg-empty">Reading the events...</p></div>`;
+      if (d.loading) return html + `<p class="trg-empty">${trgLoadingMarkup("Reading the events...")}</p></div>`;
       if (d.error) return html + `<p class="message error">Could not read the events: ${esc(d.error)}</p></div>`;
       html += triggerEventsMarkup(d.events || []);
       return html + `</div>`;
@@ -437,7 +442,7 @@ TRIGGERS_JS = r"""
         if (trgAdmin()) {
           const sw = afSwitchCreate({ id: "triggers-all", label: "All accounts", checked: false, small: true });
           slot.append(...sw.nodes);
-          afSwitchBind(sw.button, async (next) => { trg.all = next; trg.expanded = {}; await loadTriggers(); return next; }, (e) => trgMessage(trgErr(e), "error"));
+          afSwitchBind(sw.button, async (next) => { trg.all = next; trg.expanded = {}; trg.rows = null; await loadTriggers(); return next; }, (e) => trgMessage(trgErr(e), "error"));
         }
       }
       loadTriggers();
@@ -452,7 +457,14 @@ TRIGGERS_JS = r"""
         trg.sourcesError = trgErr(e);
       }
     }
+    // The loading state of a list (spinner + "Reading …"), shared by Triggers, Events and My email:
+    // a list is never shown empty, nor as its empty state, while its answer is pending.
+    function trgLoadingMarkup(text) {
+      return `<span class="trg-loading" role="status" aria-busy="true"><span class="trg-spinner" aria-hidden="true"></span>${esc(text)}</span>`;
+    }
     async function loadTriggers() {
+      // First read (or a new view): the list shows the loading state until connections AND mailboxes answered.
+      if (!trg.rows || trg.error) { trg.rows = null; trg.error = ""; if (!trg.all) trg.mailboxes = null; renderTriggers(); }
       await loadTriggerSources();
       try {
         const out = await api(`/api/gateway/triggers/connections${trg.all ? "?all=true" : ""}`);
@@ -497,8 +509,8 @@ TRIGGERS_JS = r"""
       if (!body) return;
       $("triggers-account-head").hidden = !trg.all;
       const cols = trg.all ? 5 : 4;
-      if (trg.error) { body.innerHTML = `<tr><td colspan="${cols}" class="trg-empty">Could not list the connections: ${esc(trg.error)}</td></tr>`; return; }
-      if (!trg.rows) { body.innerHTML = `<tr><td colspan="${cols}" class="trg-empty">Reading the connections...</td></tr>`; return; }
+      if (trg.error) { body.innerHTML = `<tr><td colspan="${cols}" class="trg-empty is-error" role="alert">Could not list the connections: ${esc(trg.error)}</td></tr>`; return; }
+      if (!trg.rows || (!trg.all && trg.mailboxes === null)) { body.innerHTML = `<tr><td colspan="${cols}" class="trg-empty">${trgLoadingMarkup(trg.all ? "Reading the connections..." : "Reading your connections and mailboxes...")}</td></tr>`; return; }
       body.innerHTML = triggersRowsMarkup(trg.rows, { all: trg.all, sources: trg.sources || [], expanded: trg.expanded, fire: trg.fire, mailboxes: trg.mailboxes || [], automations: trg.all ? null : trg.automations });
       if (trg.sourcesError) trgMessage(`Could not read the trigger sources: ${trg.sourcesError}`, "error");
       else if (!trg.all && trg.mailboxesError) trgMessage(`Could not read your mailboxes: ${trg.mailboxesError}`, "error");

@@ -225,6 +225,7 @@ MAILBOXES_JS = r"""
       if (!card) throw new Error("The account email UI has no #my-mailboxes-card (console_mailboxes.py).");
       card.hidden = !mbxOwnPage();
       if (!mbxOwnPage()) return;
+      if (!mbx.items || mbx.error) { mbx.items = null; mbx.error = ""; renderMyMailboxes(); }  // the loading state, never an empty list
       loadMailboxOAuthClients();
       try {
         const out = await api("/api/gateway/me/email/accounts");
@@ -240,7 +241,7 @@ MAILBOXES_JS = r"""
     function renderMyMailboxes() {
       const list = $("my-mailboxes-list");
       if (mbx.error) { list.innerHTML = `<p class="af-form__error">Could not list your mailboxes: ${esc(mbx.error)}</p>`; return; }
-      if (!mbx.items) { list.innerHTML = `<p class="mbx-empty">Reading your mailboxes...</p>`; return; }
+      if (!mbx.items) { list.innerHTML = `<p class="mbx-empty">${trgLoadingMarkup("Reading your mailboxes...")}</p>`; return; }
       list.innerHTML = mailboxesMarkup(mbx.items, { note: mbx.note, confirm: mbx.confirm });
       for (const m of mbxFurther(mbx.items)) {
         const slot = list.querySelector(`[data-mbx-switch="${CSS.escape(m.account_id)}"]`);

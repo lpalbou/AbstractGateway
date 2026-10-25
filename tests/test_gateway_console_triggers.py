@@ -482,3 +482,32 @@ console.log(JSON.stringify([
     # Optional settings collapsed.
     assert '<details class="trg-more trg-field--wide"><summary>More options</summary>' in form and form.index("More options") < form.index("Items per check")
     assert config == {"url": "https://example.org/f.xml", "every": "2h", "initial_items": "deliver"}
+
+
+def test_lists_show_a_loading_state_never_an_empty_list() -> None:
+    source = _console_script()
+    harness = HELPERS + _fns(source, "trgLoadingMarkup", "renderTriggers") + """
+const nodes = {"triggers-table": {innerHTML: ""}, "triggers-account-head": {hidden: false}};
+const $ = (id) => nodes[id];
+const trgMessage = () => {};
+const triggersRowsMarkup = () => "ROWS";
+const out = [];
+globalThis.trg = {all: false, rows: null, error: "", mailboxes: null, sources: [], expanded: {}, fire: {}, automations: null, sourcesError: "", mailboxesError: ""};
+const trg = globalThis.trg;
+renderTriggers(); out.push(nodes["triggers-table"].innerHTML);
+trg.rows = []; renderTriggers(); out.push(nodes["triggers-table"].innerHTML);      // connections in, mailboxes pending
+trg.mailboxes = []; renderTriggers(); out.push(nodes["triggers-table"].innerHTML); // both answered: the rows/empty state
+trg.error = "HTTP 500"; renderTriggers(); out.push(nodes["triggers-table"].innerHTML);
+console.log(JSON.stringify(out));
+"""
+    first, half, done, err = _node(harness)
+    for state in (first, half):
+        assert 'class="trg-spinner"' in state and 'aria-busy="true"' in state and "Reading your connections and mailboxes..." in state
+        assert "Nothing to listen to yet" not in state
+    assert done == "ROWS"
+    assert 'class="trg-empty is-error" role="alert"' in err and "Could not list the connections: HTTP 500" in err
+    load = _slice_function(source, "loadTriggers")
+    assert load.index("renderTriggers();") < load.index("await loadTriggerSources();")
+    assert 'trgLoadingMarkup("Reading the events...")' in _slice_function(source, "triggerDetailMarkup")
+    assert 'trgLoadingMarkup("Reading your mailboxes...")' in _slice_function(source, "renderMyMailboxes")
+    assert "renderMyMailboxes(); }  // the loading state" in _slice_function(source, "loadMyMailboxes") or "renderMyMailboxes(); }" in _slice_function(source, "loadMyMailboxes")
