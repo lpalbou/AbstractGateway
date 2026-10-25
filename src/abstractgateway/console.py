@@ -2330,7 +2330,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           <div id="triggers-message" class="message trg-message" role="status" aria-live="polite"></div>
           <div class="table-scroll workflows-scroll">
             <table class="trg-table" data-ui-no-stack>
-              <thead><tr><th class="trg-col-name">Name</th><th id="triggers-account-head" class="trg-col-account" hidden>Account</th><th class="trg-col-status">Status</th><th class="trg-col-last trg-th-last">Last event</th><th class="trg-col-actions"><span class="sr-only">Actions</span></th></tr></thead>
+              <thead><tr><th class="trg-col-name">Connection</th><th id="triggers-handled-head" class="trg-col-handled">Handled by</th><th id="triggers-account-head" class="trg-col-account" hidden>Account</th><th class="trg-col-status">Status</th><th class="trg-col-last">Last event</th><th class="trg-col-actions"><span class="sr-only">Actions</span></th></tr></thead>
               <tbody id="triggers-table"></tbody>
             </table>
           </div>

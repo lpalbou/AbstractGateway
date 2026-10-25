@@ -30,15 +30,18 @@ const TRG_MORE_FIELDS = new Set(["subject_path", "tolerance_s", "max_items"]);
 const TRG_HTTP_WORDS = { 400: "bad request", 401: "unauthorized", 403: "forbidden", 404: "not found", 410: "gone", 429: "too many requests", 500: "server error", 502: "bad gateway", 503: "unavailable" };
 const TRG_MAILBOX_STATE = { connected: ["Active", "is-ok"], receive_only: ["Can't send", "is-warn"], paused: ["Paused", "is-muted"], needs_reconnect: ["Needs reconnecting", "is-warn"], unavailable: ["Unavailable", "is-muted"], not_connected: ["Not connected", "is-muted"] };
 const TRG_NEW_FLOW = "New flow for this trigger…";
-const TRG_NOTHING_HANDLES = "Nothing handles it yet.";
+const TRG_NOTHING_YET = "Nothing yet";
 const TRG_OBSERVER_PATH = "/#automations";
+const TRG_COLS = 5;
+const svgIcon = (paths) => `<svg>${paths}</svg>`;
+const ICONS = { logs: "<svg>logs</svg>", trash: "<svg>trash</svg>", mail: "<svg>mail</svg>" };
 """
 
-# Handled by + Use in a flow (operator 2026-10-25).
-USE_FNS = ("trgConnectionMatch", "trgMailboxMatch", "trgMailKey", "trgHandlers", "trgHandlerText", "trgHandledMarkup", "trgLoadingMarkup",
-           "trgFlowMenuMarkup", "trgUseLine", "trgUseBlock")
+# Handled by (operator 2026-10-25): chips, "+", the menu with checkmarks, Pause / Resume / Remove.
+USE_FNS = ("trgConnectionMatch", "trgMailboxMatch", "trgMailKey", "trgFlowKey", "trgHandlers", "trgIcon", "trgChipText", "trgHandledMarkup", "trgLoadingMarkup",
+           "trgMenuFlows", "trgFlowMenuMarkup", "trgManageMarkup", "trgRemoveQuestion", "trgUseLine")
 
-ROW_FNS = ("webhookRefusalWords", "trgErrorText", "trgAgo", "trgSourceLabel", "trgTriggerPhrase", "trgUsedBy", "trgListeningWords", "trgUserNames", "trgConnectionUsers", "trgMailboxUsers", "trgDoingText", "trgListenSwitch", "trgAdvancedMarkup", "trgStatusCell", "trgMailboxStatusCell", "trgMailboxStatusChip", "trgMailboxAccessWords", "mailboxRowsMarkup", "trgPrincipalText", "trgStatusChip", "trgFireLine", "trgCopyRow",
+ROW_FNS = ("webhookRefusalWords", "trgErrorText", "trgAgo", "trgSourceLabel", "trgTriggerPhrase", "trgUsedBy", "trgListeningWords", "trgUserNames", "trgConnectionUsers", "trgMailboxUsers", "trgDoingText", "trgDoingShort", "trgListenSwitch", "trgAdvancedMarkup", "trgStatusCell", "trgMailboxStatusCell", "trgMailboxStatusChip", "trgMailboxAccessWords", "trgIconButton", "trgLastCell", "mailboxRowsMarkup", "trgPrincipalText", "trgStatusChip", "trgFireLine", "trgCopyRow",
            "triggerEventsMarkup", "triggerDetailMarkup", *USE_FNS, "triggersRowsMarkup")
 
 SOURCES = [
@@ -113,6 +116,12 @@ console.log(JSON.stringify(out));
     for action in ('data-trg-events="c1"', 'data-trg-test="c1"', 'data-trg-delete="c1"'):
         assert action in c1, action
     assert 'aria-expanded="false"' in c1
+    # The actions are icon buttons: their words are the accessible name and the tooltip.
+    assert 'class="trg-icon-btn" data-trg-test="c1" aria-label="Test Release &lt;feed&gt;" data-af-tip="Send a test event to Release &lt;feed&gt;"' in c1
+    assert 'class="trg-icon-btn is-danger" data-trg-delete="c1" aria-label="Delete Release &lt;feed&gt;" data-af-tip="Delete Release &lt;feed&gt;"' in c1
+    # One cell per column: Connection · Handled by · Status · Last event · Actions; the test result under the time.
+    assert re.findall(r'<td class="([^"]+)"', c1) == ["trg-conn", "trg-handled-cell", "trg-status", "trg-last", "trg-actions-cell"]
+    assert '<span class="trg-last__when">3 min ago</span><span class="trg-fire is-ok" role="status">Test event #7 sent.</span>' in c1
     c2 = mine[mine.index('data-trg-row="c2"') : mine.index('data-trg-row="c3"')]
     assert '<span class="trg-chip is-muted">Paused</span>' in c2 and "Never" in c2
     c3 = mine[mine.index('data-trg-row="c3"') :]
@@ -122,9 +131,11 @@ console.log(JSON.stringify(out));
     # The account column only in the admin's all-accounts view.
     assert "trg-account" not in mine
     allv = r["all"]
+    # All accounts: an Account column in place of Handled by.
+    assert "trg-handled-cell" not in allv and "data-trg-useflow" not in allv
     assert allv.count('class="trg-account"') == 3 and ">bob<" in allv and "owner not reported" in allv
     # UX #14: never a dead end.
-    assert "Nothing to listen to yet." in r["empty"] and 'colspan="4"' in r["empty"]
+    assert "Nothing to listen to yet." in r["empty"] and 'colspan="5"' in r["empty"]
     for b in ('data-trg-empty="mailbox">Add a mailbox (My email)', 'data-trg-empty="feed.item">Add a feed', 'data-trg-empty="webhook.received">Add a webhook'):
         assert b in r["empty"], b
     assert "No account has a connection yet." in r["emptyAll"] and 'colspan="5"' in r["emptyAll"]
@@ -244,7 +255,7 @@ def test_routes_are_the_connections_contract() -> None:
 
 def test_mailbox_sources_are_rows_not_new_connections() -> None:
     source = _console_script()
-    harness = HELPERS + _fns(source, "trgConnectableSources", "trgAgo", "trgUsedBy", "trgListeningWords", "trgUserNames", "trgMailboxUsers", "trgMailboxStatusChip", "trgMailboxStatusCell", "trgMailboxAccessWords", *USE_FNS, "mailboxRowsMarkup") + """
+    harness = HELPERS + _fns(source, "trgConnectableSources", "trgAgo", "trgUsedBy", "trgListeningWords", "trgUserNames", "trgMailboxUsers", "trgMailboxStatusChip", "trgDoingShort", "trgMailboxStatusCell", "trgMailboxAccessWords", "trgIconButton", "trgLastCell", *USE_FNS, "mailboxRowsMarkup") + """
 const SOURCES = [
   {id: "email.received", version: 1, label: "When an email arrives", available: true, needs_connection: true, connection_provider: "email_accounts", connection_schema: {type: "object"}},
   {id: "webhook.received", version: 1, label: "When a webhook is called", available: true, needs_connection: true, connection_provider: "trigger_connections", connection_schema: {type: "object", properties: {}}},
@@ -261,18 +272,19 @@ console.log(JSON.stringify([trgConnectableSources(SOURCES).map((s) => s.id), mai
     assert ids == ["webhook.received"]  # the mailbox source is never offered in New connection
     assert rows.count('class="trg-row trg-row--mailbox"') == 3  # configured mailboxes only
     work = rows[rows.index('data-trg-mailbox="work"'):rows.index('data-trg-mailbox="nosmtp"')]
-    assert '<span class="trg-name">me@work.example</span>' in work and "When mail arrives in me@work.example · Read only" in work
-    # The access in My email's words; Read and write without an outgoing server says it can't send.
-    assert "When mail arrives in me@example.org · Read and write" in rows and "read-only" not in rows
+    # The access in My email's words, a quiet tag beside the name; the trigger as a sentence under it.
+    assert '<span class="trg-name">me@work.example</span><span class="trg-tag">Read only</span></div><span class="trg-sub">When mail arrives in me@work.example</span>' in work
+    assert '<span class="trg-tag">Read and write</span>' in rows and "read-only" not in rows
     nosmtp = rows[rows.index('data-trg-mailbox="nosmtp"'):]
-    assert "When mail arrives in rw@work.example · Read and write" in nosmtp and '<span class="trg-chip is-warn">Can&#39;t send</span>' in nosmtp
+    # Read and write without an outgoing server says it can't send.
+    assert '<span class="trg-tag">Read and write</span>' in nosmtp and '<span class="trg-chip is-warn">Can&#39;t send</span>' in nosmtp
     assert "trg-chip" not in work
-    # The same three states with the mailbox's own switch (no used_by reported here: "Listening").
-    assert '<span class="trg-doing">Listening</span>' in work and "checked 1 min ago" in work
+    # The same three states with the mailbox's own switch (no used_by reported here: the switch says Listening, no sentence).
+    assert '<span class="trg-doing"></span>' in work and '<span class="trg-last__when">Checked 1 min ago</span>' in work
     assert 'data-trg-mailbox-use="work"' in work and ">Listening</span>" in work and 'aria-checked="true"' in work
-    assert 'data-trg-mailbox-manage="work"' in work and "Manage in My email" in work
+    assert 'data-trg-mailbox-manage="work" aria-label="Manage me@work.example in My email" data-af-tip="Manage in My email"' in work
     # Named like My email: the mailbox's name or address (never its derived id); the primary says "Sends as you".
-    assert '<span class="trg-name">me@example.org<span class="mbx-badge">Sends as you</span></span>' in rows
+    assert '<span class="trg-name">me@example.org</span><span class="trg-tag is-accent">Sends as you</span><span class="trg-tag">Read and write</span>' in rows
     assert "(primary)" not in rows
 
 
@@ -344,7 +356,7 @@ console.log(JSON.stringify([sig]));
 
 def test_rows_say_what_a_connection_is_doing_with_a_listening_toggle() -> None:
     source = _console_script()
-    harness = HELPERS + _fns(source, "webhookRefusalWords", "trgErrorText", "trgUsedBy", "trgListeningWords", "trgUserNames", "trgConnectionMatch", "trgConnectionUsers", "trgDoingText", "trgListenSwitch", "trgAdvancedMarkup", "trgStatusChip", "trgStatusCell") + """
+    harness = HELPERS + _fns(source, "webhookRefusalWords", "trgErrorText", "trgUsedBy", "trgListeningWords", "trgUserNames", "trgConnectionMatch", "trgConnectionUsers", "trgDoingText", "trgDoingShort", "trgListenSwitch", "trgAdvancedMarkup", "trgStatusChip", "trgStatusCell") + """
 const rows = [
   {connection_id: "a", label: "bbc-feed", status: "active", paused: false, always_listen: false, listening: "listening", used_by: 2},
   {connection_id: "b", label: "hook", status: "active", paused: false, always_listen: false, listening: "listening", used_by: ["auto_1"]},
@@ -371,6 +383,12 @@ console.log(JSON.stringify(rows.map((r) => [trgDoingText(r), trgStatusCell(r)]).
         "Listening · used by 5 automations"]
     on, paused, old = out[0][1], out[3][1], out[4][1]
     assert 'role="switch"' in on and 'aria-checked="true"' in on and ">Listening</span>" in on and 'data-trg-listen="a"' in on
+    # One compact block: the switch (and a status chip) on the first line, the sentence under its label
+    # without repeating "Listening", then the disclosure.
+    assert on.startswith('<div class="trg-state"><div class="trg-state__row"><button type="button" role="switch"')
+    assert '<span class="trg-doing" data-trg-doing="a">Used by 2 automations</span>' in on
+    assert '<span class="trg-doing" data-trg-doing="d">Paused</span>' in paused
+    assert '<span class="trg-doing" data-trg-doing="f">Kept on even when nothing uses it</span>' in out[5][1]
     assert 'aria-checked="false"' in paused
     assert "listening state not reported (update the gateway)" in old and 'role="switch"' not in old
     # Collapsed, content-named (no "Advanced" anywhere): keep fetching even when nothing uses it.
@@ -425,8 +443,8 @@ console.log(JSON.stringify([
 
 def test_lists_show_a_loading_state_never_an_empty_list() -> None:
     source = _console_script()
-    harness = HELPERS + _fns(source, "trgLoadingMarkup", "renderTriggers") + """
-const nodes = {"triggers-table": {innerHTML: ""}, "triggers-account-head": {hidden: false}};
+    harness = HELPERS + _fns(source, "trgLoadingMarkup", "trgFocus", "trgFocusSelector", "renderTriggers") + """
+const nodes = {"triggers-table": {innerHTML: ""}, "triggers-account-head": {hidden: false}, "triggers-handled-head": {hidden: false}};
 const $ = (id) => nodes[id];
 const trgMessage = () => {};
 const triggersRowsMarkup = () => "ROWS";
@@ -794,7 +812,7 @@ BUNDLES = [
 ]
 
 
-def test_handled_by_lists_every_automation_of_a_trigger_with_its_flow() -> None:
+def test_handled_by_is_one_control_chips_and_plus() -> None:
     source = _console_script()
     harness = HELPERS + _fns(source, *ROW_FNS, "trgTriggeredFlows") + f"""
 const SOURCES = {json.dumps(SOURCES)};
@@ -807,10 +825,12 @@ const mailboxes = [{{ account_id: "default", primary: true, configured: true, ad
                    {{ account_id: "work", primary: false, configured: true, address: "w@x.test", enabled: true, mailbox: {{ state: "connected" }}, watcher: {{}} }}];
 const flows = trgTriggeredFlows({json.dumps(BUNDLES)});
 const o = {{ sources: SOURCES, expanded: {{}}, fire: {{}}, mailboxes, automations: AUTOS, flows, flowsError: "", flowMenu: "", useMsg: {{}} }};
+const twins = [AUTOS[0], Object.assign({{}}, AUTOS[0], {{ automation_id: "a9", title: "Morning brief" }})];
 console.log(JSON.stringify({{
   mine: triggersRowsMarkup(rows, o),
   unknown: triggersRowsMarkup(rows, Object.assign({{}}, o, {{ automations: null }})),
   all: triggersRowsMarkup(rows, Object.assign({{}}, o, {{ all: true }})),
+  twins: triggersRowsMarkup(rows.slice(0, 1), Object.assign({{}}, o, {{ automations: twins, mailboxes: [] }})),
 }}));
 """
     r = _node(harness)
@@ -819,43 +839,58 @@ console.log(JSON.stringify({{
     c2 = mine[mine.index('data-trg-row="c2"'):mine.index('data-trg-mailbox="default"')]
     primary = mine[mine.index('data-trg-mailbox="default"'):mine.index('data-trg-mailbox="work"')]
     work = mine[mine.index('data-trg-mailbox="work"'):]
-    # Two automations on one connection, each "<title> · <flow>", the paused one says so; archived never.
-    assert '<span class="trg-handled__head">Handled by</span>' in c1
-    assert re.findall(r'data-trg-observer="(a\d)"', c1) == ["a1", "a2"]
-    assert ">Release digest · Digest</button>" in c1 and ">Old &lt;one&gt; · Summarize</button> <span class=\"trg-handled__paused\">(paused)</span>" in c1
-    assert c1.count("(paused)") == 1 and "Gone" not in c1
-    # The status no longer repeats the names (Handled by says who): it counts the active ones.
-    assert '<span class="trg-doing" data-trg-doing="c1">Listening · used by 1 automation</span>' in c1
-    # Nothing handles it: said in the muted style.
-    assert '<span class="trg-handled__none">Nothing handles it yet.</span>' in c2
-    # A mailbox: the primary is matched by "self"; a title equal to its flow name is said once.
-    assert ">Triage</button>" in primary and "Triage · Triage" not in primary
-    assert "Nothing handles it yet." in work
-    # Every row (feeds, webhooks, mailboxes) has Use in a flow, keyed by its trigger.
+    # A chip per automation (active or paused, never archived): its flow's name, the automation's
+    # title in the tooltip, the paused one muted with "paused"; each opens Observer.
+    assert re.findall(r'data-trg-observer="(a\d)"', c1) == ["a1", "a2"] and "Gone" not in c1
+    assert ('<button type="button" class="trg-hchip" data-trg-observer="a1" data-af-tip="Release digest · open in Observer" '
+            'aria-label="Digest: Release digest, open in Observer"><span class="trg-hchip__text">Digest</span></button>') in c1
+    assert ('class="trg-hchip is-paused" data-trg-observer="a2" data-af-tip="Old &lt;one&gt; (paused) · open in Observer"') in c1
+    assert '<span class="trg-hchip__text">Summarize</span> <span class="trg-hchip__state">paused</span>' in c1
+    # Then "+", which opens the menu; nothing handles it: "Nothing yet · +", muted.
+    assert ('data-trg-useflow="c1" aria-haspopup="menu" aria-expanded="false" aria-label="Use Release feed in a flow" data-af-tip="Use in a flow"') in c1
+    assert c1.index('data-trg-observer="a2"') < c1.index('data-trg-useflow="c1"')
+    assert '<li class="trg-hb__none">Nothing yet<span aria-hidden="true">·</span></li><li><button type="button" class="trg-hchip trg-hchip--add" data-trg-useflow="c2"' in c2
+    # The status counts the active ones (the chips name them), without repeating "Listening".
+    assert '<span class="trg-doing" data-trg-doing="c1">Used by 1 automation</span>' in c1
+    # A mailbox: the primary is matched by "self"; the chip is its flow.
+    assert '<span class="trg-hchip__text">Triage</span>' in primary and "Nothing yet" in work
     for key in ("c1", "c2", "mail:default", "mail:work"):
-        assert f'data-trg-useflow="{key}" aria-haspopup="menu" aria-expanded="false">Use in a flow ▾</button>' in mine, key
-    # Automations not read: no Handled by (never a false "Nothing handles it"), the button stays.
-    assert "Handled by" not in r["unknown"] and 'data-trg-useflow="c1"' in r["unknown"]
-    # The admin's All accounts view: other people's connections, no Use in a flow.
-    assert "data-trg-useflow" not in r["all"] and "Handled by" not in r["all"]
+        assert f'data-trg-useflow="{key}" aria-haspopup="menu"' in mine, key
+    # Two automations of one flow on one trigger: each chip says which.
+    assert re.findall(r'<span class="trg-hchip__text">([^<]+)</span>', r["twins"]) == ["Digest · Release digest", "Digest · Morning brief"]
+    # Automations not read: "+" alone, never a false "Nothing yet".
+    unknown = r["unknown"]
+    assert "Nothing yet" not in unknown and "data-trg-observer" not in unknown and 'data-trg-useflow="c1"' in unknown
+    # The admin's All accounts view: other people's connections, no Handled by.
+    assert "data-trg-useflow" not in r["all"] and "trg-hchip" not in r["all"]
+    html = gateway_console_html()
+    head = html[html.index('id="tab-triggers"'): html.index('id="tab-skills"')]
+    thead = head[head.index("<thead>"):head.index("</thead>")]
+    assert re.findall(r"<th(?:\s[^>]*)?>([^<]*)<", thead) == ["Connection", "Handled by", "Account", "Status", "Last event", ""]
+    assert 'id="triggers-handled-head"' in head and '$("triggers-handled-head").hidden = trg.all;' in _slice_function(source, "renderTriggers")
 
 
-def test_use_in_a_flow_menu_new_flow_link_and_triggered_flows_only() -> None:
+def test_the_menu_new_flow_then_triggered_flows_with_checkmarks() -> None:
     source = _console_script()
     harness = HELPERS + _fns(source, *USE_FNS, "trgTriggeredFlows", "trgFlowPath") + f"""
 const AUTOS = {json.dumps(AUTOS)};
 const flows = trgTriggeredFlows({json.dumps(BUNDLES)});
 const handlers = trgHandlers(AUTOS, trgConnectionMatch({{ connection_id: "c1" }}));
-const o = (extra) => Object.assign({{ flows, flowsError: "", flowMenu: "c1", useMsg: {{}} }}, extra || {{}});
+const o = (extra) => Object.assign({{ flows, flowsError: "", flowMenu: "c1", flowManage: null, useMsg: {{}} }}, extra || {{}});
+const cell = (hs, extra) => trgHandledMarkup("c1", "Release feed", hs, o(extra));
 console.log(JSON.stringify({{
   flows,
   paths: [trgFlowPath("conn_abc"), trgFlowPath("mail:default"), trgFlowPath("mail:a b"), trgFlowPath(trgMailKey("work"))],
-  open: trgUseBlock("c1", "Release feed", handlers, o()),
-  closed: trgUseBlock("c1", "Release feed", handlers, o({{ flowMenu: "c2" }})),
-  none: trgUseBlock("c1", "Release feed", [], o({{ flows: [] }})),
-  loading: trgUseBlock("c1", "Release feed", [], o({{ flows: null }})),
-  failed: trgUseBlock("c1", "Release feed", [], o({{ flows: null, flowsError: "HTTP 500" }})),
-  said: trgUseBlock("c1", "Release feed", [], o({{ flowMenu: "", useMsg: {{ c1: {{ ok: false, text: "Triage cannot read it." }} }} }})),
+  open: cell(handlers),
+  closed: cell(handlers, {{ flowMenu: "c2" }}),
+  none: cell([], {{ flows: [] }}),
+  loading: cell([], {{ flows: null }}),
+  failed: cell([], {{ flows: null, flowsError: "HTTP 500" }}),
+  said: cell([], {{ flowMenu: "", useMsg: {{ c1: {{ ok: false, text: "Triage cannot read it." }} }} }}),
+  manage: cell(handlers, {{ flowManage: {{ key: "c1", flow: "digest:digest", confirm: "" }} }}),
+  managePaused: cell(handlers, {{ flowManage: {{ key: "c1", flow: "sum:sum", confirm: "" }} }}),
+  confirm: cell(handlers, {{ flowManage: {{ key: "c1", flow: "sum:sum", confirm: "a2" }} }}),
+  gone: cell([], {{ flowManage: {{ key: "c1", flow: "sum:sum", confirm: "" }} }}),
 }}));
 """
     r = _node(harness)
@@ -866,18 +901,67 @@ console.log(JSON.stringify({{
     assert r["paths"] == ["/?trigger=conn_abc", "/?trigger=mail:default", "/?trigger=mail:a%20b", "/?trigger=mail:work"]
     menu = r["open"]
     assert 'aria-expanded="true"' in menu and 'role="menu" aria-label="Use Release feed in a flow"' in menu
-    items = re.findall(r'role="menuitem"[^>]*>([^<]+)', menu)
-    assert items == ["New flow for this trigger…", "Digest", "Triage"], items
+    # Anchored under the chips (the popover's place).
+    assert '<div class="trg-hb__anchor"><div class="trg-flowmenu" role="menu"' in menu
+    # New flow first; then every triggered flow, plus a flow handling it that is no longer published
+    # (Summarize), each checked when it handles this trigger.
+    items = re.findall(r'role="(menuitem(?:checkbox)?)"(?: aria-checked="(\w+)")?[^>]*>.*?(?:trg-flowmenu__name">|trg-flowmenu__text">)([^<]+)', menu)
+    assert items == [("menuitem", "", "New flow for this trigger…"), ("menuitemcheckbox", "true", "Digest"),
+                     ("menuitemcheckbox", "true", "Summarize"), ("menuitemcheckbox", "false", "Triage")], items
     assert 'data-trg-newflow="c1"' in menu
-    # A flow that already handles this trigger is shown, not offered twice.
-    digest = menu[menu.index('data-trg-flow="digest@1.0.0:digest"'):]
-    assert " disabled " in digest.split("</button>")[0] and "Already handles it" in digest.split("</button>")[0]
-    triage = menu[menu.index('data-trg-flow="triage@1.0.0:triage"'):]
-    assert " disabled " not in triage.split("</button>")[0]
-    assert "role=\"menu\"" not in r["closed"] and 'aria-expanded="false"' in r["closed"]
+    digest = menu[menu.index('data-trg-mflow="digest:digest"'):].split("</button>")[0]
+    assert 'data-trg-manage="c1"' in menu and "<svg>" in digest and '<span class="trg-flowmenu__meta">Handles it · Release digest</span>' in digest
+    summarize = menu[menu.index('data-trg-mflow="sum:sum"'):].split("</button>")[0]
+    assert '<span class="trg-flowmenu__meta">Handles it, paused · Old &lt;one&gt;</span>' in summarize
+    triage = menu[menu.index('data-trg-flow="triage@1.0.0:triage"'):].split("</button>")[0]
+    assert 'data-trg-pickflow="c1"' in menu and "trg-flowmenu__meta" not in triage and " disabled" not in triage
+    assert 'role="menu"' not in r["closed"] and 'aria-expanded="false"' in r["closed"]
     assert "New flow for this trigger…" in r["none"] and "No triggered flow yet: start with a new one." in r["none"]
     assert "Reading your flows..." in r["loading"] and "Could not read your flows: HTTP 500" in r["failed"]
     assert '<span class="trg-fire is-failed" role="status">Triage cannot read it.</span>' in r["said"]
+    # A checked flow: its automation here with Pause (Resume when paused) and Remove; Remove asks first.
+    manage = r["manage"]
+    assert 'data-trg-manage-back="c1"' in manage and ">All flows<" in manage and "Digest handles Release feed" in manage
+    assert '<button type="button" role="menuitem" class="secondary" data-trg-pause="a1">Pause</button><button type="button" role="menuitem" class="secondary" data-trg-remove="a1">Remove</button>' in manage
+    assert "data-trg-pickflow" not in manage and "data-trg-newflow" not in manage
+    assert 'data-trg-resume="a2">Resume</button>' in r["managePaused"] and "data-trg-pause" not in r["managePaused"]
+    confirm = r["confirm"]
+    assert '<p class="trg-flowmenu__confirm" role="alert">Remove Old &lt;one&gt;? It stops handling Release feed; its history stays in Observer.</p>' in confirm
+    assert 'class="danger" data-trg-remove-now="a2">Remove</button>' in confirm and 'data-trg-remove-cancel="a2">Cancel</button>' in confirm
+    assert "That flow no longer handles Release feed." in r["gone"]
+
+
+def test_pause_resume_remove_go_through_the_automation_commands() -> None:
+    source = _console_script()
+    harness = HELPERS + _fns(source, "trgErr", "trgCommandWords", "trgCommandRefusal") + """
+const err = (status, code, message) => Object.assign(new Error(message), { status, detail: { reason_code: code, message } });
+console.log(JSON.stringify({
+  words: ["pause", "resume", "remove"].map((v) => trgCommandWords(v, "Release digest", "Release feed")),
+  refusals: [trgCommandRefusal(err(409, "invalid_state", "Automation is already paused."), "Release digest was not paused"),
+             trgCommandRefusal(err(401, "unauthorized", "x"), "Release digest was not removed")],
+}));
+"""
+    r = _node(harness)
+    assert [(w["type"], w["status"], w["done"]) for w in r["words"]] == [
+        ("automation.pause", "paused", "Release digest is paused."),
+        ("automation.resume", "active", "Release digest is on again."),
+        ("automation.archive", "", "Release digest no longer handles Release feed."),
+    ]
+    assert r["refusals"] == ["Release digest was not paused: Automation is already paused.", "Your session expired: sign in again, then try again."]
+    # The existing route (POST /automations/{id}/commands) with a fresh command id, then the list is
+    # read again until it shows the change (bounded).
+    run = _slice_function(source, "automationCommandForTrigger")
+    assert 'api(`/api/gateway/automations/${encodeURIComponent(automationId)}/commands`, { method: "POST", body: JSON.stringify({ command_id: trgRequestId(), type: words.type, payload: {} }) })' in run
+    assert "await trgAwaitAutomation(automationId, words.status)" in run
+    wait = _slice_function(source, "trgAwaitAutomation")
+    assert "for (let i = 0; i < 12; i += 1)" in wait and "await loadTriggerAutomations();" in wait
+    # The command types exist at the gateway (one source of truth).
+    from abstractgateway.automation_command_types import AUTOMATION_COMMAND_TYPES
+    assert {"automation.pause", "automation.resume", "automation.archive"} <= set(AUTOMATION_COMMAND_TYPES)
+    # The menu by keyboard (arrows, Home, End; Esc back to "+") and a click elsewhere closes it.
+    bind = _slice_function(source, "bindTriggersPage")
+    assert '["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)' in bind and 'if (e.key === "Escape") { e.preventDefault(); closeFlowMenu(true); return; }' in bind
+    assert 'document.addEventListener("click", (e) => {' in bind
 
 
 def test_a_pick_creates_the_automation_from_the_flows_defaults_with_this_trigger() -> None:

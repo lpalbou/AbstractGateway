@@ -69,5 +69,5 @@ def test_triggers_page_in_a_browser(triggers_gateway) -> None:
     )
     assert proc.returncode == 0, proc.stderr[-4000:]
     out = json.loads(proc.stdout.strip().splitlines()[-1])
-    assert out["failures"] == [], out["failures"]
+    assert out["failures"] == [], "\n".join(out["failures"])
     assert out["checks"] >= 45, out["checks"]

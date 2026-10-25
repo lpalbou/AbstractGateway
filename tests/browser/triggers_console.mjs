@@ -237,7 +237,7 @@ async function noSideScroll(page, what) {
 
 const browser = await chromium.launch();
 try {
-  for (const [w, h, theme] of [[1440, 900, "light"], [1440, 900, "dark"], [390, 844, "light"]]) {
+  for (const [w, h, theme] of [[1440, 900, "light"], [1440, 900, "dark"], [400, 860, "light"], [400, 860, "dark"]]) {
     const tag = `${w}-${theme}`;
     const { ctx, page, store } = await newPage(browser, { width: w, height: h }, theme);
     await signIn(page, "admin", ADMIN);
@@ -263,17 +263,17 @@ try {
     check((await page.locator('[data-trg-row="conn_feed1"] .trg-fire').textContent()).trim() === "Test event #4 sent.", `${tag}: test result shown`);
     await page.waitForSelector('[data-trg-event="evt_test_4"]');
     check((await page.locator('[data-trg-event="evt_test_4"] .trg-event__line').textContent()).startsWith("Test event · "), `${tag}: test event listed in words`);
-    check((await page.locator('[data-trg-row="conn_feed1"] td.trg-last').textContent()).trim() === "just now" || w < 1024, `${tag}: last event refreshed`);
+    check((await page.locator('[data-trg-row="conn_feed1"] .trg-last__when').textContent()).trim() === "just now", `${tag}: last event refreshed`);
     if (w === 1440) await shot(page, `triggers-list-events-${tag}`);
-    else await shot(page, `triggers-list-${tag}`);
+    else await shot(page, `triggers-list-events-${tag}`);
 
     if (w === 1440 && theme === "light") {
       // Create a feed connection: the form comes from connection_schema.
-      check((await page.textContent('[data-trg-row="conn_feed1"]')).includes("Listening · used by 2 automations"), "row: listening in words");
+      check((await page.textContent('[data-trg-row="conn_feed1"] .trg-doing')).trim() === "Used by 2 automations", "row: listening in words, under the Listening switch");
       check((await page.textContent('[data-trg-row="conn_mail1"]')).includes("Waiting for an automation to use it"), "row: pressed + unused in words");
       await page.click('[data-trg-row="conn_mail1"] .trg-advanced summary');
       await page.click('[data-trg-always="conn_mail1"]');
-      await page.waitForFunction(() => (document.querySelector('[data-trg-row="conn_mail1"]') || {}).textContent.includes("kept on even when nothing uses it"));
+      await page.waitForFunction(() => (document.querySelector('[data-trg-row="conn_mail1"]') || {}).textContent.includes("Kept on even when nothing uses it"));
       check(JSON.stringify(store.lastConnPut) === JSON.stringify({ id: "conn_mail1", body: { always_listen: true } }), "Keep fetching: PUT {always_listen: true}", store.lastConnPut);
       // The mailbox row: the same states, with the mailbox's own switch.
       await page.click('[data-trg-mailbox-use="default"]');
@@ -288,10 +288,13 @@ try {
       check((await page.getAttribute('[data-trg-listen="conn_feed1"]', "aria-checked")) === "false", "Listening toggle shows its state");
       await shot(page, "triggers-listening-1440-light");
       await page.click('[data-trg-listen="conn_feed1"]');
-      await page.waitForFunction(() => (document.querySelector('[data-trg-row="conn_feed1"]') || {}).textContent.includes("Listening · used by 2"));
+      await page.waitForFunction(() => (document.querySelector('[data-trg-row="conn_feed1"]') || {}).textContent.includes("Used by 2"));
       check(await page.locator('[data-trg-mailbox="default"]').count() === 1, "mailbox row listed");
       check((await page.textContent('[data-trg-mailbox="default"]')).includes("When mail arrives in admin@example.org"), "mailbox row: the trigger in words");
-      check((await page.textContent('[data-trg-mailbox="default"]')).includes("Manage in My email"), "mailbox row: link");
+      check((await page.getAttribute('[data-trg-mailbox-manage="default"]', "aria-label")) === "Manage admin@example.org in My email" && (await page.getAttribute('[data-trg-mailbox-manage="default"]', "data-af-tip")) === "Manage in My email", "mailbox row: Manage in My email (icon button)");
+      // Icon buttons: their words are the accessible name and the tooltip.
+      const names = await page.$$eval('[data-trg-row="conn_feed1"] .trg-actions button', (els) => els.map((e) => [e.getAttribute("aria-label"), e.dataset.afTip, e.textContent.trim()]));
+      check(JSON.stringify(names) === JSON.stringify([["Events of Release notes feed", "Recent events of Release notes feed", ""], ["Test Release notes feed", "Send a test event to Release notes feed", ""], ["Delete Release notes feed", "Delete Release notes feed", ""]]), "actions: icon buttons named", names);
       await page.click("#triggers-new");
       await page.waitForSelector("#trigger-modal-backdrop:not([hidden]) [data-trg-source]");
       const opts = await page.$$eval("#trg-f-source option", (els) => els.map((e) => e.value));
@@ -505,28 +508,31 @@ try {
       await page.waitForFunction(() => !document.querySelector('[data-mbx-row="me-fastmail-com"]'));
       check(store.requests.includes("DELETE /api/gateway/me/email/accounts/me-fastmail-com"), "row: Remove DELETEs");
     }
-    if (w === 390) {
+    if (w === 400 && theme === "light") {
       // Phone width: the tabs and the mailbox form in one column, nothing wider than the screen.
       await page.waitForSelector('[data-trg-mailbox="default"]');
       await page.click('[data-trg-mailbox-manage="default"]');
       await page.waitForSelector('#my-mailboxes-list [data-mbx-row="__primary"]', { timeout: 30000 });
-      await noSideScroll(page, "my email 390");
-      await shotEl(page, "#account-email-backdrop .af-modal", "my-email-tab-mailboxes-390-light");
+      await noSideScroll(page, "my email 400");
+      await shotEl(page, "#account-email-backdrop .af-modal", "my-email-tab-mailboxes-400-light");
       await page.click("#my-mailbox-add");
       await page.fill("#mbs-address", "me@unknown.example");
       await page.waitForSelector("details.mbs-servers[open] #mbs-imap-host");
-      await noSideScroll(page, "mailbox form 390");
+      await noSideScroll(page, "mailbox form 400");
       const widths = await page.$$eval("#mailbox-sheet-body input", (els) => els.map((e) => Math.round(e.getBoundingClientRect().right)));
-      check(widths.every((r) => r <= 390), "mailbox form 390: every field inside the screen", widths);
-      await shotEl(page, "#mailbox-sheet-backdrop .af-modal", "mailbox-form-unknown-390-light");
+      check(widths.every((r) => r <= 400), "mailbox form 400: every field inside the screen", widths);
+      await shotEl(page, "#mailbox-sheet-backdrop .af-modal", "mailbox-form-unknown-400-light");
     }
     await ctx.close();
   }
-  // Handled by + Use in a flow (operator 2026-10-25): who treats each trigger's events, and a
-  // menu that opens Flow on this trigger or turns one of your triggered flows on for it.
-  for (const [w, h] of [[1440, 900], [400, 860]]) {
-    const tag = `use-${w}`;
-    const { ctx, page, store } = await newPage(browser, { width: w, height: h });
+  // Handled by (operator 2026-10-25): one control per row — a chip per automation (its flow; the
+  // automation's title in the tooltip; a paused one muted), "+" opening the menu: New flow, then
+  // the triggered flows with a checkmark on those handling it; a checked one offers Pause (Resume) /
+  // Remove for its automation. At 1440 and 400 px, light and dark.
+  for (const [w, h, theme] of [[1440, 900, "light"], [1440, 900, "dark"], [400, 860, "light"], [400, 860, "dark"]]) {
+    const tag = `handled-${w}-${theme}`;
+    const full = theme === "light";
+    const { ctx, page, store } = await newPage(browser, { width: w, height: h }, theme);
     store.mailboxes.push({ account_id: "work", primary: false, configured: true, name: "Work", address: "me@work.example", can_read: false, can_send: false, can_write: false, access: "read", enabled: true, mailbox: { state: "connected" }, watcher: {} });
     store.autos = [
       { automation_id: "auto_1", title: "Release digest", status: "active", flow_name: "Digest", target: { workflow_id: "digest@1.0.0:digest", bundle_ref: "digest@1.0.0", flow_id: "digest" }, trigger: { source_id: "feed.item", source_version: 1, config: { connection_id: "conn_feed1" } } },
@@ -534,6 +540,7 @@ try {
     ];
     store.opens = [];
     store.posts = [];
+    store.commands = [];
     const BUNDLES = { items: [
       { bundle_id: "digest", bundle_version: "1.0.0", bundle_ref: "digest@1.0.0", automation_defaults: { digest: { schema_version: 1, trigger: { source_id: "feed.item", source_version: 1, config: {} , connection_id: "author" }, context: { mode: "independent" }, input_data: { prompt: "Summarize" } } },
         entrypoints: [{ flow_id: "digest", name: "Digest", workflow_id: "digest@1.0.0:digest", triggerable: true }, { flow_id: "chat", name: "Chat helper", workflow_id: "digest@1.0.0:chat", triggerable: false }] },
@@ -553,6 +560,19 @@ try {
       store.autos = store.autos.concat([{ automation_id: id, title: b.title, status: "active", flow_name: b.title, target: { bundle_ref: b.target.bundle_ref, flow_id: b.target.flow_id }, trigger: b.trigger }]);
       return route.fulfill({ json: { automation_id: id, revision: 1, summary: {} } });
     });
+    // The automations command route: a receipt; the fake "runner" applies it on the second read.
+    await ctx.route((u) => /^\/api\/gateway\/automations\/[^/]+\/commands$/.test(u.pathname), (route) => {
+      const id = new URL(route.request().url()).pathname.split("/")[4];
+      const b = JSON.parse(route.request().postData() || "{}");
+      store.commands.push({ id, ...b });
+      if (store.refuseNext) { const r = store.refuseNext; store.refuseNext = null; return route.fulfill({ status: r.status, json: { detail: { reason_code: r.code, message: r.message } } }); }
+      const apply = () => {
+        if (b.type === "automation.archive") store.autos = store.autos.filter((a) => a.automation_id !== id);
+        else store.autos = store.autos.map((a) => (a.automation_id === id ? { ...a, status: b.type === "automation.pause" ? "paused" : "active" } : a));
+      };
+      setTimeout(apply, 300);
+      return route.fulfill({ json: { accepted: true, command_id: b.command_id, automation_id: id } });
+    });
     await ctx.route((u) => /^\/api\/gateway\/apps\/(flow|observer)\/open$/.test(u.pathname), (route) => {
       const app = new URL(route.request().url()).pathname.split("/")[4];
       store.opens.push({ app, path: JSON.parse(route.request().postData() || "{}").path });
@@ -561,23 +581,100 @@ try {
     ctx.on("page", (p) => { if (p !== page) p.close().catch(() => {}); });
     await signIn(page, "admin", ADMIN);
     await openTab(page, "triggers");
-    await page.waitForSelector('[data-trg-row="conn_feed1"] .trg-handled__list', { timeout: 30000 });
+    const feedChips = '[data-trg-row="conn_feed1"] .trg-hchip[data-trg-observer]';
+    await page.waitForSelector(feedChips, { timeout: 30000 });
     check(store.autosQuery === "?status=active,paused&limit=200", `${tag}: automations read active and paused`, store.autosQuery);
-    const handled = await page.$$eval('[data-trg-row="conn_feed1"] .trg-handled__list li', (els) => els.map((e) => e.textContent.replace(/\s+/g, " ").trim()));
-    check(JSON.stringify(handled) === JSON.stringify(["Release digest · Digest", "Old digest · Summarize (paused)"]), `${tag}: Handled by lists both, the paused one says so`, handled);
-    check((await page.textContent('[data-trg-row="conn_feed1"] .trg-doing')).trim() === "Listening · used by 1 automation", `${tag}: the status counts, Handled by names`);
-    const none = await page.$eval('[data-trg-mailbox="default"] .trg-handled__none', (el) => [el.textContent, getComputedStyle(el).color]);
-    const ink = await page.$eval('[data-trg-mailbox="default"] .trg-name', (el) => getComputedStyle(el).color);
-    check(none[0] === "Nothing handles it yet." && none[1] !== ink, `${tag}: nothing handles it, muted`, { none, ink });
-    // The menu on a mailbox: New flow first, then the triggered flows only.
+    const chips = () => page.$$eval(feedChips, (els) => els.map((e) => [e.textContent.replace(/\s+/g, " ").trim(), e.dataset.afTip, e.classList.contains("is-paused")]));
+    const first = await chips();
+    check(JSON.stringify(first) === JSON.stringify([["Digest", "Release digest · open in Observer", false], ["Summarize paused", "Old digest (paused) · open in Observer", true]]), `${tag}: a chip per flow, the title in the tooltip, the paused one muted`, first);
+    const muted = await page.$eval('[data-trg-row="conn_feed1"] .trg-hchip.is-paused', (el) => getComputedStyle(el).color);
+    const ink = await page.$eval('[data-trg-row="conn_feed1"] .trg-hchip:not(.is-paused)', (el) => getComputedStyle(el).color);
+    check(muted !== ink, `${tag}: the paused chip is muted`, { muted, ink });
+    check((await page.textContent('[data-trg-row="conn_feed1"] .trg-doing')).trim() === "Used by 1 automation", `${tag}: the status counts, Handled by names`);
+    const none = await page.$eval('[data-trg-mailbox="default"] .trg-hb__none', (el) => [el.textContent.trim(), getComputedStyle(el).color]);
+    const nameInk = await page.$eval('[data-trg-mailbox="default"] .trg-name', (el) => getComputedStyle(el).color);
+    check(none[0] === "Nothing yet·" && none[1] !== nameInk, `${tag}: nothing yet, muted`, { none, nameInk });
+    // One grid: on desktop every cell of a row starts on the same line; at 400 px a card, nothing clipped.
+    const geo = await page.$eval('[data-trg-row="conn_feed1"]', (tr) => Array.from(tr.children).map((td) => {
+      const r = td.getBoundingClientRect();
+      return { top: Math.round(r.top), left: Math.round(r.left), right: Math.round(r.right), sw: td.scrollWidth, cw: td.clientWidth };
+    }));
+    if (w === 1440) {
+      check(new Set(geo.map((g) => g.top)).size === 1 && geo.length === 5, `${tag}: five cells on one row`, geo);
+      const tops = await page.$eval('[data-trg-row="conn_feed1"]', (tr) => [".trg-conn__head", ".trg-hb__chips", ".trg-state__row", ".trg-last__when", ".trg-actions"].map((s) => Math.round(tr.querySelector(s).getBoundingClientRect().top)));
+      check(Math.max(...tops) - Math.min(...tops) <= 1, `${tag}: first lines aligned`, tops);
+    } else {
+      check(geo.every((g) => g.left >= 0 && g.right <= w && g.sw <= g.cw + 1), `${tag}: card cells inside the screen, nothing clipped`, geo);
+      const order = await page.$eval('[data-trg-row="conn_feed1"]', (tr) => Array.from(tr.children).map((td) => Math.round(td.getBoundingClientRect().top)));
+      check(order.every((t, i) => i === 0 || t > order[i - 1]), `${tag}: the card stacks name, handled by, status, last event, actions`, order);
+    }
+    await noSideScroll(page, `${tag} list`);
+    await shot(page, `triggers-${tag}`);
+    // The menu on a mailbox: New flow first, then the triggered flows, none checked.
     await page.click('[data-trg-useflow="mail:default"]');
     await page.waitForSelector('[data-trg-flowmenu="mail:default"]');
-    const items = await page.$$eval('[data-trg-flowmenu="mail:default"] [role=menuitem]', (els) => els.map((e) => e.textContent.trim()));
-    check(JSON.stringify(items) === JSON.stringify(["New flow for this trigger…", "Digest", "Triage"]), `${tag}: menu contents`, items);
+    const items = await page.$$eval('[data-trg-flowmenu="mail:default"] [role^=menuitem]', (els) => els.map((e) => [(e.querySelector(".trg-flowmenu__name") || e.querySelector(".trg-flowmenu__text")).textContent.trim(), e.getAttribute("aria-checked")]));
+    check(JSON.stringify(items) === JSON.stringify([["New flow for this trigger…", null], ["Digest", "false"], ["Triage", "false"]]), `${tag}: menu contents`, items);
     check(await page.evaluate(() => document.activeElement && document.activeElement.dataset.trgNewflow) === "mail:default", `${tag}: the menu takes the focus`);
+    await page.keyboard.press("ArrowDown");
+    check(await page.evaluate(() => document.activeElement && document.activeElement.dataset.trgFlow) === "digest@1.0.0:digest", `${tag}: ArrowDown moves in the menu`);
+    await page.keyboard.press("End");
+    check(await page.evaluate(() => document.activeElement && document.activeElement.dataset.trgFlow) === "triage@1.0.0:triage", `${tag}: End reaches the last item`);
     await noSideScroll(page, `${tag} menu open`);
-    await shot(page, `triggers-use-in-a-flow-menu-${w}`);
+    if (full) await shot(page, `triggers-${tag}-menu`);
+    // A click elsewhere closes it.
+    await page.click("#page-title");
+    await page.waitForFunction(() => !document.querySelector("[data-trg-flowmenu]"));
+    check(true, `${tag}: a click elsewhere closes the menu`);
+    // The feed's menu: Digest checked (published), Summarize checked (handling, no longer published), Triage not.
+    await page.click('[data-trg-useflow="conn_feed1"]');
+    await page.waitForSelector('[data-trg-flowmenu="conn_feed1"]');
+    const feedItems = await page.$$eval('[data-trg-flowmenu="conn_feed1"] [role^=menuitem]', (els) => els.map((e) => [(e.querySelector(".trg-flowmenu__name") || e.querySelector(".trg-flowmenu__text")).textContent.trim(), (e.querySelector(".trg-flowmenu__meta") || {}).textContent || "", e.getAttribute("aria-checked"), !!e.querySelector(".trg-flowmenu__mark svg")]));
+    check(JSON.stringify(feedItems) === JSON.stringify([["New flow for this trigger…", "", null, true], ["Digest", "Handles it · Release digest", "true", true], ["Summarize", "Handles it, paused · Old digest", "true", true], ["Triage", "", "false", false]]), `${tag}: checkmarks on the flows that handle it`, feedItems);
+    if (full) await shot(page, `triggers-${tag}-menu-checked`);
+    // A checked pick: Pause (the automation's command), said beside the control, the chip muted.
+    await page.click('[data-trg-flowmenu="conn_feed1"] [data-trg-mflow="digest:digest"]');
+    await page.waitForSelector('[data-trg-pause="auto_1"]');
+    check(await page.evaluate(() => document.activeElement && document.activeElement.dataset.trgPause) === "auto_1", `${tag}: Pause has the focus`);
+    check((await page.textContent('[data-trg-flowmenu="conn_feed1"] .trg-flowmenu__head')).trim() === "Digest handles Release notes feed", `${tag}: the flow's automations here`);
+    if (full) await shot(page, `triggers-${tag}-manage`);
+    if (full) {
+      store.refuseNext = { status: 409, code: "invalid_state", message: "Automation is already paused." };
+      await page.click('[data-trg-pause="auto_1"]');
+      await page.waitForSelector('[data-trg-row="conn_feed1"] .trg-hb .trg-fire.is-failed');
+      check((await page.textContent('[data-trg-row="conn_feed1"] .trg-hb .trg-fire')).trim() === "Release digest was not paused: Automation is already paused.", `${tag}: a refused command in words`);
+      await page.click('[data-trg-useflow="conn_feed1"]');
+      await page.click('[data-trg-flowmenu="conn_feed1"] [data-trg-mflow="digest:digest"]');
+    }
+    await page.click('[data-trg-pause="auto_1"]');
+    await page.waitForFunction(() => (document.querySelector('[data-trg-row="conn_feed1"] .trg-hb .trg-fire.is-ok') || {}).textContent === "Release digest is paused.", null, { timeout: 15000 });
+    const cmd = store.commands[store.commands.length - 1];
+    check(cmd.id === "auto_1" && cmd.type === "automation.pause" && JSON.stringify(cmd.payload) === "{}" && /^console-trigger-/.test(cmd.command_id), `${tag}: Pause is automation.pause`, cmd);
+    check(await page.$eval('[data-trg-observer="auto_1"]', (el) => el.classList.contains("is-paused")), `${tag}: the paused chip shows it`);
+    check(await page.evaluate(() => document.activeElement && document.activeElement.dataset.trgUseflow) === "conn_feed1", `${tag}: the focus back on +`);
+    // Resume.
+    await page.click('[data-trg-useflow="conn_feed1"]');
+    await page.click('[data-trg-flowmenu="conn_feed1"] [data-trg-mflow="digest:digest"]');
+    await page.click('[data-trg-resume="auto_1"]');
+    await page.waitForFunction(() => (document.querySelector('[data-trg-row="conn_feed1"] .trg-hb .trg-fire.is-ok') || {}).textContent === "Release digest is on again.", null, { timeout: 15000 });
+    check(store.commands[store.commands.length - 1].type === "automation.resume" && !(await page.$eval('[data-trg-observer="auto_1"]', (el) => el.classList.contains("is-paused"))), `${tag}: Resume`);
+    // Remove: asked first (Cancel keeps it), then automation.archive; the chip goes.
+    await page.click('[data-trg-useflow="conn_feed1"]');
+    await page.click('[data-trg-flowmenu="conn_feed1"] [data-trg-mflow="sum:sum"]');
+    await page.click('[data-trg-remove="auto_2"]');
+    await page.waitForSelector('[data-trg-remove-now="auto_2"]');
+    check((await page.textContent('[data-trg-flowmenu="conn_feed1"] .trg-flowmenu__confirm')).trim() === "Remove Old digest? It stops handling Release notes feed; its history stays in Observer.", `${tag}: Remove asks first`);
+    check(await page.evaluate(() => document.activeElement && document.activeElement.dataset.trgRemoveCancel) === "auto_2", `${tag}: Cancel has the focus`);
+    if (full) await shot(page, `triggers-${tag}-remove-confirm`);
+    const before = store.commands.length;
+    await page.click('[data-trg-remove-cancel="auto_2"]');
+    check(store.commands.length === before && (await page.locator('[data-trg-remove="auto_2"]').count()) === 1, `${tag}: Cancel keeps it`);
+    await page.click('[data-trg-remove="auto_2"]');
+    await page.click('[data-trg-remove-now="auto_2"]');
+    await page.waitForFunction(() => !document.querySelector('[data-trg-observer="auto_2"]'), null, { timeout: 15000 });
+    check(store.commands[store.commands.length - 1].type === "automation.archive" && (await page.textContent('[data-trg-row="conn_feed1"] .trg-hb .trg-fire')).trim() === "Old digest no longer handles Release notes feed.", `${tag}: Remove archives it, said`);
     // New flow: Flow through the app door at ?trigger=mail:<mailbox id> (and ?trigger=<connection id>).
+    await page.click('[data-trg-useflow="mail:default"]');
     await page.click('[data-trg-newflow="mail:default"]');
     await page.waitForFunction(() => !document.querySelector("[data-trg-flowmenu]"));
     await page.waitForTimeout(200);
@@ -586,34 +683,32 @@ try {
     await page.click('[data-trg-newflow="conn_feed1"]');
     await page.waitForTimeout(200);
     check(JSON.stringify(store.opens[store.opens.length - 1]) === JSON.stringify({ app: "flow", path: "/?trigger=conn_feed1" }), `${tag}: new flow link for a connection`, store.opens);
-    // A flow that already handles the feed is shown, not offered twice; Esc closes the menu.
+    // Esc closes the menu and gives the focus back to "+".
     await page.click('[data-trg-useflow="conn_feed1"]');
-    check(await page.locator('[data-trg-flowmenu="conn_feed1"] [data-trg-flow="digest@1.0.0:digest"]').isDisabled(), `${tag}: Digest already handles the feed`);
     await page.keyboard.press("Escape");
     await page.waitForFunction(() => !document.querySelector("[data-trg-flowmenu]"));
     check(await page.evaluate(() => document.activeElement && document.activeElement.dataset.trgUseflow) === "conn_feed1", `${tag}: Esc gives the focus back`);
-    // A refusal in words, beside the menu (a mailbox the flow cannot read).
+    // A refusal in words, beside the control (a mailbox the flow cannot read).
     await page.click('[data-trg-useflow="mail:work"]');
     await page.click('[data-trg-flowmenu="mail:work"] [data-trg-flow="triage@1.0.0:triage"]');
-    await page.waitForSelector('[data-trg-mailbox="work"] .trg-use .trg-fire.is-failed');
-    check((await page.textContent('[data-trg-mailbox="work"] .trg-use .trg-fire')).trim() === "Triage cannot read Work: it has no incoming server. Connect it again with its incoming server (My email).", `${tag}: refusal in words`, await page.textContent('[data-trg-mailbox="work"] .trg-use .trg-fire'));
-    await shot(page, `triggers-use-in-a-flow-refused-${w}`);
-    // A pick: the automation is created from the flow with this trigger, then Handled by shows it.
+    await page.waitForSelector('[data-trg-mailbox="work"] .trg-hb .trg-fire.is-failed');
+    check((await page.textContent('[data-trg-mailbox="work"] .trg-hb .trg-fire')).trim() === "Triage cannot read Work: it has no incoming server. Connect it again with its incoming server (My email).", `${tag}: refusal in words`, await page.textContent('[data-trg-mailbox="work"] .trg-hb .trg-fire'));
+    // An unchecked pick: the automation is created from the flow with this trigger, then its chip shows.
     await page.click('[data-trg-useflow="mail:default"]');
     await page.click('[data-trg-flowmenu="mail:default"] [data-trg-flow="triage@1.0.0:triage"]');
-    await page.waitForSelector('[data-trg-mailbox="default"] .trg-handled__list');
+    await page.waitForSelector('[data-trg-mailbox="default"] .trg-hchip[data-trg-observer]');
     const post = store.posts[store.posts.length - 1];
     check(post.title === "Triage" && JSON.stringify(post.target) === JSON.stringify({ bundle_ref: "triage@1.0.0", flow_id: "triage", input_data: {} })
       && JSON.stringify(post.trigger) === JSON.stringify({ source_id: "email.received", source_version: 1, config: { from: ["boss@x.test"], account: "default" } })
       && JSON.stringify(post.context) === JSON.stringify({ mode: "growing" }) && /^console-trigger-/.test(post.request_id), `${tag}: the create body`, post);
-    check((await page.textContent('[data-trg-mailbox="default"] .trg-handled__list')).trim() === "Triage", `${tag}: Handled by refreshed`);
-    check((await page.textContent('[data-trg-mailbox="default"] .trg-use .trg-fire.is-ok')).trim() === "Triage now handles admin@example.org. It is on.", `${tag}: success said`);
-    // Each Handled by line opens Observer's Automations page.
+    check((await page.textContent('[data-trg-mailbox="default"] .trg-hchip[data-trg-observer]')).trim() === "Triage", `${tag}: Handled by refreshed`);
+    check((await page.textContent('[data-trg-mailbox="default"] .trg-hb .trg-fire.is-ok')).trim() === "Triage now handles admin@example.org. It is on.", `${tag}: success said`);
+    // A chip opens Observer's Automations page.
     await page.click('[data-trg-row="conn_feed1"] [data-trg-observer="auto_1"]');
     await page.waitForTimeout(200);
     check(JSON.stringify(store.opens[store.opens.length - 1]) === JSON.stringify({ app: "observer", path: "/#automations" }), `${tag}: Observer link`, store.opens);
     await noSideScroll(page, `${tag} after a pick`);
-    await shot(page, `triggers-use-in-a-flow-done-${w}`);
+    if (full) await shot(page, `triggers-${tag}-done`);
     await ctx.close();
   }
   // Deep link: `#triggers?new=feed.item` opens the dialog on that source.
