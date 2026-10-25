@@ -46,6 +46,8 @@ def test_one_user_lists_a_primary_and_a_read_only_mailbox(gateway, imap, imap_bo
     items = c.get("/api/gateway/me/email/accounts", headers=gateway["alice"]).json()["items"]
     assert [(i["account_id"], i["address"], i["can_read"], i["can_send"]) for i in items] == [
         ("default", ALICE, True, True), (WORK, BOB, True, False)]
+    # A read-only mailbox (IMAP only) cannot be changed either (AbstractCore's can_write).
+    assert [(i["account_id"], i["can_write"]) for i in items] == [("default", True), (WORK, False)]
     me = c.get("/api/gateway/me/email", headers=gateway["alice"]).json()
     assert [a["account_id"] for a in me["accounts"]] == ["default", WORK]
     assert me["address"] == ALICE and me["account_ref"] == "default:alice:default"  # the primary is unchanged

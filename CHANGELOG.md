@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Mailbox rows (`GET /me/email/accounts`, `GET /me/email` `accounts`) carry `can_write`: whether the mailbox may be changed (mark, label, move, delete; AbstractCore 2.28's `EmailAccount.can_write`, false for a read-only mailbox with IMAP only).
 - **Publish to a channel.** The host side of a flow's `PUBLISH_EVENT` (`publish_host.py`,
   `events_stream.record_published`): `{channel, type?, title, body?, subject?, data?, alert?}` lands on the run
   owner's event stream as an event of your type on your channel (id `publish:<run_id>:<step_id>`, idempotent), and

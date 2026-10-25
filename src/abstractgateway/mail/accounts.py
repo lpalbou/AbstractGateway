@@ -299,6 +299,8 @@ def mailbox_summary(plane: EmailPlane) -> Dict[str, Any]:
         "address": str(pub.get("address") or "") or None,
         "can_read": bool(pub.get("can_read")),
         "can_send": bool(pub.get("can_send")),
+        # May the mailbox be changed (mark, label, move, delete)? AbstractCore >= 2.28: IMAP + SMTP.
+        "can_write": bool(pub.get("can_write")),
         "enabled": bool(pub.get("enabled")),
         "folder": (str(imap.get("folder") or "") or "INBOX") if imap else None,
         "mailbox": mailbox_view(plane),
