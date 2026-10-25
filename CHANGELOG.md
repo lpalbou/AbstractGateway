@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Triggers: Handled by and Use in a flow.** Every row of the console's Triggers page (feeds, webhooks and
+  mailboxes) lists the automations its events start, active or paused: *<automation title> · <flow name>*,
+  *(paused)*, each opening Observer's Automations page; with none, *Nothing handles it yet.* **Use in a flow ▾**
+  opens a menu: **New flow for this trigger…** opens Flow at `/apps/flow/?trigger=<connection id>` (a mailbox:
+  `?trigger=mail:<mailbox id>`) through the app door, then your published triggered flows (`GET /bundles`
+  entrypoints with `triggerable`); a pick creates the automation with `POST /api/gateway/automations` (named after
+  the flow, its `automation_defaults` inputs and context, this trigger), turned on, and Handled by refreshes;
+  a refusal is said beside the menu. The status line counts the active automations instead of naming them. The
+  terminal console has the same (`f` / **Use in a flow**; the new-flow entry prints the link with Copy).
+  Automation summaries now carry `target` `{workflow_id, bundle_ref, flow_id}` and `flow_name`.
 - **Alerts on the Apple Watch and iPhone while the app is closed** (Apple push). The apps register at sign-in with
   `PUT /api/gateway/me/push/devices/{device_id}` `{token, topic, env, app, reg, name?}` (`DELETE` at sign-out,
   `GET /api/gateway/me/push/devices` lists yours, never with the token; a registration expires 7 days after its last

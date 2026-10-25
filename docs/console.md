@@ -447,8 +447,8 @@ email)**, **Add a feed** and **Add a webhook**.
   a new item*, *When My GitHub hook is called*, *When mail arrives in
   me@example.org*; then what it is doing, and **Last event**. The **Listening**
   switch is yours and the only control: on (the default for a new connection) it
-  says *Listening · used by Release digest* (the names of your active
-  automations that use it, up to three, then *+N*) or *Waiting for an automation
+  says *Listening · used by 2 automations* (your active automations that use
+  it; their names are under **Handled by**) or *Waiting for an automation
   to use it*; off it says *Paused*. Whether an automation uses it never moves
   the switch. **When nothing uses it** (collapsed, per connection) has **Keep
   fetching even when nothing uses it**. A mailbox row shows the same states with
@@ -460,6 +460,27 @@ email)**, **Add a feed** and **Add a webhook**.
   address.*); a paused one says *Paused* with the problem under its name. The
   line under the list: *A connection only fetches while an automation uses it.
   Pause it to stop fetching.*
+- **Handled by**, under each row's name (feeds, webhooks and mailboxes): one
+  line per automation of yours, active or paused, that this trigger starts,
+  *<automation title> · <flow name>* (the title alone when it is the flow's
+  name), *(paused)* after a paused one. Each line opens Observer's Automations
+  page. With none: *Nothing handles it yet.* Several automations on one trigger
+  are normal: each runs its flow on every event.
+- **Use in a flow ▾**, under Handled by, opens a small menu. **New flow for this
+  trigger…** opens Flow on this trigger, signed in, at
+  `/apps/flow/?trigger=<connection id>` (a mailbox:
+  `/apps/flow/?trigger=mail:<mailbox id>`; Flow's docs, *Open Flow from a
+  trigger*). Under it, **Or let one of your triggered flows handle it** lists
+  your published flows that have a trigger (a flow that already handles this
+  one is shown greyed, *Already handles it*). Picking one turns it on for this
+  trigger at once: an automation named after the flow, with the flow's saved
+  inputs and context (and, for a flow made for the same kind of trigger, its
+  other trigger settings, such as mail filters), listening to THIS connection
+  or mailbox (`POST /api/gateway/automations`, the creation Observer and Flow
+  use). Handled by then shows it, and the row says *<flow> now handles <name>.
+  It is on.* A refusal is said beside the menu, for example *Triage cannot read
+  Work: it has no incoming server. Connect it again with its incoming server
+  (My email).* **Esc** closes the menu.
 - **Events** opens the 20 most recent events under the row, each a sentence
   (*Test event · just now*, *New item: Release 0.13 · 09:00*, *Call received ·
   09:00*) with its full JSON behind **Details** (the CloudEvents envelope your
@@ -1048,11 +1069,17 @@ you can click.
   with the reason and an **Archive** button.
 
 - **V Triggers** is the web page's table: Name (your label, the trigger in words
-  under it), Status (what it is doing, in the web's words), the **Listening**
+  under it, then **Handled by:** one line per automation, *<title> · <flow
+  name>*, *(paused)*, or *Nothing handles it yet.*), Status (what it is doing, in
+  the web's words), the **Listening**
   switch (`l`; `k` toggles **Keep fetching even when nothing uses it**; a
   mailbox row's switch is the mailbox's **Active**), Last event (an Account column with **All accounts**, `a`,
   administrators), your mailboxes as rows with **Manage under Account → My
-  email** (opens your email dialog) and, per connection **Events** (`e`, also `Enter`: a dialog with the 20 most recent
+  email** (opens your email dialog) and, on every row of yours, **Use in a flow** (`f`: a dialog
+  with the web menu's choices; **New flow for this trigger…** prints Flow's link,
+  `<gateway>/apps/flow/?trigger=<connection id>` or `…?trigger=mail:<mailbox id>`,
+  with **Copy**, since a terminal cannot open Flow; then your triggered flows, a
+  pick turning one on for this trigger, its refusal said in the web's words), per connection **Events** (`e`, also `Enter`: a dialog with the 20 most recent
   events, newest first, each followed by its JSON; a webhook's address with
   **Copy**), **Test** (`t`: the row's note says "Test event #N sent.") and
   **Delete** (`d`, after the web's question). **New connection** (`n`) is a

@@ -353,7 +353,9 @@ editor stores the suggestion in the VisualFlow document as
   naming a connection that is not yours answers 404 `connection_not_found`.
   The automation stores it as `trigger.config.connection_id`. Connections are
   managed with the [connections API](./api.md#trigger-connections) and the
-  console's Triggers page.
+  console's Triggers page, which also says which automations handle each
+  connection and mailbox (**Handled by**) and turns one of your triggered flows
+  on for it (**Use in a flow**, [console.md](./console.md#triggers)).
 
 ## Tool approval and consent
 
@@ -431,6 +433,8 @@ for a trigger with no clock time (manual, email).
 {"automation_id": "…", "title": "…",
  "status": "active",                  // active | paused | completed | failed | archived
  "trigger": {"binding_id": "…", "source_id": "schedule", "source_version": 1, "config": {…}},
+ "target": {"workflow_id": "digest@1.2.0:digest", "bundle_ref": "digest@1.2.0", "flow_id": "digest"},
+ "flow_name": "Release digest",
  "context_mode": "independent", "workspace_root": "/…/workspaces/session-automation-…",
  "next_fire_at": "…", "occurrence_count": 6,
  "next_run_at": "2026-10-09T06:00:00+00:00", "next_run_local": "2026-10-09T08:00:00+02:00",
@@ -459,6 +463,12 @@ for a trigger with no clock time (manual, email).
   absent when `next_fire_at` is.
 - `time_zone` is a `schedule@2` automation's zone; for any other trigger it is
   the owner's account time zone.
+- `target` is the workflow the automation runs (`{workflow_id, bundle_ref,
+  flow_id}`; its `input_data` stays in the definition, `GET
+  /automations/{id}`), and `flow_name` that entrypoint's name in the bundle
+  version it runs (null when this gateway does not have that version loaded).
+  The console's Triggers page lists *<title> · <flow_name>* under each trigger
+  (**Handled by**). A legacy row has neither.
 - `trigger_text` is the trigger of ANY automation in words, the line a client
   shows next to the title: the schedule sentence (`schedule_rule_text`) for a
   schedule, "By hand", "When mail arrives in <address>" (the watched mailbox),
