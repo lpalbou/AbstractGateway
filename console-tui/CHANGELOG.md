@@ -1,6 +1,12 @@
 # Changelog — abstractgateway-console
 
 ## [Unreleased]
+### Changed
+- **Triggers speaks the web page's words.** Rows are named by your label with the trigger under it ("When bbc-feed
+  has a new item", "When My GitHub hook is called"); your mailboxes are rows ("When mail arrives in …") with **Manage
+  under Account → My email**, and the mailbox source is no longer offered in **New connection** ("What to listen
+  to"). Settings show labels and help; a generated secret is never asked for; a new webhook shows the GitHub/Zapier
+  recipe and a signed call (bash, `openssl`) with its real address and secret.
 ### Added
 - **Triggers** (WORK, key **V**; root backlog 1041): the web console's Triggers page — your trigger connections
   (Source, Name, Status, Last event; an Account column with **All accounts** for administrators), per row **Events**

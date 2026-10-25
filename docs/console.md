@@ -949,15 +949,19 @@ you can click.
   switch. **⚠ Broken workflows** lists versions the gateway could not load,
   with the reason and an **Archive** button.
 
-- **V Triggers** is the web page's table: Source, Name, Status, Last event
-  (an Account column with **All accounts**, `a`, administrators) and, per
-  row, **Events** (`e`, also `Enter`: a dialog with the 20 most recent
+- **V Triggers** is the web page's table: Name (your label, the trigger in words
+  under it), Status, Last event (an Account column with **All accounts**, `a`,
+  administrators), your mailboxes as rows with **Manage under Account → My
+  email** (opens your email dialog) and, per connection **Events** (`e`, also `Enter`: a dialog with the 20 most recent
   events, newest first, each followed by its JSON; a webhook's address with
   **Copy**), **Test** (`t`: the row's note says "Test event #N sent.") and
   **Delete** (`d`, after the web's question). **New connection** (`n`) is a
-  dialog: Source (the sources that need a connection), Name, and the
-  source's settings; a webhook's address and signing secret are then shown
-  once, each with **Copy**. **Refresh** reads the list again.
+  dialog: What to listen to (a feed or a webhook), Name, and the source's
+  settings with their labels (a generated secret is never asked for); a
+  webhook's address and signing secret are then shown once, each with
+  **Copy**, with the GitHub/Zapier recipe and the signed call (bash,
+  `openssl`) to copy. The signed test call and the further mailboxes are in
+  the web console. **Refresh** reads the list again.
 
 - **4 Skills & MCP** has **[Skills] [MCP servers]** in its head (`[` / `]`
   switch them).

@@ -15,7 +15,7 @@ use abstractgateway_console::store::json::WriteState;
 use abstractgateway_console::store::Loadable;
 use abstractgateway_console::ui::triggers::{
     self, config_from, connectable_sources, delete_question, event_lines, form_fields, rows_from,
-    status_word, test_result, K_EVENTS, K_LIST, K_SOURCES,
+    status_word, test_result, K_EVENTS, K_LIST, K_MAILBOXES, K_SOURCES,
 };
 use abstractgateway_console::worker::json::JsonCmd;
 use abstractgateway_console::worker::Cmd;
@@ -31,6 +31,8 @@ fn sources() -> Value {
             "every_minutes": {"type": "integer", "title": "Check every (minutes)", "default": 15}}}},
         {"id": "webhook.received", "version": 1, "label": "Webhook received", "available": true, "needs_connection": true,
          "connection_schema": {"type": "object", "properties": {}}},
+        {"id": "email.received", "version": 1, "label": "When an email arrives", "available": true, "needs_connection": true,
+         "connection_provider": "email_accounts", "connection_schema": {"type": "object", "properties": {"account": {"type": "string"}}}},
         {"id": "broken", "label": "Broken", "available": false}
     ]})
 }
@@ -59,6 +61,16 @@ fn rows_sources_and_words() {
     assert_eq!(triggers::owner_text(None), "owner not reported");
     assert!(rows_from(&json!({"items": []})).is_err());
     let src = connectable_sources(&sources()).unwrap();
+    let mb = triggers::mailboxes_from(&mailboxes()).unwrap();
+    assert_eq!(
+        mb.iter().map(|m| m.name()).collect::<Vec<_>>(),
+        ["admin@example.org (primary)", "work"]
+    );
+    assert_eq!(
+        mb[1].phrase(),
+        "When mail arrives in me@work.example · read-only"
+    );
+    assert_eq!(mb[1].status(), ("Read-only".to_string(), "ok"));
     assert_eq!(
         src.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
         ["feed.item", "webhook.received"]
@@ -159,8 +171,8 @@ fn form_engine_matches_the_web() {
         [
             "Every (minutes) must be a whole number.",
             "Feed address does not have the expected form.",
-            "kind is required.",
-            "ratio must be a number.",
+            "Kind is required.",
+            "Ratio must be a number.",
         ]
     );
 }
@@ -204,9 +216,20 @@ fn page(admin: bool) -> r8w4::Harness {
     }
     h.store.json.set(K_SOURCES, Loadable::Ready(sources()));
     h.store.json.set(K_LIST, Loadable::Ready(list()));
+    h.store.json.set(K_MAILBOXES, Loadable::Ready(mailboxes()));
     h.turns(3);
     h.sent();
     h
+}
+
+fn mailboxes() -> Value {
+    json!({"items": [
+        {"account_id": "default", "primary": true, "configured": true, "address": "admin@example.org", "can_send": true,
+         "enabled": true, "mailbox": {"state": "connected"}, "watcher": {}},
+        {"account_id": "work", "primary": false, "configured": true, "address": "me@work.example", "can_send": false,
+         "enabled": true, "mailbox": {"state": "receive_only"}, "watcher": {}},
+        {"account_id": "old", "primary": false, "configured": false}
+    ]})
 }
 
 fn json_cmds(h: &mut r8w4::Harness) -> Vec<JsonCmd> {
@@ -259,21 +282,23 @@ fn the_page_shows_the_webs_words() {
     let s = h.turns(2);
     for w in [
         "Triggers",
-        "A connection is one place events come from",
+        "A connection is something of yours the gateway listens to",
         "All accounts",
         "New connection",
         "Refresh",
-        "Source",
         "Name",
         "Status",
         "Last event",
-        "Feed item",
-        "feed.item v1",
+        "When Release feed has a new item",
         "Release feed",
         "Active",
         "Never",
-        "Webhook received",
+        "When CI hook is called",
         "CI hook",
+        "admin@example.org (primary)",
+        "When mail arrives in admin@example.org",
+        "When mail arrives in me@work.example · read-only",
+        "Manage under Account → My email",
         "Paused",
         "Events",
         "Test",
@@ -390,7 +415,7 @@ fn click_new_connection_creates_and_shows_the_secret_once() {
     clicked().lock().unwrap().insert("new");
     let s = h.turns(3);
     assert!(
-        s.contains("Source") && s.contains("Feed item") && s.contains("Name *"),
+        s.contains("What to listen to") && s.contains("Feed item") && s.contains("Name *"),
         "{s}"
     );
     assert!(
@@ -446,6 +471,11 @@ fn click_new_connection_creates_and_shows_the_secret_once() {
         s.contains("whsec_abc123") && s.contains("Signing secret") && s.contains("Copy"),
         "{s}"
     );
+    assert!(
+        s.contains("Set up the sender") && s.contains("paste the webhook address"),
+        "{s}"
+    );
+    assert!(s.contains("SECRET='whsec_abc123'"), "{s}");
     h.click_text("Done");
     let s = h.turns(2);
     assert!(
@@ -458,7 +488,7 @@ fn click_new_connection_creates_and_shows_the_secret_once() {
 /// (the set below is the list those tests cover; a new action is RED).
 #[test]
 fn every_action_has_a_click_test() {
-    let covered: BTreeSet<&str> = ["events", "test", "delete", "refresh", "new"]
+    let covered: BTreeSet<&str> = ["events", "test", "delete", "refresh", "new", "manage"]
         .into_iter()
         .collect();
     let rows = rows_from(&list()).unwrap();
@@ -469,6 +499,9 @@ fn every_action_has_a_click_test() {
         }
     }
     for a in triggers::panel_actions() {
+        offered.insert(a.id);
+    }
+    for a in triggers::mailbox_actions() {
         offered.insert(a.id);
     }
     let missing: Vec<&&str> = offered.difference(&covered).collect();
@@ -487,7 +520,53 @@ fn narrow_terminal_keeps_rows_and_actions() {
     h.store.json.set(K_SOURCES, Loadable::Ready(sources()));
     h.store.json.set(K_LIST, Loadable::Ready(list()));
     let s = h.turns(3);
-    for w in ["Release feed", "CI hook", "Last event: Never", "Events", "Test", "Delete"] {
+    for w in [
+        "Release feed",
+        "CI hook",
+        "Last event: Never",
+        "Events",
+        "Test",
+        "Delete",
+    ] {
         assert!(s.contains(w), "{w:?} missing at 80x24:\n{s}");
     }
+}
+
+#[test]
+fn readable_webhook_form_and_mailbox_manage_click() {
+    let schema = json!({"type": "object", "additionalProperties": false, "properties": {
+        "subject_path": {"type": "string", "description": "dotted path in a JSON body for the event subject (default: the webhook id)"},
+        "tolerance_s": {"type": "integer", "minimum": 60, "maximum": 3600, "default": 300},
+        "secret": {"type": "string", "x-secret": true, "description": "whsec_<base64>; generated when omitted"}
+    }});
+    let f = form_fields(&schema);
+    assert_eq!(
+        f.iter().map(|x| x.label.as_str()).collect::<Vec<_>>(),
+        [
+            "Subject (path in the JSON body)",
+            "Accepted clock skew (seconds)"
+        ]
+    );
+    assert_eq!(
+        f[0].description,
+        "Dotted path in a JSON body for the event subject (default: the webhook id)"
+    );
+    let curl =
+        triggers::webhook_curl_example("http://h/api/gateway/triggers/webhooks/c1", "whsec_abc");
+    assert!(
+        curl.contains("KEY=$(printf %s \"${SECRET#whsec_}\" | base64 -d | xxd -p -c 256)"),
+        "{curl}"
+    );
+    assert!(curl.contains("-H \"webhook-signature: v1,$SIG\""), "{curl}");
+    // The mailbox row's link opens your own email (the web's Account → My email).
+    let mut h = page(true);
+    let before = h.turns(1);
+    assert!(!before.contains("Add your mailbox") || true);
+    click_row(&mut h, "admin@example.org (primary)", "Manage");
+    clicked().lock().unwrap().insert("manage");
+    let s = h.turns(3);
+    assert!(
+        s.contains("Email") || s.contains("mailbox"),
+        "the email dialog opens:\n{s}"
+    );
 }

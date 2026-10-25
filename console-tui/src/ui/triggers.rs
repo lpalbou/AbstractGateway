@@ -44,7 +44,15 @@ pub const TITLE: &str = "Triggers";
 pub const SUBTITLE: &str =
     "Connections that can start your automations: mailboxes, feeds, webhooks";
 pub const NAV_TIP: &str = "Mailboxes, feeds and webhooks that can start your automations";
-pub const PURPOSE: &str = "A connection is one place events come from: this mailbox, this feed, this webhook. Create it once here; your automations and flows can then listen to it.";
+pub const PURPOSE: &str = "A connection is something of yours the gateway listens to: a mailbox, a feed, a webhook address. Flows and automations use it by name.";
+/// The webhook setup recipe (the web's setup panel).
+pub const WEBHOOK_RECIPE: &str = "GitHub, Zapier and other services: paste the webhook address as the webhook URL, the signing secret as the secret, and choose JSON as the content type.";
+pub const WEBHOOK_SHELL: &str =
+    "Any other sender signs each call per Standard Webhooks. From a shell (bash, openssl):";
+/// The mailbox rows' link (the web's words).
+pub const MANAGE_MAILBOX: &str = "Manage under Account → My email";
+pub const K_MAILBOXES: &str = "triggers.mailboxes";
+const MAILBOXES_PATH: &str = "/me/email/accounts";
 pub const NEW: &str = "New connection";
 pub const REFRESH: &str = "Refresh";
 pub const REFRESH_TIP: &str = "Read the connections again";
@@ -59,6 +67,7 @@ pub const WEBHOOK_HELP: &str = "Senders sign each request with this connection's
 pub const NO_SOURCE: &str = "No trigger source on this gateway needs a connection.";
 pub const CREATED_HELP: &str = "Your automations and flows can now listen to it.";
 pub const NAME_HELP: &str = "How you find it in Flow and in your automations.";
+pub const NAME_PLACEHOLDER: &str = "Release feed, Orders webhook…";
 pub const EVENTS_LIMIT: usize = 20;
 
 /// Page keys only an admin has.
@@ -203,6 +212,9 @@ pub fn connectable_sources(v: &Value) -> Result<Vec<SourceDesc>, String> {
         match s.get("needs_connection").and_then(Value::as_bool) {
             None => missing.push(format!("{id}@{version}")),
             Some(false) => {}
+            // A mailbox-backed source reads the person's mail accounts: its mailboxes are rows of
+            // the page, managed under Account → My email (never a New connection).
+            Some(true) if st(s, "connection_provider").as_deref() == Some("email_accounts") => {}
             Some(true) => {
                 let schema = s.get("connection_schema").filter(|x| x.is_object()).ok_or(format!(
                     "Trigger source {id}@{version} needs a connection but serves no connection_schema object."
@@ -295,6 +307,11 @@ pub fn row_actions(r: &ConnRow) -> Vec<Action> {
     ]
 }
 
+/// A mailbox row's one action (the web's link).
+pub fn mailbox_actions() -> Vec<Action> {
+    vec![Action::label("manage", MANAGE_MAILBOX).tooltip("Mailboxes are managed with your account")]
+}
+
 /// The head buttons.
 pub fn panel_actions() -> Vec<Action> {
     vec![
@@ -385,6 +402,120 @@ const FORM_KEYWORDS: &[&str] = &[
     "writeOnly",
 ];
 
+/// The label of a setting whose schema has no `title` (the web's `TRG_FIELD_LABELS`, then
+/// the key in words).
+pub fn field_label(key: &str) -> String {
+    match key {
+        "subject_path" => "Subject (path in the JSON body)".into(),
+        "tolerance_s" => "Accepted clock skew (seconds)".into(),
+        "url" => "Feed address".into(),
+        "every" => "Check every".into(),
+        "max_items" => "Items per check (at most)".into(),
+        "initial_items" => "Items already in the feed".into(),
+        other => sentence_case(&other.replace('_', " ")),
+    }
+}
+
+fn sentence_case(s: &str) -> String {
+    let t = s.trim();
+    let mut c = t.chars();
+    match c.next() {
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+        None => String::new(),
+    }
+}
+
+/// The trigger in words (the same words as Flow): never `source_id@version`.
+pub fn trigger_phrase(r: &ConnRow, sources: &Value) -> String {
+    match r.source_id.as_str() {
+        "feed.item" => format!("When {} has a new item", r.label),
+        "webhook.received" => format!("When {} is called", r.label),
+        _ => source_label(r, sources),
+    }
+}
+
+/// One mailbox row (`GET /me/email/accounts` item; configured ones only).
+#[derive(Clone, Debug, PartialEq)]
+pub struct MailboxRow {
+    pub id: String,
+    pub primary: bool,
+    pub address: Option<String>,
+    pub can_send: bool,
+    pub enabled: bool,
+    pub state: String,
+    pub last_poll: Option<String>,
+}
+
+pub fn mailboxes_from(v: &Value) -> Result<Vec<MailboxRow>, String> {
+    let items = v
+        .get("items")
+        .and_then(Value::as_array)
+        .ok_or("the gateway's answer has no items list.")?;
+    Ok(items
+        .iter()
+        .filter(|m| m.get("configured").and_then(Value::as_bool) == Some(true))
+        .map(|m| MailboxRow {
+            id: st(m, "account_id").unwrap_or_default(),
+            primary: m.get("primary").and_then(Value::as_bool) == Some(true),
+            address: st(m, "address").filter(|a| !a.is_empty()),
+            can_send: m.get("can_send").and_then(Value::as_bool) == Some(true),
+            enabled: m.get("enabled").and_then(Value::as_bool) == Some(true),
+            state: m
+                .get("mailbox")
+                .and_then(|b| st(b, "state"))
+                .unwrap_or_default(),
+            last_poll: m.get("watcher").and_then(|w| st(w, "last_poll")),
+        })
+        .collect())
+}
+
+impl MailboxRow {
+    pub fn name(&self) -> String {
+        if self.primary {
+            format!("{} (primary)", self.address.as_deref().unwrap_or(&self.id))
+        } else {
+            self.id.clone()
+        }
+    }
+    pub fn phrase(&self) -> String {
+        format!(
+            "When mail arrives in {}{}",
+            self.address.as_deref().unwrap_or(&self.id),
+            if self.can_send { "" } else { " · read-only" }
+        )
+    }
+    /// The web's status words (`TRG_MAILBOX_STATE`).
+    pub fn status(&self) -> (String, &'static str) {
+        if !self.enabled {
+            return ("Off".into(), "muted");
+        }
+        match self.state.as_str() {
+            "connected" => ("Active".into(), "ok"),
+            "receive_only" => ("Read-only".into(), "ok"),
+            "paused" => ("Paused".into(), "muted"),
+            "needs_reconnect" => ("Needs reconnecting".into(), "warn"),
+            "unavailable" => ("Unavailable".into(), "muted"),
+            "not_connected" => ("Not connected".into(), "muted"),
+            "" => ("unknown".into(), "warn"),
+            other => (other.to_string(), "warn"),
+        }
+    }
+}
+
+/// The signed call the setup panel offers (the web's `webhookCurlExample`), with the real values.
+pub fn webhook_curl_example(ingress_url: &str, secret: &str) -> String {
+    [
+        format!("SECRET='{secret}'"),
+        format!("URL='{ingress_url}'"),
+        "KEY=$(printf %s \"${SECRET#whsec_}\" | base64 -d | xxd -p -c 256)".to_string(),
+        "ID=msg_$(date +%s); TS=$(date +%s); BODY='{\"hello\": \"world\"}'".to_string(),
+        "SIG=$(printf %s \"$ID.$TS.$BODY\" | openssl dgst -sha256 -mac HMAC -macopt hexkey:$KEY -binary | base64)".to_string(),
+        "curl -sS -X POST \"$URL\" -H \"webhook-id: $ID\" -H \"webhook-timestamp: $TS\" \\".to_string(),
+        "  -H \"webhook-signature: v1,$SIG\" -H \"Content-Type: application/json\" --data \"$BODY\"".to_string(),
+    ]
+    .join("\n")
+}
+
 pub fn form_fields(schema: &Value) -> Vec<FormField> {
     let required: Vec<String> = schema
         .get("required")
@@ -400,10 +531,13 @@ pub fn form_fields(schema: &Value) -> Vec<FormField> {
     };
     props
         .iter()
+        // A secret the gateway generates (`x-secret`) is never typed: it is shown once after Create.
+        .filter(|(_, p)| p.get("x-secret").and_then(Value::as_bool) != Some(true))
         .map(|(key, p)| {
-            let known = p
-                .as_object()
-                .is_some_and(|o| o.keys().all(|k| FORM_KEYWORDS.contains(&k.as_str())));
+            let known = p.as_object().is_some_and(|o| {
+                o.keys()
+                    .all(|k| FORM_KEYWORDS.contains(&k.as_str()) || k.starts_with("x-"))
+            });
             let ty = p.get("type").and_then(Value::as_str).unwrap_or("");
             let kind = if !known {
                 "readonly"
@@ -431,8 +565,8 @@ pub fn form_fields(schema: &Value) -> Vec<FormField> {
                 kind,
                 label: st(p, "title")
                     .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| key.clone()),
-                description: st(p, "description").unwrap_or_default(),
+                    .unwrap_or_else(|| field_label(key)),
+                description: sentence_case(&st(p, "description").unwrap_or_default()),
                 required: required.iter().any(|r| r == key),
                 schema: p.clone(),
             }
@@ -591,6 +725,9 @@ pub fn refresh(ctx: &Ctx) {
     }
     ctx.send(Cmd::Json(JsonCmd::get(K_SOURCES, SOURCES_PATH)));
     ctx.send(Cmd::Json(JsonCmd::get(K_LIST, list_path(all))));
+    if !all {
+        ctx.send(Cmd::Json(JsonCmd::get(K_MAILBOXES, MAILBOXES_PATH)));
+    }
 }
 
 /// The footer verbs.
@@ -740,6 +877,9 @@ fn set_all(ctx: &Ctx, tu: Tu, on: bool) {
     tu.all.set(on);
     ctx.store.json.set(K_LIST, Loadable::Loading);
     ctx.send(Cmd::Json(JsonCmd::get(K_LIST, list_path(on))));
+    if !on {
+        ctx.send(Cmd::Json(JsonCmd::get(K_MAILBOXES, MAILBOXES_PATH)));
+    }
 }
 
 fn panel_action(cx: Scope, ctx: &Ctx, tu: Tu, id: &str) {
@@ -879,10 +1019,7 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
     };
     let now = now_s();
     let narrow = width < 100;
-    let mut cols = vec![
-        Col::new("Source", ColW::Fit { min: 10, max: 26 }),
-        Col::new("Name", ColW::Flex { weight: 1, min: 12 }),
-    ];
+    let mut cols = vec![Col::new("Name", ColW::Flex { weight: 1, min: 16 })];
     if all {
         cols.push(Col::new("Account", ColW::Fit { min: 8, max: 18 }));
     }
@@ -890,7 +1027,7 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
     if !narrow {
         cols.push(Col::new("Last event", ColW::Fit { min: 10, max: 12 }));
     }
-    cols.push(Col::new("Actions", ColW::Fit { min: 6, max: 28 }));
+    cols.push(Col::new("Actions", ColW::Fit { min: 6, max: 36 }));
     let table_rows: Vec<WRow> = rows
         .iter()
         .map(|r| {
@@ -901,16 +1038,10 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
                 "warn" => t.warn,
                 _ => t.text_muted,
             };
-            let mut cells = vec![
-                Cell::Lines(vec![
-                    vec![Ink::new(source_label(r, &sources), t.text)],
-                    vec![Ink::new(
-                        format!("{} v{}", r.source_id, r.source_version),
-                        t.text_muted,
-                    )],
-                ]),
-                Cell::Lines(vec![vec![Ink::new(r.label.clone(), t.text).bold()]]),
-            ];
+            let mut cells = vec![Cell::Lines(vec![
+                vec![Ink::new(r.label.clone(), t.text).bold()],
+                vec![Ink::new(trigger_phrase(r, &sources), t.text_muted)],
+            ])];
             if all {
                 cells.push(Cell::text(owner_text(r.principal.as_deref()), t.text));
             }
@@ -934,7 +1065,40 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
             WRow::new(r.id.clone(), cells).note(note)
         })
         .collect();
-    let keys: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+    let mut table_rows = table_rows;
+    let mut keys: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+    // The person's mailboxes (own view): rows of "When mail arrives in …", managed under My email.
+    if !all {
+        if let Loadable::Ready(v) = ctx.store.json.get(K_MAILBOXES) {
+            for m in mailboxes_from(&v).unwrap_or_default() {
+                let (word, tone) = m.status();
+                let ink = match tone {
+                    "ok" => t.ok,
+                    "warn" => t.warn,
+                    _ => t.text_muted,
+                };
+                let last = match &m.last_poll {
+                    Some(p) => format!("checked {}", ago(p, now).unwrap_or_else(|| p.clone())),
+                    None => "Never".into(),
+                };
+                let mut cells = vec![
+                    Cell::Lines(vec![
+                        vec![Ink::new(m.name(), t.text).bold()],
+                        vec![Ink::new(m.phrase(), t.text_muted)],
+                    ]),
+                    Cell::text(word, ink),
+                ];
+                if !narrow {
+                    cells.push(Cell::text(last.clone(), t.text));
+                }
+                cells.push(Cell::Actions(mailbox_actions()));
+                let key = format!("mailbox:{}", m.id);
+                let note = narrow.then(|| (format!("Last check: {last}"), t.text_muted));
+                table_rows.push(WRow::new(key.clone(), cells).note(note));
+                keys.push(key);
+            }
+        }
+    }
     let i = tu.sel.get_untracked().min(keys.len().saturating_sub(1));
     let sel = cx.signal(keys.get(i).cloned());
     {
@@ -957,12 +1121,22 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
         .empty(if all { EMPTY_ALL } else { EMPTY })
         .autofocus()
         .on_action(move |key, id| {
+            if key.starts_with("mailbox:") {
+                if id == "manage" {
+                    super::my_email::open(pcx, &ca);
+                }
+                return;
+            }
             if let Some(p) = ka.iter().position(|x| x == key) {
                 tu.sel.set(p);
             }
             row_action(pcx, &ca, tu, id);
         })
         .on_activate(move |key| {
+            if key.starts_with("mailbox:") {
+                super::my_email::open(pcx, &ce);
+                return;
+            }
             if let Some(p) = ke.iter().position(|x| x == key) {
                 tu.sel.set(p);
             }
@@ -1096,6 +1270,19 @@ fn open_create(cx: Scope, ctx: &Ctx, tu: Tu) {
                         col = col.child(sentence(&t, SECRET_ONCE, w, t.warn));
                         col = col.child(copy_row(gcx, &c2, &t, "Signing secret", s, w));
                     }
+                    if let (Some(u), Some(s)) = (&url, &secret) {
+                        col = col.child(super::w::form::section(&t, "Set up the sender"));
+                        col = col.child(sentence(&t, WEBHOOK_RECIPE, w, t.text_muted));
+                        col = col.child(sentence(&t, WEBHOOK_SHELL, w, t.text_muted));
+                        col = col.child(copy_row(
+                            gcx,
+                            &c2,
+                            &t,
+                            "Signed call",
+                            &webhook_curl_example(u, s),
+                            w,
+                        ));
+                    }
                     if url.is_none() && secret.is_none() {
                         col = col.child(sentence(&t, CREATED_HELP, w, t.text_muted));
                     }
@@ -1155,7 +1342,12 @@ fn open_create(cx: Scope, ctx: &Ctx, tu: Tu) {
                 .element(gcx, &t)
                 .autofocus()
                 .build();
-                col = col.child(super::w::field_row(&t, "Source", label_w, src_select));
+                col = col.child(super::w::field_row(
+                    &t,
+                    "What to listen to",
+                    label_w,
+                    src_select,
+                ));
                 col = col.child(super::w::field_row(
                     &t,
                     "Name *",
@@ -1165,7 +1357,7 @@ fn open_create(cx: Scope, ctx: &Ctx, tu: Tu) {
                         caret,
                         TextInput::new()
                             .value(name)
-                            .placeholder("Work mailbox, Release feed…")
+                            .placeholder(NAME_PLACEHOLDER)
                             .layout(LayoutStyle::default().w(field_w).h(1))
                             .element(gcx, &t),
                     )
