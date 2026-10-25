@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Events and triggers: examples (backlog 1048, `docs/events-examples.md`): watch a mailbox and tell me when
+  something important arrives, a digest of a news feed, run a flow when an external system calls my webhook
+  (the Standard Webhooks signing as shell commands), following your event stream; each one a hermetic
+  end-to-end test under `tests/e2e_events/` (`python -m pytest tests -q -k e2e_events`): the real app and
+  runner, a scripted model double deciding through the flow's LLM node, AbstractCore's fake mail servers, a
+  recorded Python Insider RSS (plus a live variant run with `--allow-network`), the gateway tray following
+  the stream over HTTP on a scratch port.
 - Per-user event stream (backlog 1046, `events_stream.py`): one durable, ordered stream per person
   (`user:<tenant>:<user>`, the runtime's `JsonFileEventInbox` in the plane's data folder) holding only what is
   not a step of a run, in CloudEvents 1.0 names (`{specversion, id, type, source, subject?, time, data,
