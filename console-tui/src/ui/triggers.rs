@@ -7,8 +7,20 @@
 //! automation and flow of its owner.
 //!
 //! The page: the web's purpose sentence; [New connection] [Refresh] and,
-//! for admins, the **All accounts** toggle; a `DataTable` Source · Name ·
-//! (Account) · Status · Last event · [Events] [Test] [Delete]. Events opens
+//! for admins, the **All accounts** toggle; a `DataTable` Name (the name and
+//! the trigger sentence) · (Account) · Status · Listening · **Handled by**
+//! (own view only: the flows of the automations handling it, a paused one
+//! "<flow> (paused)" muted, "Nothing yet" when none, empty while the
+//! automations are not read) · Last event (a row note below 100 columns) ·
+//! [Use in a flow] [Events] [Test] [Delete]. Use in a flow (`f`) is the web's
+//! menu: "New flow for this trigger…" (Flow's link, with Copy), then every
+//! published triggered flow, "✓ <flow>" when it already handles the trigger
+//! (plus every handler whose flow is not published, by its flow name). An
+//! unchecked pick creates the automation; a checked one opens that flow's
+//! automations on this trigger, each with Pause (Resume when paused) and
+//! Remove (asked first, inline), sent as `POST /automations/{id}/commands`
+//! (`automation.pause|resume|archive`), then the automations are read again.
+//! Events opens
 //! the connection's 20 most recent events (newest first, each with its
 //! whole JSON); Test sends a test event and says "Test event #N sent." in
 //! the row's note; Delete asks the web's question first. New connection is
@@ -21,7 +33,8 @@
 //! the web page's routes: GET /trigger-sources, GET|POST
 //! /triggers/connections (`?all=true` for an admin), DELETE
 //! /triggers/connections/{id}, GET …/{id}/events?limit=20, POST
-//! …/{id}/test-fire.
+//! …/{id}/test-fire; GET /automations, POST /automations, POST
+//! /automations/{id}/commands; GET /bundles.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -68,7 +81,23 @@ pub const FLOWS_PATH: &str = "/bundles";
 pub const K_USE: &str = "triggers.use";
 pub const USE_IN_FLOW: &str = "Use in a flow";
 pub const NEW_FLOW: &str = "New flow for this trigger…";
-pub const NOTHING_HANDLES: &str = "Nothing handles it yet.";
+/// The Handled by column (own view) and its empty cell.
+pub const HANDLED_BY: &str = "Handled by";
+pub const NOTHING_YET: &str = "Nothing yet";
+/// A Pause / Resume / Remove on a handler (`POST /automations/{id}/commands`), the web's words:
+/// `<title>` is the automation's title, `<label>` the trigger's, `<reason>` the refusal.
+pub const K_CMD: &str = "triggers.command";
+pub const SAID_PAUSED: &str = "<title> is paused.";
+pub const SAID_RESUMED: &str = "<title> is on again.";
+pub const SAID_REMOVED: &str = "<title> no longer handles <label>.";
+pub const NOT_PAUSED: &str = "<title> was not paused: <reason>";
+pub const NOT_RESUMED: &str = "<title> was not resumed: <reason>";
+pub const NOT_REMOVED: &str = "<title> was not removed: <reason>";
+pub const SESSION_EXPIRED: &str = "Your session expired: sign in again, then try again.";
+pub const REMOVE_QUESTION: &str =
+    "Remove <title>? It stops handling <label>; its history stays in Observer.";
+/// The second re-read after a command's receipt (the runner applies it shortly after).
+pub const REREAD_AFTER: std::time::Duration = std::time::Duration::from_millis(1500);
 pub const FLOWS_HEAD: &str = "Or let one of your triggered flows handle it";
 pub const NO_FLOWS: &str = "No triggered flow yet: start with a new one.";
 pub const NEW_FLOW_HELP: &str = "A terminal cannot open Flow: open this link in your browser.";
@@ -307,6 +336,18 @@ impl Handler {
             base
         }
     }
+    /// The flow's name (the title when the automation names no flow).
+    pub fn name(&self) -> String {
+        if self.flow.is_empty() {
+            self.title.clone()
+        } else {
+            self.flow.clone()
+        }
+    }
+    /// Does this automation run that published flow?
+    pub fn runs(&self, f: &TriggeredFlow) -> bool {
+        self.bundle == f.bundle && self.flow_id == f.flow_id
+    }
 }
 
 /// Your automations (active and paused) on a trigger; None when the list was not read.
@@ -347,23 +388,169 @@ pub fn handlers(autos: &Value, matches: impl Fn(&Value) -> bool) -> Option<Vec<H
     )
 }
 
-/// The Handled by lines under a row's name: "Handled by: <first>", then one indented line per
-/// other automation; "Handled by: Nothing handles it yet." (muted) when none.
-pub fn handled_lines(handlers: &[Handler]) -> Vec<(String, bool)> {
-    if handlers.is_empty() {
-        return vec![(format!("Handled by: {NOTHING_HANDLES}"), false)];
+/// The Handled by cell: one line per handler (its flow's name, "<flow> (paused)" for a paused
+/// one), `(text, muted)`; "Nothing yet" (muted) when none; no line at all when the automations
+/// were not read (never a false "Nothing yet").
+pub fn handled_by(handlers: Option<&[Handler]>) -> Vec<(String, bool)> {
+    let Some(hs) = handlers else {
+        return Vec::new();
+    };
+    if hs.is_empty() {
+        return vec![(NOTHING_YET.to_string(), true)];
     }
-    handlers
-        .iter()
-        .enumerate()
-        .map(|(i, h)| {
-            if i == 0 {
-                (format!("Handled by: {}", h.text()), true)
+    hs.iter()
+        .map(|h| {
+            if h.paused {
+                (format!("{} (paused)", h.name()), true)
             } else {
-                (format!("            {}", h.text()), true)
+                (h.name(), false)
             }
         })
         .collect()
+}
+
+/// One choice of the Use in a flow menu after "New flow for this trigger…": a published
+/// triggered flow (`flow`), or a flow that handles the trigger but is not published (`None`);
+/// checked when `handlers` (its automations on this trigger) is not empty.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MenuItem {
+    pub name: String,
+    pub flow: Option<TriggeredFlow>,
+    pub handlers: Vec<Handler>,
+}
+
+impl MenuItem {
+    pub fn checked(&self) -> bool {
+        !self.handlers.is_empty()
+    }
+    /// "✓ <name>" when it already handles the trigger.
+    pub fn label(&self) -> String {
+        if self.checked() {
+            format!("✓ {}", self.name)
+        } else {
+            self.name.clone()
+        }
+    }
+}
+
+/// The menu's flows: every published triggered flow (by name), then every handler whose flow is
+/// not among them, grouped by its flow's name, so every handler is reachable.
+pub fn menu_items(flows: &[TriggeredFlow], hs: &[Handler]) -> Vec<MenuItem> {
+    let mut out: Vec<MenuItem> = flows
+        .iter()
+        .map(|f| MenuItem {
+            name: f.name.clone(),
+            flow: Some(f.clone()),
+            handlers: hs.iter().filter(|h| h.runs(f)).cloned().collect(),
+        })
+        .collect();
+    let mut rest: Vec<MenuItem> = Vec::new();
+    for h in hs.iter().filter(|h| !flows.iter().any(|f| h.runs(f))) {
+        let name = h.name();
+        match rest.iter_mut().find(|m| m.name == name) {
+            Some(m) => m.handlers.push(h.clone()),
+            None => rest.push(MenuItem {
+                name,
+                flow: None,
+                handlers: vec![h.clone()],
+            }),
+        }
+    }
+    rest.sort_by(|a, b| a.name.cmp(&b.name));
+    out.extend(rest);
+    out
+}
+
+/// What a checked item's automation can be asked (`POST /automations/{id}/commands`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HandlerCmd {
+    Pause,
+    Resume,
+    /// Remove = archive: the gateway has no DELETE /automations (Observer says Archive).
+    Remove,
+}
+
+impl HandlerCmd {
+    /// The command's `type`.
+    pub fn kind(self) -> &'static str {
+        match self {
+            HandlerCmd::Pause => "automation.pause",
+            HandlerCmd::Resume => "automation.resume",
+            HandlerCmd::Remove => "automation.archive",
+        }
+    }
+}
+
+/// `/automations/{id}/commands`.
+pub fn command_path(automation_id: &str) -> String {
+    format!(
+        "/automations/{}/commands",
+        crate::api::urlencode(automation_id)
+    )
+}
+
+/// The command body (the web's): `{command_id, type, payload: {}}`.
+pub fn command_body(cmd: HandlerCmd, command_id: &str) -> Value {
+    json!({"command_id": command_id, "type": cmd.kind(), "payload": {}})
+}
+
+fn words(template: &str, title: &str, label: &str, reason: &str) -> String {
+    template
+        .replace("<title>", title)
+        .replace("<label>", label)
+        .replace("<reason>", reason)
+}
+
+/// The sentence after a command's receipt.
+pub fn command_said(cmd: HandlerCmd, title: &str, label: &str) -> String {
+    let t = match cmd {
+        HandlerCmd::Pause => SAID_PAUSED,
+        HandlerCmd::Resume => SAID_RESUMED,
+        HandlerCmd::Remove => SAID_REMOVED,
+    };
+    words(t, title, label, "")
+}
+
+/// A refused command, in words: a 401 is the expired session; otherwise the gateway's own
+/// sentence (a 409 `invalid_state` says why) is the reason.
+pub fn command_refusal(e: &crate::api::ApiError, cmd: HandlerCmd, title: &str) -> String {
+    if e.kind == crate::api::ApiErrorKind::Unauthorized {
+        return SESSION_EXPIRED.into();
+    }
+    let t = match cmd {
+        HandlerCmd::Pause => NOT_PAUSED,
+        HandlerCmd::Resume => NOT_RESUMED,
+        HandlerCmd::Remove => NOT_REMOVED,
+    };
+    words(t, title, "", &refusal(e))
+}
+
+/// Remove's question (asked inline, in the menu).
+pub fn remove_question(title: &str, label: &str) -> String {
+    words(REMOVE_QUESTION, title, label, "")
+}
+
+/// A checked item's automation actions: Pause (Resume when paused) and Remove.
+pub fn handler_actions(h: &Handler) -> Vec<Action> {
+    vec![
+        if h.paused {
+            Action::label("resume", "Resume").tooltip(format!("Turn {} on again", h.title))
+        } else {
+            Action::label("pause", "Pause").tooltip(format!("Pause {}", h.title))
+        },
+        Action::label("remove", "Remove").danger().tooltip(format!(
+            "Remove {}: it stops handling this trigger",
+            h.title
+        )),
+    ]
+}
+
+/// Remove's inline answer buttons.
+pub fn remove_actions() -> Vec<Action> {
+    vec![
+        Action::label("remove_yes", "Remove").danger(),
+        Action::label("remove_no", "Cancel"),
+    ]
 }
 
 /// A row's key as Flow's `?trigger=` value: the connection id, `mail:<mailbox id>` for a mailbox.
@@ -512,7 +699,7 @@ pub fn use_refusal(e: &crate::api::ApiError, flow: &str, label: &str) -> String 
         .and_then(Value::as_str)
         .unwrap_or("");
     if e.kind == ApiErrorKind::Unauthorized {
-        return "Your session expired: sign in again, then try again.".into();
+        return SESSION_EXPIRED.into();
     }
     match code {
         "email_account_cannot_read" => format!("{flow} cannot read {label}: it has no incoming server. Connect it again with its incoming server (My email)."),
@@ -2106,10 +2293,37 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
     }
     cols.push(Col::new("Status", ColW::Fit { min: 6, max: 30 }));
     cols.push(Col::new("Listening", ColW::Fit { min: 4, max: 12 }));
+    // Handled by (own view): the flows that handle each trigger, one per line.
+    if !all {
+        cols.push(Col::new(
+            HANDLED_BY,
+            ColW::Fit {
+                min: 10,
+                max: if narrow { 16 } else { 26 },
+            },
+        ));
+    }
     if !narrow {
         cols.push(Col::new("Last event", ColW::Fit { min: 10, max: 12 }));
     }
-    cols.push(Col::new("Actions", ColW::Fit { min: 6, max: 50 }));
+    // Below 160 columns the own view's actions fold onto two lines: the Name keeps its room.
+    cols.push(Col::new(
+        "Actions",
+        ColW::Fit {
+            min: if narrow { 13 } else { 6 },
+            max: if !all && width < 160 { 24 } else { 50 },
+        },
+    ));
+    let handled_cell = |hs: Option<Vec<Handler>>| -> Cell {
+        Cell::Lines(
+            handled_by(hs.as_deref())
+                .into_iter()
+                .map(|(line, muted)| {
+                    vec![Ink::new(line, if muted { t.text_muted } else { t.text })]
+                })
+                .collect(),
+        )
+    };
     let table_rows: Vec<WRow> = rows
         .iter()
         .map(|r| {
@@ -2124,15 +2338,6 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
                 vec![Ink::new(r.label.clone(), t.text).bold()],
                 vec![Ink::new(trigger_phrase(r, &sources), t.text_muted)],
             ];
-            // Handled by (own view, automations read): who treats this connection's events.
-            if let Some(hs) = handlers(&autos, |tr| connection_match(&r.id, tr)) {
-                for (line, named) in handled_lines(&hs) {
-                    name_lines.push(vec![Ink::new(
-                        line,
-                        if named { t.text } else { t.text_muted },
-                    )]);
-                }
-            }
             // A failing connection that is on says its problem (red) as its status line; a paused
             // one keeps it under the name.
             let problem = error_text(r).filter(|_| r.paused == Some(false));
@@ -2182,6 +2387,11 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
                 },
                 None => Cell::text("—", t.text_muted),
             });
+            if !all {
+                cells.push(handled_cell(handlers(&autos, |tr| {
+                    connection_match(&r.id, tr)
+                })));
+            }
             if !narrow {
                 cells.push(Cell::text(last_event_text(r, now), t.text));
             }
@@ -2224,29 +2434,16 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
                     None => "Never".into(),
                 };
                 let mut cells = vec![
-                    Cell::Lines(
-                        vec![
-                            {
-                                let mut l = vec![Ink::new(m.name(), t.text).bold()];
-                                if m.primary {
-                                    l.push(Ink::new(format!("  {SENDS_AS_YOU}"), t.info));
-                                }
-                                l
-                            },
-                            vec![Ink::new(m.phrase(), t.text_muted)],
-                        ]
-                        .into_iter()
-                        .chain(
-                            handlers(&autos, |tr| mailbox_match(&m, tr))
-                                .map(|hs| handled_lines(&hs))
-                                .unwrap_or_default()
-                                .into_iter()
-                                .map(|(line, named)| {
-                                    vec![Ink::new(line, if named { t.text } else { t.text_muted })]
-                                }),
-                        )
-                        .collect(),
-                    ),
+                    Cell::Lines(vec![
+                        {
+                            let mut l = vec![Ink::new(m.name(), t.text).bold()];
+                            if m.primary {
+                                l.push(Ink::new(format!("  {SENDS_AS_YOU}"), t.info));
+                            }
+                            l
+                        },
+                        vec![Ink::new(m.phrase(), t.text_muted)],
+                    ]),
                     {
                         let users = mailbox_users(&m, &autos);
                         let used = autos.is_object().then_some(users.len() as i64);
@@ -2266,6 +2463,7 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
                         refused: None,
                         tip: Some(format!("Listening: {}", m.name())),
                     },
+                    handled_cell(handlers(&autos, |tr| mailbox_match(&m, tr))),
                 ];
                 if !narrow {
                     cells.push(Cell::text(last.clone(), t.text));
@@ -2437,14 +2635,18 @@ fn open_events(cx: Scope, ctx: &Ctx, r: ConnRow) {
 }
 
 /// Use in a flow (the web's menu): "New flow for this trigger…" prints Flow's link for this
-/// trigger (a terminal cannot open Flow), then your published triggered flows; a pick creates the
-/// automation (`POST /automations`, the web's body), turned on, and Handled by is read again.
+/// trigger (a terminal cannot open Flow), then your published triggered flows, "✓ <flow>" when it
+/// already handles the trigger (and every handler whose flow is not published). An unchecked pick
+/// creates the automation (`POST /automations`, the web's body), turned on; a checked one opens
+/// that flow's automations on this trigger, each with Pause (Resume) and Remove (asked first,
+/// inline). Handled by is read again after each.
 fn open_use_flow(cx: Scope, ctx: &Ctx, target: Option<Result<UseTarget, String>>) {
     let Some(target) = target else { return };
     if ctx.store.json.get_untracked(K_FLOWS).ready().is_none() {
         ctx.send(Cmd::Json(JsonCmd::get(K_FLOWS, FLOWS_PATH)));
     }
     ctx.store.json.set_write(K_USE, None);
+    ctx.store.json.set_write(K_CMD, None);
     let title = match &target {
         Ok(t) => format!("{USE_IN_FLOW} — {}", t.label),
         Err(_) => USE_IN_FLOW.to_string(),
@@ -2455,6 +2657,10 @@ fn open_use_flow(cx: Scope, ctx: &Ctx, target: Option<Result<UseTarget, String>>
         .open(ctx, cx, move |mcx, close, _guard, w| {
             let show_link = mcx.signal(false);
             let picked: Signal<Option<String>> = mcx.signal(None);
+            // The checked item opened (its name), the automation asked about Remove, the last command.
+            let opened: Signal<Option<String>> = mcx.signal(None);
+            let asking: Signal<Option<String>> = mcx.signal(None);
+            let acted: Signal<Option<(HandlerCmd, String)>> = mcx.signal(None);
             let c2 = c.clone();
             let t0 = use_theme(mcx).get().tokens;
             let body = dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |gcx| {
@@ -2487,74 +2693,18 @@ fn open_use_flow(cx: Scope, ctx: &Ctx, target: Option<Result<UseTarget, String>>
                     .cloned()
                     .unwrap_or(Value::Null);
                 let hs = handlers(&autos, |tr| target.matches(tr)).unwrap_or_default();
-                match c2.store.json.get(K_FLOWS) {
+                // The published flows (none while unread or refused: the handlers stay reachable).
+                let flows = match c2.store.json.get(K_FLOWS) {
                     Loadable::Ready(v) => match triggered_flows(&v) {
-                        Ok(flows) if flows.is_empty() => {
-                            col = col.child(sentence(&t, NO_FLOWS, w, t.text_muted))
-                        }
-                        Ok(flows) => {
-                            col = col.child(super::w::form::section(&t, FLOWS_HEAD));
-                            for f in flows {
-                                if hs
-                                    .iter()
-                                    .any(|h| h.bundle == f.bundle && h.flow_id == f.flow_id)
-                                {
-                                    col = col.child(sentence(
-                                        &t,
-                                        &format!("{} · already handles it", f.name),
-                                        w,
-                                        t.text_muted,
-                                    ));
-                                    continue;
-                                }
-                                let a = Action::label("pick", f.name.clone())
-                                    .tooltip(format!("Turn {} on for {}", f.name, target.label));
-                                let (c3, tg) = (c2.clone(), target.clone());
-                                col = col.child(menu_item(button(
-                                    gcx,
-                                    &t,
-                                    &a,
-                                    On::Raised,
-                                    true,
-                                    move || {
-                                        if c3
-                                            .store
-                                            .json
-                                            .write_untracked(K_USE)
-                                            .is_some_and(|w| w.is_pending())
-                                        {
-                                            return;
-                                        }
-                                        picked.set(Some(f.name.clone()));
-                                        let rid = format!(
-                                            "console-tui-trigger-{}",
-                                            std::time::SystemTime::now()
-                                                .duration_since(std::time::UNIX_EPOCH)
-                                                .map(|d| d.as_nanos())
-                                                .unwrap_or(0)
-                                        );
-                                        c3.store.json.set_write(K_USE, Some(WriteState::Pending));
-                                        c3.send(Cmd::Json(JsonCmd::Send {
-                                            key: K_USE.into(),
-                                            method: "POST".into(),
-                                            path: "/automations".into(),
-                                            body: use_flow_body(&f, &tg, &rid),
-                                            slow: false,
-                                            label: format!("Turn on {} for {}", f.name, tg.label),
-                                            reload: vec![(K_AUTOS.into(), AUTOS_PATH.into())],
-                                            journal: true,
-                                        }));
-                                    },
-                                )));
-                            }
-                        }
+                        Ok(f) => Some(f),
                         Err(e) => {
                             col = col.child(sentence(
                                 &t,
                                 &format!("Could not read your flows: {e}"),
                                 w,
                                 t.error,
-                            ))
+                            ));
+                            None
                         }
                     },
                     Loadable::Failed(e) => {
@@ -2563,9 +2713,147 @@ fn open_use_flow(cx: Scope, ctx: &Ctx, target: Option<Result<UseTarget, String>>
                             &format!("Could not read your flows: {}", refusal(&e)),
                             w,
                             t.error,
-                        ))
+                        ));
+                        None
                     }
-                    _ => col = col.child(sentence(&t, "Reading your flows...", w, t.text_muted)),
+                    _ => {
+                        col = col.child(sentence(&t, "Reading your flows...", w, t.text_muted));
+                        None
+                    }
+                };
+                let items = menu_items(flows.as_deref().unwrap_or(&[]), &hs);
+                if items.is_empty() {
+                    if flows.is_some() {
+                        col = col.child(sentence(&t, NO_FLOWS, w, t.text_muted));
+                    }
+                } else {
+                    col = col.child(super::w::form::section(&t, FLOWS_HEAD));
+                }
+                let busy = |c: &Ctx| {
+                    [K_USE, K_CMD].iter().any(|k| {
+                        c.store
+                            .json
+                            .write_untracked(k)
+                            .is_some_and(|w| w.is_pending())
+                    })
+                };
+                for item in items {
+                    if item.checked() {
+                        let name = item.name.clone();
+                        let a = Action::label("handled", item.label()).tooltip(format!(
+                            "{} already handles {}: pause or remove it",
+                            item.name, target.label
+                        ));
+                        col = col.child(menu_item(button(
+                            gcx,
+                            &t,
+                            &a,
+                            On::Raised,
+                            true,
+                            move || {
+                                asking.set(None);
+                                opened.update(|o| {
+                                    *o = if o.as_deref() == Some(name.as_str()) {
+                                        None
+                                    } else {
+                                        Some(name.clone())
+                                    }
+                                });
+                            },
+                        )));
+                        if opened.get().as_deref() != Some(item.name.as_str()) {
+                            continue;
+                        }
+                        // The flow's automations on this trigger, each with its actions.
+                        for h in &item.handlers {
+                            let text = if h.paused {
+                                format!("{} (paused)", h.title)
+                            } else {
+                                h.title.clone()
+                            };
+                            col = col.child(super::kit::sentence_indent(
+                                &t,
+                                &text,
+                                w,
+                                4,
+                                if h.paused { t.text_muted } else { t.text },
+                            ));
+                            let ask = asking.get().as_deref() == Some(h.id.as_str());
+                            if ask {
+                                col = col.child(super::kit::sentence_indent(
+                                    &t,
+                                    &remove_question(&h.title, &target.label),
+                                    w,
+                                    4,
+                                    t.warn,
+                                ));
+                            }
+                            let acts = if ask {
+                                remove_actions()
+                            } else {
+                                handler_actions(h)
+                            };
+                            let mut views = Vec::new();
+                            for a in acts {
+                                let (c3, h2, label) = (c2.clone(), h.clone(), target.label.clone());
+                                let id = a.id;
+                                views.push(button(gcx, &t, &a, On::Raised, true, move || {
+                                    let cmd = match id {
+                                        "remove" => {
+                                            asking.set(Some(h2.id.clone()));
+                                            return;
+                                        }
+                                        "remove_no" => {
+                                            asking.set(None);
+                                            return;
+                                        }
+                                        "pause" => HandlerCmd::Pause,
+                                        "resume" => HandlerCmd::Resume,
+                                        _ => HandlerCmd::Remove,
+                                    };
+                                    if busy(&c3) {
+                                        return;
+                                    }
+                                    asking.set(None);
+                                    c3.store.json.set_write(K_USE, None);
+                                    acted.set(Some((cmd, h2.title.clone())));
+                                    send_command(&c3, &h2, cmd, &label);
+                                }));
+                            }
+                            col = col.child(indented_row(views, 4));
+                        }
+                        continue;
+                    }
+                    let Some(f) = item.flow else { continue };
+                    let a = Action::label("pick", f.name.clone())
+                        .tooltip(format!("Turn {} on for {}", f.name, target.label));
+                    let (c3, tg) = (c2.clone(), target.clone());
+                    col = col.child(menu_item(button(
+                        gcx,
+                        &t,
+                        &a,
+                        On::Raised,
+                        true,
+                        move || {
+                            if busy(&c3) {
+                                return;
+                            }
+                            picked.set(Some(f.name.clone()));
+                            c3.store.json.set_write(K_CMD, None);
+                            let rid = format!("console-tui-trigger-{}", unique());
+                            c3.store.json.set_write(K_USE, Some(WriteState::Pending));
+                            c3.send(Cmd::Json(JsonCmd::Send {
+                                key: K_USE.into(),
+                                method: "POST".into(),
+                                path: "/automations".into(),
+                                body: use_flow_body(&f, &tg, &rid),
+                                slow: false,
+                                label: format!("Turn on {} for {}", f.name, tg.label),
+                                reload: vec![(K_AUTOS.into(), AUTOS_PATH.into())],
+                                journal: true,
+                            }));
+                        },
+                    )));
                 }
                 let name = picked.get().unwrap_or_default();
                 match c2.store.json.write(K_USE) {
@@ -2595,6 +2883,27 @@ fn open_use_flow(cx: Scope, ctx: &Ctx, target: Option<Result<UseTarget, String>>
                     }
                     None => {}
                 }
+                if let Some((cmd, title)) = acted.get() {
+                    match c2.store.json.write(K_CMD) {
+                        Some(WriteState::Done(_)) => {
+                            col = col.child(sentence(
+                                &t,
+                                &command_said(cmd, &title, &target.label),
+                                w,
+                                t.ok,
+                            ))
+                        }
+                        Some(WriteState::Failed(e)) => {
+                            col = col.child(sentence(
+                                &t,
+                                &command_refusal(&e, cmd, &title),
+                                w,
+                                t.error,
+                            ))
+                        }
+                        _ => {}
+                    }
+                }
                 col.build()
             });
             Element::new()
@@ -2609,6 +2918,60 @@ fn open_use_flow(cx: Scope, ctx: &Ctx, target: Option<Result<UseTarget, String>>
                 .child(close_button(mcx, &t0, "Close", close))
                 .build()
         });
+}
+
+/// A per-call unique suffix (request and command ids).
+fn unique() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0)
+}
+
+/// Pause / Resume / Remove a handler: `POST /automations/{id}/commands`. The receipt only means
+/// queued (the runner applies it shortly after), so the automations are read again with the
+/// receipt and once more a moment later.
+fn send_command(ctx: &Ctx, h: &Handler, cmd: HandlerCmd, label: &str) {
+    let verb = match cmd {
+        HandlerCmd::Pause => "Pause",
+        HandlerCmd::Resume => "Resume",
+        HandlerCmd::Remove => "Remove",
+    };
+    ctx.store.json.set_write(K_CMD, Some(WriteState::Pending));
+    ctx.send(Cmd::Json(JsonCmd::Send {
+        key: K_CMD.into(),
+        method: "POST".into(),
+        path: command_path(&h.id),
+        body: command_body(cmd, &format!("console-trigger-{}", unique())),
+        slow: false,
+        label: format!("{verb} {} on {label}", h.title),
+        reload: vec![(K_AUTOS.into(), AUTOS_PATH.into())],
+        journal: true,
+    }));
+    let c = ctx.clone();
+    abstracttui::reactive::after(REREAD_AFTER, move || {
+        c.send(Cmd::Json(JsonCmd::get(K_AUTOS, AUTOS_PATH)));
+    });
+}
+
+/// A left-aligned row of buttons, indented.
+fn indented_row(views: Vec<View>, indent: i32) -> View {
+    let mut row = Element::new()
+        .style(
+            LayoutStyle::row()
+                .height(Dimension::Cells(1))
+                .shrink(0.0)
+                .gap(1),
+        )
+        .child(
+            Element::new()
+                .style(LayoutStyle::default().w(indent - 1).shrink(0.0))
+                .build(),
+        );
+    for v in views {
+        row = row.child(v);
+    }
+    row.build()
 }
 
 /// One left-aligned menu line (a button).

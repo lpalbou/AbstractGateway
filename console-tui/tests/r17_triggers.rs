@@ -503,7 +503,18 @@ fn click_new_connection_creates_and_shows_the_secret_once() {
 #[test]
 fn every_action_has_a_click_test() {
     let covered: BTreeSet<&str> = [
-        "events", "test", "delete", "refresh", "new", "manage", "flow",
+        "events",
+        "test",
+        "delete",
+        "refresh",
+        "new",
+        "manage",
+        "flow",
+        "pause",
+        "resume",
+        "remove",
+        "remove_yes",
+        "remove_no",
     ]
     .into_iter()
     .collect();
@@ -518,6 +529,16 @@ fn every_action_has_a_click_test() {
         offered.insert(a.id);
     }
     for a in triggers::mailbox_actions() {
+        offered.insert(a.id);
+    }
+    // A checked Use in a flow item's automations: Pause / Resume, Remove, and Remove's answer.
+    let hs = triggers::handlers(&autos(), |_| true).unwrap();
+    for h in &hs {
+        for a in triggers::handler_actions(h) {
+            offered.insert(a.id);
+        }
+    }
+    for a in triggers::remove_actions() {
         offered.insert(a.id);
     }
     let missing: Vec<&&str> = offered.difference(&covered).collect();
@@ -1179,24 +1200,23 @@ fn handled_by_menu_and_create_body_match_the_web() {
         hs.iter().map(|h| h.text()).collect::<Vec<_>>(),
         ["Release digest · Digest", "Old digest · Summarize (paused)"]
     );
+    // The Handled by cell: the flows' names, a paused one "(paused)" and muted.
     assert_eq!(
-        triggers::handled_lines(&hs),
+        triggers::handled_by(Some(&hs)),
         [
-            ("Handled by: Release digest · Digest".to_string(), true),
-            (
-                "            Old digest · Summarize (paused)".to_string(),
-                true
-            )
+            ("Digest".to_string(), false),
+            ("Summarize (paused)".to_string(), true)
         ]
     );
     let none =
         triggers::handlers(&autos(), |t| triggers::connection_match("conn_hook1", t)).unwrap();
     assert_eq!(
-        triggers::handled_lines(&none),
-        [("Handled by: Nothing handles it yet.".to_string(), false)]
+        triggers::handled_by(Some(&none)),
+        [("Nothing yet".to_string(), true)]
     );
-    // Not read: no Handled by at all (never a false "Nothing handles it").
+    // Not read: an empty cell (never a false "Nothing yet").
     assert!(triggers::handlers(&Value::Null, |_| true).is_none());
+    assert!(triggers::handled_by(None).is_empty());
     // The primary mailbox is matched by "self"; a title equal to its flow is said once.
     let mb = triggers::mailboxes_from(&mailboxes()).unwrap();
     let triage = triggers::handlers(&autos(), |t| triggers::mailbox_match(&mb[0], t)).unwrap();
@@ -1301,20 +1321,66 @@ fn use_page() -> r8w4::Harness {
     h
 }
 
+/// The screen line holding `name` and the `n` lines under it (a row's cells wrap below it).
+fn row_block(s: &str, name: &str, n: usize) -> String {
+    let lines: Vec<&str> = s.lines().collect();
+    let i = lines
+        .iter()
+        .position(|l| l.contains(name))
+        .unwrap_or_else(|| panic!("{name} row:\n{s}"));
+    lines[i..(i + n + 1).min(lines.len())].join("\n")
+}
+
 #[test]
 fn rows_say_handled_by() {
     let mut h = use_page();
     let s = h.turns(2);
-    for w in [
-        "Handled by: Release digest · Digest",
-        "Old digest · Summarize (paused)",
-        "Handled by: Nothing handles it yet.",
-        "Handled by: Triage",
-        "Use in a flow",
-    ] {
+    for w in ["Handled by", "Use in a flow"] {
         assert!(s.contains(w), "{w:?} missing:\n{s}");
     }
-    assert!(!s.contains("Gone"), "{s}");
+    // Its own column: the flows (one per line), a paused one says so; the Name keeps name + sentence.
+    let feed = row_block(&s, "Release feed", 1);
+    assert!(
+        feed.contains("Digest") && feed.contains("Summarize (paused)"),
+        "{feed}\n{s}"
+    );
+    let hook = row_block(&s, "CI hook", 0);
+    assert!(hook.contains("Nothing yet"), "{hook}\n{s}");
+    let primary = row_block(&s, "admin@example.org", 0);
+    assert!(primary.contains("Triage"), "{primary}\n{s}");
+    for banned in [
+        "Handled by:",
+        "Nothing handles it",
+        "Release digest",
+        "Gone",
+    ] {
+        assert!(!s.contains(banned), "{banned:?}:\n{s}");
+    }
+}
+
+#[test]
+fn handled_by_is_empty_while_the_automations_are_not_read_and_absent_for_all_accounts() {
+    let mut h = harness((170, 46), Mount::Page(triggers::screen));
+    h.identity("alice", false);
+    h.store.json.set(K_SOURCES, Loadable::Ready(sources()));
+    h.store.json.set(K_LIST, Loadable::Ready(list()));
+    h.store.json.set(K_MAILBOXES, Loadable::Ready(mailboxes()));
+    let s = h.turns(3);
+    assert!(s.contains("Handled by") && s.contains("CI hook"), "{s}");
+    assert!(
+        !s.contains("Nothing yet"),
+        "never a false Nothing yet:\n{s}"
+    );
+    // The admin's All accounts view: other people's connections, no Handled by.
+    let mut a = page(true);
+    a.store
+        .json
+        .set(triggers::K_AUTOS, Loadable::Ready(autos()));
+    a.key(b"a");
+    a.store.json.set(K_LIST, Loadable::Ready(list()));
+    let s = a.turns(3);
+    assert!(s.contains("Account") && s.contains("CI hook"), "{s}");
+    assert!(!s.contains("Handled by"), "{s}");
 }
 
 #[test]
@@ -1327,11 +1393,15 @@ fn click_use_in_a_flow_lists_the_choices_prints_the_link_and_creates() {
         "Use in a flow — Release feed",
         "New flow for this trigger…",
         "Or let one of your triggered flows handle it",
-        "Digest · already handles it",
+        "✓ Digest",
         "Triage",
+        // A handler whose flow is not published is reachable too, by its flow's name.
+        "✓ Summarize",
     ] {
         assert!(s.contains(w), "{w:?} missing:\n{s}");
     }
+    assert!(!s.contains("already handles it"), "{s}");
+    assert!(!s.contains("✓ Triage"), "{s}");
     assert!(!s.contains("Chat helper"), "{s}");
     // New flow: a terminal cannot open Flow, so the link is printed.
     h.click_text("New flow for this trigger…");
@@ -1449,10 +1519,18 @@ fn the_f_key_opens_use_in_a_flow_for_the_selected_row() {
         .json
         .set(triggers::K_FLOWS, Loadable::Ready(bundles()));
     let s = n.turns(3);
-    assert!(
-        s.contains("Handled by:") && s.contains("Release digest") && s.contains("Use in a flow"),
-        "{s}"
-    );
+    for w in [
+        "Handled by",
+        "Digest",
+        "Summarize",
+        "Nothing yet",
+        "Use in a flow",
+        "Release feed",
+        "Listening",
+        "Last event: Never",
+    ] {
+        assert!(s.contains(w), "{w:?} missing at 80x24:\n{s}");
+    }
     n.assert_fits();
     n.shoot("triggers-handled-by");
     n.key(b"f");
@@ -1462,4 +1540,292 @@ fn the_f_key_opens_use_in_a_flow_for_the_selected_row() {
     }
     n.assert_fits();
     n.shoot("triggers-use-in-a-flow");
+}
+
+// ------------------- Handled by: Pause / Resume / Remove from the menu (operator 2026-10-25)
+
+/// The Use in a flow menu of Release feed, with `item` (a checked flow) opened.
+fn open_checked(item: &str) -> r8w4::Harness {
+    let mut h = use_page();
+    click_row(&mut h, "Release feed", "Use in a flow");
+    let s = h.turns(3);
+    assert!(s.contains(item), "{item:?} missing:\n{s}");
+    h.click_text(item);
+    h.turns(2);
+    h.sent();
+    h
+}
+
+/// The one command POSTed: (path, body with its command_id checked and blanked, reload).
+fn command_sent(h: &mut r8w4::Harness) -> (String, Value, Vec<(String, String)>) {
+    let cmds = json_cmds(h);
+    let mut posts: Vec<_> = cmds
+        .iter()
+        .filter_map(|c| match c {
+            JsonCmd::Send {
+                method,
+                path,
+                body,
+                reload,
+                ..
+            } if method == "POST" && path.ends_with("/commands") => {
+                Some((path.clone(), body.clone(), reload.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(posts.len(), 1, "{cmds:?}");
+    let (path, mut body, reload) = posts.remove(0);
+    let id = body["command_id"].as_str().unwrap_or_default().to_string();
+    assert!(
+        id.starts_with("console-trigger-") && id.len() > 16,
+        "{body}"
+    );
+    body["command_id"] = json!("<id>");
+    (path, body, reload)
+}
+
+#[test]
+fn a_checked_flow_lists_its_automations_with_pause_and_remove() {
+    let mut h = open_checked("✓ Digest");
+    let s = h.turns(2);
+    assert!(
+        s.contains("Release digest") && s.contains("Pause") && s.contains("Remove"),
+        "{s}"
+    );
+    assert!(!s.contains("Resume"), "{s}");
+    // Picking it again closes it; nothing was sent.
+    h.click_text("✓ Digest");
+    let s = h.turns(2);
+    assert!(!s.contains("Release digest"), "{s}");
+    assert!(json_cmds(&mut h).is_empty());
+    h.assert_fits();
+}
+
+#[test]
+fn pause_on_an_active_handler_posts_the_command_and_reads_again() {
+    let mut h = open_checked("✓ Digest");
+    click_pair(&mut h, "Pause", "Remove");
+    clicked().lock().unwrap().insert("pause");
+    let (path, body, reload) = command_sent(&mut h);
+    assert_eq!(path, "/automations/a1/commands");
+    assert_eq!(
+        body,
+        json!({"command_id": "<id>", "type": "automation.pause", "payload": {}})
+    );
+    assert_eq!(
+        reload,
+        vec![(
+            triggers::K_AUTOS.to_string(),
+            triggers::AUTOS_PATH.to_string()
+        )]
+    );
+    h.store.json.set_write(
+        triggers::K_CMD,
+        Some(WriteState::Done(json!({"accepted": true}))),
+    );
+    let s = h.turns(2);
+    assert!(s.contains("Release digest is paused."), "{s}");
+    // The runner applies it shortly after the receipt: the automations are read once more.
+    h.until("the second read of the automations", |h, _| {
+        json_cmds(h).iter().any(|c| {
+            matches!(c, JsonCmd::Get { key, path, .. }
+                if key == triggers::K_AUTOS && path == triggers::AUTOS_PATH)
+        })
+    });
+}
+
+#[test]
+fn resume_on_a_paused_handler() {
+    let mut h = open_checked("✓ Summarize");
+    let s = h.turns(1);
+    assert!(s.contains("Old digest (paused)"), "{s}");
+    click_last(&mut h, " Resume ");
+    clicked().lock().unwrap().insert("resume");
+    let (path, body, _) = command_sent(&mut h);
+    assert_eq!(path, "/automations/a2/commands");
+    assert_eq!(
+        body,
+        json!({"command_id": "<id>", "type": "automation.resume", "payload": {}})
+    );
+    h.store
+        .json
+        .set_write(triggers::K_CMD, Some(WriteState::Done(json!({}))));
+    let s = h.turns(2);
+    assert!(s.contains("Old digest is on again."), "{s}");
+}
+
+#[test]
+fn remove_asks_first_then_archives() {
+    let mut h = open_checked("✓ Digest");
+    click_last(&mut h, " Remove ");
+    clicked().lock().unwrap().insert("remove");
+    let s = h.turns(2);
+    assert!(
+        s.contains("Remove Release digest? It stops handling Release feed; its history stays in")
+            && s.contains("Observer."),
+        "{s}"
+    );
+    assert!(
+        json_cmds(&mut h).is_empty(),
+        "nothing sent before the answer"
+    );
+    // Cancel: the question goes, nothing is sent.
+    click_last(&mut h, " Cancel ");
+    clicked().lock().unwrap().insert("remove_no");
+    let s = h.turns(2);
+    assert!(!s.contains("its history stays"), "{s}");
+    assert!(json_cmds(&mut h).is_empty());
+    // Remove, then Remove again: automation.archive.
+    click_last(&mut h, " Remove ");
+    h.turns(2);
+    click_last(&mut h, " Remove ");
+    clicked().lock().unwrap().insert("remove_yes");
+    let (path, body, _) = command_sent(&mut h);
+    assert_eq!(path, "/automations/a1/commands");
+    assert_eq!(
+        body,
+        json!({"command_id": "<id>", "type": "automation.archive", "payload": {}})
+    );
+    h.store
+        .json
+        .set_write(triggers::K_CMD, Some(WriteState::Done(json!({}))));
+    let s = h.turns(2);
+    assert!(
+        s.contains("Release digest no longer handles Release feed."),
+        "{s}"
+    );
+    h.shoot("triggers-remove-handler");
+}
+
+#[test]
+fn a_refused_command_is_said_in_words() {
+    use abstractgateway_console::api::{ApiError, ApiErrorKind};
+    let mut h = open_checked("✓ Digest");
+    click_pair(&mut h, "Pause", "Remove");
+    command_sent(&mut h);
+    let mut e = ApiError::new(ApiErrorKind::Http(409), "conflict");
+    e.body = Some(json!({"reason_code": "invalid_state",
+                         "message": "Automation is archived; only unarchive is possible."}));
+    h.store
+        .json
+        .set_write(triggers::K_CMD, Some(WriteState::Failed(e.clone())));
+    let s = h.turns(2);
+    assert!(
+        s.contains("Release digest was not paused: Automation is archived; only unarchive is"),
+        "{s}"
+    );
+    // The words, exactly (the web's), for each command and for an expired session.
+    let pause = triggers::HandlerCmd::Pause;
+    assert_eq!(
+        triggers::command_refusal(&e, triggers::HandlerCmd::Resume, "Old digest"),
+        "Old digest was not resumed: Automation is archived; only unarchive is possible."
+    );
+    assert_eq!(
+        triggers::command_refusal(&e, triggers::HandlerCmd::Remove, "Old digest"),
+        "Old digest was not removed: Automation is archived; only unarchive is possible."
+    );
+    let expired = ApiError::new(ApiErrorKind::Unauthorized, "401");
+    assert_eq!(
+        triggers::command_refusal(&expired, pause, "Old digest"),
+        "Your session expired: sign in again, then try again."
+    );
+    assert_eq!(triggers::command_said(pause, "A", "Feed"), "A is paused.");
+    assert_eq!(
+        triggers::command_said(triggers::HandlerCmd::Remove, "A", "Feed"),
+        "A no longer handles Feed."
+    );
+    assert_eq!(triggers::NOTHING_YET, "Nothing yet");
+    assert_eq!(triggers::HANDLED_BY, "Handled by");
+    assert_eq!(triggers::command_path("a 1"), "/automations/a%201/commands");
+}
+
+#[test]
+fn menu_items_check_handled_flows_and_keep_unpublished_handlers() {
+    let flows = triggers::triggered_flows(&bundles()).unwrap();
+    let hs = triggers::handlers(&autos(), |t| triggers::connection_match("conn_feed1", t)).unwrap();
+    let items = triggers::menu_items(&flows, &hs);
+    assert_eq!(
+        items.iter().map(|i| i.label()).collect::<Vec<_>>(),
+        ["✓ Digest", "Triage", "✓ Summarize"]
+    );
+    assert!(items[2].flow.is_none());
+    assert_eq!(
+        items[0]
+            .handlers
+            .iter()
+            .map(|h| h.id.as_str())
+            .collect::<Vec<_>>(),
+        ["a1"]
+    );
+    // Flows unread: every handler is still reachable.
+    assert_eq!(
+        triggers::menu_items(&[], &hs)
+            .iter()
+            .map(|i| i.label())
+            .collect::<Vec<_>>(),
+        ["✓ Digest", "✓ Summarize"]
+    );
+}
+
+/// 80x24 with the Handled by column and an opened checked item: everything fits.
+#[test]
+fn the_menu_with_actions_fits_at_80x24() {
+    let mut n = harness((80, 24), Mount::Page(triggers::screen));
+    n.identity("alice", false);
+    n.store.json.set(K_SOURCES, Loadable::Ready(sources()));
+    n.store.json.set(K_LIST, Loadable::Ready(list()));
+    n.store.json.set(K_MAILBOXES, Loadable::Ready(mailboxes()));
+    n.store
+        .json
+        .set(triggers::K_AUTOS, Loadable::Ready(autos()));
+    n.store
+        .json
+        .set(triggers::K_FLOWS, Loadable::Ready(bundles()));
+    n.turns(3);
+    n.assert_fits();
+    n.key(b"f");
+    n.turns(3);
+    n.click_text("✓ Digest");
+    let s = n.turns(2);
+    for w in ["Release digest", "Pause", "Remove", "Close"] {
+        assert!(s.contains(w), "{w:?} missing at 80x24:\n{s}");
+    }
+    n.assert_fits();
+    n.shoot("triggers-handler-actions");
+}
+
+/// A 120-column page (a 141-column terminal with the rail): Last event is a column again, the actions fold onto two
+/// lines so the Name keeps its room, and every row says who handles it.
+#[test]
+fn handled_by_at_120_columns() {
+    let mut n = harness((120, 40), Mount::Page(triggers::screen));
+    n.identity("alice", false);
+    n.store.json.set(K_SOURCES, Loadable::Ready(sources()));
+    n.store.json.set(K_LIST, Loadable::Ready(list()));
+    n.store.json.set(K_MAILBOXES, Loadable::Ready(mailboxes()));
+    n.store
+        .json
+        .set(triggers::K_AUTOS, Loadable::Ready(autos()));
+    let s = n.turns(3);
+    let head = s
+        .lines()
+        .find(|l| l.contains("Handled by"))
+        .unwrap_or_else(|| panic!("{s}"));
+    assert!(
+        head.contains("Last event") && head.contains("Actions"),
+        "{s}"
+    );
+    let feed = row_block(&s, "Release feed", 1);
+    assert!(
+        feed.contains("Digest") && feed.contains("Summarize (paused)"),
+        "{s}"
+    );
+    assert!(row_block(&s, "CI hook", 0).contains("Nothing yet"), "{s}");
+    assert!(
+        row_block(&s, "admin@example.org", 0).contains("Triage"),
+        "{s}"
+    );
+    n.assert_fits();
+    n.shoot("triggers-handled-by");
 }
