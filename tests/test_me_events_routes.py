@@ -236,14 +236,17 @@ def test_client_channels_report_and_the_dedupe_rule(tmp_path: Path, monkeypatch:
         later = time.time() + 61
         assert already_notified(events, record_key=key, channel="assistant", device=mac, now=later) is False
 
-        for channel in ("assistant", "code", "watch"):
-            r = report(channel, device="watch-1" if channel == "watch" else mac)
+        for channel in ("assistant", "code", "watch", "phone"):
+            r = report(channel, device={"watch": "watch-1", "phone": "phone-1"}.get(channel, mac))
             assert r.status_code == 200 and r.json()["created"] is True, (channel, r.text)
         assert report("assistant").json()["created"] is False  # idempotent per (channel, record)
         sent = [e["data"] for e in _events(client, alice)["events"] if e["type"] == "notification.sent"]
-        assert sorted(d["channel"] for d in sent) == ["assistant", "code", "tray", "watch"]
+        assert sorted(d["channel"] for d in sent) == ["assistant", "code", "phone", "tray", "watch"]
         assert all(d["record_key"] == key and d["notice"] == f"attention:{key}" for d in sent)
-        assert {d["channel"]: d["device"] for d in sent}["watch"] == "watch-1"
+        devices = {d["channel"]: d["device"] for d in sent}
+        assert devices["watch"] == "watch-1" and devices["phone"] == "phone-1"
+        # A phone has its own device: the tray's report on the Mac never silences it.
+        assert already_notified(events, record_key=key, channel="phone", device="phone-1") is False
         failed = report("code", outcome="failed")
         assert failed.status_code == 200
         assert _events(client, alice)["events"][-1]["type"] == "notification.failed"

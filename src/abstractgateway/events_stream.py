@@ -54,9 +54,9 @@ EVENT_TYPES = frozenset(
         "run.finished",
     }
 )
-CHANNELS = frozenset({"console", "email", "tray", "assistant", "code", "watch"})
+CHANNELS = frozenset({"console", "email", "tray", "assistant", "code", "watch", "phone"})
 # The client channels that report what they showed (POST /me/events/notifications).
-CLIENT_CHANNELS = ("tray", "assistant", "code", "watch")
+CLIENT_CHANNELS = ("tray", "assistant", "code", "watch", "phone")
 # Dedupe window of the client notification rule (`already_notified`).
 NOTIFY_DEDUPE_S = 60.0
 TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})

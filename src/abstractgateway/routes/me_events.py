@@ -164,7 +164,7 @@ async def stream_my_events(
 
 
 class NotificationReport(BaseModel):
-    channel: Literal["tray", "assistant", "code", "watch"] = Field(
+    channel: Literal["tray", "assistant", "code", "watch", "phone"] = Field(
         ..., description="The client channel that showed (or failed to show) the notice."
     )
     outcome: Literal["sent", "failed"]
@@ -178,7 +178,7 @@ class NotificationReport(BaseModel):
 
 @router.post("/events/notifications")
 async def report_notification(request: Request, body: NotificationReport) -> Dict[str, Any]:
-    """A client channel (tray, assistant, code, watch) records the notice it showed as
+    """A client channel (tray, assistant, code, watch, phone) records the notice it showed as
     `notification.sent|failed {channel, notice, record_key, device?}` in the caller's own stream.
     Idempotent per (channel, record_key). Dedupe rule for apps: before notifying, stay silent when
     a `notification.sent` for the record from another channel on the same device is under a

@@ -1269,10 +1269,10 @@ curl -sS -N -H "$AUTH" -H "Last-Event-ID: 12" "$BASE_URL/api/gateway/me/events/s
 
 ### Report a notice a client showed: `POST /api/gateway/me/events/notifications`
 
-`{channel: "tray" | "assistant" | "code" | "watch", outcome: "sent" | "failed", record_key,
+`{channel: "tray" | "assistant" | "code" | "watch" | "phone", outcome: "sent" | "failed", record_key,
 device?, error?}` records `notification.sent|failed {channel, notice: "attention:<record_key>",
 record_key, device?}` in your stream (once per channel and record; any other channel is 422). The
-desktop tray, the Assistant, the Code apps and the watch call it after each notification they show.
+desktop tray, the Assistant, the Code apps, the watch and the phone call it after each notification they show.
 `device` is an opaque id of the machine (the tray sends the first 16 hex characters of the
 sha256 of the lower-cased host name; an app on the same machine sends the same value).
 
@@ -1280,8 +1280,8 @@ sha256 of the lower-cased host name; an app on the same machine sends the same v
 it reads the recent stream and stays silent when it holds a `notification.sent` for the same
 `record_key` from **another** client channel with the **same** `device`, less than **60 seconds**
 old. The gateway tray is the default notifier (it notifies at once); the Assistant and Code notify
-only when no tray, or other app, reported on that machine. A watch has its own `device`, so it
-always notifies. Reference implementation: `events_stream.already_notified(events, record_key=,
+only when no tray, or other app, reported on that machine. A watch and a phone each have their own
+`device`, so they always notify. Reference implementation: `events_stream.already_notified(events, record_key=,
 channel=, device=)`.
 
 There is no parameter naming a person: every route reads and writes the caller's own stream in

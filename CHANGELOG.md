@@ -50,8 +50,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   session's own workflow (same provider and model) in the caller's session, under the gateway's workspace guard
   and built-in tool deny; `wake.scheduled` is written to the owner's event stream, and archiving it before it
   fires writes `wake.cancelled`. A session whose workflow is not a bundle workflow is refused with a sentence.
-- `POST /api/gateway/me/events/notifications` accepts the channels `tray`, `assistant`, `code` and `watch`
-  (422 otherwise) and an optional `device`; documented dedupe rule so an approval is notified once per machine
+- `POST /api/gateway/me/events/notifications` accepts the channels `tray`, `assistant`, `code`, `watch` and
+  `phone` (422 otherwise; a watch or a phone uses its own device id, so it always notifies) and an optional `device`; documented dedupe rule so an approval is notified once per machine
   (an app stays silent when another channel on the same device reported `notification.sent` for the record in
   the last minute; reference `events_stream.already_notified`). The tray sends its machine id.
 

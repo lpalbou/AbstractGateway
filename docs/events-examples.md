@@ -3,7 +3,7 @@
 Three end-to-end examples of events and attention: something
 happens outside (a mail, a feed post, a call to a webhook), an automation runs a workflow on it, the
 workflow's model decides whether you need to know, and you are told on your event stream, in the
-gateway tray, the Assistant, Code and the watch.
+gateway tray, the Assistant, Code, the watch and the phone.
 
 Each example is also a hermetic test under `tests/e2e_events/` (scratch data folder and HOME, no
 provider, fake mail servers, nothing on port 8080):
@@ -270,7 +270,8 @@ curl -s -X POST "http://127.0.0.1:8080/api/gateway/me/events/notifications" \
 ```
 
 The machine id is the first 16 hex characters of the sha256 of the lower-cased host name (what
-the gateway tray sends). `channel` is one of `tray`, `assistant`, `code`, `watch`.
+the gateway tray sends). `channel` is one of `tray`, `assistant`, `code`, `watch`, `phone`; a watch
+or a phone sends its own device id, so it always notifies.
 
 ## Trying it by hand without a model or a mailbox
 
