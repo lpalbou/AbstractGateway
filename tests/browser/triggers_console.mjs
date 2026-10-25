@@ -243,10 +243,10 @@ try {
     if (w === 1440 && theme === "light") {
       // Create a feed connection: the form comes from connection_schema.
       check((await page.textContent('[data-trg-row="conn_feed1"]')).includes("Listening · used by 2 automations"), "row: listening in words");
-      check((await page.textContent('[data-trg-row="conn_mail1"]')).includes("Listening · nothing uses it yet, so nothing is fetched until an automation does"), "row: pressed + unused in words");
+      check((await page.textContent('[data-trg-row="conn_mail1"]')).includes("Waiting for an automation to use it"), "row: pressed + unused in words");
       await page.click('[data-trg-row="conn_mail1"] .trg-advanced summary');
       await page.click('[data-trg-always="conn_mail1"]');
-      await page.waitForFunction(() => (document.querySelector('[data-trg-row="conn_mail1"]') || {}).textContent.includes("fetching anyway"));
+      await page.waitForFunction(() => (document.querySelector('[data-trg-row="conn_mail1"]') || {}).textContent.includes("kept on even when nothing uses it"));
       check(JSON.stringify(store.lastConnPut) === JSON.stringify({ id: "conn_mail1", body: { always_listen: true } }), "Keep fetching: PUT {always_listen: true}", store.lastConnPut);
       // The mailbox row: the same states, with the mailbox's own switch.
       await page.click('[data-trg-mailbox-use="default"]');

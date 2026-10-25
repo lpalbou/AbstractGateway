@@ -177,16 +177,40 @@ TRIGGERS_JS = r"""
       if (Array.isArray(r.used_by)) return r.used_by.length;
       return typeof r.used_by === "number" ? r.used_by : null;
     }
-    function trgListeningWords(paused, usedBy, alwaysListen) {
+    // UX #8: names, not counts ("Listening · used by Release digest"), up to 3 then "+N"; an unused
+    // connection is "Waiting for an automation to use it".
+    function trgListeningWords(paused, usedBy, alwaysListen, names) {
       if (paused) return "Paused";
+      const list = names || [];
+      const count = Math.max(usedBy || 0, list.length);
+      if (list.length) {
+        const shown = list.slice(0, 3);
+        const more = count - shown.length;
+        return `Listening · used by ${shown.join(", ")}${more > 0 ? ` +${more}` : ""}`;
+      }
       if (usedBy === null) return "Listening";
       if (usedBy > 0) return `Listening · used by ${usedBy} automation${usedBy === 1 ? "" : "s"}`;
-      if (alwaysListen) return "Listening · nothing uses it yet; fetching anyway (Keep fetching even when nothing uses it)";
-      return "Listening · nothing uses it yet, so nothing is fetched until an automation does";
+      if (alwaysListen) return "Listening · kept on even when nothing uses it";
+      return "Waiting for an automation to use it";
     }
-    function trgDoingText(r) {
+    // The titles of your active automations that read a connection (or a mailbox).
+    function trgUserNames(automations, match) {
+      return (automations || []).filter((a) => a && a.status === "active" && a.trigger && match(a.trigger))
+        .map((a) => String(a.title || a.automation_id || "an automation"));
+    }
+    function trgConnectionUsers(r, automations) {
+      return trgUserNames(automations, (t) => !!(t.config && t.config.connection_id === r.connection_id));
+    }
+    function trgMailboxUsers(m, automations) {
+      return trgUserNames(automations, (t) => {
+        if (t.source_id !== "email.received") return false;
+        const account = String((t.config && t.config.account) || "self");
+        return account === m.account_id || (account === "self" && m.primary);
+      });
+    }
+    function trgDoingText(r, automations) {
       if (typeof r.paused !== "boolean") return "";
-      return trgListeningWords(r.paused, trgUsedBy(r), r.always_listen === true);
+      return trgListeningWords(r.paused, trgUsedBy(r), r.always_listen === true, trgConnectionUsers(r, automations));
     }
     function trgListenSwitch(r) {
       const id = esc(r.connection_id);
@@ -194,8 +218,8 @@ TRIGGERS_JS = r"""
       return `<button type="button" role="switch" class="af-switch af-switch--sm" aria-checked="${on ? "true" : "false"}" data-trg-listen="${id}" data-af-tip="${on ? "Pause" : "Resume"} ${esc(r.label || r.connection_id)}">`
         + `<span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Listening</span></span></button>`;
     }
-    function trgStatusCell(r) {
-      const doing = trgDoingText(r);
+    function trgStatusCell(r, automations) {
+      const doing = trgDoingText(r, automations);
       if (!doing) return `${trgStatusChip(r.status)}<span class="trg-sub">listening state not reported (update the gateway)</span>`;
       const st = String(r.status || "").toLowerCase();
       const chip = st && st !== "active" ? trgStatusChip(r.status) : "";
@@ -249,12 +273,13 @@ TRIGGERS_JS = r"""
       return `<span class="trg-chip is-warn">${esc(st || "unknown")}</span>`;
     }
     // A mailbox row: the same three states, with the mailbox's own "Use this mailbox" switch.
-    function trgMailboxStatusCell(m) {
-      const words = trgListeningWords(!m.enabled, trgUsedBy(m), false);
+    function trgMailboxStatusCell(m, automations) {
+      const users = trgMailboxUsers(m, automations);
+      const words = trgListeningWords(!m.enabled, automations ? users.length : null, false, users);
       const id = esc(m.account_id);
       return `${trgMailboxStatusChip(m)}<span class="trg-doing">${esc(words)}</span>`
         + `<button type="button" role="switch" class="af-switch af-switch--sm" aria-checked="${m.enabled ? "true" : "false"}" data-trg-mailbox-use="${id}">`
-        + `<span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Use this mailbox</span></span></button>`;
+        + `<span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Listening</span></span></button>`;
     }
     async function setMailboxInUse(id, enabled) {
       try {
@@ -274,7 +299,7 @@ TRIGGERS_JS = r"""
         const name = m.primary ? `${m.address || m.account_id} (primary)` : m.account_id;
         return `<tr class="trg-row trg-row--mailbox" data-trg-mailbox="${id}">`
           + `<td class="trg-name-cell"><span class="trg-name">${esc(name)}</span><span class="trg-sub">When mail arrives in ${esc(m.address || m.account_id)}${m.can_send ? "" : " · read-only"}</span><span class="trg-sub trg-fold">Last check: ${esc(last)}</span></td>`
-          + `<td class="trg-status">${trgMailboxStatusCell(m)}</td>`
+          + `<td class="trg-status">${trgMailboxStatusCell(m, o.automations)}</td>`
           + `<td class="trg-last">${esc(last)}</td>`
           + `<td class="trg-actions-cell"><div class="trg-actions"><button type="button" class="link-button" data-trg-mailbox-manage="${id}" data-af-tip="Mailboxes are managed with your account">Manage under Account → My email</button></div></td></tr>`;
       }).join("");
@@ -303,7 +328,7 @@ TRIGGERS_JS = r"""
         let html = `<tr class="trg-row" data-trg-row="${id}">`
           + `<td class="trg-name-cell"><span class="trg-name">${label}</span><span class="trg-sub">${phrase}</span><span class="trg-sub trg-fold">Last event: ${esc(last)}</span>${trgFireLine(o.fire && o.fire[r.connection_id])}</td>`
           + (o.all ? `<td class="trg-account">${owner ? esc(owner) : `<span class="trg-sub">owner not reported</span>`}</td>` : "")
-          + `<td class="trg-status">${trgStatusCell(r)}</td>`
+          + `<td class="trg-status">${trgStatusCell(r, o.automations)}</td>`
           + `<td class="trg-last">${esc(last)}</td>`
           + `<td class="trg-actions-cell"><div class="trg-actions">${acts.join("")}</div></td></tr>`;
         if (open) html += `<tr class="trg-detail" data-trg-detail="${id}"><td colspan="${cols}">${triggerDetailMarkup(r, o.expanded[r.connection_id])}</td></tr>`;
@@ -381,10 +406,18 @@ TRIGGERS_JS = r"""
       } catch (e) {
         trg.error = trgErr(e);
       }
-      if (!trg.all) await loadTriggerMailboxes();
+      if (!trg.all) await Promise.all([loadTriggerMailboxes(), loadTriggerAutomations()]);
       renderTriggers();
       for (const id of Object.keys(trg.expanded)) loadTriggerEvents(id);
       if (trg.pendingNew) { const want = trg.pendingNew; trg.pendingNew = ""; openTriggerModal(want); }
+    }
+    async function loadTriggerAutomations() {
+      try {
+        const out = await api("/api/gateway/automations?status=active&limit=200");
+        trg.automations = out && Array.isArray(out.items) ? out.items : null;
+      } catch {
+        trg.automations = null;  // the rows fall back to counts ("used by 2 automations")
+      }
     }
     async function loadTriggerMailboxes() {
       try {
@@ -410,7 +443,7 @@ TRIGGERS_JS = r"""
       const cols = trg.all ? 5 : 4;
       if (trg.error) { body.innerHTML = `<tr><td colspan="${cols}" class="trg-empty">Could not list the connections: ${esc(trg.error)}</td></tr>`; return; }
       if (!trg.rows) { body.innerHTML = `<tr><td colspan="${cols}" class="trg-empty">Reading the connections...</td></tr>`; return; }
-      body.innerHTML = triggersRowsMarkup(trg.rows, { all: trg.all, sources: trg.sources || [], expanded: trg.expanded, fire: trg.fire, mailboxes: trg.mailboxes || [] });
+      body.innerHTML = triggersRowsMarkup(trg.rows, { all: trg.all, sources: trg.sources || [], expanded: trg.expanded, fire: trg.fire, mailboxes: trg.mailboxes || [], automations: trg.all ? null : trg.automations });
       if (trg.sourcesError) trgMessage(`Could not read the trigger sources: ${trg.sourcesError}`, "error");
       else if (!trg.all && trg.mailboxesError) trgMessage(`Could not read your mailboxes: ${trg.mailboxesError}`, "error");
     }

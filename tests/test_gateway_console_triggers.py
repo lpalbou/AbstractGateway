@@ -27,7 +27,7 @@ const TRG_FIELD_LABELS = { subject_path: "Subject (path in the JSON body)", tole
 const TRG_MAILBOX_STATE = { connected: ["Active", "is-ok"], receive_only: ["Read-only", "is-ok"], paused: ["Paused", "is-muted"], needs_reconnect: ["Needs reconnecting", "is-warn"], unavailable: ["Unavailable", "is-muted"], not_connected: ["Not connected", "is-muted"] };
 """
 
-ROW_FNS = ("trgAgo", "trgSourceLabel", "trgTriggerPhrase", "trgUsedBy", "trgListeningWords", "trgDoingText", "trgListenSwitch", "trgAdvancedMarkup", "trgStatusCell", "trgMailboxStatusCell", "trgMailboxStatusChip", "mailboxRowsMarkup", "trgPrincipalText", "trgStatusChip", "trgFireLine", "trgCopyRow",
+ROW_FNS = ("trgAgo", "trgSourceLabel", "trgTriggerPhrase", "trgUsedBy", "trgListeningWords", "trgUserNames", "trgConnectionUsers", "trgMailboxUsers", "trgDoingText", "trgListenSwitch", "trgAdvancedMarkup", "trgStatusCell", "trgMailboxStatusCell", "trgMailboxStatusChip", "mailboxRowsMarkup", "trgPrincipalText", "trgStatusChip", "trgFireLine", "trgCopyRow",
            "triggerEventsMarkup", "triggerDetailMarkup", "triggersRowsMarkup")
 
 SOURCES = [
@@ -215,7 +215,7 @@ def test_routes_are_the_connections_contract() -> None:
 
 def test_mailbox_sources_are_rows_not_new_connections() -> None:
     source = _console_script()
-    harness = HELPERS + _fns(source, "trgConnectableSources", "trgAgo", "trgUsedBy", "trgListeningWords", "trgMailboxStatusChip", "trgMailboxStatusCell", "mailboxRowsMarkup") + """
+    harness = HELPERS + _fns(source, "trgConnectableSources", "trgAgo", "trgUsedBy", "trgListeningWords", "trgUserNames", "trgMailboxUsers", "trgMailboxStatusChip", "trgMailboxStatusCell", "mailboxRowsMarkup") + """
 const SOURCES = [
   {id: "email.received", version: 1, label: "When an email arrives", available: true, needs_connection: true, connection_provider: "email_accounts", connection_schema: {type: "object"}},
   {id: "webhook.received", version: 1, label: "When a webhook is called", available: true, needs_connection: true, connection_provider: "trigger_connections", connection_schema: {type: "object", properties: {}}},
@@ -234,7 +234,7 @@ console.log(JSON.stringify([trgConnectableSources(SOURCES).map((s) => s.id), mai
     assert '<span class="trg-name">work</span>' in work and "When mail arrives in me@work.example · read-only" in work
     # The same three states with the mailbox's own switch (no used_by reported here: "Listening").
     assert '<span class="trg-doing">Listening</span>' in work and "checked 1 min ago" in work
-    assert 'data-trg-mailbox-use="work"' in work and ">Use this mailbox</span>" in work and 'aria-checked="true"' in work
+    assert 'data-trg-mailbox-use="work"' in work and ">Listening</span>" in work and 'aria-checked="true"' in work
     assert 'data-trg-mailbox-manage="work"' in work and "Manage under Account → My email" in work
     assert "me@example.org (primary)" in rows
 
@@ -341,7 +341,7 @@ def test_my_email_has_the_further_mailboxes_card() -> None:
 
 def test_rows_say_what_a_connection_is_doing_with_a_listening_toggle() -> None:
     source = _console_script()
-    harness = HELPERS + _fns(source, "trgUsedBy", "trgListeningWords", "trgDoingText", "trgListenSwitch", "trgAdvancedMarkup", "trgStatusChip", "trgStatusCell") + """
+    harness = HELPERS + _fns(source, "trgUsedBy", "trgListeningWords", "trgUserNames", "trgConnectionUsers", "trgDoingText", "trgListenSwitch", "trgAdvancedMarkup", "trgStatusChip", "trgStatusCell") + """
 const rows = [
   {connection_id: "a", label: "bbc-feed", status: "active", paused: false, always_listen: false, listening: "listening", used_by: 2},
   {connection_id: "b", label: "hook", status: "active", paused: false, always_listen: false, listening: "listening", used_by: ["auto_1"]},
@@ -350,13 +350,21 @@ const rows = [
   {connection_id: "e", label: "old gateway", status: "active"},
   {connection_id: "f", label: "eager", status: "active", paused: false, always_listen: true, listening: "listening", used_by: 0},
 ];
-console.log(JSON.stringify(rows.map((r) => [trgDoingText(r), trgStatusCell(r)])));
+const autos = [
+  {automation_id: "x1", title: "Release digest", status: "active", trigger: {source_id: "feed.item", config: {connection_id: "a"}}},
+  {automation_id: "x2", title: "Morning brief", status: "active", trigger: {source_id: "feed.item", config: {connection_id: "a"}}},
+  {automation_id: "x3", title: "Old one", status: "paused", trigger: {source_id: "feed.item", config: {connection_id: "a"}}},
+];
+const many = [1, 2, 3, 4, 5].map((i) => ({automation_id: `m${i}`, title: `Auto ${i}`, status: "active", trigger: {config: {connection_id: "a"}}}));
+console.log(JSON.stringify(rows.map((r) => [trgDoingText(r), trgStatusCell(r)]).concat([[trgDoingText(rows[0], autos), ""], [trgDoingText(rows[0], many), ""]])));
 """
     out = _node(harness)
     assert [d for d, _ in out] == [
         "Listening · used by 2 automations", "Listening · used by 1 automation",
-        "Listening · nothing uses it yet, so nothing is fetched until an automation does", "Paused", "",
-        "Listening · nothing uses it yet; fetching anyway (Keep fetching even when nothing uses it)"]
+        "Waiting for an automation to use it", "Paused", "",
+        "Listening · kept on even when nothing uses it",
+        "Listening · used by Release digest, Morning brief",
+        "Listening · used by Auto 1, Auto 2, Auto 3 +2"]
     on, paused, old = out[0][1], out[3][1], out[4][1]
     assert 'role="switch"' in on and 'aria-checked="true"' in on and ">Listening</span>" in on and 'data-trg-listen="a"' in on
     assert 'aria-checked="false"' in paused
