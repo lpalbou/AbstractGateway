@@ -56,6 +56,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   413, a body neither JSON nor UTF-8 text 415, more than 60 calls a minute per connection
   (120 per client address) 429. Refusals are recorded on the connection and the audit line. Every runtime the
   gateway builds now gets its plane's trigger connection store (`<runtime data dir>/triggers/connections/`).
+- Agents can schedule a later run (backlog 1045 wiring): the gateway's ReAct tool registry offers AbstractAgent's
+  `schedule_run` beside `delegate_agent` (a run gets it when its allowlist names it). An AbstractAgent without the tool
+  keeps every other builtin and logs that `schedule_run` is not offered.
 - Feed connections are polled (backlog 1043): each account's worker loop calls AbstractRuntime's
   `poll_feed_connections` over the plane's connection store (the one store its runtime was wired with) and wakes the
   automations that received items. Nothing polls at import.

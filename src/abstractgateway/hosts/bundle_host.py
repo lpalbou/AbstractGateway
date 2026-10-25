@@ -904,6 +904,17 @@ def _build_gateway_react_logic(*, email_tools_listed: bool, mcp_registry_dir: Pa
                 seen_names.add(t.name)
     except Exception:
         pass
+    # schedule_run (framework backlog 1045): an agent schedules a later run in its own session
+    # (AbstractAgent >= the release carrying SCHEDULE_RUN_TOOL; the ReAct adapter maps it to the
+    # runtime's SCHEDULE_RUN effect, the gateway's handler is `wakes_host`). Imported on its own so
+    # an older AbstractAgent keeps every other builtin, and says so in the log.
+    try:
+        from abstractagent.logic.builtins import SCHEDULE_RUN_TOOL  # type: ignore
+    except ImportError:
+        logger.warning("schedule_run is not offered: this AbstractAgent has no SCHEDULE_RUN_TOOL (upgrade AbstractAgent)")
+    else:
+        if SCHEDULE_RUN_TOOL.name not in {getattr(t, "name", None) for t in all_tool_defs}:
+            all_tool_defs.append(SCHEDULE_RUN_TOOL)
 
     # MCP tools offered to agents join the registry LIVE (mcp_run_tools.py): the logic's
     # `tools` is read at every agent step, so an admin turning a server on or off needs no
