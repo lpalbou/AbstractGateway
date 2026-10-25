@@ -631,6 +631,20 @@ class CreateAutomationBody(BaseModel):
     notify: Optional[Dict[str, Any]] = None
 
 
+def _check_email_account(svc: Any, trigger: Any, *, field: str, command_id: Optional[str] = None) -> None:
+    """Host check of an `email.received@1` binding's mailbox (framework backlog 1044): its
+    `config.account` must name one of the OWNER's connected mailboxes that can read (`self`,
+    `default` and no value are the primary mailbox). The runtime adapter stays pure; 422
+    `email_account_not_found` / `email_account_cannot_read` otherwise."""
+    from ..mail.accounts import plane_for_service_config, validate_trigger_account
+    from ..mail.core_mail import EmailError
+
+    try:
+        validate_trigger_account(plane_for_service_config(svc.config), trigger)
+    except EmailError as e:
+        raise AutomationError(422, e.code, e.message, field=field, command_id=command_id)
+
+
 def _create(svc: Any, principal: Any, body: CreateAutomationBody) -> Dict[str, Any]:
     tenant, user = _principal_tuple(principal)
     target = _resolve_target(svc, principal, body.target)
@@ -657,6 +671,7 @@ def _create(svc: Any, principal: Any, body: CreateAutomationBody) -> Dict[str, A
     # R16.1 A2: a schedule@2 rule without a time zone runs on the OWNER's account time zone.
     owner_zone = principal_time_zone(svc, principal)
     trigger = with_time_zone(trigger, owner_zone)
+    _check_email_account(svc, trigger, field="trigger.config.account")
     target["input_data"] = _guarded_input_data(svc, principal, target["input_data"], automation_id=automation_id)
     request: Dict[str, Any] = {
         "request_id": body.request_id,
@@ -901,6 +916,8 @@ def _check_revise(svc: Any, principal: Any, controller: Any, payload: Dict[str, 
         old = definition.get("trigger") if isinstance(definition.get("trigger"), dict) else {}
         keep = (old.get("config") or {}).get("time_zone") if is_schedule_v2(old) else None
         changes["trigger"] = with_time_zone(changes["trigger"], keep or principal_time_zone(svc, principal))
+    if "trigger" in changes:
+        _check_email_account(svc, changes["trigger"], field="changes.trigger.config.account", command_id=command_id)
     if "target" in changes:
         target = _resolve_target(svc, principal, changes["target"], field="changes.target")
         target.pop("_bundle")

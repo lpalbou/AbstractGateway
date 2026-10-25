@@ -4,8 +4,9 @@ Started with the principal's service wherever its runner starts (the single-user
 multi-user first request, the multi-user eager rehydration at boot), registered in
 `worker_registry` as `email:<tenant>:<user>`, stopped with the service. Every tick:
 
-1. the watcher polls when due (60 s; capped backoff on failures) and only while the plane has
-   an active `email.received` automation;
+1. each mailbox's watcher polls when due (60 s; capped backoff on failures) and only while an
+   active `email.received` automation watches that mailbox (the primary and every further one,
+   framework backlog 1044);
 2. the collector turns new automation / run facts into queued notices;
 3. the outbox sends what is due.
 
@@ -46,18 +47,28 @@ class EmailWorker:
         # Read per use: a host rebuild (publish, reload) swaps the runtime.
         return self.svc.host.runtime
 
-    def _watcher(self) -> Any:
+    def _watcher(self, mailbox: Optional[EmailPlane] = None) -> Any:
+        """The watcher of one of the user's mailboxes (the primary by default): it reads only
+        while an automation watches THAT mailbox, and wakes only those automations."""
         from abstractruntime.email import wake_email_automations
 
         from .watcher import MailWatcher, plane_has_email_automations
 
         runtime = self.runtime
+        plane = mailbox if mailbox is not None else self.plane.primary
+        account_id = plane.account_id
         return MailWatcher(
-            self.plane,
+            plane,
             inbox=runtime.event_inbox,
-            has_consumers=lambda: plane_has_email_automations(self.svc),
-            on_appended=lambda _ids: wake_email_automations(runtime),
+            has_consumers=lambda: plane_has_email_automations(self.svc, account_id),
+            on_appended=lambda _ids: wake_email_automations(runtime, account_id=account_id),
         )
+
+    def _watchers(self) -> list:
+        """One watcher per mailbox of the user (framework backlog 1044), the primary first."""
+        from .accounts import mailbox_planes
+
+        return [self._watcher(p) for p in mailbox_planes(self.plane)]
 
     def tick(self) -> Dict[str, Any]:
         from .notifications import NotificationCollector, NotificationOutbox
@@ -79,11 +90,20 @@ class EmailWorker:
         except Exception:  # noqa: BLE001
             logger.warning("email binding refresh failed for %s", self.name, exc_info=True)
         try:
-            watcher = self._watcher()
-            if watcher.due():
-                out["watcher"] = watcher.poll_once()
-        except Exception:  # noqa: BLE001
-            logger.warning("email watcher tick failed for %s", self.name, exc_info=True)
+            watchers = self._watchers()
+        except Exception:  # noqa: BLE001 - no runtime yet, or an unreadable mailbox list
+            logger.warning("email watchers unavailable for %s", self.name, exc_info=True)
+            watchers = []
+        for watcher in watchers:
+            try:
+                if watcher.due():
+                    result = watcher.poll_once()
+                    if watcher.plane.is_primary:
+                        out["watcher"] = result
+                    else:
+                        out.setdefault("watchers", {})[watcher.plane.account_id] = result
+            except Exception:  # noqa: BLE001 - one mailbox's failure never stops the others
+                logger.warning("email watcher tick failed for %s (%s)", self.name, watcher.plane.account_id, exc_info=True)
         try:
             usable = email_usable(self.plane)
         except Exception:  # noqa: BLE001
@@ -262,10 +282,14 @@ class EntityEmailWorker(EmailWorker):
     def runtime(self) -> Any:
         return self.svc.host.runtime
 
-    def _watcher(self) -> Any:
+    def _watcher(self, mailbox: Optional[EmailPlane] = None) -> Any:
         from .watcher import MailWatcher
 
         return MailWatcher(self.plane, has_consumers=lambda: True)
+
+    def _watchers(self) -> list:
+        # An entity has one mailbox (its own address); further mailboxes are a user feature.
+        return [self._watcher()]
 
 
 _ENTITY_WORKERS: Dict[str, EntityEmailWorker] = {}

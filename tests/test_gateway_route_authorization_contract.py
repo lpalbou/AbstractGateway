@@ -170,6 +170,12 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     ("PUT", "/api/gateway/me/email/notifications"),
     # The caller's OWN mailbox folder (same plane rule as PUT /me/email/limits).
     ("PUT", "/api/gateway/me/email/folder"),
+    # The caller's further mailboxes (framework backlog 1044): the same plane rule (the
+    # principal's own plane; `{mailbox_id}` names a mailbox OF THAT PLANE only, validated).
+    ("PUT", "/api/gateway/me/email/accounts/{mailbox_id}"),
+    ("POST", "/api/gateway/me/email/accounts/{mailbox_id}/test"),
+    ("PUT", "/api/gateway/me/email/accounts/{mailbox_id}/enabled"),
+    ("DELETE", "/api/gateway/me/email/accounts/{mailbox_id}"),
     # Entity mailboxes (round 3 §3.1): the /accounts/{account_id}/... mirror of the
     # routes above. The handler (routes/email.py `_entity_target`) admits only an
     # admin or the entity's CREATOR, refuses user targets, entities the caller

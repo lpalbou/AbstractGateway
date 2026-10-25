@@ -26,6 +26,14 @@ user makes so their agents and automations can read and send mail as them.
     POST   /me/email/oauth/poll          {flow_id}          -> pending | connected
     POST   /me/email/oauth/finish        {flow_id, wait_s}  wait up to 60 s for the approval
     POST   /me/email/oauth/cancel        {flow_id}
+    GET    /me/email/accounts            every mailbox of mine: [{account_id, primary, address, can_read,
+                                         can_send, enabled, folder, mailbox, watcher}] (backlog 1044)
+    GET    /me/email/accounts/{mailbox_id}        one of them (404 email_not_configured when unknown)
+    PUT    /me/email/accounts/{mailbox_id}        connect a further mailbox (test, then store); `send: false`
+                                         (the default) = read-only, IMAP only; `default` = PUT /me/email
+    POST   /me/email/accounts/{mailbox_id}/test   sign in with the stored mailbox
+    PUT    /me/email/accounts/{mailbox_id}/enabled {enabled}  "Use this mailbox" for that mailbox
+    DELETE /me/email/accounts/{mailbox_id}        disconnect it (credentials and cursor deleted)
     GET    /me/notifications             events, channel availability, outbox summary
     PUT    /me/notifications             {email: {event: bool}}  (v1 five-kind body accepted and mapped)
     POST   /me/notifications/test        send one test notification now
@@ -221,6 +229,26 @@ class ConnectBody(BaseModel):
     imap: Optional[ServerBody] = Field(None, description="Omit imap AND smtp to discover the servers from the address")
     smtp: Optional[ServerBody] = Field(None, description="Omit imap AND smtp to discover the servers from the address")
     test: bool = True
+
+
+class MailboxConnectBody(ConnectBody):
+    """A further mailbox (framework backlog 1044): read-only unless `send` is true."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "examples": [
+                {"address": "me@work.example", "password": "app-password", "imap": {"host": "imap.work.example", "port": 993, "security": "ssl"}},
+                {"address": "me@work.example", "password": "app-password", "send": True},
+            ]
+        },
+    )
+
+    send: bool = Field(
+        False,
+        description="Also store an outgoing server (SMTP: given, discovered or the domain's standard one) so runs bound "
+        "to this mailbox can send. False (default): a read-only mailbox, IMAP only; sends from it are refused.",
+    )
 
 
 class DiscoverBody(BaseModel):
@@ -491,6 +519,105 @@ async def me_email_put(request: Request, body: ConnectBody) -> Any:
             actor=_actor(principal),
         )
         out["tools_reloaded"] = _reload_my_toolsets(principal, plane)
+        return {"ok": True, **out}
+
+    return await _call(run)
+
+
+# ---------------------------------------------------------------------------
+# /me/email/accounts — several mailboxes per user (framework backlog 1044)
+# ---------------------------------------------------------------------------
+
+
+def _mailbox(plane: EmailPlane, mailbox_id: str) -> EmailPlane:
+    return mail_accounts.require_mailbox(plane, mailbox_id)
+
+
+@router.get(
+    "/me/email/accounts",
+    summary="My mailboxes (the primary first)",
+    description="`{items: [{account_id, primary, account_ref, configured, address, can_read, can_send, enabled, folder, "
+    "mailbox: {state, address, provider, reason}, watcher: {state, last_poll, last_error, received}}]}`. The primary "
+    "mailbox (`default`, the one `/me/email` connects and runs are bound to) is always listed, connected or not; "
+    "further mailboxes once connected. Never a secret. A mailbox without SMTP is read-only (`can_send: false`).",
+)
+async def me_email_accounts(request: Request) -> Any:
+    _principal, plane = _self_plane(request)
+    return await _call(lambda: {"items": mail_accounts.mailboxes_public(plane)})
+
+
+@router.get("/me/email/accounts/{mailbox_id}", summary="One of my mailboxes")
+async def me_email_account_get(request: Request, mailbox_id: str) -> Any:
+    _principal, plane = _self_plane(request)
+    return await _call(lambda: mail_accounts.mailbox_summary(_mailbox(plane, mailbox_id)))
+
+
+@router.put(
+    "/me/email/accounts/{mailbox_id}",
+    summary="Connect a further mailbox (test, then store)",
+    description="Like PUT /me/email for the mailbox `mailbox_id` (1-32 of a-z, 0-9, `_`, `-`): servers discovered "
+    "when `imap` and `smtp` are omitted, a failed test stores nothing and names its step. `send: false` (default) "
+    "stores IMAP only: a read-only mailbox that automations can watch (`email.received@1` with `account: "
+    "<mailbox_id>`) and that refuses sends. `send: true` also stores and tests SMTP. `mailbox_id: default` is the "
+    "primary mailbox and behaves exactly like PUT /me/email (both legs). Answers the mailbox's listing row.",
+)
+async def me_email_account_put(request: Request, mailbox_id: str, body: MailboxConnectBody) -> Any:
+    principal, plane = _self_plane(request)
+
+    def run() -> Dict[str, Any]:
+        target = plane.for_account(mail_accounts.check_mailbox_id(mailbox_id))
+        out = mail_accounts.connect_password(
+            target,
+            address=body.address,
+            password=body.password,
+            username=body.username,
+            display_name=body.display_name,
+            imap=_server_dict(body.imap),
+            smtp=_server_dict(body.smtp),
+            test=body.test,
+            allow_ca_file=principal.is_admin(),
+            actor=_actor(principal),
+            send=bool(body.send),
+        )
+        if target.is_primary:
+            out = mail_accounts.mailbox_summary(target)
+        _reload_my_toolsets(principal, plane)
+        return {"ok": True, **out}
+
+    return await _call(run)
+
+
+@router.post("/me/email/accounts/{mailbox_id}/test", summary="Test one of my mailboxes")
+async def me_email_account_test(request: Request, mailbox_id: str) -> Any:
+    principal, plane = _self_plane(request)
+    return await _call(lambda: mail_accounts.test_account(_mailbox(plane, mailbox_id), actor=_actor(principal)))
+
+
+@router.put("/me/email/accounts/{mailbox_id}/enabled", summary="\"Use this mailbox\" for one of my mailboxes")
+async def me_email_account_enabled(request: Request, mailbox_id: str, body: EnabledBody) -> Any:
+    principal, plane = _self_plane(request)
+
+    def run() -> Dict[str, Any]:
+        target = _mailbox(plane, mailbox_id)
+        mail_accounts.account_store(target).set_enabled(body.enabled)
+        mail_accounts.rebind_live_runtime(target)
+        from ..mail.audit import audit_email_event
+
+        audit_email_event("email.user_switch", tenant_id=target.tenant_id, user_id=target.user_id, account_id=target.account_id,
+                          actor=_actor(principal), enabled=bool(body.enabled))
+        return {"ok": True, **mail_accounts.mailbox_summary(target)}
+
+    return await _call(run)
+
+
+@router.delete("/me/email/accounts/{mailbox_id}", summary="Disconnect one of my mailboxes")
+async def me_email_account_delete(request: Request, mailbox_id: str) -> Any:
+    principal, plane = _self_plane(request)
+
+    def run() -> Dict[str, Any]:
+        target = _mailbox(plane, mailbox_id)
+        out = mail_accounts.disconnect(target, actor=_actor(principal))
+        _reload_my_toolsets(principal, plane)
         return {"ok": True, **out}
 
     return await _call(run)
@@ -1091,6 +1218,8 @@ async def legacy_email_send(request: Request, body: LegacySendBody) -> Any:
 # ---------------------------------------------------------------------------
 
 _MIRRORED_PREFIXES = ("/me/email", "/me/notifications")
+# Further mailboxes (framework backlog 1044) are a user feature: an entity has one mailbox, its own.
+_NOT_MIRRORED_PREFIXES = ("/me/email/accounts",)
 
 
 def _mirror_entity_routes() -> List[str]:
@@ -1102,7 +1231,7 @@ def _mirror_entity_routes() -> List[str]:
         if not isinstance(route, APIRoute) or not route.path.startswith(prefix):
             continue
         rel = route.path[len(prefix):]
-        if not rel.startswith(_MIRRORED_PREFIXES):
+        if not rel.startswith(_MIRRORED_PREFIXES) or rel.startswith(_NOT_MIRRORED_PREFIXES):
             continue
         target = "/accounts/{account_id}" + rel[len("/me"):]
         router.add_api_route(

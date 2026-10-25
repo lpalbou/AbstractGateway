@@ -4,7 +4,13 @@ Where things live (a "plane" is one principal's data home: `<data_dir>` for the 
 runtime -- the single-user gateway and the admin -- else `<data_dir>/users/<tenant>/<runtime>`):
 
     <plane>/email/account/abstractcore.json     account settings, policy, limits (AbstractCore
-                                                `EmailAccountStore`, `email` section)
+                                                `EmailAccountStore`, `email` section) of the
+                                                PRIMARY mailbox, account id `default`
+    <plane>/email/accounts/<id>/abstractcore.json  each further mailbox of the user (framework
+                                                backlog 1044), the same layout under its folder
+                                                (credentials in `email/secret.enc`, its watcher
+                                                state in `watcher.json`); IMAP without SMTP =
+                                                a read-only mailbox
     <plane>/email/account/email/secret.enc      the password / OAuth tokens, AES-256-GCM, sealed
                                                 with the data folder's key file
                                                 (`<data_dir>/secrets/sealing.key`, security/sealing.py;
@@ -32,6 +38,7 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import re
 import secrets
 import tempfile
 import threading
@@ -76,6 +83,10 @@ from ..users import gateway_data_dir_from_env
 from .audit import audit_email_event
 
 ACCOUNT_ID = "default"
+# The id of the primary mailbox (the one `/me/email` connects; runs are bound to it). Further
+# mailboxes have ids of their own (`MAILBOX_ID_RE`), framework backlog 1044.
+DEFAULT_ACCOUNT_ID = ACCOUNT_ID
+MAILBOX_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 SETTINGS_LABEL = "Settings → My email"
 ADMIN_DISABLED_CAUSE = "Your admin turned mailboxes off for your account."
 ADMIN_DISABLED_FIX = "Ask your gateway admin to allow \u201cMailboxes for users\u201d for you; your settings are kept."
@@ -141,16 +152,36 @@ class EmailPlane:
     root: Path
     is_default: bool
     is_entity: bool = False
+    # Which of the user's mailboxes this plane value addresses (framework backlog 1044): the
+    # primary `default`, or a further mailbox id. Everything per mailbox (config file,
+    # credentials, status, watcher cursor, account_ref) follows it; everything per user (key,
+    # email address, capabilities, agent-tools switch, notifications) does not.
+    account_id: str = ACCOUNT_ID
 
     @property
     def key(self) -> str:
         return f"{self.tenant_id}:{self.user_id}"
 
     @property
+    def is_primary(self) -> bool:
+        return self.account_id == DEFAULT_ACCOUNT_ID
+
+    @property
+    def primary(self) -> "EmailPlane":
+        """The user's primary mailbox (the one runs are bound to)."""
+
+        return self if self.is_primary else replace(self, account_id=DEFAULT_ACCOUNT_ID)
+
+    def for_account(self, account_id: str) -> "EmailPlane":
+        """The same user's mailbox `account_id` (validated: `MAILBOX_ID_RE`)."""
+
+        return replace(self, account_id=check_mailbox_id(account_id))
+
+    @property
     def account_ref(self) -> str:
         """`<tenant>:<user>:<account_id>` — the run binding's reference (never a secret)."""
 
-        return f"{self.tenant_id}:{self.user_id}:{ACCOUNT_ID}"
+        return f"{self.tenant_id}:{self.user_id}:{self.account_id}"
 
     @property
     def email_dir(self) -> Path:
@@ -158,12 +189,135 @@ class EmailPlane:
 
     @property
     def account_config_file(self) -> Path:
-        return self.email_dir / "account" / "abstractcore.json"
+        if self.is_primary:
+            return self.email_dir / "account" / "abstractcore.json"
+        return self.email_dir / "accounts" / self.account_id / "abstractcore.json"
+
+    @property
+    def mailbox_dir(self) -> Path:
+        """The folder of this mailbox's own files (its store and, for a further mailbox, its
+        watcher state)."""
+
+        return self.account_config_file.parent
 
     @property
     def runtime_data_dir(self) -> Path:
         # An entity's home IS its runtime's directory (runtime_<slug>.sqlite3 lives in it).
         return self.root if (self.is_default or self.is_entity) else self.root / "runtime"
+
+
+def check_mailbox_id(value: Any) -> str:
+    """A mailbox id: 1-32 of a-z, 0-9, `_`, `-` (starting with a letter or digit)."""
+
+    text = str(value or "").strip()
+    if not MAILBOX_ID_RE.match(text):
+        raise EmailInvalidSettings(
+            f"{text!r} is not a mailbox id.", "Use 1 to 32 lowercase letters, digits, '_' or '-' (for example: work)."
+        )
+    return text
+
+
+def mailbox_ids(plane: EmailPlane) -> List[str]:
+    """The user's mailboxes: `default` (the primary, connected or not) first, then every further
+    mailbox that is connected, by id."""
+
+    out = [DEFAULT_ACCOUNT_ID]
+    base = plane.email_dir / "accounts"
+    if base.is_dir():
+        for child in sorted(base.iterdir()):
+            if not child.is_dir() or not MAILBOX_ID_RE.match(child.name) or child.name == DEFAULT_ACCOUNT_ID:
+                continue
+            if not (child / "abstractcore.json").is_file():
+                continue
+            try:
+                if account_store(plane.for_account(child.name)).settings().account is None:
+                    continue
+            except EmailError:
+                pass  # unreadable: listed, its state says why
+            out.append(child.name)
+    return out
+
+
+def mailbox_planes(plane: EmailPlane) -> List[EmailPlane]:
+    return [plane.for_account(i) if i != DEFAULT_ACCOUNT_ID else plane.primary for i in mailbox_ids(plane)]
+
+
+def require_mailbox(plane: EmailPlane, account_id: str) -> EmailPlane:
+    """The user's mailbox `account_id`, or `email_not_configured` (404): an unknown id reads
+    like a mailbox that was never connected."""
+
+    from .core_mail import EmailNotConfigured
+
+    account_id = check_mailbox_id(account_id)
+    if account_id not in mailbox_ids(plane):
+        raise EmailNotConfigured(f"You have no mailbox {account_id!r}.", "Connect it first: PUT /api/gateway/me/email/accounts/{id}.")
+    return plane.for_account(account_id)
+
+
+def mailbox_summary(plane: EmailPlane) -> Dict[str, Any]:
+    """One mailbox of the user, the shape `GET /me/email/accounts` lists (never a secret)."""
+
+    try:
+        pub = account_store(plane).public()
+    except EmailError as err:
+        pub = {"configured": False, "error": err.to_dict(include_details=False)}
+    try:
+        from .watcher import watcher_public_status
+
+        w = watcher_public_status(plane)
+        watcher = {k: w.get(k) for k in ("state", "last_poll", "last_error", "received")}
+    except Exception:  # noqa: BLE001 - the listing never fails on a watcher file
+        watcher = {"state": "unknown"}
+    imap = pub.get("imap") if isinstance(pub.get("imap"), dict) else None
+    return {
+        "account_id": plane.account_id,
+        "primary": plane.is_primary,
+        "account_ref": plane.account_ref,
+        "configured": bool(pub.get("configured")),
+        "address": str(pub.get("address") or "") or None,
+        "can_read": bool(pub.get("can_read")),
+        "can_send": bool(pub.get("can_send")),
+        "enabled": bool(pub.get("enabled")),
+        "folder": (str(imap.get("folder") or "") or "INBOX") if imap else None,
+        "mailbox": mailbox_view(plane),
+        "watcher": watcher,
+    }
+
+
+def mailboxes_public(plane: EmailPlane) -> List[Dict[str, Any]]:
+    return [mailbox_summary(p) for p in mailbox_planes(plane)]
+
+
+def validate_trigger_account(plane: EmailPlane, trigger: Any) -> Optional[str]:
+    """Host check of an `email.received@1` binding's `config.account` at automation create /
+    revise time (framework backlog 1044; the runtime adapter stays pure). `self`, `default` and
+    no value are the primary mailbox (unchanged behaviour). Any other value must name one of the
+    OWNER's connected mailboxes that can read (IMAP). Returns the account id, None for another
+    source. Raises EmailError: `email_account_not_found` / `email_account_cannot_read`."""
+
+    if not isinstance(trigger, dict) or str(trigger.get("source_id") or "") != "email.received":
+        return None
+    config = trigger.get("config") if isinstance(trigger.get("config"), dict) else {}
+    account = str(config.get("account") or "").strip()
+    if account in ("", "self", DEFAULT_ACCOUNT_ID):
+        return DEFAULT_ACCOUNT_ID
+    if not MAILBOX_ID_RE.match(account) or account not in mailbox_ids(plane):
+        raise EmailError(
+            f"You have no mailbox {account!r} to watch.",
+            "Pick one of your mailboxes (GET /api/gateway/me/email/accounts), or connect it first.",
+            code="email_account_not_found",
+        )
+    try:
+        can_read = bool(account_store(plane.for_account(account)).public().get("can_read"))
+    except EmailError:
+        can_read = False
+    if not can_read:
+        raise EmailError(
+            f"The mailbox {account!r} has no incoming server (IMAP), so it can't be watched.",
+            "Connect it again with its IMAP server.",
+            code="email_account_cannot_read",
+        )
+    return account
 
 
 def _is_entity(principal: GatewayPrincipal) -> bool:
@@ -303,7 +457,7 @@ def self_address(plane: EmailPlane) -> str:
     if reg:
         return reg
     try:
-        st = account_store(plane).settings()
+        st = account_store(plane.primary).settings()
     except EmailError:
         return ""
     if st.account is None:
@@ -857,6 +1011,11 @@ def public_status(plane: EmailPlane) -> Dict[str, Any]:
         out["watcher"] = watcher_public_status(plane)
     except Exception:  # noqa: BLE001 - the status view never fails on the watcher file
         out["watcher"] = {"state": "unknown"}
+    # Every mailbox of the user (framework backlog 1044): the primary first.
+    try:
+        out["accounts"] = mailboxes_public(plane)
+    except Exception:  # noqa: BLE001 - the status view never fails on a further mailbox
+        out["accounts"] = []
     out["source"] = "gateway user settings"
     out["store"] = {
         "kind": "gateway",
@@ -1092,8 +1251,14 @@ def connect_password(
     test: bool = True,
     allow_ca_file: bool = False,
     actor: str = "",
+    send: bool = True,
 ) -> Dict[str, Any]:
+    """Connect (test, then store) the mailbox `plane` addresses. `send=False` (a further mailbox
+    only, framework backlog 1044) stores IMAP alone: a read-only mailbox, never filled with a
+    standard SMTP leg; the primary mailbox always stores both legs."""
     require_admin_email_on(plane)
+    if plane.is_primary:
+        send = True
     discovery: Optional[Dict[str, Any]] = None
     if _no_host(imap) and _no_host(smtp):
         # No servers given: discover them from the address (400 email_discovery_failed + tried).
@@ -1104,7 +1269,7 @@ def connect_password(
                 f"{str(address or '').strip()!r} is not a valid email address.", "Give the mailbox's address as name@example.com."
             ) from None
         imap = {**found["imap"], "folder": (imap or {}).get("folder") or "INBOX"} if isinstance(found.get("imap"), dict) else None
-        smtp = dict(found["smtp"]) if isinstance(found.get("smtp"), dict) else None
+        smtp = dict(found["smtp"]) if isinstance(found.get("smtp"), dict) and send else None
         username = username or str(found.get("username") or "")
         discovery = {"source": found.get("source"), "provider": found.get("provider"), "tried": found.get("tried") or []}
     else:
@@ -1114,7 +1279,10 @@ def connect_password(
     # form or the discovery left out is the domain's standard one (imap./smtp.<domain>, 993 /
     # 465 SSL — `server_defaults`), and the test below signs in to both before anything is
     # stored: a mailbox is never connected receive-only without saying so.
-    if _no_host(imap) or _no_host(smtp):
+    if not send:
+        # A read-only mailbox: IMAP only (filled when left out), never an SMTP leg.
+        smtp = None
+    if _no_host(imap) or (send and _no_host(smtp)):
         try:
             std = server_defaults(str(address or "").strip(), discovered=found if isinstance(found, dict) else {"found": False})
         except ValueError:
@@ -1123,7 +1291,7 @@ def connect_password(
             ) from None
         if _no_host(imap):
             imap = {**dict(std.get("imap") or {}), "folder": (imap or {}).get("folder") or "INBOX"}
-        if _no_host(smtp):
+        if send and _no_host(smtp):
             smtp = dict(std.get("smtp") or {})
     imap_s, smtp_s = build_servers(imap, smtp, allow_ca_file=allow_ca_file)
     store = account_store(plane)
@@ -1137,7 +1305,8 @@ def connect_password(
         store.connect(account, EmailSecret(password), test=bool(test), registered_address=reg)
     except EmailError as err:
         raise _named_step_error(err) from None
-    set_address_if_empty(plane, account.address, actor=actor)
+    if plane.is_primary:
+        set_address_if_empty(plane, account.address, actor=actor)
     try:
         from .watcher import reset_watcher_cursor
 
@@ -1147,9 +1316,9 @@ def connect_password(
     rebind_live_runtime(plane)
     audit_email_event(
         "email.connected", tenant_id=plane.tenant_id, user_id=plane.user_id, actor=actor or plane.user_id, auth_kind="password",
-        outcome="tested" if test else "untested", discovered=discovery is not None,
+        outcome="tested" if test else "untested", discovered=discovery is not None, account_id=plane.account_id,
     )
-    out = public_status(plane)
+    out = public_status(plane) if plane.is_primary else mailbox_summary(plane)
     if discovery is not None:
         out["discovery"] = discovery
     return out
@@ -1264,8 +1433,8 @@ def disconnect(plane: EmailPlane, *, actor: str = "") -> Dict[str, Any]:
     except Exception:  # noqa: BLE001
         pass
     rebind_live_runtime(plane)
-    audit_email_event("email.disconnected", tenant_id=plane.tenant_id, user_id=plane.user_id, actor=actor or plane.user_id)
-    return public_status(plane)
+    audit_email_event("email.disconnected", tenant_id=plane.tenant_id, user_id=plane.user_id, actor=actor or plane.user_id, account_id=plane.account_id)
+    return public_status(plane) if plane.is_primary else {"account_id": plane.account_id, "disconnected": True, "accounts": mailboxes_public(plane)}
 
 
 # ---------------------------------------------------------------------------------------

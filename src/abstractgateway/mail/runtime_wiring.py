@@ -38,11 +38,30 @@ def plane_for_host(*, data_root: Path, tenant_id: str, user_id: str, runtime_id:
     )
 
 
+def mailbox_for_ref(plane: EmailPlane, ref: str) -> Optional[EmailPlane]:
+    """The mailbox of THIS plane's user that `ref` (`<tenant>:<user>:<account_id>`) names, or None
+    (another user's ref, a malformed one, or a mailbox that is not connected). One runtime = one
+    user; the user may hold several mailboxes (framework backlog 1044)."""
+
+    from .accounts import MAILBOX_ID_RE, mailbox_ids
+
+    prefix = f"{plane.tenant_id}:{plane.user_id}:"
+    if not isinstance(ref, str) or not ref.startswith(prefix):
+        return None
+    account_id = ref[len(prefix):]
+    if not MAILBOX_ID_RE.match(account_id):
+        return None
+    if account_id == plane.primary.account_id:
+        return plane.primary
+    return plane.for_account(account_id) if account_id in mailbox_ids(plane) else None
+
+
 def make_email_resolver(plane: EmailPlane):
     def resolve(binding: Any, *, use: str = "agent_tool"):
         ref = str(getattr(binding, "account_ref", "") or "")
-        if ref != plane.account_ref:
-            # A run bound to another account never resolves here (one runtime = one account).
+        mailbox = mailbox_for_ref(plane, ref)
+        if mailbox is None:
+            # A run bound to another user's account never resolves here (one runtime = one user).
             raise EmailNotConfigured(
                 "This run is bound to an email account that is not this user's.",
                 "Start the run again from your own account.",
@@ -51,10 +70,12 @@ def make_email_resolver(plane: EmailPlane):
         # too). `use` comes from the runtime: "action" is the runtime's own send-email action
         # (user-authored templates) — the account being connected, enabled and allowed is
         # enough; anything else is an agent/workflow tool call and also needs "Agent email
-        # tools" (available from the administrator AND switched on by the user).
+        # tools" (available from the administrator AND switched on by the user). The switches
+        # are the user's; the account is the bound mailbox (a read-only one refuses sends with
+        # AbstractCore's "no SMTP (send) settings").
         if use != "action":
-            require_agent_tools(plane)
-        return email_context(plane)
+            require_agent_tools(plane.primary)
+        return email_context(mailbox)
 
     return resolve
 
@@ -63,7 +84,10 @@ def current_binding(plane: EmailPlane) -> Optional[Any]:
     from abstractruntime.email import EmailBinding
 
     # The binding follows the ACCOUNT (connected + enabled + allowed), never the agent-tools
-    # choice: user-authored send actions work with agent tools off.
+    # choice: user-authored send actions work with agent tools off. Runs are bound to the
+    # user's PRIMARY mailbox (an automation on a further mailbox binds that one, see
+    # `abstractruntime.email.email_binding_for_trigger`).
+    plane = plane.primary
     if not email_usable(plane):
         return None
     try:

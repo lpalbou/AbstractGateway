@@ -20,6 +20,7 @@ _ALLOWED_FIELDS = frozenset(
     {
         "tenant_id",
         "user_id",
+        "account_id",
         "actor",
         "code",
         "cause",

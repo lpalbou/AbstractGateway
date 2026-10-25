@@ -44,6 +44,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   webhook-id 409, an unknown connection 404, a body over 512 KiB 413, more than 60 calls a minute per connection
   (120 per client address) 429. Refusals are recorded on the connection and the audit line. Every runtime the
   gateway builds now gets its plane's trigger connection store (`<runtime data dir>/triggers/connections/`).
+- Several mailboxes per user, read-only at minimum (backlog 1044): `GET /api/gateway/me/email/accounts` lists every
+  mailbox of the caller with `can_read` / `can_send` (also as `accounts` in `GET /me/email`);
+  `PUT|GET|DELETE /me/email/accounts/{mailbox_id}`, `POST …/{mailbox_id}/test`, `PUT …/{mailbox_id}/enabled`. A further
+  mailbox stores IMAP only unless `send: true` (read-only: sends refused). Each mailbox has its own watcher, cursor and
+  inbox stream `email:<tenant>:<user>:<mailbox_id>:<folder>`, read only while an automation watches it, and wakes only
+  those automations. `email.received@1` bindings name a mailbox with `account: <mailbox_id>`, checked by the gateway when
+  the automation is created or revised (422 `email_account_not_found` / `email_account_cannot_read`). A run bound to a
+  further mailbox resolves that mailbox. Existing installs migrate without action: the mailbox they have is the primary,
+  id `default`, its files unchanged.
 - `GET /api/gateway/sessions/search?q=…`: keyword search over the caller's conversations: their questions,
   answers and artifacts (generated media by their prompt, attachments by their file name), with
   AbstractRuntime's `ConversationSearch` (words and parts of words, case and accents ignored, a typo

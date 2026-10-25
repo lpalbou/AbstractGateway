@@ -212,10 +212,35 @@ curl -sS -X PUT -H "$AUTH" "$BASE_URL/api/gateway/me/email/policy" \
 curl -sS -X PUT -H "$AUTH" "$BASE_URL/api/gateway/me/email/limits" -d '{"per_hour": 100, "per_day": 1000}'
 ```
 
+## Several mailboxes
+
+Besides your primary mailbox you can connect further ones (framework backlog 1044), each with an
+id of your choice (`work`, `support`: 1 to 32 lowercase letters, digits, `_` or `-`):
+
+```bash
+curl -sS -X PUT -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"address":"me@work.example","password":"app-password"}' \
+  "$BASE_URL/api/gateway/me/email/accounts/work"
+```
+
+- A further mailbox is **read-only** unless you ask for sending (`"send": true`): only its incoming
+  server (IMAP) is stored and tested, it shows `can_send: false`, and anything bound to it that
+  tries to send is refused ("This account has no SMTP (send) settings.").
+- `GET /me/email/accounts` lists them all with `can_read` / `can_send`, the primary (id `default`)
+  first. Your email address, notifications and Agent email tools switch stay yours, not per mailbox;
+  runs and notifications keep using the primary mailbox.
+- An automation watches one mailbox: `email.received@1` with `"account": "<mailbox_id>"` (`self`,
+  `default` or no value = the primary). The gateway refuses, when the automation is saved, a
+  mailbox you have not connected (`email_account_not_found`) or one without IMAP
+  (`email_account_cannot_read`). Each mailbox has its own watcher, cursor and status, and is read
+  only while an automation watches it.
+- A single-mailbox install needs no migration: the existing mailbox is the primary, id `default`,
+  its files where they were.
+
 ## Automations on new mail
 
-The mail watcher reads your mailbox only while at least one of your automations is active on the
-`email.received@1` trigger, checking every 60 seconds. It is read-only (IMAP `EXAMINE` and
+The mail watcher reads a mailbox only while at least one of your automations is active on the
+`email.received@1` trigger for that mailbox, checking every 60 seconds. It is read-only (IMAP `EXAMINE` and
 `BODY.PEEK`), keeps a durable cursor, survives a server rebuilding the folder (UIDVALIDITY change:
 it re-reads by date and passes messages it already has), and moves the cursor past a message only
 after that message is durably stored in your runtime's event inbox. A message that cannot be read
@@ -380,6 +405,7 @@ account is copied once into the gateway settings (the consoles say which account
 | Password / OAuth tokens | `<plane>/email/account/email/secret.enc` (AES-256-GCM under the data folder's key `<data_dir>/secrets/sealing.key`; never the OS keychain, [security](security.md#sealed-secrets-one-key-file-per-data-folder)) |
 | The sealing key (every sealed secret) | `<data_dir>/secrets/sealing.key` (0600 in a 0700 folder; back it up with the data folder) |
 | Watcher state | `<plane>/email/watcher.json`; the cursor and received mail in `<runtime data dir>/event_inbox/` |
+| A further mailbox `<id>` | `<plane>/email/accounts/<id>/abstractcore.json`, its credentials in `…/accounts/<id>/email/secret.enc`, its watcher state in `…/accounts/<id>/watcher.json`; its mail in the same event inbox, stream `email:<tenant>:<user>:<id>:<folder>` |
 | Notification preferences and outbox | `<plane>/email/notifications.json`, `<plane>/email/outbox.sqlite3` (created with the first notice) |
 | What is available to users (defaults + per-user) | `<data_dir>/auth/capabilities.json` |
 | Agent email tools choice | `<plane>/email/agent_tools.json` |

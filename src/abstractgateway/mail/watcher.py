@@ -19,7 +19,9 @@ The mailbox -> inbox step itself is AbstractRuntime's `EmailInboxFeeder` (framew
 This module adds the gateway's part:
 
 - gating: nothing is read while the admin or the user turned email off, while no account is
-  connected, or while the plane has no active `email.received` automation (the consumer probe);
+  connected, or while the plane has no active `email.received` automation on THAT mailbox (the
+  consumer probe); one watcher per readable mailbox of the user (framework backlog 1044), each
+  with its own cursor and state;
 - cadence: at most one poll per 60 s (minimum 30 s);
 - after new mail, the email-triggered automations are woken (`wake_email_automations`);
 - typed audit events (`email.cursor_reset`, `email.message_unprocessable`) and the account's last
@@ -50,10 +52,11 @@ _LOCKS_GUARD = threading.Lock()
 
 
 def _plane_lock(plane: EmailPlane) -> threading.Lock:
+    key = f"{plane.root}#{plane.account_id}"  # one lock per mailbox
     with _LOCKS_GUARD:
-        lock = _LOCKS.get(str(plane.root))
+        lock = _LOCKS.get(key)
         if lock is None:
-            lock = _LOCKS[str(plane.root)] = threading.Lock()
+            lock = _LOCKS[key] = threading.Lock()
         return lock
 
 
@@ -89,7 +92,8 @@ def make_feeder(plane: EmailPlane, inbox: Any) -> Any:
 
 
 def _state_path(plane: EmailPlane) -> Path:
-    return plane.email_dir / "watcher.json"
+    # The primary mailbox keeps its historical place; a further one its own folder (1044).
+    return plane.email_dir / "watcher.json" if plane.is_primary else plane.mailbox_dir / "watcher.json"
 
 
 def read_watcher_state(plane: EmailPlane) -> Dict[str, Any]:
@@ -323,9 +327,10 @@ class MailWatcher:
         return self._gate(doc, "watching", out)
 
 
-def plane_has_email_automations(svc: Any) -> bool:
-    """True when the plane's runtime has an active automation on `email.received@1`."""
+def plane_has_email_automations(svc: Any, account_id: Optional[str] = None) -> bool:
+    """True when the plane's runtime has an active automation on `email.received@1` (bound to
+    mailbox `account_id` when given: `self` / unset bindings watch the primary `default`)."""
 
     from abstractruntime.email import email_trigger_consumers
 
-    return bool(email_trigger_consumers(svc.host.runtime))
+    return bool(email_trigger_consumers(svc.host.runtime, account_id=account_id))
