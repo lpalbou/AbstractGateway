@@ -1122,6 +1122,35 @@ with its signing secret, a feed URL. Automations bind it by id
 (`trigger.config.connection_id`); each connection has one inbox stream,
 `trigger:<connection_id>`, that its events are appended to and its automations read.
 
+### Trigger connections
+
+The caller's own connections, in the caller's own runtime plane (another account's connection
+answers 404 like an unknown one). An administrator also lists every account's with `all=true` and
+may read, test and revoke any by id.
+
+| Route | Answer |
+|---|---|
+| `GET /api/gateway/triggers/connections?source_id=&all=` | `{connections: [row]}`, oldest first; `all=true` is admin only (403 `admin_required`) |
+| `POST /api/gateway/triggers/connections` | `{source_id, source_version, label?, config}` → 201: the row at top level, plus the one-time `secret` (a webhook's signing secret `whsec_…`, generated when `config` gives none; never shown again) and, for a webhook, `ingress_url`. 422 `unknown_trigger_source` / `invalid_connection` (a source that takes no trigger connection, a mailbox source, a config its `connection_schema` refuses) |
+| `GET /api/gateway/triggers/connections/{id}` | the row |
+| `PUT /api/gateway/triggers/connections/{id}` | `{label?, config?, status?: active \| disabled}` → the row (a new `config` is validated whole; secret fields left out keep their sealed value) |
+| `DELETE /api/gateway/triggers/connections/{id}` | `{deleted: true, connection_id}` (its past events stay until the inbox retention removes them) |
+| `GET /api/gateway/triggers/connections/{id}/events?after=&limit=` | `{events: [CloudEvents JSON + sequence + recordedtime], next_after}`; without `after` the newest `limit` (default 50, at most 500), oldest first; with `after` the next `limit` after that sequence |
+| `POST /api/gateway/triggers/connections/{id}/test-fire` | `{event_id, sequence, woken}`: a synthetic `{data: {test: true}}` event appended to the connection's stream like a real one (bound automations admit it) |
+
+A row: `{connection_id, principal ("<tenant>:<user>"), source_id, source_version (integer), label,
+status ("active" | "disabled" | "error"), created_at, updated_at, last_event_at (string or null),
+last_error (object or null), config_public (object; never a secret), secret_fields, stream
+("trigger:<id>"), ingress_url (webhooks)}`. Errors: `{"detail": {"reason_code", "message",
+"field"?}}`. Request and response models are in the OpenAPI schema (`/openapi.json`, tag
+`triggers`).
+
+```bash
+curl -sS -X POST -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"source_id":"webhook.received","source_version":1,"label":"Shop orders","config":{}}' \
+  "$BASE_URL/api/gateway/triggers/connections"     # -> connection_id, secret (once), ingress_url
+```
+
 ### Webhook ingress (`POST /api/gateway/triggers/webhooks/{connection_id}`)
 
 The one public route of the family: it carries **no bearer token**. The

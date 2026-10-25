@@ -313,6 +313,17 @@ editor stores the suggestion in the VisualFlow document as
   `automation_defaults` keyed by entrypoint flow id.
 - At creation the defaults are checked again with the same rules; invalid
   published defaults answer 422 with the offending `field`.
+- A trigger whose source listens to a **connection** (`needs_connection` with
+  the `trigger_connections` provider: `webhook.received@1`, `feed.item@1`)
+  carries `"connection_id": "<id>"` in `trigger` (or in `trigger.config`);
+  it is required for those sources (422 `connection_required`) and refused for
+  the others. A connection belongs to one person: an automation created from
+  defaults that name someone else's connection is refused with 422
+  `connection_not_yours` ("choose one of your own connections"), and a request
+  naming a connection that is not yours answers 404 `connection_not_found`.
+  The automation stores it as `trigger.config.connection_id`. Connections are
+  managed with the [connections API](./api.md#trigger-connections) and the
+  console's Triggers page.
 
 ## Tool approval and consent
 

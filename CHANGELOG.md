@@ -56,6 +56,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   413, a body neither JSON nor UTF-8 text 415, more than 60 calls a minute per connection
   (120 per client address) 429. Refusals are recorded on the connection and the audit line. Every runtime the
   gateway builds now gets its plane's trigger connection store (`<runtime data dir>/triggers/connections/`).
+- Trigger connections API (backlog 1041): `GET/POST /api/gateway/triggers/connections`,
+  `GET/PUT/DELETE /api/gateway/triggers/connections/{id}`, `GET …/{id}/events?after=&limit=` (CloudEvents JSON with
+  `sequence`), `POST …/{id}/test-fire`. The caller's own connections in their runtime plane (another account's id
+  answers 404); an administrator lists every account's with `all=true` and may read, test and revoke any. Rows carry
+  `config_public` (never a secret); creating a webhook connection answers its signing secret once and its
+  `ingress_url`. Automations: `trigger.connection_id` is accepted in a workflow's `automation_defaults` (required for a
+  connection source, refused for the others) and in a request, stored as `trigger.config.connection_id`; a connection
+  that is not the owner's is refused (404 `connection_not_found`, or 422 `connection_not_yours` when it came from a
+  shared workflow's defaults).
 - Several mailboxes per user, read-only at minimum (backlog 1044): `GET /api/gateway/me/email/accounts` lists every
   mailbox of the caller with `can_read` / `can_send` (also as `accounts` in `GET /me/email`);
   `PUT|GET|DELETE /me/email/accounts/{mailbox_id}`, `POST …/{mailbox_id}/test`, `PUT …/{mailbox_id}/enabled`. A further

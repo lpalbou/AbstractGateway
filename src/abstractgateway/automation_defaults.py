@@ -3,11 +3,17 @@
 A runnable flow may carry the defaults of the automations created from it:
 
     automation_defaults = {schema_version: 1, title?: str,
-                           trigger: {source_id, source_version: int, config: object},
+                           trigger: {source_id, source_version: int, config: object,
+                                     connection_id?: str},
                            context: {mode: "independent"|"growing"}, input_data: object}
 
 No binding_id, credentials or instantiated ids: those are server-owned and
-minted when an automation is created. The gateway validates the field on
+minted when an automation is created. The one exception is `trigger.connection_id`
+(framework backlog 1040/1047): REQUIRED when the source's descriptor says it needs a
+trigger connection (`needs_connection` with the `trigger_connections` provider: a webhook,
+a feed), refused otherwise. It is the AUTHOR's connection: an automation created from the
+defaults by anyone else is refused (`connection_not_yours`, routes/automations.py) and that
+person picks one of their own connections. The gateway validates the field on
 save, stores it in the flow document, and on publish exports it as
 `manifest.metadata.automation_defaults[<root flow_id>]`; the catalog, `/bundles`
 and `/bundles/{id}` expose `automation_defaults` keyed by entrypoint flow id.
@@ -30,7 +36,7 @@ CONTEXT_MODES = ("independent", "growing")
 TITLE_MAX = 120
 
 _TOP_KEYS = frozenset({"schema_version", "title", "trigger", "context", "input_data"})
-_TRIGGER_KEYS = frozenset({"source_id", "source_version", "config"})
+_TRIGGER_KEYS = frozenset({"source_id", "source_version", "config", "connection_id"})
 _CONTEXT_KEYS = frozenset({"mode"})
 
 
@@ -109,6 +115,16 @@ def _structural(raw: Any) -> Dict[str, Any]:
     if not isinstance(config, Mapping):
         raise AutomationDefaultsError("trigger.config must be an object", field="automation_defaults.trigger.config")
     out["trigger"] = {"source_id": source_id, "source_version": int(source_version), "config": dict(config)}
+    if "connection_id" in trigger:
+        cid = trigger.get("connection_id")
+        from abstractruntime.triggers.connections import CONNECTION_ID_RE
+
+        if not isinstance(cid, str) or not CONNECTION_ID_RE.match(cid):
+            raise AutomationDefaultsError(
+                "trigger.connection_id must be a connection id (letters, digits, '_' or '-', at most 64)",
+                field="automation_defaults.trigger.connection_id",
+            )
+        out["trigger"]["connection_id"] = cid
 
     context = raw.get("context", {})
     if not isinstance(context, Mapping):
@@ -155,8 +171,31 @@ def validate_flow_automation_defaults(raw: Any, *, now: Optional[str] = None) ->
         adapter = get_trigger_adapter(trigger["source_id"], trigger["source_version"])
     except UnknownTriggerSource as exc:
         raise AutomationDefaultsError(str(exc), field="automation_defaults.trigger.source_id", reason_code="unknown_trigger_source") from exc
+    from abstractruntime.triggers.connections import uses_connection_store
+
+    config = dict(trigger["config"])
+    needs = uses_connection_store(getattr(adapter, "descriptor", None) or {})
+    cid = trigger.get("connection_id")
+    if needs and not (cid or config.get("connection_id")):
+        raise AutomationDefaultsError(
+            f"trigger {trigger['source_id']}@{trigger['source_version']} listens to a connection: set trigger.connection_id",
+            field="automation_defaults.trigger.connection_id",
+            reason_code="connection_required",
+        )
+    if not needs and cid is not None:
+        raise AutomationDefaultsError(
+            f"trigger {trigger['source_id']}@{trigger['source_version']} takes no connection (remove trigger.connection_id)",
+            field="automation_defaults.trigger.connection_id",
+        )
+    if needs and cid:
+        if config.get("connection_id") not in (None, cid):
+            raise AutomationDefaultsError(
+                "trigger.connection_id and trigger.config.connection_id name different connections",
+                field="automation_defaults.trigger.connection_id",
+            )
+        config["connection_id"] = cid
     try:
-        adapter.validate(trigger["config"], now=now or datetime.datetime.now(datetime.timezone.utc).isoformat())
+        adapter.validate(config, now=now or datetime.datetime.now(datetime.timezone.utc).isoformat())
     except TriggerConfigError as exc:
         raise AutomationDefaultsError(str(exc), field=f"automation_defaults.trigger.{exc.field}", reason_code=exc.reason_code) from exc
     return value
@@ -172,9 +211,27 @@ def manifest_automation_defaults(manifest: Any) -> Dict[str, Any]:
     return {str(fid): value for fid, value in raw.items() if str(fid) in entry_ids and isinstance(value, dict)}
 
 
+def fold_connection_id(trigger: Any) -> Any:
+    """`trigger.connection_id` (the flow defaults' and a client's form) moved into
+    `trigger.config.connection_id` (the binding's form, what the runtime reads). Raises
+    AutomationDefaultsError when both are given and differ. Non-dict input is returned as is."""
+    if not isinstance(trigger, Mapping) or "connection_id" not in trigger:
+        return trigger
+    out = {k: v for k, v in trigger.items() if k != "connection_id"}
+    cid = trigger.get("connection_id")
+    config = dict(out.get("config") or {}) if isinstance(out.get("config"), Mapping) else {}
+    if config.get("connection_id") not in (None, cid):
+        raise AutomationDefaultsError("trigger.connection_id and trigger.config.connection_id name different connections", field="trigger.connection_id")
+    if cid is not None:
+        config["connection_id"] = cid
+    out["config"] = config
+    return out
+
+
 __all__ = [
     "AUTOMATION_DEFAULTS_SCHEMA_VERSION",
     "AutomationDefaultsError",
+    "fold_connection_id",
     "manifest_automation_defaults",
     "validate_flow_automation_defaults",
 ]

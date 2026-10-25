@@ -1,5 +1,22 @@
 """Triggers HTTP surface, under `/api/gateway/triggers` (framework backlog 1041/1042).
 
+Connections (the caller's own; principal-scoped like the automations family, every route acts on
+the caller's runtime plane; an admin also reads and revokes any account's with `?all=true` on the
+list and by id on the others):
+
+    GET    /triggers/connections[?source_id=&all=true]   {connections: [row]}
+    POST   /triggers/connections                         {source_id, source_version, label?, config}
+                                                         -> row + one-time `secret` (+ `ingress_url`)
+    GET    /triggers/connections/{id}                    row
+    PUT    /triggers/connections/{id}                    {label?, config?, status?: active|disabled} -> row
+    DELETE /triggers/connections/{id}                    {deleted: true, connection_id}
+    GET    /triggers/connections/{id}/events[?after=&limit=]  {events: [CloudEvents + sequence], next_after}
+    POST   /triggers/connections/{id}/test-fire          {event_id, sequence, woken}
+
+row = {connection_id, principal, source_id, source_version (int), label, status, created_at,
+updated_at, last_event_at (str|null), last_error (obj|null), config_public (object, never a
+secret), secret_fields, stream, ingress_url? (webhooks)}.
+
 - `POST /triggers/webhooks/{connection_id}`: the PUBLIC webhook ingress. No bearer token: the
   Standard Webhooks signature (`webhook-id`, `webhook-timestamp`, `webhook-signature`, HMAC-SHA256
   with the connection's secret) is the auth (`GatewaySecurityMiddleware._public_auth_path`). Rate
@@ -7,7 +24,9 @@
   accepted call appends one CloudEvents-shaped event to the connection's inbox stream
   `trigger:<connection_id>` and wakes the automations bound to it.
 
-Every non-2xx answer carries `{"detail": {"reason_code", "message"}}`.
+Every non-2xx answer carries `{"detail": {"reason_code", "message", "field"?}}`: 404
+`connection_not_found` (unknown, or another account's: indistinguishable), 422 `invalid_connection` /
+`unknown_trigger_source`, 403 `admin_required` (`all=true` without the admin role).
 """
 
 from __future__ import annotations
@@ -16,8 +35,9 @@ import asyncio
 import logging
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field
 
 from .. import trigger_connections as tc
 
@@ -134,3 +154,275 @@ async def receive_webhook(connection_id: str, request: Request) -> JSONResponse:
                 "event_id": verdict.get("event_id"), "seq": int(verdict.get("seq") or 0), "woken": int(verdict.get("woken") or 0)}
     _audit(request, connection_id=connection_id, outcome="accepted", webhook_id=accepted["webhook_id"], seq=accepted["seq"])
     return JSONResponse(status_code=202, content=accepted)
+
+
+# ---------------------------------------------------------------------------------------
+# Connections (framework backlog 1041)
+# ---------------------------------------------------------------------------------------
+
+_CONNECTION_ERROR_STATUS = {
+    "connection_not_found": 404,
+    "invalid_connection": 422,
+    "unknown_trigger_source": 422,
+    "connection_required": 422,
+    "connection_source_mismatch": 422,
+    "connection_disabled": 409,
+}
+EVENTS_LIMIT_MAX = 500
+
+
+class CreateConnectionBody(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "examples": [
+                {"source_id": "webhook.received", "source_version": 1, "label": "Orders from the shop", "config": {}},
+                {"source_id": "feed.item", "source_version": 1, "label": "Python blog", "config": {"url": "https://blog.python.org/feeds/posts/default"}},
+            ]
+        },
+    )
+
+    source_id: str = Field(..., description="A trigger source whose descriptor says needs_connection (GET /trigger-sources)")
+    source_version: int = Field(..., ge=1)
+    label: Optional[str] = Field(None, description="One line, at most 120 characters (default: the source's label)")
+    config: Dict[str, Any] = Field(default_factory=dict, description="Validated against the source's connection_schema; x-secret fields are sealed")
+
+
+class UpdateConnectionBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    label: Optional[str] = None
+    config: Optional[Dict[str, Any]] = Field(None, description="Replaces the config (validated whole); secret fields left out keep their sealed value")
+    status: Optional[str] = Field(None, description="active | disabled")
+
+
+def _principal(request: Request) -> Any:
+    from .gateway import _principal_from_request
+
+    return _principal_from_request(request)
+
+
+def _connection_error(exc: Any) -> JSONResponse:
+    detail = exc.to_error() if hasattr(exc, "to_error") else {"reason_code": "invalid_connection", "message": str(exc)}
+    return JSONResponse(status_code=_CONNECTION_ERROR_STATUS.get(detail.get("reason_code"), 422), content={"detail": detail})
+
+
+def _own_store(principal: Any) -> tuple:
+    """(service, store) of the caller's runtime plane."""
+    from ..service import get_gateway_service_for_principal
+
+    svc = get_gateway_service_for_principal(principal)
+    return svc, tc.store_for_service(svc)
+
+
+def ingress_url(request: Request, connection_id: str) -> str:
+    """The absolute address a sender posts to (the request's own base URL)."""
+    return f"{str(request.base_url).rstrip('/')}/api/gateway/triggers/webhooks/{connection_id}"
+
+
+def connection_row(conn: Any, request: Request) -> Dict[str, Any]:
+    """The one row shape (console page, Flow's connection selector, the TUI): never a secret."""
+    row: Dict[str, Any] = {
+        "connection_id": conn.connection_id,
+        "principal": conn.principal,
+        "source_id": conn.source_id,
+        "source_version": int(conn.source_version),
+        "label": str(conn.label or "") or conn.connection_id,
+        "status": str(conn.status or "active"),
+        "created_at": conn.created_at or None,
+        "updated_at": conn.updated_at or None,
+        "last_event_at": conn.last_event_at or None,
+        "last_error": dict(conn.last_error) if isinstance(conn.last_error, dict) else None,
+        "config_public": dict(conn.config or {}),
+        "secret_fields": list(conn.secret_fields or []),
+        "stream": conn.stream,
+    }
+    if conn.source_id == WEBHOOK_SOURCE_ID:
+        row["ingress_url"] = ingress_url(request, conn.connection_id)
+    return row
+
+
+def _resolve(principal: Any, connection_id: str) -> tuple:
+    """(service, store, connection) for the caller: their own connection; an admin also any
+    account's (found across the planes). None when unknown or not theirs (404)."""
+    svc, store = _own_store(principal)
+    conn = store.get(str(connection_id), principal=tc.principal_key(principal))
+    if conn is not None:
+        return svc, store, conn
+    if principal.is_admin():
+        located = tc.locate_connection(str(connection_id))
+        if located is not None:
+            from ..service import get_gateway_service_for_principal
+
+            return get_gateway_service_for_principal(located.principal), located.store, located.connection
+    return None
+
+
+def _not_found(connection_id: str) -> JSONResponse:
+    return JSONResponse(status_code=404, content={"detail": {"reason_code": "connection_not_found",
+                                                             "message": f"No trigger connection {connection_id!r} for this account.",
+                                                             "field": "connection_id"}})
+
+
+def _all_connections(source_id: Optional[str]) -> list:
+    out, seen = [], set()
+    for _principal_of_plane, data_dir in tc._candidate_planes():
+        for conn in tc.store_for_data_dir(data_dir).list(source_id=source_id):
+            if conn.connection_id not in seen:
+                seen.add(conn.connection_id)
+                out.append(conn)
+    return sorted(out, key=lambda c: (c.created_at, c.connection_id))
+
+
+@router.get("/connections", summary="My trigger connections (an admin: every account's with all=true)")
+async def list_connections(
+    request: Request,
+    source_id: Optional[str] = Query(None, description="Only the connections of this source id"),
+    all: bool = Query(False, description="Admin only: every account's connections (rows carry `principal`)"),  # noqa: A002 - the wire name
+) -> Any:
+    principal = _principal(request)
+    if all and not principal.is_admin():
+        return JSONResponse(status_code=403, content={"detail": {"reason_code": "admin_required",
+                                                                 "message": "Only an administrator lists every account's connections."}})
+
+    def run() -> Dict[str, Any]:
+        if all:
+            conns = _all_connections(source_id)
+        else:
+            _svc, store = _own_store(principal)
+            conns = store.list(principal=tc.principal_key(principal), source_id=source_id)
+        return {"connections": [connection_row(c, request) for c in conns]}
+
+    return await asyncio.to_thread(run)
+
+
+@router.post("/connections", status_code=201, summary="Create a trigger connection (the secret is shown once)")
+async def create_connection(request: Request, body: CreateConnectionBody) -> Any:
+    """201: the connection row at top level, plus the one-time `secret` (a webhook's signing
+    secret, generated when the config gives none; never shown again) and, for a webhook,
+    `ingress_url`."""
+    principal = _principal(request)
+    from abstractruntime.triggers.connections import TriggerConnectionError
+
+    def run() -> Any:
+        _svc, store = _own_store(principal)
+        try:
+            conn = store.create(principal=tc.principal_key(principal), source_id=body.source_id, source_version=int(body.source_version),
+                                config=dict(body.config or {}), label=body.label)
+            secrets = store.secrets(conn.connection_id, principal=tc.principal_key(principal)) if conn.secret_ref else {}
+        except TriggerConnectionError as exc:
+            return _connection_error(exc)
+        out = connection_row(conn, request)
+        if isinstance(secrets.get("secret"), str):
+            out["secret"] = secrets["secret"]
+        return JSONResponse(status_code=201, content=out)
+
+    return await asyncio.to_thread(run)
+
+
+@router.get("/connections/{connection_id}", summary="One trigger connection")
+async def get_connection(request: Request, connection_id: str) -> Any:
+    principal = _principal(request)
+    found = await asyncio.to_thread(_resolve, principal, connection_id)
+    return _not_found(connection_id) if found is None else connection_row(found[2], request)
+
+
+@router.put("/connections/{connection_id}", summary="Change a trigger connection's label, config or status")
+async def update_connection(request: Request, connection_id: str, body: UpdateConnectionBody) -> Any:
+    principal = _principal(request)
+    from abstractruntime.triggers.connections import TriggerConnectionError
+
+    def run() -> Any:
+        found = _resolve(principal, connection_id)
+        if found is None:
+            return _not_found(connection_id)
+        _svc, store, conn = found
+        if body.status is not None and body.status not in ("active", "disabled"):
+            return JSONResponse(status_code=422, content={"detail": {"reason_code": "invalid_connection",
+                                                                     "message": "status must be active or disabled", "field": "status"}})
+        try:
+            conn = store.update(conn.connection_id, principal=conn.principal, config=body.config, label=body.label, status=body.status)
+        except TriggerConnectionError as exc:
+            return _connection_error(exc)
+        return connection_row(conn, request)
+
+    return await asyncio.to_thread(run)
+
+
+@router.delete("/connections/{connection_id}", summary="Delete a trigger connection (its past events stay until retention)")
+async def delete_connection(request: Request, connection_id: str) -> Any:
+    principal = _principal(request)
+
+    def run() -> Any:
+        found = _resolve(principal, connection_id)
+        if found is None:
+            return _not_found(connection_id)
+        _svc, store, conn = found
+        store.delete(conn.connection_id, principal=conn.principal)
+        return {"deleted": True, "connection_id": conn.connection_id}
+
+    return await asyncio.to_thread(run)
+
+
+def _event_item(rec: Dict[str, Any]) -> Dict[str, Any]:
+    payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
+    return {**payload, "sequence": int(rec.get("seq") or 0), "recordedtime": rec.get("appended_at")}
+
+
+@router.get("/connections/{connection_id}/events", summary="A connection's recent events")
+async def connection_events(
+    request: Request,
+    connection_id: str,
+    after: Optional[int] = Query(None, ge=0, description="Events after this sequence, oldest first; omitted = the newest `limit`"),
+    limit: int = Query(50, ge=1, le=EVENTS_LIMIT_MAX),
+) -> Any:
+    """`{events: [CloudEvents JSON + sequence + recordedtime], next_after}`: the connection's inbox
+    stream (`trigger:<id>`). Without `after`: the newest `limit` events (oldest first); with it,
+    the next `limit` after that sequence; `next_after` is the last sequence returned (page on)."""
+    principal = _principal(request)
+
+    def run() -> Any:
+        found = _resolve(principal, connection_id)
+        if found is None:
+            return _not_found(connection_id)
+        svc, _store, conn = found
+        inbox = svc.host.runtime.event_inbox
+        if inbox is None:
+            raise RuntimeError("the connection's runtime has no event inbox")
+        if after is None:
+            records = inbox.read(stream=conn.stream)[-int(limit):]
+        else:
+            records = inbox.read(after_seq=int(after), stream=conn.stream, limit=int(limit))
+        events = [_event_item(r) for r in records]
+        return {"events": events, "next_after": events[-1]["sequence"] if events else after}
+
+    return await asyncio.to_thread(run)
+
+
+@router.post("/connections/{connection_id}/test-fire", summary="Send a test event to a connection")
+async def connection_test_fire(request: Request, connection_id: str) -> Any:
+    """Appends a synthetic `{data: {test: true}}` event to the connection's stream, exactly like a
+    real one (bound automations admit it), and wakes them: `{event_id, sequence, woken}`."""
+    principal = _principal(request)
+    from abstractruntime.email import wake_stream_consumers
+    from abstractruntime.triggers.connections import TriggerConnectionError, test_fire
+
+    def run() -> Any:
+        found = _resolve(principal, connection_id)
+        if found is None:
+            return _not_found(connection_id)
+        svc, store, conn = found
+        runtime = svc.host.runtime
+        try:
+            result = test_fire(store, runtime.event_inbox, conn.connection_id, principal=conn.principal)
+        except TriggerConnectionError as exc:
+            return _connection_error(exc)
+        woken = wake_stream_consumers(runtime, conn.stream)
+        for automation_id in woken:
+            try:
+                svc.runner.nudge(str(automation_id))
+            except Exception:  # noqa: BLE001
+                pass
+        return {"event_id": result.event_id, "sequence": int(result.seq), "woken": len(woken)}
+
+    return await asyncio.to_thread(run)

@@ -57,6 +57,7 @@ from ..automation_attention import (
 from ..automation_command_types import AUTOMATION_COMMAND_TYPES, AUTOMATION_SUMMARY_CAPABILITIES
 from ..automation_defaults import (
     AutomationDefaultsError,
+    fold_connection_id,
     manifest_automation_defaults,
     strip_server_owned_input,
     validate_flow_automation_defaults,
@@ -645,11 +646,40 @@ def _check_email_account(svc: Any, trigger: Any, *, field: str, command_id: Opti
         raise AutomationError(422, e.code, e.message, field=field, command_id=command_id)
 
 
+def _check_trigger_connection(svc: Any, principal: Any, trigger: Any, *, from_defaults: bool, field: str, command_id: Optional[str] = None) -> Any:
+    """`trigger.connection_id` folded into `config.connection_id`; a connection the owner does not
+    have is refused here with a sentence that says what to do. From a workflow's published
+    defaults it is the AUTHOR's connection (`connection_not_yours`: pick one of your own); in a
+    request, `connection_not_found` (the runtime re-checks owner, source and status at create)."""
+    from abstractruntime.triggers.connections import binding_connection_id
+
+    from ..trigger_connections import principal_key, store_for_service
+
+    try:
+        trigger = fold_connection_id(trigger)
+    except AutomationDefaultsError as e:
+        raise AutomationError(422, e.reason_code, str(e), field=field, command_id=command_id)
+    cid = binding_connection_id(trigger) if isinstance(trigger, dict) else None
+    if not cid:
+        return trigger
+    if store_for_service(svc).get(str(cid), principal=principal_key(principal)) is None:
+        if from_defaults:
+            raise AutomationError(
+                422, "connection_not_yours",
+                f"This workflow's default trigger listens to connection {cid!r}, which is not yours. "
+                "Choose one of your own connections (trigger.connection_id), or create one on the Triggers page.",
+                field=field, command_id=command_id,
+            )
+        raise AutomationError(404, "connection_not_found", f"No trigger connection {cid!r} for this account.", field=field, command_id=command_id)
+    return trigger
+
+
 def _create(svc: Any, principal: Any, body: CreateAutomationBody) -> Dict[str, Any]:
     tenant, user = _principal_tuple(principal)
     target = _resolve_target(svc, principal, body.target)
     bundle = target.pop("_bundle")
     title, trigger, context = body.title, body.trigger, body.context
+    trigger_from_defaults = trigger is None
     if trigger is None or title is None:
         # A request may lean on the target's published defaults (contract C6),
         # re-checked by the same validator that checked them at save time.
@@ -672,6 +702,7 @@ def _create(svc: Any, principal: Any, body: CreateAutomationBody) -> Dict[str, A
     owner_zone = principal_time_zone(svc, principal)
     trigger = with_time_zone(trigger, owner_zone)
     _check_email_account(svc, trigger, field="trigger.config.account")
+    trigger = _check_trigger_connection(svc, principal, trigger, from_defaults=trigger_from_defaults, field="trigger.connection_id")
     target["input_data"] = _guarded_input_data(svc, principal, target["input_data"], automation_id=automation_id)
     request: Dict[str, Any] = {
         "request_id": body.request_id,
@@ -918,6 +949,8 @@ def _check_revise(svc: Any, principal: Any, controller: Any, payload: Dict[str, 
         changes["trigger"] = with_time_zone(changes["trigger"], keep or principal_time_zone(svc, principal))
     if "trigger" in changes:
         _check_email_account(svc, changes["trigger"], field="changes.trigger.config.account", command_id=command_id)
+        changes["trigger"] = _check_trigger_connection(svc, principal, changes["trigger"], from_defaults=False,
+                                                       field="changes.trigger.connection_id", command_id=command_id)
     if "target" in changes:
         target = _resolve_target(svc, principal, changes["target"], field="changes.target")
         target.pop("_bundle")

@@ -258,6 +258,14 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     # The public trigger webhook ingress (PUBLIC_WRITES below): signature-authenticated,
     # no principal; it writes only the connection's own inbox stream.
     ("POST", "/api/gateway/triggers/webhooks/{connection_id}"),
+    # Trigger connections (framework backlog 1041): the caller's OWN connections in the caller's
+    # own runtime plane (store filtered by the owner string "<tenant>:<user>"; a foreign id
+    # answers 404 like an unknown one). An admin may also revoke / read any account's (in-handler
+    # `is_admin()`); `?all=true` on the list is refused 403 for non-admins in the handler.
+    ("POST", "/api/gateway/triggers/connections"),
+    ("PUT", "/api/gateway/triggers/connections/{connection_id}"),
+    ("DELETE", "/api/gateway/triggers/connections/{connection_id}"),
+    ("POST", "/api/gateway/triggers/connections/{connection_id}/test-fire"),
     ("POST", "/api/gateway/runs/{run_id}/chat"),
     ("POST", "/api/gateway/runs/{run_id}/chat_threads"),
     ("POST", "/api/gateway/runs/{run_id}/summary"),
