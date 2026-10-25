@@ -56,6 +56,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   413, a body neither JSON nor UTF-8 text 415, more than 60 calls a minute per connection
   (120 per client address) 429. Refusals are recorded on the connection and the audit line. Every runtime the
   gateway builds now gets its plane's trigger connection store (`<runtime data dir>/triggers/connections/`).
+- Feed connections are polled (backlog 1043): each account's worker loop calls AbstractRuntime's
+  `poll_feed_connections` over the plane's connection store (the one store its runtime was wired with) and wakes the
+  automations that received items. Nothing polls at import.
 - Trigger connections API (backlog 1041): `GET/POST /api/gateway/triggers/connections`,
   `GET/PUT/DELETE /api/gateway/triggers/connections/{id}`, `GET …/{id}/events?after=&limit=` (CloudEvents JSON with
   `sequence`), `POST …/{id}/test-fire`. The caller's own connections in their runtime plane (another account's id

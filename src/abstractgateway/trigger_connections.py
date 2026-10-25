@@ -64,14 +64,40 @@ def store_for_data_dir(data_dir: Path) -> TriggerConnectionStore:
 
 
 def store_for_service(svc: Any) -> TriggerConnectionStore:
-    """The trigger connections of a principal's service (its runtime data folder)."""
-    return store_for_data_dir(Path(svc.config.data_dir))
+    """The trigger connections of a principal's service: THE store its runtime was wired with
+    (`wire_runtime_connections`, called at every runtime build), so routes, the webhook ingress,
+    the feed poller and automation creation share one instance."""
+    runtime = getattr(getattr(svc, "host", None), "runtime", None)
+    store = getattr(runtime, "trigger_connection_store", None) if runtime is not None else None
+    if store is None:
+        raise RuntimeError("this service's runtime has no trigger connection store (mail/runtime_wiring.wire_runtime_email wires it)")
+    return store
 
 
 def wire_runtime_connections(runtime: Any, data_dir: Path) -> None:
-    """Give a built runtime its plane's connection store (automation create/revise checks a
-    binding's `config.connection_id` against it). A runtime without the seam fails loudly."""
+    """THE one place a runtime gets its plane's connection store (automation create/revise checks
+    a binding's `config.connection_id` against it; routes and pollers read it back through
+    `store_for_service`). A runtime without the seam fails loudly."""
     runtime.set_trigger_connection_store(store_for_data_dir(Path(data_dir)))
+
+
+def poll_feeds(svc: Any) -> list:
+    """One feed step for a principal's service (framework backlog 1043): AbstractRuntime's
+    `poll_feed_connections` over the plane's store (it fetches only connections whose interval has
+    elapsed, at most one fetch timeout each), then nudges the runner for the woken automations.
+    Called from the plane's worker loop (mail/worker.py); never at import."""
+    from abstractruntime.triggers import poll_feed_connections
+
+    runtime = svc.host.runtime
+    reports = poll_feed_connections(runtime, store_for_service(svc))
+    runner = getattr(svc, "runner", None)
+    for row in reports:
+        for automation_id in row.get("woken") or []:
+            try:
+                runner.nudge(str(automation_id))
+            except Exception:  # noqa: BLE001 - the runner's poll ticks it anyway
+                pass
+    return reports
 
 
 # ---------------------------------------------------------------------------------------
@@ -185,6 +211,7 @@ __all__ = [
     "WEBHOOK_RATE_WINDOW_S",
     "WebhookRateLimiter",
     "locate_connection",
+    "poll_feeds",
     "principal_key",
     "store_for_data_dir",
     "store_for_service",

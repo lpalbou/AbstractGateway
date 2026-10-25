@@ -1138,6 +1138,10 @@ may read, test and revoke any by id.
 | `GET /api/gateway/triggers/connections/{id}/events?after=&limit=` | `{events: [CloudEvents JSON + sequence + recordedtime], next_after}`; without `after` the newest `limit` (default 50, at most 500), oldest first; with `after` the next `limit` after that sequence |
 | `POST /api/gateway/triggers/connections/{id}/test-fire` | `{event_id, sequence, woken}`: a synthetic `{data: {test: true}}` event appended to the connection's stream like a real one (bound automations admit it) |
 
+Feed connections (`feed.item@1`) are polled by the gateway itself, from each account's worker
+loop (every 15 seconds it fetches the connections whose `every` has elapsed; 15 minutes by
+default), whether or not an automation listens yet, so their events show here.
+
 A row: `{connection_id, principal ("<tenant>:<user>"), source_id, source_version (integer), label,
 status ("active" | "disabled" | "error"), created_at, updated_at, last_event_at (string or null),
 last_error (object or null), config_public (object; never a secret), secret_fields, stream

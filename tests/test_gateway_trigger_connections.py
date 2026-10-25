@@ -228,3 +228,64 @@ def test_a_foreign_row_in_the_same_plane_is_never_listed_or_read(gw) -> None:
     other = plane.create(principal="default:mallory", source_id="webhook.received", source_version=1, config={})
     assert c.get(BASE, headers=alice).json()["connections"] == []
     assert c.get(f"{BASE}/{other.connection_id}", headers=alice).status_code == 404
+
+
+RSS = b"""<?xml version="1.0"?><rss version="2.0"><channel><title>t</title><link>http://x/</link><description>d</description>
+<item><title>first</title><link>http://x/1</link><guid>g1</guid></item>
+<item><title>second</title><link>http://x/2</link><guid>g2</guid></item>
+</channel></rss>"""
+
+
+def test_the_worker_loop_polls_the_planes_feeds_and_wakes_their_automations(gw) -> None:
+    """Wiring (backlog 1043): the plane's worker tick calls AbstractRuntime's
+    `poll_feed_connections` over THE store its runtime was wired with, and nudges the woken."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from abstractruntime.automations.models import wake_wait_key
+    from abstractruntime.core.models import RunStatus, WaitReason, WaitState
+
+    from automations_fixtures import controller_run
+    from abstractgateway import trigger_connections as tc
+    from abstractgateway.mail.accounts import plane_for_service_config
+    from abstractgateway.mail.worker import EmailWorker
+    from abstractgateway.service import get_gateway_service_for_principal
+    from abstractgateway.users import GatewayUserRegistry
+
+    class Feed(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 - http.server API
+            self.send_response(200)
+            self.send_header("Content-Type", "application/rss+xml")
+            self.end_headers()
+            self.wfile.write(RSS)
+
+        def log_message(self, *a):  # quiet
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Feed)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        c, _ref, alice, _bob = gw
+        svc = get_gateway_service_for_principal(GatewayUserRegistry().get_user("alice").to_principal())
+        background = getattr(svc, "email_worker", None)
+        assert background is not None  # the plane's worker exists; stopped so this test ticks it alone
+        background.stop()
+        url = f"http://127.0.0.1:{server.server_address[1]}/feed.xml"
+        r = c.post(BASE, headers=alice, json={"source_id": "feed.item", "source_version": 1, "label": "news",
+                                              "config": {"url": url, "initial_items": "deliver"}})
+        assert r.status_code == 201, r.text
+        cid = r.json()["connection_id"]
+        assert tc.store_for_service(svc) is svc.host.runtime.trigger_connection_store  # one store
+        run = controller_run(title="On news")
+        run.vars["_meta"]["automation"]["trigger"] = {"binding_id": "b", "source_id": "feed.item", "source_version": 1, "config": {"connection_id": cid}}
+        run.status = RunStatus.WAITING
+        run.waiting = WaitState(reason=WaitReason.EVENT, wait_key=wake_wait_key(run.run_id))
+        svc.host.run_store.save(run)
+
+        out = EmailWorker(svc, plane_for_service_config(svc.config)).tick()
+        [report] = out["feeds"]
+        assert report["connection_id"] == cid and run.run_id in report["woken"]
+        events = c.get(f"{BASE}/{cid}/events", headers=alice).json()["events"]
+        assert sorted(e["data"]["title"] for e in events) == ["first", "second"]
+    finally:
+        server.shutdown()

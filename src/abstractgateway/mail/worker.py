@@ -7,7 +7,8 @@ multi-user first request, the multi-user eager rehydration at boot), registered 
 1. each mailbox's watcher polls when due (60 s; capped backoff on failures) and only while an
    active `email.received` automation watches that mailbox (the primary and every further one,
    framework backlog 1044);
-2. the collector turns new automation / run facts into queued notices;
+2. the plane's feed connections are polled (`trigger_connections.poll_feeds`, framework backlog 1043);
+   the collector turns new automation / run facts into queued notices;
 3. the outbox sends what is due.
 
 A tick never raises; each step's failure is recorded in its own status (watcher state,
@@ -104,6 +105,18 @@ class EmailWorker:
                         out.setdefault("watchers", {})[watcher.plane.account_id] = result
             except Exception:  # noqa: BLE001 - one mailbox's failure never stops the others
                 logger.warning("email watcher tick failed for %s (%s)", self.name, watcher.plane.account_id, exc_info=True)
+        # Feed connections of the plane (framework backlog 1043): polled from this loop, beside the
+        # mail watchers, whether or not the mailbox is usable (a feed needs no mailbox).
+        # An entity's worker has no runner (entities run no automations): no feeds there.
+        if getattr(self.svc, "runner", None) is not None:
+            try:
+                from ..trigger_connections import poll_feeds
+
+                feeds = poll_feeds(self.svc)
+                if feeds:
+                    out["feeds"] = feeds
+            except Exception:  # noqa: BLE001 - recorded per connection (last_error) by the poller
+                logger.warning("feed polling failed for %s", self.name, exc_info=True)
         try:
             usable = email_usable(self.plane)
         except Exception:  # noqa: BLE001

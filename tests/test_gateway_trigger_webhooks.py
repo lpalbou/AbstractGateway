@@ -206,7 +206,7 @@ def test_a_connection_of_another_source_is_not_a_webhook_endpoint(gateway) -> No
 
     svc = get_gateway_service_for_principal(_principal("alice"))
     feed = tc.store_for_service(svc).create(principal="default:alice", source_id="feed.item", source_version=1,
-                                            config={"url": "https://example.test/feed.xml"})
+                                            config={"url": "http://127.0.0.1:9/feed.xml"})  # a closed port: the plane's worker polls feeds
     body = b"{}"
     r = client.post(f"/api/gateway/triggers/webhooks/{feed.connection_id}", content=body, headers=_sign(body, wid="f1", ts=int(time.time())))
     assert (r.status_code, r.json()["detail"]["reason_code"]) == (404, "connection_not_found")
