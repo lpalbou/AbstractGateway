@@ -131,8 +131,7 @@ def test_test_fire_and_a_real_webhook_show_in_the_events(gw) -> None:
     fire = c.post(f"{BASE}/{cid}/test-fire", headers=alice, json={})
     assert fire.status_code == 200, fire.text
     assert fire.json()["event_id"] and fire.json()["sequence"] >= 1
-    assert (created["listening"], created["used_by"], created["always_listen"]) == ("idle", 0, False)
-    assert c.put(f"{BASE}/{cid}", headers=alice, json={"always_listen": True}).json()["listening"] == "listening"
+    assert (created["listening"], created["used_by"], created["always_listen"]) == ("idle", 0, False)  # idle still accepts calls
     body = b'{"order": 42}'
     assert c.post(f"/api/gateway/triggers/webhooks/{cid}", content=body, headers=_sign(created["secret"], body, "w-1")).status_code == 202
 

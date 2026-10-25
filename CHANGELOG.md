@@ -52,7 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Connections listen only while something uses them.** Connection rows carry `listening` (listening | idle | paused), `used_by` (the active automations reading it), `paused` and `always_listen`; `PUT /api/gateway/triggers/connections/{id}` accepts `paused` and `always_listen`. Idle feeds are not fetched, and a webhook to an idle connection answers 409 `not_listening` without storing anything (a paused one: 409 `connection_disabled`).
+- **Connections listen only while something uses them.** Connection rows carry `listening` (listening | idle | paused), `used_by` (the active automations reading it), `paused` and `always_listen`; `PUT /api/gateway/triggers/connections/{id}` accepts `paused` and `always_listen`. Idle feeds are not fetched; a webhook call to an idle connection is accepted and stored (only a paused one answers 409 `connection_disabled`).
 
 - **Sign in with Google (or Microsoft) for further mailboxes.** `POST /api/gateway/me/email/accounts/{mailbox_id}/oauth/start|poll|finish|cancel` take the primary mailbox's OAuth2 bodies and answers, plus `send` (default false: read-only, IMAP with XOAUTH2 only); the tokens are sealed in that mailbox's own store and a sign-in belongs to the user and the mailbox it was started for. A password refused by Gmail's servers now says "Gmail refuses account passwords: use an app password or Sign in with Google."
 

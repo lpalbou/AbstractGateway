@@ -1144,7 +1144,8 @@ automation reads it (`used_by` > 0) or `always_listen` is on, "idle" otherwise, 
 `paused` is on (or the status is disabled). Feed connections (`feed.item@1`) are polled by the
 gateway itself from each account's worker loop (every 15 seconds it fetches the LISTENING
 connections whose `every` has elapsed; 15 minutes by default; the first poll after an idle spell is
-a baseline); a webhook to an idle connection answers 409 `not_listening` and stores nothing.
+a baseline). A webhook call is accepted and stored whether or not something listens yet; only
+a paused (or disabled) connection refuses it.
 
 A row: `{connection_id, principal ("<tenant>:<user>"), source_id, source_version (integer), label,
 status ("active" | "disabled" | "error"), listening ("listening" | "idle" | "paused"), used_by (integer:
@@ -1182,8 +1183,8 @@ knows the address and the secret.
   (`last_error`) and on the request's audit line (`webhook` {connection_id, outcome,
   reason_code}, never the body): `401 webhook_unsigned` (a header missing), `401
   webhook_signature_invalid`, `404 connection_not_found` (unknown id, or not a webhook
-  connection), `409 connection_disabled` (disabled or paused), `409 not_listening` (no automation
-  listens and `always_listen` is off: nothing stored), `409 webhook_stale` (timestamp outside the connection's
+  connection), `409 connection_disabled` (disabled or paused; an idle connection accepts
+  the call), `409 webhook_stale` (timestamp outside the connection's
   window: 5 minutes by default, `tolerance_s` 60..3600), `409 webhook_replayed` (this webhook-id was
   already accepted: nothing is appended twice; **senders should treat it as delivered**, a
   Standard Webhooks retry reuses the id), `413 webhook_too_large` (body over 512 KiB), `415

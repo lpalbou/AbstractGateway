@@ -57,7 +57,6 @@ _REFUSALS: Dict[str, tuple] = {
     "stale": (409, "webhook_stale", "webhook-timestamp is outside this connection's window (5 minutes by default) of the gateway's clock."),
     "replayed_id": (409, "webhook_replayed", "This webhook-id was already accepted for this connection: treat it as delivered."),
     "connection_disabled": (409, "connection_disabled", "This webhook connection is disabled or paused."),
-    "not_listening": (409, "not_listening", "Nothing listens to this webhook connection yet: bind an automation to it, or switch on Always listen."),
     "too_large": (413, "webhook_too_large", "The body is too large."),
     "unsupported_body": (415, "webhook_unsupported_body", "The body must be JSON or UTF-8 text."),
 }
@@ -107,8 +106,7 @@ def _accept(located: Any, *, body: bytes, headers: Dict[str, str]) -> Dict[str, 
     inbox = runtime.event_inbox
     if inbox is None:
         raise RuntimeError("the connection's runtime has no event inbox (mail/runtime_wiring.wire_runtime_email)")
-    verdict = append_webhook_event(inbox, located.connection, body, headers, store=located.store, max_body_bytes=tc.WEBHOOK_MAX_BODY_BYTES,
-                                   runtime=runtime)
+    verdict = append_webhook_event(inbox, located.connection, body, headers, store=located.store, max_body_bytes=tc.WEBHOOK_MAX_BODY_BYTES)
     if verdict.get("status") != "appended":
         return dict(verdict)
     woken = wake_stream_consumers(runtime, located.connection.stream)
@@ -127,8 +125,8 @@ async def receive_webhook(connection_id: str, request: Request) -> JSONResponse:
     Verification and the append are AbstractRuntime's (`abstractruntime.triggers.append_webhook_event`).
     202 `{accepted, connection_id, webhook_id, event_id, seq, woken}`; 401 `webhook_unsigned` /
     `webhook_signature_invalid`; 404 `connection_not_found` (unknown, or not a webhook
-    connection); 409 `connection_disabled` (disabled or paused), `not_listening` (no automation
-    listens and Always listen is off: nothing stored), `webhook_stale` (timestamp outside the connection's
+    connection); 409 `connection_disabled` (disabled or paused; an idle connection accepts the call
+    and keeps the event), `webhook_stale` (timestamp outside the connection's
     window, 5 minutes by default), `webhook_replayed` (this webhook-id was already accepted: the
     sender should treat it as delivered); 413 `webhook_too_large`; 415 `webhook_unsupported_body`;
     429 `webhook_rate_limited` (Retry-After)."""
