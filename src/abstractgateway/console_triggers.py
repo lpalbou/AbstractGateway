@@ -1649,12 +1649,14 @@ TRIGGERS_JS = r"""
           : e.key === "ArrowDown" ? (at + 1) % items.length : (at <= 0 ? items.length - 1 : at - 1);
         try { items[next].focus(); } catch {}
       };
-      // A click anywhere else closes the menu.
-      document.addEventListener("click", (e) => {
-        if (!trg.flowMenu || !e.target || !document.contains(e.target)) return;
-        if (e.target.closest && e.target.closest("[data-trg-flowmenu], [data-trg-useflow]")) return;
-        closeFlowMenu(false);
-      });
+      // A click anywhere else closes the menu (the console's guard for a page without a full DOM).
+      if (typeof document.addEventListener === "function") {
+        document.addEventListener("click", (e) => {
+          if (!trg.flowMenu || !e.target || !document.contains(e.target)) return;
+          if (e.target.closest && e.target.closest("[data-trg-flowmenu], [data-trg-useflow]")) return;
+          closeFlowMenu(false);
+        });
+      }
       $("trigger-modal-close").onclick = closeTriggerModal;
       $("trigger-modal-body").onchange = (e) => {
         const t = e.target;
