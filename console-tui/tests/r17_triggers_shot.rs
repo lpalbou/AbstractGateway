@@ -73,7 +73,10 @@ fn triggers_is_reached_with_v_after_workflows_and_shows_the_web_rows() {
          "enabled": true, "mailbox": {"state": "connected"}, "watcher": {}}
     ]})));
     h.store.json.set(K_AUTOS, Loadable::Ready(json!({"items": [
-        {"title": "Release digest", "status": "active", "trigger": {"source_id": "feed.item", "config": {"connection_id": "conn_bbc"}}}
+        {"title": "Release digest", "status": "active", "flow_name": "Digest", "target": {"bundle_ref": "digest@1.0.0", "flow_id": "digest"},
+         "trigger": {"source_id": "feed.item", "config": {"connection_id": "conn_bbc"}}},
+        {"title": "Old digest", "status": "paused", "flow_name": "Summarize", "target": {"bundle_ref": "sum@1.0.0", "flow_id": "sum"},
+         "trigger": {"source_id": "feed.item", "config": {"connection_id": "conn_bbc"}}}
     ]})));
     // The screen key, from Accounts.
     let s = h.key(b"V");
@@ -89,7 +92,11 @@ fn triggers_is_reached_with_v_after_workflows_and_shows_the_web_rows() {
         "New connection",
         "bbc-feed",
         "When bbc-feed has a new item",
-        "Listening · used by Release",
+        "Listening · used by 1",
+        "Handled by: Release digest · Digest",
+        "Old digest · Summarize (paused)",
+        "Handled by: Nothing handles it yet.",
+        "Use in a flow",
         "My GitHub hook",
         "Waiting for an automation to",
         "Broken feed",

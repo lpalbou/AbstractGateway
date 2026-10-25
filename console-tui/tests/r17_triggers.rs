@@ -502,9 +502,11 @@ fn click_new_connection_creates_and_shows_the_secret_once() {
 /// (the set below is the list those tests cover; a new action is RED).
 #[test]
 fn every_action_has_a_click_test() {
-    let covered: BTreeSet<&str> = ["events", "test", "delete", "refresh", "new", "manage"]
-        .into_iter()
-        .collect();
+    let covered: BTreeSet<&str> = [
+        "events", "test", "delete", "refresh", "new", "manage", "flow",
+    ]
+    .into_iter()
+    .collect();
     let rows = rows_from(&list()).unwrap();
     let mut offered: BTreeSet<&str> = BTreeSet::new();
     for r in &rows {
@@ -661,7 +663,7 @@ fn ux_review_words_errors_names_and_local_address() {
     let names = triggers::connection_users(&rows[0], &autos);
     assert_eq!(
         triggers::doing_text_with(&rows[0], &names).as_deref(),
-        Some("Listening · used by Auto 1, Auto 2, Auto 3 +2")
+        Some("Listening · used by 5 automations")
     );
     assert_eq!(
         triggers::error_text(&rows[0]).as_deref(),
@@ -1134,4 +1136,330 @@ fn a_feed_without_check_every_leaves_the_form_default() {
     let body = create_post(&mut h).expect("a POST");
     assert_eq!(body["config"]["every"], "15m");
     assert_eq!(body["config"]["url"], "https://example.org/feed.xml");
+}
+
+// ------------------------------------- Handled by + Use in a flow (operator 2026-10-25)
+
+fn autos() -> Value {
+    json!({"items": [
+        {"automation_id": "a1", "title": "Release digest", "status": "active", "flow_name": "Digest",
+         "target": {"workflow_id": "digest@1.0.0:digest", "bundle_ref": "digest@1.0.0", "flow_id": "digest"},
+         "trigger": {"source_id": "feed.item", "source_version": 1, "config": {"connection_id": "conn_feed1"}}},
+        {"automation_id": "a2", "title": "Old digest", "status": "paused", "flow_name": "Summarize",
+         "target": {"workflow_id": "sum@1.0.0:sum", "bundle_ref": "sum@1.0.0", "flow_id": "sum"},
+         "trigger": {"source_id": "feed.item", "source_version": 1, "config": {"connection_id": "conn_feed1"}}},
+        {"automation_id": "a3", "title": "Gone", "status": "archived", "flow_name": "Digest",
+         "target": {"bundle_ref": "digest@1.0.0", "flow_id": "digest"},
+         "trigger": {"source_id": "feed.item", "source_version": 1, "config": {"connection_id": "conn_feed1"}}},
+        {"automation_id": "a4", "title": "Triage", "status": "active", "flow_name": "Triage",
+         "target": {"bundle_ref": "triage@1.0.0", "flow_id": "triage"},
+         "trigger": {"source_id": "email.received", "source_version": 1, "config": {"account": "self"}}}
+    ]})
+}
+
+fn bundles() -> Value {
+    json!({"items": [
+        {"bundle_id": "digest", "bundle_version": "1.0.0", "bundle_ref": "digest@1.0.0",
+         "automation_defaults": {"digest": {"schema_version": 1, "trigger": {"source_id": "feed.item", "source_version": 1, "config": {}, "connection_id": "author"},
+                                            "context": {"mode": "growing"}, "input_data": {"prompt": "Summarize"}}},
+         "entrypoints": [{"flow_id": "digest", "name": "Digest", "workflow_id": "digest@1.0.0:digest", "triggerable": true},
+                         {"flow_id": "chat", "name": "Chat helper", "workflow_id": "digest@1.0.0:chat", "triggerable": false}]},
+        {"bundle_id": "triage", "bundle_version": "1.0.0", "bundle_ref": "triage@1.0.0",
+         "automation_defaults": {"triage": {"schema_version": 1, "trigger": {"source_id": "email.received", "source_version": 1, "config": {"account": "author", "from": ["boss@x.test"]}},
+                                            "context": {"mode": "independent"}, "input_data": {}}},
+         "entrypoints": [{"flow_id": "triage", "name": "Triage", "workflow_id": "triage@1.0.0:triage", "triggerable": true}]}
+    ]})
+}
+
+#[test]
+fn handled_by_menu_and_create_body_match_the_web() {
+    let rows = rows_from(&list()).unwrap();
+    let hs = triggers::handlers(&autos(), |t| triggers::connection_match(&rows[0].id, t)).unwrap();
+    assert_eq!(
+        hs.iter().map(|h| h.text()).collect::<Vec<_>>(),
+        ["Release digest · Digest", "Old digest · Summarize (paused)"]
+    );
+    assert_eq!(
+        triggers::handled_lines(&hs),
+        [
+            ("Handled by: Release digest · Digest".to_string(), true),
+            (
+                "            Old digest · Summarize (paused)".to_string(),
+                true
+            )
+        ]
+    );
+    let none =
+        triggers::handlers(&autos(), |t| triggers::connection_match("conn_hook1", t)).unwrap();
+    assert_eq!(
+        triggers::handled_lines(&none),
+        [("Handled by: Nothing handles it yet.".to_string(), false)]
+    );
+    // Not read: no Handled by at all (never a false "Nothing handles it").
+    assert!(triggers::handlers(&Value::Null, |_| true).is_none());
+    // The primary mailbox is matched by "self"; a title equal to its flow is said once.
+    let mb = triggers::mailboxes_from(&mailboxes()).unwrap();
+    let triage = triggers::handlers(&autos(), |t| triggers::mailbox_match(&mb[0], t)).unwrap();
+    assert_eq!(
+        triage.iter().map(|h| h.text()).collect::<Vec<_>>(),
+        ["Triage"]
+    );
+    assert!(
+        triggers::handlers(&autos(), |t| triggers::mailbox_match(&mb[1], t))
+            .unwrap()
+            .is_empty()
+    );
+    // Flow's link forms, exactly.
+    assert_eq!(
+        triggers::new_flow_link("http://127.0.0.1:8080/", "conn_feed1"),
+        "http://127.0.0.1:8080/apps/flow/?trigger=conn_feed1"
+    );
+    assert_eq!(
+        triggers::new_flow_link(
+            "http://127.0.0.1:8080",
+            &triggers::trigger_key(true, "default")
+        ),
+        "http://127.0.0.1:8080/apps/flow/?trigger=mail:default"
+    );
+    // Triggered entrypoints only, by name.
+    let flows = triggers::triggered_flows(&bundles()).unwrap();
+    assert_eq!(
+        flows.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(),
+        ["Digest", "Triage"]
+    );
+    // The create body: named after the flow, its inputs and context, THIS trigger.
+    let feed = triggers::UseTarget {
+        mailbox: false,
+        primary: false,
+        id: "conn_feed1".into(),
+        label: "Release feed".into(),
+        source_id: "feed.item".into(),
+        source_version: 1,
+    };
+    assert_eq!(
+        triggers::use_flow_body(&flows[0], &feed, "rq1"),
+        json!({"request_id": "rq1", "title": "Digest",
+               "target": {"bundle_ref": "digest@1.0.0", "flow_id": "digest", "input_data": {"prompt": "Summarize"}},
+               "trigger": {"source_id": "feed.item", "source_version": 1, "config": {}, "connection_id": "conn_feed1"},
+               "context": {"mode": "growing"}})
+    );
+    let work = triggers::UseTarget {
+        mailbox: true,
+        primary: false,
+        id: "work".into(),
+        label: "me@work.example".into(),
+        source_id: "email.received".into(),
+        source_version: 1,
+    };
+    assert_eq!(
+        triggers::use_flow_body(&flows[1], &work, "rq2")["trigger"],
+        json!({"source_id": "email.received", "source_version": 1, "config": {"from": ["boss@x.test"], "account": "work"}})
+    );
+    let mut e = abstractgateway_console::api::ApiError::new(
+        abstractgateway_console::api::ApiErrorKind::Http(422),
+        "x",
+    );
+    e.body = Some(json!({"reason_code": "email_account_cannot_read", "message": "x"}));
+    assert_eq!(
+        triggers::use_refusal(&e, "Triage", "me@work.example"),
+        "Triage cannot read me@work.example: it has no incoming server. Connect it again with its incoming server (My email)."
+    );
+    assert_eq!(
+        triggers::AUTOS_PATH,
+        "/automations?status=active,paused&limit=200"
+    );
+}
+
+/// Click `needle` on the LAST screen line holding it (a dialog's button over the page).
+fn click_last(h: &mut r8w4::Harness, needle: &str) -> String {
+    let screen = h.turns(1);
+    let (y, line) = screen
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains(needle))
+        .last()
+        .unwrap_or_else(|| panic!("{needle:?} not on screen:\n{screen}"));
+    let b = line.rfind(needle).unwrap() + 1;
+    let x = line[..b].chars().count() + 1;
+    h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes())
+}
+
+fn use_page() -> r8w4::Harness {
+    let mut h = harness((170, 46), Mount::Page(triggers::screen));
+    h.identity("alice", false);
+    h.store.json.set(K_SOURCES, Loadable::Ready(sources()));
+    h.store.json.set(K_LIST, Loadable::Ready(list()));
+    h.store.json.set(K_MAILBOXES, Loadable::Ready(mailboxes()));
+    h.store
+        .json
+        .set(triggers::K_AUTOS, Loadable::Ready(autos()));
+    h.store
+        .json
+        .set(triggers::K_FLOWS, Loadable::Ready(bundles()));
+    h.turns(3);
+    h.sent();
+    h
+}
+
+#[test]
+fn rows_say_handled_by() {
+    let mut h = use_page();
+    let s = h.turns(2);
+    for w in [
+        "Handled by: Release digest · Digest",
+        "Old digest · Summarize (paused)",
+        "Handled by: Nothing handles it yet.",
+        "Handled by: Triage",
+        "Use in a flow",
+    ] {
+        assert!(s.contains(w), "{w:?} missing:\n{s}");
+    }
+    assert!(!s.contains("Gone"), "{s}");
+}
+
+#[test]
+fn click_use_in_a_flow_lists_the_choices_prints_the_link_and_creates() {
+    let mut h = use_page();
+    click_row(&mut h, "Release feed", "Use in a flow");
+    clicked().lock().unwrap().insert("flow");
+    let s = h.turns(3);
+    for w in [
+        "Use in a flow — Release feed",
+        "New flow for this trigger…",
+        "Or let one of your triggered flows handle it",
+        "Digest · already handles it",
+        "Triage",
+    ] {
+        assert!(s.contains(w), "{w:?} missing:\n{s}");
+    }
+    assert!(!s.contains("Chat helper"), "{s}");
+    // New flow: a terminal cannot open Flow, so the link is printed.
+    h.click_text("New flow for this trigger…");
+    let s = h.turns(2);
+    assert!(
+        s.contains("http://127.0.0.1:18999/apps/flow/?trigger=conn_feed1"),
+        "{s}"
+    );
+    assert!(
+        s.contains("A terminal cannot open Flow: open this link in your browser."),
+        "{s}"
+    );
+    // A pick: POST /automations with the web's body, then Handled by is read again.
+    h.sent();
+    let screen = h.turns(1);
+    click_last(&mut h, " Triage ");
+    let cmds = json_cmds(&mut h);
+    eprintln!("{screen}");
+    let post = cmds.iter().find_map(|c| match c {
+        JsonCmd::Send {
+            method,
+            path,
+            body,
+            reload,
+            ..
+        } if method == "POST" && path == "/automations" => Some((body.clone(), reload.clone())),
+        _ => None,
+    });
+    let (body, reload) = post.unwrap_or_else(|| panic!("{cmds:?}"));
+    assert_eq!(body["title"], "Triage");
+    assert_eq!(
+        body["target"],
+        json!({"bundle_ref": "triage@1.0.0", "flow_id": "triage", "input_data": {}})
+    );
+    assert_eq!(
+        body["trigger"],
+        json!({"source_id": "feed.item", "source_version": 1, "config": {}, "connection_id": "conn_feed1"})
+    );
+    assert!(body["request_id"]
+        .as_str()
+        .unwrap()
+        .starts_with("console-tui-trigger-"));
+    assert_eq!(
+        reload,
+        vec![(
+            triggers::K_AUTOS.to_string(),
+            triggers::AUTOS_PATH.to_string()
+        )]
+    );
+    h.store.json.set_write(
+        triggers::K_USE,
+        Some(WriteState::Done(json!({"automation_id": "a9"}))),
+    );
+    let s = h.turns(2);
+    assert!(
+        s.contains("Triage now handles Release feed. It is on."),
+        "{s}"
+    );
+    h.shoot("triggers-use-in-a-flow");
+}
+
+#[test]
+fn use_in_a_flow_on_a_mailbox_links_mail_and_says_a_refusal() {
+    let mut h = use_page();
+    click_row(&mut h, "me@work.example", "Use in a flow");
+    let s = h.turns(3);
+    assert!(s.contains("Use in a flow — me@work.example"), "{s}");
+    h.click_text("New flow for this trigger…");
+    let s = h.turns(2);
+    assert!(
+        s.contains("http://127.0.0.1:18999/apps/flow/?trigger=mail:work"),
+        "{s}"
+    );
+    h.sent();
+    click_last(&mut h, " Triage ");
+    let cmds = json_cmds(&mut h);
+    assert!(cmds.iter().any(|c| matches!(c, JsonCmd::Send { method, path, body, .. }
+        if method == "POST" && path == "/automations"
+            && body["trigger"] == json!({"source_id": "email.received", "source_version": 1, "config": {"from": ["boss@x.test"], "account": "work"}}))),
+        "{cmds:?}");
+    let mut e = abstractgateway_console::api::ApiError::new(
+        abstractgateway_console::api::ApiErrorKind::Http(422),
+        "no IMAP",
+    );
+    e.body = Some(json!({"reason_code": "email_account_cannot_read", "message": "no IMAP"}));
+    h.store
+        .json
+        .set_write(triggers::K_USE, Some(WriteState::Failed(e)));
+    let s = h.turns(2);
+    assert!(
+        s.contains("Triage cannot read me@work.example: it has no incoming"),
+        "{s}"
+    );
+}
+
+#[test]
+fn the_f_key_opens_use_in_a_flow_for_the_selected_row() {
+    let mut h = use_page();
+    h.key(b"f");
+    let s = h.turns(3);
+    assert!(
+        s.contains("Use in a flow — Release feed") && s.contains("New flow for this trigger…"),
+        "{s}"
+    );
+    // 80x24, the smallest terminal: the rows keep Handled by and the dialog keeps its choices.
+    let mut n = harness((80, 24), Mount::Page(triggers::screen));
+    n.identity("alice", false);
+    n.store.json.set(K_SOURCES, Loadable::Ready(sources()));
+    n.store.json.set(K_LIST, Loadable::Ready(list()));
+    n.store.json.set(K_MAILBOXES, Loadable::Ready(mailboxes()));
+    n.store
+        .json
+        .set(triggers::K_AUTOS, Loadable::Ready(autos()));
+    n.store
+        .json
+        .set(triggers::K_FLOWS, Loadable::Ready(bundles()));
+    let s = n.turns(3);
+    assert!(
+        s.contains("Handled by:") && s.contains("Release digest") && s.contains("Use in a flow"),
+        "{s}"
+    );
+    n.assert_fits();
+    n.shoot("triggers-handled-by");
+    n.key(b"f");
+    let s = n.turns(3);
+    for w in ["New flow for this trigger…", "Triage", "Close"] {
+        assert!(s.contains(w), "{w:?} missing at 80x24:\n{s}");
+    }
+    n.assert_fits();
+    n.shoot("triggers-use-in-a-flow");
 }

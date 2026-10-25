@@ -59,7 +59,19 @@ pub const LISTEN_HELP: &str =
 pub const K_PAUSE: &str = "triggers.pause";
 pub const K_MAILBOXES: &str = "triggers.mailboxes";
 pub const K_AUTOS: &str = "triggers.automations";
-const AUTOS_PATH: &str = "/automations?status=active&limit=200";
+/// Active AND paused: Handled by lists a paused automation with "(paused)".
+pub const AUTOS_PATH: &str = "/automations?status=active,paused&limit=200";
+/// Your published flows (Use in a flow lists the triggered ones).
+pub const K_FLOWS: &str = "triggers.flows";
+pub const FLOWS_PATH: &str = "/bundles";
+/// The automation a Use in a flow pick creates (`POST /automations`).
+pub const K_USE: &str = "triggers.use";
+pub const USE_IN_FLOW: &str = "Use in a flow";
+pub const NEW_FLOW: &str = "New flow for this trigger…";
+pub const NOTHING_HANDLES: &str = "Nothing handles it yet.";
+pub const FLOWS_HEAD: &str = "Or let one of your triggered flows handle it";
+pub const NO_FLOWS: &str = "No triggered flow yet: start with a new one.";
+pub const NEW_FLOW_HELP: &str = "A terminal cannot open Flow: open this link in your browser.";
 const MAILBOXES_PATH: &str = "/me/email/accounts";
 pub const NEW: &str = "New connection";
 pub const REFRESH: &str = "Refresh";
@@ -176,19 +188,12 @@ pub fn listening_words(
     if paused {
         return "Paused".into();
     }
-    // UX #8: names, not counts, up to 3 then "+N".
+    // Who uses it is the row's Handled by (names and flows): the status counts the active ones.
     if !names.is_empty() {
-        let count = (used_by.unwrap_or(0) as usize).max(names.len());
-        let shown: Vec<&str> = names.iter().take(3).map(String::as_str).collect();
-        let more = count - shown.len();
+        let n = names.len();
         return format!(
-            "Listening · used by {}{}",
-            shown.join(", "),
-            if more > 0 {
-                format!(" +{more}")
-            } else {
-                String::new()
-            }
+            "Listening · used by {n} automation{}",
+            if n == 1 { "" } else { "s" }
         );
     }
     match used_by {
@@ -238,27 +243,286 @@ pub fn automation_users(autos: &Value, matches: impl Fn(&Value) -> bool) -> Vec<
         .unwrap_or_default()
 }
 
+/// Does an automation's trigger listen to this connection?
+pub fn connection_match(id: &str, t: &Value) -> bool {
+    t.get("config")
+        .and_then(|c| c.get("connection_id"))
+        .and_then(Value::as_str)
+        == Some(id)
+}
+
+/// Does an automation's trigger read this mailbox? ("self", "default" and no account are the
+/// primary mailbox, as the gateway's `validate_trigger_account` says.)
+pub fn mailbox_match(m: &MailboxRow, t: &Value) -> bool {
+    account_match(&m.id, m.primary, t)
+}
+
+fn account_match(id: &str, primary: bool, t: &Value) -> bool {
+    if t.get("source_id").and_then(Value::as_str) != Some("email.received") {
+        return false;
+    }
+    let account = t
+        .get("config")
+        .and_then(|c| c.get("account"))
+        .and_then(Value::as_str)
+        .filter(|a| !a.is_empty())
+        .unwrap_or("self");
+    account == id || ((account == "self" || account == "default") && primary)
+}
+
 pub fn connection_users(r: &ConnRow, autos: &Value) -> Vec<String> {
-    automation_users(autos, |t| {
-        t.get("config")
-            .and_then(|c| c.get("connection_id"))
-            .and_then(Value::as_str)
-            == Some(r.id.as_str())
-    })
+    automation_users(autos, |t| connection_match(&r.id, t))
 }
 
 pub fn mailbox_users(m: &MailboxRow, autos: &Value) -> Vec<String> {
-    automation_users(autos, |t| {
-        if t.get("source_id").and_then(Value::as_str) != Some("email.received") {
-            return false;
+    automation_users(autos, |t| mailbox_match(m, t))
+}
+
+// ------------------------------------------- Handled by + Use in a flow
+
+/// One automation that handles a trigger's events (the web's Handled by line).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Handler {
+    pub id: String,
+    pub title: String,
+    /// The summary's `flow_name` (else the target's flow id; empty when neither).
+    pub flow: String,
+    pub paused: bool,
+    /// The target's bundle id (no version) and flow id: "already handles it" in the menu.
+    pub bundle: String,
+    pub flow_id: String,
+}
+
+impl Handler {
+    /// "<title> · <flow>" (the title alone when it IS the flow's name), "(paused)" after a paused one.
+    pub fn text(&self) -> String {
+        let base = if self.flow.is_empty() || self.flow == self.title {
+            self.title.clone()
+        } else {
+            format!("{} · {}", self.title, self.flow)
+        };
+        if self.paused {
+            format!("{base} (paused)")
+        } else {
+            base
         }
-        let account = t
-            .get("config")
-            .and_then(|c| c.get("account"))
-            .and_then(Value::as_str)
-            .unwrap_or("self");
-        account == m.id || (account == "self" && m.primary)
-    })
+    }
+}
+
+/// Your automations (active and paused) on a trigger; None when the list was not read.
+pub fn handlers(autos: &Value, matches: impl Fn(&Value) -> bool) -> Option<Vec<Handler>> {
+    let items = autos.get("items").and_then(Value::as_array)?;
+    Some(
+        items
+            .iter()
+            .filter(|a| {
+                matches!(
+                    a.get("status").and_then(Value::as_str),
+                    Some("active" | "paused")
+                )
+            })
+            .filter(|a| a.get("trigger").is_some_and(&matches))
+            .map(|a| {
+                let target = a.get("target").cloned().unwrap_or(Value::Null);
+                let flow_id = st(&target, "flow_id").unwrap_or_default();
+                Handler {
+                    id: st(a, "automation_id").unwrap_or_default(),
+                    title: st(a, "title")
+                        .filter(|t| !t.is_empty())
+                        .unwrap_or_else(|| "an automation".into()),
+                    flow: st(a, "flow_name")
+                        .filter(|f| !f.is_empty())
+                        .unwrap_or_else(|| flow_id.clone()),
+                    paused: a.get("status").and_then(Value::as_str) == Some("paused"),
+                    bundle: st(&target, "bundle_ref")
+                        .unwrap_or_default()
+                        .split('@')
+                        .next()
+                        .unwrap_or("")
+                        .to_string(),
+                    flow_id,
+                }
+            })
+            .collect(),
+    )
+}
+
+/// The Handled by lines under a row's name: "Handled by: <first>", then one indented line per
+/// other automation; "Handled by: Nothing handles it yet." (muted) when none.
+pub fn handled_lines(handlers: &[Handler]) -> Vec<(String, bool)> {
+    if handlers.is_empty() {
+        return vec![(format!("Handled by: {NOTHING_HANDLES}"), false)];
+    }
+    handlers
+        .iter()
+        .enumerate()
+        .map(|(i, h)| {
+            if i == 0 {
+                (format!("Handled by: {}", h.text()), true)
+            } else {
+                (format!("            {}", h.text()), true)
+            }
+        })
+        .collect()
+}
+
+/// A row's key as Flow's `?trigger=` value: the connection id, `mail:<mailbox id>` for a mailbox.
+pub fn trigger_key(kind_mailbox: bool, id: &str) -> String {
+    if kind_mailbox {
+        format!("mail:{id}")
+    } else {
+        id.to_string()
+    }
+}
+
+/// Flow's "Open Flow from a trigger" link: `<flow url>/?trigger=<connection id>` or
+/// `<flow url>/?trigger=mail:<mailbox id>` (the Flow app served by the gateway at `/apps/flow`).
+pub fn new_flow_link(gateway_url: &str, key: &str) -> String {
+    let q = match key.strip_prefix("mail:") {
+        Some(id) => format!("mail:{}", crate::api::urlencode(id)),
+        None => crate::api::urlencode(key),
+    };
+    format!(
+        "{}/apps/flow/?trigger={q}",
+        gateway_url.trim_end_matches('/')
+    )
+}
+
+/// One published triggered flow (`GET /bundles` entrypoint with `triggerable`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct TriggeredFlow {
+    pub workflow_id: String,
+    pub bundle: String,
+    pub bundle_ref: String,
+    pub flow_id: String,
+    pub name: String,
+    /// The flow's published `automation_defaults` (Null when none).
+    pub defaults: Value,
+}
+
+/// Your published triggered flows, by name (the web's `trgTriggeredFlows`).
+pub fn triggered_flows(v: &Value) -> Result<Vec<TriggeredFlow>, String> {
+    let items = v
+        .get("items")
+        .and_then(Value::as_array)
+        .ok_or("the gateway's answer has no items list.")?;
+    let mut out = Vec::new();
+    for b in items {
+        let bundle = st(b, "bundle_id").unwrap_or_default();
+        let bundle_ref = st(b, "bundle_ref")
+            .unwrap_or_else(|| format!("{bundle}@{}", st(b, "bundle_version").unwrap_or_default()));
+        for ep in b
+            .get("entrypoints")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if ep.get("triggerable").and_then(Value::as_bool) != Some(true) {
+                continue;
+            }
+            let flow_id = st(ep, "flow_id").unwrap_or_default();
+            out.push(TriggeredFlow {
+                workflow_id: st(ep, "workflow_id").unwrap_or_default(),
+                bundle: bundle.clone(),
+                bundle_ref: bundle_ref.clone(),
+                name: st(ep, "name")
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or_else(|| flow_id.clone()),
+                defaults: b
+                    .get("automation_defaults")
+                    .and_then(|d| d.get(&flow_id))
+                    .cloned()
+                    .unwrap_or(Value::Null),
+                flow_id,
+            });
+        }
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
+/// The trigger a pick binds the flow to.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UseTarget {
+    pub mailbox: bool,
+    /// The primary mailbox (an automation on "self" reads it).
+    pub primary: bool,
+    pub id: String,
+    pub label: String,
+    pub source_id: String,
+    pub source_version: i64,
+}
+
+impl UseTarget {
+    pub fn key(&self) -> String {
+        trigger_key(self.mailbox, &self.id)
+    }
+    /// Does an automation's trigger listen to this target?
+    pub fn matches(&self, t: &Value) -> bool {
+        if self.mailbox {
+            account_match(&self.id, self.primary, t)
+        } else {
+            connection_match(&self.id, t)
+        }
+    }
+}
+
+/// The automation a pick creates (the web's `trgUseFlowBody`): named after the flow, the flow's
+/// defaults' inputs and context (and its trigger settings when made for this kind of trigger),
+/// THIS trigger.
+pub fn use_flow_body(flow: &TriggeredFlow, target: &UseTarget, request_id: &str) -> Value {
+    let d = &flow.defaults;
+    let dt = d.get("trigger").cloned().unwrap_or(Value::Null);
+    let same = st(&dt, "source_id").as_deref() == Some(target.source_id.as_str());
+    let mut config = match (same, dt.get("config")) {
+        (true, Some(Value::Object(c))) => c.clone(),
+        _ => serde_json::Map::new(),
+    };
+    config.remove("connection_id");
+    config.remove("account");
+    let mut trigger =
+        json!({"source_id": target.source_id, "source_version": target.source_version});
+    if target.mailbox {
+        config.insert("account".into(), json!(target.id));
+        trigger["config"] = Value::Object(config);
+    } else {
+        trigger["config"] = Value::Object(config);
+        trigger["connection_id"] = json!(target.id);
+    }
+    let mut body = json!({
+        "request_id": request_id,
+        "title": flow.name,
+        "target": {"bundle_ref": flow.bundle_ref, "flow_id": flow.flow_id,
+                   "input_data": d.get("input_data").filter(|v| v.is_object()).cloned().unwrap_or(json!({}))},
+        "trigger": trigger,
+    });
+    if let Some(c) = d.get("context").filter(|c| c.is_object()) {
+        body["context"] = c.clone();
+    }
+    body
+}
+
+/// A refused pick, in the web's words (`trgUseFlowRefusal`).
+pub fn use_refusal(e: &crate::api::ApiError, flow: &str, label: &str) -> String {
+    use crate::api::ApiErrorKind;
+    let code = e
+        .body
+        .as_ref()
+        .and_then(|b| b.get("reason_code"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if e.kind == ApiErrorKind::Unauthorized {
+        return "Your session expired: sign in again, then try again.".into();
+    }
+    match code {
+        "email_account_cannot_read" => format!("{flow} cannot read {label}: it has no incoming server. Connect it again with its incoming server (My email)."),
+        "email_account_not_found" => format!("{label} is not connected any more: add it again in My email."),
+        "connection_not_found" | "connection_not_yours" => format!("{label} is not one of your connections any more."),
+        "workflow_refused" | "forbidden" => format!("You may not run {flow} on this gateway: ask its administrator."),
+        "unknown_trigger_source" | "unsupported_feature" => format!("This gateway cannot run that trigger: {}", refusal(e)),
+        _ if e.kind == ApiErrorKind::Forbidden => format!("You may not run {flow} on this gateway: ask its administrator."),
+        _ => format!("{flow} was not turned on: {}", refusal(e)),
+    }
 }
 
 /// UX #9: the stored error (`last_error {code, cause, fix}`), in the web's words.
@@ -491,9 +755,12 @@ pub fn last_event_text(r: &ConnRow, now_s: i64) -> String {
     }
 }
 
-/// A row's actions (the web's three buttons).
+/// A row's actions (the web's Use in a flow and three buttons).
 pub fn row_actions(r: &ConnRow) -> Vec<Action> {
     vec![
+        Action::label("flow", USE_IN_FLOW)
+            .key('f')
+            .tooltip(format!("Handle {}'s events with a flow", r.label)),
         Action::label("events", "Events")
             .key('e')
             .tooltip(action_tip("events", &r.label)),
@@ -562,7 +829,12 @@ pub fn source_hint(id: &str) -> &'static str {
 
 /// A mailbox row's one action (the web's link).
 pub fn mailbox_actions() -> Vec<Action> {
-    vec![Action::label("manage", MANAGE_MAILBOX).tooltip("Mailboxes are managed with your account")]
+    vec![
+        Action::label("flow", USE_IN_FLOW)
+            .key('f')
+            .tooltip("Handle this mailbox's mail with a flow"),
+        Action::label("manage", MANAGE_MAILBOX).tooltip("Mailboxes are managed with your account"),
+    ]
 }
 
 /// The head buttons.
@@ -1386,6 +1658,7 @@ pub fn refresh(ctx: &Ctx) {
     if !all {
         ctx.send(Cmd::Json(JsonCmd::get(K_MAILBOXES, MAILBOXES_PATH)));
         ctx.send(Cmd::Json(JsonCmd::get(K_AUTOS, AUTOS_PATH)));
+        ctx.send(Cmd::Json(JsonCmd::get(K_FLOWS, FLOWS_PATH)));
     }
 }
 
@@ -1395,6 +1668,7 @@ pub fn hints(ctx: &Ctx) -> Vec<(&'static str, &'static str)> {
     vec![
         ("↑↓", "rows"),
         ("Tab", "actions"),
+        ("f", USE_IN_FLOW),
         ("Enter/e", "Events"),
         ("t", "Test"),
         ("d", "Delete"),
@@ -1525,6 +1799,9 @@ fn handle_key(cx: Scope, ctx: &Ctx, tu: Tu, key: Key) -> bool {
     match key {
         Key::Char('n') => panel_action(cx, ctx, tu, "new"),
         Key::Char('a') if is_admin(ctx) => set_all(ctx, tu, !tu.all.get_untracked()),
+        Key::Char('f') if !tu.all.get_untracked() => {
+            open_use_flow(cx, ctx, selected_target(ctx, tu))
+        }
         Key::Char('e') => row_action(cx, ctx, tu, "events"),
         Key::Char('t') => row_action(cx, ctx, tu, "test"),
         Key::Char('d') => row_action(cx, ctx, tu, "delete"),
@@ -1553,10 +1830,73 @@ fn panel_action(cx: Scope, ctx: &Ctx, tu: Tu, id: &str) {
     }
 }
 
+/// The trigger the selected row names (connections first, then your mailboxes, as listed);
+/// Err when a mailbox's source is not served by this gateway.
+fn selected_target(ctx: &Ctx, tu: Tu) -> Option<Result<UseTarget, String>> {
+    let rows = rows_now(ctx);
+    let i = tu.sel.get_untracked();
+    if i < rows.len() {
+        return Some(Ok(conn_target(&rows[i])));
+    }
+    let boxes = match ctx.store.json.get_untracked(K_MAILBOXES) {
+        Loadable::Ready(v) => mailboxes_from(&v).unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    let m = boxes
+        .get(i - rows.len())
+        .or(if rows.is_empty() { boxes.first() } else { None });
+    match m {
+        Some(m) => Some(mailbox_target(ctx, m)),
+        None => rows.last().map(|r| Ok(conn_target(r))),
+    }
+}
+
+fn conn_target(r: &ConnRow) -> UseTarget {
+    UseTarget {
+        mailbox: false,
+        primary: false,
+        id: r.id.clone(),
+        label: r.label.clone(),
+        source_id: r.source_id.clone(),
+        source_version: r.source_version,
+    }
+}
+
+/// A mailbox's trigger: `email.received` at the version this gateway serves.
+fn mailbox_target(ctx: &Ctx, m: &MailboxRow) -> Result<UseTarget, String> {
+    let sources = ctx
+        .store
+        .json
+        .get_untracked(K_SOURCES)
+        .ready()
+        .cloned()
+        .unwrap_or(Value::Null);
+    let version = sources
+        .get("items")
+        .and_then(Value::as_array)
+        .and_then(|l| {
+            l.iter().find(|s| {
+                s.get("id").and_then(Value::as_str) == Some("email.received")
+                    && s.get("available").and_then(Value::as_bool) == Some(true)
+            })
+        })
+        .and_then(|s| s.get("version").and_then(Value::as_i64))
+        .ok_or("this gateway has no email trigger (email.received). Update the gateway.")?;
+    Ok(UseTarget {
+        mailbox: true,
+        primary: m.primary,
+        id: m.id.clone(),
+        label: m.name(),
+        source_id: "email.received".into(),
+        source_version: version,
+    })
+}
+
 fn row_action(cx: Scope, ctx: &Ctx, tu: Tu, id: &str) {
     let Some(r) = selected(ctx, tu) else { return };
     let all = tu.all.get_untracked();
     match id {
+        "flow" if !all => open_use_flow(cx, ctx, Some(Ok(conn_target(&r)))),
         "events" => open_events(cx, ctx, r),
         "test" => {
             if tu.pending.with_untracked(Option::is_some) {
@@ -1769,7 +2109,7 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
     if !narrow {
         cols.push(Col::new("Last event", ColW::Fit { min: 10, max: 12 }));
     }
-    cols.push(Col::new("Actions", ColW::Fit { min: 6, max: 36 }));
+    cols.push(Col::new("Actions", ColW::Fit { min: 6, max: 50 }));
     let table_rows: Vec<WRow> = rows
         .iter()
         .map(|r| {
@@ -1784,6 +2124,15 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
                 vec![Ink::new(r.label.clone(), t.text).bold()],
                 vec![Ink::new(trigger_phrase(r, &sources), t.text_muted)],
             ];
+            // Handled by (own view, automations read): who treats this connection's events.
+            if let Some(hs) = handlers(&autos, |tr| connection_match(&r.id, tr)) {
+                for (line, named) in handled_lines(&hs) {
+                    name_lines.push(vec![Ink::new(
+                        line,
+                        if named { t.text } else { t.text_muted },
+                    )]);
+                }
+            }
             // A failing connection that is on says its problem (red) as its status line; a paused
             // one keeps it under the name.
             let problem = error_text(r).filter(|_| r.paused == Some(false));
@@ -1836,7 +2185,13 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
             if !narrow {
                 cells.push(Cell::text(last_event_text(r, now), t.text));
             }
-            cells.push(Cell::Actions(row_actions(r)));
+            // All accounts: other people's connections, never bound to your flows here.
+            cells.push(Cell::Actions(
+                row_actions(r)
+                    .into_iter()
+                    .filter(|a| !(all && a.id == "flow"))
+                    .collect(),
+            ));
             let mut note: Option<(String, Rgba)> = None;
             if narrow {
                 note = Some((
@@ -1869,16 +2224,29 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
                     None => "Never".into(),
                 };
                 let mut cells = vec![
-                    Cell::Lines(vec![
-                        {
-                            let mut l = vec![Ink::new(m.name(), t.text).bold()];
-                            if m.primary {
-                                l.push(Ink::new(format!("  {SENDS_AS_YOU}"), t.info));
-                            }
-                            l
-                        },
-                        vec![Ink::new(m.phrase(), t.text_muted)],
-                    ]),
+                    Cell::Lines(
+                        vec![
+                            {
+                                let mut l = vec![Ink::new(m.name(), t.text).bold()];
+                                if m.primary {
+                                    l.push(Ink::new(format!("  {SENDS_AS_YOU}"), t.info));
+                                }
+                                l
+                            },
+                            vec![Ink::new(m.phrase(), t.text_muted)],
+                        ]
+                        .into_iter()
+                        .chain(
+                            handlers(&autos, |tr| mailbox_match(&m, tr))
+                                .map(|hs| handled_lines(&hs))
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(|(line, named)| {
+                                    vec![Ink::new(line, if named { t.text } else { t.text_muted })]
+                                }),
+                        )
+                        .collect(),
+                    ),
                     {
                         let users = mailbox_users(&m, &autos);
                         let used = autos.is_object().then_some(users.len() as i64);
@@ -1933,9 +2301,17 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
         .empty(if all { EMPTY_ALL } else { EMPTY })
         .autofocus()
         .on_action(move |key, id| {
-            if key.starts_with("mailbox:") {
+            if let Some(mid) = key.strip_prefix("mailbox:") {
                 if id == "manage" {
                     super::my_email::open(pcx, &ca);
+                } else if id == "flow" {
+                    let boxes = match ca.store.json.get_untracked(K_MAILBOXES) {
+                        Loadable::Ready(v) => mailboxes_from(&v).unwrap_or_default(),
+                        _ => Vec::new(),
+                    };
+                    if let Some(m) = boxes.iter().find(|m| m.id == mid) {
+                        open_use_flow(pcx, &ca, Some(mailbox_target(&ca, m)));
+                    }
                 }
                 return;
             }
@@ -2058,6 +2434,189 @@ fn open_events(cx: Scope, ctx: &Ctx, r: ConnRow) {
                 .child(close_button(mcx, &t, "Close", close))
                 .build()
         });
+}
+
+/// Use in a flow (the web's menu): "New flow for this trigger…" prints Flow's link for this
+/// trigger (a terminal cannot open Flow), then your published triggered flows; a pick creates the
+/// automation (`POST /automations`, the web's body), turned on, and Handled by is read again.
+fn open_use_flow(cx: Scope, ctx: &Ctx, target: Option<Result<UseTarget, String>>) {
+    let Some(target) = target else { return };
+    if ctx.store.json.get_untracked(K_FLOWS).ready().is_none() {
+        ctx.send(Cmd::Json(JsonCmd::get(K_FLOWS, FLOWS_PATH)));
+    }
+    ctx.store.json.set_write(K_USE, None);
+    let title = match &target {
+        Ok(t) => format!("{USE_IN_FLOW} — {}", t.label),
+        Err(_) => USE_IN_FLOW.to_string(),
+    };
+    let c = ctx.clone();
+    super::w::FormModal::new(title)
+        .size(90, 28)
+        .open(ctx, cx, move |mcx, close, _guard, w| {
+            let show_link = mcx.signal(false);
+            let picked: Signal<Option<String>> = mcx.signal(None);
+            let c2 = c.clone();
+            let t0 = use_theme(mcx).get().tokens;
+            let body = dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |gcx| {
+                let t = use_theme(gcx).get().tokens;
+                let mut col = Element::new().style(LayoutStyle::column().shrink(0.0));
+                let target = match &target {
+                    Ok(x) => x.clone(),
+                    Err(e) => return sentence(&t, &format!("Not available: {e}"), w, t.error),
+                };
+                let key = target.key();
+                let link = new_flow_link(&c2.ui.conn_url.get_untracked(), &key);
+                let new_flow = Action::label("new_flow", NEW_FLOW)
+                    .tooltip("Create a flow that starts from this trigger");
+                col = col.child(menu_item(super::w::action::button_focused(
+                    gcx,
+                    &t,
+                    &new_flow,
+                    On::Raised,
+                    move || show_link.set(true),
+                )));
+                if show_link.get() {
+                    col = col.child(sentence(&t, NEW_FLOW_HELP, w, t.text_muted));
+                    col = col.child(copy_row(gcx, &c2, &t, "Flow link", &link, w));
+                }
+                let autos = c2
+                    .store
+                    .json
+                    .get(K_AUTOS)
+                    .ready()
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                let hs = handlers(&autos, |tr| target.matches(tr)).unwrap_or_default();
+                match c2.store.json.get(K_FLOWS) {
+                    Loadable::Ready(v) => match triggered_flows(&v) {
+                        Ok(flows) if flows.is_empty() => {
+                            col = col.child(sentence(&t, NO_FLOWS, w, t.text_muted))
+                        }
+                        Ok(flows) => {
+                            col = col.child(super::w::form::section(&t, FLOWS_HEAD));
+                            for f in flows {
+                                if hs
+                                    .iter()
+                                    .any(|h| h.bundle == f.bundle && h.flow_id == f.flow_id)
+                                {
+                                    col = col.child(sentence(
+                                        &t,
+                                        &format!("{} · already handles it", f.name),
+                                        w,
+                                        t.text_muted,
+                                    ));
+                                    continue;
+                                }
+                                let a = Action::label("pick", f.name.clone())
+                                    .tooltip(format!("Turn {} on for {}", f.name, target.label));
+                                let (c3, tg) = (c2.clone(), target.clone());
+                                col = col.child(menu_item(button(
+                                    gcx,
+                                    &t,
+                                    &a,
+                                    On::Raised,
+                                    true,
+                                    move || {
+                                        if c3
+                                            .store
+                                            .json
+                                            .write_untracked(K_USE)
+                                            .is_some_and(|w| w.is_pending())
+                                        {
+                                            return;
+                                        }
+                                        picked.set(Some(f.name.clone()));
+                                        let rid = format!(
+                                            "console-tui-trigger-{}",
+                                            std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .map(|d| d.as_nanos())
+                                                .unwrap_or(0)
+                                        );
+                                        c3.store.json.set_write(K_USE, Some(WriteState::Pending));
+                                        c3.send(Cmd::Json(JsonCmd::Send {
+                                            key: K_USE.into(),
+                                            method: "POST".into(),
+                                            path: "/automations".into(),
+                                            body: use_flow_body(&f, &tg, &rid),
+                                            slow: false,
+                                            label: format!("Turn on {} for {}", f.name, tg.label),
+                                            reload: vec![(K_AUTOS.into(), AUTOS_PATH.into())],
+                                            journal: true,
+                                        }));
+                                    },
+                                )));
+                            }
+                        }
+                        Err(e) => {
+                            col = col.child(sentence(
+                                &t,
+                                &format!("Could not read your flows: {e}"),
+                                w,
+                                t.error,
+                            ))
+                        }
+                    },
+                    Loadable::Failed(e) => {
+                        col = col.child(sentence(
+                            &t,
+                            &format!("Could not read your flows: {}", refusal(&e)),
+                            w,
+                            t.error,
+                        ))
+                    }
+                    _ => col = col.child(sentence(&t, "Reading your flows...", w, t.text_muted)),
+                }
+                let name = picked.get().unwrap_or_default();
+                match c2.store.json.write(K_USE) {
+                    Some(WriteState::Pending) => {
+                        col = col.child(sentence(
+                            &t,
+                            &format!("Turning on {name}..."),
+                            w,
+                            t.text_muted,
+                        ))
+                    }
+                    Some(WriteState::Done(_)) => {
+                        col = col.child(sentence(
+                            &t,
+                            &format!("{name} now handles {}. It is on.", target.label),
+                            w,
+                            t.ok,
+                        ))
+                    }
+                    Some(WriteState::Failed(e)) => {
+                        col = col.child(sentence(
+                            &t,
+                            &use_refusal(&e, &name, &target.label),
+                            w,
+                            t.error,
+                        ))
+                    }
+                    None => {}
+                }
+                col.build()
+            });
+            Element::new()
+                .style(LayoutStyle::column().grow(1.0))
+                .child(
+                    abstracttui::widgets::Scroll::new(body)
+                        .axes(false, true)
+                        .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))
+                        .scrollbar_auto_hide(true)
+                        .view(mcx),
+                )
+                .child(close_button(mcx, &t0, "Close", close))
+                .build()
+        });
+}
+
+/// One left-aligned menu line (a button).
+fn menu_item(v: View) -> View {
+    Element::new()
+        .style(LayoutStyle::row().height(Dimension::Cells(1)).shrink(0.0))
+        .child(v)
+        .build()
 }
 
 /// The create form's field readers: (key, raw value now).
