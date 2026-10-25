@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Publish to a channel.** The host side of a flow's `PUBLISH_EVENT` (`publish_host.py`,
+  `events_stream.record_published`): `{channel, type?, title, body?, subject?, data?, alert?}` lands on the run
+  owner's event stream as an event of your type on your channel (id `publish:<run_id>:<step_id>`, idempotent), and
+  `alert: true` also raises an attention item the tray, the Assistant and the watch announce.
+  `GET /api/gateway/me/events` and `/me/events/stream` take `channel=<a,b>` (`attention` = the attention.* events;
+  absent = everything); `GET /api/gateway/me/events/channels` lists the channels with counts and last time;
+  `POST /api/gateway/me/events/seen {record_key}` marks a published alert seen. A guide for application authors in
+  `docs/events-examples.md` ("Publish to a channel").
+
 - **Run a triggered flow with real data.** `POST /api/gateway/triggers/sample` `{trigger, count?}` answers the inputs a real occurrence of that trigger would receive (`inputs` with `event`, `truncated`, `count`, and a `summary` such as "Last 100 messages of me@example.com"), built read-only from the caller's own mailbox, feed or webhook connection through AbstractRuntime's `sample_occurrence_inputs` (count 1..500, a mailbox read for at most 20 s; another account's mailbox or connection: 404). Flow's Run dialog starts a normal run with them.
 - **Mailbox autodiscovery from an address.** `GET /api/gateway/me/email/autodiscover?address=` answers the provider (google, microsoft, yahoo, icloud, fastmail or other) and its name, the IMAP and SMTP servers, the login, how one signs in (`oauth`, `password`, `app_password`, and whether this gateway can do the OAuth sign-in), the provider's app-password page and where the answer came from (preset, autoconfig, srv or none), through AbstractCore's discovery cached per domain for a day. `PUT /me/email/accounts/{mailbox_id}` accepts an optional `name` for the mailbox; the login defaults to the address.
 - **Triggers page, UX review.** Unused connections read *Waiting for an automation to use it*; used ones *Listening ·

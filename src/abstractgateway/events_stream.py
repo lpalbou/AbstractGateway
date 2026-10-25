@@ -34,6 +34,7 @@ import datetime
 import hashlib
 import json
 import logging
+import re
 import threading
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
@@ -60,6 +61,13 @@ CLIENT_CHANNELS = ("tray", "assistant", "code", "watch", "phone")
 # Dedupe window of the client notification rule (`already_notified`).
 NOTIFY_DEDUPE_S = 60.0
 TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
+# Published events (a flow's PUBLISH_EVENT, `record_published`): an application-chosen channel and
+# type. `attention` is the implicit channel of attention.* events and cannot be published to.
+ATTENTION_CHANNEL = "attention"
+CHANNEL_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+PUBLISHED_TYPE_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
+PUBLISH_TITLE_MAX = 200
+PUBLISH_BODY_MAX = 4000
 # Boot repair window: runs updated this long before the newest stream event are re-checked.
 REBUILD_MARGIN_S = 600.0
 
@@ -106,7 +114,31 @@ def to_cloudevent(record: Mapping[str, Any]) -> Dict[str, Any]:
     subject = payload.get("subject")
     if isinstance(subject, str) and subject:
         out["subject"] = subject
+    channel = payload.get("channel")
+    if isinstance(channel, str) and channel:
+        out["channel"] = channel
     return out
+
+
+def event_channel(event: Mapping[str, Any]) -> Optional[str]:
+    """The channel of a wire event: a published event's own, `attention` for attention.*, else None."""
+    channel = event.get("channel")
+    if isinstance(channel, str) and channel:
+        return channel
+    if str(event.get("type") or "").startswith("attention."):
+        return ATTENTION_CHANNEL
+    return None
+
+
+def parse_channels(value: Optional[str]) -> Optional[frozenset]:
+    """`a,b` -> {a, b}; None/empty -> None (no filter). Raises ValueError on a malformed name."""
+    if value is None or not str(value).strip():
+        return None
+    names = [c.strip() for c in str(value).split(",") if c.strip()]
+    for name in names:
+        if not CHANNEL_RE.match(name):
+            raise ValueError(f"invalid channel name {name!r} (lowercase letters, digits, '.', '_' or '-', at most 64)")
+    return frozenset(names)
 
 
 class UserEventStream:
@@ -170,6 +202,62 @@ class UserEventStream:
                 logger.debug("user event listener failed", exc_info=True)
 
     # -- reads -------------------------------------------------------------------------------
+
+    def append_published(self, *, event_id: str, type: str, channel: str, data: Mapping[str, Any],
+                         subject: Optional[str] = None, source: str = "/abstractgateway") -> Tuple[Dict[str, Any], bool]:
+        """Append an application event on `channel` (validated by `record_published`)."""
+        payload: Dict[str, Any] = {"type": type, "channel": channel, "source": source, "time": _now_iso(), "data": dict(data)}
+        if subject:
+            payload["subject"] = str(subject)
+        result = self.inbox.append(stream=self.name, event_id=str(event_id), payload=payload)
+        event = to_cloudevent(result.record)
+        if not result.duplicate:
+            self._notify()
+        return event, not result.duplicate
+
+    def read_filtered(self, *, after: int = 0, limit: int = 100, channels: Optional[frozenset] = None) -> Tuple[List[Dict[str, Any]], int]:
+        """Events with `sequence > after` on `channels` (None = all), and the sequence scanned up to
+        (the cursor to send next, past non-matching events)."""
+        if not channels:
+            events = self.read(after=after, limit=limit)
+            return events, (int(events[-1]["sequence"]) if events else int(after))
+        out: List[Dict[str, Any]] = []
+        cursor = int(after)
+        batch = max(200, int(limit) * 4)
+        while len(out) < int(limit):
+            chunk = self.read(after=cursor, limit=batch)
+            if not chunk:
+                break
+            for ev in chunk:
+                cursor = int(ev["sequence"])
+                if event_channel(ev) in channels:
+                    out.append(ev)
+                    if len(out) >= int(limit):
+                        break
+            if len(chunk) < batch:
+                break
+        return out, cursor
+
+    def channels(self) -> List[Dict[str, Any]]:
+        """`[{channel, count, last_time, last_sequence}]` over the retained stream, most recent first."""
+        seen: Dict[str, Dict[str, Any]] = {}
+        cursor = 0
+        while True:
+            chunk = self.read(after=cursor, limit=1000)
+            if not chunk:
+                break
+            for ev in chunk:
+                cursor = int(ev["sequence"])
+                ch = event_channel(ev)
+                if ch is None:
+                    continue
+                row = seen.setdefault(ch, {"channel": ch, "count": 0, "last_time": None, "last_sequence": 0})
+                row["count"] += 1
+                row["last_time"] = ev.get("time")
+                row["last_sequence"] = cursor
+            if len(chunk) < 1000:
+                break
+        return sorted(seen.values(), key=lambda r: -int(r["last_sequence"]))
 
     def read(self, *, after: int = 0, limit: int = 100) -> List[Dict[str, Any]]:
         return [to_cloudevent(r) for r in self.inbox.read(after_seq=max(0, int(after)), stream=self.name, limit=max(1, int(limit)))]
@@ -509,6 +597,72 @@ def already_notified(
     return False
 
 
+def record_published(stream: UserEventStream, *, run_id: str, step_id: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
+    """A flow's `PUBLISH_EVENT` on the caller's stream: `{type, channel, subject?, data: {title, body?, ...data}}`
+    with id `publish:<run_id>:<step_id>` (a replayed step appends nothing); with `alert: true` also an
+    `attention.raised {kind: notify, record_key: publish:<run_id>:<step_id>, channel, run_id, title}` so the
+    tray, the Assistant and the watch announce it. Returns `{event_id, sequence, alerted}`.
+    Raises ValueError with a sentence on a refused payload."""
+    if not isinstance(payload, Mapping):
+        raise ValueError("publish needs an object")
+    unknown = sorted(k for k in payload if k not in ("channel", "type", "title", "body", "subject", "data", "alert"))
+    if unknown:
+        raise ValueError(f"unknown publish field(s) {unknown}")
+    channel = str(payload.get("channel") or "").strip()
+    if not CHANNEL_RE.match(channel):
+        raise ValueError("channel must be a name: lowercase letters, digits, '.', '_' or '-', at most 64, starting with a letter or digit")
+    if channel == ATTENTION_CHANNEL:
+        raise ValueError("the 'attention' channel is the gateway's own; use alert: true to reach the person")
+    typ = str(payload.get("type") or f"{channel}.message").strip()
+    if typ in EVENT_TYPES or not PUBLISHED_TYPE_RE.match(typ):
+        raise ValueError("type must be your own name (lowercase letters, digits, '.', '_' or '-'), not one of the gateway's event types")
+    title = payload.get("title")
+    if not isinstance(title, str) or not title.strip() or len(title) > PUBLISH_TITLE_MAX:
+        raise ValueError(f"title must be a non-empty text of at most {PUBLISH_TITLE_MAX} characters")
+    body = payload.get("body")
+    if body is not None and (not isinstance(body, str) or len(body) > PUBLISH_BODY_MAX):
+        raise ValueError(f"body must be a text of at most {PUBLISH_BODY_MAX} characters")
+    extra = payload.get("data") or {}
+    if not isinstance(extra, Mapping):
+        raise ValueError("data must be an object")
+    subject = payload.get("subject")
+    if subject is not None and (not isinstance(subject, str) or len(subject) > 200):
+        raise ValueError("subject must be a text of at most 200 characters")
+    alert = payload.get("alert", False)
+    if not isinstance(alert, bool):
+        raise ValueError("alert must be true or false")
+    data: Dict[str, Any] = {**dict(extra), "title": title.strip()}
+    if body:
+        data["body"] = body
+    json.dumps(data)  # JSON-safe or raise
+    key = f"publish:{run_id}:{step_id}"
+    event, _created = stream.append_published(
+        event_id=key, type=typ, channel=channel, data=data, subject=subject, source=f"/abstractgateway/runs/{run_id}"
+    )
+    if alert:
+        stream.append(
+            "attention.raised",
+            event_id=f"attention.raised:{key}",
+            subject=str(run_id),
+            source=f"/abstractgateway/runs/{run_id}",
+            data={"kind": "notify", "record_key": key, "channel": channel, "run_id": str(run_id), "title": data["title"],
+                  "published_sequence": event["sequence"]},
+        )
+    return {"event_id": key, "sequence": event["sequence"], "alerted": bool(alert)}
+
+
+def record_publish_seen(stream: UserEventStream, *, record_key: str) -> bool:
+    """`attention.seen {record_key}` for a published alert the person has seen."""
+    key = str(record_key)
+    if not key.startswith("publish:"):
+        raise ValueError("only a published alert's record_key (publish:...) is marked seen here")
+    _e, created = stream.append(
+        "attention.seen", event_id=f"attention.seen:{key}", subject=key, source="/abstractgateway/notifications",
+        data={"record_key": key},
+    )
+    return created
+
+
 def rebuild_attention(stream: UserEventStream, run_store: Any, ledger_store: Any) -> Dict[str, int]:
     """Repair a crash between an attention record and its stream event: items above the stream's
     per-automation floor are (re)appended. A stream that never recorded a floor takes the current
@@ -719,6 +873,10 @@ __all__ = [
     "record_notification",
     "record_run",
     "record_run_finished",
+    "record_published",
+    "record_publish_seen",
+    "event_channel",
+    "parse_channels",
     "record_run_started",
     "record_wait_raised",
     "record_wait_seen",

@@ -1,8 +1,10 @@
 """The caller's own event stream (framework backlog 1046): catch-up and live tail.
 
-    GET /api/gateway/me/events?after=<seq>&limit=<n>     catch-up page (JSON)
-    GET /api/gateway/me/events/stream?after=<seq>        live tail (SSE)
-    POST /api/gateway/me/events/notifications           a client reports a notice it showed (tray)
+    GET /api/gateway/me/events?after=<seq>&limit=<n>&channel=<a,b>   catch-up page (JSON)
+    GET /api/gateway/me/events/stream?after=<seq>&channel=<a,b>      live tail (SSE)
+    GET /api/gateway/me/events/channels                              the channels seen, with counts
+    POST /api/gateway/me/events/notifications                        a client reports a notice it showed
+    POST /api/gateway/me/events/seen                                 a published alert was seen
 
 Principal-scoped by construction: the stream is the one of the request's principal in the plane
 its service serves (`events_stream.stream_for(data_dir, tenant, user)`), so no parameter can name
@@ -22,7 +24,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ..events_stream import UserEventStream, record_notification, stream_for
+from ..events_stream import UserEventStream, event_channel, parse_channels, record_notification, record_publish_seen, stream_for
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +49,13 @@ def _my_stream(request: Request) -> UserEventStream:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
+def _channels(channel: Optional[str]):
+    try:
+        return parse_channels(channel)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 def resolve_start(after: int, last_event_id: Optional[str]) -> int:
     """`after` wins when set; else `Last-Event-ID` (the last `id:` the client saw); else 0."""
     start = max(0, int(after or 0))
@@ -65,22 +74,35 @@ async def list_my_events(
     request: Request,
     after: int = Query(0, ge=0, description="The last sequence already consumed (0 = from the start)."),
     limit: int = Query(100, ge=1, le=PAGE_MAX),
+    channel: Optional[str] = Query(None, description="Only these channels (comma-separated); `attention` = attention.* events."),
 ) -> Dict[str, Any]:
-    """A page of the caller's events with `sequence > after`, oldest first.
+    """A page of the caller's events with `sequence > after`, oldest first, optionally only on some
+    channels (`channel=a,b`; `attention` is the channel of attention.* events).
 
-    `next_after` is the cursor to send next; `head` the newest sequence; `more` whether events
-    past this page exist."""
+    `next_after` is the cursor to send next (past events of other channels); `head` the newest
+    sequence; `more` whether events past this page may exist."""
     stream = _my_stream(request)
-    events = await asyncio.to_thread(stream.read, after=after, limit=limit)
+    channels = _channels(channel)
+    events, next_after = await asyncio.to_thread(stream.read_filtered, after=after, limit=limit, channels=channels)
     head = await asyncio.to_thread(stream.head)
-    next_after = int(events[-1]["sequence"]) if events else int(after)
-    return {
+    out: Dict[str, Any] = {
         "stream": stream.name,
         "events": events,
-        "next_after": next_after,
+        "next_after": int(next_after),
         "head": head,
-        "more": head > next_after and len(events) >= limit,
+        "more": head > int(next_after) and len(events) >= limit,
     }
+    if channels:
+        out["channels"] = sorted(channels)
+    return out
+
+
+@router.get("/events/channels")
+async def list_my_channels(request: Request) -> Dict[str, Any]:
+    """The channels in the caller's retained stream: `[{channel, count, last_time, last_sequence}]`,
+    most recently used first (`attention` included when attention events exist)."""
+    stream = _my_stream(request)
+    return {"stream": stream.name, "channels": await asyncio.to_thread(stream.channels)}
 
 
 def _frame(event: Dict[str, Any]) -> bytes:
@@ -95,6 +117,7 @@ async def sse_frames(
     heartbeat_s: float,
     disconnected: Callable[[], Awaitable[bool]],
     poll_s: float = POLL_S,
+    channels: Optional[frozenset] = None,
 ) -> AsyncIterator[bytes]:
     """Catch-up from `after`, then live events, `: keep-alive` comments every `heartbeat_s`.
     Never ends on its own (the client closes it)."""
@@ -122,9 +145,11 @@ async def sse_frames(
                 token = await asyncio.to_thread(stream.change_token)
                 events = await asyncio.to_thread(stream.read, after=cursor, limit=BATCH)
                 if events:
-                    yield b"".join(_frame(e) for e in events)
                     cursor = int(events[-1]["sequence"])
-                    last_emit = loop.time()
+                    shown = [e for e in events if not channels or event_channel(e) in channels]
+                    if shown:
+                        yield b"".join(_frame(e) for e in shown)
+                        last_emit = loop.time()
                     if len(events) >= BATCH:
                         dirty.set()
                         continue
@@ -147,6 +172,7 @@ async def stream_my_events(
     request: Request,
     after: int = Query(0, ge=0, description="The last sequence already consumed; Last-Event-ID is used when 0."),
     heartbeat_s: float = Query(15.0, gt=0.1, le=60.0),
+    channel: Optional[str] = Query(None, description="Only these channels (comma-separated); `attention` = attention.* events."),
 ) -> StreamingResponse:
     """The caller's events as server-sent events: the catch-up from `after`, then each new event.
 
@@ -155,9 +181,10 @@ async def stream_my_events(
     is 0) and receives exactly the events after it. Same cursor semantics as
     `/runs/{run_id}/ledger/stream`; the stream never ends on its own."""
     stream = _my_stream(request)
+    channels = _channels(channel)
     start = resolve_start(after, request.headers.get("last-event-id"))
     return StreamingResponse(
-        sse_frames(stream, after=start, heartbeat_s=heartbeat_s, disconnected=request.is_disconnected),
+        sse_frames(stream, after=start, heartbeat_s=heartbeat_s, disconnected=request.is_disconnected, channels=channels),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -192,6 +219,22 @@ async def report_notification(request: Request, body: NotificationReport) -> Dic
     created = await asyncio.to_thread(
         record_notification, stream, body.outcome, channel=body.channel, notice=f"attention:{body.record_key}", data=data
     )
+    return {"ok": True, "created": bool(created)}
+
+
+class SeenReport(BaseModel):
+    record_key: str = Field(..., min_length=1, max_length=400, description="A published alert's record_key (publish:<run_id>:<step_id>).")
+
+
+@router.post("/events/seen")
+async def mark_published_seen(request: Request, body: SeenReport) -> Dict[str, Any]:
+    """Mark a published alert seen: `attention.seen {record_key}` in the caller's own stream (the
+    badge drops it). Automation items keep `POST /automations/{id}/seen`; waits end when answered."""
+    stream = _my_stream(request)
+    try:
+        created = await asyncio.to_thread(record_publish_seen, stream, record_key=body.record_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"ok": True, "created": bool(created)}
 
 

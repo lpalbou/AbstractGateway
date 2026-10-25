@@ -39,6 +39,8 @@ class AttentionNotice:
     seq: int
     run_id: str = ""
     session_id: str = ""
+    channel: str = ""  # a published alert's channel (a flow's PUBLISH_EVENT)
+    title: str = ""
 
 
 WAIT_KINDS = frozenset({"approval", "question"})
@@ -54,6 +56,8 @@ class AttentionLedger:
         self._seen: Dict[str, int] = {}
         self._waits: Set[Tuple[str, str, str]] = set()
         self._waits_seen: Set[Tuple[str, str, str]] = set()
+        self._published: Set[str] = set()
+        self._published_seen: Set[str] = set()
 
     def _apply_wait(self, typ: Any, data: Dict[str, Any]) -> Optional[AttentionNotice]:
         key = (str(data.get("run_id") or ""), str(data.get("wait_key") or ""), str(data.get("step_id") or ""))
@@ -78,6 +82,17 @@ class AttentionLedger:
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
         if data.get("kind") in WAIT_KINDS:
             return self._apply_wait(typ, data)
+        key = str(data.get("record_key") or "")
+        if key.startswith("publish:"):
+            # A published alert: raised once, seen by `attention.seen {record_key}`.
+            if typ == "attention.raised" and key not in self._published_seen:
+                self._published.add(key)
+                return AttentionNotice(key, "", "notify", 0, run_id=str(data.get("run_id") or ""),
+                                       channel=str(data.get("channel") or ""), title=str(data.get("title") or ""))
+            if typ == "attention.seen":
+                self._published.discard(key)
+                self._published_seen.add(key)
+            return None
         aid = str(data.get("automation_id") or "")
         if not aid:
             return None
@@ -97,7 +112,7 @@ class AttentionLedger:
     @property
     def unseen(self) -> int:
         items = sum(len([s for s in seqs if s > self._seen.get(aid, 0)]) for aid, seqs in self._raised.items())
-        return items + len(self._waits)
+        return items + len(self._waits) + len(self._published)
 
 
 class SseParser:

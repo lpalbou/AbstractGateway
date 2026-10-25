@@ -1274,18 +1274,28 @@ event written twice (a retry, a repair after a crash) is stored once.
 | `notification.sent`, `notification.failed` | `{channel, notice, …}` | a notice reached a channel or could not: `console` (the item is listed), `email` (the outbox sent it, or failed with `code`, `cause`), `tray` (the desktop tray showed it) |
 | `wake.scheduled` | `{automation_id, session_id, origin_run_id, at \| on}` | a run asked for work later (`schedule_run`, the `SCHEDULE_RUN` effect): the gateway created a one-shot automation that will run in the caller's session |
 | `wake.cancelled` | `{automation_id, session_id, origin_run_id}` | that automation was archived before it fired: nothing runs |
+| your own type (`orders.paid`, default `<channel>.message`), with `channel` | `{title, body?, …your data}` | a flow published it to you (the `PUBLISH_EVENT` effect, `{channel, type?, title, body?, subject?, data?, alert?}`); id `publish:<run_id>:<step_id>` |
+| `attention.raised` (a published alert) | `{kind: "notify", record_key: "publish:<run_id>:<step_id>", channel, run_id, title, published_sequence}` | that publication had `alert: true`: the tray, the Assistant and the watch announce it |
+| `attention.seen` (a published alert) | `{record_key}` | you saw it (`POST /api/gateway/me/events/seen`) |
 
 What needs you = the `attention.raised` items without their `attention.seen`: an automation item is
 seen once a `attention.seen` of its automation has a `seq` at or above it; a wait is seen by the
-`attention.seen` with the same `run_id`, `wait_key` and `step_id`.
+`attention.seen` with the same `run_id`, `wait_key` and `step_id`; a published alert by the
+`attention.seen` with the same `record_key`.
+
+**Channels.** A published event carries a `channel` (lowercase letters, digits, `.`, `_`, `-`, at
+most 64). Every `attention.*` event is on the channel `attention`; the other gateway events have
+none. Both read routes take `channel=<name>[,<name>…]` to receive only those channels; without it
+you receive everything.
 
 Older events go after 90 days or beyond the newest 10,000 (their `sequence` is never reused).
 
 ### Catch up: `GET /api/gateway/me/events?after=<sequence>&limit=<n>`
 
-Events with `sequence > after`, oldest first (`limit` 1–1000, default 100). Answer:
-`{stream, events: [...], next_after, head, more}`: send `next_after` as the next `after`; `head`
-is the newest sequence; `more` says a further page exists.
+Events with `sequence > after`, oldest first (`limit` 1–1000, default 100), optionally only on
+some channels (`&channel=orders,attention`). Answer: `{stream, events: [...], next_after, head,
+more, channels?}`: send `next_after` as the next `after` (with a channel filter it is past the
+events of other channels too); `head` is the newest sequence; `more` says a further page may exist.
 
 ```bash
 curl -sS -H "$AUTH" "$BASE_URL/api/gateway/me/events?after=0&limit=100"
@@ -1298,7 +1308,19 @@ from `after`, then each new event as it is written. Each frame is
 `id: <sequence>` / `event: <type>` / `data: <event JSON>`; a `: keep-alive` comment every
 `heartbeat_s` seconds (0.1–60, default 15). A reconnecting client sends `Last-Event-ID` (browsers
 do it on their own) and receives exactly the events after it; an explicit `after` wins over the
-header. The stream does not end on its own.
+header. The stream does not end on its own. `&channel=<name>[,…]` sends only those channels; the
+`id` stays the stream's sequence, so `Last-Event-ID` resumes past the other channels' events.
+
+### Your channels: `GET /api/gateway/me/events/channels`
+
+`{stream, channels: [{channel, count, last_time, last_sequence}]}` over your retained stream, most
+recently used first (`attention` included when you have attention events).
+
+### Mark a published alert seen: `POST /api/gateway/me/events/seen`
+
+`{record_key: "publish:<run_id>:<step_id>"}` writes `attention.seen {record_key}` in your stream
+(`{ok, created}`; another kind of key is 422). Automation items are marked seen with
+`POST /api/gateway/automations/{id}/seen`; a wait ends when it is answered.
 
 ```bash
 curl -sS -N -H "$AUTH" -H "Last-Event-ID: 12" "$BASE_URL/api/gateway/me/events/stream"

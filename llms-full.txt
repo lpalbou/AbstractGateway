@@ -5894,6 +5894,36 @@ curl -sS -X POST -H "$AUTH" -H "Content-Type: application/json" \
   "$BASE_URL/api/gateway/triggers/connections"     # -> connection_id, secret (once), ingress_url
 ```
 
+### Sample inputs (`POST /api/gateway/triggers/sample`)
+
+What a triggered flow would receive, from your own real data, so **Run** on a flow that an
+automation triggers behaves as if the trigger fired (Flow's Run dialog calls it, then starts a
+normal run with `inputs`).
+
+- Body: `{trigger: {source_id, source_version, config}, count?: 1..500 (default 100)}`: the binding
+  an automation would use (`trigger.connection_id` accepted as at creation).
+- Answer: `{inputs, truncated, count, source, summary}`. `inputs` are the flat named inputs plus
+  `event` a real occurrence receives (`messages` + `mailbox`, `items` + `feed`, `calls`,
+  `scheduled_at` + `occurrence`), bodies included; the event carries `abstracttest: true`.
+  `summary` is one sentence: "Last 100 messages of me@example.com", "Latest 20 items of Python
+  Insider", "Last 3 calls received by this webhook", "A sample call (this connection has not
+  received one yet)".
+- Read-only: the newest messages of the bound mailbox (its filters applied; nothing marked read, no
+  watcher cursor moved), the latest items of the feed connection, the last calls stored for the
+  webhook connection; nothing is stored except the artifacts holding message bodies. A mailbox is
+  read for at most 20 seconds (`truncated: true` then). Your own test reads your mailbox whether or
+  not "Agent email tools" is on.
+- Errors (`{"detail": {"reason_code", "message"}}`): 404 `email_account_not_found` /
+  `connection_not_found` (not one of yours), 409 `email_not_configured` (no usable mailbox), 422
+  `invalid_sample` (unknown source, bad config, bad count), 503 `sample_unavailable` (the feed could
+  not be read), 504 `sample_timeout`.
+
+```bash
+curl -sS -X POST -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"trigger":{"source_id":"email.received","source_version":1,"config":{"account":"self"}},"count":20}' \
+  "$BASE_URL/api/gateway/triggers/sample"
+```
+
 ### Webhook ingress (`POST /api/gateway/triggers/webhooks/{connection_id}`)
 
 The one public route of the family: it carries **no bearer token**. The
@@ -5977,18 +6007,28 @@ event written twice (a retry, a repair after a crash) is stored once.
 | `notification.sent`, `notification.failed` | `{channel, notice, …}` | a notice reached a channel or could not: `console` (the item is listed), `email` (the outbox sent it, or failed with `code`, `cause`), `tray` (the desktop tray showed it) |
 | `wake.scheduled` | `{automation_id, session_id, origin_run_id, at \| on}` | a run asked for work later (`schedule_run`, the `SCHEDULE_RUN` effect): the gateway created a one-shot automation that will run in the caller's session |
 | `wake.cancelled` | `{automation_id, session_id, origin_run_id}` | that automation was archived before it fired: nothing runs |
+| your own type (`orders.paid`, default `<channel>.message`), with `channel` | `{title, body?, …your data}` | a flow published it to you (the `PUBLISH_EVENT` effect, `{channel, type?, title, body?, subject?, data?, alert?}`); id `publish:<run_id>:<step_id>` |
+| `attention.raised` (a published alert) | `{kind: "notify", record_key: "publish:<run_id>:<step_id>", channel, run_id, title, published_sequence}` | that publication had `alert: true`: the tray, the Assistant and the watch announce it |
+| `attention.seen` (a published alert) | `{record_key}` | you saw it (`POST /api/gateway/me/events/seen`) |
 
 What needs you = the `attention.raised` items without their `attention.seen`: an automation item is
 seen once a `attention.seen` of its automation has a `seq` at or above it; a wait is seen by the
-`attention.seen` with the same `run_id`, `wait_key` and `step_id`.
+`attention.seen` with the same `run_id`, `wait_key` and `step_id`; a published alert by the
+`attention.seen` with the same `record_key`.
+
+**Channels.** A published event carries a `channel` (lowercase letters, digits, `.`, `_`, `-`, at
+most 64). Every `attention.*` event is on the channel `attention`; the other gateway events have
+none. Both read routes take `channel=<name>[,<name>…]` to receive only those channels; without it
+you receive everything.
 
 Older events go after 90 days or beyond the newest 10,000 (their `sequence` is never reused).
 
 ### Catch up: `GET /api/gateway/me/events?after=<sequence>&limit=<n>`
 
-Events with `sequence > after`, oldest first (`limit` 1–1000, default 100). Answer:
-`{stream, events: [...], next_after, head, more}`: send `next_after` as the next `after`; `head`
-is the newest sequence; `more` says a further page exists.
+Events with `sequence > after`, oldest first (`limit` 1–1000, default 100), optionally only on
+some channels (`&channel=orders,attention`). Answer: `{stream, events: [...], next_after, head,
+more, channels?}`: send `next_after` as the next `after` (with a channel filter it is past the
+events of other channels too); `head` is the newest sequence; `more` says a further page may exist.
 
 ```bash
 curl -sS -H "$AUTH" "$BASE_URL/api/gateway/me/events?after=0&limit=100"
@@ -6001,7 +6041,19 @@ from `after`, then each new event as it is written. Each frame is
 `id: <sequence>` / `event: <type>` / `data: <event JSON>`; a `: keep-alive` comment every
 `heartbeat_s` seconds (0.1–60, default 15). A reconnecting client sends `Last-Event-ID` (browsers
 do it on their own) and receives exactly the events after it; an explicit `after` wins over the
-header. The stream does not end on its own.
+header. The stream does not end on its own. `&channel=<name>[,…]` sends only those channels; the
+`id` stays the stream's sequence, so `Last-Event-ID` resumes past the other channels' events.
+
+### Your channels: `GET /api/gateway/me/events/channels`
+
+`{stream, channels: [{channel, count, last_time, last_sequence}]}` over your retained stream, most
+recently used first (`attention` included when you have attention events).
+
+### Mark a published alert seen: `POST /api/gateway/me/events/seen`
+
+`{record_key: "publish:<run_id>:<step_id>"}` writes `attention.seen {record_key}` in your stream
+(`{ok, created}`; another kind of key is 422). Automation items are marked seen with
+`POST /api/gateway/automations/{id}/seen`; a wait ends when it is answered.
 
 ```bash
 curl -sS -N -H "$AUTH" -H "Last-Event-ID: 12" "$BASE_URL/api/gateway/me/events/stream"
@@ -8205,15 +8257,19 @@ you can click.
   **Manage**, the mind, voice, tools per phase and instructions (the gateway's
   `GET /entities/{name}/access` decides; anyone else reads the gateway's
   sentence "Only an admin or <entity>'s creator can change its settings.").
-- **Email** (`@`): on your own row, **Email — <you>** with your **Email
-  address**, your **Mailbox** ([IMAP] [Google] [Microsoft]; the IMAP pane
-  shows the incoming and outgoing servers, filled in as soon as the address has
-  a domain; the links **My provider uses a different login name** (`Ctrl+O`)
-  and, when your address is already set, **Use a different account**
-  (`Ctrl+U`) reveal the Login and Mailbox address fields), once connected the mailbox's **Active** switch, Test and
-  Disconnect, the **Job failed** and **Approval needed** notifications with
-  **Send a test**, the **Agent email tools** switch and **Recipients and
-  limits** (recipient rules, send limits, folder) — see [email.md](docs/email.md).
+- **Email** (`@`): on your own row, **My email**, the web's three tabs as
+  three sections of one page. **Mailboxes**: not connected yet, the web's
+  mailbox form in its order — **Email address** and the line saying what was
+  found, the sign-in way (**Password** | **Google** | **Microsoft**; Google or
+  Microsoft picked by itself when the address is theirs and the gateway has
+  that sign-in client), **Password**, **Server settings** (`Ctrl+O`, or the
+  link; open by themselves when nothing was found: both servers, then the
+  **Sign-in name** prefilled with the address) and **Connect**; once
+  connected, the mailbox's **Active** switch, Test and Disconnect.
+  **Notifications**: your **Email address**, **Job failed** and **Approval
+  needed** with **Send a test**. **Agents**: the **Agent email tools** switch
+  and **Recipients and limits** (recipient rules, send limits, folder) — see
+  [email.md](docs/email.md).
   On another user's row, their **Email address** with **Save** ("Saved:
   <id>'s codes and notifications go to <address>.") and a read-only mailbox
   line; on an entity's row, the entity's own mailbox form.
@@ -8264,7 +8320,7 @@ you can click.
 - **V Triggers** is the web page's table: Name (your label, the trigger in words
   under it), Status (what it is doing, in the web's words), the **Listening**
   switch (`l`; `k` toggles **Keep fetching even when nothing uses it**; a
-  mailbox row's switch is **Use this mailbox**), Last event (an Account column with **All accounts**, `a`,
+  mailbox row's switch is the mailbox's **Active**), Last event (an Account column with **All accounts**, `a`,
   administrators), your mailboxes as rows with **Manage under Account → My
   email** (opens your email dialog) and, per connection **Events** (`e`, also `Enter`: a dialog with the 20 most recent
   events, newest first, each followed by its JSON; a webhook's address with
@@ -11733,6 +11789,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Publish to a channel.** The host side of a flow's `PUBLISH_EVENT` (`publish_host.py`,
+  `events_stream.record_published`): `{channel, type?, title, body?, subject?, data?, alert?}` lands on the run
+  owner's event stream as an event of your type on your channel (id `publish:<run_id>:<step_id>`, idempotent), and
+  `alert: true` also raises an attention item the tray, the Assistant and the watch announce.
+  `GET /api/gateway/me/events` and `/me/events/stream` take `channel=<a,b>` (`attention` = the attention.* events;
+  absent = everything); `GET /api/gateway/me/events/channels` lists the channels with counts and last time;
+  `POST /api/gateway/me/events/seen {record_key}` marks a published alert seen. A guide for application authors in
+  `docs/events-examples.md` ("Publish to a channel").
+
+- **Run a triggered flow with real data.** `POST /api/gateway/triggers/sample` `{trigger, count?}` answers the inputs a real occurrence of that trigger would receive (`inputs` with `event`, `truncated`, `count`, and a `summary` such as "Last 100 messages of me@example.com"), built read-only from the caller's own mailbox, feed or webhook connection through AbstractRuntime's `sample_occurrence_inputs` (count 1..500, a mailbox read for at most 20 s; another account's mailbox or connection: 404). Flow's Run dialog starts a normal run with them.
 - **Mailbox autodiscovery from an address.** `GET /api/gateway/me/email/autodiscover?address=` answers the provider (google, microsoft, yahoo, icloud, fastmail or other) and its name, the IMAP and SMTP servers, the login, how one signs in (`oauth`, `password`, `app_password`, and whether this gateway can do the OAuth sign-in), the provider's app-password page and where the answer came from (preset, autoconfig, srv or none), through AbstractCore's discovery cached per domain for a day. `PUT /me/email/accounts/{mailbox_id}` accepts an optional `name` for the mailbox; the login defaults to the address.
 - **Triggers page, UX review.** Unused connections read *Waiting for an automation to use it*; used ones *Listening ·
   used by Release digest* (your automations' names); one **Listening** switch label on every row; recorded problems in
@@ -14888,11 +14954,83 @@ The machine id is the first 16 hex characters of the sha256 of the lower-cased h
 the gateway tray sends). `channel` is one of `tray`, `assistant`, `code`, `watch`, `phone`; a watch
 or a phone sends its own device id, so it always notifies.
 
+## Publish to a channel (for application authors)
+
+A flow can push a message to the person on a **channel** of your choosing, and any application (a
+dashboard, a phone app, a script, a desktop widget) can follow that channel. Nothing in the gateway
+knows your application: you pick a name, the flow publishes to it, your app subscribes to it.
+
+1. **Pick a channel name**: lowercase letters, digits, `.`, `_` or `-`, at most 64 (`orders`,
+   `home.alarm`). `attention` is reserved: it is where every "this needs you" event already goes.
+2. **Publish from the flow.** The flow's publish step (the `PUBLISH_EVENT` effect) takes
+   `{channel, type?, title, body?, subject?, data?, alert?}`. It lands on the stream of the person
+   who owns the run as
+
+   ```json
+   {"specversion": "1.0", "id": "publish:<run_id>:<step_id>", "type": "orders.paid",
+    "channel": "orders", "source": "/abstractgateway/runs/<run_id>", "subject": "42",
+    "time": "2026-10-25T17:00:00+00:00",
+    "data": {"title": "Order 42 paid", "body": "12.00 EUR", "amount": 12},
+    "sequence": 87}
+   ```
+
+   `type` defaults to `<channel>.message`. The id is stable: a step that runs again publishes
+   nothing twice. With `"alert": true` the person is also told: an `attention.raised` on the
+   `attention` channel, announced by the tray (and the Assistant and the watch); your app marks it
+   seen with `POST /api/gateway/me/events/seen {"record_key": "publish:<run_id>:<step_id>"}`.
+3. **Subscribe from your application**, with the person's token (or a browser session):
+
+   ```bash
+   # live: server-sent events, only your channel
+   curl -sS -N -H "Authorization: Bearer <token>" \
+     "http://127.0.0.1:8080/api/gateway/me/events/stream?channel=orders"
+   # after a disconnect: resume exactly where you were
+   curl -sS -N -H "Authorization: Bearer <token>" -H "Last-Event-ID: 87" \
+     "http://127.0.0.1:8080/api/gateway/me/events/stream?channel=orders"
+   # or poll: one page at a time, keep next_after as your cursor
+   curl -sS -H "Authorization: Bearer <token>" \
+     "http://127.0.0.1:8080/api/gateway/me/events?channel=orders&after=0&limit=100"
+   ```
+
+   Each SSE frame is `id: <sequence>`, `event: <type>`, `data: <the event JSON>`; store the last
+   `id` you handled and send it back as `Last-Event-ID`. `GET /api/gateway/me/events/channels`
+   lists the channels the person's stream holds, with counts and the last time each was used.
+
+The stream is per person: an application only ever reads the stream of the account whose token it
+uses. It is made for clients that hold a connection (a browser page, an app, a desktop helper). For
+a server that wants the gateway to call it instead, outbound webhooks (the gateway POSTing each
+event to your URL) are a planned addition; until then, run a small subscriber next to your server
+that follows the SSE route and forwards each event.
+
 ## Trying it by hand without a model or a mailbox
 
 The console's **Triggers** page has **Test** on each connection: it appends a synthetic event
 (`data.test: true`) and wakes the bound automations, so an automation, its occurrence and your stream
 can be checked before any real mail, post or call.
+
+## Test a triggered flow with real data
+
+You do not have to wait for the trigger to see what a flow does with it. **Run** on a flow that an
+automation triggers (Flow's Run dialog) asks the gateway for a sample built from your own data, the
+exact inputs a real occurrence would receive, and starts a normal run with them:
+
+```bash
+curl -sS -X POST -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"trigger":{"source_id":"email.received","source_version":1,"config":{"account":"self"}},"count":20}' \
+  "$BASE_URL/api/gateway/triggers/sample"
+# {"inputs": {"messages": [...], "mailbox": "me@example.com", "event": {..., "abstracttest": true}},
+#  "truncated": false, "count": 20, "summary": "Last 20 messages of me@example.com"}
+```
+
+- **Mailbox** (`email.received@1`): the newest messages that pass the trigger's filters, read-only
+  (nothing marked read, the watcher's cursor untouched), at most 20 seconds of reading.
+- **Feed** (`feed.item@1`): the latest items of the connection's feed (one fetch, nothing stored).
+- **Webhook** (`webhook.received@1`): the last calls the connection received, or one sample call
+  when it has not received any yet.
+- **Schedule**: one occurrence as if it fired now.
+
+The event carries `abstracttest: true`, so a flow can tell a test run from a real one. The sample is
+yours only: another account's mailbox or connection answers 404. Reference: [api.md](docs/api.md#sample-inputs-post-apigatewaytriggerssample).
 
 ---
 

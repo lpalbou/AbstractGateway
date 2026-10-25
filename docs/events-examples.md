@@ -273,6 +273,54 @@ The machine id is the first 16 hex characters of the sha256 of the lower-cased h
 the gateway tray sends). `channel` is one of `tray`, `assistant`, `code`, `watch`, `phone`; a watch
 or a phone sends its own device id, so it always notifies.
 
+## Publish to a channel (for application authors)
+
+A flow can push a message to the person on a **channel** of your choosing, and any application (a
+dashboard, a phone app, a script, a desktop widget) can follow that channel. Nothing in the gateway
+knows your application: you pick a name, the flow publishes to it, your app subscribes to it.
+
+1. **Pick a channel name**: lowercase letters, digits, `.`, `_` or `-`, at most 64 (`orders`,
+   `home.alarm`). `attention` is reserved: it is where every "this needs you" event already goes.
+2. **Publish from the flow.** The flow's publish step (the `PUBLISH_EVENT` effect) takes
+   `{channel, type?, title, body?, subject?, data?, alert?}`. It lands on the stream of the person
+   who owns the run as
+
+   ```json
+   {"specversion": "1.0", "id": "publish:<run_id>:<step_id>", "type": "orders.paid",
+    "channel": "orders", "source": "/abstractgateway/runs/<run_id>", "subject": "42",
+    "time": "2026-10-25T17:00:00+00:00",
+    "data": {"title": "Order 42 paid", "body": "12.00 EUR", "amount": 12},
+    "sequence": 87}
+   ```
+
+   `type` defaults to `<channel>.message`. The id is stable: a step that runs again publishes
+   nothing twice. With `"alert": true` the person is also told: an `attention.raised` on the
+   `attention` channel, announced by the tray (and the Assistant and the watch); your app marks it
+   seen with `POST /api/gateway/me/events/seen {"record_key": "publish:<run_id>:<step_id>"}`.
+3. **Subscribe from your application**, with the person's token (or a browser session):
+
+   ```bash
+   # live: server-sent events, only your channel
+   curl -sS -N -H "Authorization: Bearer <token>" \
+     "http://127.0.0.1:8080/api/gateway/me/events/stream?channel=orders"
+   # after a disconnect: resume exactly where you were
+   curl -sS -N -H "Authorization: Bearer <token>" -H "Last-Event-ID: 87" \
+     "http://127.0.0.1:8080/api/gateway/me/events/stream?channel=orders"
+   # or poll: one page at a time, keep next_after as your cursor
+   curl -sS -H "Authorization: Bearer <token>" \
+     "http://127.0.0.1:8080/api/gateway/me/events?channel=orders&after=0&limit=100"
+   ```
+
+   Each SSE frame is `id: <sequence>`, `event: <type>`, `data: <the event JSON>`; store the last
+   `id` you handled and send it back as `Last-Event-ID`. `GET /api/gateway/me/events/channels`
+   lists the channels the person's stream holds, with counts and the last time each was used.
+
+The stream is per person: an application only ever reads the stream of the account whose token it
+uses. It is made for clients that hold a connection (a browser page, an app, a desktop helper). For
+a server that wants the gateway to call it instead, outbound webhooks (the gateway POSTing each
+event to your URL) are a planned addition; until then, run a small subscriber next to your server
+that follows the SSE route and forwards each event.
+
 ## Trying it by hand without a model or a mailbox
 
 The console's **Triggers** page has **Test** on each connection: it appends a synthetic event

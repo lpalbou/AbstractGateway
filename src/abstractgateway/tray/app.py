@@ -610,6 +610,9 @@ class TrayApp:
         """(title, message) for one attention item. Results and failures are read in the Assistant
         (its Automations), never "the console"; a person's wait is a conversation, never a "session".
         pystray notifications carry no click action, so the text says where to go."""
+        if notice.channel:
+            # A flow published it to you on one of your channels (PUBLISH_EVENT with alert).
+            return (notice.title or notice.channel), f"New on {notice.channel} — open the Assistant."
         if notice.kind == "approval":
             return "Approval needed", "A conversation waits for your approval — open the Assistant."
         if notice.kind == "question":
