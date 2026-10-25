@@ -15,7 +15,16 @@ Page (`/console#triggers`; `#triggers?new=<source_id>` opens the create dialog o
   password (`format: password` or `writeOnly`), integer, number, boolean, enum; anything else is
   shown read-only). A webhook's signing secret comes back ONCE in the create answer: the dialog
   then shows the address and the secret with copy buttons and the sentence that it is shown once;
-- admins get an **All accounts** switch: every account's connections, with an Account column.
+- admins get an **All accounts** switch: every account's connections, with an Account column;
+- every row of your own (feed, webhook, mailbox) says **Handled by**: one line per automation
+  (active or paused) on that trigger, "<automation title> · <flow name>" (the summary's
+  `flow_name`), "(paused)" after a paused one, each opening Observer's Automations page; none =
+  "Nothing handles it yet." Under it **Use in a flow ▾** opens a small menu: "New flow for this
+  trigger…" opens Flow at `/?trigger=<connection id>` (`/?trigger=mail:<mailbox id>` for a
+  mailbox) through the app door (POST /apps/flow/open), then your published triggered flows
+  (GET /bundles entrypoints with `triggerable`); a pick creates the automation (POST /automations,
+  named after the flow, the flow's automation_defaults inputs and context, THIS trigger), turned
+  on, and Handled by is read again. A refusal is said in words beside the menu.
 
 Routes (W2, root backlog 1040/1041/1042): GET /trigger-sources (descriptors with
 `needs_connection` + `connection_schema`); GET/POST /triggers/connections (`?all=true` for an
@@ -104,7 +113,23 @@ TRIGGERS_CSS = r"""
 .trg-setup { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); }
 .trg-setup p { margin: 0; }
 .trg-code { flex: 1 1 260px; min-width: 0; margin: 0; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--ui-surface-2, var(--bg-secondary)); font-family: var(--font-mono); font-size: var(--font-size-md); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 22rem; overflow: auto; }
-.trg-row--mailbox .link-button { white-space: normal; text-align: right; }
+.trg-row--mailbox .trg-actions .link-button { white-space: normal; text-align: right; }
+.trg-handled { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; margin-top: 6px; font-size: var(--font-size-md); }
+.trg-handled__head { color: var(--muted); font-weight: 600; }
+.trg-handled__none { color: var(--muted); }
+.trg-handled__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; flex: 1 1 14rem; min-width: 0; }
+.trg-handled__list .link-button { font-size: var(--font-size-md); color: var(--text); text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.trg-handled__paused { color: var(--muted); }
+.trg-use { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 6px; }
+.trg-use__button { min-height: 30px; padding: 3px 10px; font-size: var(--font-size-md); }
+.trg-flowmenu { display: flex; flex-direction: column; gap: 2px; width: min(100%, 24rem); padding: 6px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--ui-surface-1, var(--bg)); box-shadow: 0 6px 18px color-mix(in srgb, #000 12%, transparent); }
+.trg-flowmenu__item { display: flex; flex-direction: column; align-items: flex-start; width: 100%; min-height: 36px; padding: 6px 10px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); font-weight: 400; text-align: left; white-space: normal; cursor: pointer; }
+.trg-flowmenu__item:hover:not(:disabled), .trg-flowmenu__item:focus-visible { background: var(--ui-surface-2, var(--bg-secondary)); }
+.trg-flowmenu__item:disabled { color: var(--muted); cursor: default; }
+.trg-flowmenu__item.is-new { font-weight: 600; color: var(--accent); }
+.trg-flowmenu__head { margin: 6px 10px 2px; color: var(--muted); font-size: var(--font-size-sm); font-weight: 600; }
+.trg-flowmenu__note { margin: 4px 10px; color: var(--muted); font-size: var(--font-size-md); }
+.trg-flowmenu__note.is-error { color: var(--error, #d6336c); }
 @media (max-width: 1023.98px) {
   .trg-table .trg-th-last, .trg-table td.trg-last { display: none; }
   .trg-fold { display: block; }
@@ -116,7 +141,7 @@ TRIGGERS_CSS = r"""
   .trg-table tr.trg-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; padding: 12px 0; border-top: 1px solid var(--line-soft); }
   .trg-table tr.trg-row > td { padding: 0; border: 0; width: auto; }
   .trg-actions { justify-content: flex-start; }
-  .trg-actions > button, .trg-toolbar > button { min-height: 44px; }
+  .trg-actions > button, .trg-toolbar > button, .trg-use__button, .trg-flowmenu__item { min-height: 44px; }
   .trg-form { grid-template-columns: minmax(0, 1fr); }
 }
 """
@@ -126,6 +151,7 @@ TRIGGERS_JS = r"""
     const trg = {
       opened: false, all: false, rows: null, error: "", sources: null, sourcesError: "", mailboxes: null, mailboxesError: "", hookTest: null,
       expanded: {}, fire: {}, modal: null, release: null, pendingNew: "", feedCatalog: null,
+      automations: null, flows: null, flowsError: "", flowMenu: "", useMsg: {},
     };
     const TRG_EVENTS_LIMIT = 20;
     const TRG_STATUS = { active: ["Active", "is-ok"], paused: ["Paused", "is-muted"], error: ["Error", "is-err"], failed: ["Error", "is-err"], disabled: ["Off", "is-muted"] };
@@ -196,17 +222,13 @@ TRIGGERS_JS = r"""
       if (Array.isArray(r.used_by)) return r.used_by.length;
       return typeof r.used_by === "number" ? r.used_by : null;
     }
-    // UX #8: names, not counts ("Listening · used by Release digest"), up to 3 then "+N"; an unused
-    // connection is "Waiting for an automation to use it".
+    // The listening state in words; WHO uses it is the row's Handled by (names and flows), so the
+    // status counts the active users ("Listening · used by 2 automations"); an unused connection
+    // is "Waiting for an automation to use it".
     function trgListeningWords(paused, usedBy, alwaysListen, names) {
       if (paused) return "Paused";
-      const list = names || [];
-      const count = Math.max(usedBy || 0, list.length);
-      if (list.length) {
-        const shown = list.slice(0, 3);
-        const more = count - shown.length;
-        return `Listening · used by ${shown.join(", ")}${more > 0 ? ` +${more}` : ""}`;
-      }
+      const n = (names || []).length;
+      if (n) return `Listening · used by ${n} automation${n === 1 ? "" : "s"}`;
       if (usedBy === null) return "Listening";
       if (usedBy > 0) return `Listening · used by ${usedBy} automation${usedBy === 1 ? "" : "s"}`;
       if (alwaysListen) return "Listening · kept on even when nothing uses it";
@@ -217,15 +239,123 @@ TRIGGERS_JS = r"""
       return (automations || []).filter((a) => a && a.status === "active" && a.trigger && match(a.trigger))
         .map((a) => String(a.title || a.automation_id || "an automation"));
     }
-    function trgConnectionUsers(r, automations) {
-      return trgUserNames(automations, (t) => !!(t.config && t.config.connection_id === r.connection_id));
+    function trgConnectionMatch(r) {
+      return (t) => !!(t.config && t.config.connection_id === r.connection_id);
     }
-    function trgMailboxUsers(m, automations) {
-      return trgUserNames(automations, (t) => {
+    // A mail trigger's account: "self", "default" and no value are the primary mailbox (the
+    // gateway's validate_trigger_account).
+    function trgMailboxMatch(m) {
+      return (t) => {
         if (t.source_id !== "email.received") return false;
         const account = String((t.config && t.config.account) || "self");
-        return account === m.account_id || (account === "self" && m.primary);
-      });
+        return account === m.account_id || ((account === "self" || account === "default") && !!m.primary);
+      };
+    }
+    function trgConnectionUsers(r, automations) {
+      return trgUserNames(automations, trgConnectionMatch(r));
+    }
+    function trgMailboxUsers(m, automations) {
+      return trgUserNames(automations, trgMailboxMatch(m));
+    }
+
+    // ---- Handled by + Use in a flow (operator 2026-10-25): which workflows treat a trigger's
+    // events, and a short way to make one. A row's key is its connection id, or `mail:<mailbox id>`
+    // for a mailbox: the same key is Flow's `?trigger=` value (Flow docs/web-editor.md, "Open Flow
+    // from a trigger").
+    const TRG_NEW_FLOW = "New flow for this trigger…";
+    const TRG_NOTHING_HANDLES = "Nothing handles it yet.";
+    // Observer's documented Automations page (`#automations`; Observer has no per-automation link).
+    const TRG_OBSERVER_PATH = "/#automations";
+    function trgMailKey(id) { return `mail:${id}`; }
+    function trgFlowPath(key) {
+      const k = String(key);
+      return k.startsWith("mail:") ? `/?trigger=mail:${encodeURIComponent(k.slice(5))}` : `/?trigger=${encodeURIComponent(k)}`;
+    }
+    // Your automations (active and paused) on this trigger, in list order: who handles its events.
+    function trgHandlers(automations, match) {
+      if (!Array.isArray(automations)) return null;
+      return automations.filter((a) => a && (a.status === "active" || a.status === "paused") && a.trigger && match(a.trigger)).map((a) => ({
+        id: String(a.automation_id || ""), title: String(a.title || "an automation"), paused: a.status === "paused",
+        flow: String(a.flow_name || (a.target && a.target.flow_id) || ""),
+        bundle: String((a.target && a.target.bundle_ref) || "").split("@")[0], flowId: String((a.target && a.target.flow_id) || ""),
+      }));
+    }
+    function trgHandlerText(h) {
+      return h.flow && h.flow !== h.title ? `${h.title} · ${h.flow}` : h.title;
+    }
+    function trgHandledMarkup(handlers) {
+      if (handlers === null) return "";
+      if (!handlers.length) return `<div class="trg-handled"><span class="trg-handled__head">Handled by</span><span class="trg-handled__none">${TRG_NOTHING_HANDLES}</span></div>`;
+      const items = handlers.map((h) => `<li><button type="button" class="link-button" data-trg-observer="${esc(h.id)}" data-af-tip="Open in Observer">${esc(trgHandlerText(h))}</button>${h.paused ? ` <span class="trg-handled__paused">(paused)</span>` : ""}</li>`).join("");
+      return `<div class="trg-handled"><span class="trg-handled__head">Handled by</span><ul class="trg-handled__list">${items}</ul></div>`;
+    }
+    // Your published triggered flows (GET /bundles entrypoints with `triggerable`), by name.
+    function trgTriggeredFlows(items) {
+      const out = [];
+      for (const b of items || []) {
+        const defaults = b && b.automation_defaults && typeof b.automation_defaults === "object" ? b.automation_defaults : {};
+        for (const ep of (b && b.entrypoints) || []) {
+          if (!ep || ep.triggerable !== true) continue;
+          out.push({ workflowId: String(ep.workflow_id || ""), bundle: String(b.bundle_id), bundleRef: String(b.bundle_ref || `${b.bundle_id}@${b.bundle_version}`), flowId: String(ep.flow_id), name: String(ep.name || ep.flow_id), defaults: defaults[ep.flow_id] || null });
+        }
+      }
+      return out.sort((a, b) => a.name.localeCompare(b.name));
+    }
+    function trgFlowMenuMarkup(key, label, flows, flowsError, handlers) {
+      const k = esc(key);
+      let html = `<div class="trg-flowmenu" role="menu" aria-label="Use ${esc(label)} in a flow" data-trg-flowmenu="${k}">`
+        + `<button type="button" role="menuitem" class="trg-flowmenu__item is-new" data-trg-newflow="${k}">${TRG_NEW_FLOW}</button>`;
+      if (flowsError) html += `<p class="trg-flowmenu__note is-error" role="status">Could not read your flows: ${esc(flowsError)}</p>`;
+      else if (!flows) html += `<p class="trg-flowmenu__note">${trgLoadingMarkup("Reading your flows...")}</p>`;
+      else if (!flows.length) html += `<p class="trg-flowmenu__note">No triggered flow yet: start with a new one.</p>`;
+      else {
+        html += `<p class="trg-flowmenu__head">Or let one of your triggered flows handle it</p>`;
+        for (const f of flows) {
+          const already = (handlers || []).some((h) => h.bundle === f.bundle && h.flowId === f.flowId);
+          html += `<button type="button" role="menuitem" class="trg-flowmenu__item" data-trg-pickflow="${k}" data-trg-flow="${esc(f.workflowId)}"${already ? ` disabled aria-disabled="true"` : ""}>${esc(f.name)}${already ? `<span class="trg-sub">Already handles it</span>` : ""}</button>`;
+        }
+      }
+      return html + `</div>`;
+    }
+    function trgUseLine(msg) {
+      if (!msg) return "";
+      if (msg.pending) return `<span class="trg-fire" role="status">${esc(msg.text)}</span>`;
+      return `<span class="trg-fire ${msg.ok ? "is-ok" : "is-failed"}" role="status">${esc(msg.text)}</span>`;
+    }
+    // The row's Handled by, its Use in a flow button and menu, and the last outcome beside them.
+    function trgUseBlock(key, label, handlers, o) {
+      const open = o.flowMenu === key;
+      return trgHandledMarkup(handlers)
+        + `<div class="trg-use"><button type="button" class="secondary trg-use__button" data-trg-useflow="${esc(key)}" aria-haspopup="menu" aria-expanded="${open ? "true" : "false"}">Use in a flow ▾</button>`
+        + (open ? trgFlowMenuMarkup(key, label, o.flows, o.flowsError, handlers) : "")
+        + trgUseLine(o.useMsg && o.useMsg[key]) + `</div>`;
+    }
+    // The automation a pick creates: the flow's published defaults (inputs, context, and the
+    // trigger's other settings when the flow was made for this kind of trigger), with THIS trigger.
+    function trgUseFlowBody(flow, target, requestId) {
+      const d = flow.defaults && typeof flow.defaults === "object" ? flow.defaults : {};
+      const dt = d.trigger && typeof d.trigger === "object" ? d.trigger : {};
+      const same = dt.source_id === target.source_id;
+      const config = Object.assign({}, same && dt.config && typeof dt.config === "object" ? dt.config : {});
+      delete config.connection_id;
+      delete config.account;
+      const trigger = { source_id: target.source_id, source_version: target.source_version, config };
+      if (target.kind === "mailbox") config.account = target.id;
+      else trigger.connection_id = target.id;
+      const body = { request_id: requestId, title: flow.name, target: { bundle_ref: flow.bundleRef, flow_id: flow.flowId, input_data: Object.assign({}, d.input_data || {}) }, trigger };
+      if (d.context && typeof d.context === "object") body.context = d.context;
+      return body;
+    }
+    // A refused pick, in words (the gateway's reason codes).
+    function trgUseFlowRefusal(e, flowName, label) {
+      const code = String((e && e.detail && e.detail.reason_code) || "");
+      if (e && e.status === 401) return "Your session expired: sign in again, then try again.";
+      if (code === "email_account_cannot_read") return `${flowName} cannot read ${label}: it has no incoming server. Connect it again with its incoming server (My email).`;
+      if (code === "email_account_not_found") return `${label} is not connected any more: add it again in My email.`;
+      if (code === "connection_not_found" || code === "connection_not_yours") return `${label} is not one of your connections any more.`;
+      if (code === "workflow_refused" || code === "forbidden" || (e && e.status === 403)) return `You may not run ${flowName} on this gateway: ask its administrator.`;
+      if (code === "unknown_trigger_source" || code === "unsupported_feature") return `This gateway cannot run that trigger: ${trgErr(e)}`;
+      return `${flowName} was not turned on: ${trgErr(e)}`;
     }
     function trgDoingText(r, automations) {
       if (typeof r.paused !== "boolean") return "";
@@ -345,7 +475,8 @@ TRIGGERS_JS = r"""
         // Named like My email: the mailbox's name (its address), the primary with "Sends as you".
         const name = m.name || m.address || m.account_id;
         return `<tr class="trg-row trg-row--mailbox" data-trg-mailbox="${id}">`
-          + `<td class="trg-name-cell"><span class="trg-name">${esc(name)}${m.primary ? `<span class="mbx-badge">Sends as you</span>` : ""}</span><span class="trg-sub">When mail arrives in ${esc(m.address || m.account_id)} · ${esc(trgMailboxAccessWords(m))}</span><span class="trg-sub trg-fold">${esc(last.charAt(0).toUpperCase() + last.slice(1))}</span></td>`
+          + `<td class="trg-name-cell"><span class="trg-name">${esc(name)}${m.primary ? `<span class="mbx-badge">Sends as you</span>` : ""}</span><span class="trg-sub">When mail arrives in ${esc(m.address || m.account_id)} · ${esc(trgMailboxAccessWords(m))}</span><span class="trg-sub trg-fold">${esc(last.charAt(0).toUpperCase() + last.slice(1))}</span>`
+          + `${trgUseBlock(trgMailKey(m.account_id), name, trgHandlers(o.automations, trgMailboxMatch(m)), o)}</td>`
           + `<td class="trg-status">${trgMailboxStatusCell(m, o.automations)}</td>`
           + `<td class="trg-last">${esc(last)}</td>`
           + `<td class="trg-actions-cell"><div class="trg-actions"><button type="button" class="link-button" data-trg-mailbox-manage="${id}" data-af-tip="Your mailboxes are managed in My email">Manage in My email</button></div></td></tr>`;
@@ -379,7 +510,8 @@ TRIGGERS_JS = r"""
           `<button type="button" class="secondary" data-trg-delete="${id}" data-af-tip="Delete ${label}">Delete</button>`,
         ];
         let html = `<tr class="trg-row" data-trg-row="${id}">`
-          + `<td class="trg-name-cell"><span class="trg-name">${label}</span><span class="trg-sub">${phrase}</span>${r.paused && trgErrorText(r) ? `<span class="trg-error" role="status">${esc(trgErrorText(r))}</span>` : ""}<span class="trg-sub trg-fold">Last event: ${esc(last)}</span>${trgFireLine(o.fire && o.fire[r.connection_id])}</td>`
+          + `<td class="trg-name-cell"><span class="trg-name">${label}</span><span class="trg-sub">${phrase}</span>${r.paused && trgErrorText(r) ? `<span class="trg-error" role="status">${esc(trgErrorText(r))}</span>` : ""}<span class="trg-sub trg-fold">Last event: ${esc(last)}</span>${trgFireLine(o.fire && o.fire[r.connection_id])}`
+          + `${o.all ? "" : trgUseBlock(r.connection_id, r.label || r.connection_id, trgHandlers(o.automations, trgConnectionMatch(r)), o)}</td>`
           + (o.all ? `<td class="trg-account">${owner ? esc(owner) : `<span class="trg-sub">owner not reported</span>`}</td>` : "")
           + `<td class="trg-status">${trgStatusCell(r, o.automations)}</td>`
           + `<td class="trg-last">${esc(last)}</td>`
@@ -485,17 +617,88 @@ TRIGGERS_JS = r"""
       } catch (e) {
         trg.error = trgErr(e);
       }
-      if (!trg.all) await Promise.all([loadTriggerMailboxes(), loadTriggerAutomations()]);
+      if (!trg.all) await Promise.all([loadTriggerMailboxes(), loadTriggerAutomations(), loadTriggerFlows()]);
       renderTriggers();
       for (const id of Object.keys(trg.expanded)) loadTriggerEvents(id);
       if (trg.pendingNew) { const want = trg.pendingNew; trg.pendingNew = ""; openTriggerModal(want); }
     }
     async function loadTriggerAutomations() {
       try {
-        const out = await api("/api/gateway/automations?status=active&limit=200");
+        // Active AND paused: Handled by lists a paused automation with "(paused)".
+        const out = await api("/api/gateway/automations?status=active,paused&limit=200");
         trg.automations = out && Array.isArray(out.items) ? out.items : null;
       } catch {
         trg.automations = null;  // the rows fall back to counts ("used by 2 automations")
+      }
+    }
+    // The flows a pick can turn on: your published triggered flows (GET /bundles).
+    async function loadTriggerFlows() {
+      try {
+        const out = await api("/api/gateway/bundles");
+        if (!out || !Array.isArray(out.items)) throw new Error("the gateway's answer has no items list.");
+        trg.flows = trgTriggeredFlows(out.items);
+        trg.flowsError = "";
+      } catch (e) {
+        trg.flows = null;
+        trg.flowsError = trgErr(e);
+      }
+    }
+    // Open an app page through the gateway's app door (POST /apps/{id}/open, a signed-in handover)
+    // in a new tab; a refusal is said on the row.
+    async function trgOpenApp(appId, appName, path, key) {
+      const tab = typeof window !== "undefined" && window.open ? window.open("about:blank", "_blank") : null;
+      try {
+        const res = await api(`/api/gateway/apps/${appId}/open`, { method: "POST", body: JSON.stringify({ origin: appBrowserOrigin(), path }) });
+        if (tab) tab.location = res.open_url; else location.assign(res.open_url);
+      } catch (e) {
+        if (tab) tab.close();
+        const hint = e && e.data && e.data.hint ? ` ${e.data.hint}` : "";
+        trg.useMsg[key] = { ok: false, text: `Could not open ${appName}: ${trgErr(e)}${hint}` };
+        renderTriggers();
+      }
+    }
+    // The row a key names: {kind, id, label, source_id, source_version} (a mailbox's source version
+    // is the gateway's email.received descriptor).
+    function trgUseTarget(key) {
+      if (String(key).startsWith("mail:")) {
+        const id = String(key).slice(5);
+        const m = (trg.mailboxes || []).find((x) => x.account_id === id);
+        const src = (trg.sources || []).find((x) => x && x.id === "email.received" && x.available);
+        if (!m) return null;
+        if (!src) throw new Error("this gateway has no email trigger (email.received). Update the gateway.");
+        return { kind: "mailbox", id, label: String(m.name || m.address || id), source_id: "email.received", source_version: Number(src.version), match: trgMailboxMatch(m) };
+      }
+      const r = (trg.rows || []).find((x) => x.connection_id === key);
+      return r ? { kind: "connection", id: r.connection_id, label: String(r.label || r.connection_id), source_id: r.source_id, source_version: Number(r.source_version), match: trgConnectionMatch(r) } : null;
+    }
+    // A pick: create the automation from that flow with this trigger (POST /automations, the
+    // creation Observer's New automation and Flow's Turn it on use), turned on; then Handled by.
+    async function useFlowForTrigger(key, workflowId) {
+      const flow = (trg.flows || []).find((f) => f.workflowId === workflowId);
+      if (!flow || (trg.useMsg[key] && trg.useMsg[key].pending)) return;
+      let target;
+      try { target = trgUseTarget(key); } catch (e) { trg.useMsg[key] = { ok: false, text: `${flow.name} was not turned on: ${trgErr(e)}` }; renderTriggers(); return; }
+      if (!target) return;
+      trg.flowMenu = "";
+      trg.useMsg[key] = { pending: true, text: `Turning on ${flow.name}...` };
+      renderTriggers();
+      const requestId = `console-trigger-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      try {
+        const out = await api("/api/gateway/automations", { method: "POST", body: JSON.stringify(trgUseFlowBody(flow, target, requestId)) });
+        if (!out || !out.automation_id) throw new Error("the gateway's answer has no automation_id.");
+        trg.useMsg[key] = { ok: true, text: `${flow.name} now handles ${target.label}. It is on.` };
+        await loadTriggerAutomations();
+      } catch (e) {
+        trg.useMsg[key] = { ok: false, text: trgUseFlowRefusal(e, flow.name, target.label) };
+      }
+      renderTriggers();
+    }
+    function toggleFlowMenu(key) {
+      trg.flowMenu = trg.flowMenu === key ? "" : key;
+      renderTriggers();
+      if (trg.flowMenu) {
+        const first = document.querySelector(`[data-trg-flowmenu="${CSS.escape(key)}"] [role="menuitem"]`);
+        try { if (first) first.focus(); } catch {}
       }
     }
     async function loadTriggerMailboxes() {
@@ -522,7 +725,8 @@ TRIGGERS_JS = r"""
       const cols = trg.all ? 5 : 4;
       if (trg.error) { body.innerHTML = `<tr><td colspan="${cols}" class="trg-empty is-error" role="alert">Could not list the connections: ${esc(trg.error)}</td></tr>`; return; }
       if (!trg.rows || (!trg.all && trg.mailboxes === null)) { body.innerHTML = `<tr><td colspan="${cols}" class="trg-empty">${trgLoadingMarkup(trg.all ? "Reading the connections..." : "Reading your connections and mailboxes...")}</td></tr>`; return; }
-      body.innerHTML = triggersRowsMarkup(trg.rows, { all: trg.all, sources: trg.sources || [], expanded: trg.expanded, fire: trg.fire, mailboxes: trg.mailboxes || [], automations: trg.all ? null : trg.automations });
+      body.innerHTML = triggersRowsMarkup(trg.rows, { all: trg.all, sources: trg.sources || [], expanded: trg.expanded, fire: trg.fire, mailboxes: trg.mailboxes || [], automations: trg.all ? null : trg.automations,
+        flows: trg.flows, flowsError: trg.flowsError, flowMenu: trg.flowMenu, useMsg: trg.useMsg });
       if (trg.sourcesError) trgMessage(`Could not read the trigger sources: ${trg.sourcesError}`, "error");
       else if (!trg.all && trg.mailboxesError) trgMessage(`Could not read your mailboxes: ${trg.mailboxesError}`, "error");
     }
@@ -1175,6 +1379,10 @@ TRIGGERS_JS = r"""
         else if (t.dataset.trgDelete) confirmDeleteTrigger(t.dataset.trgDelete);
         else if (t.dataset.trgCopy) trgCopy(t.dataset.trgCopy);
         else if (t.dataset.trgMailboxManage) openMyEmailFromTriggers();
+        else if (t.dataset.trgUseflow) toggleFlowMenu(t.dataset.trgUseflow);
+        else if (t.dataset.trgNewflow) { const k = t.dataset.trgNewflow; trg.flowMenu = ""; renderTriggers(); trgOpenApp("flow", "Flow", trgFlowPath(k), k); }
+        else if (t.dataset.trgPickflow) useFlowForTrigger(t.dataset.trgPickflow, t.dataset.trgFlow);
+        else if (t.dataset.trgObserver) { const li = t.closest(".trg-row"); const k = li ? (li.dataset.trgRow || trgMailKey(li.dataset.trgMailbox)) : ""; trgOpenApp("observer", "Observer", TRG_OBSERVER_PATH, k); }
         else if (t.dataset.trgEmpty === "mailbox") { mbx.openAddOnLoad = true; openMyEmailFromTriggers(); }
         else if (t.dataset.trgEmpty) openTriggerModal(t.dataset.trgEmpty);
         else if (t.dataset.trgAlways) {
@@ -1189,6 +1397,15 @@ TRIGGERS_JS = r"""
           const row = (trg.rows || []).find((x) => x.connection_id === t.dataset.trgListen);
           if (row) { t.setAttribute("aria-busy", "true"); setTriggerPaused(row.connection_id, !row.paused); }
         }
+      };
+      // Esc closes an open Use in a flow menu and gives the focus back to its button.
+      $("triggers-table").onkeydown = (e) => {
+        if (e.key !== "Escape" || !trg.flowMenu) return;
+        const key = trg.flowMenu;
+        trg.flowMenu = "";
+        renderTriggers();
+        const b = document.querySelector(`[data-trg-useflow="${CSS.escape(key)}"]`);
+        try { if (b) b.focus(); } catch {}
       };
       $("trigger-modal-close").onclick = closeTriggerModal;
       $("trigger-modal-body").onchange = (e) => {

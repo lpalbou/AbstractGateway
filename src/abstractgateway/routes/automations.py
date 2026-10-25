@@ -354,6 +354,31 @@ def _trigger_text(svc: Any, principal: Any, trigger: Any, rule: str) -> str:
     return trigger_text(trigger, rule=rule, connection_label=connection_label, mailbox_address=mailbox_address, source_label=source_label)
 
 
+def _target_projection(target: Any) -> Optional[Dict[str, str]]:
+    """`{workflow_id, bundle_ref, flow_id}` of a definition's target (its `input_data` stays in the
+    definition: GET /automations/{id})."""
+    if not isinstance(target, dict):
+        return None
+    return {k: str(target.get(k) or "") for k in ("workflow_id", "bundle_ref", "flow_id")}
+
+
+def _flow_name(svc: Any, target: Any) -> Optional[str]:
+    """The entrypoint's `name` in the bundle version the automation runs (None when that bundle
+    is not loaded here or names no entrypoint `flow_id`)."""
+    if not isinstance(target, dict):
+        return None
+    bundle_id, version = _split_bundle_ref(str(target.get("bundle_ref") or ""))
+    flow_id = str(target.get("flow_id") or "")
+    bundles = getattr(getattr(svc, "host", None), "bundles", None)
+    versions = bundles.get(bundle_id) if isinstance(bundles, dict) else None
+    bundle = versions.get(version) if isinstance(versions, dict) and version else None
+    for ep in list(getattr(getattr(bundle, "manifest", None), "entrypoints", None) or []):
+        if str(getattr(ep, "flow_id", "") or "") == flow_id:
+            name = str(getattr(ep, "name", "") or "").strip()
+            return name or None
+    return None
+
+
 def automation_summary_row(svc: Any, principal: Any, controller: Any, *, owner_zone: Optional[str] = None) -> Dict[str, Any]:
     """Contract F `AutomationSummary` of one controller run."""
     runtime = svc.host.runtime
@@ -365,6 +390,10 @@ def automation_summary_row(svc: Any, principal: Any, controller: Any, *, owner_z
         "title": base["title"],
         "status": status,
         "trigger": base["trigger"],
+        # The workflow it runs (never its inputs) and that entrypoint's name, so a list can say
+        # "<automation> · <flow>" without one read per automation (Triggers page: Handled by).
+        "target": _target_projection(base.get("target")),
+        "flow_name": _flow_name(svc, base.get("target")),
         "context_mode": base["context_mode"],
         "growing_max_tokens": base["growing_max_tokens"],
         # The automation's folder (= definition.workspace_root): apps open it

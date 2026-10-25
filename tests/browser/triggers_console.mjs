@@ -522,6 +522,100 @@ try {
     }
     await ctx.close();
   }
+  // Handled by + Use in a flow (operator 2026-10-25): who treats each trigger's events, and a
+  // menu that opens Flow on this trigger or turns one of your triggered flows on for it.
+  for (const [w, h] of [[1440, 900], [400, 860]]) {
+    const tag = `use-${w}`;
+    const { ctx, page, store } = await newPage(browser, { width: w, height: h });
+    store.mailboxes.push({ account_id: "work", primary: false, configured: true, name: "Work", address: "me@work.example", can_read: false, can_send: false, can_write: false, access: "read", enabled: true, mailbox: { state: "connected" }, watcher: {} });
+    store.autos = [
+      { automation_id: "auto_1", title: "Release digest", status: "active", flow_name: "Digest", target: { workflow_id: "digest@1.0.0:digest", bundle_ref: "digest@1.0.0", flow_id: "digest" }, trigger: { source_id: "feed.item", source_version: 1, config: { connection_id: "conn_feed1" } } },
+      { automation_id: "auto_2", title: "Old digest", status: "paused", flow_name: "Summarize", target: { workflow_id: "sum@1.0.0:sum", bundle_ref: "sum@1.0.0", flow_id: "sum" }, trigger: { source_id: "feed.item", source_version: 1, config: { connection_id: "conn_feed1" } } },
+    ];
+    store.opens = [];
+    store.posts = [];
+    const BUNDLES = { items: [
+      { bundle_id: "digest", bundle_version: "1.0.0", bundle_ref: "digest@1.0.0", automation_defaults: { digest: { schema_version: 1, trigger: { source_id: "feed.item", source_version: 1, config: {} , connection_id: "author" }, context: { mode: "independent" }, input_data: { prompt: "Summarize" } } },
+        entrypoints: [{ flow_id: "digest", name: "Digest", workflow_id: "digest@1.0.0:digest", triggerable: true }, { flow_id: "chat", name: "Chat helper", workflow_id: "digest@1.0.0:chat", triggerable: false }] },
+      { bundle_id: "triage", bundle_version: "1.0.0", bundle_ref: "triage@1.0.0", automation_defaults: { triage: { schema_version: 1, trigger: { source_id: "email.received", source_version: 1, config: { account: "author", from: ["boss@x.test"] } }, context: { mode: "growing" }, input_data: {} } },
+        entrypoints: [{ flow_id: "triage", name: "Triage", workflow_id: "triage@1.0.0:triage", triggerable: true }] },
+    ] };
+    await ctx.route((u) => u.pathname === "/api/gateway/bundles", (route) => route.fulfill({ json: BUNDLES }));
+    await ctx.route((u) => u.pathname === "/api/gateway/automations", (route) => {
+      const req = route.request();
+      if (req.method() === "GET") { store.autosQuery = new URL(req.url()).search; return route.fulfill({ json: { items: store.autos, next_cursor: null } }); }
+      const b = JSON.parse(req.postData() || "{}");
+      store.posts.push(b);
+      if (b.trigger && b.trigger.config && b.trigger.config.account === "work") {
+        return route.fulfill({ status: 422, json: { detail: { reason_code: "email_account_cannot_read", message: "The mailbox 'work' has no incoming server (IMAP), so it can't be watched.", field: "trigger.config.account" } } });
+      }
+      const id = `auto_new${store.posts.length}`;
+      store.autos = store.autos.concat([{ automation_id: id, title: b.title, status: "active", flow_name: b.title, target: { bundle_ref: b.target.bundle_ref, flow_id: b.target.flow_id }, trigger: b.trigger }]);
+      return route.fulfill({ json: { automation_id: id, revision: 1, summary: {} } });
+    });
+    await ctx.route((u) => /^\/api\/gateway\/apps\/(flow|observer)\/open$/.test(u.pathname), (route) => {
+      const app = new URL(route.request().url()).pathname.split("/")[4];
+      store.opens.push({ app, path: JSON.parse(route.request().postData() || "{}").path });
+      return route.fulfill({ json: { ok: true, open_url: "/healthz" } });
+    });
+    ctx.on("page", (p) => { if (p !== page) p.close().catch(() => {}); });
+    await signIn(page, "admin", ADMIN);
+    await openTab(page, "triggers");
+    await page.waitForSelector('[data-trg-row="conn_feed1"] .trg-handled__list', { timeout: 30000 });
+    check(store.autosQuery === "?status=active,paused&limit=200", `${tag}: automations read active and paused`, store.autosQuery);
+    const handled = await page.$$eval('[data-trg-row="conn_feed1"] .trg-handled__list li', (els) => els.map((e) => e.textContent.replace(/\s+/g, " ").trim()));
+    check(JSON.stringify(handled) === JSON.stringify(["Release digest · Digest", "Old digest · Summarize (paused)"]), `${tag}: Handled by lists both, the paused one says so`, handled);
+    check((await page.textContent('[data-trg-row="conn_feed1"] .trg-doing')).trim() === "Listening · used by 1 automation", `${tag}: the status counts, Handled by names`);
+    const none = await page.$eval('[data-trg-mailbox="default"] .trg-handled__none', (el) => [el.textContent, getComputedStyle(el).color]);
+    const ink = await page.$eval('[data-trg-mailbox="default"] .trg-name', (el) => getComputedStyle(el).color);
+    check(none[0] === "Nothing handles it yet." && none[1] !== ink, `${tag}: nothing handles it, muted`, { none, ink });
+    // The menu on a mailbox: New flow first, then the triggered flows only.
+    await page.click('[data-trg-useflow="mail:default"]');
+    await page.waitForSelector('[data-trg-flowmenu="mail:default"]');
+    const items = await page.$$eval('[data-trg-flowmenu="mail:default"] [role=menuitem]', (els) => els.map((e) => e.textContent.trim()));
+    check(JSON.stringify(items) === JSON.stringify(["New flow for this trigger…", "Digest", "Triage"]), `${tag}: menu contents`, items);
+    check(await page.evaluate(() => document.activeElement && document.activeElement.dataset.trgNewflow) === "mail:default", `${tag}: the menu takes the focus`);
+    await noSideScroll(page, `${tag} menu open`);
+    await shot(page, `triggers-use-in-a-flow-menu-${w}`);
+    // New flow: Flow through the app door at ?trigger=mail:<mailbox id> (and ?trigger=<connection id>).
+    await page.click('[data-trg-newflow="mail:default"]');
+    await page.waitForFunction(() => !document.querySelector("[data-trg-flowmenu]"));
+    await page.waitForTimeout(200);
+    check(JSON.stringify(store.opens[store.opens.length - 1]) === JSON.stringify({ app: "flow", path: "/?trigger=mail:default" }), `${tag}: new flow link for a mailbox`, store.opens);
+    await page.click('[data-trg-useflow="conn_feed1"]');
+    await page.click('[data-trg-newflow="conn_feed1"]');
+    await page.waitForTimeout(200);
+    check(JSON.stringify(store.opens[store.opens.length - 1]) === JSON.stringify({ app: "flow", path: "/?trigger=conn_feed1" }), `${tag}: new flow link for a connection`, store.opens);
+    // A flow that already handles the feed is shown, not offered twice; Esc closes the menu.
+    await page.click('[data-trg-useflow="conn_feed1"]');
+    check(await page.locator('[data-trg-flowmenu="conn_feed1"] [data-trg-flow="digest@1.0.0:digest"]').isDisabled(), `${tag}: Digest already handles the feed`);
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.querySelector("[data-trg-flowmenu]"));
+    check(await page.evaluate(() => document.activeElement && document.activeElement.dataset.trgUseflow) === "conn_feed1", `${tag}: Esc gives the focus back`);
+    // A refusal in words, beside the menu (a mailbox the flow cannot read).
+    await page.click('[data-trg-useflow="mail:work"]');
+    await page.click('[data-trg-flowmenu="mail:work"] [data-trg-flow="triage@1.0.0:triage"]');
+    await page.waitForSelector('[data-trg-mailbox="work"] .trg-use .trg-fire.is-failed');
+    check((await page.textContent('[data-trg-mailbox="work"] .trg-use .trg-fire')).trim() === "Triage cannot read Work: it has no incoming server. Connect it again with its incoming server (My email).", `${tag}: refusal in words`, await page.textContent('[data-trg-mailbox="work"] .trg-use .trg-fire'));
+    await shot(page, `triggers-use-in-a-flow-refused-${w}`);
+    // A pick: the automation is created from the flow with this trigger, then Handled by shows it.
+    await page.click('[data-trg-useflow="mail:default"]');
+    await page.click('[data-trg-flowmenu="mail:default"] [data-trg-flow="triage@1.0.0:triage"]');
+    await page.waitForSelector('[data-trg-mailbox="default"] .trg-handled__list');
+    const post = store.posts[store.posts.length - 1];
+    check(post.title === "Triage" && JSON.stringify(post.target) === JSON.stringify({ bundle_ref: "triage@1.0.0", flow_id: "triage", input_data: {} })
+      && JSON.stringify(post.trigger) === JSON.stringify({ source_id: "email.received", source_version: 1, config: { from: ["boss@x.test"], account: "default" } })
+      && JSON.stringify(post.context) === JSON.stringify({ mode: "growing" }) && /^console-trigger-/.test(post.request_id), `${tag}: the create body`, post);
+    check((await page.textContent('[data-trg-mailbox="default"] .trg-handled__list')).trim() === "Triage", `${tag}: Handled by refreshed`);
+    check((await page.textContent('[data-trg-mailbox="default"] .trg-use .trg-fire.is-ok')).trim() === "Triage now handles admin@example.org. It is on.", `${tag}: success said`);
+    // Each Handled by line opens Observer's Automations page.
+    await page.click('[data-trg-row="conn_feed1"] [data-trg-observer="auto_1"]');
+    await page.waitForTimeout(200);
+    check(JSON.stringify(store.opens[store.opens.length - 1]) === JSON.stringify({ app: "observer", path: "/#automations" }), `${tag}: Observer link`, store.opens);
+    await noSideScroll(page, `${tag} after a pick`);
+    await shot(page, `triggers-use-in-a-flow-done-${w}`);
+    await ctx.close();
+  }
   // Deep link: `#triggers?new=feed.item` opens the dialog on that source.
   {
     const { ctx, page } = await newPage(browser, { width: 1280, height: 860 });

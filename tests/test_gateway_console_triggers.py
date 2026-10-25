@@ -29,10 +29,17 @@ const TRG_ENUM_WORDS = { initial_items: { skip: "Ignore what is already there", 
 const TRG_MORE_FIELDS = new Set(["subject_path", "tolerance_s", "max_items"]);
 const TRG_HTTP_WORDS = { 400: "bad request", 401: "unauthorized", 403: "forbidden", 404: "not found", 410: "gone", 429: "too many requests", 500: "server error", 502: "bad gateway", 503: "unavailable" };
 const TRG_MAILBOX_STATE = { connected: ["Active", "is-ok"], receive_only: ["Can't send", "is-warn"], paused: ["Paused", "is-muted"], needs_reconnect: ["Needs reconnecting", "is-warn"], unavailable: ["Unavailable", "is-muted"], not_connected: ["Not connected", "is-muted"] };
+const TRG_NEW_FLOW = "New flow for this trigger…";
+const TRG_NOTHING_HANDLES = "Nothing handles it yet.";
+const TRG_OBSERVER_PATH = "/#automations";
 """
 
+# Handled by + Use in a flow (operator 2026-10-25).
+USE_FNS = ("trgConnectionMatch", "trgMailboxMatch", "trgMailKey", "trgHandlers", "trgHandlerText", "trgHandledMarkup", "trgLoadingMarkup",
+           "trgFlowMenuMarkup", "trgUseLine", "trgUseBlock")
+
 ROW_FNS = ("webhookRefusalWords", "trgErrorText", "trgAgo", "trgSourceLabel", "trgTriggerPhrase", "trgUsedBy", "trgListeningWords", "trgUserNames", "trgConnectionUsers", "trgMailboxUsers", "trgDoingText", "trgListenSwitch", "trgAdvancedMarkup", "trgStatusCell", "trgMailboxStatusCell", "trgMailboxStatusChip", "trgMailboxAccessWords", "mailboxRowsMarkup", "trgPrincipalText", "trgStatusChip", "trgFireLine", "trgCopyRow",
-           "triggerEventsMarkup", "triggerDetailMarkup", "triggersRowsMarkup")
+           "triggerEventsMarkup", "triggerDetailMarkup", *USE_FNS, "triggersRowsMarkup")
 
 SOURCES = [
     {"id": "feed.item", "version": 1, "label": "Feed item", "available": True, "needs_connection": True,
@@ -237,7 +244,7 @@ def test_routes_are_the_connections_contract() -> None:
 
 def test_mailbox_sources_are_rows_not_new_connections() -> None:
     source = _console_script()
-    harness = HELPERS + _fns(source, "trgConnectableSources", "trgAgo", "trgUsedBy", "trgListeningWords", "trgUserNames", "trgMailboxUsers", "trgMailboxStatusChip", "trgMailboxStatusCell", "trgMailboxAccessWords", "mailboxRowsMarkup") + """
+    harness = HELPERS + _fns(source, "trgConnectableSources", "trgAgo", "trgUsedBy", "trgListeningWords", "trgUserNames", "trgMailboxUsers", "trgMailboxStatusChip", "trgMailboxStatusCell", "trgMailboxAccessWords", *USE_FNS, "mailboxRowsMarkup") + """
 const SOURCES = [
   {id: "email.received", version: 1, label: "When an email arrives", available: true, needs_connection: true, connection_provider: "email_accounts", connection_schema: {type: "object"}},
   {id: "webhook.received", version: 1, label: "When a webhook is called", available: true, needs_connection: true, connection_provider: "trigger_connections", connection_schema: {type: "object", properties: {}}},
@@ -337,7 +344,7 @@ console.log(JSON.stringify([sig]));
 
 def test_rows_say_what_a_connection_is_doing_with_a_listening_toggle() -> None:
     source = _console_script()
-    harness = HELPERS + _fns(source, "webhookRefusalWords", "trgErrorText", "trgUsedBy", "trgListeningWords", "trgUserNames", "trgConnectionUsers", "trgDoingText", "trgListenSwitch", "trgAdvancedMarkup", "trgStatusChip", "trgStatusCell") + """
+    harness = HELPERS + _fns(source, "webhookRefusalWords", "trgErrorText", "trgUsedBy", "trgListeningWords", "trgUserNames", "trgConnectionMatch", "trgConnectionUsers", "trgDoingText", "trgListenSwitch", "trgAdvancedMarkup", "trgStatusChip", "trgStatusCell") + """
 const rows = [
   {connection_id: "a", label: "bbc-feed", status: "active", paused: false, always_listen: false, listening: "listening", used_by: 2},
   {connection_id: "b", label: "hook", status: "active", paused: false, always_listen: false, listening: "listening", used_by: ["auto_1"]},
@@ -359,8 +366,9 @@ console.log(JSON.stringify(rows.map((r) => [trgDoingText(r), trgStatusCell(r)]).
         "Listening · used by 2 automations", "Listening · used by 1 automation",
         "Waiting for an automation to use it", "Paused", "",
         "Listening · kept on even when nothing uses it",
-        "Listening · used by Release digest, Morning brief",
-        "Listening · used by Auto 1, Auto 2, Auto 3 +2"]
+        # Who uses it is the row's Handled by: the status counts the active ones.
+        "Listening · used by 2 automations",
+        "Listening · used by 5 automations"]
     on, paused, old = out[0][1], out[3][1], out[4][1]
     assert 'role="switch"' in on and 'aria-checked="true"' in on and ">Listening</span>" in on and 'data-trg-listen="a"' in on
     assert 'aria-checked="false"' in paused
@@ -759,3 +767,160 @@ console.log(JSON.stringify([out]));
     every, markup = r["template"]
     assert every == "1h" and note in markup and 'value="1"' in markup and hours in markup
     assert r["backToDefault"][0] == "15m" and note not in r["backToDefault"][1]
+
+
+# ---- Handled by + Use in a flow (operator 2026-10-25) ----
+
+AUTOS = [
+    {"automation_id": "a1", "title": "Release digest", "status": "active", "flow_name": "Digest", "target": {"workflow_id": "digest@1.0.0:digest", "bundle_ref": "digest@1.0.0", "flow_id": "digest"},
+     "trigger": {"source_id": "feed.item", "source_version": 1, "config": {"connection_id": "c1"}}},
+    {"automation_id": "a2", "title": "Old <one>", "status": "paused", "flow_name": "Summarize", "target": {"workflow_id": "sum@2.0.0:sum", "bundle_ref": "sum@2.0.0", "flow_id": "sum"},
+     "trigger": {"source_id": "feed.item", "source_version": 1, "config": {"connection_id": "c1"}}},
+    {"automation_id": "a3", "title": "Gone", "status": "archived", "flow_name": "Digest", "target": {"bundle_ref": "digest@1.0.0", "flow_id": "digest"},
+     "trigger": {"source_id": "feed.item", "source_version": 1, "config": {"connection_id": "c1"}}},
+    {"automation_id": "a4", "title": "Triage", "status": "active", "flow_name": "Triage", "target": {"bundle_ref": "triage@1.0.0", "flow_id": "triage"},
+     "trigger": {"source_id": "email.received", "source_version": 1, "config": {"account": "self"}}},
+]
+BUNDLES = [
+    {"bundle_id": "digest", "bundle_version": "1.0.0", "bundle_ref": "digest@1.0.0",
+     "automation_defaults": {"digest": {"schema_version": 1, "title": "Digest", "trigger": {"source_id": "feed.item", "source_version": 1, "config": {"connection_id": "author_conn"}},
+                                         "context": {"mode": "growing", "growing": {"max_tokens": 9000}}, "input_data": {"prompt": "Summarize the new items"}}},
+     "entrypoints": [{"flow_id": "digest", "name": "Digest", "workflow_id": "digest@1.0.0:digest", "triggerable": True},
+                     {"flow_id": "chat", "name": "Chat helper", "workflow_id": "digest@1.0.0:chat", "triggerable": False}]},
+    {"bundle_id": "triage", "bundle_version": "1.0.0", "bundle_ref": "triage@1.0.0",
+     "automation_defaults": {"triage": {"schema_version": 1, "trigger": {"source_id": "email.received", "source_version": 1, "config": {"account": "author", "from": ["boss@x.test"]}},
+                                         "context": {"mode": "independent"}, "input_data": {}}},
+     "entrypoints": [{"flow_id": "triage", "name": "Triage", "workflow_id": "triage@1.0.0:triage", "triggerable": True}]},
+]
+
+
+def test_handled_by_lists_every_automation_of_a_trigger_with_its_flow() -> None:
+    source = _console_script()
+    harness = HELPERS + _fns(source, *ROW_FNS, "trgTriggeredFlows") + f"""
+const SOURCES = {json.dumps(SOURCES)};
+const AUTOS = {json.dumps(AUTOS)};
+const rows = [
+  {{ connection_id: "c1", source_id: "feed.item", source_version: 1, label: "Release feed", status: "active", paused: false, always_listen: false, used_by: 1, last_event_at: null }},
+  {{ connection_id: "c2", source_id: "webhook.received", source_version: 1, label: "CI hook", status: "active", paused: false, always_listen: false, used_by: 0, last_event_at: null }},
+];
+const mailboxes = [{{ account_id: "default", primary: true, configured: true, address: "me@x.test", enabled: true, mailbox: {{ state: "connected" }}, watcher: {{}} }},
+                   {{ account_id: "work", primary: false, configured: true, address: "w@x.test", enabled: true, mailbox: {{ state: "connected" }}, watcher: {{}} }}];
+const flows = trgTriggeredFlows({json.dumps(BUNDLES)});
+const o = {{ sources: SOURCES, expanded: {{}}, fire: {{}}, mailboxes, automations: AUTOS, flows, flowsError: "", flowMenu: "", useMsg: {{}} }};
+console.log(JSON.stringify({{
+  mine: triggersRowsMarkup(rows, o),
+  unknown: triggersRowsMarkup(rows, Object.assign({{}}, o, {{ automations: null }})),
+  all: triggersRowsMarkup(rows, Object.assign({{}}, o, {{ all: true }})),
+}}));
+"""
+    r = _node(harness)
+    mine = r["mine"]
+    c1 = mine[mine.index('data-trg-row="c1"'):mine.index('data-trg-row="c2"')]
+    c2 = mine[mine.index('data-trg-row="c2"'):mine.index('data-trg-mailbox="default"')]
+    primary = mine[mine.index('data-trg-mailbox="default"'):mine.index('data-trg-mailbox="work"')]
+    work = mine[mine.index('data-trg-mailbox="work"'):]
+    # Two automations on one connection, each "<title> · <flow>", the paused one says so; archived never.
+    assert '<span class="trg-handled__head">Handled by</span>' in c1
+    assert re.findall(r'data-trg-observer="(a\d)"', c1) == ["a1", "a2"]
+    assert ">Release digest · Digest</button>" in c1 and ">Old &lt;one&gt; · Summarize</button> <span class=\"trg-handled__paused\">(paused)</span>" in c1
+    assert c1.count("(paused)") == 1 and "Gone" not in c1
+    # The status no longer repeats the names (Handled by says who): it counts the active ones.
+    assert '<span class="trg-doing" data-trg-doing="c1">Listening · used by 1 automation</span>' in c1
+    # Nothing handles it: said in the muted style.
+    assert '<span class="trg-handled__none">Nothing handles it yet.</span>' in c2
+    # A mailbox: the primary is matched by "self"; a title equal to its flow name is said once.
+    assert ">Triage</button>" in primary and "Triage · Triage" not in primary
+    assert "Nothing handles it yet." in work
+    # Every row (feeds, webhooks, mailboxes) has Use in a flow, keyed by its trigger.
+    for key in ("c1", "c2", "mail:default", "mail:work"):
+        assert f'data-trg-useflow="{key}" aria-haspopup="menu" aria-expanded="false">Use in a flow ▾</button>' in mine, key
+    # Automations not read: no Handled by (never a false "Nothing handles it"), the button stays.
+    assert "Handled by" not in r["unknown"] and 'data-trg-useflow="c1"' in r["unknown"]
+    # The admin's All accounts view: other people's connections, no Use in a flow.
+    assert "data-trg-useflow" not in r["all"] and "Handled by" not in r["all"]
+
+
+def test_use_in_a_flow_menu_new_flow_link_and_triggered_flows_only() -> None:
+    source = _console_script()
+    harness = HELPERS + _fns(source, *USE_FNS, "trgTriggeredFlows", "trgFlowPath") + f"""
+const AUTOS = {json.dumps(AUTOS)};
+const flows = trgTriggeredFlows({json.dumps(BUNDLES)});
+const handlers = trgHandlers(AUTOS, trgConnectionMatch({{ connection_id: "c1" }}));
+const o = (extra) => Object.assign({{ flows, flowsError: "", flowMenu: "c1", useMsg: {{}} }}, extra || {{}});
+console.log(JSON.stringify({{
+  flows,
+  paths: [trgFlowPath("conn_abc"), trgFlowPath("mail:default"), trgFlowPath("mail:a b"), trgFlowPath(trgMailKey("work"))],
+  open: trgUseBlock("c1", "Release feed", handlers, o()),
+  closed: trgUseBlock("c1", "Release feed", handlers, o({{ flowMenu: "c2" }})),
+  none: trgUseBlock("c1", "Release feed", [], o({{ flows: [] }})),
+  loading: trgUseBlock("c1", "Release feed", [], o({{ flows: null }})),
+  failed: trgUseBlock("c1", "Release feed", [], o({{ flows: null, flowsError: "HTTP 500" }})),
+  said: trgUseBlock("c1", "Release feed", [], o({{ flowMenu: "", useMsg: {{ c1: {{ ok: false, text: "Triage cannot read it." }} }} }})),
+}}));
+"""
+    r = _node(harness)
+    # Triggered entrypoints only (the chat entrypoint of the same bundle is not offered), by name.
+    assert [f["name"] for f in r["flows"]] == ["Digest", "Triage"]
+    assert r["flows"][0]["bundleRef"] == "digest@1.0.0" and r["flows"][0]["defaults"]["input_data"] == {"prompt": "Summarize the new items"}
+    # Flow's link forms, exactly: ?trigger=<connection id> and ?trigger=mail:<mailbox id>.
+    assert r["paths"] == ["/?trigger=conn_abc", "/?trigger=mail:default", "/?trigger=mail:a%20b", "/?trigger=mail:work"]
+    menu = r["open"]
+    assert 'aria-expanded="true"' in menu and 'role="menu" aria-label="Use Release feed in a flow"' in menu
+    items = re.findall(r'role="menuitem"[^>]*>([^<]+)', menu)
+    assert items == ["New flow for this trigger…", "Digest", "Triage"], items
+    assert 'data-trg-newflow="c1"' in menu
+    # A flow that already handles this trigger is shown, not offered twice.
+    digest = menu[menu.index('data-trg-flow="digest@1.0.0:digest"'):]
+    assert " disabled " in digest.split("</button>")[0] and "Already handles it" in digest.split("</button>")[0]
+    triage = menu[menu.index('data-trg-flow="triage@1.0.0:triage"'):]
+    assert " disabled " not in triage.split("</button>")[0]
+    assert "role=\"menu\"" not in r["closed"] and 'aria-expanded="false"' in r["closed"]
+    assert "New flow for this trigger…" in r["none"] and "No triggered flow yet: start with a new one." in r["none"]
+    assert "Reading your flows..." in r["loading"] and "Could not read your flows: HTTP 500" in r["failed"]
+    assert '<span class="trg-fire is-failed" role="status">Triage cannot read it.</span>' in r["said"]
+
+
+def test_a_pick_creates_the_automation_from_the_flows_defaults_with_this_trigger() -> None:
+    source = _console_script()
+    harness = HELPERS + _fns(source, "trgErr", "trgTriggeredFlows", "trgUseFlowBody", "trgUseFlowRefusal") + f"""
+const flows = trgTriggeredFlows({json.dumps(BUNDLES)});
+const digest = flows[0], triage = flows[1];
+const err = (status, code, message) => Object.assign(new Error(message), {{ status, detail: {{ reason_code: code, message }} }});
+console.log(JSON.stringify({{
+  feed: trgUseFlowBody(digest, {{ kind: "connection", id: "conn_1", source_id: "feed.item", source_version: 1 }}, "rq1"),
+  hook: trgUseFlowBody(digest, {{ kind: "connection", id: "conn_2", source_id: "webhook.received", source_version: 1 }}, "rq2"),
+  mail: trgUseFlowBody(triage, {{ kind: "mailbox", id: "work", source_id: "email.received", source_version: 1 }}, "rq3"),
+  refusals: [
+    trgUseFlowRefusal(err(422, "email_account_cannot_read", "x"), "Triage", "w@x.test"),
+    trgUseFlowRefusal(err(422, "email_account_not_found", "x"), "Triage", "w@x.test"),
+    trgUseFlowRefusal(err(404, "connection_not_found", "x"), "Digest", "CI hook"),
+    trgUseFlowRefusal(err(403, "workflow_refused", "x"), "Digest", "CI hook"),
+    trgUseFlowRefusal(err(422, "invalid_definition", "workflow digest@1.0.0:digest is not loaded on this gateway"), "Digest", "CI hook"),
+  ],
+}}));
+"""
+    r = _node(harness)
+    # Named after the flow, its inputs and context, THIS connection (the author's never kept).
+    assert r["feed"] == {"request_id": "rq1", "title": "Digest",
+                         "target": {"bundle_ref": "digest@1.0.0", "flow_id": "digest", "input_data": {"prompt": "Summarize the new items"}},
+                         "trigger": {"source_id": "feed.item", "source_version": 1, "config": {}, "connection_id": "conn_1"},
+                         "context": {"mode": "growing", "growing": {"max_tokens": 9000}}}
+    # Another kind of trigger: the flow's trigger settings do not apply, its inputs do.
+    assert r["hook"]["trigger"] == {"source_id": "webhook.received", "source_version": 1, "config": {}, "connection_id": "conn_2"}
+    # A mailbox: `config.account` is this mailbox; the flow's own mail filters stay.
+    assert r["mail"]["trigger"] == {"source_id": "email.received", "source_version": 1, "config": {"from": ["boss@x.test"], "account": "work"}}
+    assert r["mail"]["title"] == "Triage" and r["mail"]["context"] == {"mode": "independent"}
+    assert r["refusals"] == [
+        "Triage cannot read w@x.test: it has no incoming server. Connect it again with its incoming server (My email).",
+        "w@x.test is not connected any more: add it again in My email.",
+        "CI hook is not one of your connections any more.",
+        "You may not run Digest on this gateway: ask its administrator.",
+        "Digest was not turned on: workflow digest@1.0.0:digest is not loaded on this gateway",
+    ]
+    # The create is the automations route; the flows are GET /bundles; the menu opens Flow and Observer
+    # through the app door; automations are read active AND paused.
+    assert 'api("/api/gateway/automations", { method: "POST"' in _slice_function(source, "useFlowForTrigger")
+    assert 'api("/api/gateway/bundles")' in _slice_function(source, "loadTriggerFlows")
+    assert "/api/gateway/apps/${appId}/open" in _slice_function(source, "trgOpenApp")
+    assert '"/api/gateway/automations?status=active,paused&limit=200"' in _slice_function(source, "loadTriggerAutomations")
+    assert 'trgOpenApp("flow", "Flow", trgFlowPath(k), k)' in source and 'trgOpenApp("observer", "Observer", TRG_OBSERVER_PATH, k)' in source
