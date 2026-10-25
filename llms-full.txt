@@ -312,7 +312,7 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.11.0` (trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
+- `AbstractRuntime>=0.12.0` (publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
 - `abstractcore>=2.26.0` (mail, media capabilities, and request-scoped authentication for the managed OpenAI-compatible endpoint)
 - `abstractvoice>=0.15.0` (the voice listings import `abstractvoice.engine_runtime`)
 - `abstractagent>=0.4.0` (the `schedule_run` tool for ReAct agents, and Python execution inside the run's command sandbox)
@@ -7251,7 +7251,7 @@ Your email address and mailbox (`/api/gateway/me/...`, every signed-in human):
 | `PUT /me/email/folder` | `{folder}` — the folder your mailbox is read from (empty = INBOX); the connection is kept and nothing is tested; 404 `email_not_configured` without a mailbox |
 | `PUT /me/email/enabled` | `{enabled}` — the mailbox's **Active** switch (off keeps the settings; stops watching, sending and notifications); `tools_reloaded` |
 | `GET /me/email/autodiscover?address=` | everything a mailbox form needs from an address alone: `{address, provider: google \| microsoft \| yahoo \| icloud \| fastmail \| other, display_name ("Gmail", …; the domain for other), imap: {host, port, security: ssl \| starttls}, smtp: {host, port, security} \| null, login (the address, or the provider's login form), sign_in: ["oauth" \| "password" \| "app_password"] (what the provider accepts), oauth_available (this gateway has a sign-in client for it), app_password_url? (Google, Yahoo, iCloud), source: preset \| autoconfig \| srv \| none}`. Resolution: AbstractCore's provider table (and MX pointing at a known provider) → the domain's autoconfig file and the Thunderbird ISPDB (3 s each) → DNS SRV (`_imaps._tcp`, `_submission(s)._tcp`, then `_imap._tcp` with STARTTLS) → `none` (empty IMAP host, no SMTP); an IMAP server alone is enough (a further mailbox reads only). Cached per domain for a day. 400 `email_invalid_settings` for a non-address |
-| `GET /me/email/accounts` | every mailbox of yours: `{items: [{account_id, primary, account_ref, configured, address, can_read, can_send, enabled, folder, mailbox{state, address, provider, reason}, watcher{state, last_poll, last_error, received}}]}`; the primary (`default`, the one `PUT /me/email` connects and runs are bound to) always first, further mailboxes once connected. `GET /me/email` carries the same list as `accounts` |
+| `GET /me/email/accounts` | every mailbox of yours: `{items: [{account_id, primary, account_ref, configured, address, can_read, can_send, can_write (the mailbox may be changed: mark, label, move, delete; false for a read-only mailbox), enabled, folder, mailbox{state, address, provider, reason}, watcher{state, last_poll, last_error, received}}]}`; the primary (`default`, the one `PUT /me/email` connects and runs are bound to) always first, further mailboxes once connected. `GET /me/email` carries the same list as `accounts` |
 | `GET /me/email/accounts/{mailbox_id}` | one of them; 404 `email_not_configured` for an id you have not connected |
 | `PUT /me/email/accounts/{mailbox_id}` | connect a further mailbox (`mailbox_id`: 1-32 of `a-z 0-9 _ -`; 400 `email_invalid_settings` otherwise): the `PUT /me/email` body plus `send` (default `false`) and `name` (optional, at most 120 characters: the mailbox's name in your lists, answered as `name` in its row; the login, `username`, defaults to the address). `send: false` stores IMAP only: a **read-only** mailbox (`can_send: false`, `mailbox.state: receive_only`) that automations can watch and that refuses sends; `send: true` also stores and tests SMTP. `mailbox_id: default` is the primary and behaves like `PUT /me/email`. Never changes your email address. Answers the mailbox's row |
 | `POST /me/email/accounts/{mailbox_id}/test` | `{imap, smtp, ok, message}` for that mailbox |
@@ -11296,7 +11296,7 @@ deny rules the gateway relies on; the message names what is missing. Upgrade
 it in the gateway's Python, then start again:
 
 ```bash
-pip install -U "abstractruntime>=0.11.0"
+pip install -U "abstractruntime>=0.12.0"
 ```
 
 ### The one-time sign-in link does not work
@@ -11789,6 +11789,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Flows publish to a channel: every runtime the gateway builds registers the `PUBLISH_EVENT` handler
+  (`publish_host.py`), so a flow's *Publish to channel* step lands on the run owner's event stream (and raises
+  attention with `alert: true`). Needs AbstractRuntime 0.12.0: the dependency floor moves to `>=0.12.0` in the
+  base, `apple` and `gpu` profiles.
+
+- Mailbox rows (`GET /me/email/accounts`, `GET /me/email` `accounts`) carry `can_write`: whether the mailbox may be changed (mark, label, move, delete; AbstractCore 2.28's `EmailAccount.can_write`, false for a read-only mailbox with IMAP only).
 - **Publish to a channel.** The host side of a flow's `PUBLISH_EVENT` (`publish_host.py`,
   `events_stream.record_published`): `{channel, type?, title, body?, subject?, data?, alert?}` lands on the run
   owner's event stream as an event of your type on your channel (id `publish:<run_id>:<step_id>`, idempotent), and

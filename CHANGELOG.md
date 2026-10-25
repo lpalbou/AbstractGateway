@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Flows publish to a channel: every runtime the gateway builds registers the `PUBLISH_EVENT` handler
+  (`publish_host.py`), so a flow's *Publish to channel* step lands on the run owner's event stream (and raises
+  attention with `alert: true`). Needs AbstractRuntime 0.12.0: the dependency floor moves to `>=0.12.0` in the
+  base, `apple` and `gpu` profiles.
+
 - Mailbox rows (`GET /me/email/accounts`, `GET /me/email` `accounts`) carry `can_write`: whether the mailbox may be changed (mark, label, move, delete; AbstractCore 2.28's `EmailAccount.can_write`, false for a read-only mailbox with IMAP only).
 - **Publish to a channel.** The host side of a flow's `PUBLISH_EVENT` (`publish_host.py`,
   `events_stream.record_published`): `{channel, type?, title, body?, subject?, data?, alert?}` lands on the run

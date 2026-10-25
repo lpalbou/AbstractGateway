@@ -2123,6 +2123,11 @@ class WorkflowBundleGatewayHost:
         from ..wakes_host import wire_schedule_run
 
         wire_schedule_run(runtime, data_dir=Path(data_root), root_data_dir=Path(catalog_root), tenant=email_plane.tenant_id, user=email_plane.user_id)
+        # PUBLISH_EVENT ("Publish to channel"): this plane writes what its runs publish to the
+        # owner's event stream (publish_host.py). Fails loudly on a runtime without the seam.
+        from ..publish_host import wire_publish_event
+
+        wire_publish_event(runtime, data_dir=Path(data_root), tenant=email_plane.tenant_id, user=email_plane.user_id)
 
         _install_catalog_subworkflow_guard(
             runtime=runtime,

@@ -149,3 +149,30 @@ def test_the_sse_tail_filters_by_channel(tmp_path: Path) -> None:
     joined = b"".join(asyncio.run(_run()))
     assert b"event: orders.message" in joined and b"news.message" not in joined
     assert b"id: 2\n" in joined  # the id stays the stream sequence (Last-Event-ID resumes past the news event)
+
+
+def test_a_flow_step_publishes_through_the_runtime_effect(tmp_path: Path) -> None:
+    """The runtime's PUBLISH_EVENT effect reaches the gateway's handler (wired like the bundle host
+    does) and lands on the owner's stream; a replayed step publishes once."""
+    from abstractruntime import Effect, EffectType, Runtime, StepPlan, WorkflowSpec
+    from abstractruntime.core.models import RunStatus
+    from abstractruntime.storage.in_memory import InMemoryLedgerStore, InMemoryRunStore
+
+    def go(run, ctx):
+        return StepPlan(node_id="go", effect=Effect(type=EffectType.PUBLISH_EVENT, payload={
+            "channel": "orders", "title": "Order 42 paid", "data": {"amount": 12}, "alert": True}, result_key="published"), next_node="done")
+
+    def done(run, ctx):
+        return StepPlan(node_id="done", complete_output={"published": run.vars.get("published")})
+
+    wf = WorkflowSpec(workflow_id="pub", entry_node="go", nodes={"go": go, "done": done})
+    rt = Runtime(run_store=InMemoryRunStore(), ledger_store=InMemoryLedgerStore())
+    wire_publish_event(rt, data_dir=tmp_path, tenant="default", user="alice")
+    rid = rt.start(workflow=wf)
+    state = rt.tick(workflow=wf, run_id=rid)
+    assert state.status == RunStatus.COMPLETED, state.error
+    stream = stream_for(tmp_path, "default", "alice")
+    events = stream.read(after=0, limit=10)
+    assert [e["type"] for e in events] == ["orders.message", "attention.raised"]
+    assert events[0]["id"].startswith(f"publish:{rid}:") and events[0]["data"]["amount"] == 12
+    assert state.output["published"]["event_id"] == events[0]["id"]
