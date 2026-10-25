@@ -694,12 +694,24 @@ TRIGGERS_JS = r"""
       if (t.pending) return `<p class="trg-help" role="status">Sending a signed test call...</p>`;
       if (t.error) return `<p class="message error" role="status">${esc(t.error)}</p>`;
       const ok = t.status >= 200 && t.status < 300;
-      let html = `<p class="trg-fire ${ok ? "is-ok" : "is-failed"}" role="status">HTTP ${esc(t.status)}${t.reason ? ` · ${esc(t.reason)}` : ""}</p>`;
-      if (String(t.reason || "").includes("not_listening")) {
-        html += `<p class="trg-help">Nothing uses this webhook yet, so the gateway does not accept calls for it. Bind an automation to it, or turn on "Keep fetching even when nothing uses it" under "When nothing uses it" on its row.</p>`;
+      const name = t.name || "The webhook";
+      if (ok) {
+        let html = `<p class="trg-fire is-ok" role="status">It worked: ${esc(name)} received the call · see it under Events.</p>`;
+        if (t.event) html += `<details><summary>Details</summary><pre class="trg-code">${esc(JSON.stringify(t.event, null, 2))}</pre></details>`;
+        return html;
       }
-      if (t.event) html += `<details open><summary>The event it created (#${esc(t.event.sequence)})</summary><pre class="trg-code">${esc(JSON.stringify(t.event, null, 2))}</pre></details>`;
-      return html;
+      return `<p class="trg-fire is-failed" role="status">The call was refused: ${esc(webhookRefusalWords(t.reason))} <span class="trg-sub" style="display:inline">(HTTP ${esc(t.status)})</span></p>`;
+    }
+    // Why the ingress refused a call, in words (the gateway's reason codes).
+    function webhookRefusalWords(reason) {
+      const r = String(reason || "");
+      if (r.includes("signature")) return "the signature did not match the signing secret.";
+      if (r.includes("unsigned")) return "the call was not signed.";
+      if (r.includes("stale")) return "its time stamp is too far from now.";
+      if (r.includes("replayed")) return "this call was already received.";
+      if (r.includes("disabled") || r.includes("paused")) return "the connection is paused (turn Listening on).";
+      if (r.includes("not_listening")) return "nothing uses this webhook yet.";
+      return r || "the gateway did not say why.";
     }
     function webhookSetupMarkup(c, test) {
       return `<section class="trg-field trg-field--wide trg-setup" aria-labelledby="trg-setup-title">`
@@ -760,7 +772,7 @@ TRIGGERS_JS = r"""
           const out = await api(`/api/gateway/triggers/connections/${encodeURIComponent(c.connection_id)}/events?limit=1`);
           event = out && Array.isArray(out.events) && out.events.length ? out.events[out.events.length - 1] : null;
         }
-        trg.hookTest = { status: res.status, reason, event };
+        trg.hookTest = { status: res.status, reason, event, name: c.label || c.connection_id };
         loadTriggers();
       } catch (e) {
         trg.hookTest = { error: `Test call not sent: ${trgErr(e)}` };

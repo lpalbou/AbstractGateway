@@ -309,7 +309,7 @@ try {
       await page.click("[data-trg-hook-test]");
       await page.waitForSelector("[data-trg-hook-result] .trg-fire");
       const result = await page.textContent("[data-trg-hook-result]");
-      check(result.includes("HTTP 202") && result.includes("The event it created"), "signed test call: 202 and the event", result);
+      check(result.includes("It worked: GitHub pushes received the call · see it under Events.") && !result.includes("fetch"), "signed test call: it worked, in words", result);
       check(store.requests.some((r) => r === "INGRESS /api/gateway/triggers/webhooks/conn_new4"), "signed test call reached the ingress");
       await shotEl(page, "#trigger-modal-backdrop .af-modal", "triggers-webhook-secret-once-1440-light");
       await page.click("[data-trg-done]");

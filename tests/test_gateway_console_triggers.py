@@ -263,15 +263,15 @@ console.log(JSON.stringify([fields.map((f) => [f.key, f.kind, f.label, f.descrip
 
 def test_webhook_setup_panel_has_the_real_address_and_secret() -> None:
     source = _console_script()
-    harness = HELPERS + _fns(source, "webhookCurlExample", "webhookTestResultMarkup", "webhookSetupMarkup") + """
+    harness = HELPERS + _fns(source, "webhookCurlExample", "webhookRefusalWords", "webhookTestResultMarkup", "webhookSetupMarkup") + """
 const c = {connection_id: "conn_1", ingress_url: "http://127.0.0.1:8080/api/gateway/triggers/webhooks/conn_1", secret: "whsec_c2VjcmV0"};
 console.log(JSON.stringify([webhookCurlExample(c.ingress_url, c.secret), webhookSetupMarkup(c, null),
-  webhookSetupMarkup(c, {status: 202, reason: "", event: {sequence: 3, type: "abstract.webhook.received.v1"}}),
+  webhookSetupMarkup(c, {status: 202, reason: "", name: "GitHub pushes", event: {sequence: 3, type: "abstract.webhook.received.v1"}}),
   webhookSetupMarkup(c, {status: 401, reason: "webhook_signature_invalid"}),
   webhookSetupMarkup(c, {status: 409, reason: "not_listening"})]));
 """
     curl, panel, ok, refused, idle = _node(harness)
-    assert "HTTP 409 · not_listening" in idle and "Nothing uses this webhook yet" in idle and "Keep fetching even when nothing uses it" in idle
+    assert "nothing uses this webhook yet." in idle and "fetch" not in idle
     assert "SECRET='whsec_c2VjcmV0'" in curl and "URL='http://127.0.0.1:8080/api/gateway/triggers/webhooks/conn_1'" in curl
     assert 'KEY=$(printf %s "${SECRET#whsec_}" | base64 -d | xxd -p -c 256)' in curl
     assert "openssl dgst -sha256 -mac HMAC -macopt hexkey:$KEY -binary | base64" in curl
@@ -279,8 +279,9 @@ console.log(JSON.stringify([webhookCurlExample(c.ingress_url, c.secret), webhook
     assert "paste the webhook address as the webhook URL, the signing secret as the secret, and choose JSON" in panel
     assert 'data-trg-hook-test="1"' in panel and ">Send a signed test call</button>" in panel
     assert 'data-trg-copy="created:curl"' in panel
-    assert "HTTP 202" in ok and "The event it created (#3)" in ok
-    assert "HTTP 401 · webhook_signature_invalid" in refused and "is-failed" in refused
+    assert "It worked: GitHub pushes received the call · see it under Events." in ok and "<summary>Details</summary>" in ok
+    assert "HTTP 202" not in ok and "fetch" not in ok
+    assert "The call was refused: the signature did not match the signing secret." in refused and "is-failed" in refused
 
 
 def test_webhook_signature_matches_standard_webhooks() -> None:
