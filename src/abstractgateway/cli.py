@@ -726,6 +726,22 @@ def _run_models_command(args: argparse.Namespace) -> int:
     return 0 if worked else 1
 
 
+def _push_relay_arg(value: str) -> str:
+    from .push.settings import parse_relay_value
+
+    try:
+        parse_relay_value(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+    return value
+
+
+def _push_relay_help() -> str:
+    from .push.settings import FLAG_HELP
+
+    return FLAG_HELP.replace("%", "%%")
+
+
 def main(argv: list[str] | None = None) -> None:
     console_level = _resolve_default_console_level()
     _configure_console_logging(console_level)
@@ -794,6 +810,14 @@ def main(argv: list[str] | None = None) -> None:
         "this flag says. Audited at boot and shown on the console (Security). There is no environment variable.",
     )
     serve.add_argument(
+        "--push-relay",
+        default=None,
+        dest="push_relay",
+        metavar="URL|off",
+        type=_push_relay_arg,
+        help=_push_relay_help(),
+    )
+    serve.add_argument(
         "--no-runner",
         action="store_true",
         help="Serve the HTTP API without starting the runner (use `abstractgateway runner` in another process).",
@@ -826,6 +850,22 @@ def main(argv: list[str] | None = None) -> None:
         dest="unsandboxed_commands",
         help="Same as `serve --unsandboxed-commands`, for the split runner process (it executes the tools).",
     )
+    runner.add_argument(
+        "--push-relay",
+        default=None,
+        dest="push_relay",
+        metavar="URL|off",
+        type=_push_relay_arg,
+        help="Same as `serve --push-relay`, for the split runner process (it sends the pushes).",
+    )
+
+    push_relay = sub.add_parser(
+        "push-relay",
+        help="Run the Apple push relay (publisher-hosted; holds the APNs key, builds fixed messages, stores nothing)",
+    )
+    from .push.settings import add_relay_arguments
+
+    add_relay_arguments(push_relay)
 
     cfg_cmd = sub.add_parser("config", help="Run the AbstractGateway configuration helper")
     cfg_cmd.add_argument("config_args", nargs=argparse.REMAINDER, help="Arguments forwarded to abstractgateway-config")
@@ -1037,6 +1077,14 @@ def main(argv: list[str] | None = None) -> None:
         from .command_sandbox import set_unsandboxed_commands
 
         set_unsandboxed_commands(bool(getattr(args, "unsandboxed_commands", False)), source="serve")
+        from .push.settings import set_push_relay
+
+        _relay = set_push_relay(getattr(args, "push_relay", None), source="serve")
+        if _relay is not None:
+            if getattr(args, "reload", False):
+                _stderr("[WARN] --push-relay is ignored with --reload: the app runs in uvicorn's reloader child, which sends no pushes")
+            else:
+                _stderr(f"[INFO] push: alerts for registered watches and iPhones go through {_relay}")
         if getattr(args, "unsandboxed_commands", False):
             if getattr(args, "reload", False):
                 _stderr("[WARN] --unsandboxed-commands is ignored with --reload: the app runs in uvicorn's reloader child, where commands stay sandboxed or refused")
@@ -1287,6 +1335,11 @@ def main(argv: list[str] | None = None) -> None:
             _exit_now_if_nondaemon_stragglers()
         return
 
+    if args.cmd == "push-relay":
+        from .push.relay import run_relay_command
+
+        raise SystemExit(run_relay_command(args))
+
     if args.cmd == "runner":
         # Force runner enabled for this process.
         prev_runner_env = os.environ.get("ABSTRACTGATEWAY_RUNNER")
@@ -1303,6 +1356,9 @@ def main(argv: list[str] | None = None) -> None:
         from .service import start_gateway_runner, stop_gateway_runner
 
         set_unsandboxed_commands(bool(getattr(args, "unsandboxed_commands", False)), source="runner")
+        from .push.settings import set_push_relay
+
+        set_push_relay(getattr(args, "push_relay", None), source="runner")
         stop = threading.Event()
 
         def _handle(_signum, _frame) -> None:  # pragma: no cover

@@ -125,6 +125,15 @@ tray = [
   "Pillow>=10.0.0",
 ]
 
+# The Apple push relay (`abstractgateway push-relay`, framework backlog 1049), run by whoever holds
+# an APNs key (the publisher, or a self-hoster): APNs speaks HTTP/2 only (httpx needs `h2` for it)
+# and the provider token is an ES256 JWT (`cryptography`). A gateway that only SENDS to a relay
+# needs neither: it calls the relay with the plain httpx dependency above.
+push-relay = [
+  "httpx[http2]<1.0.0,>=0.28.1",
+  "cryptography>=42.0.0",
+]
+
 # Native Apple Gateway profile. This is for direct macOS Python installs (not
 # Docker), because MLX/Metal-backed engines need the host Apple runtime. As the
 # deployment entry point, Gateway's `apple` profile installs the full native

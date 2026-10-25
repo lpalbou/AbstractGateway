@@ -48,6 +48,9 @@ class GatewayService:
     # notification dispatcher (mail/worker.py). Replaces the retired
     # env-configured `email_bridge`.
     email_worker: Optional[Any] = None
+    # Apple push (framework backlog 1049): the plane's push dispatcher (push/dispatcher.py), built
+    # only when this process has `--push-relay <URL>`; started beside the email worker.
+    push_dispatcher: Optional[Any] = None
     agora_bridge: Optional[Any] = None
     entity_registry: Optional[Any] = None
     entity_chat_host: Optional[Any] = None
@@ -408,6 +411,7 @@ def get_gateway_service_for_principal(principal: GatewayPrincipal) -> GatewaySer
                 # The mail watcher + notification dispatcher of this plane start
                 # with its runner (the multi-user path used to never start mail).
                 _start_email_worker(svc)
+                _start_push_dispatcher(svc)
         elif getattr(svc.config, "runner_enabled", False) and _runner_needs_restart(svc.runner):
             # Self-healing (backlog 0063): a cached service whose runner lost
             # the lock race and returned dead used to be returned as-is
@@ -1334,6 +1338,7 @@ def start_gateway_runner() -> None:
         bridge.start()
     _boot_checkpoint()
     _start_email_worker(svc)
+    _start_push_dispatcher(svc)
     agora_bridge = getattr(svc, "agora_bridge", None)
     _boot_checkpoint()
     if agora_bridge is not None:
@@ -1355,6 +1360,35 @@ def _start_email_worker(svc: GatewayService) -> None:
         sync_entity_workers()
     except Exception:  # noqa: BLE001 - email is optional; never blocks a runner start
         logging.getLogger("abstractgateway.service").warning("entity email workers failed to start", exc_info=True)
+
+
+def _start_push_dispatcher(svc: GatewayService) -> None:
+    """The plane's push dispatcher, in the process that runs its runner (backlog 1049). Built only
+    with `--push-relay <URL>`: with `off` nothing exists, no thread, no socket."""
+    from .push.settings import push_relay_url
+
+    relay = push_relay_url()
+    if relay is None or getattr(svc, "push_dispatcher", None) is not None:
+        return
+    try:
+        from .events_stream import plane_owner, stream_for
+        from .live_deltas import ROLE_RUNNER, process_role
+        from .push.dispatcher import PushDispatcher
+
+        cfg = svc.config
+        dispatcher = PushDispatcher(
+            plane_dir=Path(cfg.data_dir),
+            root_dir=Path(getattr(cfg, "root_data_dir", None) or cfg.data_dir),
+            stream=stream_for(cfg.data_dir, *plane_owner(cfg)),
+            relay_url=relay,
+            # A split runner cannot be woken by the API process's device route: it stats devices.json.
+            poll_when_idle=process_role() == ROLE_RUNNER,
+            name=f"push-{gateway_service_label(svc)}",
+        )
+        object.__setattr__(svc, "push_dispatcher", dispatcher)
+        dispatcher.start()
+    except Exception:  # noqa: BLE001 - push is optional; never blocks a runner start
+        logging.getLogger("abstractgateway.service").warning("push dispatcher failed to start", exc_info=True)
 
 
 def stop_gateway_runner() -> None:
@@ -1450,6 +1484,9 @@ def _stop_gateway_service_instance(service: GatewayService) -> None:
         email_worker = getattr(service, "email_worker", None)
         if email_worker is not None:
             _stage("email worker stop", email_worker.stop)
+        push_dispatcher = getattr(service, "push_dispatcher", None)
+        if push_dispatcher is not None:
+            _stage("push dispatcher stop", push_dispatcher.stop)
         bridge3 = getattr(service, "agora_bridge", None)
         if bridge3 is not None:
             _stage("agora bridge stop", bridge3.stop)
