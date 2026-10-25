@@ -582,6 +582,14 @@ class GatewayRunner:
                 self._save_open_waits()
         return out
 
+    def _automation_owner(self, automation_id: str) -> Optional[str]:
+        """`<tenant>:<user>` of the automation (`_meta.automation_owner`), None for one created
+        before owners were recorded (the runtime then falls back to the binding's owner)."""
+        run = self.run_store.load(str(automation_id))
+        meta = (getattr(run, "vars", None) or {}).get("_meta") if run is not None else None
+        owner = meta.get("automation_owner") if isinstance(meta, dict) else None
+        return owner if isinstance(owner, str) and owner.strip() else None
+
     def _stream_wake_cancelled(self, automation_id: str) -> None:
         """`wake.cancelled` when the archived automation is a wake that never fired (1045)."""
         stream = self._user_stream
@@ -2190,6 +2198,10 @@ class GatewayRunner:
                 payload=command_payload,
                 actor=rec.client_id,
                 expected_revision=expected_revision,
+                # The automation's OWNER (recorded at creation): a revise onto a
+                # trigger connection is checked against the owner's connections,
+                # not against the previous binding's (none, for a schedule).
+                principal=self._automation_owner(automation_id),
             )
         except Exception as exc:
             logger.exception("GatewayRunner: automation command %s (%s) failed on the host", rec.command_id, typ)

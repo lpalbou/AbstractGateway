@@ -125,8 +125,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   archived left out unless `archived=true`); one item per session with a snippet and the match positions;
   `indexing.complete: false` while older conversations are still being indexed.
 
+### Changed
+
+- Dependency floors: `AbstractRuntime>=0.11.0` (trigger connections, the CloudEvents trigger envelope, run origin,
+  `SCHEDULE_RUN`, several mailboxes per user, the run stores' mailbox index) and `abstractagent>=0.4.0` (the
+  `schedule_run` tool), in the base, `apple` and `gpu` profiles.
+
 ### Fixed
 
+- Revising an automation onto a trigger connection (a feed, a webhook) is checked against the automation owner's
+  connections: an automation that had none (a schedule) can be moved onto one of its owner's connections, and one
+  of another person's is refused (`connection_not_found`).
 - Durable `emit_event` reaches every running or waiting run that declares the event's mailbox, however many
   runs are active (it reached the newest 200 only), through the run store's mailbox index (AbstractRuntime
   `list_mailbox_runs`).
