@@ -23,11 +23,15 @@ const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCA
 const TRG_EVENTS_LIMIT = 20;
 const TRG_STATUS = { active: ["Active", "is-ok"], paused: ["Paused", "is-muted"], error: ["Error", "is-err"], failed: ["Error", "is-err"], disabled: ["Off", "is-muted"] };
 const TRG_FORM_KEYWORDS = new Set(["type", "title", "description", "enum", "default", "pattern", "format", "minimum", "maximum", "minLength", "maxLength", "examples", "writeOnly"]);
-const TRG_FIELD_LABELS = { subject_path: "Subject (path in the JSON body)", tolerance_s: "Accepted clock skew (seconds)", url: "Feed address", every: "Check every", max_items: "Items per check (at most)", initial_items: "Items already in the feed" };
+const TRG_FIELD_LABELS = { subject_path: "Subject (path in the JSON body)", tolerance_s: "Accepted clock skew (seconds)", url: "Feed address", every: "Check every", max_items: "Items per check (at most)", initial_items: "When added" };
+const TRG_DURATION_UNITS = [["s", "seconds"], ["m", "minutes"], ["h", "hours"], ["d", "days"]];
+const TRG_ENUM_WORDS = { initial_items: { skip: "Ignore what is already there", deliver: "Also deliver the latest items" } };
+const TRG_MORE_FIELDS = new Set(["subject_path", "tolerance_s", "max_items"]);
+const TRG_HTTP_WORDS = { 400: "bad request", 401: "unauthorized", 403: "forbidden", 404: "not found", 410: "gone", 429: "too many requests", 500: "server error", 502: "bad gateway", 503: "unavailable" };
 const TRG_MAILBOX_STATE = { connected: ["Active", "is-ok"], receive_only: ["Read-only", "is-ok"], paused: ["Paused", "is-muted"], needs_reconnect: ["Needs reconnecting", "is-warn"], unavailable: ["Unavailable", "is-muted"], not_connected: ["Not connected", "is-muted"] };
 """
 
-ROW_FNS = ("trgAgo", "trgSourceLabel", "trgTriggerPhrase", "trgUsedBy", "trgListeningWords", "trgUserNames", "trgConnectionUsers", "trgMailboxUsers", "trgDoingText", "trgListenSwitch", "trgAdvancedMarkup", "trgStatusCell", "trgMailboxStatusCell", "trgMailboxStatusChip", "mailboxRowsMarkup", "trgPrincipalText", "trgStatusChip", "trgFireLine", "trgCopyRow",
+ROW_FNS = ("webhookRefusalWords", "trgErrorText", "trgAgo", "trgSourceLabel", "trgTriggerPhrase", "trgUsedBy", "trgListeningWords", "trgUserNames", "trgConnectionUsers", "trgMailboxUsers", "trgDoingText", "trgListenSwitch", "trgAdvancedMarkup", "trgStatusCell", "trgMailboxStatusCell", "trgMailboxStatusChip", "mailboxRowsMarkup", "trgPrincipalText", "trgStatusChip", "trgFireLine", "trgCopyRow",
            "triggerEventsMarkup", "triggerDetailMarkup", "triggersRowsMarkup")
 
 SOURCES = [
@@ -156,7 +160,7 @@ console.log(JSON.stringify([out]));
 
 def test_connection_form_engine() -> None:
     source = _console_script()
-    harness = HELPERS + _fns(source, "trgHumanize", "trgSentence", "triggerFormFields", "triggerFormMarkup", "triggerConfigFromValues") + """
+    harness = HELPERS + _fns(source, "trgHumanize", "trgSentence", "triggerFormFields", "trgIsDuration", "trgFieldHint", "trgFieldMarkup", "triggerFormMarkup", "triggerConfigFromValues") + """
 const schema = { type: "object", required: ["url", "kind"], properties: {
   url: { type: "string", title: "Feed address", pattern: "^https?://", examples: ["https://example.org/feed.xml"] },
   token: { type: "string", title: "Token", format: "password" },
@@ -181,8 +185,10 @@ console.log(JSON.stringify([{ kinds, html, good, bad }]));
     assert 'for="trg-f-url">Feed address *</label>' in html and 'placeholder="https://example.org/feed.xml"' in html
     assert 'type="password"' in html and "never-shown" not in html  # a default secret is never prefilled
     assert 'value="15"' in html and "Not editable here" in html
+    assert r["good"]["byField"] == {}
+    r["good"].pop("byField")
     assert r["good"] == {"config": {"url": "https://example.org/f", "token": "abc", "every_minutes": 30, "ratio": 0.5, "include_body": True, "kind": "atom"}, "problems": []}
-    assert r["bad"]["problems"] == ["Feed address does not have the expected form.", "Every (minutes) must be a whole number.", "Ratio must be a number.", "Kind is required."]
+    assert r["bad"]["problems"] == ["Feed address: start with https:// (e.g. https://example.org/feed.xml)", "Every (minutes) must be a whole number.", "Ratio must be a number.", "Kind is required."]
 
 
 def test_delete_question_and_hash_link() -> None:
@@ -241,7 +247,7 @@ console.log(JSON.stringify([trgConnectableSources(SOURCES).map((s) => s.id), mai
 
 def test_webhook_form_is_readable_and_hides_the_generated_secret() -> None:
     source = _console_script()
-    harness = HELPERS + _fns(source, "trgHumanize", "trgSentence", "triggerFormFields", "triggerFormMarkup") + """
+    harness = HELPERS + _fns(source, "trgHumanize", "trgSentence", "triggerFormFields", "trgIsDuration", "trgFieldHint", "trgFieldMarkup", "triggerFormMarkup") + """
 const schema = {type: "object", additionalProperties: false, properties: {
   subject_path: {type: "string", description: "dotted path in a JSON body for the event subject (default: the webhook id)"},
   tolerance_s: {type: "integer", minimum: 60, maximum: 3600, default: 300},
@@ -263,20 +269,27 @@ console.log(JSON.stringify([fields.map((f) => [f.key, f.kind, f.label, f.descrip
 
 def test_webhook_setup_panel_has_the_real_address_and_secret() -> None:
     source = _console_script()
-    harness = HELPERS + _fns(source, "webhookCurlExample", "webhookRefusalWords", "webhookTestResultMarkup", "webhookSetupMarkup") + """
+    harness = HELPERS + _fns(source, "webhookCurlExample", "webhookRefusalWords", "webhookTestResultMarkup", "trgLocalAddress", "webhookSetupMarkup") + """
 const c = {connection_id: "conn_1", ingress_url: "http://127.0.0.1:8080/api/gateway/triggers/webhooks/conn_1", secret: "whsec_c2VjcmV0"};
 console.log(JSON.stringify([webhookCurlExample(c.ingress_url, c.secret), webhookSetupMarkup(c, null),
   webhookSetupMarkup(c, {status: 202, reason: "", name: "GitHub pushes", event: {sequence: 3, type: "abstract.webhook.received.v1"}}),
   webhookSetupMarkup(c, {status: 401, reason: "webhook_signature_invalid"}),
-  webhookSetupMarkup(c, {status: 409, reason: "not_listening"})]));
+  webhookSetupMarkup(c, {status: 409, reason: "not_listening"}),
+  webhookSetupMarkup({connection_id: "conn_1", ingress_url: "https://gw.example.net/api/gateway/triggers/webhooks/conn_1", secret: "whsec_c2VjcmV0"}, null),
+  [trgLocalAddress("http://127.0.0.1:8080/x"), trgLocalAddress("http://192.168.1.4/x"), trgLocalAddress("http://mac.local/x"), trgLocalAddress("https://gw.example.net/x"), trgLocalAddress("https://100.64.1.2/x")]]));
 """
-    curl, panel, ok, refused, idle = _node(harness)
+    curl, panel, ok, refused, idle, public, local = _node(harness)
+    assert local == [True, True, True, False, False]
+    assert "paste the webhook address as the webhook URL, the signing secret as the secret, and choose JSON" in public
+    assert "can't reach" not in public
     assert "nothing uses this webhook yet." in idle and "fetch" not in idle
     assert "SECRET='whsec_c2VjcmV0'" in curl and "URL='http://127.0.0.1:8080/api/gateway/triggers/webhooks/conn_1'" in curl
     assert 'KEY=$(printf %s "${SECRET#whsec_}" | base64 -d | xxd -p -c 256)' in curl
     assert "openssl dgst -sha256 -mac HMAC -macopt hexkey:$KEY -binary | base64" in curl
     assert '-H "webhook-signature: v1,$SIG"' in curl
-    assert "paste the webhook address as the webhook URL, the signing secret as the secret, and choose JSON" in panel
+    # A local address: say GitHub can't reach it (UX #15), never the paste instruction.
+    assert "GitHub can't reach this computer yet. Turn on internet access under Network first." in panel
+    assert "paste the webhook address" not in panel and 'data-trg-open-network="1"' in panel
     assert 'data-trg-hook-test="1"' in panel and ">Send a signed test call</button>" in panel
     assert 'data-trg-copy="created:curl"' in panel
     assert "It worked: GitHub pushes received the call · see it under Events." in ok and "<summary>Details</summary>" in ok
@@ -419,3 +432,41 @@ console.log(JSON.stringify([
     assert "/api/gateway/me/email/accounts/${encodeURIComponent(id)}/oauth" in start and "`${base}/start`" in start and "`${base}/finish`" in start
     assert "JSON.stringify({ provider, address })" in start
     assert "err.innerHTML = `Not added. ${help}`" in _slice_function(source, "addMyMailbox")
+
+
+def test_ux_errors_feed_form_refusals_and_more_options() -> None:
+    source = _console_script()
+    harness = HELPERS + _fns(source, "webhookRefusalWords", "trgErrorText", "trgHumanize", "trgSentence", "triggerFormFields",
+                             "trgIsDuration", "trgFieldHint", "trgFieldMarkup", "triggerFormMarkup", "triggerConfigFromValues", "trgRefusalByField") + """
+const trgErr = (e) => String((e && e.message) || e);
+const feed = {type: "object", required: ["url"], properties: {
+  url: {type: "string", format: "uri", description: "the RSS 2.0 or Atom feed address (http or https)"},
+  every: {type: "string", format: "duration", pattern: "^[1-9][0-9]*[smhd]$", default: "15m"},
+  max_items: {type: "integer", minimum: 1, maximum: 50, default: 20},
+  initial_items: {type: "string", enum: ["skip", "deliver"], default: "skip"},
+}};
+const fields = triggerFormFields(feed);
+const errors = trgRefusalByField({message: "url must be an http(s) address of a feed", detail: {field: "config.url"}}, fields);
+console.log(JSON.stringify([
+  trgErrorText({source_id: "feed.item", last_error: {code: "feed_http_404", cause: "The feed answered HTTP 404.", fix: "Check the feed address."}}),
+  trgErrorText({source_id: "webhook.received", last_error: {code: "webhook_signature_invalid", cause: "A webhook call was refused (signature_invalid)."}}),
+  trgErrorText({source_id: "feed.item", last_error: null}),
+  triggerFormMarkup(fields, {url: "ftp://kept.example/x"}, errors),
+  errors,
+  triggerConfigFromValues(fields, {url: "https://example.org/f.xml", every: "2h", initial_items: '"deliver"'}).config,
+]));
+"""
+    e404, ehook, none, form, errors, config = _node(harness)
+    assert e404 == "Can't read the feed: the address answered 404 (not found). Check the feed address."
+    assert ehook == "Last call refused: the signature did not match the signing secret."
+    assert none == ""
+    # The refusal beside its field, the text kept.
+    assert errors == {"url": "Feed address: start with https:// (e.g. https://example.org/feed.xml)"}
+    assert 'value="ftp://kept.example/x"' in form and '<p class="trg-field-error" role="alert">Feed address: start with https://' in form
+    # Check every [15] [minutes]; When added: words.
+    assert 'data-trg-dur-n="every" value="15"' in form and '<option value="m" selected>minutes</option>' in form
+    assert ">Check every</label>" in form and ">When added</label>" in form
+    assert ">Ignore what is already there</option>" in form and ">Also deliver the latest items</option>" in form and "(not set)" not in form.split("When added")[1]
+    # Optional settings collapsed.
+    assert '<details class="trg-more trg-field--wide"><summary>More options</summary>' in form and form.index("More options") < form.index("Items per check")
+    assert config == {"url": "https://example.org/f.xml", "every": "2h", "initial_items": "deliver"}

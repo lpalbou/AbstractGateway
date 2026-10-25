@@ -275,7 +275,9 @@ try {
       await page.fill("#trg-f-label", "Changelog");
       await page.fill("#trg-f-url", "not a url");
       await page.click("[data-trg-create]");
-      check((await page.textContent("#trigger-modal-note")).includes("Feed address does not have the expected form."), "create: the schema's pattern is checked");
+      await page.waitForSelector("#trigger-modal-body .trg-field-error");
+      check((await page.textContent("#trigger-modal-body .trg-field-error")).startsWith("Feed address: start with https://"), "create: the refusal beside the field, in red");
+      check((await page.inputValue("#trg-f-url")) === "not a url", "create: the text is kept");
       await page.fill("#trg-f-url", "https://example.org/changelog.xml");
       await shotEl(page, "#trigger-modal-backdrop .af-modal", "triggers-create-feed-1440-light");
       await page.click("[data-trg-create]");
@@ -288,7 +290,8 @@ try {
       await page.click("#triggers-new");
       await page.waitForSelector("#trg-f-source");
       await page.selectOption("#trg-f-source", "webhook.received@1");
-      await page.waitForSelector("#trg-f-tolerance_s");
+      await page.waitForSelector("#trigger-modal-body details.trg-more");
+      check(await page.locator("#trigger-modal-body details.trg-more[open]").count() === 0, "webhook form: Name only, the rest collapsed");
       const form = await page.textContent("#trigger-modal-body");
       check(form.includes("Subject (path in the JSON body)") && form.includes("Accepted clock skew (seconds)"), "webhook form: human labels", form);
       check(!form.includes("subject_path") && !form.includes("Not editable here") && await page.locator("#trg-f-secret").count() === 0, "webhook form: no raw keys, no secret field");

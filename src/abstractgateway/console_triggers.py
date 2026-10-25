@@ -46,6 +46,14 @@ TRIGGERS_CSS = r"""
 .trg-doing { display: block; font-size: var(--font-size-md); margin: 2px 0 4px; }
 .trg-table td.trg-status .af-switch { margin-top: 2px; }
 .trg-advanced { margin-top: 4px; font-size: var(--font-size-md); }
+.trg-error { display: block; margin-top: 4px; color: var(--error, #d6336c); font-size: var(--font-size-md); }
+.trg-field-error { margin: 2px 0 0; color: var(--error, #d6336c); font-size: var(--font-size-md); }
+.trg-field input[aria-invalid="true"] { border-color: var(--error, #d6336c); }
+.trg-duration { display: flex; gap: 8px; }
+.trg-duration input { max-width: 8rem; }
+.trg-duration select { max-width: 12rem; }
+.trg-more > summary { cursor: pointer; color: var(--muted); min-height: 28px; }
+.trg-warn-line { margin: 0; color: var(--warning, #c77700); }
 .trg-advanced > summary { cursor: pointer; color: var(--muted); min-height: 24px; }
 .trg-table th.trg-col-last { width: 9rem; }
 .trg-table th.trg-col-actions { width: 15rem; }
@@ -252,6 +260,23 @@ TRIGGERS_JS = r"""
         renderTriggers();
       }
     }
+    // UX #9: the stored error (`last_error {code, cause, fix}`), in words and in red.
+    const TRG_HTTP_WORDS = { 400: "bad request", 401: "unauthorized", 403: "forbidden", 404: "not found", 410: "gone", 429: "too many requests", 500: "server error", 502: "bad gateway", 503: "unavailable" };
+    function trgErrorText(r) {
+      const e = r && r.last_error;
+      if (!e || typeof e !== "object") return "";
+      const code = String(e.code || "");
+      const cause = String(e.cause || e.message || "");
+      if (r.source_id === "feed.item" || code.startsWith("feed_")) {
+        const m = /HTTP (\d{3})/.exec(cause);
+        if (m) return `Can't read the feed: the address answered ${m[1]}${TRG_HTTP_WORDS[m[1]] ? ` (${TRG_HTTP_WORDS[m[1]]})` : ""}. Check the feed address.`;
+        if (code === "feed_unreachable") return "Can't read the feed: it could not be reached. Check the address and the network.";
+        if (code === "feed_unreadable") return "Can't read the feed: the address does not answer with an RSS or Atom feed. Check the feed address.";
+        return `Can't read the feed: ${cause}${e.fix ? ` ${e.fix}` : ""}`;
+      }
+      if (code.startsWith("webhook_")) return `Last call refused: ${webhookRefusalWords(code)}`;
+      return `${cause}${e.fix ? ` ${e.fix}` : ""}`.trim();
+    }
     function trgFireLine(fire) {
       if (!fire) return "";
       if (fire.pending) return `<span class="trg-fire" role="status">Sending a test event...</span>`;
@@ -326,7 +351,7 @@ TRIGGERS_JS = r"""
           `<button type="button" class="secondary" data-trg-delete="${id}" data-af-tip="Delete ${label}">Delete</button>`,
         ];
         let html = `<tr class="trg-row" data-trg-row="${id}">`
-          + `<td class="trg-name-cell"><span class="trg-name">${label}</span><span class="trg-sub">${phrase}</span><span class="trg-sub trg-fold">Last event: ${esc(last)}</span>${trgFireLine(o.fire && o.fire[r.connection_id])}</td>`
+          + `<td class="trg-name-cell"><span class="trg-name">${label}</span><span class="trg-sub">${phrase}</span>${trgErrorText(r) ? `<span class="trg-error" role="status">${esc(trgErrorText(r))}</span>` : ""}<span class="trg-sub trg-fold">Last event: ${esc(last)}</span>${trgFireLine(o.fire && o.fire[r.connection_id])}</td>`
           + (o.all ? `<td class="trg-account">${owner ? esc(owner) : `<span class="trg-sub">owner not reported</span>`}</td>` : "")
           + `<td class="trg-status">${trgStatusCell(r, o.automations)}</td>`
           + `<td class="trg-last">${esc(last)}</td>`
@@ -534,7 +559,7 @@ TRIGGERS_JS = r"""
       url: "Feed address",
       every: "Check every",
       max_items: "Items per check (at most)",
-      initial_items: "Items already in the feed",
+      initial_items: "When added",
     };
     function trgHumanize(key) {
       const words = String(key).replace(/_/g, " ").trim();
@@ -563,51 +588,94 @@ TRIGGERS_JS = r"""
         return { key, kind, label, description: trgSentence(p.description), required: required.has(key), schema: p };
       });
     }
-    function triggerFormMarkup(fields) {
-      return fields.map((f) => {
-        const id = `trg-f-${f.key.replace(/[^A-Za-z0-9_-]/g, "-")}`;
-        const label = `<label for="${id}">${esc(f.label)}${f.required ? " *" : ""}</label>`;
-        const help = f.description ? `<p class="trg-help">${esc(f.description)}</p>` : "";
-        const dflt = f.schema.default;
-        let control;
-        if (f.kind === "enum") {
-          control = `<select id="${id}" data-trg-field="${esc(f.key)}"><option value="">(not set)</option>`
-            + f.schema.enum.map((v) => `<option value="${esc(JSON.stringify(v))}"${JSON.stringify(v) === JSON.stringify(dflt) ? " selected" : ""}>${esc(typeof v === "string" ? v : JSON.stringify(v))}</option>`).join("")
-            + `</select>`;
-        } else if (f.kind === "boolean") {
-          control = `<select id="${id}" data-trg-field="${esc(f.key)}"><option value="">(not set)</option><option value="true"${dflt === true ? " selected" : ""}>Yes</option><option value="false"${dflt === false ? " selected" : ""}>No</option></select>`;
-        } else if (f.kind === "integer" || f.kind === "number") {
-          control = `<input id="${id}" type="number" step="${f.kind === "integer" ? "1" : "any"}" data-trg-field="${esc(f.key)}" value="${dflt === undefined ? "" : esc(dflt)}">`;
-        } else if (f.kind === "string" || f.kind === "password") {
-          const ex = Array.isArray(f.schema.examples) && f.schema.examples.length ? ` placeholder="${esc(f.schema.examples[0])}"` : "";
-          control = `<input id="${id}" type="${f.kind === "password" ? "password" : "text"}" autocomplete="off" data-trg-field="${esc(f.key)}" value="${dflt === undefined || f.kind === "password" ? "" : esc(dflt)}"${ex}>`;
-        } else {
-          control = `<pre class="trg-help">Not editable here: ${esc(JSON.stringify(f.schema))}</pre>`;
-        }
-        return `<div class="trg-field trg-field--wide">${label}${control}${help}</div>`;
-      }).join("");
+    // UX #11/#12/#13: human controls (a number + unit for a duration, words for known choices), the
+    // values kept across a refusal, each refusal beside its field in red, optional settings collapsed.
+    const TRG_DURATION_UNITS = [["s", "seconds"], ["m", "minutes"], ["h", "hours"], ["d", "days"]];
+    const TRG_ENUM_WORDS = { initial_items: { skip: "Ignore what is already there", deliver: "Also deliver the latest items" } };
+    const TRG_MORE_FIELDS = new Set(["subject_path", "tolerance_s", "max_items"]);
+    function trgIsDuration(f) {
+      return f.kind === "string" && (f.schema.format === "duration" || f.schema.pattern === "^[1-9][0-9]*[smhd]$");
+    }
+    function trgFieldMarkup(f, values, errors) {
+      const id = `trg-f-${f.key.replace(/[^A-Za-z0-9_-]/g, "-")}`;
+      const label = `<label for="${id}">${esc(f.label)}${f.required ? " *" : ""}</label>`;
+      const help = f.description ? `<p class="trg-help">${esc(f.description)}</p>` : "";
+      const err = errors && errors[f.key] ? `<p class="trg-field-error" role="alert">${esc(errors[f.key])}</p>` : "";
+      const dflt = f.schema.default;
+      const has = values && values[f.key] !== undefined;
+      const cur = has ? String(values[f.key]) : (dflt === undefined ? "" : (typeof dflt === "string" ? dflt : JSON.stringify(dflt)));
+      let control;
+      if (trgIsDuration(f)) {
+        const m = /^([1-9][0-9]*)([smhd])$/.exec(cur) || [null, "", "m"];
+        control = `<span class="trg-duration"><input id="${id}" type="number" min="1" step="1" data-trg-dur-n="${esc(f.key)}" value="${esc(m[1])}" aria-label="${esc(f.label)}">`
+          + `<select data-trg-dur-u="${esc(f.key)}" aria-label="${esc(f.label)} unit">${TRG_DURATION_UNITS.map(([u, w]) => `<option value="${u}"${u === m[2] ? " selected" : ""}>${w}</option>`).join("")}</select></span>`;
+      } else if (f.kind === "enum") {
+        const words = TRG_ENUM_WORDS[f.key] || {};
+        const sel = has ? cur : (dflt === undefined ? "" : JSON.stringify(dflt));
+        control = `<select id="${id}" data-trg-field="${esc(f.key)}">${dflt === undefined ? `<option value="">(not set)</option>` : ""}`
+          + f.schema.enum.map((v) => `<option value="${esc(JSON.stringify(v))}"${JSON.stringify(v) === sel ? " selected" : ""}>${esc(words[v] || (typeof v === "string" ? v : JSON.stringify(v)))}</option>`).join("")
+          + `</select>`;
+      } else if (f.kind === "boolean") {
+        const b = has ? cur : (dflt === undefined ? "" : String(dflt));
+        control = `<select id="${id}" data-trg-field="${esc(f.key)}"><option value="">(not set)</option><option value="true"${b === "true" ? " selected" : ""}>Yes</option><option value="false"${b === "false" ? " selected" : ""}>No</option></select>`;
+      } else if (f.kind === "integer" || f.kind === "number") {
+        control = `<input id="${id}" type="number" step="${f.kind === "integer" ? "1" : "any"}" data-trg-field="${esc(f.key)}" value="${esc(cur)}">`;
+      } else if (f.kind === "string" || f.kind === "password") {
+        const ex = Array.isArray(f.schema.examples) && f.schema.examples.length ? ` placeholder="${esc(f.schema.examples[0])}"` : "";
+        const v = f.kind === "password" && !has ? "" : cur;
+        control = `<input id="${id}" type="${f.kind === "password" ? "password" : "text"}" autocomplete="off" data-trg-field="${esc(f.key)}" value="${esc(v)}"${ex}${err ? ' aria-invalid="true"' : ""}>`;
+      } else {
+        control = `<pre class="trg-help">Not editable here: ${esc(JSON.stringify(f.schema))}</pre>`;
+      }
+      return `<div class="trg-field trg-field--wide">${label}${control}${err}${help}</div>`;
+    }
+    function triggerFormMarkup(fields, values, errors) {
+      const main = fields.filter((f) => f.required || !TRG_MORE_FIELDS.has(f.key));
+      const more = fields.filter((f) => !f.required && TRG_MORE_FIELDS.has(f.key));
+      let html = main.map((f) => trgFieldMarkup(f, values, errors)).join("");
+      if (more.length) {
+        const open = more.some((f) => errors && errors[f.key]) ? " open" : "";
+        html += `<details class="trg-more trg-field--wide"${open}><summary>More options</summary>${more.map((f) => trgFieldMarkup(f, values, errors)).join("")}</details>`;
+      }
+      return html;
     }
     // Form values -> the connection's config; returns {config, problems}. Empty = not set (the
     // source applies its default); the gateway validates the whole config again on create.
     function triggerConfigFromValues(fields, values) {
       const config = {};
       const problems = [];
+      const byField = {};
+      const problem = (f, text) => { problems.push(text); byField[f.key] = text; };
       for (const f of fields) {
         if (f.kind === "readonly") continue;
         const raw = String(values[f.key] === undefined ? "" : values[f.key]).trim();
-        if (!raw) { if (f.required) problems.push(`${f.label} is required.`); continue; }
+        if (!raw) { if (f.required) problem(f, `${f.label} is required.`); continue; }
         if (f.kind === "integer" || f.kind === "number") {
           const n = Number(raw);
-          if (!Number.isFinite(n) || (f.kind === "integer" && !Number.isInteger(n))) { problems.push(`${f.label} must be ${f.kind === "integer" ? "a whole number" : "a number"}.`); continue; }
+          if (!Number.isFinite(n) || (f.kind === "integer" && !Number.isInteger(n))) { problem(f, `${f.label} must be ${f.kind === "integer" ? "a whole number" : "a number"}.`); continue; }
           config[f.key] = n;
         } else if (f.kind === "boolean") config[f.key] = raw === "true";
         else if (f.kind === "enum") config[f.key] = JSON.parse(raw);
         else {
-          if (typeof f.schema.pattern === "string" && !new RegExp(f.schema.pattern, "u").test(raw)) { problems.push(`${f.label} does not have the expected form.`); continue; }
+          if (typeof f.schema.pattern === "string" && !new RegExp(f.schema.pattern, "u").test(raw)) { problem(f, trgFieldHint(f) || `${f.label} does not have the expected form.`); continue; }
           config[f.key] = raw;
         }
       }
-      return { config, problems };
+      return { config, problems, byField };
+    }
+    // The fix for a refused field, in words (UX #12).
+    function trgFieldHint(f) {
+      if (f.key === "url") return "Feed address: start with https:// (e.g. https://example.org/feed.xml)";
+      if (trgIsDuration(f)) return `${f.label}: a whole number of seconds, minutes, hours or days.`;
+      return "";
+    }
+    // A gateway refusal for one field (`detail.field` "config.url") → its sentence beside that field.
+    function trgRefusalByField(e, fields) {
+      const d = e && e.detail;
+      const key = d && typeof d.field === "string" ? d.field.replace(/^(trigger\.)?config\./, "") : "";
+      const f = (fields || []).find((x) => x.key === key);
+      if (!f) return null;
+      return { [f.key]: trgFieldHint(f) || `${f.label}: ${trgErr(e)}` };
     }
     function closeTriggerModal() {
       const backdrop = $("trigger-modal-backdrop");
@@ -651,8 +719,8 @@ TRIGGERS_JS = r"""
       const options = sources.map((x) => `<option value="${esc(`${x.id}@${x.version}`)}"${s && x === s ? " selected" : ""}>${esc(x.label || x.id)}</option>`).join("");
       let html = `<div class="trg-form">`
         + `<div class="trg-field"><label for="trg-f-source">What to listen to</label><select id="trg-f-source" data-trg-source><option value="">Choose…</option>${options}</select></div>`
-        + `<div class="trg-field"><label for="trg-f-label">Name *</label><input id="trg-f-label" type="text" autocomplete="off" data-trg-label value="${esc(m.label || "")}" placeholder="Release feed, Orders webhook…"><p class="trg-help">How you find it in Flow and in your automations.</p></div>`;
-      if (s) html += triggerFormMarkup(m.fields);
+        + `<div class="trg-field"><label for="trg-f-label">Name *</label><input id="trg-f-label" type="text" autocomplete="off" data-trg-label value="${esc(m.label || "")}" placeholder="Release feed, Orders webhook…">${m.errors && m.errors.__name ? `<p class="trg-field-error" role="alert">${esc(m.errors.__name)}</p>` : ""}<p class="trg-help">How you find it in Flow and in your automations.</p></div>`;
+      if (s) html += triggerFormMarkup(m.fields, m.values, m.errors);
       body.innerHTML = html + `</div>`;
       note.textContent = m.problem || "";
       actions.innerHTML = s ? `<button type="button" data-trg-create="1"${m.saving ? " disabled" : ""}>Create</button>` : "";
@@ -683,6 +751,11 @@ TRIGGERS_JS = r"""
     function trgModalValues() {
       const values = {};
       for (const el of Array.from(document.querySelectorAll("#trigger-modal-body [data-trg-field]"))) values[el.dataset.trgField] = el.value;
+      for (const el of Array.from(document.querySelectorAll("#trigger-modal-body [data-trg-dur-n]"))) {
+        const unit = document.querySelector(`#trigger-modal-body [data-trg-dur-u="${CSS.escape(el.dataset.trgDurN)}"]`);
+        const n = String(el.value || "").trim();
+        values[el.dataset.trgDurN] = n ? `${n}${unit ? unit.value : "m"}` : "";
+      }
       return values;
     }
     async function createTriggerConnection() {
@@ -691,9 +764,12 @@ TRIGGERS_JS = r"""
       const s = m.sources.find((x) => `${x.id}@${x.version}` === m.sourceKey);
       if (!s) return;
       m.label = String($("trg-f-label").value || "").trim();
-      const { config, problems } = triggerConfigFromValues(m.fields, trgModalValues());
-      if (!m.label) problems.unshift("Name is required.");
-      if (problems.length) { $("trigger-modal-note").textContent = problems.join(" "); return; }
+      m.values = trgModalValues();
+      const { config, byField } = triggerConfigFromValues(m.fields, m.values);
+      if (!m.label) byField.__name = "Name is required.";
+      m.errors = byField;
+      m.problem = "";
+      if (Object.keys(byField).length) { renderTriggerModal(); return; }
       m.saving = true;
       $("trigger-modal-note").textContent = "Creating...";
       try {
@@ -705,7 +781,9 @@ TRIGGERS_JS = r"""
         await loadTriggers();
       } catch (e) {
         m.saving = false;
-        m.problem = `Not created: ${trgErr(e)}`;
+        const one = trgRefusalByField(e, m.fields);
+        if (one) { m.errors = one; m.problem = ""; }
+        else m.problem = `Not created: ${trgErr(e)}`;
         renderTriggerModal();
       }
     }
@@ -746,10 +824,23 @@ TRIGGERS_JS = r"""
       if (r.includes("not_listening")) return "nothing uses this webhook yet.";
       return r || "the gateway did not say why.";
     }
+    // UX #15: an address only this computer (or its network) can reach.
+    function trgLocalAddress(url) {
+      let host = "";
+      try { host = new URL(String(url)).hostname.toLowerCase().replace(/^\[|\]$/g, ""); } catch { return false; }
+      if (host === "localhost" || host === "::1" || host === "0.0.0.0" || host.endsWith(".local") || host.endsWith(".localhost")) return true;
+      const m = /^(\d+)\.(\d+)\.\d+\.\d+$/.exec(host);
+      if (!m) return false;
+      const a = Number(m[1]), b = Number(m[2]);
+      return a === 127 || a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) || (a === 169 && b === 254);
+    }
     function webhookSetupMarkup(c, test) {
+      const local = trgLocalAddress(c.ingress_url);
       return `<section class="trg-field trg-field--wide trg-setup" aria-labelledby="trg-setup-title">`
         + `<h3 id="trg-setup-title" class="trg-detail__head">Set up the sender</h3>`
-        + `<p class="trg-help">GitHub, Zapier and other services: paste the webhook address as the webhook URL, the signing secret as the secret, and choose JSON as the content type.</p>`
+        + (local
+          ? `<p class="trg-warn-line" role="status">GitHub can't reach this computer yet. Turn on internet access under Network first. <button type="button" class="link-button" data-trg-open-network="1">Open Network</button></p>`
+          : `<p class="trg-help">GitHub, Zapier and other services: paste the webhook address as the webhook URL, the signing secret as the secret, and choose JSON as the content type.</p>`)
         + `<p class="trg-help">Any other sender signs each call per Standard Webhooks. From a shell (bash, openssl):</p>`
         + `<div class="trg-copy-row"><pre class="trg-code" data-trg-value="created:curl">${esc(webhookCurlExample(c.ingress_url, c.secret))}</pre>`
         + `<button type="button" class="secondary" data-trg-copy="created:curl" aria-label="Copy the signed call">Copy</button></div>`
@@ -858,6 +949,8 @@ TRIGGERS_JS = r"""
         trg.modal.sourceKey = t.value;
         const s = trg.modal.sources.find((x) => `${x.id}@${x.version}` === t.value);
         trg.modal.fields = s ? triggerFormFields(s.connection_schema) : [];
+        trg.modal.values = {};
+        trg.modal.errors = {};
         trg.modal.problem = "";
         renderTriggerModal();
       };
@@ -865,6 +958,7 @@ TRIGGERS_JS = r"""
         const t = e.target && e.target.closest ? e.target.closest("button") : null;
         if (t && t.dataset.trgCopy) trgCopy(t.dataset.trgCopy);
         else if (t && t.dataset.trgHookTest) sendSignedTestCall();
+        else if (t && t.dataset.trgOpenNetwork) { closeTriggerModal(); $("tab-button-network").click(); }
       };
       $("trigger-modal-actions").onclick = (e) => {
         const t = e.target && e.target.closest ? e.target.closest("button") : null;
