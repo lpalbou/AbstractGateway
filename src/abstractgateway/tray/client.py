@@ -167,6 +167,10 @@ class GatewayClient:
             body["error"] = str(error)[:400]
         return self._request("POST", "/me/events/notifications", body=body, timeout=6.0)
 
+    def automation(self, automation_id: str) -> Result:
+        """One automation (`GET /automations/{id}`: `{definition, active_revision, summary}`)."""
+        return self._request("GET", f"/automations/{urllib.parse.quote(str(automation_id), safe='')}", timeout=6.0)
+
     def run_wait(self, run_id: str) -> Result:
         """One run's pending wait with the tool calls awaiting approval in full
         (`GET /host/runs/{id}/wait`): what "Show and approve…" shows."""

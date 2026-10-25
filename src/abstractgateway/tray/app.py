@@ -588,22 +588,36 @@ class TrayApp:
         if live and notice is not None:
             self._show_attention(notice)
 
-    def attention_notice_text(self, notice: AttentionNotice) -> tuple:
-        """(title, message) for one attention item; the automation's own title when known."""
+    def _automation_title(self, automation_id: str) -> str:
+        """The automation's title: from the Scheduled rows already read, else `GET /automations/{id}`."""
         snap = self._snap
-        name = ""
         for row in (snap.automations if snap is not None else ()) or ():
-            if getattr(row, "automation_id", None) == notice.automation_id:
-                name = str(getattr(row, "title", "") or "")
-                break
+            if getattr(row, "automation_id", None) == automation_id:
+                title = str(getattr(row, "title", "") or "").strip()
+                if title:
+                    return title
+        if automation_id:
+            r = self.client.automation(automation_id)
+            if r.ok and isinstance(r.data, dict):
+                summary = r.data.get("summary") if isinstance(r.data.get("summary"), dict) else {}
+                definition = r.data.get("definition") if isinstance(r.data.get("definition"), dict) else {}
+                title = str(summary.get("title") or definition.get("title") or "").strip()
+                if title:
+                    return title
+        return ""
+
+    def attention_notice_text(self, notice: AttentionNotice) -> tuple:
+        """(title, message) for one attention item. Results and failures are read in the Assistant
+        (its Automations), never "the console"; a person's wait is a conversation, never a "session".
+        pystray notifications carry no click action, so the text says where to go."""
         if notice.kind == "approval":
-            return "Approval needed", "A session waits for your approval. Open it to approve or deny."
+            return "Approval needed", "A conversation waits for your approval — open the Assistant."
         if notice.kind == "question":
-            return "A question for you", "A session waits for your answer. Open it to reply."
-        name = name or "An automation"
+            return "A question for you", "A conversation waits for your answer — open the Assistant."
+        name = self._automation_title(notice.automation_id) or "An automation"
         if notice.kind == "failure":
-            return f"{name} failed", "It failed after its retries. Open the console to see what happened."
-        return name, "It has a result for you. Open the console to read it."
+            return f"{name} failed", f"{name} failed after its retries — see Automations in the Assistant."
+        return name, f"{name} has a new result — open it in the Assistant."
 
     def _show_attention(self, notice: AttentionNotice) -> None:
         title, message = self.attention_notice_text(notice)

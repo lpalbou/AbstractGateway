@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Tray notifications name where to go: "<automation title> has a new result — open it in the Assistant.",
+  "<title> failed after its retries — see Automations in the Assistant.", "A conversation waits for your approval —
+  open the Assistant." The title is read from `GET /automations/{id}` when the menu has not listed it yet.
 - **Triggers page: mailboxes are rows, not connections.** "When an email arrives" is no longer offered in **New
   connection**; your mailboxes are listed as rows of that source with **Manage under Account → My email**.
 - **Readable connection forms.** Settings show labels and help ("Subject (path in the JSON body)", "Accepted clock skew

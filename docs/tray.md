@@ -231,15 +231,18 @@ off after a break (`Last-Event-ID`), so nothing is missed and nothing is shown
 twice.
 
 - **A notification per automation item.** When an automation has something
-  for you (its occurrence asked to notify, or it failed after its retries),
-  the tray shows one notification: `<automation title>` · *It has a result
-  for you. Open the console to read it.*, or `<automation title> failed` ·
-  *It failed after its retries. Open the console to see what happened.* Items
-  that existed before the tray started are not shown again.
-- **A notification per wait on you.** A session that stops for your approval
-  (*Approval needed*) or your answer (*A question for you*) is announced once.
+  for you (its run asked to notify, or it failed after its retries), the tray
+  shows one notification: `<automation title>` · *<automation title> has a new
+  result — open it in the Assistant.*, or `<automation title> failed` ·
+  *<automation title> failed after its retries — see Automations in the
+  Assistant.* Items that existed before the tray started are not shown again.
+- **A notification per wait on you.** A conversation that stops for your
+  approval (*Approval needed* · *A conversation waits for your approval — open
+  the Assistant.*) or your answer (*A question for you*) is announced once.
+  Notifications have no click action: open the Assistant from the tray menu
+  (**Apps ▸ Launch Assistant**).
 - **The count.** The icon's tooltip says how many things wait for you
-  (`2 things waiting for you`): automation items not yet seen and sessions
+  (`2 things waiting for you`): automation items not yet seen and conversations
   waiting on you; seeing an item in a client (the console, the Assistant, the
   watch) or answering the wait lowers it.
 - **Delivery is recorded.** Each notification shown (or that this desktop

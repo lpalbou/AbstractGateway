@@ -120,7 +120,7 @@ def test_tray_follows_the_stream_notifies_live_attention_and_records_it(tmp_path
 
             stream.append("attention.raised", event_id="r3", data=_raised("auto2", 1)["data"])  # live
             _wait(lambda: len(tray._icon.shown) == 1)
-            assert tray._icon.shown[0] == ("An automation", "It has a result for you. Open the console to read it.")
+            assert tray._icon.shown[0] == ("An automation", "An automation has a new result — open it in the Assistant.")
             assert tray._attention.unseen == 2 and dirty
 
             def _reported() -> bool:
@@ -160,3 +160,34 @@ def test_badge_counts_waits_on_a_person_until_each_is_resolved() -> None:
     ledger.apply({"type": "attention.seen", "sequence": 6, "data": {**w2, "outcome": "denied"}})
     ledger.apply(_seen("auto", 1))
     assert ledger.unseen == 0
+
+
+def test_notice_copy_names_the_assistant_and_the_automation_title() -> None:
+    from types import SimpleNamespace
+
+    from abstractgateway.tray.app import TrayApp
+    from abstractgateway.tray.client import Result
+    from abstractgateway.tray.events import AttentionNotice
+
+    tray = TrayApp({"base_url": "http://127.0.0.1:9", "token": "t", "parent_pid": 0})
+    asked: list = []
+
+    def automation(aid):
+        asked.append(aid)
+        return Result(True, 200, {"summary": {"title": "Mailbox watch"}, "definition": {"title": "Mailbox watch"}})
+
+    tray.client.automation = automation  # type: ignore[method-assign]
+    notify = AttentionNotice("k1", "auto1", "notify", 1)
+    assert tray.attention_notice_text(notify) == ("Mailbox watch", "Mailbox watch has a new result — open it in the Assistant.")
+    assert asked == ["auto1"]  # not in the Scheduled rows: read from GET /automations/{id}
+    failure = AttentionNotice("k2", "auto1", "failure", 2)
+    assert tray.attention_notice_text(failure) == ("Mailbox watch failed", "Mailbox watch failed after its retries — see Automations in the Assistant.")
+    approval = AttentionNotice("k3", "", "approval", 0, run_id="r1")
+    assert tray.attention_notice_text(approval) == ("Approval needed", "A conversation waits for your approval — open the Assistant.")
+    question = AttentionNotice("k4", "", "question", 0, run_id="r1")
+    texts = [t for n in (notify, failure, approval, question) for t in tray.attention_notice_text(n)]
+    assert not any("session" in t.lower() or "console" in t.lower() for t in texts)
+    # A title already in the Scheduled rows needs no request.
+    asked.clear()
+    tray._snap = SimpleNamespace(automations=(SimpleNamespace(automation_id="auto9", title="Feed digest"),))
+    assert tray.attention_notice_text(AttentionNotice("k5", "auto9", "notify", 1))[0] == "Feed digest" and asked == []

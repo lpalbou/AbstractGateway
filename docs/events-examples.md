@@ -87,7 +87,7 @@ curl -sS "http://127.0.0.1:8080/api/gateway/me/events?after=0&limit=100" \
   -H "Authorization: Bearer <token>" | jq '.events[] | select(.type == "attention.raised")'
 ```
 
-and the gateway tray shows one notification ("Mailbox watch — It has a result for you"), recorded on
+and the gateway tray shows one notification ("Mailbox watch has a new result — open it in the Assistant."), recorded on
 the stream as `notification.sent {channel: "tray"}`. Opening the automation marks it seen
 (`attention.seen`), which lowers every badge.
 
