@@ -33,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shown once with copy buttons; administrators switch on **All accounts**. `#triggers?new=<source_id>` opens the
   dialog on a source. The terminal console has the same page (key **V**).
 - Run origin (backlog 1038): every run started through `POST /runs/start` records who started it,
-  `input_data._meta.origin = {kind: "person", actor: <account user id>, client: <request interface>, ref: {}}`,
+  `input_data._meta.origin = {kind: "person", actor: "<tenant>:<user>", client: <request interface>, ref: {}}`,
   and the `POST /runs/schedule` wrapper `kind: "system"`. The gateway writes it (a client-sent origin is
   replaced); `GET /runs/{run_id}` answers it as `origin` (null for older runs).
 - Webhook ingress for trigger connections (backlog 1042): `POST /api/gateway/triggers/webhooks/{connection_id}`,

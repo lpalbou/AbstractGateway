@@ -1,6 +1,6 @@
 """Run origin (backlog 1038, gateway part): `/runs/start` records WHO started a run.
 
-`_meta.origin = {kind: "person", actor: <principal user id>, client: <interface>, ref: {}}`
+`_meta.origin = {kind: "person", actor: "<tenant>:<user>", client: <interface>, ref: {}}`
 is stamped by the host on every person-started run, overriding anything a client sends; the
 legacy scheduled wrapper (`/runs/schedule`) is stamped `kind: "system"`. Proven with two real
 principals through the real app + auth middleware, and read back from the run store and from
@@ -33,22 +33,22 @@ def test_each_principal_is_the_actor_of_the_runs_they_start(tmp_path: Path, monk
             _write_min_bundle(bundles_dir=tmp_path / "runtime" / "users" / "default" / user / "flows")
 
         # A forged origin in the client's input is overwritten, never trusted.
-        forged = {"_meta": {"origin": {"kind": "trigger", "actor": "bob", "client": "x", "ref": {"automation_id": "a"}}}, "prompt": "hi"}
+        forged = {"_meta": {"origin": {"kind": "trigger", "actor": "default:bob", "client": "x", "ref": {"automation_id": "a"}}}, "prompt": "hi"}
         alice_run = _start(client, alice, interface="abstractassistant.chat.v1", input_data=forged)
         bob_run = _start(client, bob)
 
         a = client.get(f"/api/gateway/runs/{alice_run}", headers=alice)
         b = client.get(f"/api/gateway/runs/{bob_run}", headers=bob)
         assert a.status_code == 200 and b.status_code == 200, (a.text, b.text)
-        assert a.json()["origin"] == {"kind": "person", "actor": "alice", "client": "abstractassistant.chat.v1", "ref": {}}
-        assert b.json()["origin"] == {"kind": "person", "actor": "bob", "client": None, "ref": {}}
+        assert a.json()["origin"] == {"kind": "person", "actor": "default:alice", "client": "abstractassistant.chat.v1", "ref": {}}
+        assert b.json()["origin"] == {"kind": "person", "actor": "default:bob", "client": None, "ref": {}}
 
         # The stored run carries it inline (`vars._meta.origin`): readable from stored data alone.
         from abstractgateway.service import get_gateway_service_for_principal
 
         for user_id, run_id in (("alice", alice_run), ("bob", bob_run)):
             run = get_gateway_service_for_principal(_principal(user_id)).host.run_store.load(run_id)
-            assert run is not None and run.vars["_meta"]["origin"]["actor"] == user_id
+            assert run is not None and run.vars["_meta"]["origin"]["actor"] == f"default:{user_id}"
         # `actor_id` stays the runner's ownership marker ("gateway"): the runner ticks
         # only those runs; the principal lives in origin.actor (deviation recorded in L2).
         assert a.json()["actor_id"] == "gateway"
@@ -73,7 +73,7 @@ def test_the_legacy_scheduled_wrapper_is_a_system_run_set_up_by_the_principal(tm
         assert r.status_code == 200, r.text
         detail = client.get(f"/api/gateway/runs/{r.json()['run_id']}", headers=alice)
         assert detail.status_code == 200, detail.text
-        assert detail.json()["origin"] == {"kind": "system", "actor": "alice", "client": None, "ref": {}}
+        assert detail.json()["origin"] == {"kind": "system", "actor": "default:alice", "client": None, "ref": {}}
 
 
 def test_a_run_started_before_origin_existed_reads_none() -> None:

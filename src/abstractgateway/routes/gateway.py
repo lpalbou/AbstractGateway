@@ -9123,13 +9123,18 @@ def _audit_run_started(request: Request, *, run_id: str, selection: Dict[str, An
 
 def _stamp_run_origin(input_data: Dict[str, Any], *, kind: str, principal: GatewayPrincipal, client: Optional[str]) -> None:
     """Record who started this run, once, in the one shape of backlog 1038:
-    `_meta.origin = {kind, actor, client, ref}`. The host writes it; a client-sent
-    `_meta.origin` is overwritten, never trusted. `actor` is the principal's user id;
+    `_meta.origin = {kind, actor, client, ref}` (AbstractRuntime's `origin_for`, the shape the
+    automation controller stamps on occurrences). The host writes it; a client-sent
+    `_meta.origin` is overwritten, never trusted. `actor` is the principal, `"<tenant>:<user>"`;
     `client` the interface the request named (None when it named none)."""
+    from abstractruntime.core.run_origin import ORIGIN_KEY, origin_for
+
     meta = input_data.get("_meta")
     meta = dict(meta) if isinstance(meta, dict) else {}
     iface = str(client or "").strip() or None
-    meta["origin"] = {"kind": kind, "actor": str(principal.user_id or "").strip() or None, "client": iface, "ref": {}}
+    tenant = str(principal.tenant_id or "").strip() or "default"
+    user = str(principal.user_id or "").strip() or "local"
+    meta[ORIGIN_KEY] = origin_for(kind, actor=f"{tenant}:{user}", client=iface)
     input_data["_meta"] = meta
 
 

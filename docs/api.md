@@ -183,7 +183,7 @@ tells a restored conversation how its workflow was chosen.
 Every run also records who started it, in the run's inputs as
 `input_data._meta.origin` and on `GET /runs/{run_id}` as `origin`:
 `{kind, actor, client, ref}`. A run started through `POST /runs/start` is
-`kind: "person"` with `actor` = the calling account's user id and `client` =
+`kind: "person"` with `actor` = the calling account, `"<tenant>:<user>"`, and `client` =
 the request's `interface` (null when it names none); the wrapper run of
 `POST /runs/schedule` is `kind: "system"` with the same `actor`. The gateway
 writes it; an origin sent by the client is replaced. Runs started before this
