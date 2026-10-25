@@ -302,13 +302,13 @@ TRIGGERS_JS = r"""
     // The person's mailboxes as rows (source "When an email arrives"): an email trigger reads a mail
     // account, created and managed under Account → My email (GET /me/email/accounts).
     const TRG_MAILBOX_STATE = {
-      connected: ["Active", "is-ok"], receive_only: ["Read-only", "is-ok"], paused: ["Paused", "is-muted"],
+      connected: ["Active", "is-ok"], receive_only: ["Can't send", "is-warn"], paused: ["Paused", "is-muted"],
       needs_reconnect: ["Needs reconnecting", "is-warn"], unavailable: ["Unavailable", "is-muted"], not_connected: ["Not connected", "is-muted"],
     };
     function trgMailboxStatusChip(m) {
       const st = String((m.mailbox && m.mailbox.state) || "").trim();
       // A healthy mailbox needs no chip: the listening words say it all.
-      if (!m.enabled || st === "connected" || st === "receive_only") return "";
+      if (!m.enabled || st === "connected") return "";
       const known = TRG_MAILBOX_STATE[st];
       if (known) return `<span class="trg-chip ${known[1]}">${esc(known[0])}</span>`;
       return `<span class="trg-chip is-warn">${esc(st || "unknown")}</span>`;
@@ -331,6 +331,11 @@ TRIGGERS_JS = r"""
         renderTriggers();
       }
     }
+    // What automations may do with the mailbox, in My email's words (the gateway's `access`).
+    function trgMailboxAccessWords(m) {
+      const access = m.access || (m.can_write ? "write" : "read");
+      return access === "write" ? "Read and write" : "Read only";
+    }
     function mailboxRowsMarkup(items, opts) {
       const o = opts || {};
       return (items || []).filter((m) => m && m.configured).map((m) => {
@@ -340,7 +345,7 @@ TRIGGERS_JS = r"""
         // Named like My email: the mailbox's name (its address), the primary with "Sends as you".
         const name = m.name || m.address || m.account_id;
         return `<tr class="trg-row trg-row--mailbox" data-trg-mailbox="${id}">`
-          + `<td class="trg-name-cell"><span class="trg-name">${esc(name)}${m.primary ? `<span class="mbx-badge">Sends as you</span>` : ""}</span><span class="trg-sub">When mail arrives in ${esc(m.address || m.account_id)}${m.can_send ? "" : " · read-only"}</span><span class="trg-sub trg-fold">${esc(last.charAt(0).toUpperCase() + last.slice(1))}</span></td>`
+          + `<td class="trg-name-cell"><span class="trg-name">${esc(name)}${m.primary ? `<span class="mbx-badge">Sends as you</span>` : ""}</span><span class="trg-sub">When mail arrives in ${esc(m.address || m.account_id)} · ${esc(trgMailboxAccessWords(m))}</span><span class="trg-sub trg-fold">${esc(last.charAt(0).toUpperCase() + last.slice(1))}</span></td>`
           + `<td class="trg-status">${trgMailboxStatusCell(m, o.automations)}</td>`
           + `<td class="trg-last">${esc(last)}</td>`
           + `<td class="trg-actions-cell"><div class="trg-actions"><button type="button" class="link-button" data-trg-mailbox-manage="${id}" data-af-tip="Your mailboxes are managed in My email">Manage in My email</button></div></td></tr>`;

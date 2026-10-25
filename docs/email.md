@@ -228,11 +228,27 @@ curl -sS -X PUT -H "$AUTH" -H "Content-Type: application/json" \
   (`{"address": "me@gmail.com", "provider": "google"}`), then `…/oauth/finish` with the `flow_id`.
   A password refused by Gmail's servers answers "Gmail refuses account passwords: use an app
   password or Sign in with Google."
-- A further mailbox is **read-only** unless you ask for sending (`"send": true`): only its incoming
-  server (IMAP) is stored and tested, it shows `can_send: false`, and anything bound to it that
-  tries to send is refused ("This account has no SMTP (send) settings.").
-- `GET /me/email/accounts` lists them all with `can_read` / `can_send`, the primary (id `default`)
-  first. Your email address, notifications and Agent email tools switch stay yours, not per mailbox;
+- Each further mailbox has an **access** you choose: **Read only** (the default, `"write": false`)
+  or **Read and write** (`"write": true`). Read only stores and tests only its incoming server
+  (IMAP): automations watch and read it, and a flow's mark, label, move, delete, send, reply or
+  forward on it is refused ("This mailbox is read-only: automations only read it.", with the fix
+  "In My email, turn on Read and write for <address> to change it or send from it."). Read and
+  write also stores and tests its outgoing server (SMTP: the one you give, else the provider's or
+  the domain's standard one), so automations can change it and send as it. Your primary mailbox is
+  always read and write. (`"send": true` is accepted as the older name of `"write": true`.)
+- Change the access of a connected mailbox without adding it again: `PUT
+  /me/email/accounts/<id>/access` with `{"write": true}` or `{"write": false}` (in the console: the
+  row's **Read and write** switch). Turning it on adds and signs in to its outgoing server with the
+  stored password or Google/Microsoft sign-in; a refusal names its step and changes nothing.
+  Turning it off keeps that server, unused.
+
+  ```bash
+  curl -sS -X PUT -H "$AUTH" -H "Content-Type: application/json" \
+    -d '{"write": true}' "$BASE_URL/api/gateway/me/email/accounts/work/access"
+  ```
+
+- `GET /me/email/accounts` lists them all with `can_read` / `can_send` / `can_write` and `access`
+  (`read` | `write`), the primary (id `default`) first. Your email address, notifications and Agent email tools switch stay yours, not per mailbox;
   runs and notifications keep using the primary mailbox.
 - An automation watches one mailbox: `email.received@1` with `"account": "<mailbox_id>"` (`self`,
   `default` or no value = the primary). The gateway refuses, when the automation is saved, a

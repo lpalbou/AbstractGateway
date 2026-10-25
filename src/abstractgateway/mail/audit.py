@@ -50,6 +50,9 @@ _ALLOWED_FIELDS = frozenset(
         "discovered",
         # round 16: which sealed store moved off the OS keychain (mailbox, oauth_clients, ...)
         "store",
+        # a further mailbox's access: "read" | "write" (email.access_changed), and whether an
+        # outgoing server was added with it ("leg": "smtp")
+        "access",
     }
 )
 

@@ -67,7 +67,7 @@ function fakeStore() {
     },
     requests: [],
     mailboxes: [
-      { account_id: "default", primary: true, configured: true, address: "admin@example.org", can_read: true, can_send: true, enabled: true, folder: "INBOX", mailbox: { state: "connected" }, watcher: { state: "idle", last_poll: iso(120000) } },
+      { account_id: "default", primary: true, configured: true, address: "admin@example.org", can_read: true, can_send: true, can_write: true, access: "write", enabled: true, folder: "INBOX", mailbox: { state: "connected" }, watcher: { state: "idle", last_poll: iso(120000) } },
     ],
   };
   return s;
@@ -126,13 +126,14 @@ async function mockRoutes(ctx, store) {
       const b = JSON.parse(req.postData() || "{}");
       store.lastMailboxPut = { id, body: b };
       if (b.imap && b.imap.host === "imap.gmail.com") return route.fulfill({ status: 400, json: { detail: { reason_code: "email_auth_failed", message: "IMAP sign-in failed: [AUTHENTICATIONFAILED] Invalid credentials" } } });
-      const row = { account_id: id, primary: false, configured: true, address: b.address, name: b.name, can_read: true, can_send: !!b.send, enabled: true, folder: "INBOX", mailbox: { state: b.send ? "connected" : "receive_only", provider: "imap" }, watcher: { state: "idle" } };
+      const row = { account_id: id, primary: false, configured: true, address: b.address, name: b.name, can_read: true, can_send: !!b.write, can_write: !!b.write, access: b.write ? "write" : "read", enabled: true, folder: "INBOX", mailbox: { state: "connected", provider: "imap" }, watcher: { state: "idle" } };
       store.mailboxes = store.mailboxes.filter((m) => m.account_id !== id).concat([row]);
       return route.fulfill({ json: { ok: true, ...row } });
     }
     const m = store.mailboxes.find((x) => x.account_id === id);
     if (!m) return route.fulfill({ status: 404, json: { detail: { message: "No such mailbox." } } });
     if (sub === "enabled") { m.enabled = !!JSON.parse(req.postData() || "{}").enabled; return route.fulfill({ json: { ok: true, ...m } }); }
+    if (sub === "access") { const w = !!JSON.parse(req.postData() || "{}").write; store.lastAccessPut = { id, write: w }; Object.assign(m, { access: w ? "write" : "read", can_write: w, can_send: w }); return route.fulfill({ json: { ok: true, ...m } }); }
     if (sub === "test") return route.fulfill({ json: { ok: true } });
     if (method === "DELETE") { store.mailboxes = store.mailboxes.filter((x) => x.account_id !== id); return route.fulfill({ json: { ok: true } }); }
     return route.fulfill({ status: 405, json: {} });
@@ -437,22 +438,36 @@ try {
       check((await page.textContent("[data-mbs-found]")).trim() === "We could not find this provider's settings; enter them below.", "form: unknown provider line");
       check(await page.inputValue("#mbs-login") === "me@unknown.example", "form: Sign-in name prefilled with the address");
       await shotEl(page, "#mailbox-sheet-backdrop .af-modal", "mailbox-form-unknown-1440-light");
-      // Fastmail: an app password; Read and send off; Server settings collapsed and prefilled.
+      // Fastmail: an app password; Read and write off; Server settings collapsed and prefilled.
       await page.fill("#mbs-address", "me@fastmail.com");
       await page.waitForFunction(() => (document.querySelector("[data-mbs-found]") || {}).textContent === "Fastmail · use an app password");
       check(await page.inputValue("#mbs-password") === "", "form: another address starts the password afresh");
-      check(await page.getAttribute("#mbs-send", "aria-checked") === "false" && (await page.textContent("#mbs-send")).includes("Read and send"), "form: Read and send, off by default");
+      check(await page.getAttribute("#mbs-write", "aria-checked") === "false" && (await page.textContent("#mbs-write")).includes("Read and write"), "form: Read and write, off by default");
+      check((await page.textContent("#mailbox-sheet-body")).includes("Off: automations read this mailbox and never change it or send from it. On: they can mark, move, label, delete and send as it."), "form: Read and write says what each position means");
+      check(await page.locator("#mbs-smtp-host").count() === 0, "form: no outgoing server while Read only");
+      await page.click("#mbs-write");
+      await page.waitForSelector("#mbs-smtp-host", { state: "attached" });
+      check(await page.inputValue("#mbs-smtp-host") === "smtp.fastmail.com", "form: Read and write shows the outgoing server, prefilled");
+      await page.click("#mbs-write");
+      await page.waitForFunction(() => !document.getElementById("mbs-smtp-host"));
       check(await page.locator("details.mbs-servers:not([open])").count() === 1 && await page.inputValue("#mbs-imap-host") === "imap.fastmail.com", "form: Server settings collapsed, prefilled");
       const order = await page.$$eval("#mailbox-sheet-body label, #mailbox-sheet-body summary, #mailbox-sheet-body [role=switch]", (els) => els.map((e) => (e.getAttribute("role") === "switch" ? e.querySelector(".af-switch__label").textContent : e.textContent).trim()));
-      check(JSON.stringify(order) === JSON.stringify(["Email address", "Password", "Read and send", "Server settings", "Incoming server (IMAP)", "Port", "Security", "Sign-in name"]), "form: field order", order);
+      check(JSON.stringify(order) === JSON.stringify(["Email address", "Password", "Read and write", "Server settings", "Incoming server (IMAP)", "Port", "Security", "Sign-in name"]), "form: field order", order);
       await page.fill("#mbs-password", "app-password");
       await shotEl(page, "#mailbox-sheet-backdrop .af-modal", "mailbox-form-fastmail-1440-light");
       await page.click("#mailbox-sheet-go");
       await page.waitForSelector('[data-mbx-row="me-fastmail-com"]');
       check(await page.locator("#mailbox-sheet-backdrop").isHidden(), "form: closes after adding");
-      check(JSON.stringify(store.lastMailboxPut) === JSON.stringify({ id: "me-fastmail-com", body: { address: "me@fastmail.com", password: "app-password", test: true, imap: { host: "imap.fastmail.com", security: "ssl", port: 993 }, send: false, name: "me@fastmail.com" } }), "form: the PUT body (no name asked: the address)", store.lastMailboxPut);
+      check(JSON.stringify(store.lastMailboxPut) === JSON.stringify({ id: "me-fastmail-com", body: { address: "me@fastmail.com", password: "app-password", test: true, imap: { host: "imap.fastmail.com", security: "ssl", port: 993 }, write: false, name: "me@fastmail.com" } }), "form: the PUT body (no name asked: the address)", store.lastMailboxPut);
       const row = (await page.textContent('[data-mbx-row="me-fastmail-com"] .mbx-row__line')).replace(/\s+/g, " ").trim();
-      check(row === "me@fastmail.com · connected, reads only", "mailboxes: the added row, one line", row);
+      check(row === "me@fastmail.com · connected · Read only", "mailboxes: the added row, one line", row);
+      // The row's Read and write switch: off (Read only), turning it on PUTs …/access {write: true}.
+      const acc = page.locator("#my-mailbox-write-me-fastmail-com");
+      check((await acc.getAttribute("role")) === "switch" && (await acc.textContent()).includes("Read and write") && (await acc.getAttribute("aria-checked")) === "false", "row: Read and write switch, off");
+      await acc.click();
+      await page.waitForFunction(() => (document.querySelector('[data-mbx-row="me-fastmail-com"] .mbx-row__line') || {}).textContent.includes("Read and write"));
+      check(JSON.stringify(store.lastAccessPut) === JSON.stringify({ id: "me-fastmail-com", write: true }), "row: Read and write PUTs access {write: true}", store.lastAccessPut);
+      check(await page.getAttribute("#my-mailbox-write-me-fastmail-com", "aria-checked") === "true", "row: the switch shows the new state");
       // The row: Active switch, "…" menu Test / Settings / Remove.
       const sw = page.locator("#my-mailbox-active-me-fastmail-com");
       check((await sw.getAttribute("role")) === "switch" && (await sw.textContent()).includes("Active"), "row: Active switch");

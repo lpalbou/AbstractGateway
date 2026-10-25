@@ -41,13 +41,14 @@ def test_one_user_lists_a_primary_and_a_read_only_mailbox(gateway, imap, imap_bo
     assert r.status_code == 200, r.text
     row = r.json()
     assert (row["account_id"], row["primary"], row["address"], row["can_read"], row["can_send"]) == (WORK, False, BOB, True, False)
-    assert row["account_ref"] == "default:alice:work" and row["mailbox"]["state"] == "receive_only"
+    # Read only is the person's choice, not a fault: the mailbox is "connected", its access says the rest.
+    assert row["account_ref"] == "default:alice:work" and row["mailbox"]["state"] == "connected" and row["access"] == "read"
 
     items = c.get("/api/gateway/me/email/accounts", headers=gateway["alice"]).json()["items"]
     assert [(i["account_id"], i["address"], i["can_read"], i["can_send"]) for i in items] == [
         ("default", ALICE, True, True), (WORK, BOB, True, False)]
-    # A read-only mailbox (IMAP only) cannot be changed either (AbstractCore's can_write).
-    assert [(i["account_id"], i["can_write"]) for i in items] == [("default", True), (WORK, False)]
+    # A read-only mailbox cannot be changed either (AbstractCore's can_write); the primary is read and write.
+    assert [(i["account_id"], i["can_write"], i["access"]) for i in items] == [("default", True, "write"), (WORK, False, "read")]
     me = c.get("/api/gateway/me/email", headers=gateway["alice"]).json()
     assert [a["account_id"] for a in me["accounts"]] == ["default", WORK]
     assert me["address"] == ALICE and me["account_ref"] == "default:alice:default"  # the primary is unchanged
@@ -80,11 +81,21 @@ def test_the_single_mailbox_layout_is_unchanged(gateway, imap, smtp) -> None:
     assert mailbox_ids(plane) == ["default"]
 
 
-def test_send_true_stores_smtp_and_bad_ids_are_refused(gateway, imap_bob, smtp) -> None:
+def test_write_true_stores_smtp_and_bad_ids_are_refused(gateway, imap_bob, smtp) -> None:
     c = gateway["client"]
-    r = _connect_work(gateway, imap_bob, send=True, smtp={"host": "localhost", "port": smtp.port, "security": "starttls"})
+    r = _connect_work(gateway, imap_bob, write=True, smtp={"host": "localhost", "port": smtp.port, "security": "starttls"})
     assert r.status_code == 200, r.text
-    assert r.json()["can_send"] is True and r.json()["mailbox"]["state"] == "connected"
+    assert (r.json()["can_send"], r.json()["can_write"], r.json()["access"], r.json()["mailbox"]["state"]) == (True, True, "write", "connected")
+    # `send` is still accepted as the older name of `write`.
+    r = c.put("/api/gateway/me/email/accounts/older", headers=gateway["alice"],
+              json={"address": BOB, "password": PASSWORDS[BOB], "imap": {"host": "localhost", "port": imap_bob.port, "security": "ssl"},
+                    "send": True, "smtp": {"host": "localhost", "port": smtp.port, "security": "starttls"}})
+    assert r.status_code == 200 and r.json()["access"] == "write" and r.json()["can_send"] is True, r.text
+    # Read only (the default) never stores an outgoing server, even one given.
+    r = c.put("/api/gateway/me/email/accounts/plain", headers=gateway["alice"],
+              json={"address": BOB, "password": PASSWORDS[BOB], "imap": {"host": "localhost", "port": imap_bob.port, "security": "ssl"},
+                    "smtp": {"host": "localhost", "port": smtp.port, "security": "starttls"}})
+    assert (r.json()["access"], r.json()["can_send"]) == ("read", False)
     bad = c.put("/api/gateway/me/email/accounts/Bad..Id", headers=gateway["alice"],
                 json={"address": BOB, "password": "x", "imap": {"host": "localhost", "port": imap_bob.port}})
     assert bad.status_code == 400 and bad.json()["detail"]["reason_code"] == "email_invalid_settings"
@@ -161,7 +172,7 @@ def test_the_worker_reads_a_mailbox_only_for_its_automations_and_wakes_only_them
 
 def test_a_run_bound_to_the_work_mailbox_resolves_it_and_cannot_send(gateway, imap, imap_bob, smtp) -> None:
     from abstractcore.comms.email.context import guarded_send
-    from abstractcore.comms.email import EmailNotConfigured
+    from abstractcore.comms.email import EmailMailboxReadOnly, EmailNotConfigured
     from abstractruntime.email import EmailBinding, email_binding_for_trigger
 
     from abstractgateway.mail.core_mail import OutgoingMessage
@@ -176,7 +187,7 @@ def test_a_run_bound_to_the_work_mailbox_resolves_it_and_cannot_send(gateway, im
     binding = email_binding_for_trigger(primary, {"source_id": "email.received", "source_version": 1, "config": {"account": WORK}})
     ctx = resolve(binding, use="action")
     assert ctx.account.address == BOB and ctx.account.can_read and not ctx.account.can_send
-    with pytest.raises(EmailNotConfigured, match="no SMTP"):
+    with pytest.raises(EmailMailboxReadOnly, match="read-only"):
         guarded_send(ctx, OutgoingMessage(to=(ALICE,), subject="hi", text="x"))
     assert resolve(primary, use="action").account.address == ALICE
     for foreign in ("default:alice:nope", "default:bob:default", "default:alice:../x"):
@@ -383,3 +394,62 @@ def test_folder_roles_come_from_special_use(ca, tokens, monkeypatch) -> None:
         assert len(server.logins) == logins + 1  # the cache lasts a minute
     finally:
         server.close()
+
+
+def test_access_flips_without_reconnecting_and_runs_can_then_change_and_send(gateway, imap, imap_bob, smtp) -> None:
+    """lpalbou-gmail's case: a mailbox added Read only is turned Read and write in place; a flow's
+    Mark as read and Forward then work, with the sign-in kept."""
+    from abstractcore.comms.email.context import guarded_send
+    from abstractruntime.email import email_binding_for_trigger
+
+    from abstractgateway.mail.core_mail import OutgoingMessage
+    from abstractgateway.mail.runtime_wiring import current_binding, make_email_resolver
+
+    c = gateway["client"]
+    _connect_primary(gateway, imap, smtp)
+    assert _connect_work(gateway, imap_bob).status_code == 200
+    route = f"/api/gateway/me/email/accounts/{WORK}/access"
+    smtp_leg = {"host": "localhost", "port": smtp.port, "security": "starttls"}
+    # A refused outgoing server changes nothing and names its step.
+    bad = c.put(route, headers=gateway["alice"], json={"write": True, "smtp": {"host": "localhost", "port": 1, "security": "starttls"}})
+    assert bad.status_code >= 400 and bad.json()["detail"].get("details", {}).get("step") == "smtp", bad.text
+    assert c.get(f"/api/gateway/me/email/accounts/{WORK}", headers=gateway["alice"]).json()["access"] == "read"
+
+    r = c.put(route, headers=gateway["alice"], json={"write": True, "smtp": smtp_leg})
+    assert r.status_code == 200, r.text
+    row = r.json()
+    assert (row["ok"], row["access"], row["can_write"], row["can_send"], row["mailbox"]["state"]) == (True, "write", True, True, "connected")
+    plane = plane_of("alice")
+    binding = email_binding_for_trigger(current_binding(plane), {"source_id": "email.received", "source_version": 1, "config": {"account": WORK}})
+    ctx = make_email_resolver(plane)(binding, use="action")
+    assert ctx.account.can_write and ctx.account.can_send
+    guarded_send(ctx, OutgoingMessage(to=(ALICE,), subject="forwarded", text="x"))
+    assert len(smtp.messages) == 1
+    uid = imap_bob.add_message("INBOX", message("mark me", to=BOB))
+    ctx.client().mark([uid], seen=True)
+    assert "\\Seen" in imap_bob.flags_of("INBOX", uid)
+
+    # Back to Read only: the outgoing server is kept, unused; runs are refused again.
+    r = c.put(route, headers=gateway["alice"], json={"write": False})
+    assert (r.json()["access"], r.json()["can_write"], r.json()["can_send"]) == ("read", False, False)
+    assert not make_email_resolver(plane)(binding, use="action").account.can_write
+    # Turning it on again needs no new outgoing server.
+    assert c.put(route, headers=gateway["alice"], json={"write": True}).json()["can_send"] is True
+
+    # The primary is always read and write; another user's or an unknown mailbox is not found.
+    prim = c.put("/api/gateway/me/email/accounts/default/access", headers=gateway["alice"], json={"write": False})
+    assert prim.status_code == 400 and prim.json()["detail"]["reason_code"] == "email_invalid_settings"
+    assert c.put(route, headers=gateway["bob"], json={"write": True}).status_code == 404
+    assert c.put("/api/gateway/me/email/accounts/nope/access", headers=gateway["alice"], json={"write": True}).status_code == 404
+
+
+def test_turning_write_on_finds_the_outgoing_server_when_none_is_given(gateway, imap_bob, monkeypatch) -> None:
+    from abstractgateway.mail import accounts as mail_accounts
+
+    monkeypatch.setattr(mail_accounts, "discover_servers", lambda address, **kw: {"found": False})
+    assert _connect_work(gateway, imap_bob).status_code == 200
+    r = gateway["client"].put(f"/api/gateway/me/email/accounts/{WORK}/access", headers=gateway["alice"], json={"write": True, "test": False})
+    assert r.status_code == 200, r.text
+    cfg = json.loads((plane_of("alice").email_dir / "accounts" / WORK / "abstractcore.json").read_text())
+    acct = cfg["email"]["account"]
+    assert acct["access"] == "write" and acct["smtp"]["host"] == "smtp." + BOB.split("@")[1], acct

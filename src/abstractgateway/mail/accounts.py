@@ -299,8 +299,10 @@ def mailbox_summary(plane: EmailPlane) -> Dict[str, Any]:
         "address": str(pub.get("address") or "") or None,
         "can_read": bool(pub.get("can_read")),
         "can_send": bool(pub.get("can_send")),
-        # May the mailbox be changed (mark, label, move, delete)? AbstractCore >= 2.28: IMAP + SMTP.
+        # May automations change the mailbox (mark, label, move, delete) and send from it? The
+        # person's choice (AbstractCore 2.29 `EmailAccount.access`): `access` "read" | "write".
         "can_write": bool(pub.get("can_write")),
+        "access": (str(pub.get("access") or "") or None) if pub.get("configured") else None,
         "enabled": bool(pub.get("enabled")),
         "folder": (str(imap.get("folder") or "") or "INBOX") if imap else None,
         "mailbox": mailbox_view(plane),
@@ -1165,8 +1167,10 @@ def mailbox_view(plane: EmailPlane) -> Dict[str, Any]:
         return {"state": "needs_reconnect", "address": address, "provider": provider, "reason": REASON_MAILBOX_NEEDS_RECONNECT}
     if not pub.get("enabled"):
         return {"state": "paused", "address": address, "provider": provider, "reason": REASON_MAILBOX_PAUSED}
-    if not isinstance(pub.get("smtp"), dict):
-        # Stored before connects required both legs (gateway < 0.10.1): reads work, sends never.
+    if (pub.get("can_write") or plane.is_primary) and not isinstance(pub.get("smtp"), dict):
+        # Read and write without an outgoing server (a primary stored before connects required both
+        # legs, gateway < 0.10.1): reads and changes work, sends never. A mailbox kept Read only is
+        # "connected": its access says the rest.
         return {"state": "receive_only", "address": address, "provider": provider, "reason": REASON_MAILBOX_RECEIVE_ONLY}
     return {"state": "connected", "address": address, "provider": provider, "reason": None}
 
@@ -1465,14 +1469,15 @@ def connect_password(
     test: bool = True,
     allow_ca_file: bool = False,
     actor: str = "",
-    send: bool = True,
+    write: bool = True,
 ) -> Dict[str, Any]:
-    """Connect (test, then store) the mailbox `plane` addresses. `send=False` (a further mailbox
-    only, framework backlog 1044) stores IMAP alone: a read-only mailbox, never filled with a
-    standard SMTP leg; the primary mailbox always stores both legs."""
+    """Connect (test, then store) the mailbox `plane` addresses. `write=False` (a further mailbox
+    only, framework backlog 1044) stores IMAP alone with access "read": automations only read it,
+    never filled with a standard SMTP leg. `write=True` stores access "write" and both legs (the
+    outgoing server given, discovered or the domain's standard one), tested. The primary mailbox is
+    always read and write."""
     require_admin_email_on(plane)
-    if plane.is_primary:
-        send = True
+    send = True if plane.is_primary else bool(write)
     discovery: Optional[Dict[str, Any]] = None
     if _no_host(imap) and _no_host(smtp):
         # No servers given: discover them from the address (400 email_discovery_failed + tried).
@@ -1513,7 +1518,9 @@ def connect_password(
     # else the address's local part (AbstractCore `EmailAccountStore.connect`,
     # `default_display_name`). The login defaults to the discovered form above, else the
     # address (EmailAccount.build).
-    account = EmailAccount.build(address=address, username=username, imap=imap_s, smtp=smtp_s, display_name=display_name)
+    account = EmailAccount.build(
+        address=address, username=username, imap=imap_s, smtp=smtp_s, display_name=display_name, access="write" if send else "read"
+    )
     reg = registered_address(plane)
     try:
         store.connect(account, EmailSecret(password), test=bool(test), registered_address=reg)
@@ -1650,6 +1657,65 @@ def disconnect(plane: EmailPlane, *, actor: str = "") -> Dict[str, Any]:
     rebind_live_runtime(plane)
     audit_email_event("email.disconnected", tenant_id=plane.tenant_id, user_id=plane.user_id, actor=actor or plane.user_id, account_id=plane.account_id)
     return public_status(plane) if plane.is_primary else {"account_id": plane.account_id, "disconnected": True, "accounts": mailboxes_public(plane)}
+
+
+REASON_PRIMARY_ALWAYS_WRITE = "Your own mailbox (the one that sends as you) is always read and write."
+
+
+def set_mailbox_access(
+    plane: EmailPlane,
+    *,
+    write: bool,
+    smtp: Optional[Dict[str, Any]] = None,
+    test: bool = True,
+    allow_ca_file: bool = False,
+    actor: str = "",
+) -> Dict[str, Any]:
+    """Read only (`write=False`) or Read and write (`write=True`) for a further mailbox, without
+    connecting it again (its sign-in is kept). Turning it on for a mailbox stored without an
+    outgoing server adds one so it can send: `smtp` when given, else the provider's (Google /
+    Microsoft sign-in), else the discovered or the domain's standard server; signed in to with the
+    stored password or token first (`test`), and a refusal names the step and changes nothing.
+    Turning it off keeps a stored outgoing server, unused. The primary mailbox is always read and
+    write (400). Answers the mailbox's listing row."""
+    from .core_mail import EmailNotConfigured
+
+    require_admin_email_on(plane)
+    if plane.is_primary:
+        raise EmailInvalidSettings(REASON_PRIMARY_ALWAYS_WRITE, "Choose Read only or Read and write for another mailbox.")
+    store = account_store(plane)
+    acct = store.settings().account
+    if acct is None:
+        raise EmailNotConfigured("This mailbox is not connected.", "Add the mailbox first (My email, Add mailbox).")
+    leg = None
+    if write and acct.smtp is None:
+        raw = dict(smtp) if isinstance(smtp, dict) and str(smtp.get("host") or "").strip() else None
+        if raw is None and acct.oauth is not None and acct.oauth.provider != "custom":
+            raw = dict(provider_preset(acct.oauth.provider, tenant=acct.oauth.tenant).get("smtp") or {}) or None
+        if raw is None:
+            try:
+                found = discover_servers(acct.address)
+            except ValueError:
+                found = {"found": False}
+            raw = dict(server_defaults(acct.address, discovered=found if isinstance(found, dict) else {"found": False}).get("smtp") or {}) or None
+        if raw is None:
+            raise EmailInvalidSettings(
+                f"No outgoing server (SMTP) was found for {acct.address}.", "Give the outgoing server (host, port, security)."
+            )
+        if acct.imap is not None and acct.imap.ca_file and not str(raw.get("ca_file") or "").strip():
+            raw["ca_file"] = acct.imap.ca_file  # the mailbox's own private CA, set by an administrator
+            allow_ca_file = True
+        _imap_unused, leg = build_servers(None, raw, allow_ca_file=allow_ca_file)
+    try:
+        store.set_access("write" if write else "read", smtp=leg, test=bool(test))
+    except EmailError as err:
+        raise _named_step_error(err, password_sign_in=acct.auth_kind == "password") from None
+    rebind_live_runtime(plane)
+    audit_email_event(
+        "email.access_changed", tenant_id=plane.tenant_id, user_id=plane.user_id, actor=actor or plane.user_id,
+        account_id=plane.account_id, access="write" if write else "read", leg="smtp" if leg is not None else None,
+    )
+    return mailbox_summary(plane)
 
 
 # ---------------------------------------------------------------------------------------
@@ -1907,15 +1973,15 @@ def oauth_start(
     scopes: Optional[List[str]] = None,
     ca_file: str = "",
     is_admin: bool = False,
-    send: bool = True,
+    write: bool = True,
 ) -> Dict[str, Any]:
     """Begin an OAuth2 sign-in for the mailbox `plane` addresses (the primary, or a further
-    mailbox: framework backlog 1044). `send=False` (a further mailbox only) keeps IMAP alone:
-    the mailbox is read with XOAUTH2 and never sends; the primary always keeps both legs."""
+    mailbox: framework backlog 1044). `write=False` (a further mailbox only) keeps IMAP alone with
+    access "read": read with XOAUTH2, never changed or sent from. `write=True` keeps the provider's
+    outgoing server too (access "write"); the primary is always read and write."""
     _prune_flows()
     require_admin_email_on(plane)
-    if plane.is_primary:
-        send = True
+    send = True if plane.is_primary else bool(write)
     prov = str(provider or "").strip().lower()
     _refuse_oauth_overrides(
         prov,
@@ -1951,7 +2017,8 @@ def oauth_start(
         imap_s = replace(imap_s, ca_file=imap_s.ca_file or ca_file) if imap_s else None
         smtp_s = replace(smtp_s, ca_file=smtp_s.ca_file or ca_file) if smtp_s else None
     account = EmailAccount.build(
-        address=address, username=address, imap=imap_s, smtp=smtp_s, display_name=display_name, auth_kind="oauth2", oauth=oauth
+        address=address, username=address, imap=imap_s, smtp=smtp_s, display_name=display_name, auth_kind="oauth2", oauth=oauth,
+        access="write" if send else "read",
     )
     try:
         verify = tls_context(ca_file) if ca_file else None

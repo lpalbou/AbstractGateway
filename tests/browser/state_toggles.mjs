@@ -259,7 +259,7 @@ try {
     await page.waitForSelector("#mailbox-sheet-backdrop:not([hidden]) [data-mbs-found].is-ok", { timeout: 10000 });
     check((await page.textContent("#mailbox-sheet-title")).trim() === "Connect your mailbox" && (await page.textContent("#mailbox-sheet-go")).trim() === "Connect", "the primary: Connect", await page.textContent("#mailbox-sheet-title"));
     check(await page.inputValue("#mbs-address") === "admin@example.net" && (await page.textContent("[data-mbs-found]")).trim() === "example.net · password sign-in", "address prefilled, provider found");
-    check(await page.locator("#mbs-send").count() === 0, "the primary always sends: no Read and send switch");
+    check(await page.locator("#mbs-write").count() === 0, "the primary is always read and write: no Read and write switch");
     await page.click("details.mbs-servers > summary");
     const serverVals = await page.evaluate(() => ["imap-host", "imap-port", "smtp-host", "smtp-port", "smtp-security", "login"].map((k) => document.getElementById(`mbs-${k}`).value));
     check(JSON.stringify(serverVals) === JSON.stringify(["mail.example.net", "993", "mail.example.net", "587", "starttls", "admin@example.net"]), "Server settings prefilled from the lookup", serverVals);
@@ -422,7 +422,7 @@ try {
     // Mailboxes: the primary row, one line; its "…" → Settings opens the full editor in a dialog.
     await page.waitForSelector('#my-mailboxes-list [data-mbx-row="__primary"]', { timeout: 10000 });
     const primaryLine = (await page.textContent('[data-mbx-row="__primary"] .mbx-row__line')).replace(/\s+/g, " ").trim();
-    check(primaryLine === "alice@fastmail.com · connectedSends as you", "the primary row: address · state + Sends as you", primaryLine);
+    check(primaryLine === "alice@fastmail.com · connected · Read and writeSends as you", "the primary row: address · state · access + Sends as you", primaryLine);
     await page.click('[data-mbx-row="__primary"] .mbx-menu > summary');
     await page.click('[data-mbx-settings="__primary"]');
     await page.waitForSelector("#mailbox-settings-backdrop:not([hidden]) #my-email-connected", { state: "visible", timeout: 10000 });

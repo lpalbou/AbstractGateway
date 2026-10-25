@@ -28,10 +28,10 @@ const TRG_DURATION_UNITS = [["s", "seconds"], ["m", "minutes"], ["h", "hours"], 
 const TRG_ENUM_WORDS = { initial_items: { skip: "Ignore what is already there", deliver: "Also deliver the latest items" } };
 const TRG_MORE_FIELDS = new Set(["subject_path", "tolerance_s", "max_items"]);
 const TRG_HTTP_WORDS = { 400: "bad request", 401: "unauthorized", 403: "forbidden", 404: "not found", 410: "gone", 429: "too many requests", 500: "server error", 502: "bad gateway", 503: "unavailable" };
-const TRG_MAILBOX_STATE = { connected: ["Active", "is-ok"], receive_only: ["Read-only", "is-ok"], paused: ["Paused", "is-muted"], needs_reconnect: ["Needs reconnecting", "is-warn"], unavailable: ["Unavailable", "is-muted"], not_connected: ["Not connected", "is-muted"] };
+const TRG_MAILBOX_STATE = { connected: ["Active", "is-ok"], receive_only: ["Can't send", "is-warn"], paused: ["Paused", "is-muted"], needs_reconnect: ["Needs reconnecting", "is-warn"], unavailable: ["Unavailable", "is-muted"], not_connected: ["Not connected", "is-muted"] };
 """
 
-ROW_FNS = ("webhookRefusalWords", "trgErrorText", "trgAgo", "trgSourceLabel", "trgTriggerPhrase", "trgUsedBy", "trgListeningWords", "trgUserNames", "trgConnectionUsers", "trgMailboxUsers", "trgDoingText", "trgListenSwitch", "trgAdvancedMarkup", "trgStatusCell", "trgMailboxStatusCell", "trgMailboxStatusChip", "mailboxRowsMarkup", "trgPrincipalText", "trgStatusChip", "trgFireLine", "trgCopyRow",
+ROW_FNS = ("webhookRefusalWords", "trgErrorText", "trgAgo", "trgSourceLabel", "trgTriggerPhrase", "trgUsedBy", "trgListeningWords", "trgUserNames", "trgConnectionUsers", "trgMailboxUsers", "trgDoingText", "trgListenSwitch", "trgAdvancedMarkup", "trgStatusCell", "trgMailboxStatusCell", "trgMailboxStatusChip", "trgMailboxAccessWords", "mailboxRowsMarkup", "trgPrincipalText", "trgStatusChip", "trgFireLine", "trgCopyRow",
            "triggerEventsMarkup", "triggerDetailMarkup", "triggersRowsMarkup")
 
 SOURCES = [
@@ -237,23 +237,29 @@ def test_routes_are_the_connections_contract() -> None:
 
 def test_mailbox_sources_are_rows_not_new_connections() -> None:
     source = _console_script()
-    harness = HELPERS + _fns(source, "trgConnectableSources", "trgAgo", "trgUsedBy", "trgListeningWords", "trgUserNames", "trgMailboxUsers", "trgMailboxStatusChip", "trgMailboxStatusCell", "mailboxRowsMarkup") + """
+    harness = HELPERS + _fns(source, "trgConnectableSources", "trgAgo", "trgUsedBy", "trgListeningWords", "trgUserNames", "trgMailboxUsers", "trgMailboxStatusChip", "trgMailboxStatusCell", "trgMailboxAccessWords", "mailboxRowsMarkup") + """
 const SOURCES = [
   {id: "email.received", version: 1, label: "When an email arrives", available: true, needs_connection: true, connection_provider: "email_accounts", connection_schema: {type: "object"}},
   {id: "webhook.received", version: 1, label: "When a webhook is called", available: true, needs_connection: true, connection_provider: "trigger_connections", connection_schema: {type: "object", properties: {}}},
 ];
 const items = [
-  {account_id: "default", primary: true, configured: true, address: "me@example.org", can_send: true, enabled: true, mailbox: {state: "connected"}, watcher: {}},
-  {account_id: "work", primary: false, configured: true, address: "me@work.example", can_send: false, enabled: true, mailbox: {state: "receive_only"}, watcher: {last_poll: "2026-10-25T11:59:00Z"}},
+  {account_id: "default", primary: true, configured: true, address: "me@example.org", can_send: true, can_write: true, access: "write", enabled: true, mailbox: {state: "connected"}, watcher: {}},
+  {account_id: "work", primary: false, configured: true, address: "me@work.example", can_send: false, can_write: false, access: "read", enabled: true, mailbox: {state: "connected"}, watcher: {last_poll: "2026-10-25T11:59:00Z"}},
+  {account_id: "nosmtp", primary: false, configured: true, address: "rw@work.example", can_send: false, can_write: true, access: "write", enabled: true, mailbox: {state: "receive_only"}, watcher: {}},
   {account_id: "old", primary: false, configured: false, address: null, can_send: false, enabled: false, mailbox: {state: "not_connected"}, watcher: {}},
 ];
 console.log(JSON.stringify([trgConnectableSources(SOURCES).map((s) => s.id), mailboxRowsMarkup(items, {sources: SOURCES, now: Date.parse("2026-10-25T12:00:00Z")})]));
 """
     ids, rows = _node(harness)
     assert ids == ["webhook.received"]  # the mailbox source is never offered in New connection
-    assert rows.count('class="trg-row trg-row--mailbox"') == 2  # configured mailboxes only
-    work = rows[rows.index('data-trg-mailbox="work"'):]
-    assert '<span class="trg-name">me@work.example</span>' in work and "When mail arrives in me@work.example · read-only" in work
+    assert rows.count('class="trg-row trg-row--mailbox"') == 3  # configured mailboxes only
+    work = rows[rows.index('data-trg-mailbox="work"'):rows.index('data-trg-mailbox="nosmtp"')]
+    assert '<span class="trg-name">me@work.example</span>' in work and "When mail arrives in me@work.example · Read only" in work
+    # The access in My email's words; Read and write without an outgoing server says it can't send.
+    assert "When mail arrives in me@example.org · Read and write" in rows and "read-only" not in rows
+    nosmtp = rows[rows.index('data-trg-mailbox="nosmtp"'):]
+    assert "When mail arrives in rw@work.example · Read and write" in nosmtp and '<span class="trg-chip is-warn">Can&#39;t send</span>' in nosmtp
+    assert "trg-chip" not in work
     # The same three states with the mailbox's own switch (no used_by reported here: "Listening").
     assert '<span class="trg-doing">Listening</span>' in work and "checked 1 min ago" in work
     assert 'data-trg-mailbox-use="work"' in work and ">Listening</span>" in work and 'aria-checked="true"' in work
@@ -444,7 +450,9 @@ const MBX_PROVIDERS = {
   microsoft: { name: "Outlook", url: "https://account.live.com/proofs/manage/additional", signIn: "Sign in with Microsoft" },
 };
 const MBX_PROVIDER_NAMES = { google: "Gmail", microsoft: "Outlook", yahoo: "Yahoo Mail", icloud: "iCloud Mail", fastmail: "Fastmail" };
-const MBX_STATE = { connected: "connected", receive_only: "connected, reads only", paused: "paused", needs_reconnect: "needs reconnecting", unavailable: "turned off by your admin", not_connected: "not connected" };
+const MBX_STATE = { connected: "connected", receive_only: "connected, can't send", paused: "paused", needs_reconnect: "needs reconnecting", unavailable: "turned off by your admin", not_connected: "not connected" };
+const MBX_ACCESS_WORDS = { read: "Read only", write: "Read and write" };
+const MBX_WRITE_HELP = "Off: automations read this mailbox and never change it or send from it. On: they can mark, move, label, delete and send as it.";
 """
 GMAIL = {"address": "someone@gmail.com", "provider": "google", "display_name": "Gmail", "imap": {"host": "imap.gmail.com", "port": 993, "security": "ssl"},
          "smtp": {"host": "smtp.gmail.com", "port": 465, "security": "ssl"}, "login": "someone@gmail.com", "sign_in": ["oauth", "app_password"],
@@ -462,7 +470,7 @@ MS_ONLY = {"address": "me@outlook.com", "provider": "microsoft", "display_name":
 def test_the_mailbox_form_order_and_derived_defaults() -> None:
     """One form for the primary and the other mailboxes: Email address first; the provider found; Sign in
     or Password; Server settings collapsed unless nothing was found; Sign-in name prefilled with the
-    address; Read and send only for another mailbox with an outgoing server; no Name asked."""
+    address; Read and write (default off) only for another mailbox, its outgoing server shown when on; no Name asked."""
     source = _console_script()
     harness = HELPERS + MBX_HELPERS + _fns(source, "mailboxProviderHelpHtml", "mailboxFoundLine", "mailboxSheetMarkup", "mailboxSheetBody", "mailboxIdFromAddress") + f"""
 const st = (target, found, extra) => Object.assign({{target, address: found ? found.address : "", found, imap: found ? found.imap : {{}}, smtp: found ? (found.smtp || {{}}) : {{}}, login: found ? found.login : "", serversOpen: !!(found && found.source === "none"), errors: {{}}}}, extra || {{}});
@@ -475,12 +483,13 @@ console.log(JSON.stringify([
   [mailboxFoundLine(G), mailboxFoundLine(F), mailboxFoundLine(A), mailboxFoundLine(N), mailboxFoundLine(M), mailboxFoundLine(MO)],
   mailboxSheetMarkup(st("other", MO)),
   mailboxSheetBody(st("other", F, {{password: "pw"}})), mailboxSheetBody(st("primary", F, {{password: "pw", login: "custom"}})),
+  mailboxSheetMarkup(st("other", F, {{write: true}})), mailboxSheetBody(st("other", F, {{password: "pw", write: true}})),
   mailboxSheetBody(st("other", N, {{password: ""}})).errors,
   mailboxSheetMarkup(st("other", F, {{password: "x", errors: {{password: "Enter the password (or an app password)."}}}})),
   [mailboxIdFromAddress("Lpalbou@AbstractFramework.ai", []), mailboxIdFromAddress("a@b.co", ["a-b-co"]), mailboxIdFromAddress("default@x", [])],
 ]));
 """
-    (empty, g_oauth, g_pw, f_other, f_primary, none, ms_only, lines, ms_oauth, f_body, p_body, n_errors, f_err, ids) = _node(harness)
+    (empty, g_oauth, g_pw, f_other, f_primary, none, ms_only, lines, ms_oauth, f_body, p_body, f_write, fw_body, n_errors, f_err, ids) = _node(harness)
     # Step 1: one field, Email address (autofocus); nothing else before an address is looked up.
     assert 'for="mbs-address">Email address</label>' in empty and "autofocus" in empty
     assert "mbs-password" not in empty and "Server settings" not in empty and "Name" not in empty
@@ -493,9 +502,12 @@ console.log(JSON.stringify([
     assert order == sorted(order)
     assert '<details class="mbs-servers">' in f_other and 'id="mbs-login" data-mbs="login" autocomplete="off" spellcheck="false" value="me@fastmail.com"' in f_other
     assert 'value="imap.fastmail.com"' in f_other
-    # Read and send: another mailbox with an outgoing server only; never for the primary (it always sends).
-    assert "data-mbs-send-slot" in f_other and "data-mbs-send-slot" not in f_primary and "data-mbs-send-slot" not in none
+    # Read and write: another mailbox only (also when nothing was found); never the primary (always read and write).
+    assert "data-mbs-write-slot" in f_other and "data-mbs-write-slot" in none and "data-mbs-write-slot" not in f_primary
+    assert "data-mbs-write-slot" not in empty and "data-mbs-send-slot" not in f_other
+    # The outgoing server (SMTP) appears when Read and write is on.
     assert 'id="mbs-smtp-host"' in f_primary and 'id="mbs-smtp-host"' not in f_other
+    assert 'id="mbs-smtp-host"' in f_write and 'value="smtp.fastmail.com"' in f_write
     # Nothing found: Server settings open.
     assert '<details class="mbs-servers" open>' in none
     # A provider that only accepts its own sign-in, without a client here: said plainly, no password.
@@ -510,9 +522,10 @@ console.log(JSON.stringify([
     assert "Fastmail needs an app password (create one in your account's security settings)." in f_other
     # Bodies: no name asked (it defaults to the address); read-only by default; the primary has both legs.
     assert f_body["body"] == {"address": "me@fastmail.com", "password": "pw", "test": True,
-                              "imap": {"host": "imap.fastmail.com", "security": "ssl", "port": 993}, "send": False, "name": "me@fastmail.com"}
+                              "imap": {"host": "imap.fastmail.com", "security": "ssl", "port": 993}, "write": False, "name": "me@fastmail.com"}
+    assert fw_body["body"]["write"] is True and fw_body["body"]["smtp"] == {"host": "smtp.fastmail.com", "security": "ssl", "port": 465}
     assert p_body["body"]["smtp"] == {"host": "smtp.fastmail.com", "security": "ssl", "port": 465} and p_body["body"]["username"] == "custom"
-    assert "send" not in p_body["body"] and "name" not in p_body["body"]
+    assert "send" not in p_body["body"] and "write" not in p_body["body"] and "name" not in p_body["body"]
     assert set(n_errors) == {"password", "imap.host"}
     # Errors inline in red, the text kept.
     assert '<p class="mbs-error" role="alert">Enter the password (or an app password).</p>' in f_err and 'value="x"' in f_err and 'aria-invalid="true"' in f_err
@@ -521,24 +534,31 @@ console.log(JSON.stringify([
 
 def test_my_email_mailboxes_tab_one_list() -> None:
     source = _console_script()
-    harness = HELPERS + MBX_HELPERS + _fns(source, "mbxProviderWord", "mailboxRemoveQuestion", "mbxRowMarkup", "mbxFurther", "mbxRows", "mailboxesMarkup") + """
+    harness = HELPERS + MBX_HELPERS + _fns(source, "mbxProviderWord", "mbxAccessWords", "mailboxRemoveQuestion", "mbxRowMarkup", "mbxFurther", "mbxRows", "mailboxesMarkup") + """
 const primary = {configured: true, address: "me@gmail.com", enabled: true, oauth: {provider: "google"}, mailbox: {state: "connected"}};
 const items = [
   {account_id: "default", primary: true, configured: true, address: "me@gmail.com"},
-  {account_id: "work", primary: false, configured: true, address: "me@work.example", name: "me@work.example", can_send: false, enabled: true, folder: "INBOX", mailbox: {state: "receive_only", provider: "fastmail"}},
+  {account_id: "work", primary: false, configured: true, address: "me@work.example", name: "me@work.example", can_send: false, can_write: false, access: "read", enabled: true, folder: "INBOX", mailbox: {state: "connected", provider: "fastmail"}},
+  {account_id: "rw", primary: false, configured: true, address: "rw@work.example", can_send: true, can_write: true, access: "write", enabled: true, mailbox: {state: "connected"}},
   {account_id: "old", primary: false, configured: false},
 ];
 console.log(JSON.stringify([mailboxesMarkup(mbxRows(primary, items), {note: {}, confirm: "work"}), mailboxesMarkup(mbxRows({configured: false}, []), {})]));
 """
     html, empty = _node(harness)
     rows = re.findall(r'data-mbx-row="([^"]+)"', html)
-    assert rows == ["__primary", "work"]  # the primary first, then the others (configured only)
+    assert rows == ["__primary", "work", "rw"]  # the primary first, then the others (configured only)
     first = html[: html.index('data-mbx-row="work"')]
-    assert '<strong>me@gmail.com</strong> · <span class="mbx-sub">Gmail</span> · <span class="mbx-sub">connected</span><span class="mbx-badge">Sends as you</span>' in first
-    work = html[html.index('data-mbx-row="work"'):]
-    assert '<strong>me@work.example</strong> · <span class="mbx-sub">Fastmail</span> · <span class="mbx-sub">connected, reads only</span>' in work
+    assert ('<strong>me@gmail.com</strong> · <span class="mbx-sub">Gmail</span> · <span class="mbx-sub">connected</span> · '
+            '<span class="mbx-sub" data-mbx-access-words="__primary">Read and write</span><span class="mbx-badge">Sends as you</span>') in first
+    assert 'data-mbx-access="__primary"' not in html  # the primary is always read and write: no access switch
+    work = html[html.index('data-mbx-row="work"'):html.index('data-mbx-row="rw"')]
+    assert ('<strong>me@work.example</strong> · <span class="mbx-sub">Fastmail</span> · <span class="mbx-sub">connected</span> · '
+            '<span class="mbx-sub" data-mbx-access-words="work">Read only</span>') in work
+    assert '<span data-mbx-switch="work"></span><span data-mbx-access="work"></span>' in work  # Active, then Read and write
+    rw = html[html.index('data-mbx-row="rw"'):]
+    assert 'data-mbx-access-words="rw">Read and write</span>' in rw and 'data-mbx-access="rw"' in rw
     assert "folder" not in html and "INBOX" not in html
-    assert html.count("reads only") == 1 and "read-only" not in html and "Sends as you" not in work
+    assert "reads only" not in html and "read-only" not in html and "Sends as you" not in work
     for b in ('data-mbx-test="work">Test</button>', 'data-mbx-settings="work">Settings</button>', 'data-mbx-delete="work">Remove</button>'):
         assert b in work, b
     assert '<details class="mbx-menu"><summary aria-label="More for me@work.example">…</summary>' in work
@@ -587,3 +607,23 @@ console.log(JSON.stringify([fields.map((f) => [f.key, f.kind]), triggerFormMarku
     assert '<span class="trg-doing" data-trg-doing="f">Paused</span>' in paused
     assert row.count("Can&#39;t read the feed") == 1  # said once (the status line), not also under the name
 
+
+
+def test_mailbox_access_controls_are_wired_to_the_access_route() -> None:
+    """Read only / Read and write (framework backlog 1044 follow-up): the per-row switch PUTs
+    …/access {write}; the form's switch says what each position means, its value goes out as `write`
+    (password and Google/Microsoft sign-in), and a mailbox's Settings open with its current access."""
+    source = _console_script()
+    flat = re.sub(r"\s+", "", source).replace(",}", "}")
+    for line in MBX_HELPERS.splitlines():
+        if line.startswith(("const MBX_STATE", "const MBX_ACCESS_WORDS", "const MBX_WRITE_HELP")):
+            assert re.sub(r"\s+", "", line) in flat, line
+    render = _slice_function(source, "renderMyMailboxes")
+    assert 'label: "Read and write", checked: r.access === "write"' in render
+    assert 'api(mbxRoute(r.key, "/access"), { method: "PUT", body: JSON.stringify({ write: next }), slow: true })' in render
+    sheet = _slice_function(source, "renderMailboxSheet")
+    assert 'afSwitchCreate({ id: "mbs-write", label: "Read and write", description: MBX_WRITE_HELP, checked: !!st.write' in sheet
+    assert "Read and send" not in source and "mbs-send" not in source
+    assert "if (st.target === \"other\") start.write = !!st.write;" in _slice_function(source, "startMailboxOAuth")
+    assert 'write: !primary && !!o.write' in _slice_function(source, "openMailboxSheet")
+    assert 'm.access === "write"' in _slice_function(source, "bindMyMailboxes")

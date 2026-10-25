@@ -186,8 +186,11 @@ default and your browser remembers it.
 - **Email** opens a dialog. On your own row it is **My email**: a compact header
   (your address) and three tabs ([email.md](./email.md)). **Mailboxes**: one list,
   your primary mailbox first (badge *Sends as you*), then your other mailboxes;
-  each row is one line, *address · provider · state*, with an **Active** switch
-  and a **…** menu (**Test**, **Settings**, **Remove**); **Add mailbox** opens the
+  each row is one line, *address · provider · state · access* (*Read only* or
+  *Read and write*), with an **Active** switch, on another mailbox a **Read and
+  write** switch (on: automations may change it and send from it; turning it on
+  adds and checks its outgoing server, keeping its sign-in; your primary mailbox
+  is always read and write), and a **…** menu (**Test**, **Settings**, **Remove**); **Add mailbox** opens the
   mailbox form ([below](#the-mailbox-form)) in its own dialog. **Notifications**:
   your email address (the one inline **Save**), **Job failed** and **Approval
   needed**. **Agents**: **Agent email tools** and **Recipients and limits**.
@@ -432,7 +435,9 @@ The **Triggers** page (sidebar *Work*, `/console#triggers`) lists your trigger
 mailbox, a feed, a webhook address; flows and automations use it by name. You
 create feeds and webhooks here, once, and every automation of yours can use
 them (AbstractFlow's automation dialog offers them). Your **mailboxes** are
-listed here too (*When mail arrives in …*); you add and manage them in **My
+listed here too (*When mail arrives in … · Read only* or *· Read and write*, as
+in My email; *Can't send* when a read-and-write mailbox has no outgoing
+server); you add and manage them in **My
 email** (Accounts → your row → Email), which the row's link opens. With nothing
 yet, the page says *Nothing to listen to yet.* with **Add a mailbox (My
 email)**, **Add a feed** and **Add a webhook**.
@@ -517,13 +522,14 @@ One form connects your primary mailbox (**Connect**) and adds another one
    only accepts its own sign-in, on a gateway without that client, is said
    plainly: *Microsoft mailboxes need Sign in with Microsoft; ask your gateway
    admin to register a Microsoft sign-in client.*
-3. **Read and send** (another mailbox only, off by default, shown only when the
-   provider has an outgoing server). Off: automations read it and it never sends.
-   Your primary mailbox always sends.
+3. **Read and write** (another mailbox only, off by default). *Off: automations
+   read this mailbox and never change it or send from it. On: they can mark,
+   move, label, delete and send as it.* Your primary mailbox is always read and
+   write.
 4. **Server settings** (collapsed, prefilled from the lookup; open by itself
    only when nothing was found): incoming server, port and security, the
-   outgoing server when the mailbox sends, and **Sign-in name** (prefilled with
-   the address).
+   outgoing server (SMTP) when **Read and write** is on, and **Sign-in name**
+   (prefilled with the address).
 
 No name is asked: another mailbox is named by its address, and its id is
 derived from it (`me@fastmail.com` → `me-fastmail-com`). The gateway signs in
@@ -531,9 +537,16 @@ first and stores nothing when that fails; the refusal shows in red in the form
 with everything you typed kept. Routes: the primary through `PUT
 /api/gateway/me/email` (and `…/oauth/start|finish|cancel`); another mailbox
 through `GET /api/gateway/me/email/accounts`, `PUT|DELETE
-/api/gateway/me/email/accounts/{mailbox_id}` (`send`, `name`), `POST
-…/{mailbox_id}/test`, `PUT …/{mailbox_id}/enabled` and
-`…/{mailbox_id}/oauth/start|finish|cancel`.
+/api/gateway/me/email/accounts/{mailbox_id}` (`write`, `name`), `POST
+…/{mailbox_id}/test`, `PUT …/{mailbox_id}/enabled`, `PUT …/{mailbox_id}/access`
+(`write`) and `…/{mailbox_id}/oauth/start|finish|cancel` (`write`).
+
+In the terminal console, **My email → Mailboxes** shows each of your other
+mailboxes as one line (*address · provider · state · Read only* or *Read and
+write*) with **Active** and **Read and write** switches, and **Add mailbox**
+connects another one by password with the same **Read and write** switch (off
+by default; the outgoing server appears in Server settings when it is on).
+Google and Microsoft sign-in for another mailbox is on the web console only.
 
 ### Memory figures on Resources
 

@@ -28,16 +28,18 @@ user makes so their agents and automations can read and send mail as them.
     POST   /me/email/oauth/cancel        {flow_id}
     GET    /me/email/autodiscover?address=  provider, servers, login and sign-in methods from an address alone
     GET    /me/email/accounts            every mailbox of mine: [{account_id, primary, address, can_read,
-                                         can_send, enabled, folder, mailbox, watcher}] (backlog 1044)
+                                         can_send, can_write, access, enabled, folder, mailbox, watcher}] (backlog 1044)
     GET    /me/email/accounts/{mailbox_id}        one of them (404 email_not_configured when unknown)
     GET    /me/email/folders, /me/email/accounts/{mailbox_id}/folders   {folders: [{name, special, messages}]}
-    PUT    /me/email/accounts/{mailbox_id}        connect a further mailbox (test, then store); `send: false`
-                                         (the default) = read-only, IMAP only; `default` = PUT /me/email
+    PUT    /me/email/accounts/{mailbox_id}        connect a further mailbox (test, then store); `write: false`
+                                         (the default) = Read only, IMAP only; `write: true` = Read and write
+                                         (SMTP too); `send` = older name of `write`; `default` = PUT /me/email
+    PUT    /me/email/accounts/{mailbox_id}/access {write}  Read only / Read and write without reconnecting
     POST   /me/email/accounts/{mailbox_id}/test   sign in with the stored mailbox
     PUT    /me/email/accounts/{mailbox_id}/enabled {enabled}  "Use this mailbox" for that mailbox
     DELETE /me/email/accounts/{mailbox_id}        disconnect it (credentials and cursor deleted)
     POST   /me/email/accounts/{mailbox_id}/oauth/start|poll|finish|cancel   OAuth2 sign-in of a further
-                                         mailbox (the primary's bodies + `send`, default false: IMAP XOAUTH2 only)
+                                         mailbox (the primary's bodies + `write`, default false: IMAP XOAUTH2 only)
     GET    /me/notifications             events, channel availability, outbox summary
     PUT    /me/notifications             {email: {event: bool}}  (v1 five-kind body accepted and mapped)
     POST   /me/notifications/test        send one test notification now
@@ -235,15 +237,22 @@ class ConnectBody(BaseModel):
     test: bool = True
 
 
+WRITE_DESCRIPTION = (
+    "Read and write: automations may change this mailbox (mark, label, move, delete) and send from it (send, reply, "
+    "forward); its outgoing server (SMTP: given, discovered or the domain's standard one) is stored and tested too. "
+    "False (default): Read only, IMAP only; automations only read it."
+)
+
+
 class MailboxConnectBody(ConnectBody):
-    """A further mailbox (framework backlog 1044): read-only unless `send` is true."""
+    """A further mailbox (framework backlog 1044): Read only unless `write` is true."""
 
     model_config = ConfigDict(
         extra="forbid",
         json_schema_extra={
             "examples": [
                 {"address": "me@work.example", "password": "app-password", "imap": {"host": "imap.work.example", "port": 993, "security": "ssl"}},
-                {"address": "me@work.example", "password": "app-password", "send": True},
+                {"address": "me@work.example", "password": "app-password", "write": True},
             ]
         },
     )
@@ -251,11 +260,22 @@ class MailboxConnectBody(ConnectBody):
     name: Optional[str] = Field(
         None, max_length=120, description="The mailbox's name in your lists (\"Work\"); optional. Login defaults to the address."
     )
-    send: bool = Field(
-        False,
-        description="Also store an outgoing server (SMTP: given, discovered or the domain's standard one) so runs bound "
-        "to this mailbox can send. False (default): a read-only mailbox, IMAP only; sends from it are refused.",
-    )
+    write: bool = Field(False, description=WRITE_DESCRIPTION)
+    send: Optional[bool] = Field(None, description="Older name of `write` (true = Read and write); kept for existing callers")
+
+    @property
+    def wants_write(self) -> bool:
+        return bool(self.write or self.send)
+
+
+class MailboxAccessBody(BaseModel):
+    """Read only or Read and write for a further mailbox already connected (its sign-in is kept)."""
+
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"write": True}, {"write": False}]})
+
+    write: bool = Field(..., description="True: Read and write (adds and tests an outgoing server when it has none). False: Read only")
+    smtp: Optional[ServerBody] = Field(None, description="The outgoing server to add, optional: default the provider's, the discovered or the domain's standard one")
+    test: bool = Field(True, description="Sign in to an outgoing server being added before storing it")
 
 
 class DiscoverBody(BaseModel):
@@ -379,13 +399,18 @@ class OAuthStartBody(BaseModel):
 
 
 class MailboxOAuthStartBody(OAuthStartBody):
-    """OAuth2 sign-in of a further mailbox (framework backlog 1044): read-only unless `send`."""
+    """OAuth2 sign-in of a further mailbox (framework backlog 1044): Read only unless `write`."""
 
-    send: bool = Field(
+    write: bool = Field(
         False,
-        description="Also keep the provider's outgoing server (SMTP with XOAUTH2) so runs bound to this mailbox can send. "
-        "False (default): a read-only mailbox, IMAP (XOAUTH2) only.",
+        description="Read and write: automations may change this mailbox and send from it; the provider's outgoing server "
+        "(SMTP with XOAUTH2) is kept too. False (default): Read only, IMAP (XOAUTH2) only.",
     )
+    send: Optional[bool] = Field(None, description="Older name of `write` (true = Read and write); kept for existing callers")
+
+    @property
+    def wants_write(self) -> bool:
+        return bool(self.write or self.send)
 
 
 class FlowBody(BaseModel):
@@ -568,10 +593,12 @@ async def me_email_autodiscover(request: Request, address: str = Query(..., min_
 @router.get(
     "/me/email/accounts",
     summary="My mailboxes (the primary first)",
-    description="`{items: [{account_id, primary, account_ref, configured, address, can_read, can_send, enabled, folder, "
-    "mailbox: {state, address, provider, reason}, watcher: {state, last_poll, last_error, received}}]}`. The primary "
-    "mailbox (`default`, the one `/me/email` connects and runs are bound to) is always listed, connected or not; "
-    "further mailboxes once connected. Never a secret. A mailbox without SMTP is read-only (`can_send: false`).",
+    description="`{items: [{account_id, primary, name, account_ref, configured, address, can_read, can_send, can_write, "
+    "access: read|write|null, enabled, folder, mailbox: {state, address, provider, reason}, watcher: {state, last_poll, "
+    "last_error, received}}]}`. The primary mailbox (`default`, the one `/me/email` connects and runs are bound to) is "
+    "always listed, connected or not; further mailboxes once connected. Never a secret. `access` is the person's "
+    "choice: `read` (Read only: automations only read it) or `write` (Read and write: they may change it and, with "
+    "an outgoing server, send from it: `can_send`).",
 )
 async def me_email_accounts(request: Request) -> Any:
     _principal, plane = _self_plane(request)
@@ -608,10 +635,12 @@ async def me_email_account_get(request: Request, mailbox_id: str) -> Any:
     "/me/email/accounts/{mailbox_id}",
     summary="Connect a further mailbox (test, then store)",
     description="Like PUT /me/email for the mailbox `mailbox_id` (1-32 of a-z, 0-9, `_`, `-`): servers discovered "
-    "when `imap` and `smtp` are omitted, a failed test stores nothing and names its step. `send: false` (default) "
-    "stores IMAP only: a read-only mailbox that automations can watch (`email.received@1` with `account: "
-    "<mailbox_id>`) and that refuses sends. `send: true` also stores and tests SMTP. `mailbox_id: default` is the "
-    "primary mailbox and behaves exactly like PUT /me/email (both legs). Answers the mailbox's listing row.",
+    "when `imap` and `smtp` are omitted, a failed test stores nothing and names its step. `write: false` (default) "
+    "stores IMAP only with access `read` (Read only): automations can watch it (`email.received@1` with `account: "
+    "<mailbox_id>`) and read it, never change it or send from it. `write: true` (Read and write) also stores and tests "
+    "SMTP (given, discovered or the domain's standard one). `send` is accepted as an older name of `write`. "
+    "`mailbox_id: default` is the primary mailbox and behaves exactly like PUT /me/email (both legs, always read and "
+    "write). Answers the mailbox's listing row.",
 )
 async def me_email_account_put(request: Request, mailbox_id: str, body: MailboxConnectBody) -> Any:
     principal, plane = _self_plane(request)
@@ -629,7 +658,7 @@ async def me_email_account_put(request: Request, mailbox_id: str, body: MailboxC
             test=body.test,
             allow_ca_file=principal.is_admin(),
             actor=_actor(principal),
-            send=bool(body.send),
+            write=body.wants_write,
         )
         if not target.is_primary and body.name is not None:
             mail_accounts.set_mailbox_name(target, body.name)
@@ -645,8 +674,8 @@ async def me_email_account_put(request: Request, mailbox_id: str, body: MailboxC
 @router.post(
     "/me/email/accounts/{mailbox_id}/oauth/start",
     summary="Begin an OAuth2 sign-in for a further mailbox (Sign in with Google / Microsoft)",
-    description="The body and answer of POST /me/email/oauth/start, plus `send` (default false: read-only, IMAP with "
-    "XOAUTH2 only). The tokens are sealed in that mailbox's own store when the sign-in finishes. `mailbox_id: default` "
+    description="The body and answer of POST /me/email/oauth/start, plus `write` (default false: Read only, IMAP with "
+    "XOAUTH2 only; true: Read and write, the provider's SMTP kept too; `send` is an older name of `write`). The tokens are sealed in that mailbox's own store when the sign-in finishes. `mailbox_id: default` "
     "is the primary mailbox (both legs, like POST /me/email/oauth/start).",
 )
 async def me_email_account_oauth_start(request: Request, mailbox_id: str, body: MailboxOAuthStartBody) -> Any:
@@ -671,7 +700,7 @@ async def me_email_account_oauth_start(request: Request, mailbox_id: str, body: 
             scopes=body.scopes,
             ca_file=body.ca_file,
             is_admin=principal.is_admin(),
-            send=bool(body.send),
+            write=body.wants_write,
         )
 
     return await _call(run)
@@ -723,6 +752,32 @@ async def me_email_account_enabled(request: Request, mailbox_id: str, body: Enab
         audit_email_event("email.user_switch", tenant_id=target.tenant_id, user_id=target.user_id, account_id=target.account_id,
                           actor=_actor(principal), enabled=bool(body.enabled))
         return {"ok": True, **mail_accounts.mailbox_summary(target)}
+
+    return await _call(run)
+
+
+@router.put(
+    "/me/email/accounts/{mailbox_id}/access",
+    summary="Read only or Read and write for one of my other mailboxes",
+    description="`{write: bool, smtp?: {host, port, security}, test?: true}`. Changes a further mailbox's access without "
+    "connecting it again. `write: true` (Read and write) lets automations change it (mark, label, move, delete) and "
+    "send from it; a mailbox stored without an outgoing server gets one (`smtp`, else the provider's for a Google / "
+    "Microsoft sign-in, else the discovered or the domain's standard one), signed in to with the stored password or "
+    "token first: a refusal answers its typed error with `details.step: smtp` and changes nothing. `write: false` "
+    "(Read only) keeps a stored outgoing server, unused. 400 `email_invalid_settings` for the primary (`default`: "
+    "always read and write); 404 for a mailbox that is not yours. Answers `{ok: true, ...row}`.",
+)
+async def me_email_account_access(request: Request, mailbox_id: str, body: MailboxAccessBody) -> Any:
+    principal, plane = _self_plane(request)
+
+    def run() -> Dict[str, Any]:
+        target = _mailbox(plane, mailbox_id)
+        out = mail_accounts.set_mailbox_access(
+            target, write=body.write, smtp=_server_dict(body.smtp), test=body.test, allow_ca_file=principal.is_admin(),
+            actor=_actor(principal),
+        )
+        _reload_my_toolsets(principal, plane)
+        return {"ok": True, **out}
 
     return await _call(run)
 

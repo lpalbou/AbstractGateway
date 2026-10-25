@@ -4,8 +4,9 @@ Operator rework (2026-10-25): the dialog has a compact header ("My email" + the 
 tabs, **Mailboxes** | **Notifications** | **Agents** (console.py moves the existing cards into them).
 
 - **Mailboxes**: one list — the primary mailbox first (badge "Sends as you"), then the others; each
-  row is ONE line "address · provider · state", an **Active** switch and a "…" menu (Test, Settings,
-  Remove). **Add mailbox** opens the mailbox form as a dialog, never inline. The primary's **Settings**
+  row is ONE line "address · provider · state · Read only|Read and write", an **Active** switch, on
+  another mailbox a **Read and write** switch (`PUT /me/email/accounts/{id}/access {write}`; the
+  primary is always read and write) and a "…" menu (Test, Settings, Remove). **Add mailbox** opens the mailbox form as a dialog, never inline. The primary's **Settings**
   opens the full editor (stored servers, folder, Google/Microsoft client, Test, Disconnect) in its own
   dialog, `#mailbox-settings-backdrop` (console.py holds its markup).
 - **The mailbox form** (one component for the primary "Connect" and for another mailbox "Add
@@ -13,15 +14,16 @@ tabs, **Mailboxes** | **Notifications** | **Agents** (console.py moves the exist
   `{provider, display_name, imap, smtp|null, login, sign_in[], oauth_available, app_password_url?,
   source}` and one line says what was found. Step 2: **Sign in with Google/Microsoft** when the
   gateway has that client, else a **Password** with the provider's app-password link. **Server
-  settings** (IMAP server/port/security, outgoing server when sending, **Sign-in name** prefilled with
-  the address) stay collapsed unless nothing was found. **Read and send** (another mailbox only, off
-  by default) appears only when the provider has an outgoing server. No name is asked: the id is
+  settings** (IMAP server/port/security, the outgoing server when the mailbox may write, **Sign-in
+  name** prefilled with the address) stay collapsed unless nothing was found. **Read and write**
+  (another mailbox only, off by default: automations only read it; on: they may mark, move, label,
+  delete and send as it) shows the outgoing server (SMTP) settings. No name is asked: the id is
   derived from the address.
 
 Routes: primary = the email UI's base (`myEmailApi()`: `/me/email`, or an entity's own `/accounts/<id>/email`):
 PUT base, POST base/test, PUT base/enabled, DELETE base, base/oauth/start|finish|cancel. Others (own account
-only): GET /me/email/accounts, PUT|DELETE /me/email/accounts/{id} (`send`), POST …/test, PUT …/enabled,
-…/oauth/start|finish|cancel. Spliced into the console script scope: `api`, `esc`, `$`, `state`, `afSwitchCreate`,
+only): GET /me/email/accounts, PUT|DELETE /me/email/accounts/{id} (`write`), POST …/test, PUT …/enabled,
+PUT …/access, …/oauth/start|finish|cancel (`write`). Spliced into the console script scope: `api`, `esc`, `$`, `state`, `afSwitchCreate`,
 `afSwitchBind`, `emailErrorText`, `myEmailUi`, `myEmailApi`, `loadMyEmail`, `bindAccountModal`, `trgAgo`,
 `trgLoadingMarkup` are the console's own.
 """
@@ -93,7 +95,7 @@ MAILBOXES_JS = r"""
       microsoft: { name: "Outlook", url: "https://account.live.com/proofs/manage/additional", signIn: "Sign in with Microsoft" },
     };
     const MBX_STATE = {
-      connected: "connected", receive_only: "connected, reads only", paused: "paused",
+      connected: "connected", receive_only: "connected, can't send", paused: "paused",
       needs_reconnect: "needs reconnecting", unavailable: "turned off by your admin", not_connected: "not connected",
     };
     function mbxOwnPage() { return !myEmailUi.base; }
@@ -131,6 +133,12 @@ MAILBOXES_JS = r"""
     function mbxProviderWord(provider) {
       return MBX_PROVIDER_NAMES[provider] || "";
     }
+    // What automations may do with a mailbox, in words (the gateway's `access`; the primary is always read and write).
+    const MBX_ACCESS_WORDS = { read: "Read only", write: "Read and write" };
+    const MBX_WRITE_HELP = "Off: automations read this mailbox and never change it or send from it. On: they can mark, move, label, delete and send as it.";
+    function mbxAccessWords(access) {
+      return MBX_ACCESS_WORDS[access] || "";
+    }
     function mbxRowMarkup(row, opts) {
       const o = opts || {};
       const key = esc(row.key);
@@ -138,9 +146,10 @@ MAILBOXES_JS = r"""
       const provider = mbxProviderWord(row.provider);
       if (provider) parts.push(`<span class="mbx-sub">${esc(provider)}</span>`);
       parts.push(`<span class="mbx-sub">${esc(row.enabled === false ? "not in use" : (MBX_STATE[row.state] || row.state || "unknown"))}</span>`);
+      if (mbxAccessWords(row.access)) parts.push(`<span class="mbx-sub" data-mbx-access-words="${key}">${esc(mbxAccessWords(row.access))}</span>`);
       const note = o.note && o.note[row.key];
       let html = `<li class="mbx-row" data-mbx-row="${key}"><span class="mbx-row__line">${parts.join(" · ")}${row.primary ? `<span class="mbx-badge">Sends as you</span>` : ""}</span>`
-        + `<span class="mbx-row__actions"><span data-mbx-switch="${key}"></span>`
+        + `<span class="mbx-row__actions"><span data-mbx-switch="${key}"></span>${row.primary ? "" : `<span data-mbx-access="${key}"></span>`}`
         + `<details class="mbx-menu"><summary aria-label="More for ${esc(row.address || row.key)}">…</summary><div class="mbx-menu__list">`
         + `<button type="button" data-mbx-test="${key}">Test</button><button type="button" data-mbx-settings="${key}">Settings</button><button type="button" data-mbx-delete="${key}">Remove</button>`
         + `</div></details></span>`;
@@ -162,10 +171,10 @@ MAILBOXES_JS = r"""
       const rows = [];
       const d = primary || {};
       if (d.configured) {
-        rows.push({ key: "__primary", primary: true, address: d.address, provider: (d.oauth && d.oauth.provider) || (d.mailbox && d.mailbox.provider) || "", state: (d.mailbox && d.mailbox.state) || "connected", enabled: d.enabled !== false });
+        rows.push({ key: "__primary", primary: true, address: d.address, provider: (d.oauth && d.oauth.provider) || (d.mailbox && d.mailbox.provider) || "", state: (d.mailbox && d.mailbox.state) || "connected", enabled: d.enabled !== false, access: "write" });
       }
       for (const m of mbxFurther(items)) {
-        rows.push({ key: m.account_id, primary: false, name: m.name && m.name !== m.address ? `${m.name} (${m.address})` : "", address: m.address, provider: (m.mailbox && m.mailbox.provider) || "", state: (m.mailbox && m.mailbox.state) || "", enabled: !!m.enabled });
+        rows.push({ key: m.account_id, primary: false, name: m.name && m.name !== m.address ? `${m.name} (${m.address})` : "", address: m.address, provider: (m.mailbox && m.mailbox.provider) || "", state: (m.mailbox && m.mailbox.state) || "", enabled: !!m.enabled, access: m.access || (m.can_write ? "write" : "read") });
       }
       return rows;
     }
@@ -214,6 +223,18 @@ MAILBOXES_JS = r"""
           await mbxReload(r.key);
           return next;
         }, (e) => { mbx.note[r.key] = { ok: false, text: `Not saved: ${emailErrorText(e)}` }; renderMyMailboxes(); });
+        // Another mailbox: Read and write (on) or Read only (off). Turning it on adds and tests its outgoing server.
+        const accessSlot = list.querySelector(`[data-mbx-access="${CSS.escape(r.key)}"]`);
+        if (!accessSlot) continue;
+        const asw = afSwitchCreate({ id: `my-mailbox-write-${r.key}`, label: "Read and write", checked: r.access === "write", small: true });
+        accessSlot.append(...asw.nodes);
+        afSwitchBind(asw.button, async (next) => {
+          if (next) { mbx.note[r.key] = { ok: true, text: "Checking its outgoing server..." }; renderMyMailboxes(); }
+          await api(mbxRoute(r.key, "/access"), { method: "PUT", body: JSON.stringify({ write: next }), slow: true });
+          delete mbx.note[r.key];
+          await mbxReload(r.key);
+          return next;
+        }, (e) => { mbx.note[r.key] = { ok: false, text: `Not saved: ${emailErrorText(e)}` }; renderMyMailboxes(); });
       }
       $("my-mailbox-add").hidden = state.myEmail && state.myEmail.email_available === false;
     }
@@ -252,7 +273,7 @@ MAILBOXES_JS = r"""
     }
     // ---- the mailbox form (a dialog): Email address → Sign in / Password → Server settings ----
     // st: {target: "primary"|"other", id, address, found, finding, usePassword, password, login, imap, smtp,
-    //      serversOpen, send, errors, problem, saving}
+    //      serversOpen, write, errors, problem, saving}
     function mailboxSheetMarkup(st) {
       const e = st.errors || {};
       const err = (k) => e[k] ? `<p class="mbs-error" role="alert">${esc(e[k])}</p>` : "";
@@ -283,11 +304,11 @@ MAILBOXES_JS = r"""
             + (help ? `<p class="af-form__help" data-mbs-help>${help}</p>` : `<p class="af-form__help">Use an app password if your provider needs one. Stored encrypted, never shown.</p>`)
             + `${err("password")}</div>`;
         }
-        if (st.target === "other" && d.smtp && d.smtp.host) {
-          html += `<div data-mbs-send-slot></div>`;
+        if (st.target === "other") {
+          html += `<div data-mbs-write-slot></div>`;
         }
         const im = st.imap || {}, sm = st.smtp || {};
-        const showSmtp = st.target === "primary" || st.send;
+        const showSmtp = st.target === "primary" || st.write;
         html += `<details class="mbs-servers"${st.serversOpen ? " open" : ""}><summary>Server settings</summary><div class="mbs-servers__grid">`
           + `<div class="af-form__field"><label class="af-form__label" for="mbs-imap-host">Incoming server (IMAP)</label><input id="mbs-imap-host" data-mbs="imap.host" autocomplete="off" spellcheck="false" value="${esc(im.host || "")}"${inv("imap.host")}>${err("imap.host")}</div>`
           + `<div class="af-form__field"><label class="af-form__label" for="mbs-imap-port">Port</label><input id="mbs-imap-port" data-mbs="imap.port" inputmode="numeric" value="${esc(im.port || "")}"></div>`
@@ -311,7 +332,7 @@ MAILBOXES_JS = r"""
       if (!String(st.password || "")) errors.password = "Enter the password (or an app password).";
       const im = st.imap || {}, sm = st.smtp || {};
       if (!String(im.host || "").trim()) errors["imap.host"] = "Enter the incoming server (Server settings).";
-      const sending = st.target === "primary" || st.send;
+      const sending = st.target === "primary" || st.write;
       if (st.target === "primary" && String(im.host || "").trim() && !String(sm.host || "").trim()) errors["smtp.host"] = "Enter the outgoing server too.";
       if (Object.keys(errors).length) return { errors };
       const leg = (l) => {
@@ -323,7 +344,7 @@ MAILBOXES_JS = r"""
       const login = String(st.login || "").trim();
       if (login && login.toLowerCase() !== address.toLowerCase()) body.username = login;
       if (sending && String(sm.host || "").trim()) body.smtp = leg(sm);
-      if (st.target === "other") { body.send = !!st.send; body.name = address; }
+      if (st.target === "other") { body.write = !!st.write; body.name = address; }
       return { body, errors: {} };
     }
     function openMailboxSheet(opts) {
@@ -334,7 +355,7 @@ MAILBOXES_JS = r"""
       const address = primary ? (o.settings ? (d.address || "") : (d.email_address || "")) : (o.address || "");
       mbx.sheet = {
         target: primary ? "primary" : "other", id: o.id || "", address, lockAddress: !!(o.settings && !primary), found: null, finding: false,
-        usePassword: false, password: "", login: "", imap: {}, smtp: {}, serversOpen: false, send: false, errors: {}, problem: "", saving: false,
+        usePassword: false, password: "", login: "", imap: {}, smtp: {}, serversOpen: false, write: !primary && !!o.write, errors: {}, problem: "", saving: false,
       };
       $("mailbox-sheet-title").textContent = primary ? (o.settings ? "Mailbox settings" : "Connect your mailbox") : (o.settings ? "Mailbox settings" : "Add mailbox");
       $("mailbox-sheet-go").textContent = primary ? "Connect" : (o.settings ? "Save" : "Add mailbox");
@@ -380,11 +401,11 @@ MAILBOXES_JS = r"""
         const el = $(keep.id);
         try { el.focus(); if (keep.a != null && el.setSelectionRange) el.setSelectionRange(keep.a, keep.b); } catch {}
       }
-      const slot = document.querySelector("#mailbox-sheet-body [data-mbs-send-slot]");
+      const slot = document.querySelector("#mailbox-sheet-body [data-mbs-write-slot]");
       if (slot) {
-        const sw = afSwitchCreate({ id: "mbs-send", label: "Read and send", description: "Off: automations read this mailbox and it never sends.", checked: !!st.send, small: true });
+        const sw = afSwitchCreate({ id: "mbs-write", label: "Read and write", description: MBX_WRITE_HELP, checked: !!st.write, small: true });
         slot.append(...sw.nodes);
-        afSwitchBind(sw.button, async (next) => { mbxCollectSheet(); st.send = next; renderMailboxSheet(); return next; }, () => {});
+        afSwitchBind(sw.button, async (next) => { mbxCollectSheet(); st.write = next; renderMailboxSheet(); return next; }, () => {});
       }
       const d = st.found;
       const passwordOk = d && (!Array.isArray(d.sign_in) || d.sign_in.includes("password") || d.sign_in.includes("app_password"));
@@ -409,7 +430,7 @@ MAILBOXES_JS = r"""
       }
       if (mbx.sheet !== st || String(st.address).trim().toLowerCase() !== String(d.address || a).toLowerCase()) return;
       st.finding = false;
-      if (st.found && st.found.address !== d.address) { st.password = ""; st.usePassword = false; st.send = false; }  // another address: start step 2 afresh
+      if (st.found && st.found.address !== d.address) { st.password = ""; st.usePassword = false; st.write = false; }  // another address: start step 2 afresh
       st.found = d;
       st.imap = Object.assign({}, d.imap || {});
       st.smtp = Object.assign({}, d.smtp || {});
@@ -464,7 +485,9 @@ MAILBOXES_JS = r"""
       const note = $("mailbox-sheet-note");
       let out;
       try {
-        out = await api(`${base}/start`, { method: "POST", body: JSON.stringify({ provider, address: String(st.address || "").trim() }), slow: true });
+        const start = { provider, address: String(st.address || "").trim() };
+        if (st.target === "other") start.write = !!st.write;
+        out = await api(`${base}/start`, { method: "POST", body: JSON.stringify(start), slow: true });
       } catch (e) {
         st.problem = `Not signed in: ${emailErrorText(e)}`;
           renderMailboxSheet();
@@ -553,7 +576,7 @@ MAILBOXES_JS = r"""
           const key = t.dataset.mbxSettings;
           const m = (mbx.items || []).find((x) => x.account_id === key);
           if (key === "__primary") openPrimaryMailboxSettings();
-          else openMailboxSheet({ target: "other", settings: true, id: key, address: m ? m.address : "" });
+          else openMailboxSheet({ target: "other", settings: true, id: key, address: m ? m.address : "", write: !!(m && (m.access === "write" || (!m.access && m.can_write))) });
         }
         else if (t.dataset.mbxDelete) { mbx.confirm = t.dataset.mbxDelete; renderMyMailboxes(); }
         else if (t.dataset.mbxDeleteCancel) { mbx.confirm = ""; renderMyMailboxes(); }
