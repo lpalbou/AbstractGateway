@@ -176,6 +176,12 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     ("POST", "/api/gateway/me/email/accounts/{mailbox_id}/test"),
     ("PUT", "/api/gateway/me/email/accounts/{mailbox_id}/enabled"),
     ("DELETE", "/api/gateway/me/email/accounts/{mailbox_id}"),
+    # OAuth2 sign-in of a further mailbox: the same plane rule; a flow belongs to the user AND the
+    # mailbox it was started for (another user's or another mailbox's flow reads as unknown).
+    ("POST", "/api/gateway/me/email/accounts/{mailbox_id}/oauth/start"),
+    ("POST", "/api/gateway/me/email/accounts/{mailbox_id}/oauth/poll"),
+    ("POST", "/api/gateway/me/email/accounts/{mailbox_id}/oauth/finish"),
+    ("POST", "/api/gateway/me/email/accounts/{mailbox_id}/oauth/cancel"),
     # Entity mailboxes (round 3 §3.1): the /accounts/{account_id}/... mirror of the
     # routes above. The handler (routes/email.py `_entity_target`) admits only an
     # admin or the entity's CREATOR, refuses user targets, entities the caller

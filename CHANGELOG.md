@@ -36,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Sign in with Google (or Microsoft) for further mailboxes.** `POST /api/gateway/me/email/accounts/{mailbox_id}/oauth/start|poll|finish|cancel` take the primary mailbox's OAuth2 bodies and answers, plus `send` (default false: read-only, IMAP with XOAUTH2 only); the tokens are sealed in that mailbox's own store and a sign-in belongs to the user and the mailbox it was started for. A password refused by Gmail's servers now says "Gmail refuses account passwords: use an app password or Sign in with Google."
+
 - Workflow `automation_defaults` accept `context.growing.max_tokens` (a positive whole number, growing mode
   only): stored, published, and copied into the automations created from them. `GET /api/gateway/automations/defaults`
   (`{growing_max_tokens}`, the gateway's default budget) is documented as the value clients show.

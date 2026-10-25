@@ -41,7 +41,26 @@ from typing import Any, Callable, Dict, Optional
 
 from .core_mail import EmailError
 
-from .accounts import EmailPlane, account_store, admin_email_enabled, email_context, _read_json, _write_private_json, needs_reconnect
+from . import accounts as _accounts
+from .accounts import EmailPlane, _read_json, _write_private_json
+
+# Looked up on the module at each call (never bound at import): a test that patches
+# `accounts.account_store` while this module is first imported must not leave its stub here.
+def account_store(plane: EmailPlane) -> Any:
+    return _accounts.account_store(plane)
+
+
+def admin_email_enabled(plane: EmailPlane) -> bool:
+    return _accounts.admin_email_enabled(plane)
+
+
+def email_context(plane: EmailPlane, **kw: Any) -> Any:
+    return _accounts.email_context(plane, **kw)
+
+
+def needs_reconnect(plane: EmailPlane) -> bool:
+    return _accounts.needs_reconnect(plane)
+
 from .audit import audit_email_event
 
 DEFAULT_INTERVAL_S = 60.0

@@ -223,6 +223,11 @@ curl -sS -X PUT -H "$AUTH" -H "Content-Type: application/json" \
   "$BASE_URL/api/gateway/me/email/accounts/work"
 ```
 
+- Gmail (and other providers that refuse account passwords) signs in with OAuth2 instead:
+  `POST /me/email/accounts/<id>/oauth/start` with the same body as the primary's sign-in
+  (`{"address": "me@gmail.com", "provider": "google"}`), then `…/oauth/finish` with the `flow_id`.
+  A password refused by Gmail's servers answers "Gmail refuses account passwords: use an app
+  password or Sign in with Google."
 - A further mailbox is **read-only** unless you ask for sending (`"send": true`): only its incoming
   server (IMAP) is stored and tested, it shows `can_send: false`, and anything bound to it that
   tries to send is refused ("This account has no SMTP (send) settings.").

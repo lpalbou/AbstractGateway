@@ -221,3 +221,115 @@ def test_disconnecting_the_work_mailbox_removes_it_from_the_list(gateway, imap, 
     assert c.get("/api/gateway/me/email", headers=gateway["alice"]).json()["mailbox"]["state"] == "connected"
     audit = [json.loads(x) for x in (gateway["data_dir"] / "audit_log.jsonl").read_text().splitlines() if '"event"' in x]
     assert any(e["event"] == "email.disconnected" and e.get("account_id") == WORK for e in audit)
+
+
+def _oauth_body(oauth_server, imap, ca, **extra) -> dict:
+    return {
+        "address": ALICE,
+        "provider": "custom",
+        "client_id": oauth_server.client_id,
+        "client_secret": oauth_server.client_secret,
+        "flow": "device",
+        "token_endpoint": f"{oauth_server.base_url}/token",
+        "device_authorization_endpoint": f"{oauth_server.base_url}/device",
+        "scopes": ["mail"],
+        "imap": {"host": "localhost", "port": imap.port, "security": "ssl"},
+        "ca_file": str(ca.ca_pem),
+        **extra,
+    }
+
+
+def test_a_further_mailbox_signs_in_with_oauth_read_only(gateway, imap_bob, smtp, oauth_server, ca) -> None:
+    """Gmail refuses account passwords over IMAP: a further mailbox signs in with OAuth2 (the
+    primary's flow), its tokens sealed in its own store, IMAP XOAUTH2 only unless `send`."""
+    from email_fixtures import ADMIN
+
+    from abstractgateway.mail.accounts import default_plane
+    from abstractgateway.users import GatewayUserRegistry
+
+    GatewayUserRegistry().create_user(user_id="admin", roles=["admin", "user"], email=ALICE)  # custom endpoints: admin only
+    c = gateway["client"]
+    base = f"/api/gateway/me/email/accounts/{WORK}/oauth"
+    # An SMTP leg in the body is dropped: without `send` the mailbox is read-only.
+    r = c.post(f"{base}/start", headers=ADMIN, json=_oauth_body(oauth_server, imap_bob, ca, smtp={"host": "localhost", "port": smtp.port, "security": "starttls"}))
+    assert r.status_code == 200, r.text
+    flow = r.json()
+    assert flow["flow"] == "device" and "device_code" not in flow
+    assert c.post(f"{base}/poll", headers=ADMIN, json={"flow_id": flow["flow_id"]}).json()["pending"] is True
+    # The flow belongs to this mailbox of this user: not the primary's route, not another user.
+    other_box = c.post("/api/gateway/me/email/oauth/finish", headers=ADMIN, json={"flow_id": flow["flow_id"]})
+    assert other_box.status_code == 422 and other_box.json()["detail"]["reason_code"] == "email_oauth_failed"
+    other_user = c.post(f"{base}/finish", headers=gateway["bob"], json={"flow_id": flow["flow_id"]})
+    assert other_user.status_code == 422
+
+    oauth_server.approve_all_devices()
+    done = c.post(f"{base}/finish", headers=ADMIN, json={"flow_id": flow["flow_id"], "wait_s": 5})
+    assert done.status_code == 200, done.text
+    row = done.json()
+    assert (row["ok"], row["account_id"], row["address"], row["can_read"], row["can_send"]) == (True, WORK, ALICE, True, False)
+    assert oauth_server.client_secret not in done.text
+    items = c.get("/api/gateway/me/email/accounts", headers=ADMIN).json()["items"]
+    assert [(i["account_id"], i["configured"]) for i in items] == [("default", False), (WORK, True)]  # the primary untouched
+    assert c.post(f"/api/gateway/me/email/accounts/{WORK}/test", headers=ADMIN).json()["imap"]["ok"] is True
+
+    plane = default_plane(gateway["data_dir"])
+    sealed = plane.email_dir / "accounts" / WORK / "email" / "secret.enc"
+    cfg = (plane.email_dir / "accounts" / WORK / "abstractcore.json").read_text()
+    assert sealed.is_file() and '"oauth2"' in cfg and oauth_server.client_secret not in cfg
+    assert not (plane.email_dir / "account" / "email" / "secret.enc").exists()
+
+
+def test_further_mailbox_oauth_with_send_keeps_smtp(gateway, imap_bob, smtp, oauth_server, ca) -> None:
+    from email_fixtures import ADMIN
+
+    from abstractgateway.users import GatewayUserRegistry
+
+    GatewayUserRegistry().create_user(user_id="admin", roles=["admin", "user"], email=ALICE)
+    c = gateway["client"]
+    base = f"/api/gateway/me/email/accounts/{WORK}/oauth"
+    body = _oauth_body(oauth_server, imap_bob, ca, send=True, smtp={"host": "localhost", "port": smtp.port, "security": "starttls"})
+    flow = c.post(f"{base}/start", headers=ADMIN, json=body).json()
+    oauth_server.approve_all_devices()
+    row = c.post(f"{base}/finish", headers=ADMIN, json={"flow_id": flow["flow_id"], "wait_s": 5}).json()
+    assert row["can_send"] is True and row["can_read"] is True, row
+    assert c.post(f"{base}/cancel", headers=ADMIN, json={"flow_id": flow["flow_id"]}).json()["cancelled"] is False
+
+
+def test_a_password_refused_by_gmail_says_what_works() -> None:
+    from abstractgateway.mail.accounts import GMAIL_PASSWORD_REFUSED, _named_step_error
+    from abstractgateway.mail.core_mail import EmailError
+
+    def refused(host: str) -> EmailError:
+        return EmailError("Authentication failed.", "Check the password.", code="email_auth_failed",
+                          details={"protocol": "imap", "host": host, "port": 993})
+
+    gmail = _named_step_error(refused("imap.gmail.com"), password_sign_in=True)
+    assert gmail.details["step_message"] == GMAIL_PASSWORD_REFUSED and gmail.details["provider"] == "google"
+    assert "Sign in with Google" in GMAIL_PASSWORD_REFUSED and "app password" in GMAIL_PASSWORD_REFUSED
+    smtp_gmail = _named_step_error(EmailError("x", "y", code="email_auth_failed", details={"protocol": "smtp", "host": "smtp.gmail.com", "port": 465}),
+                                   password_sign_in=True)
+    assert smtp_gmail.details["step_message"] == GMAIL_PASSWORD_REFUSED
+    other = _named_step_error(refused("imap.example.test"), password_sign_in=True)
+    assert other.details["step_message"].startswith("Sign-in refused by imap.example.test")
+    oauth = _named_step_error(refused("imap.gmail.com"), password_sign_in=False)  # an OAuth sign-in: no app-password advice
+    assert oauth.details["step_message"].startswith("Sign-in refused by imap.gmail.com")
+
+
+def test_a_password_connect_to_gmail_answers_the_gmail_sentence(gateway, monkeypatch) -> None:
+    """Through the route: the connect test's refusal (AbstractCore's store) reaches the client as
+    the provider-aware sentence (`detail.message`), nothing stored."""
+    from abstractgateway.mail import accounts as mail_accounts
+    from abstractgateway.mail.core_mail import EmailError
+
+    def refuse(self, account, secret, **kw):
+        raise EmailError("Authentication failed.", "Check the password.", code="email_auth_failed",
+                         details={"protocol": "imap", "host": "imap.gmail.com", "port": 993})
+
+    monkeypatch.setattr(mail_accounts.EmailAccountStore, "connect", refuse)
+    r = gateway["client"].put(f"/api/gateway/me/email/accounts/{WORK}", headers=gateway["alice"],
+                              json={"address": "me@gmail.com", "password": "account-password",
+                                    "imap": {"host": "imap.gmail.com", "port": 993, "security": "ssl"}})
+    assert r.status_code == 422, r.text
+    detail = r.json()["detail"]
+    assert detail["message"] == mail_accounts.GMAIL_PASSWORD_REFUSED and detail["step"] == "imap"
+    assert gateway["client"].get(f"/api/gateway/me/email/accounts/{WORK}", headers=gateway["alice"]).status_code == 404

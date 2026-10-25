@@ -1217,9 +1217,24 @@ def _no_host(leg: Optional[Dict[str, Any]]) -> bool:
     return not (isinstance(leg, dict) and str(leg.get("host") or "").strip())
 
 
-def _named_step_error(err: EmailError) -> EmailError:
+# A password sign-in refused by Google's mail servers: Gmail refuses the account password over
+# IMAP/SMTP (an app password or "Sign in with Google" works). Decided by the server's host name,
+# the hosts of AbstractCore's own `google` provider preset, never by the server's message text.
+GMAIL_PASSWORD_REFUSED = "Gmail refuses account passwords: use an app password or Sign in with Google."
+
+
+def _google_mail_hosts() -> frozenset:
+    try:
+        preset = provider_preset("google")
+    except Exception:  # noqa: BLE001 - no preset: no provider-specific sentence
+        return frozenset()
+    return frozenset(str((preset.get(leg) or {}).get("host") or "").strip().lower() for leg in ("imap", "smtp")) - {""}
+
+
+def _named_step_error(err: EmailError, *, password_sign_in: bool = False) -> EmailError:
     """A failed connect names the step that failed (`details.step`: imap | smtp) and says it the
-    way the Connect form shows it (`details.step_message`)."""
+    way the Connect form shows it (`details.step_message`). A PASSWORD sign-in refused by Gmail
+    says what works instead (`GMAIL_PASSWORD_REFUSED`, `details.provider: google`)."""
 
     d = err.details or {}
     step = str(d.get("protocol") or "")
@@ -1227,6 +1242,9 @@ def _named_step_error(err: EmailError) -> EmailError:
         return err
     host, port = str(d.get("host") or ""), d.get("port")
     where = f"{host}:{port}" if port else host
+    if err.code == "email_auth_failed" and password_sign_in and host.strip().lower() in _google_mail_hosts():
+        err.details = {**d, "step": step, "step_message": GMAIL_PASSWORD_REFUSED, "provider": "google"}
+        return err
     if err.code == "email_auth_failed":
         msg = f"Sign-in refused by {host} \u2014 check the password."
     elif err.code == "email_tls_failed":
@@ -1304,7 +1322,7 @@ def connect_password(
     try:
         store.connect(account, EmailSecret(password), test=bool(test), registered_address=reg)
     except EmailError as err:
-        raise _named_step_error(err) from None
+        raise _named_step_error(err, password_sign_in=True) from None
     if plane.is_primary:
         set_address_if_empty(plane, account.address, actor=actor)
     try:
@@ -1395,7 +1413,8 @@ def _test_message(store: EmailAccountStore, result: Dict[str, Any]) -> str:
             str(res.get("cause") or "The check failed."), str(res.get("fix") or ""), code=str(res.get("code") or "email_error"),
             details={"protocol": leg, "host": getattr(server, "host", "") or leg, "port": getattr(server, "port", None)},
         )
-        msg = str((_named_step_error(err).details or {}).get("step_message") or err.cause)
+        password = str(getattr(acct, "auth_kind", "") or "password") == "password"
+        msg = str((_named_step_error(err, password_sign_in=password).details or {}).get("step_message") or err.cause)
         cause = str(res.get("cause") or "").strip()
         return f"{msg} ({cause.rstrip('.')})" if cause and cause not in msg else msg
     hosts = [str(getattr(getattr(acct, leg, None), "host", "") or "") for leg in ("imap", "smtp")] if acct is not None else []
@@ -1692,9 +1711,15 @@ def oauth_start(
     scopes: Optional[List[str]] = None,
     ca_file: str = "",
     is_admin: bool = False,
+    send: bool = True,
 ) -> Dict[str, Any]:
+    """Begin an OAuth2 sign-in for the mailbox `plane` addresses (the primary, or a further
+    mailbox: framework backlog 1044). `send=False` (a further mailbox only) keeps IMAP alone:
+    the mailbox is read with XOAUTH2 and never sends; the primary always keeps both legs."""
     _prune_flows()
     require_admin_email_on(plane)
+    if plane.is_primary:
+        send = True
     prov = str(provider or "").strip().lower()
     _refuse_oauth_overrides(
         prov,
@@ -1724,6 +1749,8 @@ def oauth_start(
     )
     _gateway_secret_stays_with_preset(chosen, oauth, preset)
     imap_s, smtp_s = build_servers(imap, smtp, preset, allow_ca_file=is_admin)
+    if not send:
+        smtp_s = None  # a read-only further mailbox: IMAP (XOAUTH2) only
     if ca_file:
         imap_s = replace(imap_s, ca_file=imap_s.ca_file or ca_file) if imap_s else None
         smtp_s = replace(smtp_s, ca_file=smtp_s.ca_file or ca_file) if smtp_s else None
@@ -1745,6 +1772,7 @@ def oauth_start(
     entry: Dict[str, Any] = {
         "created": time.time(),
         "plane_key": plane.key,
+        "account_id": plane.account_id,
         "account": account,
         "client": client,
         "kind": kind,
@@ -1771,11 +1799,17 @@ def oauth_start(
     return out
 
 
+def _mailbox_id_of(plane: Any) -> str:
+    """The mailbox a plane value addresses (a plane without one, e.g. a test double, is the primary)."""
+    return str(getattr(plane, "account_id", DEFAULT_ACCOUNT_ID) or DEFAULT_ACCOUNT_ID)
+
+
 def _flow_for(plane: EmailPlane, flow_id: str) -> Dict[str, Any]:
     with _FLOWS_LOCK:
         entry = _FLOWS.get(str(flow_id or ""))
-    if entry is None or entry.get("plane_key") != plane.key:
-        # Another user's flow reads exactly like an unknown one.
+    if entry is None or entry.get("plane_key") != plane.key or entry.get("account_id", DEFAULT_ACCOUNT_ID) != _mailbox_id_of(plane):
+        # Another user's flow, or one started for another of this user's mailboxes, reads exactly
+        # like an unknown one.
         raise EmailOAuthFailed("This sign-in is unknown or expired.", "Start the sign-in again.")
     return entry
 
@@ -1820,9 +1854,11 @@ def oauth_finish(plane: EmailPlane, flow_id: str, *, wait_s: float = 0.0, actor:
         expires_at=tokens.expires_at,
         client_secret=entry["client_secret"],
     )
-    store = account_store(plane)
+    primary = _mailbox_id_of(plane) == DEFAULT_ACCOUNT_ID
+    store = account_store(plane)  # this mailbox's own store: the tokens are sealed in its own vault
     store.connect(entry["account"], secret, test=True, registered_address=registered_address(plane))
-    set_address_if_empty(plane, entry["account"].address, actor=actor)
+    if primary:
+        set_address_if_empty(plane, entry["account"].address, actor=actor)
     try:
         from .watcher import reset_watcher_cursor
 
@@ -1833,8 +1869,9 @@ def oauth_finish(plane: EmailPlane, flow_id: str, *, wait_s: float = 0.0, actor:
     audit_email_event(
         "email.connected", tenant_id=plane.tenant_id, user_id=plane.user_id, actor=actor or plane.user_id,
         auth_kind="oauth2", provider=entry["account"].oauth.provider if entry["account"].oauth else None, outcome="tested",
+        account_id=_mailbox_id_of(plane),
     )
-    return {"ok": True, **public_status(plane)}
+    return {"ok": True, **(public_status(plane) if primary else mailbox_summary(plane))}
 
 
 def oauth_cancel(plane: EmailPlane, flow_id: str) -> Dict[str, Any]:
@@ -1842,7 +1879,7 @@ def oauth_cancel(plane: EmailPlane, flow_id: str) -> Dict[str, Any]:
     means the flow is unknown or already committing; callers must not promise rollback."""
     with _FLOWS_LOCK:
         entry = _FLOWS.get(str(flow_id or ""))
-        if entry is None or entry.get("plane_key") != plane.key:
+        if entry is None or entry.get("plane_key") != plane.key or entry.get("account_id", DEFAULT_ACCOUNT_ID) != _mailbox_id_of(plane):
             return {"ok": True, "cancelled": False}
         _FLOWS.pop(str(flow_id), None)
     loop = entry.get("loopback")

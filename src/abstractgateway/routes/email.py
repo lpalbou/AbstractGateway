@@ -34,6 +34,8 @@ user makes so their agents and automations can read and send mail as them.
     POST   /me/email/accounts/{mailbox_id}/test   sign in with the stored mailbox
     PUT    /me/email/accounts/{mailbox_id}/enabled {enabled}  "Use this mailbox" for that mailbox
     DELETE /me/email/accounts/{mailbox_id}        disconnect it (credentials and cursor deleted)
+    POST   /me/email/accounts/{mailbox_id}/oauth/start|poll|finish|cancel   OAuth2 sign-in of a further
+                                         mailbox (the primary's bodies + `send`, default false: IMAP XOAUTH2 only)
     GET    /me/notifications             events, channel availability, outbox summary
     PUT    /me/notifications             {email: {event: bool}}  (v1 five-kind body accepted and mapped)
     POST   /me/notifications/test        send one test notification now
@@ -371,6 +373,16 @@ class OAuthStartBody(BaseModel):
     ca_file: str = Field("", description="A PEM file on the gateway host (administrators only)")
 
 
+class MailboxOAuthStartBody(OAuthStartBody):
+    """OAuth2 sign-in of a further mailbox (framework backlog 1044): read-only unless `send`."""
+
+    send: bool = Field(
+        False,
+        description="Also keep the provider's outgoing server (SMTP with XOAUTH2) so runs bound to this mailbox can send. "
+        "False (default): a read-only mailbox, IMAP (XOAUTH2) only.",
+    )
+
+
 class FlowBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -585,6 +597,68 @@ async def me_email_account_put(request: Request, mailbox_id: str, body: MailboxC
         return {"ok": True, **out}
 
     return await _call(run)
+
+
+@router.post(
+    "/me/email/accounts/{mailbox_id}/oauth/start",
+    summary="Begin an OAuth2 sign-in for a further mailbox (Sign in with Google / Microsoft)",
+    description="The body and answer of POST /me/email/oauth/start, plus `send` (default false: read-only, IMAP with "
+    "XOAUTH2 only). The tokens are sealed in that mailbox's own store when the sign-in finishes. `mailbox_id: default` "
+    "is the primary mailbox (both legs, like POST /me/email/oauth/start).",
+)
+async def me_email_account_oauth_start(request: Request, mailbox_id: str, body: MailboxOAuthStartBody) -> Any:
+    principal, plane = _self_plane(request)
+
+    def run() -> Dict[str, Any]:
+        target = plane.for_account(mail_accounts.check_mailbox_id(mailbox_id))
+        return mail_accounts.oauth_start(
+            target,
+            address=body.address,
+            provider=body.provider,
+            client_id=body.client_id,
+            client_secret=body.client_secret,
+            tenant=body.tenant,
+            flow=body.flow,
+            display_name=body.display_name,
+            imap=_server_dict(body.imap),
+            smtp=_server_dict(body.smtp),
+            token_endpoint=body.token_endpoint,
+            authorization_endpoint=body.authorization_endpoint,
+            device_authorization_endpoint=body.device_authorization_endpoint,
+            scopes=body.scopes,
+            ca_file=body.ca_file,
+            is_admin=principal.is_admin(),
+            send=bool(body.send),
+        )
+
+    return await _call(run)
+
+
+@router.post("/me/email/accounts/{mailbox_id}/oauth/poll", summary="Is the further mailbox's OAuth2 sign-in approved yet? (no wait)")
+async def me_email_account_oauth_poll(request: Request, mailbox_id: str, body: FlowBody) -> Any:
+    principal, plane = _self_plane(request)
+    return await _call(lambda: mail_accounts.oauth_finish(plane.for_account(mail_accounts.check_mailbox_id(mailbox_id)), body.flow_id,
+                                                          wait_s=0.0, actor=_actor(principal)))
+
+
+@router.post("/me/email/accounts/{mailbox_id}/oauth/finish", summary="Complete the further mailbox's OAuth2 sign-in (waits up to 60 s)")
+async def me_email_account_oauth_finish(request: Request, mailbox_id: str, body: FlowBody) -> Any:
+    principal, plane = _self_plane(request)
+
+    def run() -> Dict[str, Any]:
+        target = plane.for_account(mail_accounts.check_mailbox_id(mailbox_id))
+        out = mail_accounts.oauth_finish(target, body.flow_id, wait_s=body.wait_s, actor=_actor(principal))
+        if isinstance(out, dict) and out.get("ok"):
+            _reload_my_toolsets(principal, plane)
+        return out
+
+    return await _call(run)
+
+
+@router.post("/me/email/accounts/{mailbox_id}/oauth/cancel", summary="Cancel the further mailbox's pending OAuth2 sign-in")
+async def me_email_account_oauth_cancel(request: Request, mailbox_id: str, body: FlowBody) -> Any:
+    _principal, plane = _self_plane(request)
+    return await _call(lambda: mail_accounts.oauth_cancel(plane.for_account(mail_accounts.check_mailbox_id(mailbox_id)), body.flow_id))
 
 
 @router.post("/me/email/accounts/{mailbox_id}/test", summary="Test one of my mailboxes")
