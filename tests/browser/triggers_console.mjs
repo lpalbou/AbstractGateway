@@ -353,7 +353,9 @@ try {
       check((await page.textContent("#my-mailbox-provider-help")).startsWith("Gmail refuses account passwords."), "Gmail help shown while typing");
       await page.click("#my-mailbox-add-go");
       await page.waitForSelector("#my-mailbox-error:not([hidden])");
-      check((await page.textContent("#my-mailbox-error")).startsWith("Not added. Gmail refuses account passwords. Use an app password"), "Gmail refusal: provider-aware help", await page.textContent("#my-mailbox-error"));
+      check((await page.textContent("#my-mailbox-error")) === "Not added. Gmail refuses account passwords. Create an app password and paste it here, or Sign in with Google.", "Gmail refusal: provider-aware help", await page.textContent("#my-mailbox-error"));
+      const link = page.locator('#my-mailbox-error a');
+      check((await link.getAttribute("href")) === "https://myaccount.google.com/apppasswords" && (await link.getAttribute("target")) === "_blank", "Gmail refusal: a direct link in a new tab");
       await shotEl(page, "#my-mailboxes-card", "my-email-gmail-help-1440-light");
       await page.fill("#my-mailbox-id", "abstractframework");
       await page.fill("#my-mailbox-address", "lpalbou@abstractframework.ai");

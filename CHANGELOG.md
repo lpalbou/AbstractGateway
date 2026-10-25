@@ -14,9 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nothing uses it yet, so nothing is fetched until an automation does* or *Paused*. **When nothing uses it** (collapsed) has **Keep
   fetching even when nothing uses it** (`always_listen`). Mailbox rows show the same states with their **Use this
   mailbox** switch. A line under the list explains when a connection fetches.
-- **Further mailboxes: Gmail help and Sign in with Google.** For `imap.gmail.com` or a Gmail address the form explains
-  that Gmail refuses account passwords and points to an app password; **Sign in with Google** adds the mailbox through
-  `/me/email/accounts/{mailbox_id}/oauth/*` when the gateway has a Google sign-in client.
+- **Further mailboxes: app-password links and provider sign-in.** For Gmail and Outlook servers or addresses the form
+  says the provider refuses account passwords, with a direct **Create an app password** link (new tab) to paste from;
+  **Sign in with Google** / **Sign in with Microsoft** come first when the gateway has that sign-in client, through
+  `/me/email/accounts/{mailbox_id}/oauth/*`.
 - **Further mailboxes in the console.** Accounts → your row → Email has a **Further mailboxes** card: **Add a mailbox
   (read-only)** (name, address, IMAP server, port, security, login, password; the gateway signs in before storing),
   and per mailbox a **Use this mailbox** switch, **Test** and **Delete** (asks first). A further mailbox is IMAP only:

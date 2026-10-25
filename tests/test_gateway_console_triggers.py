@@ -374,24 +374,39 @@ console.log(JSON.stringify(rows.map((r) => [trgDoingText(r), trgStatusCell(r)]))
 
 def test_gmail_help_and_google_sign_in_offer() -> None:
     source = _console_script()
-    harness = _fns(source, "mailboxProviderHelp", "mbxGoogleAvailable") + """
-const MBX_GMAIL_HELP = "Gmail refuses account passwords. Use an app password (Google Account → Security → 2-Step Verification → App passwords), or Sign in with Google below.";
+    harness = HELPERS + _fns(source, "mailboxProvider", "mailboxProviderHelpHtml", "mbxClientAvailable", "mbxGoogleAvailable") + """
+const MBX_PROVIDERS = {
+  google: { name: "Gmail", url: "https://myaccount.google.com/apppasswords", signIn: "Sign in with Google" },
+  microsoft: { name: "Outlook", url: "https://account.live.com/proofs/manage/additional", signIn: "Sign in with Microsoft" },
+};
 console.log(JSON.stringify([
-  mailboxProviderHelp("imap.gmail.com", "x@abstractframework.ai"), mailboxProviderHelp("", "me@gmail.com"),
-  mailboxProviderHelp("imap.fastmail.com", "me@fastmail.com"),
+  mailboxProvider("imap.gmail.com", "x@abstractframework.ai"), mailboxProvider("", "me@gmail.com"),
+  mailboxProvider("outlook.office365.com", ""), mailboxProvider("", "me@hotmail.com"), mailboxProvider("imap.fastmail.com", "me@fastmail.com"),
+  mailboxProviderHelpHtml("google", true), mailboxProviderHelpHtml("google", false), mailboxProviderHelpHtml("microsoft", true),
   mbxGoogleAvailable({providers: {google: {configured: false, builtin_available: true}}}),
-  mbxGoogleAvailable({providers: {google: {configured: true, builtin_available: false}}}),
-  mbxGoogleAvailable({providers: {google: {configured: false, builtin_available: false}}}),
-  mbxGoogleAvailable({}),
+  mbxClientAvailable({providers: {microsoft: {configured: true, builtin_available: false}}}, "microsoft"),
+  mbxClientAvailable({providers: {google: {configured: false, builtin_available: false}}}, "google"),
+  mbxClientAvailable({}, "google"),
 ]));
 """
-    a, b, c, g1, g2, g3, g4 = _node(harness)
-    assert a == b and a.startswith("Gmail refuses account passwords. Use an app password")
-    assert c == ""
-    assert (g1, g2, g3, g4) == (True, True, False, False)
+    out = _node(harness)
+    assert out[:5] == ["google", "google", "microsoft", "microsoft", ""]
+    g_signin, g_plain, ms = out[5], out[6], out[7]
+    # A direct link that opens in a new tab; never a menu path.
+    assert g_signin == ('Gmail refuses account passwords. <a href="https://myaccount.google.com/apppasswords" target="_blank" '
+                        'rel="noopener noreferrer">Create an app password</a> and paste it here, or Sign in with Google.')
+    assert g_plain.endswith("</a> and paste it here.") and "Sign in" not in g_plain
+    assert ms == ('Outlook refuses account passwords. <a href="https://account.live.com/proofs/manage/additional" target="_blank" '
+                  'rel="noopener noreferrer">Create an app password</a> and paste it here, or Sign in with Microsoft.')
+    assert "→" not in g_signin and "Security" not in g_signin
+    assert out[8:] == [True, True, False, False]
     html = gateway_console_html()
     card = html[html.index('id="my-mailboxes-card"'):]
-    assert '<button id="my-mailbox-google" class="secondary" type="button" hidden>Sign in with Google</button>' in card
-    start = _slice_function(source, "startMailboxGoogle")
+    actions = card[card.index('<button id="my-mailbox-google"'):]
+    # The sign-in buttons come first.
+    assert actions.index("Sign in with Google") < actions.index(">Add mailbox</button>")
+    assert '<button id="my-mailbox-microsoft" type="button" hidden>Sign in with Microsoft</button>' in card
+    start = _slice_function(source, "startMailboxOAuth")
     assert "/api/gateway/me/email/accounts/${encodeURIComponent(id)}/oauth" in start and "`${base}/start`" in start and "`${base}/finish`" in start
-    assert "Not added. ${help}" in _slice_function(source, "addMyMailbox")
+    assert "JSON.stringify({ provider, address })" in start
+    assert "err.innerHTML = `Not added. ${help}`" in _slice_function(source, "addMyMailbox")

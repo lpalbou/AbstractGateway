@@ -42,18 +42,33 @@ MAILBOXES_CSS = r"""
 
 MAILBOXES_JS = r"""
     // ---- Account → My email: further mailboxes, read-only (console_mailboxes.py) ----
-    const mbx = { items: null, error: "", adding: false, saving: false, confirm: "", note: {}, switches: {}, google: false, oauth: null };
-    const MBX_GMAIL_HELP = "Gmail refuses account passwords. Use an app password (Google Account → Security → 2-Step Verification → App passwords), or Sign in with Google below.";
-    // Provider-aware help for a refused sign-in (Gmail never accepts the account password over IMAP).
-    function mailboxProviderHelp(host, address) {
+    const mbx = { items: null, error: "", adding: false, saving: false, confirm: "", note: {}, switches: {}, google: false, microsoft: false, oauth: null };
+    // Providers that refuse account passwords over IMAP (operator ruling: a direct link, never a menu path).
+    const MBX_PROVIDERS = {
+      google: { name: "Gmail", url: "https://myaccount.google.com/apppasswords", signIn: "Sign in with Google" },
+      microsoft: { name: "Outlook", url: "https://account.live.com/proofs/manage/additional", signIn: "Sign in with Microsoft" },
+    };
+    function mailboxProvider(host, address) {
       const h = String(host || "").trim().toLowerCase();
       const a = String(address || "").trim().toLowerCase();
-      if (h === "imap.gmail.com" || h.endsWith(".gmail.com") || h.endsWith("googlemail.com") || /@(gmail|googlemail)\.com$/.test(a)) return MBX_GMAIL_HELP;
+      if (h === "imap.gmail.com" || h.endsWith(".gmail.com") || h.endsWith("googlemail.com") || /@(gmail|googlemail)\.com$/.test(a)) return "google";
+      if (h === "outlook.office365.com" || h === "imap-mail.outlook.com" || h.endsWith(".outlook.com") || /@(outlook|hotmail|live|msn)\.[a-z.]+$/.test(a)) return "microsoft";
       return "";
     }
+    // The help as HTML: "<Name> refuses account passwords. <a>Create an app password</a> and paste it here[, or Sign in with …]."
+    function mailboxProviderHelpHtml(provider, signInAvailable) {
+      const p = MBX_PROVIDERS[provider];
+      if (!p) return "";
+      return `${esc(p.name)} refuses account passwords. <a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">Create an app password</a> and paste it here${signInAvailable ? `, or ${esc(p.signIn)}` : ""}.`;
+    }
+    function mailboxProviderHelp(host, address) {
+      const provider = mailboxProvider(host, address);
+      return provider ? mailboxProviderHelpHtml(provider, !!mbx[provider]) : "";
+    }
     // "Sign in with Google" is offered when the gateway has a Google client (its own or the built-in one).
-    function mbxGoogleAvailable(clients) {
-      const g = clients && clients.providers && clients.providers.google;
+    function mbxGoogleAvailable(clients) { return mbxClientAvailable(clients, "google"); }
+    function mbxClientAvailable(clients, provider) {
+      const g = clients && clients.providers && clients.providers[provider];
       return !!(g && (g.configured || g.builtin_available));
     }
     const MBX_STATE = {
@@ -118,21 +133,29 @@ MAILBOXES_JS = r"""
     }
     async function loadMailboxOAuthClients() {
       try {
-        mbx.google = mbxGoogleAvailable(await api("/api/gateway/me/email/oauth/clients"));
+        const clients = await api("/api/gateway/me/email/oauth/clients");
+        mbx.google = mbxClientAvailable(clients, "google");
+        mbx.microsoft = mbxClientAvailable(clients, "microsoft");
       } catch {
         mbx.google = false;
+        mbx.microsoft = false;
       }
       $("my-mailbox-google").hidden = !mbx.google;
+      $("my-mailbox-microsoft").hidden = !mbx.microsoft;
+      // A registered sign-in client makes its button the first choice; Add mailbox (password) steps back.
+      $("my-mailbox-add-go").classList.toggle("secondary", mbx.google || mbx.microsoft);
+      mbxRenderHelp();
     }
     function mbxRenderHelp() {
       const help = mailboxProviderHelp($("my-mailbox-imap-host").value, $("my-mailbox-address").value);
       const el = $("my-mailbox-provider-help");
-      el.textContent = help;
+      el.innerHTML = help;
       el.hidden = !help;
     }
     // Sign in with Google for a further mailbox: /me/email/accounts/{id}/oauth/start|finish|cancel, the
     // primary's /me/email/oauth/* shape (device code or a link on the gateway's computer).
-    async function startMailboxGoogle() {
+    async function startMailboxGoogle() { return startMailboxOAuth("google"); }
+    async function startMailboxOAuth(provider) {
       if (mbx.oauth) return;
       const err = $("my-mailbox-error");
       const id = String($("my-mailbox-id").value || "").trim();
@@ -148,7 +171,7 @@ MAILBOXES_JS = r"""
       const prompt = $("my-mailbox-state");
       let out;
       try {
-        out = await api(`${base}/start`, { method: "POST", body: JSON.stringify({ provider: "google", address }), slow: true });
+        out = await api(`${base}/start`, { method: "POST", body: JSON.stringify({ provider, address }), slow: true });
       } catch (e) {
         err.textContent = `Not signed in: ${emailErrorText(e)}`;
         err.hidden = false;
@@ -170,7 +193,7 @@ MAILBOXES_JS = r"""
         }
         if (flow.cancelled) break;
         if (res && res.pending) continue;
-        prompt.textContent = `Added ${id}: signed in with Google as ${res.address || address}.`;
+        prompt.textContent = `Added ${id}: signed in with ${provider === "microsoft" ? "Microsoft" : "Google"} as ${res.address || address}.`;
         mbxShowForm(false);
         await loadMyMailboxes();
         break;
@@ -247,7 +270,8 @@ MAILBOXES_JS = r"""
       } catch (e) {
         $("my-mailbox-state").textContent = "";
         const help = mailboxProviderHelp(out.body.imap.host, out.body.address);
-        err.textContent = help ? `Not added. ${help}` : `Not added: ${emailErrorText(e)}`;
+        if (help) err.innerHTML = `Not added. ${help}`;
+        else err.textContent = `Not added: ${emailErrorText(e)}`;
         err.hidden = false;
       } finally {
         mbx.saving = false;
@@ -289,7 +313,8 @@ MAILBOXES_JS = r"""
       $("my-mailbox-add").onclick = () => mbxShowForm(!mbx.adding);
       $("my-mailbox-add-cancel").onclick = () => mbxShowForm(false);
       $("my-mailbox-add-go").onclick = () => addMyMailbox();
-      $("my-mailbox-google").onclick = () => startMailboxGoogle();
+      $("my-mailbox-google").onclick = () => startMailboxOAuth("google");
+      $("my-mailbox-microsoft").onclick = () => startMailboxOAuth("microsoft");
       $("my-mailbox-google-cancel").onclick = () => cancelMailboxGoogle();
       $("my-mailbox-imap-host").oninput = mbxRenderHelp;
       $("my-mailbox-address").oninput = mbxRenderHelp;
@@ -323,7 +348,7 @@ MAILBOXES_HTML = r"""
                   <div class="af-form__field mbx-wide"><label class="af-form__label" for="my-mailbox-password">Password</label><input id="my-mailbox-password" type="password" autocomplete="new-password" aria-describedby="my-mailbox-password-help"><p id="my-mailbox-password-help" class="af-form__help">Use an app password if your provider needs one. Stored encrypted, never shown.</p></div>
                   <p id="my-mailbox-provider-help" class="af-form__help mbx-wide" hidden></p>
                   <p id="my-mailbox-error" class="af-form__error mbx-wide" role="alert" hidden></p>
-                  <div class="af-form__actions mbx-wide"><button id="my-mailbox-add-cancel" class="secondary" type="button">Cancel</button><button id="my-mailbox-google" class="secondary" type="button" hidden>Sign in with Google</button><button id="my-mailbox-google-cancel" class="secondary" type="button" hidden>Cancel sign-in</button><button id="my-mailbox-add-go" type="button">Add mailbox</button></div>
+                  <div class="af-form__actions mbx-wide"><button id="my-mailbox-google" type="button" hidden>Sign in with Google</button><button id="my-mailbox-microsoft" type="button" hidden>Sign in with Microsoft</button><button id="my-mailbox-google-cancel" class="secondary" type="button" hidden>Cancel sign-in</button><button id="my-mailbox-add-cancel" class="secondary" type="button">Cancel</button><button id="my-mailbox-add-go" type="button">Add mailbox</button></div>
                 </div>
               </section>
 """
