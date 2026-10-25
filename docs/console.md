@@ -435,58 +435,77 @@ The **Triggers** page (sidebar *Work*, `/console#triggers`) lists your trigger
 mailbox, a feed, a webhook address; flows and automations use it by name. You
 create feeds and webhooks here, once, and every automation of yours can use
 them (AbstractFlow's automation dialog offers them). Your **mailboxes** are
-listed here too (*When mail arrives in … · Read only* or *· Read and write*, as
-in My email; *Can't send* when a read-and-write mailbox has no outgoing
-server); you add and manage them in **My
-email** (Accounts → your row → Email), which the row's link opens. With nothing
+listed here too (*When mail arrives in …*, tagged *Read only* or *Read and
+write* as in My email; *Can't send* when a read-and-write mailbox has no
+outgoing server); you add and manage them in **My email** (Accounts → your row
+→ Email), which the row's envelope button opens. With nothing
 yet, the page says *Nothing to listen to yet.* with **Add a mailbox (My
 email)**, **Add a feed** and **Add a webhook**.
 
-- Each row is named by your label (for example *bbc-feed* or *My GitHub hook*),
-  with the trigger under it in the same words as AbstractFlow: *When bbc-feed has
-  a new item*, *When My GitHub hook is called*, *When mail arrives in
-  me@example.org*; then what it is doing, and **Last event**. The **Listening**
-  switch is yours and the only control: on (the default for a new connection) it
-  says *Listening · used by 2 automations* (your active automations that use
-  it; their names are under **Handled by**) or *Waiting for an automation
-  to use it*; off it says *Paused*. Whether an automation uses it never moves
-  the switch. **When nothing uses it** (collapsed, per connection) has **Keep
-  fetching even when nothing uses it**. A mailbox row shows the same states with
-  the same **Listening** switch (it is the mailbox's **Active** switch in
-  My email → Mailboxes); a mailbox row is named like My email (its address;
-  your primary mailbox with *Sends as you*). A problem the gateway recorded is
-  the row's status line, in red, while the connection is on (for example
-  *Can't read the feed: the address answered 404 (not found). Check the feed
-  address.*); a paused one says *Paused* with the problem under its name. The
-  line under the list: *A connection only fetches while an automation uses it.
-  Pause it to stop fetching.*
-- **Handled by**, under each row's name (feeds, webhooks and mailboxes): one
-  line per automation of yours, active or paused, that this trigger starts,
-  *<automation title> · <flow name>* (the title alone when it is the flow's
-  name), *(paused)* after a paused one. Each line opens Observer's Automations
-  page. With none: *Nothing handles it yet.* Several automations on one trigger
-  are normal: each runs its flow on every event.
-- **Use in a flow ▾**, under Handled by, opens a small menu. **New flow for this
-  trigger…** opens Flow on this trigger, signed in, at
-  `/apps/flow/?trigger=<connection id>` (a mailbox:
-  `/apps/flow/?trigger=mail:<mailbox id>`; Flow's docs, *Open Flow from a
-  trigger*). Under it, **Or let one of your triggered flows handle it** lists
-  your published flows that have a trigger (a flow that already handles this
-  one is shown greyed, *Already handles it*). Picking one turns it on for this
-  trigger at once: an automation named after the flow, with the flow's saved
-  inputs and context (and, for a flow made for the same kind of trigger, its
-  other trigger settings, such as mail filters), listening to THIS connection
-  or mailbox (`POST /api/gateway/automations`, the creation Observer and Flow
-  use). Handled by then shows it, and the row says *<flow> now handles <name>.
-  It is on.* A refusal is said beside the menu, for example *Triage cannot read
-  Work: it has no incoming server. Connect it again with its incoming server
-  (My email).* **Esc** closes the menu.
-- **Events** opens the 20 most recent events under the row, each a sentence
+The list is one grid, every cell's first line on the same line: **Connection**
+· **Handled by** · **Status** · **Last event** · actions. Below 768 px wide a row
+becomes a card: name, sentence, Handled by, status, last event, actions.
+
+- **Connection**: your label (for example *bbc-feed* or *My GitHub hook*), with
+  quiet tags beside it on a mailbox (*Sends as you* on your primary mailbox,
+  *Read and write* or *Read only*), and the trigger under it in the same words as
+  AbstractFlow: *When bbc-feed has a new item*, *When My GitHub hook is called*,
+  *When mail arrives in me@example.org*. A mailbox row is named like My email
+  (its name or address).
+- **Status**: the **Listening** switch is yours and the only control. On (the
+  default for a new connection), the line under it says *Used by 2 automations*
+  (your active automations on it; their flows are under **Handled by**) or
+  *Waiting for an automation to use it*; off, it says *Paused*. Whether an
+  automation uses it never moves the switch. **When nothing uses it** (a quiet
+  disclosure under it) has **Keep fetching even when nothing uses it**. A
+  mailbox row has the same switch (it is the mailbox's **Active** switch in My
+  email → Mailboxes). A problem the gateway recorded replaces the line, in red,
+  while the connection is on (for example *Can't read the feed: the address
+  answered 404 (not found). Check the feed address.*); a paused one says
+  *Paused* with the problem under its name. The line under the list: *A
+  connection only fetches while an automation uses it. Pause it to stop
+  fetching.*
+- **Handled by** (feeds, webhooks and mailboxes of yours) is one control. Each
+  automation of yours that this trigger starts, active or paused, is a chip
+  named after its flow (*Judge what arrived*); the automation's title is in the
+  chip's tooltip, a paused one is muted and says *paused*, and a chip opens
+  Observer's Automations page. With none: *Nothing yet*. Several automations on
+  one trigger are normal: each runs its flow on every event (two on the same
+  flow add their titles to the chips).
+- **+** after the chips opens a menu. **New flow for this trigger…** opens Flow
+  on this trigger, signed in, at `/apps/flow/?trigger=<connection id>` (a
+  mailbox: `/apps/flow/?trigger=mail:<mailbox id>`; Flow's docs, *Open Flow from
+  a trigger*). Under it, **Or let one of your triggered flows handle it** lists
+  your published flows that have a trigger, a checkmark on those already
+  handling this one (*Handles it · <automation title>*; a flow that handles it
+  but is no longer published is listed too).
+  - Picking an unchecked flow turns it on for this trigger at once: an
+    automation named after the flow, with the flow's saved inputs and context
+    (and, for a flow made for the same kind of trigger, its other trigger
+    settings, such as mail filters), listening to THIS connection or mailbox
+    (`POST /api/gateway/automations`, the creation Observer and Flow use). Its
+    chip appears and the row says *<flow> now handles <name>. It is on.*
+  - Picking a checked flow shows its automation(s) on this trigger, each with
+    **Pause** (**Resume** when paused) and **Remove**. Remove asks first, in
+    the menu: *Remove <title>? It stops handling <name>; its history stays in
+    Observer.* They are the automation's own commands (`POST
+    /api/gateway/automations/{id}/commands`, `automation.pause`,
+    `automation.resume`, `automation.archive`: removing archives the
+    automation, its history stays readable in Observer); the row then says
+    *<title> is paused.*, *<title> is on again.* or *<title> no longer handles
+    <name>.* once the gateway has applied it.
+  - A refusal is said beside the control, for example *Triage cannot read Work:
+    it has no incoming server. Connect it again with its incoming server (My
+    email).* The arrow keys, **Home** and **End** move in the menu; **Esc** or
+    a click elsewhere closes it.
+- The actions are icon buttons, their words in the tooltip: **Events** opens
+  the 20 most recent events under the row, each a sentence
   (*Test event · just now*, *New item: Release 0.13 · 09:00*, *Call received ·
   09:00*) with its full JSON behind **Details** (the CloudEvents envelope your
   flow receives as `input_data.event`). **Test** sends a test event and says the
-  result in the row. **Delete** asks under the row first: automations that
-  listen to a deleted connection stop receiving its events.
+  result under the last event. **Delete** asks under the row first: automations
+  that listen to a deleted connection stop receiving its events. A mailbox row
+  has **Manage in My email** instead.
 - **New connection** opens a dialog: pick **What to listen to** (a feed or a
   webhook, each with a one-line hint; never a mailbox), give it a name, and fill
   its settings: a feed asks for its address, **Check every** *[15] [minutes]*
@@ -1069,17 +1088,20 @@ you can click.
   with the reason and an **Archive** button.
 
 - **V Triggers** is the web page's table: Name (your label, the trigger in words
-  under it, then **Handled by:** one line per automation, *<title> · <flow
-  name>*, *(paused)*, or *Nothing handles it yet.*), Status (what it is doing, in
-  the web's words), the **Listening**
+  under it), Status (what it is doing, in the web's words), the **Listening**
   switch (`l`; `k` toggles **Keep fetching even when nothing uses it**; a
-  mailbox row's switch is the mailbox's **Active**), Last event (an Account column with **All accounts**, `a`,
-  administrators), your mailboxes as rows with **Manage under Account → My
-  email** (opens your email dialog) and, on every row of yours, **Use in a flow** (`f`: a dialog
-  with the web menu's choices; **New flow for this trigger…** prints Flow's link,
+  mailbox row's switch is the mailbox's **Active**), **Handled by** (your rows:
+  the flows of the automations handling it, *<flow> (paused)* muted, or
+  *Nothing yet*), Last event (a note under the row below 100 columns; an
+  Account column with **All accounts**, `a`, administrators), your mailboxes as
+  rows with **Manage under Account → My email** (opens your email dialog) and,
+  on every row of yours, **Use in a flow** (`f`: a dialog with the web menu's
+  choices; **New flow for this trigger…** prints Flow's link,
   `<gateway>/apps/flow/?trigger=<connection id>` or `…?trigger=mail:<mailbox id>`,
-  with **Copy**, since a terminal cannot open Flow; then your triggered flows, a
-  pick turning one on for this trigger, its refusal said in the web's words), per connection **Events** (`e`, also `Enter`: a dialog with the 20 most recent
+  with **Copy**, since a terminal cannot open Flow; then your triggered flows,
+  *✓ <flow>* on those handling it: an unchecked pick turns one on for this
+  trigger, a checked one shows its automations with **Pause** (**Resume**) and
+  **Remove**, Remove asked first, all said in the web's words), per connection **Events** (`e`, also `Enter`: a dialog with the 20 most recent
   events, newest first, each followed by its JSON; a webhook's address with
   **Copy**), **Test** (`t`: the row's note says "Test event #N sent.") and
   **Delete** (`d`, after the web's question). **New connection** (`n`) is a
