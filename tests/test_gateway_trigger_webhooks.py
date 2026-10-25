@@ -86,7 +86,12 @@ def test_a_signed_call_appends_one_event_and_wakes_the_bound_automation(gateway)
 
     [event] = svc.host.runtime.event_inbox.read(stream=f"trigger:{conn.connection_id}")
     payload = event["payload"]
-    assert payload["data"] == {"webhook_id": wid, "content_type": "application/json", "body": {"action": "opened", "number": 7}}
+    # The runtime (0.12.0, 9f8b6f7) also records the request headers for the flow; their values
+    # depend on the client, so the three stable fields are checked and the headers only for shape.
+    data = dict(payload["data"])
+    headers = data.pop("headers")
+    assert isinstance(headers, dict) and headers.get("content-type", "").startswith("application/json")
+    assert data == {"webhook_id": wid, "content_type": "application/json", "body": {"action": "opened", "number": 7}}
     assert payload["subject"] == wid and payload["dedupekey"] == wid
     assert out["event_id"] == f"trigger:{conn.connection_id}:{payload['id']}"
     assert payload["type"] == "abstract.webhook.received.v1"
