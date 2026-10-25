@@ -431,6 +431,79 @@ class GatewayRunner:
         self._scan_last_probe = 0.0
         self._next_due_epoch: Optional[float] = None
 
+        # PER-USER EVENT STREAM (backlog 1046, events_stream.py): the plane
+        # owner's stream, attached by the service (`attach_user_stream`). The
+        # runner writes run pointers after each tick's save and attention
+        # events from the ledger records it observes; the boot pass repairs a
+        # crash between a save and its append. No stream attached = this
+        # runner writes none (direct test construction).
+        self._user_stream: Optional[Any] = None
+        self._user_stream_rebuilt = False
+        self._stream_started: set = set()
+        self._stream_lock = threading.Lock()
+        self._stream_queue: List[Any] = []
+
+    def attach_user_stream(self, stream: Any) -> None:
+        """The stream run pointers / attention events of this plane go to."""
+        self._user_stream = stream
+        self._user_stream_rebuilt = False
+
+    @property
+    def user_stream(self) -> Optional[Any]:
+        return self._user_stream
+
+    def _stream_run(self, run: Any) -> None:
+        """run.started (+ trigger.event) / run.finished for a just-SAVED run state."""
+        stream = self._user_stream
+        if stream is None or run is None:
+            return
+        from .events_stream import TERMINAL_STATUSES, record_run
+
+        rid = str(getattr(run, "run_id", "") or "")
+        st = getattr(run, "status", None)
+        terminal = str(getattr(st, "value", st) or "").lower() in TERMINAL_STATUSES
+        if not terminal and rid in self._stream_started:
+            return  # already announced by this process (the append would be a no-op)
+        try:
+            record_run(stream, run)
+        except Exception:
+            logger.exception("GatewayRunner: user stream pointer for %s failed (boot repair will retry)", rid)
+            return
+        with self._stream_lock:
+            if terminal:
+                self._stream_started.discard(rid)
+            elif len(self._stream_started) < 50_000:
+                self._stream_started.add(rid)
+
+    def _drain_user_stream(self) -> None:
+        """Loop thread: boot repair once, then the attention records queued by the ledger hook."""
+        stream = self._user_stream
+        if stream is None:
+            return
+        if not self._user_stream_rebuilt:
+            self._user_stream_rebuilt = True
+            from .events_stream import rebuild_attention, rebuild_run_pointers
+
+            try:
+                rebuilt = rebuild_run_pointers(stream, self.run_store)
+                attention = rebuild_attention(stream, self.run_store, self.ledger_store)
+                stream.prune()
+                if rebuilt.get("appended") or attention.get("appended"):
+                    logger.info("GatewayRunner: user stream repaired (runs %s, attention %s)", rebuilt, attention)
+            except Exception:
+                logger.exception("GatewayRunner: user stream boot repair failed")
+        with self._stream_lock:
+            queued, self._stream_queue = self._stream_queue, []
+        if not queued:
+            return
+        from .events_stream import record_attention_raised
+
+        for item in queued:
+            try:
+                record_attention_raised(stream, item)
+            except Exception:
+                logger.exception("GatewayRunner: attention.raised for %s failed (boot repair will retry)", item.get("record_key"))
+
     @property
     def enabled(self) -> bool:
         return self._enable
@@ -610,6 +683,21 @@ class GatewayRunner:
                                 self._next_due_epoch = epoch
         except Exception:
             logger.debug("GatewayRunner: ledger wake parse failed (waking anyway)", exc_info=True)
+        if self._user_stream is not None and isinstance(record, dict):
+            # attention.raised (backlog 1046): an `automation.completed` record
+            # carrying an attention item. Parsed here (pure, cheap), written
+            # on the loop thread (file I/O never on the appending tick).
+            try:
+                effect = record.get("effect")
+                if isinstance(effect, dict) and effect.get("type") == "emit_event":
+                    from .events_stream import attention_from_record
+
+                    item = attention_from_record(record)
+                    if item is not None:
+                        with self._stream_lock:
+                            self._stream_queue.append(item)
+            except Exception:
+                logger.debug("GatewayRunner: attention parse failed", exc_info=True)
         self._wake.set()
 
     def _queue_direct_tick(self, run_id: Any) -> None:
@@ -1323,6 +1411,10 @@ class GatewayRunner:
                     self._reap_idle_pollers()
                 except Exception as e:
                     logger.exception("GatewayRunner idle-poller reap error: %s", e)
+                try:
+                    self._drain_user_stream()
+                except Exception as e:
+                    logger.exception("GatewayRunner user stream drain error: %s", e)
                 # Sleep until the next wake OR the poll interval, whichever
                 # comes first. A burst of wakes during this wait sets one flag
                 # and therefore costs exactly one extra pass (coalescing);
@@ -2261,6 +2353,14 @@ class GatewayRunner:
                 # the model call stops within one token instead of decoding on.
                 runtime.cancel_run(rid, reason=reason_str or "Cancelled", cancelled_by="command")
 
+        if typ == "cancel" and self._user_stream is not None:
+            # run.finished for the cancelled roots (saved by cancel_run above).
+            for rid in targets:
+                try:
+                    self._stream_run(self.run_store.load(rid))
+                except Exception:
+                    logger.exception("GatewayRunner: user stream pointer after cancel of %s failed", rid)
+
         if typ == "cancel":
             # Backstop (stop_kill_switch.py): if a model call of this tree is
             # still executing `stop_kill_switch_s` after this point, that
@@ -2696,6 +2796,9 @@ class GatewayRunner:
                     run_id,
                 )
                 return
+
+        # Per-user stream pointers (backlog 1046): AFTER the tick's save.
+        self._stream_run(state)
 
         # Auto-compaction for scheduled workflows (best-effort).
         try:

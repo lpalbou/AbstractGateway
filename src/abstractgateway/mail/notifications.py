@@ -715,6 +715,7 @@ class NotificationOutbox:
             finally:
                 conn.close()
             out["sent"] += len(keys)
+            self._stream_outcome("sent", batch, message_id=message_id)
             for row in batch:
                 audit_email_event(
                     "email.notification_sent",
@@ -740,6 +741,32 @@ class NotificationOutbox:
         finally:
             conn.close()
 
+    def _stream_outcome(self, outcome: str, rows: List[Dict[str, Any]], **data: Any) -> None:
+        """`notification.sent|failed {channel: email}` in the plane owner's event stream
+        (backlog 1046), one per notice, after the outbox row changed. Never raises: the outbox
+        row is the delivery truth."""
+        try:
+            from ..events_stream import record_notification, stream_for
+
+            stream = stream_for(self.plane.runtime_data_dir, self.plane.tenant_id, self.plane.user_id)
+            for row in rows:
+                record_notification(
+                    stream, outcome, channel="email", notice=str(row.get("idempotency_key") or ""),
+                    data={"kind": row.get("kind"), "subject_ref": row.get("subject_ref") or None, **data},
+                )
+        except Exception:  # noqa: BLE001
+            import logging
+
+            logging.getLogger(__name__).exception("notification.%s stream append failed", outcome)
+
+    def _rows_for(self, keys: List[str]) -> List[Dict[str, Any]]:
+        conn = self._connect()
+        try:
+            marks = ",".join("?" for _ in keys)
+            return [dict(r) for r in conn.execute(f"SELECT idempotency_key, kind, subject_ref FROM notices WHERE idempotency_key IN ({marks})", tuple(keys)).fetchall()]
+        finally:
+            conn.close()
+
     def _mark_failed(self, keys: List[str], err: EmailError) -> None:
         conn = self._connect()
         try:
@@ -751,6 +778,8 @@ class NotificationOutbox:
                 )
         finally:
             conn.close()
+        if keys:
+            self._stream_outcome("failed", self._rows_for(keys), code=err.code, cause=err.cause)
         for key in keys:
             audit_email_event(
                 "email.notification_failed",
@@ -779,6 +808,8 @@ class NotificationOutbox:
                 )
         finally:
             conn.close()
+        if keys:
+            self._stream_outcome("failed", self._rows_for(keys), code="email_send_outcome_unknown", cause="the notice may or may not have arrived")
 
 
 # ---------------------------------------------------------------------------------------

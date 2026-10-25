@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Per-user event stream (backlog 1046, `events_stream.py`): one durable, ordered stream per person
+  (`user:<tenant>:<user>`, the runtime's `JsonFileEventInbox` in the plane's data folder) holding only what is
+  not a step of a run, in CloudEvents 1.0 names (`{specversion, id, type, source, subject?, time, data,
+  sequence}`): `trigger.event`, `attention.raised` (the ledger `record_key`, never a body), `attention.seen`,
+  `notification.sent|failed` (console, email), and the pointers `run.started|finished {run_id, session_id,
+  origin}` written after the run store save, idempotent by id and rebuilt at boot after a crash in between.
+
 - Console **Triggers** page (backlog 1041, `/console#triggers`): your trigger connections (Source, Name,
   Status, Last event) with **Events** (the 20 most recent events, each expandable to its JSON), **Test** (sends a
   test event, the result said in the row) and **Delete** (confirmed under the row); **New connection** renders the

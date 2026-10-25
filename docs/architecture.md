@@ -161,6 +161,19 @@ browser on this computer from one elsewhere on the network
   store the scheduling pass sleeps until the earliest wait deadline, which it
   asks the run store for (`next_wait_deadline`, every waiting run), so a wake
   parked behind hundreds of automations still fires on time.
+- **Per-user event stream** (`src/abstractgateway/events_stream.py`, backlog
+  1046): one ordered, durable stream per person, `user:<tenant>:<user>`, in
+  the plane's data folder (`<data dir>/events/users/<sha256>/`, the runtime's
+  `JsonFileEventInbox`). It holds only what is not a step of a run:
+  `trigger.event`, `wake.scheduled|cancelled`, `attention.raised|seen`,
+  `notification.sent|failed` and the pointers `run.started|finished
+  {run_id, session_id, origin}`, in CloudEvents 1.0 attribute names. The
+  runner writes the pointers after the run store save (ids like
+  `run.started:<run_id>`, so a repeat appends nothing) and the attention
+  events from the `automation.completed` records it observes (the ledger
+  `record_key`, never a body); a boot pass rebuilds what a crash between a
+  save and its append lost. The seen-cursor store writes `attention.seen`,
+  the email outbox `notification.sent|failed`.
 - **Runtime settings** (`src/abstractgateway/runtime_config.py`): one store,
   `<data dir>/config/runtime_config.json`, for the settings the consoles, the
   tray and the CLI change: network exposure, `apps.*`, `allow_engine_install`,

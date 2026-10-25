@@ -611,6 +611,11 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
         command_store=stores.command_store,
         cursor_store=stores.command_cursor_store,
     )
+    # Per-user event stream (backlog 1046): the plane owner's stream receives this runner's
+    # run pointers and attention events (events_stream.py).
+    from .events_stream import plane_owner, stream_for
+
+    runner.attach_user_stream(stream_for(cfg.data_dir, *plane_owner(cfg)))
 
     policy = load_gateway_auth_policy_from_env()
 

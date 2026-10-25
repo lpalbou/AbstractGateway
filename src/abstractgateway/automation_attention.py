@@ -80,6 +80,7 @@ class AttentionPreferenceStore:
     def __init__(self, plane_data_dir: Path, *, tenant: str, user: str) -> None:
         self.tenant = str(tenant)
         self.user = str(user)
+        self.plane_data_dir = Path(plane_data_dir)
         self.dir = Path(plane_data_dir) / "automations" / "attention"
         self.path = self.dir / f"{principal_key(self.tenant, self.user)}.json"
 
@@ -127,7 +128,20 @@ class AttentionPreferenceStore:
             data["schema_version"] = SCHEMA_VERSION
             data["principal"] = [self.tenant, self.user]
             self._write(data)
-            return int(seq), True
+        self._stream_seen(str(automation_id), int(seq))
+        return int(seq), True
+
+    def _stream_seen(self, automation_id: str, seq: int) -> None:
+        """`attention.seen` in this principal's event stream (backlog 1046), after the cursor
+        moved. A failed append is logged, never raised: the cursor (the truth) is saved."""
+        import logging
+
+        from .events_stream import record_attention_seen, stream_for
+
+        try:
+            record_attention_seen(stream_for(self.plane_data_dir, self.tenant, self.user), automation_id=automation_id, seq=seq)
+        except Exception:
+            logging.getLogger(__name__).exception("attention.seen for %s failed", automation_id)
 
 
 def attention_store_for(svc: Any, principal: Any) -> AttentionPreferenceStore:
