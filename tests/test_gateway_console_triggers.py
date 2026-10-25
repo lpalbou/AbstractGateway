@@ -22,7 +22,7 @@ const HTML_ESCAPES = {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'"
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch] || ch);
 const TRG_EVENTS_LIMIT = 20;
 const TRG_STATUS = { active: ["Active", "is-ok"], paused: ["Paused", "is-muted"], error: ["Error", "is-err"], failed: ["Error", "is-err"], disabled: ["Off", "is-muted"] };
-const TRG_FORM_KEYWORDS = new Set(["type", "title", "description", "enum", "default", "pattern", "format", "minimum", "maximum", "minLength", "maxLength", "examples", "writeOnly"]);
+const TRG_FORM_KEYWORDS = new Set(["type", "title", "description", "enum", "default", "pattern", "format", "minimum", "maximum", "minLength", "maxLength", "examples", "writeOnly", "enumNames"]);
 const TRG_FIELD_LABELS = { subject_path: "Subject (path in the JSON body)", tolerance_s: "Accepted clock skew (seconds)", url: "Feed address", every: "Check every", max_items: "Items per check (at most)", initial_items: "When added" };
 const TRG_DURATION_UNITS = [["s", "seconds"], ["m", "minutes"], ["h", "hours"], ["d", "days"]];
 const TRG_ENUM_WORDS = { initial_items: { skip: "Ignore what is already there", deliver: "Also deliver the latest items" } };
@@ -48,6 +48,14 @@ SOURCES = [
 
 def _fns(source: str, *names: str) -> str:
     return "\n".join(_slice_function(source, n) for n in names)
+
+
+def test_helper_constants_are_the_shipped_ones() -> None:
+    """The constants copied into HELPERS are the shipped lines, verbatim (no drift)."""
+    flat = re.sub(r"\s+", "", _console_script()).replace(",}", "}")
+    for line in HELPERS.splitlines():
+        if line.startswith("const TRG_"):
+            assert re.sub(r"\s+", "", line) in flat, line
 
 
 def test_sidebar_page_and_dialog_structure() -> None:
@@ -168,7 +176,7 @@ console.log(JSON.stringify([out]));
 
 def test_connection_form_engine() -> None:
     source = _console_script()
-    harness = HELPERS + _fns(source, "trgHumanize", "trgSentence", "triggerFormFields", "trgIsDuration", "trgFieldHint", "trgFieldMarkup", "triggerFormMarkup", "triggerConfigFromValues") + """
+    harness = HELPERS + _fns(source, "trgHumanize", "trgSentence", "triggerFormFields", "trgIsDuration", "trgEnumNames", "trgControlSaysIt", "trgFieldHint", "trgFieldMarkup", "triggerFormMarkup", "triggerConfigFromValues") + """
 const schema = { type: "object", required: ["url", "kind"], properties: {
   url: { type: "string", title: "Feed address", pattern: "^https?://", examples: ["https://example.org/feed.xml"] },
   token: { type: "string", title: "Token", format: "password" },
@@ -245,17 +253,19 @@ console.log(JSON.stringify([trgConnectableSources(SOURCES).map((s) => s.id), mai
     assert ids == ["webhook.received"]  # the mailbox source is never offered in New connection
     assert rows.count('class="trg-row trg-row--mailbox"') == 2  # configured mailboxes only
     work = rows[rows.index('data-trg-mailbox="work"'):]
-    assert '<span class="trg-name">work</span>' in work and "When mail arrives in me@work.example · read-only" in work
+    assert '<span class="trg-name">me@work.example</span>' in work and "When mail arrives in me@work.example · read-only" in work
     # The same three states with the mailbox's own switch (no used_by reported here: "Listening").
     assert '<span class="trg-doing">Listening</span>' in work and "checked 1 min ago" in work
     assert 'data-trg-mailbox-use="work"' in work and ">Listening</span>" in work and 'aria-checked="true"' in work
     assert 'data-trg-mailbox-manage="work"' in work and "Manage in My email" in work
-    assert "me@example.org (primary)" in rows
+    # Named like My email: the mailbox's name or address (never its derived id); the primary says "Sends as you".
+    assert '<span class="trg-name">me@example.org<span class="mbx-badge">Sends as you</span></span>' in rows
+    assert "(primary)" not in rows
 
 
 def test_webhook_form_is_readable_and_hides_the_generated_secret() -> None:
     source = _console_script()
-    harness = HELPERS + _fns(source, "trgHumanize", "trgSentence", "triggerFormFields", "trgIsDuration", "trgFieldHint", "trgFieldMarkup", "triggerFormMarkup") + """
+    harness = HELPERS + _fns(source, "trgHumanize", "trgSentence", "triggerFormFields", "trgIsDuration", "trgEnumNames", "trgControlSaysIt", "trgFieldHint", "trgFieldMarkup", "triggerFormMarkup") + """
 const schema = {type: "object", additionalProperties: false, properties: {
   subject_path: {type: "string", description: "dotted path in a JSON body for the event subject (default: the webhook id)"},
   tolerance_s: {type: "integer", minimum: 60, maximum: 3600, default: 300},
@@ -321,7 +331,7 @@ console.log(JSON.stringify([sig]));
 
 def test_rows_say_what_a_connection_is_doing_with_a_listening_toggle() -> None:
     source = _console_script()
-    harness = HELPERS + _fns(source, "trgUsedBy", "trgListeningWords", "trgUserNames", "trgConnectionUsers", "trgDoingText", "trgListenSwitch", "trgAdvancedMarkup", "trgStatusChip", "trgStatusCell") + """
+    harness = HELPERS + _fns(source, "webhookRefusalWords", "trgErrorText", "trgUsedBy", "trgListeningWords", "trgUserNames", "trgConnectionUsers", "trgDoingText", "trgListenSwitch", "trgAdvancedMarkup", "trgStatusChip", "trgStatusCell") + """
 const rows = [
   {connection_id: "a", label: "bbc-feed", status: "active", paused: false, always_listen: false, listening: "listening", used_by: 2},
   {connection_id: "b", label: "hook", status: "active", paused: false, always_listen: false, listening: "listening", used_by: ["auto_1"]},
@@ -356,7 +366,7 @@ console.log(JSON.stringify(rows.map((r) => [trgDoingText(r), trgStatusCell(r)]).
         assert " on<" not in cell and " off<" not in cell
     html = gateway_console_html()
     panel = html[html.index('id="tab-triggers"'): html.index('id="tab-skills"')]
-    assert "A connection only fetches while an automation uses it; pause it to stop even then." in panel
+    assert "A connection only fetches while an automation uses it. Pause it to stop fetching." in panel
     assert 'JSON.stringify({ paused })' in _slice_function(source, "setTriggerPaused")
     assert 'JSON.stringify({ always_listen: on })' in _slice_function(source, "setTriggerAlwaysListen")
 
@@ -364,7 +374,7 @@ console.log(JSON.stringify(rows.map((r) => [trgDoingText(r), trgStatusCell(r)]).
 def test_ux_errors_feed_form_refusals_and_more_options() -> None:
     source = _console_script()
     harness = HELPERS + _fns(source, "webhookRefusalWords", "trgErrorText", "trgHumanize", "trgSentence", "triggerFormFields",
-                             "trgIsDuration", "trgFieldHint", "trgFieldMarkup", "triggerFormMarkup", "triggerConfigFromValues", "trgRefusalByField") + """
+                             "trgIsDuration", "trgEnumNames", "trgControlSaysIt", "trgFieldHint", "trgFieldMarkup", "triggerFormMarkup", "triggerConfigFromValues", "trgRefusalByField") + """
 const trgErr = (e) => String((e && e.message) || e);
 const feed = {type: "object", required: ["url"], properties: {
   url: {type: "string", format: "uri", description: "the RSS 2.0 or Atom feed address (http or https)"},
@@ -537,4 +547,43 @@ console.log(JSON.stringify([mailboxesMarkup(mbxRows(primary, items), {note: {}, 
     page = gateway_console_html()
     card = page[page.index('id="my-mailboxes-card"'):]
     assert '>Mailboxes</h3>' in card and '<button id="my-mailbox-add" class="secondary" type="button">Add mailbox</button>' in card
+
+
+def test_the_runtime_feed_schema_reads_as_words() -> None:
+    """UX re-review #4/#15: the runtime's feed schema (enumNames, descriptions naming the raw values)
+    renders as controls with words, never raw JSON; a failing feed's status line is its red error."""
+    source = _console_script()
+    harness = HELPERS + _fns(source, "trgHumanize", "trgSentence", "triggerFormFields", "trgIsDuration", "trgEnumNames",
+                             "trgControlSaysIt", "trgFieldHint", "trgFieldMarkup", "triggerFormMarkup", "triggerConfigFromValues") + "\n" + _fns(source, *ROW_FNS) + """
+const feed = {type: "object", additionalProperties: false, required: ["url"], properties: {
+  url: {type: "string", format: "uri", title: "Feed address", description: "The address of the RSS or Atom feed (starts with http:// or https://)."},
+  every: {type: "string", format: "duration", pattern: "^[1-9][0-9]*[smhd]$", default: "15m", title: "Check every",
+          description: "How often to check the feed: a number and a unit (s, m, h or d), for example 15m. At least 60s."},
+  max_items: {type: "integer", minimum: 1, maximum: 50, default: 20, title: "Most new items per check", description: "The most new items one check delivers; older new items are skipped."},
+  initial_items: {type: "string", enum: ["skip", "deliver"], enumNames: ["Ignore what is already there", "Also deliver the latest items"], default: "skip",
+                  title: "When added", description: "What to do with the items already in the feed when it is first checked: ignore what is already there (skip), or also deliver the latest items (deliver)."},
+}};
+const fields = triggerFormFields(feed);
+const failing = {connection_id: "f", source_id: "feed.item", label: "Python news", status: "active", paused: false, always_listen: true, used_by: 0,
+  last_error: {code: "feed_http_404", cause: "The feed answered HTTP 404."}};
+console.log(JSON.stringify([fields.map((f) => [f.key, f.kind]), triggerFormMarkup(fields, {}, {}),
+  triggerConfigFromValues(fields, {url: "https://e.org/f.xml", every: "15m", initial_items: '"deliver"'}).config,
+  trgStatusCell(failing, []), trgStatusCell(Object.assign({}, failing, {paused: true}), []),
+  triggersRowsMarkup([failing], {sources: [], now: Date.parse("2026-10-25T12:00:00Z")})]));
+"""
+    kinds, form, config, failing, paused, row = _node(harness)
+    assert dict(kinds)["initial_items"] == "enum"
+    assert "Not editable here" not in form and "enumNames" not in form
+    assert '<option value="&quot;skip&quot;" selected>Ignore what is already there</option>' in form
+    assert '<option value="&quot;deliver&quot;">Also deliver the latest items</option>' in form
+    # Descriptions that restate the control are not shown; the others are.
+    assert "(skip)" not in form and "(deliver)" not in form and "s, m, h or d" not in form
+    assert "The address of the RSS or Atom feed" in form and "older new items are skipped" in form
+    assert 'data-trg-dur-n="every" value="15"' in form and '<option value="m" selected>minutes</option>' in form
+    assert config == {"url": "https://e.org/f.xml", "every": "15m", "initial_items": "deliver"}
+    # A failing feed that is on: its red error is the status line, not "Listening · kept on…".
+    assert '<span class="trg-doing trg-error" role="status" data-trg-doing="f">Can&#39;t read the feed: the address answered 404 (not found). Check the feed address.</span>' in failing
+    assert "Listening ·" not in failing and 'data-trg-listen="f"' in failing
+    assert '<span class="trg-doing" data-trg-doing="f">Paused</span>' in paused
+    assert row.count("Can&#39;t read the feed") == 1  # said once (the status line), not also under the name
 

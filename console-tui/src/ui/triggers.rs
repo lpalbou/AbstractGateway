@@ -49,11 +49,13 @@ pub const PURPOSE: &str = "A connection is something of yours the gateway listen
 pub const WEBHOOK_RECIPE: &str = "GitHub, Zapier and other services: paste the webhook address as the webhook URL, the signing secret as the secret, and choose JSON as the content type.";
 pub const WEBHOOK_SHELL: &str =
     "Any other sender signs each call per Standard Webhooks. From a shell (bash, openssl):";
+/// The primary mailbox's badge (the web's, as in My email).
+pub const SENDS_AS_YOU: &str = "Sends as you";
 /// The mailbox rows' link (the web's words).
 pub const MANAGE_MAILBOX: &str = "Manage in My email";
 /// The line under the list (the web's).
 pub const LISTEN_HELP: &str =
-    "A connection only fetches while an automation uses it; pause it to stop even then.";
+    "A connection only fetches while an automation uses it. Pause it to stop fetching.";
 pub const K_PAUSE: &str = "triggers.pause";
 pub const K_MAILBOXES: &str = "triggers.mailboxes";
 pub const K_AUTOS: &str = "triggers.automations";
@@ -672,7 +674,68 @@ const FORM_KEYWORDS: &[&str] = &[
     "maxLength",
     "examples",
     "writeOnly",
+    "enumNames",
 ];
+
+/// A duration's units (the web's `TRG_DURATION_UNITS`): `(suffix, words)`.
+pub const DURATION_UNITS: [(&str, &str); 4] = [
+    ("s", "seconds"),
+    ("m", "minutes"),
+    ("h", "hours"),
+    ("d", "days"),
+];
+
+/// A duration setting (`format: duration`, or the runtime's `^[1-9][0-9]*[smhd]$`): shown as
+/// "Check every [15] [minutes]" (the web's control), never as raw "15m".
+pub fn is_duration(f: &FormField) -> bool {
+    f.kind == "string"
+        && (st(&f.schema, "format").as_deref() == Some("duration")
+            || st(&f.schema, "pattern").as_deref() == Some("^[1-9][0-9]*[smhd]$"))
+}
+
+/// "15m" → ("15", index of minutes); anything else → ("", minutes).
+pub fn duration_parts(raw: &str) -> (String, usize) {
+    let raw = raw.trim();
+    let minutes = 1;
+    let Some(last) = raw.chars().last() else {
+        return (String::new(), minutes);
+    };
+    let num = &raw[..raw.len() - last.len_utf8()];
+    match DURATION_UNITS.iter().position(|(u, _)| u.starts_with(last)) {
+        Some(i)
+            if !num.is_empty()
+                && num.chars().all(|c| c.is_ascii_digit())
+                && !num.starts_with('0') =>
+        {
+            (num.to_string(), i)
+        }
+        _ => (String::new(), minutes),
+    }
+}
+
+/// An enum's shown names: the schema's `enumNames` (same length), else `None`.
+pub fn enum_names(f: &FormField) -> Option<Vec<String>> {
+    let vals = f.schema.get("enum").and_then(Value::as_array)?;
+    let names = f.schema.get("enumNames").and_then(Value::as_array)?;
+    (names.len() == vals.len()).then(|| {
+        names
+            .iter()
+            .map(|n| {
+                n.as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| n.to_string())
+            })
+            .collect()
+    })
+}
+
+/// A description that only restates what the control shows (a duration's "s, m, h or d", a
+/// choice's raw values) is not shown (the web's `trgControlSaysIt`).
+pub fn description_shown(f: &FormField) -> bool {
+    !f.description.is_empty()
+        && !is_duration(f)
+        && !(f.kind == "enum" && (enum_names(f).is_some() || f.key == "initial_items"))
+}
 
 /// The label of a setting whose schema has no `title` (the web's `TRG_FIELD_LABELS`, then
 /// the key in words).
@@ -711,6 +774,8 @@ pub fn trigger_phrase(r: &ConnRow, sources: &Value) -> String {
 pub struct MailboxRow {
     pub id: String,
     pub primary: bool,
+    /// The mailbox's name (another mailbox is named by its address).
+    pub label: Option<String>,
     pub address: Option<String>,
     pub can_send: bool,
     pub enabled: bool,
@@ -730,6 +795,7 @@ pub fn mailboxes_from(v: &Value) -> Result<Vec<MailboxRow>, String> {
         .map(|m| MailboxRow {
             id: st(m, "account_id").unwrap_or_default(),
             primary: m.get("primary").and_then(Value::as_bool) == Some(true),
+            label: st(m, "name").filter(|a| !a.is_empty()),
             address: st(m, "address").filter(|a| !a.is_empty()),
             can_send: m.get("can_send").and_then(Value::as_bool) == Some(true),
             enabled: m.get("enabled").and_then(Value::as_bool) == Some(true),
@@ -744,12 +810,12 @@ pub fn mailboxes_from(v: &Value) -> Result<Vec<MailboxRow>, String> {
 }
 
 impl MailboxRow {
+    /// Named like My email: the mailbox's name, else its address (never its derived id).
     pub fn name(&self) -> String {
-        if self.primary {
-            format!("{} (primary)", self.address.as_deref().unwrap_or(&self.id))
-        } else {
-            self.id.clone()
-        }
+        self.label
+            .clone()
+            .or_else(|| self.address.clone())
+            .unwrap_or_else(|| self.id.clone())
     }
     pub fn phrase(&self) -> String {
         format!(
@@ -803,7 +869,7 @@ pub fn form_fields(schema: &Value) -> Vec<FormField> {
     let Some(props) = schema.get("properties").and_then(Value::as_object) else {
         return Vec::new();
     };
-    props
+    let mut fields = props
         .iter()
         // A secret the gateway generates (`x-secret`) is never typed: it is shown once after Create.
         .filter(|(_, p)| p.get("x-secret").and_then(Value::as_bool) != Some(true))
@@ -845,7 +911,11 @@ pub fn form_fields(schema: &Value) -> Vec<FormField> {
                 schema: p.clone(),
             }
         })
-        .collect()
+        .collect::<Vec<_>>();
+    // Required settings first (the web shows the schema's order; serde_json sorts keys, so the
+    // required Feed address would otherwise come last).
+    fields.sort_by_key(|f| !f.required);
+    fields
 }
 
 /// The options of a choice field: `(raw value, shown label)`, "(not set)" first.
@@ -855,8 +925,10 @@ pub fn choice_options(f: &FormField) -> Vec<(String, String)> {
         out.push(("true".into(), "Yes".into()));
         out.push(("false".into(), "No".into()));
     } else if let Some(vals) = f.schema.get("enum").and_then(Value::as_array) {
-        for v in vals {
+        let names = enum_names(f);
+        for (i, v) in vals.iter().enumerate() {
             let shown = match (f.key.as_str(), v.as_str()) {
+                _ if names.is_some() => names.as_ref().map(|n| n[i].clone()).unwrap_or_default(),
                 ("initial_items", Some("skip")) => "Ignore what is already there".to_string(),
                 ("initial_items", Some("deliver")) => "Also deliver the latest items".to_string(),
                 _ => v
@@ -1404,7 +1476,10 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
                 vec![Ink::new(r.label.clone(), t.text).bold()],
                 vec![Ink::new(trigger_phrase(r, &sources), t.text_muted)],
             ];
-            if let Some(e) = error_text(r) {
+            // A failing connection that is on says its problem (red) as its status line; a paused
+            // one keeps it under the name.
+            let problem = error_text(r).filter(|_| r.paused == Some(false));
+            if let (Some(e), Some(true)) = (error_text(r), r.paused) {
                 name_lines.push(vec![Ink::new(e, t.error)]);
             }
             let mut cells = vec![Cell::Lines(name_lines)];
@@ -1412,6 +1487,16 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
                 cells.push(Cell::text(owner_text(r.principal.as_deref()), t.text));
             }
             match doing_text_with(r, &connection_users(r, &autos)) {
+                Some(_) if problem.is_some() => cells.push(Cell::Lines(
+                    if r.status.trim().eq_ignore_ascii_case("active") {
+                        vec![vec![Ink::new(problem.clone().unwrap_or_default(), t.error)]]
+                    } else {
+                        vec![
+                            vec![Ink::new(word, ink)],
+                            vec![Ink::new(problem.clone().unwrap_or_default(), t.error)],
+                        ]
+                    },
+                )),
                 Some(d) => cells.push(Cell::Lines(
                     if r.status.trim().eq_ignore_ascii_case("active") {
                         vec![vec![Ink::new(d, t.text)]]
@@ -1477,7 +1562,13 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
                 };
                 let mut cells = vec![
                     Cell::Lines(vec![
-                        vec![Ink::new(m.name(), t.text).bold()],
+                        {
+                            let mut l = vec![Ink::new(m.name(), t.text).bold()];
+                            if m.primary {
+                                l.push(Ink::new(format!("  {SENDS_AS_YOU}"), t.info));
+                            }
+                            l
+                        },
                         vec![Ink::new(m.phrase(), t.text_muted)],
                     ]),
                     {
@@ -1852,6 +1943,54 @@ fn open_create(cx: Scope, ctx: &Ctx, tu: Tu) {
                                 .element(fcx, &t)
                                 .build()
                             }
+                            "string" if is_duration(&f) => {
+                                // Check every [15] [minutes] (the web's control).
+                                let (n0, u0) = duration_parts(&initial_value(&f));
+                                let n = fcx.signal(n0);
+                                let u = fcx.signal(u0);
+                                vals.borrow_mut().push((
+                                    f.key.clone(),
+                                    Box::new(move || {
+                                        let num = n.get_untracked().trim().to_string();
+                                        if num.is_empty() {
+                                            String::new()
+                                        } else {
+                                            format!(
+                                                "{num}{}",
+                                                DURATION_UNITS[u.get_untracked().min(3)].0
+                                            )
+                                        }
+                                    }),
+                                ));
+                                Element::new()
+                                    .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
+                                    .child(
+                                        super::w::caret_tracked(
+                                            fcx,
+                                            caret,
+                                            TextInput::new()
+                                                .value(n)
+                                                .layout(
+                                                    LayoutStyle::default().w(6).h(1).shrink(0.0),
+                                                )
+                                                .element(fcx, &t),
+                                        )
+                                        .build(),
+                                    )
+                                    .child(
+                                        Select::new(
+                                            DURATION_UNITS
+                                                .iter()
+                                                .map(|(_, w)| SelectOption::new(w.to_string()))
+                                                .collect(),
+                                        )
+                                        .value(u)
+                                        .layout(LayoutStyle::default().w(14).h(1).shrink(0.0))
+                                        .element(fcx, &t)
+                                        .build(),
+                                    )
+                                    .build()
+                            }
                             "readonly" => sentence(
                                 &t,
                                 &format!("Not editable here: {}", f.schema),
@@ -1884,7 +2023,7 @@ fn open_create(cx: Scope, ctx: &Ctx, tu: Tu) {
                             }
                         };
                         fc = fc.child(super::w::field_row(&t, &label, label_w, control));
-                        if !f.description.is_empty() {
+                        if description_shown(&f) {
                             fc = fc.child(super::kit::sentence_indent(
                                 &t,
                                 &f.description,

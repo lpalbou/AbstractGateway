@@ -2330,7 +2330,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
               <tbody id="triggers-table"></tbody>
             </table>
           </div>
-          <p class="section-note trg-help">A connection only fetches while an automation uses it; pause it to stop even then.</p>
+          <p class="section-note trg-help">A connection only fetches while an automation uses it. Pause it to stop fetching.</p>
         </section>
       </div>
       <div id="tab-skills" class="tab-panel">

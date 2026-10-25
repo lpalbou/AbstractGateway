@@ -242,7 +242,12 @@ TRIGGERS_JS = r"""
       if (!doing) return `${trgStatusChip(r.status)}<span class="trg-sub">listening state not reported (update the gateway)</span>`;
       const st = String(r.status || "").toLowerCase();
       const chip = st && st !== "active" ? trgStatusChip(r.status) : "";
-      return `${chip}<span class="trg-doing" data-trg-doing="${esc(r.connection_id)}">${esc(doing)}</span>${trgListenSwitch(r)}${trgAdvancedMarkup(r)}`;
+      // A failing connection that is on says its problem (red) in place of the listening words.
+      const problem = !r.paused ? trgErrorText(r) : "";
+      const line = problem
+        ? `<span class="trg-doing trg-error" role="status" data-trg-doing="${esc(r.connection_id)}">${esc(problem)}</span>`
+        : `<span class="trg-doing" data-trg-doing="${esc(r.connection_id)}">${esc(doing)}</span>`;
+      return `${chip}${line}${trgListenSwitch(r)}${trgAdvancedMarkup(r)}`;
     }
     // The operator's "Advanced" (collapsed, per connection), content-named per the console's rule (R15 D1,
     // no "Advanced" anywhere): "When nothing uses it" → keep fetching even when no automation uses it.
@@ -332,9 +337,10 @@ TRIGGERS_JS = r"""
         const id = esc(m.account_id);
         const w = m.watcher || {};
         const last = w.last_poll ? `checked ${trgAgo(w.last_poll, o.now) || w.last_poll}` : "Never";
-        const name = m.primary ? `${m.address || m.account_id} (primary)` : m.account_id;
+        // Named like My email: the mailbox's name (its address), the primary with "Sends as you".
+        const name = m.name || m.address || m.account_id;
         return `<tr class="trg-row trg-row--mailbox" data-trg-mailbox="${id}">`
-          + `<td class="trg-name-cell"><span class="trg-name">${esc(name)}</span><span class="trg-sub">When mail arrives in ${esc(m.address || m.account_id)}${m.can_send ? "" : " · read-only"}</span><span class="trg-sub trg-fold">${esc(last.charAt(0).toUpperCase() + last.slice(1))}</span></td>`
+          + `<td class="trg-name-cell"><span class="trg-name">${esc(name)}${m.primary ? `<span class="mbx-badge">Sends as you</span>` : ""}</span><span class="trg-sub">When mail arrives in ${esc(m.address || m.account_id)}${m.can_send ? "" : " · read-only"}</span><span class="trg-sub trg-fold">${esc(last.charAt(0).toUpperCase() + last.slice(1))}</span></td>`
           + `<td class="trg-status">${trgMailboxStatusCell(m, o.automations)}</td>`
           + `<td class="trg-last">${esc(last)}</td>`
           + `<td class="trg-actions-cell"><div class="trg-actions"><button type="button" class="link-button" data-trg-mailbox-manage="${id}" data-af-tip="Your mailboxes are managed in My email">Manage in My email</button></div></td></tr>`;
@@ -368,7 +374,7 @@ TRIGGERS_JS = r"""
           `<button type="button" class="secondary" data-trg-delete="${id}" data-af-tip="Delete ${label}">Delete</button>`,
         ];
         let html = `<tr class="trg-row" data-trg-row="${id}">`
-          + `<td class="trg-name-cell"><span class="trg-name">${label}</span><span class="trg-sub">${phrase}</span>${trgErrorText(r) ? `<span class="trg-error" role="status">${esc(trgErrorText(r))}</span>` : ""}<span class="trg-sub trg-fold">Last event: ${esc(last)}</span>${trgFireLine(o.fire && o.fire[r.connection_id])}</td>`
+          + `<td class="trg-name-cell"><span class="trg-name">${label}</span><span class="trg-sub">${phrase}</span>${r.paused && trgErrorText(r) ? `<span class="trg-error" role="status">${esc(trgErrorText(r))}</span>` : ""}<span class="trg-sub trg-fold">Last event: ${esc(last)}</span>${trgFireLine(o.fire && o.fire[r.connection_id])}</td>`
           + (o.all ? `<td class="trg-account">${owner ? esc(owner) : `<span class="trg-sub">owner not reported</span>`}</td>` : "")
           + `<td class="trg-status">${trgStatusCell(r, o.automations)}</td>`
           + `<td class="trg-last">${esc(last)}</td>`
@@ -594,7 +600,7 @@ TRIGGERS_JS = r"""
 
     // ---- the create dialog: the form engine for a source's `connection_schema` (the JSON Schema
     // subset Flow renders for `config_schema`).
-    const TRG_FORM_KEYWORDS = new Set(["type", "title", "description", "enum", "default", "pattern", "format", "minimum", "maximum", "minLength", "maxLength", "examples", "writeOnly"]);
+    const TRG_FORM_KEYWORDS = new Set(["type", "title", "description", "enum", "default", "pattern", "format", "minimum", "maximum", "minLength", "maxLength", "examples", "writeOnly", "enumNames"]);
     // Labels for the settings of the shipped sources whose schemas carry no `title`.
     const TRG_FIELD_LABELS = {
       subject_path: "Subject (path in the JSON body)",
@@ -636,13 +642,23 @@ TRIGGERS_JS = r"""
     const TRG_DURATION_UNITS = [["s", "seconds"], ["m", "minutes"], ["h", "hours"], ["d", "days"]];
     const TRG_ENUM_WORDS = { initial_items: { skip: "Ignore what is already there", deliver: "Also deliver the latest items" } };
     const TRG_MORE_FIELDS = new Set(["subject_path", "tolerance_s", "max_items"]);
+    // An enum's shown names: the schema's `enumNames` (same length), else the console's words, else the value.
+    function trgEnumNames(f) {
+      const names = f.schema && f.schema.enumNames;
+      return Array.isArray(names) && Array.isArray(f.schema.enum) && names.length === f.schema.enum.length ? names.map(String) : null;
+    }
+    // A description that only restates what the control already shows (a duration's "s, m, h or d",
+    // a choice's raw values) is not shown: the control's own words say it (UX re-review #4).
+    function trgControlSaysIt(f) {
+      return trgIsDuration(f) || (f.kind === "enum" && !!(trgEnumNames(f) || TRG_ENUM_WORDS[f.key]));
+    }
     function trgIsDuration(f) {
       return f.kind === "string" && (f.schema.format === "duration" || f.schema.pattern === "^[1-9][0-9]*[smhd]$");
     }
     function trgFieldMarkup(f, values, errors) {
       const id = `trg-f-${f.key.replace(/[^A-Za-z0-9_-]/g, "-")}`;
       const label = `<label for="${id}">${esc(f.label)}${f.required ? " *" : ""}</label>`;
-      const help = f.description ? `<p class="trg-help">${esc(f.description)}</p>` : "";
+      const help = f.description && !trgControlSaysIt(f) ? `<p class="trg-help">${esc(f.description)}</p>` : "";
       const err = errors && errors[f.key] ? `<p class="trg-field-error" role="alert">${esc(errors[f.key])}</p>` : "";
       const dflt = f.schema.default;
       const has = values && values[f.key] !== undefined;
@@ -654,9 +670,10 @@ TRIGGERS_JS = r"""
           + `<select data-trg-dur-u="${esc(f.key)}" aria-label="${esc(f.label)} unit">${TRG_DURATION_UNITS.map(([u, w]) => `<option value="${u}"${u === m[2] ? " selected" : ""}>${w}</option>`).join("")}</select></span>`;
       } else if (f.kind === "enum") {
         const words = TRG_ENUM_WORDS[f.key] || {};
+        const names = trgEnumNames(f);
         const sel = has ? cur : (dflt === undefined ? "" : JSON.stringify(dflt));
         control = `<select id="${id}" data-trg-field="${esc(f.key)}">${dflt === undefined ? `<option value="">(not set)</option>` : ""}`
-          + f.schema.enum.map((v) => `<option value="${esc(JSON.stringify(v))}"${JSON.stringify(v) === sel ? " selected" : ""}>${esc(words[v] || (typeof v === "string" ? v : JSON.stringify(v)))}</option>`).join("")
+          + f.schema.enum.map((v, i) => `<option value="${esc(JSON.stringify(v))}"${JSON.stringify(v) === sel ? " selected" : ""}>${esc(names ? names[i] : (words[v] || (typeof v === "string" ? v : JSON.stringify(v))))}</option>`).join("")
           + `</select>`;
       } else if (f.kind === "boolean") {
         const b = has ? cur : (dflt === undefined ? "" : String(dflt));

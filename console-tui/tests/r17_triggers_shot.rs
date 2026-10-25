@@ -43,7 +43,13 @@ fn triggers_is_reached_with_v_after_workflows_and_shows_the_web_rows() {
     );
     h.store.json.set(K_SOURCES, Loadable::Ready(json!({"items": [
         {"id": "feed.item", "version": 1, "label": "When a feed has a new item", "available": true, "needs_connection": true,
-         "connection_provider": "trigger_connections", "connection_schema": {"type": "object", "required": ["url"], "properties": {"url": {"type": "string"}}}},
+         "connection_provider": "trigger_connections", "connection_schema": {"type": "object", "required": ["url"], "properties": {
+             "url": {"type": "string", "format": "uri", "title": "Feed address", "description": "The address of the RSS or Atom feed (starts with http:// or https://)."},
+             "every": {"type": "string", "format": "duration", "pattern": "^[1-9][0-9]*[smhd]$", "default": "15m", "title": "Check every",
+                       "description": "How often to check the feed: a number and a unit (s, m, h or d), for example 15m. At least 60s."},
+             "initial_items": {"type": "string", "enum": ["skip", "deliver"], "enumNames": ["Ignore what is already there", "Also deliver the latest items"],
+                               "default": "skip", "title": "When added",
+                               "description": "What to do with the items already in the feed when it is first checked: ignore what is already there (skip), or also deliver the latest items (deliver)."}}}},
         {"id": "webhook.received", "version": 1, "label": "When a webhook is called", "available": true, "needs_connection": true,
          "connection_provider": "trigger_connections", "connection_schema": {"type": "object", "properties": {}}},
         {"id": "email.received", "version": 1, "label": "When an email arrives", "available": true, "needs_connection": true,
@@ -89,7 +95,7 @@ fn triggers_is_reached_with_v_after_workflows_and_shows_the_web_rows() {
         "Broken feed",
         "Paused",
         "Can't read the feed: the address answered 404",
-        "admin@example.org (primary)",
+        "admin@example.org  Sends as you",
         "When mail arrives in admin@example.org",
         "Manage in My email",
         "Events",
@@ -107,5 +113,18 @@ fn triggers_is_reached_with_v_after_workflows_and_shows_the_web_rows() {
         s.contains("What to listen to") && s.contains("When a feed has a new item"),
         "{s}"
     );
+    // The runtime's feed settings in words: Check every [15] [minutes], When added by name.
+    for w in [
+        "Check every",
+        "15",
+        "minutes",
+        "When added",
+        "Ignore what is already there",
+    ] {
+        assert!(s.contains(w), "{w:?} missing:\n{s}");
+    }
+    for banned in ["Not editable here", "enumNames", "(skip)", "s, m, h or d"] {
+        assert!(!s.contains(banned), "{banned:?}:\n{s}");
+    }
     h.shoot("triggers-new-connection");
 }

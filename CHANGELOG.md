@@ -55,6 +55,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Triggers, re-review.** The feed form's **When added** is a choice in words (a source's `enumNames` are accepted;
+  no "Not editable here" with raw JSON), and descriptions that restate the control (a duration's units, a choice's
+  raw values) are not shown; mailbox rows are named like My email (the address, the primary with *Sends as you*); a
+  failing connection that is on shows its red error as its status line; the line under the list reads *Pause it to
+  stop fetching.* The mailbox form opens in a narrow dialog (480 px), its links use the console's link look, and a
+  refused Gmail/Outlook password keeps the provider's help under the field. The terminal console matches (its feed
+  form asks *Check every [15] [minutes]*, required settings first).
 - Every automation's trigger in words: summaries carry `trigger_text` ("When Python news has a new item", "When mail
   arrives in me@example.org", "When Orders is called", "By hand", or the schedule sentence) next to the unchanged
   `schedule_text`/`schedule_rule_text`; the tray shows it on its rows and submenus and says **Pause** / **Resume**.

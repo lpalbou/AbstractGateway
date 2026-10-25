@@ -75,6 +75,11 @@ MAILBOXES_CSS = r"""
 .mbs-servers__wide { grid-column: 1 / -1; }
 #mailbox-settings-body .account-card { border: 0; padding: 0; background: transparent; box-shadow: none; }
 #mailbox-settings-body .account-card > .af-card__header { display: none; }
+/* links in the form: the console's link look (as .link-button), never the browser's default blue */
+.mbs a, #my-mailboxes-card a { color: var(--text); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); }
+.mbs a:hover, #my-mailboxes-card a:hover { text-decoration-color: currentColor; }
+/* the mailbox form is one column: a narrow dialog on wide screens (the kit's phone sheet below 768 px) */
+@media (min-width: 768px) { #mailbox-sheet-backdrop .af-modal { width: min(480px, calc(100vw - 32px)); } }
 .mbs-actions { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
 @media (max-width: 767.98px) { .mbs-servers__grid { grid-template-columns: minmax(0, 1fr); } .mbx-row__actions { flex-basis: 100%; } }
 """
@@ -270,7 +275,7 @@ MAILBOXES_JS = r"""
         } else {
           const ways = Array.isArray(d.sign_in) ? d.sign_in : [];
           const appOnly = ways.includes("app_password") && !ways.includes("password");
-          const help = st.problemHtml ? "" : p ? mailboxProviderHelpHtml(d.provider, !!d.oauth_available, d.app_password_url)
+          const help = p ? mailboxProviderHelpHtml(d.provider, !!d.oauth_available, d.app_password_url)
             : appOnly ? `${esc(d.display_name || "This provider")} needs an app password${d.app_password_url ? `: <a href="${esc(d.app_password_url)}" target="_blank" rel="noopener noreferrer">Create an app password</a> and paste it here` : " (create one in your account's security settings)"}.`
             : "";
           html += `<div class="af-form__field"><label class="af-form__label" for="mbs-password">Password</label>`
@@ -295,7 +300,7 @@ MAILBOXES_JS = r"""
           + `<div class="af-form__field mbs-servers__wide"><label class="af-form__label" for="mbs-login">Sign-in name</label><input id="mbs-login" data-mbs="login" autocomplete="off" spellcheck="false" value="${esc(st.login || st.address || "")}"></div>`
           + `</div></details>`;
       }
-      if (st.problem) html += `<p class="mbs-error" role="alert">${st.problemHtml ? st.problem : esc(st.problem)}</p>`;
+      if (st.problem) html += `<p class="mbs-error" role="alert">${esc(st.problem)}</p>`;
       return html + `</div>`;
     }
     // The connect body (password sign-in), or field errors.
@@ -421,7 +426,6 @@ MAILBOXES_JS = r"""
       const { body, errors } = mailboxSheetBody(st);
       st.errors = errors;
       st.problem = "";
-      st.problemHtml = false;
       if (Object.keys(errors).length) {
         if (errors["imap.host"] || errors["smtp.host"]) st.serversOpen = true;
         renderMailboxSheet();
@@ -441,8 +445,11 @@ MAILBOXES_JS = r"""
       } catch (e) {
         st.saving = false;
         $("mailbox-sheet-note").textContent = "";
+        // A refused password at a provider that refuses account passwords: one short sentence; the
+        // provider's own help (with its app-password link) stays under the Password field.
         const p = st.found && MBX_PROVIDERS[st.found.provider];
-        if (p) { st.problem = `Not connected. ${mailboxProviderHelpHtml(st.found.provider, !!st.found.oauth_available, st.found.app_password_url)}`; st.problemHtml = true; }
+        const code = e && e.detail && typeof e.detail === "object" ? String(e.detail.reason_code || e.detail.code || "") : "";
+        if (p && code === "email_auth_failed") st.problem = `Not connected: ${p.name} refused this password. Use an app password (the link above)${st.found.oauth_available ? `, or ${p.signIn}` : ""}.`;
         else st.problem = `Not connected: ${emailErrorText(e)}`;
         renderMailboxSheet();
       }
@@ -460,8 +467,7 @@ MAILBOXES_JS = r"""
         out = await api(`${base}/start`, { method: "POST", body: JSON.stringify({ provider, address: String(st.address || "").trim() }), slow: true });
       } catch (e) {
         st.problem = `Not signed in: ${emailErrorText(e)}`;
-        st.problemHtml = false;
-        renderMailboxSheet();
+          renderMailboxSheet();
         return;
       }
       const flow = { id: out.flow_id, base, cancelled: false };
@@ -474,7 +480,7 @@ MAILBOXES_JS = r"""
         try {
           res = await api(`${base}/finish`, { method: "POST", body: JSON.stringify({ flow_id: flow.id, wait_s: 20 }), timeoutMs: 70000 });
         } catch (e) {
-          if (!flow.cancelled && mbx.sheet === st) { st.problem = `Not signed in: ${emailErrorText(e)}`; st.problemHtml = false; note.textContent = ""; renderMailboxSheet(); }
+          if (!flow.cancelled && mbx.sheet === st) { st.problem = `Not signed in: ${emailErrorText(e)}`; note.textContent = ""; renderMailboxSheet(); }
           break;
         }
         if (flow.cancelled) break;

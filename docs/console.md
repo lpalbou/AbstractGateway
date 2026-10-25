@@ -448,9 +448,13 @@ email)**, **Add a feed** and **Add a webhook**.
   the switch. **When nothing uses it** (collapsed, per connection) has **Keep
   fetching even when nothing uses it**. A mailbox row shows the same states with
   the same **Listening** switch (it is the mailbox's **Active** switch in
-  My email → Mailboxes). A problem the gateway recorded shows in red under the row, for
-  example *Can't read the feed: the address answered 404 (not found). Check the
-  feed address.*
+  My email → Mailboxes); a mailbox row is named like My email (its address;
+  your primary mailbox with *Sends as you*). A problem the gateway recorded is
+  the row's status line, in red, while the connection is on (for example
+  *Can't read the feed: the address answered 404 (not found). Check the feed
+  address.*); a paused one says *Paused* with the problem under its name. The
+  line under the list: *A connection only fetches while an automation uses it.
+  Pause it to stop fetching.*
 - **Events** opens the 20 most recent events under the row, each a sentence
   (*Test event · just now*, *New item: Release 0.13 · 09:00*, *Call received ·
   09:00*) with its full JSON behind **Details** (the CloudEvents envelope your
@@ -461,7 +465,9 @@ email)**, **Add a feed** and **Add a webhook**.
   webhook, each with a one-line hint; never a mailbox), give it a name, and fill
   its settings: a feed asks for its address, **Check every** *[15] [minutes]*
   and **When added** (*Ignore what is already there* or *Also deliver the latest
-  items*); a webhook asks for nothing else. Optional settings (a webhook's
+  items*, the names the source gives its choices); a webhook asks for nothing
+  else. A setting's description is not shown when the control already says it
+  (a duration's units, a choice's values). Optional settings (a webhook's
   *Subject (path in the JSON body)* and *Accepted clock skew (seconds)*, a feed's
   items per check) are under **More options**. A refusal shows in red beside its
   field and keeps what you typed. **Cancel** closes the dialog. After **Create**

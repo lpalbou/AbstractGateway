@@ -64,7 +64,7 @@ fn rows_sources_and_words() {
     let mb = triggers::mailboxes_from(&mailboxes()).unwrap();
     assert_eq!(
         mb.iter().map(|m| m.name()).collect::<Vec<_>>(),
-        ["admin@example.org (primary)", "work"]
+        ["admin@example.org", "me@work.example"]
     );
     assert_eq!(
         mb[1].phrase(),
@@ -299,7 +299,7 @@ fn the_page_shows_the_webs_words() {
         "Never",
         "When CI hook is called",
         "CI hook",
-        "admin@example.org (primary)",
+        "admin@example.org",
         "When mail arrives in admin@example.org",
         "When mail arrives in me@work.example · read-only",
         "Manage in My email",
@@ -564,7 +564,7 @@ fn readable_webhook_form_and_mailbox_manage_click() {
     let mut h = page(true);
     let before = h.turns(1);
     assert!(!before.contains("Add your mailbox") || true);
-    click_row(&mut h, "admin@example.org (primary)", "Manage");
+    click_row(&mut h, "admin@example.org", "Manage");
     clicked().lock().unwrap().insert("manage");
     let s = h.turns(3);
     assert!(
@@ -611,7 +611,7 @@ fn rows_say_what_a_connection_is_doing_and_the_listening_switch_pauses_it() {
     for w in [
         "Listening · used by 2",
         "Waiting for an automation to",
-        "A connection only fetches while an automation uses it; pause it to stop even then.",
+        "A connection only fetches while an automation uses it. Pause it to stop fetching.",
     ] {
         assert!(s.contains(w), "{w:?} missing:\n{s}");
     }
@@ -664,10 +664,57 @@ fn ux_review_words_errors_names_and_local_address() {
     let mut h = page(true);
     h.store.json.set(K_LIST, Loadable::Ready(l));
     let s = h.turns(3);
+    // A failing feed that is on: its red error IS the status line (never "Listening · …").
+    let feed_row = s
+        .lines()
+        .find(|l| l.contains("Release feed") && !l.contains("When "))
+        .unwrap_or_else(|| panic!("{s}"));
     assert!(
-        s.contains("Can't read the feed: the address answered 404"),
-        "{s}"
+        feed_row.contains("Can't read the feed: the") && !feed_row.contains("Listening"),
+        "{feed_row}\n{s}"
     );
+    assert_eq!(
+        s.matches("Can't read the feed").count(),
+        1,
+        "said once:\n{s}"
+    );
+}
+
+/// UX re-review #4: the runtime's feed settings (enumNames, descriptions that restate the
+/// values) read as controls with words: "Check every [15] [minutes]", "When added" names.
+#[test]
+fn the_runtime_feed_schema_reads_as_words() {
+    let schema = json!({"type": "object", "required": ["url"], "properties": {
+        "url": {"type": "string", "format": "uri", "title": "Feed address", "description": "The address of the RSS or Atom feed (starts with http:// or https://)."},
+        "every": {"type": "string", "format": "duration", "pattern": "^[1-9][0-9]*[smhd]$", "default": "15m", "title": "Check every",
+                  "description": "How often to check the feed: a number and a unit (s, m, h or d), for example 15m. At least 60s."},
+        "initial_items": {"type": "string", "enum": ["skip", "deliver"], "enumNames": ["Ignore what is already there", "Also deliver the latest items"],
+                          "default": "skip", "title": "When added",
+                          "description": "What to do with the items already in the feed when it is first checked: ignore what is already there (skip), or also deliver the latest items (deliver)."}
+    }});
+    let fields = triggers::form_fields(&schema);
+    let f = |k: &str| fields.iter().find(|f| f.key == k).unwrap().clone();
+    assert_eq!(f("initial_items").kind, "enum", "never Not editable here");
+    let opts: Vec<String> = triggers::choice_options(&f("initial_items"))
+        .into_iter()
+        .map(|(_, l)| l)
+        .collect();
+    assert_eq!(
+        opts,
+        [
+            "(not set)",
+            "Ignore what is already there",
+            "Also deliver the latest items"
+        ]
+    );
+    assert!(triggers::is_duration(&f("every")));
+    assert_eq!(triggers::duration_parts("15m"), ("15".to_string(), 1));
+    assert_eq!(triggers::duration_parts("2h"), ("2".to_string(), 2));
+    assert_eq!(triggers::duration_parts("x"), (String::new(), 1));
+    // Descriptions that restate the control are not shown; the others are.
+    assert!(!triggers::description_shown(&f("every")));
+    assert!(!triggers::description_shown(&f("initial_items")));
+    assert!(triggers::description_shown(&f("url")));
 }
 
 #[test]

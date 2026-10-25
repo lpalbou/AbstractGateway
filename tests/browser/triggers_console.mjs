@@ -34,7 +34,12 @@ const SOURCES = {
     { id: "feed.item", version: 1, label: "When a feed has a new item", available: true, needs_connection: true, config_schema: { type: "object" }, event_schema: {}, capabilities: { kind: "event" },
       connection_schema: { type: "object", required: ["url"], properties: {
         url: { type: "string", title: "Feed address", description: "An RSS or Atom address.", pattern: "^https?://", examples: ["https://example.org/feed.xml"] },
-        every_minutes: { type: "integer", title: "Check every (minutes)", default: 15, minimum: 5 } } } },
+        // The runtime's own feed settings (abstractruntime triggers/feed.py), verbatim.
+        every: { type: "string", format: "duration", pattern: "^[1-9][0-9]*[smhd]$", default: "15m", title: "Check every",
+          description: "How often to check the feed: a number and a unit (s, m, h or d), for example 15m. At least 60s." },
+        max_items: { type: "integer", minimum: 1, maximum: 50, default: 20, title: "Most new items per check", description: "The most new items one check delivers; older new items are skipped." },
+        initial_items: { type: "string", enum: ["skip", "deliver"], enumNames: ["Ignore what is already there", "Also deliver the latest items"], default: "skip", title: "When added",
+          description: "What to do with the items already in the feed when it is first checked: ignore what is already there (skip), or also deliver the latest items (deliver)." } } } },
     { id: "webhook.received", version: 1, label: "When a webhook is called", available: true, needs_connection: true, config_schema: { type: "object" }, event_schema: {}, capabilities: { kind: "event" },
       connection_schema: { type: "object", additionalProperties: false, properties: {
         subject_path: { type: "string", description: "dotted path in a JSON body for the event subject (default: the webhook id)" },
@@ -275,7 +280,7 @@ try {
       check(store.requests.includes("PUT /api/gateway/me/email/accounts/default/enabled"), "mailbox row switch: PUT enabled");
       await page.click('[data-trg-mailbox-use="default"]');
       await page.waitForFunction(() => !(document.querySelector('[data-trg-mailbox="default"]') || {}).textContent.includes("Paused"));
-      check((await page.textContent("#tab-triggers")).includes("A connection only fetches while an automation uses it; pause it to stop even then."), "help line under the list");
+      check((await page.textContent("#tab-triggers")).includes("A connection only fetches while an automation uses it. Pause it to stop fetching."), "help line under the list");
       await page.click('[data-trg-listen="conn_feed1"]');
       await page.waitForFunction(() => (document.querySelector('[data-trg-row="conn_feed1"]') || {}).textContent.includes("Paused"));
       check(JSON.stringify(store.lastConnPut) === JSON.stringify({ id: "conn_feed1", body: { paused: true } }), "Listening toggle: PUT {paused: true}", store.lastConnPut);
@@ -292,7 +297,12 @@ try {
       check(JSON.stringify(opts) === JSON.stringify(["", "feed.item@1", "webhook.received@1"]), "create: connection sources only, never the mailbox source", opts);
       await page.selectOption("#trg-f-source", "feed.item@1");
       await page.waitForSelector("#trg-f-url");
-      check((await page.inputValue("#trg-f-every_minutes")) === "15", "create: schema default prefilled");
+      check((await page.inputValue("#trg-f-every")) === "15" && (await page.$eval('[data-trg-dur-u="every"]', (el) => el.selectedOptions[0].textContent)) === "minutes", "create: Check every [15] [minutes]");
+      const whenAdded = await page.$$eval("#trg-f-initial_items option", (els) => els.map((e) => [e.textContent, e.selected]));
+      check(JSON.stringify(whenAdded) === JSON.stringify([["Ignore what is already there", true], ["Also deliver the latest items", false]]), "create: When added is a choice in words", whenAdded);
+      const feedForm = await page.textContent("#trigger-modal-body");
+      check(!feedForm.includes("Not editable here") && !feedForm.includes("enumNames") && !feedForm.includes("(skip)") && !feedForm.includes("s, m, h or d"), "create: no raw JSON, no restated values", feedForm);
+      await page.selectOption("#trg-f-initial_items", { label: "Also deliver the latest items" });
       await page.fill("#trg-f-label", "Changelog");
       await page.fill("#trg-f-url", "not a url");
       await page.click("[data-trg-create]");
@@ -304,7 +314,7 @@ try {
       await page.click("[data-trg-create]");
       await page.waitForSelector("[data-trg-done]");
       check((await page.textContent("#trigger-modal-body")).includes("Next: in Flow, + → When something arrives → Changelog."), "created: the next step");
-      check(JSON.stringify(store.lastCreate) === JSON.stringify({ source_id: "feed.item", source_version: 1, label: "Changelog", config: { url: "https://example.org/changelog.xml", every_minutes: 15 } }), "create: the POST body", store.lastCreate);
+      check(JSON.stringify(store.lastCreate) === JSON.stringify({ source_id: "feed.item", source_version: 1, label: "Changelog", config: { url: "https://example.org/changelog.xml", every: "15m", max_items: 20, initial_items: "deliver" } }), "create: the POST body", store.lastCreate);
       check(await page.locator("[data-trg-value='created:secret']").count() === 0, "create: no secret for a feed");
       await page.click("[data-trg-done]");
       await page.waitForSelector('#triggers-table tr.trg-row:has-text("Changelog")');
@@ -402,9 +412,16 @@ try {
       await page.fill("#mbs-password", "account-password");
       await page.click("#mailbox-sheet-go");
       await page.waitForSelector('#mailbox-sheet-body .mbs-error[role="alert"]');
-      check((await page.textContent('#mailbox-sheet-body .mbs-error[role="alert"]')).startsWith("Not connected. Gmail refuses account passwords."), "form: Gmail refusal says what to do");
-      const link = page.locator('#mailbox-sheet-body .mbs-error a');
-      check((await link.getAttribute("href")) === "https://myaccount.google.com/apppasswords" && (await link.getAttribute("target")) === "_blank", "form: refusal links the app-password page");
+      check((await page.textContent('#mailbox-sheet-body .mbs-error[role="alert"]')) === "Not connected: Gmail refused this password. Use an app password (the link above), or Sign in with Google.", "form: Gmail refusal, one short sentence", await page.textContent('#mailbox-sheet-body .mbs-error[role="alert"]'));
+      // The Gmail help stays provider-specific under the field, its link in the console's link look.
+      check((await page.textContent("[data-mbs-help]")).startsWith("Gmail refuses account passwords."), "form: Gmail help kept after the refusal");
+      const link = page.locator("[data-mbs-help] a");
+      check((await link.getAttribute("href")) === "https://myaccount.google.com/apppasswords" && (await link.getAttribute("target")) === "_blank", "form: the direct app-password link in a new tab");
+      const linkInk = await link.evaluate((el) => getComputedStyle(el).color);
+      const textInk = await page.$eval("#mailbox-sheet-title", (el) => getComputedStyle(el).color);
+      check(linkInk === textInk && linkInk !== "rgb(0, 0, 238)", "form: link in the console's text colour, never the default blue", { linkInk, textInk });
+      const sheetW = await page.$eval("#mailbox-sheet-backdrop .af-modal", (el) => Math.round(el.getBoundingClientRect().width));
+      check(sheetW <= 480 && sheetW >= 440, "form: a narrow dialog (480 px) for a one-column form", sheetW);
       check(await page.inputValue("#mbs-password") === "account-password" && await page.inputValue("#mbs-address") === "someone@gmail.com", "form: the text is kept");
       const red = await page.$eval('#mailbox-sheet-body .mbs-error[role="alert"]', (el) => getComputedStyle(el).color);
       check(red !== await page.$eval("#mbs-address", (el) => getComputedStyle(el).color), "form: the error is coloured", red);
