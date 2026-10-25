@@ -520,6 +520,7 @@ fn narrow_terminal_keeps_rows_and_actions() {
     h.admin();
     h.store.json.set(K_SOURCES, Loadable::Ready(sources()));
     h.store.json.set(K_LIST, Loadable::Ready(list()));
+    h.store.json.set(K_MAILBOXES, Loadable::Ready(mailboxes()));
     let s = h.turns(3);
     for w in [
         "Release feed",
@@ -666,5 +667,41 @@ fn ux_review_words_errors_names_and_local_address() {
     assert!(
         s.contains("Can't read the feed: the address answered 404"),
         "{s}"
+    );
+}
+
+#[test]
+fn the_list_waits_for_connections_and_mailboxes_and_the_dialog_has_cancel_and_hints() {
+    let mut h = harness((150, 40), Mount::Page(triggers::screen));
+    h.admin();
+    h.store.json.set(K_SOURCES, Loadable::Ready(sources()));
+    h.store
+        .json
+        .set(K_LIST, Loadable::Ready(json!({"connections": []})));
+    let s = h.turns(3);
+    // Mailboxes not answered yet: the loading state, never the empty state.
+    assert!(
+        s.contains("Reading your connections and mailboxes..."),
+        "{s}"
+    );
+    assert!(!s.contains("Nothing to listen to yet"), "{s}");
+    h.store
+        .json
+        .set(K_MAILBOXES, Loadable::Ready(json!({"items": []})));
+    let s = h.turns(3);
+    assert!(s.contains("Nothing to listen to yet"), "{s}");
+    h.store.json.set(K_MAILBOXES, Loadable::Loading);
+    h.store.json.set(K_MAILBOXES, Loadable::Ready(mailboxes()));
+    // New connection: a one-line hint per option, and Cancel.
+    h.click_text("New connection");
+    let s = h.turns(3);
+    assert!(
+        s.contains("Runs when a feed (RSS or Atom) publishes a new item."),
+        "{s}"
+    );
+    let s2 = h.click_after("Feed address", "Cancel");
+    assert!(
+        !s2.contains("What to listen to"),
+        "Cancel closes the dialog:\n{s2}"
     );
 }

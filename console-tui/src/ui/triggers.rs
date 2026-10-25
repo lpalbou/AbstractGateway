@@ -66,6 +66,8 @@ pub const ALL: &str = "All accounts";
 pub const EMPTY: &str = "Nothing to listen to yet. Press n to add a feed or a webhook; add a mailbox in My email (Accounts, @).";
 pub const EMPTY_ALL: &str = "No account has a connection yet.";
 pub const LOADING: &str = "Reading the connections...";
+/// The own view waits for the connections AND the mailboxes (never an empty list meanwhile).
+pub const LOADING_OWN: &str = "Reading your connections and mailboxes...";
 pub const EVENTS_EMPTY: &str = "No event yet. Send a test event to see one here.";
 pub const EVENTS_LOADING: &str = "Reading the events...";
 pub const SECRET_ONCE: &str = "The signing secret is shown once. Copy it now: the gateway keeps it sealed and never shows it again.";
@@ -529,6 +531,17 @@ pub fn local_address(url: &str) -> bool {
         || (a == 192 && b == 168)
         || (a == 172 && (16..=31).contains(&b))
         || (a == 169 && b == 254)
+}
+
+/// The one-line hint per option of "What to listen to" (the web's `TRG_SOURCE_HINTS`).
+pub fn source_hint(id: &str) -> &'static str {
+    match id {
+        "feed.item" => "Runs when a feed (RSS or Atom) publishes a new item.",
+        "webhook.received" => {
+            "Runs when another service (GitHub, Zapier…) calls an address you give it."
+        }
+        _ => "",
+    }
 }
 
 /// A mailbox row's one action (the web's link).
@@ -1312,7 +1325,12 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
     };
     let rows = match ctx.store.json.get(K_LIST) {
         Loadable::NotAsked | Loadable::Loading => {
-            return anchor(sentence(t, LOADING, width, t.text_muted))
+            return anchor(sentence(
+                t,
+                if all { LOADING } else { LOADING_OWN },
+                width,
+                t.text_muted,
+            ))
         }
         Loadable::Failed(e) => {
             return anchor(sentence(
@@ -1333,6 +1351,23 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
                 ))
             }
         },
+    };
+    // Own view: the mailboxes are rows too, so the list waits for them (loading, never empty).
+    let mailbox_error = if all {
+        None
+    } else {
+        match ctx.store.json.get(K_MAILBOXES) {
+            Loadable::NotAsked | Loadable::Loading => {
+                return anchor(super::w::form::sentence(
+                    t,
+                    LOADING_OWN,
+                    width,
+                    t.text_muted,
+                ))
+            }
+            Loadable::Failed(e) => Some(format!("Could not read your mailboxes: {}", refusal(&e))),
+            Loadable::Ready(_) => None,
+        }
     };
     let sources = match ctx.store.json.get(K_SOURCES) {
         Loadable::Ready(v) => v,
@@ -1493,7 +1528,7 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
     let (ca, ce) = (ctx.clone(), ctx.clone());
     let (ka, ke, kt) = (keys.clone(), keys.clone(), keys);
     let ct = ctx.clone();
-    DataTable::new(cols, table_rows, sel)
+    let table = DataTable::new(cols, table_rows, sel)
         .width(width)
         .max_rows((page_h - 9).max(4))
         .empty(if all { EMPTY_ALL } else { EMPTY })
@@ -1530,7 +1565,15 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
             }
             row_action(pcx, &ce, tu, "events");
         })
-        .view(cx, t)
+        .view(cx, t);
+    match mailbox_error {
+        Some(e) => Element::new()
+            .style(LayoutStyle::column().gap(0).grow(1.0))
+            .child(sentence(t, &e, width, t.error))
+            .child(table)
+            .build(),
+        None => table,
+    }
 }
 
 // ---------------------------------------------------------------- modals
@@ -1639,6 +1682,7 @@ fn open_create(cx: Scope, ctx: &Ctx, tu: Tu) {
             let values: FieldValues = Rc::new(RefCell::new(Vec::new()));
             let c2 = c.clone();
             let close2 = close.clone();
+            let close_cancel = close.clone();
             dyn_view_scoped(LayoutStyle::column().grow(1.0), move |gcx| {
                 let t = use_theme(gcx).get().tokens;
                 // Created: the address and the secret, once.
@@ -1743,6 +1787,16 @@ fn open_create(cx: Scope, ctx: &Ctx, tu: Tu) {
                     label_w,
                     src_select,
                 ));
+                // UX #18: one line on what the chosen option listens to.
+                {
+                    let hint_sources = sources.clone();
+                    col = col.child(dyn_view(LayoutStyle::column().shrink(0.0), move || {
+                        let t = abstracttui::app::current_theme().tokens;
+                        let i = src_idx.get().min(hint_sources.len() - 1);
+                        let hint = source_hint(&hint_sources[i].id);
+                        super::kit::sentence_indent(&t, hint, w, label_w as usize, t.text_faint)
+                    }));
+                }
                 col = col.child(super::w::field_row(
                     &t,
                     "Name *",
@@ -1858,51 +1912,64 @@ fn open_create(cx: Scope, ctx: &Ctx, tu: Tu) {
                 );
                 let (c3, vals2, srcs) = (c2.clone(), values.clone(), sources.clone());
                 let all = ALL_VIEW.with(|a| a.get()) && is_admin(&c2);
-                col = col.child(super::w::form::button_row(vec![button(
-                    gcx,
-                    &t,
-                    &Action::label("create", "Create"),
-                    On::Raised,
-                    true,
-                    move || {
-                        if c3
-                            .store
-                            .json
-                            .write_untracked(K_CREATE)
-                            .is_some_and(|w| w.is_pending())
+                col = col.child(super::w::form::button_row(vec![
+                    button(
+                        gcx,
+                        &t,
+                        &Action::label("cancel", "Cancel"),
+                        On::Raised,
+                        false,
                         {
-                            return;
-                        }
-                        let s = &srcs[src_idx.get_untracked().min(srcs.len() - 1)];
-                        let label = name.get_untracked().trim().to_string();
-                        let raw: Vec<(String, String)> = vals2
-                            .borrow()
-                            .iter()
-                            .map(|(k, f)| (k.clone(), f()))
-                            .collect();
-                        let (config, mut problems) =
-                            config_from(&form_fields(&s.connection_schema), &raw);
-                        if label.is_empty() {
-                            problems.insert(0, "Name is required.".into());
-                        }
-                        if !problems.is_empty() {
-                            note.set(problems.join(" "));
-                            return;
-                        }
-                        note.set(String::new());
-                        c3.store.json.set_write(K_CREATE, Some(WriteState::Pending));
-                        c3.send(Cmd::Json(JsonCmd::Send {
-                            key: K_CREATE.into(),
-                            method: "POST".into(),
-                            path: list_path(false),
-                            body: create_body(s, &label, config),
-                            slow: false,
-                            label: format!("Create {label}"),
-                            reload: vec![(K_LIST.into(), list_path(all))],
-                            journal: true,
-                        }));
-                    },
-                )]));
+                            let close = close_cancel.clone();
+                            move || close()
+                        },
+                    ),
+                    button(
+                        gcx,
+                        &t,
+                        &Action::label("create", "Create"),
+                        On::Raised,
+                        true,
+                        move || {
+                            if c3
+                                .store
+                                .json
+                                .write_untracked(K_CREATE)
+                                .is_some_and(|w| w.is_pending())
+                            {
+                                return;
+                            }
+                            let s = &srcs[src_idx.get_untracked().min(srcs.len() - 1)];
+                            let label = name.get_untracked().trim().to_string();
+                            let raw: Vec<(String, String)> = vals2
+                                .borrow()
+                                .iter()
+                                .map(|(k, f)| (k.clone(), f()))
+                                .collect();
+                            let (config, mut problems) =
+                                config_from(&form_fields(&s.connection_schema), &raw);
+                            if label.is_empty() {
+                                problems.insert(0, "Name is required.".into());
+                            }
+                            if !problems.is_empty() {
+                                note.set(problems.join(" "));
+                                return;
+                            }
+                            note.set(String::new());
+                            c3.store.json.set_write(K_CREATE, Some(WriteState::Pending));
+                            c3.send(Cmd::Json(JsonCmd::Send {
+                                key: K_CREATE.into(),
+                                method: "POST".into(),
+                                path: list_path(false),
+                                body: create_body(s, &label, config),
+                                slow: false,
+                                label: format!("Create {label}"),
+                                reload: vec![(K_LIST.into(), list_path(all))],
+                                journal: true,
+                            }));
+                        },
+                    ),
+                ]));
                 if let Some(WriteState::Failed(e)) = c2.store.json.write(K_CREATE) {
                     note.set(format!("Not created: {}", refusal(&e)));
                 }
