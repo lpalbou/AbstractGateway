@@ -50,8 +50,8 @@ function fakeStore() {
   const s = {
     seq: 3, n: 2,
     rows: [
-      { connection_id: "conn_feed1", source_id: "feed.item", source_version: 1, label: "Release notes feed", status: "active", created_at: iso(86400000), last_event_at: iso(240000), config_public: { url: "https://example.org/releases.xml", every_minutes: 15 }, principal: "default:admin", paused: false, listening: true, used_by: 2 },
-      { connection_id: "conn_mail1", source_id: "email.received", source_version: 1, label: "My mailbox", status: "active", created_at: iso(86400000 * 3), last_event_at: null, config_public: { account: "self" }, principal: "default:admin", paused: false, listening: false, used_by: 0 },
+      { connection_id: "conn_feed1", source_id: "feed.item", source_version: 1, label: "Release notes feed", status: "active", created_at: iso(86400000), last_event_at: iso(240000), config_public: { url: "https://example.org/releases.xml", every_minutes: 15 }, principal: "default:admin", paused: false, always_listen: false, listening: "listening", used_by: 2 },
+      { connection_id: "conn_mail1", source_id: "email.received", source_version: 1, label: "My mailbox", status: "active", created_at: iso(86400000 * 3), last_event_at: null, config_public: { account: "self" }, principal: "default:admin", paused: false, always_listen: false, listening: "idle", used_by: 0 },
     ],
     others: [
       { connection_id: "conn_bob1", source_id: "webhook.received", source_version: 1, label: "Bob's CI hook", status: "paused", created_at: iso(3600000), last_event_at: iso(3600000), config_public: {}, ingress_url: `${BASE}/api/gateway/triggers/webhooks/conn_bob1`, principal: "default:bob" },
@@ -140,7 +140,9 @@ async function mockRoutes(ctx, store) {
     if (method === "PUT" && !sub) {
       const b = JSON.parse(req.postData() || "{}");
       store.lastConnPut = { id, body: b };
-      if (typeof b.paused === "boolean") { row.paused = b.paused; row.listening = !b.paused && (row.used_by || 0) > 0; }
+      if (typeof b.paused === "boolean") row.paused = b.paused;
+      if (typeof b.always_listen === "boolean") row.always_listen = b.always_listen;
+      row.listening = row.paused ? "paused" : ((row.used_by || 0) > 0 || row.always_listen ? "listening" : "idle");
       return route.fulfill({ json: row });
     }
     if (method === "DELETE" && !sub) {
@@ -241,7 +243,17 @@ try {
     if (w === 1440 && theme === "light") {
       // Create a feed connection: the form comes from connection_schema.
       check((await page.textContent('[data-trg-row="conn_feed1"]')).includes("Listening · used by 2 automations"), "row: listening in words");
-      check((await page.textContent('[data-trg-row="conn_mail1"]')).includes("Idle · nothing uses it yet (nothing is fetched or stored)"), "row: idle in words");
+      check((await page.textContent('[data-trg-row="conn_mail1"]')).includes("Listening · nothing uses it yet, so nothing is fetched until an automation does"), "row: pressed + unused in words");
+      await page.click('[data-trg-row="conn_mail1"] .trg-advanced summary');
+      await page.click('[data-trg-always="conn_mail1"]');
+      await page.waitForFunction(() => (document.querySelector('[data-trg-row="conn_mail1"]') || {}).textContent.includes("fetching anyway"));
+      check(JSON.stringify(store.lastConnPut) === JSON.stringify({ id: "conn_mail1", body: { always_listen: true } }), "Advanced: PUT {always_listen: true}", store.lastConnPut);
+      // The mailbox row: the same states, with the mailbox's own switch.
+      await page.click('[data-trg-mailbox-use="default"]');
+      await page.waitForFunction(() => (document.querySelector('[data-trg-mailbox="default"]') || {}).textContent.includes("Paused"));
+      check(store.requests.includes("PUT /api/gateway/me/email/accounts/default/enabled"), "mailbox row switch: PUT enabled");
+      await page.click('[data-trg-mailbox-use="default"]');
+      await page.waitForFunction(() => !(document.querySelector('[data-trg-mailbox="default"]') || {}).textContent.includes("Paused"));
       check((await page.textContent("#tab-triggers")).includes("A connection only fetches while an automation uses it; pause it to stop even then."), "help line under the list");
       await page.click('[data-trg-listen="conn_feed1"]');
       await page.waitForFunction(() => (document.querySelector('[data-trg-row="conn_feed1"]') || {}).textContent.includes("Paused"));

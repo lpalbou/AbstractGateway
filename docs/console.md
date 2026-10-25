@@ -433,11 +433,14 @@ listed here too (*When mail arrives in …*); you add and manage them under
 - Each row is named by your label (for example *bbc-feed* or *My GitHub hook*),
   with the trigger under it in the same words as AbstractFlow: *When bbc-feed has
   a new item*, *When My GitHub hook is called*, *When mail arrives in
-  me@example.org*; then what it is doing, in words: *Listening · used by 2
-  automations*, *Idle · nothing uses it yet (nothing is fetched or stored)* or
-  *Paused*, with a **Listening** switch that pauses or resumes it, and **Last
-  event**. A connection only fetches while an automation uses it; pause it to
-  stop even then (the line under the list says so). **Events** opens the 20 most recent events under the row; each
+  me@example.org*; then what it is doing, in words, and **Last event**. The
+  **Listening** switch is yours and the only control: on (the default for a new
+  connection) it says *Listening · used by 2 automations*, or *Listening ·
+  nothing uses it yet, so nothing is fetched until an automation does*; off it
+  says *Paused*. Whether an automation uses it never moves the switch.
+  **Advanced** (collapsed, per connection) has **Keep fetching even when nothing
+  uses it**. A mailbox row shows the same states with its own **Use this
+  mailbox** switch (the same one as on the Email card). **Events** opens the 20 most recent events under the row; each
   one expands to its full JSON (the CloudEvents envelope your flow receives as
   `input_data.event`). **Test** sends a test event (`data.test: true`) and says
   the result in the row ("Test event #12 sent."); it also appears in the events.

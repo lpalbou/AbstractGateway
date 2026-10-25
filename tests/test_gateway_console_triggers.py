@@ -27,7 +27,7 @@ const TRG_FIELD_LABELS = { subject_path: "Subject (path in the JSON body)", tole
 const TRG_MAILBOX_STATE = { connected: ["Active", "is-ok"], receive_only: ["Read-only", "is-ok"], paused: ["Paused", "is-muted"], needs_reconnect: ["Needs reconnecting", "is-warn"], unavailable: ["Unavailable", "is-muted"], not_connected: ["Not connected", "is-muted"] };
 """
 
-ROW_FNS = ("trgAgo", "trgSourceLabel", "trgTriggerPhrase", "trgUsedBy", "trgDoingText", "trgListenSwitch", "trgStatusCell", "trgMailboxStatusChip", "mailboxRowsMarkup", "trgPrincipalText", "trgStatusChip", "trgFireLine", "trgCopyRow",
+ROW_FNS = ("trgAgo", "trgSourceLabel", "trgTriggerPhrase", "trgUsedBy", "trgListeningWords", "trgDoingText", "trgListenSwitch", "trgAdvancedMarkup", "trgStatusCell", "trgMailboxStatusCell", "trgMailboxStatusChip", "mailboxRowsMarkup", "trgPrincipalText", "trgStatusChip", "trgFireLine", "trgCopyRow",
            "triggerEventsMarkup", "triggerDetailMarkup", "triggersRowsMarkup")
 
 SOURCES = [
@@ -215,7 +215,7 @@ def test_routes_are_the_connections_contract() -> None:
 
 def test_mailbox_sources_are_rows_not_new_connections() -> None:
     source = _console_script()
-    harness = HELPERS + _fns(source, "trgConnectableSources", "trgAgo", "trgMailboxStatusChip", "mailboxRowsMarkup") + """
+    harness = HELPERS + _fns(source, "trgConnectableSources", "trgAgo", "trgUsedBy", "trgListeningWords", "trgMailboxStatusChip", "trgMailboxStatusCell", "mailboxRowsMarkup") + """
 const SOURCES = [
   {id: "email.received", version: 1, label: "When an email arrives", available: true, needs_connection: true, connection_provider: "email_accounts", connection_schema: {type: "object"}},
   {id: "webhook.received", version: 1, label: "When a webhook is called", available: true, needs_connection: true, connection_provider: "trigger_connections", connection_schema: {type: "object", properties: {}}},
@@ -232,7 +232,9 @@ console.log(JSON.stringify([trgConnectableSources(SOURCES).map((s) => s.id), mai
     assert rows.count('class="trg-row trg-row--mailbox"') == 2  # configured mailboxes only
     work = rows[rows.index('data-trg-mailbox="work"'):]
     assert '<span class="trg-name">work</span>' in work and "When mail arrives in me@work.example · read-only" in work
-    assert '<span class="trg-chip is-ok">Read-only</span>' in work and "checked 1 min ago" in work
+    # The same three states with the mailbox's own switch (no used_by reported here: "Listening").
+    assert '<span class="trg-doing">Listening</span>' in work and "checked 1 min ago" in work
+    assert 'data-trg-mailbox-use="work"' in work and ">Use this mailbox</span>" in work and 'aria-checked="true"' in work
     assert 'data-trg-mailbox-manage="work"' in work and "Manage under Account → My email" in work
     assert "me@example.org (primary)" in rows
 
@@ -336,30 +338,36 @@ def test_my_email_has_the_further_mailboxes_card() -> None:
 
 def test_rows_say_what_a_connection_is_doing_with_a_listening_toggle() -> None:
     source = _console_script()
-    harness = HELPERS + _fns(source, "trgUsedBy", "trgDoingText", "trgListenSwitch", "trgStatusChip", "trgStatusCell") + """
+    harness = HELPERS + _fns(source, "trgUsedBy", "trgListeningWords", "trgDoingText", "trgListenSwitch", "trgAdvancedMarkup", "trgStatusChip", "trgStatusCell") + """
 const rows = [
-  {connection_id: "a", label: "bbc-feed", status: "active", paused: false, listening: true, used_by: 2},
-  {connection_id: "b", label: "hook", status: "active", paused: false, listening: true, used_by: ["auto_1"]},
-  {connection_id: "c", label: "idle", status: "active", paused: false, listening: false, used_by: 0},
-  {connection_id: "d", label: "stopped", status: "active", paused: true, listening: false, used_by: 3},
+  {connection_id: "a", label: "bbc-feed", status: "active", paused: false, always_listen: false, listening: "listening", used_by: 2},
+  {connection_id: "b", label: "hook", status: "active", paused: false, always_listen: false, listening: "listening", used_by: ["auto_1"]},
+  {connection_id: "c", label: "idle", status: "active", paused: false, always_listen: false, listening: "idle", used_by: 0},
+  {connection_id: "d", label: "stopped", status: "active", paused: true, always_listen: false, listening: "paused", used_by: 3},
   {connection_id: "e", label: "old gateway", status: "active"},
+  {connection_id: "f", label: "eager", status: "active", paused: false, always_listen: true, listening: "listening", used_by: 0},
 ];
 console.log(JSON.stringify(rows.map((r) => [trgDoingText(r), trgStatusCell(r)])));
 """
     out = _node(harness)
     assert [d for d, _ in out] == [
         "Listening · used by 2 automations", "Listening · used by 1 automation",
-        "Idle · nothing uses it yet (nothing is fetched or stored)", "Paused", ""]
+        "Listening · nothing uses it yet, so nothing is fetched until an automation does", "Paused", "",
+        "Listening · nothing uses it yet; fetching anyway (Keep fetching even when nothing uses it)"]
     on, paused, old = out[0][1], out[3][1], out[4][1]
     assert 'role="switch"' in on and 'aria-checked="true"' in on and ">Listening</span>" in on and 'data-trg-listen="a"' in on
     assert 'aria-checked="false"' in paused
     assert "listening state not reported (update the gateway)" in old and 'role="switch"' not in old
+    # Advanced (collapsed): keep fetching even when nothing uses it.
+    assert '<details class="trg-advanced"><summary>Advanced</summary>' in on and 'data-trg-always="a"' in on
+    assert ">Keep fetching even when nothing uses it</span>" in on and 'aria-checked="true"' in out[5][1]
     for _, cell in out:
         assert " on<" not in cell and " off<" not in cell
     html = gateway_console_html()
     panel = html[html.index('id="tab-triggers"'): html.index('id="tab-skills"')]
     assert "A connection only fetches while an automation uses it; pause it to stop even then." in panel
     assert 'JSON.stringify({ paused })' in _slice_function(source, "setTriggerPaused")
+    assert 'JSON.stringify({ always_listen: on })' in _slice_function(source, "setTriggerAlwaysListen")
 
 
 def test_gmail_help_and_google_sign_in_offer() -> None:

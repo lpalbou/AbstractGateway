@@ -45,6 +45,8 @@ TRIGGERS_CSS = r"""
 .trg-table th.trg-col-status { width: 15rem; }
 .trg-doing { display: block; font-size: var(--font-size-md); margin: 2px 0 4px; }
 .trg-table td.trg-status .af-switch { margin-top: 2px; }
+.trg-advanced { margin-top: 4px; font-size: var(--font-size-md); }
+.trg-advanced > summary { cursor: pointer; color: var(--muted); min-height: 24px; }
 .trg-table th.trg-col-last { width: 9rem; }
 .trg-table th.trg-col-actions { width: 15rem; }
 .trg-name { font-weight: 600; }
@@ -168,20 +170,23 @@ TRIGGERS_JS = r"""
       if (known) return `<span class="trg-chip ${known[1]}">${esc(known[0])}</span>`;
       return `<span class="trg-chip is-warn">${esc(key || "unknown")}</span>`;
     }
-    // What a connection is doing, in words (runtime `paused` / `listening` / `used_by`): it fetches
-    // only while an automation uses it, and a person can pause it even then.
+    // What a connection is doing, in words (operator ruling): the Listening switch is the person's
+    // (`paused`), the only control; whether an automation uses it (`used_by`) is the system's economy
+    // and never moves the switch. `always_listen` (Advanced) keeps fetching when nothing uses it.
     function trgUsedBy(r) {
       if (Array.isArray(r.used_by)) return r.used_by.length;
-      return typeof r.used_by === "number" ? r.used_by : 0;
+      return typeof r.used_by === "number" ? r.used_by : null;
+    }
+    function trgListeningWords(paused, usedBy, alwaysListen) {
+      if (paused) return "Paused";
+      if (usedBy === null) return "Listening";
+      if (usedBy > 0) return `Listening · used by ${usedBy} automation${usedBy === 1 ? "" : "s"}`;
+      if (alwaysListen) return "Listening · nothing uses it yet; fetching anyway (Keep fetching even when nothing uses it)";
+      return "Listening · nothing uses it yet, so nothing is fetched until an automation does";
     }
     function trgDoingText(r) {
       if (typeof r.paused !== "boolean") return "";
-      if (r.paused) return "Paused";
-      if (r.listening) {
-        const n = trgUsedBy(r);
-        return `Listening · used by ${n} automation${n === 1 ? "" : "s"}`;
-      }
-      return "Idle · nothing uses it yet (nothing is fetched or stored)";
+      return trgListeningWords(r.paused, trgUsedBy(r), r.always_listen === true);
     }
     function trgListenSwitch(r) {
       const id = esc(r.connection_id);
@@ -194,7 +199,24 @@ TRIGGERS_JS = r"""
       if (!doing) return `${trgStatusChip(r.status)}<span class="trg-sub">listening state not reported (update the gateway)</span>`;
       const st = String(r.status || "").toLowerCase();
       const chip = st && st !== "active" ? trgStatusChip(r.status) : "";
-      return `${chip}<span class="trg-doing" data-trg-doing="${esc(r.connection_id)}">${esc(doing)}</span>${trgListenSwitch(r)}`;
+      return `${chip}<span class="trg-doing" data-trg-doing="${esc(r.connection_id)}">${esc(doing)}</span>${trgListenSwitch(r)}${trgAdvancedMarkup(r)}`;
+    }
+    // Advanced (collapsed, per connection): keep fetching even when no automation uses it.
+    function trgAdvancedMarkup(r) {
+      if (typeof r.always_listen !== "boolean") return "";
+      const id = esc(r.connection_id);
+      return `<details class="trg-advanced"><summary>Advanced</summary>`
+        + `<button type="button" role="switch" class="af-switch af-switch--sm" aria-checked="${r.always_listen ? "true" : "false"}" data-trg-always="${id}">`
+        + `<span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Keep fetching even when nothing uses it</span></span></button></details>`;
+    }
+    async function setTriggerAlwaysListen(id, on) {
+      try {
+        await api(`/api/gateway/triggers/connections/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ always_listen: on }) });
+        await loadTriggers();
+      } catch (e) {
+        trgMessage(`Not saved: ${trgErr(e)}`, "error");
+        renderTriggers();
+      }
     }
     async function setTriggerPaused(id, paused) {
       try {
@@ -218,11 +240,29 @@ TRIGGERS_JS = r"""
       needs_reconnect: ["Needs reconnecting", "is-warn"], unavailable: ["Unavailable", "is-muted"], not_connected: ["Not connected", "is-muted"],
     };
     function trgMailboxStatusChip(m) {
-      if (!m.enabled) return `<span class="trg-chip is-muted">Off</span>`;
       const st = String((m.mailbox && m.mailbox.state) || "").trim();
+      // A healthy mailbox needs no chip: the listening words say it all.
+      if (!m.enabled || st === "connected" || st === "receive_only") return "";
       const known = TRG_MAILBOX_STATE[st];
       if (known) return `<span class="trg-chip ${known[1]}">${esc(known[0])}</span>`;
       return `<span class="trg-chip is-warn">${esc(st || "unknown")}</span>`;
+    }
+    // A mailbox row: the same three states, with the mailbox's own "Use this mailbox" switch.
+    function trgMailboxStatusCell(m) {
+      const words = trgListeningWords(!m.enabled, trgUsedBy(m), false);
+      const id = esc(m.account_id);
+      return `${trgMailboxStatusChip(m)}<span class="trg-doing">${esc(words)}</span>`
+        + `<button type="button" role="switch" class="af-switch af-switch--sm" aria-checked="${m.enabled ? "true" : "false"}" data-trg-mailbox-use="${id}">`
+        + `<span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Use this mailbox</span></span></button>`;
+    }
+    async function setMailboxInUse(id, enabled) {
+      try {
+        await api(`/api/gateway/me/email/accounts/${encodeURIComponent(id)}/enabled`, { method: "PUT", body: JSON.stringify({ enabled }) });
+        await loadTriggers();
+      } catch (e) {
+        trgMessage(`Not saved: ${trgErr(e)}`, "error");
+        renderTriggers();
+      }
     }
     function mailboxRowsMarkup(items, opts) {
       const o = opts || {};
@@ -233,7 +273,7 @@ TRIGGERS_JS = r"""
         const name = m.primary ? `${m.address || m.account_id} (primary)` : m.account_id;
         return `<tr class="trg-row trg-row--mailbox" data-trg-mailbox="${id}">`
           + `<td class="trg-name-cell"><span class="trg-name">${esc(name)}</span><span class="trg-sub">When mail arrives in ${esc(m.address || m.account_id)}${m.can_send ? "" : " · read-only"}</span><span class="trg-sub trg-fold">Last check: ${esc(last)}</span></td>`
-          + `<td class="trg-status">${trgMailboxStatusChip(m)}</td>`
+          + `<td class="trg-status">${trgMailboxStatusCell(m)}</td>`
           + `<td class="trg-last">${esc(last)}</td>`
           + `<td class="trg-actions-cell"><div class="trg-actions"><button type="button" class="link-button" data-trg-mailbox-manage="${id}" data-af-tip="Mailboxes are managed with your account">Manage under Account → My email</button></div></td></tr>`;
       }).join("");
@@ -748,6 +788,14 @@ TRIGGERS_JS = r"""
         else if (t.dataset.trgDelete) confirmDeleteTrigger(t.dataset.trgDelete);
         else if (t.dataset.trgCopy) trgCopy(t.dataset.trgCopy);
         else if (t.dataset.trgMailboxManage) openMyEmailFromTriggers();
+        else if (t.dataset.trgAlways) {
+          const row = (trg.rows || []).find((x) => x.connection_id === t.dataset.trgAlways);
+          if (row) { t.setAttribute("aria-busy", "true"); setTriggerAlwaysListen(row.connection_id, !row.always_listen); }
+        }
+        else if (t.dataset.trgMailboxUse) {
+          const m = (trg.mailboxes || []).find((x) => x.account_id === t.dataset.trgMailboxUse);
+          if (m) { t.setAttribute("aria-busy", "true"); setMailboxInUse(m.account_id, !m.enabled); }
+        }
         else if (t.dataset.trgListen) {
           const row = (trg.rows || []).find((x) => x.connection_id === t.dataset.trgListen);
           if (row) { t.setAttribute("aria-busy", "true"); setTriggerPaused(row.connection_id, !row.paused); }
