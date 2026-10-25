@@ -30,7 +30,7 @@ def test_sidebar_work_group_and_page_structure() -> None:
     html = gateway_console_html()
     nav = html[html.index('<nav class="shell_nav"') : html.index("</nav>")]
     work = nav[nav.index('id="nav-group-work"') : nav.index('id="nav-group-models"')]
-    assert re.findall(r'<span class="shell_nav_label">([^<]+)</span>', work) == ["Workflows", "Skills &amp; MCP", "Runtimes", "Apps"]
+    assert re.findall(r'<span class="shell_nav_label">([^<]+)</span>', work) == ["Workflows", "Triggers", "Skills &amp; MCP", "Runtimes", "Apps"]
     panel = html[html.index('id="tab-skills"') : html.index('id="tab-runtimes"')]
     assert 'role="tablist"' in panel and ">Skills</button>" in panel and ">MCP servers</button>" in panel
     # The shelf setting lives on the Skills tab, and no longer on Apps.

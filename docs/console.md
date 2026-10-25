@@ -419,6 +419,40 @@ does not have this setting says so. The same setting is in the terminal console
 (Runtimes → *Runtime knobs* → *Edit stream replies*) and in
 `abstractgateway config set agents.streaming_default true|false`.
 
+### Triggers
+
+The **Triggers** page (sidebar *Work*, `/console#triggers`) lists your trigger
+**connections**: the places events come from that your automations and flows can
+listen to. A trigger *source* is a type (email received, feed item, webhook
+received); a *connection* is yours: this mailbox, this feed address, this
+webhook. You create it once here and every automation of yours can use it
+(AbstractFlow's *Automation defaults* dialog offers your connections for the
+sources that need one).
+
+- The table shows each connection's **Source**, **Name**, **Status** and
+  **Last event**. **Events** opens the 20 most recent events under the row; each
+  one expands to its full JSON (the CloudEvents envelope your flow receives as
+  `input_data.event`). **Test** sends a test event (`data.test: true`) and says
+  the result in the row ("Test event #12 sent."); it also appears in the events.
+  **Delete** asks under the row first: automations that listen to a deleted
+  connection stop receiving its events.
+- **New connection** opens a dialog: pick one of the sources that need a
+  connection, give it a name, and fill the source's own settings (the form comes
+  from the source's `connection_schema`).
+- A **webhook** connection answers with its address and a signing secret. The
+  secret is shown **once**, in that dialog, with a copy button: the gateway keeps
+  it sealed and never shows it again. The address stays visible under the row
+  (Events). Senders sign each request per Standard Webhooks.
+- Administrators get an **All accounts** switch: every account's connections,
+  with an Account column.
+- `/console#triggers?new=<source_id>` opens the dialog on that source (AbstractFlow's
+  *New connection…* link uses it).
+
+Routes: `GET /api/gateway/trigger-sources`, `GET|POST /api/gateway/triggers/connections`
+(`?all=true` for an administrator), `DELETE /api/gateway/triggers/connections/{id}`,
+`GET /api/gateway/triggers/connections/{id}/events?after=<seq>&limit=`,
+`POST /api/gateway/triggers/connections/{id}/test-fire`.
+
 ### Memory figures on Resources
 
 The accelerator meter shows the larger of two figures and names it: the

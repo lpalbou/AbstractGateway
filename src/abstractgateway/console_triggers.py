@@ -1,0 +1,561 @@
+"""The console's Triggers page (root backlog 1041): the signed-in person's trigger CONNECTIONS.
+
+A trigger source is a type (email received, feed item, webhook received); a connection is one
+person's instance of it (this mailbox, this feed URL, this webhook and its secret), created once
+here and reused by every automation and flow of its owner (Flow's automation dialog lists them).
+
+Page (`/console#triggers`; `#triggers?new=<source_id>` opens the create dialog on that source):
+- a table Source · Name · Status · Last event · actions **Events** (expands the row: the connection's
+  20 most recent events, each a `<details>` holding the event JSON; webhook rows also show their
+  address with a copy button) · **Test** (sends a test event; the result is said in the row) ·
+  **Delete** (an inline confirmation under the row, never a dialog);
+- **New connection** opens a kit `af-modal`: the sources whose descriptor says
+  `needs_connection: true`, a Name, and the source's settings rendered from its
+  `connection_schema` (the same JSON Schema subset Flow renders for `config_schema`: string,
+  password (`format: password` or `writeOnly`), integer, number, boolean, enum; anything else is
+  shown read-only). A webhook's signing secret comes back ONCE in the create answer: the dialog
+  then shows the address and the secret with copy buttons and the sentence that it is shown once;
+- admins get an **All accounts** switch: every account's connections, with an Account column.
+
+Routes (W2, root backlog 1040/1041/1042): GET /trigger-sources (descriptors with
+`needs_connection` + `connection_schema`); GET/POST /triggers/connections (`?all=true` for an
+admin: every principal's, rows carry `principal`, the owner string `"<tenant>:<user>"`); DELETE /triggers/connections/{id};
+GET /triggers/connections/{id}/events?after=<seq>&limit=; POST /triggers/connections/{id}/test-fire
+→ {event_id, sequence}.
+
+Spliced into the console script scope with the UI layer (console.py _console_owned_sources):
+`api`, `esc`, `$`, `state`, `afSwitchCreate`, `afSwitchBind`, `setActiveTab`, `bindAccountModal`,
+`clipboardWrite` and `uiToast` are the console's own.
+"""
+
+from __future__ import annotations
+
+TRIGGERS_CSS = r"""
+/* ---- Triggers page (console_triggers.py, root backlog 1041) ---- */
+.trg-page { display: flex; flex-direction: column; gap: 12px; }
+.trg-purpose { margin: 0; max-width: 90ch; }
+.trg-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.trg-toolbar .trg-spacer { flex: 1 1 auto; }
+.trg-message:empty { display: none; }
+.trg-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+.trg-table th { text-align: left; white-space: nowrap; }
+.trg-table td { vertical-align: top; padding-top: 10px; padding-bottom: 10px; overflow-wrap: anywhere; }
+.trg-table th.trg-col-source { width: 22%; }
+.trg-table th.trg-col-name { width: auto; }
+.trg-table th.trg-col-account { width: 14%; }
+.trg-table th.trg-col-status { width: 8.5rem; }
+.trg-table th.trg-col-last { width: 9rem; }
+.trg-table th.trg-col-actions { width: 15rem; }
+.trg-name { font-weight: 600; }
+.trg-sub { display: block; color: var(--muted); font-size: var(--af-helper-size, var(--font-size-md)); font-weight: 400; margin-top: 2px; }
+.trg-mono { font-family: var(--font-mono); font-size: var(--font-size-md); overflow-wrap: anywhere; word-break: break-word; }
+.trg-chip { display: inline-flex; align-items: center; min-height: 22px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); font-size: var(--font-size-sm); font-weight: 500; white-space: nowrap; }
+.trg-chip.is-ok { border-color: color-mix(in srgb, var(--success, #2f9e44) 55%, transparent); color: var(--success, #2f9e44); }
+.trg-chip.is-warn { border-color: color-mix(in srgb, var(--warning, #c77700) 55%, transparent); color: var(--warning, #c77700); }
+.trg-chip.is-err { border-color: color-mix(in srgb, var(--error, #d6336c) 55%, transparent); color: var(--error, #d6336c); }
+.trg-chip.is-muted { color: var(--muted); }
+.trg-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+@media (min-width: 1024px) { .trg-actions { flex-wrap: nowrap; } }
+.trg-actions > button { white-space: nowrap; }
+.trg-fire { display: block; margin-top: 6px; font-size: var(--font-size-md); }
+.trg-fire.is-ok { color: var(--success, #2f9e44); }
+.trg-fire.is-failed { color: var(--error, #d6336c); }
+.trg-empty { padding: 14px 2px; color: var(--muted); }
+.trg-detail > td { padding: 4px 10px 14px; border-top: 0; }
+.trg-detail__box { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: var(--ui-surface-1, transparent); }
+.trg-detail__head { margin: 0; font-weight: 600; font-size: var(--font-size-base); }
+.trg-copy-row { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.trg-copy-row > code { flex: 1 1 260px; min-width: 0; padding: 6px 8px; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); overflow-wrap: anywhere; word-break: break-all; }
+.trg-copy-row > button { min-height: 44px; white-space: nowrap; }
+.trg-events { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.trg-events details > summary { cursor: pointer; min-height: 28px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.trg-events details > summary .trg-seq { font-family: var(--font-mono); color: var(--muted); }
+.trg-events pre { margin: 6px 0 4px; padding: 8px 10px; max-height: 22rem; overflow: auto; border-radius: var(--radius-sm); background: var(--ui-surface-2, var(--bg-secondary)); font-size: var(--font-size-md); white-space: pre-wrap; overflow-wrap: anywhere; }
+.trg-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px 18px; }
+.trg-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.trg-field--wide { grid-column: 1 / -1; }
+.trg-field > label, .trg-field > .trg-label { font-size: var(--font-size-base); font-weight: 600; text-transform: none; letter-spacing: normal; color: var(--text); }
+.trg-field input, .trg-field select { width: 100%; box-sizing: border-box; }
+.trg-help { margin: 0; color: var(--muted); font-size: var(--af-helper-size, var(--font-size-md)); line-height: 1.4; }
+.trg-once { margin: 0; padding: 10px 12px; border-left: 3px solid var(--warning, var(--accent)); background: color-mix(in srgb, var(--warning, var(--accent)) 9%, transparent); border-radius: var(--radius-sm); font-size: var(--font-size-base); line-height: 1.45; }
+.trg-footer-actions { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+@media (max-width: 1023.98px) {
+  .trg-table .trg-th-last, .trg-table td.trg-last { display: none; }
+  .trg-fold { display: block; }
+}
+@media (min-width: 1024px) { .trg-fold { display: none; } }
+@media (max-width: 767.98px) {
+  .trg-table, .trg-table tbody, .trg-table tr, .trg-table td { display: block; width: 100%; }
+  .trg-table thead { display: none; }
+  .trg-table tr.trg-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; padding: 12px 0; border-top: 1px solid var(--line-soft); }
+  .trg-table tr.trg-row > td { padding: 0; border: 0; width: auto; }
+  .trg-actions { justify-content: flex-start; }
+  .trg-actions > button, .trg-toolbar > button { min-height: 44px; }
+  .trg-form { grid-template-columns: minmax(0, 1fr); }
+}
+"""
+
+TRIGGERS_JS = r"""
+    // ---- Triggers page (console_triggers.py, root backlog 1041) ----
+    const trg = {
+      opened: false, all: false, rows: null, error: "", sources: null, sourcesError: "",
+      expanded: {}, fire: {}, modal: null, release: null, pendingNew: "",
+    };
+    const TRG_EVENTS_LIMIT = 20;
+    const TRG_STATUS = { active: ["Active", "is-ok"], paused: ["Paused", "is-muted"], error: ["Error", "is-err"], failed: ["Error", "is-err"], disabled: ["Off", "is-muted"] };
+    function trgAdmin() { return !!(state.principal && state.principal.admin); }
+    function trgErr(e) { return String((e && e.message) || e || "The gateway did not say why."); }
+    function trgAgo(iso, nowMs) {
+      const t = Date.parse(String(iso || ""));
+      if (!Number.isFinite(t)) return "";
+      const s = Math.max(0, Math.round(((nowMs || Date.now()) - t) / 1000));
+      if (s < 60) return "just now";
+      const m = Math.round(s / 60);
+      if (m < 60) return `${m} min ago`;
+      const h = Math.round(m / 60);
+      if (h < 24) return `${h} h ago`;
+      return `${Math.round(h / 24)} d ago`;
+    }
+    // The sources a connection can be created for: GET /trigger-sources descriptors whose
+    // `needs_connection` is true. A served source WITHOUT the boolean is a gateway older than the
+    // connections contract: said loudly, never read as "needs none".
+    function trgConnectableSources(items) {
+      const out = [];
+      const missing = [];
+      for (const s of items || []) {
+        if (!s || !s.available) continue;
+        if (typeof s.needs_connection !== "boolean") { missing.push(`${s.id}@${s.version}`); continue; }
+        if (!s.needs_connection) continue;
+        if (!s.connection_schema || typeof s.connection_schema !== "object" || Array.isArray(s.connection_schema)) {
+          throw new Error(`Trigger source ${s.id}@${s.version} needs a connection but serves no connection_schema object.`);
+        }
+        out.push(s);
+      }
+      if (missing.length) {
+        throw new Error(`This gateway's trigger sources do not say whether they need a connection (needs_connection missing on ${missing.join(", ")}). Update the gateway.`);
+      }
+      return out;
+    }
+    function trgSourceLabel(row, sources) {
+      const s = (sources || []).find((x) => x.id === row.source_id && Number(x.version) === Number(row.source_version));
+      return s ? String(s.label || s.id) : `${row.source_id} v${row.source_version}`;
+    }
+    function trgPrincipalText(p) {
+      // The store's owner string is "<tenant>:<user>" (W2 principal_key); the default tenant is implied.
+      if (typeof p === "string" && p.trim()) return p.trim().replace(/^default:/, "");
+      if (p && typeof p === "object" && p.user_id) return p.tenant_id && p.tenant_id !== "default" ? `${p.tenant_id}/${p.user_id}` : String(p.user_id);
+      return "";
+    }
+    function trgStatusChip(status) {
+      const key = String(status || "").trim().toLowerCase();
+      const known = TRG_STATUS[key];
+      if (known) return `<span class="trg-chip ${known[1]}">${esc(known[0])}</span>`;
+      return `<span class="trg-chip is-warn">${esc(key || "unknown")}</span>`;
+    }
+    function trgFireLine(fire) {
+      if (!fire) return "";
+      if (fire.pending) return `<span class="trg-fire" role="status">Sending a test event...</span>`;
+      if (fire.ok) return `<span class="trg-fire is-ok" role="status">Test event #${esc(fire.sequence)} sent.</span>`;
+      return `<span class="trg-fire is-failed" role="status">Test not sent: ${esc(fire.message || "")}</span>`;
+    }
+    function triggersRowsMarkup(rows, opts) {
+      const o = opts || {};
+      const cols = o.all ? 6 : 5;
+      const list = rows || [];
+      if (!list.length) {
+        return `<tr><td colspan="${cols}" class="trg-empty">${o.all ? "No account has a connection yet." : "No connection yet. Create one to let your automations listen to a mailbox, a feed or a webhook."}</td></tr>`;
+      }
+      return list.map((r) => {
+        const id = esc(r.connection_id);
+        const label = esc(r.label || r.connection_id);
+        const source = esc(trgSourceLabel(r, o.sources));
+        const last = r.last_event_at ? trgAgo(r.last_event_at, o.now) || esc(r.last_event_at) : "Never";
+        const open = !!(o.expanded && o.expanded[r.connection_id]);
+        const owner = o.all ? trgPrincipalText(r.principal) : "";
+        const acts = [
+          `<button type="button" class="secondary" data-trg-events="${id}" aria-expanded="${open ? "true" : "false"}" data-af-tip="Recent events of ${label}">Events</button>`,
+          `<button type="button" class="secondary" data-trg-test="${id}" data-af-tip="Send a test event to ${label}">Test</button>`,
+          `<button type="button" class="secondary" data-trg-delete="${id}" data-af-tip="Delete ${label}">Delete</button>`,
+        ];
+        let html = `<tr class="trg-row" data-trg-row="${id}">`
+          + `<td class="trg-source">${source}<span class="trg-sub trg-mono">${esc(r.source_id)} v${esc(r.source_version)}</span></td>`
+          + `<td class="trg-name-cell"><span class="trg-name">${label}</span><span class="trg-sub trg-fold">Last event: ${esc(last)}</span>${trgFireLine(o.fire && o.fire[r.connection_id])}</td>`
+          + (o.all ? `<td class="trg-account">${owner ? esc(owner) : `<span class="trg-sub">owner not reported</span>`}</td>` : "")
+          + `<td class="trg-status">${trgStatusChip(r.status)}</td>`
+          + `<td class="trg-last">${esc(last)}</td>`
+          + `<td class="trg-actions-cell"><div class="trg-actions">${acts.join("")}</div></td></tr>`;
+        if (open) html += `<tr class="trg-detail" data-trg-detail="${id}"><td colspan="${cols}">${triggerDetailMarkup(r, o.expanded[r.connection_id])}</td></tr>`;
+        return html;
+      }).join("");
+    }
+    function trgCopyRow(label, value, key) {
+      return `<div class="trg-field trg-field--wide"><span class="trg-label">${esc(label)}</span>`
+        + `<div class="trg-copy-row"><code data-trg-value="${esc(key)}">${esc(value)}</code>`
+        + `<button type="button" class="secondary" data-trg-copy="${esc(key)}" aria-label="Copy the ${esc(label.toLowerCase())}">Copy</button></div></div>`;
+    }
+    // The expanded row: a webhook's address (copy), then the recent events, newest first.
+    function triggerDetailMarkup(row, detail) {
+      const d = detail || {};
+      let html = `<div class="trg-detail__box">`;
+      if (row.ingress_url) {
+        html += trgCopyRow("Webhook address", row.ingress_url, `ingress:${row.connection_id}`)
+          + `<p class="trg-help">Senders sign each request with this connection's secret (Standard Webhooks). The secret was shown once, when the connection was created.</p>`;
+      }
+      html += `<p class="trg-detail__head">Recent events</p>`;
+      if (d.loading) return html + `<p class="trg-empty">Reading the events...</p></div>`;
+      if (d.error) return html + `<p class="message error">Could not read the events: ${esc(d.error)}</p></div>`;
+      html += triggerEventsMarkup(d.events || []);
+      return html + `</div>`;
+    }
+    function triggerEventsMarkup(events) {
+      const list = (events || []).slice().sort((a, b) => Number(b.sequence || 0) - Number(a.sequence || 0)).slice(0, TRG_EVENTS_LIMIT);
+      if (!list.length) return `<p class="trg-empty">No event yet. Send a test event to see one here.</p>`;
+      const items = list.map((e) => {
+        const test = e && e.data && typeof e.data === "object" && e.data.test === true;
+        const when = e.time ? `<span class="trg-sub" style="display:inline">${esc(trgAgo(e.time) || e.time)}</span>` : "";
+        return `<li><details data-trg-event="${esc(e.id || "")}"><summary><span class="trg-seq">#${esc(e.sequence)}</span>`
+          + `<span>${esc(e.type || "event")}</span>${e.subject ? `<span>${esc(e.subject)}</span>` : ""}${test ? `<span class="trg-chip is-muted">test</span>` : ""}${when}</summary>`
+          + `<pre>${esc(JSON.stringify(e, null, 2))}</pre></details></li>`;
+      }).join("");
+      return `<ul class="trg-events">${items}</ul>`;
+    }
+    function trgMessage(text, tone) {
+      const el = $("triggers-message");
+      if (!el) return;
+      el.textContent = text || "";
+      el.className = `message trg-message${tone ? ` ${tone}` : ""}`;
+    }
+    function openTriggersPage() {
+      if (!state.principal) return;
+      if (!trg.opened) {
+        trg.opened = true;
+        const slot = $("triggers-all-slot");
+        slot.hidden = !trgAdmin();
+        if (trgAdmin()) {
+          const sw = afSwitchCreate({ id: "triggers-all", label: "All accounts", checked: false, small: true });
+          slot.append(...sw.nodes);
+          afSwitchBind(sw.button, async (next) => { trg.all = next; trg.expanded = {}; await loadTriggers(); return next; }, (e) => trgMessage(trgErr(e), "error"));
+        }
+      }
+      loadTriggers();
+    }
+    async function loadTriggerSources() {
+      try {
+        const out = await api("/api/gateway/trigger-sources");
+        trg.sources = (out && out.items) || [];
+        trg.sourcesError = "";
+      } catch (e) {
+        trg.sources = null;
+        trg.sourcesError = trgErr(e);
+      }
+    }
+    async function loadTriggers() {
+      await loadTriggerSources();
+      try {
+        const out = await api(`/api/gateway/triggers/connections${trg.all ? "?all=true" : ""}`);
+        if (!out || !Array.isArray(out.connections)) throw new Error("the gateway's answer has no connections list.");
+        trg.rows = out.connections;
+        trg.error = "";
+      } catch (e) {
+        trg.error = trgErr(e);
+      }
+      renderTriggers();
+      for (const id of Object.keys(trg.expanded)) loadTriggerEvents(id);
+      if (trg.pendingNew) { const want = trg.pendingNew; trg.pendingNew = ""; openTriggerModal(want); }
+    }
+    function renderTriggers() {
+      const body = $("triggers-table");
+      if (!body) return;
+      $("triggers-account-head").hidden = !trg.all;
+      const cols = trg.all ? 6 : 5;
+      if (trg.error) { body.innerHTML = `<tr><td colspan="${cols}" class="trg-empty">Could not list the connections: ${esc(trg.error)}</td></tr>`; return; }
+      if (!trg.rows) { body.innerHTML = `<tr><td colspan="${cols}" class="trg-empty">Reading the connections...</td></tr>`; return; }
+      body.innerHTML = triggersRowsMarkup(trg.rows, { all: trg.all, sources: trg.sources || [], expanded: trg.expanded, fire: trg.fire });
+      if (trg.sourcesError) trgMessage(`Could not read the trigger sources: ${trg.sourcesError}`, "error");
+    }
+    async function loadTriggerEvents(id) {
+      if (!trg.expanded[id]) return;
+      trg.expanded[id] = Object.assign({}, trg.expanded[id], { loading: !trg.expanded[id].events });
+      renderTriggers();
+      try {
+        const out = await api(`/api/gateway/triggers/connections/${encodeURIComponent(id)}/events?limit=${TRG_EVENTS_LIMIT}`);
+        if (!out || !Array.isArray(out.events)) throw new Error("the gateway's answer has no events list.");
+        if (trg.expanded[id]) trg.expanded[id] = { events: out.events, error: "", loading: false };
+      } catch (e) {
+        if (trg.expanded[id]) trg.expanded[id] = { events: null, error: trgErr(e), loading: false };
+      }
+      renderTriggers();
+    }
+    function toggleTriggerEvents(id) {
+      if (trg.expanded[id]) { delete trg.expanded[id]; renderTriggers(); return; }
+      trg.expanded[id] = { loading: true };
+      loadTriggerEvents(id);
+    }
+    async function testFireTrigger(id) {
+      trg.fire[id] = { pending: true };
+      renderTriggers();
+      try {
+        const out = await api(`/api/gateway/triggers/connections/${encodeURIComponent(id)}/test-fire`, { method: "POST", body: "{}" });
+        if (!out || out.sequence === undefined || !out.event_id) throw new Error("the gateway's answer has no event_id and sequence.");
+        trg.fire[id] = { ok: true, sequence: out.sequence, event_id: out.event_id };
+      } catch (e) {
+        trg.fire[id] = { ok: false, message: trgErr(e) };
+      }
+      // The test event is in the connection's stream: refresh the row (last event) and its events.
+      await loadTriggers();
+    }
+    function confirmDeleteTrigger(id) {
+      const row = (trg.rows || []).find((r) => r.connection_id === id);
+      const tr = document.querySelector(`[data-trg-row="${CSS.escape(id)}"]`);
+      if (!row || !tr) return;
+      for (const old of Array.from(document.querySelectorAll("#triggers-table .row-confirm"))) old.remove();
+      const confirmRow = document.createElement("tr");
+      confirmRow.className = "row-confirm";
+      const td = document.createElement("td");
+      td.colSpan = trg.all ? 6 : 5;
+      const box = document.createElement("div");
+      box.className = "inline-confirm";
+      box.setAttribute("role", "group");
+      const span = document.createElement("span");
+      span.textContent = triggerDeleteQuestion(row.label || row.connection_id);
+      const yes = document.createElement("button");
+      yes.type = "button";
+      yes.className = "danger";
+      yes.textContent = "Delete";
+      const no = document.createElement("button");
+      no.type = "button";
+      no.className = "secondary";
+      no.textContent = "Cancel";
+      no.onclick = () => confirmRow.remove();
+      yes.onclick = async () => {
+        yes.disabled = true;
+        try {
+          await api(`/api/gateway/triggers/connections/${encodeURIComponent(id)}`, { method: "DELETE" });
+          delete trg.expanded[id];
+          delete trg.fire[id];
+          trgMessage(`Deleted ${row.label || id}.`, "ok");
+          await loadTriggers();
+        } catch (e) {
+          yes.disabled = false;
+          trgMessage(`Not deleted: ${trgErr(e)}`, "error");
+        }
+      };
+      box.append(span, yes, no);
+      td.append(box);
+      confirmRow.append(td);
+      tr.after(confirmRow);
+      try { no.focus(); } catch {}
+    }
+    function triggerDeleteQuestion(label) {
+      return `Delete ${label}? Automations that listen to it stop receiving its events.`;
+    }
+
+    // ---- the create dialog: the form engine for a source's `connection_schema` (the JSON Schema
+    // subset Flow renders for `config_schema`).
+    const TRG_FORM_KEYWORDS = new Set(["type", "title", "description", "enum", "default", "pattern", "format", "minimum", "maximum", "minLength", "maxLength", "examples", "writeOnly"]);
+    function triggerFormFields(schema) {
+      const props = schema && typeof schema.properties === "object" && schema.properties ? schema.properties : {};
+      const required = new Set(Array.isArray(schema && schema.required) ? schema.required : []);
+      return Object.keys(props).map((key) => {
+        const p = props[key] && typeof props[key] === "object" ? props[key] : {};
+        let kind = "readonly";
+        if (!Object.keys(p).some((k) => !TRG_FORM_KEYWORDS.has(k))) {
+          if (Array.isArray(p.enum)) kind = "enum";
+          else if (p.type === "string") kind = (p.format === "password" || p.writeOnly === true) ? "password" : "string";
+          else if (p.type === "integer" || p.type === "number" || p.type === "boolean") kind = p.type;
+        }
+        return { key, kind, label: String(p.title || key), description: String(p.description || ""), required: required.has(key), schema: p };
+      });
+    }
+    function triggerFormMarkup(fields) {
+      return fields.map((f) => {
+        const id = `trg-f-${f.key.replace(/[^A-Za-z0-9_-]/g, "-")}`;
+        const label = `<label for="${id}">${esc(f.label)}${f.required ? " *" : ""}</label>`;
+        const help = f.description ? `<p class="trg-help">${esc(f.description)}</p>` : "";
+        const dflt = f.schema.default;
+        let control;
+        if (f.kind === "enum") {
+          control = `<select id="${id}" data-trg-field="${esc(f.key)}"><option value="">(not set)</option>`
+            + f.schema.enum.map((v) => `<option value="${esc(JSON.stringify(v))}"${JSON.stringify(v) === JSON.stringify(dflt) ? " selected" : ""}>${esc(typeof v === "string" ? v : JSON.stringify(v))}</option>`).join("")
+            + `</select>`;
+        } else if (f.kind === "boolean") {
+          control = `<select id="${id}" data-trg-field="${esc(f.key)}"><option value="">(not set)</option><option value="true"${dflt === true ? " selected" : ""}>Yes</option><option value="false"${dflt === false ? " selected" : ""}>No</option></select>`;
+        } else if (f.kind === "integer" || f.kind === "number") {
+          control = `<input id="${id}" type="number" step="${f.kind === "integer" ? "1" : "any"}" data-trg-field="${esc(f.key)}" value="${dflt === undefined ? "" : esc(dflt)}">`;
+        } else if (f.kind === "string" || f.kind === "password") {
+          const ex = Array.isArray(f.schema.examples) && f.schema.examples.length ? ` placeholder="${esc(f.schema.examples[0])}"` : "";
+          control = `<input id="${id}" type="${f.kind === "password" ? "password" : "text"}" autocomplete="off" data-trg-field="${esc(f.key)}" value="${dflt === undefined || f.kind === "password" ? "" : esc(dflt)}"${ex}>`;
+        } else {
+          control = `<pre class="trg-help">Not editable here: ${esc(JSON.stringify(f.schema))}</pre>`;
+        }
+        return `<div class="trg-field trg-field--wide">${label}${control}${help}</div>`;
+      }).join("");
+    }
+    // Form values -> the connection's config; returns {config, problems}. Empty = not set (the
+    // source applies its default); the gateway validates the whole config again on create.
+    function triggerConfigFromValues(fields, values) {
+      const config = {};
+      const problems = [];
+      for (const f of fields) {
+        if (f.kind === "readonly") continue;
+        const raw = String(values[f.key] === undefined ? "" : values[f.key]).trim();
+        if (!raw) { if (f.required) problems.push(`${f.label} is required.`); continue; }
+        if (f.kind === "integer" || f.kind === "number") {
+          const n = Number(raw);
+          if (!Number.isFinite(n) || (f.kind === "integer" && !Number.isInteger(n))) { problems.push(`${f.label} must be ${f.kind === "integer" ? "a whole number" : "a number"}.`); continue; }
+          config[f.key] = n;
+        } else if (f.kind === "boolean") config[f.key] = raw === "true";
+        else if (f.kind === "enum") config[f.key] = JSON.parse(raw);
+        else {
+          if (typeof f.schema.pattern === "string" && !new RegExp(f.schema.pattern, "u").test(raw)) { problems.push(`${f.label} does not have the expected form.`); continue; }
+          config[f.key] = raw;
+        }
+      }
+      return { config, problems };
+    }
+    function closeTriggerModal() {
+      const backdrop = $("trigger-modal-backdrop");
+      if (backdrop.hidden) return;
+      backdrop.hidden = true;
+      $("trigger-modal-body").textContent = "";
+      const release = trg.release;
+      trg.release = null;
+      if (release) release();
+      trg.modal = null;
+    }
+    function renderTriggerModal() {
+      const m = trg.modal;
+      const body = $("trigger-modal-body");
+      const note = $("trigger-modal-note");
+      const actions = $("trigger-modal-actions");
+      if (m.created) {
+        const c = m.created;
+        $("trigger-modal-title").textContent = `Connection created — ${c.label || c.connection_id}`;
+        let html = `<div class="trg-form">`;
+        if (c.ingress_url) html += trgCopyRow("Webhook address", c.ingress_url, "created:ingress");
+        if (c.secret) {
+          html += `<p class="trg-once trg-field--wide">The signing secret is shown once. Copy it now: the gateway keeps it sealed and never shows it again.</p>`
+            + trgCopyRow("Signing secret", c.secret, "created:secret");
+        }
+        if (!c.ingress_url && !c.secret) html += `<p class="trg-help trg-field--wide">Your automations and flows can now listen to it.</p>`;
+        body.innerHTML = html + `</div>`;
+        note.textContent = "";
+        actions.innerHTML = `<button type="button" data-trg-done="1">Done</button>`;
+        return;
+      }
+      $("trigger-modal-title").textContent = "New connection";
+      const sources = m.sources;
+      if (!sources.length) {
+        body.innerHTML = `<p class="trg-empty">No trigger source on this gateway needs a connection.</p>`;
+        actions.innerHTML = "";
+        return;
+      }
+      const s = sources.find((x) => `${x.id}@${x.version}` === m.sourceKey) || null;
+      const options = sources.map((x) => `<option value="${esc(`${x.id}@${x.version}`)}"${s && x === s ? " selected" : ""}>${esc(x.label || x.id)}</option>`).join("");
+      let html = `<div class="trg-form">`
+        + `<div class="trg-field"><label for="trg-f-source">Source</label><select id="trg-f-source" data-trg-source><option value="">Choose a source…</option>${options}</select></div>`
+        + `<div class="trg-field"><label for="trg-f-label">Name *</label><input id="trg-f-label" type="text" autocomplete="off" data-trg-label value="${esc(m.label || "")}" placeholder="Work mailbox, Release feed…"><p class="trg-help">How you find it in Flow and in your automations.</p></div>`;
+      if (s) html += triggerFormMarkup(m.fields);
+      body.innerHTML = html + `</div>`;
+      note.textContent = m.problem || "";
+      actions.innerHTML = s ? `<button type="button" data-trg-create="1"${m.saving ? " disabled" : ""}>Create</button>` : "";
+    }
+    async function openTriggerModal(sourceId) {
+      closeTriggerModal();
+      const backdrop = $("trigger-modal-backdrop");
+      $("trigger-modal-title").textContent = "New connection";
+      $("trigger-modal-body").innerHTML = `<p class="trg-empty">Reading the trigger sources...</p>`;
+      $("trigger-modal-note").textContent = "";
+      $("trigger-modal-actions").textContent = "";
+      backdrop.hidden = false;
+      trg.release = bindAccountModal(backdrop, closeTriggerModal);
+      if (!trg.sources) await loadTriggerSources();
+      let sources;
+      try {
+        if (trg.sourcesError) throw new Error(`Could not read the trigger sources: ${trg.sourcesError}`);
+        sources = trgConnectableSources(trg.sources);
+      } catch (e) {
+        $("trigger-modal-body").innerHTML = `<p class="message error">${esc(trgErr(e))}</p>`;
+        return;
+      }
+      const pick = sources.find((x) => x.id === sourceId || `${x.id}@${x.version}` === sourceId) || (sources.length === 1 ? sources[0] : null);
+      trg.modal = { sources, sourceKey: pick ? `${pick.id}@${pick.version}` : "", fields: pick ? triggerFormFields(pick.connection_schema) : [], label: "", problem: "", saving: false, created: null };
+      renderTriggerModal();
+    }
+    function trgModalValues() {
+      const values = {};
+      for (const el of Array.from(document.querySelectorAll("#trigger-modal-body [data-trg-field]"))) values[el.dataset.trgField] = el.value;
+      return values;
+    }
+    async function createTriggerConnection() {
+      const m = trg.modal;
+      if (!m || m.saving) return;
+      const s = m.sources.find((x) => `${x.id}@${x.version}` === m.sourceKey);
+      if (!s) return;
+      m.label = String($("trg-f-label").value || "").trim();
+      const { config, problems } = triggerConfigFromValues(m.fields, trgModalValues());
+      if (!m.label) problems.unshift("Name is required.");
+      if (problems.length) { $("trigger-modal-note").textContent = problems.join(" "); return; }
+      m.saving = true;
+      $("trigger-modal-note").textContent = "Creating...";
+      try {
+        const created = await api("/api/gateway/triggers/connections", { method: "POST", body: JSON.stringify({ source_id: s.id, source_version: s.version, label: m.label, config }) });
+        if (!created || !created.connection_id) throw new Error("the gateway's answer has no connection_id.");
+        m.created = created;
+        m.saving = false;
+        renderTriggerModal();
+        await loadTriggers();
+      } catch (e) {
+        m.saving = false;
+        m.problem = `Not created: ${trgErr(e)}`;
+        renderTriggerModal();
+      }
+    }
+    async function trgCopy(key) {
+      const el = document.querySelector(`[data-trg-value="${CSS.escape(key)}"]`);
+      if (!el) return;
+      const ok = await clipboardWrite(el.textContent || "");
+      uiToast(ok ? "Copied" : "Copy failed — select and copy");
+    }
+    // `#triggers?new=<source_id>` (Flow's "New connection…" link): open the dialog on that source.
+    function triggersNewFromHash() {
+      const h = String(location.hash || "");
+      const m = /^#triggers\?(.*)$/.exec(h);
+      if (!m) return "";
+      return String(new URLSearchParams(m[1]).get("new") || "").trim();
+    }
+    function bindTriggersPage() {
+      $("tab-button-triggers").onclick = () => { setActiveTab("triggers"); };
+      $("triggers-new").onclick = () => openTriggerModal("");
+      $("triggers-refresh").onclick = () => loadTriggers();
+      $("triggers-table").onclick = (e) => {
+        const t = e.target && e.target.closest ? e.target.closest("button") : null;
+        if (!t) return;
+        if (t.dataset.trgEvents) toggleTriggerEvents(t.dataset.trgEvents);
+        else if (t.dataset.trgTest) testFireTrigger(t.dataset.trgTest);
+        else if (t.dataset.trgDelete) confirmDeleteTrigger(t.dataset.trgDelete);
+        else if (t.dataset.trgCopy) trgCopy(t.dataset.trgCopy);
+      };
+      $("trigger-modal-close").onclick = closeTriggerModal;
+      $("trigger-modal-body").onchange = (e) => {
+        const t = e.target;
+        if (!t || !trg.modal || t.dataset.trgSource === undefined) return;
+        trg.modal.label = String($("trg-f-label").value || "");
+        trg.modal.sourceKey = t.value;
+        const s = trg.modal.sources.find((x) => `${x.id}@${x.version}` === t.value);
+        trg.modal.fields = s ? triggerFormFields(s.connection_schema) : [];
+        trg.modal.problem = "";
+        renderTriggerModal();
+      };
+      $("trigger-modal-body").onclick = (e) => {
+        const t = e.target && e.target.closest ? e.target.closest("button") : null;
+        if (t && t.dataset.trgCopy) trgCopy(t.dataset.trgCopy);
+      };
+      $("trigger-modal-actions").onclick = (e) => {
+        const t = e.target && e.target.closest ? e.target.closest("button") : null;
+        if (!t) return;
+        if (t.dataset.trgCreate) createTriggerConnection();
+        else if (t.dataset.trgDone) closeTriggerModal();
+      };
+    }
+"""

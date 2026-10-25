@@ -154,14 +154,15 @@ def _console_owned_sources() -> Tuple[str, str, str, str]:
     from .console_catalog import CATALOG_CSS, CATALOG_JS
     from .console_skills_mcp import SKILLS_MCP_CSS, SKILLS_MCP_JS
     from .console_themes import KIT_THEME_CSS
+    from .console_triggers import TRIGGERS_CSS, TRIGGERS_JS
     from .console_ui import CONSOLE_UI_CSS, CONSOLE_UI_JS
     from .console_workspaces import ACCOUNTS_CSS, WORKSPACES_CSS, WORKSPACES_JS
 
     return (
         _strip_html_comments(_CONSOLE_HTML_TEMPLATE),
         _strip_css_comments(KIT_THEME_CSS),
-        _strip_css_comments(CONSOLE_UI_CSS + CATALOG_CSS + SKILLS_MCP_CSS + ACCOUNTS_CSS + WORKSPACES_CSS),
-        _strip_js_line_comments(CONSOLE_UI_JS + CATALOG_JS + SKILLS_MCP_JS + WORKSPACES_JS),
+        _strip_css_comments(CONSOLE_UI_CSS + CATALOG_CSS + SKILLS_MCP_CSS + TRIGGERS_CSS + ACCOUNTS_CSS + WORKSPACES_CSS),
+        _strip_js_line_comments(CONSOLE_UI_JS + CATALOG_JS + SKILLS_MCP_JS + TRIGGERS_JS + WORKSPACES_JS),
     )
 
 
@@ -2119,6 +2120,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      <div class="shell_nav_group af-nav-group" role="group" aria-labelledby="nav-group-work">
 	        <div id="nav-group-work" class="shell_nav_caption af-nav-group__caption">Work</div>
 	        <button id="tab-button-workflows" class="tab-button shell_nav_item" type="button" title="Bundles, versions, import and export"><span class="shell_nav_icon" aria-hidden="true">⑂</span><span class="shell_nav_label">Workflows</span></button>
+	        <button id="tab-button-triggers" class="tab-button shell_nav_item" type="button" title="Mailboxes, feeds and webhooks that can start your automations"><span class="shell_nav_icon" aria-hidden="true">↯</span><span class="shell_nav_label">Triggers</span></button>
 	        <button id="tab-button-skills" class="tab-button shell_nav_item" type="button" title="Skills agents can load, and the MCP tool servers this gateway knows"><span class="shell_nav_icon" aria-hidden="true">✦</span><span class="shell_nav_label">Skills &amp; MCP</span></button>
 	        <button id="tab-button-runtimes" class="tab-button shell_nav_item" type="button" title="Each user's data plane: runs, flows, sessions and memory"><span class="shell_nav_icon" aria-hidden="true">◎</span><span class="shell_nav_label">Runtimes</span></button>
 	        <button id="tab-button-apps" class="tab-button shell_nav_item" type="button" title="Browser apps (Flow, Code, Observer...): install, start, open"><span class="shell_nav_icon" aria-hidden="true">▣</span><span class="shell_nav_label">Apps</span></button>
@@ -2306,6 +2308,25 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        </div>
 	      </div>
 
+      <div id="tab-triggers" class="tab-panel">
+        <!-- TRIGGERS (root backlog 1041, console_triggers.py): this person's trigger connections. -->
+        <section id="triggers-section" class="session-only trg-page">
+          <p class="section-note trg-purpose">A connection is one place events come from: this mailbox, this feed, this webhook. Create it once here; your automations and flows can then listen to it.</p>
+          <div class="trg-toolbar">
+            <span id="triggers-all-slot" class="workflows-switch" hidden></span>
+            <span class="trg-spacer"></span>
+            <button id="triggers-refresh" class="secondary" type="button" data-af-tip="Read the connections again">Refresh</button>
+            <button id="triggers-new" type="button">New connection</button>
+          </div>
+          <div id="triggers-message" class="message trg-message" role="status" aria-live="polite"></div>
+          <div class="table-scroll workflows-scroll">
+            <table class="trg-table" data-ui-no-stack>
+              <thead><tr><th class="trg-col-source">Source</th><th class="trg-col-name">Name</th><th id="triggers-account-head" class="trg-col-account" hidden>Account</th><th class="trg-col-status">Status</th><th class="trg-col-last trg-th-last">Last event</th><th class="trg-col-actions"><span class="sr-only">Actions</span></th></tr></thead>
+              <tbody id="triggers-table"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
       <div id="tab-skills" class="tab-panel">
         <!-- SKILLS & MCP (DESIGN-v3 §6, console_skills_mcp.py): kit tabs Skills | MCP servers. -->
         <section id="skills-mcp-section" class="session-only skmcp-page">
@@ -3274,6 +3295,20 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      </div>
 	    </div>
 	  </div>
+  <!-- Triggers: the create dialog (console_triggers.py), kit af-modal bound by bindModal. -->
+  <div id="trigger-modal-backdrop" class="af-modal-backdrop" hidden>
+    <div class="af-modal af-modal--wide" role="dialog" aria-modal="true" aria-labelledby="trigger-modal-title">
+      <div class="af-modal__header">
+        <h2 id="trigger-modal-title" class="af-modal__title">New connection</h2>
+        <button id="trigger-modal-close" class="af-modal__close" type="button" aria-label="Close" data-af-tip="Close">×</button>
+      </div>
+      <div id="trigger-modal-body" class="af-modal__body"></div>
+      <div class="af-modal__footer">
+        <p id="trigger-modal-note" class="af-modal__footer-note" role="status" aria-live="polite"></p>
+        <div id="trigger-modal-actions" class="trg-footer-actions"></div>
+      </div>
+    </div>
+  </div>
   <!-- Skills & MCP modals (console_skills_mcp.py): kit af-modal af-modal--wide, bound by bindModal. -->
   <div id="skill-modal-backdrop" class="af-modal-backdrop" hidden>
     <div class="af-modal af-modal--wide" role="dialog" aria-modal="true" aria-labelledby="skill-modal-title">
@@ -4024,7 +4059,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // door (users & entities), where they run, then setup (providers,
 	    // capability defaults), then validation (sandbox). A stale persisted
 	    // "entities" value folds into "users" below.
-	    const TABS = ["users", "runtimes", "workflows", "skills", "providers", "openai", "defaults", "sandbox", "models", "catalog", "apps", "network"];
+	    const TABS = ["users", "runtimes", "workflows", "triggers", "skills", "providers", "openai", "defaults", "sandbox", "models", "catalog", "apps", "network"];
 	    // Retired tab ids and their new homes: a persisted value or a `#<id>` link
 	    // still lands there (entities merged into users; DESIGN-v3 §7: the Engines
 	    // tab merged into Providers).
@@ -4235,6 +4270,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      users: ["Accounts", "People who use this gateway and the entities that act on it"],
 	      runtimes: ["Runtimes", "Each user's own data plane: runs, flows, sessions and memory"],
       workflows: ["Workflows", "Bundles, versions, import and export"],
+      triggers: ["Triggers", "Connections that can start your automations: mailboxes, feeds, webhooks"],
       skills: ["Skills & MCP", "Skills agents can load, and MCP tool servers"],
 	      providers: ["Providers", "Local engines and remote provider connections"],
 	      openai: ["OpenAI API", "Let apps use your models through one OpenAI-compatible address"],
@@ -4270,6 +4306,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      writeStringSetting(ACTIVE_TAB_KEY, next);
 	      wsOnTabChange(next);  // drops a `#runtimes?account=` link when leaving the Runtimes page (console_workspaces.py)
 	      if (next === "skills") openSkillsMcpPage();  // console_skills_mcp.py
+	      if (next === "triggers") openTriggersPage();  // console_triggers.py
 	      mcOnTabChange(next);  // the catalog's `#catalog?...` link follows the tab (console_catalog.py)
 	    }
 	    // ---- Workflows: the registered workflow registry ----
@@ -12545,6 +12582,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (!state.hashApplied && TABS.includes(wantedTab)) {
 	        state.hashApplied = true;
 	        state.activeTab = wantedTab;
+	        // `#triggers?new=<source_id>` (Flow's "New connection…"): the create dialog opens on that source.
+	        if (wantedTab === "triggers") trg.pendingNew = triggersNewFromHash();
 	        setActiveTab(wantedTab);
 	        if (wantedTab === "models") { loadHostState(); startHostStatePoll(); }
 	        if (wantedTab === "users") loadMyEmail();
@@ -16017,6 +16056,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // tab opens (shared ensureDataHomes cache).
 	    $("tab-button-runtimes").onclick = () => { runtimesClearFilter(); setActiveTab("runtimes"); loadRuntimes(); };
 	    bindSkillsMcpPage();
+	    bindTriggersPage();
 	    $("tab-button-workflows").onclick = () => { setActiveTab("workflows"); mountWorkflowSwitches(); loadWorkflows(); if (state.principal && state.principal.admin) mountAgentDefaults("workflows", $("agent-defaults-root")); };
 	    $("workflows-refresh").onclick = () => loadWorkflows();
 	    $("app-settings-close").onclick = () => appSettingsModalClose();

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Console **Triggers** page (backlog 1041, `/console#triggers`): your trigger connections (Source, Name,
+  Status, Last event) with **Events** (the 20 most recent events, each expandable to its JSON), **Test** (sends a
+  test event, the result said in the row) and **Delete** (confirmed under the row); **New connection** renders the
+  chosen source's `connection_schema` as a form; a webhook connection's address and one-time signing secret are
+  shown once with copy buttons; administrators switch on **All accounts**. `#triggers?new=<source_id>` opens the
+  dialog on a source. The terminal console does not have this page yet.
 - Run origin (backlog 1038): every run started through `POST /runs/start` records who started it,
   `input_data._meta.origin = {kind: "person", actor: <account user id>, client: <request interface>, ref: {}}`,
   and the `POST /runs/schedule` wrapper `kind: "system"`. The gateway writes it (a client-sent origin is
