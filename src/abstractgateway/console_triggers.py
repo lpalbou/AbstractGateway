@@ -876,7 +876,6 @@ TRIGGERS_JS = r"""
       if (r.includes("stale")) return "its time stamp is too far from now.";
       if (r.includes("replayed")) return "this call was already received.";
       if (r.includes("disabled") || r.includes("paused")) return "the connection is paused (turn Listening on).";
-      if (r.includes("not_listening")) return "nothing uses this webhook yet.";
       return r || "the gateway did not say why.";
     }
     // UX #15: an address only this computer (or its network) can reach.

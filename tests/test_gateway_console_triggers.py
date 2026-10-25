@@ -282,15 +282,13 @@ const c = {connection_id: "conn_1", ingress_url: "http://127.0.0.1:8080/api/gate
 console.log(JSON.stringify([webhookCurlExample(c.ingress_url, c.secret), webhookSetupMarkup(c, null),
   webhookSetupMarkup(c, {status: 202, reason: "", name: "GitHub pushes", event: {sequence: 3, type: "abstract.webhook.received.v1"}}),
   webhookSetupMarkup(c, {status: 401, reason: "webhook_signature_invalid"}),
-  webhookSetupMarkup(c, {status: 409, reason: "not_listening"}),
   webhookSetupMarkup({connection_id: "conn_1", ingress_url: "https://gw.example.net/api/gateway/triggers/webhooks/conn_1", secret: "whsec_c2VjcmV0"}, null),
   [trgLocalAddress("http://127.0.0.1:8080/x"), trgLocalAddress("http://192.168.1.4/x"), trgLocalAddress("http://mac.local/x"), trgLocalAddress("https://gw.example.net/x"), trgLocalAddress("https://100.64.1.2/x")]]));
 """
-    curl, panel, ok, refused, idle, public, local = _node(harness)
+    curl, panel, ok, refused, public, local = _node(harness)
     assert local == [True, True, True, False, False]
     assert "paste the webhook address as the webhook URL, the signing secret as the secret, and choose JSON" in public
     assert "can't reach" not in public
-    assert "nothing uses this webhook yet." in idle and "fetch" not in idle
     assert "SECRET='whsec_c2VjcmV0'" in curl and "URL='http://127.0.0.1:8080/api/gateway/triggers/webhooks/conn_1'" in curl
     assert 'KEY=$(printf %s "${SECRET#whsec_}" | base64 -d | xxd -p -c 256)' in curl
     assert "openssl dgst -sha256 -mac HMAC -macopt hexkey:$KEY -binary | base64" in curl
