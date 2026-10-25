@@ -438,8 +438,8 @@ listed here too (*When mail arrives in …*); you add and manage them under
   connection) it says *Listening · used by 2 automations*, or *Listening ·
   nothing uses it yet, so nothing is fetched until an automation does*; off it
   says *Paused*. Whether an automation uses it never moves the switch.
-  **Advanced** (collapsed, per connection) has **Keep fetching even when nothing
-  uses it**. A mailbox row shows the same states with its own **Use this
+  **When nothing uses it** (collapsed, per connection) has **Keep fetching even
+  when nothing uses it**. A mailbox row shows the same states with its own **Use this
   mailbox** switch (the same one as on the Email card). **Events** opens the 20 most recent events under the row; each
   one expands to its full JSON (the CloudEvents envelope your flow receives as
   `input_data.event`). **Test** sends a test event (`data.test: true`) and says

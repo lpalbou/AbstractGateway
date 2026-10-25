@@ -172,7 +172,7 @@ TRIGGERS_JS = r"""
     }
     // What a connection is doing, in words (operator ruling): the Listening switch is the person's
     // (`paused`), the only control; whether an automation uses it (`used_by`) is the system's economy
-    // and never moves the switch. `always_listen` (Advanced) keeps fetching when nothing uses it.
+    // and never moves the switch. `always_listen` ("When nothing uses it") keeps fetching when nothing uses it.
     function trgUsedBy(r) {
       if (Array.isArray(r.used_by)) return r.used_by.length;
       return typeof r.used_by === "number" ? r.used_by : null;
@@ -201,11 +201,12 @@ TRIGGERS_JS = r"""
       const chip = st && st !== "active" ? trgStatusChip(r.status) : "";
       return `${chip}<span class="trg-doing" data-trg-doing="${esc(r.connection_id)}">${esc(doing)}</span>${trgListenSwitch(r)}${trgAdvancedMarkup(r)}`;
     }
-    // Advanced (collapsed, per connection): keep fetching even when no automation uses it.
+    // The operator's "Advanced" (collapsed, per connection), content-named per the console's rule (R15 D1,
+    // no "Advanced" anywhere): "When nothing uses it" → keep fetching even when no automation uses it.
     function trgAdvancedMarkup(r) {
       if (typeof r.always_listen !== "boolean") return "";
       const id = esc(r.connection_id);
-      return `<details class="trg-advanced"><summary>Advanced</summary>`
+      return `<details class="trg-advanced"><summary>When nothing uses it</summary>`
         + `<button type="button" role="switch" class="af-switch af-switch--sm" aria-checked="${r.always_listen ? "true" : "false"}" data-trg-always="${id}">`
         + `<span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Keep fetching even when nothing uses it</span></span></button></details>`;
     }
@@ -695,7 +696,7 @@ TRIGGERS_JS = r"""
       const ok = t.status >= 200 && t.status < 300;
       let html = `<p class="trg-fire ${ok ? "is-ok" : "is-failed"}" role="status">HTTP ${esc(t.status)}${t.reason ? ` · ${esc(t.reason)}` : ""}</p>`;
       if (String(t.reason || "").includes("not_listening")) {
-        html += `<p class="trg-help">Nothing uses this webhook yet, so the gateway does not accept calls for it. Bind an automation to it, or turn on "Keep fetching even when nothing uses it" under Advanced on its row.</p>`;
+        html += `<p class="trg-help">Nothing uses this webhook yet, so the gateway does not accept calls for it. Bind an automation to it, or turn on "Keep fetching even when nothing uses it" under "When nothing uses it" on its row.</p>`;
       }
       if (t.event) html += `<details open><summary>The event it created (#${esc(t.event.sequence)})</summary><pre class="trg-code">${esc(JSON.stringify(t.event, null, 2))}</pre></details>`;
       return html;

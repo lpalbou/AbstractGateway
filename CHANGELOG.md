@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Triggers: what each connection is doing.** The **Listening** switch is yours and the only control (`PUT
   /api/gateway/triggers/connections/{id}` with `paused`); rows say *Listening · used by N automations*, *Listening ·
-  nothing uses it yet, so nothing is fetched until an automation does* or *Paused*. **Advanced** (collapsed) has **Keep
+  nothing uses it yet, so nothing is fetched until an automation does* or *Paused*. **When nothing uses it** (collapsed) has **Keep
   fetching even when nothing uses it** (`always_listen`). Mailbox rows show the same states with their **Use this
   mailbox** switch. A line under the list explains when a connection fetches.
 - **Further mailboxes: Gmail help and Sign in with Google.** For `imap.gmail.com` or a Gmail address the form explains

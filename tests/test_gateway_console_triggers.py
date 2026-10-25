@@ -360,8 +360,8 @@ console.log(JSON.stringify(rows.map((r) => [trgDoingText(r), trgStatusCell(r)]))
     assert 'role="switch"' in on and 'aria-checked="true"' in on and ">Listening</span>" in on and 'data-trg-listen="a"' in on
     assert 'aria-checked="false"' in paused
     assert "listening state not reported (update the gateway)" in old and 'role="switch"' not in old
-    # Advanced (collapsed): keep fetching even when nothing uses it.
-    assert '<details class="trg-advanced"><summary>Advanced</summary>' in on and 'data-trg-always="a"' in on
+    # Collapsed, content-named (no "Advanced" anywhere): keep fetching even when nothing uses it.
+    assert '<details class="trg-advanced"><summary>When nothing uses it</summary>' in on and 'data-trg-always="a"' in on
     assert ">Keep fetching even when nothing uses it</span>" in on and 'aria-checked="true"' in out[5][1]
     for _, cell in out:
         assert " on<" not in cell and " off<" not in cell

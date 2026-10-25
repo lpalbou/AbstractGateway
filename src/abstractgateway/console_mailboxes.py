@@ -305,7 +305,6 @@ MAILBOXES_JS = r"""
 """
 
 MAILBOXES_HTML = r"""
-              <!-- Further mailboxes, read-only (root backlog 1044, console_mailboxes.py): your own account only. -->
               <section id="my-mailboxes-card" class="af-card account-card" aria-labelledby="my-mailboxes-title" hidden>
                 <div class="af-card__header">
                   <h3 id="my-mailboxes-title" class="af-card__title">Further mailboxes</h3>

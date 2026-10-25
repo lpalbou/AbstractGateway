@@ -247,7 +247,7 @@ try {
       await page.click('[data-trg-row="conn_mail1"] .trg-advanced summary');
       await page.click('[data-trg-always="conn_mail1"]');
       await page.waitForFunction(() => (document.querySelector('[data-trg-row="conn_mail1"]') || {}).textContent.includes("fetching anyway"));
-      check(JSON.stringify(store.lastConnPut) === JSON.stringify({ id: "conn_mail1", body: { always_listen: true } }), "Advanced: PUT {always_listen: true}", store.lastConnPut);
+      check(JSON.stringify(store.lastConnPut) === JSON.stringify({ id: "conn_mail1", body: { always_listen: true } }), "Keep fetching: PUT {always_listen: true}", store.lastConnPut);
       // The mailbox row: the same states, with the mailbox's own switch.
       await page.click('[data-trg-mailbox-use="default"]');
       await page.waitForFunction(() => (document.querySelector('[data-trg-mailbox="default"]') || {}).textContent.includes("Paused"));
