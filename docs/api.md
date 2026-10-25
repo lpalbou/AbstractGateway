@@ -179,6 +179,16 @@ the run's inputs as `input_data.workflow_selection` (written by the gateway;
 a value sent by the client is replaced), so `GET /runs/{run_id}/input_data`
 tells a restored conversation how its workflow was chosen.
 
+Every run also records who started it, in the run's inputs as
+`input_data._meta.origin` and on `GET /runs/{run_id}` as `origin`:
+`{kind, actor, client, ref}`. A run started through `POST /runs/start` is
+`kind: "person"` with `actor` = the calling account's user id and `client` =
+the request's `interface` (null when it names none); the wrapper run of
+`POST /runs/schedule` is `kind: "system"` with the same `actor`. The gateway
+writes it; an origin sent by the client is replaced. Runs started before this
+field existed answer `origin: null`. The run's `actor_id` stays `"gateway"`
+(it marks the runs this gateway's runner ticks); the person is `origin.actor`.
+
 Evidence: request/response models live in `src/abstractgateway/routes/gateway.py` (`StartRunRequest`, `start_run`).
 
 #### The gateway default agent workflow (`flow_id: "@default"`)

@@ -1631,6 +1631,12 @@ def run_summary(run: Any) -> Dict[str, Any]:
                 }
     except Exception:
         pass
+    # Who or what started the run (backlog 1038): `_meta.origin` as the host
+    # stamped it ({kind, actor, client, ref}); None on runs started before it.
+    _vars_for_origin = getattr(run, "vars", None)
+    _meta_for_origin = _vars_for_origin.get("_meta") if isinstance(_vars_for_origin, dict) else None
+    _origin = _meta_for_origin.get("origin") if isinstance(_meta_for_origin, dict) else None
+    out["origin"] = dict(_origin) if isinstance(_origin, dict) else None
     # Automation attribution (automations contract C11): the same four fields
     # the run index stores, derived by the runtime from the run's inline _meta.
     from abstractruntime.core.run_attribution import automation_index_fields

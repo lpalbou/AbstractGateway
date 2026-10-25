@@ -9121,6 +9121,18 @@ def _audit_run_started(request: Request, *, run_id: str, selection: Dict[str, An
         pass
 
 
+def _stamp_run_origin(input_data: Dict[str, Any], *, kind: str, principal: GatewayPrincipal, client: Optional[str]) -> None:
+    """Record who started this run, once, in the one shape of backlog 1038:
+    `_meta.origin = {kind, actor, client, ref}`. The host writes it; a client-sent
+    `_meta.origin` is overwritten, never trusted. `actor` is the principal's user id;
+    `client` the interface the request named (None when it named none)."""
+    meta = input_data.get("_meta")
+    meta = dict(meta) if isinstance(meta, dict) else {}
+    iface = str(client or "").strip() or None
+    meta["origin"] = {"kind": kind, "actor": str(principal.user_id or "").strip() or None, "client": iface, "ref": {}}
+    input_data["_meta"] = meta
+
+
 @router.post("/runs/start", response_model=StartRunResponse)
 async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
     svc = get_gateway_service()
@@ -9289,6 +9301,10 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
             svc, agent_default=agent_default, catalog_selection=catalog_selection
         )
         input_data["workflow_selection"] = dict(workflow_selection)
+        # Origin (backlog 1038): a person started this run through this request.
+        # `actor_id` stays "gateway": it is the runner's ownership marker (runner.py
+        # ticks only runs whose actor_id == "gateway"); the principal is the origin's actor.
+        _stamp_run_origin(input_data, kind="person", principal=principal, client=req.interface)
         run_id = svc.host.start_run(
             flow_id=flow_id,
             bundle_id=bundle_id,
@@ -9665,6 +9681,8 @@ async def start_scheduled_run(req: ScheduleRunRequest, request: Request) -> Star
                 _ensure_session_memory_owner_run_exists(run_store=svc.host.run_store, session_id=session_id)
             except Exception as e:
                 logger.warning("Failed to ensure session memory owner run exists (schedule)", extra={"error": str(e)})
+        # Origin (backlog 1038): the legacy scheduled wrapper is a system run set up by this principal.
+        _stamp_run_origin(wrapper_vars, kind="system", principal=principal, client=getattr(req, "interface", None))
         run_id = host.start_run(flow_id=scheduled_workflow_id, bundle_id=None, input_data=wrapper_vars, actor_id="gateway", session_id=session_id)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to start scheduled run: {e}")

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Run origin (backlog 1038): every run started through `POST /runs/start` records who started it,
+  `input_data._meta.origin = {kind: "person", actor: <account user id>, client: <request interface>, ref: {}}`,
+  and the `POST /runs/schedule` wrapper `kind: "system"`. The gateway writes it (a client-sent origin is
+  replaced); `GET /runs/{run_id}` answers it as `origin` (null for older runs).
 - `GET /api/gateway/sessions/search?q=…`: keyword search over the caller's conversations: their questions,
   answers and artifacts (generated media by their prompt, attachments by their file name), with
   AbstractRuntime's `ConversationSearch` (words and parts of words, case and accents ignored, a typo
