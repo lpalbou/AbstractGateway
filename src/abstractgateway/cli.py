@@ -851,6 +851,15 @@ def main(argv: list[str] | None = None) -> None:
         "thresholds, so a full collection no longer pauses the whole gateway for seconds (default: on). "
         "`off` leaves Python's defaults. Logged at boot. There is no environment variable.",
     )
+    serve.add_argument(
+        "--run-index",
+        default="verify",
+        choices=["trusted", "verify"],
+        dest="run_index",
+        help="How run listings are answered (AbstractRuntime 0.12 trusted run index). `verify` (default in this "
+        "release): the directory scan answers and the in-memory index is compared with it, mismatches counted under "
+        "run_index in /api/health. `trusted`: the index answers, no scan. There is no environment variable.",
+    )
     from .work_pools import DEFAULT_SIZES as _POOL_DEFAULTS
 
     serve.add_argument(
@@ -1118,6 +1127,9 @@ def main(argv: list[str] | None = None) -> None:
         from .service import set_gc_tuning
 
         set_gc_tuning(str(getattr(args, "gc_tuning", "on") or "on") == "on", source="serve")
+        from .stores import set_run_index_mode
+
+        set_run_index_mode(str(getattr(args, "run_index", "verify") or "verify"), source="serve")
         from .work_pools import configure_pools
 
         try:

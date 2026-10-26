@@ -588,6 +588,19 @@ async def health_check():
         body["pools"] = pool_stats()
     except Exception:
         pass
+    # Run index (gateway load 2026-10-26): mode and the shadow counters (verify mode compares the scan
+    # with the in-memory index; `shadow_mismatches` must stay 0 before `--run-index trusted` is the default).
+    try:
+        from .stores import run_index_mode
+
+        from . import service as _service_mod
+
+        svc = getattr(_service_mod, "_service", None)  # the default plane's service, never built here
+        store = getattr(getattr(svc, "stores", None), "run_store", None) or getattr(svc, "run_store", None)
+        stats = store.run_index_stats() if store is not None and hasattr(store, "run_index_stats") else {}
+        body["run_index"] = {"mode": run_index_mode(), **(dict(stats) if isinstance(stats, dict) else {})}
+    except Exception:
+        pass
     # Boot honesty (supervisor seam, c4063): while the background boot runs,
     # answer status="starting" — a supervisor must never count a loading
     # gateway as unresponsive (false recycle) NOR as fully healthy. A failed

@@ -21,6 +21,22 @@ class GatewayStores:
     command_cursor_store: Any
 
 
+_run_index_mode: str = "verify"  # `serve --run-index trusted|verify`; verify = shadow mode for this release
+
+
+def set_run_index_mode(mode: str, *, source: str = "serve") -> None:
+    """Record `serve --run-index trusted|verify` for this process (read when a store is built)."""
+    global _run_index_mode
+    value = str(mode or "verify").strip().lower()
+    if value not in ("trusted", "verify"):
+        raise ValueError(f"run index mode must be trusted or verify, not {mode!r}")
+    _run_index_mode = value
+
+
+def run_index_mode() -> str:
+    return _run_index_mode
+
+
 def build_file_stores(*, base_dir: Path) -> GatewayStores:
     """Create file-backed Run/Ledger/Artifact stores under base_dir.
 
@@ -42,7 +58,10 @@ def build_file_stores(*, base_dir: Path) -> GatewayStores:
     base.mkdir(parents=True, exist_ok=True)
 
     artifact_store = FileArtifactStore(base)
-    run_store = OffloadingRunStore(JsonFileRunStore(base), artifact_store=artifact_store)
+    # Run index mode (gateway load 2026-10-26, runtime 09d3b63): `verify` answers listings from the
+    # directory scan and compares with the in-memory index (shadow; mismatches counted in
+    # /api/health run_index), `trusted` answers from the index. `serve --run-index` sets it.
+    run_store = OffloadingRunStore(JsonFileRunStore(base, trust_index=(run_index_mode() == "trusted")), artifact_store=artifact_store)
     ledger_store = OffloadingLedgerStore(ObservableLedgerStore(JsonlLedgerStore(base)), artifact_store=artifact_store)
     command_store = JsonlCommandStore(base)
     command_cursor_store = JsonFileCommandCursorStore(base / "commands_cursor.json")
