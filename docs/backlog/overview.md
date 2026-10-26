@@ -22,7 +22,7 @@ can trust without importing local gateway packages.
 ## Counts
 
 - Planned: 5
-- Proposed: 42
+- Proposed: 43
 - Completed: 24
 - Deprecated: 1
 - Recurrent: 0
@@ -111,6 +111,7 @@ Priority P1: user-scoped MCP credentials and access (0936), requested after the 
 
 | Item | Promotion criteria |
 | --- | --- |
+| [0938_ai_identity_presentation_avatar_voice_image.md](proposed/0938_ai_identity_presentation_avatar_voice_image.md) | One presentation record per AI (avatar design, voice, optional image) held by the runtime and served by the gateway, so every client shows and speaks the same identity. Promote when the runtime and gateway seats agree on the record's home and the two routes. |
 | [0937_session_titles_written_by_the_model.md](proposed/0937_session_titles_written_by_the_model.md) | A session title written by the model after its first answer, into the existing `title` tag; clients change nothing. Promote when the operator asks or assistant 0006 needs it. |
 | [0935_per_principal_provider_access_policy.md](proposed/0935_per_principal_provider_access_policy.md) | Admin-selected provider access for human and entity principals. Promote when prioritized and policy/revocation semantics are settled; enabled admin providers stay shared by default until then. |
 | [2026-05-09_abstractflow_draft_spaces_and_ephemeral_runs.md](proposed/2026-05-09_abstractflow_draft_spaces_and_ephemeral_runs.md) | Remaining optional hardening: draft-bundle cleanup and default memory-scope isolation; run-tree purge is implemented. |
