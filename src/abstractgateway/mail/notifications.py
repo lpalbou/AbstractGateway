@@ -1039,6 +1039,35 @@ _COLLECT_MEMO_LOCK = threading.Lock()
 # A full pass at least this often even when the tokens say nothing changed: what the in-process
 # signals cannot see (another process writing the same folder) is read within this delay.
 FULL_PASS_S = 300.0
+# A finished run's notice is decided once: the full pass re-reads a COMPLETED/FAILED run only when
+# its index row (status, updated_at) is new since the last decision. The persisted cursor
+# (`jobs.through`) lets the first pass after a restart skip what an earlier process decided;
+# it trails the newest decided `updated_at` by this overlap (saves stamped out of order).
+FINISHED_OVERLAP_S = 120.0
+
+
+def _ts(value: Any) -> Optional[float]:
+    """An ISO timestamp as epoch seconds; None when it is not one (never skipped then)."""
+    try:
+        dt = datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:  # noqa: BLE001
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return dt.timestamp()
+
+
+def _index_rows(run_store: Any, status: Any, limit: int) -> Optional[List[Dict[str, Any]]]:
+    """The store's lightweight index rows (`list_run_index`: status, updated_at, wait_reason, no
+    vars); None for a store without them (the caller then lists full runs, as before)."""
+    fn = getattr(run_store, "list_run_index", None)
+    if not callable(fn):
+        return None
+    try:
+        rows = fn(status=status, limit=limit)
+    except Exception:  # noqa: BLE001
+        return None
+    return [r for r in rows if isinstance(r, dict) and r.get("run_id")] if isinstance(rows, list) else None
 
 
 class NotificationCollector:
@@ -1153,7 +1182,7 @@ class NotificationCollector:
         # A mailbox sealed with the old keychain key (round 16): an explicit "Email result" is
         # still queued so it fails ONCE, visibly, with the reconnect sentence (never retried).
         reconnect = (not usable) and mailbox_unavailable_reason(self.plane) == REASON_MAILBOX_NEEDS_RECONNECT
-        ctx = {"prefs": prefs, "usable": usable, "reconnect": reconnect}
+        ctx: Dict[str, Any] = {"prefs": prefs, "usable": usable, "reconnect": reconnect}
 
         run_sig = _change_signal(run_store)
         ledger_sig = _change_signal(ledger_store) if ledger_store is not None else None
@@ -1190,6 +1219,12 @@ class NotificationCollector:
         full = changed_runs is None or changed_ledgers is None
 
         state = _read_json(_collector_path(self.plane))
+        # Decisions carry over only under the same switches (a mailbox that becomes usable, a
+        # preference that changes: every finished run since the baseline is decided again).
+        ctx["seen"] = dict(memo.get("seen") or {}) if memo.get("switches") == switches else {}
+        jobs = state.get("jobs") if isinstance(state.get("jobs"), dict) else {}
+        if jobs.get("switches") == switches and jobs.get("through"):
+            ctx["jobs_through"] = str(jobs["through"])
         first = not state.get("baseline_at")
         att: Dict[str, int] = {str(k): int(v) for k, v in (state.get("attention") or {}).items()}
         baseline_at = str(state.get("baseline_at") or _now_iso())
@@ -1199,16 +1234,18 @@ class NotificationCollector:
             out["queued"] += self._incremental_pass(run_store, ledger_store, changed_runs or set(), changed_ledgers or set(), att, baseline_at, ctx)
             out["incremental"] = 1
 
-        _write_private_json(
-            _collector_path(self.plane),
-            {"version": 1, "baseline_at": baseline_at, "attention": att, "updated_at": _now_iso()},
-        )
+        doc: Dict[str, Any] = {"version": 1, "baseline_at": baseline_at, "attention": att, "updated_at": _now_iso()}
+        through = ctx.get("jobs_through_out") or ctx.get("jobs_through")
+        if through:
+            doc["jobs"] = {"switches": switches, "through": str(through)}
+        _write_private_json(_collector_path(self.plane), doc)
         with _COLLECT_MEMO_LOCK:
             _COLLECT_MEMO[key] = {
                 "tokens": tokens,
                 "stores": stores,
                 "switches": switches,
                 "full_at": now if (first or full) else float(memo.get("full_at") or now),
+                "seen": ctx.get("seen") or {},
             }
         return out
 
@@ -1242,16 +1279,76 @@ class NotificationCollector:
         try:
             from abstractruntime.core.models import RunStatus, WaitReason
 
+            # Index rows first (no vars); a run is loaded only when its row (status, updated_at)
+            # is new since this collector last decided it: never 400 full RunStates per pass.
+            seen: Dict[str, Tuple[str, str]] = ctx.setdefault("seen", {})
+            fresh_seen: Dict[str, Tuple[str, str]] = {}
+
+            def row_sig(row: Dict[str, Any]) -> Tuple[str, str]:
+                return (str(row.get("status") or ""), str(row.get("updated_at") or ""))
+
             if usable and prefs.get("approval_needed") and not first:
-                for run in run_store.list_runs(status=RunStatus.WAITING, wait_reason=WaitReason.USER, limit=200):
-                    queued += self._plain_wait(run)
+                rows = _index_rows(run_store, RunStatus.WAITING, 200)
+                if rows is None:
+                    for run in run_store.list_runs(status=RunStatus.WAITING, wait_reason=WaitReason.USER, limit=200):
+                        queued += self._plain_wait(run)
+                else:
+                    user = str(getattr(WaitReason.USER, "value", WaitReason.USER))
+                    for row in rows:
+                        if str(row.get("wait_reason") or "") != user:
+                            continue
+                        rid, sig = str(row["run_id"]), row_sig(row)
+                        fresh_seen[rid] = sig
+                        if seen.get(rid) == sig:
+                            continue
+                        run = self._load(run_store, rid, ctx)
+                        if run is None:
+                            fresh_seen.pop(rid, None)
+                        elif getattr(run, "status", None) == RunStatus.WAITING and getattr(getattr(run, "waiting", None), "reason", None) == WaitReason.USER:
+                            queued += self._plain_wait(run)
             if not first:
+                through = _ts(ctx.get("jobs_through")) if ctx.get("jobs_through") else None
+                base = _ts(baseline_at)
+                newest: Optional[float] = None
                 for status, kind in ((RunStatus.COMPLETED, "job_finished"), (RunStatus.FAILED, "job_failed")):
-                    for run in run_store.list_runs(status=status, limit=200):
-                        queued += self._job_notice(run, kind, baseline_at, usable)
+                    rows = _index_rows(run_store, status, 200)
+                    if rows is None:
+                        for run in run_store.list_runs(status=status, limit=200):
+                            queued += self._job_notice(run, kind, baseline_at, usable)
+                        continue
+                    for row in rows:
+                        rid, sig = str(row["run_id"]), row_sig(row)
+                        fresh_seen[rid] = sig
+                        at = _ts(row.get("updated_at"))
+                        if at is not None:
+                            newest = at if newest is None else max(newest, at)
+                        if seen.get(rid) == sig:
+                            continue  # decided by an earlier pass of this process
+                        if at is not None and ((base is not None and at < base) or (through is not None and at < through)):
+                            continue  # before notifications were on / decided before a restart
+                        run = self._load(run_store, rid, ctx)
+                        if run is None:
+                            fresh_seen.pop(rid, None)  # unreadable now: decided on a later pass
+                        elif getattr(run, "status", None) == status:
+                            queued += self._job_notice(run, kind, baseline_at, usable)
+                if newest is not None:
+                    mark = newest - FINISHED_OVERLAP_S
+                    if through is None or mark > through:
+                        ctx["jobs_through_out"] = datetime.datetime.fromtimestamp(mark, datetime.timezone.utc).isoformat()
+            seen.clear()
+            seen.update(fresh_seen)
         except Exception:  # noqa: BLE001
             pass
         return queued
+
+    @staticmethod
+    def _load(run_store: Any, rid: str, ctx: Dict[str, Any]) -> Any:
+        try:
+            run = run_store.load(rid)
+        except Exception:  # noqa: BLE001 - unreadable: not this pass's fact
+            return None
+        ctx["loads"] = int(ctx.get("loads") or 0) + 1
+        return run
 
     def _incremental_pass(
         self,
@@ -1321,6 +1418,9 @@ class NotificationCollector:
                 if run is None:
                     continue
                 status = getattr(run, "status", None)
+                if status in (RunStatus.WAITING, RunStatus.COMPLETED, RunStatus.FAILED):
+                    # Decided here: the next full pass does not load it again for the same row.
+                    ctx.setdefault("seen", {})[rid] = (str(getattr(status, "value", status)), str(getattr(run, "updated_at", "") or ""))
                 if status == RunStatus.WAITING and usable and prefs.get("approval_needed"):
                     aid = controller_of(run)
                     summ = summary(aid) if aid else None

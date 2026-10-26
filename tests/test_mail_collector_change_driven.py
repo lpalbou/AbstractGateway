@@ -53,12 +53,12 @@ class _Counting:
         return sum(self.calls.values())
 
 
-def _run(rid, status, *, notify=None, waiting=None, vars0=None, parent=None):
+def _run(rid, status, *, notify=None, waiting=None, vars0=None, parent=None, updated_at="2999-01-01T00:00:00+00:00"):
     v = dict(vars0 or {})
     if notify:
         v["_runtime"] = {"notify": notify}
     return RunState(run_id=rid, workflow_id="Nightly build", status=status, current_node="n", vars=v, waiting=waiting,
-                    parent_run_id=parent, actor_id="gateway", updated_at="2999-01-01T00:00:00+00:00")
+                    parent_run_id=parent, actor_id="gateway", updated_at=updated_at)
 
 
 @pytest.fixture
@@ -157,15 +157,65 @@ def test_a_changed_switch_or_an_unknown_change_set_reads_everything(gateway, ima
     _collect(plane, stores.svc)
     r = gateway["client"].put("/api/gateway/me/email/notifications", headers=gateway["alice"], json={"job_failed": False, "approval_needed": True})
     assert r.status_code == 200, r.text
-    before = stores.rs.calls["list_runs"]
+    before = stores.rs.calls["list_run_index"]
     out = _collect(plane, stores.svc)
-    assert "skipped" not in out and "incremental" not in out and stores.rs.calls["list_runs"] > before
+    assert "skipped" not in out and "incremental" not in out and stores.rs.calls["list_run_index"] > before
     # Another process creating a run in the folder: the change set is unknown, so a full pass.
     assert _collect(plane, stores.svc) == {"queued": 0, "skipped": 1}
     JsonFileRunStore(stores.run_store._base).save(_run("foreign", RunStatus.COMPLETED))
-    before = stores.rs.calls["list_runs"]
+    before = stores.rs.calls["list_run_index"]
     out = _collect(plane, stores.svc)
-    assert "incremental" not in out and stores.rs.calls["list_runs"] > before
+    assert "incremental" not in out and stores.rs.calls["list_run_index"] > before
+
+
+def test_400_finished_runs_a_change_to_one_loads_exactly_one(gateway, imap, smtp, stores, monkeypatch) -> None:
+    """The full pass (every 5 min, a foreign change, a restart) reads index rows, never the 400
+    finished RunStates: a run is loaded only when its (status, updated_at) row is new."""
+    from abstractgateway.mail import notifications
+
+    _connect(gateway, imap, smtp)
+    plane = plane_of("alice")
+    asked = {"on": ["finished", "failed"], "channels": ["email"]}
+    for i in range(400):
+        status = RunStatus.COMPLETED if i % 2 else RunStatus.FAILED
+        stores.run_store.save(_run(f"done-{i:03d}", status, notify=asked, updated_at=f"2020-01-01T00:{i // 60:02d}:{i % 60:02d}+00:00"))
+    _collect(plane, stores.svc)  # baseline
+    stores.rs.calls.update({k: 0 for k in stores.rs.calls})
+    _collect(plane, stores.svc)  # full: 400 rows, all decided before the baseline, none loaded
+    assert stores.rs.calls["load"] == 0
+
+    def now() -> str:
+        import datetime
+
+        return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    # One run re-finishes (in-process save): the incremental pass loads it alone.
+    stores.rs.calls["load"] = 0
+    stores.run_store.save(_run("done-007", RunStatus.COMPLETED, notify=asked, updated_at=now()))
+    out = _collect(plane, stores.svc)
+    assert out.get("incremental") == 1 and out["queued"] == 1
+    assert stores.rs.calls["load"] == 1
+
+    # Another process finishes a new one: unknown change set, a FULL pass, still exactly one load.
+    stores.rs.calls["load"] = 0
+    JsonFileRunStore(stores.run_store._base).save(_run("done-400", RunStatus.COMPLETED, notify=asked, updated_at=now()))
+    out = _collect(plane, stores.svc)
+    assert "incremental" not in out and out["queued"] == 1
+    assert stores.rs.calls["load"] == 1
+
+    # The 5-minute full pass with nothing new: no load at all.
+    monkeypatch.setattr(notifications, "FULL_PASS_S", 0.0)
+    stores.rs.calls["load"] = 0
+    out = _collect(plane, stores.svc)
+    assert "incremental" not in out and out["queued"] == 0 and stores.rs.calls["load"] == 0
+
+    # A restart (process memo gone): the persisted cursor keeps it to the overlap window.
+    monkeypatch.setattr(notifications, "_COLLECT_MEMO", {})
+    stores.rs.calls["load"] = 0
+    out = _collect(plane, stores.svc)
+    assert out["queued"] == 0 and stores.rs.calls["load"] <= 2  # done-007/400, idempotent
+    # Never a bulk read of full runs (list_runs loads every RunState it returns).
+    assert stores.rs.calls["list_runs"] == 0
 
 
 def test_benchmark_11500_quiet_runs_skip_under_5ms(gateway, imap, smtp, stores) -> None:
