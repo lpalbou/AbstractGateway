@@ -9976,7 +9976,7 @@ async def list_runs(
                 rows = lister(root_only=True, limit=10_000_000) if callable(lister) else [run_summary(r) for r in rs.list_runs(limit=10_000_000)]
                 return migrate_docs_qa_sessions(svc.config.data_dir, rows)
 
-            await asyncio.to_thread(_migrate)
+            await off_loop("heavy", _migrate)  # a whole-index listing: the heavy pool
     except SessionKindsUnreadable as exc:
         raise HTTPException(status_code=500, detail={"reason_code": "session_kinds_unreadable", "message": str(exc)}) from None
 
@@ -10050,7 +10050,7 @@ async def list_runs(
             # branch on which filter produced the page.
             return {"items": child_items, "count": len(child_items), "parent_run_id": prid, "offset": int(offset), "has_more": child_more}
 
-        return await asyncio.to_thread(_children_page)
+        return await off_loop("heavy", _children_page)
 
     status_enum: Optional[RunStatus] = None
     if isinstance(status, str) and status.strip():
@@ -10374,7 +10374,9 @@ async def _coalesced_runs_listing(key: str, compute: Any) -> Dict[str, Any]:
     every waiter. The event loop is single-threaded: the dict needs no lock."""
     task = _runs_list_inflight.get(key)
     if task is None:
-        task = asyncio.create_task(asyncio.to_thread(compute))
+        # The heavy pool (work_pools.py): a listing reads the run index and ledger lengths;
+        # the loop's default executor was shared with every other blocking call.
+        task = asyncio.create_task(off_loop("heavy", compute))
         _runs_list_inflight[key] = task
         task.add_done_callback(lambda t, k=key: _runs_list_inflight.pop(k, None) if _runs_list_inflight.get(k) is t else None)
     try:
@@ -23103,6 +23105,13 @@ async def backlog_exec_request_feedback(request_id: str, req: BacklogExecFeedbac
 
 @router.post("/backlog/exec/requests/{request_id}/promote", response_model=BacklogExecRequestDetailResponse)
 async def backlog_exec_request_promote(request_id: str, req: BacklogExecPromoteRequest) -> BacklogExecRequestDetailResponse:
+    """Promote a request awaiting QA: conflict check (git per file), copy/delete per the
+    candidate manifest, request + lock writes, UAT stop. All of it is file and process work:
+    it runs in the heavy pool (gateway load 2026-10-26, backlog 1054), never on the loop."""
+    return await off_loop("heavy", _backlog_exec_request_promote_sync, request_id, req)
+
+
+def _backlog_exec_request_promote_sync(request_id: str, req: BacklogExecPromoteRequest) -> BacklogExecRequestDetailResponse:
     repo_root = _backlog_repo_root()
     if repo_root is None:
         raise HTTPException(status_code=404, detail=_backlog_unavailable_detail())
@@ -29641,7 +29650,8 @@ async def host_tray_show(request: Request) -> Dict[str, Any]:
     decision = tray_decision(reload=bool(ctx.get("reload")), runner_only=bool(ctx.get("runner_only")), no_tray=bool(ctx.get("no_tray")))
     if not decision.start:
         raise HTTPException(status_code=409, detail=f"the tray cannot start here ({decision.reason}): {decision.hint or ''}".strip())
-    await asyncio.to_thread(
+    await off_loop(
+        "light",
         get_tray_supervisor().start,
         base_url=str(ctx["base_url"]),
         data_dir=Path(ctx["data_dir"]),
@@ -29679,7 +29689,7 @@ async def host_shutdown(request: Request, req: Optional[_HostControlRequest] = N
 async def host_update_state(request: Request) -> Dict[str, Any]:
     """How this gateway was installed, the last update check, and the upgrade job state. Admin only."""
     _require_admin_principal(request)
-    return await asyncio.to_thread(self_update.update_overview, check=False)
+    return await off_loop("light", self_update.update_overview, check=False)
 
 
 @router.post("/host/update/check")
@@ -29695,7 +29705,8 @@ async def host_update_check(request: Request) -> Dict[str, Any]:
         self_update.check_for_update(force=True)
         return self_update.update_overview(check=False)
 
-    return await asyncio.to_thread(_run)
+    # A remote check (5 s timeouts): the watchers pool, never a light or heavy thread.
+    return await off_loop("watchers", _run)
 
 
 class _HostUpdateStartRequest(BaseModel):
@@ -29722,7 +29733,7 @@ async def host_update_start(request: Request, req: Optional[_HostUpdateStartRequ
         return self_update.update_overview(check=False)
 
     try:
-        return await asyncio.to_thread(_run)
+        return await off_loop("light", _run)
     except (self_update.UpdateNotPossible, self_update.UpdateJobBusy) as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
 
