@@ -20,10 +20,17 @@ catch-up notification, so nothing alerts twice.
 Watch-first: a principal with a watch registration refreshed in the last 24 h gets alerts on the
 watch only; otherwise on the phone (the two apps are separate families; both would ring the wrist).
 
-Idle guarantee: with `--push-relay off` no dispatcher thread exists. With a relay but no
-registration the thread is parked on an event with no timeout (in the serve process the device
-route wakes it); a split runner process, which the API process cannot wake, stats `devices.json`
-every 2 s and nothing else. No socket is opened until a row is due.
+The forwarder address: `resolve_relay()` (the flag > the saved Push forwarder setting > the
+packaged default, `push.settings.effective_forwarder`) is read at the start of every pass and while
+parked; a change rebuilds the relay client (no restart). The settings PUT wakes the serve process's
+dispatchers; a split runner's 2 s poll sees the settings file move.
+
+Idle guarantee: with `--push-relay off` no dispatcher thread exists, and in the serve process none
+exists while the effective address is off (the settings PUT starts one). With an address but no
+registration, or no address, the thread is parked on an event with no timeout (in the serve process
+the device route and the settings PUT wake it); a split runner process, which the API process cannot
+wake, stats `devices.json` and `push/settings.json` every 2 s and nothing else. No socket is opened
+until a row is due.
 
 Retries: 2 s, 10 s, 60 s, 5 min, then every 15 min until the row is an hour old; then it is dropped
 (`notification.failed` for an approval or a question). One log line per hour per plane at most.
@@ -171,6 +178,8 @@ class PushDispatcher:
         root_dir: Path,
         stream: Any,
         relay_url: Optional[str],
+        resolve_relay: Optional[Callable[[], Optional[str]]] = None,
+        settings_token: Optional[Callable[[], Any]] = None,
         poll_when_idle: bool = False,
         clock: Callable[[], float] = time.time,
         transport: Any = None,
@@ -184,7 +193,11 @@ class PushDispatcher:
         self.store = DeviceStore(self.plane_dir, Path(root_dir))
         self.outbox = Outbox(self.plane_dir)
         self.relay_url = relay_url
+        self._transport = transport
         self.relay = RelayClient(relay_url, transport=transport) if relay_url else None
+        # The effective forwarder address, re-read per pass (None: the fixed `relay_url`).
+        self.resolve_relay = resolve_relay
+        self.settings_token = settings_token or (lambda: None)
         self.poll_when_idle = bool(poll_when_idle)
         self.clock = clock
         self.name = name
@@ -203,8 +216,9 @@ class PushDispatcher:
         return self._thread is not None and self._thread.is_alive()
 
     def start(self) -> None:
-        """No relay (`off`): nothing at all. Else the dispatcher thread (idempotent)."""
-        if self.relay is None or self.running:
+        """A fixed `off` (no relay, nothing to resolve): nothing at all. Else the dispatcher thread
+        (idempotent)."""
+        if (self.relay is None and self.resolve_relay is None) or self.running:
             return
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name=f"gateway-{self.name}", daemon=True)
@@ -222,8 +236,29 @@ class PushDispatcher:
             self.relay.close()
 
     def kick(self) -> None:
-        """A registration changed (the device route, same process)."""
+        """A registration or the forwarder setting changed (the device route / settings PUT, same process)."""
         self._wake.set()
+
+    def refresh_relay(self) -> Optional[str]:
+        """Re-read the effective forwarder address; a change replaces the relay client. Returns it."""
+        if self.resolve_relay is None:
+            return self.relay_url
+        try:
+            url = self.resolve_relay()
+        except Exception:  # noqa: BLE001 - an unreadable setting keeps the address in use
+            logger.debug("push forwarder address unreadable", exc_info=True)
+            return self.relay_url
+        if url != self.relay_url:
+            if url and not self.relay_url:
+                # Turned on: what happened while it was off is never pushed (the stream head is the baseline).
+                write_cursor(self.plane_dir, int(self.stream.head()))
+            old = self.relay
+            self.relay = RelayClient(url, transport=self._transport) if url else None
+            self.relay_url = url
+            if old is not None:
+                old.close()
+            logger.info("push: forwarder %s", url or "off")
+        return url
 
     def _subscribe(self) -> None:
         if self._listener_off is None:
@@ -240,7 +275,8 @@ class PushDispatcher:
     def _loop(self) -> None:
         while not self._stop.is_set():
             try:
-                if not self._devices(self.clock()):
+                self.refresh_relay()
+                if self.relay is None or not self._devices(self.clock()):
                     self._park()
                     continue
                 self._subscribe()
@@ -257,15 +293,16 @@ class PushDispatcher:
             self._wake.wait()
             self._wake.clear()
             return
-        token = self.store.change_token()
+        token = (self.store.change_token(), self.settings_token())
         while not self._stop.is_set():
-            if self._wake.wait(POLL_S) or self.store.change_token() != token:
+            if self._wake.wait(POLL_S) or (self.store.change_token(), self.settings_token()) != token:
                 self._wake.clear()
                 return
 
     def _wait_active(self, next_due: Optional[float]) -> None:
         stream_token = self.stream.change_token()
         devices_token = self.store.change_token()
+        settings_token = self.settings_token()
         while not self._stop.is_set():
             now = self.clock()
             timeout = POLL_S if next_due is None else max(0.05, min(POLL_S, next_due - now))
@@ -274,14 +311,16 @@ class PushDispatcher:
                 return
             if next_due is not None and self.clock() >= next_due:
                 return
-            # Another process may have appended (split mode) or changed a registration.
-            if self.stream.change_token() != stream_token or self.store.change_token() != devices_token:
+            # Another process may have appended (split mode), changed a registration or the setting.
+            if (self.stream.change_token() != stream_token or self.store.change_token() != devices_token
+                    or self.settings_token() != settings_token):
                 return
 
     # -- one pass ----------------------------------------------------------------------------
 
     def tick(self, now: Optional[float] = None) -> Dict[str, Any]:
         clock = float(now if now is not None else self.clock())
+        self.refresh_relay()
         devices = self._devices(clock)
         if not devices or self.relay is None:
             return {"idle": True, "next_due": None}

@@ -242,8 +242,10 @@ from .routes.me_events import router as me_events_router  # noqa: E402
 app.include_router(me_events_router, prefix="/api")
 # Apple push devices (framework backlog 1049): /gateway/me/push/devices; literal paths.
 from .routes.push import router as push_router  # noqa: E402
+from .routes.push import settings_router as push_settings_router  # noqa: E402
 
 app.include_router(push_router, prefix="/api")
+app.include_router(push_settings_router, prefix="/api")
 # AbstractNote's read API (optional, abstractnote_seam.py): /api/gateway/note/..., literal
 # paths, before the parametrized gateway router. Absent when abstractnote is not installed.
 from .abstractnote_seam import note_router  # noqa: E402

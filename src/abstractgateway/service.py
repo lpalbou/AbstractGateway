@@ -1362,17 +1362,39 @@ def _start_email_worker(svc: GatewayService) -> None:
         logging.getLogger("abstractgateway.service").warning("entity email workers failed to start", exc_info=True)
 
 
-def _start_push_dispatcher(svc: GatewayService) -> None:
-    """The plane's push dispatcher, in the process that runs its runner (backlog 1049). Built only
-    with `--push-relay <URL>`: with `off` nothing exists, no thread, no socket."""
-    from .push.settings import push_relay_url
+def _push_root(svc: Any) -> Optional[Path]:
+    """The gateway's root data dir of a service (where the saved Push forwarder setting lives)."""
+    cfg = getattr(svc, "config", None)
+    if cfg is None:
+        return None
+    return Path(getattr(cfg, "root_data_dir", None) or cfg.data_dir)
 
-    relay = push_relay_url()
-    if relay is None or getattr(svc, "push_dispatcher", None) is not None:
+
+def _start_push_dispatcher(svc: GatewayService, *, turned_on: bool = False) -> None:
+    """The plane's push dispatcher, in the process that runs its runner (backlog 1049). The forwarder
+    address is the `--push-relay` flag > the saved Push forwarder setting > the packaged default
+    (`push.settings.effective_forwarder`), re-read by the dispatcher at every pass. Built only while
+    that address is set, except in a split runner without the flag (the API process cannot start it
+    there, so it parks and stats the settings file); with `--push-relay off` nothing exists, no
+    thread, no socket. `turned_on` (the settings PUT): what happened while it was off is never
+    pushed (the cursor moves to the stream head)."""
+    from .push import settings as push_settings
+
+    if getattr(svc, "push_dispatcher", None) is not None:
+        return
+    root = _push_root(svc)
+    relay = push_settings.push_relay_url(root)
+    flag_given, _flag_url = push_settings.flag_relay()
+    try:
+        from .live_deltas import ROLE_RUNNER, process_role
+
+        split = process_role() == ROLE_RUNNER
+    except Exception:  # noqa: BLE001
+        split = False
+    if relay is None and (flag_given or not split or root is None):
         return
     try:
         from .events_stream import plane_owner, stream_for
-        from .live_deltas import ROLE_RUNNER, process_role
         from .push.dispatcher import PushDispatcher
 
         cfg = svc.config
@@ -1381,14 +1403,41 @@ def _start_push_dispatcher(svc: GatewayService) -> None:
             root_dir=Path(getattr(cfg, "root_data_dir", None) or cfg.data_dir),
             stream=stream_for(cfg.data_dir, *plane_owner(cfg)),
             relay_url=relay,
+            resolve_relay=lambda: push_settings.push_relay_url(root),
+            settings_token=lambda: push_settings.settings_change_token(root),
             # A split runner cannot be woken by the API process's device route: it stats devices.json.
-            poll_when_idle=process_role() == ROLE_RUNNER,
+            poll_when_idle=split,
             name=f"push-{gateway_service_label(svc)}",
         )
+        if turned_on and relay is not None:
+            from .push.store import write_cursor
+
+            write_cursor(Path(cfg.data_dir), int(dispatcher.stream.head()))
         object.__setattr__(svc, "push_dispatcher", dispatcher)
         dispatcher.start()
     except Exception:  # noqa: BLE001 - push is optional; never blocks a runner start
         logging.getLogger("abstractgateway.service").warning("push dispatcher failed to start", exc_info=True)
+
+
+def push_forwarder_changed() -> int:
+    """The saved Push forwarder setting changed (the settings PUT, this process): start the missing
+    dispatchers of the live planes that run their runner here, wake the others. Returns how many."""
+    with _service_lock:
+        services = [s for s in [_service, *_services_by_principal.values()] if s is not None]
+    seen: set = set()
+    n = 0
+    for svc in services:
+        if id(svc) in seen or not getattr(getattr(svc, "config", None), "runner_enabled", False):
+            continue
+        seen.add(id(svc))
+        dispatcher = getattr(svc, "push_dispatcher", None)
+        if dispatcher is None:
+            _start_push_dispatcher(svc, turned_on=True)
+            dispatcher = getattr(svc, "push_dispatcher", None)
+        if dispatcher is not None:
+            dispatcher.kick()
+            n += 1
+    return n
 
 
 def stop_gateway_runner() -> None:

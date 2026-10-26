@@ -88,6 +88,9 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
     # never from a path or body id), so no row is needed there; the admin's
     # per-user switch (/api/gateway/admin/users/{id}/email) rides the admin row.
     GatewayRoutePolicy(resource="email", reason_code="admin_required", prefixes=("/api/gateway/email",)),
+    # The gateway-wide Push forwarder address (routes/push.py; read and write: admins). Each
+    # person's devices live at /api/gateway/me/push/devices, self-only by construction.
+    GatewayRoutePolicy(resource="push", reason_code="admin_required", exact=("/api/gateway/push/settings",)),
     # Host/model MUTATIONS are operator surfaces; the READ side (which models
     # are resident, how much memory is left — /models/loaded, /host/state,
     # /host/metrics/*, /models/context_estimate) is visibility every

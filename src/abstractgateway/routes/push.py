@@ -4,6 +4,13 @@
     DELETE /api/gateway/me/push/devices/{device_id}   sign-out
     GET    /api/gateway/me/push/devices               [{device_id, app, name, refreshed_at, last_sent_at, last_error}]
 
+The gateway's Push forwarder address (admin only; the saved layer under the `--push-relay` flag
+and over the packaged default, `push/settings.py`):
+
+    GET    /api/gateway/push/settings   {forwarder: {mode: default|off|url, url, effective, source: flag|setting|packaged, packaged}}
+    PUT    /api/gateway/push/settings   {mode, url?} -> the same, plus {probe: {reachable, topics, reason}} when an
+                                        address is in effect (one GET <address>/v1/info; saved either way)
+
 Principal-scoped by construction like `/me/events` (the plane and the principal come from the
 request, never from a parameter); a browser session's writes carry the CSRF header (the auth
 middleware enforces it). Tokens are stored, never returned. A token registered here leaves every
@@ -22,10 +29,12 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 from fastapi import APIRouter, HTTPException, Path as PathParam, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..push import settings as push_settings
 from ..push.settings import push_relay_url
 from ..push.store import PACKAGED_TOPICS, DeviceStore, principal_key, public_view, write_cursor
 
 router = APIRouter(prefix="/gateway/me/push", tags=["push"])
+settings_router = APIRouter(prefix="/gateway/push", tags=["push"])
 
 DEVICE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$"
 INFO_TTL_S = 3600.0
@@ -61,9 +70,13 @@ def _context(request: Request) -> Tuple[Any, Any, str]:
     return svc, stream, principal_key(stream.tenant, stream.user)
 
 
-def _store(svc: Any) -> DeviceStore:
+def _root(svc: Any) -> Path:
     cfg = svc.config
-    return DeviceStore(Path(cfg.data_dir), Path(getattr(cfg, "root_data_dir", None) or cfg.data_dir))
+    return Path(getattr(cfg, "root_data_dir", None) or cfg.data_dir)
+
+
+def _store(svc: Any) -> DeviceStore:
+    return DeviceStore(Path(svc.config.data_dir), _root(svc))
 
 
 def relay_topics(relay: Optional[str]) -> Tuple[str, ...]:
@@ -92,7 +105,7 @@ def relay_topics(relay: Optional[str]) -> Tuple[str, ...]:
 
 
 def relay_state(store: DeviceStore, principal: str) -> str:
-    if push_relay_url() is None:
+    if push_relay_url(store.root_dir) is None:
         return "off"
     if any(d.get("relay_unreachable_since") for d in store.active(principal=principal)):
         return "unreachable"
@@ -122,10 +135,10 @@ async def put_my_push_device(
     device_id: str = PathParam(..., pattern=DEVICE_ID_PATTERN),
 ) -> Dict[str, Any]:
     """Register (or refresh) this device for alerts while its app is closed. Answers
-    `{ok, relay: on|off|unreachable}` — `off`: this gateway sends no pushes (`--push-relay off`)."""
+    `{ok, relay: on|off|unreachable}` — `off`: this gateway sends no pushes (no forwarder address)."""
     svc, stream, who = _context(request)
     topic = body.topic.strip()
-    if topic not in PACKAGED_TOPICS and topic not in await asyncio.to_thread(relay_topics, push_relay_url()):
+    if topic not in PACKAGED_TOPICS and topic not in await asyncio.to_thread(relay_topics, push_relay_url(_root(svc))):
         raise HTTPException(status_code=422, detail=f"unknown app topic {topic!r}: this gateway pushes only to {', '.join(PACKAGED_TOPICS)} and the relay's own apps")
     store = _store(svc)
     _rec, first = await asyncio.to_thread(
@@ -156,4 +169,55 @@ async def list_my_push_devices(request: Request) -> List[Dict[str, Any]]:
     return [public_view(r) for r in rows]
 
 
-__all__ = ["router", "relay_topics"]
+class ForwarderBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"mode": "url", "url": "http://127.0.0.1:8095"}, {"mode": "default"}]})
+
+    mode: Literal["default", "off", "url"] = Field(..., description="default: the built-in forwarder (off while none is built in); off: no pushes; url: your own forwarder")
+    url: Optional[str] = Field(None, max_length=500, description="With mode url only: https://..., or http:// on this computer (127.0.0.1, ::1, localhost)")
+
+
+def _settings_view(root: Path) -> Dict[str, Any]:
+    state = push_settings.forwarder_state(root)
+    return {"forwarder": {k: state[k] for k in ("mode", "url", "effective", "source", "packaged")}}
+
+
+@settings_router.get("/settings", summary="The Push forwarder address: saved setting, the one in effect and where it comes from")
+async def get_push_settings(request: Request) -> Dict[str, Any]:
+    """`{forwarder: {mode: default|off|url, url, effective, source: flag|setting|packaged, packaged}}`.
+    `effective` is the address pushes go to (null: off); `source: flag` = the `--push-relay` launch
+    flag of this run wins over the saved setting."""
+    from ..service import get_gateway_service
+    from .gateway import _require_admin_principal
+
+    _require_admin_principal(request)
+    return await asyncio.to_thread(_settings_view, _root(get_gateway_service()))
+
+
+@settings_router.put("/settings", summary="Save the Push forwarder address (default | off | your own URL)")
+async def put_push_settings(request: Request, body: ForwarderBody) -> Dict[str, Any]:
+    """Saves `{mode, url?}` (422 on a bad address: https, or http only on this computer) and takes
+    effect without a restart. When an address is in effect afterwards, probes `GET <address>/v1/info`
+    once and answers `probe: {reachable, topics, reason}`; the setting is saved either way."""
+    from ..service import get_gateway_service, push_forwarder_changed
+    from .gateway import _require_admin_principal
+
+    admin = _require_admin_principal(request)
+    root = _root(get_gateway_service())
+    try:
+        await asyncio.to_thread(push_settings.save_forwarder, root, body.mode, body.url,
+                                actor=str(getattr(admin, "user_id", "") or ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    await asyncio.to_thread(push_forwarder_changed)
+    out = await asyncio.to_thread(_settings_view, root)
+    effective = out["forwarder"]["effective"]
+    if effective:
+        probe = await asyncio.to_thread(push_settings.probe_forwarder, effective)
+        if probe["reachable"]:
+            with _info_lock:
+                _info_cache[effective] = (time.monotonic(), tuple(probe["topics"]))
+        out["probe"] = probe
+    return out
+
+
+__all__ = ["router", "relay_topics", "settings_router"]

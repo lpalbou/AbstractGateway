@@ -263,7 +263,7 @@ def gateway_console_html() -> str:
         # Account → My email: further mailboxes (console_mailboxes.py).
         ("<!--__MY_MAILBOXES_HTML__-->", MAILBOXES_HTML),
         ("<!--__MAILBOX_SHEET_HTML__-->", MAILBOX_SHEET_HTML),
-        # My email → Notifications → Devices: the watches and iPhones that get pushes (console_push.py).
+        # My email → Notifications → Devices + (admins) Push forwarder (console_push.py).
         ("<!--__MY_PUSH_DEVICES_HTML__-->", PUSH_DEVICES_HTML),
         ("/*__AF_CONSOLE_ISLANDS_JS__*/", islands_js),
         ("/*__ABSTRACTCORE_FRAGMENT_CSS__*/", css.replace("</style", "<\\/style")),
@@ -7615,6 +7615,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         myEmailMessage("");
         loadMyMailboxes();  // console_mailboxes.py: further mailboxes (own account only)
         loadMyPushDevices();  // console_push.py: the watches and iPhones that get pushes (own account only)
+        loadPushForwarder();  // console_push.py: the gateway's Push forwarder (admins, own account page)
       } catch (e) {
         if (generation === myEmailUi.generation && base === myEmailApi()) myEmailMessage(emailErrorText(e), "error");
       }
