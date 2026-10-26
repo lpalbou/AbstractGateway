@@ -588,6 +588,16 @@ async def health_check():
         body["pools"] = pool_stats()
     except Exception:
         pass
+    # GC tuning (gateway load 2026-10-26): what `serve --gc-tuning` applied after the boot, since the
+    # service logger's INFO line does not reach every log file.
+    try:
+        from . import service as _svc_mod
+
+        rep = getattr(_svc_mod, "_gc_tuning_report", None)
+        if isinstance(rep, dict) and rep:
+            body["gc_tuning"] = {k: v for k, v in rep.items() if k != "line"}
+    except Exception:
+        pass
     # Run index (gateway load 2026-10-26): mode and the shadow counters (verify mode compares the scan
     # with the in-memory index; `shadow_mismatches` must stay 0 before `--run-index trusted` is the default).
     try:
