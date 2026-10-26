@@ -999,6 +999,91 @@ def gateway_boot_state() -> Dict[str, Any]:
     return {"state": _boot_state, "error": _boot_error}
 
 
+# ---------------------------------------------------------------------------
+# Garbage-collection tuning (gateway performance, backlog 1054) -- BEGIN
+#
+# A warm gateway holds tens of millions of Python objects (bundles, stores,
+# scan memos, RunState caches). CPython's full collection walks all of them
+# while holding the GIL: one gen-2 pass was measured at >=10 s, a pause of the
+# whole process (event loop, runners, health). Once the boot has built the
+# long-lived objects, `gc.freeze()` moves them to the permanent generation,
+# which no collection visits again, and higher thresholds make the young
+# collections (and the full ones they trigger) rarer. `serve --gc-tuning off`
+# leaves the interpreter's defaults alone. No environment variable. Only a
+# `serve` process tunes (the flag is recorded by the CLI, default on): an app
+# booted any other way (tests, embedding) keeps its garbage collector as is.
+# ---------------------------------------------------------------------------
+GC_TUNED_THRESHOLDS = (50_000, 50, 100)
+_gc_tuning_on: Optional[bool] = None  # None = not started by `serve`: never tune
+_gc_tuning_report: Dict[str, Any] = {}
+
+
+def set_gc_tuning(on: bool, *, source: str = "serve") -> None:
+    """Record `serve --gc-tuning on|off` for this process (applied once the boot is done)."""
+    global _gc_tuning_on
+    _gc_tuning_on = bool(on)
+    _gc_tuning_report.clear()
+    _gc_tuning_report.update({"requested": "on" if _gc_tuning_on else "off", "source": str(source)})
+
+
+def gc_tuning_report() -> Dict[str, Any]:
+    """What `apply_gc_tuning` did in this process ({} before it ran)."""
+    return dict(_gc_tuning_report)
+
+
+def apply_gc_tuning(on: Optional[bool] = None) -> Dict[str, Any]:
+    """Freeze the objects alive now and raise the collection thresholds, or (off) touch nothing.
+
+    Returns {applied, thresholds_before, thresholds, frozen, collect_s, line}; `line` is the log line.
+    """
+    import gc
+    import time as _time
+
+    enabled = bool(_gc_tuning_on) if on is None else bool(on)
+    before = tuple(gc.get_threshold())
+    if not enabled:
+        line = "gc: tuning off (--gc-tuning off): thresholds %s left as they are, nothing frozen" % "/".join(map(str, before))
+        out: Dict[str, Any] = {"applied": False, "thresholds_before": before, "thresholds": before,
+                               "frozen": gc.get_freeze_count(), "collect_s": 0.0, "line": line}
+    else:
+        # Collect once first so the garbage of the boot is freed, not frozen forever.
+        t0 = _time.perf_counter()
+        gc.collect()
+        collect_s = _time.perf_counter() - t0
+        gc.freeze()
+        gc.set_threshold(*GC_TUNED_THRESHOLDS)
+        frozen = gc.get_freeze_count()
+        line = "gc: froze %d objects alive after boot (collect %.2f s); thresholds %s -> %s" % (
+            frozen, collect_s, "/".join(map(str, before)), "/".join(map(str, GC_TUNED_THRESHOLDS)))
+        out = {"applied": True, "thresholds_before": before, "thresholds": tuple(gc.get_threshold()),
+               "frozen": frozen, "collect_s": round(collect_s, 3), "line": line}
+    logging.getLogger("abstractgateway.service").info(out["line"])
+    print(f"[INFO] {out['line']}", file=sys.stderr, flush=True)
+    _gc_tuning_report.update({k: (list(v) if isinstance(v, tuple) else v) for k, v in out.items()})
+    return out
+
+
+def _apply_gc_tuning_after_boot() -> None:
+    """Called once by the boot thread when serving starts. Multi-user boots warm every plane's
+    service on the eager-rehydrate thread: wait for it (bounded) so those objects are frozen too.
+    Runs on its own daemon thread, so the boot is never delayed by it. Nothing at all when this
+    process was not started by `serve` (no --gc-tuning choice recorded)."""
+    if _gc_tuning_on is None:
+        return
+
+    def _run() -> None:
+        t = _rehydrate_thread
+        if t is not None:
+            t.join(timeout=900.0)
+        try:
+            apply_gc_tuning()
+        except Exception:  # noqa: BLE001 - tuning is an optimisation, never a reason to fail
+            logging.getLogger("abstractgateway.service").warning("gc tuning failed", exc_info=True)
+
+    threading.Thread(target=_run, name="gateway-gc-tuning", daemon=True).start()
+# Garbage-collection tuning -- END
+
+
 def begin_gateway_boot() -> None:
     """Start the heavy service boot on a background thread (idempotent while
     starting; a failed/idle state boots fresh). Lifespan calls this and
@@ -1095,6 +1180,7 @@ def begin_gateway_boot() -> None:
             start_gateway_runner()
             _boot_checkpoint()
             if current():
+                _apply_gc_tuning_after_boot()  # gc tuning (backlog 1054), see the block above
                 _boot_state = "ready"
         except _BootCancelled:
             # Stopped during startup: stop what this boot already built or

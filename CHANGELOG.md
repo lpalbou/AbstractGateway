@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 - Push: the packaged app topics are the merged AbstractAssistant family, `ai.abstractframework.assistant` (iPhone) and `ai.abstractframework.assistant.watchkitapp` (its watch companion); the old `.watch` and `.iphone` ids are no longer accepted.
+- Performance (backlog 1054): once the boot is done, `serve` freezes the objects it built (`gc.freeze()`) and raises the garbage collector's thresholds to 50000/50/100, so a full collection over a large heap no longer pauses the whole gateway for seconds; logged at boot (`[INFO] gc: ...`); `serve --gc-tuning off` keeps Python's defaults (no environment variable). `scripts/perf/` holds the benchmark fixture (`clone_runtime.sh`: a scrubbed APFS clone of a data dir) and `bench_gateway.sh` (a hermetic gateway on it, probe p50/p99, CPU at rest, GC pauses, outbound-network guard).
 
 ### Added
 

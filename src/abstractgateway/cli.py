@@ -842,6 +842,15 @@ def main(argv: list[str] | None = None) -> None:
         help="Run queued backlog executions on this machine for this run (wins over the saved setting "
         "`abstractgateway config set backlog_exec_runner on|off`). Default: the saved setting, else off.",
     )
+    serve.add_argument(
+        "--gc-tuning",
+        default="on",
+        choices=["on", "off"],
+        dest="gc_tuning",
+        help="Once the boot is done, freeze the objects it built (gc.freeze) and raise the garbage collector's "
+        "thresholds, so a full collection no longer pauses the whole gateway for seconds (default: on). "
+        "`off` leaves Python's defaults. Logged at boot. There is no environment variable.",
+    )
 
     runner = sub.add_parser("runner", help="Run the AbstractGateway runner worker (no HTTP)")
     runner.add_argument(
@@ -1077,6 +1086,9 @@ def main(argv: list[str] | None = None) -> None:
         from .command_sandbox import set_unsandboxed_commands
 
         set_unsandboxed_commands(bool(getattr(args, "unsandboxed_commands", False)), source="serve")
+        from .service import set_gc_tuning
+
+        set_gc_tuning(str(getattr(args, "gc_tuning", "on") or "on") == "on", source="serve")
         from .push.settings import set_push_relay
 
         _relay = set_push_relay(getattr(args, "push_relay", None), source="serve")
