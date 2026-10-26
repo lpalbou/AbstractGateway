@@ -180,3 +180,35 @@ def test_each_principal_gets_only_their_own_waits(tmp_path: Path, monkeypatch: p
         assert _seen(alice)[0]["outcome"] == "answered" and _seen(alice)[0]["step_id"] == a["step_id"]
         assert _seen(bob) == []  # bob's question is still open, and never in alice's stream
         assert runs["bob"] not in json.dumps(client.get("/api/gateway/me/events", headers=alice).json())
+
+
+def test_a_draft_test_run_parked_on_a_person_raises_no_attention(tmp_path: Path) -> None:
+    """A flow editor draft test (`_run_lifecycle.purpose == draft_test`) is hidden from the run
+    listings, so a wait on it would be a badge nobody can act on (watch seat, 2026-10-26): it
+    never raises attention, and a stale open wait for one is closed at boot."""
+    from abstractruntime.storage.json_files import JsonFileRunStore, JsonlLedgerStore
+
+    rs = JsonFileRunStore(tmp_path / "runs")
+    ledger = ObservableLedgerStore(JsonlLedgerStore(tmp_path / "runs"))
+    runtime, wf, runner, stream, _rs, _l = _make(tmp_path, run_store=rs, ledger=ledger, attach=False)
+    stream.append("attention.seen", event_id="seed", data={"automation_id": "a", "seq": 1})
+    rid = runtime.start(
+        workflow=wf, actor_id="gateway", session_id="s9",
+        vars={"_run_lifecycle": {"source": "abstractflow.editor", "purpose": "draft_test", "visibility": "private"}},
+    )
+    runner._tick_run(rid)  # parked on a person, but hidden from every listing
+    runner.attach_user_stream(stream)
+    runner._drain_user_stream()  # boot repair: nothing raised for it
+    assert [t for t, _ in _waits(stream) if t == "attention.raised"] == []
+    # A live park (not at boot) raises nothing either.
+    runner._raise_wait({"run_id": rid, "wait_key": "k", "step_id": "st", "kind": "question"})
+    assert [t for t, _ in _waits(stream) if t == "attention.raised"] == []
+    # A stale open wait for it from an older gateway is closed at boot, so the badge goes away.
+    with runner._waits_lock:
+        runner._open_waits[rid] = {"run_id": rid, "wait_key": "k", "step_id": "st", "kind": "question", "session_id": "s9"}
+        runner._save_open_waits()
+    runner2 = GatewayRunner(base_dir=tmp_path, host=runner._host, enable=False)
+    runner2.attach_user_stream(stream)
+    runner2._drain_user_stream()
+    assert [d["outcome"] for t, d in _waits(stream) if t == "attention.seen"] == ["cancelled"]
+    assert rid not in runner2._open_waits

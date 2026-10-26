@@ -529,6 +529,19 @@ class GatewayRunner:
             self._open_waits.pop(rid, None)
             self._save_open_waits()
 
+    @staticmethod
+    def _hidden_from_people(run: Any) -> bool:
+        """A run the listings hide (a flow editor draft test, `_run_lifecycle.purpose == draft_test`)
+        never raises attention: a wait nobody can see is a phantom badge (watch seat, 2026-10-26)."""
+        from abstractruntime.core.run_lifecycle import extract_run_lifecycle
+
+        from .service import is_draft_run_lifecycle
+
+        try:
+            return is_draft_run_lifecycle(extract_run_lifecycle(getattr(run, "vars", None)))
+        except Exception:  # noqa: BLE001 - a malformed lifecycle hides nothing
+            return False
+
     def _raise_wait(self, item: Dict[str, Any]) -> None:
         """attention.raised for a run that just parked on a person (loop thread)."""
         from .events_stream import TERMINAL_STATUSES, record_wait_raised, record_wait_seen, still_waiting_on, wait_outcome
@@ -538,6 +551,8 @@ class GatewayRunner:
             return
         rid = str(item["run_id"])
         run = self.run_store.load(rid)
+        if run is not None and self._hidden_from_people(run):
+            return
         session_id = getattr(run, "session_id", None) if run is not None else None
         with self._waits_lock:
             prev = self._open_waits.get(rid)
@@ -580,6 +595,8 @@ class GatewayRunner:
             before = len(self._open_waits)
             if run is None:
                 self._close_missing_wait(rid)
+            elif self._hidden_from_people(run):
+                self._close_missing_wait(rid)  # a draft test parked on a person: nobody can answer it
             else:
                 self._resolve_wait_if_closed(run)
             out["seen"] += before - len(self._open_waits)
@@ -590,6 +607,8 @@ class GatewayRunner:
         for run in waiting or []:
             rid = str(getattr(run, "run_id", "") or "")
             if rid in self._open_waits or getattr(run, "actor_id", None) != "gateway" or wait_kind(run) is None:
+                continue
+            if self._hidden_from_people(run):
                 continue
             item = latest_wait_record(self.ledger_store, run)
             if item is None:
@@ -1344,6 +1363,24 @@ class GatewayRunner:
             "paused_by": paused.get("paused_by"),
             "pause_reason": paused.get("reason"),
         }
+        # Split mode (gateway load 2026-10-26): which process answers, and in the API process
+        # whether the runner process and its model host are there (no address, no secret).
+        try:
+            from . import split_mode
+
+            out["mode"] = split_mode.mode()
+            out["process"] = split_mode.role()
+            if split_mode.is_api_process():
+                from .users import gateway_data_dir_from_env
+
+                out["runner_process"] = {
+                    "pid": holder_pid,
+                    "alive": bool(holder_alive),
+                    "heartbeat_fresh": bool(heartbeat_fresh),
+                    **split_mode.runner_process_snapshot(gateway_data_dir_from_env()),
+                }
+        except Exception as e:  # noqa: BLE001 - health stays answerable; the error is shown
+            out["mode_error"] = f"{type(e).__name__}: {e}"
         if loop_restarts:
             # Self-heal visibility: recoveries are normal operation ONLY when
             # rare; a climbing counter on /api/health is the operator's cue.
