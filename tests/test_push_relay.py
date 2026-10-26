@@ -126,7 +126,7 @@ def test_template_headers_and_body(relay, key) -> None:
                 "mutable-content": 1, "interruption-level": "time-sensitive", "thread-id": "approval"},
         "s": 7, "r": "0123456789abcdef",
     }
-    assert json.loads(second.content)["aps"]["interruption-level"] == "passive"
+    assert json.loads(second.content)["aps"]["interruption-level"] == "active"
     for kind in ("question", "notify", "failure"):
         _h, body = apns_message(_req(kind=kind), now=T0)
         assert body["aps"]["alert"] == {"title-loc-key": f"push.{kind}.title", "loc-key": f"push.{kind}.body"}

@@ -17,8 +17,11 @@ turns `attention.raised` events into requests to the push relay:
 Collapse id: `sha256("attention:" + record_key)[:32]`, the same id the apps use for their own
 catch-up notification, so nothing alerts twice.
 
-Watch-first: a principal with a watch registration refreshed in the last 24 h gets alerts on the
-watch only; otherwise on the phone (the two apps are separate families; both would ring the wrist).
+Phone-first (2026-10-26): the iPhone app and the watch app are one family, so Apple mirrors the
+phone's alert to the paired watch; a principal with a fresh phone registration gets alerts there,
+a watch signed in on its own (no fresh phone) gets them directly. A published alert's channels (Flow's
+"Where") reaches only the listed apps, phone-first among them: `watch` alone pushes the watch and never
+the phone, `phone` alone never pushes the watch, neither listed = nothing pushed.
 A published alert that chose its channels (`channels` on its `attention.raised`, Notify me's
 "Where") reaches only the listed apps, watch-first among them: `watch` alone never falls back to
 the phone, `phone` alone never rings the watch, neither listed = nothing pushed.
@@ -112,16 +115,22 @@ def seen_key_of_seen(data: Mapping[str, Any]) -> Optional[tuple]:
 
 
 def alert_targets(devices: List[Mapping[str, Any]], now: float, asked: Optional[List[str]] = None) -> List[Mapping[str, Any]]:
-    """Watch-first: the fresh watches, else the phones, else whatever watches remain. `asked` (a
-    published alert's channels; None = every channel) keeps only the devices whose app is listed."""
+    """Phone-first (2026-10-26, the iPhone app and the watch app are ONE family: Apple mirrors the
+    phone's alert to the paired watch, so pushing both would ring the wrist twice): the fresh phones;
+    else the fresh watches (a watch signed in on its own); else whatever remains. `asked` (a published
+    alert's channels; None = every channel) keeps only the devices whose app is listed, so "watch"
+    alone pushes the watch directly and never the phone."""
     if asked is not None:
         devices = [d for d in devices if d.get("app") in asked]
-    watches = [d for d in devices if d.get("app") == "watch"]
-    fresh = [d for d in watches if float(d.get("refreshed_at") or 0.0) + WATCH_FRESH_S > float(now)]
-    if fresh:
-        return fresh
-    phones = [d for d in devices if d.get("app") == "phone"]
-    return phones or watches
+    def fresh(app: str) -> List[Mapping[str, Any]]:
+        return [d for d in devices if d.get("app") == app and float(d.get("refreshed_at") or 0.0) + WATCH_FRESH_S > float(now)]
+    phones = fresh("phone")
+    if phones:
+        return phones
+    watches = fresh("watch")
+    if watches:
+        return watches
+    return [d for d in devices if d.get("app") == "phone"] or [d for d in devices if d.get("app") == "watch"]
 
 
 class RelayClient:

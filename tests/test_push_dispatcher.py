@@ -1,7 +1,7 @@
 """The push dispatcher (framework backlog 1049), driven pass by pass with a clock and a fake relay
 transport: the exact relay request, the kind mapping, the history baseline, a restart with queued
 rows, `attention.seen` before the send, the `gone` timestamp rule, a 2-hour relay outage, the
-outbox cap, watch-first, and the records it writes."""
+outbox cap, phone-first, and the records it writes."""
 
 from __future__ import annotations
 
@@ -245,15 +245,19 @@ def test_outbox_is_capped_and_purged(tmp_path: Path) -> None:
     assert oct((tmp_path / "push" / "outbox.sqlite3").stat().st_mode & 0o777) == "0o600"
 
 
-def test_watch_first() -> None:
+def test_phone_first() -> None:
+    """One app family: the phone gets the alert and Apple mirrors it to the watch; a watch signed in
+    on its own (no fresh phone) gets it directly; a stale device is the last resort."""
     now = T0
     watch = {"device_id": "w", "app": "watch", "refreshed_at": now - 3600}
     stale_watch = {"device_id": "sw", "app": "watch", "refreshed_at": now - 2 * 86400}
     phone = {"device_id": "p", "app": "phone", "refreshed_at": now}
-    assert [d["device_id"] for d in alert_targets([watch, phone], now)] == ["w"]
-    assert [d["device_id"] for d in alert_targets([stale_watch, phone], now)] == ["p"]
+    stale_phone = {"device_id": "sp", "app": "phone", "refreshed_at": now - 2 * 86400}
+    assert [d["device_id"] for d in alert_targets([watch, phone], now)] == ["p"]
+    assert [d["device_id"] for d in alert_targets([watch, stale_phone], now)] == ["w"]
+    assert [d["device_id"] for d in alert_targets([stale_watch, stale_phone], now)] == ["sp"]
     assert [d["device_id"] for d in alert_targets([stale_watch], now)] == ["sw"]
-    assert [d["device_id"] for d in alert_targets([phone], now)] == ["p"]
+    assert [d["device_id"] for d in alert_targets([watch], now)] == ["w"]
 
 
 def test_watch_and_phone_registered_send_one_alert(tmp_path: Path) -> None:
@@ -264,4 +268,4 @@ def test_watch_and_phone_registered_send_one_alert(tmp_path: Path) -> None:
     d.tick()
     raise_approval(stream, 1)
     d.tick()
-    assert [c["token"] for c in relay.calls] == [TOKEN_A]
+    assert [c["token"] for c in relay.calls] == [TOKEN_B]  # phone-first: Apple mirrors it to the watch

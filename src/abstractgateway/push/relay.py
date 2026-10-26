@@ -143,7 +143,11 @@ def apns_message(req: Dict[str, Any], *, now: float) -> Tuple[Dict[str, str], Di
             "alert": {"title-loc-key": f"push.{kind}.title", "loc-key": f"push.{kind}.body"},
             "sound": "default",
             "mutable-content": 1,
-            "interruption-level": "time-sensitive" if urgent else "passive",
+            # A person asked to be notified (notify) or an automation has a result or failed: an
+            # ordinary alert (banner + sound). Approvals and questions break through Focus. Nothing
+            # is passive: a passive push sits silently in Notification Center and reads as "no
+            # notification at all" (operator, 2026-10-26).
+            "interruption-level": "time-sensitive" if urgent else "active",
             "thread-id": kind,
         },
         "s": int(req["seq"]),

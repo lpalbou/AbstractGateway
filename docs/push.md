@@ -26,16 +26,16 @@ What you get:
 |---|---|---|
 | a run asks for your approval | Approval needed | time-sensitive |
 | a run asks you a question | Question | time-sensitive |
-| a flow published an alert to you | the publication's title | passive |
-| an automation has a result | *<automation> has a result* | passive |
-| an automation failed | *<automation> failed* | passive |
+| a flow published an alert to you | the publication's title | active (banner and sound) |
+| an automation has a result | *<automation> has a result* | active |
+| an automation failed | *<automation> failed* | active |
 
 An approval that is answered before the push leaves (on another device, in the console) is never
 pushed. A watch registered in the last 24 hours takes the alerts; otherwise the iPhone does, so
 your wrist rings once. A registration not refreshed for 7 days expires.
 
 A flow's *Notify me* alert can choose where it goes (its `channels`: `tray`, `watch`, `phone`,
-`email`, `console`). Push then rings only the listed apps, the watch first among them: an alert
+`email`, `console`). Push then rings only the listed apps, the phone first among them (the iPhone app and the watch app are one family, so Apple mirrors the phone's alert to the watch; a watch signed in on its own is pushed directly): an alert
 for `watch` alone never falls back to the iPhone, and one that lists neither is not pushed. An
 alert with no `channels` goes everywhere, as above. `GET /api/gateway/runs/{run_id}/after` shows,
 for a run, which alerts it raised and where each was delivered
@@ -155,7 +155,7 @@ the automation, the title of the publication). If the fetch times out, the gener
 The APNs request: `apns-push-type: alert`, `apns-priority` 10 for approvals and questions and 5
 otherwise, `apns-collapse-id` = `collapse`, expiry after 24 hours, and the body
 `{aps: {alert: {title-loc-key, loc-key}, sound: "default", mutable-content: 1,
-interruption-level: "time-sensitive" | "passive", thread-id: <kind>}, s: <seq>, r: <reg>}`.
+interruption-level: "time-sensitive" | "active", thread-id: <kind>}, s: <seq>, r: <reg>}`.
 
 ## Reference
 

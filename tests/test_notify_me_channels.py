@@ -1,7 +1,7 @@
 """Notify me's channel choice, end to end (framework ADR-0041 follow-up): a published alert carries
 `recipient` ("me") and `channels` (tray, watch, phone, email, console; absent = every channel) on its
 `attention.raised`, and every deliverer honours it: the tray consumer (no notification, no badge
-without "tray"), the push dispatcher (only the listed apps, watch-first among them), the email outbox
+without "tray"), the push dispatcher (only the listed apps, phone-first among them), the email outbox
 (a Notify me email only with "email"). The console item is the record itself, always written; After
 the run says what was asked beside what was delivered. Hermetic: scratch dirs, a MockTransport relay,
 a fake usable mailbox (no network, no SMTP)."""
@@ -102,8 +102,8 @@ def _push_world(tmp_path: Path, *, watch: bool = True, phone: bool = True):
     (["email"], []),
     (["phone"], [TOKEN_B]),              # the phone even with a fresh watch
     (["watch"], [TOKEN_A]),
-    (["watch", "phone"], [TOKEN_A]),     # watch-first among the listed
-    (None, [TOKEN_A]),                   # every channel: watch-first as before
+    (["watch", "phone"], [TOKEN_B]),     # phone-first among the listed (Apple mirrors to the watch)
+    (None, [TOKEN_B]),                   # every channel: phone-first
 ])
 def test_push_reaches_only_the_listed_apps(tmp_path: Path, asked: Optional[List[str]], tokens: List[str]) -> None:
     stream, d, relay = _push_world(tmp_path)
