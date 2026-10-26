@@ -13,7 +13,10 @@ Cadence (two daemon threads, never the GUI thread):
   throttle: the Sessions submenu is read at human speed, and a list nobody
   has the menu open to see is not worth a poll per five seconds.
 - Gateway reachability: derived; three consecutive failed fast polls flip the
-  state to "unreachable" (one blip never repaints the icon red). Two 401/403
+  state to "unreachable" (one blip never repaints the icon red). A poll that
+  TIMES OUT while the gateway answered within `SLOW_UNREACHABLE_S` is "slow"
+  (`Snapshot.slow`, the menu's "The gateway is slow to answer"), never red; a
+  failed `/automations` fetch backs off 10 s, x2, up to 2 min. Two 401/403
   answers in a row mean the token is dead (a gateway that restarted without
   us, or another gateway on the port): polling STOPS so the auth lockout never
   trips for every other loopback client.
@@ -40,6 +43,22 @@ RUNS_LIMIT = 25  # what we ASK for; the window then decides what is shown
 # automation-shaped event arrives; this slow reconciliation catches what no event announces
 # (an automation created, renamed or deleted in the console).
 AUTOMATIONS_RECONCILE_S = 300.0
+# A failed `/automations` fetch (above all its 10 s timeout on a busy gateway) is retried after
+# a growing pause, never on every slow pass: base, then x2 each failure, at most the cap
+# (10, 20, 40, 80, 120, 120 ... s). Retrying each pass is how 14 copies of one listing piled
+# up on the operator's gateway (2026-10-26). Any answer resets the ladder.
+AUTOMATIONS_BACKOFF_BASE_S = 10.0
+AUTOMATIONS_BACKOFF_MAX_S = 120.0
+# A probe that TIMES OUT is a gateway that is up but slow: "The gateway is slow to answer",
+# not the red "Not responding". Only when nothing has answered for this long (or a probe got
+# no answer at all: refused, reset) does the state turn unreachable.
+SLOW_UNREACHABLE_S = 90.0
+SLOW_WORDS = "The gateway is slow to answer"
+
+
+def automations_backoff_s(previous_s: float) -> float:
+    """The next pause of the `/automations` retry ladder after a failure."""
+    return min(AUTOMATIONS_BACKOFF_MAX_S, max(AUTOMATIONS_BACKOFF_BASE_S, 2.0 * float(previous_s or 0.0)))
 
 
 @dataclass(frozen=True)
@@ -165,6 +184,9 @@ class Snapshot:
     # /host/state) as (tone, text): tone is "pending" | "failed" | "kept" |
     # "done" | "unreported". Empty = nothing to say (or not sampled yet).
     eject_status: tuple[tuple[str, str], ...] = ()
+    # A probe timed out while the gateway answers otherwise (or answered within
+    # SLOW_UNREACHABLE_S): the menu says SLOW_WORDS; `gateway_state` stays as it was.
+    slow: bool = False
 
 
 def _num(value: Any) -> Optional[float]:
@@ -456,6 +478,7 @@ class Sampler:
             "reachable": False,
             "ever_reachable": False,
             "failures": 0,
+            "slow": False,
             "paused": False,
             "inflight": 0,
             "paused_by": None,
@@ -483,6 +506,10 @@ class Sampler:
         self._last_automations = 0.0
         self._automations_dirty = True
         self._events_live = False
+        self._automations_backoff_s = 0.0
+        self._automations_retry_at = 0.0
+        self._automations_slow = False
+        self._last_answer = 0.0  # monotonic time of the last fast-lane answer
         self._slow_thread: Optional[threading.Thread] = None
         self._slow_wake = threading.Event()
         self._live_supported: Optional[bool] = None  # GET /host/metrics/live exists on this gateway?
@@ -682,10 +709,7 @@ class Sampler:
                         self._state["pause_reason"] = runner.get("reason")
                         if self._state.get("override") in {"pausing", "resuming"}:
                             self._state["override"] = None
-                    self._state["reachable"] = True
-                    self._state["ever_reachable"] = True
-                    self._state["failures"] = 0
-                    self._state["last_error"] = None
+                    self._note_answer_locked()
                 return
             else:
                 self._note_auth(live)
@@ -693,10 +717,7 @@ class Sampler:
                     self._gpu_hist.append(None)
                     self._mem_hist.append(None)
                     self._rss_hist.append(None)
-                    self._state["failures"] = int(self._state["failures"]) + 1
-                    self._state["last_error"] = live.error
-                    if self._state["failures"] >= 3:
-                        self._state["reachable"] = False
+                    self._note_failure_locked(live)
                 if self._live_supported is True:
                     return
         gpu = self._client.gpu()
@@ -713,15 +734,32 @@ class Sampler:
                 self._mem_hist.append(None)
                 self._rss_hist.append(None)
             if gpu.ok or mem.ok:
-                self._state["reachable"] = True
-                self._state["ever_reachable"] = True
-                self._state["failures"] = 0
-                self._state["last_error"] = None
+                self._note_answer_locked()
             else:
-                self._state["failures"] = int(self._state["failures"]) + 1
-                self._state["last_error"] = gpu.error or mem.error
-                if self._state["failures"] >= 3:
-                    self._state["reachable"] = False
+                self._note_failure_locked(gpu, mem)
+
+    def _note_answer_locked(self) -> None:
+        self._state["reachable"] = True
+        self._state["ever_reachable"] = True
+        self._state["failures"] = 0
+        self._state["last_error"] = None
+        self._state["slow"] = False
+        self._last_answer = time.monotonic()
+
+    def _note_failure_locked(self, *results: Any) -> None:
+        """A failed fast probe. Timed out while something answered within SLOW_UNREACHABLE_S:
+        slow, still reachable. Otherwise (no answer at all, or silent for that long): three in
+        a row turn the state unreachable, the red "!"."""
+        self._state["failures"] = int(self._state["failures"]) + 1
+        self._state["last_error"] = next((r.error for r in results if r.error), None)
+        timed_out = bool(results) and all(bool(getattr(r, "timed_out", False)) for r in results)
+        recent = self._state["ever_reachable"] and (time.monotonic() - self._last_answer) < SLOW_UNREACHABLE_S
+        if timed_out and recent:
+            self._state["slow"] = True
+            return
+        self._state["slow"] = False
+        if self._state["failures"] >= 3:
+            self._state["reachable"] = False
 
     def _sample_runner(self) -> None:
         r = self._client.runner()
@@ -786,6 +824,8 @@ class Sampler:
     def automations_due(self, now: float) -> bool:
         """Event stream live: on an automation event, or the slow reconciliation. Not live (an
         older gateway, a broken stream): every runs interval, as before the stream existed."""
+        if now < self._automations_retry_at:
+            return False  # backing off after a failure (AUTOMATIONS_BACKOFF_*)
         if self._automations_dirty:
             return True
         every = AUTOMATIONS_RECONCILE_S if self._events_live else self._runs_every
@@ -802,9 +842,16 @@ class Sampler:
             if a.ok:
                 self._state["automations"] = automation_rows_from_listing(a.data)
                 self._state["automations_error"] = None
+                self._automations_backoff_s = 0.0
+                self._automations_retry_at = 0.0
+                self._automations_slow = False
             else:
-                self._automations_dirty = True  # retry on the next pass
-                self._state["automations_error"] = a.error or "automations unavailable"
+                # Retried after the back-off pause, not on the next pass (the rows we have stay).
+                self._automations_dirty = True
+                self._automations_backoff_s = automations_backoff_s(self._automations_backoff_s)
+                self._automations_retry_at = now + self._automations_backoff_s
+                self._automations_slow = bool(getattr(a, "timed_out", False))
+                self._state["automations_error"] = SLOW_WORDS if self._automations_slow else (a.error or "automations unavailable")
 
     # -- output --------------------------------------------------------------
 
@@ -871,6 +918,7 @@ class Sampler:
                 device_held_basis=mem.get("held_basis"),
                 held_by=tuple(mem.get("held_by") or ()),
                 eject_status=tuple(s.get("eject_status") or ()),
+                slow=bool(s.get("slow")) or self._automations_slow,
             )
 
     def _notify(self) -> None:

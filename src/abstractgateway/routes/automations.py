@@ -11,11 +11,15 @@ Every non-2xx answer on these paths carries
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import datetime
 import logging
+import threading
+import time
+from collections import OrderedDict
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
@@ -23,8 +27,14 @@ from pydantic import BaseModel, ConfigDict
 # Runtime seams (automations contracts A-E): imported directly, so a runtime
 # without them fails at import, never silently.
 from abstractruntime.automation_queries import ChangedSinceUnsupported, InvalidCursor, automation_summary, list_automations
-from abstractruntime.automations.attention import list_attention, normalize_occurrence_output, pending_waits
+from abstractruntime.automations.attention import (
+    list_attention,
+    normalize_occurrence_output,
+    pending_waits,
+    pending_waits_by_automation,
+)
 from abstractruntime.automations.commands import command_digest
+from abstractruntime.automations.consumers import automation_generation, store_key
 from abstractruntime.automations.ledger import automation_records, find_by_idempotency_key, record_key, record_payload
 from abstractruntime.automations.models import (
     AUTOMATION_STATUSES,
@@ -39,6 +49,7 @@ from abstractruntime.automations.service import (
     adopt_legacy_schedule_projection,
     create_automation,
     get_automation,
+    latest_occurrence,
     list_occurrences,
     start_discussion,
 )
@@ -176,6 +187,7 @@ async def mark_automation_seen(request: Request, automation_id: str, req: SeenRe
             field="attention_cursor",
         )
     stored, _changed = attention_store_for(svc, principal).mark_seen(str(controller.run_id), seq)
+    invalidate_automations_listing(svc)
     return {"attention_cursor": format_attention_cursor(stored)}
 
 
@@ -260,7 +272,9 @@ def _triggers_by_revision(ledger_store: Any, automation_id: str) -> Dict[int, Di
 def _occurrence_answer(child: Any, artifact_store: Any) -> Dict[str, Any]:
     if child is None or child.status not in (RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED):
         return {"answer": "", "error": None}
-    return normalize_occurrence_output(child, artifact_store=artifact_store)
+    # `lazy`: only the answer/notify/success/error values are resolved, never the rest of an
+    # agent's output (2026-10-26: one excerpt resolved 1,705 artifacts).
+    return normalize_occurrence_output(child, artifact_store=artifact_store, lazy=True)
 
 
 def context_used_tokens(child: Any) -> Optional[int]:
@@ -282,8 +296,12 @@ def context_used_tokens(child: Any) -> Optional[int]:
 def _attention_block(svc: Any, principal: Any, controller: Any, waits: List[Dict[str, Any]]) -> Dict[str, Any]:
     latest = automation_attention_seq(controller)
     seen = attention_store_for(svc, principal).seen_seq(str(controller.run_id))
-    page = list_attention(svc.host.ledger_store, str(controller.run_id), after_seq=seen, limit=_ITEMS_MAX)
-    items = [_attention_item(i) for i in page["items"]]
+    items: List[Dict[str, Any]] = []
+    if latest > seen:
+        # Nothing unseen (the usual case): the ledger is not read at all. Otherwise
+        # `list_attention` reads back from the ledger's end to the seen floor, once: the items
+        # with seq in (seen, latest] are append-only ledger facts, so that pair names them.
+        items = _unseen_items(svc, str(controller.run_id), seen, latest)
     unseen = max(latest - seen, len(items), 0)
     return {
         "pending_waits": len(waits),
@@ -295,6 +313,30 @@ def _attention_block(svc: Any, principal: Any, controller: Any, waits: List[Dict
         # prompt?, choices?, details?} exactly as the runtime types them.
         "waits": [dict(w) for w in waits[:_ITEMS_MAX]],
     }
+
+
+_UNSEEN_LOCK = threading.Lock()
+_UNSEEN_ITEMS: "OrderedDict[Any, List[Dict[str, Any]]]" = OrderedDict()
+_UNSEEN_MAX = 2048
+
+
+def _unseen_items(svc: Any, automation_id: str, seen: int, latest: int) -> List[Dict[str, Any]]:
+    """The oldest `_ITEMS_MAX` attention items above `seen`, kept per (plane, automation, seen,
+    latest): attention records are append-only and numbered, so a new item moves `latest`
+    (a new key) and nothing else can change the answer."""
+    key = (store_key(svc.host.run_store), automation_id, int(seen), int(latest))
+    with _UNSEEN_LOCK:
+        hit = _UNSEEN_ITEMS.get(key)
+        if hit is not None:
+            _UNSEEN_ITEMS.move_to_end(key)
+            return copy.deepcopy(hit)
+    page = list_attention(svc.host.ledger_store, automation_id, after_seq=seen, limit=_ITEMS_MAX)
+    items = [_attention_item(i) for i in page["items"]]
+    with _UNSEEN_LOCK:
+        _UNSEEN_ITEMS[key] = items
+        while len(_UNSEEN_ITEMS) > _UNSEEN_MAX:
+            _UNSEEN_ITEMS.popitem(last=False)
+    return copy.deepcopy(items)
 
 
 def _attention_item(raw: Dict[str, Any]) -> Dict[str, Any]:
@@ -379,12 +421,26 @@ def _flow_name(svc: Any, target: Any) -> Optional[str]:
     return None
 
 
-def automation_summary_row(svc: Any, principal: Any, controller: Any, *, owner_zone: Optional[str] = None) -> Dict[str, Any]:
-    """Contract F `AutomationSummary` of one controller run."""
+def automation_summary_row(
+    svc: Any,
+    principal: Any,
+    controller: Any,
+    *,
+    owner_zone: Optional[str] = None,
+    waits: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Contract F `AutomationSummary` of one controller run.
+
+    O(1) in the automation's history (2026-10-26, gateway load investigation): the waits come
+    from the run index's WAITING rows (`waits`, when the caller read them once for a whole
+    page, else `pending_waits`), the last occurrence from the tail of the controller's ledger
+    (`latest_occurrence`) and its one run; the attention items are read only when something
+    is unseen."""
     runtime = svc.host.runtime
     base = automation_summary(controller)
     status = automation_status(controller)
-    waits = pending_waits(svc.host.run_store, str(controller.run_id), limit=_ITEMS_MAX)
+    if waits is None:
+        waits = pending_waits(svc.host.run_store, str(controller.run_id), limit=_ITEMS_MAX)
     out: Dict[str, Any] = {
         "automation_id": str(controller.run_id),
         "title": base["title"],
@@ -424,9 +480,8 @@ def automation_summary_row(svc: Any, principal: Any, controller: Any, *, owner_z
         reason = pause_reason(svc.config.data_dir, str(controller.run_id))
         if reason:
             out["paused_reason"] = reason
-    latest = list_occurrences(runtime, str(controller.run_id), limit=1)["items"]
-    if latest:
-        occ = latest[0]
+    occ = latest_occurrence(runtime, str(controller.run_id), user_turn=False)
+    if occ is not None:
         child = svc.host.run_store.load(str(occ["run_id"]))
         answer = _occurrence_answer(child, svc.host.artifact_store)
         last = {
@@ -796,6 +851,7 @@ def _create(svc: Any, principal: Any, body: CreateAutomationBody) -> Dict[str, A
         created_id, revision = create_automation(runtime, request, actor_id="gateway")
     except RuntimeAutomationError as e:
         raise _domain_error(e)
+    invalidate_automations_listing(svc)
     _nudge(svc, created_id)
     if str((trigger or {}).get("source_id") or "") == "email.received":
         # The mail watcher reads nothing until an email automation exists and its first read is a
@@ -879,17 +935,257 @@ def _audit_automation(request: Request, *, automation_id: str, command: str) -> 
         pass
 
 
-def _archived_count(svc: Any, principal: Any, run_store: Any) -> int:
-    """How many of this principal's automations are archived (legacy roots included)."""
-    n = len(list_automations(run_store, status="archived", limit=1_000_000).items)
-    rows = run_store.list_run_index(role="legacy_schedule", limit=100_000)
-    for row in rows:
-        if str(row.get("parent_run_id") or "").strip():
-            continue
-        run = run_store.load(str(row["run_id"]))
-        if run is not None and legacy_summary_row(run, run_store)["status"] == "archived":
-            n += 1
-    return n
+# ---------------------------------------------------------------- the listing
+#
+# 2026-10-26 (gateway load investigation, untracked/gateway-load-2026-10-26.md): the listing
+# re-read every automation's whole history per row (942 runs, 192 MB, every past prompt),
+# ran four run-index scans (one stat per run file each), and the tray retried it after its
+# 10 s timeout while the abandoned computations kept running: 14 copies at once, minutes per
+# answer. Now:
+#
+# - rows are O(1) in history (`automation_summary_row`), the WAITING index is read once per
+#   page (`pending_waits_by_automation`), and the controller / legacy index rows are kept per
+#   plane (`_index_rows`): one full index listing per `_INDEX_FULL_S`, refreshed in between
+#   from the store's active index (live runs only);
+# - identical concurrent requests share ONE computation (single flight), and its answer is
+#   kept `_LIST_TTL_S` seconds, dropped at once by anything that changes a row this process
+#   sees: a ledger append on the plane (every occurrence step, wait and controller decision
+#   writes one), an automation command, create or seen cursor of this module, a change of
+#   the automation generation. Another process's writes show within `_LIST_TTL_S`.
+# - a computation abandoned by its client (the tray's 10 s timeout) cannot be stopped (it
+#   runs in a worker thread), but it is cheap now and its answer is what the client's retry
+#   gets: a retry never starts a second one. The tray backs off on timeouts (tray/sampler.py).
+
+_INDEX_TTL_S = 30.0
+_INDEX_FULL_S = 600.0
+_LIST_TTL_S = 3.0
+
+
+class _ListMemo:
+    """Single flight + a short answer cache for `GET /automations`, per plane and principal."""
+
+    def __init__(self, *, ttl_s: float = _LIST_TTL_S, clock: Callable[[], float] = time.monotonic) -> None:
+        self.ttl_s = float(ttl_s)
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._bumps: Dict[Any, int] = {}
+        self._subscribed: Dict[Any, Any] = {}
+        self._answers: Dict[Any, Tuple[float, Any, Dict[str, Any]]] = {}
+        self._inflight: Dict[Any, "_Flight"] = {}
+        self.computations = 0  # how many listings were computed (tests, diagnostics)
+
+    # -- change signal ------------------------------------------------------------------
+
+    def plane_key(self, svc: Any) -> Any:
+        return store_key(svc.host.run_store)
+
+    def bump(self, plane: Any) -> None:
+        with self._lock:
+            self._bumps[plane] = self._bumps.get(plane, 0) + 1
+
+    def bump_service(self, svc: Any) -> None:
+        try:
+            self.bump(self.plane_key(svc))
+        except Exception:  # noqa: BLE001 - a missed bump is stale for _LIST_TTL_S at most
+            logger.debug("automations listing: bump failed", exc_info=True)
+
+    def _watch_ledger(self, svc: Any, plane: Any) -> None:
+        """Subscribe once per plane ledger: any append moves the plane's stamp."""
+        from ..ledger_tail import find_observable
+
+        ledger = getattr(svc.host, "ledger_store", None)
+        observable = find_observable(ledger) if ledger is not None else None
+        if observable is None:
+            return
+        with self._lock:
+            if self._subscribed.get(plane) is observable:
+                return
+            self._subscribed[plane] = observable
+
+        def _on_append(_record: Any) -> None:
+            self.bump(plane)
+
+        try:
+            observable.subscribe(_on_append)
+        except Exception:  # noqa: BLE001 - without it the answer lives _LIST_TTL_S
+            logger.debug("automations listing: ledger subscription failed", exc_info=True)
+
+    def stamp(self, svc: Any, plane: Any) -> Tuple[int, int]:
+        with self._lock:
+            local = self._bumps.get(plane, 0)
+        return local, automation_generation(svc.host.run_store)
+
+    # -- answers ------------------------------------------------------------------------
+
+    def cached(self, key: Any, stamp: Any) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            hit = self._answers.get(key)
+        if hit is None:
+            return None
+        at, hit_stamp, answer = hit
+        if hit_stamp != stamp or (self._clock() - at) > self.ttl_s:
+            return None
+        return copy.deepcopy(answer)
+
+    def flight(self, key: Any) -> Tuple["_Flight", bool]:
+        """The computation in progress for `key` and whether the caller leads it."""
+        with self._lock:
+            f = self._inflight.get(key)
+            if f is not None:
+                return f, False
+            f = _Flight()
+            self._inflight[key] = f
+            return f, True
+
+    def land(self, key: Any, flight: "_Flight", stamp: Any, answer: Optional[Dict[str, Any]], error: Optional[BaseException]) -> None:
+        with self._lock:
+            if self._inflight.get(key) is flight:
+                del self._inflight[key]
+            if error is None and answer is not None:
+                # Kept under the stamp read BEFORE computing: a change during the computation
+                # makes the answer stale at once.
+                self._answers[key] = (self._clock(), stamp, answer)
+        flight.finish(answer, error)
+
+    def get(self, svc: Any, key: Any, compute: Callable[[], Dict[str, Any]]) -> Dict[str, Any]:
+        """Thread-side entry: the cached answer, the in-progress one, or compute it (blocking)."""
+        plane = self.plane_key(svc)
+        self._watch_ledger(svc, plane)
+        stamp = self.stamp(svc, plane)
+        hit = self.cached(key, stamp)
+        if hit is not None:
+            return hit
+        flight, leader = self.flight(key)
+        if not leader:
+            return copy.deepcopy(flight.wait())
+        self._compute(key, flight, stamp, compute)
+        return copy.deepcopy(flight.wait())
+
+    def _compute(self, key: Any, flight: "_Flight", stamp: Any, compute: Callable[[], Dict[str, Any]]) -> None:
+        answer: Optional[Dict[str, Any]] = None
+        error: Optional[BaseException] = None
+        with self._lock:
+            self.computations += 1
+        try:
+            answer = compute()
+        except BaseException as exc:  # noqa: BLE001 - handed to every waiter
+            error = exc
+        self.land(key, flight, stamp, answer, error)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._answers.clear()
+
+
+class _Flight:
+    """One computation's outcome, awaited by threads (`wait`) or the event loop (`event`)."""
+
+    def __init__(self) -> None:
+        self._done = threading.Event()
+        self.answer: Optional[Dict[str, Any]] = None
+        self.error: Optional[BaseException] = None
+        self._loop_waiters: List[Tuple[Any, Any]] = []
+        self._lock = threading.Lock()
+
+    def finish(self, answer: Optional[Dict[str, Any]], error: Optional[BaseException]) -> None:
+        with self._lock:
+            self.answer, self.error = answer, error
+            self._done.set()
+            waiters, self._loop_waiters = self._loop_waiters, []
+        for loop, fut in waiters:
+            try:
+                loop.call_soon_threadsafe(lambda f=fut: f.done() or f.set_result(None))
+            except RuntimeError:
+                pass  # that loop is closed: its request is gone
+
+    def wait(self) -> Dict[str, Any]:
+        self._done.wait()
+        if self.error is not None:
+            raise self.error
+        assert self.answer is not None
+        return self.answer
+
+    def event(self, loop: Any) -> Any:
+        """An asyncio future of `loop`, resolved when the computation ends."""
+        fut = loop.create_future()
+        with self._lock:
+            if self._done.is_set():
+                fut.set_result(None)
+            else:
+                self._loop_waiters.append((loop, fut))
+        return fut
+
+
+_LIST_MEMO = _ListMemo()
+_LIST_TASKS: "set[Any]" = set()  # leader tasks, referenced until done (asyncio keeps weak refs)
+_INDEX_LOCK = threading.Lock()
+_INDEX_ROLES = ("controller", "legacy_schedule")
+
+
+class _IndexRows:
+    """The controller and legacy-schedule index rows of one plane, by run id."""
+
+    def __init__(self, rows: List[Dict[str, Any]], *, gen: int, now: float) -> None:
+        self.by_id: Dict[str, Dict[str, Any]] = {str(r["run_id"]): r for r in rows if r.get("run_id")}
+        self.gen = gen
+        self.refreshed_at = now
+        self.scanned_at = now
+
+    def merge(self, rows: List[Dict[str, Any]], *, gen: int, now: float) -> None:
+        for r in rows:
+            if r.get("run_id"):
+                self.by_id[str(r["run_id"])] = r
+        self.gen = gen
+        self.refreshed_at = now
+
+    def split(self) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        rows = list(self.by_id.values())
+        controllers = [r for r in rows if r.get("role") == "controller"]
+        legacy = [r for r in rows if r.get("role") == "legacy_schedule" and not str(r.get("parent_run_id") or "").strip()]
+        return controllers, legacy
+
+
+_INDEX_ROWS: Dict[Any, _IndexRows] = {}
+
+
+def _index_rows(run_store: Any) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """`(controller rows, top-level legacy schedule rows)` of the run index.
+
+    One FULL listing (a JSON-file store stats every run file) per plane, the first time and
+    then at most every `_INDEX_FULL_S`. In between, a change of the store's automation
+    generation (a controller created, paused, archived... in this process) or `_INDEX_TTL_S`
+    (what this process cannot see) refreshes it from the RUNNING and WAITING rows only (the
+    store's active index: one stat per live run). That is enough: a new controller or legacy
+    root starts live, a run never changes role, and a controller that ended stays known from
+    an earlier read (each listed row's run is loaded; a deleted one is skipped and dropped).
+    """
+    plane = store_key(run_store)
+    gen = automation_generation(run_store)
+    now = time.monotonic()
+    with _INDEX_LOCK:
+        hit = _INDEX_ROWS.get(plane)
+    if hit is None or (now - hit.scanned_at) > _INDEX_FULL_S:
+        hit = _IndexRows(run_store.list_run_index(role=_INDEX_ROLES, limit=1_000_000), gen=gen, now=now)
+    elif hit.gen != gen or (now - hit.refreshed_at) > _INDEX_TTL_S:
+        live: List[Dict[str, Any]] = []
+        for st in (RunStatus.RUNNING, RunStatus.WAITING):
+            live.extend(run_store.list_run_index(status=st, role=_INDEX_ROLES, limit=1_000_000))
+        hit.merge(live, gen=gen, now=now)
+    with _INDEX_LOCK:
+        _INDEX_ROWS[plane] = hit
+    return hit.split()
+
+
+def _forget_index_row(run_store: Any, run_id: str) -> None:
+    with _INDEX_LOCK:
+        hit = _INDEX_ROWS.get(store_key(run_store))
+        if hit is not None:
+            hit.by_id.pop(str(run_id), None)
+
+
+def invalidate_automations_listing(svc: Any) -> None:
+    """Drop the cached `GET /automations` answers of this plane (an automation write)."""
+    _LIST_MEMO.bump_service(svc)
 
 
 def _list(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str], limit: int, archived_only: bool = False) -> Dict[str, Any]:
@@ -907,36 +1203,82 @@ def _list(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str]
         wanted = [s for s in AUTOMATION_STATUSES if s != "archived"]
     run_store = svc.host.run_store
     owner_zone = principal_time_zone(svc, principal)
+    controller_rows, legacy_rows = _index_rows(run_store)
     try:
         # The status filter rides the runtime's page so a page is never short of what it hides.
-        page = list_automations(run_store, status=list(wanted), cursor=cursor, limit=limit)
+        page = list_automations(run_store, status=list(wanted), cursor=cursor, limit=limit, index_rows=controller_rows)
     except InvalidCursor as e:
         raise AutomationError(422, "invalid_request", str(e), field="cursor")
+    # Every run waiting on a person, from ONE read of the WAITING index, for the whole page.
+    waits_by_automation = pending_waits_by_automation(run_store, limit=_ITEMS_MAX)
     items: List[Dict[str, Any]] = []
     for row in page.items:
         controller = run_store.load(str(row["automation_id"]))
+        if controller is None:
+            _forget_index_row(run_store, str(row["automation_id"]))
+            continue
         try:
-            summary = automation_summary_row(svc, principal, controller, owner_zone=owner_zone)
+            summary = automation_summary_row(
+                svc, principal, controller, owner_zone=owner_zone, waits=waits_by_automation.get(str(controller.run_id), [])
+            )
         except (RuntimeAutomationError, LookupError, ValueError, KeyError, TypeError) as e:
             # One malformed row must never take the whole list down (review 47 P2-1).
             logger.warning("automations list: skipping malformed automation %s: %s", row.get("automation_id"), e)
             continue
         if wanted is None or summary["status"] in wanted:
             items.append(summary)
+    # Legacy scheduled roots: projected once, for the last page and the archived count.
+    legacy_rows = sorted(legacy_rows, key=lambda r: (str(r.get("created_at") or ""), str(r.get("run_id") or "")), reverse=True)
+    legacy: List[Dict[str, Any]] = []
+    for row in legacy_rows:
+        run = run_store.load(str(row["run_id"]))
+        if run is None:
+            _forget_index_row(run_store, str(row["run_id"]))
+            continue
+        legacy.append(legacy_summary_row(run, run_store, owner_zone=owner_zone))
     if page.next_cursor is None:
         # Legacy scheduled roots ride the LAST page: a client paging through
         # every page sees each of them exactly once.
-        rows = run_store.list_run_index(role="legacy_schedule", limit=100_000)
-        rows = [r for r in rows if not str(r.get("parent_run_id") or "").strip()]
-        rows.sort(key=lambda r: (str(r.get("created_at") or ""), str(r.get("run_id") or "")), reverse=True)
-        for row in rows:
-            run = run_store.load(str(row["run_id"]))
-            if run is None:
-                continue
-            summary = legacy_summary_row(run, run_store, owner_zone=owner_zone)
-            if wanted is None or summary["status"] in wanted:
-                items.append(summary)
-    return {"items": items, "next_cursor": page.next_cursor, "archived_automations": _archived_count(svc, principal, run_store)}
+        items.extend(summary for summary in legacy if wanted is None or summary["status"] in wanted)
+    archived = len(list_automations(run_store, status="archived", limit=1_000_000, index_rows=controller_rows).items)
+    archived += sum(1 for summary in legacy if summary["status"] == "archived")
+    return {"items": items, "next_cursor": page.next_cursor, "archived_automations": archived}
+
+
+def _principal_list_key(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str], limit: int, archived_only: bool) -> Any:
+    return (_LIST_MEMO.plane_key(svc), _principal_tuple(principal), status, cursor, int(limit), bool(archived_only))
+
+
+def list_automations_shared(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str], limit: int, archived_only: bool = False) -> Dict[str, Any]:
+    """`_list` through the single flight and the answer cache (thread side)."""
+    key = _principal_list_key(svc, principal, status, cursor, limit, archived_only)
+    return _LIST_MEMO.get(svc, key, lambda: _list(svc, principal, status, cursor, limit, archived_only))
+
+
+async def _list_shared_async(request: Request, svc: Any, principal: Any, status: Optional[str], cursor: Optional[str], limit: int, archived_only: bool) -> Dict[str, Any]:
+    """Event-loop side: a cached answer is returned without a thread; a request joining a
+    computation in progress waits on the loop (no worker thread held); the leader's
+    computation runs in a worker thread as a task of its own, to its end, even when every
+    request waiting for it is gone."""
+    memo = _LIST_MEMO
+    key = _principal_list_key(svc, principal, status, cursor, limit, archived_only)
+    plane = memo.plane_key(svc)
+    memo._watch_ledger(svc, plane)
+    stamp = memo.stamp(svc, plane)
+    hit = memo.cached(key, stamp)
+    if hit is not None:
+        return hit
+    flight, leader = memo.flight(key)
+    if leader:
+        # A task of its own (the request's context copied into the worker thread): it runs to
+        # its end even when this request is abandoned, and lands the answer for every waiter.
+        task = asyncio.ensure_future(
+            _off_the_event_loop(memo._compute, key, flight, stamp, lambda: _list(svc, principal, status, cursor, limit, archived_only))
+        )
+        _LIST_TASKS.add(task)
+        task.add_done_callback(_LIST_TASKS.discard)
+    await flight.event(asyncio.get_running_loop())
+    return copy.deepcopy(flight.wait())
 
 
 @router.get("/automations")
@@ -951,12 +1293,14 @@ async def list_automations_route(
     """Every automation of this principal, newest first, as full pages; legacy
     `scheduled:*` roots follow on the last page with `legacy: true`. Archived
     automations are listed only with `archived_only=true` (or an explicit
-    `status` naming `archived`)."""
+    `status` naming `archived`). Identical concurrent requests share one
+    computation; its answer is kept a few seconds, dropped by any change this
+    gateway records (see `_ListMemo`)."""
     principal = _principal_from_request(request)
     if changed_since is not None:
         raise AutomationError(422, "unsupported_feature", str(ChangedSinceUnsupported()), field="changed_since")
     svc = get_gateway_service()
-    return await _off_the_event_loop(_list, svc, principal, status, cursor, limit, bool(archived_only))
+    return await _list_shared_async(request, svc, principal, status, cursor, limit, bool(archived_only))
 
 
 def _get(svc: Any, principal: Any, automation_id: str) -> Dict[str, Any]:
@@ -987,6 +1331,7 @@ def _append_command(svc: Any, *, automation_id: str, command_id: str, type_: str
         seq=0,
     )
     res = svc.runner.command_store.append(record)
+    invalidate_automations_listing(svc)
     try:
         svc.runner.nudge(str(automation_id))
     except Exception:  # noqa: BLE001 - the runner's poll applies it anyway

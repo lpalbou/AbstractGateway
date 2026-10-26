@@ -23,6 +23,9 @@ class Result:
     status: int
     data: Any = None
     error: Optional[str] = None
+    # No answer within the call's timeout (the gateway is up but slow), as opposed to no
+    # answer at all (refused, reset): the tray says "slow to answer" for the first.
+    timed_out: bool = False
 
     @property
     def detail(self) -> str:
@@ -80,9 +83,10 @@ class GatewayClient:
             parsed = _parse_json(raw)
             return Result(False, int(exc.code), parsed, error=parsed.get("detail") if isinstance(parsed, dict) else (raw.decode("utf-8", "replace")[:300] or str(exc)))
         except urllib.error.URLError as exc:
-            return Result(False, 0, None, error=f"unreachable: {getattr(exc, 'reason', exc)}")
+            reason = getattr(exc, "reason", exc)
+            return Result(False, 0, None, error=f"unreachable: {reason}", timed_out=isinstance(reason, TimeoutError))
         except Exception as exc:  # noqa: BLE001 - timeouts, resets
-            return Result(False, 0, None, error=f"{type(exc).__name__}: {exc}")
+            return Result(False, 0, None, error=f"{type(exc).__name__}: {exc}", timed_out=isinstance(exc, TimeoutError))
         parsed = _parse_json(raw)
         ok = 200 <= status < 300 and not (isinstance(parsed, dict) and parsed.get("ok") is False)
         err = None

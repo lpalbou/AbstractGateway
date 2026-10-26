@@ -279,6 +279,9 @@ def state_lines(snap: Snapshot, *, update_phase: str = "idle", update_latest: Op
     if st == "running":
         n = snap.inflight_ticks
         detail = f"Working on {n} step{'s' if n != 1 else ''}" if n > 0 else None
+        if snap.slow:
+            # Up, but a probe timed out: not the red "Not responding" (sampler.SLOW_WORDS).
+            detail = "The gateway is slow to answer" + (f" · {detail}" if detail else "")
     elif st == "pausing":
         n = snap.inflight_ticks
         if snap.step_gate_supported is False:

@@ -149,6 +149,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`GET /automations` costs the automations, not their history, and never piles up.** Each row used to re-read the
+  automation's whole past (every occurrence tree, the full controller ledger, every past prompt artifact, every
+  artifact of the last answer) and the list ran four run-index scans: 2.4 s cold / 1.6 s warm on a copy of the
+  operator's data uncontended, 10 s to no answer in 240 s on the busy gateway, and the tray's retries stacked 14 copies.
+  Now a row reads the waits from the run index's WAITING rows (one read per page), the last occurrence from the tail
+  of the controller ledger, the attention items only when something is unseen (kept per seen/latest pair), and only
+  the answer's own values; the controller and legacy rows are listed once and refreshed from the live runs on an
+  automation change or every 30 s (a full listing at most every 10 minutes). Same answer, byte for byte: 0.22–0.28 s
+  cold, 15–24 ms warm on that copy. Identical concurrent requests share one computation (a waiter holds no worker
+  thread), its answer is kept 3 s and dropped at once by a ledger append on the plane, a command, a create or a seen
+  cursor. An abandoned computation cannot be stopped (a worker thread), but it is cheap and serves the retry.
+- **Tray: a slow gateway is "slow to answer", not "Not responding".** A failed `/automations` fetch is retried after
+  10 s, then 20, 40, 80 and 120 s (reset by any answer) instead of on every pass; a probe that times out while the
+  gateway answered in the last 90 s shows *The gateway is slow to answer* (menu header detail, Scheduled line), and
+  the red "!" stays for no answer at all (refused, or nothing for 90 s).
 - **The mail notification check reads only what changed.** Every 15 s it listed every automation, read each
   automation's whole ledger, walked the active automations' occurrence trees and listed completed and failed runs
   (two more full scans): 7-25% of a core on the operator's idle gateway, 0.97 s a pass on an 11,500-run copy with no
