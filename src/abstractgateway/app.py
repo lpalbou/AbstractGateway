@@ -595,9 +595,24 @@ async def health_check():
 
         from . import service as _service_mod
 
-        svc = getattr(_service_mod, "_service", None)  # the default plane's service, never built here
-        store = getattr(getattr(svc, "stores", None), "run_store", None) or getattr(svc, "run_store", None)
-        stats = store.run_index_stats() if store is not None and hasattr(store, "run_index_stats") else {}
+        # Every service this process holds (the default plane and the per-account ones), never built here.
+        candidates = [getattr(_service_mod, "_service", None)] + list(getattr(_service_mod, "_services_by_principal", {}).values())
+        stats: Dict[str, Any] = {}
+        planes = 0
+        for svc in candidates:
+            store = getattr(getattr(svc, "stores", None), "run_store", None) or getattr(svc, "run_store", None)
+            if store is None or not hasattr(store, "run_index_stats"):
+                continue
+            one = store.run_index_stats()
+            if not isinstance(one, dict):
+                continue
+            planes += 1
+            for k, v in one.items():
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    stats[k] = stats.get(k, 0) + v
+                elif k not in stats:
+                    stats[k] = v
+        stats["planes"] = planes
         body["run_index"] = {"mode": run_index_mode(), **(dict(stats) if isinstance(stats, dict) else {})}
     except Exception:
         pass
