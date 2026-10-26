@@ -461,6 +461,10 @@ class TelegramBridge:
     def start(self) -> None:
         if not self._cfg.enabled:
             return
+        from ..split_mode import background_work_here
+
+        if not background_work_here("the Telegram bridge"):
+            return  # split mode: the runner process runs it
         if not self._cfg.flow_id:
             raise ValueError("ABSTRACT_TELEGRAM_FLOW_ID is required when ABSTRACT_TELEGRAM_BRIDGE=1")
 

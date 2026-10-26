@@ -1514,12 +1514,58 @@ Core catalog proxy settings:
   This is separate from Gateway auth.
 - `ABSTRACTGATEWAY_CORE_CATALOG_TIMEOUT_S`: catalog proxy timeout (default `3.0` seconds).
 
+## Split mode: API and runner in two processes (opt-in)
+
+By default one `abstractgateway serve` process does everything. Split mode puts the runs and the
+model in their own process, so a long generation never shares a Python interpreter with the API
+(`/me`, the console, live streams). It is opt-in and not the default yet. Run these two commands
+with the same data dir (the runner first, or in either order):
+
+```bash
+abstractgateway runner --data-dir /path/to/data
+abstractgateway serve --no-runner --data-dir /path/to/data
+```
+
+Both take their usual flags (`runner` takes `--data-dir`, `--unsandboxed-commands` and
+`--push-relay`; `serve --no-runner` takes every `serve` flag). Who does what:
+
+| Work | `serve` alone | `serve --no-runner` (API process) | `runner` (runner process) |
+|---|---|---|---|
+| HTTP API, console, apps, live streams, `/api/health` | yes | yes | no |
+| Run ticking: starts, waits, commands, schedules (every account's plane) | yes | no: it creates runs and queues commands | yes |
+| Text model: runs and the OpenAI-compatible `/v1` | yes | no model loaded: `/v1` is forwarded to the runner | yes, one copy |
+| Mail watchers, feed polling, notification outbox | yes | no | yes |
+| Push dispatcher (watch and iPhone alerts) | yes | no | yes |
+| Telegram and agora bridges | yes | no | yes |
+
+- **`/v1` in split mode.** The API process checks the caller (key, Who can connect, Guest) as
+  usual, then forwards the request, streaming both ways, to a model host the runner process
+  serves on `127.0.0.1` (a port the system picks). The runner records its address in
+  `<data dir>/split/model_host.json` (mode 0600) with a secret made at each start; the model host
+  refuses any request without it, so another program on the machine cannot use the port to skip
+  the API's checks. No runner answering: `/v1` answers `503` with code `runner_unavailable`. The
+  API process never loads the default text model (its runtime builds the model client at the
+  first call instead of at boot).
+- **Events.** An event delivered by the API process reaches runs the runner process parked: the
+  run store's event-wait and mailbox indexes re-read what another process changed before every
+  lookup (at the latest 2 s after the change).
+- **Health.** In `GET /api/health`, each row of `runner.runners` carries `mode` (`split` or
+  `combined`) and `process` (`api`, `runner` or `combined`); in the API process, `status` is
+  `disabled` and `runner_process` says `{pid, alive, heartbeat_fresh, model_host: up|down}`.
+- **Not yet in split mode:** the API process's own model calls (Ask on a run, run summaries, the
+  console sandbox, entity chat) still build a model client in the API process when used; the
+  backlog exec runner (opt-in) follows its own setting in both processes.
+
+Evidence: `src/abstractgateway/split_mode.py`, `src/abstractgateway/cli.py` (`runner`,
+`serve --no-runner`), `src/abstractgateway/core_endpoint.py` (`serve_core`),
+`tests/test_split_mode_two_process_smoke.py`.
+
 ## CLI flags
 
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N]`
+- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]`
   (`--no-tray`: no menu bar / tray icon for this run, for a test or scratch
   gateway next to your usual one; a start with `--host 127.0.0.1`, a `--port`
   other than the configured one and `--print-token` is treated as a test

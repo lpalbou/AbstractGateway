@@ -1787,12 +1787,58 @@ Core catalog proxy settings:
   This is separate from Gateway auth.
 - `ABSTRACTGATEWAY_CORE_CATALOG_TIMEOUT_S`: catalog proxy timeout (default `3.0` seconds).
 
+## Split mode: API and runner in two processes (opt-in)
+
+By default one `abstractgateway serve` process does everything. Split mode puts the runs and the
+model in their own process, so a long generation never shares a Python interpreter with the API
+(`/me`, the console, live streams). It is opt-in and not the default yet. Run these two commands
+with the same data dir (the runner first, or in either order):
+
+```bash
+abstractgateway runner --data-dir /path/to/data
+abstractgateway serve --no-runner --data-dir /path/to/data
+```
+
+Both take their usual flags (`runner` takes `--data-dir`, `--unsandboxed-commands` and
+`--push-relay`; `serve --no-runner` takes every `serve` flag). Who does what:
+
+| Work | `serve` alone | `serve --no-runner` (API process) | `runner` (runner process) |
+|---|---|---|---|
+| HTTP API, console, apps, live streams, `/api/health` | yes | yes | no |
+| Run ticking: starts, waits, commands, schedules (every account's plane) | yes | no: it creates runs and queues commands | yes |
+| Text model: runs and the OpenAI-compatible `/v1` | yes | no model loaded: `/v1` is forwarded to the runner | yes, one copy |
+| Mail watchers, feed polling, notification outbox | yes | no | yes |
+| Push dispatcher (watch and iPhone alerts) | yes | no | yes |
+| Telegram and agora bridges | yes | no | yes |
+
+- **`/v1` in split mode.** The API process checks the caller (key, Who can connect, Guest) as
+  usual, then forwards the request, streaming both ways, to a model host the runner process
+  serves on `127.0.0.1` (a port the system picks). The runner records its address in
+  `<data dir>/split/model_host.json` (mode 0600) with a secret made at each start; the model host
+  refuses any request without it, so another program on the machine cannot use the port to skip
+  the API's checks. No runner answering: `/v1` answers `503` with code `runner_unavailable`. The
+  API process never loads the default text model (its runtime builds the model client at the
+  first call instead of at boot).
+- **Events.** An event delivered by the API process reaches runs the runner process parked: the
+  run store's event-wait and mailbox indexes re-read what another process changed before every
+  lookup (at the latest 2 s after the change).
+- **Health.** In `GET /api/health`, each row of `runner.runners` carries `mode` (`split` or
+  `combined`) and `process` (`api`, `runner` or `combined`); in the API process, `status` is
+  `disabled` and `runner_process` says `{pid, alive, heartbeat_fresh, model_host: up|down}`.
+- **Not yet in split mode:** the API process's own model calls (Ask on a run, run summaries, the
+  console sandbox, entity chat) still build a model client in the API process when used; the
+  backlog exec runner (opt-in) follows its own setting in both processes.
+
+Evidence: `src/abstractgateway/split_mode.py`, `src/abstractgateway/cli.py` (`runner`,
+`serve --no-runner`), `src/abstractgateway/core_endpoint.py` (`serve_core`),
+`tests/test_split_mode_two_process_smoke.py`.
+
 ## CLI flags
 
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N]`
+- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]`
   (`--no-tray`: no menu bar / tray icon for this run, for a test or scratch
   gateway next to your usual one; a start with `--host 127.0.0.1`, a `--port`
   other than the configured one and `--print-token` is treated as a test
@@ -1814,6 +1860,25 @@ Most-used:
   the gateway (mail, feeds, provider endpoints, model generation). Quick work never waits behind a scan;
   more scans than `--pool-heavy` wait their turn. `GET /api/health` reports each pool's `size`,
   `threads` and `queued` under `pools`. Evidence: `src/abstractgateway/work_pools.py`
+  `serve --run-index trusted|verify` (default `verify`, no environment variable): how run listings are
+  answered. `verify` lets the folder scan answer and compares the in-memory run index with it; `trusted`
+  answers from the index with no scan. `GET /api/health` reports `run_index`: the mode, the planes
+  counted and the summed counters of every plane's run store (`shadow_mismatches` must stay 0 before
+  `trusted` becomes the default). Evidence: `src/abstractgateway/stores.py`
+  `serve --gc-tuning on|off` (default `on`, no environment variable): once the boot is done, freeze the
+  objects it built and raise the garbage collector's thresholds, so a full collection no longer pauses the
+  gateway for seconds; `off` keeps Python's defaults. `GET /api/health` reports what was applied under
+  `gc_tuning`. Evidence: `src/abstractgateway/service.py`
+  A service the gateway is still building (the first request of an account, a restart) is built in its
+  own thread: requests wait for it without holding the event loop, `GET /api/health` keeps answering, and a
+  route that reaches it any other way answers `503` `service_starting` with `Retry-After: 1`.
+- `scripts/perf/ci.sh [--cpu-max PCT] [--port P] [--work DIR] [--reuse-fixture]` (from a checkout): the
+  load test CI runs on pull requests and every night (`.github/workflows/perf.yml`). It builds a synthetic
+  data folder (`scripts/perf/make_fixture.py`: 10k runs, 100k artifacts, 50 automations, no real data),
+  starts a hermetic gateway on it (`--no-tray`, scratch home, empty environment, outbound network refused,
+  paused) and fails when a p99 goes over its bound (`/me` 50 ms, `/triggers/connections` 100 ms, session
+  artifacts 100 ms, `/runs?limit=20` 200 ms, `/automations` 500 ms), a probe answers anything but 200, or
+  CPU at rest over 2 minutes goes over `--cpu-max` (default 5% of a core, 10% on CI runners)
 - `abstractgateway push-relay --apns-key-file F --key-id K --team-id T --topic BUNDLE_ID … [--listen HOST:PORT]`:
   run the stateless Apple push relay with your own key (extra `push-relay`; [push.md](docs/push.md#run-your-own-relay))
   (host/port default to the [network exposure](#network-exposure-localhost--local-network--internet)
@@ -6057,8 +6122,8 @@ event written twice (a retry, a repair after a crash) is stored once.
 | `notification.sent`, `notification.failed` | `{channel, notice, …}` | a notice reached a channel or could not: `console` (the item is listed), `email` (the outbox sent it, or failed with `code`, `cause`), `tray` (the desktop tray showed it), `watch` / `phone` with `via: "push"` (Apple accepted the push, or an approval or question could not be pushed within an hour; see [push.md](docs/push.md)) |
 | `wake.scheduled` | `{automation_id, session_id, origin_run_id, at \| on}` | a run asked for work later (`schedule_run`, the `SCHEDULE_RUN` effect): the gateway created a one-shot automation that will run in the caller's session |
 | `wake.cancelled` | `{automation_id, session_id, origin_run_id}` | that automation was archived before it fired: nothing runs |
-| your own type (`orders.paid`, default `<channel>.message`), with `channel` | `{title, body?, …your data}` | a flow published it to you (the `PUBLISH_EVENT` effect, `{channel, type?, title, body?, subject?, data?, alert?}`); id `publish:<run_id>:<step_id>` |
-| `attention.raised` (a published alert) | `{kind: "notify", record_key: "publish:<run_id>:<step_id>", channel, run_id, title, published_sequence}` | that publication had `alert: true`: the tray, the Assistant and the watch announce it |
+| your own type (`orders.paid`, default `<channel>.message`), with `channel` | `{title, body?, …your data}` | a flow published it to you (the `PUBLISH_EVENT` effect, `{channel, type?, title, body?, subject?, data?, alert?, recipient?, channels?}`); id `publish:<run_id>:<step_id>` |
+| `attention.raised` (a published alert) | `{kind: "notify", record_key: "publish:<run_id>:<step_id>", channel, run_id, title, published_sequence, recipient, channels?}` | that publication had `alert: true`: `recipient` is `"me"` (another account is refused for now); `channels` the deliverers it asked for, from `tray`, `watch`, `phone`, `email`, `console` (Notify me's "Where"; absent = every channel). The tray shows and counts it only when `tray` is listed, push rings only the listed apps (watch first among them), the email outbox mails it (`kind: notify_me`) only when `email` is listed and a mailbox is usable; the console item is this record, always written. `channels` without `alert` is refused |
 | `attention.seen` (a published alert) | `{record_key}` | you saw it (`POST /api/gateway/me/events/seen`) |
 
 What needs you = the `attention.raised` items without their `attention.seen`: an automation item is
@@ -6173,6 +6238,9 @@ run**.
   `notify_me` (a Notify me node), `publish` (Publish to channel with Alert on), `wait` (the run or a
   sub-run parked on you: `kind` `approval` or `question`, with `run_id`, `prompt_ref` and `open`
   until it was answered, cancelled or timed out; an open wait comes first) and `email_when_done`.
+  A published alert (`notify_me`, `publish`) also carries `recipient` (`"me"`) and `asked`: the
+  channels it chose (`["watch", "phone"]`) or `"all"`, shown as "asked: watch, phone" beside the
+  deliveries; its email delivery, when asked, is found by its outbox key.
 - `deliveries`: one row per `notification.sent|failed` recorded for those alerts. `via` is `push`
   (the gateway's push dispatcher), `outbox` (email) or `stream` (an app read your stream and showed
   it; the console lists the item). `device_name` when the device registered one; `reason` on a
@@ -12142,6 +12210,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Split mode works as an opt-in** (backlog 1054, round 3): `abstractgateway runner --data-dir DIR` + `abstractgateway serve --no-runner --data-dir DIR`. The API process loads no text model: its runtime builds the model client at the first call instead of at boot (AbstractRuntime `set_default_model_warmup(False)`), and the OpenAI-compatible `/v1` admits each request as before, then forwards it, streaming both ways, to a model host the runner process serves on `127.0.0.1` (address and a per-start secret in `<data dir>/split/model_host.json`, mode 0600; a request without the secret is refused; no runner = `503 runner_unavailable`, never a local load). Events the API process delivers reach runs the runner parked (AbstractRuntime: the event-wait and mailbox indexes refresh across processes). Mail watchers, feed polling, the notification outbox, the push dispatcher and the Telegram/agora bridges run only in the runner process (they used to start in both). `/api/health` rows carry `mode` (`split`/`combined`), `process` (`api`/`runner`/`combined`) and, in the API process, `runner_process` `{pid, alive, heartbeat_fresh, model_host}`. `runner` takes `--data-dir`. Docs: configuration.md (the two commands, who does what), architecture.md. Tests: `/v1` forwarded with one model load (fake model host), secret refused, no runner = 503, dead address ignored; a hermetic two-process smoke (run started on the API completes in the runner, health, `/v1`, no model built in the API process). Not the default yet.
+
+- A flow editor draft test parked on a person (hidden from the run listings) no longer raises attention, and a stale open wait for one is closed at boot: the watch and phone badges no longer count a wait nobody can see.
+
+- **Notify me reaches the channels it chose** (framework ADR-0041 follow-up). A published alert's `attention.raised` carries `recipient` (`"me"`; another account is refused: "notifying another account is not available yet") and `channels` (from `tray`, `watch`, `phone`, `email`, `console`; absent = every channel, so older flows behave as before), validated by `record_published` (`channels` without `alert` refused). Every deliverer reads it through `events_stream.alert_asks`: the tray consumer neither shows nor counts an alert that does not list `tray`; the push dispatcher sends only to the listed apps, watch-first among them (`watch` alone never falls back to the phone); the email outbox now mails a Notify me alert (`kind: notify_me`, outbox key `notify_me_key(record_key)`, fixed template "“<flow>” notified you.", the flow's text labelled) when `email` is listed (or nothing is) and a mailbox is usable, queued by the publish host (`wire_publish_event(..., email_plane=)`). The console item is the record itself, always written. `GET /runs/{id}/after` gives a published alert `recipient` and `asked` (`["watch", "phone"]` or `"all"`) and finds its email delivery. Tests: tests/test_notify_me_channels.py (the record, tray, push per channel set, email only when asked, After the run, end to end from a compiled Notify me through the runtime to a fake relay). Docs: api.md (event shapes, After the run).
+
 - **After the run** (framework ADR-0041 "No hidden effects after a flow"): `GET /api/gateway/runs/{run_id}/after` answers what happened after a run in one read: what arrived (count and a line: "4 new emails: “O” from … and 3 more", the mailbox address or connection name), when it started and ended, On Flow End's `response` excerpt and `note`, the alerts it raised (On Flow End's `notify` of older flows, the automation's failure item, Notify me, Publish to channel with Alert on, an approval or a question on the run or one of its sub-runs, "Email me when done") or why nothing rang (`quiet_reason`: empty title, no notify, still running, not recorded yet), and each delivery with its channel, route (`push`, `stream`, `outbox`), device, time and state. Exact reads only (the automation's ledger key, deterministic event ids through the stream index), off the event loop, in the caller's own plane and stream.
 
 - `serve --run-index trusted|verify` (default `verify` in this release): the run listings' in-memory index (AbstractRuntime 09d3b63) runs in shadow mode, its mismatch counters under `run_index` in `/api/health`; `trusted` answers listings from the index.
@@ -12152,6 +12226,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Performance (backlog 1054): the mail notification check's full pass (every 5 minutes, after another process's change, after a restart) reads the run index rows (status, updated_at, wait reason; no vars) instead of loading up to 200 completed + 200 failed + 200 waiting full runs; a run is loaded only when its row is new since the collector last decided it (kept per process under the same switches, plus a persisted `jobs.through` cursor trailing the newest decided finish by 120 s for the pass after a restart); same notices and idempotency keys. 400 finished runs, one change: one load (incremental or full).
 - Push: the packaged app topics are the merged AbstractAssistant family, `ai.abstractframework.assistant` (iPhone) and `ai.abstractframework.assistant.watchkitapp` (its watch companion); the old `.watch` and `.iphone` ids are no longer accepted.
 - Performance (backlog 1054): once the boot is done, `serve` freezes the objects it built (`gc.freeze()`) and raises the garbage collector's thresholds to 50000/50/100, so a full collection over a large heap no longer pauses the whole gateway for seconds; logged at boot (`[INFO] gc: ...`); `serve --gc-tuning off` keeps Python's defaults (no environment variable). `scripts/perf/` holds the benchmark fixture (`clone_runtime.sh`: a scrubbed APFS clone of a data dir) and `bench_gateway.sh` (a hermetic gateway on it, probe p50/p99, CPU at rest, GC pauses, outbound-network guard).
+- Performance (backlog 1054, round 3): the last blocking calls on the event loop's shared executor run in the work pools: `GET /runs` (the one-time docs-chat migration, the children page, the listing itself) in `heavy`; `POST /host/tray/show`, `GET /host/update` and `POST /host/update/start` in `light`; `POST /host/update/check` (a remote check) in `watchers`. `POST /backlog/exec/requests/{id}/promote` (request and manifest reads, a `git` call per file, the copies and writes) no longer runs on the event loop at all.
+- Performance (backlog 1054, round 3): an account's service is never built on the event loop. A build runs in its own thread, once per service however many requests wait for it, and requests await it; the pre-warm covers every path that can reach a service (not only `/api/gateway`), the single-user service, and the plane an admin is served from for another account's entity. A request that still reaches a service being built answers `503` `service_starting` with `Retry-After: 1` (or the build's own error, once) instead of freezing the gateway; a cached service whose runner needs a restart keeps serving while the restart runs off the loop. Measured: a 5 s build during a request, `/api/health` answering in 2-50 ms throughout (it froze 5 s).
+- Load test in CI (backlog 1054): `.github/workflows/perf.yml` (pull requests touching `src/`, nightly, manual) runs `scripts/perf/ci.sh`: a synthetic fixture (`scripts/perf/make_fixture.py`: 10k runs, 100k artifacts, 50 automations with their ledgers, no operator data), a hermetic gateway, 20 probe rounds and a 2-minute idle window; it fails when a p99 is over its bound (`/me` 50 ms, `/triggers/connections` 100 ms, session artifacts 100 ms, `/runs?limit=20` 200 ms, `/automations` 500 ms), a probe answers anything but 200, or CPU at rest is over `--cpu-max` (5% of a core, 10% on CI runners). `bench_driver.py` gained `--fail-p99 NAME=S` / `--fail-idle-cpu PCT` and reads CPU and threads from `/proc` on Linux; `bench_gateway.sh` gained `--python`, `--perf-dir`, `--driver-arg` and `installed` sources, and exits with the gates' verdict. Tests pin `/api/health`'s `pools`, `run_index` (mode, planes, summed counters) and `gc_tuning`.
 
 ### Added
 
@@ -16418,15 +16495,23 @@ flowchart TB
 - **Single process**: `abstractgateway serve` starts the HTTP API and the
   runner. On a desktop session it also starts the tray helper, and it starts
   the browser apps you enabled.
-- **Split API and runner**: `abstractgateway runner` (worker) and
-  `abstractgateway serve --no-runner` (API) share one data dir, so you can
-  restart the API without pausing durable execution. Live replies pass through
-  `<data dir>/live/` in this shape.
+- **Split API and runner** (opt-in): `abstractgateway runner --data-dir DIR`
+  (worker) and `abstractgateway serve --no-runner --data-dir DIR` (API) share
+  one data dir, so you can restart the API without pausing durable execution.
+  The runner process ticks every run, holds the one text model, and runs the
+  mail watchers, feed polling, push dispatcher and bridges; the API process
+  only serves HTTP, creates runs and queues commands. Its OpenAI-compatible
+  `/v1` admits each request, then forwards it to a model host the runner
+  serves on `127.0.0.1` (address and per-start secret in
+  `<data dir>/split/model_host.json`), so the model is never loaded twice.
+  Live replies pass through `<data dir>/live/`; events the API delivers reach
+  runs the runner parked (the run store's indexes refresh across processes).
+  The full table of who does what: [configuration.md](docs/configuration.md#split-mode-api-and-runner-in-two-processes-opt-in).
 - **Container**: the GHCR image runs `serve` with user auth; see
   [deployment.md](docs/deployment.md).
 
 Evidence: `src/abstractgateway/cli.py` (flags), `src/abstractgateway/runner.py`
-(lock file).
+(lock file), `src/abstractgateway/split_mode.py` (model host, placement).
 
 ## Security model (summary)
 

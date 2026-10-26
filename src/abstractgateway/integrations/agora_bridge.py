@@ -238,6 +238,10 @@ class AgoraBridge:
     def start(self) -> None:
         if not self.config.enabled or not self.config.residents:
             return
+        from ..split_mode import background_work_here
+
+        if not background_work_here("the agora bridge"):
+            return  # split mode: the runner process runs it
         self.ensure_resident_runs()
         for res in self.config.residents:
             t = threading.Thread(target=self._resident_loop, args=(res,), name=f"agora-bridge-{res.alias}", daemon=True)

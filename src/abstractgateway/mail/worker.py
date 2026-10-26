@@ -187,6 +187,10 @@ class EmailWorker:
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
             return
+        from ..split_mode import background_work_here
+
+        if not background_work_here("mail watchers, feed polling and the notification outbox"):
+            return  # split mode: the runner process runs this plane's worker
         self._stop.clear()
         runner = getattr(self.svc, "runner", None)
         if runner is not None:  # an entity's worker has no automation runner (EntityMailHost)
@@ -315,9 +319,12 @@ def sync_entity_workers() -> Dict[str, list]:
     its email worker (boot, first request) and after an entity is archived, unarchived,
     suspended or resumed, or its mailbox is configured."""
 
+    from ..split_mode import background_work_here
     from ..users import GatewayUserRegistry
     from .accounts import entity_mail_active, entity_plane
 
+    if not background_work_here("entity mail workers"):
+        return {"started": [], "stopped": []}  # split mode: the runner process runs them
     wanted: Dict[str, EmailPlane] = {}
     for rec in GatewayUserRegistry().list_users():
         if rec.principal_kind != "entity" or not entity_mail_active(rec):

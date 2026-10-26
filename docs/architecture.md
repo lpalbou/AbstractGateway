@@ -728,15 +728,23 @@ flowchart TB
 - **Single process**: `abstractgateway serve` starts the HTTP API and the
   runner. On a desktop session it also starts the tray helper, and it starts
   the browser apps you enabled.
-- **Split API and runner**: `abstractgateway runner` (worker) and
-  `abstractgateway serve --no-runner` (API) share one data dir, so you can
-  restart the API without pausing durable execution. Live replies pass through
-  `<data dir>/live/` in this shape.
+- **Split API and runner** (opt-in): `abstractgateway runner --data-dir DIR`
+  (worker) and `abstractgateway serve --no-runner --data-dir DIR` (API) share
+  one data dir, so you can restart the API without pausing durable execution.
+  The runner process ticks every run, holds the one text model, and runs the
+  mail watchers, feed polling, push dispatcher and bridges; the API process
+  only serves HTTP, creates runs and queues commands. Its OpenAI-compatible
+  `/v1` admits each request, then forwards it to a model host the runner
+  serves on `127.0.0.1` (address and per-start secret in
+  `<data dir>/split/model_host.json`), so the model is never loaded twice.
+  Live replies pass through `<data dir>/live/`; events the API delivers reach
+  runs the runner parked (the run store's indexes refresh across processes).
+  The full table of who does what: [configuration.md](./configuration.md#split-mode-api-and-runner-in-two-processes-opt-in).
 - **Container**: the GHCR image runs `serve` with user auth; see
   [deployment.md](./deployment.md).
 
 Evidence: `src/abstractgateway/cli.py` (flags), `src/abstractgateway/runner.py`
-(lock file).
+(lock file), `src/abstractgateway/split_mode.py` (model host, placement).
 
 ## Security model (summary)
 
