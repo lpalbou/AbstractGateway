@@ -7,7 +7,8 @@
                arrived: {count, noun, line}} | null,
      run: {started, ended, status, response_excerpt, note},
      tree: [run ids looked at: the run and its sub-runs],
-     attention: {record_key, kind, title, raised_at, from, run_id?, prompt_ref?, open?} | null,
+     attention: {record_key, kind, title, raised_at, from, run_id?, prompt_ref?, open?,
+                 recipient?, asked?} | null,
      alerts: [ the same shape, every alert the run raised ],
      deliveries: [{record_key, channel, via, device?, device_name?, time, state, reason?}],
      quiet_reason?: "empty title" | "no notify" | "still running" | "not recorded yet"}
@@ -26,6 +27,11 @@ Built from records only, never a stream scan:
 
 `via`: `push` (the gateway's push dispatcher), `outbox` (email), `stream` (an app read the
 person's stream and showed it; the console lists the item).
+
+A published alert (Notify me) says whom it was for and where it asked to go: `recipient` ("me")
+and `asked`, the channels it chose (`["watch", "phone"]`) or `"all"` (none chosen: every channel),
+so a reader sees "asked: watch, phone" beside what was delivered. Its email, when asked, is found
+by its outbox key (`notify_me_key(record_key)`).
 """
 
 from __future__ import annotations
@@ -148,6 +154,8 @@ def _alert_from_published(event: Mapping[str, Any]) -> Dict[str, Any]:
         "raised_at": event.get("time"),
         "from": "notify_me" if data.get("channel") == "me" else "publish",
         "step_id": key.rsplit(":", 1)[-1] if key.count(":") >= 2 else None,
+        "recipient": str(data.get("recipient") or "me"),
+        "asked": [str(c) for c in data["channels"]] if isinstance(data.get("channels"), list) else "all",
     }
 
 
@@ -269,6 +277,7 @@ def build_after(
     }
 
     from .mail.notifications import idempotency_key as mail_key
+    from .mail.notifications import notify_me_key
 
     index_ids = stream.index_event_ids()
     alerts: List[Dict[str, Any]] = []
@@ -295,7 +304,9 @@ def build_after(
             if alert["record_key"]:
                 alert["run_id"] = nid
                 alerts.append(alert)
-                wanted += notice_event_ids(alert["record_key"])
+                mail = notify_me_key(alert["record_key"])
+                email_owner[mail] = alert["record_key"]
+                wanted += notice_event_ids(alert["record_key"], email_keys=[mail])
         prefix = f"attention.raised:{nid}:"
         wait_ids = sorted((k for k in index_ids if k.startswith(prefix)), key=lambda k: int(index_ids[k]))
         for event in stream.events_by_ids(wait_ids, index=index_ids):

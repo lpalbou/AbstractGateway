@@ -19,6 +19,9 @@ catch-up notification, so nothing alerts twice.
 
 Watch-first: a principal with a watch registration refreshed in the last 24 h gets alerts on the
 watch only; otherwise on the phone (the two apps are separate families; both would ring the wrist).
+A published alert that chose its channels (`channels` on its `attention.raised`, Notify me's
+"Where") reaches only the listed apps, watch-first among them: `watch` alone never falls back to
+the phone, `phone` alone never rings the watch, neither listed = nothing pushed.
 
 The forwarder address: `resolve_relay()` (the flag > the saved Push forwarder setting > the
 packaged default, `push.settings.effective_forwarder`) is read at the start of every pass and while
@@ -108,8 +111,11 @@ def seen_key_of_seen(data: Mapping[str, Any]) -> Optional[tuple]:
     return None
 
 
-def alert_targets(devices: List[Mapping[str, Any]], now: float) -> List[Mapping[str, Any]]:
-    """Watch-first: the fresh watches, else the phones, else whatever watches remain."""
+def alert_targets(devices: List[Mapping[str, Any]], now: float, asked: Optional[List[str]] = None) -> List[Mapping[str, Any]]:
+    """Watch-first: the fresh watches, else the phones, else whatever watches remain. `asked` (a
+    published alert's channels; None = every channel) keeps only the devices whose app is listed."""
+    if asked is not None:
+        devices = [d for d in devices if d.get("app") in asked]
     watches = [d for d in devices if d.get("app") == "watch"]
     fresh = [d for d in watches if float(d.get("refreshed_at") or 0.0) + WATCH_FRESH_S > float(now)]
     if fresh:
@@ -220,6 +226,10 @@ class PushDispatcher:
         (idempotent)."""
         if (self.relay is None and self.resolve_relay is None) or self.running:
             return
+        from ..split_mode import background_work_here
+
+        if not background_work_here("the push dispatcher"):
+            return  # split mode: the runner process sends the pushes (it polls the settings, 2 s)
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name=f"gateway-{self.name}", daemon=True)
         self._thread.start()
@@ -319,6 +329,8 @@ class PushDispatcher:
     # -- one pass ----------------------------------------------------------------------------
 
     def tick(self, now: Optional[float] = None) -> Dict[str, Any]:
+        from ..events_stream import alert_channels
+
         clock = float(now if now is not None else self.clock())
         self.refresh_relay()
         devices = self._devices(clock)
@@ -354,7 +366,7 @@ class PushDispatcher:
                             "seen_key": seen_key,
                             "seen_seq": seen_seq,
                         }
-                        for d in alert_targets(devices, clock)
+                        for d in alert_targets(devices, clock, alert_channels(data))
                     ]
                     enqueued += self.outbox.enqueue(rows)
                 elif event.get("type") == "attention.seen":

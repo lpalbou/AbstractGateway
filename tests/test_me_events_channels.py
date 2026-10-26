@@ -50,7 +50,7 @@ def test_an_alert_raises_attention_the_tray_counts_until_seen(tmp_path: Path) ->
     events = stream.read(after=0, limit=10)
     assert [e["type"] for e in events] == ["alerts.message", "attention.raised"]
     raised = events[1]["data"]
-    assert raised == {"kind": "notify", "record_key": "publish:r9:s1", "channel": "alerts", "run_id": "r9", "title": "Disk full", "published_sequence": 1}
+    assert raised == {"kind": "notify", "record_key": "publish:r9:s1", "channel": "alerts", "run_id": "r9", "title": "Disk full", "published_sequence": 1, "recipient": "me"}
     ledger = AttentionLedger()
     notice = None
     for e in events:

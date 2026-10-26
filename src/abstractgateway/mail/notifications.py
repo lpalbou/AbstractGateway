@@ -17,6 +17,10 @@ The explicit opt-ins stand on their own, with no global preference involved:
                         delivers to email (`notify.channels` holds "email", schema v2)
     job finished/failed a run started with `_runtime.notify = {on: ["finished" | "failed"],
                         channels: ["email"]}` ("email me when done")
+    notify me           a flow's Notify me step (a published alert) whose channels include
+                        email (absent channels = every channel): queued when the step runs
+                        (`queue_notify_me`, from the publish host), outbox key
+                        `idempotency_key("notify_me", <record_key>)`
 
 Preferences v1 (five kinds, all OFF by default) are read as v2: `job_failed = job_failed OR
 automation_failed`, `approval_needed = approval_needed`; a file never saved gets the v2 defaults.
@@ -295,6 +299,7 @@ def render_notice(kind: str, facts: Dict[str, Any]) -> Tuple[str, str, str]:
         "approval_needed": "needs your action",
         "job_finished": "finished",
         "job_failed": "failed",
+        "notify_me": "notification",
         "test": "test notification",
     }.get(kind, kind)
     subject = f"{SUBJECT_PREFIX} {title}: {status}"
@@ -317,6 +322,8 @@ def render_notice(kind: str, facts: Dict[str, Any]) -> Tuple[str, str, str]:
         lines.append(f"The run “{title}” finished.")
     elif kind == "job_failed":
         lines.append(f"The run “{title}” failed.")
+    elif kind == "notify_me":
+        lines.append(f"“{title}” notified you.")
     cause = str(facts.get("cause") or "").strip()
     fix = str(facts.get("fix") or "").strip()
     if cause:
@@ -327,7 +334,7 @@ def render_notice(kind: str, facts: Dict[str, Any]) -> Tuple[str, str, str]:
     model_body = str(facts.get("model_body") or "").strip()
     if model_title or model_body:
         lines.append("")
-        lines.append("Written by the automation (model-authored text):")
+        lines.append("Written by the flow:" if kind == "notify_me" else "Written by the automation (model-authored text):")
         if model_title and model_title != title:
             lines.append(model_title)
         if model_body:
@@ -354,6 +361,8 @@ def _why_line(kind: str) -> str:
         return "You receive this because this automation is set to \u201cEmail result\u201d."
     if kind in ("job_finished", "job_failed"):
         return "You receive this because this run was started with \u201cemail me when done\u201d."
+    if kind == "notify_me":
+        return "You receive this because this flow has a Notify me step that reaches you by email."
     if kind == "automation_failed":
         return f"You receive this because \u201cJob failed\u201d is on in {SETTINGS_LABEL} \u2192 Notifications."
     if kind == "approval_needed":
@@ -826,6 +835,23 @@ def queue_notice(plane: EmailPlane, kind: str, key: str, facts: Dict[str, Any]) 
     return NotificationOutbox(plane).enqueue(
         key, kind, subject, text, html_body, recipients=facts.get("recipients"), subject_ref=str(facts.get("subject_ref") or "")
     )
+
+
+def notify_me_key(record_key: str) -> str:
+    """The outbox key of a Notify me email (one per published alert, a replayed step queues nothing)."""
+    return idempotency_key("notify_me", record_key)
+
+
+def queue_notify_me(plane: EmailPlane, *, record_key: str, run: Any, title: str, body: Optional[str] = None) -> bool:
+    """Queue the email of a published alert (a flow's Notify me with email among its channels) when
+    the person's mailbox is usable; the mail worker sends it and records `notification.sent|failed
+    {channel: email}`. False when nothing was queued (no usable mailbox, or queued before)."""
+    if not email_usable(plane):
+        return False
+    rid = str(getattr(run, "run_id", "") or "")
+    facts: Dict[str, Any] = {"title": _run_title(run), "model_title": title, "model_body": body or "",
+                             "ref": f"run {rid}", "subject_ref": f"run:{rid}", "recipients": ["self"]}
+    return queue_notice(plane, "notify_me", notify_me_key(record_key), facts)
 
 
 _LAST_NOTIFICATION_WORDS = {

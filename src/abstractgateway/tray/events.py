@@ -5,7 +5,9 @@ One daemon thread follows `GET /api/gateway/me/events/stream` (SSE) after a catc
 nothing is shown twice. What the tray does with the events:
 
 - `attention.raised` arriving LIVE (after the tray started) -> one OS notification, then
-  `POST /me/events/notifications {channel: "tray"}` records that it was shown (or why not);
+  `POST /me/events/notifications {channel: "tray"}` records that it was shown (or why not); a
+  published alert whose `channels` (Notify me's "Where") does not list `tray` is neither shown nor
+  counted on the badge;
 - the badge = attention items raised and not yet seen (`attention.raised` seq above the latest
   `attention.seen` seq of the same automation), over the whole retained history;
 - automation-shaped events (`trigger.event`, `attention.*`, `wake.*`, an occurrence's
@@ -22,6 +24,8 @@ import logging
 import threading
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
+
+from ..events_stream import alert_asks
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +88,10 @@ class AttentionLedger:
             return self._apply_wait(typ, data)
         key = str(data.get("record_key") or "")
         if key.startswith("publish:"):
-            # A published alert: raised once, seen by `attention.seen {record_key}`.
+            # A published alert: raised once, seen by `attention.seen {record_key}`. One that chose
+            # its channels without the tray is not the tray's (no notification, no badge).
+            if typ == "attention.raised" and not alert_asks(data, "tray"):
+                return None
             if typ == "attention.raised" and key not in self._published_seen:
                 self._published.add(key)
                 return AttentionNotice(key, "", "notify", 0, run_id=str(data.get("run_id") or ""),

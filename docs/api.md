@@ -1311,8 +1311,8 @@ event written twice (a retry, a repair after a crash) is stored once.
 | `notification.sent`, `notification.failed` | `{channel, notice, …}` | a notice reached a channel or could not: `console` (the item is listed), `email` (the outbox sent it, or failed with `code`, `cause`), `tray` (the desktop tray showed it), `watch` / `phone` with `via: "push"` (Apple accepted the push, or an approval or question could not be pushed within an hour; see [push.md](./push.md)) |
 | `wake.scheduled` | `{automation_id, session_id, origin_run_id, at \| on}` | a run asked for work later (`schedule_run`, the `SCHEDULE_RUN` effect): the gateway created a one-shot automation that will run in the caller's session |
 | `wake.cancelled` | `{automation_id, session_id, origin_run_id}` | that automation was archived before it fired: nothing runs |
-| your own type (`orders.paid`, default `<channel>.message`), with `channel` | `{title, body?, …your data}` | a flow published it to you (the `PUBLISH_EVENT` effect, `{channel, type?, title, body?, subject?, data?, alert?}`); id `publish:<run_id>:<step_id>` |
-| `attention.raised` (a published alert) | `{kind: "notify", record_key: "publish:<run_id>:<step_id>", channel, run_id, title, published_sequence}` | that publication had `alert: true`: the tray, the Assistant and the watch announce it |
+| your own type (`orders.paid`, default `<channel>.message`), with `channel` | `{title, body?, …your data}` | a flow published it to you (the `PUBLISH_EVENT` effect, `{channel, type?, title, body?, subject?, data?, alert?, recipient?, channels?}`); id `publish:<run_id>:<step_id>` |
+| `attention.raised` (a published alert) | `{kind: "notify", record_key: "publish:<run_id>:<step_id>", channel, run_id, title, published_sequence, recipient, channels?}` | that publication had `alert: true`: `recipient` is `"me"` (another account is refused for now); `channels` the deliverers it asked for, from `tray`, `watch`, `phone`, `email`, `console` (Notify me's "Where"; absent = every channel). The tray shows and counts it only when `tray` is listed, push rings only the listed apps (watch first among them), the email outbox mails it (`kind: notify_me`) only when `email` is listed and a mailbox is usable; the console item is this record, always written. `channels` without `alert` is refused |
 | `attention.seen` (a published alert) | `{record_key}` | you saw it (`POST /api/gateway/me/events/seen`) |
 
 What needs you = the `attention.raised` items without their `attention.seen`: an automation item is
@@ -1427,6 +1427,9 @@ run**.
   `notify_me` (a Notify me node), `publish` (Publish to channel with Alert on), `wait` (the run or a
   sub-run parked on you: `kind` `approval` or `question`, with `run_id`, `prompt_ref` and `open`
   until it was answered, cancelled or timed out; an open wait comes first) and `email_when_done`.
+  A published alert (`notify_me`, `publish`) also carries `recipient` (`"me"`) and `asked`: the
+  channels it chose (`["watch", "phone"]`) or `"all"`, shown as "asked: watch, phone" beside the
+  deliveries; its email delivery, when asked, is found by its outbox key.
 - `deliveries`: one row per `notification.sent|failed` recorded for those alerts. `via` is `push`
   (the gateway's push dispatcher), `outbox` (email) or `stream` (an app read your stream and showed
   it; the console lists the item). `device_name` when the device registered one; `reason` on a

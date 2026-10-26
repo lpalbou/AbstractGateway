@@ -2127,7 +2127,8 @@ class WorkflowBundleGatewayHost:
         # owner's event stream (publish_host.py). Fails loudly on a runtime without the seam.
         from ..publish_host import wire_publish_event
 
-        wire_publish_event(runtime, data_dir=Path(data_root), tenant=email_plane.tenant_id, user=email_plane.user_id)
+        wire_publish_event(runtime, data_dir=Path(data_root), tenant=email_plane.tenant_id, user=email_plane.user_id,
+                           email_plane=email_plane)
 
         _install_catalog_subworkflow_guard(
             runtime=runtime,

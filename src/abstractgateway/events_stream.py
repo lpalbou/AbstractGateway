@@ -67,6 +67,11 @@ ATTENTION_CHANNEL = "attention"
 CHANNEL_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 PUBLISHED_TYPE_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 PUBLISH_TITLE_MAX = 200
+# Where a published alert can reach its recipient (Notify me's "Where"; AbstractRuntime
+# `core/publish.DELIVERY_CHANNELS`): absent on the record = every channel.
+ALERT_CHANNELS = ("tray", "watch", "phone", "email", "console")
+# Whom a published alert reaches: the run's owner. Another account is a later feature.
+ALERT_RECIPIENT = "me"
 PUBLISH_BODY_MAX = 4000
 # Boot repair window: runs updated this long before the newest stream event are re-checked.
 REBUILD_MARGIN_S = 600.0
@@ -658,15 +663,51 @@ def already_notified(
     return False
 
 
+def alert_channels(data: Mapping[str, Any]) -> Optional[List[str]]:
+    """The channels a published alert asked for (`channels` on its `attention.raised`), or None:
+    every channel (an older record, a flow that chose "All my channels", an automation item, whose
+    `channels` is the automation's own console/email setting)."""
+    if not str(data.get("record_key") or "").startswith("publish:"):
+        return None
+    asked = data.get("channels")
+    if not isinstance(asked, list):
+        return None
+    return [str(c) for c in asked]
+
+
+def alert_asks(data: Mapping[str, Any], channel: str) -> bool:
+    """Does this `attention.raised` reach `channel` (tray, watch, phone, email, console)? Every
+    deliverer asks before delivering: absent `channels` = yes."""
+    asked = alert_channels(data)
+    return asked is None or channel in asked
+
+
+def _alert_channels_of(payload: Mapping[str, Any]) -> Optional[List[str]]:
+    value = payload.get("channels")
+    if value is None:
+        return None
+    if not isinstance(value, (list, tuple)) or not value:
+        raise ValueError(f"channels must be a non-empty list of {', '.join(ALERT_CHANNELS)} (or left out for all)")
+    if not all(isinstance(c, str) for c in value):
+        raise ValueError(f"channels must be names among {', '.join(ALERT_CHANNELS)}")
+    asked = {c.strip().lower() for c in value}
+    unknown = sorted(asked - set(ALERT_CHANNELS))
+    if unknown or not asked:
+        raise ValueError(f"unknown channel(s) {unknown}: choose from {', '.join(ALERT_CHANNELS)}")
+    return [c for c in ALERT_CHANNELS if c in asked]
+
+
 def record_published(stream: UserEventStream, *, run_id: str, step_id: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
     """A flow's `PUBLISH_EVENT` on the caller's stream: `{type, channel, subject?, data: {title, body?, ...data}}`
     with id `publish:<run_id>:<step_id>` (a replayed step appends nothing); with `alert: true` also an
-    `attention.raised {kind: notify, record_key: publish:<run_id>:<step_id>, channel, run_id, title}` so the
-    tray, the Assistant and the watch announce it. Returns `{event_id, sequence, alerted}`.
-    Raises ValueError with a sentence on a refused payload."""
+    `attention.raised {kind: notify, record_key: publish:<run_id>:<step_id>, channel, run_id, title, recipient,
+    channels?}` so the tray, the Assistant and the watch announce it: `recipient` is "me" (the only one
+    today), `channels` the deliverers it asked for (absent = every channel; each deliverer reads it with
+    `alert_asks`). Returns `{event_id, sequence, alerted}`. Raises ValueError with a sentence on a
+    refused payload."""
     if not isinstance(payload, Mapping):
         raise ValueError("publish needs an object")
-    unknown = sorted(k for k in payload if k not in ("channel", "type", "title", "body", "subject", "data", "alert"))
+    unknown = sorted(k for k in payload if k not in ("channel", "type", "title", "body", "subject", "data", "alert", "recipient", "channels"))
     if unknown:
         raise ValueError(f"unknown publish field(s) {unknown}")
     channel = str(payload.get("channel") or "").strip()
@@ -692,6 +733,12 @@ def record_published(stream: UserEventStream, *, run_id: str, step_id: str, payl
     alert = payload.get("alert", False)
     if not isinstance(alert, bool):
         raise ValueError("alert must be true or false")
+    recipient = str(payload.get("recipient") or ALERT_RECIPIENT).strip()
+    if recipient != ALERT_RECIPIENT:
+        raise ValueError(f"notifying another account is not available yet: the recipient is \"{ALERT_RECIPIENT}\" (you)")
+    channels = _alert_channels_of(payload)
+    if channels is not None and not alert:
+        raise ValueError("channels choose where the alert reaches you: set alert on, or leave channels out")
     data: Dict[str, Any] = {**dict(extra), "title": title.strip()}
     if body:
         data["body"] = body
@@ -707,7 +754,8 @@ def record_published(stream: UserEventStream, *, run_id: str, step_id: str, payl
             subject=str(run_id),
             source=f"/abstractgateway/runs/{run_id}",
             data={"kind": "notify", "record_key": key, "channel": channel, "run_id": str(run_id), "title": data["title"],
-                  "published_sequence": event["sequence"]},
+                  "published_sequence": event["sequence"], "recipient": recipient,
+                  **({"channels": channels} if channels is not None else {})},
         )
     return {"event_id": key, "sequence": event["sequence"], "alerted": bool(alert)}
 
@@ -938,6 +986,9 @@ __all__ = [
     "record_run",
     "record_run_finished",
     "record_published",
+    "alert_asks",
+    "alert_channels",
+    "ALERT_CHANNELS",
     "record_publish_seen",
     "event_channel",
     "parse_channels",
