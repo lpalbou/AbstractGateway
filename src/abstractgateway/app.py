@@ -124,6 +124,23 @@ from .service import ServicePrewarmMiddleware  # noqa: E402
 
 app.add_middleware(ServicePrewarmMiddleware)
 
+
+# A route that reaches a service still being built, on the event loop, never builds it there
+# (service.py, backlog 1054 round 3): the build runs in its own thread and the request answers
+# 503 + Retry-After, so the loop (and /api/health) keeps answering.
+from .service import ServiceStarting  # noqa: E402
+
+
+@app.exception_handler(ServiceStarting)
+async def _service_starting_handler(_request, exc: ServiceStarting):  # noqa: ANN001 - Starlette handler signature
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(
+        status_code=503,
+        content={"detail": {"reason_code": "service_starting", "message": "The gateway is still starting this account's service. Retry in a moment."}},
+        headers={"Retry-After": "1"},
+    )
+
 # Gateway security (backlog 309).
 app.add_middleware(GatewaySecurityMiddleware, policy=load_gateway_auth_policy_from_env())
 

@@ -19260,7 +19260,22 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
 
 @router.get("/discovery/capabilities")
 async def discovery_capabilities() -> Dict[str, Any]:
-    """List optional gateway capabilities for thin clients (best-effort)."""
+    """List optional gateway capabilities for thin clients (best-effort).
+
+    OFF the event loop (gateway load 2026-10-26, the 04:07 watchdog exit): the payload reads
+    package metadata, the Core capability defaults (`core_config` -> AbstractCore's
+    `list_capability_defaults` -> engine importability checks, `importlib.util.find_spec`, which
+    waits on the interpreter's import lock while another thread imports) and the settings files.
+    On the loop that wait froze the whole gateway for 31 s. It runs in the watchers pool: it can
+    wait on the import lock, and must never fill the light or heavy pools."""
+    # Blocking probe, off the event loop: it imports torch/transformers to list
+    # model names and has been measured at 30s. On the loop it stalls EVERY other
+    # request in the process (measured: a 0.02s route took 16.2s behind one).
+    music_probe = await _discovery_to_thread(_gateway_music_capability_probe)
+    return await off_loop("watchers", _discovery_capabilities_payload, music_probe)
+
+
+def _discovery_capabilities_payload(music_probe: Dict[str, Any]) -> Dict[str, Any]:
     caps: Dict[str, Any] = {}
 
     caps["abstractgateway"] = _optional_package_status("abstractgateway", "abstractgateway")
@@ -19285,10 +19300,6 @@ async def discovery_capabilities() -> Dict[str, Any]:
     host_facade, host_err = _gateway_abstractcore_host_facade()
     discovery_facade, discovery_err = _gateway_abstractcore_discovery_facade()
     run_facade, run_err = _gateway_abstractcore_run_facade()
-    # Blocking probe, off the event loop: it imports torch/transformers to list
-    # model names and has been measured at 30s. On the loop it stalls EVERY other
-    # request in the process (measured: a 0.02s route took 16.2s behind one).
-    music_probe = await _discovery_to_thread(_gateway_music_capability_probe)
     music_route_available = bool(run_facade is not None and not run_err)
     music_configured = bool(
         music_probe.get("available")
@@ -27609,8 +27620,15 @@ def capability_defaults_route_problems(base_dir: Path) -> list[str]:
 
 @router.get("/config/capability-defaults")
 async def capability_defaults_get() -> Dict[str, Any]:
-    """List execution-host Core/Runtime capability routing defaults for thin-client settings UIs."""
+    """List execution-host Core/Runtime capability routing defaults for thin-client settings UIs.
+
+    Off the event loop (watchers pool): the Core payload checks engine importability, which can
+    wait on the import lock (the 04:07 watchdog exit of 2026-10-26, same chain)."""
     svc = get_gateway_service()
+    return await off_loop("watchers", _capability_defaults_payload_for, svc)
+
+
+def _capability_defaults_payload_for(svc: Any) -> Dict[str, Any]:
     payload = gateway_capability_defaults_payload(base_dir=Path(svc.config.data_dir))
     problems = capability_defaults_route_problems(Path(svc.config.data_dir))
     if problems:

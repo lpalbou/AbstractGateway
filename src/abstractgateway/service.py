@@ -168,10 +168,167 @@ def get_gateway_service() -> GatewayService:
     svc = _service
     if svc is not None:
         return svc
+    if _on_event_loop():
+        # A miss ON the loop never builds there (round 3, backlog 1054): the build starts in
+        # its own thread and this request answers 503 "starting" (or the build's own error).
+        _miss_on_loop(_GLOBAL_SERVICE_KEY, _build_global_service)
+    return _build_global_service()
+
+
+def _build_global_service() -> GatewayService:
+    """The single-user service: built once, under `_service_lock` (never on the event loop)."""
+    global _service
     with _service_lock:
         if _service is None:
             _service = create_default_gateway_service()
         return _service
+
+
+# ---------------------------------------------------------------------------
+# Service builds OFF the event loop (gateway load 2026-10-26, backlog 1054, round 3).
+#
+# A cache miss used to build inline: `get_gateway_service[_for_principal]` is called by routes
+# ON the event loop, and a build (stores, bundle compilation, entity routing, mail) takes
+# seconds to minutes under `_service_lock`. The pre-warm middleware built off the loop first,
+# but only for `/api/gateway` paths and only for the caller's own principal: any other miss
+# (another path, an admin served by another account's plane, a retry after a failed pre-warm,
+# a service still starting its runner) parked the whole loop, `/api/health` included.
+#
+# Now every build runs in its own thread, single-flight per service key, behind a
+# `concurrent.futures.Future`: the loop AWAITS it (`ensure_gateway_service*`, the pre-warm
+# middleware, the entity-plane dependency); a worker thread blocks on the build as before; a
+# miss that still reaches the loop starts (or joins) the build and answers at once with 503
+# `service_starting` (Retry-After: 1), or with the error of the build that just failed.
+# ---------------------------------------------------------------------------
+import concurrent.futures as _cf
+
+_GLOBAL_SERVICE_KEY = "__global_service__"
+_build_futures: Dict[str, "_cf.Future[GatewayService]"] = {}
+_build_errors: Dict[str, BaseException] = {}
+_build_guard = threading.Lock()
+
+
+def _on_event_loop() -> bool:
+    """True when the calling thread is running an asyncio event loop."""
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+        return True
+    except RuntimeError:
+        return False
+
+
+class ServiceStarting(Exception):
+    """A route reached a service that is still being built, on the event loop. The app answers
+    503 {"reason_code": "service_starting"} with Retry-After: 1 (app.py handler)."""
+
+    def __init__(self, key: str) -> None:
+        super().__init__(f"the gateway service for {key} is starting; retry in a moment")
+        self.key = key
+
+
+def _service_build_future(key: str, build: Any) -> "_cf.Future[GatewayService]":
+    """Start `build()` in a thread named gw-service-build, or join the one in flight for `key`.
+    The thread carries the caller's context variables (the request principal)."""
+    import contextvars
+
+    with _build_guard:
+        fut = _build_futures.get(key)
+        if fut is not None and not fut.done():
+            return fut
+        fut = _cf.Future()
+        _build_futures[key] = fut
+    ctx = contextvars.copy_context()
+
+    def _run() -> None:
+        try:
+            result = ctx.run(build)
+        except BaseException as exc:  # noqa: BLE001 - handed to every waiter
+            with _build_guard:
+                _build_errors[key] = exc
+                if _build_futures.get(key) is fut:
+                    _build_futures.pop(key, None)
+            fut.set_exception(exc)
+        else:
+            with _build_guard:
+                _build_errors.pop(key, None)
+                if _build_futures.get(key) is fut:
+                    _build_futures.pop(key, None)
+            fut.set_result(result)
+
+    threading.Thread(target=_run, name=f"gw-service-build:{key}", daemon=True).start()
+    return fut
+
+
+# Set by ServicePrewarmMiddleware for the request it serves: the app awaits service builds.
+# An app assembled without it (a test's bare FastAPI + router, an embedder) keeps the old
+# inline build on a miss, with one warning per service key.
+import contextvars as _cv
+
+_PREWARM_ACTIVE: "_cv.ContextVar[bool]" = _cv.ContextVar("abstractgateway_service_prewarm_active", default=False)
+_inline_build_warned: set[str] = set()
+
+
+def _miss_on_loop(key: str, build: Any) -> None:
+    """A miss on the event loop: never build here. Re-raise the error of the build that just
+    failed for `key` (once, so the next request retries), else start or join the build and
+    raise ServiceStarting. Returns (the caller builds inline) only in an app without the
+    pre-warm middleware."""
+    if not _PREWARM_ACTIVE.get():
+        if key not in _inline_build_warned:
+            _inline_build_warned.add(key)
+            logging.getLogger("abstractgateway.service").warning(
+                "service %s built ON the event loop: this app has no ServicePrewarmMiddleware", key
+            )
+        return
+    with _build_guard:
+        err = _build_errors.pop(key, None)
+        inflight = _build_futures.get(key)
+    if err is not None and (inflight is None or inflight.done()):
+        raise err
+    _service_build_future(key, build)
+    raise ServiceStarting(key)
+
+
+def _resolved_service_target() -> tuple[str, Optional[GatewayService], Any]:
+    """What `get_gateway_service()` would serve now: (key, the ready service or None, build)."""
+    principal = current_gateway_principal()
+    if gateway_multi_user_enabled():
+        target = None
+        if principal is not None:
+            owner = _ENTITY_PLANE_OWNER.get()
+            target = owner if (owner is not None and principal.is_admin()) else principal
+        else:
+            target = _default_runtime_principal()
+        if target is not None:
+            return _principal_service_key(target), _ready_principal_service(target), (lambda t=target: _build_principal_service(t))
+    return _GLOBAL_SERVICE_KEY, _service, _build_global_service
+
+
+async def ensure_gateway_service() -> GatewayService:
+    """The service `get_gateway_service()` resolves to for this context, built off the loop
+    (awaited, never blocking it). Returns at once when it exists."""
+    import asyncio
+
+    key, ready, build = _resolved_service_target()
+    if ready is not None:
+        return ready
+    return await asyncio.wrap_future(_service_build_future(key, build))
+
+
+async def ensure_gateway_service_for_principal(principal: GatewayPrincipal) -> GatewayService:
+    """`get_gateway_service_for_principal`, awaited: the build runs in its own thread."""
+    import asyncio
+
+    if not gateway_multi_user_enabled():
+        return await ensure_gateway_service()
+    ready = _ready_principal_service(principal)
+    if ready is not None:
+        return ready
+    return await asyncio.wrap_future(
+        _service_build_future(_principal_service_key(principal), lambda: _build_principal_service(principal))
+    )
 
 
 def principal_service_cached(principal: GatewayPrincipal) -> bool:
@@ -209,10 +366,16 @@ class ServicePrewarmMiddleware:
     def __init__(self, app: Any) -> None:
         self._app = app
 
+    # Paths that never touch a service (health peeks, never builds; static pages).
+    _SKIP_PREFIXES = ("/api/health", "/console", "/docs", "/redoc", "/openapi.json", "/favicon")
+
     async def __call__(self, scope, receive, send):  # noqa: ANN001 - ASGI signature
-        if scope.get("type") != "http":
+        if scope.get("type") not in ("http", "websocket"):
             return await self._app(scope, receive, send)
-        if not str(scope.get("path") or "").startswith("/api/gateway"):
+        path = str(scope.get("path") or "")
+        # Every path that can reach a service (round 3, backlog 1054): /api/gateway, the other
+        # /api routers, /v1, /apps. The rule used to cover /api/gateway alone.
+        if path in ("", "/") or path.startswith(self._SKIP_PREFIXES):
             return await self._app(scope, receive, send)
         try:
             # Boot gate (c4063 follow-up): while the background boot runs,
@@ -228,12 +391,11 @@ class ServicePrewarmMiddleware:
                 deadline = time.monotonic() + 300.0
                 while _boot_state == "starting" and time.monotonic() < deadline:
                     await asyncio.sleep(0.05)
-            if gateway_multi_user_enabled():
-                principal = current_gateway_principal()
-                if principal is not None and not principal_service_cached(principal):
-                    from .work_pools import off_loop
-
-                    await off_loop("heavy", get_gateway_service_for_principal, principal)
+            # The service this request resolves to, built in its own thread and AWAITED (the
+            # loop keeps serving). A cached service costs one dict lookup. From here on a miss
+            # on the loop never builds inline (`_miss_on_loop`).
+            _PREWARM_ACTIVE.set(True)
+            await ensure_gateway_service()
         except Exception:
             import logging
 
@@ -429,6 +591,29 @@ def get_gateway_service_for_principal(principal: GatewayPrincipal) -> GatewaySer
     if svc is not None and key not in _building_keys:
         if not (getattr(svc.config, "runner_enabled", False) and _runner_needs_restart(svc.runner)):
             return svc
+        if _on_event_loop():
+            # A working service whose runner needs a restart still serves reads: the restart
+            # (under the lock) runs in the build thread, never on the loop.
+            _service_build_future(key, lambda: _build_principal_service(principal))
+            return svc
+    if _on_event_loop():
+        _miss_on_loop(key, lambda: _build_principal_service(principal))
+    return _build_principal_service(principal)
+
+
+def _ready_principal_service(principal: GatewayPrincipal) -> Optional[GatewayService]:
+    """The principal's service when it exists and is fully set up (lock-free), else None."""
+    key = _principal_service_key(principal)
+    svc = _services_by_principal.get(key)
+    if svc is None or key in _building_keys:
+        return None
+    return svc
+
+
+def _build_principal_service(principal: GatewayPrincipal) -> GatewayService:
+    """Look up or build (and self-heal) a principal's service under `_service_lock`. Called in
+    a worker or build thread only: it can hold the lock for minutes."""
+    key = _principal_service_key(principal)
     with _service_lock:
         svc = _services_by_principal.get(key)
         if svc is None:

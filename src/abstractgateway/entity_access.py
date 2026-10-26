@@ -187,9 +187,12 @@ async def entity_plane_resolver(request: Request) -> None:
 
     owner = await off_loop("light", _admin_plane_owner_for, principal, str(name))
     if owner is not None:
-        from .service import set_entity_plane_owner
+        from .service import ensure_gateway_service_for_principal, set_entity_plane_owner
 
         set_entity_plane_owner(owner)
+        # That plane's service, built off the loop and awaited (the pre-warm middleware warmed
+        # the caller's own plane only; backlog 1054 round 3).
+        await ensure_gateway_service_for_principal(owner)
 
 
 def entity_plane_for(slug: str):
