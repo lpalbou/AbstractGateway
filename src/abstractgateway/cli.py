@@ -820,7 +820,8 @@ def main(argv: list[str] | None = None) -> None:
     serve.add_argument(
         "--no-runner",
         action="store_true",
-        help="Serve the HTTP API without starting the runner (use `abstractgateway runner` in another process).",
+        help="Split mode (opt-in): serve the HTTP API only. Runs, the model, mail, feeds, push and bridges run in "
+        "`abstractgateway runner` (same data dir), and /v1 is forwarded to it. See docs/configuration.md.",
     )
     serve.add_argument(
         "--data-dir",
@@ -890,7 +891,17 @@ def main(argv: list[str] | None = None) -> None:
         f"(default: {_POOL_DEFAULTS['watchers']}).",
     )
 
-    runner = sub.add_parser("runner", help="Run the AbstractGateway runner worker (no HTTP)")
+    runner = sub.add_parser(
+        "runner",
+        help="Run the runner process of split mode: ticks every run, holds the model, runs mail, feeds, push and "
+        "bridges, and serves the OpenAI API's model host on 127.0.0.1 for `serve --no-runner` (see docs/configuration.md)",
+    )
+    runner.add_argument(
+        "--data-dir",
+        default=None,
+        help="Data dir: the SAME one `serve --no-runner` uses (default: $ABSTRACTGATEWAY_DATA_DIR, else ./runtime if "
+        "it exists, else the per-OS user data dir)",
+    )
     runner.add_argument(
         "--unsandboxed-commands",
         action="store_true",
@@ -1065,7 +1076,7 @@ def main(argv: list[str] | None = None) -> None:
 
         raise SystemExit(run_service(args))
 
-    if args.cmd in ("serve", "network") and getattr(args, "data_dir", None):
+    if args.cmd in ("serve", "network", "runner") and getattr(args, "data_dir", None):
         from .host_paths import DATA_DIR_SOURCE_ENV
 
         import pathlib as _pathlib  # `Path` is function-local in main() (later branches import it)
@@ -1319,6 +1330,11 @@ def main(argv: list[str] | None = None) -> None:
             from .live_deltas import ROLE_API, set_process_role
 
             set_process_role(ROLE_API)
+            # The runner process holds the model: this process builds its runtimes (reads, commands)
+            # without loading the default model (one model at a time), and /v1 forwards to the runner.
+            from abstractruntime.integrations.abstractcore.llm_client import set_default_model_warmup
+
+            set_default_model_warmup(False)
 
         try:
             import uvicorn
@@ -1435,10 +1451,24 @@ def main(argv: list[str] | None = None) -> None:
             pass
 
         start_gateway_runner()
+        # Split mode's model host: the API process forwards /v1 here (loopback, address recorded in
+        # <data dir>/split/model_host.json), so the text model is loaded in this process only.
+        from .split_mode import ModelHost
+        from .users import gateway_data_dir_from_env
+
+        model_host = None
+        try:
+            model_host = ModelHost(gateway_data_dir_from_env()).start()
+            _stderr(f"[INFO] split mode: runner process {os.getpid()}; the OpenAI API's model host is on {model_host.url}")
+        except Exception as exc:  # noqa: BLE001 - runs still tick; /v1 on the API answers 503 runner_unavailable
+            _stderr(f"[ERROR] split mode: the model host did not start ({type(exc).__name__}: {exc}); "
+                    "the OpenAI API (/v1) answers 503 until the runner is restarted")
         try:
             while not stop.is_set():
                 stop.wait(0.5)
         finally:
+            if model_host is not None:
+                model_host.stop()
             stop_gateway_runner()
             if prev_runner_env is None:
                 os.environ.pop("ABSTRACTGATEWAY_RUNNER", None)

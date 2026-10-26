@@ -16,6 +16,12 @@ client presenting it is still accepted for one release (the 0.12.0 key).
 Who can connect (`reach`) filters on the client address: the socket peer, or
 the first X-Forwarded-For hop when the peer is this machine (a local proxy
 such as `tailscale serve`) or when proxies elsewhere are trusted.
+
+Split mode (`serve --no-runner` + `abstractgateway runner`): this process admits
+the request exactly as above, then forwards it to the runner process's model
+host (`split_mode.forward_core_request`, loopback, address in the data dir); it
+never imports Core's server, so the text model is loaded once, in the runner.
+No runner process answering = 503 `runner_unavailable`, never a local load.
 """
 from __future__ import annotations
 
@@ -38,6 +44,7 @@ from abstractruntime.integrations.abstractcore.server_facade import serve_core_r
 
 from .work_pools import off_loop
 from . import network_exposure as ne
+from . import split_mode
 from .asgi_receive import replay_body_receive
 from .runtime_config import resolve_network_setting, store_lock
 from .users import gateway_data_dir_from_env
@@ -733,6 +740,23 @@ def _standardize_send(send, note: Dict[str, Any], *, chat_stream: Optional[ChatS
     return wrapped
 
 
+RUNNER_UNAVAILABLE = ("The OpenAI API is served by the runner process in split mode, and no runner process is "
+                      "answering: start it with `abstractgateway runner` (same data dir).")
+
+
+async def serve_core(scope, receive, send, *, token: str, allow_unauthenticated: bool = False,
+                     data_dir: Optional[Path] = None) -> None:
+    """Core's serving app for one admitted request: in this process (combined `serve`, or the split
+    runner), or, in the split API process, forwarded to the runner's model host (never loaded here).
+    Raises split_mode.RunnerUnavailable when the API process has no runner to forward to."""
+    if split_mode.is_api_process():
+        await split_mode.forward_core_request(
+            scope, receive, send, data_dir=Path(data_dir) if data_dir is not None else gateway_data_dir_from_env(),
+            allow_unauthenticated=allow_unauthenticated)
+        return
+    await serve_core_request(scope, receive, send, token=token, allow_unauthenticated=allow_unauthenticated)
+
+
 async def _core_models(scope, settings: EndpointSettings, *, authenticated: bool, allow_open: bool,
                        query: bytes = b"") -> Tuple[int, Any]:
     """GET /v1/models through Core for this caller: (status, parsed body)."""
@@ -751,7 +775,10 @@ async def _core_models(scope, settings: EndpointSettings, *, authenticated: bool
     if authenticated:
         headers.append((b"authorization", f"Bearer {settings.token}".encode()))
     sub = dict(scope, method="GET", path="/v1/models", raw_path=b"/v1/models", root_path="", query_string=query, headers=headers)
-    await serve_core_request(sub, receive, send, token=settings.token, allow_unauthenticated=allow_open and not authenticated)
+    try:
+        await serve_core(sub, receive, send, token=settings.token, allow_unauthenticated=allow_open and not authenticated)
+    except split_mode.RunnerUnavailable:
+        return 503, None
     try:
         return status["code"], json.loads(bytes(body))
     except ValueError:
@@ -928,10 +955,13 @@ class CoreEndpoint:
             return await downstream_receive()
 
         try:
-            await serve_core_request(core_scope, guarded_receive, guarded_send, token=settings.token,
-                                     allow_unauthenticated=allow_open and not authenticated)
+            await serve_core(core_scope, guarded_receive, guarded_send, token=settings.token,
+                             allow_unauthenticated=allow_open and not authenticated, data_dir=data_dir)
         except EndpointStopped:
             note["ended"] = "stopped"
+        except split_mode.RunnerUnavailable:
+            note["ended"] = "runner_unavailable"
+            await openai_error(503, RUNNER_UNAVAILABLE, type_="server_error", code="runner_unavailable")(scope, receive, send)
         finally:
             with _INFLIGHT_LOCK:
                 _INFLIGHT.discard(stop)
@@ -1327,14 +1357,22 @@ async def check_setup(data_dir: Path, *, network: Dict[str, Any]) -> List[Dict[s
     else:
         checks.append({"id": "listener", "ok": False,
                        "text": "The gateway listens on this computer only: change it on the Network page."})
-    try:
-        import importlib
+    if split_mode.is_api_process():
+        # Split mode: Core's server runs in the runner process; importing it here would be the
+        # first step to a second model copy.
+        if await off_loop("light", split_mode.read_address, data_dir) is None:
+            checks.append({"id": "core", "ok": False, "text": RUNNER_UNAVAILABLE})
+            return checks
+        checks.append({"id": "core", "ok": True, "text": "AbstractCore's server runs in the runner process."})
+    else:
+        try:
+            import importlib
 
-        await off_loop("heavy", importlib.import_module, "abstractcore.server.app")
-        checks.append({"id": "core", "ok": True, "text": "AbstractCore's server is installed."})
-    except Exception as exc:  # noqa: BLE001 - reported to the admin verbatim
-        checks.append({"id": "core", "ok": False, "text": f"AbstractCore's server cannot start: {type(exc).__name__}: {exc}"})
-        return checks
+            await off_loop("heavy", importlib.import_module, "abstractcore.server.app")
+            checks.append({"id": "core", "ok": True, "text": "AbstractCore's server is installed."})
+        except Exception as exc:  # noqa: BLE001 - reported to the admin verbatim
+            checks.append({"id": "core", "ok": False, "text": f"AbstractCore's server cannot start: {type(exc).__name__}: {exc}"})
+            return checks
     if settings.enabled:
         count = await asyncio.wait_for(_count_models(settings), timeout=20)
         checks.append({"id": "models", "ok": count > 0,
@@ -1360,7 +1398,10 @@ async def _count_models(settings: EndpointSettings) -> int:
              "scheme": "http", "path": "/v1/models", "raw_path": b"/v1/models", "root_path": "",
              "query_string": b"", "client": ("127.0.0.1", 0), "server": ("127.0.0.1", 0),
              "headers": [(b"authorization", f"Bearer {settings.token}".encode())]}
-    await serve_core_request(scope, receive, send, token=settings.token)
+    try:
+        await serve_core(scope, receive, send, token=settings.token)
+    except split_mode.RunnerUnavailable:
+        return 0
     if status["code"] != 200:
         return 0
     try:
