@@ -823,6 +823,10 @@ before pagination and totals. Uploaded recordings and explicitly generated audio
 remain in the normal listing. Existing streamed recordings are classified from their
 producer metadata without rewriting their saved artifact references.
 
+`GET /sessions/{session_id}/artifacts` reads only that session's artifacts through the
+artifact store's indexes. It and the other artifact listings (`GET /runs/{run_id}/artifacts`,
+`/artifacts/search`, `/artifacts/stats`) build and render their page off the event loop.
+
 `GET /artifacts/search` retains the complete archive. Use `tags=artifact_space=voice`
 to list the voice space, including historical streamed recordings. Playback and downloads
 continue to use the original artifact IDs. The `voice/` paths are logical artifact paths;

@@ -4278,6 +4278,17 @@ def _map_catalog_error(exc: Exception) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))
 
 
+def _model_json_response(model: Any) -> Response:
+    """A response model rendered to JSON bytes in the CALLING thread.
+
+    FastAPI's fast path serializes a returned model ON the event loop; a route that builds its
+    page off the loop returns these bytes instead, so the loop only sends them. Same bytes as
+    FastAPI's default (`by_alias=True`, nothing excluded). A `Response` passes through as is."""
+    if isinstance(model, Response):
+        return model
+    return Response(content=model.model_dump_json(by_alias=True), media_type="application/json")
+
+
 async def _off_the_event_loop(fn: Any, /, *args: Any, **kwargs: Any) -> Any:
     """Run a HOST REBUILD (or anything that can trigger one) in a worker thread.
 
@@ -6293,10 +6304,26 @@ def _artifact_search_candidates(
         sid = str(session_id or "").strip()
         if not sid:
             raise HTTPException(status_code=400, detail="session_id is required when scope=session")
+        owner_run_id = _session_memory_run_id(sid)
+        # INDEXED (2026-10-26, both watchdog restarts that night): the session's candidates come
+        # from the store's catalog indexes (owner run, `session_id` tag, `shared` tag), so the
+        # cost follows the session, not the 106k-artifact catalog. The visibility rule below is
+        # unchanged; it runs on the candidates instead of on every artifact.
+        list_candidates = getattr(store, "list_session_candidates", None)
+        if callable(list_candidates):
+            try:
+                candidates = list(list_candidates(sid, owner_run_id=owner_run_id) or [])
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Failed to list session artifacts: {e}")
+            for meta in candidates:
+                if str(getattr(meta, "run_id", "") or "") == owner_run_id or _artifact_visible_to_session(meta, sid):
+                    add_meta(meta)
+            rows.sort(key=lambda r: str(r.created_at or ""), reverse=True)
+            return rows
         list_by_run = getattr(store, "list_by_run", None)
         if callable(list_by_run):
             try:
-                for meta in list_by_run(_session_memory_run_id(sid)) or []:
+                for meta in list_by_run(owner_run_id) or []:
                     add_meta(meta)
             except Exception as e:
                 raise HTTPException(status_code=500, detail=f"Failed to list session artifacts: {e}")
@@ -9933,29 +9960,34 @@ async def list_runs(
                 status_enum0 = RunStatus(status.strip().lower())  # type: ignore[arg-type]
             except Exception:
                 raise HTTPException(status_code=400, detail="Invalid status (expected: running|waiting|completed|failed|cancelled)")
-        try:
-            children = list(list_children(parent_run_id=prid) or [])
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to list children: {e}")
-        child_items: list[Dict[str, Any]] = []
-        _child_want = int(offset) + int(limit) + 1  # +1 = honest has_more
-        for r in children:
-            if status_enum0 is not None and getattr(r, "status", None) != status_enum0:
-                continue
-            summary = run_summary(r)
-            if not include_drafts and bool(summary.get("is_draft") is True):
-                continue
-            if not _matches_query(summary):
-                continue
-            summary["kind"] = _kind_of(summary)
-            child_items.append(summary)
-            if len(child_items) >= _child_want:
-                break
-        child_more = len(child_items) > int(offset) + int(limit)
-        child_items = child_items[int(offset): int(offset) + int(limit)]
-        # Same envelope as the normal listing ("items") so consumers never
-        # branch on which filter produced the page.
-        return {"items": child_items, "count": len(child_items), "parent_run_id": prid, "offset": int(offset), "has_more": child_more}
+        # OFF-LOOP (2026-10-26): `list_children` reads run files (a store scan when the
+        # children index is cold); it ran on the event loop.
+        def _children_page() -> Dict[str, Any]:
+            try:
+                children = list(list_children(parent_run_id=prid) or [])
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Failed to list children: {e}")
+            child_items: list[Dict[str, Any]] = []
+            _child_want = int(offset) + int(limit) + 1  # +1 = honest has_more
+            for r in children:
+                if status_enum0 is not None and getattr(r, "status", None) != status_enum0:
+                    continue
+                summary = run_summary(r)
+                if not include_drafts and bool(summary.get("is_draft") is True):
+                    continue
+                if not _matches_query(summary):
+                    continue
+                summary["kind"] = _kind_of(summary)
+                child_items.append(summary)
+                if len(child_items) >= _child_want:
+                    break
+            child_more = len(child_items) > int(offset) + int(limit)
+            child_items = child_items[int(offset): int(offset) + int(limit)]
+            # Same envelope as the normal listing ("items") so consumers never
+            # branch on which filter produced the page.
+            return {"items": child_items, "count": len(child_items), "parent_run_id": prid, "offset": int(offset), "has_more": child_more}
+
+        return await asyncio.to_thread(_children_page)
 
     status_enum: Optional[RunStatus] = None
     if isinstance(status, str) and status.strip():
@@ -10910,79 +10942,84 @@ async def search_artifacts(
     created_before: Optional[str] = Query(None, description="created_at <= value, ISO string compare."),
     include_stats: bool = Query(False, description="Include exact stats/facets for the selected server-side scope."),
     debug_unlimited: bool = Query(False, description="Allow limit<=0 to return all rows. Intended for admin/debug use."),
-) -> ArtifactSearchResponse:
+) -> Response:
     """Search artifact metadata with v1 envelopes, bounded pages, and optional exact stats."""
-    svc = get_gateway_service()
-    store = _artifact_store_or_500(svc)
-    scope0 = str(scope or "all").strip().lower() or "all"
-    tag_filter = _parse_artifact_tag_filter(tags)
-    if bool(debug_unlimited) or int(limit) <= 0:
-        # Unlimited on the GLOBAL artifact scope stays admin-only. It is now
-        # refused LOUDLY: `limit=-1` from a non-admin used to be silently
-        # rewritten to 500 rows, so the caller believed it had everything.
-        # An authorization answer is honest; a quiet downgrade is not.
-        _require_admin_principal(request)
-    effective_limit = _artifact_effective_limit(int(limit), debug_unlimited=bool(debug_unlimited))
-    rows, total, stats, warnings, rows_pre_paged = _artifact_rows_from_store_search(
-        store,
-        scope=scope0,
-        session_id=str(session_id or ""),
-        run_id=str(run_id or ""),
-        modality=str(modality or ""),
-        artifact_kind=str(artifact_kind or ""),
-        semantic_kind=str(semantic_kind or ""),
-        render_kind=str(render_kind or ""),
-        workflow_id=str(workflow_id or ""),
-        node_id=str(node_id or ""),
-        content_type=str(content_type or ""),
-        query=str(query or ""),
-        tags=tag_filter,
-        created_after=str(created_after or ""),
-        created_before=str(created_before or ""),
-        offset=int(offset),
-        limit=effective_limit,
-        cursor=str(cursor or ""),
-        order=str(order or "desc"),
-        order_by=str(order_by or "created_at"),
-        include_stats=bool(include_stats),
-    )
-    paged = _artifact_page(
-        rows,
-        offset=0 if rows_pre_paged else int(offset),
-        reported_offset=int(offset) if rows_pre_paged else None,
-        limit=effective_limit,
-        cursor=str(cursor or ""),
-        order=str(order or "desc"),
-        total_count=int(total),
-        stats=stats,
-        warnings=warnings,
-    )
-    # Stamp the on-disk location for ADMINS only (absolute host paths are
-    # admin-classed — the same rule the runtime-config surface follows).
-    # Costs one store lookup per SERVED row, never per candidate.
-    _stamp_artifact_paths(store, list(getattr(paged, "items", None) or []), request)
-    return ArtifactSearchResponse(
-        scope=scope0,
-        query=str(query or "").strip() or None,
-        modality=str(modality or "").strip() or None,
-        artifact_kind=str(artifact_kind or "").strip() or None,
-        semantic_kind=str(semantic_kind or "").strip() or None,
-        render_kind=str(render_kind or "").strip() or None,
-        content_type=str(content_type or "").strip() or None,
-        order_by=str(order_by or "created_at").strip().lower() or "created_at",
-        order=str(order or "desc").strip().lower() or "desc",
-        tags=tag_filter,
-        items=paged.items,
-        total=int(total),
-        offset=paged.offset,
-        limit=paged.limit,
-        has_more=paged.has_more,
-        cursor=paged.cursor,
-        next_cursor=paged.next_cursor,
-        facets=paged.facets,
-        stats=paged.stats,
-        warnings=paged.warnings,
-    )
+    # OFF-LOOP, rendered in the worker thread (2026-10-26 watchdog restarts): the store
+    # lookups, the page and its JSON bytes never run on the event loop.
+    def _build() -> Any:
+        svc = get_gateway_service()
+        store = _artifact_store_or_500(svc)
+        scope0 = str(scope or "all").strip().lower() or "all"
+        tag_filter = _parse_artifact_tag_filter(tags)
+        if bool(debug_unlimited) or int(limit) <= 0:
+            # Unlimited on the GLOBAL artifact scope stays admin-only. It is now
+            # refused LOUDLY: `limit=-1` from a non-admin used to be silently
+            # rewritten to 500 rows, so the caller believed it had everything.
+            # An authorization answer is honest; a quiet downgrade is not.
+            _require_admin_principal(request)
+        effective_limit = _artifact_effective_limit(int(limit), debug_unlimited=bool(debug_unlimited))
+        rows, total, stats, warnings, rows_pre_paged = _artifact_rows_from_store_search(
+            store,
+            scope=scope0,
+            session_id=str(session_id or ""),
+            run_id=str(run_id or ""),
+            modality=str(modality or ""),
+            artifact_kind=str(artifact_kind or ""),
+            semantic_kind=str(semantic_kind or ""),
+            render_kind=str(render_kind or ""),
+            workflow_id=str(workflow_id or ""),
+            node_id=str(node_id or ""),
+            content_type=str(content_type or ""),
+            query=str(query or ""),
+            tags=tag_filter,
+            created_after=str(created_after or ""),
+            created_before=str(created_before or ""),
+            offset=int(offset),
+            limit=effective_limit,
+            cursor=str(cursor or ""),
+            order=str(order or "desc"),
+            order_by=str(order_by or "created_at"),
+            include_stats=bool(include_stats),
+        )
+        paged = _artifact_page(
+            rows,
+            offset=0 if rows_pre_paged else int(offset),
+            reported_offset=int(offset) if rows_pre_paged else None,
+            limit=effective_limit,
+            cursor=str(cursor or ""),
+            order=str(order or "desc"),
+            total_count=int(total),
+            stats=stats,
+            warnings=warnings,
+        )
+        # Stamp the on-disk location for ADMINS only (absolute host paths are
+        # admin-classed — the same rule the runtime-config surface follows).
+        # Costs one store lookup per SERVED row, never per candidate.
+        _stamp_artifact_paths(store, list(getattr(paged, "items", None) or []), request)
+        return ArtifactSearchResponse(
+            scope=scope0,
+            query=str(query or "").strip() or None,
+            modality=str(modality or "").strip() or None,
+            artifact_kind=str(artifact_kind or "").strip() or None,
+            semantic_kind=str(semantic_kind or "").strip() or None,
+            render_kind=str(render_kind or "").strip() or None,
+            content_type=str(content_type or "").strip() or None,
+            order_by=str(order_by or "created_at").strip().lower() or "created_at",
+            order=str(order or "desc").strip().lower() or "desc",
+            tags=tag_filter,
+            items=paged.items,
+            total=int(total),
+            offset=paged.offset,
+            limit=paged.limit,
+            has_more=paged.has_more,
+            cursor=paged.cursor,
+            next_cursor=paged.next_cursor,
+            facets=paged.facets,
+            stats=paged.stats,
+            warnings=paged.warnings,
+        )
+
+    return await _off_the_event_loop(lambda: _model_json_response(_build()))
 
 
 @router.get("/artifacts/stats", response_model=ArtifactStatsResponse)
@@ -11000,56 +11037,61 @@ async def artifact_stats(
     tags: Optional[str] = Query(None, description="Optional tag filters as JSON object or key=value list."),
     created_after: Optional[str] = Query(None, description="created_at >= value, ISO string compare."),
     created_before: Optional[str] = Query(None, description="created_at <= value, ISO string compare."),
-) -> ArtifactStatsResponse:
+) -> Response:
     """Return exact artifact counts/facets for a selected Gateway-visible scope."""
-    svc = get_gateway_service()
-    store = _artifact_store_or_500(svc)
-    tag_filter = _parse_artifact_tag_filter(tags)
-    rows, _total, stats, _warnings, _rows_pre_paged = _artifact_rows_from_store_search(
-        store,
-        scope=str(scope or "all").strip().lower() or "all",
-        session_id=str(session_id or ""),
-        run_id=str(run_id or ""),
-        modality=str(modality or ""),
-        semantic_kind=str(semantic_kind or ""),
-        render_kind=str(render_kind or ""),
-        workflow_id=str(workflow_id or ""),
-        node_id=str(node_id or ""),
-        content_type=str(content_type or ""),
-        query=str(query or ""),
-        tags=tag_filter,
-        created_after=str(created_after or ""),
-        created_before=str(created_before or ""),
-        offset=0,
-        limit=0,
-        order="desc",
-        include_stats=True,
-    )
-    stats0 = stats or _artifact_stats_from_rows(rows, filters={}, warnings=[])
-    return ArtifactStatsResponse(
-        ok=True,
-        scope=str(scope or "all").strip().lower() or "all",
-        total=int(stats0.get("total") or 0),
-        total_bytes=int(stats0.get("total_bytes") or stats0.get("byte_total") or 0),
-        filters=dict(stats0.get("filters") or {}),
-        facets=dict(stats0.get("facets") or {}),
-        supported_filters=[
-            "scope",
-            "session_id",
-            "run_id",
-            "modality",
-            "semantic_kind",
-            "render_kind",
-            "workflow_id",
-            "node_id",
-            "content_type",
-            "created_after",
-            "created_before",
-            "tags",
-            "query",
-        ],
-        default_page_size=500,
-    )
+    # OFF-LOOP, rendered in the worker thread (2026-10-26 watchdog restarts): the store
+    # lookups, the page and its JSON bytes never run on the event loop.
+    def _build() -> Any:
+        svc = get_gateway_service()
+        store = _artifact_store_or_500(svc)
+        tag_filter = _parse_artifact_tag_filter(tags)
+        rows, _total, stats, _warnings, _rows_pre_paged = _artifact_rows_from_store_search(
+            store,
+            scope=str(scope or "all").strip().lower() or "all",
+            session_id=str(session_id or ""),
+            run_id=str(run_id or ""),
+            modality=str(modality or ""),
+            semantic_kind=str(semantic_kind or ""),
+            render_kind=str(render_kind or ""),
+            workflow_id=str(workflow_id or ""),
+            node_id=str(node_id or ""),
+            content_type=str(content_type or ""),
+            query=str(query or ""),
+            tags=tag_filter,
+            created_after=str(created_after or ""),
+            created_before=str(created_before or ""),
+            offset=0,
+            limit=0,
+            order="desc",
+            include_stats=True,
+        )
+        stats0 = stats or _artifact_stats_from_rows(rows, filters={}, warnings=[])
+        return ArtifactStatsResponse(
+            ok=True,
+            scope=str(scope or "all").strip().lower() or "all",
+            total=int(stats0.get("total") or 0),
+            total_bytes=int(stats0.get("total_bytes") or stats0.get("byte_total") or 0),
+            filters=dict(stats0.get("filters") or {}),
+            facets=dict(stats0.get("facets") or {}),
+            supported_filters=[
+                "scope",
+                "session_id",
+                "run_id",
+                "modality",
+                "semantic_kind",
+                "render_kind",
+                "workflow_id",
+                "node_id",
+                "content_type",
+                "created_after",
+                "created_before",
+                "tags",
+                "query",
+            ],
+            default_page_size=500,
+        )
+
+    return await _off_the_event_loop(lambda: _model_json_response(_build()))
 
 
 @router.get("/runs/{run_id}/artifacts", response_model=ArtifactListResponse)
@@ -11058,40 +11100,45 @@ async def list_run_artifacts(
     limit: int = Query(500, ge=-1, description="Maximum number of artifacts (most recent first); 0 or -1 means unlimited (no server ceiling)."),
     offset: int = Query(0, ge=0, description="Result offset for pagination."),
     include_voice: bool = Query(False, description="Include read-aloud recordings from the voice/ namespace."),
-) -> ArtifactListResponse:
+) -> Response:
     """List artifacts associated with a run."""
-    svc = get_gateway_service()
-    rs = svc.host.run_store
-    try:
-        run = rs.load(str(run_id))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
-    if run is None:
-        # Internal session-memory runs are created lazily; for UX, create a placeholder
-        # when the client asks for session artifacts before any attachments exist.
-        run = _load_or_create_session_memory_owner_run(run_store=rs, run_id=str(run_id))
-    if run is None:
-        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+    # OFF-LOOP, rendered in the worker thread (2026-10-26 watchdog restarts): the store
+    # lookups, the page and its JSON bytes never run on the event loop.
+    def _build() -> Any:
+        svc = get_gateway_service()
+        rs = svc.host.run_store
+        try:
+            run = rs.load(str(run_id))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
+        if run is None:
+            # Internal session-memory runs are created lazily; for UX, create a placeholder
+            # when the client asks for session artifacts before any attachments exist.
+            run = _load_or_create_session_memory_owner_run(run_store=rs, run_id=str(run_id))
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
 
-    store = _artifact_store_or_500(svc)
-    effective_limit = _artifact_effective_limit(int(limit))
-    rows, total, _stats, warnings, rows_pre_paged = _artifact_rows_from_store_search(
-        store,
-        scope="run",
-        run_id=str(run_id),
-        offset=int(offset),
-        limit=effective_limit,
-        order="desc",
-        include_voice=bool(include_voice),
-    )
-    return _artifact_page(
-        rows,
-        offset=0 if rows_pre_paged else int(offset),
-        reported_offset=int(offset) if rows_pre_paged else None,
-        limit=effective_limit,
-        total_count=total,
-        warnings=warnings,
-    )
+        store = _artifact_store_or_500(svc)
+        effective_limit = _artifact_effective_limit(int(limit))
+        rows, total, _stats, warnings, rows_pre_paged = _artifact_rows_from_store_search(
+            store,
+            scope="run",
+            run_id=str(run_id),
+            offset=int(offset),
+            limit=effective_limit,
+            order="desc",
+            include_voice=bool(include_voice),
+        )
+        return _artifact_page(
+            rows,
+            offset=0 if rows_pre_paged else int(offset),
+            reported_offset=int(offset) if rows_pre_paged else None,
+            limit=effective_limit,
+            total_count=total,
+            warnings=warnings,
+        )
+
+    return await _off_the_event_loop(lambda: _model_json_response(_build()))
 
 
 @router.get("/sessions/{session_id}/artifacts", response_model=ArtifactListResponse)
@@ -11100,37 +11147,42 @@ async def list_session_artifacts(
     limit: int = Query(500, ge=-1, description="Maximum number of artifacts (most recent first); 0 or -1 means unlimited (no server ceiling)."),
     offset: int = Query(0, ge=0, description="Result offset for pagination."),
     include_voice: bool = Query(False, description="Include read-aloud recordings from the voice/ namespace."),
-) -> ArtifactListResponse:
+) -> Response:
     """List artifacts visible to a session for run-start input selection."""
-    sid = str(session_id or "").strip()
-    if not sid:
-        raise HTTPException(status_code=400, detail="session_id is required")
-    svc = get_gateway_service()
-    try:
-        owner_run_id = _ensure_session_memory_owner_run_exists(run_store=svc.host.run_store, session_id=sid)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to create session memory run: {e}")
+    # OFF-LOOP, rendered in the worker thread (2026-10-26 watchdog restarts): the store
+    # lookups, the page and its JSON bytes never run on the event loop.
+    def _build() -> Any:
+        sid = str(session_id or "").strip()
+        if not sid:
+            raise HTTPException(status_code=400, detail="session_id is required")
+        svc = get_gateway_service()
+        try:
+            owner_run_id = _ensure_session_memory_owner_run_exists(run_store=svc.host.run_store, session_id=sid)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to create session memory run: {e}")
 
-    store = _artifact_store_or_500(svc)
-    effective_limit = _artifact_effective_limit(int(limit))
-    rows, total, _stats, warnings, rows_pre_paged = _artifact_rows_from_store_search(
-        store,
-        scope="session",
-        session_id=sid,
-        run_id=str(owner_run_id),
-        offset=int(offset),
-        limit=effective_limit,
-        order="desc",
-        include_voice=bool(include_voice),
-    )
-    return _artifact_page(
-        rows,
-        offset=0 if rows_pre_paged else int(offset),
-        reported_offset=int(offset) if rows_pre_paged else None,
-        limit=effective_limit,
-        total_count=total,
-        warnings=warnings,
-    )
+        store = _artifact_store_or_500(svc)
+        effective_limit = _artifact_effective_limit(int(limit))
+        rows, total, _stats, warnings, rows_pre_paged = _artifact_rows_from_store_search(
+            store,
+            scope="session",
+            session_id=sid,
+            run_id=str(owner_run_id),
+            offset=int(offset),
+            limit=effective_limit,
+            order="desc",
+            include_voice=bool(include_voice),
+        )
+        return _artifact_page(
+            rows,
+            offset=0 if rows_pre_paged else int(offset),
+            reported_offset=int(offset) if rows_pre_paged else None,
+            limit=effective_limit,
+            total_count=total,
+            warnings=warnings,
+        )
+
+    return await _off_the_event_loop(lambda: _model_json_response(_build()))
 
 
 @router.get("/runs/{run_id}/artifacts/{artifact_id}")

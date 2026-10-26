@@ -143,6 +143,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Opening a conversation's attachments no longer stalls the gateway.** `GET /api/gateway/sessions/{id}/artifacts`
+  read all 106k artifacts of the operator's catalog on the event loop (2-3 s each call, more under load): both
+  watchdog restarts of 2026-10-26, and the watch's "Connecting...". It now asks the artifact store for that
+  session's candidates through its indexes (AbstractRuntime `list_session_candidates`; same visibility rule) and,
+  like `GET /runs/{id}/artifacts`, `/artifacts/search` and `/artifacts/stats`, builds and renders its page in a
+  worker thread: 2.1 s to 16 ms, with no event-loop step over 1-2 ms. `GET /runs?parent_run_id=` lists children off
+  the loop too. Needs the AbstractRuntime release that carries `list_session_candidates`.
 - **The Triggers page answers in milliseconds; idle polling stops re-reading run files.** `GET /api/gateway/triggers/connections`
   took 15 s to 200 s on the operator's gateway, which sat at 190% CPU while idle (slowing every other request,
   `GET /automations` at 10 s among them): every connection row, feed poll, mailbox poll and wake listed the whole
