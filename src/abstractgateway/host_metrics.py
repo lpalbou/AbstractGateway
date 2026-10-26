@@ -6,14 +6,9 @@ import re
 import shutil
 import subprocess
 import sys
-import threading
-import time
 from typing import Any, Dict, List, Optional
 
 
-_CACHE_LOCK = threading.Lock()
-_CACHE_AT_S: float = 0.0
-_CACHE_VALUE: Optional[Dict[str, Any]] = None
 
 
 def _utc_now_iso() -> str:
@@ -245,30 +240,22 @@ def _read_host_gpu_metrics_best_effort(*, timeout_s: float = 1.0) -> Dict[str, A
     return {"supported": False, "reason": "; ".join(reasons) if reasons else "unsupported"}
 
 
-def get_host_gpu_metrics(*, cache_ttl_s: float = 1.0) -> Dict[str, Any]:
+def get_host_gpu_metrics(*, cache_ttl_s: Optional[float] = None) -> Dict[str, Any]:
     """Return best-effort host GPU utilization metrics.
 
     This is intentionally dependency-light:
     - macOS: reads IORegistry IOAccelerator PerformanceStatistics via `ioreg`
     - NVIDIA: reads utilization via `nvidia-smi`
+
+    Cached `host_status_cache.GPU_TTL_S` (2 s) by default and single-flight: the tray (1 Hz),
+    the Observer's widget and /host/state share one subprocess per TTL, never one each
+    (gateway load 2026-10-26). `cache_ttl_s=0` probes now.
     """
+    from .host_status_cache import gpu_cache
 
-    global _CACHE_AT_S, _CACHE_VALUE
+    def _probe() -> Dict[str, Any]:
+        payload = _read_host_gpu_metrics_best_effort(timeout_s=1.0)
+        return {"ts": _utc_now_iso(), **payload}
 
-    ttl = max(0.0, float(cache_ttl_s))
-    now = time.time()
-
-    if ttl > 0:
-        with _CACHE_LOCK:
-            if _CACHE_VALUE is not None and (now - _CACHE_AT_S) <= ttl:
-                return dict(_CACHE_VALUE)
-
-    payload = _read_host_gpu_metrics_best_effort(timeout_s=1.0)
-    out: Dict[str, Any] = {"ts": _utc_now_iso(), **payload}
-
-    if ttl > 0:
-        with _CACHE_LOCK:
-            _CACHE_AT_S = now
-            _CACHE_VALUE = dict(out)
-
-    return out
+    provider = str(os.getenv("ABSTRACTGATEWAY_GPU_METRICS_PROVIDER", "auto") or "auto").strip().lower()
+    return dict(gpu_cache.get(provider, _probe, ttl_s=cache_ttl_s))

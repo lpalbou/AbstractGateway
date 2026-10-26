@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import datetime
+import functools
 import hashlib
 import inspect
 import io
@@ -26412,6 +26413,11 @@ def _gateway_model_residency_client_call(
             error="Gateway runtime does not expose model residency controls.",
         )
 
+    if not str(method_name).startswith(("list_", "get_")):
+        # A load / unload / pin changes what is resident: /host/state walks again.
+        from ..host_status_cache import invalidate_residency
+
+        invalidate_residency()
     try:
         result = fn(**dict(payload or {}))
     except Exception as e:
@@ -28991,43 +28997,36 @@ async def prompt_cache_load(req: _GatewayPromptCacheLoadRequest) -> Dict[str, An
 async def host_gpu_metrics() -> Dict[str, Any]:
     # OFF THE LOOP (tray wave, 2026-09-05): the probe is an `ioreg`/`nvidia-smi`
     # subprocess; a 1 Hz poller must never run it on the event loop.
-    return await asyncio.to_thread(host_metrics.get_host_gpu_metrics)
+    return await off_loop("light", host_metrics.get_host_gpu_metrics)
 
 
-_HOST_MEMORY_CACHE_LOCK = threading.Lock()
-_HOST_MEMORY_CACHE: Dict[str, Any] = {"at": 0.0, "value": None}
-HOST_MEMORY_CACHE_TTL_S = 1.0
+def _host_facade_cache_key(facade: Any) -> Any:
+    """What a host-status cache entry is keyed on: the runtime's AbstractCore client behind the
+    facade. `get_abstractcore_host_facade` builds a NEW facade per call (AbstractRuntime
+    host_facade.py `from_runtime` -> `cls(runtime)`, `self._client`), so keying on the facade
+    object (as before 2026-10-26) never hit live: every poll re-ran `ioreg` + `sysctl`. A
+    rebuilt host has a new client, hence a miss. Any other object (a test stub) keys on itself."""
+    from abstractruntime.integrations.abstractcore.host_facade import AbstractCoreHostFacade
+
+    if isinstance(facade, AbstractCoreHostFacade):
+        return ("client", facade._client)
+    return ("facade", facade)
 
 
 def _gateway_host_memory_snapshot_cached() -> tuple[Optional[Dict[str, Any]], Optional[str]]:
     """The memory snapshot runs `ioreg`+`sysctl` on Apple silicon (uncached
-    upstream); several pollers (tray 1 Hz, console 5 s, activity window)
-    must share one probe per second."""
-    now = time.time()
+    upstream); several pollers (tray 1 Hz, console 5 s, Observer, activity window)
+    share one probe per `host_status_cache.MEMORY_TTL_S`, single-flight."""
+    from ..host_status_cache import memory_cache
+
     try:
         facade, _err = _gateway_abstractcore_host_facade()
     except Exception:
         facade = None
-    # Key on the facade OBJECT, not id(facade): the cache holds a reference,
-    # so a discarded facade's id cannot be reused by a new one and serve it
-    # the old snapshot (seen as a test-order flake on Python 3.13).
-    key = facade
-    with _HOST_MEMORY_CACHE_LOCK:
-        cached = _HOST_MEMORY_CACHE.get("value")
-        if (
-            key is not None
-            and cached is not None
-            and _HOST_MEMORY_CACHE.get("key") is key
-            and (now - float(_HOST_MEMORY_CACHE.get("at") or 0.0)) <= HOST_MEMORY_CACHE_TTL_S
-        ):
-            return cached
-    value = _gateway_host_memory_snapshot()
-    if key is not None and value[0] is not None:
-        with _HOST_MEMORY_CACHE_LOCK:
-            _HOST_MEMORY_CACHE["at"] = now
-            _HOST_MEMORY_CACHE["key"] = key
-            _HOST_MEMORY_CACHE["value"] = value
-    return value
+    if facade is None:
+        return _gateway_host_memory_snapshot()
+    # Only a snapshot is kept (a failure is asked again on the next call).
+    return memory_cache.get(_host_facade_cache_key(facade), _gateway_host_memory_snapshot, cache_if=lambda v: v[0] is not None)
 
 
 def _host_live_metrics_payload() -> Dict[str, Any]:
@@ -29060,7 +29059,7 @@ def _host_live_metrics_payload() -> Dict[str, Any]:
 @router.get("/host/metrics/live")
 async def host_live_metrics() -> Dict[str, Any]:
     """GPU + memory + execution state in one cheap call (1 s server-side caches) — the tray's fast lane."""
-    return await asyncio.to_thread(_host_live_metrics_payload)
+    return await off_loop("light", _host_live_metrics_payload)
 
 
 def _gateway_host_memory_snapshot() -> tuple[Optional[Dict[str, Any]], Optional[str]]:
@@ -29080,7 +29079,7 @@ def _gateway_host_memory_snapshot() -> tuple[Optional[Dict[str, Any]], Optional[
 @router.get("/host/metrics/memory")
 async def host_memory_metrics() -> Dict[str, Any]:
     """Best-effort host memory snapshot (RAM/process/device) via the Runtime host facade."""
-    snapshot, reason = await asyncio.to_thread(_gateway_host_memory_snapshot_cached)
+    snapshot, reason = await off_loop("light", _gateway_host_memory_snapshot_cached)
     if snapshot is None:
         return {"ok": True, "supported": False, "reason": reason}
     return {"ok": True, "supported": True, **snapshot}
@@ -29096,7 +29095,8 @@ async def host_state() -> Dict[str, Any]:
     # OFF THE LOOP (tray wave, 2026-09-05): residency walks every provider
     # (HTTP to LM Studio/Ollama, up to 2 s each) plus `ioreg`/`sysctl` probes;
     # inline, an unreachable provider froze every other request for seconds.
-    return await asyncio.to_thread(_host_state_payload)
+    # Provider calls (up to 2 s each) wait in the watchers pool, never beside /me.
+    return await off_loop("watchers", _host_state_payload)
 
 
 def _gateway_install_block() -> Dict[str, Any]:
@@ -29131,6 +29131,16 @@ def _gateway_install_block() -> Dict[str, Any]:
     except Exception as e:  # noqa: BLE001 - decoration over a snapshot that must answer
         out["error"] = f"{type(e).__name__}: {e}"
     return out
+
+
+def _gateway_install_block_cached() -> Dict[str, Any]:
+    """`_gateway_install_block` for host_status_cache.INSTALL_BLOCK_TTL_S (file reads and the
+    login-service status on every 5 s /host/state poll before); keyed on the data-dir
+    environment, so a changed data dir is never served the old block."""
+    from ..host_status_cache import install_block_cache
+
+    key = (os.getenv("ABSTRACTGATEWAY_DATA_DIR") or "", os.getenv("ABSTRACTGATEWAY_AUTH_TOKEN") is not None)
+    return dict(install_block_cache.get(key, _gateway_install_block))
 
 
 @router.get("/host/first-run")
@@ -29187,8 +29197,19 @@ def _host_state_payload() -> Dict[str, Any]:
         degraded.append("gpu")
 
     models: Optional[list[Dict[str, Any]]] = None
+    # The residency walk (a provider call each) and the session-cache enumeration: shared by
+    # every /host/state poller for host_status_cache.RESIDENCY_TTL_S, single-flight; a load,
+    # eject or pin through the gateway drops them (_gateway_model_residency_client_call).
+    from ..host_status_cache import residency_cache, session_caches_cache
+
+    try:
+        _facade, _ferr = _gateway_abstractcore_host_facade()
+    except Exception:
+        _facade = None
+    _key = _host_facade_cache_key(_facade) if _facade is not None else None
+    _list_loaded = lambda: _gateway_model_residency_client_call(method_name="list_model_residency", operation="list_loaded")  # noqa: E731
     residency = _normalize_gateway_model_residency_response(
-        _gateway_model_residency_client_call(method_name="list_model_residency", operation="list_loaded"),
+        residency_cache.get(_key, _list_loaded, ttl_s=None if _key is not None else 0),
         operation="list_loaded",
     )
     if residency.get("ok") is False or residency.get("supported") is False:
@@ -29199,7 +29220,8 @@ def _host_state_payload() -> Dict[str, Any]:
         models = _model_residency_rows_v1(residency)
 
     session_caches: Optional[list[Any]] = None
-    caches = _gateway_session_cache_facade_call(method_name="list_session_prompt_caches", operation="list")
+    _list_caches = lambda: _gateway_session_cache_facade_call(method_name="list_session_prompt_caches", operation="list")  # noqa: E731
+    caches = session_caches_cache.get(_key, _list_caches, ttl_s=None if _key is not None else 0)
     # `ok: false` is a facade-level in-band failure (no raise) — degrade like
     # a missing method rather than answering with a silently empty list.
     if caches.get("available") is False or caches.get("ok") is False:
@@ -29248,7 +29270,7 @@ def _host_state_payload() -> Dict[str, Any]:
         **({"host": host_block} if host_block is not None else {}),
         # Install facts: which data dir and why, the
         # auth posture, the login service, the first-run wizard state.
-        "gateway": _gateway_install_block(),
+        "gateway": _gateway_install_block_cached(),
         "memory": memory,
         "gpu": gpu,
         "models": models,
@@ -29300,6 +29322,19 @@ def _host_control_actor(principal: GatewayPrincipal) -> str:
     return f"{tenant}/{user}"
 
 
+@functools.lru_cache(maxsize=1)
+def _runtime_step_gate_supported() -> Optional[bool]:
+    """Whether the installed Runtime.tick takes `step_gate` (fixed for the process)."""
+    try:
+        from abstractruntime import Runtime as _Runtime
+
+        import inspect as _inspect
+
+        return "step_gate" in _inspect.signature(_Runtime.tick).parameters
+    except Exception:
+        return None
+
+
 def _host_runner_payload() -> Dict[str, Any]:
     from ..service import gateway_runner_health_snapshot
 
@@ -29314,15 +29349,7 @@ def _host_runner_payload() -> Dict[str, Any]:
             inflight += int(r.get("inflight_ticks") or 0)
         except Exception:
             continue
-    step_gate_supported: Optional[bool] = None
-    try:
-        from abstractruntime import Runtime as _Runtime
-
-        import inspect as _inspect
-
-        step_gate_supported = "step_gate" in _inspect.signature(_Runtime.tick).parameters
-    except Exception:
-        step_gate_supported = None
+    step_gate_supported = _runtime_step_gate_supported()
     return {
         "ok": True,
         **host_control.pause_snapshot(),
@@ -29352,7 +29379,7 @@ async def host_runner_state(request: Request) -> Dict[str, Any]:
     dump_path, file, line}) or null — the console's Resources page and the
     terminal console show its `line`."""
     principal = _principal_from_request(request)
-    payload = _host_runner_payload()
+    payload = await off_loop("light", _host_runner_payload)
     if principal.is_admin():
         from .. import loop_watchdog
 
@@ -29429,12 +29456,14 @@ async def host_runs(
     if cached["payload"] is not None and cached["key"] == key and (now - float(cached["at"])) < _HOST_RUNS_TTL_S:
         payload = cached["payload"]
     else:
-        payload = await asyncio.to_thread(
+        payload = await off_loop(
+            "heavy",
             recent_runs_host_wide,
             data_dir=Path(svc.config.data_dir),
             limit=int(limit),
             since_epoch=now - (float(window_hours) * 3600.0),
             default_run_store=getattr(getattr(svc, "host", None), "run_store", None),
+            default_ledger_store=getattr(getattr(svc, "host", None), "ledger_store", None),
         )
         _HOST_RUNS_CACHE.update({"at": now, "key": key, "payload": payload})
     # Per caller, so outside the cache.
@@ -29469,7 +29498,8 @@ async def host_run_wait_route(request: Request, run_id: str) -> Dict[str, Any]:
     from ..admin_runtimes import host_run_wait
 
     svc = get_gateway_service()
-    out = await asyncio.to_thread(
+    out = await off_loop(
+        "light",
         host_run_wait,
         data_dir=Path(svc.config.data_dir),
         run_id=str(run_id),

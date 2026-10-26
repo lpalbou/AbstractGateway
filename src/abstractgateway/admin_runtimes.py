@@ -21,6 +21,7 @@ is broken).
 from __future__ import annotations
 
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -58,16 +59,42 @@ def _dir_size(path: Path, *, exclude: Tuple[str, ...] = (), deadline: Optional[f
     return total, False
 
 
+# One set of read-only stores per runtime dir for the life of the process (gateway load
+# 2026-10-26): `/host/runs` (the tray, every 20 s) built NEW stores for every plane on every
+# call, so each call opened the artifact catalog and paid a cold run-index scan (no scan memo,
+# no active index) per plane. A kept store re-validates its memo by stat and follows other
+# writers through the creation log, like any second store over a folder.
+_STORES_BY_DIR: Dict[Tuple[str, str], Any] = {}
+_STORES_LOCK = threading.Lock()
+
+
 def _stores_for_dir(runtime_dir: Path):
-    """Read-only stores over a runtime data dir (no runner, no ticking).
-    Backend detection mirrors the service factory: gateway.sqlite3 present =
+    """Read-only stores over a runtime data dir (no runner, no ticking), built once per dir
+    and backend. Backend detection mirrors the service factory: gateway.sqlite3 present =
     sqlite, else the file backend."""
     from .stores import build_file_stores, build_sqlite_stores
 
     db = runtime_dir / "gateway.sqlite3"
-    if db.exists():
-        return build_sqlite_stores(base_dir=runtime_dir, db_path=db)
-    return build_file_stores(base_dir=runtime_dir)
+    backend = "sqlite" if db.exists() else "file"
+    try:
+        key = (str(Path(runtime_dir).resolve()), backend)
+    except OSError:
+        key = (str(runtime_dir), backend)
+    with _STORES_LOCK:
+        cached = _STORES_BY_DIR.get(key)
+        if cached is not None:
+            return cached
+        stores = build_sqlite_stores(base_dir=runtime_dir, db_path=db) if backend == "sqlite" else build_file_stores(base_dir=runtime_dir)
+        _STORES_BY_DIR[key] = stores
+        return stores
+
+
+def forget_stores() -> None:
+    """Drop the kept stores (tests; a data dir that was replaced under the process)."""
+    with _STORES_LOCK:
+        _STORES_BY_DIR.clear()
+    with _LEDGER_LEN_LOCK:
+        _LEDGER_LEN.clear()
 
 
 def _run_summary(run: Any) -> Dict[str, Any]:
@@ -520,6 +547,34 @@ def _host_row_order(row: Dict[str, Any]) -> Tuple[int, float]:
     return (group, -(when if isinstance(when, (int, float)) else float("-inf")))
 
 
+# A FINISHED row's step count, kept per (ledger store, run) while the row's last update is the
+# same: `JsonlLedgerStore.count` reads the whole ledger file, and the tray asked it for the
+# same finished rows every 20 s. Active rows are always counted.
+_LEDGER_LEN: Dict[Tuple[int, str], Tuple[Any, Any, Optional[int]]] = {}
+_LEDGER_LEN_LOCK = threading.Lock()
+_LEDGER_LEN_MAX = 4096
+
+
+def _ledger_len_cached(ledger_store: Any, row: Dict[str, Any]) -> Optional[int]:
+    run_id = str(row.get("run_id") or "")
+    if row.get("activity") in {"running", "waiting"} or ledger_store is None or not run_id:
+        return _ledger_len(ledger_store, run_id)
+    key = (id(ledger_store), run_id)
+    sig = (row.get("status"), row.get("updated_epoch"))
+    with _LEDGER_LEN_LOCK:
+        hit = _LEDGER_LEN.get(key)
+    # The entry holds its store: an id reused by a later store never matches.
+    if hit is not None and hit[0] is ledger_store and hit[1] == sig:
+        return hit[2]
+    n = _ledger_len(ledger_store, run_id)
+    if n is not None:
+        with _LEDGER_LEN_LOCK:
+            if len(_LEDGER_LEN) >= _LEDGER_LEN_MAX:
+                _LEDGER_LEN.clear()
+            _LEDGER_LEN[key] = (ledger_store, sig, n)
+    return n
+
+
 def _ledger_len(ledger_store: Any, run_id: str) -> Optional[int]:
     """How many ledger entries a run has — its steps. None when unknowable.
 
@@ -809,6 +864,7 @@ def recent_runs_host_wide(
     limit: int = 25,
     since_epoch: Optional[float] = None,
     default_run_store: Optional[Any] = None,
+    default_ledger_store: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """The runs on this MACHINE, across data planes: every ACTIVE turn root
     first (running, then waiting — whatever their age), then the turn roots
@@ -843,9 +899,14 @@ def recent_runs_host_wide(
     skipped: List[str] = []
 
     try:
-        stores = _stores_for_dir(Path(data_dir))
-        planes.append(("default", default_run_store if default_run_store is not None else stores.run_store))
-        ledgers["default"] = getattr(stores, "ledger_store", None)
+        if default_run_store is not None and default_ledger_store is not None:
+            # The service's own stores: no second store (and no second memo) over the folder.
+            planes.append(("default", default_run_store))
+            ledgers["default"] = default_ledger_store
+        else:
+            stores = _stores_for_dir(Path(data_dir))
+            planes.append(("default", default_run_store if default_run_store is not None else stores.run_store))
+            ledgers["default"] = getattr(stores, "ledger_store", None)
     except Exception as e:  # noqa: BLE001
         warnings.append(f"#FALLBACK default plane unreadable: {e}")
 
@@ -895,7 +956,7 @@ def recent_runs_host_wide(
     # Step counts LAST, on the survivors only: counting the ledger of every
     # run we then threw away is the expensive mistake this ordering avoids.
     for row in rows:
-        row["ledger_len"] = _ledger_len(ledgers.get(str(row.get("plane"))), str(row.get("run_id") or ""))
+        row["ledger_len"] = _ledger_len_cached(ledgers.get(str(row.get("plane"))), row)
     # The session's title and what a waiting row waits for: on the survivors
     # only, for the same reason (one document load per row).
     enrich_host_rows(rows, dict(planes))
