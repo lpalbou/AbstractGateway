@@ -5,6 +5,13 @@
 #                                 [--port 18080] [--clone DIR] [--session ID]
 #                                 [--gateway-src DIR] [--runtime-src DIR]   # code to run (default: the checkouts)
 #                                 [--serve-arg ARG]...                       # extra `serve` flags, e.g. --gc-tuning off
+#                                 [--driver-arg ARG]...                      # bench_driver.py flags, e.g. --fail-p99 me=0.05
+#                                 [--python PY] [--perf-dir DIR] [--boot-timeout S]
+#
+# --runtime-src installed / --gateway-src installed: use the installed package (CI), not a checkout.
+# --python: the interpreter that runs the gateway (default: <framework>/.venv/bin/python, else python3).
+# --perf-dir: where logs, the scratch HOME and the JSON go (default: <framework>/untracked/perf).
+# The exit code is the driver's: 1 when a --driver-arg gate failed (scripts/perf/ci.sh).
 #
 # The gateway: 127.0.0.1:<port>, --no-tray, --exec-runner off, --push-relay off, an EMPTY environment (env -i) with a
 # scratch HOME/TMPDIR/HF_HOME under untracked/perf/bench-home (no keychain, no ~/.abstractcore, no provider keys),
@@ -27,6 +34,8 @@ JSON=0; LABEL=""
 SESSION="6529fb2d-573b-4521-b0e1-d9adbae4f275"
 GW_SRC="$REPO/src"; RT_SRC="$FRAMEWORK/abstractruntime/src"
 SERVE_ARGS=()
+DRIVER_ARGS=()
+[ -x "$VENV_PY" ] || VENV_PY="$(command -v python3)"
 while [ $# -gt 0 ]; do
   case "$1" in
     --json) JSON=1; shift ;;
@@ -42,7 +51,10 @@ while [ $# -gt 0 ]; do
     --gateway-src) GW_SRC="$2"; shift 2 ;;
     --runtime-src) RT_SRC="$2"; shift 2 ;;
     --serve-arg) SERVE_ARGS+=("$2"); shift 2 ;;
-    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+    --driver-arg) DRIVER_ARGS+=("$2"); shift 2 ;;
+    --python) VENV_PY="$2"; shift 2 ;;
+    --perf-dir) PERF="$2"; shift 2 ;;
+    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -53,8 +65,13 @@ done
 [ -f "$CLONE/run_$SESSION.json" ] || { echo "session $SESSION has no run file in the clone" >&2; exit 2; }
 case "$(cd "$CLONE" && pwd -P)" in "$(cd "$FRAMEWORK/runtime" 2>/dev/null && pwd -P)") echo "refusing: --clone is the live data dir" >&2; exit 2 ;; esac
 if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t >/dev/null 2>&1; then echo "port $PORT is already in use" >&2; exit 2; fi
-[ -d "$GW_SRC/abstractgateway" ] || { echo "no abstractgateway package under $GW_SRC" >&2; exit 2; }
-[ -d "$RT_SRC/abstractruntime" ] || { echo "no abstractruntime package under $RT_SRC" >&2; exit 2; }
+[ "$GW_SRC" = installed ] || [ -d "$GW_SRC/abstractgateway" ] || { echo "no abstractgateway package under $GW_SRC" >&2; exit 2; }
+[ "$RT_SRC" = installed ] || [ -d "$RT_SRC/abstractruntime" ] || { echo "no abstractruntime package under $RT_SRC" >&2; exit 2; }
+"$VENV_PY" -c 'import abstractgateway, abstractruntime' 2>/dev/null || [ "$GW_SRC" != installed ] || { echo "$VENV_PY cannot import abstractgateway" >&2; exit 2; }
+DRIVER_PY=/usr/bin/python3
+[ -x "$DRIVER_PY" ] || DRIVER_PY="$(command -v python3)"
+mkdir -p "$PERF"
+PERF="$(cd "$PERF" && pwd)"
 
 TS="$(date +%Y%m%d-%H%M%S)"
 LOGS="$PERF/bench-logs/$TS"
@@ -63,9 +80,12 @@ mkdir -p "$LOGS" "$HOME_DIR/tmp" "$HOME_DIR/hf"
 GUARD_LOG="$LOGS/netguard.jsonl"; GC_LOG="$LOGS/gc.jsonl"; GW_LOG="$LOGS/gateway.log"
 : > "$GUARD_LOG"; : > "$GC_LOG"
 TOKEN="$(openssl rand -hex 24)"
-FLOWS="$(cd "$GW_SRC/.." && pwd)/flows/bundles/"
+FLOWS="$REPO/flows/bundles/"
+[ "$GW_SRC" = installed ] || FLOWS="$(cd "$GW_SRC/.." && pwd)/flows/bundles/"
 # The live gateway's PYTHONPATH, with the guard and the chosen gateway/runtime code first.
-PYPATH="$HERE/netguard:$GW_SRC:$RT_SRC"
+PYPATH="$HERE/netguard"
+[ "$GW_SRC" = installed ] || PYPATH="$PYPATH:$GW_SRC"
+[ "$RT_SRC" = installed ] || PYPATH="$PYPATH:$RT_SRC"
 for p in abstractmemory/src abstractflow/src abstractcamera/src abstract3d/src abstractagent/src abstractcore; do
   PYPATH="$PYPATH:$FRAMEWORK/$p"
 done
@@ -103,7 +123,7 @@ T0=$(date +%s)
 while :; do
   kill -0 "$GW_PID" 2>/dev/null || { echo "the gateway exited during boot; last log lines:" >&2; tail -30 "$GW_LOG" >&2; exit 1; }
   H="$(curl -s -m 5 "http://127.0.0.1:$PORT/api/health" 2>/dev/null || true)"
-  if [ -n "$H" ] && printf '%s' "$H" | /usr/bin/python3 -I -c '
+  if [ -n "$H" ] && printf '%s' "$H" | "$DRIVER_PY" -I -c '
 import json, sys
 d = json.load(sys.stdin)
 r = d.get("runner") or {}
@@ -122,11 +142,13 @@ grep -E "\[INFO\] gc:" "$GW_LOG" || echo "(no gc tuning line in the log: this co
 
 JSON_PATH=""
 [ "$JSON" = 1 ] && JSON_PATH="$PERF/bench-$TS.json"
-/usr/bin/python3 -I "$HERE/bench_driver.py" --base "http://127.0.0.1:$PORT" --token "$TOKEN" --pid "$GW_PID" \
+DRIVER_RC=0
+"$DRIVER_PY" -I "$HERE/bench_driver.py" --base "http://127.0.0.1:$PORT" --token "$TOKEN" --pid "$GW_PID" \
   --session "$SESSION" --rounds "$ROUNDS" --warmup "$WARMUP" --timeout "$TIMEOUT" --idle "$IDLE" \
-  --gc-log "$GC_LOG" --guard-log "$GUARD_LOG" --label "${LABEL:-$TS}" ${JSON_PATH:+--json "$JSON_PATH"}
+  --gc-log "$GC_LOG" --guard-log "$GUARD_LOG" --label "${LABEL:-$TS}" ${JSON_PATH:+--json "$JSON_PATH"} \
+  ${DRIVER_ARGS[@]+"${DRIVER_ARGS[@]}"} || DRIVER_RC=$?
 if [ -n "$JSON_PATH" ]; then
-  /usr/bin/python3 -I - "$JSON_PATH" "$BOOT_S" "$GW_SRC" "$RT_SRC" "$GW_LOG" "${SERVE_ARGS[*]:-}" <<'PYEOF'
+  "$DRIVER_PY" -I - "$JSON_PATH" "$BOOT_S" "$GW_SRC" "$RT_SRC" "$GW_LOG" "${SERVE_ARGS[*]:-}" <<'PYEOF'
 import json, subprocess, sys
 path, boot_s, gw, rt, log, serve_args = sys.argv[1:7]
 d = json.load(open(path))
@@ -148,3 +170,4 @@ json.dump(d, open(path, "w"), indent=2)
 PYEOF
 fi
 echo "guard refusals (first 5):"; head -5 "$GUARD_LOG" || true
+exit "$DRIVER_RC"

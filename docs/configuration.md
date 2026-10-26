@@ -1587,6 +1587,25 @@ Most-used:
   the gateway (mail, feeds, provider endpoints, model generation). Quick work never waits behind a scan;
   more scans than `--pool-heavy` wait their turn. `GET /api/health` reports each pool's `size`,
   `threads` and `queued` under `pools`. Evidence: `src/abstractgateway/work_pools.py`
+  `serve --run-index trusted|verify` (default `verify`, no environment variable): how run listings are
+  answered. `verify` lets the folder scan answer and compares the in-memory run index with it; `trusted`
+  answers from the index with no scan. `GET /api/health` reports `run_index`: the mode, the planes
+  counted and the summed counters of every plane's run store (`shadow_mismatches` must stay 0 before
+  `trusted` becomes the default). Evidence: `src/abstractgateway/stores.py`
+  `serve --gc-tuning on|off` (default `on`, no environment variable): once the boot is done, freeze the
+  objects it built and raise the garbage collector's thresholds, so a full collection no longer pauses the
+  gateway for seconds; `off` keeps Python's defaults. `GET /api/health` reports what was applied under
+  `gc_tuning`. Evidence: `src/abstractgateway/service.py`
+  A service the gateway is still building (the first request of an account, a restart) is built in its
+  own thread: requests wait for it without holding the event loop, `GET /api/health` keeps answering, and a
+  route that reaches it any other way answers `503` `service_starting` with `Retry-After: 1`.
+- `scripts/perf/ci.sh [--cpu-max PCT] [--port P] [--work DIR] [--reuse-fixture]` (from a checkout): the
+  load test CI runs on pull requests and every night (`.github/workflows/perf.yml`). It builds a synthetic
+  data folder (`scripts/perf/make_fixture.py`: 10k runs, 100k artifacts, 50 automations, no real data),
+  starts a hermetic gateway on it (`--no-tray`, scratch home, empty environment, outbound network refused,
+  paused) and fails when a p99 goes over its bound (`/me` 50 ms, `/triggers/connections` 100 ms, session
+  artifacts 100 ms, `/runs?limit=20` 200 ms, `/automations` 500 ms), a probe answers anything but 200, or
+  CPU at rest over 2 minutes goes over `--cpu-max` (default 5% of a core, 10% on CI runners)
 - `abstractgateway push-relay --apns-key-file F --key-id K --team-id T --topic BUNDLE_ID … [--listen HOST:PORT]`:
   run the stateless Apple push relay with your own key (extra `push-relay`; [push.md](./push.md#run-your-own-relay))
   (host/port default to the [network exposure](#network-exposure-localhost--local-network--internet)

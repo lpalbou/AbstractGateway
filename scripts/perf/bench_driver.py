@@ -4,7 +4,12 @@ Probes, in rounds (one call of each per round, sequential, like a client opening
   /api/gateway/me, /api/gateway/triggers/connections, /api/gateway/sessions/{id}/artifacts,
   /api/gateway/runs?limit=20, /api/gateway/automations
 then an idle window with NO request: process CPU from cumulative CPU time (`ps -o time=`, not the decayed
-`pcpu`), threads, RSS, garbage-collection pauses (from the netguard GC log) and outbound connections (lsof).
+`pcpu`; /proc/<pid>/stat on Linux), threads, RSS, garbage-collection pauses (from the netguard GC log) and
+outbound connections (lsof).
+
+Gates (the CI load test, scripts/perf/ci.sh): `--fail-p99 NAME=SECONDS` (repeatable) fails the run when that
+probe's p99 is above the bound OR any of its answers was not a 200 (a fast error must not pass);
+`--fail-idle-cpu PCT` fails it when CPU at rest is above PCT % of a core. Exit code 1 on any failure.
 """
 
 from __future__ import annotations
@@ -60,6 +65,15 @@ def percentile(values: List[float], p: float) -> Optional[float]:
 
 
 def proc_cpu_s(pid: int) -> Optional[float]:
+    """Cumulative user+system CPU seconds. Linux: /proc (clock ticks; `ps` rounds to whole seconds)."""
+    stat = f"/proc/{pid}/stat"
+    if os.path.exists(stat):
+        try:
+            with open(stat, encoding="utf-8") as fh:
+                fields = fh.read().rsplit(")", 1)[1].split()
+            return (int(fields[11]) + int(fields[12])) / float(os.sysconf("SC_CLK_TCK"))
+        except Exception:
+            pass
     out = subprocess.run(["ps", "-o", "time=", "-p", str(pid)], capture_output=True, text=True).stdout
     return parse_ps_time(out)
 
@@ -70,6 +84,15 @@ def proc_rss_mb(pid: int) -> Optional[int]:
 
 
 def proc_threads(pid: int) -> Optional[int]:
+    status = f"/proc/{pid}/status"
+    if os.path.exists(status):  # Linux: `ps -M` is not a thread listing there
+        try:
+            with open(status, encoding="utf-8") as fh:
+                for line in fh:
+                    if line.startswith("Threads:"):
+                        return int(line.split()[1])
+        except Exception:
+            return None
     out = subprocess.run(["ps", "-M", "-p", str(pid)], capture_output=True, text=True).stdout
     lines = [l for l in out.splitlines()[1:] if l.strip()]
     return len(lines) or None
@@ -77,7 +100,10 @@ def proc_threads(pid: int) -> Optional[int]:
 
 def outbound_connections(pid: int) -> List[str]:
     """Established/connecting TCP/UDP endpoints of `pid` whose remote side is not loopback."""
-    out = subprocess.run(["lsof", "-nP", "-a", "-p", str(pid), "-i"], capture_output=True, text=True).stdout
+    try:
+        out = subprocess.run(["lsof", "-nP", "-a", "-p", str(pid), "-i"], capture_output=True, text=True).stdout
+    except FileNotFoundError:
+        return ["lsof not installed: outbound connections not checked"]
     bad = []
     for line in out.splitlines()[1:]:
         m = re.search(r"->(\[[^\]]+\]|[^:\s]+):", line)
@@ -152,7 +178,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--guard-log", default="")
     ap.add_argument("--label", default="")
     ap.add_argument("--json", default="")
+    ap.add_argument("--fail-p99", action="append", default=[], metavar="NAME=SECONDS",
+                    help=f"fail when probe NAME's p99 exceeds SECONDS or it had a non-200 answer ({', '.join(n for n, _ in PROBES)})")
+    ap.add_argument("--fail-idle-cpu", type=float, default=None, metavar="PCT", help="fail when CPU at rest exceeds PCT %% of a core")
     a = ap.parse_args(argv)
+    bounds: Dict[str, float] = {}
+    for item in a.fail_p99:
+        name, _, value = str(item).partition("=")
+        if name not in dict(PROBES) or not value:
+            ap.error(f"--fail-p99 {item!r}: expected NAME=SECONDS with NAME in {', '.join(n for n, _ in PROBES)}")
+        bounds[name] = float(value)
 
     t_start = time.time()
     meta = {"label": a.label, "pid": a.pid, "base": a.base, "session": a.session, "rounds": a.rounds,
@@ -225,11 +260,25 @@ def main(argv: Optional[List[str]] = None) -> int:
           f"total {g['total_s']} s; whole run longest {fmt_s(result['gc_whole_run']['max_s'])}")
     print(f"network: outbound connections seen {len(result['network']['outbound_connections_seen'])}, "
           f"guard refusals {guard_refusals}")
+    failures: List[str] = []
+    for name, bound in bounds.items():
+        r = probes_out[name]
+        if r["ok"] != r["n"]:
+            failures.append(f"{name}: {r['n'] - r['ok']} of {r['n']} answers were not 200 (codes {r['codes']})")
+        if r["p99_s"] is None or r["p99_s"] > bound:
+            failures.append(f"{name}: p99 {fmt_s(r['p99_s'])} > {fmt_s(bound)}")
+    if a.fail_idle_cpu is not None and (idle_cpu is None or idle_cpu > a.fail_idle_cpu):
+        failures.append(f"CPU at rest {idle_cpu}% > {a.fail_idle_cpu}% of a core")
+    if bounds or a.fail_idle_cpu is not None:
+        result["gates"] = {"p99_s": bounds, "idle_cpu_pct": a.fail_idle_cpu, "failures": failures, "ok": not failures}
+        print("gates: " + ("PASS" if not failures else "FAIL"))
+        for line in failures:
+            print(f"  FAIL {line}")
     if a.json:
         with open(a.json, "w", encoding="utf-8") as fh:
             json.dump(result, fh, indent=2)
         print(f"json: {a.json}")
-    return 0
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

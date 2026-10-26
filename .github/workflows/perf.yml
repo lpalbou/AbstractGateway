@@ -1,0 +1,65 @@
+name: Perf
+
+# The gateway load test (backlog 1054): scripts/perf/ci.sh on a synthetic fixture (10k runs,
+# 100k artifacts, 50 automations), a hermetic gateway, p99 gates per probe and CPU at rest.
+# Runs on pull requests that touch the server code and every night; `scripts/perf/ci.sh` runs
+# it the same way on a laptop.
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "scripts/perf/**"
+      - "pyproject.toml"
+      - ".github/workflows/perf.yml"
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      cpu_max:
+        description: "CPU-at-rest gate, % of a core (shared runners are noisy: 10; a quiet machine: 5)"
+        required: false
+        default: "10"
+      runtime_ref:
+        description: "AbstractRuntime git ref to test against (the run index and listing work land there first)"
+        required: false
+        default: "main"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  perf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CPU_MAX: ${{ github.event.inputs.cpu_max || '10' }}
+      RUNTIME_REF: ${{ github.event.inputs.runtime_ref || 'main' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install -U pip
+          python -m pip install --no-cache-dir -e .
+          python -m pip install --no-cache-dir "abstractruntime @ git+https://github.com/lpalbou/AbstractRuntime.git@${RUNTIME_REF}"
+          command -v lsof >/dev/null || (sudo apt-get update && sudo apt-get install -y lsof)
+      - name: Load test
+        run: scripts/perf/ci.sh --python "$(command -v python)" --runtime-src installed --cpu-max "$CPU_MAX" --work "$RUNNER_TEMP/perf"
+      - name: Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-results
+          path: |
+            ${{ runner.temp }}/perf/bench-*.json
+            ${{ runner.temp }}/perf/bench-logs/
+            ${{ runner.temp }}/perf/fixture/fixture.json
+          if-no-files-found: warn
+          retention-days: 14
