@@ -6,7 +6,8 @@
      trigger: {automation_id, automation_title, source, text, connection, fired_at,
                arrived: {count, noun, line}} | null,
      run: {started, ended, status, response_excerpt, note},
-     attention: {record_key, kind, title, raised_at, from} | null,
+     tree: [run ids looked at: the run and its sub-runs],
+     attention: {record_key, kind, title, raised_at, from, run_id?, prompt_ref?, open?} | null,
      alerts: [ the same shape, every alert the run raised ],
      deliveries: [{record_key, channel, via, device?, device_name?, time, state, reason?}],
      quiet_reason?: "empty title" | "no notify" | "still running" | "not recorded yet"}
@@ -15,8 +16,11 @@ Built from records only, never a stream scan:
 
 - the automation's own decision of the occurrence (`automation.completed`, read by its exact
   ledger key `automation:completed:<automation_id>:<index>` = the attention item's record key);
-- the alerts the run published itself (Notify me, Publish to channel with Alert on), found by
-  their deterministic ids `attention.raised:publish:<run_id>:<step_id>` in the stream index;
+- the alerts the run and its sub-runs (parent_run_id links) published (Notify me, Publish to
+  channel with Alert on), found by their deterministic ids
+  `attention.raised:publish:<run_id>:<step_id>` in the stream index;
+- the waits that parked the run or a sub-run on the person (an approval, a question),
+  `attention.raised:<run_id>:<wait_key>:<step_id>`, `open` until their `attention.seen`;
 - each delivery's `notification.sent|failed` event, by its deterministic id
   (`notification.<outcome>:<channel>:attention:<record_key>`, email: the outbox key).
 
@@ -32,6 +36,8 @@ TERMINAL = frozenset({"completed", "failed", "cancelled"})
 RESPONSE_EXCERPT_MAX = 280
 NOTE_MAX = 500
 LINE_MAX = 160
+# Sub-runs looked at under one run (an agent spawns a few; a runaway tree is cut here).
+TREE_MAX = 200
 
 
 def _status(run: Any) -> str:
@@ -145,6 +151,49 @@ def _alert_from_published(event: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _alert_from_wait(event: Mapping[str, Any], index: Mapping[str, int]) -> Dict[str, Any]:
+    """A run parked on the person (an approval, a question: `record_wait_raised`); `open` until its
+    `attention.seen` (the wait was answered, cancelled or timed out) is in the stream."""
+    data = event.get("data") if isinstance(event.get("data"), Mapping) else {}
+    rid, wait_key, step_id = data.get("run_id"), data.get("wait_key"), data.get("step_id")
+    return {
+        "record_key": str(data.get("record_key") or ""),
+        "kind": data.get("kind"),
+        "title": None,
+        "raised_at": event.get("time"),
+        "from": "wait",
+        "run_id": rid,
+        "step_id": step_id,
+        "prompt_ref": data.get("prompt_ref"),
+        "open": f"attention.seen:{rid}:{wait_key}:{step_id}" not in index,
+    }
+
+
+def run_tree(run: Any, run_store: Any, *, limit: int = TREE_MAX) -> List[Any]:
+    """The run and its sub-runs (parent_run_id links, the store's children index), breadth first,
+    at most `limit` runs."""
+    out = [run]
+    queue = [str(getattr(run, "run_id", "") or "")]
+    seen = set(queue)
+    lister = getattr(run_store, "list_children", None)
+    while queue and lister is not None and len(out) < limit:
+        parent = queue.pop(0)
+        try:
+            children = lister(parent_run_id=parent) or []
+        except Exception:  # noqa: BLE001 - a store without the index answers for the run alone
+            children = []
+        for child in children:
+            cid = str(getattr(child, "run_id", "") or "")
+            if not cid or cid in seen:
+                continue
+            seen.add(cid)
+            out.append(child)
+            queue.append(cid)
+            if len(out) >= limit:
+                break
+    return out
+
+
 def _delivery(event: Mapping[str, Any], device_name: Optional[Callable[[str], Optional[str]]]) -> Dict[str, Any]:
     from .events_stream import delivery_route
 
@@ -219,27 +268,65 @@ def build_after(
         "note": _clip(end.get("note"), NOTE_MAX),
     }
 
+    from .mail.notifications import idempotency_key as mail_key
+
     index_ids = stream.index_event_ids()
     alerts: List[Dict[str, Any]] = []
     wanted: List[str] = []
+    # Email events carry the outbox key, not the record key: outbox key -> its alert's record key.
+    email_owner: Dict[str, str] = {}
     completion = occurrence_completion(ledger_store, aid, index) if aid else None
     if completion and completion.get("attention"):
         key = completion["record_key"]
         raised = stream.events_by_ids([f"attention.raised:{key}"], index=index_ids)
         alerts.append(_alert_from_completion(completion, raised[0] if raised else None))
-        wanted += notice_event_ids(key, email_keys=email_notice_keys(aid, completion["attention"]))
-    for event in stream.events_by_ids(published_alert_ids(index_ids, rid), index=index_ids):
-        alert = _alert_from_published(event)
-        if alert["record_key"]:
-            alerts.append(alert)
-            wanted += notice_event_ids(alert["record_key"])
+        mails = email_notice_keys(aid, completion["attention"])
+        email_owner.update({m: key for m in mails})
+        wanted += notice_event_ids(key, email_keys=mails)
+    # The run and its sub-runs (an agent's run, a subflow): the alerts they published (Notify me)
+    # and the waits that parked them on the person (approvals, questions), each by its id prefix
+    # in the stream index (`attention.raised:publish:<run>:`, `attention.raised:<run>:`).
+    tree = run_tree(run, run_store) if run_store is not None else [run]
+    waits: List[Dict[str, Any]] = []
+    for node in tree:
+        nid = str(getattr(node, "run_id", "") or "")
+        for event in stream.events_by_ids(published_alert_ids(index_ids, nid), index=index_ids):
+            alert = _alert_from_published(event)
+            if alert["record_key"]:
+                alert["run_id"] = nid
+                alerts.append(alert)
+                wanted += notice_event_ids(alert["record_key"])
+        prefix = f"attention.raised:{nid}:"
+        wait_ids = sorted((k for k in index_ids if k.startswith(prefix)), key=lambda k: int(index_ids[k]))
+        for event in stream.events_by_ids(wait_ids, index=index_ids):
+            alert = _alert_from_wait(event, index_ids)
+            if alert["record_key"]:
+                waits.append(alert)
+                data = event.get("data") if isinstance(event.get("data"), Mapping) else {}
+                mail = mail_key("approval_needed", nid, data.get("wait_key"))
+                email_owner[mail] = alert["record_key"]
+                wanted += notice_event_ids(alert["record_key"], email_keys=[mail])
+    # An open wait is what the person must act on now: it leads.
+    alerts = [a for a in waits if a["open"]] + alerts + [a for a in waits if not a["open"]]
 
-    deliveries = [_delivery(e, device_name) for e in stream.events_by_ids(wanted, index=index_ids)]
-    # Email events carry the outbox key, not the record key: give them their alert's.
-    if completion and completion.get("attention"):
-        for d in deliveries:
-            if d["channel"] == "email" and not d["record_key"]:
-                d["record_key"] = completion["record_key"]
+    # "Email me when done" on the run itself (job_finished / job_failed): an effect after the
+    # run too, shown as its own alert when its mail was recorded.
+    for kind in ("job_finished", "job_failed"):
+        mail = mail_key(kind, rid)
+        if f"notification.sent:email:{mail}" in index_ids or f"notification.failed:email:{mail}" in index_ids:
+            owner = f"email:{kind}:{rid}"
+            email_owner[mail] = owner
+            alerts.append({"record_key": owner, "kind": "finished" if kind == "job_finished" else "failure", "title": None,
+                           "raised_at": None, "from": "email_when_done"})
+            wanted += [f"notification.sent:email:{mail}", f"notification.failed:email:{mail}"]
+
+    deliveries = []
+    for event in stream.events_by_ids(wanted, index=index_ids):
+        d = _delivery(event, device_name)
+        data = event.get("data") if isinstance(event.get("data"), Mapping) else {}
+        if d["channel"] == "email" and not d["record_key"]:
+            d["record_key"] = email_owner.get(str(data.get("notice") or ""))
+        deliveries.append(d)
     deliveries.sort(key=lambda d: str(d.get("time") or ""))
 
     out: Dict[str, Any] = {
@@ -249,6 +336,7 @@ def build_after(
         "attention": alerts[0] if alerts else None,
         "alerts": alerts,
         "deliveries": deliveries,
+        "tree": [str(getattr(n, "run_id", "") or "") for n in tree],
     }
     if not alerts:
         if status not in TERMINAL:
@@ -263,4 +351,4 @@ def build_after(
     return out
 
 
-__all__ = ["arrived_summary", "build_after", "end_payload"]
+__all__ = ["arrived_summary", "build_after", "end_payload", "run_tree"]

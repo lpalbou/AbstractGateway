@@ -33,6 +33,11 @@ class _Runs:
         return self.runs.get(run_id)
 
 
+class _Tree(_Runs):
+    def list_children(self, *, parent_run_id: str, status: Any = None) -> List[Any]:
+        return [r for r in self.runs.values() if getattr(r, "parent_run_id", None) == parent_run_id]
+
+
 class _Ledger:
     def __init__(self, records: Dict[str, List[Dict[str, Any]]]) -> None:
         self.records = records
@@ -184,3 +189,44 @@ def test_route_is_principal_scoped(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         assert client.get(f"/api/gateway/runs/{rid}/after").status_code == 401
         # The /me/events routes kept their paths.
         assert client.get("/api/gateway/me/events", headers=alice).status_code == 200
+
+
+def test_an_approval_on_a_sub_run_is_the_parent_runs_attention(tmp_path: Path) -> None:
+    """The live shape of 2026-10-26 (run 7abde419…): a person's basic-agent run waits on its agent
+    sub-run; the sub-run asks for a tool approval; the tray reports it, the phone and the watch get
+    a push, the email outbox mails it. The PARENT's after-the-run answers that open approval and
+    its four deliveries, never "still running"."""
+    from abstractgateway.events_stream import record_wait_raised, record_wait_seen
+    from abstractgateway.mail.notifications import idempotency_key
+
+    stream = stream_for(tmp_path, "default", "admin")
+    parent = SimpleNamespace(run_id="7abde419", status="waiting", parent_run_id=None, created_at="2026-10-26T01:22:26+00:00",
+                             updated_at="2026-10-26T01:22:26+00:00", vars={"_meta": {"origin": {"kind": "person"}}}, output=None)
+    child = SimpleNamespace(run_id="4a02d8d6", status="waiting", parent_run_id="7abde419", created_at="x", updated_at="y", vars={}, output=None)
+    wait_key = "tool_approval:4a02d8d6:act:f046d418"
+    item = {"run_id": "4a02d8d6", "wait_key": wait_key, "step_id": "3ce288ff", "kind": "approval", "wait_kind": "tool_approval",
+            "record_key": "f046d418dda6cdaa8a9fe0d06cf1684c", "result_key": None}
+    record_wait_raised(stream, item, session_id="7abde419")
+    rk = item["record_key"]
+    record_notification(stream, "sent", channel="tray", notice=f"attention:{rk}", data={"record_key": rk, "device": "mac"})
+    record_notification(stream, "sent", channel="phone", notice=f"attention:{rk}", data={"record_key": rk, "device": "ph"})
+    record_notification(stream, "sent", channel="watch", notice=f"attention:{rk}", data={"record_key": rk, "device": "wa", "via": "push"})
+    mail = idempotency_key("approval_needed", "4a02d8d6", wait_key)
+    record_notification(stream, "sent", channel="email", notice=mail, data={"kind": "approval_needed", "subject_ref": None})
+
+    out = build_after(parent, run_store=_Tree(parent, child), ledger_store=None, stream=stream)
+    assert out["tree"] == ["7abde419", "4a02d8d6"]
+    att = out["attention"]
+    assert att["kind"] == "approval" and att["open"] is True and att["from"] == "wait"
+    assert att["run_id"] == "4a02d8d6" and att["prompt_ref"] == "/api/gateway/runs/4a02d8d6" and att["raised_at"]
+    assert "quiet_reason" not in out
+    assert {(d["channel"], d["via"], d["record_key"]) for d in out["deliveries"]} == {
+        ("tray", "stream", rk), ("phone", "stream", rk), ("watch", "push", rk), ("email", "outbox", rk),
+    }
+    # Answered: the approval is no longer open, still listed with its deliveries.
+    record_wait_seen(stream, item, outcome="approved")
+    again = build_after(parent, run_store=_Tree(parent, child), ledger_store=None, stream=stream)
+    assert again["attention"]["open"] is False and len(again["deliveries"]) == 4
+    # The run alone (no children index): the approval is not seen, the run is "still running".
+    alone = build_after(parent, run_store=_Runs(parent), ledger_store=None, stream=stream)
+    assert alone["attention"] is None and alone["quiet_reason"] == "still running"
