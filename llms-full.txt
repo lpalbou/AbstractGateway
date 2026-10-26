@@ -12196,6 +12196,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The runner stops stat-ing every run file twice a second.** Its scan gate asked "did anything change?" by globbing
+  and stat-ing all 11,500 run files every 0.5 s (0.18 s each on the operator's folder, 13-36% of a core while idle,
+  every stat a GIL hand-off). It now compares the run store's own change token (AbstractRuntime
+  `JsonFileRunStore.change_token`: one stat, no file read, about 1 µs). An older AbstractRuntime without it keeps the
+  old fingerprint, with a warning at start.
 - **Opening a conversation's attachments no longer stalls the gateway.** `GET /api/gateway/sessions/{id}/artifacts`
   read all 106k artifacts of the operator's catalog on the event loop (2-3 s each call, more under load): both
   watchdog restarts of 2026-10-26, and the watch's "Connecting...". It now asks the artifact store for that

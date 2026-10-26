@@ -275,6 +275,25 @@ def _file_store_base(run_store: Any) -> Optional[Path]:
     return None
 
 
+def _store_change_token(run_store: Any) -> Optional[Any]:
+    """The run store's own change signal, `JsonFileRunStore.change_token` (walking wrappers like
+    `_file_store_base`): a callable answering `(creation-log size, active-index counter)` with
+    one stat, or None when the chain bottoms out elsewhere (indexed stores scan unconditionally)
+    or the runtime predates it (the caller falls back to the directory fingerprint)."""
+    obj = run_store
+    for _ in range(5):
+        if obj is None:
+            return None
+        if type(obj).__name__ == "JsonFileRunStore":
+            fn = getattr(obj, "change_token", None)
+            return fn if callable(fn) else None
+        nxt = getattr(obj, "inner", None)
+        if nxt is None:
+            nxt = getattr(obj, "_inner", None)
+        obj = nxt
+    return None
+
+
 _STEP_GATE_SUPPORT: Dict[type, bool] = {}
 
 
@@ -1619,14 +1638,26 @@ class GatewayRunner:
     # Scan gate (see file_store_fingerprint for the incident this exists for)
     # ---------------------------------------------------------------------
 
-    def _resolve_scan_base(self) -> Optional[Path]:
+    def _resolve_scan_base(self) -> Optional[Any]:
+        """What the gate compares: the store's change token (a callable), or, on a runtime
+        without one, the run directory for the old glob + stat fingerprint. None = no gate."""
         if self._scan_gate_base is _UNRESOLVED:
             try:
-                self._scan_gate_base = _file_store_base(self.run_store)
+                base = _file_store_base(self.run_store)
+                if base is not None:
+                    token_fn = _store_change_token(self.run_store)
+                    if token_fn is not None:
+                        base = token_fn
+                    else:
+                        logger.warning(
+                            "GatewayRunner: the run store has no change_token (older AbstractRuntime); "
+                            "the scan gate stats every run file instead"
+                        )
+                self._scan_gate_base = base
             except Exception:
                 self._scan_gate_base = None
         base = self._scan_gate_base
-        return base if isinstance(base, Path) else None
+        return base if (isinstance(base, Path) or callable(base)) else None
 
     def _scan_pass_due(self) -> bool:
         """Whether this iteration should run the (expensive) scheduling scans.
@@ -1634,8 +1665,13 @@ class GatewayRunner:
         True unconditionally on non-file stores (indexed scans are cheap and
         a fileless fingerprint would be constant — skipping forever). On file
         stores: forced passes (first run, post-command), due wait deadlines,
-        and fingerprint changes scan; a QUIET store skips, probing at most
+        and change-token moves scan; a QUIET store skips, probing at most
         every `scan_gate_idle_interval_s`.
+
+        The probe is the STORE's change token (2026-10-26): one stat of the creation log
+        plus the active-index counter every save/create/delete moves. It replaced a glob +
+        stat of every run file (0.18 s at 11,500 runs, every 0.5 s: 13-36% of a core on
+        the operator's idle gateway, each stat a GIL hand-off).
         """
         base = self._resolve_scan_base()
         if base is None:
@@ -1650,7 +1686,7 @@ class GatewayRunner:
         if (now - self._scan_last_probe) < max(0.05, float(self._cfg.scan_gate_idle_interval_s)):
             return False
         self._scan_last_probe = now
-        fp = file_store_fingerprint(base)
+        fp = base() if callable(base) else file_store_fingerprint(base)
         if fp != self._scan_fingerprint:
             # Captured BEFORE the pass runs: any write landing during the
             # pass yields a different fingerprint at the next probe, so a
