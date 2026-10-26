@@ -5,16 +5,21 @@ never its inputs) and that entrypoint's name (`flow_name`), so the Triggers page
 "<automation> · <flow>" per connection from ONE list read. A pick in Use in a flow is the
 automations create route with the body the console builds (the flow's published defaults, this
 trigger): the automation exists afterwards with this trigger and that target; a refused trigger
-comes back as the route's 4xx envelope the console words."""
+comes back as the route's 4xx envelope the console words. The name on Handled by's face opens the
+flow in Flow (`/apps/flow/?flow=<id>`): the id is the library flow a published bundle keeps in
+`metadata.source.root_flow_id`, read here off the real GET /bundles answer by the console's own
+`trgLibraryIds` (operator 2026-10-26)."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
-from automations_fixtures import ECHO_FLOW_ID, HEADERS, gateway_env, wait_until, write_echo_bundle
+from automations_fixtures import ECHO_BUNDLE_ID, ECHO_FLOW_ID, HEADERS, gateway_env, wait_until, write_echo_bundle
+from test_gateway_console_offline import _console_script, _node, _slice_function
 
 pytestmark = pytest.mark.basic
 
@@ -105,3 +110,50 @@ def test_flow_name_reads_the_entrypoint_name_of_the_version_it_runs() -> None:
     assert _flow_name(svc, {"bundle_ref": "digest@9.9.9", "flow_id": "main"}) is None
     assert _flow_name(svc, None) is None
     assert _target_projection({"workflow_id": "w", "bundle_ref": "b@1", "flow_id": "f", "input_data": {"secret": 1}}) == {"workflow_id": "w", "bundle_ref": "b@1", "flow_id": "f"}
+
+
+def _library_flow(name: str) -> dict:
+    """A triggered library flow (its automation defaults carry a trigger): start → end."""
+    return {
+        "name": name,
+        "nodes": [
+            {"id": "start", "type": "on_flow_start", "position": {"x": 0, "y": 0},
+             "data": {"nodeType": "on_flow_start", "label": "Start", "inputs": [], "outputs": [{"id": "exec-out", "label": "", "type": "execution"}]}},
+            {"id": "end", "type": "on_flow_end", "position": {"x": 200, "y": 0},
+             "data": {"nodeType": "on_flow_end", "label": "End", "inputs": [{"id": "exec-in", "label": "", "type": "execution"}], "outputs": []}},
+        ],
+        "edges": [{"id": "e1", "source": "start", "sourceHandle": "exec-out", "target": "end", "targetHandle": "exec-in"}],
+        "entryNode": "start",
+        "automation_defaults": {"schema_version": 1, "title": name, "trigger": {"source_id": "manual", "source_version": 1, "config": {}}},
+    }
+
+
+def test_the_face_links_a_published_flow_to_its_library_flow_and_nothing_else(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    gateway_env(monkeypatch, tmp_path)
+    write_echo_bundle(tmp_path / "bundles", automation_defaults=DEFAULTS)  # on disk, not published from Flow
+    from abstractgateway.app import app
+
+    with TestClient(app) as c:
+        created = c.post("/api/gateway/visualflows", headers=HEADERS, json=_library_flow("Judge what arrived"))
+        assert created.status_code == 200, created.text
+        flow_id = created.json()["id"]
+        pub = c.post(f"/api/gateway/visualflows/{flow_id}/publish", headers=HEADERS,
+                     json={"bundle_id": "judge", "bundle_version": "0.0.1", "overwrite": True, "reload_gateway": True})
+        assert pub.status_code == 200, pub.text
+        items = c.get("/api/gateway/bundles", headers=HEADERS).json()["items"]
+        judge = next(i for i in items if i["bundle_id"] == "judge")
+        # What the console reads: published from Flow, the library flow's id, a triggerable entrypoint.
+        assert judge["source"] == "published" and judge["metadata"]["source"]["root_flow_id"] == flow_id
+        assert [ep["triggerable"] for ep in judge["entrypoints"]] == [True]
+        echo = next(i for i in items if i["bundle_id"] == ECHO_BUNDLE_ID)
+        assert echo["source"] != "published"
+        # The console's own mapping, run on this answer: only the published bundle has a library flow.
+        source = _console_script()
+        out = _node(_slice_function(source, "trgLibraryIds") + _slice_function(source, "trgLibraryPath")
+                    + f"\nconst ids = trgLibraryIds({json.dumps(items)});\nconsole.log(JSON.stringify([ids, trgLibraryPath(ids.judge)]));\n")
+        assert out == [{"judge": flow_id}, f"/?flow={flow_id}"]
+        # The id Flow opens (GET /visualflows/{id}, its library's load path) is that flow.
+        got = c.get(f"/api/gateway/visualflows/{flow_id}", headers=HEADERS)
+        assert got.status_code == 200 and got.json()["name"] == "Judge what arrived"
+        # And the app door takes the link form (POST /apps/flow/open {path: "/?flow=<id>"}).
+        assert "trgOpenApp(\"flow\", \"Flow\", trgLibraryPath(t.dataset.trgOpenflow), trgRowKey(t))" in source

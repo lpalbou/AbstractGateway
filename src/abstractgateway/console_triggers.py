@@ -6,7 +6,7 @@ here and reused by every automation and flow of its owner (Flow's automation dia
 
 Page (`/console#triggers`; `#triggers?new=<source_id>` opens the create dialog on that source):
 - a table on one grid (operator 2026-10-25), each cell's first line on the same line:
-  **Connection** (name; quiet tags "Sends as you", "Read and write"/"Read only" on a mailbox; the
+  **Connection** (name; quiet tags "Main mailbox", "Read and write"/"Read only" on a mailbox; the
   trigger as a sentence under it) · **Handled by** (your rows) · **Status** (the Listening switch,
   the state sentence under it, the quiet "When nothing uses it" disclosure) · **Last event** (a
   Test result under it) · actions as icon buttons whose words are their tooltip and accessible
@@ -23,19 +23,23 @@ Page (`/console#triggers`; `#triggers?new=<source_id>` opens the create dialog o
   then shows the address and the secret with copy buttons and the sentence that it is shown once;
 - admins get an **All accounts** switch: every account's connections, an Account column in place
   of Handled by;
-- **Handled by** (feeds, webhooks, mailboxes of your own) is one control: a chip per automation
-  (active or paused) on that trigger, its flow's name (the summary's `flow_name`), the automation's
-  title in the tooltip, a paused one muted with "paused"; a chip opens Observer's Automations page;
-  none = "Nothing yet". The "+" chip opens the menu: "New flow for this trigger…" opens Flow at
-  `/?trigger=<connection id>` (`/?trigger=mail:<mailbox id>` for a mailbox) through the app door
-  (POST /apps/flow/open), then your published triggered flows (GET /bundles entrypoints with
-  `triggerable`), a checkmark on those already handling it. An unchecked pick creates the
-  automation (POST /automations, named after the flow, the flow's automation_defaults inputs and
-  context, THIS trigger), turned on; a checked pick lists that flow's automation(s) here with
-  **Pause** (**Resume** when paused) and **Remove** (asked inline first; `automation.archive`,
-  the history stays), through POST /automations/{id}/commands, and the list is read again until it
-  shows the change. Outcomes and refusals are said in words beside the control. Arrows, Home, End
-  move in the menu; Esc or a click elsewhere closes it.
+- **Handled by** (feeds, webhooks, mailboxes of your own) is one dropdown (operator 2026-10-26): a
+  select-looking face the column's width showing the flow that handles the trigger (its name,
+  "+1" when several, a muted "paused" when the only one is paused) or "Choose a flow…". The name
+  opens that flow in Flow through the app door (POST /apps/flow/open, then `/apps/flow/?flow=<id>`,
+  the library flow id a published bundle keeps in `metadata.source.root_flow_id`; a shipped or
+  imported workflow has none: the name is plain, tooltip "Not in the Flow library (ADR-0040)");
+  the × beside a lone flow stops it handling the trigger. The menu: "New flow for this trigger…"
+  (Flow at `/?trigger=<connection id>`, `/?trigger=mail:<mailbox id>` for a mailbox), then your
+  published triggered flows (GET /bundles entrypoints with `triggerable`), a checkmark on those
+  handling it (plus a handling flow no longer published). An unchecked pick creates the automation
+  (POST /automations, named after the flow, the flow's automation_defaults inputs and context, THIS
+  trigger), turned on. A checked entry (one per automation) carries Pause (Resume), Runs (Observer's
+  Automations page, "Its runs in Observer") and × ("Stop handling this trigger": "Remove <flow>
+  from this trigger? Its runs stay in Observer." with Remove / Keep, `automation.archive`), through
+  POST /automations/{id}/commands; the list is read again until it shows the change. Outcomes and
+  refusals are said in words under the face. Arrows, Home, End move in the menu (ArrowDown on the
+  face opens it); Enter picks; Esc or a click elsewhere closes it.
 
 Routes (W2, root backlog 1040/1041/1042): GET /trigger-sources (descriptors with
 `needs_connection` + `connection_schema`); GET/POST /triggers/connections (`?all=true` for an
@@ -148,37 +152,53 @@ TRIGGERS_CSS = r"""
 .trg-icon-btn:hover:not(:disabled), .trg-icon-btn:focus-visible { filter: none; border-color: var(--line-soft); background: var(--button-2); color: var(--text); }
 .trg-icon-btn[aria-expanded="true"] { border-color: color-mix(in srgb, var(--accent) 50%, transparent); background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--text); }
 .trg-icon-btn.is-danger:hover:not(:disabled), .trg-icon-btn.is-danger:focus-visible { color: var(--danger, var(--error, #d6336c)); }
-/* Handled by: one control. A chip per automation (its flow), "+" opens the menu. */
-.trg-hb { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
-.trg-hb__chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: var(--trg-line); max-width: 100%; }
-.trg-hb__chips > li { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; }
-.trg-hb__none { gap: 8px; color: var(--muted); font-size: var(--font-size-md); }
-.trg-hchip { display: inline-flex; align-items: center; gap: 6px; height: 26px; min-height: 26px; max-width: 100%; padding: 0 10px 0 9px; border: 1px solid var(--line); border-radius: 999px; background: color-mix(in srgb, var(--text) 5%, transparent); color: var(--text); font-size: var(--font-size-md); font-weight: 500; }
-.trg-hchip::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--success, #2f9e44); }
-.trg-hchip__text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.trg-hchip__state { color: var(--muted); font-size: var(--font-size-xs); font-weight: 500; }
-.trg-hchip.is-paused { border-style: dashed; background: transparent; color: var(--muted); }
-.trg-hchip.is-paused::before { background: transparent; box-shadow: inset 0 0 0 1.5px var(--muted); }
-.trg-hchip:hover:not(:disabled), .trg-hchip:focus-visible { filter: none; border-color: var(--accent); }
-.trg-hchip--add { width: 26px; padding: 0; justify-content: center; border-style: dashed; background: transparent; color: var(--muted); }
-.trg-hchip--add::before { display: none; }
-.trg-hchip--add .button-icon svg { width: 14px; height: 14px; }
-.trg-hchip--add[aria-expanded="true"] { border-style: solid; border-color: var(--accent); color: var(--text); }
-/* The menu: a popover anchored under the chips (however many lines they take), over the rows below. */
+/* Handled by (operator 2026-10-26): one dropdown, a select-looking face the column's width. The
+   toggle covers the whole box (a click anywhere opens the menu); the flow's name (a link to it in
+   Flow) and the × sit above it. */
+.trg-hb { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 4px; min-width: 0; }
+.trg-dd { position: relative; display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; box-sizing: border-box; min-height: var(--trg-line); margin: -1px 0; padding: 0 32px 0 10px; border: 1px solid var(--ui-border-1, var(--line)); border-radius: var(--radius-lg); background: var(--ui-surface-3, var(--panel)); color: var(--text-primary, var(--text)); transition: border-color .15s, box-shadow .15s; }
+.trg-dd:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--ui-border-1, var(--line))); }
+.trg-dd__toggle { position: absolute; inset: 0; z-index: 0; display: block; width: 100%; height: 100%; min-height: 0; margin: 0; padding: 0; border: 0; border-radius: inherit; background: transparent; color: var(--text-secondary, var(--muted)); cursor: pointer; }
+.trg-dd__toggle:hover:not(:disabled) { filter: none; background: transparent; }
+.trg-dd__toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.trg-dd__toggle[aria-expanded="true"] { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+.trg-dd__chev { position: absolute; top: 50%; right: 8px; display: inline-flex; width: 16px; height: 16px; margin-top: -8px; pointer-events: none; }
+.trg-dd__chev svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform .15s; }
+.trg-dd__toggle[aria-expanded="true"] .trg-dd__chev svg { transform: rotate(180deg); }
+.trg-dd__value { position: relative; z-index: 1; display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; pointer-events: none; font-size: var(--font-size-md); line-height: 1.3; }
+.trg-dd__text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trg-dd__text.is-placeholder { color: var(--text-secondary, var(--muted)); }
+.trg-dd__name { pointer-events: auto; display: inline-block; min-width: 0; max-width: 100%; height: auto; min-height: 0; margin: 0; padding: 1px 0; border: 0; border-radius: 0; background: transparent; color: var(--accent); font: inherit; font-weight: 600; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 3px; }
+.trg-dd__name:hover:not(:disabled), .trg-dd__name:focus-visible { filter: none; background: transparent; text-decoration-color: currentColor; }
+.trg-dd__name.is-off { color: var(--text-primary, var(--text)); text-decoration: none; cursor: default; }
+.trg-dd.is-paused .trg-dd__name { color: var(--text-secondary, var(--muted)); }
+.trg-dd__state, .trg-dd__more { flex: none; color: var(--text-secondary, var(--muted)); font-size: var(--font-size-sm); font-weight: 500; }
+.trg-dd__x, .trg-flowmenu__x { position: relative; z-index: 1; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 24px; min-width: 24px; height: 24px; min-height: 24px; margin: 0; padding: 0; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--text-secondary, var(--muted)); }
+.trg-dd__x svg, .trg-flowmenu__x svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.trg-dd__x:hover:not(:disabled), .trg-dd__x:focus-visible, .trg-flowmenu__x:hover:not(:disabled), .trg-flowmenu__x:focus-visible { filter: none; border-color: var(--line-soft); background: var(--button-2); color: var(--danger, var(--error, #d6336c)); }
+/* The menu: a popover under the face, over the rows below, at least the face's width. */
 .trg-hb__anchor { position: relative; width: 100%; height: 0; }
-.trg-flowmenu { position: absolute; top: 2px; left: 0; z-index: 30; display: flex; flex-direction: column; gap: 1px; width: 22rem; max-width: calc(100vw - 32px); max-height: min(28rem, 70vh); overflow-y: auto; padding: 6px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--bg-secondary, var(--panel)); box-shadow: var(--shadow, 0 10px 28px rgba(0, 0, 0, .22)); }
+.trg-flowmenu { position: absolute; top: 2px; left: 0; z-index: 30; display: flex; flex-direction: column; gap: 1px; width: 24rem; min-width: 100%; max-width: calc(100vw - 32px); box-sizing: border-box; max-height: min(30rem, 70vh); overflow-y: auto; padding: 6px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--bg-secondary, var(--panel)); box-shadow: var(--shadow, 0 10px 28px rgba(0, 0, 0, .22)); }
 .trg-flowmenu__item { display: flex; align-items: flex-start; justify-content: flex-start; gap: 10px; width: 100%; min-height: 36px; padding: 7px 10px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); font-weight: 400; text-align: left; white-space: normal; cursor: pointer; }
 .trg-flowmenu__item:hover:not(:disabled), .trg-flowmenu__item:focus-visible { filter: none; outline: none; background: color-mix(in srgb, var(--text) 8%, transparent); }
 .trg-flowmenu__item.is-new { color: var(--accent); font-weight: 600; }
 .trg-flowmenu__mark { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 20px; color: var(--accent); }
 .trg-flowmenu__mark svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.trg-flowmenu__text { display: flex; flex-direction: column; gap: 1px; min-width: 0; line-height: 20px; }
+.trg-flowmenu__text { display: flex; flex-direction: column; gap: 1px; min-width: 0; line-height: 20px; overflow-wrap: anywhere; }
 .trg-flowmenu__meta { color: var(--muted); font-size: var(--font-size-sm); line-height: 1.3; }
 .trg-flowmenu__head { margin: 8px 10px 4px; padding-top: 8px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: var(--font-size-xs); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
 .trg-flowmenu__note { margin: 4px 10px 6px; color: var(--muted); font-size: var(--font-size-md); }
 .trg-flowmenu__note.is-error { color: var(--error, #d6336c); }
-.trg-flowmenu__auto { display: flex; flex-direction: column; gap: 8px; margin: 2px 4px; padding: 10px; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); }
-.trg-flowmenu__title { font-weight: 600; }
+/* A checked entry: ✓ name (what it is) on the left, Pause (Resume) · Runs · × on the same row. */
+.trg-flowmenu__entry { display: flex; align-items: center; gap: 2px; border-radius: var(--radius-sm); }
+.trg-flowmenu__entry:hover, .trg-flowmenu__entry:focus-within { background: color-mix(in srgb, var(--text) 5%, transparent); }
+.trg-flowmenu__entry > .trg-flowmenu__item { flex: 1 1 auto; min-width: 0; background: transparent; }
+.trg-flowmenu__entry.is-paused .trg-flowmenu__name { color: var(--muted); }
+.trg-flowmenu__tools { flex: none; display: inline-flex; align-items: center; gap: 2px; padding-right: 4px; }
+.trg-flowmenu__tool { min-height: 26px; height: 26px; margin: 0; padding: 0 8px; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: transparent; color: var(--text); font-size: var(--font-size-sm); font-weight: 500; }
+.trg-flowmenu__tool.is-link { border-color: transparent; color: var(--accent); text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 3px; }
+.trg-flowmenu__tool:hover:not(:disabled), .trg-flowmenu__tool:focus-visible { filter: none; border-color: var(--line); background: var(--button-2); }
+.trg-flowmenu__confirm-box { display: flex; flex-direction: column; gap: 8px; margin: 0 4px 4px 36px; padding: 8px 10px; border-left: 2px solid var(--danger, var(--error, #d6336c)); background: color-mix(in srgb, var(--danger, var(--error, #d6336c)) 7%, transparent); border-radius: var(--radius-sm); }
 .trg-flowmenu__confirm { margin: 0; font-size: var(--font-size-md); line-height: 1.45; }
 .trg-flowmenu__acts { display: flex; flex-wrap: wrap; gap: 6px; }
 .trg-flowmenu__acts > button { min-height: 30px; padding: 4px 12px; }
@@ -194,10 +214,14 @@ TRIGGERS_CSS = r"""
   .trg-fire { flex-basis: 100%; }
   .trg-actions { justify-content: flex-start; gap: 8px; }
   .trg-icon-btn { width: 44px; min-width: 44px; height: 44px; min-height: 44px; margin: 0; border-color: var(--line-soft); }
-  .trg-hchip { height: 34px; min-height: 34px; }
-  .trg-hchip--add { width: 34px; }
+  .trg-dd { min-height: 44px; }
+  .trg-dd__name { padding: 8px 0; }
+  .trg-dd__x { width: 40px; min-width: 40px; height: 40px; min-height: 40px; margin-right: -4px; }
   .trg-flowmenu { width: 100%; max-width: 100%; }
   .trg-toolbar > button, .trg-flowmenu__item, .trg-flowmenu__acts > button { min-height: 44px; }
+  .trg-flowmenu__tool { height: 40px; min-height: 40px; padding: 0 10px; }
+  .trg-flowmenu__x { width: 40px; min-width: 40px; height: 40px; min-height: 40px; }
+  .trg-flowmenu__confirm-box { margin-left: 4px; }
   .trg-form { grid-template-columns: minmax(0, 1fr); }
 }
 """
@@ -207,7 +231,7 @@ TRIGGERS_JS = r"""
     const trg = {
       opened: false, all: false, rows: null, error: "", sources: null, sourcesError: "", mailboxes: null, mailboxesError: "", hookTest: null,
       expanded: {}, fire: {}, modal: null, release: null, pendingNew: "", feedCatalog: null,
-      automations: null, flows: null, flowsError: "", flowMenu: "", flowManage: null, useMsg: {},
+      automations: null, flows: null, flowsError: "", library: {}, flowMenu: "", flowConfirm: "", useMsg: {},
     };
     const TRG_EVENTS_LIMIT = 20;
     const TRG_STATUS = { active: ["Active", "is-ok"], paused: ["Paused", "is-muted"], error: ["Error", "is-err"], failed: ["Error", "is-err"], disabled: ["Off", "is-muted"] };
@@ -314,16 +338,19 @@ TRIGGERS_JS = r"""
       return trgUserNames(automations, trgMailboxMatch(m));
     }
 
-    // ---- Handled by (operator 2026-10-25): which flows treat a trigger's events, as ONE control.
-    // A chip per automation on the trigger (active or paused): its flow's name, the automation's
-    // title in the tooltip, a paused one muted; each opens Observer's Automations page. Then "+"
-    // opens the menu: "New flow for this trigger…", then every published triggered flow, a
-    // checkmark on those already handling it. An unchecked pick creates the automation; a checked
-    // pick offers Pause (Resume) / Remove for its automation(s). A row's key is its connection id,
-    // or `mail:<mailbox id>` for a mailbox: the same key is Flow's `?trigger=` value (Flow
-    // docs/web-editor.md, "Open Flow from a trigger").
+    // ---- Handled by (operator 2026-10-26): which flows treat a trigger's events, as ONE dropdown.
+    // Its face (a select-looking box, the column's width) shows the selected flow's name ("+1" when
+    // several, a muted "paused" when the only one is paused), or "Choose a flow…"; the name opens
+    // that flow in Flow (`/apps/flow/?flow=<library flow id>`), the × beside a lone flow stops it
+    // handling the trigger (asked first). The menu: "New flow for this trigger…", then the published
+    // triggered flows, a checkmark on those handling it; a checked one carries Pause (Resume), Runs
+    // (Observer) and × on its row. A row's key is its connection id, or `mail:<mailbox id>` for a
+    // mailbox: the same key is Flow's `?trigger=` value (Flow docs/web-editor.md).
     const TRG_NEW_FLOW = "New flow for this trigger…";
-    const TRG_NOTHING_YET = "Nothing yet";
+    const TRG_CHOOSE_FLOW = "Choose a flow…";
+    const TRG_NOT_IN_LIBRARY = "Not in the Flow library (ADR-0040)";
+    const TRG_STOP_HANDLING = "Stop handling this trigger";
+    const TRG_RUNS_TIP = "Its runs in Observer";
     // Observer's documented Automations page (`#automations`; Observer has no per-automation link).
     const TRG_OBSERVER_PATH = "/#automations";
     function trgMailKey(id) { return `mail:${id}`; }
@@ -331,16 +358,34 @@ TRIGGERS_JS = r"""
       const k = String(key);
       return k.startsWith("mail:") ? `/?trigger=mail:${encodeURIComponent(k.slice(5))}` : `/?trigger=${encodeURIComponent(k)}`;
     }
+    // A flow of the Flow library, opened in Flow (Flow docs/web-editor.md, "Open A Library Flow From A Link").
+    function trgLibraryPath(flowId) { return `/?flow=${encodeURIComponent(String(flowId))}`; }
+    // The library flow behind each workflow published from Flow: bundle id → the id of the flow it
+    // was published from (the manifest's `metadata.source.root_flow_id`, written by POST
+    // /visualflows/{id}/publish). Shipped and imported workflows have none (ADR-0040).
+    function trgLibraryIds(items) {
+      const out = {};
+      for (const b of items || []) {
+        const src = b && b.metadata && b.metadata.source && typeof b.metadata.source === "object" ? b.metadata.source : null;
+        const id = src && typeof src.root_flow_id === "string" ? src.root_flow_id.trim() : "";
+        if (b && b.source === "published" && id) out[String(b.bundle_id)] = id;
+      }
+      return out;
+    }
     // A flow across its versions: "<bundle id>:<flow id>" (an automation runs one pinned version).
     function trgFlowKey(bundle, flowId) { return `${bundle}:${flowId}`; }
     // Your automations (active and paused) on this trigger, in list order: who handles its events.
-    function trgHandlers(automations, match) {
+    // `library` (trgLibraryIds) gives each its Flow library id ("" when none).
+    function trgHandlers(automations, match, library) {
       if (!Array.isArray(automations)) return null;
-      return automations.filter((a) => a && (a.status === "active" || a.status === "paused") && a.trigger && match(a.trigger)).map((a) => ({
-        id: String(a.automation_id || ""), title: String(a.title || "an automation"), paused: a.status === "paused",
-        flow: String(a.flow_name || (a.target && a.target.flow_id) || ""),
-        bundle: String((a.target && a.target.bundle_ref) || "").split("@")[0], flowId: String((a.target && a.target.flow_id) || ""),
-      }));
+      return automations.filter((a) => a && (a.status === "active" || a.status === "paused") && a.trigger && match(a.trigger)).map((a) => {
+        const bundle = String((a.target && a.target.bundle_ref) || "").split("@")[0];
+        return {
+          id: String(a.automation_id || ""), title: String(a.title || "an automation"), paused: a.status === "paused",
+          flow: String(a.flow_name || (a.target && a.target.flow_id) || ""),
+          bundle, flowId: String((a.target && a.target.flow_id) || ""), library: String((library && library[bundle]) || ""),
+        };
+      });
     }
     // The page's own glyphs next to the console's registry (ICONS): 24x24 strokes, currentColor.
     function trgIcon(name) {
@@ -348,32 +393,45 @@ TRIGGERS_JS = r"""
         send: '<path d="M20.5 3.5 10.5 13.5"></path><path d="M20.5 3.5 14 20.5l-3.5-7-7-3.5z"></path>',
         plus: '<path d="M12 5v14M5 12h14"></path>',
         check: '<path d="m5 12.5 4.5 4.5L19 7.5"></path>',
-        back: '<path d="m14.5 6-6 6 6 6"></path>',
+        x: '<path d="M7 7l10 10M17 7 7 17"></path>',
+        chevron: '<path d="m7 10 5 5 5-5"></path>',
       };
       return own[name] ? svgIcon(own[name]) : (ICONS[name] || "");
     }
-    // The chip's words: the flow's name; when two automations run the same flow here, with the title.
+    // A handler's words: the flow's name; when two automations run the same flow here, with the title.
     function trgChipText(h, handlers) {
       const name = h.flow || h.title;
       const twins = (handlers || []).filter((x) => (x.flow || x.title) === name).length;
       return twins > 1 && h.title !== name ? `${name} · ${h.title}` : name;
     }
-    // The Handled by cell: chips, "+", the menu when open, the last outcome beside them. Automations
-    // not read (null): "+" alone, never a false "Nothing yet".
+    // The flow's name on the face: a link to it in Flow, or (no library flow) its name, said why.
+    function trgFlowNameMarkup(h, name, cls) {
+      if (h.library) {
+        return `<button type="button" class="${cls}" data-trg-openflow="${esc(h.library)}" data-af-tip="Open ${esc(name)} in Flow" aria-label="Open ${esc(name)} in Flow">${esc(name)}</button>`;
+      }
+      return `<span class="${cls} is-off" tabindex="0" role="note" data-af-tip="${TRG_NOT_IN_LIBRARY}" aria-label="${esc(`${name}: ${TRG_NOT_IN_LIBRARY}`)}">${esc(name)}</span>`;
+    }
+    // The face: the toggle covers the whole box (a click anywhere opens the menu); the name link and
+    // the × sit above it. Automations not read (null): said, never a false "Choose a flow…".
+    function trgFaceMarkup(key, label, handlers, open) {
+      const toggle = `<button type="button" class="trg-dd__toggle" data-trg-useflow="${esc(key)}" aria-haspopup="menu" aria-expanded="${open ? "true" : "false"}" aria-label="${esc(`Flows handling ${label}`)}">`
+        + `<span class="trg-dd__chev" aria-hidden="true">${trgIcon("chevron")}</span></button>`;
+      if (!handlers) return `<div class="trg-dd">${toggle}<span class="trg-dd__value"><span class="trg-dd__text is-placeholder">Automations not read</span></span></div>`;
+      if (!handlers.length) return `<div class="trg-dd">${toggle}<span class="trg-dd__value"><span class="trg-dd__text is-placeholder">${TRG_CHOOSE_FLOW}</span></span></div>`;
+      const h = handlers[0];
+      const name = trgChipText(h, handlers);
+      const more = handlers.length > 1 ? `<span class="trg-dd__more" aria-label="${esc(`and ${handlers.length - 1} more`)}">+${handlers.length - 1}</span>` : "";
+      const paused = handlers.length === 1 && h.paused ? `<span class="trg-dd__state">paused</span>` : "";
+      const x = handlers.length === 1
+        ? `<button type="button" class="trg-dd__x" data-trg-unhandle="${esc(h.id)}" aria-label="${esc(`Stop handling: remove ${name} from ${label}`)}" data-af-tip="${TRG_STOP_HANDLING}">${trgIcon("x")}</button>`
+        : "";
+      return `<div class="trg-dd has-value${handlers.length === 1 && h.paused ? " is-paused" : ""}">${toggle}<span class="trg-dd__value">${trgFlowNameMarkup(h, name, "trg-dd__name")}${paused}${more}</span>${x}</div>`;
+    }
+    // The Handled by cell: the face, the menu when open, the last outcome under it.
     function trgHandledMarkup(key, label, handlers, o) {
-      const k = esc(key);
       const open = o.flowMenu === key;
-      const chips = (handlers || []).map((h) => {
-        const text = trgChipText(h, handlers);
-        const tip = `${h.title}${h.paused ? " (paused)" : ""} · open in Observer`;
-        return `<li><button type="button" class="trg-hchip${h.paused ? " is-paused" : ""}" data-trg-observer="${esc(h.id)}" data-af-tip="${esc(tip)}" aria-label="${esc(`${text}${h.paused ? ", paused" : ""}: ${h.title}, open in Observer`)}">`
-          + `<span class="trg-hchip__text">${esc(text)}</span>${h.paused ? ` <span class="trg-hchip__state">paused</span>` : ""}</button></li>`;
-      }).join("");
-      const none = handlers && !handlers.length ? `<li class="trg-hb__none">${TRG_NOTHING_YET}<span aria-hidden="true">·</span></li>` : "";
-      const add = `<li><button type="button" class="trg-hchip trg-hchip--add" data-trg-useflow="${k}" aria-haspopup="menu" aria-expanded="${open ? "true" : "false"}" aria-label="Use ${esc(label)} in a flow" data-af-tip="Use in a flow">`
-        + `<span class="button-icon" aria-hidden="true">${trgIcon("plus")}</span></button></li>`;
-      return `<div class="trg-hb" data-trg-hb="${k}"><span class="trg-card-label">Handled by</span><ul class="trg-hb__chips" aria-label="Handled by">${chips}${none}${add}</ul>`
-        + (open ? `<div class="trg-hb__anchor">${trgFlowMenuMarkup(key, label, o.flows, o.flowsError, handlers, o.flowManage)}</div>` : "")
+      return `<div class="trg-hb" data-trg-hb="${esc(key)}"><span class="trg-card-label">Handled by</span>${trgFaceMarkup(key, label, handlers, open)}`
+        + (open ? `<div class="trg-hb__anchor">${trgFlowMenuMarkup(key, label, o.flows, o.flowsError, handlers, o.flowConfirm)}</div>` : "")
         + trgUseLine(o.useMsg && o.useMsg[key]) + `</div>`;
     }
     // Your published triggered flows (GET /bundles entrypoints with `triggerable`), by name.
@@ -398,10 +456,9 @@ TRIGGERS_JS = r"""
       }
       return items.sort((a, b) => a.name.localeCompare(b.name)).map((i) => Object.assign(i, { handlers: (handlers || []).filter((h) => trgFlowKey(h.bundle, h.flowId) === i.key) }));
     }
-    function trgFlowMenuMarkup(key, label, flows, flowsError, handlers, manage) {
+    function trgFlowMenuMarkup(key, label, flows, flowsError, handlers, confirm) {
       const k = esc(key);
-      let html = `<div class="trg-flowmenu" role="menu" aria-label="Use ${esc(label)} in a flow" data-trg-flowmenu="${k}">`;
-      if (manage && manage.key === key) return html + trgManageMarkup(key, label, handlers, manage) + `</div>`;
+      let html = `<div class="trg-flowmenu" role="menu" aria-label="${esc(`Flows handling ${label}`)}" data-trg-flowmenu="${k}">`;
       html += `<button type="button" role="menuitem" class="trg-flowmenu__item is-new" data-trg-newflow="${k}"><span class="trg-flowmenu__mark" aria-hidden="true">${trgIcon("plus")}</span><span class="trg-flowmenu__text">${TRG_NEW_FLOW}</span></button>`;
       const items = trgMenuFlows(flows, handlers);
       if (flowsError) html += `<p class="trg-flowmenu__note is-error" role="status">Could not read your flows: ${esc(flowsError)}</p>`;
@@ -409,43 +466,36 @@ TRIGGERS_JS = r"""
       else if (!items.length) html += `<p class="trg-flowmenu__note">No triggered flow yet: start with a new one.</p>`;
       if (items.length) html += `<p class="trg-flowmenu__head" role="presentation">Or let one of your triggered flows handle it</p>`;
       for (const it of items) {
-        const hs = it.handlers;
-        if (hs.length) {
-          const meta = hs.length === 1 ? `${hs[0].paused ? "Handles it, paused" : "Handles it"} · ${hs[0].title}` : `Handles it · ${hs.length} automations`;
-          html += `<button type="button" role="menuitemcheckbox" aria-checked="true" class="trg-flowmenu__item is-checked" data-trg-manage="${k}" data-trg-mflow="${esc(it.key)}">`
-            + `<span class="trg-flowmenu__mark" aria-hidden="true">${trgIcon("check")}</span><span class="trg-flowmenu__text"><span class="trg-flowmenu__name">${esc(it.name)}</span><span class="trg-flowmenu__meta">${esc(meta)}</span></span></button>`;
-        } else {
-          html += `<button type="button" role="menuitemcheckbox" aria-checked="false" class="trg-flowmenu__item" data-trg-pickflow="${k}" data-trg-flow="${esc(it.workflowId)}">`
-            + `<span class="trg-flowmenu__mark" aria-hidden="true"></span><span class="trg-flowmenu__text"><span class="trg-flowmenu__name">${esc(it.name)}</span></span></button>`;
-        }
+        if (it.handlers.length) { for (const h of it.handlers) html += trgCheckedEntryMarkup(it, h, label, confirm); continue; }
+        html += `<button type="button" role="menuitemcheckbox" aria-checked="false" class="trg-flowmenu__item" data-trg-pickflow="${k}" data-trg-flow="${esc(it.workflowId)}">`
+          + `<span class="trg-flowmenu__mark" aria-hidden="true"></span><span class="trg-flowmenu__text"><span class="trg-flowmenu__name">${esc(it.name)}</span></span></button>`;
       }
       return html + `</div>`;
     }
-    // A checked flow: its automation(s) on this trigger, each with Pause (Resume) and Remove; Remove
-    // asks first, here (never a browser dialog).
-    function trgManageMarkup(key, label, handlers, manage) {
-      const k = esc(key);
-      const mine = (handlers || []).filter((h) => trgFlowKey(h.bundle, h.flowId) === manage.flow);
-      let html = `<button type="button" role="menuitem" class="trg-flowmenu__item" data-trg-manage-back="${k}"><span class="trg-flowmenu__mark" aria-hidden="true">${trgIcon("back")}</span><span class="trg-flowmenu__text">All flows</span></button>`;
-      if (!mine.length) return html + `<p class="trg-flowmenu__note">That flow no longer handles ${esc(label)}.</p>`;
-      html += `<p class="trg-flowmenu__head" role="presentation">${esc(mine[0].flow || mine[0].title)} handles ${esc(label)}</p>`;
-      for (const h of mine) {
-        const id = esc(h.id);
-        html += `<div class="trg-flowmenu__auto" role="group" aria-label="${esc(h.title)}" data-trg-auto="${id}"><span class="trg-flowmenu__title">${esc(h.title)}${h.paused ? ` <span class="trg-hchip__state">paused</span>` : ""}</span>`;
-        if (manage.confirm === h.id) {
-          html += `<p class="trg-flowmenu__confirm" role="alert">${esc(trgRemoveQuestion(h.title, label))}</p>`
-            + `<div class="trg-flowmenu__acts"><button type="button" role="menuitem" class="danger" data-trg-remove-now="${id}">Remove</button><button type="button" role="menuitem" class="secondary" data-trg-remove-cancel="${id}">Cancel</button></div>`;
-        } else {
-          html += `<div class="trg-flowmenu__acts">`
-            + (h.paused ? `<button type="button" role="menuitem" class="secondary" data-trg-resume="${id}">Resume</button>` : `<button type="button" role="menuitem" class="secondary" data-trg-pause="${id}">Pause</button>`)
-            + `<button type="button" role="menuitem" class="secondary" data-trg-remove="${id}">Remove</button></div>`;
-        }
-        html += `</div>`;
+    // A flow handling the trigger (one entry per automation): ✓, its name, "Handles it" / "Paused"
+    // (with the automation's title when it is not the flow's name), then on the same row Pause
+    // (Resume), Runs (its runs in Observer) and × (stop handling, asked here first: Remove / Keep).
+    function trgCheckedEntryMarkup(it, h, label, confirm) {
+      const id = esc(h.id);
+      const meta = [h.paused ? "Paused" : "Handles it", h.title !== it.name ? h.title : ""].filter(Boolean).join(" · ");
+      let html = `<div class="trg-flowmenu__entry${h.paused ? " is-paused" : ""}" data-trg-entry="${id}">`
+        + `<button type="button" role="menuitemcheckbox" aria-checked="true" class="trg-flowmenu__item is-checked" data-trg-checked="${id}" data-trg-mflow="${esc(it.key)}">`
+        + `<span class="trg-flowmenu__mark" aria-hidden="true">${trgIcon("check")}</span><span class="trg-flowmenu__text"><span class="trg-flowmenu__name">${esc(it.name)}</span><span class="trg-flowmenu__meta">${esc(meta)}</span></span></button>`;
+      if (confirm === h.id) {
+        return html + `</div><div class="trg-flowmenu__confirm-box" role="group" aria-label="${esc(`Remove ${it.name}`)}"><p class="trg-flowmenu__confirm" role="alert">${esc(trgRemoveQuestion(it.name))}</p>`
+          + `<div class="trg-flowmenu__acts"><button type="button" role="menuitem" class="danger" data-trg-remove-now="${id}">Remove</button><button type="button" role="menuitem" class="secondary" data-trg-remove-cancel="${id}">Keep</button></div></div>`;
       }
-      return html;
+      const title = esc(h.title);
+      return html + `<span class="trg-flowmenu__tools">`
+        + (h.paused
+          ? `<button type="button" role="menuitem" class="trg-flowmenu__tool" data-trg-resume="${id}" aria-label="Resume ${title}" data-af-tip="Turn it on again">Resume</button>`
+          : `<button type="button" role="menuitem" class="trg-flowmenu__tool" data-trg-pause="${id}" aria-label="Pause ${title}" data-af-tip="Pause it">Pause</button>`)
+        + `<button type="button" role="menuitem" class="trg-flowmenu__tool is-link" data-trg-runs="${id}" aria-label="Runs of ${title} in Observer" data-af-tip="${TRG_RUNS_TIP}">Runs</button>`
+        + `<button type="button" role="menuitem" class="trg-flowmenu__x" data-trg-remove="${id}" aria-label="${esc(`Stop handling: remove ${it.name} from ${label}`)}" data-af-tip="${TRG_STOP_HANDLING}">${trgIcon("x")}</button>`
+        + `</span></div>`;
     }
-    function trgRemoveQuestion(title, label) {
-      return `Remove ${title}? It stops handling ${label}; its history stays in Observer.`;
+    function trgRemoveQuestion(name) {
+      return `Remove ${name} from this trigger? Its runs stay in Observer.`;
     }
     function trgUseLine(msg) {
       if (!msg) return "";
@@ -611,13 +661,13 @@ TRIGGERS_JS = r"""
         const id = esc(m.account_id);
         const w = m.watcher || {};
         const last = w.last_poll ? `Checked ${trgAgo(w.last_poll, o.now) || w.last_poll}` : "Never";
-        // Named like My email: the mailbox's name (its address); the primary "Sends as you" and
-        // the access ("Read and write", "Read only") as quiet tags beside it.
+        // Named like My email: the mailbox's name (its address); the person's own mailbox from My
+        // email "Main mailbox" and the access ("Read and write", "Read only") as quiet tags beside it.
         const name = m.name || m.address || m.account_id;
         return `<tr class="trg-row trg-row--mailbox" data-trg-mailbox="${id}">`
-          + `<td class="trg-conn"><div class="trg-conn__head"><span class="trg-name">${esc(name)}</span>${m.primary ? `<span class="trg-tag is-accent">Sends as you</span>` : ""}<span class="trg-tag">${esc(trgMailboxAccessWords(m))}</span></div>`
+          + `<td class="trg-conn"><div class="trg-conn__head"><span class="trg-name">${esc(name)}</span>${m.primary ? `<span class="trg-tag is-accent" data-af-tip="Your own mailbox, from My email">Main mailbox</span>` : ""}<span class="trg-tag">${esc(trgMailboxAccessWords(m))}</span></div>`
           + `<span class="trg-sub">When mail arrives in ${esc(m.address || m.account_id)}</span></td>`
-          + `<td class="trg-handled-cell">${trgHandledMarkup(trgMailKey(m.account_id), name, trgHandlers(o.automations, trgMailboxMatch(m)), o)}</td>`
+          + `<td class="trg-handled-cell">${trgHandledMarkup(trgMailKey(m.account_id), name, trgHandlers(o.automations, trgMailboxMatch(m), o.library), o)}</td>`
           + `<td class="trg-status">${trgMailboxStatusCell(m, o.automations)}</td>`
           + trgLastCell(last, "")
           + `<td class="trg-actions-cell"><div class="trg-actions">${trgIconButton(`data-trg-mailbox-manage="${id}"`, "mail", `Manage ${name} in My email`, "Manage in My email")}</div></td></tr>`;
@@ -664,7 +714,7 @@ TRIGGERS_JS = r"""
           + `<td class="trg-conn"><div class="trg-conn__head"><span class="trg-name">${label}</span></div><span class="trg-sub">${phrase}</span>${r.paused && trgErrorText(r) ? `<span class="trg-error" role="status">${esc(trgErrorText(r))}</span>` : ""}</td>`
           + (o.all
             ? `<td class="trg-account"><span class="trg-card-label">Account</span>${owner ? esc(owner) : `<span class="trg-sub">owner not reported</span>`}</td>`
-            : `<td class="trg-handled-cell">${trgHandledMarkup(r.connection_id, name, trgHandlers(o.automations, trgConnectionMatch(r)), o)}</td>`)
+            : `<td class="trg-handled-cell">${trgHandledMarkup(r.connection_id, name, trgHandlers(o.automations, trgConnectionMatch(r), o.library), o)}</td>`)
           + `<td class="trg-status">${trgStatusCell(r, o.automations)}</td>`
           + trgLastCell(last, trgFireLine(o.fire && o.fire[r.connection_id]))
           + `<td class="trg-actions-cell"><div class="trg-actions">${acts.join("")}</div></td></tr>`;
@@ -789,6 +839,7 @@ TRIGGERS_JS = r"""
         const out = await api("/api/gateway/bundles");
         if (!out || !Array.isArray(out.items)) throw new Error("the gateway's answer has no items list.");
         trg.flows = trgTriggeredFlows(out.items);
+        trg.library = trgLibraryIds(out.items);
         trg.flowsError = "";
       } catch (e) {
         trg.flows = null;
@@ -832,7 +883,7 @@ TRIGGERS_JS = r"""
       try { target = trgUseTarget(key); } catch (e) { trg.useMsg[key] = { ok: false, text: `${flow.name} was not turned on: ${trgErr(e)}` }; renderTriggers(); return; }
       if (!target) return;
       trg.flowMenu = "";
-      trg.flowManage = null;
+      trg.flowConfirm = "";
       trg.useMsg[key] = { pending: true, text: `Turning on ${flow.name}...` };
       renderTriggers();
       trgFocus(`[data-trg-useflow="${CSS.escape(key)}"]`);
@@ -849,6 +900,11 @@ TRIGGERS_JS = r"""
     function trgRequestId() {
       return `console-trigger-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     }
+    // The row key a control sits in (its Handled by cell's `data-trg-hb`).
+    function trgRowKey(el) {
+      const hb = el && el.closest ? el.closest("[data-trg-hb]") : null;
+      return hb ? hb.dataset.trgHb : "";
+    }
     function trgFocus(selector) {
       try { const el = document.querySelector(selector); if (el) el.focus(); } catch {}
     }
@@ -862,7 +918,7 @@ TRIGGERS_JS = r"""
     }
     function toggleFlowMenu(key) {
       trg.flowMenu = trg.flowMenu === key ? "" : key;
-      trg.flowManage = null;
+      trg.flowConfirm = "";
       renderTriggers();
       if (trg.flowMenu) trgFocus(`[data-trg-flowmenu="${CSS.escape(key)}"] [role^="menuitem"]`);
     }
@@ -870,17 +926,18 @@ TRIGGERS_JS = r"""
       const key = trg.flowMenu;
       if (!key) return;
       trg.flowMenu = "";
-      trg.flowManage = null;
+      trg.flowConfirm = "";
       renderTriggers();
       if (focusBack) trgFocus(`[data-trg-useflow="${CSS.escape(key)}"]`);
     }
-    // A checked flow in the menu: its automation(s) here with Pause (Resume) / Remove.
-    function manageFlowInMenu(key, flowKey, confirm) {
-      trg.flowManage = { key, flow: flowKey, confirm: confirm || "" };
+    // × (on a checked entry, or beside the lone flow on the face): the menu open on this trigger,
+    // asking "Remove <flow> from this trigger?" under that entry, Keep focused; "" = asked no more.
+    function askRemoveInMenu(key, automationId) {
+      trg.flowMenu = key;
+      trg.flowConfirm = automationId || "";
       renderTriggers();
       const menu = `[data-trg-flowmenu="${CSS.escape(key)}"]`;
-      if (confirm) trgFocus(`${menu} [data-trg-remove-cancel]`);
-      else trgFocus(`${menu} .trg-flowmenu__acts button`);
+      if (automationId) trgFocus(`${menu} [data-trg-remove-cancel="${CSS.escape(automationId)}"]`);
     }
     // Pause / Resume / Remove one automation that handles a trigger. The receipt says the command is
     // queued; the runner applies it a moment later, so the list is read again until it shows it.
@@ -892,7 +949,7 @@ TRIGGERS_JS = r"""
       try { const t = trgUseTarget(key); if (t) label = t.label; } catch {}
       const words = trgCommandWords(verb, String(a.title || "an automation"), label);
       trg.flowMenu = "";
-      trg.flowManage = null;
+      trg.flowConfirm = "";
       trg.useMsg[key] = { pending: true, text: words.pending };
       renderTriggers();
       trgFocus(`[data-trg-useflow="${CSS.escape(key)}"]`);
@@ -944,7 +1001,7 @@ TRIGGERS_JS = r"""
       if (!trg.rows || (!trg.all && trg.mailboxes === null)) { body.innerHTML = `<tr><td colspan="${cols}" class="trg-empty">${trgLoadingMarkup(trg.all ? "Reading the connections..." : "Reading your connections and mailboxes...")}</td></tr>`; return; }
       const keep = trgFocusSelector(body);
       body.innerHTML = triggersRowsMarkup(trg.rows, { all: trg.all, sources: trg.sources || [], expanded: trg.expanded, fire: trg.fire, mailboxes: trg.mailboxes || [], automations: trg.all ? null : trg.automations,
-        flows: trg.flows, flowsError: trg.flowsError, flowMenu: trg.flowMenu, flowManage: trg.flowManage, useMsg: trg.useMsg });
+        flows: trg.flows, flowsError: trg.flowsError, library: trg.library, flowMenu: trg.flowMenu, flowConfirm: trg.flowConfirm, useMsg: trg.useMsg });
       if (keep) trgFocus(keep);
       if (trg.sourcesError) trgMessage(`Could not read the trigger sources: ${trg.sourcesError}`, "error");
       else if (!trg.all && trg.mailboxesError) trgMessage(`Could not read your mailboxes: ${trg.mailboxesError}`, "error");
@@ -1601,25 +1658,26 @@ TRIGGERS_JS = r"""
         else if (t.dataset.trgUseflow) toggleFlowMenu(t.dataset.trgUseflow);
         else if (t.dataset.trgNewflow) { const k = t.dataset.trgNewflow; closeFlowMenu(true); trgOpenApp("flow", "Flow", trgFlowPath(k), k); }
         else if (t.dataset.trgPickflow) useFlowForTrigger(t.dataset.trgPickflow, t.dataset.trgFlow);
-        else if (t.dataset.trgManage) manageFlowInMenu(t.dataset.trgManage, t.dataset.trgMflow);
-        else if (t.dataset.trgManageBack) {
-          const k = t.dataset.trgManageBack, flow = trg.flowManage && trg.flowManage.flow;
-          trg.flowManage = null;
-          renderTriggers();
-          trgFocus(`[data-trg-flowmenu="${CSS.escape(k)}"] ${flow ? `[data-trg-mflow="${CSS.escape(flow)}"]` : '[role^="menuitem"]'}`);
+        else if (t.dataset.trgOpenflow) trgOpenApp("flow", "Flow", trgLibraryPath(t.dataset.trgOpenflow), trgRowKey(t));
+        else if (t.dataset.trgUnhandle) askRemoveInMenu(trgRowKey(t), t.dataset.trgUnhandle);
+        else if (t.dataset.trgChecked) {
+          // A checked entry picked again: its own Pause (Resume), Runs and × take the focus.
+          const entry = t.closest("[data-trg-entry]");
+          const tool = entry && entry.querySelector(".trg-flowmenu__tools button");
+          if (tool) tool.focus(); else trgFocus(`[data-trg-remove-cancel="${CSS.escape(t.dataset.trgChecked)}"]`);
         }
         else if (t.dataset.trgPause || t.dataset.trgResume || t.dataset.trgRemoveNow) {
           const menu = t.closest("[data-trg-flowmenu]");
           const verb = t.dataset.trgPause ? "pause" : t.dataset.trgResume ? "resume" : "remove";
           if (menu) automationCommandForTrigger(menu.dataset.trgFlowmenu, t.dataset.trgPause || t.dataset.trgResume || t.dataset.trgRemoveNow, verb);
         }
-        else if (t.dataset.trgRemove && trg.flowManage) manageFlowInMenu(trg.flowManage.key, trg.flowManage.flow, t.dataset.trgRemove);
-        else if (t.dataset.trgRemoveCancel && trg.flowManage) {
+        else if (t.dataset.trgRemove) askRemoveInMenu(trgRowKey(t), t.dataset.trgRemove);
+        else if (t.dataset.trgRemoveCancel) {
           const id = t.dataset.trgRemoveCancel;
-          manageFlowInMenu(trg.flowManage.key, trg.flowManage.flow, "");
+          askRemoveInMenu(trgRowKey(t), "");
           trgFocus(`[data-trg-remove="${CSS.escape(id)}"]`);
         }
-        else if (t.dataset.trgObserver) { const li = t.closest(".trg-row"); const k = li ? (li.dataset.trgRow || trgMailKey(li.dataset.trgMailbox)) : ""; trgOpenApp("observer", "Observer", TRG_OBSERVER_PATH, k); }
+        else if (t.dataset.trgRuns) { const k = trgRowKey(t); closeFlowMenu(false); trgOpenApp("observer", "Observer", TRG_OBSERVER_PATH, k); }
         else if (t.dataset.trgEmpty === "mailbox") { mbx.openAddOnLoad = true; openMyEmailFromTriggers(); }
         else if (t.dataset.trgEmpty) openTriggerModal(t.dataset.trgEmpty);
         else if (t.dataset.trgAlways) {
@@ -1638,6 +1696,9 @@ TRIGGERS_JS = r"""
       // The menu by keyboard: arrows, Home and End move between its items; Esc closes it and gives
       // the focus back to its "+".
       $("triggers-table").onkeydown = (e) => {
+        // ArrowDown on a closed face opens its menu.
+        const at0 = e.target && e.target.dataset ? e.target.dataset.trgUseflow : "";
+        if (at0 && e.key === "ArrowDown" && trg.flowMenu !== at0) { e.preventDefault(); toggleFlowMenu(at0); return; }
         if (!trg.flowMenu) return;
         if (e.key === "Escape") { e.preventDefault(); closeFlowMenu(true); return; }
         if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
@@ -1653,7 +1714,7 @@ TRIGGERS_JS = r"""
       if (typeof document.addEventListener === "function") {
         document.addEventListener("click", (e) => {
           if (!trg.flowMenu || !e.target || !document.contains(e.target)) return;
-          if (e.target.closest && e.target.closest("[data-trg-flowmenu], [data-trg-useflow]")) return;
+          if (e.target.closest && e.target.closest("[data-trg-flowmenu], .trg-dd")) return;
           closeFlowMenu(false);
         });
       }

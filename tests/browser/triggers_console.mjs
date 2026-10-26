@@ -525,10 +525,12 @@ try {
     }
     await ctx.close();
   }
-  // Handled by (operator 2026-10-25): one control per row — a chip per automation (its flow; the
-  // automation's title in the tooltip; a paused one muted), "+" opening the menu: New flow, then
-  // the triggered flows with a checkmark on those handling it; a checked one offers Pause (Resume) /
-  // Remove for its automation. At 1440 and 400 px, light and dark.
+  // Handled by (operator 2026-10-26): one dropdown per row. Its face (a select-looking box, the
+  // column's width) names the flow that handles the trigger ("+1" when several, "paused" when the
+  // only one is), its name a link opening that flow in Flow (`/?flow=<library id>`), a × beside a
+  // lone flow; or "Choose a flow…". The menu: New flow, then the triggered flows with a checkmark
+  // on those handling it, each checked entry with Pause (Resume), Runs (Observer) and × on its row,
+  // × asked first (Remove / Keep). At 1440 and 400 px, light and dark.
   for (const [w, h, theme] of [[1440, 900, "light"], [1440, 900, "dark"], [400, 860, "light"], [400, 860, "dark"]]) {
     const tag = `handled-${w}-${theme}`;
     const full = theme === "light";
@@ -541,10 +543,12 @@ try {
     store.opens = [];
     store.posts = [];
     store.commands = [];
+    // digest: published from Flow (its library flow vf-digest); triage: ships with the gateway (no library flow).
     const BUNDLES = { items: [
-      { bundle_id: "digest", bundle_version: "1.0.0", bundle_ref: "digest@1.0.0", automation_defaults: { digest: { schema_version: 1, trigger: { source_id: "feed.item", source_version: 1, config: {} , connection_id: "author" }, context: { mode: "independent" }, input_data: { prompt: "Summarize" } } },
+      { bundle_id: "digest", bundle_version: "1.0.0", bundle_ref: "digest@1.0.0", source: "published", metadata: { source: { root_flow_id: "vf-digest", root_flow_name: "Digest" } },
+        automation_defaults: { digest: { schema_version: 1, trigger: { source_id: "feed.item", source_version: 1, config: {} , connection_id: "author" }, context: { mode: "independent" }, input_data: { prompt: "Summarize" } } },
         entrypoints: [{ flow_id: "digest", name: "Digest", workflow_id: "digest@1.0.0:digest", triggerable: true }, { flow_id: "chat", name: "Chat helper", workflow_id: "digest@1.0.0:chat", triggerable: false }] },
-      { bundle_id: "triage", bundle_version: "1.0.0", bundle_ref: "triage@1.0.0", automation_defaults: { triage: { schema_version: 1, trigger: { source_id: "email.received", source_version: 1, config: { account: "author", from: ["boss@x.test"] } }, context: { mode: "growing" }, input_data: {} } },
+      { bundle_id: "triage", bundle_version: "1.0.0", bundle_ref: "triage@1.0.0", source: "shipped", metadata: {}, automation_defaults: { triage: { schema_version: 1, trigger: { source_id: "email.received", source_version: 1, config: { account: "author", from: ["boss@x.test"] } }, context: { mode: "growing" }, input_data: {} } },
         entrypoints: [{ flow_id: "triage", name: "Triage", workflow_id: "triage@1.0.0:triage", triggerable: true }] },
     ] };
     await ctx.route((u) => u.pathname === "/api/gateway/bundles", (route) => route.fulfill({ json: BUNDLES }));
@@ -579,21 +583,40 @@ try {
       return route.fulfill({ json: { ok: true, open_url: "/healthz" } });
     });
     ctx.on("page", (p) => { if (p !== page) p.close().catch(() => {}); });
+    const lastOpen = () => JSON.stringify(store.opens[store.opens.length - 1] || null);
+    const focused = (attr) => page.evaluate((a) => (document.activeElement && document.activeElement.dataset ? document.activeElement.dataset[a] || "" : ""), attr);
+    const feedFace = '[data-trg-row="conn_feed1"] .trg-dd';
+    const menuOf = (k) => `[data-trg-flowmenu="${k}"]`;
+    const waitClosed = () => page.waitForFunction(() => !document.querySelector("[data-trg-flowmenu]"));
+    // Open a face's menu the way a person does: a click on the box (by its chevron, clear of the name).
+    const openFace = async (row) => {
+      const t = page.locator(`${row} .trg-dd__toggle`);
+      const box = await t.boundingBox();
+      await t.click({ position: { x: box.width - 14, y: box.height / 2 } });
+    };
     await signIn(page, "admin", ADMIN);
     await openTab(page, "triggers");
-    const feedChips = '[data-trg-row="conn_feed1"] .trg-hchip[data-trg-observer]';
-    await page.waitForSelector(feedChips, { timeout: 30000 });
+    await page.waitForSelector(`${feedFace} .trg-dd__name`, { timeout: 30000 });
     check(store.autosQuery === "?status=active,paused&limit=200", `${tag}: automations read active and paused`, store.autosQuery);
-    const chips = () => page.$$eval(feedChips, (els) => els.map((e) => [e.textContent.replace(/\s+/g, " ").trim(), e.dataset.afTip, e.classList.contains("is-paused")]));
-    const first = await chips();
-    check(JSON.stringify(first) === JSON.stringify([["Digest", "Release digest · open in Observer", false], ["Summarize paused", "Old digest (paused) · open in Observer", true]]), `${tag}: a chip per flow, the title in the tooltip, the paused one muted`, first);
-    const muted = await page.$eval('[data-trg-row="conn_feed1"] .trg-hchip.is-paused', (el) => getComputedStyle(el).color);
-    const ink = await page.$eval('[data-trg-row="conn_feed1"] .trg-hchip:not(.is-paused)', (el) => getComputedStyle(el).color);
-    check(muted !== ink, `${tag}: the paused chip is muted`, { muted, ink });
-    check((await page.textContent('[data-trg-row="conn_feed1"] .trg-doing')).trim() === "Used by 1 automation", `${tag}: the status counts, Handled by names`);
-    const none = await page.$eval('[data-trg-mailbox="default"] .trg-hb__none', (el) => [el.textContent.trim(), getComputedStyle(el).color]);
+    // The face: the first flow's name (a link to it in Flow), "+1" for the paused second one, no ×
+    // with several; a select-looking box as wide as its column, its chevron at the right.
+    const face = await page.$eval(feedFace, (el) => {
+      const td = el.closest("td");
+      const cs = getComputedStyle(td);
+      const name = el.querySelector(".trg-dd__name");
+      return { text: el.textContent.replace(/\s+/g, " ").trim(), tip: name.dataset.afTip, link: name.dataset.trgOpenflow, x: !!el.querySelector(".trg-dd__x"),
+        w: Math.round(el.getBoundingClientRect().width), cw: Math.round(td.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)),
+        border: getComputedStyle(el).borderTopStyle, chev: !!el.querySelector(".trg-dd__chev svg"), deco: getComputedStyle(name).textDecorationLine };
+    });
+    check(face.text === "Digest+1" && face.link === "vf-digest" && face.tip === "Open Digest in Flow" && !face.x, `${tag}: the face names the flow, +1, no × with several`, face);
+    check(Math.abs(face.w - face.cw) <= 2 && face.border === "solid" && face.chev, `${tag}: a select-looking face, the column's width`, face);
+    check(face.deco.includes("underline"), `${tag}: the name reads as a link`, face);
+    const placeholder = await page.$eval('[data-trg-mailbox="default"] .trg-dd', (el) => [el.textContent.trim(), getComputedStyle(el.querySelector(".trg-dd__text")).color]);
     const nameInk = await page.$eval('[data-trg-mailbox="default"] .trg-name', (el) => getComputedStyle(el).color);
-    check(none[0] === "Nothing yet·" && none[1] !== nameInk, `${tag}: nothing yet, muted`, { none, nameInk });
+    check(placeholder[0] === "Choose a flow…" && placeholder[1] !== nameInk, `${tag}: Choose a flow…, muted`, { placeholder, nameInk });
+    check((await page.textContent('[data-trg-row="conn_feed1"] .trg-doing')).trim() === "Used by 1 automation", `${tag}: the status counts, Handled by names`);
+    check((await page.textContent('[data-trg-mailbox="default"] .trg-tag.is-accent')).trim() === "Main mailbox", `${tag}: the person's own mailbox says Main mailbox`);
+    check(!(await page.textContent("#triggers-table")).includes("Sends as you"), `${tag}: never "Sends as you" on Triggers`);
     // One grid: on desktop every cell of a row starts on the same line; at 400 px a card, nothing clipped.
     const geo = await page.$eval('[data-trg-row="conn_feed1"]', (tr) => Array.from(tr.children).map((td) => {
       const r = td.getBoundingClientRect();
@@ -601,112 +624,156 @@ try {
     }));
     if (w === 1440) {
       check(new Set(geo.map((g) => g.top)).size === 1 && geo.length === 5, `${tag}: five cells on one row`, geo);
-      const tops = await page.$eval('[data-trg-row="conn_feed1"]', (tr) => [".trg-conn__head", ".trg-hb__chips", ".trg-state__row", ".trg-last__when", ".trg-actions"].map((s) => Math.round(tr.querySelector(s).getBoundingClientRect().top)));
+      const tops = await page.$eval('[data-trg-row="conn_feed1"]', (tr) => [".trg-conn__head", ".trg-dd", ".trg-state__row", ".trg-last__when", ".trg-actions"].map((s) => Math.round(tr.querySelector(s).getBoundingClientRect().top)));
       check(Math.max(...tops) - Math.min(...tops) <= 1, `${tag}: first lines aligned`, tops);
     } else {
       check(geo.every((g) => g.left >= 0 && g.right <= w && g.sw <= g.cw + 1), `${tag}: card cells inside the screen, nothing clipped`, geo);
       const order = await page.$eval('[data-trg-row="conn_feed1"]', (tr) => Array.from(tr.children).map((td) => Math.round(td.getBoundingClientRect().top)));
       check(order.every((t, i) => i === 0 || t > order[i - 1]), `${tag}: the card stacks name, handled by, status, last event, actions`, order);
+      const hgt = await page.$eval(feedFace, (el) => Math.round(el.getBoundingClientRect().height));
+      check(hgt >= 44, `${tag}: a 44 px face to touch`, hgt);
     }
     await noSideScroll(page, `${tag} list`);
     await shot(page, `triggers-${tag}`);
-    // The menu on a mailbox: New flow first, then the triggered flows, none checked.
-    await page.click('[data-trg-useflow="mail:default"]');
-    await page.waitForSelector('[data-trg-flowmenu="mail:default"]');
-    const items = await page.$$eval('[data-trg-flowmenu="mail:default"] [role^=menuitem]', (els) => els.map((e) => [(e.querySelector(".trg-flowmenu__name") || e.querySelector(".trg-flowmenu__text")).textContent.trim(), e.getAttribute("aria-checked")]));
+    // The name opens that flow in Flow (the app door, ?flow=<library id>), not the menu, not Observer.
+    await page.click(`${feedFace} .trg-dd__name`);
+    await page.waitForTimeout(250);
+    check(lastOpen() === JSON.stringify({ app: "flow", path: "/?flow=vf-digest" }) && !(await page.$("[data-trg-flowmenu]")), `${tag}: the name opens the flow in Flow`, store.opens);
+    // The menu on a mailbox (a click anywhere on the face): New flow first, then the triggered flows, none checked.
+    await openFace('[data-trg-mailbox="default"]');
+    await page.waitForSelector(menuOf("mail:default"));
+    const items = await page.$$eval(`${menuOf("mail:default")} [role^=menuitem]`, (els) => els.map((e) => [(e.querySelector(".trg-flowmenu__name") || e.querySelector(".trg-flowmenu__text")).textContent.trim(), e.getAttribute("aria-checked")]));
     check(JSON.stringify(items) === JSON.stringify([["New flow for this trigger…", null], ["Digest", "false"], ["Triage", "false"]]), `${tag}: menu contents`, items);
-    check(await page.evaluate(() => document.activeElement && document.activeElement.dataset.trgNewflow) === "mail:default", `${tag}: the menu takes the focus`);
+    check(await focused("trgNewflow") === "mail:default", `${tag}: the menu takes the focus`);
+    check(await page.getAttribute('[data-trg-useflow="mail:default"]', "aria-expanded") === "true", `${tag}: the face says it is open`);
+    const mrect = await page.$eval(menuOf("mail:default"), (el) => { const r = el.getBoundingClientRect(); const f = el.closest(".trg-hb").querySelector(".trg-dd").getBoundingClientRect(); return { left: Math.round(r.left), right: Math.round(r.right), w: Math.round(r.width), fw: Math.round(f.width), top: Math.round(r.top), fb: Math.round(f.bottom) }; });
+    check(mrect.left >= 0 && mrect.right <= w && mrect.w >= mrect.fw - 1 && mrect.top >= mrect.fb, `${tag}: the menu under the face, at least as wide, inside the screen`, mrect);
     await page.keyboard.press("ArrowDown");
-    check(await page.evaluate(() => document.activeElement && document.activeElement.dataset.trgFlow) === "digest@1.0.0:digest", `${tag}: ArrowDown moves in the menu`);
+    check(await focused("trgFlow") === "digest@1.0.0:digest", `${tag}: ArrowDown moves in the menu`);
     await page.keyboard.press("End");
-    check(await page.evaluate(() => document.activeElement && document.activeElement.dataset.trgFlow) === "triage@1.0.0:triage", `${tag}: End reaches the last item`);
+    check(await focused("trgFlow") === "triage@1.0.0:triage", `${tag}: End reaches the last item`);
     await noSideScroll(page, `${tag} menu open`);
     if (full) await shot(page, `triggers-${tag}-menu`);
     // A click elsewhere closes it.
     await page.click("#page-title");
-    await page.waitForFunction(() => !document.querySelector("[data-trg-flowmenu]"));
+    await waitClosed();
     check(true, `${tag}: a click elsewhere closes the menu`);
-    // The feed's menu: Digest checked (published), Summarize checked (handling, no longer published), Triage not.
-    await page.click('[data-trg-useflow="conn_feed1"]');
-    await page.waitForSelector('[data-trg-flowmenu="conn_feed1"]');
-    const feedItems = await page.$$eval('[data-trg-flowmenu="conn_feed1"] [role^=menuitem]', (els) => els.map((e) => [(e.querySelector(".trg-flowmenu__name") || e.querySelector(".trg-flowmenu__text")).textContent.trim(), (e.querySelector(".trg-flowmenu__meta") || {}).textContent || "", e.getAttribute("aria-checked"), !!e.querySelector(".trg-flowmenu__mark svg")]));
-    check(JSON.stringify(feedItems) === JSON.stringify([["New flow for this trigger…", "", null, true], ["Digest", "Handles it · Release digest", "true", true], ["Summarize", "Handles it, paused · Old digest", "true", true], ["Triage", "", "false", false]]), `${tag}: checkmarks on the flows that handle it`, feedItems);
+    // By keyboard: ArrowDown on the face opens, Esc closes and gives the focus back.
+    await page.focus('[data-trg-useflow="conn_feed1"]');
+    await page.keyboard.press("ArrowDown");
+    await page.waitForSelector(menuOf("conn_feed1"));
+    check(await focused("trgNewflow") === "conn_feed1", `${tag}: ArrowDown on the face opens the menu`);
+    await page.keyboard.press("Escape");
+    await waitClosed();
+    check(await focused("trgUseflow") === "conn_feed1", `${tag}: Esc gives the focus back to the face`);
+    // Enter on the face opens it too.
+    await page.keyboard.press("Enter");
+    await page.waitForSelector(menuOf("conn_feed1"));
+    // The feed's menu: Digest checked (published), Summarize checked (handling, no longer published),
+    // Triage not; each checked entry carries Pause (Resume), Runs and × on its own row.
+    const feedItems = await page.$$eval(`${menuOf("conn_feed1")} [role=menuitemcheckbox], ${menuOf("conn_feed1")} [data-trg-newflow]`, (els) => els.map((e) => [(e.querySelector(".trg-flowmenu__name") || e.querySelector(".trg-flowmenu__text")).textContent.trim(), (e.querySelector(".trg-flowmenu__meta") || {}).textContent || "", e.getAttribute("aria-checked"), !!e.querySelector(".trg-flowmenu__mark svg")]));
+    check(JSON.stringify(feedItems) === JSON.stringify([["New flow for this trigger…", "", null, true], ["Digest", "Handles it · Release digest", "true", true], ["Summarize", "Paused · Old digest", "true", true], ["Triage", "", "false", false]]), `${tag}: checkmarks on the flows that handle it`, feedItems);
+    const rowTools = await page.$$eval(`${menuOf("conn_feed1")} [data-trg-entry]`, (els) => els.map((e) => {
+      const b = e.querySelector("[data-trg-checked]").getBoundingClientRect();
+      const x = e.querySelector(".trg-flowmenu__x");
+      const xr = x.getBoundingClientRect();
+      return { id: e.dataset.trgEntry, tools: Array.from(e.querySelectorAll(".trg-flowmenu__tools button")).map((t) => t.textContent.trim() || t.dataset.afTip),
+        xTip: x.dataset.afTip, sameRow: xr.top >= b.top - 1 && xr.bottom <= b.bottom + 1, right: xr.right <= e.getBoundingClientRect().right + 1 && xr.left > b.left };
+    }));
+    check(JSON.stringify(rowTools) === JSON.stringify([
+      { id: "auto_1", tools: ["Pause", "Runs", "Stop handling this trigger"], xTip: "Stop handling this trigger", sameRow: true, right: true },
+      { id: "auto_2", tools: ["Resume", "Runs", "Stop handling this trigger"], xTip: "Stop handling this trigger", sameRow: true, right: true },
+    ]), `${tag}: every checked entry has Pause/Resume, Runs and × at the right of its row`, rowTools);
+    check(await page.getAttribute('[data-trg-runs="auto_1"]', "data-af-tip") === "Its runs in Observer", `${tag}: Runs says where it goes`);
+    await noSideScroll(page, `${tag} checked menu`);
     if (full) await shot(page, `triggers-${tag}-menu-checked`);
-    // A checked pick: Pause (the automation's command), said beside the control, the chip muted.
-    await page.click('[data-trg-flowmenu="conn_feed1"] [data-trg-mflow="digest:digest"]');
-    await page.waitForSelector('[data-trg-pause="auto_1"]');
-    check(await page.evaluate(() => document.activeElement && document.activeElement.dataset.trgPause) === "auto_1", `${tag}: Pause has the focus`);
-    check((await page.textContent('[data-trg-flowmenu="conn_feed1"] .trg-flowmenu__head')).trim() === "Digest handles Release notes feed", `${tag}: the flow's automations here`);
-    if (full) await shot(page, `triggers-${tag}-manage`);
+    // A checked entry picked again: its own Pause takes the focus.
+    await page.click(`${menuOf("conn_feed1")} [data-trg-checked="auto_1"]`);
+    check(await focused("trgPause") === "auto_1", `${tag}: a checked entry picked again offers its Pause`);
     if (full) {
       store.refuseNext = { status: 409, code: "invalid_state", message: "Automation is already paused." };
       await page.click('[data-trg-pause="auto_1"]');
       await page.waitForSelector('[data-trg-row="conn_feed1"] .trg-hb .trg-fire.is-failed');
       check((await page.textContent('[data-trg-row="conn_feed1"] .trg-hb .trg-fire')).trim() === "Release digest was not paused: Automation is already paused.", `${tag}: a refused command in words`);
-      await page.click('[data-trg-useflow="conn_feed1"]');
-      await page.click('[data-trg-flowmenu="conn_feed1"] [data-trg-mflow="digest:digest"]');
+      await openFace('[data-trg-row="conn_feed1"]');
+      await page.waitForSelector('[data-trg-pause="auto_1"]');
     }
     await page.click('[data-trg-pause="auto_1"]');
     await page.waitForFunction(() => (document.querySelector('[data-trg-row="conn_feed1"] .trg-hb .trg-fire.is-ok') || {}).textContent === "Release digest is paused.", null, { timeout: 15000 });
     const cmd = store.commands[store.commands.length - 1];
     check(cmd.id === "auto_1" && cmd.type === "automation.pause" && JSON.stringify(cmd.payload) === "{}" && /^console-trigger-/.test(cmd.command_id), `${tag}: Pause is automation.pause`, cmd);
-    check(await page.$eval('[data-trg-observer="auto_1"]', (el) => el.classList.contains("is-paused")), `${tag}: the paused chip shows it`);
-    check(await page.evaluate(() => document.activeElement && document.activeElement.dataset.trgUseflow) === "conn_feed1", `${tag}: the focus back on +`);
-    // Resume.
-    await page.click('[data-trg-useflow="conn_feed1"]');
-    await page.click('[data-trg-flowmenu="conn_feed1"] [data-trg-mflow="digest:digest"]');
+    check(await focused("trgUseflow") === "conn_feed1", `${tag}: the focus back on the face`);
+    // Resume, from the entry's own Resume.
+    await openFace('[data-trg-row="conn_feed1"]');
     await page.click('[data-trg-resume="auto_1"]');
     await page.waitForFunction(() => (document.querySelector('[data-trg-row="conn_feed1"] .trg-hb .trg-fire.is-ok') || {}).textContent === "Release digest is on again.", null, { timeout: 15000 });
-    check(store.commands[store.commands.length - 1].type === "automation.resume" && !(await page.$eval('[data-trg-observer="auto_1"]', (el) => el.classList.contains("is-paused"))), `${tag}: Resume`);
-    // Remove: asked first (Cancel keeps it), then automation.archive; the chip goes.
-    await page.click('[data-trg-useflow="conn_feed1"]');
-    await page.click('[data-trg-flowmenu="conn_feed1"] [data-trg-mflow="sum:sum"]');
+    check(store.commands[store.commands.length - 1].type === "automation.resume", `${tag}: Resume`);
+    // Runs: Observer's Automations page.
+    await openFace('[data-trg-row="conn_feed1"]');
+    await page.click('[data-trg-runs="auto_1"]');
+    await waitClosed();
+    await page.waitForTimeout(200);
+    check(lastOpen() === JSON.stringify({ app: "observer", path: "/#automations" }), `${tag}: Runs opens Observer`, store.opens);
+    // × on a checked entry: asked first (Keep keeps it), then automation.archive; the face drops "+1".
+    await openFace('[data-trg-row="conn_feed1"]');
     await page.click('[data-trg-remove="auto_2"]');
     await page.waitForSelector('[data-trg-remove-now="auto_2"]');
-    check((await page.textContent('[data-trg-flowmenu="conn_feed1"] .trg-flowmenu__confirm')).trim() === "Remove Old digest? It stops handling Release notes feed; its history stays in Observer.", `${tag}: Remove asks first`);
-    check(await page.evaluate(() => document.activeElement && document.activeElement.dataset.trgRemoveCancel) === "auto_2", `${tag}: Cancel has the focus`);
+    check((await page.textContent(`${menuOf("conn_feed1")} .trg-flowmenu__confirm`)).trim() === "Remove Summarize from this trigger? Its runs stay in Observer.", `${tag}: × asks first`);
+    check(await focused("trgRemoveCancel") === "auto_2", `${tag}: Keep has the focus`);
+    const acts = await page.$$eval(`${menuOf("conn_feed1")} .trg-flowmenu__confirm-box button`, (els) => els.map((e) => e.textContent.trim()));
+    check(JSON.stringify(acts) === JSON.stringify(["Remove", "Keep"]), `${tag}: Remove / Keep`, acts);
+    await noSideScroll(page, `${tag} remove confirm`);
     if (full) await shot(page, `triggers-${tag}-remove-confirm`);
     const before = store.commands.length;
     await page.click('[data-trg-remove-cancel="auto_2"]');
-    check(store.commands.length === before && (await page.locator('[data-trg-remove="auto_2"]').count()) === 1, `${tag}: Cancel keeps it`);
+    check(store.commands.length === before && (await page.locator('[data-trg-remove="auto_2"]').count()) === 1 && await focused("trgRemove") === "auto_2", `${tag}: Keep keeps it, the × focused again`);
     await page.click('[data-trg-remove="auto_2"]');
     await page.click('[data-trg-remove-now="auto_2"]');
-    await page.waitForFunction(() => !document.querySelector('[data-trg-observer="auto_2"]'), null, { timeout: 15000 });
+    await page.waitForFunction(() => !document.querySelector('[data-trg-row="conn_feed1"] .trg-dd__more'), null, { timeout: 15000 });
     check(store.commands[store.commands.length - 1].type === "automation.archive" && (await page.textContent('[data-trg-row="conn_feed1"] .trg-hb .trg-fire')).trim() === "Old digest no longer handles Release notes feed.", `${tag}: Remove archives it, said`);
+    // One flow left: its × on the face, which asks in the menu, under its entry.
+    await page.waitForSelector(`${feedFace} [data-trg-unhandle="auto_1"]`);
+    check(await page.getAttribute(`${feedFace} .trg-dd__x`, "data-af-tip") === "Stop handling this trigger", `${tag}: the face's × says what it does`);
+    if (full) await shot(page, `triggers-${tag}-one-flow`);
+    await page.click(`${feedFace} [data-trg-unhandle="auto_1"]`);
+    await page.waitForSelector('[data-trg-remove-now="auto_1"]');
+    check((await page.textContent(`${menuOf("conn_feed1")} .trg-flowmenu__confirm`)).trim() === "Remove Digest from this trigger? Its runs stay in Observer." && await focused("trgRemoveCancel") === "auto_1", `${tag}: the face's × asks in the menu`);
+    if (full) await shot(page, `triggers-${tag}-face-remove-confirm`);
+    await page.click('[data-trg-remove-cancel="auto_1"]');
+    await page.keyboard.press("Escape");
+    await waitClosed();
     // New flow: Flow through the app door at ?trigger=mail:<mailbox id> (and ?trigger=<connection id>).
-    await page.click('[data-trg-useflow="mail:default"]');
+    await openFace('[data-trg-mailbox="default"]');
     await page.click('[data-trg-newflow="mail:default"]');
-    await page.waitForFunction(() => !document.querySelector("[data-trg-flowmenu]"));
+    await waitClosed();
     await page.waitForTimeout(200);
-    check(JSON.stringify(store.opens[store.opens.length - 1]) === JSON.stringify({ app: "flow", path: "/?trigger=mail:default" }), `${tag}: new flow link for a mailbox`, store.opens);
-    await page.click('[data-trg-useflow="conn_feed1"]');
+    check(lastOpen() === JSON.stringify({ app: "flow", path: "/?trigger=mail:default" }), `${tag}: new flow link for a mailbox`, store.opens);
+    await openFace('[data-trg-row="conn_feed1"]');
     await page.click('[data-trg-newflow="conn_feed1"]');
     await page.waitForTimeout(200);
-    check(JSON.stringify(store.opens[store.opens.length - 1]) === JSON.stringify({ app: "flow", path: "/?trigger=conn_feed1" }), `${tag}: new flow link for a connection`, store.opens);
-    // Esc closes the menu and gives the focus back to "+".
-    await page.click('[data-trg-useflow="conn_feed1"]');
-    await page.keyboard.press("Escape");
-    await page.waitForFunction(() => !document.querySelector("[data-trg-flowmenu]"));
-    check(await page.evaluate(() => document.activeElement && document.activeElement.dataset.trgUseflow) === "conn_feed1", `${tag}: Esc gives the focus back`);
-    // A refusal in words, beside the control (a mailbox the flow cannot read).
-    await page.click('[data-trg-useflow="mail:work"]');
-    await page.click('[data-trg-flowmenu="mail:work"] [data-trg-flow="triage@1.0.0:triage"]');
+    check(lastOpen() === JSON.stringify({ app: "flow", path: "/?trigger=conn_feed1" }), `${tag}: new flow link for a connection`, store.opens);
+    // A refusal in words, under the face (a mailbox the flow cannot read).
+    await openFace('[data-trg-mailbox="work"]');
+    await page.click(`${menuOf("mail:work")} [data-trg-flow="triage@1.0.0:triage"]`);
     await page.waitForSelector('[data-trg-mailbox="work"] .trg-hb .trg-fire.is-failed');
     check((await page.textContent('[data-trg-mailbox="work"] .trg-hb .trg-fire')).trim() === "Triage cannot read Work: it has no incoming server. Connect it again with its incoming server (My email).", `${tag}: refusal in words`, await page.textContent('[data-trg-mailbox="work"] .trg-hb .trg-fire'));
-    // An unchecked pick: the automation is created from the flow with this trigger, then its chip shows.
-    await page.click('[data-trg-useflow="mail:default"]');
-    await page.click('[data-trg-flowmenu="mail:default"] [data-trg-flow="triage@1.0.0:triage"]');
-    await page.waitForSelector('[data-trg-mailbox="default"] .trg-hchip[data-trg-observer]');
+    // An unchecked pick: the automation is created from the flow with this trigger, then the face names it.
+    await openFace('[data-trg-mailbox="default"]');
+    await page.click(`${menuOf("mail:default")} [data-trg-flow="triage@1.0.0:triage"]`);
+    await page.waitForSelector('[data-trg-mailbox="default"] .trg-dd__name');
     const post = store.posts[store.posts.length - 1];
     check(post.title === "Triage" && JSON.stringify(post.target) === JSON.stringify({ bundle_ref: "triage@1.0.0", flow_id: "triage", input_data: {} })
       && JSON.stringify(post.trigger) === JSON.stringify({ source_id: "email.received", source_version: 1, config: { from: ["boss@x.test"], account: "default" } })
       && JSON.stringify(post.context) === JSON.stringify({ mode: "growing" }) && /^console-trigger-/.test(post.request_id), `${tag}: the create body`, post);
-    check((await page.textContent('[data-trg-mailbox="default"] .trg-hchip[data-trg-observer]')).trim() === "Triage", `${tag}: Handled by refreshed`);
-    check((await page.textContent('[data-trg-mailbox="default"] .trg-hb .trg-fire.is-ok')).trim() === "Triage now handles admin@example.org. It is on.", `${tag}: success said`);
-    // A chip opens Observer's Automations page.
-    await page.click('[data-trg-row="conn_feed1"] [data-trg-observer="auto_1"]');
+    // Triage ships with the gateway: its name is plain, the tooltip says why, a click opens nothing.
+    const triage = await page.$eval('[data-trg-mailbox="default"] .trg-dd__name', (el) => ({ text: el.textContent.trim(), off: el.classList.contains("is-off"), tip: el.dataset.afTip, tag: el.tagName }));
+    check(JSON.stringify(triage) === JSON.stringify({ text: "Triage", off: true, tip: "Not in the Flow library (ADR-0040)", tag: "SPAN" }), `${tag}: a shipped flow is not a link`, triage);
+    const opens = store.opens.length;
+    await page.click('[data-trg-mailbox="default"] .trg-dd__name');
     await page.waitForTimeout(200);
-    check(JSON.stringify(store.opens[store.opens.length - 1]) === JSON.stringify({ app: "observer", path: "/#automations" }), `${tag}: Observer link`, store.opens);
+    check(store.opens.length === opens, `${tag}: the plain name opens nothing`, store.opens);
+    await page.keyboard.press("Escape");
+    check((await page.textContent('[data-trg-mailbox="default"] .trg-hb .trg-fire.is-ok')).trim() === "Triage now handles admin@example.org. It is on.", `${tag}: success said`);
     await noSideScroll(page, `${tag} after a pick`);
     if (full) await shot(page, `triggers-${tag}-done`);
     await ctx.close();
