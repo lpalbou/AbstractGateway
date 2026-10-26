@@ -1390,6 +1390,61 @@ Evidence: `src/abstractgateway/events_stream.py` (vocabulary, writers, boot repa
 A closed app on a watch or an iPhone learns about new attention items through Apple push: see
 [Push devices](#push-devices-apigatewaymepushdevices) and [push.md](./push.md).
 
+### After the run: `GET /api/gateway/runs/{run_id}/after`
+
+What happened after a run, in one read (framework ADR-0041 "No hidden effects after a flow"):
+what arrived, when it ran, the note its On Flow End recorded, the alert it raised (or why nothing
+rang) and every recorded delivery. Flow's run view and Observer's run card show it as **After the
+run**.
+
+```json
+{
+  "run_id": "ce98246c-…",
+  "trigger": {
+    "automation_id": "da8bc2b9-…", "automation_title": "Gmail watch", "occurrence_index": 15,
+    "source": "email.received", "text": "When mail arrives in me@example.org", "connection": "me@example.org",
+    "fired_at": "2026-10-26T00:15:59+00:00",
+    "arrived": {"count": 4, "noun": "new emails", "line": "“O” from codex@athena.ovh and 3 more"}
+  },
+  "run": {"run_id": "ce98246c-…", "status": "completed", "started": "…", "ended": "…",
+          "response_excerpt": "…", "note": "4 mails judged; 4 suspicious."},
+  "attention": {"record_key": "automation:completed:da8bc2b9-…:15", "kind": "notify",
+                "title": "Suspicious credential emails received", "raised_at": "…", "from": "flow_end"},
+  "alerts": ["… every alert, the same shape …"],
+  "deliveries": [
+    {"record_key": "automation:completed:…:15", "channel": "tray", "via": "stream", "device": "a5e2…", "time": "…", "state": "sent"},
+    {"record_key": "automation:completed:…:15", "channel": "watch", "via": "push", "device": "506b…", "device_name": "Watch", "time": "…", "state": "sent"}
+  ],
+  "tree": ["ce98246c-…"]
+}
+```
+
+- `trigger`: null for a run no automation started. `arrived` is null for a schedule or a run by hand.
+- `run.note`: On Flow End's `note` pin (a short line of what happened and why); `response_excerpt`
+  its `response`, at most 280 characters.
+- `alerts` (and `attention`, the first of them): `from` says where each came from: `flow_end` (the
+  `notify` pin of flows saved before ADR-0041), `failure` (the automation's failure item),
+  `notify_me` (a Notify me node), `publish` (Publish to channel with Alert on), `wait` (the run or a
+  sub-run parked on you: `kind` `approval` or `question`, with `run_id`, `prompt_ref` and `open`
+  until it was answered, cancelled or timed out; an open wait comes first) and `email_when_done`.
+- `deliveries`: one row per `notification.sent|failed` recorded for those alerts. `via` is `push`
+  (the gateway's push dispatcher), `outbox` (email) or `stream` (an app read your stream and showed
+  it; the console lists the item). `device_name` when the device registered one; `reason` on a
+  failure.
+- `quiet_reason` (only when there is no alert): `empty title` (On Flow End's notify had no title),
+  `no notify` (nothing in the flow notifies), `still running`, `not recorded yet` (the run ended,
+  the automation has not recorded its decision yet). Deliveries are recorded after the run ends:
+  clients read again for a few seconds.
+- `tree`: the runs looked at, the run and its sub-runs (`parent_run_id` links, at most 200).
+
+Built from exact reads, never a scan of your stream: the automation's decision by its ledger key
+`automation:completed:<automation_id>:<index>`, then each alert and delivery by its deterministic
+event id through the stream's index. The run is looked up in your own plane (404 otherwise) and
+the deliveries in your own stream.
+
+Evidence: `src/abstractgateway/run_after.py`, `src/abstractgateway/routes/me_events.py`
+(`get_run_after`), `tests/test_run_after.py`.
+
 ## Push devices (`/api/gateway/me/push/devices`)
 
 The AbstractAssistant apps register here so they get your alerts while closed

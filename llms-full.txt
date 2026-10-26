@@ -6136,6 +6136,61 @@ Evidence: `src/abstractgateway/events_stream.py` (vocabulary, writers, boot repa
 A closed app on a watch or an iPhone learns about new attention items through Apple push: see
 [Push devices](#push-devices-apigatewaymepushdevices) and [push.md](docs/push.md).
 
+### After the run: `GET /api/gateway/runs/{run_id}/after`
+
+What happened after a run, in one read (framework ADR-0041 "No hidden effects after a flow"):
+what arrived, when it ran, the note its On Flow End recorded, the alert it raised (or why nothing
+rang) and every recorded delivery. Flow's run view and Observer's run card show it as **After the
+run**.
+
+```json
+{
+  "run_id": "ce98246c-…",
+  "trigger": {
+    "automation_id": "da8bc2b9-…", "automation_title": "Gmail watch", "occurrence_index": 15,
+    "source": "email.received", "text": "When mail arrives in me@example.org", "connection": "me@example.org",
+    "fired_at": "2026-10-26T00:15:59+00:00",
+    "arrived": {"count": 4, "noun": "new emails", "line": "“O” from codex@athena.ovh and 3 more"}
+  },
+  "run": {"run_id": "ce98246c-…", "status": "completed", "started": "…", "ended": "…",
+          "response_excerpt": "…", "note": "4 mails judged; 4 suspicious."},
+  "attention": {"record_key": "automation:completed:da8bc2b9-…:15", "kind": "notify",
+                "title": "Suspicious credential emails received", "raised_at": "…", "from": "flow_end"},
+  "alerts": ["… every alert, the same shape …"],
+  "deliveries": [
+    {"record_key": "automation:completed:…:15", "channel": "tray", "via": "stream", "device": "a5e2…", "time": "…", "state": "sent"},
+    {"record_key": "automation:completed:…:15", "channel": "watch", "via": "push", "device": "506b…", "device_name": "Watch", "time": "…", "state": "sent"}
+  ],
+  "tree": ["ce98246c-…"]
+}
+```
+
+- `trigger`: null for a run no automation started. `arrived` is null for a schedule or a run by hand.
+- `run.note`: On Flow End's `note` pin (a short line of what happened and why); `response_excerpt`
+  its `response`, at most 280 characters.
+- `alerts` (and `attention`, the first of them): `from` says where each came from: `flow_end` (the
+  `notify` pin of flows saved before ADR-0041), `failure` (the automation's failure item),
+  `notify_me` (a Notify me node), `publish` (Publish to channel with Alert on), `wait` (the run or a
+  sub-run parked on you: `kind` `approval` or `question`, with `run_id`, `prompt_ref` and `open`
+  until it was answered, cancelled or timed out; an open wait comes first) and `email_when_done`.
+- `deliveries`: one row per `notification.sent|failed` recorded for those alerts. `via` is `push`
+  (the gateway's push dispatcher), `outbox` (email) or `stream` (an app read your stream and showed
+  it; the console lists the item). `device_name` when the device registered one; `reason` on a
+  failure.
+- `quiet_reason` (only when there is no alert): `empty title` (On Flow End's notify had no title),
+  `no notify` (nothing in the flow notifies), `still running`, `not recorded yet` (the run ended,
+  the automation has not recorded its decision yet). Deliveries are recorded after the run ends:
+  clients read again for a few seconds.
+- `tree`: the runs looked at, the run and its sub-runs (`parent_run_id` links, at most 200).
+
+Built from exact reads, never a scan of your stream: the automation's decision by its ledger key
+`automation:completed:<automation_id>:<index>`, then each alert and delivery by its deterministic
+event id through the stream's index. The run is looked up in your own plane (404 otherwise) and
+the deliveries in your own stream.
+
+Evidence: `src/abstractgateway/run_after.py`, `src/abstractgateway/routes/me_events.py`
+(`get_run_after`), `tests/test_run_after.py`.
+
 ## Push devices (`/api/gateway/me/push/devices`)
 
 The AbstractAssistant apps register here so they get your alerts while closed
@@ -12087,6 +12142,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **After the run** (framework ADR-0041 "No hidden effects after a flow"): `GET /api/gateway/runs/{run_id}/after` answers what happened after a run in one read: what arrived (count and a line: "4 new emails: “O” from … and 3 more", the mailbox address or connection name), when it started and ended, On Flow End's `response` excerpt and `note`, the alerts it raised (On Flow End's `notify` of older flows, the automation's failure item, Notify me, Publish to channel with Alert on, an approval or a question on the run or one of its sub-runs, "Email me when done") or why nothing rang (`quiet_reason`: empty title, no notify, still running, not recorded yet), and each delivery with its channel, route (`push`, `stream`, `outbox`), device, time and state. Exact reads only (the automation's ledger key, deterministic event ids through the stream index), off the event loop, in the caller's own plane and stream.
+
+- `serve --run-index trusted|verify` (default `verify` in this release): the run listings' in-memory index (AbstractRuntime 09d3b63) runs in shadow mode, its mismatch counters under `run_index` in `/api/health`; `trusted` answers listings from the index.
+
+- Performance (backlog 1054): the routes that read files on the event loop now do it in a worker (same answers): `GET /visualflows` (one folder scan, each flow file parsed once per version, the whole answer kept while no file changed, and its JSON encoded in the worker: Flow's library polls it), `GET /backlog/{kind}` (root discovery, each item parsed once per version, encoding in the worker), `GET /backlog/exec/requests`, artifact export, `POST /artifacts/import`, `POST /attachments/ingest`, admin catalog promote, bundle download, `GET /workflows/{id}/flow`, bug and feature reports and their inbox listings. `GET /runs` reads the session archive and session kinds files from memory (a write through the gateway drops the entry at once; another process's write is seen within 1 s).
+- Performance (backlog 1054): host status for the tray, the Observer and the console computes its expensive parts once per short TTL, single-flight, off the event loop: the GPU probe (`ioreg`/`nvidia-smi` subprocess) 2 s, stamped when it ends (the old 1 s cache was stamped when the probe started, so the tray's 1 Hz poll missed every time); the memory snapshot (`ioreg` + `sysctl`) 2 s keyed on the runtime's client (keyed on the facade object before, which the runtime builds anew per call: it never hit); `/host/state`'s model residency walk and session-cache enumeration 4 s (a load, unload or pin through the gateway drops them) and its install block 10 s; `/host/runner` off the loop. `/host/runs` keeps one set of read-only stores per plane (it built new stores, artifact catalog and a cold run-index scan, per plane per call) and reuses the service's own stores for the default plane; finished rows' step counts are kept while the row is unchanged.
 - Performance (backlog 1054, gateway load 2026-10-26): a cached account service answers without the service lock, so `GET /me` and the live-update stream no longer wait on the event loop while the boot builds another account's service (two of the night's three watchdog restarts); blocking work runs in three bounded pools by kind, `light` (sign-in, `/me`, live-update streams, one-record reads), `heavy` (scans, listings, reloads) and `watchers` (mail, provider endpoints, model generation), sized by `serve --pool-light/--pool-heavy/--pool-watchers N` (defaults 8/4/16, no environment variable) and reported by `GET /api/health` under `pools`; browser sessions are kept in memory with the file as the source of truth (own writes at once, another process's within 2 s, `last_seen_at` written at most once a minute off the loop), and the users file and session secret are re-read only when they change.
 - Performance (backlog 1054): the mail notification check's full pass (every 5 minutes, after another process's change, after a restart) reads the run index rows (status, updated_at, wait reason; no vars) instead of loading up to 200 completed + 200 failed + 200 waiting full runs; a run is loaded only when its row is new since the collector last decided it (kept per process under the same switches, plus a persisted `jobs.through` cursor trailing the newest decided finish by 120 s for the pass after a restart); same notices and idempotency keys. 400 finished runs, one change: one load (incremental or full).
 - Push: the packaged app topics are the merged AbstractAssistant family, `ai.abstractframework.assistant` (iPhone) and `ai.abstractframework.assistant.watchkitapp` (its watch companion); the old `.watch` and `.iphone` ids are no longer accepted.
