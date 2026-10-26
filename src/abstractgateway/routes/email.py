@@ -86,6 +86,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..work_pools import off_loop
 from ..mail.core_mail import EmailError, EmailInvalidMessage, OutgoingMessage, SearchCriteria, evaluate, parse_recipients
 
 from ..mail import accounts as mail_accounts
@@ -125,7 +126,7 @@ def _error_response(err: EmailError) -> JSONResponse:
 
 async def _call(fn, *args: Any, **kwargs: Any) -> Any:
     try:
-        return await _off_the_event_loop(fn, *args, **kwargs)
+        return await off_loop("watchers", fn, *args, **kwargs)
     except EmailError as err:
         return _error_response(err)
 
@@ -1196,7 +1197,7 @@ def _client_ip(request: Request) -> str:
 async def session_recovery_available() -> Dict[str, Any]:
     from ..mail.recovery import recovery_available
 
-    available = await _off_the_event_loop(recovery_available)
+    available = await off_loop("light", recovery_available)
     return {"available": bool(available), "purposes": ["sign_in", "reset_token"] if available else []}
 
 
@@ -1221,9 +1222,9 @@ async def session_recovery_request(request: Request, body: RecoveryRequestBody) 
 
     if body.purpose not in PURPOSES:
         raise HTTPException(status_code=400, detail={"reason_code": "invalid_request", "message": "purpose must be sign_in or reset_token"})
-    if not await _off_the_event_loop(mail_accounts.recovery_enabled):
+    if not await off_loop("light", mail_accounts.recovery_enabled):
         raise HTTPException(status_code=404, detail={"reason_code": "recovery_off", "message": "Sign-in by email is off on this gateway."})
-    return await _off_the_event_loop(
+    return await off_loop("watchers",
         request_code, user_id=body.user_id, tenant_id=body.tenant_id, purpose=body.purpose, client_ip=_client_ip(request)
     )
 
@@ -1232,7 +1233,7 @@ async def session_recovery_request(request: Request, body: RecoveryRequestBody) 
 async def session_recovery_redeem(request: Request, response: Response, body: RecoveryRedeemBody) -> Dict[str, Any]:
     from ..mail.recovery import REDEEM_REFUSED, redeem_code
 
-    principal = await _off_the_event_loop(
+    principal = await off_loop("light",
         redeem_code, user_id=body.user_id, tenant_id=body.tenant_id, purpose=body.purpose, code=body.code, client_ip=_client_ip(request)
     )
     if principal is None:
@@ -1241,7 +1242,7 @@ async def session_recovery_redeem(request: Request, response: Response, body: Re
     if body.purpose == "reset_token":
         from ..users import GatewayUserRegistry
 
-        _record, issued_token = await _off_the_event_loop(
+        _record, issued_token = await off_loop("light",
             lambda: GatewayUserRegistry().update_user(user_id=principal.user_id, tenant_id=principal.tenant_id, token="")
         )
         request.state.audit_detail = {"recovery": {"purpose": "reset_token", "token_rotated": True}}

@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from ..work_pools import off_loop
 from ..config import entity_iterations_ceiling
 from ..entities import EntityRegistry, entity_slug
 from ..entity_access import (
@@ -2736,7 +2737,7 @@ async def open_entity_chat(name: str, req: OpenChatRequest) -> Dict[str, Any]:
         pass  # no visit host on this service shape
 
     try:
-        out = await run_in_threadpool(
+        out = await off_loop("heavy",
             _chat_host().open,
             name,
             provider=req.provider,
@@ -2792,7 +2793,7 @@ async def entity_chat_turn(name: str, chat_id: str, req: ChatTurnRequest) -> Dic
     from fastapi.concurrency import run_in_threadpool
 
     try:
-        return await run_in_threadpool(
+        return await off_loop("watchers",
             lambda: _chat_host().turn(chat_id, req.text, speaker=req.speaker)
         )
     except ChatOpenRefused as e:
@@ -2833,7 +2834,7 @@ async def close_entity_chat(name: str, chat_id: str, req: Optional[CloseChatRequ
     from fastapi.concurrency import run_in_threadpool
 
     try:
-        out = await run_in_threadpool(
+        out = await off_loop("heavy",
             _chat_host().close, chat_id, reflect=bool(req.reflect) if req is not None else True
         )
     except ChatOpenRefused as e:

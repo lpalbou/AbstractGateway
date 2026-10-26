@@ -63,6 +63,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..work_pools import off_loop
 from ..apps_desktop import is_desktop_app
 from ..apps_manager import (
     HANDOVER_TTL_S,
@@ -313,7 +314,7 @@ async def apps_launch_tui(request: Request, app_id: str):
             )
         )
     try:
-        return await asyncio.to_thread(m.launch_tui, app_id, principal=principal, gateway_url=gateway_url)
+        return await off_loop("watchers", m.launch_tui, app_id, principal=principal, gateway_url=gateway_url)
     except AppsError as exc:
         return _error(exc)
 
@@ -353,14 +354,14 @@ async def apps_launch(request: Request, app_id: str):
     m = get_apps_manager()
     if is_desktop_app(app_id):
         try:
-            return await asyncio.to_thread(
+            return await off_loop("watchers",
                 m.launch_desktop, str(app_id).strip().lower(), same_machine=_same_machine(request),
                 principal=_principal(request),
             )
         except AppsError as exc:
             return _error(exc)
     try:
-        row = await asyncio.to_thread(m.launch, app_id)
+        row = await off_loop("watchers", m.launch, app_id)
     except AppsError as exc:
         return _error(exc)
     return {"ok": True, "app": row}
@@ -376,11 +377,11 @@ async def apps_stop(request: Request, app_id: str):
     m = get_apps_manager()
     if is_desktop_app(app_id):
         try:
-            return await asyncio.to_thread(m.stop_desktop, str(app_id).strip().lower())
+            return await off_loop("watchers", m.stop_desktop, str(app_id).strip().lower())
         except AppsError as exc:
             return _error(exc)
     try:
-        row = await asyncio.to_thread(m.stop, app_id)
+        row = await off_loop("watchers", m.stop, app_id)
     except AppsError as exc:
         return _error(exc)
     return {"ok": True, "app": row}

@@ -38,6 +38,7 @@ from typing import Any, Mapping, Optional
 
 from fastapi import Request
 
+from .work_pools import off_loop
 from .security.principal import GatewayPrincipal, current_gateway_principal, safe_principal_component
 
 NAME_TAKEN = "That name is taken: another account already has an entity called {slug!r}. Pick another name."
@@ -184,7 +185,7 @@ async def entity_plane_resolver(request: Request) -> None:
     principal = getattr(request.state, "gateway_principal", None) or current_gateway_principal()
     import asyncio
 
-    owner = await asyncio.to_thread(_admin_plane_owner_for, principal, str(name))
+    owner = await off_loop("light", _admin_plane_owner_for, principal, str(name))
     if owner is not None:
         from .service import set_entity_plane_owner
 

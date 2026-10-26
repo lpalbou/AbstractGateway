@@ -64,6 +64,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import StreamingResponse
 from starlette.websockets import WebSocketDisconnect
 
+from .work_pools import off_loop
 from .apps_manager import APP_BY_ID, AppSpec, get_apps_manager
 
 logger = logging.getLogger(__name__)
@@ -388,10 +389,10 @@ async def _target(app_id: str) -> Tuple[Optional[AppSpec], Optional[int], Option
     if spec is None:
         return None, None, "unknown_app"
     m = get_apps_manager()
-    port = await run_in_threadpool(m.serving_port, spec)
+    port = await off_loop("light", m.serving_port, spec)
     if not port:
         return spec, None, "not_running"
-    if not await run_in_threadpool(m.app_mount, spec, port):
+    if not await off_loop("light", m.app_mount, spec, port):
         return spec, port, "not_mountable"
     return spec, port, None
 
@@ -444,7 +445,7 @@ async def app_http(request: Request, app_id: str, path: str) -> Response:
         return JSONResponse(status_code=403, content={"ok": False, "reason": "cross_origin", "message": "Requests to an app must come from the gateway's own pages."}, headers={"Cache-Control": "no-store"})
     _prefix, session_cookie = app_cookie_names(spec)
     pairs = parse_cookie_pairs(request.headers.get("cookie"))
-    signed_in = await run_in_threadpool(session_valid, first_cookie(pairs, session_cookie))
+    signed_in = await off_loop("light", session_valid, first_cookie(pairs, session_cookie))
     public = not signed_in and public_asset_path(request.method, rest)
     if not signed_in and not public:
         if _wants_page(request):
@@ -517,7 +518,7 @@ async def app_websocket(websocket: WebSocket, app_id: str, path: str) -> None:
         await websocket.close(code=1008)
         return
     _prefix, session_cookie = app_cookie_names(spec)
-    if not await run_in_threadpool(session_valid, first_cookie(parse_cookie_pairs(headers.get("cookie")), session_cookie)):
+    if not await off_loop("light", session_valid, first_cookie(parse_cookie_pairs(headers.get("cookie")), session_cookie)):
         await websocket.close(code=1008)
         return
     rest = _upstream_path(websocket.scope, spec.id)

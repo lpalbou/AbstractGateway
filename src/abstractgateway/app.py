@@ -35,6 +35,16 @@ async def _lifespan(_app: FastAPI):
     # The previous process's newest hang (R13.1): read once, shown by the
     # console's Resources page and the terminal console.
     loop_watchdog.load_last_incident()
+    # Worker pools by kind of work (gateway load 2026-10-26): light / heavy / watchers,
+    # sized by `serve --pool-light/--pool-heavy/--pool-watchers` (work_pools.py).
+    try:
+        import logging
+
+        from .work_pools import pool_sizes
+
+        logging.getLogger("abstractgateway").info("worker pools: %s", pool_sizes())
+    except Exception:
+        pass
     begin_gateway_boot()
     # Browser apps marked enabled start with the gateway, as its children
     # (never launchd/systemd), on a background thread; they stop with it.
@@ -569,6 +579,13 @@ async def health_check():
         from .loop_watchdog import health_snapshot as _watchdog_snapshot
 
         body["watchdog"] = _watchdog_snapshot()
+    except Exception:
+        pass
+    # Worker pools (gateway load 2026-10-26): size, threads started, queued work per kind.
+    try:
+        from .work_pools import pool_stats
+
+        body["pools"] = pool_stats()
     except Exception:
         pass
     # Boot honesty (supervisor seam, c4063): while the background boot runs,

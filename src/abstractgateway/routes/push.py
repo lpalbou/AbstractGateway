@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 from fastapi import APIRouter, HTTPException, Path as PathParam, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..work_pools import off_loop
 from ..push import settings as push_settings
 from ..push.settings import push_relay_url
 from ..push.store import PACKAGED_TOPICS, DeviceStore, principal_key, public_view, write_cursor
@@ -138,16 +139,16 @@ async def put_my_push_device(
     `{ok, relay: on|off|unreachable}` — `off`: this gateway sends no pushes (no forwarder address)."""
     svc, stream, who = _context(request)
     topic = body.topic.strip()
-    if topic not in PACKAGED_TOPICS and topic not in await asyncio.to_thread(relay_topics, push_relay_url(_root(svc))):
+    if topic not in PACKAGED_TOPICS and topic not in await off_loop("light", relay_topics, push_relay_url(_root(svc))):
         raise HTTPException(status_code=422, detail=f"unknown app topic {topic!r}: this gateway pushes only to {', '.join(PACKAGED_TOPICS)} and the relay's own apps")
     store = _store(svc)
-    _rec, first = await asyncio.to_thread(
+    _rec, first = await off_loop("light",
         store.put, principal=who, device_id=device_id, token=body.token, topic=topic, env=body.env, app=body.app,
         reg=body.reg, name=(body.name or "").strip() or None,
     )
     if first and _is_plane_owner(svc, who):
         # The first registration: the dispatcher starts from now, never from history.
-        await asyncio.to_thread(lambda: write_cursor(store.plane_dir, int(stream.head())))
+        await off_loop("light", lambda: write_cursor(store.plane_dir, int(stream.head())))
     _kick(svc)
     return {"ok": True, "relay": relay_state(store, who)}
 
@@ -156,7 +157,7 @@ async def put_my_push_device(
 async def delete_my_push_device(request: Request, device_id: str = PathParam(..., pattern=DEVICE_ID_PATTERN)) -> Dict[str, Any]:
     """Forget this device (sign-out). Idempotent: `{ok, deleted}`."""
     svc, _stream, who = _context(request)
-    deleted = await asyncio.to_thread(_store(svc).remove, principal=who, device_id=device_id)
+    deleted = await off_loop("light", _store(svc).remove, principal=who, device_id=device_id)
     _kick(svc)
     return {"ok": True, "deleted": bool(deleted)}
 
@@ -165,7 +166,7 @@ async def delete_my_push_device(request: Request, device_id: str = PathParam(...
 async def list_my_push_devices(request: Request) -> List[Dict[str, Any]]:
     """The caller's registered devices, oldest first. Never the tokens."""
     svc, _stream, who = _context(request)
-    rows = await asyncio.to_thread(_store(svc).active, principal=who)
+    rows = await off_loop("light", _store(svc).active, principal=who)
     return [public_view(r) for r in rows]
 
 
@@ -190,7 +191,7 @@ async def get_push_settings(request: Request) -> Dict[str, Any]:
     from .gateway import _require_admin_principal
 
     _require_admin_principal(request)
-    return await asyncio.to_thread(_settings_view, _root(get_gateway_service()))
+    return await off_loop("light", _settings_view, _root(get_gateway_service()))
 
 
 @settings_router.put("/settings", summary="Save the Push forwarder address (default | off | your own URL)")
@@ -204,15 +205,15 @@ async def put_push_settings(request: Request, body: ForwarderBody) -> Dict[str, 
     admin = _require_admin_principal(request)
     root = _root(get_gateway_service())
     try:
-        await asyncio.to_thread(push_settings.save_forwarder, root, body.mode, body.url,
+        await off_loop("light", push_settings.save_forwarder, root, body.mode, body.url,
                                 actor=str(getattr(admin, "user_id", "") or ""))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    await asyncio.to_thread(push_forwarder_changed)
-    out = await asyncio.to_thread(_settings_view, root)
+    await off_loop("light", push_forwarder_changed)
+    out = await off_loop("light", _settings_view, root)
     effective = out["forwarder"]["effective"]
     if effective:
-        probe = await asyncio.to_thread(push_settings.probe_forwarder, effective)
+        probe = await off_loop("watchers", push_settings.probe_forwarder, effective)
         if probe["reachable"]:
             with _info_lock:
                 _info_cache[effective] = (time.monotonic(), tuple(probe["topics"]))

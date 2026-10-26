@@ -21,6 +21,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
+from ..work_pools import off_loop
 from .. import autostart
 from .gateway import _host_control_actor, _require_admin_principal
 
@@ -50,7 +51,7 @@ def _data_dir():
 async def start_at_login_status(request: Request) -> Dict[str, Any]:
     """Would this gateway start at the next login, and can it be changed from here?"""
     _require_admin_principal(request)
-    return await asyncio.to_thread(autostart.start_at_login_status, data_dir=_data_dir())
+    return await off_loop("watchers", autostart.start_at_login_status, data_dir=_data_dir())
 
 
 @router.put("/host/start-at-login")
@@ -59,7 +60,7 @@ async def start_at_login_change(request: Request, req: StartAtLoginRequest) -> A
     gateway; the body carries the read-back (`start_at_login`)."""
     principal = _require_admin_principal(request)
     actor = _host_control_actor(principal)
-    status, body = await asyncio.to_thread(
+    status, body = await off_loop("watchers",
         autostart.set_start_at_login,
         data_dir=_data_dir(),
         enabled=bool(req.enabled),

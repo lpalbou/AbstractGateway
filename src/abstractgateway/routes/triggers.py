@@ -46,6 +46,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
+from ..work_pools import off_loop
 from .. import trigger_connections as tc
 
 WEBHOOK_SOURCE_ID = "webhook.received"
@@ -145,12 +146,12 @@ async def receive_webhook(connection_id: str, request: Request) -> JSONResponse:
     if body is None:
         _audit(request, connection_id=connection_id, outcome="refused", reason_code="webhook_too_large")
         return _refuse(413, "webhook_too_large", f"The body exceeds {tc.WEBHOOK_MAX_BODY_BYTES} bytes.")
-    located = await asyncio.to_thread(tc.locate_connection, str(connection_id))
+    located = await off_loop("light", tc.locate_connection, str(connection_id))
     if located is None or located.connection.source_id != WEBHOOK_SOURCE_ID:
         _audit(request, connection_id=connection_id, outcome="refused", reason_code="connection_not_found")
         return _refuse(404, "connection_not_found", "No webhook connection with this id.")
     headers = {k.lower(): v for k, v in request.headers.items()}
-    verdict = await asyncio.to_thread(_accept, located, body=body, headers=headers)
+    verdict = await off_loop("light", _accept, located, body=body, headers=headers)
     if verdict.get("status") != "appended":
         status, reason_code, message = _REFUSALS.get(
             str(verdict.get("reason") or ""), (int(verdict.get("http_status") or 400), f"webhook_{verdict.get('reason')}", "The webhook was refused.")
@@ -180,7 +181,7 @@ async def feed_catalog(request: Request) -> Any:
     from .. import feed_catalog as fc
     from ..users import gateway_data_dir_from_env
 
-    out = await asyncio.to_thread(fc.load_catalog, Path(gateway_data_dir_from_env()))
+    out = await off_loop("light", fc.load_catalog, Path(gateway_data_dir_from_env()))
     if not principal.is_admin():
         out = {"version": out["version"], "feeds": out["feeds"]}
     return out
@@ -356,7 +357,7 @@ async def list_connections(
                 usage[id(c)] = u
         return {"connections": [connection_row(c, request, runtime, usage=usage[id(c)]) for c, runtime in pairs]}
 
-    return await asyncio.to_thread(run)
+    return await off_loop("heavy", run)
 
 
 @router.post("/connections", status_code=201, summary="Create a trigger connection (the secret is shown once)")
@@ -380,7 +381,7 @@ async def create_connection(request: Request, body: CreateConnectionBody) -> Any
             out["secret"] = secrets["secret"]
         return JSONResponse(status_code=201, content=out)
 
-    return await asyncio.to_thread(run)
+    return await off_loop("light", run)
 
 
 @router.get("/connections/{connection_id}", summary="One trigger connection")
@@ -391,7 +392,7 @@ async def get_connection(request: Request, connection_id: str) -> Any:
         found = _resolve(principal, connection_id)
         return _not_found(connection_id) if found is None else connection_row(found[2], request, found[0].host.runtime)
 
-    return await asyncio.to_thread(run)
+    return await off_loop("light", run)
 
 
 @router.put("/connections/{connection_id}", summary="Change a trigger connection's label, config or status")
@@ -414,7 +415,7 @@ async def update_connection(request: Request, connection_id: str, body: UpdateCo
             return _connection_error(exc)
         return connection_row(conn, request, svc.host.runtime)
 
-    return await asyncio.to_thread(run)
+    return await off_loop("light", run)
 
 
 @router.delete("/connections/{connection_id}", summary="Delete a trigger connection (its past events stay until retention)")
@@ -429,7 +430,7 @@ async def delete_connection(request: Request, connection_id: str) -> Any:
         store.delete(conn.connection_id, principal=conn.principal)
         return {"deleted": True, "connection_id": conn.connection_id}
 
-    return await asyncio.to_thread(run)
+    return await off_loop("light", run)
 
 
 def _event_item(rec: Dict[str, Any]) -> Dict[str, Any]:
@@ -464,7 +465,7 @@ async def connection_events(
         events = [_event_item(r) for r in records]
         return {"events": events, "next_after": events[-1]["sequence"] if events else after}
 
-    return await asyncio.to_thread(run)
+    return await off_loop("heavy", run)
 
 
 @router.post("/connections/{connection_id}/test-fire", summary="Send a test event to a connection")
@@ -493,7 +494,7 @@ async def connection_test_fire(request: Request, connection_id: str) -> Any:
                 pass
         return {"event_id": result.event_id, "sequence": int(result.seq), "woken": len(woken)}
 
-    return await asyncio.to_thread(run)
+    return await off_loop("heavy", run)
 
 
 # ---------------------------------------------------------------------------------------
@@ -599,7 +600,7 @@ async def sample_trigger_inputs(request: Request, body: SampleBody) -> Any:
     principal = _principal(request)
     svc = get_gateway_service()
     try:
-        return await asyncio.wait_for(asyncio.to_thread(_sample, svc, principal, body), timeout=SAMPLE_CAP_S + 10.0)
+        return await asyncio.wait_for(off_loop("heavy", _sample, svc, principal, body), timeout=SAMPLE_CAP_S + 10.0)
     except asyncio.TimeoutError:
         return JSONResponse(status_code=504, content={"detail": {"reason_code": "sample_timeout",
                                                                  "message": "Reading the sample took too long; try a smaller count."}})

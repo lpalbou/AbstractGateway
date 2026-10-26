@@ -32,6 +32,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
+from ..work_pools import off_loop
 from .. import core_endpoint as ce
 from .. import network_exposure as ne
 from ..users import gateway_data_dir_from_env
@@ -189,8 +190,8 @@ def _response(body):
 async def openai_api_status(request: Request):
     principal = _principal_from_request(request)
     data_dir = gateway_data_dir_from_env()
-    settings = await asyncio.to_thread(ce.read_settings, data_dir)
-    body = await asyncio.to_thread(_status, request, settings, data_dir, admin=bool(principal.is_admin()),
+    settings = await off_loop("light", ce.read_settings, data_dir)
+    body = await off_loop("light", _status, request, settings, data_dir, admin=bool(principal.is_admin()),
                                    listed=await _listed(settings))
     return _response(body)
 
@@ -199,7 +200,7 @@ async def openai_api_status(request: Request):
 async def openai_api_logs(request: Request, limit: int = Query(default=50, ge=1, le=500)):
     principal = _principal_from_request(request)
     own = None if principal.is_admin() else str(principal.user_id)
-    rows = await asyncio.to_thread(ce.recent_requests, limit=limit, user_id=own,
+    rows = await off_loop("light", ce.recent_requests, limit=limit, user_id=own,
                                    tenant_id=str(principal.tenant_id or "default"))
     return _response({"schema": SCHEMA, "rows": rows, "scope": "all" if own is None else "own"})
 
@@ -210,7 +211,7 @@ async def openai_api_log_record(request: Request, request_id: str):
     admin reads only their own: someone else's id answers 404, like an unknown one."""
     principal = _principal_from_request(request)
     own = None if principal.is_admin() else str(principal.user_id)
-    row = await asyncio.to_thread(ce.request_record, request_id[:200], user_id=own,
+    row = await off_loop("light", ce.request_record, request_id[:200], user_id=own,
                                   tenant_id=str(principal.tenant_id or "default"))
     if row is None:
         raise HTTPException(status_code=404, detail="There is no such request in the log.")
@@ -221,8 +222,8 @@ async def openai_api_log_record(request: Request, request_id: str):
 async def status(request: Request):
     _require_admin_principal(request)
     data_dir = gateway_data_dir_from_env()
-    settings = await asyncio.to_thread(ce.read_settings, data_dir)
-    return _response(await asyncio.to_thread(_status, request, settings, data_dir, admin=True, listed=await _listed(settings)))
+    settings = await off_loop("light", ce.read_settings, data_dir)
+    return _response(await off_loop("light", _status, request, settings, data_dir, admin=True, listed=await _listed(settings)))
 
 
 @router.post("")
@@ -230,7 +231,7 @@ async def change(request: Request, body: EndpointChange):
     _require_admin_principal(request)
     data_dir = gateway_data_dir_from_env()
     try:
-        settings = await asyncio.to_thread(ce.change_settings, data_dir, enabled=body.enabled, access=body.access,
+        settings = await off_loop("light", ce.change_settings, data_dir, enabled=body.enabled, access=body.access,
                                            reach=body.reach, open_account=body.open_account,
                                            owner_reveal=body.owner_reveal)
     except ValueError as exc:
@@ -240,7 +241,7 @@ async def change(request: Request, body: EndpointChange):
                                                      "access": settings.access, "reach": settings.reach,
                                                      "open_account": settings.open_account,
                                                      "owner_reveal": settings.owner_reveal}}
-    out = await asyncio.to_thread(_status, request, settings, data_dir, admin=True, listed=await _listed(settings))
+    out = await off_loop("light", _status, request, settings, data_dir, admin=True, listed=await _listed(settings))
     out["ended_requests"] = ended
     return _response(out)
 
@@ -249,12 +250,12 @@ async def change(request: Request, body: EndpointChange):
 async def restart(request: Request):
     _require_admin_principal(request)
     data_dir = gateway_data_dir_from_env()
-    settings = await asyncio.to_thread(ce.read_settings, data_dir)
+    settings = await off_loop("light", ce.read_settings, data_dir)
     if not settings.enabled:
         raise HTTPException(status_code=409, detail="The OpenAI API is stopped: turn on Endpoint first.")
     ended = ce.end_inflight_requests()
     request.state.audit_detail = {"core_endpoint_action": "restart", "ended_requests": ended}
-    out = await asyncio.to_thread(_status, request, settings, data_dir, admin=True, listed=await _listed(settings))
+    out = await off_loop("light", _status, request, settings, data_dir, admin=True, listed=await _listed(settings))
     out["ended_requests"] = ended
     return _response(out)
 
@@ -263,7 +264,7 @@ async def restart(request: Request):
 async def check(request: Request):
     _require_admin_principal(request)
     data_dir = gateway_data_dir_from_env()
-    network = await asyncio.to_thread(_network, data_dir)
+    network = await off_loop("watchers", _network, data_dir)
     try:
         checks = await ce.check_setup(data_dir, network=network)
     except asyncio.TimeoutError:
@@ -275,9 +276,9 @@ async def check(request: Request):
 async def rotate(request: Request):
     _require_admin_principal(request)
     data_dir = gateway_data_dir_from_env()
-    settings = await asyncio.to_thread(ce.change_settings, data_dir, rotate=True)
+    settings = await off_loop("light", ce.change_settings, data_dir, rotate=True)
     request.state.audit_detail = {"core_endpoint_token_action": "rotate"}
-    return _response({"token": settings.token, **(await asyncio.to_thread(_status, request, settings, data_dir, admin=True))})
+    return _response({"token": settings.token, **(await off_loop("light", _status, request, settings, data_dir, admin=True))})
 
 
 # ---- Named API keys for /v1 (round 16, backlog 1000; semantics in `abstractgateway.openai_keys`) ----
@@ -319,8 +320,8 @@ def _note_key_change(request: Request, *, action: str, user_id: str, tenant_id: 
 async def my_openai_keys(request: Request):
     from .. import openai_keys as ok
 
-    _principal, rec = await asyncio.to_thread(_own_account, request)
-    keys = await asyncio.to_thread(ok.list_keys, rec.user_id, rec.tenant_id)
+    _principal, rec = await off_loop("light", _own_account, request)
+    keys = await off_loop("light", ok.list_keys, rec.user_id, rec.tenant_id)
     return _response({"schema": SCHEMA, "account": rec.user_id, "keys": keys or []})
 
 
@@ -332,9 +333,9 @@ async def my_openai_key_create(request: Request, body: OpenAIKeyCreate):
     from .. import openai_keys as ok
     from ..users import OpenAIKeyError
 
-    principal, rec = await asyncio.to_thread(_own_account, request)
+    principal, rec = await off_loop("light", _own_account, request)
     try:
-        out = await asyncio.to_thread(ok.create_key, rec.user_id, rec.tenant_id, body.label,
+        out = await off_loop("light", ok.create_key, rec.user_id, rec.tenant_id, body.label,
                                       created_by=str(principal.user_id))
     except OpenAIKeyError as exc:
         raise _key_error(exc) from None
@@ -350,9 +351,9 @@ async def my_openai_key_reveal(request: Request, fingerprint: str):
     from .. import openai_keys as ok
     from ..users import OpenAIKeyError
 
-    _principal, rec = await asyncio.to_thread(_own_account, request)
+    _principal, rec = await off_loop("light", _own_account, request)
     try:
-        out = await asyncio.to_thread(ok.reveal_key, rec.user_id, rec.tenant_id, fingerprint)
+        out = await off_loop("light", ok.reveal_key, rec.user_id, rec.tenant_id, fingerprint)
     except OpenAIKeyError as exc:
         _note_key_change(request, action="reveal_refused", user_id=rec.user_id, tenant_id=rec.tenant_id,
                          item={"label": None, "fingerprint": str(fingerprint)[:64]})
@@ -366,9 +367,9 @@ async def my_openai_key_revoke(request: Request, fingerprint: str):
     from .. import openai_keys as ok
     from ..users import OpenAIKeyError
 
-    _principal, rec = await asyncio.to_thread(_own_account, request)
+    _principal, rec = await off_loop("light", _own_account, request)
     try:
-        gone = await asyncio.to_thread(ok.revoke_key, rec.user_id, rec.tenant_id, fingerprint)
+        gone = await off_loop("light", ok.revoke_key, rec.user_id, rec.tenant_id, fingerprint)
     except OpenAIKeyError as exc:
         raise _key_error(exc) from None
     _note_key_change(request, action="revoke", user_id=rec.user_id, tenant_id=rec.tenant_id, item=gone)
@@ -380,7 +381,7 @@ async def account_openai_keys(request: Request, account_id: str, tenant_id: str 
     from .. import openai_keys as ok
 
     _require_admin_principal(request)
-    keys = await asyncio.to_thread(ok.list_keys, account_id, tenant_id)
+    keys = await off_loop("light", ok.list_keys, account_id, tenant_id)
     if keys is None:
         raise HTTPException(status_code=404, detail={"reason_code": "account_not_found",
                                                      "message": f"There is no account named {account_id!r} on this gateway."})
@@ -408,7 +409,7 @@ async def account_openai_key_revoke(request: Request, account_id: str, fingerpri
 
     _require_admin_principal(request)
     try:
-        gone = await asyncio.to_thread(ok.revoke_key, account_id, tenant_id, fingerprint)
+        gone = await off_loop("light", ok.revoke_key, account_id, tenant_id, fingerprint)
     except OpenAIKeyError as exc:
         raise _key_error(exc) from None
     _note_key_change(request, action="revoke", user_id=account_id, tenant_id=tenant_id, item=gone)

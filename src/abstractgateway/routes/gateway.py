@@ -51,6 +51,7 @@ from abstractruntime.storage.base import QueryableRunIndexStore, QueryableRunSto
 from abstractruntime.core.models import Effect, EffectType, RunState, RunStatus, StepRecord, WaitReason
 from abstractruntime.storage.artifacts import build_artifact_descriptor_payload
 
+from ..work_pools import off_loop
 from ..memory_store import (
     memory_backend_unavailable_reason,
     memory_store_exists,
@@ -1149,7 +1150,7 @@ async def gateway_me_accounts(request: Request, include_archived: bool = Query(d
     principal = _principal_from_request(request)
     from ..admin_accounts import list_my_accounts
 
-    return await _off_the_event_loop(list_my_accounts, principal, include_archived=bool(include_archived))
+    return await off_loop("light", list_my_accounts, principal, include_archived=bool(include_archived))
 
 
 NO_OWN_TOKEN = (
@@ -1175,7 +1176,7 @@ async def gateway_me_rotate_token(request: Request, response: Response) -> Dict[
     rec = registry.get_user(str(principal.user_id), tenant_id=str(principal.tenant_id or "default"))
     if rec is None or rec.principal_kind == "entity" or principal.source != "user-registry":
         raise HTTPException(status_code=404, detail={"reason_code": "no_own_token", "message": NO_OWN_TOKEN})
-    record, issued = await _off_the_event_loop(
+    record, issued = await off_loop("light",
         lambda: registry.update_user(user_id=rec.user_id, tenant_id=rec.tenant_id, token="")
     )
     from ..mail.audit import audit_email_event
@@ -1211,7 +1212,7 @@ async def gateway_me_account_activity(
     from ..admin_accounts import my_account_ids
 
     kinds = _activity_kinds(kind)
-    mine = dict(await _off_the_event_loop(my_account_ids, principal))
+    mine = dict(await off_loop("light", my_account_ids, principal))
     if account_id not in mine:
         raise HTTPException(
             status_code=404,
@@ -2674,7 +2675,7 @@ async def _launch_workspace_opener(command: List[str]) -> None:
             close_fds=True,
         )
 
-    await asyncio.to_thread(_launch)
+    await off_loop("watchers", _launch)
 
 
 # ---------------------------------------------------------------------
@@ -4303,8 +4304,11 @@ async def _off_the_event_loop(fn: Any, /, *args: Any, **kwargs: Any) -> Any:
 
     The rebuild still swaps the host under the host lock, exactly as before; only the
     thread it burns is different. Exceptions (HTTPException included) propagate.
+
+    It runs in the HEAVY pool (work_pools.py, gateway load 2026-10-26): rebuilds, scans and
+    listings share a few threads, and never delay sign-in, /me, health or the live streams.
     """
-    return await asyncio.to_thread(fn, *args, **kwargs)
+    return await off_loop("heavy", fn, *args, **kwargs)
 
 
 def _audit_reload(request: Request, reload_obj: Dict[str, Any]) -> None:
@@ -9770,7 +9774,7 @@ async def get_run(run_id: str) -> Dict[str, Any]:
     try:
         # H7c (agency live finding, c1085): one-shot store reads run OFF the
         # event loop — sync SQLite on the loop pins /health for the duration.
-        run = await asyncio.to_thread(rs.load, str(run_id))
+        run = await off_loop("light", rs.load, str(run_id))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
     if run is None:
@@ -10669,7 +10673,7 @@ async def list_run_workspace_files(
     if not root.is_dir():
         raise HTTPException(status_code=404, detail=f"the workspace folder {str(root)!r} does not exist")
     try:
-        return await asyncio.to_thread(list_entries, root, path, recursive=bool(recursive), limit=limit, is_blocked=is_blocked)
+        return await off_loop("heavy", list_entries, root, path, recursive=bool(recursive), limit=limit, is_blocked=is_blocked)
     except WorkspacePathError as exc:
         raise _browse_error(exc) from exc
 
@@ -10801,7 +10805,7 @@ async def get_run_history_bundle(
         # H7c (agency live finding, c1085): a busy-store bundle export took
         # 28s WALL on the event loop and pinned /health for the duration —
         # the whole export (run tree walk + ledger reads) runs off-loop.
-        bundle = await asyncio.to_thread(
+        bundle = await off_loop("heavy",
             export_run_history_bundle,
             run_id=rid,
             run_store=svc.host.run_store,
@@ -10895,7 +10899,7 @@ async def get_session_history_bloc(
     ledger_store = getattr(getattr(svc, "host", None), "ledger_store", None)
 
     try:
-        return await asyncio.to_thread(
+        return await off_loop("heavy",
             assemble_session_history_bloc,
             run_store=rs,
             ledger_store=ledger_store,
@@ -11445,12 +11449,12 @@ async def get_ledger(
     try:
         # H7c (agency c1085): store reads off the event loop — a large ledger
         # materialization on the loop pins every other request.
-        run0 = await asyncio.to_thread(svc.host.run_store.load, str(run_id))
+        run0 = await off_loop("light", svc.host.run_store.load, str(run_id))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
     if run0 is None:
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
-    ledger = await asyncio.to_thread(svc.host.ledger_store.list, str(run_id))
+    ledger = await off_loop("heavy", svc.host.ledger_store.list, str(run_id))
     if not isinstance(ledger, list):
         ledger = []
     a = int(after or 0)
@@ -11495,7 +11499,7 @@ async def get_ledger_batch(req: LedgerBatchRequest) -> Dict[str, Any]:
             out[rid] = {"items": items, "next_after": next_after}
         return out
 
-    return {"runs": await asyncio.to_thread(_collect)}
+    return {"runs": await off_loop("heavy", _collect)}
 
 
 # SSE terminal-detection settle window. After a drain that
@@ -11594,7 +11598,7 @@ async def stream_ledger(
 
     # Fail fast: streaming a non-existent run should not hold open a keep-alive connection forever.
     try:
-        run0 = await asyncio.to_thread(rs.load, run_id2)
+        run0 = await off_loop("light", rs.load, run_id2)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
     if run0 is None:
@@ -11626,14 +11630,14 @@ async def stream_ledger(
     live_scope = scope_key(live_data_dir)
     # The run's parent chain in the CALLER's run store (the tenancy check
     # above already passed).
-    live_chain = await asyncio.to_thread(resolve_chain_in_store, rs, run0, run_id=run_id2)
+    live_chain = await off_loop("light", resolve_chain_in_store, rs, run0, run_id=run_id2)
 
     async def _gen():
         tail = resolve_ledger_tail(svc.host.ledger_store, run_id2, start_index=start_index)
         loop = asyncio.get_running_loop()
         dirty = asyncio.Event()
         dirty.set()  # first pass always drains (catch-up)
-        live = await asyncio.to_thread(
+        live = await off_loop("light",
             live_hub.subscribe, live_scope, live_chain, loop=loop, data_dir=live_data_dir
         )
 
@@ -11704,7 +11708,7 @@ async def stream_ledger(
                     last_emit = loop.time()
                 if dirty.is_set():
                     dirty.clear()
-                    new_records = await asyncio.to_thread(tail.read_new)
+                    new_records = await off_loop("light", tail.read_new)
                     progressed = bool(getattr(tail, "progressed", False))
                     if new_records:
                         # Batched sends (~256KB): one ASGI send per record paid
@@ -11757,7 +11761,7 @@ async def stream_ledger(
                         # a run ended by a process that could not reach this
                         # hub) and send every live frame BEFORE `done`.
                         try:
-                            final_run = await asyncio.to_thread(rs.load, run_id2)
+                            final_run = await off_loop("light", rs.load, run_id2)
                             live_hub.run_terminal(
                                 live_scope, run_id2, getattr(final_run, "status", None), live_chain
                             )
@@ -11784,7 +11788,7 @@ async def stream_ledger(
                             settle_checks_left -= 1
                         last_status_check = now
                         try:
-                            cur_run = await asyncio.to_thread(rs.load, run_id2)
+                            cur_run = await off_loop("light", rs.load, run_id2)
                             terminal = _is_terminal(getattr(cur_run, "status", None))
                         except Exception:
                             # If status lookup fails, keep streaming keep-alives.
@@ -11876,7 +11880,7 @@ async def generate_run_summary(run_id: str, req: GenerateRunSummaryRequest) -> G
     )
 
     try:
-        summary_text = await asyncio.to_thread(_generate_summary_text, provider=provider, model=model, context=context)
+        summary_text = await off_loop("watchers", _generate_summary_text, provider=provider, model=model, context=context)
     except HTTPException:
         raise
     except Exception as e:
@@ -12112,7 +12116,7 @@ async def run_chat(run_id: str, req: RunChatRequest) -> RunChatResponse:
     messages, history = _client_history_window(req.messages)
 
     try:
-        answer_text = await asyncio.to_thread(_generate_chat_text, provider=provider, model=model, context=context, messages=messages)
+        answer_text = await off_loop("watchers", _generate_chat_text, provider=provider, model=model, context=context, messages=messages)
     except HTTPException:
         raise
     except Exception as e:
@@ -12536,7 +12540,7 @@ async def _discovery_to_thread(func, *args, **kwargs):
     """Run one blocking discovery probe off the loop, under admission control."""
     sem = _get_discovery_semaphore()
     async with sem:
-        return await asyncio.to_thread(func, *args, **kwargs)
+        return await off_loop("watchers", func, *args, **kwargs)
 
 
 def _voice_synth_max_concurrency() -> int:
@@ -12735,7 +12739,7 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
     # resolves the default. Runs off the event loop (the read may be a
     # remote HTTP GET in split mode).
     if provider_name is None and model_name is None and voice_name is None and profile_name is None:
-        _voice_defaults = await asyncio.to_thread(_configured_voice_output_defaults, "tts")
+        _voice_defaults = await off_loop("light", _configured_voice_output_defaults, "tts")
         if _voice_defaults.get("provider"):
             provider_name = str(_voice_defaults["provider"])
             if _voice_defaults.get("model"):
@@ -12796,7 +12800,7 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
     permit_transferred = False
     try:
         synth_task = asyncio.ensure_future(
-            asyncio.to_thread(
+            off_loop("watchers",
                 run_facade.generate_voice,
                 str(getattr(run, "run_id", rid)),
                 text=text,
@@ -12877,11 +12881,11 @@ async def voice_tts_stream(run_id: str, req: VoiceTTSRequest) -> StreamingRespon
     # setup and the engine call below can block on disk or on the voice
     # engine's lock; the loop must keep answering /api/health meanwhile.
     try:
-        run = await asyncio.to_thread(rs.load, rid)
+        run = await off_loop("light", rs.load, rid)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
     if run is None:
-        run = await asyncio.to_thread(_load_or_create_session_memory_owner_run, run_store=rs, run_id=rid)
+        run = await off_loop("light", _load_or_create_session_memory_owner_run, run_store=rs, run_id=rid)
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run '{rid}' not found")
 
@@ -12922,7 +12926,7 @@ async def voice_tts_stream(run_id: str, req: VoiceTTSRequest) -> StreamingRespon
     # P0), same discipline as the artifact lane: fill only a fully-bare
     # request, off the event loop.
     if provider_name is None and model_name is None and voice_name is None and profile_name is None:
-        _voice_defaults = await asyncio.to_thread(_configured_voice_output_defaults, "tts")
+        _voice_defaults = await off_loop("light", _configured_voice_output_defaults, "tts")
         if _voice_defaults.get("provider"):
             provider_name = str(_voice_defaults["provider"])
             if _voice_defaults.get("model"):
@@ -13291,7 +13295,7 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
     # "voice") when the request named NEITHER provider nor model; a partial
     # request is the caller's coherent intent, untouched. Off the loop.
     if stt_provider_name is None and stt_model_name is None:
-        _stt_defaults = await asyncio.to_thread(_configured_voice_output_defaults, "stt")
+        _stt_defaults = await off_loop("light", _configured_voice_output_defaults, "stt")
         if _stt_defaults.get("provider"):
             stt_provider_name = str(_stt_defaults["provider"])
             if _stt_defaults.get("model"):
@@ -13324,7 +13328,7 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
 
     _stt_started = time.monotonic()
     try:
-        child = await asyncio.to_thread(
+        child = await off_loop("watchers",
             run_facade.transcribe_audio,
             str(getattr(run, "run_id", rid)),
             media=audio_ref,
@@ -13404,7 +13408,7 @@ async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTra
         metadata_schema="abstractruntime.transcript_artifact_metadata.v1",
     )
     try:
-        meta = await asyncio.to_thread(
+        meta = await off_loop("heavy",
             store_fn,
             transcript_bytes,
             content_type="text/plain; charset=utf-8",
@@ -14241,7 +14245,7 @@ async def image_generate(run_id: str, req: ImageGenerateRequest) -> ImageGenerat
         child_vars = {"_runtime": runtime_ns}
 
     try:
-        child = await asyncio.to_thread(
+        child = await off_loop("watchers",
             run_facade.generate_image,
             str(getattr(run, "run_id", rid)),
             prompt=prompt,
@@ -14452,7 +14456,7 @@ async def image_edit(run_id: str, req: ImageEditRequest) -> ImageGenerateRespons
         child_vars = {"_runtime": runtime_ns}
 
     try:
-        child = await asyncio.to_thread(
+        child = await off_loop("watchers",
             run_facade.edit_image,
             str(getattr(run, "run_id", rid)),
             prompt=prompt,
@@ -14616,7 +14620,7 @@ async def image_upscale(run_id: str, req: ImageUpscaleRequest) -> ImageGenerateR
         child_vars = {"_runtime": runtime_ns}
 
     try:
-        child = await asyncio.to_thread(
+        child = await off_loop("watchers",
             upscale_image_fn,
             str(getattr(run, "run_id", rid)),
             media=[source_item],
@@ -14789,7 +14793,7 @@ async def video_generate(run_id: str, req: VideoGenerateRequest) -> VideoGenerat
         child_vars = {"_runtime": runtime_ns}
 
     try:
-        child = await asyncio.to_thread(
+        child = await off_loop("watchers",
             generate_video_fn,
             str(getattr(run, "run_id", rid)),
             prompt=prompt,
@@ -14980,7 +14984,7 @@ async def image_to_video(run_id: str, req: ImageToVideoRequest) -> VideoGenerate
         child_vars = {"_runtime": runtime_ns}
 
     try:
-        child = await asyncio.to_thread(
+        child = await off_loop("watchers",
             image_to_video_fn,
             str(getattr(run, "run_id", rid)),
             prompt=prompt,
@@ -15159,7 +15163,7 @@ async def music_generate(run_id: str, req: MusicGenerateRequest) -> MusicGenerat
         child_vars = {"_runtime": runtime_ns}
 
     try:
-        child = await asyncio.to_thread(
+        child = await off_loop("watchers",
             run_facade.generate_music,
             str(getattr(run, "run_id", rid)),
             prompt=prompt,
@@ -15668,7 +15672,7 @@ def installed_framework_version(dist_version: Optional[str] = None, data_dir: Op
 async def gateway_about() -> Dict[str, Any]:
     """Which AbstractFramework and package versions this gateway runs.
     Public (no sign-in): About screens of every app read it."""
-    return await asyncio.to_thread(about_payload)
+    return await off_loop("heavy", about_payload)
 
 
 @router.get("/skills")
@@ -15686,7 +15690,7 @@ async def gateway_skills_inventory(request: Request) -> Dict[str, Any]:
 
     svc = get_gateway_service()
     include_archived = str(request.query_params.get("include_archived") or "").strip().lower() in ("1", "true", "yes")
-    return await asyncio.to_thread(
+    return await off_loop("heavy",
         skills_inventory, data_dir=Path(svc.stores.base_dir), include_archived=include_archived
     )
 
@@ -15707,7 +15711,7 @@ async def gateway_skill_detail(name: str, request: Request) -> Dict[str, Any]:
     from ..skills_library import SkillLibraryError, skill_detail
 
     try:
-        return await asyncio.to_thread(skill_detail, name)
+        return await off_loop("heavy", skill_detail, name)
     except SkillLibraryError as exc:
         raise _skills_refusal(exc) from None
 
@@ -15719,7 +15723,7 @@ async def gateway_skill_export(name: str, request: Request) -> Response:
     from ..skills_library import SkillLibraryError, export_zip
 
     try:
-        filename, blob = await asyncio.to_thread(export_zip, name)
+        filename, blob = await off_loop("heavy", export_zip, name)
     except SkillLibraryError as exc:
         raise _skills_refusal(exc) from None
     return Response(
@@ -15747,7 +15751,7 @@ async def gateway_admin_skill_import(request: Request) -> Dict[str, Any]:
             blob = await single.read(MAX_IMPORT_BYTES * 2 + 1)
             if len(blob) > MAX_IMPORT_BYTES * 2:
                 raise SkillLibraryError(f"The upload is larger than {MAX_IMPORT_BYTES * 2} bytes.")
-            entries = await asyncio.to_thread(files_from_zip, blob)
+            entries = await off_loop("heavy", files_from_zip, blob)
         else:
             uploads = [f for f in form.getlist("files") if hasattr(f, "read")]
             paths = [str(p) for p in form.getlist("paths")]
@@ -15762,7 +15766,7 @@ async def gateway_admin_skill_import(request: Request) -> Dict[str, Any]:
                 if total > MAX_IMPORT_BYTES:
                     raise SkillLibraryError(f"The folder holds more than {MAX_IMPORT_BYTES} bytes; a skill may hold at most that.")
                 entries.append((paths[i] if paths else str(up.filename or ""), blob))
-        detail = await asyncio.to_thread(import_skill, entries)
+        detail = await off_loop("heavy", import_skill, entries)
     except SkillLibraryError as exc:
         raise _skills_refusal(exc) from None
     request.state.audit_detail = {"skill_import": {"name": detail["name"], "by": principal.user_id}}
@@ -15783,7 +15787,7 @@ async def gateway_admin_skill_update(name: str, request: Request) -> Dict[str, A
     skill_md = body.get("skill_md")
     fields = {k: (None if body.get(k) is None else str(body.get(k))) for k in ("name", "description", "version", "license") if k in body}
     try:
-        detail = await asyncio.to_thread(update_skill, name, skill_md=None if skill_md is None else str(skill_md), fields=fields)
+        detail = await off_loop("heavy", update_skill, name, skill_md=None if skill_md is None else str(skill_md), fields=fields)
     except SkillLibraryError as exc:
         raise _skills_refusal(exc) from None
     request.state.audit_detail = {"skill_update": {"name": name}}
@@ -15803,7 +15807,7 @@ async def gateway_admin_skill_duplicate(name: str, request: Request) -> Dict[str
         body = {}
     new_name = (body or {}).get("name") if isinstance(body, dict) else None
     try:
-        return await asyncio.to_thread(duplicate_skill, name, new_name)
+        return await off_loop("heavy", duplicate_skill, name, new_name)
     except SkillLibraryError as exc:
         raise _skills_refusal(exc) from None
 
@@ -15816,7 +15820,7 @@ async def gateway_admin_skill_archive(name: str, request: Request) -> Dict[str, 
     from ..skills_library import SkillLibraryError, archive_skill
 
     try:
-        return await asyncio.to_thread(archive_skill, name)
+        return await off_loop("heavy", archive_skill, name)
     except SkillLibraryError as exc:
         raise _skills_refusal(exc) from None
 
@@ -15827,7 +15831,7 @@ async def gateway_admin_skill_unarchive(name: str, request: Request) -> Dict[str
     from ..skills_library import SkillLibraryError, unarchive_skill
 
     try:
-        return await asyncio.to_thread(unarchive_skill, name)
+        return await off_loop("heavy", unarchive_skill, name)
     except SkillLibraryError as exc:
         raise _skills_refusal(exc) from None
 
@@ -15843,7 +15847,7 @@ async def gateway_admin_skills_reseed(request: Request) -> Dict[str, Any]:
     _require_admin_principal(request)
     from ..skills_shelf import seed
 
-    outcome = await asyncio.to_thread(seed, gateway_data_dir_from_env())
+    outcome = await off_loop("heavy", seed, gateway_data_dir_from_env())
     request.state.audit_detail = {"skills_reseed": {"ok": bool(outcome.get("ok"))}}
     if not outcome.get("ok"):
         raise HTTPException(status_code=409, detail=f"the skills shelf could not be seeded at {outcome.get('dest')}: {outcome.get('error')}")
@@ -15903,7 +15907,7 @@ async def gateway_admin_mcp_create(request: Request) -> Dict[str, Any]:
 
     body = await _mcp_body(request)
     try:
-        row = await asyncio.to_thread(create_server, _mcp_data_dir(), body)
+        row = await off_loop("heavy", create_server, _mcp_data_dir(), body)
     except McpRegistryError as exc:
         raise _mcp_refusal(exc) from None
     request.state.audit_detail = {"mcp_server_create": {"name": row["name"]}}
@@ -15919,7 +15923,7 @@ async def gateway_admin_mcp_update(name: str, request: Request) -> Dict[str, Any
 
     body = await _mcp_body(request)
     try:
-        row = await asyncio.to_thread(update_server, _mcp_data_dir(), name, body)
+        row = await off_loop("heavy", update_server, _mcp_data_dir(), name, body)
     except McpRegistryError as exc:
         raise _mcp_refusal(exc) from None
     request.state.audit_detail = {"mcp_server_update": {"name": name}}
@@ -15932,7 +15936,7 @@ async def gateway_admin_mcp_archive(name: str, request: Request) -> Dict[str, An
     from ..mcp_registry import McpRegistryError, set_archived
 
     try:
-        return await asyncio.to_thread(set_archived, _mcp_data_dir(), name, True)
+        return await off_loop("heavy", set_archived, _mcp_data_dir(), name, True)
     except McpRegistryError as exc:
         raise _mcp_refusal(exc) from None
 
@@ -15943,7 +15947,7 @@ async def gateway_admin_mcp_unarchive(name: str, request: Request) -> Dict[str, 
     from ..mcp_registry import McpRegistryError, set_archived
 
     try:
-        return await asyncio.to_thread(set_archived, _mcp_data_dir(), name, False)
+        return await off_loop("heavy", set_archived, _mcp_data_dir(), name, False)
     except McpRegistryError as exc:
         raise _mcp_refusal(exc) from None
 
@@ -15960,7 +15964,7 @@ async def gateway_admin_mcp_agents(name: str, request: Request) -> Dict[str, Any
     if not isinstance(body.get("enabled"), bool):
         raise HTTPException(status_code=400, detail={"reason_code": "mcp_refused", "message": "Send {\"enabled\": true} or {\"enabled\": false}."})
     try:
-        row = await asyncio.to_thread(set_enabled_for_agents, _mcp_data_dir(), name, body["enabled"])
+        row = await off_loop("heavy", set_enabled_for_agents, _mcp_data_dir(), name, body["enabled"])
     except McpRegistryError as exc:
         raise _mcp_refusal(exc) from None
     request.state.audit_detail = {"mcp_server_agents": {"name": name, "enabled": body["enabled"]}}
@@ -15976,7 +15980,7 @@ async def gateway_admin_mcp_test_saved(name: str, request: Request) -> Dict[str,
     from ..mcp_registry import McpRegistryError, check_saved
 
     try:
-        return await asyncio.to_thread(check_saved, _mcp_data_dir(), name)
+        return await off_loop("watchers", check_saved, _mcp_data_dir(), name)
     except McpRegistryError as exc:
         raise _mcp_refusal(exc) from None
 
@@ -15990,7 +15994,7 @@ async def gateway_admin_mcp_test_unsaved(request: Request) -> Dict[str, Any]:
 
     body = await _mcp_body(request)
     try:
-        return await asyncio.to_thread(check_unsaved, _mcp_data_dir(), body)
+        return await off_loop("watchers", check_unsaved, _mcp_data_dir(), body)
     except McpRegistryError as exc:
         raise _mcp_refusal(exc) from None
 
@@ -19321,7 +19325,7 @@ async def voice_defaults() -> Dict[str, Any]:
     exactly this route (synthesis and transcription fill from the same rows),
     so a client shows "Gateway default · <provider> / <model>" from here and
     never from a voice catalog's engine-side fields."""
-    return await asyncio.to_thread(_effective_voice_routes)
+    return await off_loop("light", _effective_voice_routes)
 
 
 @router.get("/voice/voices")
@@ -19365,7 +19369,7 @@ async def voice_voices_catalog(
             out = _with_voice_cloud_providers(out, list_keys=("providers", "tts_providers"), provider=provider)
         else:
             out = _with_cloud_voice_reason(out, provider)
-        out = _with_effective_voice_routes(out, await asyncio.to_thread(_effective_voice_routes))
+        out = _with_effective_voice_routes(out, await off_loop("light", _effective_voice_routes))
         items = (
             _voice_provider_catalog_items(out, provider_keys=("providers", "tts_providers"))
             if providers_only
@@ -19401,7 +19405,7 @@ async def voice_voices_catalog(
         out = _with_voice_cloud_providers(out, list_keys=("providers", "tts_providers"), provider=provider)
     else:
         out = _with_cloud_voice_reason(out, provider)
-    out = _with_effective_voice_routes(out, await asyncio.to_thread(_effective_voice_routes))
+    out = _with_effective_voice_routes(out, await off_loop("light", _effective_voice_routes))
     items = (
         _voice_provider_catalog_items(out, provider_keys=("providers", "tts_providers"))
         if providers_only
@@ -20187,7 +20191,7 @@ async def discovery_providers(
             if prof is None or item.get("models") or not getattr(prof, "base_url", None):
                 return
             try:
-                payload2 = await asyncio.to_thread(
+                payload2 = await off_loop("watchers",
                     discovery.list_provider_models,
                     prof.provider_family,
                     base_url=prof.base_url or None,
@@ -20310,7 +20314,7 @@ async def discovery_provider_models(
                     models = []
                 else:
                     try:
-                        payload = await asyncio.to_thread(
+                        payload = await off_loop("watchers",
                             discovery.list_provider_models,
                             profile.provider_family,
                             base_url=profile.base_url or None,
@@ -23836,7 +23840,7 @@ async def backlog_list(kind: str) -> BacklogListResponse:
                     break
         return folded
 
-    out = await asyncio.to_thread(_walk_roots)
+    out = await off_loop("heavy", _walk_roots)
     # Newest ids first across roots (stable within a root by construction).
     out.sort(key=lambda i: int(i.item_id), reverse=True)
     return BacklogListResponse(items=out)
@@ -25128,7 +25132,7 @@ async def backlog_assist(req: BacklogAssistRequest) -> BacklogAssistResponse:
     )
 
     try:
-        out = await asyncio.to_thread(
+        out = await off_loop("watchers",
             _generate_backlog_assist_json,
             provider=provider,
             model=model,
@@ -27087,7 +27091,7 @@ async def model_availability_get() -> Dict[str, Any]:
     """
     svc = get_gateway_service()
     base_dir = Path(svc.config.data_dir)
-    return await asyncio.to_thread(gateway_model_availability_payload, base_dir=base_dir)
+    return await off_loop("heavy", gateway_model_availability_payload, base_dir=base_dir)
 
 
 @router.post("/models/download")
@@ -27109,7 +27113,7 @@ async def model_download_start(req: _GatewayModelDownloadRequest) -> Dict[str, A
     if req.recommended:
         # One PARENT job (`group`, id `grp_...`) over one child per model:
         # poll the parent for the overall bar, `jobs` for the per-model rows.
-        started = await asyncio.to_thread(start_recommended_group, dry_run=req.dry_run)
+        started = await off_loop("watchers", start_recommended_group, dry_run=req.dry_run)
         return {"ok": True, "recommended": True, "jobs": started["jobs"], "group": started["group"]}
     if not (req.provider and req.artifact):
         raise HTTPException(status_code=400, detail="`provider` and `artifact` are required (or pass `recommended`).")
@@ -27213,12 +27217,12 @@ async def model_downloads_stream(
                 return
             try:
                 if job_id:
-                    job = await asyncio.to_thread(get_job, job_id)
+                    job = await off_loop("light", get_job, job_id)
                     payload = {"job": job}
                     active = bool(job) and str(job.get("status")) in ("running", "queued")
                     name = "job"
                 else:
-                    jobs = await asyncio.to_thread(list_jobs)
+                    jobs = await off_loop("light", list_jobs)
                     payload = {"jobs": jobs}
                     active = any(str(j.get("status")) in ("running", "queued") for j in jobs)
                     name = "downloads"
@@ -27287,7 +27291,7 @@ async def _core_host_call(fn: Any, *args: Any, **kwargs: Any) -> Any:
     from ..core_config import CoreTooOld, HostActionRefused
 
     try:
-        return await asyncio.to_thread(fn, *args, **kwargs)
+        return await off_loop("watchers", fn, *args, **kwargs)
     except HostActionRefused as exc:
         body = exc.payload()
         message = str(body.pop("message", "") or exc)
@@ -27423,7 +27427,7 @@ async def host_job_cancel_post(job_id: str, request: Request) -> Any:
     from ..engines_install import default_registry
 
     if default_registry().get(job_id) is not None:
-        snap = await asyncio.to_thread(default_registry().cancel, job_id)
+        snap = await off_loop("light", default_registry().cancel, job_id)
         return dict(snap or {}, schema="host_job_v1", engine_job_schema="engine_install_job_v1")
     principal = _principal_from_request(request)
     job = await _core_host_call(core_host_job_cancel, job_id, by="api", user=getattr(principal, "user_id", None) or None)
@@ -27825,7 +27829,7 @@ async def gateway_sandbox_generate(request: Request, req: _GatewaySandboxGenerat
     try:
         media = _sandbox_media_refs(req)
         llm, routed_provider, profile_public = _gateway_llm_client(provider, model)
-        result = await asyncio.to_thread(
+        result = await off_loop("watchers",
             llm.generate,
             prompt="",
             messages=sandbox_messages,
@@ -30040,7 +30044,7 @@ async def files_list(
     )
 
     try:
-        folder_path, items, truncated = await asyncio.to_thread(
+        folder_path, items, truncated = await off_loop("heavy",
             _list_workspace_entries,
             base=base,
             mounts=mounts,
@@ -30094,7 +30098,7 @@ async def files_search(
 
     try:
         # Index build can be slow on large workspaces; keep async endpoints responsive.
-        paths = await asyncio.to_thread(_get_file_index, base=base, mounts=mounts, blocked=blocked)
+        paths = await off_loop("heavy", _get_file_index, base=base, mounts=mounts, blocked=blocked)
     except Exception as e:
         return {"items": [], "error": str(e)}
 

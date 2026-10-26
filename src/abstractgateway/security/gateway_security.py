@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Tuple
 
+from ..work_pools import off_loop
 from ..users import GatewayUserRegistry, gateway_user_auth_enabled, token_fingerprint
 from .principal import (
     GatewayPrincipal,
@@ -847,7 +848,7 @@ class GatewaySecurityMiddleware:
                     try:
                         from ..openai_keys import record_use
 
-                        await asyncio.to_thread(record_use, key_item.fingerprint, str(ip))
+                        await off_loop("light", record_use, key_item.fingerprint, str(ip))
                     except Exception:  # noqa: BLE001 - last-used is best effort, never breaks a request
                         pass
             else:

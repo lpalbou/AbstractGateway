@@ -36,6 +36,7 @@ from starlette.responses import JSONResponse
 
 from abstractruntime.integrations.abstractcore.server_facade import serve_core_request
 
+from .work_pools import off_loop
 from . import network_exposure as ne
 from .asgi_receive import replay_body_receive
 from .runtime_config import resolve_network_setting, store_lock
@@ -783,7 +784,7 @@ class CoreEndpoint:
             return await openai_error(400, str(exc), param=exc.param, code=exc.code)(scope, receive, send)
         data_dir = gateway_data_dir_from_env()
         try:
-            settings = await asyncio.to_thread(read_settings, data_dir)
+            settings = await off_loop("light", read_settings, data_dir)
             if not settings.enabled:
                 return await openai_error(404, "The OpenAI API is stopped on this gateway.", code="endpoint_stopped")(scope, receive, send)
             trust = bool(ne.live_reverse_proxy(data_dir).trust_proxy)
@@ -795,7 +796,7 @@ class CoreEndpoint:
                     403, f"This API accepts {REACH_LABELS[settings.reach].lower()}. "
                          "An admin can change Who can connect on the OpenAI API page.",
                     type_="permission_error", code="client_not_allowed")(scope, receive, send)
-            allow_open = settings.access == "open" and await asyncio.to_thread(open_access_allowed, scope, data_dir)
+            allow_open = settings.access == "open" and await off_loop("light", open_access_allowed, scope, data_dir)
         except (OSError, ValueError):
             return await openai_error(503, "OpenAI API settings are unavailable.", type_="server_error")(scope, receive, send)
         principal = state.get("gateway_principal") if isinstance(state, dict) else None
@@ -806,7 +807,7 @@ class CoreEndpoint:
         guest = False
         if principal is not None:
             note["client"] = str(getattr(principal, "user_id", "") or "user")
-            refused = await asyncio.to_thread(_capability_refusal, principal)
+            refused = await off_loop("light", _capability_refusal, principal)
             if refused:
                 return await openai_error(403, refused, type_="permission_error",
                                           code="openai_api_off")(scope, receive, send)
@@ -820,7 +821,7 @@ class CoreEndpoint:
                 guest = True
                 note["client"] = GUEST_ACCOUNT
             else:
-                reason = await asyncio.to_thread(open_account_refusal, account)
+                reason = await off_loop("light", open_account_refusal, account)
                 if reason:
                     note["client"] = "refused"
                     return await openai_error(
@@ -836,7 +837,7 @@ class CoreEndpoint:
                     code="guest_not_allowed")(scope, receive, send)
         else:
             note["client"] = "refused"
-            inactive = await asyncio.to_thread(_inactive_account, credential.strip()) if credential.strip() else None
+            inactive = await off_loop("light", _inactive_account, credential.strip()) if credential.strip() else None
             if inactive is not None:
                 note["client"] = inactive
                 return await openai_error(
@@ -1310,7 +1311,7 @@ async def check_setup(data_dir: Path, *, network: Dict[str, Any]) -> List[Dict[s
     """Plain checks, each {id, ok, text}: settings, Core, listener vs reach, models."""
     checks: List[Dict[str, Any]] = []
     try:
-        settings = await asyncio.to_thread(read_settings, data_dir)
+        settings = await off_loop("light", read_settings, data_dir)
         checks.append({"id": "settings", "ok": True, "text": "Settings are readable."})
     except (OSError, ValueError) as exc:
         return [{"id": "settings", "ok": False, "text": str(exc)}]
@@ -1329,7 +1330,7 @@ async def check_setup(data_dir: Path, *, network: Dict[str, Any]) -> List[Dict[s
     try:
         import importlib
 
-        await asyncio.to_thread(importlib.import_module, "abstractcore.server.app")
+        await off_loop("heavy", importlib.import_module, "abstractcore.server.app")
         checks.append({"id": "core", "ok": True, "text": "AbstractCore's server is installed."})
     except Exception as exc:  # noqa: BLE001 - reported to the admin verbatim
         checks.append({"id": "core", "ok": False, "text": f"AbstractCore's server cannot start: {type(exc).__name__}: {exc}"})

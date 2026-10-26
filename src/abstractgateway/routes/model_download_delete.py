@@ -18,6 +18,7 @@ CLI and the terminal console.
 
 from __future__ import annotations
 
+from ..work_pools import off_loop
 import asyncio
 from typing import Any, Dict, List
 
@@ -65,7 +66,7 @@ async def delete_download_route(req: DeleteDownloadRequest, request: Request) ->
     principal = _require_admin_principal(request)
     actor = str(getattr(principal, "user_id", "") or "")
     try:
-        out = await asyncio.to_thread(
+        out = await off_loop("heavy",
             delete_download, req.provider, req.artifact, dry_run=req.dry_run, actor=actor, resident_rows=_resident_rows
         )
     except DownloadDeleteRefused as exc:

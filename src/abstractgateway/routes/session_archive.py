@@ -97,7 +97,7 @@ async def _route(request: Request, session_id: str, archive: bool) -> Dict[str, 
     actor = str(getattr(principal, "user_id", "") or "")
     _note(request, sid, "archive" if archive else "unarchive")
     svc = get_gateway_service()
-    out = await asyncio.to_thread(_act, svc, sid, actor, archive)
+    out = await off_loop("heavy", _act, svc, sid, actor, archive)
     _audit("session.archived" if archive else "session.unarchived", session_id=sid, actor=actor, changed=bool(out.get("changed")))
     return out
 
@@ -128,6 +128,7 @@ async def unarchive_session_route(request: Request, session_id: str) -> Dict[str
 
 
 # Keyword search over the caller's conversations (routes/conversation_search.py) rides this router.
+from ..work_pools import off_loop
 from .conversation_search import router as _conversation_search_router  # noqa: E402
 
 router.include_router(_conversation_search_router)

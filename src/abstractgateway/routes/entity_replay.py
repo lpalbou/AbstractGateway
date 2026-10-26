@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
+from ..work_pools import off_loop
 from ..entities import EntityRegistry
 from ..entity_access import entity_name_guard, entity_plane_resolver
 from ..entity_settings_access import entity_settings_guard
@@ -89,7 +90,7 @@ async def _home_or_404_offloop(registry: EntityRegistry, name: str):
     which can probe an HTTP route or load a local model — seconds of loop
     blockage at connection setup, the same starvation class as c975. The
     registry's _open_lock makes the threaded call safe."""
-    return await asyncio.to_thread(_home_or_404, registry, name)
+    return await off_loop("light", _home_or_404, registry, name)
 
 
 @router.get("/{name}/replay")
@@ -113,7 +114,7 @@ async def replay_entity_stream(
     if family_list is None or "host" in family_list:
         from ..entity_replay import sweep_night_narrations
 
-        await asyncio.to_thread(sweep_night_narrations, registry.entities_dir, home.manifest.slug, home)
+        await off_loop("heavy", sweep_night_narrations, registry.entities_dir, home.manifest.slug, home)
 
     def _lines():
         for envelope in merged_replay(
@@ -496,7 +497,7 @@ async def stream_entity_replay(
     # night cadence makes a per-tick sweep unnecessary).
     include_host_pre = "host" in (family_list if family_list is not None else ["host"])
     if include_host_pre:
-        await asyncio.to_thread(sweep_night_narrations, registry.entities_dir, home.manifest.slug, home)
+        await off_loop("heavy", sweep_night_narrations, registry.entities_dir, home.manifest.slug, home)
 
     async def _gen():
         pos = cursor
@@ -520,7 +521,7 @@ async def stream_entity_replay(
                 # Pre-populate the delivered-LINES set — never jump the floor
                 # itself, or a high-seq marker sitting at a LOWER file line
                 # than some consumed marker would be skipped.
-                for m in await asyncio.to_thread(
+                for m in await off_loop("light",
                     read_host_markers, registry.entities_dir, home.manifest.slug, include_lines=True
                 ):
                     if float(m.get("seq") or 0.0) <= pos:
@@ -535,7 +536,7 @@ async def stream_entity_replay(
             # Drain the journal backlog in bounded off-loop chunks; control
             # returns to the event loop between chunks by construction.
             while True:
-                envs, pos, exhausted = await asyncio.to_thread(
+                envs, pos, exhausted = await off_loop("heavy",
                     _collect_replay_chunk,
                     home,
                     registry.entities_dir,
@@ -570,7 +571,7 @@ async def stream_entity_replay(
                 if await request.is_disconnected():
                     return  # dead tail mid-backlog: stop, don't finish the walk
             if include_host:
-                for envelope in await asyncio.to_thread(
+                for envelope in await off_loop("light",
                     read_host_markers, registry.entities_dir, home.manifest.slug, include_lines=True
                 ):
                     line = int(envelope.get("_line") or 0)

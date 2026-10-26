@@ -22,6 +22,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
+from ..work_pools import off_loop
 from .. import network_exposure as ne
 from .gateway import _host_control_actor, _principal_from_request, _require_admin_principal
 
@@ -89,7 +90,7 @@ async def network_status(
     admin = _is_admin(request)
     if lookup_public and not admin:
         raise HTTPException(status_code=403, detail="Admin principal required for the WAN address lookup")
-    out = await asyncio.to_thread(ne.network_status, _data_dir(), lookup_public=bool(lookup_public), is_admin=admin)
+    out = await off_loop("watchers", ne.network_status, _data_dir(), lookup_public=bool(lookup_public), is_admin=admin)
     # The address THIS caller uses (e.g. https://<host>.ts.net behind
     # `tailscale serve`), and whether it is one of the addresses above: a
     # client shows it instead of a plain-http LAN address the caller did
@@ -114,7 +115,7 @@ async def network_change(request: Request, req: NetworkChangeRequest) -> Any:
     with `setting_change` = the fields changed (from/to) or the refusal."""
     principal = _require_admin_principal(request)
     actor = _host_control_actor(principal)
-    status, body = await asyncio.to_thread(
+    status, body = await off_loop("watchers",
         ne.apply_network_change,
         _data_dir(),
         mode=req.mode,
@@ -147,7 +148,7 @@ async def network_restart(request: Request, req: Optional[NetworkRestartRequest]
     change is pending (unless `force`), or this process cannot relaunch
     itself (the reason names the manual restart)."""
     principal = _require_admin_principal(request)
-    status = await asyncio.to_thread(ne.network_status, _data_dir(), is_admin=True)
+    status = await off_loop("watchers", ne.network_status, _data_dir(), is_admin=True)
     story = status["restart"]
     refuse = None
     if not story.get("applies"):

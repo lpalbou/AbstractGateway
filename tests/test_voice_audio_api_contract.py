@@ -375,12 +375,14 @@ def test_voice_tts_offloads_synthesis_to_threadpool(tmp_path: Path, monkeypatch:
     headers = {"Authorization": f"Bearer {token}"}
     offloaded: list[str] = []
 
-    async def _fake_to_thread(func, /, *args, **kwargs):
-        offloaded.append(getattr(func, "__name__", repr(func)))
+    async def _fake_off_loop(kind, func, /, *args, **kwargs):
+        offloaded.append((kind, getattr(func, "__name__", repr(func))))
         return func(*args, **kwargs)
 
     _patch_gateway_capabilities(monkeypatch, gateway_routes, tts_bytes=b"tts:hello")
-    monkeypatch.setattr(gateway_routes.asyncio, "to_thread", _fake_to_thread)
+    # Off-loop work goes through work_pools.off_loop (gateway load 2026-10-26); synthesis is a
+    # long wait outside the request, so it rides the watchers pool, never the heavy one.
+    monkeypatch.setattr(gateway_routes, "off_loop", _fake_off_loop)
 
     with TestClient(app) as client:
         tts = client.post(
@@ -391,6 +393,8 @@ def test_voice_tts_offloads_synthesis_to_threadpool(tmp_path: Path, monkeypatch:
         assert tts.status_code == 200, tts.text
 
     assert offloaded
+    synth = [kind for kind, name in offloaded if name == "generate_voice"]
+    assert synth and set(synth) == {"watchers"}, offloaded
 
 
 @pytest.mark.basic

@@ -851,6 +851,35 @@ def main(argv: list[str] | None = None) -> None:
         "thresholds, so a full collection no longer pauses the whole gateway for seconds (default: on). "
         "`off` leaves Python's defaults. Logged at boot. There is no environment variable.",
     )
+    from .work_pools import DEFAULT_SIZES as _POOL_DEFAULTS
+
+    serve.add_argument(
+        "--pool-light",
+        type=int,
+        default=_POOL_DEFAULTS["light"],
+        dest="pool_light",
+        metavar="N",
+        help="Threads for quick work: sign-in, /me, health, live-update streams, one-record reads "
+        f"(default: {_POOL_DEFAULTS['light']}). It never waits behind a scan. There is no environment variable.",
+    )
+    serve.add_argument(
+        "--pool-heavy",
+        type=int,
+        default=_POOL_DEFAULTS["heavy"],
+        dest="pool_heavy",
+        metavar="N",
+        help="Threads for scans and listings of runs and artifacts, and workflow reloads "
+        f"(default: {_POOL_DEFAULTS['heavy']}). More scans than this wait their turn instead of slowing everything.",
+    )
+    serve.add_argument(
+        "--pool-watchers",
+        type=int,
+        default=_POOL_DEFAULTS["watchers"],
+        dest="pool_watchers",
+        metavar="N",
+        help="Threads for long waits outside the gateway: mail and feeds, provider endpoints, model generation "
+        f"(default: {_POOL_DEFAULTS['watchers']}).",
+    )
 
     runner = sub.add_parser("runner", help="Run the AbstractGateway runner worker (no HTTP)")
     runner.add_argument(
@@ -1089,6 +1118,16 @@ def main(argv: list[str] | None = None) -> None:
         from .service import set_gc_tuning
 
         set_gc_tuning(str(getattr(args, "gc_tuning", "on") or "on") == "on", source="serve")
+        from .work_pools import configure_pools
+
+        try:
+            configure_pools(
+                light=getattr(args, "pool_light", None),
+                heavy=getattr(args, "pool_heavy", None),
+                watchers=getattr(args, "pool_watchers", None),
+            )
+        except ValueError as e:
+            parser.error(str(e))
         from .push.settings import set_push_relay
 
         _relay = set_push_relay(getattr(args, "push_relay", None), source="serve")

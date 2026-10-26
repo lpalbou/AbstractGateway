@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, Request
 
+from ..work_pools import off_loop
 from ..account_preferences import (
     DECLARED,
     DEFAULT_WORKFLOW,
@@ -41,7 +42,7 @@ router = APIRouter(prefix="/gateway", tags=["accounts"])
 
 
 async def _off_loop(fn, *args, **kwargs):
-    return await asyncio.to_thread(fn, *args, **kwargs)
+    return await off_loop("light", fn, *args, **kwargs)
 
 
 def _gw():

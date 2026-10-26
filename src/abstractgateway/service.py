@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -219,16 +220,20 @@ class ServicePrewarmMiddleware:
             # get_gateway_service() then hits the cache instead of racing a
             # second synchronous boot on the loop. /api/health is not under
             # /api/gateway, so probes answer instantly throughout.
+            # The wait holds NO worker thread (gateway load 2026-10-26): every request that
+            # arrived during the boot used to park one pool thread for the whole boot.
             if _boot_state == "starting":
                 import asyncio
 
-                await asyncio.to_thread(wait_for_gateway_boot)
+                deadline = time.monotonic() + 300.0
+                while _boot_state == "starting" and time.monotonic() < deadline:
+                    await asyncio.sleep(0.05)
             if gateway_multi_user_enabled():
                 principal = current_gateway_principal()
                 if principal is not None and not principal_service_cached(principal):
-                    import asyncio
+                    from .work_pools import off_loop
 
-                    await asyncio.to_thread(get_gateway_service_for_principal, principal)
+                    await off_loop("heavy", get_gateway_service_for_principal, principal)
         except Exception:
             import logging
 

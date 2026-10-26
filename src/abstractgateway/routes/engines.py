@@ -26,6 +26,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..work_pools import off_loop
 from .. import engines_install as ei
 from .gateway import _core_host_call, _engine_install_policy, _host_action_error, _principal_from_request, _require_admin_principal
 
@@ -73,9 +74,9 @@ async def _payload(request: Request, probe: bool) -> Any:
         return core  # a typed error response (501 / 503)
     registry = ei.default_registry()
     accel = (core.get("host") or {}).get("accelerator")
-    installer = await asyncio.to_thread(ei.default_installer, accelerator=accel)
+    installer = await off_loop("watchers", ei.default_installer, accelerator=accel)
     policy = _engine_install_policy(request)
-    out = await asyncio.to_thread(
+    out = await off_loop("watchers",
         ei.engines_payload, installer, core, registry, install_allowed=bool(policy.get("value")), is_admin=_is_admin(request)
     )
     out["install_allowed"] = bool(policy.get("value"))
@@ -117,7 +118,7 @@ async def engine_job_continue(job_id: str, request: Request, req: Optional[Engin
         return _host_action_error(403, "refused", "engine installs are disabled on this gateway (allow_engine_install is off)", reason="not_allowed", install_policy=policy)
     body = req or EngineJobContinueRequest()
     try:
-        return await asyncio.to_thread(ei.default_registry().continue_job, job_id, body.action)
+        return await off_loop("watchers", ei.default_registry().continue_job, job_id, body.action)
     except ei.JobStateError as exc:
         return _job_error(exc)
 
@@ -126,7 +127,7 @@ async def engine_job_continue(job_id: str, request: Request, req: Optional[Engin
 async def engine_job_cancel(job_id: str, request: Request) -> Any:
     """Cancel an install job (admin only): stops its download or process tree."""
     _require_admin_principal(request)
-    snap = await asyncio.to_thread(ei.default_registry().cancel, job_id)
+    snap = await off_loop("watchers", ei.default_registry().cancel, job_id)
     if snap is None:
         return _host_action_error(404, "not_found", f"no job {job_id}")
     return snap
@@ -160,8 +161,8 @@ async def engine_install_start(engine_id: str, request: Request, req: Optional[E
     if engine_id not in ei.ENGINE_TEXT:
         return _host_action_error(404, "refused", f"unknown engine {engine_id!r}; known: {', '.join(ei.ENGINE_IDS)}", reason="unknown_engine")
     if body.dry_run:
-        installer = await asyncio.to_thread(ei.default_installer)
-        return await asyncio.to_thread(ei.dry_run_payload, installer, engine_id, location=body.location)
+        installer = await off_loop("watchers", ei.default_installer)
+        return await off_loop("watchers", ei.dry_run_payload, installer, engine_id, location=body.location)
     policy = _engine_install_policy(request)
     if not bool(policy.get("value")):
         bind = policy.get("bind_host")
@@ -176,7 +177,7 @@ async def engine_install_start(engine_id: str, request: Request, req: Optional[E
             install_policy=policy,
         )
     try:
-        snap, joined = await asyncio.to_thread(ei.default_registry().start, engine_id, force=body.force, location=body.location)
+        snap, joined = await off_loop("watchers", ei.default_registry().start, engine_id, force=body.force, location=body.location)
     except ei.JobStateError as exc:
         return _job_error(exc)
     snap = dict(snap)
@@ -197,7 +198,7 @@ async def _server_action(engine_id: str, request: Request, verb: str) -> Any:
         ("lmstudio", "stop"): installer.stop_lmstudio,
     }[(engine_id, verb)]
     try:
-        result: Dict[str, Any] = await asyncio.to_thread(fn)
+        result: Dict[str, Any] = await off_loop("watchers", fn)
     except ei.InstallFailed as exc:
         return _host_action_error(502, "failed", exc.message, reason=exc.code)
     return {"ok": True, "engine": engine_id, "action": verb, **result}

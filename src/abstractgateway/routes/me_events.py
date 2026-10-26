@@ -24,6 +24,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from ..work_pools import off_loop
 from ..events_stream import UserEventStream, event_channel, parse_channels, record_notification, record_publish_seen, stream_for
 
 logger = logging.getLogger(__name__)
@@ -83,8 +84,8 @@ async def list_my_events(
     sequence; `more` whether events past this page may exist."""
     stream = _my_stream(request)
     channels = _channels(channel)
-    events, next_after = await asyncio.to_thread(stream.read_filtered, after=after, limit=limit, channels=channels)
-    head = await asyncio.to_thread(stream.head)
+    events, next_after = await off_loop("light", stream.read_filtered, after=after, limit=limit, channels=channels)
+    head = await off_loop("light", stream.head)
     out: Dict[str, Any] = {
         "stream": stream.name,
         "events": events,
@@ -102,7 +103,7 @@ async def list_my_channels(request: Request) -> Dict[str, Any]:
     """The channels in the caller's retained stream: `[{channel, count, last_time, last_sequence}]`,
     most recently used first (`attention` included when attention events exist)."""
     stream = _my_stream(request)
-    return {"stream": stream.name, "channels": await asyncio.to_thread(stream.channels)}
+    return {"stream": stream.name, "channels": await off_loop("light", stream.channels)}
 
 
 def _frame(event: Dict[str, Any]) -> bytes:
@@ -142,8 +143,8 @@ async def sse_frames(
                 return
             if dirty.is_set():
                 dirty.clear()
-                token = await asyncio.to_thread(stream.change_token)
-                events = await asyncio.to_thread(stream.read, after=cursor, limit=BATCH)
+                token = await off_loop("light", stream.change_token)
+                events = await off_loop("light", stream.read, after=cursor, limit=BATCH)
                 if events:
                     cursor = int(events[-1]["sequence"])
                     shown = [e for e in events if not channels or event_channel(e) in channels]
@@ -161,7 +162,7 @@ async def sse_frames(
                 await asyncio.wait_for(dirty.wait(), timeout=min(float(poll_s), float(heartbeat_s)))
             except asyncio.TimeoutError:
                 # Another process may have appended: one stat decides whether to read.
-                if await asyncio.to_thread(stream.change_token) != token:
+                if await off_loop("light", stream.change_token) != token:
                     dirty.set()
     finally:
         off()
@@ -216,7 +217,7 @@ async def report_notification(request: Request, body: NotificationReport) -> Dic
         data["device"] = body.device
     if body.error:
         data["error"] = body.error
-    created = await asyncio.to_thread(
+    created = await off_loop("light",
         record_notification, stream, body.outcome, channel=body.channel, notice=f"attention:{body.record_key}", data=data
     )
     return {"ok": True, "created": bool(created)}
@@ -232,7 +233,7 @@ async def mark_published_seen(request: Request, body: SeenReport) -> Dict[str, A
     badge drops it). Automation items keep `POST /automations/{id}/seen`; waits end when answered."""
     stream = _my_stream(request)
     try:
-        created = await asyncio.to_thread(record_publish_seen, stream, record_key=body.record_key)
+        created = await off_loop("light", record_publish_seen, stream, record_key=body.record_key)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"ok": True, "created": bool(created)}

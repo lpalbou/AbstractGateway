@@ -29,6 +29,7 @@ runs next to a generating model. The rules this module implements:
 
 from __future__ import annotations
 
+from .work_pools import off_loop
 import asyncio
 import json
 import threading
@@ -127,7 +128,7 @@ async def open_voice_stream(
     except asyncio.TimeoutError:
         raise busy_error(max_concurrency) from None
     permit = _Permit(sem, loop)
-    setup_task: "asyncio.Future[Any]" = asyncio.ensure_future(asyncio.to_thread(setup))
+    setup_task: "asyncio.Future[Any]" = asyncio.ensure_future(off_loop("watchers", setup))
     try:
         await asyncio.wait({setup_task}, timeout=QUEUE_NOTICE_S)
     except BaseException:
@@ -168,7 +169,7 @@ async def open_voice_stream(
                     else:
                         await asyncio.shield(setup_task)
                 except asyncio.TimeoutError:
-                    yield _idle_line(await asyncio.to_thread(on_idle_timeout))
+                    yield _idle_line(await off_loop("light", on_idle_timeout))
                     return
                 except asyncio.CancelledError:
                     raise
@@ -214,7 +215,7 @@ async def open_voice_stream(
                         kind, value = await queue.get()
                 except asyncio.TimeoutError:
                     stop.set()
-                    yield _idle_line(await asyncio.to_thread(on_idle_timeout))
+                    yield _idle_line(await off_loop("light", on_idle_timeout))
                     return
                 if kind == "end":
                     return

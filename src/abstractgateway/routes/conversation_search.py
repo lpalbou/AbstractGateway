@@ -18,6 +18,7 @@ conversations are still being read (a first search on a large plane), never a si
 
 from __future__ import annotations
 
+from ..work_pools import off_loop
 import asyncio
 import threading
 from pathlib import Path
@@ -83,7 +84,7 @@ async def search_sessions(
         raise HTTPException(status_code=500, detail={"reason_code": "session_state_unreadable", "message": str(exc)}) from None
 
     idx = _index_for(svc)
-    report = await asyncio.to_thread(idx.sync, budget_s=SYNC_BUDGET_S)
+    report = await off_loop("heavy", idx.sync, budget_s=SYNC_BUDGET_S)
 
     # The listing's filters, applied inside the search (so they never empty a page that had
     # matches further down): archived in or out, the session purpose, the session kinds.
@@ -96,7 +97,7 @@ async def search_sessions(
         wanted = {sid for sid, k in kinds_map.items() if k == want_kind}
         only = wanted if only is None else only & wanted
     searched = set(idx.kinds) if kinds is None else set(kinds) & set(idx.kinds)
-    hits = await asyncio.to_thread(idx.search, q, limit=limit, sessions=only, exclude=exclude, session_kinds=searched)
+    hits = await off_loop("heavy", idx.search, q, limit=limit, sessions=only, exclude=exclude, session_kinds=searched)
     items = [{**h.as_dict(), "archived": h.session_id in archived_ids} for h in hits]
     return {
         "query": q,
