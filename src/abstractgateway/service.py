@@ -70,6 +70,10 @@ class GatewayService:
 _service: Optional[GatewayService] = None
 _services_by_principal: Dict[str, GatewayService] = {}
 _service_lock = threading.RLock()
+# Keys whose service is in `_services_by_principal` but still starting its runner/mail
+# (mutated under `_service_lock`; read lock-free by the fast paths, which treat a member
+# as a miss).
+_building_keys: set[str] = set()
 _backlog_exec_runner: Optional[Any] = None
 _backlog_exec_runner_error: Optional[str] = None
 
@@ -158,6 +162,11 @@ def get_gateway_service() -> GatewayService:
         default_principal = _default_runtime_principal()
         if default_principal is not None:
             return get_gateway_service_for_principal(default_principal)
+    # Lock-free fast path (gateway load 2026-10-26): an existing service answers
+    # without `_service_lock`, which a build elsewhere can hold for minutes.
+    svc = _service
+    if svc is not None:
+        return svc
     with _service_lock:
         if _service is None:
             _service = create_default_gateway_service()
@@ -165,10 +174,18 @@ def get_gateway_service() -> GatewayService:
 
 
 def principal_service_cached(principal: GatewayPrincipal) -> bool:
-    """True when this principal's GatewayService already exists (cheap peek —
-    the pre-warm middleware's gate; never constructs anything)."""
-    with _service_lock:
-        return _principal_service_key(principal) in _services_by_principal
+    """True when this principal's GatewayService already exists and is fully set up
+    (the pre-warm middleware's gate; never constructs anything).
+
+    NON-blocking (gateway load 2026-10-26, two of three watchdog exits 02:05-02:07): this
+    runs ON the event loop, and it used to take `_service_lock`, which the eager
+    rehydration holds while it builds ANOTHER principal's service (store scans, bundle
+    compilation, mail workers: tens of seconds). `GET /me` and the SSE stream parked the
+    whole loop behind that build until the watchdog killed the process. A dict lookup is
+    atomic under the GIL; a key still being set up (`_building_keys`) reads as a miss, so
+    the caller builds (waits) off the loop."""
+    key = _principal_service_key(principal)
+    return key in _services_by_principal and key not in _building_keys
 
 
 class ServicePrewarmMiddleware:
@@ -397,21 +414,38 @@ def get_gateway_service_for_principal(principal: GatewayPrincipal) -> GatewaySer
     if not gateway_multi_user_enabled():
         return get_gateway_service()
     key = _principal_service_key(principal)
+    # Lock-free fast path (gateway load 2026-10-26): routes call this inline ON the event
+    # loop, and `_service_lock` is held across whole service builds (the eager rehydration
+    # builds every account's service under it). A service that exists, is fully set up and
+    # whose runner needs no restart answers without the lock; only a miss, a build in
+    # progress or a self-heal takes it (and a miss reaches here off the loop: the pre-warm
+    # middleware builds in a worker thread first).
+    svc = _services_by_principal.get(key)
+    if svc is not None and key not in _building_keys:
+        if not (getattr(svc.config, "runner_enabled", False) and _runner_needs_restart(svc.runner)):
+            return svc
     with _service_lock:
         svc = _services_by_principal.get(key)
         if svc is None:
             svc = create_default_gateway_service(config=_config_for_principal(principal))
-            _services_by_principal[key] = svc
-            if getattr(svc.config, "runner_enabled", False):
-                try:
-                    svc.runner.start()
-                except Exception:
-                    _services_by_principal.pop(key, None)
-                    raise
-                # The mail watcher + notification dispatcher of this plane start
-                # with its runner (the multi-user path used to never start mail).
-                _start_email_worker(svc)
-                _start_push_dispatcher(svc)
+            # Published before its runner and mail start (a re-entrant lookup during that
+            # setup finds it), but marked as building: the lock-free path above must not
+            # hand out a half-started service.
+            _building_keys.add(key)
+            try:
+                _services_by_principal[key] = svc
+                if getattr(svc.config, "runner_enabled", False):
+                    try:
+                        svc.runner.start()
+                    except Exception:
+                        _services_by_principal.pop(key, None)
+                        raise
+                    # The mail watcher + notification dispatcher of this plane start
+                    # with its runner (the multi-user path used to never start mail).
+                    _start_email_worker(svc)
+                    _start_push_dispatcher(svc)
+            finally:
+                _building_keys.discard(key)
         elif getattr(svc.config, "runner_enabled", False) and _runner_needs_restart(svc.runner):
             # Self-healing (backlog 0063): a cached service whose runner lost
             # the lock race and returned dead used to be returned as-is
