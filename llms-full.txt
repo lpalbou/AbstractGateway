@@ -5888,7 +5888,10 @@ automation reads it (`used_by` > 0) or `always_listen` is on, "idle" otherwise, 
 gateway itself from each account's worker loop (every 15 seconds it fetches the LISTENING
 connections whose `every` has elapsed; 15 minutes by default; the first poll after an idle spell is
 a baseline). A webhook call is accepted and stored whether or not something listens yet; only
-a paused (or disabled) connection refuses it.
+a paused (or disabled) connection refuses it. `listening` and `used_by` come from AbstractRuntime's
+active-consumers index (one snapshot per account for the whole listing, no run file read), updated as soon as
+an automation is created, changed or ends; a change another process makes to the same data folder shows within
+30 seconds.
 
 A row: `{connection_id, principal ("<tenant>:<user>"), source_id, source_version (integer), label,
 status ("active" | "disabled" | "error"), listening ("listening" | "idle" | "paused"), used_by (integer:
@@ -12186,6 +12189,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   connection**; your mailboxes are listed as rows of that source with **Manage under Account → My email**.
 - **Readable connection forms.** Settings show labels and help ("Subject (path in the JSON body)", "Accepted clock skew
   (seconds)"); a secret the gateway generates is never asked for.
+
+### Fixed
+
+- **The Triggers page answers in milliseconds; idle polling stops re-reading run files.** `GET /api/gateway/triggers/connections`
+  took 15 s to 200 s on the operator's gateway, which sat at 190% CPU while idle (slowing every other request,
+  `GET /automations` at 10 s among them): every connection row, feed poll, mailbox poll and wake listed the whole
+  run index and re-read every automation's run file to learn who listens. AbstractRuntime now
+  answers from its active-consumers index (rebuilt once per automation change, at most every 30 s); the listing
+  takes one snapshot per account for the whole page (`connections_usage`), and `GET
+  /api/gateway/triggers/connections/{id}` builds its row off the event loop like the other routes. Needs the
+  AbstractRuntime release that carries the index.
 
 ## [0.16.0] - 2026-10-25
 

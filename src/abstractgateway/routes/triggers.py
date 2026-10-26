@@ -252,14 +252,18 @@ def ingress_url(request: Request, connection_id: str) -> str:
     return f"{str(request.base_url).rstrip('/')}/api/gateway/triggers/webhooks/{connection_id}"
 
 
-def connection_row(conn: Any, request: Request, runtime: Any) -> Dict[str, Any]:
+def connection_row(conn: Any, request: Request, runtime: Any, *, usage: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """The one row shape (console page, Flow's connection selector, the TUI): never a secret.
     `listening` ("listening" | "idle" | "paused") and `used_by` (active automations reading the
-    stream) are AbstractRuntime's `connection_usage` on the plane's runtime: a connection is fed
-    only while something listens (or `always_listen`); `paused` stops it whatever listens."""
-    from abstractruntime.triggers.connections import connection_usage
+    stream) are AbstractRuntime's `connection_usage` on the plane's runtime (answered from the
+    runtime's active-consumers index, no run file read; `usage`: already computed, as the listing
+    does once per plane with `connections_usage`): a connection is fed only while something
+    listens (or `always_listen`); `paused` stops it whatever listens. Blocking: call it off the
+    event loop."""
+    if usage is None:
+        from abstractruntime.triggers.connections import connection_usage
 
-    usage = connection_usage(runtime, conn)
+        usage = connection_usage(runtime, conn)
     row: Dict[str, Any] = {
         "connection_id": conn.connection_id,
         "principal": conn.principal,
@@ -340,7 +344,17 @@ async def list_connections(
         else:
             svc, store = _own_store(principal)
             pairs = [(c, svc.host.runtime) for c in store.list(principal=tc.principal_key(principal), source_id=source_id)]
-        return {"connections": [connection_row(c, request, runtime) for c, runtime in pairs]}
+        # One active-consumers snapshot per plane for the whole page (`connections_usage`).
+        from abstractruntime.triggers.connections import connections_usage
+
+        by_runtime: Dict[int, tuple] = {}
+        for c, runtime in pairs:
+            by_runtime.setdefault(id(runtime), (runtime, []))[1].append(c)
+        usage: Dict[int, Dict[str, Any]] = {}
+        for runtime, conns in by_runtime.values():
+            for c, u in zip(conns, connections_usage(runtime, conns)):
+                usage[id(c)] = u
+        return {"connections": [connection_row(c, request, runtime, usage=usage[id(c)]) for c, runtime in pairs]}
 
     return await asyncio.to_thread(run)
 
@@ -372,8 +386,12 @@ async def create_connection(request: Request, body: CreateConnectionBody) -> Any
 @router.get("/connections/{connection_id}", summary="One trigger connection")
 async def get_connection(request: Request, connection_id: str) -> Any:
     principal = _principal(request)
-    found = await asyncio.to_thread(_resolve, principal, connection_id)
-    return _not_found(connection_id) if found is None else connection_row(found[2], request, found[0].host.runtime)
+
+    def run() -> Any:
+        found = _resolve(principal, connection_id)
+        return _not_found(connection_id) if found is None else connection_row(found[2], request, found[0].host.runtime)
+
+    return await asyncio.to_thread(run)
 
 
 @router.put("/connections/{connection_id}", summary="Change a trigger connection's label, config or status")

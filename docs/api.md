@@ -1148,7 +1148,10 @@ automation reads it (`used_by` > 0) or `always_listen` is on, "idle" otherwise, 
 gateway itself from each account's worker loop (every 15 seconds it fetches the LISTENING
 connections whose `every` has elapsed; 15 minutes by default; the first poll after an idle spell is
 a baseline). A webhook call is accepted and stored whether or not something listens yet; only
-a paused (or disabled) connection refuses it.
+a paused (or disabled) connection refuses it. `listening` and `used_by` come from AbstractRuntime's
+active-consumers index (one snapshot per account for the whole listing, no run file read), updated as soon as
+an automation is created, changed or ends; a change another process makes to the same data folder shows within
+30 seconds.
 
 A row: `{connection_id, principal ("<tenant>:<user>"), source_id, source_version (integer), label,
 status ("active" | "disabled" | "error"), listening ("listening" | "idle" | "paused"), used_by (integer:

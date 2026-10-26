@@ -141,6 +141,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Readable connection forms.** Settings show labels and help ("Subject (path in the JSON body)", "Accepted clock skew
   (seconds)"); a secret the gateway generates is never asked for.
 
+### Fixed
+
+- **The Triggers page answers in milliseconds; idle polling stops re-reading run files.** `GET /api/gateway/triggers/connections`
+  took 15 s to 200 s on the operator's gateway, which sat at 190% CPU while idle (slowing every other request,
+  `GET /automations` at 10 s among them): every connection row, feed poll, mailbox poll and wake listed the whole
+  run index and re-read every automation's run file to learn who listens. AbstractRuntime now
+  answers from its active-consumers index (rebuilt once per automation change, at most every 30 s); the listing
+  takes one snapshot per account for the whole page (`connections_usage`), and `GET
+  /api/gateway/triggers/connections/{id}` builds its row off the event loop like the other routes. Needs the
+  AbstractRuntime release that carries the index.
+
 ## [0.16.0] - 2026-10-25
 
 ### Added
