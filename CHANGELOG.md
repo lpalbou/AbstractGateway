@@ -143,6 +143,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The mail notification check reads only what changed.** Every 15 s it listed every automation, read each
+  automation's whole ledger, walked the active automations' occurrence trees and listed completed and failed runs
+  (two more full scans): 7-25% of a core on the operator's idle gateway, 0.97 s a pass on an 11,500-run copy with no
+  automation at all. A pass whose run-store and ledger change tokens did not move now reads no store (1.2 ms, the
+  preference and mailbox checks); after a change it reads only the changed runs and ledgers (AbstractRuntime
+  `changed_run_ids`). Same notices, same idempotency keys. The full read stays for the first pass, a changed
+  switch, a change set it cannot name (another process) and at least every 5 minutes.
 - **The runner stops stat-ing every run file twice a second.** Its scan gate asked "did anything change?" by globbing
   and stat-ing all 11,500 run files every 0.5 s (0.18 s each on the operator's folder, 13-36% of a core while idle,
   every stat a GIL hand-off). It now compares the run store's own change token (AbstractRuntime

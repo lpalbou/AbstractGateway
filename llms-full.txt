@@ -10200,6 +10200,11 @@ as preferences (the per-automation and per-run options above decide). Saved pref
 over the same way: `job_failed` is on when `job_failed` or `automation_failed` was on,
 `approval_needed` keeps its value, and preferences never saved take the new defaults.
 
+The check runs with the mail worker (every 15 s). It reads nothing while no run and no ledger
+changed (the run store's and ledger's change tokens), and after a change it reads only the runs
+and ledgers that changed. A first pass, a changed switch, a change it cannot name (another
+process wrote the run folder) and at least every 5 minutes, it reads everything again.
+
 Notices go to your registered address (else your mailbox address), except automation results
 with explicit `notify.recipients`. They are sent by your own account from a durable outbox: each notice is queued once and sent once. If the gateway stops in the middle of a
 send, that notice is marked `unknown` and never resent automatically. Temporary SMTP refusals are
@@ -12196,6 +12201,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The mail notification check reads only what changed.** Every 15 s it listed every automation, read each
+  automation's whole ledger, walked the active automations' occurrence trees and listed completed and failed runs
+  (two more full scans): 7-25% of a core on the operator's idle gateway, 0.97 s a pass on an 11,500-run copy with no
+  automation at all. A pass whose run-store and ledger change tokens did not move now reads no store (1.2 ms, the
+  preference and mailbox checks); after a change it reads only the changed runs and ledgers (AbstractRuntime
+  `changed_run_ids`). Same notices, same idempotency keys. The full read stays for the first pass, a changed
+  switch, a change set it cannot name (another process) and at least every 5 minutes.
 - **The runner stops stat-ing every run file twice a second.** Its scan gate asked "did anything change?" by globbing
   and stat-ing all 11,500 run files every 0.5 s (0.18 s each on the operator's folder, 13-36% of a core while idle,
   every stat a GIL hand-off). It now compares the run store's own change token (AbstractRuntime

@@ -1014,8 +1014,44 @@ def _run_error(run: Any) -> Tuple[str, str]:
     return "", ""
 
 
+def _change_signal(store: Any) -> Optional[Any]:
+    """The object of a store chain (walking `inner` / `_inner` wrappers) that carries the change
+    signal (`change_token()` + `changed_run_ids(token)`: AbstractRuntime's JsonFileRunStore and
+    ObservableLedgerStore), else None."""
+    obj = store
+    for _ in range(6):
+        if obj is None:
+            return None
+        if callable(getattr(type(obj), "change_token", None)) and callable(getattr(type(obj), "changed_run_ids", None)):
+            return obj
+        nxt = getattr(obj, "inner", None)
+        if nxt is None:
+            nxt = getattr(obj, "_inner", None)
+        obj = nxt
+    return None
+
+
+# What the last pass saw, per plane (collector file path): the stores' change tokens before it
+# read, the switches it ran under, and when the last FULL pass ran. Process-local: a restart
+# starts with a full pass.
+_COLLECT_MEMO: Dict[str, Dict[str, Any]] = {}
+_COLLECT_MEMO_LOCK = threading.Lock()
+# A full pass at least this often even when the tokens say nothing changed: what the in-process
+# signals cannot see (another process writing the same folder) is read within this delay.
+FULL_PASS_S = 300.0
+
+
 class NotificationCollector:
-    """Turns the plane's ledger / run facts into queued notices (never sends)."""
+    """Turns the plane's ledger / run facts into queued notices (never sends).
+
+    CHANGE-DRIVEN (2026-10-26): every 15 s it used to list every automation, read every
+    automation's whole ledger, walk the active automations' occurrence trees and list the
+    completed and failed runs (2 more full scans): 7-25% of a core on the operator's idle
+    gateway. Now a pass whose run-store and ledger tokens (AbstractRuntime `change_token`) are
+    unchanged reads nothing; a pass after a change reads only the runs and ledgers that
+    changed (`changed_run_ids`). The full read stays for the first pass, a changed switch
+    (preferences, mailbox usable), an unknown change set, and at least every FULL_PASS_S.
+    """
 
     def __init__(self, plane: EmailPlane, svc: Any) -> None:
         self.plane = plane
@@ -1025,26 +1061,164 @@ class NotificationCollector:
         with _plane_lock(self.plane):
             return self._collect_locked()
 
+    # --- one fact each, shared by the full and the incremental pass ---------------------
+
+    def _attention(self, ledger_store: Any, aid: str, title: str, att: Dict[str, int], first: bool, ctx: Dict[str, Any]) -> int:
+        from abstractruntime.automations.attention import list_attention
+
+        queued = 0
+        prefs, usable, reconnect = ctx["prefs"], ctx["usable"], ctx["reconnect"]
+        floor = att.get(aid)
+        items = list_attention(ledger_store, aid, after_seq=floor or 0, limit=500)["items"] if ledger_store is not None else []
+        if floor is None and first:
+            # Baseline: never mail the history that existed before notifications were on.
+            att[aid] = max([int(i["seq"]) for i in items] or [0])
+            items = [it for it in items if "email_result" in it]
+        for it in items:
+            seq = int(it["seq"])
+            att[aid] = max(att.get(aid, 0), seq)
+            kind = "automation_failed" if str(it.get("kind")) == "failure" else "automation_result"
+            if kind == "automation_result":
+                # "Email result": the automation asks for email delivery
+                # (`notify.channels`, schema v2; the runtime stamps the channels on the
+                # attention item; v1 = console only). No global preference involved.
+                wanted = "email" in (it.get("channels") or [])
+            else:
+                # A failure after the retries: the user's "Job failed" switch.
+                wanted = bool(prefs.get("job_failed"))
+            if wanted and (usable or (reconnect and kind == "automation_result")):
+                facts = {"title": title, "model_title": it.get("title"), "ref": f"automation {aid}, occurrence {it.get('index')}",
+                         "subject_ref": f"automation:{aid}"}
+                if kind == "automation_result":
+                    facts["model_body"] = it.get("email_result", it.get("body"))
+                    facts["recipients"] = it.get("recipients", ["self"])
+                else:
+                    facts["cause"] = it.get("body")
+                    facts["fix"] = "Open the automation's last occurrence in the console to see what failed."
+                if queue_notice(self.plane, kind, idempotency_key(kind, aid, seq), facts):
+                    queued += 1
+        return queued
+
+    def _automation_wait(self, aid: str, title: str, w: Dict[str, Any]) -> int:
+        if w.get("kind") not in ("tool_approval", "ask_user", "event"):
+            return 0
+        tools = [str(c.get("name") or "") for c in (w.get("details") or []) if isinstance(c, dict)] if w.get("kind") == "tool_approval" else []
+        key = idempotency_key("approval_needed", w.get("run_id"), w.get("wait_key"))
+        return 1 if queue_notice(self.plane, "approval_needed", key, {"title": title, "wait_kind": w.get("kind"), "tools": tools, "ref": f"automation {aid}"}) else 0
+
+    def _plain_wait(self, run: Any) -> int:
+        """A run of this user waiting on a person outside automations (WAITING, reason USER)."""
+        from abstractruntime.automations.attention import typed_wait
+
+        meta = (run.vars or {}).get("_meta") if isinstance(run.vars, dict) else None
+        if isinstance(meta, dict) and (meta.get("occurrence") or meta.get("automation")):
+            return 0  # automation trees are handled with the automation's title
+        w = typed_wait(run)
+        if w is None:
+            return 0
+        tools = [str(c.get("name") or "") for c in (w.get("details") or []) if isinstance(c, dict)] if w.get("kind") == "tool_approval" else []
+        key = idempotency_key("approval_needed", run.run_id, w.get("wait_key"))
+        return 1 if queue_notice(self.plane, "approval_needed", key, {"title": _run_title(run), "wait_kind": w.get("kind"), "tools": tools, "ref": f"run {run.run_id}"}) else 0
+
+    def _job_notice(self, run: Any, kind: str, baseline_at: str, usable: bool) -> int:
+        """"Email me when done" on a COMPLETED (job_finished) or FAILED (job_failed) run."""
+        if str(getattr(run, "updated_at", "") or "") < baseline_at:
+            return 0
+        notify = _run_notify(run)
+        want_on = {str(x) for x in (notify.get("on") or [])}
+        channels = {str(x) for x in (notify.get("channels") or [])}
+        # "Email me when done": the run's own opt-in suffices (no global preference).
+        if "email" not in channels or ("finished" if kind == "job_finished" else "failed") not in want_on:
+            return 0
+        if not usable:
+            return 0
+        facts: Dict[str, Any] = {"title": _run_title(run), "ref": f"run {run.run_id}"}
+        if kind == "job_failed":
+            cause, fix = _run_error(run)
+            facts["cause"] = cause
+            facts["fix"] = fix or "Open the run in the console to see what failed."
+        return 1 if queue_notice(self.plane, kind, idempotency_key(kind, run.run_id), facts) else 0
+
+    # --- passes --------------------------------------------------------------------------
+
     def _collect_locked(self) -> Dict[str, int]:
-        out = {"queued": 0}
-        state = _read_json(_collector_path(self.plane))
-        first = not state.get("baseline_at")
-        prefs = read_preferences(self.plane)
-        usable = email_usable(self.plane)
-        # A mailbox sealed with the old keychain key (round 16): an explicit "Email result" is
-        # still queued so it fails ONCE, visibly, with the reconnect sentence (never retried).
-        reconnect = (not usable) and mailbox_unavailable_reason(self.plane) == REASON_MAILBOX_NEEDS_RECONNECT
-        att: Dict[str, int] = {str(k): int(v) for k, v in (state.get("attention") or {}).items()}
+        out: Dict[str, int] = {"queued": 0}
         host = getattr(self.svc, "host", None)
         run_store = getattr(host, "run_store", None)
         ledger_store = getattr(host, "ledger_store", None)
         if run_store is None:
             return out
+        prefs = read_preferences(self.plane)
+        usable = email_usable(self.plane)
+        # A mailbox sealed with the old keychain key (round 16): an explicit "Email result" is
+        # still queued so it fails ONCE, visibly, with the reconnect sentence (never retried).
+        reconnect = (not usable) and mailbox_unavailable_reason(self.plane) == REASON_MAILBOX_NEEDS_RECONNECT
+        ctx = {"prefs": prefs, "usable": usable, "reconnect": reconnect}
 
+        run_sig = _change_signal(run_store)
+        ledger_sig = _change_signal(ledger_store) if ledger_store is not None else None
+        # Captured BEFORE anything is read: a change landing during this pass moves the token
+        # again, so the next pass sees it (a change can be read twice, never missed).
+        tokens = (
+            run_sig.change_token() if run_sig is not None else None,
+            ledger_sig.change_token() if ledger_sig is not None else None,
+        )
+        switches = json.dumps({"prefs": prefs, "usable": bool(usable), "reconnect": bool(reconnect)}, sort_keys=True, default=str)
+        key = str(_collector_path(self.plane))
+        stores = (id(run_store), id(ledger_store))
+        with _COLLECT_MEMO_LOCK:
+            memo = dict(_COLLECT_MEMO.get(key) or {})
+        now = time.monotonic()
+        incremental = bool(
+            memo
+            and run_sig is not None
+            and (ledger_sig is not None or ledger_store is None)
+            and memo.get("stores") == stores
+            and memo.get("switches") == switches
+            and (now - float(memo.get("full_at") or 0.0)) < FULL_PASS_S
+        )
+        if incremental and memo.get("tokens") == tokens:
+            out["skipped"] = 1  # nothing changed: nothing read
+            return out
+        changed_runs: Optional[set] = None
+        changed_ledgers: Optional[set] = set()
+        if incremental:
+            old_run, old_ledger = memo.get("tokens") or (None, None)
+            changed_runs = run_sig.changed_run_ids(old_run) if old_run is not None else None
+            if ledger_sig is not None:
+                changed_ledgers = ledger_sig.changed_run_ids(old_ledger) if old_ledger is not None else None
+        full = changed_runs is None or changed_ledgers is None
+
+        state = _read_json(_collector_path(self.plane))
+        first = not state.get("baseline_at")
+        att: Dict[str, int] = {str(k): int(v) for k, v in (state.get("attention") or {}).items()}
+        baseline_at = str(state.get("baseline_at") or _now_iso())
+        if first or full:
+            out["queued"] += self._full_pass(run_store, ledger_store, att, first, baseline_at, ctx)
+        else:
+            out["queued"] += self._incremental_pass(run_store, ledger_store, changed_runs or set(), changed_ledgers or set(), att, baseline_at, ctx)
+            out["incremental"] = 1
+
+        _write_private_json(
+            _collector_path(self.plane),
+            {"version": 1, "baseline_at": baseline_at, "attention": att, "updated_at": _now_iso()},
+        )
+        with _COLLECT_MEMO_LOCK:
+            _COLLECT_MEMO[key] = {
+                "tokens": tokens,
+                "stores": stores,
+                "switches": switches,
+                "full_at": now if (first or full) else float(memo.get("full_at") or now),
+            }
+        return out
+
+    def _full_pass(self, run_store: Any, ledger_store: Any, att: Dict[str, int], first: bool, baseline_at: str, ctx: Dict[str, Any]) -> int:
+        queued = 0
+        prefs, usable = ctx["prefs"], ctx["usable"]
         # Automations: notify / failure attention items (ledger), human waits (run state).
         try:
             from abstractruntime.automation_queries import list_automations
-            from abstractruntime.automations.attention import list_attention, pending_waits
+            from abstractruntime.automations.attention import pending_waits
 
             cursor = None
             while True:
@@ -1054,43 +1228,10 @@ class NotificationCollector:
                     if not aid:
                         continue
                     title = str(item.get("title") or "Automation")
-                    floor = att.get(aid)
-                    items = list_attention(ledger_store, aid, after_seq=floor or 0, limit=500)["items"] if ledger_store is not None else []
-                    if floor is None and first:
-                        # Baseline: never mail the history that existed before notifications were on.
-                        att[aid] = max([int(i["seq"]) for i in items] or [0])
-                        items = [it for it in items if "email_result" in it]
-                    for it in items:
-                        seq = int(it["seq"])
-                        att[aid] = max(att.get(aid, 0), seq)
-                        kind = "automation_failed" if str(it.get("kind")) == "failure" else "automation_result"
-                        if kind == "automation_result":
-                            # "Email result": the automation asks for email delivery
-                            # (`notify.channels`, schema v2; the runtime stamps the channels on the
-                            # attention item; v1 = console only). No global preference involved.
-                            wanted = "email" in (it.get("channels") or [])
-                        else:
-                            # A failure after the retries: the user's "Job failed" switch.
-                            wanted = bool(prefs.get("job_failed"))
-                        if wanted and (usable or (reconnect and kind == "automation_result")):
-                            facts = {"title": title, "model_title": it.get("title"), "ref": f"automation {aid}, occurrence {it.get('index')}",
-                                     "subject_ref": f"automation:{aid}"}
-                            if kind == "automation_result":
-                                facts["model_body"] = it.get("email_result", it.get("body"))
-                                facts["recipients"] = it.get("recipients", ["self"])
-                            else:
-                                facts["cause"] = it.get("body")
-                                facts["fix"] = "Open the automation's last occurrence in the console to see what failed."
-                            if queue_notice(self.plane, kind, idempotency_key(kind, aid, seq), facts):
-                                out["queued"] += 1
+                    queued += self._attention(ledger_store, aid, title, att, first, ctx)
                     if str(item.get("status") or "") == "active" and usable and prefs.get("approval_needed") and not first:
                         for w in pending_waits(run_store, aid, limit=20):
-                            if w.get("kind") not in ("tool_approval", "ask_user", "event"):
-                                continue
-                            tools = [str(c.get("name") or "") for c in (w.get("details") or []) if isinstance(c, dict)] if w.get("kind") == "tool_approval" else []
-                            key = idempotency_key("approval_needed", w.get("run_id"), w.get("wait_key"))
-                            if queue_notice(self.plane, "approval_needed", key, {"title": title, "wait_kind": w.get("kind"), "tools": tools, "ref": f"automation {aid}"}):
-                                out["queued"] += 1
+                            queued += self._automation_wait(aid, title, w)
                 if not page.next_cursor:
                     break
                 cursor = page.next_cursor
@@ -1098,48 +1239,102 @@ class NotificationCollector:
             pass
 
         # Runs of this user waiting on a person (outside automations) and jobs that asked to be notified.
-        baseline_at = str(state.get("baseline_at") or _now_iso())
         try:
-            from abstractruntime.automations.attention import typed_wait
             from abstractruntime.core.models import RunStatus, WaitReason
 
             if usable and prefs.get("approval_needed") and not first:
                 for run in run_store.list_runs(status=RunStatus.WAITING, wait_reason=WaitReason.USER, limit=200):
-                    meta = (run.vars or {}).get("_meta") if isinstance(run.vars, dict) else None
-                    if isinstance(meta, dict) and (meta.get("occurrence") or meta.get("automation")):
-                        continue  # automation trees are handled above, with the automation's title
-                    w = typed_wait(run)
-                    if w is None:
-                        continue
-                    tools = [str(c.get("name") or "") for c in (w.get("details") or []) if isinstance(c, dict)] if w.get("kind") == "tool_approval" else []
-                    key = idempotency_key("approval_needed", run.run_id, w.get("wait_key"))
-                    if queue_notice(self.plane, "approval_needed", key, {"title": _run_title(run), "wait_kind": w.get("kind"), "tools": tools, "ref": f"run {run.run_id}"}):
-                        out["queued"] += 1
+                    queued += self._plain_wait(run)
             if not first:
                 for status, kind in ((RunStatus.COMPLETED, "job_finished"), (RunStatus.FAILED, "job_failed")):
                     for run in run_store.list_runs(status=status, limit=200):
-                        if str(getattr(run, "updated_at", "") or "") < baseline_at:
-                            continue
-                        notify = _run_notify(run)
-                        want_on = {str(x) for x in (notify.get("on") or [])}
-                        channels = {str(x) for x in (notify.get("channels") or [])}
-                        # "Email me when done": the run's own opt-in suffices (no global preference).
-                        if "email" not in channels or ("finished" if kind == "job_finished" else "failed") not in want_on:
-                            continue
-                        if not usable:
-                            continue
-                        facts: Dict[str, Any] = {"title": _run_title(run), "ref": f"run {run.run_id}"}
-                        if kind == "job_failed":
-                            cause, fix = _run_error(run)
-                            facts["cause"] = cause
-                            facts["fix"] = fix or "Open the run in the console to see what failed."
-                        if queue_notice(self.plane, kind, idempotency_key(kind, run.run_id), facts):
-                            out["queued"] += 1
+                        queued += self._job_notice(run, kind, baseline_at, usable)
         except Exception:  # noqa: BLE001
             pass
+        return queued
 
-        _write_private_json(
-            _collector_path(self.plane),
-            {"version": 1, "baseline_at": baseline_at, "attention": att, "updated_at": _now_iso()},
-        )
-        return out
+    def _incremental_pass(
+        self,
+        run_store: Any,
+        ledger_store: Any,
+        changed_runs: set,
+        changed_ledgers: set,
+        att: Dict[str, int],
+        baseline_at: str,
+        ctx: Dict[str, Any],
+    ) -> int:
+        """The full pass's facts, read only from the runs and ledgers that changed: a new
+        attention item lands in its automation's ledger; a new wait, a finished or a failed run
+        is a run that was saved."""
+        from abstractruntime.automation_queries import automation_summary
+        from abstractruntime.automations.attention import typed_wait
+        from abstractruntime.core.models import RunStatus, WaitReason
+
+        queued = 0
+        prefs, usable = ctx["prefs"], ctx["usable"]
+        runs: Dict[str, Any] = {}
+
+        def load(rid: str) -> Any:
+            if rid not in runs:
+                try:
+                    runs[rid] = run_store.load(rid)
+                except Exception:  # noqa: BLE001 - unreadable: not this pass's fact
+                    runs[rid] = None
+            return runs[rid]
+
+        summaries: Dict[str, Optional[Dict[str, Any]]] = {}
+
+        def summary(aid: str) -> Optional[Dict[str, Any]]:
+            if aid not in summaries:
+                run = load(aid)
+                try:
+                    summaries[aid] = automation_summary(run) if run is not None else None
+                except Exception:  # noqa: BLE001 - not an automation controller
+                    summaries[aid] = None
+            return summaries[aid]
+
+        def controller_of(run: Any) -> Optional[str]:
+            """The automation whose occurrence tree holds `run` (pending_waits walks the
+            controller's children): the first ancestor that is a controller."""
+            seen: set = set()
+            parent = getattr(run, "parent_run_id", None)
+            while parent and parent not in seen and len(seen) < 64:
+                seen.add(parent)
+                if summary(str(parent)) is not None:
+                    return str(parent)
+                up = load(str(parent))
+                parent = getattr(up, "parent_run_id", None) if up is not None else None
+            return None
+
+        for aid in sorted(changed_ledgers):
+            try:
+                summ = summary(aid)
+                if summ is None:
+                    continue
+                queued += self._attention(ledger_store, aid, str(summ.get("title") or "Automation"), att, False, ctx)
+            except Exception:  # noqa: BLE001 - one broken source never blocks the others
+                pass
+
+        for rid in sorted(changed_runs):
+            try:
+                run = load(rid)
+                if run is None:
+                    continue
+                status = getattr(run, "status", None)
+                if status == RunStatus.WAITING and usable and prefs.get("approval_needed"):
+                    aid = controller_of(run)
+                    summ = summary(aid) if aid else None
+                    if aid and summ is not None and str(summ.get("status") or "") == "active":
+                        w = typed_wait(run)
+                        if w is not None:
+                            queued += self._automation_wait(aid, str(summ.get("title") or "Automation"), w)
+                    waiting = getattr(run, "waiting", None)
+                    if getattr(waiting, "reason", None) == WaitReason.USER:
+                        queued += self._plain_wait(run)
+                elif status == RunStatus.COMPLETED:
+                    queued += self._job_notice(run, "job_finished", baseline_at, usable)
+                elif status == RunStatus.FAILED:
+                    queued += self._job_notice(run, "job_failed", baseline_at, usable)
+            except Exception:  # noqa: BLE001
+                pass
+        return queued

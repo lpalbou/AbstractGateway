@@ -319,6 +319,11 @@ as preferences (the per-automation and per-run options above decide). Saved pref
 over the same way: `job_failed` is on when `job_failed` or `automation_failed` was on,
 `approval_needed` keeps its value, and preferences never saved take the new defaults.
 
+The check runs with the mail worker (every 15 s). It reads nothing while no run and no ledger
+changed (the run store's and ledger's change tokens), and after a change it reads only the runs
+and ledgers that changed. A first pass, a changed switch, a change it cannot name (another
+process wrote the run folder) and at least every 5 minutes, it reads everything again.
+
 Notices go to your registered address (else your mailbox address), except automation results
 with explicit `notify.recipients`. They are sent by your own account from a durable outbox: each notice is queued once and sent once. If the gateway stops in the middle of a
 send, that notice is marked `unknown` and never resent automatically. Temporary SMTP refusals are
