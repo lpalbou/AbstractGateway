@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 ### Added
+- **My email → Notifications → Push forwarder (the web's card, admins).** Beside Devices: where this gateway sends the
+  alerts for watches and iPhones (`GET /push/settings`), in words — *Built-in forwarder* (*· none in this release
+  yet, so no alerts are sent*), *Off* or the address, and *· set by the launch flag for this run* when `--push-relay`
+  wins (with when the saved choice applies). **Edit** offers the three choices (Built-in forwarder | Off | Your own
+  forwarder and its address) and one **Save** (`PUT /push/settings {mode, url?}`); the line under it says what the
+  forwarder answered (its apps) or why it could not be reached, or the gateway's refusal of the address.
 - **My email → Notifications → Devices (the web's card).** Your own page lists the Apple Watches and iPhones that get
   alerts from this gateway while their app is closed (`GET /me/push/devices`, framework backlog 1049): *name · Apple
   Watch* or *iPhone*, *Registered … · last alert …* (or *no alert yet*), and the last error in words. Nothing to

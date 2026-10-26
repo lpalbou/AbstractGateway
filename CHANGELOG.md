@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Push forwarder: one admin setting, no restart.** The gateway's push forwarder (relay) address is a saved,
+  gateway-wide setting with three choices: **Built-in forwarder** (the packaged address; off while none is built
+  in, as in this release), **Off**, or **Your own forwarder** with its address (`https://`, or `http://` on this
+  computer such as `http://127.0.0.1:8095`). The address in use is the `--push-relay` launch flag of this run, else
+  the saved setting, else the packaged default. `GET|PUT /api/gateway/push/settings` (admins; 422 on a bad address)
+  answers `{forwarder: {mode, url, effective, source: flag|setting|packaged, packaged}}`, and a save with an address
+  in effect probes `GET <address>/v1/info` once (its apps, or why it could not be reached; saved either way). The
+  dispatcher re-reads the address at every pass: the save starts or wakes it in the serve process, and a split
+  runner sees the settings file move within 2 s; turning it on never pushes what happened while it was off. The
+  web and terminal consoles show one **Push forwarder** row beside Devices (My email → Notifications, admins) in
+  words, with *set by the launch flag for this run* when the flag wins, and an **Edit** with the three choices.
 - **Triggers: Handled by, and the page laid out on one grid.** The console's Triggers page is a table whose cells
   start on one line: **Connection** (the name, quiet tags *Sends as you* / *Read and write* / *Read only* on a
   mailbox, the trigger as a sentence), **Handled by**, **Status** (the Listening switch, the state under it —

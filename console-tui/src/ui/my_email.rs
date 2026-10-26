@@ -24,7 +24,8 @@
 //! Save, the only Save on the page; asked ONCE: with none saved and no
 //! mailbox, one sentence points at Mailboxes), the two switches "Job
 //! failed" and "Approval needed", and "Send a test"; on your own page, the
-//! **Devices** that get pushes (see `devices`).
+//! **Devices** that get pushes (see `devices`) and, for admins, the
+//! gateway-wide **Push forwarder** (see `forwarder`).
 //!
 //! **Agents** — **Agent email tools** (one switch, with the reason when
 //! unavailable) and **Recipients and limits**: who your agents may send to,
@@ -49,8 +50,13 @@ use crate::worker::operator::{EmailAction, OpCmd};
 use crate::worker::Cmd;
 
 mod devices;
+mod forwarder;
 mod others;
 pub use devices::{push_devices, PushDevice, DEVICES, DEVICES_HELP, K_DEVICES, NO_DEVICES};
+pub use forwarder::{
+    forwarder, probe_words, put_body, Forwarder, BUILT_IN, FLAG_WINS, FORWARDER, FORWARDER_HELP,
+    FORWARDER_MODES, K_FORWARDER, K_FORWARDER_WRITE, NONE_BUILT_IN,
+};
 pub use others::{
     other_mailboxes, OtherMailbox, ADD_MAILBOX, K_ACCOUNTS, K_ACCOUNTS_WRITE, WRITE_HELP,
 };
@@ -162,6 +168,8 @@ struct Page {
     sw_use: Signal<bool>,
     /// "Add mailbox" (another mailbox; your own page only).
     add: others::AddForm,
+    /// The Push forwarder card's Edit (admins; your own page only).
+    fwd: forwarder::FwdForm,
     /// Width available for wrapped helper text.
     wrap_w: usize,
 }
@@ -433,6 +441,7 @@ fn open_for(cx: Scope, ctx: &Ctx, entity: Option<String>) {
                 sw_tools: mcx.signal(false),
                 sw_use: mcx.signal(true),
                 add: others::AddForm::new(mcx),
+                fwd: forwarder::FwdForm::new(mcx),
                 // Modal inner width: the modal (≤ 100) minus its margin,
                 // border and padding, minus the scrollbar.
                 wrap_w: (vw.min(100) - 8).max(20) as usize,
@@ -442,6 +451,7 @@ fn open_for(cx: Scope, ctx: &Ctx, entity: Option<String>) {
             if entity.is_none() {
                 others::install(mcx, &ctx2, p);
                 devices::install(&ctx2);
+                forwarder::install(mcx, &ctx2, p);
             }
             // Seed the typed fields ONCE from the first answer (a republish
             // after a write never overwrites what the person is typing).
@@ -761,7 +771,9 @@ fn page_body(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> View {
         .child(gap());
     // Your own page: the watches and iPhones that get pushes (an entity has none).
     let col = if p.entity.get_untracked().is_none() {
-        col.child(devices::section(cx, ctx, &t0, p)).child(gap())
+        col.child(devices::section(cx, ctx, &t0, p))
+            .child(gap())
+            .child(forwarder::section(cx, ctx, &t0, p))
     } else {
         col
     };

@@ -4780,6 +4780,7 @@ serve:
 | `/api/gateway/automations*`, `/api/gateway/trigger-sources` | automations: recurring workflows, their occurrences and attention | [automations.md](docs/automations.md) |
 | `/api/gateway/me/events`, `/me/events/stream`, `/me/events/notifications` | your own event stream: what happened for you outside the steps of a run (catch-up, SSE) | [below](#your-event-stream-apigatewaymeevents) |
 | `/api/gateway/me/push/devices` | the watches and iPhones that get your alerts while their app is closed (Apple push) | [below](#push-devices-apigatewaymepushdevices), [push.md](docs/push.md) |
+| `/api/gateway/push/settings` | the gateway's Push forwarder address (admins) | [below](#push-forwarder-apigatewaypushsettings), [push.md](docs/push.md#your-own-forwarder) |
 
 ## OpenAI API
 
@@ -6140,7 +6141,7 @@ session's `PUT` and `DELETE` carry the CSRF header.
 shown in the console. Any other field is 422. `topic` must be one of the packaged apps
 (`ai.abstractframework.assistant.watch`, `ai.abstractframework.assistant.iphone`) or a topic the
 relay lists at `GET <relay>/v1/info`. Answer: `{ok: true, relay: "on" | "off" | "unreachable"}`
-(`off`: this gateway runs with `--push-relay off`). The apps call it at every sign-in, when their
+(`off`: no push forwarder address is in effect). The apps call it at every sign-in, when their
 token changes and at most daily; a registration expires 7 days after its last refresh. The same
 token registered by another account on this gateway moves to the caller.
 
@@ -6163,6 +6164,49 @@ curl -sS -H "$AUTH" "$BASE_URL/api/gateway/me/push/devices"
 ```
 
 Evidence: `src/abstractgateway/routes/push.py`, `src/abstractgateway/push/store.py`.
+
+## Push forwarder (`/api/gateway/push/settings`)
+
+Where this gateway sends its push requests, gateway-wide; admins only (read and write). The address
+in use is the `--push-relay` flag of this run, else the saved setting, else the packaged default
+(none in this release, so off). See [push.md](docs/push.md#your-own-forwarder).
+
+### Read: `GET /api/gateway/push/settings`
+
+```json
+{"forwarder": {"mode": "url", "url": "http://127.0.0.1:8095", "effective": "http://127.0.0.1:8095",
+               "source": "setting", "packaged": null}}
+```
+
+`mode` is the saved choice: `default` (the packaged address), `off`, or `url` with `url`.
+`effective` is the address pushes go to (`null`: off); `source` says where it comes from: `flag`
+(the launch flag wins for this run; the saved choice applies at the next start without it),
+`setting` or `packaged`. `packaged` is the built-in address (`null` until the publisher's forwarder
+is live).
+
+### Save: `PUT /api/gateway/push/settings`
+
+```json
+{"mode": "url", "url": "http://127.0.0.1:8095"}
+```
+
+`mode` is `default`, `off` or `url`; `url` goes with `url` only. The address is `https://`, or
+`http://` for a loopback host (`127.0.0.1`, `::1`, `localhost`); no user name, query or fragment.
+Anything else is 422 with the reason. The setting takes effect at once, without a restart: the
+dispatchers of this process are started or woken, and every dispatcher re-reads the address at
+each pass (a split runner sees the file move within 2 seconds). The answer is the `GET` body; when
+an address is in effect it also carries one probe of `GET <address>/v1/info`:
+`"probe": {"reachable": true, "topics": ["ai.abstractframework.assistant"], "reason": null}`, or
+`{"reachable": false, "topics": [], "reason": "Could not reach it (ConnectError: …)."}`. The setting
+is saved either way.
+
+```bash
+curl -sS -X PUT -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{"mode": "url", "url": "http://127.0.0.1:8095"}' "$BASE_URL/api/gateway/push/settings"
+```
+
+Evidence: `src/abstractgateway/routes/push.py`, `src/abstractgateway/push/settings.py`,
+`src/abstractgateway/push/dispatcher.py`.
 
 ## Conversation tool choices
 
@@ -12013,6 +12057,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Push forwarder: one admin setting, no restart.** The gateway's push forwarder (relay) address is a saved,
+  gateway-wide setting with three choices: **Built-in forwarder** (the packaged address; off while none is built
+  in, as in this release), **Off**, or **Your own forwarder** with its address (`https://`, or `http://` on this
+  computer such as `http://127.0.0.1:8095`). The address in use is the `--push-relay` launch flag of this run, else
+  the saved setting, else the packaged default. `GET|PUT /api/gateway/push/settings` (admins; 422 on a bad address)
+  answers `{forwarder: {mode, url, effective, source: flag|setting|packaged, packaged}}`, and a save with an address
+  in effect probes `GET <address>/v1/info` once (its apps, or why it could not be reached; saved either way). The
+  dispatcher re-reads the address at every pass: the save starts or wakes it in the serve process, and a split
+  runner sees the settings file move within 2 s; turning it on never pushes what happened while it was off. The
+  web and terminal consoles show one **Push forwarder** row beside Devices (My email → Notifications, admins) in
+  words, with *set by the launch flag for this run* when the flag wins, and an **Edit** with the three choices.
 - **Triggers: Handled by, and the page laid out on one grid.** The console's Triggers page is a table whose cells
   start on one line: **Connection** (the name, quiet tags *Sends as you* / *Read and write* / *Read only* on a
   mailbox, the trigger as a sentence), **Handled by**, **Status** (the Listening switch, the state under it —
@@ -15322,7 +15377,7 @@ yours only: another account's mailbox or connection answers 404. Reference: [api
 
 When something needs you — an approval, a question, a published alert, an automation's result or
 failure — the AbstractAssistant apps on your Apple Watch and iPhone show it within seconds, even
-when the app is closed. This page explains how that works, the one flag the gateway operator sets,
+when the app is closed. This page explains how that works, the one setting a self-hoster may change,
 how to run your own relay with your own Apple key, and exactly what leaves your gateway.
 
 It builds on [your event stream](docs/api.md#your-event-stream-apigatewaymeevents): a push is only a
@@ -15354,21 +15409,42 @@ An approval that is answered before the push leaves (on another device, in the c
 pushed. A watch registered in the last 24 hours takes the alerts; otherwise the iPhone does, so
 your wrist rings once. A registration not refreshed for 7 days expires.
 
-## For the operator: one flag
+## For the operator: nothing to set
+
+The gateway sends its push requests to a push forwarder (the relay described below). The address is
+built in: the publisher's forwarder, once it is live. This release has none built in, so pushes stay
+off until you run your own forwarder.
+
+### Your own forwarder
+
+One setting, nothing else. As an admin, open **My email → Notifications → Push forwarder** in the
+web or terminal console, choose **Edit**, then **Your own forwarder**, and give its address:
+`https://…`, or `http://` for a forwarder on the same computer (`http://127.0.0.1:8095`). The
+other two choices are **Built-in forwarder** (the default) and **Off**. Save asks the forwarder for
+its apps once (`GET <address>/v1/info`) and says what it answered or why it could not be reached;
+the address is saved either way and used at once, without a restart. The setting is gateway-wide,
+in `<gateway data dir>/push/settings.json` (nothing secret in it); the API is
+[`GET|PUT /api/gateway/push/settings`](docs/api.md#push-forwarder-apigatewaypushsettings).
+
+A launch flag overrides the saved setting for one run:
 
 ```bash
-abstractgateway serve --push-relay https://push.example.org
+abstractgateway serve --push-relay https://push.example.org   # or --push-relay off
 ```
 
-`--push-relay <URL|off>` names the relay this gateway sends push requests to. The default is `off`;
-the packaged default becomes the publisher's relay once it is live. There is no environment
-variable.
+The address in use is the `--push-relay` flag of this run, else the saved setting, else the
+built-in forwarder. While the flag wins, the console says *set by the launch flag for this run*.
+There is no environment variable.
 
-- With `off`, the gateway runs no push dispatcher at all: no thread, no outbound connection.
-- With a relay but no registered device, the dispatcher does no work and opens no connection. The
-  gateway contacts the relay only once a device has registered.
-- In the split layout (`serve --no-runner` plus `abstractgateway runner`), give the flag to both
-  processes: the runner process sends, the API process answers the device registrations.
+- With no address (off), the gateway runs no push dispatcher: no thread, no outbound connection.
+  Saving an address starts it.
+- With an address but no registered device, the dispatcher does no work and opens no connection.
+  The gateway contacts the forwarder only once a device has registered.
+- Turning the forwarder on never pushes what happened while it was off.
+- In the split layout (`serve --no-runner` plus `abstractgateway runner`), the runner process sends
+  and reads the saved setting too: without a flag it keeps one parked thread that checks the
+  settings file every 2 seconds, so a saved address reaches it without a restart. A `--push-relay`
+  flag goes to both processes.
 
 Delivery is retried for an hour (after 2 s, 10 s, 60 s, 5 min, then every 15 min). An approval or
 a question that could not be delivered in that hour is recorded as `notification.failed` in your
@@ -15405,7 +15481,7 @@ abstractgateway push-relay \
 The `push-relay` extra adds the HTTP/2 client Apple requires (`httpx[http2]`) and `cryptography`
 for the provider token. A gateway that only sends to a relay needs neither.
 
-Then point your gateway at it with `--push-relay https://your-relay.example`. A gateway accepts
+Then save its address as the gateway's Push forwarder ([Your own forwarder](#your-own-forwarder)). A gateway accepts
 registrations for the two packaged apps (`ai.abstractframework.assistant`, the iPhone app,
 and `ai.abstractframework.assistant.watchkitapp`, its watch companion) and for the topics your relay lists at `GET /v1/info`.
 

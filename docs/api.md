@@ -40,6 +40,7 @@ serve:
 | `/api/gateway/automations*`, `/api/gateway/trigger-sources` | automations: recurring workflows, their occurrences and attention | [automations.md](./automations.md) |
 | `/api/gateway/me/events`, `/me/events/stream`, `/me/events/notifications` | your own event stream: what happened for you outside the steps of a run (catch-up, SSE) | [below](#your-event-stream-apigatewaymeevents) |
 | `/api/gateway/me/push/devices` | the watches and iPhones that get your alerts while their app is closed (Apple push) | [below](#push-devices-apigatewaymepushdevices), [push.md](./push.md) |
+| `/api/gateway/push/settings` | the gateway's Push forwarder address (admins) | [below](#push-forwarder-apigatewaypushsettings), [push.md](./push.md#your-own-forwarder) |
 
 ## OpenAI API
 
@@ -1400,7 +1401,7 @@ session's `PUT` and `DELETE` carry the CSRF header.
 shown in the console. Any other field is 422. `topic` must be one of the packaged apps
 (`ai.abstractframework.assistant.watch`, `ai.abstractframework.assistant.iphone`) or a topic the
 relay lists at `GET <relay>/v1/info`. Answer: `{ok: true, relay: "on" | "off" | "unreachable"}`
-(`off`: this gateway runs with `--push-relay off`). The apps call it at every sign-in, when their
+(`off`: no push forwarder address is in effect). The apps call it at every sign-in, when their
 token changes and at most daily; a registration expires 7 days after its last refresh. The same
 token registered by another account on this gateway moves to the caller.
 
@@ -1423,6 +1424,49 @@ curl -sS -H "$AUTH" "$BASE_URL/api/gateway/me/push/devices"
 ```
 
 Evidence: `src/abstractgateway/routes/push.py`, `src/abstractgateway/push/store.py`.
+
+## Push forwarder (`/api/gateway/push/settings`)
+
+Where this gateway sends its push requests, gateway-wide; admins only (read and write). The address
+in use is the `--push-relay` flag of this run, else the saved setting, else the packaged default
+(none in this release, so off). See [push.md](./push.md#your-own-forwarder).
+
+### Read: `GET /api/gateway/push/settings`
+
+```json
+{"forwarder": {"mode": "url", "url": "http://127.0.0.1:8095", "effective": "http://127.0.0.1:8095",
+               "source": "setting", "packaged": null}}
+```
+
+`mode` is the saved choice: `default` (the packaged address), `off`, or `url` with `url`.
+`effective` is the address pushes go to (`null`: off); `source` says where it comes from: `flag`
+(the launch flag wins for this run; the saved choice applies at the next start without it),
+`setting` or `packaged`. `packaged` is the built-in address (`null` until the publisher's forwarder
+is live).
+
+### Save: `PUT /api/gateway/push/settings`
+
+```json
+{"mode": "url", "url": "http://127.0.0.1:8095"}
+```
+
+`mode` is `default`, `off` or `url`; `url` goes with `url` only. The address is `https://`, or
+`http://` for a loopback host (`127.0.0.1`, `::1`, `localhost`); no user name, query or fragment.
+Anything else is 422 with the reason. The setting takes effect at once, without a restart: the
+dispatchers of this process are started or woken, and every dispatcher re-reads the address at
+each pass (a split runner sees the file move within 2 seconds). The answer is the `GET` body; when
+an address is in effect it also carries one probe of `GET <address>/v1/info`:
+`"probe": {"reachable": true, "topics": ["ai.abstractframework.assistant"], "reason": null}`, or
+`{"reachable": false, "topics": [], "reason": "Could not reach it (ConnectError: …)."}`. The setting
+is saved either way.
+
+```bash
+curl -sS -X PUT -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{"mode": "url", "url": "http://127.0.0.1:8095"}' "$BASE_URL/api/gateway/push/settings"
+```
+
+Evidence: `src/abstractgateway/routes/push.py`, `src/abstractgateway/push/settings.py`,
+`src/abstractgateway/push/dispatcher.py`.
 
 ## Conversation tool choices
 

@@ -2,7 +2,7 @@
 
 When something needs you — an approval, a question, a published alert, an automation's result or
 failure — the AbstractAssistant apps on your Apple Watch and iPhone show it within seconds, even
-when the app is closed. This page explains how that works, the one flag the gateway operator sets,
+when the app is closed. This page explains how that works, the one setting a self-hoster may change,
 how to run your own relay with your own Apple key, and exactly what leaves your gateway.
 
 It builds on [your event stream](./api.md#your-event-stream-apigatewaymeevents): a push is only a
@@ -34,21 +34,42 @@ An approval that is answered before the push leaves (on another device, in the c
 pushed. A watch registered in the last 24 hours takes the alerts; otherwise the iPhone does, so
 your wrist rings once. A registration not refreshed for 7 days expires.
 
-## For the operator: one flag
+## For the operator: nothing to set
+
+The gateway sends its push requests to a push forwarder (the relay described below). The address is
+built in: the publisher's forwarder, once it is live. This release has none built in, so pushes stay
+off until you run your own forwarder.
+
+### Your own forwarder
+
+One setting, nothing else. As an admin, open **My email → Notifications → Push forwarder** in the
+web or terminal console, choose **Edit**, then **Your own forwarder**, and give its address:
+`https://…`, or `http://` for a forwarder on the same computer (`http://127.0.0.1:8095`). The
+other two choices are **Built-in forwarder** (the default) and **Off**. Save asks the forwarder for
+its apps once (`GET <address>/v1/info`) and says what it answered or why it could not be reached;
+the address is saved either way and used at once, without a restart. The setting is gateway-wide,
+in `<gateway data dir>/push/settings.json` (nothing secret in it); the API is
+[`GET|PUT /api/gateway/push/settings`](./api.md#push-forwarder-apigatewaypushsettings).
+
+A launch flag overrides the saved setting for one run:
 
 ```bash
-abstractgateway serve --push-relay https://push.example.org
+abstractgateway serve --push-relay https://push.example.org   # or --push-relay off
 ```
 
-`--push-relay <URL|off>` names the relay this gateway sends push requests to. The default is `off`;
-the packaged default becomes the publisher's relay once it is live. There is no environment
-variable.
+The address in use is the `--push-relay` flag of this run, else the saved setting, else the
+built-in forwarder. While the flag wins, the console says *set by the launch flag for this run*.
+There is no environment variable.
 
-- With `off`, the gateway runs no push dispatcher at all: no thread, no outbound connection.
-- With a relay but no registered device, the dispatcher does no work and opens no connection. The
-  gateway contacts the relay only once a device has registered.
-- In the split layout (`serve --no-runner` plus `abstractgateway runner`), give the flag to both
-  processes: the runner process sends, the API process answers the device registrations.
+- With no address (off), the gateway runs no push dispatcher: no thread, no outbound connection.
+  Saving an address starts it.
+- With an address but no registered device, the dispatcher does no work and opens no connection.
+  The gateway contacts the forwarder only once a device has registered.
+- Turning the forwarder on never pushes what happened while it was off.
+- In the split layout (`serve --no-runner` plus `abstractgateway runner`), the runner process sends
+  and reads the saved setting too: without a flag it keeps one parked thread that checks the
+  settings file every 2 seconds, so a saved address reaches it without a restart. A `--push-relay`
+  flag goes to both processes.
 
 Delivery is retried for an hour (after 2 s, 10 s, 60 s, 5 min, then every 15 min). An approval or
 a question that could not be delivered in that hour is recorded as `notification.failed` in your
@@ -85,7 +106,7 @@ abstractgateway push-relay \
 The `push-relay` extra adds the HTTP/2 client Apple requires (`httpx[http2]`) and `cryptography`
 for the provider token. A gateway that only sends to a relay needs neither.
 
-Then point your gateway at it with `--push-relay https://your-relay.example`. A gateway accepts
+Then save its address as the gateway's Push forwarder ([Your own forwarder](#your-own-forwarder)). A gateway accepts
 registrations for the two packaged apps (`ai.abstractframework.assistant`, the iPhone app,
 and `ai.abstractframework.assistant.watchkitapp`, its watch companion) and for the topics your relay lists at `GET /v1/info`.
 
