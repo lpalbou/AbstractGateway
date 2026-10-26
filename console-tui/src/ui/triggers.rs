@@ -8,18 +8,19 @@
 //!
 //! The page: the web's purpose sentence; [New connection] [Refresh] and,
 //! for admins, the **All accounts** toggle; a `DataTable` Name (the name and
-//! the trigger sentence) · (Account) · Status · Listening · **Handled by**
-//! (own view only: the flows of the automations handling it, a paused one
-//! "<flow> (paused)" muted, "Nothing yet" when none, empty while the
-//! automations are not read) · Last event (a row note below 100 columns) ·
-//! [Use in a flow] [Events] [Test] [Delete]. Use in a flow (`f`) is the web's
-//! menu: "New flow for this trigger…" (Flow's link, with Copy), then every
-//! published triggered flow, "✓ <flow>" when it already handles the trigger
-//! (plus every handler whose flow is not published, by its flow name). An
-//! unchecked pick creates the automation; a checked one opens that flow's
-//! automations on this trigger, each with Pause (Resume when paused) and
-//! Remove (asked first, inline), sent as `POST /automations/{id}/commands`
-//! (`automation.pause|resume|archive`), then the automations are read again.
+//! the trigger sentence; "Main mailbox" on the person's own mailbox) · (Account) · Status ·
+//! Listening · **Handled by** (own view only: the flows of the automations handling it, a paused
+//! one "<flow> (paused)" muted, "Choose a flow…" when none, empty while the automations are not
+//! read) · Last event (a row note below 100 columns) · [Use in a flow] [Events] [Test] [Delete].
+//! Use in a flow (`f`) is the web's dropdown menu: "New flow for this trigger…" (Flow's link, with
+//! Copy), then every published triggered flow; a flow that handles the trigger is one line per
+//! automation, "✓ <flow>" with Pause (Resume when paused), Open in Flow (prints Flow's
+//! `/apps/flow/?flow=<library flow id>` link with Copy; refused, "Not in the Flow library
+//! (ADR-0040)", for a workflow with no library flow) and Remove ("Remove <flow> from this
+//! trigger? Its runs stay in Observer." Remove / Keep) on that line, sent as `POST
+//! /automations/{id}/commands` (`automation.pause|resume|archive`), then the automations are read
+//! again; its name picked again shows the automation's title. An unchecked pick creates the
+//! automation.
 //! Events opens
 //! the connection's 20 most recent events (newest first, each with its
 //! whole JSON); Test sends a test event and says "Test event #N sent." in
@@ -62,8 +63,11 @@ pub const PURPOSE: &str = "A connection is something of yours the gateway listen
 pub const WEBHOOK_RECIPE: &str = "GitHub, Zapier and other services: paste the webhook address as the webhook URL, the signing secret as the secret, and choose JSON as the content type.";
 pub const WEBHOOK_SHELL: &str =
     "Any other sender signs each call per Standard Webhooks. From a shell (bash, openssl):";
-/// The primary mailbox's badge (the web's, as in My email).
+/// My email's badge on the primary mailbox (My email keeps it; the Triggers rows say MAIN_MAILBOX).
 pub const SENDS_AS_YOU: &str = "Sends as you";
+/// The person's own mailbox from My email, as a tag on its Triggers row (the web's, operator
+/// 2026-10-26: "Sends as you" was not understood).
+pub const MAIN_MAILBOX: &str = "Main mailbox";
 /// The mailbox rows' link (the web's words).
 pub const MANAGE_MAILBOX: &str = "Manage in My email";
 /// The line under the list (the web's).
@@ -81,9 +85,14 @@ pub const FLOWS_PATH: &str = "/bundles";
 pub const K_USE: &str = "triggers.use";
 pub const USE_IN_FLOW: &str = "Use in a flow";
 pub const NEW_FLOW: &str = "New flow for this trigger…";
-/// The Handled by column (own view) and its empty cell.
+/// The Handled by column (own view) and its empty cell (the web face's words).
 pub const HANDLED_BY: &str = "Handled by";
-pub const NOTHING_YET: &str = "Nothing yet";
+pub const CHOOSE_FLOW: &str = "Choose a flow…";
+/// A handling flow's Open in Flow: Flow's `?flow=<library flow id>` link (Flow docs/web-editor.md,
+/// "Open A Library Flow From A Link"); refused for a workflow with no library flow.
+pub const OPEN_IN_FLOW: &str = "Open in Flow";
+pub const NOT_IN_LIBRARY: &str = "Not in the Flow library (ADR-0040)";
+pub const STOP_HANDLING: &str = "Stop handling this trigger";
 /// A Pause / Resume / Remove on a handler (`POST /automations/{id}/commands`), the web's words:
 /// `<title>` is the automation's title, `<label>` the trigger's, `<reason>` the refusal.
 pub const K_CMD: &str = "triggers.command";
@@ -94,8 +103,8 @@ pub const NOT_PAUSED: &str = "<title> was not paused: <reason>";
 pub const NOT_RESUMED: &str = "<title> was not resumed: <reason>";
 pub const NOT_REMOVED: &str = "<title> was not removed: <reason>";
 pub const SESSION_EXPIRED: &str = "Your session expired: sign in again, then try again.";
-pub const REMOVE_QUESTION: &str =
-    "Remove <title>? It stops handling <label>; its history stays in Observer.";
+/// × / Remove's question, `<title>` = the flow's name (the web's words).
+pub const REMOVE_QUESTION: &str = "Remove <title> from this trigger? Its runs stay in Observer.";
 /// The second re-read after a command's receipt (the runner applies it shortly after).
 pub const REREAD_AFTER: std::time::Duration = std::time::Duration::from_millis(1500);
 pub const FLOWS_HEAD: &str = "Or let one of your triggered flows handle it";
@@ -389,14 +398,14 @@ pub fn handlers(autos: &Value, matches: impl Fn(&Value) -> bool) -> Option<Vec<H
 }
 
 /// The Handled by cell: one line per handler (its flow's name, "<flow> (paused)" for a paused
-/// one), `(text, muted)`; "Nothing yet" (muted) when none; no line at all when the automations
-/// were not read (never a false "Nothing yet").
+/// one), `(text, muted)`; "Choose a flow…" (muted) when none; no line at all when the automations
+/// were not read (never a false "Choose a flow…").
 pub fn handled_by(handlers: Option<&[Handler]>) -> Vec<(String, bool)> {
     let Some(hs) = handlers else {
         return Vec::new();
     };
     if hs.is_empty() {
-        return vec![(NOTHING_YET.to_string(), true)];
+        return vec![(CHOOSE_FLOW.to_string(), true)];
     }
     hs.iter()
         .map(|h| {
@@ -525,32 +534,69 @@ pub fn command_refusal(e: &crate::api::ApiError, cmd: HandlerCmd, title: &str) -
     words(t, title, "", &refusal(e))
 }
 
-/// Remove's question (asked inline, in the menu).
-pub fn remove_question(title: &str, label: &str) -> String {
-    words(REMOVE_QUESTION, title, label, "")
+/// Remove's question (asked inline, in the menu): `flow` is the handling flow's name.
+pub fn remove_question(flow: &str) -> String {
+    words(REMOVE_QUESTION, flow, "", "")
 }
 
-/// A checked item's automation actions: Pause (Resume when paused) and Remove.
-pub fn handler_actions(h: &Handler) -> Vec<Action> {
+/// A handling flow's actions, on its own line of the menu: Pause (Resume when paused), Open in
+/// Flow (refused, said why, when its workflow has no library flow) and Remove.
+pub fn handler_actions(h: &Handler, library_id: Option<&str>) -> Vec<Action> {
     vec![
         if h.paused {
             Action::label("resume", "Resume").tooltip(format!("Turn {} on again", h.title))
         } else {
             Action::label("pause", "Pause").tooltip(format!("Pause {}", h.title))
         },
-        Action::label("remove", "Remove").danger().tooltip(format!(
-            "Remove {}: it stops handling this trigger",
-            h.title
-        )),
+        Action::label("open_flow", OPEN_IN_FLOW)
+            .tooltip(format!("{}: print its link in Flow", h.name()))
+            .refused(library_id.is_none().then(|| NOT_IN_LIBRARY.to_string())),
+        Action::label("remove", "Remove")
+            .danger()
+            .tooltip(STOP_HANDLING),
     ]
 }
 
-/// Remove's inline answer buttons.
+/// Remove's inline answer buttons (the web's Remove / Keep).
 pub fn remove_actions() -> Vec<Action> {
     vec![
         Action::label("remove_yes", "Remove").danger(),
-        Action::label("remove_no", "Cancel"),
+        Action::label("remove_no", "Keep"),
     ]
+}
+
+/// The library flow behind each workflow published from Flow (the web's `trgLibraryIds`): bundle
+/// id → the id of the flow it was published from (`metadata.source.root_flow_id`, `source:
+/// "published"`). Shipped and imported workflows have none (ADR-0040).
+pub fn library_ids(v: &Value) -> std::collections::BTreeMap<String, String> {
+    let mut out = std::collections::BTreeMap::new();
+    for b in v
+        .get("items")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let id = b
+            .pointer("/metadata/source/root_flow_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or("");
+        if b.get("source").and_then(Value::as_str) == Some("published") && !id.is_empty() {
+            if let Some(bundle) = st(b, "bundle_id") {
+                out.insert(bundle, id.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// Flow's link to one library flow: `<gateway>/apps/flow/?flow=<flow id>`.
+pub fn flow_link(gateway_url: &str, flow_id: &str) -> String {
+    format!(
+        "{}/apps/flow/?flow={}",
+        gateway_url.trim_end_matches('/'),
+        crate::api::urlencode(flow_id)
+    )
 }
 
 /// A row's key as Flow's `?trigger=` value: the connection id, `mail:<mailbox id>` for a mailbox.
@@ -2438,7 +2484,7 @@ fn table(cx: Scope, pcx: Scope, ctx: &Ctx, tu: Tu, t: &TokenSet, width: i32, pag
                         {
                             let mut l = vec![Ink::new(m.name(), t.text).bold()];
                             if m.primary {
-                                l.push(Ink::new(format!("  {SENDS_AS_YOU}"), t.info));
+                                l.push(Ink::new(format!("  {MAIN_MAILBOX}"), t.info));
                             }
                             l
                         },
@@ -2657,8 +2703,9 @@ fn open_use_flow(cx: Scope, ctx: &Ctx, target: Option<Result<UseTarget, String>>
         .open(ctx, cx, move |mcx, close, _guard, w| {
             let show_link = mcx.signal(false);
             let picked: Signal<Option<String>> = mcx.signal(None);
-            // The checked item opened (its name), the automation asked about Remove, the last command.
+            // The handler whose title is shown, whose Flow link is printed, asked about Remove; the last command.
             let opened: Signal<Option<String>> = mcx.signal(None);
+            let linked: Signal<Option<String>> = mcx.signal(None);
             let asking: Signal<Option<String>> = mcx.signal(None);
             let acted: Signal<Option<(HandlerCmd, String)>> = mcx.signal(None);
             let c2 = c.clone();
@@ -2722,6 +2769,11 @@ fn open_use_flow(cx: Scope, ctx: &Ctx, target: Option<Result<UseTarget, String>>
                     }
                 };
                 let items = menu_items(flows.as_deref().unwrap_or(&[]), &hs);
+                // Each published workflow's library flow (Open in Flow).
+                let lib = match c2.store.json.get(K_FLOWS) {
+                    Loadable::Ready(v) => library_ids(&v),
+                    _ => Default::default(),
+                };
                 if items.is_empty() {
                     if flows.is_some() {
                         col = col.child(sentence(&t, NO_FLOWS, w, t.text_muted));
@@ -2739,88 +2791,119 @@ fn open_use_flow(cx: Scope, ctx: &Ctx, target: Option<Result<UseTarget, String>>
                 };
                 for item in items {
                     if item.checked() {
-                        let name = item.name.clone();
-                        let a = Action::label("handled", item.label()).tooltip(format!(
-                            "{} already handles {}: pause or remove it",
-                            item.name, target.label
-                        ));
-                        col = col.child(menu_item(button(
-                            gcx,
-                            &t,
-                            &a,
-                            On::Raised,
-                            true,
-                            move || {
-                                asking.set(None);
-                                opened.update(|o| {
-                                    *o = if o.as_deref() == Some(name.as_str()) {
-                                        None
-                                    } else {
-                                        Some(name.clone())
-                                    }
-                                });
-                            },
-                        )));
-                        if opened.get().as_deref() != Some(item.name.as_str()) {
-                            continue;
-                        }
-                        // The flow's automations on this trigger, each with its actions.
+                        // One line per automation of this flow on the trigger: "✓ <flow>", then
+                        // Pause (Resume), Open in Flow, Remove on the same line (the web's entry);
+                        // the name picked again shows the automation's title under it.
                         for h in &item.handlers {
-                            let text = if h.paused {
-                                format!("{} (paused)", h.title)
-                            } else {
-                                h.title.clone()
-                            };
-                            col = col.child(super::kit::sentence_indent(
-                                &t,
-                                &text,
-                                w,
-                                4,
-                                if h.paused { t.text_muted } else { t.text },
-                            ));
+                            let lib_id = lib.get(&h.bundle).cloned();
                             let ask = asking.get().as_deref() == Some(h.id.as_str());
+                            let face = if h.paused {
+                                format!("✓ {} (paused)", item.name)
+                            } else {
+                                format!("✓ {}", item.name)
+                            };
+                            let a = Action::label("handled", face).tooltip(format!(
+                                "{} handles {}: pause it, open it in Flow or remove it",
+                                item.name, target.label
+                            ));
+                            let hid = h.id.clone();
+                            let mut views =
+                                vec![button(gcx, &t, &a, On::Raised, true, move || {
+                                    opened.update(|o| {
+                                        *o = if o.as_deref() == Some(hid.as_str()) {
+                                            None
+                                        } else {
+                                            Some(hid.clone())
+                                        }
+                                    });
+                                })];
+                            if !ask {
+                                for a in handler_actions(h, lib_id.as_deref()) {
+                                    let (c3, h2, label) =
+                                        (c2.clone(), h.clone(), target.label.clone());
+                                    let id = a.id;
+                                    views.push(button(gcx, &t, &a, On::Raised, true, move || {
+                                        let cmd = match id {
+                                            "remove" => {
+                                                asking.set(Some(h2.id.clone()));
+                                                return;
+                                            }
+                                            "open_flow" => {
+                                                linked.update(|l| {
+                                                    *l = if l.as_deref() == Some(h2.id.as_str()) {
+                                                        None
+                                                    } else {
+                                                        Some(h2.id.clone())
+                                                    }
+                                                });
+                                                return;
+                                            }
+                                            "pause" => HandlerCmd::Pause,
+                                            _ => HandlerCmd::Resume,
+                                        };
+                                        if busy(&c3) {
+                                            return;
+                                        }
+                                        c3.store.json.set_write(K_USE, None);
+                                        acted.set(Some((cmd, h2.title.clone())));
+                                        send_command(&c3, &h2, cmd, &label);
+                                    }));
+                                }
+                            }
+                            col = col.child(indented_row(views, 0));
+                            if opened.get().as_deref() == Some(h.id.as_str()) {
+                                let text = if h.paused {
+                                    format!("{} (paused)", h.title)
+                                } else {
+                                    h.title.clone()
+                                };
+                                col = col.child(super::kit::sentence_indent(
+                                    &t,
+                                    &text,
+                                    w,
+                                    4,
+                                    if h.paused { t.text_muted } else { t.text },
+                                ));
+                            }
+                            if let (Some(id), true) = (
+                                lib_id.as_deref(),
+                                linked.get().as_deref() == Some(h.id.as_str()),
+                            ) {
+                                col = col.child(sentence(&t, NEW_FLOW_HELP, w, t.text_muted));
+                                col = col.child(copy_row(
+                                    gcx,
+                                    &c2,
+                                    &t,
+                                    "Flow link",
+                                    &flow_link(&c2.ui.conn_url.get_untracked(), id),
+                                    w,
+                                ));
+                            }
                             if ask {
                                 col = col.child(super::kit::sentence_indent(
                                     &t,
-                                    &remove_question(&h.title, &target.label),
+                                    &remove_question(&item.name),
                                     w,
                                     4,
                                     t.warn,
                                 ));
-                            }
-                            let acts = if ask {
-                                remove_actions()
-                            } else {
-                                handler_actions(h)
-                            };
-                            let mut views = Vec::new();
-                            for a in acts {
-                                let (c3, h2, label) = (c2.clone(), h.clone(), target.label.clone());
-                                let id = a.id;
-                                views.push(button(gcx, &t, &a, On::Raised, true, move || {
-                                    let cmd = match id {
-                                        "remove" => {
-                                            asking.set(Some(h2.id.clone()));
+                                let mut answer = Vec::new();
+                                for a in remove_actions() {
+                                    let (c3, h2, label) =
+                                        (c2.clone(), h.clone(), target.label.clone());
+                                    let id = a.id;
+                                    answer.push(button(gcx, &t, &a, On::Raised, true, move || {
+                                        asking.set(None);
+                                        if id != "remove_yes" || busy(&c3) {
                                             return;
                                         }
-                                        "remove_no" => {
-                                            asking.set(None);
-                                            return;
-                                        }
-                                        "pause" => HandlerCmd::Pause,
-                                        "resume" => HandlerCmd::Resume,
-                                        _ => HandlerCmd::Remove,
-                                    };
-                                    if busy(&c3) {
-                                        return;
-                                    }
-                                    asking.set(None);
-                                    c3.store.json.set_write(K_USE, None);
-                                    acted.set(Some((cmd, h2.title.clone())));
-                                    send_command(&c3, &h2, cmd, &label);
-                                }));
+                                        c3.store.json.set_write(K_USE, None);
+                                        acted.set(Some((HandlerCmd::Remove, h2.title.clone())));
+                                        send_command(&c3, &h2, HandlerCmd::Remove, &label);
+                                    }));
+                                }
+                                col = col.child(indented_row(answer, 4));
                             }
-                            col = col.child(indented_row(views, 4));
                         }
                         continue;
                     }
@@ -2954,20 +3037,21 @@ fn send_command(ctx: &Ctx, h: &Handler, cmd: HandlerCmd, label: &str) {
     });
 }
 
-/// A left-aligned row of buttons, indented.
+/// A left-aligned row of buttons, indented (`indent` 0: flush, the menu's own lines).
 fn indented_row(views: Vec<View>, indent: i32) -> View {
-    let mut row = Element::new()
-        .style(
-            LayoutStyle::row()
-                .height(Dimension::Cells(1))
-                .shrink(0.0)
-                .gap(1),
-        )
-        .child(
+    let mut row = Element::new().style(
+        LayoutStyle::row()
+            .height(Dimension::Cells(1))
+            .shrink(0.0)
+            .gap(1),
+    );
+    if indent > 0 {
+        row = row.child(
             Element::new()
                 .style(LayoutStyle::default().w(indent - 1).shrink(0.0))
                 .build(),
         );
+    }
     for v in views {
         row = row.child(v);
     }

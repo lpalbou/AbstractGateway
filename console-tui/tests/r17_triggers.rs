@@ -515,6 +515,7 @@ fn every_action_has_a_click_test() {
         "remove",
         "remove_yes",
         "remove_no",
+        "open_flow",
     ]
     .into_iter()
     .collect();
@@ -531,10 +532,10 @@ fn every_action_has_a_click_test() {
     for a in triggers::mailbox_actions() {
         offered.insert(a.id);
     }
-    // A checked Use in a flow item's automations: Pause / Resume, Remove, and Remove's answer.
+    // A handling flow's line: Pause / Resume, Open in Flow, Remove, and Remove's answer.
     let hs = triggers::handlers(&autos(), |_| true).unwrap();
     for h in &hs {
-        for a in triggers::handler_actions(h) {
+        for a in triggers::handler_actions(h, Some("vf")) {
             offered.insert(a.id);
         }
     }
@@ -1180,12 +1181,13 @@ fn autos() -> Value {
 
 fn bundles() -> Value {
     json!({"items": [
-        {"bundle_id": "digest", "bundle_version": "1.0.0", "bundle_ref": "digest@1.0.0",
+        {"bundle_id": "digest", "bundle_version": "1.0.0", "bundle_ref": "digest@1.0.0", "source": "published",
+         "metadata": {"source": {"root_flow_id": "vf-digest", "root_flow_name": "Digest"}},
          "automation_defaults": {"digest": {"schema_version": 1, "trigger": {"source_id": "feed.item", "source_version": 1, "config": {}, "connection_id": "author"},
                                             "context": {"mode": "growing"}, "input_data": {"prompt": "Summarize"}}},
          "entrypoints": [{"flow_id": "digest", "name": "Digest", "workflow_id": "digest@1.0.0:digest", "triggerable": true},
                          {"flow_id": "chat", "name": "Chat helper", "workflow_id": "digest@1.0.0:chat", "triggerable": false}]},
-        {"bundle_id": "triage", "bundle_version": "1.0.0", "bundle_ref": "triage@1.0.0",
+        {"bundle_id": "triage", "bundle_version": "1.0.0", "bundle_ref": "triage@1.0.0", "source": "shipped", "metadata": {},
          "automation_defaults": {"triage": {"schema_version": 1, "trigger": {"source_id": "email.received", "source_version": 1, "config": {"account": "author", "from": ["boss@x.test"]}},
                                             "context": {"mode": "independent"}, "input_data": {}}},
          "entrypoints": [{"flow_id": "triage", "name": "Triage", "workflow_id": "triage@1.0.0:triage", "triggerable": true}]}
@@ -1212,9 +1214,9 @@ fn handled_by_menu_and_create_body_match_the_web() {
         triggers::handlers(&autos(), |t| triggers::connection_match("conn_hook1", t)).unwrap();
     assert_eq!(
         triggers::handled_by(Some(&none)),
-        [("Nothing yet".to_string(), true)]
+        [("Choose a flow…".to_string(), true)]
     );
-    // Not read: an empty cell (never a false "Nothing yet").
+    // Not read: an empty cell (never a false "Choose a flow…").
     assert!(triggers::handlers(&Value::Null, |_| true).is_none());
     assert!(triggers::handled_by(None).is_empty());
     // The primary mailbox is matched by "self"; a title equal to its flow is said once.
@@ -1345,7 +1347,7 @@ fn rows_say_handled_by() {
         "{feed}\n{s}"
     );
     let hook = row_block(&s, "CI hook", 0);
-    assert!(hook.contains("Nothing yet"), "{hook}\n{s}");
+    assert!(hook.contains("Choose a flow…"), "{hook}\n{s}");
     let primary = row_block(&s, "admin@example.org", 0);
     assert!(primary.contains("Triage"), "{primary}\n{s}");
     for banned in [
@@ -1368,8 +1370,8 @@ fn handled_by_is_empty_while_the_automations_are_not_read_and_absent_for_all_acc
     let s = h.turns(3);
     assert!(s.contains("Handled by") && s.contains("CI hook"), "{s}");
     assert!(
-        !s.contains("Nothing yet"),
-        "never a false Nothing yet:\n{s}"
+        !s.contains("Choose a flow…"),
+        "never a false Choose a flow…:\n{s}"
     );
     // The admin's All accounts view: other people's connections, no Handled by.
     let mut a = page(true);
@@ -1523,7 +1525,7 @@ fn the_f_key_opens_use_in_a_flow_for_the_selected_row() {
         "Handled by",
         "Digest",
         "Summarize",
-        "Nothing yet",
+        "Choose a flow…",
         "Use in a flow",
         "Release feed",
         "Listening",
@@ -1586,20 +1588,88 @@ fn command_sent(h: &mut r8w4::Harness) -> (String, Value, Vec<(String, String)>)
 }
 
 #[test]
-fn a_checked_flow_lists_its_automations_with_pause_and_remove() {
-    let mut h = open_checked("✓ Digest");
+fn a_handling_flow_has_pause_open_in_flow_and_remove_on_its_line() {
+    let mut h = use_page();
+    click_row(&mut h, "Release feed", "Use in a flow");
+    let s = h.turns(3);
+    // Each handling flow on one line: ✓ name, Pause (Resume when paused), Open in Flow, Remove.
+    let digest = s
+        .lines()
+        .find(|l| l.contains("✓ Digest"))
+        .unwrap_or_else(|| panic!("{s}"));
+    let summarize = s
+        .lines()
+        .find(|l| l.contains("✓ Summarize (paused)"))
+        .unwrap_or_else(|| panic!("{s}"));
+    for (line, first) in [(digest, "Pause"), (summarize, "Resume")] {
+        let at: Vec<usize> = [first, "Open in Flow", "Remove"]
+            .iter()
+            .map(|w| {
+                line.find(w)
+                    .unwrap_or_else(|| panic!("{w:?} not on {line:?}\n{s}"))
+            })
+            .collect();
+        assert!(at.windows(2).all(|p| p[0] < p[1]), "{line}");
+    }
+    // The name picked again shows the automation's title; again hides it; nothing sent.
+    h.click_text("✓ Digest");
     let s = h.turns(2);
-    assert!(
-        s.contains("Release digest") && s.contains("Pause") && s.contains("Remove"),
-        "{s}"
-    );
-    assert!(!s.contains("Resume"), "{s}");
-    // Picking it again closes it; nothing was sent.
+    assert!(s.contains("Release digest"), "{s}");
     h.click_text("✓ Digest");
     let s = h.turns(2);
     assert!(!s.contains("Release digest"), "{s}");
     assert!(json_cmds(&mut h).is_empty());
     h.assert_fits();
+}
+
+/// Open in Flow prints Flow's `?flow=<library flow id>` link with Copy; a workflow with no library
+/// flow (Summarize: not published) refuses, said why.
+#[test]
+fn open_in_flow_prints_the_library_link() {
+    let mut h = use_page();
+    click_row(&mut h, "Release feed", "Use in a flow");
+    h.turns(3);
+    click_row(&mut h, "✓ Digest", "Open in Flow");
+    clicked().lock().unwrap().insert("open_flow");
+    let s = h.turns(2);
+    assert!(
+        s.contains("http://127.0.0.1:18999/apps/flow/?flow=vf-digest") && s.contains("Copy"),
+        "{s}"
+    );
+    assert!(
+        s.contains("A terminal cannot open Flow: open this link in your browser."),
+        "{s}"
+    );
+    h.shoot("triggers-open-in-flow");
+    click_row(&mut h, "✓ Summarize", "Open in Flow");
+    let s = h.turns(2);
+    assert_eq!(
+        s.matches("?flow=").count(),
+        1,
+        "Summarize has no library flow:\n{s}"
+    );
+    assert!(json_cmds(&mut h).is_empty());
+    let hs = triggers::handlers(&autos(), |t| triggers::connection_match("conn_feed1", t)).unwrap();
+    let acts = triggers::handler_actions(&hs[1], None);
+    assert_eq!(acts[1].label, "Open in Flow");
+    assert_eq!(
+        acts[1].enabled,
+        Err("Not in the Flow library (ADR-0040)".to_string())
+    );
+    assert_eq!(
+        acts[2].tooltip.as_deref(),
+        Some("Stop handling this trigger")
+    );
+    // The mapping and the link, exactly (the web's trgLibraryIds / trgLibraryPath).
+    let lib = triggers::library_ids(&bundles());
+    assert_eq!(
+        lib.into_iter().collect::<Vec<_>>(),
+        [("digest".to_string(), "vf-digest".to_string())]
+    );
+    assert_eq!(
+        triggers::flow_link("http://127.0.0.1:8080/", "a b"),
+        "http://127.0.0.1:8080/apps/flow/?flow=a%20b"
+    );
 }
 
 #[test]
@@ -1657,29 +1727,31 @@ fn resume_on_a_paused_handler() {
 
 #[test]
 fn remove_asks_first_then_archives() {
-    let mut h = open_checked("✓ Digest");
-    click_last(&mut h, " Remove ");
+    let mut h = use_page();
+    click_row(&mut h, "Release feed", "Use in a flow");
+    h.turns(3);
+    h.sent();
+    click_row(&mut h, "✓ Digest", "Remove");
     clicked().lock().unwrap().insert("remove");
     let s = h.turns(2);
     assert!(
-        s.contains("Remove Release digest? It stops handling Release feed; its history stays in")
-            && s.contains("Observer."),
+        s.contains("Remove Digest from this trigger? Its runs stay in Observer."),
         "{s}"
     );
     assert!(
         json_cmds(&mut h).is_empty(),
         "nothing sent before the answer"
     );
-    // Cancel: the question goes, nothing is sent.
-    click_last(&mut h, " Cancel ");
+    // Keep: the question goes, nothing is sent.
+    click_row(&mut h, " Keep ", "Keep");
     clicked().lock().unwrap().insert("remove_no");
     let s = h.turns(2);
-    assert!(!s.contains("its history stays"), "{s}");
+    assert!(!s.contains("Its runs stay"), "{s}");
     assert!(json_cmds(&mut h).is_empty());
-    // Remove, then Remove again: automation.archive.
-    click_last(&mut h, " Remove ");
+    // Remove, then Remove in the answer: automation.archive.
+    click_row(&mut h, "✓ Digest", "Remove");
     h.turns(2);
-    click_last(&mut h, " Remove ");
+    click_row(&mut h, " Keep ", "Remove");
     clicked().lock().unwrap().insert("remove_yes");
     let (path, body, _) = command_sent(&mut h);
     assert_eq!(path, "/automations/a1/commands");
@@ -1735,7 +1807,8 @@ fn a_refused_command_is_said_in_words() {
         triggers::command_said(triggers::HandlerCmd::Remove, "A", "Feed"),
         "A no longer handles Feed."
     );
-    assert_eq!(triggers::NOTHING_YET, "Nothing yet");
+    assert_eq!(triggers::CHOOSE_FLOW, "Choose a flow…");
+    assert_eq!(triggers::MAIN_MAILBOX, "Main mailbox");
     assert_eq!(triggers::HANDLED_BY, "Handled by");
     assert_eq!(triggers::command_path("a 1"), "/automations/a%201/commands");
 }
@@ -1821,7 +1894,10 @@ fn handled_by_at_120_columns() {
         feed.contains("Digest") && feed.contains("Summarize (paused)"),
         "{s}"
     );
-    assert!(row_block(&s, "CI hook", 0).contains("Nothing yet"), "{s}");
+    assert!(
+        row_block(&s, "CI hook", 0).contains("Choose a flow…"),
+        "{s}"
+    );
     assert!(
         row_block(&s, "admin@example.org", 0).contains("Triage"),
         "{s}"
