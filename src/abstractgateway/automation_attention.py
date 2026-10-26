@@ -25,7 +25,7 @@ import re
 import tempfile
 import threading
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 ATTENTION_CURSOR_PREFIX = "att1:"
 _CURSOR_RE = re.compile(r"^att1:(0|[1-9][0-9]*)$")
@@ -155,12 +155,50 @@ def attention_store_for(svc: Any, principal: Any) -> AttentionPreferenceStore:
     return AttentionPreferenceStore(Path(svc.config.data_dir), tenant=tenant, user=user)
 
 
+def occurrence_completion(ledger_store: Any, automation_id: str, index: Any) -> Optional[Dict[str, Any]]:
+    """The `automation.completed` decision of one occurrence, read by its exact key
+    (`automation:completed:<automation_id>:<index>`, the attention item's `record_key`):
+    `{record_key, status, finished_at, attention: {kind, seq, title, body?, channels} | None,
+    notify}`; None while the occurrence has no decision yet (still running) or on no ledger."""
+    if ledger_store is None or index is None:
+        return None
+    from abstractruntime.automations.ledger import find_by_idempotency_key, record_key, record_payload
+
+    key = record_key("automation.completed", str(automation_id), int(index))
+    rec = find_by_idempotency_key(ledger_store, str(automation_id), key)
+    if rec is None:
+        return None
+    try:
+        payload = record_payload(rec)
+    except ValueError:
+        return None
+    att = payload.get("attention") if isinstance(payload.get("attention"), dict) else None
+    return {
+        "record_key": key,
+        "status": payload.get("status"),
+        "finished_at": payload.get("finished_at"),
+        "attention": dict(att) if att and att.get("seq") else None,
+        "notify": payload.get("notify"),
+    }
+
+
+def email_notice_keys(automation_id: str, attention: Mapping[str, Any]) -> List[str]:
+    """The email outbox keys an attention item's mail would carry (`mail.notifications`:
+    `automation_result` for a notify item, `automation_failed` for a failure)."""
+    from .mail.notifications import idempotency_key
+
+    kind = "automation_failed" if str(attention.get("kind")) == "failure" else "automation_result"
+    return [idempotency_key(kind, str(automation_id), int(attention.get("seq") or 0))]
+
+
 __all__ = [
     "ATTENTION_CURSOR_PREFIX",
     "AttentionCursorError",
     "AttentionPreferenceStore",
     "AttentionStoreCorrupt",
     "attention_store_for",
+    "email_notice_keys",
+    "occurrence_completion",
     "format_attention_cursor",
     "parse_attention_cursor",
     "principal_key",

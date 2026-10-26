@@ -5,6 +5,7 @@
     GET /api/gateway/me/events/channels                              the channels seen, with counts
     POST /api/gateway/me/events/notifications                        a client reports a notice it showed
     POST /api/gateway/me/events/seen                                 a published alert was seen
+    GET /api/gateway/runs/{run_id}/after                             what happened after a run (ADR-0041)
 
 Principal-scoped by construction: the stream is the one of the request's principal in the plane
 its service serves (`events_stream.stream_for(data_dir, tenant, user)`), so no parameter can name
@@ -18,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -29,7 +31,7 @@ from ..events_stream import UserEventStream, event_channel, parse_channels, reco
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/gateway/me", tags=["events"])
+router = APIRouter(prefix="/gateway", tags=["events"])
 
 PAGE_MAX = 1000
 # Cross-process fallback: an append made by ANOTHER process (split runner) is seen by this
@@ -70,7 +72,7 @@ def resolve_start(after: int, last_event_id: Optional[str]) -> int:
     return start
 
 
-@router.get("/events")
+@router.get("/me/events")
 async def list_my_events(
     request: Request,
     after: int = Query(0, ge=0, description="The last sequence already consumed (0 = from the start)."),
@@ -98,7 +100,7 @@ async def list_my_events(
     return out
 
 
-@router.get("/events/channels")
+@router.get("/me/events/channels")
 async def list_my_channels(request: Request) -> Dict[str, Any]:
     """The channels in the caller's retained stream: `[{channel, count, last_time, last_sequence}]`,
     most recently used first (`attention` included when attention events exist)."""
@@ -168,7 +170,7 @@ async def sse_frames(
         off()
 
 
-@router.get("/events/stream")
+@router.get("/me/events/stream")
 async def stream_my_events(
     request: Request,
     after: int = Query(0, ge=0, description="The last sequence already consumed; Last-Event-ID is used when 0."),
@@ -204,7 +206,7 @@ class NotificationReport(BaseModel):
     error: Optional[str] = Field(None, max_length=400)
 
 
-@router.post("/events/notifications")
+@router.post("/me/events/notifications")
 async def report_notification(request: Request, body: NotificationReport) -> Dict[str, Any]:
     """A client channel (tray, assistant, code, watch, phone) records the notice it showed as
     `notification.sent|failed {channel, notice, record_key, device?}` in the caller's own stream.
@@ -227,7 +229,7 @@ class SeenReport(BaseModel):
     record_key: str = Field(..., min_length=1, max_length=400, description="A published alert's record_key (publish:<run_id>:<step_id>).")
 
 
-@router.post("/events/seen")
+@router.post("/me/events/seen")
 async def mark_published_seen(request: Request, body: SeenReport) -> Dict[str, Any]:
     """Mark a published alert seen: `attention.seen {record_key}` in the caller's own stream (the
     badge drops it). Automation items keep `POST /automations/{id}/seen`; waits end when answered."""
@@ -239,4 +241,90 @@ async def mark_published_seen(request: Request, body: SeenReport) -> Dict[str, A
     return {"ok": True, "created": bool(created)}
 
 
-__all__ = ["resolve_start", "router", "sse_frames"]
+def _after_sync(run_id: str, principal: Any) -> Dict[str, Any]:
+    """`run_after.build_after` for a run of the caller's plane (404 when that plane has no such run)."""
+    from ..push.store import DeviceStore
+    from ..run_after import build_after
+    from ..service import get_gateway_service
+    from .automations import _trigger_text
+    from ..automation_schedule import schedule_fields
+
+    svc = get_gateway_service()
+    run = svc.host.run_store.load(str(run_id))
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+    try:
+        stream = stream_for(svc.config.data_dir, principal.tenant_id, principal.user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    cfg = svc.config
+    devices = DeviceStore(Path(cfg.data_dir), Path(getattr(cfg, "root_data_dir", None) or cfg.data_dir))
+
+    def _trigger_words(trigger: Any) -> Any:
+        rule = ""
+        if isinstance(trigger, dict) and trigger.get("source_id") == "schedule":
+            from .automations import principal_time_zone
+
+            rule = str(schedule_fields(trigger, None, principal_time_zone(svc, principal)).get("schedule_rule_text") or "")
+        return _trigger_text(svc, principal, trigger, rule), _connection_name(svc, principal, trigger)
+
+    def _device_name(device_id: str) -> Optional[str]:
+        try:
+            rec = devices.get(device_id)
+        except Exception:  # noqa: BLE001 - a device name is a nicety, never a broken answer
+            return None
+        name = (rec or {}).get("name")
+        return str(name) if isinstance(name, str) and name.strip() else None
+
+    return build_after(
+        run,
+        run_store=svc.host.run_store,
+        ledger_store=getattr(svc.host, "ledger_store", None),
+        stream=stream,
+        trigger_words=_trigger_words,
+        device_name=_device_name,
+    )
+
+
+def _connection_name(svc: Any, principal: Any, trigger: Any) -> Optional[str]:
+    """The name of what the trigger watches: the mailbox's address, the feed or webhook
+    connection's label (the names `_trigger_text` puts in its sentence)."""
+    if not isinstance(trigger, dict):
+        return None
+    source = str(trigger.get("source_id") or "")
+    config = trigger.get("config") if isinstance(trigger.get("config"), dict) else {}
+    try:
+        if source == "email.received":
+            from ..mail.accounts import account_store, mailbox_ids, plane_for_service_config
+
+            plane = plane_for_service_config(svc.config)
+            account = str(config.get("account") or "").strip()
+            mailbox = plane.primary if account in ("", "self", "default") else (plane.for_account(account) if account in mailbox_ids(plane) else None)
+            return (str(account_store(mailbox).public().get("address") or "").strip() or None) if mailbox is not None else None
+        cid = config.get("connection_id") or trigger.get("connection_id")
+        if isinstance(cid, str) and cid:
+            from abstractruntime.triggers.connections import connection_principal
+
+            store = getattr(svc.host.runtime, "trigger_connection_store", None)
+            if store is None:
+                return None
+            conn = store.get(cid, principal=connection_principal(str(principal.tenant_id or "default"), str(principal.user_id or "")))
+            return str(getattr(conn, "label", "") or "").strip() or None
+    except Exception:  # noqa: BLE001 - the name is a nicety; the sentence still says what started it
+        logger.debug("after-the-run connection name lookup failed", exc_info=True)
+    return None
+
+
+@router.get("/runs/{run_id}/after")
+async def get_run_after(request: Request, run_id: str) -> Dict[str, Any]:
+    """What happened after a run (framework ADR-0041): what arrived, when it ran, the alert it
+    raised (or why nothing rang: `quiet_reason`), and every recorded delivery with its channel,
+    route (`push`, `stream`, `outbox`), device and time. Principal-scoped: the run is looked up in
+    the caller's own plane and the deliveries in the caller's own event stream."""
+    from .gateway import _principal_from_request
+
+    principal = _principal_from_request(request)
+    return await off_loop("light", _after_sync, str(run_id), principal)
+
+
+__all__ = ["get_run_after", "resolve_start", "router", "sse_frames"]

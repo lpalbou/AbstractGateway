@@ -265,6 +265,36 @@ class UserEventStream:
     def head(self) -> int:
         return int(self.inbox.head_seq())
 
+    def index_event_ids(self) -> Dict[str, int]:
+        """`{event id: sequence}` from the inbox index: one file read, no event file opened.
+        Event ids are deterministic (`notification.sent:<channel>:attention:<record_key>`, ...),
+        so a reader that knows what it looks for finds it here without scanning the stream."""
+        try:
+            idx = json.loads((self.dir / "index.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        ids = idx.get("event_ids") if isinstance(idx, dict) else None
+        if not isinstance(ids, dict):
+            return {}
+        out: Dict[str, int] = {}
+        for key, seq in ids.items():
+            try:
+                out[str(key)] = int(seq)
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    def events_by_ids(self, event_ids: Iterable[str], *, index: Optional[Mapping[str, int]] = None) -> List[Dict[str, Any]]:
+        """The wire events with these ids (absent or pruned ones skipped), oldest first: one read of
+        the index, then one event file per hit."""
+        ids = index if index is not None else self.index_event_ids()
+        out: List[Dict[str, Any]] = []
+        for seq in sorted({int(ids[e]) for e in event_ids if e in ids}):
+            rows = self.read(after=seq - 1, limit=1)
+            if rows and int(rows[0]["sequence"]) == seq:
+                out.append(rows[0])
+        return out
+
     def change_token(self) -> Tuple[int, int]:
         """(mtime_ns, size) of the inbox index: one stat; moves on every append (any process)."""
         try:
@@ -567,6 +597,37 @@ def record_notification(
     return created
 
 
+def notice_event_ids(record_key: str, *, email_keys: Iterable[str] = ()) -> List[str]:
+    """Every id a delivery of the attention item `record_key` can carry in the stream:
+    `notification.<sent|failed>:<channel>:attention:<record_key>` for the console and the client
+    and push channels, `notification.<sent|failed>:email:<outbox key>` for each email notice key."""
+    ids = [
+        f"notification.{outcome}:{channel}:attention:{record_key}"
+        for channel in sorted(CHANNELS - {"email"})
+        for outcome in ("sent", "failed")
+    ]
+    ids += [f"notification.{outcome}:email:{key}" for key in email_keys for outcome in ("sent", "failed")]
+    return ids
+
+
+def published_alert_ids(index: Mapping[str, int], run_id: str) -> List[str]:
+    """The `attention.raised` ids of the alerts a run published (Notify me, Publish to channel with
+    Alert on): `attention.raised:publish:<run_id>:<step_id>`, from the index keys alone."""
+    prefix = f"attention.raised:publish:{run_id}:"
+    return sorted((k for k in index if k.startswith(prefix)), key=lambda k: int(index[k]))
+
+
+def delivery_route(event: Mapping[str, Any]) -> str:
+    """How a recorded delivery travelled: `push` (the gateway's push dispatcher), `outbox` (email),
+    else `stream` (an app read the person's stream and showed it; the console lists the item)."""
+    data = event.get("data") if isinstance(event.get("data"), Mapping) else {}
+    if data.get("via") == "push":
+        return "push"
+    if data.get("channel") == "email":
+        return "outbox"
+    return "stream"
+
+
 def already_notified(
     events: Iterable[Mapping[str, Any]],
     *,
@@ -864,6 +925,9 @@ __all__ = [
     "UserEventStream",
     "already_notified",
     "attention_from_record",
+    "delivery_route",
+    "notice_event_ids",
+    "published_alert_ids",
     "is_pointer_run",
     "plane_owner",
     "rebuild_attention",
