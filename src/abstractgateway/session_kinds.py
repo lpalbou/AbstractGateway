@@ -31,8 +31,9 @@ import json
 import os
 import tempfile
 import threading
+import time
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 SCHEMA = "gateway_session_kinds_v1"
 FILENAME = "session_kinds.json"
@@ -69,7 +70,7 @@ def session_kinds(data_dir: Any) -> Dict[str, str]:
     """`{session_id: kind}` for every session that is not a conversation."""
     with _LOCK:
         out: Dict[str, str] = {}
-        for sid, rec in _load(data_dir)["sessions"].items():
+        for sid, rec in _load_cached(data_dir)["sessions"].items():
             kind = rec.get("kind") if isinstance(rec, dict) else None
             if kind in KINDS and kind != DEFAULT_KIND:
                 out[str(sid)] = str(kind)
@@ -90,18 +91,55 @@ def workflow_bundle_id(workflow_id: Any) -> Optional[str]:
     return parsed[2] if parsed else (base or None)
 
 
+# Read cache (gateway load 2026-10-26): `GET /runs` read this file on every call, on the event
+# loop. Readers get the last parsed content; the file is stat-ed again at most every
+# REVALIDATE_S (another process's write is seen within that) and a write through this module
+# drops the entry at once. An unreadable file is never cached (it raises on every read).
+REVALIDATE_S = 1.0
+_READ_CACHE: Dict[str, Tuple[float, Any, Dict[str, Any]]] = {}
+
+
+def _load_cached(data_dir: Any) -> Dict[str, Any]:
+    """`_load` for READERS (never mutate the result)."""
+    path = _path(data_dir)
+    key = str(path)
+    now = time.monotonic()
+    hit = _READ_CACHE.get(key)
+    if hit is not None and (now - hit[0]) < REVALIDATE_S:
+        return hit[2]
+    try:
+        st = os.stat(path)
+        sig: Any = (st.st_mtime_ns, st.st_size, st.st_ino)
+    except FileNotFoundError:
+        sig = None
+    except OSError:
+        sig = object()  # never equal: read (and raise) below
+    if hit is not None and hit[1] == sig:
+        _READ_CACHE[key] = (now, sig, hit[2])
+        return hit[2]
+    data = _load(data_dir)
+    _READ_CACHE[key] = (now, sig, data)
+    return data
+
+
+def _forget(data_dir: Any) -> None:
+    _READ_CACHE.pop(str(_path(data_dir)), None)
+
+
 def _write(data_dir: Any, data: Dict[str, Any]) -> None:
+    _forget(data_dir)
     path = _path(data_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(json.dumps(data, ensure_ascii=False, indent=2))
     os.replace(tmp, str(path))
+    _forget(data_dir)
 
 
 def docs_qa_migration_done(data_dir: Any) -> bool:
     with _LOCK:
-        return DOCS_QA_MIGRATION in (_load(data_dir).get("migrations") or {})
+        return DOCS_QA_MIGRATION in (_load_cached(data_dir).get("migrations") or {})
 
 
 def migrate_docs_qa_sessions(data_dir: Any, root_rows: Iterable[Dict[str, Any]]) -> int:

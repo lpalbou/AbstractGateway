@@ -53,6 +53,7 @@ from abstractruntime.core.models import Effect, EffectType, RunState, RunStatus,
 from abstractruntime.storage.artifacts import build_artifact_descriptor_payload
 
 from ..work_pools import off_loop
+from ..file_cache import FileVersionCache, listing as file_listing
 from ..memory_store import (
     memory_backend_unavailable_reason,
     memory_store_exists,
@@ -2025,16 +2026,22 @@ async def gateway_admin_promote_workflow_catalog_bundle(request: Request, payloa
         ref = str(payload.bundle_id or "").strip()
         if payload.bundle_version:
             ref = f"{ref}@{str(payload.bundle_version).strip()}"
-        installed = WorkflowBundleRegistry(getattr(host, "bundles_dir", None)).resolve_bundle(ref)
         acl = payload.acl.model_dump() if payload.acl is not None else None
-        record = _workflow_catalog_store_for_service(svc).install_bundle_bytes(
-            installed.path.read_bytes(),
-            scope=scope0,
-            tenant_id=tenant0,
-            acl=acl,
-            make_default=bool(payload.make_default),
-            publisher=_catalog_actor(principal),
-        )
+
+        def _install() -> Any:
+            installed = WorkflowBundleRegistry(getattr(host, "bundles_dir", None)).resolve_bundle(ref)
+            return _workflow_catalog_store_for_service(svc).install_bundle_bytes(
+                installed.path.read_bytes(),
+                scope=scope0,
+                tenant_id=tenant0,
+                acl=acl,
+                make_default=bool(payload.make_default),
+                publisher=_catalog_actor(principal),
+            )
+
+        # OFF THE LOOP (gateway load 2026-10-26): the bundle registry scan, the .flow read and
+        # the catalog install.
+        record = await off_loop("heavy", _install)
         reload_result = await _off_the_event_loop(reload_gateway_workflow_bundles)
         _audit_reload(request, reload_result)
     except WorkflowBundleRegistryError as e:
@@ -7399,24 +7406,63 @@ def _generate_chat_text(*, provider: str, model: str, context: Dict[str, Any], m
     return text
 
 
+@functools.lru_cache(maxsize=None)
+def _type_adapter(tp: Any) -> Any:
+    from pydantic import TypeAdapter
+
+    return TypeAdapter(tp)
+
+
+def _response_model_json(tp: Any, value: Any) -> bytes:
+    """The bytes FastAPI writes for `value` under response model `tp` (validate, then
+    `TypeAdapter.dump_json(by_alias=True)`, fastapi.routing.serialize_response), computed by
+    the caller's thread: a route that returns a large payload pays its validation and encoding
+    off the event loop (2.6 MB of flows took 13-45 ms of the loop per call)."""
+    ta = _type_adapter(tp)
+    return ta.dump_json(ta.validate_python(value), by_alias=True)
+
+
+# Flow's library polls GET /visualflows: each file is parsed once per version, and the whole
+# answer is kept while no file in the folder changed (file_cache, gateway load 2026-10-26).
+_VISUALFLOW_FILES = FileVersionCache()
+_VISUALFLOW_ANSWERS = FileVersionCache(max_entries=64)
+
+
+def _visualflow_listing_item(p: Path) -> Optional[Dict[str, Any]]:
+    try:
+        data = _read_visualflow_json(p)
+    except HTTPException as e:
+        logger.warning("Skipping invalid visualflow file %s: %s", p, e.detail)
+        return None
+    if not isinstance(data.get("id"), str) or not str(data.get("id") or "").strip():
+        data["id"] = p.stem
+    return data
+
+
+def _visualflows_listing_json(svc: Any) -> bytes:
+    base = _visualflows_dir(svc=svc)
+    files = file_listing(base, ".json")
+    version = tuple((name, sig) for name, _p, sig in files)
+
+    def build() -> bytes:
+        items: list[Dict[str, Any]] = []
+        for _name, p, sig in files:
+            item = _VISUALFLOW_FILES.get((str(p), "visualflow"), sig, lambda p=p: _visualflow_listing_item(p))
+            if item is not None:
+                items.append(item)
+        return _response_model_json(List[Dict[str, Any]], items)
+
+    return _VISUALFLOW_ANSWERS.get(str(base), version, build)
+
+
 @router.get("/visualflows")
 async def list_visualflows() -> List[Dict[str, Any]]:
     """List VisualFlow JSON records stored in the gateway."""
     svc = get_gateway_service()
-    base = _visualflows_dir(svc=svc)
-    items: list[Dict[str, Any]] = []
-    for p in sorted(base.glob("*.json")):
-        if not p.is_file():
-            continue
-        try:
-            data = _read_visualflow_json(p)
-        except HTTPException as e:
-            logger.warning("Skipping invalid visualflow file %s: %s", p, e.detail)
-            continue
-        if not isinstance(data.get("id"), str) or not str(data.get("id") or "").strip():
-            data["id"] = p.stem
-        items.append(data)
-    return items
+    # OFF THE LOOP (gateway load 2026-10-26): one scandir; files read only when they changed;
+    # the same bytes FastAPI would write, encoded in the worker thread.
+    content = await off_loop("heavy", _visualflows_listing_json, svc)
+    return Response(content=content, media_type="application/json")
 
 
 @router.post("/visualflows/code/simulate")
@@ -8262,55 +8308,59 @@ async def download_bundle(
     what was running. The sha is returned in a header so a caller can verify
     the transfer without opening the archive.
     """
-    svc = get_gateway_service()
-    host = _require_bundle_host(svc)
-    principal = _principal_from_request(request)
+    # OFF THE LOOP (gateway load 2026-10-26): the bundle registry scan and the .flow read.
+    def _work() -> Any:
+        svc = get_gateway_service()
+        host = _require_bundle_host(svc)
+        principal = _principal_from_request(request)
 
-    bid_base, bid_ver = _split_bundle_ref(str(bundle_id or "").strip())
-    if not bid_base:
-        raise HTTPException(status_code=400, detail="bundle_id is required")
-    want = str(bundle_version or "").strip() or bid_ver
-    _workflow_gate(svc, host, principal, bid_base, want or None, start=False)
+        bid_base, bid_ver = _split_bundle_ref(str(bundle_id or "").strip())
+        if not bid_base:
+            raise HTTPException(status_code=400, detail="bundle_id is required")
+        want = str(bundle_version or "").strip() or bid_ver
+        _workflow_gate(svc, host, principal, bid_base, want or None, start=False)
 
-    try:
-        from abstractruntime.workflow_bundle import WorkflowBundleRegistry
+        try:
+            from abstractruntime.workflow_bundle import WorkflowBundleRegistry
 
-        reg = WorkflowBundleRegistry(getattr(host, "bundles_dir", None))
-        versions = reg.bundles_by_id().get(bid_base) or {}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed reading bundle registry: {e}")
+            reg = WorkflowBundleRegistry(getattr(host, "bundles_dir", None))
+            versions = reg.bundles_by_id().get(bid_base) or {}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed reading bundle registry: {e}")
 
-    if not versions:
-        raise HTTPException(status_code=404, detail=f"Bundle '{bid_base}' not found")
-    if not want:
-        want = _latest_version([{"bundle_version": v} for v in versions.keys()]) or ""
-    installed = versions.get(want)
-    if installed is None:
-        available = ", ".join(sorted(str(v) for v in versions.keys()))
-        raise HTTPException(status_code=404, detail=f"Bundle '{bid_base}@{want}' not found (have: {available})")
+        if not versions:
+            raise HTTPException(status_code=404, detail=f"Bundle '{bid_base}' not found")
+        if not want:
+            want = _latest_version([{"bundle_version": v} for v in versions.keys()]) or ""
+        installed = versions.get(want)
+        if installed is None:
+            available = ", ".join(sorted(str(v) for v in versions.keys()))
+            raise HTTPException(status_code=404, detail=f"Bundle '{bid_base}@{want}' not found (have: {available})")
 
-    path = Path(getattr(installed, "path", "") or "")
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail=f"Bundle file for '{bid_base}@{want}' is missing from disk")
+        path = Path(getattr(installed, "path", "") or "")
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail=f"Bundle file for '{bid_base}@{want}' is missing from disk")
 
-    data = path.read_bytes()
-    filename = f"{bid_base}@{want}.flow"
-    # The registry does not always carry a sha on a scanned entry, and an empty
-    # integrity header is worse than none — it looks like a checksum. Fall back
-    # to hashing the bytes actually being sent, which is the stronger claim.
-    sha = str(getattr(installed, "sha256", "") or "").strip() or hashlib.sha256(data).hexdigest()
-    return StreamingResponse(
-        io.BytesIO(data),
-        media_type="application/octet-stream",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
-            "Content-Length": str(len(data)),
-            "X-AbstractGateway-Bundle-Sha256": sha,
-            # Agent-authored bytes served from the console origin.
-            "X-Content-Type-Options": "nosniff",
-            "Content-Security-Policy": "sandbox",
-        },
-    )
+        data = path.read_bytes()
+        filename = f"{bid_base}@{want}.flow"
+        # The registry does not always carry a sha on a scanned entry, and an empty
+        # integrity header is worse than none — it looks like a checksum. Fall back
+        # to hashing the bytes actually being sent, which is the stronger claim.
+        sha = str(getattr(installed, "sha256", "") or "").strip() or hashlib.sha256(data).hexdigest()
+        return StreamingResponse(
+            io.BytesIO(data),
+            media_type="application/octet-stream",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Length": str(len(data)),
+                "X-AbstractGateway-Bundle-Sha256": sha,
+                # Agent-authored bytes served from the console origin.
+                "X-Content-Type-Options": "nosniff",
+                "Content-Security-Policy": "sandbox",
+            },
+        )
+
+    return await off_loop("heavy", _work)
 
 
 @router.post("/bundles/reload")
@@ -8961,9 +9011,11 @@ async def get_workflow_flow(workflow_id: str) -> Dict[str, Any]:
         if parse_catalog_internal_bundle_id(bid_base) is not None:
             raise HTTPException(status_code=403, detail="Catalog workflows must be inspected through /api/gateway/workflow-catalog")
 
-    dyn_path_fn = getattr(host, "_dynamic_flow_path", None)
-    dyn_path = dyn_path_fn(wid) if callable(dyn_path_fn) else None
-    if dyn_path is not None:
+    def _dynamic_flow() -> Optional[Dict[str, Any]]:
+        dyn_path_fn = getattr(host, "_dynamic_flow_path", None)
+        dyn_path = dyn_path_fn(wid) if callable(dyn_path_fn) else None
+        if dyn_path is None:
+            return None
         try:
             p = Path(dyn_path)
             if p.exists() and p.is_file():
@@ -8975,6 +9027,12 @@ async def get_workflow_flow(workflow_id: str) -> Dict[str, Any]:
             raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to read dynamic flow: {e}")
+        return None
+
+    # OFF THE LOOP (gateway load 2026-10-26): the dynamic flow file read.
+    dynamic = await off_loop("light", _dynamic_flow)
+    if dynamic is not None:
+        return dynamic
 
     parsed = wid.split(":", 1)
     if len(parsed) == 2 and parsed[0] and parsed[1]:
@@ -11318,114 +11376,118 @@ async def download_run_artifact_content(
 @router.post("/runs/{run_id}/artifacts/{artifact_id}/export")
 async def export_run_artifact_content(request: Request, run_id: str, artifact_id: str, req: ArtifactExportRequest) -> Dict[str, Any]:
     """Export artifact bytes into the server workspace."""
-    svc = get_gateway_service()
-    rs = svc.host.run_store
-    try:
-        run = rs.load(str(run_id))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
-    if run is None:
-        run = _load_or_create_session_memory_owner_run(run_store=rs, run_id=str(run_id))
-    if run is None:
-        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
-
-    store = _artifact_store_or_500(svc)
-    meta = _load_artifact_metadata_or_404(store, artifact_id)
-    _assert_artifact_visible_to_run(meta=meta, run=run, run_id=str(run_id), field_name="artifact")
-
-    raw_path = str(req.path or req.destination or "").strip()
-    if not raw_path:
-        raise HTTPException(status_code=400, detail="path is required")
-
-    base, mounts, blocked, mode = _request_workspace_scope(req, _principal_from_request(request))
-    resolved, virt, root = _resolve_request_workspace_path(
-        raw_path=raw_path,
-        base=base,
-        mounts=mounts,
-        blocked=blocked,
-        mode=mode,
-    )
-    if resolved.exists() and resolved.is_dir():
-        raise HTTPException(status_code=400, detail="Destination path is a directory")
-    if _principal_effective_folders(_principal_from_request(request)).mode(resolved) != "rw":
-        raise HTTPException(
-            status_code=403,
-            detail=f"{str(resolved)!r} is not a read & write workspace for this account; nothing was written.",
-        )
-    _reject_ignored_workspace_path(resolved, root=root, is_dir=False)
-
-    parent = resolved.parent
-    if not parent.exists():
-        if not req.create_parent_dirs:
-            raise HTTPException(status_code=404, detail="Destination parent directory does not exist")
+    # OFF THE LOOP (gateway load 2026-10-26): the run load, the artifact copy and its sha256 are file IO.
+    def _work() -> Any:
+        svc = get_gateway_service()
+        rs = svc.host.run_store
         try:
-            parent.mkdir(parents=True, exist_ok=True)
+            run = rs.load(str(run_id))
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to create destination parent directories: {e}")
-    if not parent.is_dir():
-        raise HTTPException(status_code=400, detail="Destination parent is not a directory")
-    _reject_ignored_workspace_path(parent, root=root, is_dir=True)
+            raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
+        if run is None:
+            run = _load_or_create_session_memory_owner_run(run_store=rs, run_id=str(run_id))
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
 
-    if resolved.exists() and not req.overwrite:
-        raise HTTPException(status_code=409, detail="Destination already exists; set overwrite=true to replace it")
+        store = _artifact_store_or_500(svc)
+        meta = _load_artifact_metadata_or_404(store, artifact_id)
+        _assert_artifact_visible_to_run(meta=meta, run=run, run_id=str(run_id), field_name="artifact")
 
-    tmp = parent / f".{resolved.name}.{uuid.uuid4().hex}.tmp"
-    bytes_written = 0
-    try:
-        path_fn = getattr(store, "content_path", None)
-        src_path = path_fn(str(artifact_id)) if callable(path_fn) else None
-    except Exception:
-        src_path = None
+        raw_path = str(req.path or req.destination or "").strip()
+        if not raw_path:
+            raise HTTPException(status_code=400, detail="path is required")
 
-    try:
-        if src_path is not None and Path(src_path).exists():
-            with open(Path(src_path), "rb") as src, open(tmp, "wb") as dst:
-                while True:
-                    chunk = src.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    dst.write(chunk)
-                    bytes_written += len(chunk)
-        else:
-            load_fn = getattr(store, "load", None)
-            if not callable(load_fn):
-                raise HTTPException(status_code=400, detail="Artifact store does not support content reads")
-            artifact = load_fn(str(artifact_id))
-            if artifact is None:
-                raise HTTPException(status_code=404, detail=f"Artifact '{artifact_id}' not found")
-            content = getattr(artifact, "content", b"") or b""
-            with open(tmp, "wb") as dst:
-                dst.write(content)
-            bytes_written = len(content)
-        tmp.replace(resolved)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to export artifact: {e}")
-    finally:
+        base, mounts, blocked, mode = _request_workspace_scope(req, _principal_from_request(request))
+        resolved, virt, root = _resolve_request_workspace_path(
+            raw_path=raw_path,
+            base=base,
+            mounts=mounts,
+            blocked=blocked,
+            mode=mode,
+        )
+        if resolved.exists() and resolved.is_dir():
+            raise HTTPException(status_code=400, detail="Destination path is a directory")
+        if _principal_effective_folders(_principal_from_request(request)).mode(resolved) != "rw":
+            raise HTTPException(
+                status_code=403,
+                detail=f"{str(resolved)!r} is not a read & write workspace for this account; nothing was written.",
+            )
+        _reject_ignored_workspace_path(resolved, root=root, is_dir=False)
+
+        parent = resolved.parent
+        if not parent.exists():
+            if not req.create_parent_dirs:
+                raise HTTPException(status_code=404, detail="Destination parent directory does not exist")
+            try:
+                parent.mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Failed to create destination parent directories: {e}")
+        if not parent.is_dir():
+            raise HTTPException(status_code=400, detail="Destination parent is not a directory")
+        _reject_ignored_workspace_path(parent, root=root, is_dir=True)
+
+        if resolved.exists() and not req.overwrite:
+            raise HTTPException(status_code=409, detail="Destination already exists; set overwrite=true to replace it")
+
+        tmp = parent / f".{resolved.name}.{uuid.uuid4().hex}.tmp"
+        bytes_written = 0
         try:
-            if tmp.exists():
-                tmp.unlink()
+            path_fn = getattr(store, "content_path", None)
+            src_path = path_fn(str(artifact_id)) if callable(path_fn) else None
         except Exception:
-            pass
+            src_path = None
 
-    _record_artifact_access_best_effort(
-        store,
-        artifact_id,
-        action="export",
-        run_id=str(run_id),
-        session_id=str(getattr(run, "session_id", "") or ""),
-    )
+        try:
+            if src_path is not None and Path(src_path).exists():
+                with open(Path(src_path), "rb") as src, open(tmp, "wb") as dst:
+                    while True:
+                        chunk = src.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        dst.write(chunk)
+                        bytes_written += len(chunk)
+            else:
+                load_fn = getattr(store, "load", None)
+                if not callable(load_fn):
+                    raise HTTPException(status_code=400, detail="Artifact store does not support content reads")
+                artifact = load_fn(str(artifact_id))
+                if artifact is None:
+                    raise HTTPException(status_code=404, detail=f"Artifact '{artifact_id}' not found")
+                content = getattr(artifact, "content", b"") or b""
+                with open(tmp, "wb") as dst:
+                    dst.write(content)
+                bytes_written = len(content)
+            tmp.replace(resolved)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to export artifact: {e}")
+        finally:
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except Exception:
+                pass
 
-    return {
-        "ok": True,
-        "artifact_id": str(artifact_id),
-        "run_id": str(run_id),
-        "path": str(virt) if isinstance(virt, str) and virt.strip() else str(resolved),
-        "bytes_written": int(bytes_written),
-        "content_type": str(getattr(meta, "content_type", "") or "application/octet-stream"),
-        "sha256": hashlib.sha256(resolved.read_bytes()).hexdigest(),
-    }
+        _record_artifact_access_best_effort(
+            store,
+            artifact_id,
+            action="export",
+            run_id=str(run_id),
+            session_id=str(getattr(run, "session_id", "") or ""),
+        )
+
+        return {
+            "ok": True,
+            "artifact_id": str(artifact_id),
+            "run_id": str(run_id),
+            "path": str(virt) if isinstance(virt, str) and virt.strip() else str(resolved),
+            "bytes_written": int(bytes_written),
+            "content_type": str(getattr(meta, "content_type", "") or "application/octet-stream"),
+            "sha256": hashlib.sha256(resolved.read_bytes()).hexdigest(),
+        }
+
+    return await off_loop("heavy", _work)
 
 
 @router.get("/runs/{run_id}/ledger")
@@ -21176,170 +21238,174 @@ def _maybe_autobridge_report_to_proposed_backlog(
 
 @router.post("/bugs/report")
 async def bugs_report(req: BugReportCreateRequest) -> BugReportCreateResponse:
-    svc = get_gateway_service()
+    # OFF THE LOOP (gateway load 2026-10-26): the template read, the session owner run and the report write.
+    def _work() -> Any:
+        svc = get_gateway_service()
 
-    sid = str(req.session_id or "").strip()
-    if not sid:
-        raise HTTPException(status_code=400, detail="session_id is required")
+        sid = str(req.session_id or "").strip()
+        if not sid:
+            raise HTTPException(status_code=400, detail="session_id is required")
 
-    desc = str(req.description or "")
-    if not desc.strip():
-        raise HTTPException(status_code=400, detail="description is required")
-    if len(desc) > 20_000:
-        raise HTTPException(status_code=413, detail="description is too large (max 20,000 chars)")
+        desc = str(req.description or "")
+        if not desc.strip():
+            raise HTTPException(status_code=400, detail="description is required")
+        if len(desc) > 20_000:
+            raise HTTPException(status_code=413, detail="description is too large (max 20,000 chars)")
 
-    bug_dir = _gateway_bug_reports_dir()
-    template_path = _ensure_bug_report_template(bug_dir=bug_dir)
+        bug_dir = _gateway_bug_reports_dir()
+        template_path = _ensure_bug_report_template(bug_dir=bug_dir)
 
-    try:
-        template_md = template_path.read_text(encoding="utf-8")
-    except Exception:
-        template_md = _DEFAULT_BUG_REPORT_TEMPLATE_MD
-
-    created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    today = created_at[:10]
-    slug = _bug_report_slug(desc)
-    title = _bug_report_title(desc)
-    bug_id = str(uuid.uuid4())
-
-    # Ensure the session memory owner run exists so attachments can be listed deterministically.
-    try:
-        session_memory_run_id = _ensure_session_memory_owner_run_exists(run_store=svc.host.run_store, session_id=sid)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to ensure session memory run: {e}")
-
-    attachments_md = _format_session_attachments_md(session_memory_run_id=session_memory_run_id)
-
-    active_run_id = str(req.active_run_id or "").strip() or ""
-    replay_run_id = active_run_id or "<RUN_ID>"
-    workflow_id = str(req.workflow_id or "").strip() or ""
-    client = str(req.client or "").strip() or ""
-    client_version = str(req.client_version or "").strip() or ""
-    user_agent = str(req.user_agent or "").strip() or ""
-    url = str(req.url or "").strip() or ""
-    provider = str(req.provider or "").strip() or ""
-    model = str(req.model or "").strip() or ""
-    template = str(req.template or "").strip() or ""
-
-    # Server context (safe subset; do not include secrets).
-    try:
-        server_info = f"{platform.system()} {platform.release()} ({platform.machine()})"
-    except Exception:
-        server_info = platform.platform()
-    python_version = str(sys.version.split()[0] if sys.version else "").strip()
-    try:
-        from abstractgateway import __version__ as gateway_version
-    except Exception:
-        gateway_version = ""
-
-    ctx_obj: Dict[str, Any] = {
-        "active_run_id": active_run_id or None,
-        "workflow_id": workflow_id or None,
-        "provider": provider or None,
-        "model": model or None,
-        "template": template or None,
-        "client": client or None,
-        "client_version": client_version or None,
-        "url": url or None,
-        "user_agent": user_agent or None,
-        "session_memory_run_id": session_memory_run_id,
-        "created_at": created_at,
-        "bug_id": bug_id,
-        "client_context": req.context if isinstance(req.context, dict) else {},
-    }
-    # Keep the JSON payload bounded; include only what fits.
-    try:
-        ctx_json = json.dumps(ctx_obj, ensure_ascii=False, indent=2, sort_keys=True)
-    except Exception:
-        ctx_json = "{}"
-    if len(ctx_json) > 80_000:
-        ctx_json = ctx_json[:80_000] + "\n…(truncated)…\n"
-    context_block = f"```json\n{ctx_json}\n```"
-
-    replacements: Dict[str, str] = {
-        "TITLE": title,
-        "BUG_ID": bug_id,
-        "CREATED_AT": created_at,
-        "SESSION_ID": sid,
-        "SESSION_MEMORY_RUN_ID": session_memory_run_id,
-        "ACTIVE_RUN_ID": active_run_id,
-        "REPLAY_RUN_ID": replay_run_id,
-        "WORKFLOW_ID": workflow_id,
-        "USER_DESCRIPTION": _indent_markdown_literal(desc),
-        "SESSION_ATTACHMENTS": attachments_md,
-        "CLIENT": client,
-        "CLIENT_VERSION": client_version,
-        "USER_AGENT": user_agent,
-        "URL": url,
-        "PROVIDER": provider,
-        "MODEL": model,
-        "TEMPLATE": template,
-        "GATEWAY_VERSION": gateway_version,
-        "SERVER_INFO": server_info,
-        "PYTHON_VERSION": python_version,
-        "CONTEXT_JSON": context_block,
-    }
-
-    out_md = str(template_md)
-    for k, v in replacements.items():
-        out_md = out_md.replace(f"{{{{{k}}}}}", str(v))
-    if not out_md.endswith("\n"):
-        out_md += "\n"
-
-    base = f"{today}_{slug}"
-    filename = ""
-    path = None
-    for i in range(0, 1000):
-        name = f"{base}.md" if i == 0 else f"{base}_{i + 1}.md"
-        candidate = bug_dir / name
         try:
-            with open(candidate, "x", encoding="utf-8") as f:
-                f.write(out_md)
-            filename = name
-            path = candidate
-            break
-        except FileExistsError:
-            continue
+            template_md = template_path.read_text(encoding="utf-8")
+        except Exception:
+            template_md = _DEFAULT_BUG_REPORT_TEMPLATE_MD
+
+        created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        today = created_at[:10]
+        slug = _bug_report_slug(desc)
+        title = _bug_report_title(desc)
+        bug_id = str(uuid.uuid4())
+
+        # Ensure the session memory owner run exists so attachments can be listed deterministically.
+        try:
+            session_memory_run_id = _ensure_session_memory_owner_run_exists(run_store=svc.host.run_store, session_id=sid)
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to write bug report: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to ensure session memory run: {e}")
 
-    if not filename or path is None:
-        raise HTTPException(status_code=409, detail="Could not allocate a unique bug report filename")
+        attachments_md = _format_session_attachments_md(session_memory_run_id=session_memory_run_id)
 
-    # Do not leak absolute paths; return a stable path relative to the gateway data dir.
-    rel_path = f"bug_reports/{filename}"
+        active_run_id = str(req.active_run_id or "").strip() or ""
+        replay_run_id = active_run_id or "<RUN_ID>"
+        workflow_id = str(req.workflow_id or "").strip() or ""
+        client = str(req.client or "").strip() or ""
+        client_version = str(req.client_version or "").strip() or ""
+        user_agent = str(req.user_agent or "").strip() or ""
+        url = str(req.url or "").strip() or ""
+        provider = str(req.provider or "").strip() or ""
+        model = str(req.model or "").strip() or ""
+        template = str(req.template or "").strip() or ""
 
-    proposed_backlog_relpath = ""
-    proposed_backlog_item_id: Optional[int] = None
-    try:
-        repo_root = _backlog_repo_root()
-        if repo_root is not None:
-            out = _maybe_autobridge_report_to_proposed_backlog(
-                report_path=path,
-                report_relpath=rel_path,
-                report_type="bug",
-                repo_root=repo_root,
-            )
-            if isinstance(out, dict):
-                proposed_backlog_relpath = str(out.get("relpath") or "").strip()
-                bid = out.get("item_id")
-                if isinstance(bid, int):
-                    proposed_backlog_item_id = bid
-    except Exception:
-        # Best-effort only; do not fail report filing.
-        pass
-    return BugReportCreateResponse(
-        ok=True,
-        filename=filename,
-        path=rel_path,
-        template_path="bug_reports/template.md",
-        created_at=created_at,
-        session_id=sid,
-        session_memory_run_id=session_memory_run_id,
-        active_run_id=active_run_id or None,
-        proposed_backlog_relpath=proposed_backlog_relpath,
-        proposed_backlog_item_id=proposed_backlog_item_id,
-    )
+        # Server context (safe subset; do not include secrets).
+        try:
+            server_info = f"{platform.system()} {platform.release()} ({platform.machine()})"
+        except Exception:
+            server_info = platform.platform()
+        python_version = str(sys.version.split()[0] if sys.version else "").strip()
+        try:
+            from abstractgateway import __version__ as gateway_version
+        except Exception:
+            gateway_version = ""
+
+        ctx_obj: Dict[str, Any] = {
+            "active_run_id": active_run_id or None,
+            "workflow_id": workflow_id or None,
+            "provider": provider or None,
+            "model": model or None,
+            "template": template or None,
+            "client": client or None,
+            "client_version": client_version or None,
+            "url": url or None,
+            "user_agent": user_agent or None,
+            "session_memory_run_id": session_memory_run_id,
+            "created_at": created_at,
+            "bug_id": bug_id,
+            "client_context": req.context if isinstance(req.context, dict) else {},
+        }
+        # Keep the JSON payload bounded; include only what fits.
+        try:
+            ctx_json = json.dumps(ctx_obj, ensure_ascii=False, indent=2, sort_keys=True)
+        except Exception:
+            ctx_json = "{}"
+        if len(ctx_json) > 80_000:
+            ctx_json = ctx_json[:80_000] + "\n…(truncated)…\n"
+        context_block = f"```json\n{ctx_json}\n```"
+
+        replacements: Dict[str, str] = {
+            "TITLE": title,
+            "BUG_ID": bug_id,
+            "CREATED_AT": created_at,
+            "SESSION_ID": sid,
+            "SESSION_MEMORY_RUN_ID": session_memory_run_id,
+            "ACTIVE_RUN_ID": active_run_id,
+            "REPLAY_RUN_ID": replay_run_id,
+            "WORKFLOW_ID": workflow_id,
+            "USER_DESCRIPTION": _indent_markdown_literal(desc),
+            "SESSION_ATTACHMENTS": attachments_md,
+            "CLIENT": client,
+            "CLIENT_VERSION": client_version,
+            "USER_AGENT": user_agent,
+            "URL": url,
+            "PROVIDER": provider,
+            "MODEL": model,
+            "TEMPLATE": template,
+            "GATEWAY_VERSION": gateway_version,
+            "SERVER_INFO": server_info,
+            "PYTHON_VERSION": python_version,
+            "CONTEXT_JSON": context_block,
+        }
+
+        out_md = str(template_md)
+        for k, v in replacements.items():
+            out_md = out_md.replace(f"{{{{{k}}}}}", str(v))
+        if not out_md.endswith("\n"):
+            out_md += "\n"
+
+        base = f"{today}_{slug}"
+        filename = ""
+        path = None
+        for i in range(0, 1000):
+            name = f"{base}.md" if i == 0 else f"{base}_{i + 1}.md"
+            candidate = bug_dir / name
+            try:
+                with open(candidate, "x", encoding="utf-8") as f:
+                    f.write(out_md)
+                filename = name
+                path = candidate
+                break
+            except FileExistsError:
+                continue
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Failed to write bug report: {e}")
+
+        if not filename or path is None:
+            raise HTTPException(status_code=409, detail="Could not allocate a unique bug report filename")
+
+        # Do not leak absolute paths; return a stable path relative to the gateway data dir.
+        rel_path = f"bug_reports/{filename}"
+
+        proposed_backlog_relpath = ""
+        proposed_backlog_item_id: Optional[int] = None
+        try:
+            repo_root = _backlog_repo_root()
+            if repo_root is not None:
+                out = _maybe_autobridge_report_to_proposed_backlog(
+                    report_path=path,
+                    report_relpath=rel_path,
+                    report_type="bug",
+                    repo_root=repo_root,
+                )
+                if isinstance(out, dict):
+                    proposed_backlog_relpath = str(out.get("relpath") or "").strip()
+                    bid = out.get("item_id")
+                    if isinstance(bid, int):
+                        proposed_backlog_item_id = bid
+        except Exception:
+            # Best-effort only; do not fail report filing.
+            pass
+        return BugReportCreateResponse(
+            ok=True,
+            filename=filename,
+            path=rel_path,
+            template_path="bug_reports/template.md",
+            created_at=created_at,
+            session_id=sid,
+            session_memory_run_id=session_memory_run_id,
+            active_run_id=active_run_id or None,
+            proposed_backlog_relpath=proposed_backlog_relpath,
+            proposed_backlog_item_id=proposed_backlog_item_id,
+        )
+
+    return await off_loop("light", _work)
 
 
 # ---------------------------------------------------------------------------
@@ -21912,170 +21978,174 @@ def _feature_request_slug(description: str) -> str:
 
 @router.post("/features/report")
 async def features_report(req: FeatureReportCreateRequest) -> FeatureReportCreateResponse:
-    svc = get_gateway_service()
+    # OFF THE LOOP (gateway load 2026-10-26): the template read, the session owner run and the request write.
+    def _work() -> Any:
+        svc = get_gateway_service()
 
-    sid = str(req.session_id or "").strip()
-    if not sid:
-        raise HTTPException(status_code=400, detail="session_id is required")
+        sid = str(req.session_id or "").strip()
+        if not sid:
+            raise HTTPException(status_code=400, detail="session_id is required")
 
-    desc = str(req.description or "")
-    if not desc.strip():
-        raise HTTPException(status_code=400, detail="description is required")
-    if len(desc) > 20_000:
-        raise HTTPException(status_code=413, detail="description is too large (max 20,000 chars)")
+        desc = str(req.description or "")
+        if not desc.strip():
+            raise HTTPException(status_code=400, detail="description is required")
+        if len(desc) > 20_000:
+            raise HTTPException(status_code=413, detail="description is too large (max 20,000 chars)")
 
-    feature_dir = _gateway_feature_requests_dir()
-    template_path = _ensure_feature_request_template(feature_dir=feature_dir)
+        feature_dir = _gateway_feature_requests_dir()
+        template_path = _ensure_feature_request_template(feature_dir=feature_dir)
 
-    try:
-        template_md = template_path.read_text(encoding="utf-8")
-    except Exception:
-        template_md = _DEFAULT_FEATURE_REQUEST_TEMPLATE_MD
-
-    created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    today = created_at[:10]
-    slug = _feature_request_slug(desc)
-    title = _feature_request_title(desc)
-    feature_id = str(uuid.uuid4())
-
-    # Ensure the session memory owner run exists so attachments can be listed deterministically.
-    try:
-        session_memory_run_id = _ensure_session_memory_owner_run_exists(run_store=svc.host.run_store, session_id=sid)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to ensure session memory run: {e}")
-
-    attachments_md = _format_session_attachments_md(session_memory_run_id=session_memory_run_id)
-
-    active_run_id = str(req.active_run_id or "").strip() or ""
-    replay_run_id = active_run_id or "<RUN_ID>"
-    workflow_id = str(req.workflow_id or "").strip() or ""
-    client = str(req.client or "").strip() or ""
-    client_version = str(req.client_version or "").strip() or ""
-    user_agent = str(req.user_agent or "").strip() or ""
-    url = str(req.url or "").strip() or ""
-    provider = str(req.provider or "").strip() or ""
-    model = str(req.model or "").strip() or ""
-    template = str(req.template or "").strip() or ""
-
-    # Server context (safe subset; do not include secrets).
-    try:
-        server_info = f"{platform.system()} {platform.release()} ({platform.machine()})"
-    except Exception:
-        server_info = platform.platform()
-    python_version = str(sys.version.split()[0] if sys.version else "").strip()
-    try:
-        from abstractgateway import __version__ as gateway_version
-    except Exception:
-        gateway_version = ""
-
-    ctx_obj: Dict[str, Any] = {
-        "active_run_id": active_run_id or None,
-        "workflow_id": workflow_id or None,
-        "provider": provider or None,
-        "model": model or None,
-        "template": template or None,
-        "client": client or None,
-        "client_version": client_version or None,
-        "url": url or None,
-        "user_agent": user_agent or None,
-        "session_memory_run_id": session_memory_run_id,
-        "created_at": created_at,
-        "feature_id": feature_id,
-        "client_context": req.context if isinstance(req.context, dict) else {},
-    }
-    # Keep the JSON payload bounded; include only what fits.
-    try:
-        ctx_json = json.dumps(ctx_obj, ensure_ascii=False, indent=2, sort_keys=True)
-    except Exception:
-        ctx_json = "{}"
-    if len(ctx_json) > 80_000:
-        ctx_json = ctx_json[:80_000] + "\n…(truncated)…\n"
-    context_block = f"```json\n{ctx_json}\n```"
-
-    replacements: Dict[str, str] = {
-        "TITLE": title,
-        "FEATURE_ID": feature_id,
-        "CREATED_AT": created_at,
-        "SESSION_ID": sid,
-        "SESSION_MEMORY_RUN_ID": session_memory_run_id,
-        "ACTIVE_RUN_ID": active_run_id,
-        "REPLAY_RUN_ID": replay_run_id,
-        "WORKFLOW_ID": workflow_id,
-        "USER_DESCRIPTION": _indent_markdown_literal(desc),
-        "SESSION_ATTACHMENTS": attachments_md,
-        "CLIENT": client,
-        "CLIENT_VERSION": client_version,
-        "USER_AGENT": user_agent,
-        "URL": url,
-        "PROVIDER": provider,
-        "MODEL": model,
-        "TEMPLATE": template,
-        "GATEWAY_VERSION": gateway_version,
-        "SERVER_INFO": server_info,
-        "PYTHON_VERSION": python_version,
-        "CONTEXT_JSON": context_block,
-    }
-
-    out_md = str(template_md)
-    for k, v in replacements.items():
-        out_md = out_md.replace(f"{{{{{k}}}}}", str(v))
-    if not out_md.endswith("\n"):
-        out_md += "\n"
-
-    base = f"{today}_{slug}"
-    filename = ""
-    path = None
-    for i in range(0, 1000):
-        name = f"{base}.md" if i == 0 else f"{base}_{i + 1}.md"
-        candidate = feature_dir / name
         try:
-            with open(candidate, "x", encoding="utf-8") as f:
-                f.write(out_md)
-            filename = name
-            path = candidate
-            break
-        except FileExistsError:
-            continue
+            template_md = template_path.read_text(encoding="utf-8")
+        except Exception:
+            template_md = _DEFAULT_FEATURE_REQUEST_TEMPLATE_MD
+
+        created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        today = created_at[:10]
+        slug = _feature_request_slug(desc)
+        title = _feature_request_title(desc)
+        feature_id = str(uuid.uuid4())
+
+        # Ensure the session memory owner run exists so attachments can be listed deterministically.
+        try:
+            session_memory_run_id = _ensure_session_memory_owner_run_exists(run_store=svc.host.run_store, session_id=sid)
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to write feature request: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to ensure session memory run: {e}")
 
-    if not filename or path is None:
-        raise HTTPException(status_code=409, detail="Could not allocate a unique feature request filename")
+        attachments_md = _format_session_attachments_md(session_memory_run_id=session_memory_run_id)
 
-    # Do not leak absolute paths; return a stable path relative to the gateway data dir.
-    rel_path = f"feature_requests/{filename}"
+        active_run_id = str(req.active_run_id or "").strip() or ""
+        replay_run_id = active_run_id or "<RUN_ID>"
+        workflow_id = str(req.workflow_id or "").strip() or ""
+        client = str(req.client or "").strip() or ""
+        client_version = str(req.client_version or "").strip() or ""
+        user_agent = str(req.user_agent or "").strip() or ""
+        url = str(req.url or "").strip() or ""
+        provider = str(req.provider or "").strip() or ""
+        model = str(req.model or "").strip() or ""
+        template = str(req.template or "").strip() or ""
 
-    proposed_backlog_relpath = ""
-    proposed_backlog_item_id: Optional[int] = None
-    try:
-        repo_root = _backlog_repo_root()
-        if repo_root is not None:
-            out = _maybe_autobridge_report_to_proposed_backlog(
-                report_path=path,
-                report_relpath=rel_path,
-                report_type="feature",
-                repo_root=repo_root,
-            )
-            if isinstance(out, dict):
-                proposed_backlog_relpath = str(out.get("relpath") or "").strip()
-                bid = out.get("item_id")
-                if isinstance(bid, int):
-                    proposed_backlog_item_id = bid
-    except Exception:
-        # Best-effort only; do not fail report filing.
-        pass
-    return FeatureReportCreateResponse(
-        ok=True,
-        filename=filename,
-        path=rel_path,
-        template_path="feature_requests/template.md",
-        created_at=created_at,
-        session_id=sid,
-        session_memory_run_id=session_memory_run_id,
-        active_run_id=active_run_id or None,
-        proposed_backlog_relpath=proposed_backlog_relpath,
-        proposed_backlog_item_id=proposed_backlog_item_id,
-    )
+        # Server context (safe subset; do not include secrets).
+        try:
+            server_info = f"{platform.system()} {platform.release()} ({platform.machine()})"
+        except Exception:
+            server_info = platform.platform()
+        python_version = str(sys.version.split()[0] if sys.version else "").strip()
+        try:
+            from abstractgateway import __version__ as gateway_version
+        except Exception:
+            gateway_version = ""
+
+        ctx_obj: Dict[str, Any] = {
+            "active_run_id": active_run_id or None,
+            "workflow_id": workflow_id or None,
+            "provider": provider or None,
+            "model": model or None,
+            "template": template or None,
+            "client": client or None,
+            "client_version": client_version or None,
+            "url": url or None,
+            "user_agent": user_agent or None,
+            "session_memory_run_id": session_memory_run_id,
+            "created_at": created_at,
+            "feature_id": feature_id,
+            "client_context": req.context if isinstance(req.context, dict) else {},
+        }
+        # Keep the JSON payload bounded; include only what fits.
+        try:
+            ctx_json = json.dumps(ctx_obj, ensure_ascii=False, indent=2, sort_keys=True)
+        except Exception:
+            ctx_json = "{}"
+        if len(ctx_json) > 80_000:
+            ctx_json = ctx_json[:80_000] + "\n…(truncated)…\n"
+        context_block = f"```json\n{ctx_json}\n```"
+
+        replacements: Dict[str, str] = {
+            "TITLE": title,
+            "FEATURE_ID": feature_id,
+            "CREATED_AT": created_at,
+            "SESSION_ID": sid,
+            "SESSION_MEMORY_RUN_ID": session_memory_run_id,
+            "ACTIVE_RUN_ID": active_run_id,
+            "REPLAY_RUN_ID": replay_run_id,
+            "WORKFLOW_ID": workflow_id,
+            "USER_DESCRIPTION": _indent_markdown_literal(desc),
+            "SESSION_ATTACHMENTS": attachments_md,
+            "CLIENT": client,
+            "CLIENT_VERSION": client_version,
+            "USER_AGENT": user_agent,
+            "URL": url,
+            "PROVIDER": provider,
+            "MODEL": model,
+            "TEMPLATE": template,
+            "GATEWAY_VERSION": gateway_version,
+            "SERVER_INFO": server_info,
+            "PYTHON_VERSION": python_version,
+            "CONTEXT_JSON": context_block,
+        }
+
+        out_md = str(template_md)
+        for k, v in replacements.items():
+            out_md = out_md.replace(f"{{{{{k}}}}}", str(v))
+        if not out_md.endswith("\n"):
+            out_md += "\n"
+
+        base = f"{today}_{slug}"
+        filename = ""
+        path = None
+        for i in range(0, 1000):
+            name = f"{base}.md" if i == 0 else f"{base}_{i + 1}.md"
+            candidate = feature_dir / name
+            try:
+                with open(candidate, "x", encoding="utf-8") as f:
+                    f.write(out_md)
+                filename = name
+                path = candidate
+                break
+            except FileExistsError:
+                continue
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Failed to write feature request: {e}")
+
+        if not filename or path is None:
+            raise HTTPException(status_code=409, detail="Could not allocate a unique feature request filename")
+
+        # Do not leak absolute paths; return a stable path relative to the gateway data dir.
+        rel_path = f"feature_requests/{filename}"
+
+        proposed_backlog_relpath = ""
+        proposed_backlog_item_id: Optional[int] = None
+        try:
+            repo_root = _backlog_repo_root()
+            if repo_root is not None:
+                out = _maybe_autobridge_report_to_proposed_backlog(
+                    report_path=path,
+                    report_relpath=rel_path,
+                    report_type="feature",
+                    repo_root=repo_root,
+                )
+                if isinstance(out, dict):
+                    proposed_backlog_relpath = str(out.get("relpath") or "").strip()
+                    bid = out.get("item_id")
+                    if isinstance(bid, int):
+                        proposed_backlog_item_id = bid
+        except Exception:
+            # Best-effort only; do not fail report filing.
+            pass
+        return FeatureReportCreateResponse(
+            ok=True,
+            filename=filename,
+            path=rel_path,
+            template_path="feature_requests/template.md",
+            created_at=created_at,
+            session_id=sid,
+            session_memory_run_id=session_memory_run_id,
+            active_run_id=active_run_id or None,
+            proposed_backlog_relpath=proposed_backlog_relpath,
+            proposed_backlog_item_id=proposed_backlog_item_id,
+        )
+
+    return await off_loop("light", _work)
 
 #
 # ---------------------------------------------------------------------------
@@ -22310,46 +22380,62 @@ def _list_report_inbox_items(*, report_type: str, report_dir: Path, gateway_base
 
 @router.get("/reports/bugs", response_model=ReportInboxListResponse)
 async def list_bug_reports() -> ReportInboxListResponse:
-    base = _gateway_base_dir()
-    bug_dir = _gateway_bug_reports_dir()
-    items = _list_report_inbox_items(report_type="bug", report_dir=bug_dir, gateway_base_dir=base)
-    items.sort(key=lambda i: (str(i.created_at or ""), i.filename), reverse=True)
-    return ReportInboxListResponse(items=items)
+    # OFF THE LOOP (gateway load 2026-10-26): a folder listing that reads every report.
+    def _work() -> Any:
+        base = _gateway_base_dir()
+        bug_dir = _gateway_bug_reports_dir()
+        items = _list_report_inbox_items(report_type="bug", report_dir=bug_dir, gateway_base_dir=base)
+        items.sort(key=lambda i: (str(i.created_at or ""), i.filename), reverse=True)
+        return ReportInboxListResponse(items=items)
+
+    return await off_loop("heavy", _work)
 
 
 @router.get("/reports/features", response_model=ReportInboxListResponse)
 async def list_feature_requests() -> ReportInboxListResponse:
-    base = _gateway_base_dir()
-    feature_dir = _gateway_feature_requests_dir()
-    items = _list_report_inbox_items(report_type="feature", report_dir=feature_dir, gateway_base_dir=base)
-    items.sort(key=lambda i: (str(i.created_at or ""), i.filename), reverse=True)
-    return ReportInboxListResponse(items=items)
+    # OFF THE LOOP (gateway load 2026-10-26): a folder listing that reads every request.
+    def _work() -> Any:
+        base = _gateway_base_dir()
+        feature_dir = _gateway_feature_requests_dir()
+        items = _list_report_inbox_items(report_type="feature", report_dir=feature_dir, gateway_base_dir=base)
+        items.sort(key=lambda i: (str(i.created_at or ""), i.filename), reverse=True)
+        return ReportInboxListResponse(items=items)
+
+    return await off_loop("heavy", _work)
 
 
 @router.get("/reports/bugs/{filename}/content", response_model=ReportContentResponse)
 async def get_bug_report_content(filename: str) -> ReportContentResponse:
-    safe = _safe_inbox_filename(filename)
-    if safe is None:
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    bug_dir = _gateway_bug_reports_dir()
-    path = bug_dir / safe
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Bug report not found")
-    content = _read_text_bounded(path, max_chars=400_000)
-    return ReportContentResponse(report_type="bug", filename=safe, relpath=f"bug_reports/{safe}", content=content)
+    # OFF THE LOOP (gateway load 2026-10-26): one file read.
+    def _work() -> Any:
+        safe = _safe_inbox_filename(filename)
+        if safe is None:
+            raise HTTPException(status_code=400, detail="Invalid filename")
+        bug_dir = _gateway_bug_reports_dir()
+        path = bug_dir / safe
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="Bug report not found")
+        content = _read_text_bounded(path, max_chars=400_000)
+        return ReportContentResponse(report_type="bug", filename=safe, relpath=f"bug_reports/{safe}", content=content)
+
+    return await off_loop("light", _work)
 
 
 @router.get("/reports/features/{filename}/content", response_model=ReportContentResponse)
 async def get_feature_request_content(filename: str) -> ReportContentResponse:
-    safe = _safe_inbox_filename(filename)
-    if safe is None:
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    feature_dir = _gateway_feature_requests_dir()
-    path = feature_dir / safe
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Feature request not found")
-    content = _read_text_bounded(path, max_chars=400_000)
-    return ReportContentResponse(report_type="feature", filename=safe, relpath=f"feature_requests/{safe}", content=content)
+    # OFF THE LOOP (gateway load 2026-10-26): one file read.
+    def _work() -> Any:
+        safe = _safe_inbox_filename(filename)
+        if safe is None:
+            raise HTTPException(status_code=400, detail="Invalid filename")
+        feature_dir = _gateway_feature_requests_dir()
+        path = feature_dir / safe
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="Feature request not found")
+        content = _read_text_bounded(path, max_chars=400_000)
+        return ReportContentResponse(report_type="feature", filename=safe, relpath=f"feature_requests/{safe}", content=content)
+
+    return await off_loop("light", _work)
 
 
 @router.post("/triage/run", response_model=TriageRunResponse)
@@ -22707,47 +22793,48 @@ async def backlog_exec_requests(
     if repo_root is None:
         raise HTTPException(status_code=404, detail=_backlog_unavailable_detail())
 
-    base = _gateway_base_dir()
-    qdir = (base / "backlog_exec_queue").resolve()
-    if not qdir.exists():
-        return BacklogExecRequestListResponse(requests=[])
-
     wanted_raw = [s.strip().lower() for s in str(status or "").split(",") if s.strip()]
     wanted = set(wanted_raw)
 
-    paths = list(qdir.glob("*.json"))
-    try:
-        paths.sort(key=lambda p: float(p.stat().st_mtime), reverse=True)
-    except Exception:
-        paths.sort(key=lambda p: p.name, reverse=True)
+    def _work() -> bytes:
+        base = _gateway_base_dir()
+        qdir = (base / "backlog_exec_queue").resolve()
+        if not qdir.exists():
+            return _response_model_json(BacklogExecRequestListResponse, BacklogExecRequestListResponse(requests=[]))
+        # Newest file first; each request file parsed once per version (file_cache).
+        entries = file_listing(qdir, ".json", files_only=False)
+        entries.sort(key=lambda t: t[2][0], reverse=True)
 
-    items: list[Tuple[str, BacklogExecRequestSummary]] = []
-    scanned = 0
-    for p in paths:
-        scanned += 1
-        if scanned > 5000:
-            break
-        try:
-            p.relative_to(qdir)
-        except Exception:
-            continue
-        req = _load_json_bounded(p)
-        rid = str(req.get("request_id") or p.stem).strip().lower()
-        rid = _safe_backlog_exec_request_id(rid) or ""
-        if not rid:
-            continue
-        summary = _exec_request_summary(req, request_id=rid)
-        if wanted and summary.status.strip().lower() not in wanted:
-            continue
-        key = summary.created_at or summary.started_at or summary.finished_at or ""
-        items.append((key, summary))
-        if len(items) >= int(limit):
-            break
+        items: list[Tuple[str, BacklogExecRequestSummary]] = []
+        scanned = 0
+        for _name, p, sig in entries:
+            scanned += 1
+            if scanned > 5000:
+                break
+            req = _EXEC_REQUEST_FILES.get((str(p), "exec_request"), sig, lambda p=p: _load_json_bounded(p))
+            rid = str(req.get("request_id") or p.stem).strip().lower()
+            rid = _safe_backlog_exec_request_id(rid) or ""
+            if not rid:
+                continue
+            summary = _exec_request_summary(req, request_id=rid)
+            if wanted and summary.status.strip().lower() not in wanted:
+                continue
+            key = summary.created_at or summary.started_at or summary.finished_at or ""
+            items.append((key, summary))
+            if len(items) >= int(limit):
+                break
 
-    # Newest first (best-effort, ISO timestamps sort lexicographically).
-    items.sort(key=lambda t: t[0], reverse=True)
-    out = [s for _, s in items[: int(limit)]]
-    return BacklogExecRequestListResponse(requests=out)
+        # Newest first (best-effort, ISO timestamps sort lexicographically).
+        items.sort(key=lambda t: t[0], reverse=True)
+        out = [s for _, s in items[: int(limit)]]
+        return _response_model_json(BacklogExecRequestListResponse, BacklogExecRequestListResponse(requests=out))
+
+    # OFF THE LOOP (gateway load 2026-10-26): the queue folder scan, the request files and the
+    # answer's encoding.
+    return Response(content=await off_loop("heavy", _work), media_type="application/json")
+
+
+_EXEC_REQUEST_FILES = FileVersionCache()
 
 
 @router.get("/backlog/exec/active_items", response_model=BacklogExecActiveItemsResponse)
@@ -23778,7 +23865,9 @@ async def backlog_list(kind: str) -> BacklogListResponse:
     docs/backlog. `package` on each summary is the repo DIRECTORY name (one
     authority; the file-header label stays parse-side only). Per-root caps
     keep the read bounded; the whole walk runs off the event loop (H7c)."""
-    roots = _backlog_roots()
+    # OFF THE LOOP (gateway load 2026-10-26): the root discovery (a stat per workspace child)
+    # runs in the worker too.
+    roots = await off_loop("heavy", _backlog_roots)
     if not roots:
         raise HTTPException(status_code=404, detail=_backlog_unavailable_detail())
 
@@ -23787,9 +23876,19 @@ async def backlog_list(kind: str) -> BacklogListResponse:
         raise HTTPException(status_code=400, detail="Invalid backlog kind (planned|completed|proposed|recurrent|deprecated|trash)")
 
     try:
-        from ..maintenance.backlog_parser import iter_backlog_items  # type: ignore
+        from ..maintenance.backlog_parser import parse_backlog_item  # type: ignore
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Backlog parser unavailable: {e}")
+
+    def _items_of(dir_path: Path) -> List[Any]:
+        """`iter_backlog_items(dir_path, kind=k)`, each file parsed once per version: the
+        board polls this listing and most items never change (file_cache)."""
+        out = []
+        for _name, p, sig in file_listing(dir_path, ".md"):
+            item = _BACKLOG_ITEM_FILES.get((str(p), k), sig, lambda p=p: parse_backlog_item(p, kind=k))
+            if item is not None:
+                out.append(item)
+        return out
 
     def _walk_roots() -> List[BacklogItemSummary]:
         folded: List[BacklogItemSummary] = []
@@ -23797,7 +23896,7 @@ async def backlog_list(kind: str) -> BacklogListResponse:
             dir_path = repo_dir / "docs" / "backlog" / k
             if not dir_path.exists():
                 continue
-            parsed_items = list(iter_backlog_items(dir_path, kind=k))
+            parsed_items = _items_of(dir_path)
             parsed_items.sort(key=lambda i: int(getattr(i, "item_id", 0)), reverse=True)
             parsed_names = {item.path.name for item in parsed_items}
             for item in parsed_items[:500]:
@@ -23816,10 +23915,7 @@ async def backlog_list(kind: str) -> BacklogListResponse:
                     )
                 )
             # Best-effort: unparsed items stay browsable.
-            raw_files = sorted(
-                [p for p in dir_path.glob("*.md") if p.name.lower() not in {"readme.md"}],
-                key=lambda p: p.name,
-            )
+            raw_files = [p for name, p, _sig in file_listing(dir_path, ".md", files_only=False) if name.lower() not in {"readme.md"}]
             unparsed = 0
             for p in raw_files:
                 if p.name in parsed_names:
@@ -23841,10 +23937,16 @@ async def backlog_list(kind: str) -> BacklogListResponse:
                     break
         return folded
 
-    out = await off_loop("heavy", _walk_roots)
-    # Newest ids first across roots (stable within a root by construction).
-    out.sort(key=lambda i: int(i.item_id), reverse=True)
-    return BacklogListResponse(items=out)
+    def _answer() -> bytes:
+        out = _walk_roots()
+        # Newest ids first across roots (stable within a root by construction).
+        out.sort(key=lambda i: int(i.item_id), reverse=True)
+        return _response_model_json(BacklogListResponse, BacklogListResponse(items=out))
+
+    return Response(content=await off_loop("heavy", _answer), media_type="application/json")
+
+
+_BACKLOG_ITEM_FILES = FileVersionCache()
 
 
 @router.get("/backlog/{kind}/{filename}/content", response_model=BacklogContentResponse)
@@ -30258,76 +30360,80 @@ async def files_skim(
 @router.post("/artifacts/import")
 async def import_artifact(request: Request, req: ArtifactImportRequest) -> Dict[str, Any]:
     """Import a server-workspace file into the session-scoped ArtifactStore."""
-    svc = get_gateway_service()
+    # OFF THE LOOP (gateway load 2026-10-26): the workspace file read and the artifact write.
+    def _work() -> Any:
+        svc = get_gateway_service()
 
-    sid = str(req.session_id or "").strip()
-    if not sid:
-        raise HTTPException(status_code=400, detail="session_id is required")
+        sid = str(req.session_id or "").strip()
+        if not sid:
+            raise HTTPException(status_code=400, detail="session_id is required")
 
-    source_kind = str(getattr(req.source, "kind", None) or "workspace_path").strip().lower()
-    if source_kind not in {"workspace_path", "path", "workspace"}:
-        raise HTTPException(status_code=400, detail="source.kind must be 'workspace_path'")
-    raw_path = str(req.path or getattr(req.source, "path", None) or "").strip()
-    if not raw_path:
-        raise HTTPException(status_code=400, detail="path is required")
+        source_kind = str(getattr(req.source, "kind", None) or "workspace_path").strip().lower()
+        if source_kind not in {"workspace_path", "path", "workspace"}:
+            raise HTTPException(status_code=400, detail="source.kind must be 'workspace_path'")
+        raw_path = str(req.path or getattr(req.source, "path", None) or "").strip()
+        if not raw_path:
+            raise HTTPException(status_code=400, detail="path is required")
 
-    base, mounts, blocked, mode = _request_workspace_scope(req, _principal_from_request(request))
-    resolved, virt, root = _resolve_request_workspace_path(
-        raw_path=raw_path,
-        base=base,
-        mounts=mounts,
-        blocked=blocked,
-        mode=mode,
-    )
-    _reject_ignored_workspace_path(resolved, root=root, is_dir=False)
+        base, mounts, blocked, mode = _request_workspace_scope(req, _principal_from_request(request))
+        resolved, virt, root = _resolve_request_workspace_path(
+            raw_path=raw_path,
+            base=base,
+            mounts=mounts,
+            blocked=blocked,
+            mode=mode,
+        )
+        _reject_ignored_workspace_path(resolved, root=root, is_dir=False)
 
-    if not resolved.exists():
-        raise HTTPException(status_code=404, detail="File not found")
-    if not resolved.is_file():
-        raise HTTPException(status_code=400, detail="Path is not a file")
+        if not resolved.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+        if not resolved.is_file():
+            raise HTTPException(status_code=400, detail="Path is not a file")
 
-    try:
-        size = int(resolved.stat().st_size)
-    except Exception:
-        size = -1
-    max_bytes = _max_attachment_bytes()
-    if size >= 0 and size > max_bytes:
-        raise HTTPException(status_code=413, detail=f"Artifact too large ({size} bytes > {max_bytes} bytes)")
+        try:
+            size = int(resolved.stat().st_size)
+        except Exception:
+            size = -1
+        max_bytes = _max_attachment_bytes()
+        if size >= 0 and size > max_bytes:
+            raise HTTPException(status_code=413, detail=f"Artifact too large ({size} bytes > {max_bytes} bytes)")
 
-    try:
-        content = resolved.read_bytes()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read file: {e}")
+        try:
+            content = resolved.read_bytes()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to read file: {e}")
 
-    filename = str(req.filename or "").strip() or resolved.name
-    content_type = str(req.content_type or "").strip().lower()
-    if not content_type:
-        guessed, _enc = mimetypes.guess_type(filename)
-        content_type = str(guessed or "application/octet-stream")
-    rel = str(virt).strip() if isinstance(virt, str) and virt.strip() else ""
+        filename = str(req.filename or "").strip() or resolved.name
+        content_type = str(req.content_type or "").strip().lower()
+        if not content_type:
+            guessed, _enc = mimetypes.guess_type(filename)
+            content_type = str(guessed or "application/octet-stream")
+        rel = str(virt).strip() if isinstance(virt, str) and virt.strip() else ""
 
-    extra_tags: Dict[str, str] = {"purpose": str(req.purpose or "run_input").strip() or "run_input"}
-    if req.pin_id and str(req.pin_id).strip():
-        extra_tags["pin_id"] = str(req.pin_id).strip()
-    if isinstance(req.tags, dict):
-        for k, v in req.tags.items():
-            ks = str(k or "").strip()
-            vs = str(v or "").strip()
-            if ks and vs:
-                extra_tags[ks] = vs
+        extra_tags: Dict[str, str] = {"purpose": str(req.purpose or "run_input").strip() or "run_input"}
+        if req.pin_id and str(req.pin_id).strip():
+            extra_tags["pin_id"] = str(req.pin_id).strip()
+        if isinstance(req.tags, dict):
+            for k, v in req.tags.items():
+                ks = str(k or "").strip()
+                vs = str(v or "").strip()
+                if ks and vs:
+                    extra_tags[ks] = vs
 
-    return _store_session_artifact(
-        svc=svc,
-        session_id=sid,
-        content=bytes(content),
-        content_type=content_type,
-        filename=filename,
-        target="server",
-        source="workspace",
-        source_path=rel,
-        kind="run_input",
-        extra_tags=extra_tags,
-    )
+        return _store_session_artifact(
+            svc=svc,
+            session_id=sid,
+            content=bytes(content),
+            content_type=content_type,
+            filename=filename,
+            target="server",
+            source="workspace",
+            source_path=rel,
+            kind="run_input",
+            extra_tags=extra_tags,
+        )
+
+    return await off_loop("heavy", _work)
 
 
 @router.post("/attachments/ingest")
@@ -30341,62 +30447,66 @@ async def attachments_ingest(request: Request, req: AttachmentIngestRequest) -> 
     Attachments are stored under the session memory owner run id so they can be
     listed/downloaded via the existing run-scoped Artifact API.
     """
-    svc = get_gateway_service()
+    # OFF THE LOOP (gateway load 2026-10-26): the workspace file read, its sha256 and the artifact write.
+    def _work() -> Any:
+        svc = get_gateway_service()
 
-    sid = str(req.session_id or "").strip()
-    if not sid:
-        raise HTTPException(status_code=400, detail="session_id is required")
+        sid = str(req.session_id or "").strip()
+        if not sid:
+            raise HTTPException(status_code=400, detail="session_id is required")
 
-    base, mounts, blocked, mode = _request_workspace_scope(req, _principal_from_request(request))
-    resolved, virt, root = _resolve_request_workspace_path(
-        raw_path=str(req.path or ""),
-        base=base,
-        mounts=mounts,
-        blocked=blocked,
-        mode=mode,
-    )
-    _reject_ignored_workspace_path(resolved, root=root, is_dir=False)
+        base, mounts, blocked, mode = _request_workspace_scope(req, _principal_from_request(request))
+        resolved, virt, root = _resolve_request_workspace_path(
+            raw_path=str(req.path or ""),
+            base=base,
+            mounts=mounts,
+            blocked=blocked,
+            mode=mode,
+        )
+        _reject_ignored_workspace_path(resolved, root=root, is_dir=False)
 
-    if not resolved.exists():
-        raise HTTPException(status_code=404, detail="File not found")
-    if not resolved.is_file():
-        raise HTTPException(status_code=400, detail="Path is not a file")
+        if not resolved.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+        if not resolved.is_file():
+            raise HTTPException(status_code=400, detail="Path is not a file")
 
-    try:
-        size = int(resolved.stat().st_size)
-    except Exception:
-        size = -1
-    max_bytes = _max_attachment_bytes()
-    if size >= 0 and size > max_bytes:
-        raise HTTPException(status_code=413, detail=f"Attachment too large ({size} bytes > {max_bytes} bytes)")
+        try:
+            size = int(resolved.stat().st_size)
+        except Exception:
+            size = -1
+        max_bytes = _max_attachment_bytes()
+        if size >= 0 and size > max_bytes:
+            raise HTTPException(status_code=413, detail=f"Attachment too large ({size} bytes > {max_bytes} bytes)")
 
-    try:
-        content = resolved.read_bytes()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read file: {e}")
+        try:
+            content = resolved.read_bytes()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to read file: {e}")
 
-    sha256 = hashlib.sha256(bytes(content)).hexdigest()
+        sha256 = hashlib.sha256(bytes(content)).hexdigest()
 
-    filename = str(req.filename or "").strip() or resolved.name
-    content_type = str(req.content_type or "").strip().lower()
-    if not content_type:
-        guessed, _enc = mimetypes.guess_type(filename)
-        content_type = str(guessed or "application/octet-stream")
+        filename = str(req.filename or "").strip() or resolved.name
+        content_type = str(req.content_type or "").strip().lower()
+        if not content_type:
+            guessed, _enc = mimetypes.guess_type(filename)
+            content_type = str(guessed or "application/octet-stream")
 
-    rel = str(virt).strip() if isinstance(virt, str) and virt.strip() else ""
-    stored = _store_session_artifact(
-        svc=svc,
-        session_id=sid,
-        content=bytes(content),
-        content_type=content_type,
-        filename=filename,
-        target="server",
-        source="workspace",
-        source_path=rel,
-        kind="attachment",
-        extra_tags={"sha256": sha256},
-    )
-    return {**stored, "attachment": stored.get("artifact")}
+        rel = str(virt).strip() if isinstance(virt, str) and virt.strip() else ""
+        stored = _store_session_artifact(
+            svc=svc,
+            session_id=sid,
+            content=bytes(content),
+            content_type=content_type,
+            filename=filename,
+            target="server",
+            source="workspace",
+            source_path=rel,
+            kind="attachment",
+            extra_tags={"sha256": sha256},
+        )
+        return {**stored, "attachment": stored.get("artifact")}
+
+    return await off_loop("heavy", _work)
 
 
 @router.post("/attachments/upload")

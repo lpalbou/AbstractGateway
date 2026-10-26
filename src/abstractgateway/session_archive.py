@@ -23,8 +23,9 @@ import json
 import os
 import tempfile
 import threading
+import time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
 SCHEMA = "gateway_session_archive_v1"
 FILENAME = "session_archive.json"
@@ -58,19 +59,56 @@ def _load(data_dir: Any) -> Dict[str, Any]:
     return raw
 
 
+# Read cache (gateway load 2026-10-26): `GET /runs` read this file on every call, on the event
+# loop. Readers get the last parsed content; the file is stat-ed again at most every
+# REVALIDATE_S (another process's write is seen within that) and a write through this module
+# drops the entry at once. An unreadable file is never cached (it raises on every read).
+REVALIDATE_S = 1.0
+_READ_CACHE: Dict[str, Tuple[float, Any, Dict[str, Any]]] = {}
+
+
+def _load_cached(data_dir: Any) -> Dict[str, Any]:
+    """`_load` for READERS (never mutate the result)."""
+    path = _path(data_dir)
+    key = str(path)
+    now = time.monotonic()
+    hit = _READ_CACHE.get(key)
+    if hit is not None and (now - hit[0]) < REVALIDATE_S:
+        return hit[2]
+    try:
+        st = os.stat(path)
+        sig: Any = (st.st_mtime_ns, st.st_size, st.st_ino)
+    except FileNotFoundError:
+        sig = None
+    except OSError:
+        sig = object()  # never equal: read (and raise) below
+    if hit is not None and hit[1] == sig:
+        _READ_CACHE[key] = (now, sig, hit[2])
+        return hit[2]
+    data = _load(data_dir)
+    _READ_CACHE[key] = (now, sig, data)
+    return data
+
+
+def _forget(data_dir: Any) -> None:
+    _READ_CACHE.pop(str(_path(data_dir)), None)
+
+
 def _save(data_dir: Any, data: Dict[str, Any]) -> None:
+    _forget(data_dir)
     path = _path(data_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(json.dumps(data, ensure_ascii=False, indent=2))
     os.replace(tmp, str(path))
+    _forget(data_dir)
 
 
 def archived_sessions(data_dir: Any) -> Dict[str, Dict[str, Any]]:
     """`{session_id: {archived_at, archived_by}}` for this plane."""
     with _LOCK:
-        return {str(k): dict(v) for k, v in _load(data_dir)["sessions"].items() if isinstance(v, dict)}
+        return {str(k): dict(v) for k, v in _load_cached(data_dir)["sessions"].items() if isinstance(v, dict)}
 
 
 def archive_session(data_dir: Any, session_id: str, *, by: str) -> Dict[str, Any]:
