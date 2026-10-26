@@ -1519,7 +1519,7 @@ Core catalog proxy settings:
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off]`
+- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N]`
   (`--no-tray`: no menu bar / tray icon for this run, for a test or scratch
   gateway next to your usual one; a start with `--host 127.0.0.1`, a `--port`
   other than the configured one and `--print-token` is treated as a test
@@ -1535,6 +1535,12 @@ Most-used:
   `serve --push-relay <URL|off>` (default `off`, no environment variable): the
   relay this gateway sends Apple push requests to for the watch and iPhone
   apps; the split `abstractgateway runner` takes it too. See [push.md](./push.md)
+  `serve --pool-light N --pool-heavy N --pool-watchers N` (defaults 8, 4 and 16, from 1 to 256, no
+  environment variable): the threads for quick work (sign-in, `/me`, live-update streams, one-record
+  reads), for scans and listings of runs and artifacts and workflow reloads, and for long waits outside
+  the gateway (mail, feeds, provider endpoints, model generation). Quick work never waits behind a scan;
+  more scans than `--pool-heavy` wait their turn. `GET /api/health` reports each pool's `size`,
+  `threads` and `queued` under `pools`. Evidence: `src/abstractgateway/work_pools.py`
 - `abstractgateway push-relay --apns-key-file F --key-id K --team-id T --topic BUNDLE_ID … [--listen HOST:PORT]`:
   run the stateless Apple push relay with your own key (extra `push-relay`; [push.md](./push.md#run-your-own-relay))
   (host/port default to the [network exposure](#network-exposure-localhost--local-network--internet)

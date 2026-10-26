@@ -613,6 +613,12 @@ def test_gateway_browser_session_origin_expiry_logout_and_revocation_matrix(tmp_
     assert data.get("sessions")
     data["sessions"][0]["expires_at"] = "2000-01-01T00:00:00+00:00"
     sessions_file.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    # Another writer's edit is seen once the in-memory sessions are older than their TTL
+    # (security/sessions.py, gateway load 2026-10-26): move the memory's clock past it.
+    import abstractgateway.security.sessions as sessions_mod
+
+    _real_monotonic = sessions_mod._monotonic
+    monkeypatch.setattr(sessions_mod, "_monotonic", lambda: _real_monotonic() + sessions_mod.SESSION_CACHE_TTL_S + 1)
     expired = client.get("/api/gateway/me", headers={"X-AbstractGateway-Session": session})
     assert expired.status_code == 401
 

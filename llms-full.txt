@@ -1792,7 +1792,7 @@ Core catalog proxy settings:
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off]`
+- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N]`
   (`--no-tray`: no menu bar / tray icon for this run, for a test or scratch
   gateway next to your usual one; a start with `--host 127.0.0.1`, a `--port`
   other than the configured one and `--print-token` is treated as a test
@@ -1808,6 +1808,12 @@ Most-used:
   `serve --push-relay <URL|off>` (default `off`, no environment variable): the
   relay this gateway sends Apple push requests to for the watch and iPhone
   apps; the split `abstractgateway runner` takes it too. See [push.md](docs/push.md)
+  `serve --pool-light N --pool-heavy N --pool-watchers N` (defaults 8, 4 and 16, from 1 to 256, no
+  environment variable): the threads for quick work (sign-in, `/me`, live-update streams, one-record
+  reads), for scans and listings of runs and artifacts and workflow reloads, and for long waits outside
+  the gateway (mail, feeds, provider endpoints, model generation). Quick work never waits behind a scan;
+  more scans than `--pool-heavy` wait their turn. `GET /api/health` reports each pool's `size`,
+  `threads` and `queued` under `pools`. Evidence: `src/abstractgateway/work_pools.py`
 - `abstractgateway push-relay --apns-key-file F --key-id K --team-id T --topic BUNDLE_ID … [--listen HOST:PORT]`:
   run the stateless Apple push relay with your own key (extra `push-relay`; [push.md](docs/push.md#run-your-own-relay))
   (host/port default to the [network exposure](#network-exposure-localhost--local-network--internet)
@@ -5793,7 +5799,7 @@ typed waits, attention and operations, is in [automations.md](docs/automations.m
 | `GET /api/gateway/automations/defaults` | `{growing_max_tokens}`: the gateway's default history budget of a growing automation (50,000 tokens), used when a definition sets no `context.growing.max_tokens`; the one value clients show for "the default" |
 | `POST /api/gateway/automations/schedule-preview` | `{trigger, time_zone, schedule_rule_text, schedule_text, next_run_at, next_run_local, first_run_sentence}` ([automations.md](docs/automations.md#schedule-preview)) |
 | `POST /api/gateway/automations` | `{request_id, title?, target, trigger?, context?, policy?}` → `{automation_id, revision, summary}`; `context` = `{mode, growing?: {max_tokens}}` |
-| `GET /api/gateway/automations?status=&archived_only=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, archived_automations}` (older scheduled runs on the last page, `legacy: true`). A summary carries `target` `{workflow_id, bundle_ref, flow_id}` and `flow_name` (the entrypoint's name), see [automations.md](docs/automations.md); `status` takes a comma-separated list (`active,paused`). Archived automations are left out unless `archived_only=true` (only them) or `status` names `archived`; `archived_automations` counts yours |
+| `GET /api/gateway/automations?status=&archived_only=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, archived_automations}` (older scheduled runs on the last page, `legacy: true`). A summary carries `target` `{workflow_id, bundle_ref, flow_id}` and `flow_name` (the entrypoint's name), see [automations.md](docs/automations.md); `status` takes a comma-separated list (`active,paused`). Archived automations are left out unless `archived_only=true` (only them) or `status` names `archived`; `archived_automations` counts yours. Its cost follows the number of automations, not their history; identical concurrent requests share one computation, and the answer is kept up to 3 s (dropped at once by any change this gateway records: a run step, a command, a seen cursor) |
 | `GET /api/gateway/automations/{automation_id}` | `{definition, active_revision, summary}` |
 | `PATCH /api/gateway/automations/{automation_id}` | `{command_id, expected_revision?, changes}` → `{command_id, accepted, duplicate, seq}` |
 | `POST /api/gateway/automations/{automation_id}/commands` | `{command_id, type: automation.pause|resume|run_now|stop_current|archive|unarchive|revise, payload?}` → the same receipt. `unarchive` brings an archived automation back **paused** with its history (409 `invalid_state` when it is not archived); an archived automation accepts only `unarchive` |
@@ -12081,7 +12087,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Performance (backlog 1054, gateway load 2026-10-26): a cached account service answers without the service lock, so `GET /me` and the live-update stream no longer wait on the event loop while the boot builds another account's service (two of the night's three watchdog restarts); blocking work runs in three bounded pools by kind, `light` (sign-in, `/me`, live-update streams, one-record reads), `heavy` (scans, listings, reloads) and `watchers` (mail, provider endpoints, model generation), sized by `serve --pool-light/--pool-heavy/--pool-watchers N` (defaults 8/4/16, no environment variable) and reported by `GET /api/health` under `pools`; browser sessions are kept in memory with the file as the source of truth (own writes at once, another process's within 2 s, `last_seen_at` written at most once a minute off the loop), and the users file and session secret are re-read only when they change.
+- Performance (backlog 1054): the mail notification check's full pass (every 5 minutes, after another process's change, after a restart) reads the run index rows (status, updated_at, wait reason; no vars) instead of loading up to 200 completed + 200 failed + 200 waiting full runs; a run is loaded only when its row is new since the collector last decided it (kept per process under the same switches, plus a persisted `jobs.through` cursor trailing the newest decided finish by 120 s for the pass after a restart); same notices and idempotency keys. 400 finished runs, one change: one load (incremental or full).
 - Push: the packaged app topics are the merged AbstractAssistant family, `ai.abstractframework.assistant` (iPhone) and `ai.abstractframework.assistant.watchkitapp` (its watch companion); the old `.watch` and `.iphone` ids are no longer accepted.
+- Performance (backlog 1054): once the boot is done, `serve` freezes the objects it built (`gc.freeze()`) and raises the garbage collector's thresholds to 50000/50/100, so a full collection over a large heap no longer pauses the whole gateway for seconds; logged at boot (`[INFO] gc: ...`); `serve --gc-tuning off` keeps Python's defaults (no environment variable). `scripts/perf/` holds the benchmark fixture (`clone_runtime.sh`: a scrubbed APFS clone of a data dir) and `bench_gateway.sh` (a hermetic gateway on it, probe p50/p99, CPU at rest, GC pauses, outbound-network guard).
 
 ### Added
 
@@ -12223,6 +12232,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`GET /automations` costs the automations, not their history, and never piles up.** Each row used to re-read the
+  automation's whole past (every occurrence tree, the full controller ledger, every past prompt artifact, every
+  artifact of the last answer) and the list ran four run-index scans: 2.4 s cold / 1.6 s warm on a copy of the
+  operator's data uncontended, 10 s to no answer in 240 s on the busy gateway, and the tray's retries stacked 14 copies.
+  Now a row reads the waits from the run index's WAITING rows (one read per page), the last occurrence from the tail
+  of the controller ledger, the attention items only when something is unseen (kept per seen/latest pair), and only
+  the answer's own values; the controller and legacy rows are listed once and refreshed from the live runs on an
+  automation change or every 30 s (a full listing at most every 10 minutes). Same answer, byte for byte: 0.22–0.28 s
+  cold, 15–24 ms warm on that copy. Identical concurrent requests share one computation (a waiter holds no worker
+  thread), its answer is kept 3 s and dropped at once by a ledger append on the plane, a command, a create or a seen
+  cursor. An abandoned computation cannot be stopped (a worker thread), but it is cheap and serves the retry.
+- **Tray: a slow gateway is "slow to answer", not "Not responding".** A failed `/automations` fetch is retried after
+  10 s, then 20, 40, 80 and 120 s (reset by any answer) instead of on every pass; a probe that times out while the
+  gateway answered in the last 90 s shows *The gateway is slow to answer* (menu header detail, Scheduled line), and
+  the red "!" stays for no answer at all (refused, or nothing for 90 s).
 - **The mail notification check reads only what changed.** Every 15 s it listed every automation, read each
   automation's whole ledger, walked the active automations' occurrence trees and listed completed and failed runs
   (two more full scans): 7-25% of a core on the operator's idle gateway, 0.97 s a pass on an 11,500-run copy with no
@@ -15845,6 +15869,14 @@ browser on this computer from one elsewhere on the network
   shows "Gateway restarted at <time> after a hang —
   <reason>". `GET /api/health` reports its state. See
   [deployment.md](docs/deployment.md).
+- **Worker pools by kind of work** (`src/abstractgateway/work_pools.py`): blocking work leaves the
+  event loop through `off_loop(kind, fn, ...)` into one of three bounded pools: `light` (auth, `/me`,
+  live-update streams, one-record reads), `heavy` (run and artifact scans, listings, workflow reloads)
+  and `watchers` (mail, feeds, provider endpoints, model generation), sized by `serve --pool-light`,
+  `--pool-heavy` and `--pool-watchers`. A cached account service is found without the service lock, so
+  a build of another account's service never holds up `/me`. Browser sessions are kept in memory: the
+  sessions file stays the source of truth, this process's own writes apply at once, another
+  process's within 2 s, and `last_seen_at` is written at most once a minute, off the event loop.
 - **Nothing blocks the event loop**: a request body that arrived
   without a Content-Length (the console's `/apps/<id>/` proxy streams bodies)
   is buffered by the security middleware and replayed through

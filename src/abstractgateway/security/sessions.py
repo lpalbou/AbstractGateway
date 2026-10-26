@@ -26,6 +26,54 @@ _LOCKS: dict[Path, threading.RLock] = {}
 _LOCKS_GUARD = threading.Lock()
 _EPHEMERAL_SESSION_SECRET = secrets.token_bytes(48)
 
+# Sessions in memory (gateway load 2026-10-26): every authenticated browser request used to
+# read the whole sessions file (294 sessions on the operator's gateway), rewrite it to bump
+# `last_seen_at`, and read the user registry and the session secret, ON the event loop
+# (16 ms per request under load). The file stays the source of truth; this process keeps
+# what it last read or wrote:
+# - its own writes replace the memory at once (create, delete, expiry, refusals, touches);
+# - another process's write is seen within SESSION_CACHE_TTL_S: past it, one stat, and a
+#   read only when the file changed (inode/size/mtime);
+# - every write starts from a fresh stat, so it never overwrites a newer file;
+# - `last_seen_at` is written at most once per SESSION_TOUCH_INTERVAL_S per session, in a
+#   light worker thread, never on the loop.
+SESSION_CACHE_TTL_S = 2.0
+SESSION_TOUCH_INTERVAL_S = 60.0
+# path -> (file identity, records, monotonic time of the last check)
+_SESSION_CACHE: dict[Path, tuple[tuple, dict[str, "GatewaySessionRecord"], float]] = {}
+# users file path -> (file identity, records): the account check on each session request
+_REGISTRY_CACHE: dict[Path, tuple[tuple, dict[str, Any]]] = {}
+# secret file path -> (file identity, secret)
+_SECRET_CACHE: dict[Path, tuple[tuple, bytes]] = {}
+_RESOLVED: dict[str, Path] = {}
+_monotonic = __import__("time").monotonic
+
+
+def _file_identity(path: Path) -> tuple:
+    try:
+        st = os.stat(path)
+    except FileNotFoundError:
+        return ("absent",)
+    except OSError:
+        return ("unreadable",)
+    return (st.st_ino, st.st_size, st.st_mtime_ns)
+
+
+def _resolved(path: Path) -> Path:
+    key = str(path)
+    hit = _RESOLVED.get(key)
+    if hit is None:
+        hit = path.expanduser().resolve()
+        if len(_RESOLVED) > 64:
+            _RESOLVED.clear()
+        _RESOLVED[key] = hit
+    return hit
+
+
+def _read_session_file(path: Path) -> str:
+    """The one place the sessions file is read (counted by the tests)."""
+    return path.read_text(encoding="utf-8")
+
 
 def _now() -> datetime.datetime:
     return datetime.datetime.now(datetime.timezone.utc)
@@ -101,10 +149,15 @@ def _session_secret() -> bytes:
     if env_secret:
         return env_secret.encode("utf-8")
     path = _session_secret_path_from_env()
+    ident = _file_identity(path)
+    hit = _SECRET_CACHE.get(path)
+    if hit is not None and hit[0] == ident and ident[0] not in ("absent", "unreadable"):
+        return hit[1]
     try:
         if path.exists():
             secret = path.read_text(encoding="utf-8").strip()
             if secret:
+                _SECRET_CACHE[path] = (ident, secret.encode("utf-8"))
                 return secret.encode("utf-8")
         path.parent.mkdir(parents=True, exist_ok=True)
         secret = secrets.token_urlsafe(48)
@@ -306,16 +359,33 @@ def _lock_for(path: Path) -> threading.RLock:
         return lock
 
 
+def _registry_user(user_id: str, tenant_id: str) -> Any:
+    """`GatewayUserRegistry().get_user` without re-reading the users file on every request:
+    the records are kept per file identity (one stat per call; a changed file, e.g. an
+    account disabled or a password changed, is read again at once)."""
+    registry = GatewayUserRegistry()
+    path = registry.path
+    ident = _file_identity(path)
+    hit = _REGISTRY_CACHE.get(path)
+    if hit is None or hit[0] != ident:
+        with registry._lock:
+            records = registry._load_unlocked()
+        hit = (ident, records)
+        _REGISTRY_CACHE[path] = hit
+    from ..users import safe_principal_component
+
+    key = f"{safe_principal_component(tenant_id, default='default')}:{safe_principal_component(user_id, default='')}"
+    return hit[1].get(key)
+
+
 class GatewaySessionStore:
     def __init__(self, path: Optional[Path] = None):
-        self.path = (path or gateway_session_store_path_from_env()).expanduser().resolve()
+        self.path = _resolved(path or gateway_session_store_path_from_env())
         self._lock = _lock_for(self.path)
 
-    def _load_unlocked(self) -> dict[str, GatewaySessionRecord]:
-        if not self.path.exists():
-            return {}
+    def _parse(self, text: str) -> dict[str, GatewaySessionRecord]:
         try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
+            data = json.loads(text)
         except Exception:
             return {}
         rows = data.get("sessions") if isinstance(data, dict) else None
@@ -329,6 +399,28 @@ class GatewaySessionStore:
             if rec is not None:
                 out[rec.session_id] = rec
         return out
+
+    def _load_unlocked(self, *, fresh: bool = False) -> dict[str, GatewaySessionRecord]:
+        """A copy of the sessions (callers mutate it before a save). From memory within
+        SESSION_CACHE_TTL_S of the last check; past it (or `fresh`, before every write) one
+        stat, and a read only when the file changed."""
+        now = _monotonic()
+        hit = _SESSION_CACHE.get(self.path)
+        if hit is not None and not fresh and now - hit[2] < SESSION_CACHE_TTL_S:
+            return dict(hit[1])
+        ident = _file_identity(self.path)
+        if hit is not None and hit[0] == ident:
+            _SESSION_CACHE[self.path] = (ident, hit[1], now)
+            return dict(hit[1])
+        if ident[0] == "absent":
+            records: dict[str, GatewaySessionRecord] = {}
+        else:
+            try:
+                records = self._parse(_read_session_file(self.path))
+            except Exception:
+                records = {}
+        _SESSION_CACHE[self.path] = (ident, records, now)
+        return dict(records)
 
     def _save_unlocked(self, records: dict[str, GatewaySessionRecord]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -356,6 +448,8 @@ class GatewaySessionStore:
             os.chmod(self.path, 0o600)
         except Exception:
             pass
+        # Invalidated on write: memory is exactly what was written.
+        _SESSION_CACHE[self.path] = (_file_identity(self.path), {rec.session_id: rec for rec in live[:max_sessions]}, _monotonic())
 
     def create_session(
         self,
@@ -391,7 +485,7 @@ class GatewaySessionStore:
             last_seen_at=now.isoformat(),
         )
         with self._lock:
-            records = self._load_unlocked()
+            records = self._load_unlocked(fresh=True)
             records[sid] = record
             self._save_unlocked(records)
         return _encode_cookie(sid), csrf_token, record
@@ -402,6 +496,10 @@ class GatewaySessionStore:
         *,
         legacy_token_fingerprints: tuple[str, ...] = (),
     ) -> Optional[GatewayPrincipal]:
+        """The principal of a live session, or None (and the session is dropped) when it
+        expired, its account is disabled/archived/changed credentials, or its legacy token
+        is gone. Served from memory (see SESSION_CACHE_TTL_S); a refusal is written at once,
+        a `last_seen_at` bump at most once per SESSION_TOUCH_INTERVAL_S, off the caller."""
         sid = str(session_id or "").strip()
         if not sid:
             return None
@@ -413,33 +511,30 @@ class GatewaySessionStore:
                 return None
             expires = _parse_dt(rec.expires_at)
             if expires is not None and expires <= now:
-                records.pop(sid, None)
-                self._save_unlocked(records)
+                self._drop_unlocked(sid)
                 return None
             principal = rec.to_principal()
             if principal.source == "user-registry":
-                user = GatewayUserRegistry().get_user(principal.user_id, tenant_id=principal.tenant_id)
+                user = _registry_user(principal.user_id, principal.tenant_id)
                 if user is None or not user.enabled or user.archived:
-                    records.pop(sid, None)
-                    self._save_unlocked(records)
+                    self._drop_unlocked(sid)
                     return None
                 if rec.credential_fingerprint and rec.credential_fingerprint != registry_credential_fingerprint(user):
-                    records.pop(sid, None)
-                    self._save_unlocked(records)
+                    self._drop_unlocked(sid)
                     return None
                 principal = user.to_principal(token_fingerprint_value=rec.token_fingerprint)
                 if principal_barred_from_shared_runtime(principal):
                     # Minted before this rule existed, or while user accounts
                     # were on and the mode has since changed: the session
                     # would now land on the operator's shared runtime.
-                    records.pop(sid, None)
-                    self._save_unlocked(records)
+                    self._drop_unlocked(sid)
                     return None
             elif not legacy_principal_still_valid(principal, legacy_token_fingerprints=legacy_token_fingerprints):
-                records.pop(sid, None)
-                self._save_unlocked(records)
+                self._drop_unlocked(sid)
                 return None
-            records[sid] = GatewaySessionRecord(
+            seen = _parse_dt(rec.last_seen_at)
+            stale = seen is None or (now - seen).total_seconds() >= SESSION_TOUCH_INTERVAL_S
+            updated = GatewaySessionRecord(
                 session_id=rec.session_id,
                 user_id=principal.user_id,
                 tenant_id=principal.tenant_id,
@@ -452,10 +547,38 @@ class GatewaySessionStore:
                 csrf_hash=rec.csrf_hash,
                 created_at=rec.created_at,
                 expires_at=rec.expires_at,
-                last_seen_at=now.isoformat(),
+                last_seen_at=now.isoformat() if stale else rec.last_seen_at,
             )
-            self._save_unlocked(records)
+            if updated != rec:
+                # Memory first (the next requests see it, no second touch), the file in a
+                # light worker thread.
+                hit = _SESSION_CACHE.get(self.path)
+                if hit is not None:
+                    mem = dict(hit[1])
+                    mem[sid] = updated
+                    _SESSION_CACHE[self.path] = (hit[0], mem, hit[2])
+                _submit_session_write(self._persist_record, updated)
             return principal
+
+    def _drop_unlocked(self, sid: str) -> None:
+        records = self._load_unlocked(fresh=True)
+        if records.pop(sid, None) is not None:
+            self._save_unlocked(records)
+
+    def _persist_record(self, record: GatewaySessionRecord) -> None:
+        """Write one session's refreshed row onto the file's current content (never
+        resurrects a session deleted meanwhile)."""
+        try:
+            with self._lock:
+                records = self._load_unlocked(fresh=True)
+                if record.session_id not in records:
+                    return
+                records[record.session_id] = record
+                self._save_unlocked(records)
+        except Exception:  # noqa: BLE001 - a missed last_seen bump is not a failure
+            import logging
+
+            logging.getLogger("abstractgateway.security").warning("session touch write failed", exc_info=True)
 
     def verify_csrf_token(self, session_id: str, csrf_token: str) -> bool:
         sid = gateway_session_id_from_value(session_id)
@@ -473,11 +596,18 @@ class GatewaySessionStore:
         if not sid:
             return False
         with self._lock:
-            records = self._load_unlocked()
+            records = self._load_unlocked(fresh=True)
             existed = sid in records
             records.pop(sid, None)
             self._save_unlocked(records)
             return existed
+
+
+def _submit_session_write(fn: Any, *args: Any) -> None:
+    """Run a session write in the light pool (tests replace this to run it inline)."""
+    from ..work_pools import get_pool
+
+    get_pool("light").submit(fn, *args)
 
 
 def legacy_token_fingerprints(tokens: tuple[str, ...]) -> tuple[str, ...]:

@@ -240,6 +240,14 @@ browser on this computer from one elsewhere on the network
   shows "Gateway restarted at <time> after a hang —
   <reason>". `GET /api/health` reports its state. See
   [deployment.md](./deployment.md).
+- **Worker pools by kind of work** (`src/abstractgateway/work_pools.py`): blocking work leaves the
+  event loop through `off_loop(kind, fn, ...)` into one of three bounded pools: `light` (auth, `/me`,
+  live-update streams, one-record reads), `heavy` (run and artifact scans, listings, workflow reloads)
+  and `watchers` (mail, feeds, provider endpoints, model generation), sized by `serve --pool-light`,
+  `--pool-heavy` and `--pool-watchers`. A cached account service is found without the service lock, so
+  a build of another account's service never holds up `/me`. Browser sessions are kept in memory: the
+  sessions file stays the source of truth, this process's own writes apply at once, another
+  process's within 2 s, and `last_seen_at` is written at most once a minute, off the event loop.
 - **Nothing blocks the event loop**: a request body that arrived
   without a Content-Length (the console's `/apps/<id>/` proxy streams bodies)
   is buffered by the security middleware and replayed through
