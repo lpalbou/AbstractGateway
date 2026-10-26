@@ -355,6 +355,29 @@ ticking the data folder.
 
 See [automations.md](./automations.md#discuss-an-occurrence).
 
+### A flow's mail step is refused: `email_mailbox_read_only` or `email_mailbox_cannot_send`
+
+- `email_mailbox_read_only` ("This mailbox is read-only: automations only read it."): the step
+  marks, labels, moves, deletes, sends, replies or forwards on a mailbox you keep **Read only**.
+  In the console's **My email**, turn on **Read and write** for that mailbox, or
+  `PUT /api/gateway/me/email/accounts/{mailbox_id}/access` with `{"write": true}`.
+- `email_mailbox_cannot_send` ("This mailbox can't send: it has no outgoing server."): the
+  mailbox is Read and write but has no outgoing server (its row says *Can't send*). Give it one:
+  `PUT /api/gateway/me/email/accounts/{mailbox_id}/access` with `{"write": true, "smtp": {"host":
+  …, "port": …, "security": …}}` (without `smtp`, the provider's or the discovered server is used),
+  or the mailbox's **Settings** in My email.
+
+Both refusals happen before the gateway connects to the mailbox. See
+[email.md](./email.md#several-mailboxes).
+
+### A flow's alert never reached a device
+
+`GET /api/gateway/runs/{run_id}/after` answers, for that run, the alerts it raised (or why
+nothing rang: `quiet_reason`) and each delivery with its channel, route, device, time and state
+([api.md](./api.md#after-the-run-get-apigatewayrunsrun_idafter)). A *Notify me* alert whose
+`channels` leave out a device is not delivered there: the tray, the watch, the iPhone and email
+each read the alert's `channels` (none listed = every channel).
+
 ## Engines, models and apps
 
 ### Install buttons are disabled or answer `403`
@@ -405,6 +428,53 @@ The saved backlog folder no longer exists (a deleted or unmounted checkout).
 Choose **Use the gateway's own folder** in Continuum or the console, or run
 `abstractgateway config set triage_repo_root /path/to/checkout`. See
 [configuration.md](./configuration.md#backlog-folder-exec-runner-and-process-manager-continuum).
+
+## Load, split mode and push
+
+### A request answers `503` with `service_starting`
+
+The gateway was still building that account's service (the first request of the account after a
+start, or a restart of its runner). The answer carries `Retry-After: 1`: retry after a second.
+Other accounts and `GET /api/health` are not affected. If it persists, read the gateway log for
+the build's error: the next request answers that error once, then the build is tried again.
+
+### The gateway answers slowly or uses CPU while idle
+
+1. Read `GET /api/health`: `pools` shows each worker pool's `size`, `threads` and `queued`. Work
+   that stays queued in `heavy` (scans and listings of runs and artifacts) means more concurrent
+   scans than threads: raise `serve --pool-heavy N`, or find the client polling a listing.
+2. A restart after a hang leaves an incident file and a log excerpt
+   ([the watchdog entry](#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75)).
+3. `run_index` shows how run listings are answered (`serve --run-index verify|trusted`) and
+   `gc_tuning` whether the garbage-collector tuning is on (`serve --gc-tuning on`, the default).
+4. From a checkout, `scripts/perf/ci.sh` runs the same load test as CI against a synthetic data
+   folder and fails with the probe that went over its bound.
+
+See [configuration.md](./configuration.md#cli-flags).
+
+### `/v1` answers `503` with `runner_unavailable`
+
+The gateway runs in split mode (`serve --no-runner`) and no runner process answers: the API
+process never loads a model itself. Start `abstractgateway runner --data-dir DIR` with the same data
+dir. `GET /api/health` shows `runner_process: {pid, alive, heartbeat_fresh, model_host}` in the
+API process; `model_host: down` means no model host address is recorded in
+`<data dir>/split/model_host.json` (the runner removes it when it stops). See
+[configuration.md](./configuration.md#split-mode-api-and-runner-in-two-processes-opt-in).
+
+### The watch or the iPhone gets no alert
+
+- In the console, **My email → Notifications → Devices** lists the devices registered for your
+  account, with the last alert sent and the last error in words. No row: sign in to the app again
+  and allow its notifications; a registration not refreshed for 7 days expires.
+- **Push forwarder** (admins, same tab) must have an address in effect: this release has no
+  built-in forwarder, so set **Your own forwarder** or start with `--push-relay <URL>`. Save
+  probes the forwarder and says what it answered.
+- A *Notify me* alert rings only the apps its `channels` list; an approval that was answered
+  before the push left is never pushed.
+- Delivery is retried for an hour; `notification.failed` with channel `watch` or `phone` in your
+  event stream records an alert that could not be delivered.
+
+See [push.md](./push.md).
 
 ## Desktop
 
@@ -522,3 +592,4 @@ See [tray.md](./tray.md#restart-and-update).
 - [automations.md](./automations.md): automations, their routes and operations
 - [first-run.md](./first-run.md), [getting-started.md](./getting-started.md)
 - [configuration.md](./configuration.md), [security.md](./security.md)
+- [push.md](./push.md), [email.md](./email.md)

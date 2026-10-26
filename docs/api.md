@@ -1,7 +1,7 @@
 # AbstractGateway — API overview
 
 The HTTP API is implemented with FastAPI under the `/api` prefix:
-- Health: `GET /api/health` (unauthenticated; `status`, `runner`, `watchdog: {enabled, limit_s, last_tick_age_s}` — see [troubleshooting.md](./troubleshooting.md#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75)). The previous process's last watchdog incident is admin-only: `GET /api/gateway/host/runner` → `last_hang: {at, blocked_s, reason, top_frame, dump_path, file, line}` or `null`
+- Health: `GET /api/health` (unauthenticated; `status`, `runner` (each row with `mode`: `split` or `combined`, and `process`: `api`, `runner` or `combined`; in a split API process also `runner_process`), `watchdog: {enabled, limit_s, last_tick_age_s}` — see [troubleshooting.md](./troubleshooting.md#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75), `pools` (`light`, `heavy`, `watchers`: `{size, threads, queued}` each), `run_index` (`mode`: `verify` or `trusted`, `planes`, and the summed counters of every plane's run store) and `gc_tuning` (what `serve --gc-tuning` applied); the flags are in [configuration.md](./configuration.md#cli-flags) and split mode in [configuration.md](./configuration.md#split-mode-api-and-runner-in-two-processes-opt-in)). The previous process's last watchdog incident is admin-only: `GET /api/gateway/host/runner` → `last_hang: {at, blocked_s, reason, top_frame, dump_path, file, line}` or `null`
 - Gateway surface: `/api/gateway/*` (durable runs + operator tooling)
 
 The API is documented at runtime:
@@ -64,6 +64,11 @@ supported surface, access settings and errors.
 
 By default, `/api/gateway/*` is protected by `GatewaySecurityMiddleware` (bearer token + origin allowlist).  
 See: [security.md](./security.md).
+
+While the gateway builds an account's service (the first request of that account after a start,
+or a restart of its runner), requests for that account wait for it without blocking anyone else.
+A request that reaches a service still being built answers `503` with `{"detail": {"reason_code":
+"service_starting", …}}` and `Retry-After: 1`: retry after a second.
 
 All examples below assume:
 
@@ -1306,7 +1311,7 @@ event written twice (a retry, a repair after a crash) is stored once.
 | `trigger.event` | `{automation_id, occurrence_index, event_id, source_id, source_version, fired_at, run_id, session_id}` | an automation's occurrence starts (before its `run.started`) |
 | `attention.raised` | `{record_key, automation_id, run_id, index, kind, seq, channels}` | an automation records an attention item (`notify` or final failure); `record_key` names the ledger record, no title or body is copied |
 | `attention.seen` | `{automation_id, seq}` | your seen cursor of an automation moves (`POST /automations/{id}/seen`) |
-| `attention.raised` (a wait) | `{kind: "approval" \| "question", wait_kind, run_id, session_id, wait_key, step_id, record_key, prompt_ref}` | a run parks on a person: a tool call awaiting approval, a question (`ask_user`, or an event wait with a prompt or choices); `prompt_ref` is the run (`GET /api/gateway/runs/{run_id}` carries the prompt and the calls awaiting approval) — nothing is copied |
+| `attention.raised` (a wait) | `{kind: "approval" \| "question", wait_kind, run_id, session_id, wait_key, step_id, record_key, prompt_ref}` | a run parks on a person: a tool call awaiting approval, a question (`ask_user`, or an event wait with a prompt or choices); `prompt_ref` is the run (`GET /api/gateway/runs/{run_id}` carries the prompt and the calls awaiting approval) — nothing is copied. A flow editor's draft test run (hidden from the run listings) never raises one, and an open wait of one is closed when the gateway starts |
 | `attention.seen` (a wait) | `{kind, run_id, wait_key, step_id, outcome}` | that wait ends: `answered`, `approved`, `denied`, `timed_out`, `cancelled` or `failed` |
 | `notification.sent`, `notification.failed` | `{channel, notice, …}` | a notice reached a channel or could not: `console` (the item is listed), `email` (the outbox sent it, or failed with `code`, `cause`), `tray` (the desktop tray showed it), `watch` / `phone` with `via: "push"` (Apple accepted the push, or an approval or question could not be pushed within an hour; see [push.md](./push.md)) |
 | `wake.scheduled` | `{automation_id, session_id, origin_run_id, at \| on}` | a run asked for work later (`schedule_run`, the `SCHEDULE_RUN` effect): the gateway created a one-shot automation that will run in the caller's session |

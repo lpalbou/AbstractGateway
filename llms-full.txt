@@ -1838,40 +1838,54 @@ Evidence: `src/abstractgateway/split_mode.py`, `src/abstractgateway/cli.py` (`ru
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]`
-  (`--no-tray`: no menu bar / tray icon for this run, for a test or scratch
-  gateway next to your usual one; a start with `--host 127.0.0.1`, a `--port`
-  other than the configured one and `--print-token` is treated as a test
-  gateway and shows no icon either; `--watchdog-seconds N`, default 30, `0` = off:
-  a gateway whose event loop stays blocked for N seconds writes the blocked
-  stacks to its log and exits with code 75 so its service manager restarts it,
-  see [deployment.md](docs/deployment.md); `--unsandboxed-commands`, off by
-  default and with no environment variable: on a host with no command sandbox
-  (no macOS `sandbox-exec`, no Linux bubblewrap/Landlock), let commands run
-  unsandboxed instead of refusing them. It is audited at boot and shown on the
-  console. The split `abstractgateway runner` takes the same flag. See
-  [security.md](docs/security.md#command-sandbox))
-  `serve --push-relay <URL|off>` (default `off`, no environment variable): the
-  relay this gateway sends Apple push requests to for the watch and iPhone
-  apps; the split `abstractgateway runner` takes it too. See [push.md](docs/push.md)
-  `serve --pool-light N --pool-heavy N --pool-watchers N` (defaults 8, 4 and 16, from 1 to 256, no
-  environment variable): the threads for quick work (sign-in, `/me`, live-update streams, one-record
-  reads), for scans and listings of runs and artifacts and workflow reloads, and for long waits outside
-  the gateway (mail, feeds, provider endpoints, model generation). Quick work never waits behind a scan;
-  more scans than `--pool-heavy` wait their turn. `GET /api/health` reports each pool's `size`,
-  `threads` and `queued` under `pools`. Evidence: `src/abstractgateway/work_pools.py`
-  `serve --run-index trusted|verify` (default `verify`, no environment variable): how run listings are
-  answered. `verify` lets the folder scan answer and compares the in-memory run index with it; `trusted`
-  answers from the index with no scan. `GET /api/health` reports `run_index`: the mode, the planes
-  counted and the summed counters of every plane's run store (`shadow_mismatches` must stay 0 before
-  `trusted` becomes the default). Evidence: `src/abstractgateway/stores.py`
-  `serve --gc-tuning on|off` (default `on`, no environment variable): once the boot is done, freeze the
-  objects it built and raise the garbage collector's thresholds, so a full collection no longer pauses the
-  gateway for seconds; `off` keeps Python's defaults. `GET /api/health` reports what was applied under
-  `gc_tuning`. Evidence: `src/abstractgateway/service.py`
-  A service the gateway is still building (the first request of an account, a restart) is built in its
-  own thread: requests wait for it without holding the event loop, `GET /api/health` keeps answering, and a
-  route that reaches it any other way answers `503` `service_starting` with `Retry-After: 1`.
+- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]`.
+  Host and port default to the [network exposure](#network-exposure-localhost--local-network--internet)
+  setting; with none stored, `--host` defaults to `127.0.0.1` when no auth is configured, else
+  `0.0.0.0`, and `--port` to `8080`. Explicit flags override the setting.
+  `--unsandboxed-commands`, `--push-relay`, `--pool-*`, `--run-index` and `--gc-tuning` have no
+  environment variable.
+  - `--no-runner`: serve the HTTP API only, next to `abstractgateway runner`
+    ([split mode](#split-mode-api-and-runner-in-two-processes-opt-in)).
+  - `--no-tray`: no menu bar / tray icon for this run, for a test or scratch gateway next to your
+    usual one. A start with `--host 127.0.0.1`, a `--port` other than the configured one and
+    `--print-token` is treated as a test gateway and shows no icon either.
+  - `--watchdog-seconds N` (default 30, `0` = off): a gateway whose event loop stays blocked for N
+    seconds writes the blocked stacks to its log and exits with code 75 so its service manager
+    restarts it; see [deployment.md](docs/deployment.md).
+  - `--unsandboxed-commands` (off by default): on a host with no command sandbox (no macOS
+    `sandbox-exec`, no Linux bubblewrap/Landlock), let commands run unsandboxed instead of refusing
+    them. It is audited at boot and shown on the console. The split `abstractgateway runner` takes
+    the same flag. See [security.md](docs/security.md#command-sandbox).
+  - `--push-relay <URL|off>`: the push forwarder this gateway sends Apple push requests to for the
+    watch and iPhone apps, for this run; it wins over the saved Push forwarder setting. The split
+    `abstractgateway runner` takes it too. See [push.md](docs/push.md).
+  - `--pool-light N`, `--pool-heavy N`, `--pool-watchers N` (defaults 8, 4 and 16, from 1 to 256):
+    the threads for quick work (sign-in, `/me`, live-update streams, one-record reads), for scans
+    and listings of runs and artifacts and workflow reloads, and for long waits outside the gateway
+    (mail, feeds, provider endpoints, model generation). Quick work never waits behind a scan; more
+    scans than `--pool-heavy` wait their turn. `GET /api/health` reports each pool's `size`,
+    `threads` and `queued` under `pools`. Evidence: `src/abstractgateway/work_pools.py`.
+  - `--run-index trusted|verify` (default `verify`): how run listings are answered. `verify` lets
+    the folder scan answer and compares AbstractRuntime's in-memory run index with it; `trusted`
+    answers from the index with no scan. `GET /api/health` reports `run_index`: the mode, the planes
+    counted and the summed counters of every plane's run store (`shadow_mismatches` counts the
+    listings where the index and the scan differed; 0 means the index would have answered every
+    listing the same). Evidence: `src/abstractgateway/stores.py`.
+  - `--gc-tuning on|off` (default `on`): once the boot is done, freeze the objects it built and
+    raise the garbage collector's thresholds, so a full collection no longer pauses the gateway for
+    seconds; `off` keeps Python's defaults. `GET /api/health` reports what was applied under
+    `gc_tuning`. Evidence: `src/abstractgateway/service.py`.
+
+  An account's service (built at the first request of that account, and again when its runner
+  restarts) is built in its own thread: requests wait for it without holding the event loop,
+  `GET /api/health` keeps answering, and a route that reaches it any other way answers `503`
+  `service_starting` with `Retry-After: 1`.
+  Evidence: `src/abstractgateway/cli.py`
+- `abstractgateway runner [--data-dir DIR] [--unsandboxed-commands] [--push-relay URL|off]`: the
+  runner process of [split mode](#split-mode-api-and-runner-in-two-processes-opt-in) (runs, the
+  model and the `/v1` model host, mail, feeds, push, bridges)
+- `abstractgateway push-relay --apns-key-file F --key-id K --team-id T --topic BUNDLE_ID … [--listen HOST:PORT]`:
+  run the stateless Apple push relay with your own key (extra `push-relay`; [push.md](docs/push.md#run-your-own-relay))
 - `scripts/perf/ci.sh [--cpu-max PCT] [--port P] [--work DIR] [--reuse-fixture]` (from a checkout): the
   load test CI runs on pull requests and every night (`.github/workflows/perf.yml`). It builds a synthetic
   data folder (`scripts/perf/make_fixture.py`: 10k runs, 100k artifacts, 50 automations, no real data),
@@ -1879,12 +1893,6 @@ Most-used:
   paused) and fails when a p99 goes over its bound (`/me` 50 ms, `/triggers/connections` 100 ms, session
   artifacts 100 ms, `/runs?limit=20` 200 ms, `/automations` 500 ms), a probe answers anything but 200, or
   CPU at rest over 2 minutes goes over `--cpu-max` (default 5% of a core, 10% on CI runners)
-- `abstractgateway push-relay --apns-key-file F --key-id K --team-id T --topic BUNDLE_ID … [--listen HOST:PORT]`:
-  run the stateless Apple push relay with your own key (extra `push-relay`; [push.md](docs/push.md#run-your-own-relay))
-  (host/port default to the [network exposure](#network-exposure-localhost--local-network--internet)
-  setting; with none stored, `--host` defaults to `127.0.0.1` when no auth is
-  configured, else `0.0.0.0`, and `--port` to `8080`. Explicit flags override the setting.)
-  Evidence: `src/abstractgateway/cli.py`
 - `abstractgateway network status|set|addresses|restart`: who can reach the
   gateway and the URLs to copy ([network exposure](#network-exposure-localhost--local-network--internet))
 - `abstractgateway claim [--open] [--port P | --url URL] [--json]`: one-time
@@ -1896,7 +1904,6 @@ Most-used:
   registration runs plain `serve`; `--host/--port` are written into the
   [network exposure](#network-exposure-localhost--local-network--internet)
   setting, or onto the command line with `--pin-command-line`
-- `abstractgateway runner` (worker only)
 - `abstractgateway config status --json`
 - `abstractgateway config get [KEY] [--json]`, `config set KEY VALUE`, `config unset KEY`:
   runtime settings from a terminal ([backlog folder, exec runner, process
@@ -3171,6 +3178,7 @@ Every error uses the OpenAI envelope, so SDKs raise their usual exceptions:
 | 404 | unknown route, an unknown provider or model, or the API is stopped | `model_not_found`, `endpoint_stopped` |
 | 429 | too many refused keys from one address | `auth_lockout` |
 | 500 | a structured answer that still does not match `response_format` | `structured_output_invalid` |
+| 503 | split mode only: the API process forwards `/v1` to the runner process, and no runner process answers (start `abstractgateway runner` on the same data dir; see [configuration.md](docs/configuration.md#split-mode-api-and-runner-in-two-processes-opt-in)) | `runner_unavailable` |
 
 Each response carries `x-request-id`.
 
@@ -4173,9 +4181,15 @@ twice.
   the Assistant.*) or your answer (*A question for you*) is announced once.
   Notifications have no click action: open the Assistant from the tray menu
   (**Apps ▸ Launch Assistant**).
+- **A notification per published alert.** A flow's *Notify me* or *Publish to
+  channel* step with an alert shows its title · *New on <channel> — open the
+  Assistant.* An alert whose `channels` (Notify me's "Where") leave out `tray`
+  is neither shown nor counted by the tray; an alert with no `channels` goes
+  everywhere
+  ([api.md](docs/api.md#your-event-stream-apigatewaymeevents)).
 - **The count.** The icon's tooltip says how many things wait for you
-  (`2 things waiting for you`): automation items not yet seen and conversations
-  waiting on you; seeing an item in a client (the console, the Assistant, the
+  (`2 things waiting for you`): automation items and published alerts not yet
+  seen and conversations waiting on you; seeing an item in a client (the console, the Assistant, the
   watch) or answering the wait lowers it.
 - **Delivery is recorded.** Each notification shown (or that this desktop
   cannot show) is written to your stream as `notification.sent` /
@@ -4812,7 +4826,7 @@ from zero on the next download; files that were complete are kept.
 # AbstractGateway — API overview
 
 The HTTP API is implemented with FastAPI under the `/api` prefix:
-- Health: `GET /api/health` (unauthenticated; `status`, `runner`, `watchdog: {enabled, limit_s, last_tick_age_s}` — see [troubleshooting.md](docs/troubleshooting.md#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75)). The previous process's last watchdog incident is admin-only: `GET /api/gateway/host/runner` → `last_hang: {at, blocked_s, reason, top_frame, dump_path, file, line}` or `null`
+- Health: `GET /api/health` (unauthenticated; `status`, `runner` (each row with `mode`: `split` or `combined`, and `process`: `api`, `runner` or `combined`; in a split API process also `runner_process`), `watchdog: {enabled, limit_s, last_tick_age_s}` — see [troubleshooting.md](docs/troubleshooting.md#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75), `pools` (`light`, `heavy`, `watchers`: `{size, threads, queued}` each), `run_index` (`mode`: `verify` or `trusted`, `planes`, and the summed counters of every plane's run store) and `gc_tuning` (what `serve --gc-tuning` applied); the flags are in [configuration.md](docs/configuration.md#cli-flags) and split mode in [configuration.md](docs/configuration.md#split-mode-api-and-runner-in-two-processes-opt-in)). The previous process's last watchdog incident is admin-only: `GET /api/gateway/host/runner` → `last_hang: {at, blocked_s, reason, top_frame, dump_path, file, line}` or `null`
 - Gateway surface: `/api/gateway/*` (durable runs + operator tooling)
 
 The API is documented at runtime:
@@ -4875,6 +4889,11 @@ supported surface, access settings and errors.
 
 By default, `/api/gateway/*` is protected by `GatewaySecurityMiddleware` (bearer token + origin allowlist).
 See: [security.md](docs/security.md).
+
+While the gateway builds an account's service (the first request of that account after a start,
+or a restart of its runner), requests for that account wait for it without blocking anyone else.
+A request that reaches a service still being built answers `503` with `{"detail": {"reason_code":
+"service_starting", …}}` and `Retry-After: 1`: retry after a second.
 
 All examples below assume:
 
@@ -6117,7 +6136,7 @@ event written twice (a retry, a repair after a crash) is stored once.
 | `trigger.event` | `{automation_id, occurrence_index, event_id, source_id, source_version, fired_at, run_id, session_id}` | an automation's occurrence starts (before its `run.started`) |
 | `attention.raised` | `{record_key, automation_id, run_id, index, kind, seq, channels}` | an automation records an attention item (`notify` or final failure); `record_key` names the ledger record, no title or body is copied |
 | `attention.seen` | `{automation_id, seq}` | your seen cursor of an automation moves (`POST /automations/{id}/seen`) |
-| `attention.raised` (a wait) | `{kind: "approval" \| "question", wait_kind, run_id, session_id, wait_key, step_id, record_key, prompt_ref}` | a run parks on a person: a tool call awaiting approval, a question (`ask_user`, or an event wait with a prompt or choices); `prompt_ref` is the run (`GET /api/gateway/runs/{run_id}` carries the prompt and the calls awaiting approval) — nothing is copied |
+| `attention.raised` (a wait) | `{kind: "approval" \| "question", wait_kind, run_id, session_id, wait_key, step_id, record_key, prompt_ref}` | a run parks on a person: a tool call awaiting approval, a question (`ask_user`, or an event wait with a prompt or choices); `prompt_ref` is the run (`GET /api/gateway/runs/{run_id}` carries the prompt and the calls awaiting approval) — nothing is copied. A flow editor's draft test run (hidden from the run listings) never raises one, and an open wait of one is closed when the gateway starts |
 | `attention.seen` (a wait) | `{kind, run_id, wait_key, step_id, outcome}` | that wait ends: `answered`, `approved`, `denied`, `timed_out`, `cancelled` or `failed` |
 | `notification.sent`, `notification.failed` | `{channel, notice, …}` | a notice reached a channel or could not: `console` (the item is listed), `email` (the outbox sent it, or failed with `code`, `cause`), `tray` (the desktop tray showed it), `watch` / `phone` with `via: "push"` (Apple accepted the push, or an approval or question could not be pushed within an hour; see [push.md](docs/push.md)) |
 | `wake.scheduled` | `{automation_id, session_id, origin_run_id, at \| on}` | a run asked for work later (`schedule_run`, the `SCHEDULE_RUN` effect): the gateway created a one-shot automation that will run in the caller's session |
@@ -9920,7 +9939,7 @@ appear on the last page of `GET /api/gateway/automations` with `legacy: true`,
 runs, resumes them and applies commands on a data folder: the runner. Run
 either `abstractgateway serve` (API and runner in one process) or the split
 shape, `abstractgateway runner` plus `abstractgateway serve --no-runner`, on
-one data folder ([getting-started.md](docs/getting-started.md#3-split-api-vs-runner-recommended-for-upgrades)).
+one data folder ([getting-started.md](docs/getting-started.md#3-split-api-and-runner-opt-in)).
 In the split shape the API process only creates automations and discussions
 and queues commands; the runner does the rest. The lock that serializes an
 automation's steps and commands works inside one process, so do not point a
@@ -10022,6 +10041,179 @@ number of their own.
 
 ---
 
+## docs/push.md
+
+# Push to the watch and the iPhone
+
+When something needs you — an approval, a question, a published alert, an automation's result or
+failure — the AbstractAssistant apps on your Apple Watch and iPhone show it within seconds, even
+when the app is closed. This page explains how that works, the one setting a self-hoster may change,
+how to run your own relay with your own Apple key, and exactly what leaves your gateway.
+
+It builds on [your event stream](docs/api.md#your-event-stream-apigatewaymeevents): a push is only a
+hint that the stream holds something new; the app reads the real event from your gateway. For the
+other notification paths (the desktop tray, email) see [tray.md](docs/tray.md) and
+[email.md](docs/email.md).
+
+## For people: nothing to configure
+
+Sign in to the AbstractAssistant app on your watch or iPhone and allow notifications. The app
+registers itself with your gateway at sign-in and refreshes the registration at least once a week;
+signing out removes it. The system's notification permission for the app is the only switch.
+
+You can see the devices that get your alerts in the console: **My email → Notifications →
+Devices** (web and terminal console) lists each watch or iPhone with its name, when it last
+registered, the last alert sent, and the last error in plain words.
+
+What you get:
+
+| Something waits for you | Alert | Level |
+|---|---|---|
+| a run asks for your approval | Approval needed | time-sensitive |
+| a run asks you a question | Question | time-sensitive |
+| a flow published an alert to you | the publication's title | passive |
+| an automation has a result | *<automation> has a result* | passive |
+| an automation failed | *<automation> failed* | passive |
+
+An approval that is answered before the push leaves (on another device, in the console) is never
+pushed. A watch registered in the last 24 hours takes the alerts; otherwise the iPhone does, so
+your wrist rings once. A registration not refreshed for 7 days expires.
+
+A flow's *Notify me* alert can choose where it goes (its `channels`: `tray`, `watch`, `phone`,
+`email`, `console`). Push then rings only the listed apps, the watch first among them: an alert
+for `watch` alone never falls back to the iPhone, and one that lists neither is not pushed. An
+alert with no `channels` goes everywhere, as above. `GET /api/gateway/runs/{run_id}/after` shows,
+for a run, which alerts it raised and where each was delivered
+([api.md](docs/api.md#after-the-run-get-apigatewayrunsrun_idafter)).
+
+## For the operator: nothing to set
+
+The gateway sends its push requests to a push forwarder (the relay described below). The address is
+built in: the publisher's forwarder, once it is live. This release has none built in, so pushes stay
+off until you run your own forwarder.
+
+### Your own forwarder
+
+One setting, nothing else. As an admin, open **My email → Notifications → Push forwarder** in the
+web or terminal console, choose **Edit**, then **Your own forwarder**, and give its address:
+`https://…`, or `http://` for a forwarder on the same computer (`http://127.0.0.1:8095`). The
+other two choices are **Built-in forwarder** (the default) and **Off**. Save asks the forwarder for
+its apps once (`GET <address>/v1/info`) and says what it answered or why it could not be reached;
+the address is saved either way and used at once, without a restart. The setting is gateway-wide,
+in `<gateway data dir>/push/settings.json` (nothing secret in it); the API is
+[`GET|PUT /api/gateway/push/settings`](docs/api.md#push-forwarder-apigatewaypushsettings).
+
+A launch flag overrides the saved setting for one run:
+
+```bash
+abstractgateway serve --push-relay https://push.example.org   # or --push-relay off
+```
+
+The address in use is the `--push-relay` flag of this run, else the saved setting, else the
+built-in forwarder. While the flag wins, the console says *set by the launch flag for this run*.
+There is no environment variable.
+
+- With no address (off), the gateway runs no push dispatcher: no thread, no outbound connection.
+  Saving an address starts it.
+- With an address but no registered device, the dispatcher does no work and opens no connection.
+  The gateway contacts the forwarder only once a device has registered.
+- Turning the forwarder on never pushes what happened while it was off.
+- In the split layout (`serve --no-runner` plus `abstractgateway runner`), the runner process sends
+  and reads the saved setting too: without a flag it keeps one parked thread that checks the
+  settings file every 2 seconds, so a saved address reaches it without a restart. A `--push-relay`
+  flag goes to both processes.
+
+Delivery is retried for an hour (after 2 s, 10 s, 60 s, 5 min, then every 15 min). An approval or
+a question that could not be delivered in that hour is recorded as `notification.failed` in your
+event stream; each delivered alert is recorded as `notification.sent` with channel `watch` or
+`phone` and `via: "push"`. A relay outage writes at most one log line per hour.
+
+State lives in the data folder of each account (`<data dir>/push/`, private files):
+`devices.json` (the registrations), `cursor.json` (the last event read; the first start begins at
+the newest event, so history is never pushed) and `outbox.sqlite3` (one row per alert and device,
+at most 5,000, finished rows kept 7 days). `<gateway data dir>/push/token_owners.json` records which
+account holds each device token: when another account signs in on the same app, the token moves
+to it.
+
+## Run your own relay
+
+Apple only delivers notifications signed with the app publisher's key, so a self-hosted gateway
+cannot talk to Apple directly. The relay is the small service that holds that key. It ships with
+the gateway:
+
+```bash
+pip install "abstractgateway[push-relay]"
+abstractgateway push-relay \
+  --apns-key-file AuthKey_ABC123DEFG.p8 --key-id ABC123DEFG --team-id TEAM123456 \
+  --topic com.example.assistant --topic com.example.assistant.watchkitapp \
+  --listen 127.0.0.1:8095
+```
+
+- `--apns-key-file`, `--key-id`, `--team-id`: the APNs authentication key (`.p8`) from your Apple
+  developer account, its Key ID and your Team ID.
+- `--topic`: the bundle ids of the apps you build and sign; any other topic is refused.
+- `--listen` (default `127.0.0.1:8095`): put a TLS reverse proxy in front of it, and pass
+  `--forwarded-allow-ips` with the proxy's address so the per-IP limit sees the caller.
+
+The `push-relay` extra adds the HTTP/2 client Apple requires (`httpx[http2]`) and `cryptography`
+for the provider token. A gateway that only sends to a relay needs neither.
+
+Then save its address as the gateway's Push forwarder ([Your own forwarder](#your-own-forwarder)). A gateway accepts
+registrations for the two packaged apps (`ai.abstractframework.assistant`, the iPhone app,
+and `ai.abstractframework.assistant.watchkitapp`, its watch companion) and for the topics your relay lists at `GET /v1/info`.
+
+The relay is stateless: it stores nothing, keeps its rate limits in memory and reuses its signed
+provider token for at most 40 minutes. Limits: 30 alerts an hour and 300 a day per device token,
+600 requests an hour per source address.
+
+## Privacy: what the relay and Apple see
+
+The relay accepts no text. A request is exactly:
+
+```json
+{"topic": "ai.abstractframework.assistant.watchkitapp", "env": "production",
+ "token": "<APNs device token>", "kind": "approval",
+ "collapse": "<32 hex>", "seq": 42, "reg": "<16-32 hex>"}
+```
+
+- `kind` is one of `approval`, `question`, `notify`, `result`, `failure`.
+- `collapse` is `sha256("attention:" + record_key)` cut to 32 hex characters: an opaque id that
+  lets the system replace a notification instead of showing it twice. Run ids and record keys never
+  leave the gateway.
+- `seq` is the event's number in your stream, so the app can fetch exactly that event.
+- `reg` is a handle the app chose at sign-in; an alert meant for an earlier sign-in shows as
+  *From an earlier sign-in*.
+
+The relay and Apple therefore see the device token, the app, the kind of alert, the event number
+and the time — never a title, a name, a prompt or any content. The relay's logs hold
+`sha256(token)` cut to 12 characters, never a token. The relay also sees your gateway's IP address,
+and only once a device has registered.
+
+### The fixed messages
+
+The relay builds the notification itself, always the same localized message per kind
+(`title-loc-key: push.<kind>.title`, `loc-key: push.<kind>.body`), so a device token in the wrong
+hands can never carry words under the app's name. The app's notification service extension then
+fetches the event from your gateway and replaces the generic text with the real one (the name of
+the automation, the title of the publication). If the fetch times out, the generic text stays.
+
+The APNs request: `apns-push-type: alert`, `apns-priority` 10 for approvals and questions and 5
+otherwise, `apns-collapse-id` = `collapse`, expiry after 24 hours, and the body
+`{aps: {alert: {title-loc-key, loc-key}, sound: "default", mutable-content: 1,
+interruption-level: "time-sensitive" | "passive", thread-id: <kind>}, s: <seq>, r: <reg>}`.
+
+## Reference
+
+- Routes: [api.md, Push devices](docs/api.md#push-devices-apigatewaymepushdevices).
+- Relay answers: 200 `{status: sent}`; 200 `{status: gone, since_ms}` when the token is no longer
+  valid (the gateway removes a registration only when Apple's time is later than its last
+  refresh); 200 `{status: rejected, reason}`; 429 or 503 `{status: retry, after_s}`; 400
+  `{status: invalid, reason}` for a malformed request (413 past 1 KB).
+- Evidence: `src/abstractgateway/push/` (`dispatcher.py`, `store.py`, `relay.py`, `settings.py`),
+  `src/abstractgateway/routes/push.py`, `src/abstractgateway/console_push.py`.
+
+---
+
 ## docs/email.md
 
 # Email: your address and your mailboxes
@@ -10046,8 +10238,9 @@ encrypted in that user's data home and is used for:
 
 Nothing reads your mail by default: no watcher runs until you create an email-triggered
 automation, and your agents get no email tools until you switch **Agent email tools** on. Without an account there is no sending and no
-email notification; the gateway has no shared "system" sender. The mailbox is only read: nothing marks messages read, moves or
-deletes them.
+email notification; the gateway has no shared "system" sender. The mail watcher only reads: it never marks messages read,
+moves or deletes them. Only a flow's own mail steps (mark, label, move, delete, send, reply, forward) change a mailbox or send
+from it, and only a mailbox you keep **Read and write** ([Several mailboxes](#several-mailboxes)).
 
 This page is the user and operator guide. The HTTP surface is listed in [api.md](docs/api.md#email),
 the security model in [security.md](docs/security.md#per-user-email), and the consoles in
@@ -10261,7 +10454,10 @@ curl -sS -X PUT -H "$AUTH" -H "Content-Type: application/json" \
   "In My email, turn on Read and write for <address> to change it or send from it."). Read and
   write also stores and tests its outgoing server (SMTP: the one you give, else the provider's or
   the domain's standard one), so automations can change it and send as it. Your primary mailbox is
-  always read and write. (`"send": true` is accepted as the older name of `"write": true`.)
+  always read and write. (`"send": true` is accepted as the older name of `"write": true`.) A
+  Read and write mailbox whose outgoing server is missing reads *Can't send* (`mailbox.state:
+  receive_only`): a flow's send, reply or forward on it is refused with `email_mailbox_cannot_send`
+  ("This mailbox can't send: it has no outgoing server."), while mark, label, move and delete work.
 - Change the access of a connected mailbox without adding it again: `PUT
   /me/email/accounts/<id>/access` with `{"write": true}` or `{"write": false}` (in the console: the
   row's **Read and write** switch). Turning it on adds and signs in to its outgoing server with the
@@ -10338,6 +10534,7 @@ Two options stand on their own, with no switch involved:
 |---|---|
 | an automation's **Email result** (`notify.channels` holds `email`) | every completed occurrence of that automation; full result to `notify.recipients` (default self) |
 | a run's **email me when done** (`_runtime.notify = {"on": ["finished", "failed"], "channels": ["email"]}`) | that run finished or failed, as asked |
+| a flow's **Notify me** alert (a *Publish to channel* with an alert) whose `channels` list `email`, or that lists no channels | the flow raised that alert: "“<flow>” notified you." with the flow's own title and text below it, labelled as written by the flow |
 
 `GET/PUT /api/gateway/me/notifications` keep working: the earlier five-event body is accepted,
 `automation_failed` counts for `job_failed`, and `automation_result` / `job_finished` are ignored
@@ -11015,8 +11212,15 @@ Rust app (`cargo install abstractgateway-console`). See
 Each user can connect their own mailbox (Accounts → **Email** on their own row in the web
 console, `@` on their own row in the terminal console, or `/api/gateway/me/email`): automations
 can run when mail arrives, results and approvals can be emailed to the user,
-and agents can use email tools when an administrator makes them available. See
-[docs/email.md](docs/email.md).
+and agents can use email tools when an administrator makes them available.
+Further mailboxes are **Read only** (automations only read them) or **Read and
+write** (a flow's mail steps may mark, move, delete and send), your choice per
+mailbox. See [docs/email.md](docs/email.md).
+
+The AbstractAssistant apps on the Apple Watch and iPhone register with the
+gateway at sign-in and get alerts (approvals, questions, a flow's *Notify me*,
+automation results) while the app is closed, through a push relay that never
+sees any content. See [docs/push.md](docs/push.md).
 
 ## Docker server
 
@@ -11155,6 +11359,11 @@ model. Details: [docs/api.md](docs/api.md) and [docs/faq.md](docs/faq.md).
   an agent scheduled with `schedule_run`, notifications shown:
   `GET /api/gateway/me/events` (catch-up) and `/me/events/stream` (SSE)
   ([docs/events-examples.md](docs/events-examples.md))
+- Clients **read back what happened after a run**: what arrived, how it
+  ended, the alerts it raised (a flow's *Notify me* chooses its channels:
+  tray, watch, phone, email, console) and where each was delivered:
+  `GET /api/gateway/runs/{run_id}/after`
+  ([docs/api.md](docs/api.md#after-the-run-get-apigatewayrunsrun_idafter))
 - Clients **act** by submitting durable commands: `POST /api/gateway/commands`
   - supported types: `pause|resume|cancel|conclude|emit_event|update_schedule|compact_memory|inject_guidance`,
     plus the `automation.*` commands for an automation
@@ -11236,6 +11445,9 @@ Upload it with `POST /api/gateway/bundles/upload`, or place it in
 `ABSTRACTGATEWAY_FLOWS_DIR`.
 
 See [docs/getting-started.md](docs/getting-started.md) for running, split API/runner, and file→SQLite migration.
+Split mode, the worker pools (`serve --pool-light/--pool-heavy/--pool-watchers`), the run index
+(`--run-index`) and the garbage-collector tuning (`--gc-tuning`) are in
+[docs/configuration.md](docs/configuration.md#cli-flags).
 
 ## Docs
 
@@ -11249,6 +11461,8 @@ Published docs site: https://www.lpalbou.info/AbstractGateway/
 - Automations: [docs/automations.md](docs/automations.md)
 - Events and triggers, examples: [docs/events-examples.md](docs/events-examples.md)
 - Email: [docs/email.md](docs/email.md)
+- Watch and iPhone alerts (push): [docs/push.md](docs/push.md)
+- OpenAI-compatible API: [docs/openai-api.md](docs/openai-api.md)
 - Configuration: [docs/configuration.md](docs/configuration.md)
 - Consoles: [docs/console.md](docs/console.md)
 - Apps: [docs/apps.md](docs/apps.md)
@@ -11300,23 +11514,23 @@ Related repos:
 | Page | Read it for |
 |---|---|
 | [first-run.md](docs/first-run.md) | the zero-configuration start on your own machine: one-time sign-in link, first-run guide, start at login |
-| [getting-started.md](docs/getting-started.md) | explicit setup: bundles, starting and scheduling runs, split API/runner, file vs SQLite stores |
-| [architecture.md](docs/architecture.md) | components, diagrams, the replay-first durable contract, automations, triggers, events and attention, live replies, the workspace guard, the desktop hand-over, deployment shapes |
-| [api.md](docs/api.md) | the client contract with curl examples: the gateway default workflow (`@default`), live replies, a run's workspace folder, durable commands, the automation routes, trigger connections and the signed webhook ingress, your event stream (`/me/events`, its vocabulary and the one-notification-per-machine rule), discovery, media, models, host state, `/about`; map of every route family |
-| [configuration.md](docs/configuration.md) | every setting: runtime settings, network exposure (detected addresses, Tailscale), apps, default agent workflows, stream replies, skills shelf, backlog, workspace policy, capability defaults, environment variables, CLI flags |
+| [getting-started.md](docs/getting-started.md) | explicit setup: bundles, starting and scheduling runs, split API and runner (opt-in), file vs SQLite stores |
+| [architecture.md](docs/architecture.md) | components, diagrams, the replay-first durable contract, worker pools and off-loop service builds, automations, triggers, events and attention (alerts with their channels, push), live replies, the workspace guard, the desktop hand-over, deployment shapes (split mode) |
+| [api.md](docs/api.md) | the client contract with curl examples: the gateway default workflow (`@default`), live replies, a run's workspace folder, durable commands, the automation routes, trigger connections, the well-known feed catalogue, sample inputs and the signed webhook ingress, your event stream (`/me/events`, its vocabulary, published alerts with `recipient` and `channels`, the one-notification-per-machine rule), After the run (`/runs/{run_id}/after`), push devices and the push forwarder setting, discovery, media, models, host state, `/about`; map of every route family |
+| [configuration.md](docs/configuration.md) | every setting: runtime settings, network exposure (detected addresses, Tailscale), apps, default agent workflows, stream replies, skills shelf, backlog, workspace policy, capability defaults, environment variables, split mode (API and runner in two processes), CLI flags (worker pools, run index, GC tuning, push relay) and the load test |
 | [faq.md](docs/faq.md) | recurring questions and limits |
-| [troubleshooting.md](docs/troubleshooting.md) | symptoms, causes and fixes: sign-in, network modes, runs, installs, downloads, tray, login service |
+| [troubleshooting.md](docs/troubleshooting.md) | symptoms, causes and fixes: sign-in, network modes, runs, automations and mail steps, installs, downloads, `503 service_starting`, a slow gateway, split mode, watch and iPhone alerts, tray, login service |
 
 ## Topic guides
 
 | Page | Read it for |
 |---|---|
-| [email.md](docs/email.md) | per-user email: connecting your own mailbox and further read-only mailboxes (password or OAuth2), recipient policy and send limits, automations on new mail, email notifications, account recovery by email, the administrator switch, migration from the retired environment variables |
+| [email.md](docs/email.md) | per-user email: connecting your own mailbox and further mailboxes, each Read only or Read and write (password or OAuth2), recipient policy and send limits, automations on new mail, email notifications, account recovery by email, the administrator switch, migration from the retired environment variables |
 | [automations.md](docs/automations.md) | automations: a workflow run on a trigger as a durable controller run; every route with its shapes, the error envelope, tool approval, typed waits and how to answer them, attention and `/seen`, wakes an agent schedules (`schedule_run`), discussions, run lists, legacy schedules, operations (one writer process, restart recovery, boot warm-up, the acceptance script) and the limits of v1 |
 | [events-examples.md](docs/events-examples.md) | events and triggers, three end-to-end examples with the exact commands: watch a mailbox and tell me when something important arrives, a digest of a news feed, run a flow when an external system calls my webhook (signed curl); following your event stream |
-| [push.md](docs/push.md) | alerts on the Apple Watch and iPhone while the app is closed: nothing to configure for people, the `--push-relay` flag, running your own relay with your own Apple key, what the relay and Apple see, the fixed messages |
+| [push.md](docs/push.md) | alerts on the Apple Watch and iPhone while the app is closed: nothing to configure for people, the Push forwarder setting and the `--push-relay` flag, alerts that choose their channels, running your own relay with your own Apple key, what the relay and Apple see, the fixed messages |
 | [openai-api.md](docs/openai-api.md) | the OpenAI-compatible API at `/v1`: connecting apps and SDKs, what is supported, Protected/Open and Who can connect, errors, the request log, moving from `/core/v1` |
-| [console.md](docs/console.md) | the web console at `/console` (the grouped sidebar and every tab, including Accounts, Workflows and Triggers; responsive layout on phones and tablets) and the `abstractgateway-console` terminal app (its screens and keys) |
+| [console.md](docs/console.md) | the web console at `/console` (the grouped sidebar and every tab, including Accounts, My email (mailboxes, notifications, watch and iPhone devices, the push forwarder), Workflows and Triggers (well-known feeds, Handled by); responsive layout on phones and tablets) and the `abstractgateway-console` terminal app (its screens and keys) |
 | [apps.md](docs/apps.md) | installing, starting and opening the browser apps (Flow, Code, Observer, Continuum, Entity), Code's terminal app and the desktop Assistant |
 | [engines.md](docs/engines.md) | installing local engines (Ollama, LM Studio, MLX, llama.cpp, vLLM, Hugging Face): what each Install does, when a password or the Apple tools are needed |
 | [model-downloads.md](docs/model-downloads.md) | download jobs: progress, stalls, cancel, end reasons, parent jobs, the event stream |
@@ -11536,19 +11750,23 @@ curl -sS -H "Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstr
 
 Tip: to stop a schedule, cancel the scheduled parent run (`POST /api/gateway/commands`, type `cancel`).
 
-## 3) Split API vs runner (recommended for upgrades)
+## 3) Split API and runner (opt-in)
 
-By default, `abstractgateway serve` starts the HTTP API **and** the runner loop in the same process.
-
-To restart the HTTP API without pausing durable execution, run two processes sharing the same `ABSTRACTGATEWAY_DATA_DIR`:
+By default, `abstractgateway serve` starts the HTTP API **and** the runner in the same process.
+Split mode puts runs and the model in their own process, so a long generation never shares an
+interpreter with the API, and you can restart the API without pausing durable execution. Run two
+processes on the same data dir:
 
 ```bash
-# Process 1 (runner worker, no HTTP deps needed):
-abstractgateway runner
+# Process 1: runs, the model (and the OpenAI API's model host), mail, feeds, push, bridges
+abstractgateway runner --data-dir "$ABSTRACTGATEWAY_DATA_DIR"
 
-# Process 2 (HTTP API only):
-abstractgateway serve --no-runner --host 127.0.0.1 --port 8080
+# Process 2: the HTTP API, console and live streams only
+abstractgateway serve --no-runner --data-dir "$ABSTRACTGATEWAY_DATA_DIR" --host 127.0.0.1 --port 8080
 ```
+
+The API process loads no text model: `/v1` is forwarded to the runner process. Who does what, and
+the health fields that show it: [configuration.md](docs/configuration.md#split-mode-api-and-runner-in-two-processes-opt-in).
 
 ## 3b) Docker / Compose
 
@@ -12029,6 +12247,29 @@ ticking the data folder.
 
 See [automations.md](docs/automations.md#discuss-an-occurrence).
 
+### A flow's mail step is refused: `email_mailbox_read_only` or `email_mailbox_cannot_send`
+
+- `email_mailbox_read_only` ("This mailbox is read-only: automations only read it."): the step
+  marks, labels, moves, deletes, sends, replies or forwards on a mailbox you keep **Read only**.
+  In the console's **My email**, turn on **Read and write** for that mailbox, or
+  `PUT /api/gateway/me/email/accounts/{mailbox_id}/access` with `{"write": true}`.
+- `email_mailbox_cannot_send` ("This mailbox can't send: it has no outgoing server."): the
+  mailbox is Read and write but has no outgoing server (its row says *Can't send*). Give it one:
+  `PUT /api/gateway/me/email/accounts/{mailbox_id}/access` with `{"write": true, "smtp": {"host":
+  …, "port": …, "security": …}}` (without `smtp`, the provider's or the discovered server is used),
+  or the mailbox's **Settings** in My email.
+
+Both refusals happen before the gateway connects to the mailbox. See
+[email.md](docs/email.md#several-mailboxes).
+
+### A flow's alert never reached a device
+
+`GET /api/gateway/runs/{run_id}/after` answers, for that run, the alerts it raised (or why
+nothing rang: `quiet_reason`) and each delivery with its channel, route, device, time and state
+([api.md](docs/api.md#after-the-run-get-apigatewayrunsrun_idafter)). A *Notify me* alert whose
+`channels` leave out a device is not delivered there: the tray, the watch, the iPhone and email
+each read the alert's `channels` (none listed = every channel).
+
 ## Engines, models and apps
 
 ### Install buttons are disabled or answer `403`
@@ -12079,6 +12320,53 @@ The saved backlog folder no longer exists (a deleted or unmounted checkout).
 Choose **Use the gateway's own folder** in Continuum or the console, or run
 `abstractgateway config set triage_repo_root /path/to/checkout`. See
 [configuration.md](docs/configuration.md#backlog-folder-exec-runner-and-process-manager-continuum).
+
+## Load, split mode and push
+
+### A request answers `503` with `service_starting`
+
+The gateway was still building that account's service (the first request of the account after a
+start, or a restart of its runner). The answer carries `Retry-After: 1`: retry after a second.
+Other accounts and `GET /api/health` are not affected. If it persists, read the gateway log for
+the build's error: the next request answers that error once, then the build is tried again.
+
+### The gateway answers slowly or uses CPU while idle
+
+1. Read `GET /api/health`: `pools` shows each worker pool's `size`, `threads` and `queued`. Work
+   that stays queued in `heavy` (scans and listings of runs and artifacts) means more concurrent
+   scans than threads: raise `serve --pool-heavy N`, or find the client polling a listing.
+2. A restart after a hang leaves an incident file and a log excerpt
+   ([the watchdog entry](#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75)).
+3. `run_index` shows how run listings are answered (`serve --run-index verify|trusted`) and
+   `gc_tuning` whether the garbage-collector tuning is on (`serve --gc-tuning on`, the default).
+4. From a checkout, `scripts/perf/ci.sh` runs the same load test as CI against a synthetic data
+   folder and fails with the probe that went over its bound.
+
+See [configuration.md](docs/configuration.md#cli-flags).
+
+### `/v1` answers `503` with `runner_unavailable`
+
+The gateway runs in split mode (`serve --no-runner`) and no runner process answers: the API
+process never loads a model itself. Start `abstractgateway runner --data-dir DIR` with the same data
+dir. `GET /api/health` shows `runner_process: {pid, alive, heartbeat_fresh, model_host}` in the
+API process; `model_host: down` means no model host address is recorded in
+`<data dir>/split/model_host.json` (the runner removes it when it stops). See
+[configuration.md](docs/configuration.md#split-mode-api-and-runner-in-two-processes-opt-in).
+
+### The watch or the iPhone gets no alert
+
+- In the console, **My email → Notifications → Devices** lists the devices registered for your
+  account, with the last alert sent and the last error in words. No row: sign in to the app again
+  and allow its notifications; a registration not refreshed for 7 days expires.
+- **Push forwarder** (admins, same tab) must have an address in effect: this release has no
+  built-in forwarder, so set **Your own forwarder** or start with `--push-relay <URL>`. Save
+  probes the forwarder and says what it answered.
+- A *Notify me* alert rings only the apps its `channels` list; an approval that was answered
+  before the push left is never pushed.
+- Delivery is retried for an hour; `notification.failed` with channel `watch` or `phone` in your
+  event stream records an alert that could not be delivered.
+
+See [push.md](docs/push.md).
 
 ## Desktop
 
@@ -12196,6 +12484,7 @@ See [tray.md](docs/tray.md#restart-and-update).
 - [automations.md](docs/automations.md): automations, their routes and operations
 - [first-run.md](docs/first-run.md), [getting-started.md](docs/getting-started.md)
 - [configuration.md](docs/configuration.md), [security.md](docs/security.md)
+- [push.md](docs/push.md), [email.md](docs/email.md)
 
 ---
 
@@ -12323,10 +12612,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   says the provider refuses account passwords, with a direct **Create an app password** link (new tab) to paste from;
   **Sign in with Google** / **Sign in with Microsoft** come first when the gateway has that sign-in client, through
   `/me/email/accounts/{mailbox_id}/oauth/*`.
-- **Further mailboxes in the console.** Accounts → your row → Email has a **Further mailboxes** card: **Add a mailbox
-  (read-only)** (name, address, IMAP server, port, security, login, password; the gateway signs in before storing),
-  and per mailbox a **Use this mailbox** switch, **Test** and **Delete** (asks first). A further mailbox is IMAP only:
-  automations can watch it, it never sends.
+- **Further mailboxes in the console.** My email → **Mailboxes** lists your other mailboxes with an **Active** switch,
+  **Test**, **Settings** and **Remove** (asks first), and **Add mailbox** connects another one (the gateway signs in
+  before storing); each is Read only or Read and write (see above).
 - **Webhook setup panel.** After creating a webhook connection, the console shows the address and the one-time secret
   with copy buttons, a ready-to-copy signed call (bash, `openssl`) with the real address and secret, the GitHub/Zapier
   recipe, and **Send a signed test call** (signed in the browser, posted to the ingress; the HTTP status and the event
@@ -12358,7 +12646,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dialog: **Email address** alone, then one line saying what the gateway found (`GET /me/email/autodiscover`), then
   **Sign in with Google/Microsoft** when the gateway has that client or a **Password** with the provider's direct
   app-password link; a Microsoft-only mailbox on a gateway without a Microsoft client is said plainly. **Read and
-  send** (another mailbox, off by default) only when the provider can send; **Server settings** collapsed and
+  write** (another mailbox, off by default); **Server settings** collapsed and
   prefilled (open by itself when nothing was found), with **Sign-in name** prefilled with the address. No name is
   asked: another mailbox is named by its address. Refusals show in red in the form with what you typed kept.
 - Tray notifications name where to go: "<automation title> has a new result — open it in the Assistant.",
@@ -15598,172 +15886,6 @@ yours only: another account's mailbox or connection answers 404. Reference: [api
 
 ---
 
-## docs/push.md
-
-# Push to the watch and the iPhone
-
-When something needs you — an approval, a question, a published alert, an automation's result or
-failure — the AbstractAssistant apps on your Apple Watch and iPhone show it within seconds, even
-when the app is closed. This page explains how that works, the one setting a self-hoster may change,
-how to run your own relay with your own Apple key, and exactly what leaves your gateway.
-
-It builds on [your event stream](docs/api.md#your-event-stream-apigatewaymeevents): a push is only a
-hint that the stream holds something new; the app reads the real event from your gateway. For the
-other notification paths (the desktop tray, email) see [tray.md](docs/tray.md) and
-[email.md](docs/email.md).
-
-## For people: nothing to configure
-
-Sign in to the AbstractAssistant app on your watch or iPhone and allow notifications. The app
-registers itself with your gateway at sign-in and refreshes the registration at least once a week;
-signing out removes it. The system's notification permission for the app is the only switch.
-
-You can see the devices that get your alerts in the console: **My email → Notifications →
-Devices** (web and terminal console) lists each watch or iPhone with its name, when it last
-registered, the last alert sent, and the last error in plain words.
-
-What you get:
-
-| Something waits for you | Alert | Level |
-|---|---|---|
-| a run asks for your approval | Approval needed | time-sensitive |
-| a run asks you a question | Question | time-sensitive |
-| a flow published an alert to you | the publication's title | passive |
-| an automation has a result | *<automation> has a result* | passive |
-| an automation failed | *<automation> failed* | passive |
-
-An approval that is answered before the push leaves (on another device, in the console) is never
-pushed. A watch registered in the last 24 hours takes the alerts; otherwise the iPhone does, so
-your wrist rings once. A registration not refreshed for 7 days expires.
-
-## For the operator: nothing to set
-
-The gateway sends its push requests to a push forwarder (the relay described below). The address is
-built in: the publisher's forwarder, once it is live. This release has none built in, so pushes stay
-off until you run your own forwarder.
-
-### Your own forwarder
-
-One setting, nothing else. As an admin, open **My email → Notifications → Push forwarder** in the
-web or terminal console, choose **Edit**, then **Your own forwarder**, and give its address:
-`https://…`, or `http://` for a forwarder on the same computer (`http://127.0.0.1:8095`). The
-other two choices are **Built-in forwarder** (the default) and **Off**. Save asks the forwarder for
-its apps once (`GET <address>/v1/info`) and says what it answered or why it could not be reached;
-the address is saved either way and used at once, without a restart. The setting is gateway-wide,
-in `<gateway data dir>/push/settings.json` (nothing secret in it); the API is
-[`GET|PUT /api/gateway/push/settings`](docs/api.md#push-forwarder-apigatewaypushsettings).
-
-A launch flag overrides the saved setting for one run:
-
-```bash
-abstractgateway serve --push-relay https://push.example.org   # or --push-relay off
-```
-
-The address in use is the `--push-relay` flag of this run, else the saved setting, else the
-built-in forwarder. While the flag wins, the console says *set by the launch flag for this run*.
-There is no environment variable.
-
-- With no address (off), the gateway runs no push dispatcher: no thread, no outbound connection.
-  Saving an address starts it.
-- With an address but no registered device, the dispatcher does no work and opens no connection.
-  The gateway contacts the forwarder only once a device has registered.
-- Turning the forwarder on never pushes what happened while it was off.
-- In the split layout (`serve --no-runner` plus `abstractgateway runner`), the runner process sends
-  and reads the saved setting too: without a flag it keeps one parked thread that checks the
-  settings file every 2 seconds, so a saved address reaches it without a restart. A `--push-relay`
-  flag goes to both processes.
-
-Delivery is retried for an hour (after 2 s, 10 s, 60 s, 5 min, then every 15 min). An approval or
-a question that could not be delivered in that hour is recorded as `notification.failed` in your
-event stream; each delivered alert is recorded as `notification.sent` with channel `watch` or
-`phone` and `via: "push"`. A relay outage writes at most one log line per hour.
-
-State lives in the data folder of each account (`<data dir>/push/`, private files):
-`devices.json` (the registrations), `cursor.json` (the last event read; the first start begins at
-the newest event, so history is never pushed) and `outbox.sqlite3` (one row per alert and device,
-at most 5,000, finished rows kept 7 days). `<gateway data dir>/push/token_owners.json` records which
-account holds each device token: when another account signs in on the same app, the token moves
-to it.
-
-## Run your own relay
-
-Apple only delivers notifications signed with the app publisher's key, so a self-hosted gateway
-cannot talk to Apple directly. The relay is the small service that holds that key. It ships with
-the gateway:
-
-```bash
-pip install "abstractgateway[push-relay]"
-abstractgateway push-relay \
-  --apns-key-file AuthKey_ABC123DEFG.p8 --key-id ABC123DEFG --team-id TEAM123456 \
-  --topic com.example.assistant --topic com.example.assistant.watchkitapp \
-  --listen 127.0.0.1:8095
-```
-
-- `--apns-key-file`, `--key-id`, `--team-id`: the APNs authentication key (`.p8`) from your Apple
-  developer account, its Key ID and your Team ID.
-- `--topic`: the bundle ids of the apps you build and sign; any other topic is refused.
-- `--listen` (default `127.0.0.1:8095`): put a TLS reverse proxy in front of it, and pass
-  `--forwarded-allow-ips` with the proxy's address so the per-IP limit sees the caller.
-
-The `push-relay` extra adds the HTTP/2 client Apple requires (`httpx[http2]`) and `cryptography`
-for the provider token. A gateway that only sends to a relay needs neither.
-
-Then save its address as the gateway's Push forwarder ([Your own forwarder](#your-own-forwarder)). A gateway accepts
-registrations for the two packaged apps (`ai.abstractframework.assistant`, the iPhone app,
-and `ai.abstractframework.assistant.watchkitapp`, its watch companion) and for the topics your relay lists at `GET /v1/info`.
-
-The relay is stateless: it stores nothing, keeps its rate limits in memory and reuses its signed
-provider token for at most 40 minutes. Limits: 30 alerts an hour and 300 a day per device token,
-600 requests an hour per source address.
-
-## Privacy: what the relay and Apple see
-
-The relay accepts no text. A request is exactly:
-
-```json
-{"topic": "ai.abstractframework.assistant.watchkitapp", "env": "production",
- "token": "<APNs device token>", "kind": "approval",
- "collapse": "<32 hex>", "seq": 42, "reg": "<16-32 hex>"}
-```
-
-- `kind` is one of `approval`, `question`, `notify`, `result`, `failure`.
-- `collapse` is `sha256("attention:" + record_key)` cut to 32 hex characters: an opaque id that
-  lets the system replace a notification instead of showing it twice. Run ids and record keys never
-  leave the gateway.
-- `seq` is the event's number in your stream, so the app can fetch exactly that event.
-- `reg` is a handle the app chose at sign-in; an alert meant for an earlier sign-in shows as
-  *From an earlier sign-in*.
-
-The relay and Apple therefore see the device token, the app, the kind of alert, the event number
-and the time — never a title, a name, a prompt or any content. The relay's logs hold
-`sha256(token)` cut to 12 characters, never a token. The relay also sees your gateway's IP address,
-and only once a device has registered.
-
-### The fixed messages
-
-The relay builds the notification itself, always the same localized message per kind
-(`title-loc-key: push.<kind>.title`, `loc-key: push.<kind>.body`), so a device token in the wrong
-hands can never carry words under the app's name. The app's notification service extension then
-fetches the event from your gateway and replaces the generic text with the real one (the name of
-the automation, the title of the publication). If the fetch times out, the generic text stays.
-
-The APNs request: `apns-push-type: alert`, `apns-priority` 10 for approvals and questions and 5
-otherwise, `apns-collapse-id` = `collapse`, expiry after 24 hours, and the body
-`{aps: {alert: {title-loc-key, loc-key}, sound: "default", mutable-content: 1,
-interruption-level: "time-sensitive" | "passive", thread-id: <kind>}, s: <seq>, r: <reg>}`.
-
-## Reference
-
-- Routes: [api.md, Push devices](docs/api.md#push-devices-apigatewaymepushdevices).
-- Relay answers: 200 `{status: sent}`; 200 `{status: gone, since_ms}` when the token is no longer
-  valid (the gateway removes a registration only when Apple's time is later than its last
-  refresh); 200 `{status: rejected, reason}`; 429 or 503 `{status: retry, after_s}`; 400
-  `{status: invalid, reason}` for a malformed request (413 past 1 KB).
-- Evidence: `src/abstractgateway/push/` (`dispatcher.py`, `store.py`, `relay.py`, `settings.py`),
-  `src/abstractgateway/routes/push.py`, `src/abstractgateway/console_push.py`.
-
----
-
 ## docs/architecture.md
 
 # AbstractGateway — Architecture
@@ -16016,6 +16138,21 @@ browser on this computer from one elsewhere on the network
   a build of another account's service never holds up `/me`. Browser sessions are kept in memory: the
   sessions file stays the source of truth, this process's own writes apply at once, another
   process's within 2 s, and `last_seen_at` is written at most once a minute, off the event loop.
+- **Account services built off the event loop** (`src/abstractgateway/service.py`): an account's
+  service (its runtime, stores and runner) is built once in its own thread, however many requests
+  wait for it; requests await the build, and a request that reaches a service still being built
+  answers `503 service_starting` with `Retry-After: 1`. After the boot, `serve --gc-tuning on`
+  freezes the objects the boot built and raises the garbage collector's thresholds.
+- **Reading only what changed**: run listings come from AbstractRuntime's run index
+  (`serve --run-index verify|trusted`); the runner's scan gate and the mail notification check
+  compare the run store's and the ledger's change tokens instead of re-reading the folders; the
+  Triggers page asks AbstractRuntime's active-consumers index who listens to a connection; host
+  status (GPU, memory, model residency) is computed once per short TTL
+  (`src/abstractgateway/host_status_cache.py`). `GET /api/health` reports `pools`, `run_index`
+  and `gc_tuning`.
+- **Push dispatcher** (`src/abstractgateway/push/`): in the process that runs the runner, it turns
+  `attention.raised` into content-free requests to the push relay for registered watches and
+  iPhones ([push.md](docs/push.md)).
 - **Nothing blocks the event loop**: a request body that arrived
   without a Content-Length (the console's `/apps/<id>/` proxy streams bodies)
   is buffered by the security middleware and replayed through
@@ -16293,9 +16430,15 @@ flowchart LR
     Runner["GatewayRunner<br/>ticks, ledger observer"]
     Wakes["schedule_run host<br/>(one-shot automation)"]
     Outbox[("Email outbox")]
+    Publish["Publish host<br/>(PUBLISH_EVENT: Notify me,<br/>Publish to channel)"]
     UStream[("User stream<br/>user:&lt;tenant&gt;:&lt;user&gt;")]
     Me["GET /me/events<br/>GET /me/events/stream (SSE)<br/>POST /me/events/notifications"]
+    PushD["Push dispatcher<br/>(runner process)"]
+    After["GET /runs/{id}/after<br/>(what happened after a run)"]
   end
+
+  Relay["Push relay<br/>(abstractgateway push-relay)"]
+  APNs["Apple push service"]
 
   subgraph RT["AbstractRuntime"]
     Ctl["Automation controller"]
@@ -16315,6 +16458,8 @@ flowchart LR
   TInbox -->|wake| Ctl
   Ctl -->|admit| Occ
   Run -->|SCHEDULE_RUN| Wakes --> Ctl
+  Run -->|PUBLISH_EVENT| Publish -->|"event + attention.raised<br/>(recipient, channels)"| UStream
+  Publish -->|"email listed"| Outbox
   Runner -->|run.started / finished, trigger.event,<br/>attention.raised / seen| UStream
   Wakes -->|wake.scheduled| UStream
   Outbox -->|notification.sent / failed| UStream
@@ -16322,6 +16467,9 @@ flowchart LR
   Me --> Tray
   Me --> Apps
   Tray -->|notification.sent (tray)| Me
+  UStream -->|attention.raised| PushD -->|"no text: topic, token, kind, seq"| Relay --> APNs --> Apps
+  PushD -->|notification.sent / failed| UStream
+  UStream --> After
 ```
 
 - **Pointers, not copies.** The stream never holds a step of a run, a prompt
@@ -16335,6 +16483,16 @@ flowchart LR
 - **One notification per machine.** The tray announces each attention item;
   an app on the same computer stays silent when the tray reported it in the
   last minute.
+- **Alerts choose their channels.** A flow's *Notify me* (a `PUBLISH_EVENT`
+  with an alert) carries `recipient` and `channels` (`tray`, `watch`,
+  `phone`, `email`, `console`; none = all) on its `attention.raised`; every
+  deliverer reads them before delivering (`events_stream.alert_asks`).
+- **Push carries no content.** The push dispatcher sends the relay only the
+  app topic, the device token, the kind of alert and the event's sequence;
+  the app reads the event from the gateway ([push.md](docs/push.md)).
+- **After the run** (`GET /api/gateway/runs/{run_id}/after`) reads back, for
+  one run and its sub-runs, what arrived, how it ended, the alerts it raised
+  and each delivery, from exact reads of the ledger and the stream.
 
 See [api.md](docs/api.md#your-event-stream-apigatewaymeevents) for the event
 vocabulary and the routes, [api.md](docs/api.md#triggers) for trigger
@@ -16487,9 +16645,11 @@ flowchart TB
     Serve1 --> AppsLocal["Browser apps on 127.0.0.1"]
   end
   subgraph Server["Server or container"]
-    API["abstractgateway serve --no-runner"] --- DD[("shared data dir")]
-    Worker["abstractgateway runner"] --- DD
+    API["abstractgateway serve --no-runner<br/>HTTP API, console, streams"] --- DD[("shared data dir")]
+    Worker["abstractgateway runner<br/>runs, model, mail, feeds, push"] --- DD
     Proxy["TLS reverse proxy or tunnel"] --> API
+    API -->|"/v1 forwarded<br/>(127.0.0.1, per-start secret)"| ModelHost["Model host<br/>(in the runner process)"]
+    Worker --- ModelHost
   end
 ```
 
@@ -17009,12 +17169,17 @@ restarts until you resume (tray, console banner, or
 
 ### How do I run API and runner as separate processes?
 
-Run:
+Split mode is opt-in. Run both with the same data dir:
 
 ```bash
-abstractgateway runner
-abstractgateway serve --no-runner --host 127.0.0.1 --port 8080
+abstractgateway runner --data-dir /path/to/data
+abstractgateway serve --no-runner --data-dir /path/to/data --host 127.0.0.1 --port 8080
 ```
+
+The runner process ticks the runs, holds the one text model (the API process forwards `/v1` to
+it), and runs the mail watchers, feed polling, push and bridges; the API process serves HTTP,
+creates runs and queues commands. The full table is in
+[configuration.md](docs/configuration.md#split-mode-api-and-runner-in-two-processes-opt-in).
 
 The runner uses a lock file (`gateway_runner.lock`) to prevent double-ticking on the same data dir. A locked-out runner keeps retrying acquisition in the background; a newly started process asks a live holder to yield (newest process wins), and the holder heartbeats the lock file so `GET /api/health` can report whether anyone is actually ticking the data dir (`runner.runners[].status`).
 

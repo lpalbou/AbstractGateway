@@ -34,6 +34,13 @@ An approval that is answered before the push leaves (on another device, in the c
 pushed. A watch registered in the last 24 hours takes the alerts; otherwise the iPhone does, so
 your wrist rings once. A registration not refreshed for 7 days expires.
 
+A flow's *Notify me* alert can choose where it goes (its `channels`: `tray`, `watch`, `phone`,
+`email`, `console`). Push then rings only the listed apps, the watch first among them: an alert
+for `watch` alone never falls back to the iPhone, and one that lists neither is not pushed. An
+alert with no `channels` goes everywhere, as above. `GET /api/gateway/runs/{run_id}/after` shows,
+for a run, which alerts it raised and where each was delivered
+([api.md](./api.md#after-the-run-get-apigatewayrunsrun_idafter)).
+
 ## For the operator: nothing to set
 
 The gateway sends its push requests to a push forwarder (the relay described below). The address is

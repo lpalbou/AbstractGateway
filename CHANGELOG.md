@@ -120,10 +120,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   says the provider refuses account passwords, with a direct **Create an app password** link (new tab) to paste from;
   **Sign in with Google** / **Sign in with Microsoft** come first when the gateway has that sign-in client, through
   `/me/email/accounts/{mailbox_id}/oauth/*`.
-- **Further mailboxes in the console.** Accounts → your row → Email has a **Further mailboxes** card: **Add a mailbox
-  (read-only)** (name, address, IMAP server, port, security, login, password; the gateway signs in before storing),
-  and per mailbox a **Use this mailbox** switch, **Test** and **Delete** (asks first). A further mailbox is IMAP only:
-  automations can watch it, it never sends.
+- **Further mailboxes in the console.** My email → **Mailboxes** lists your other mailboxes with an **Active** switch,
+  **Test**, **Settings** and **Remove** (asks first), and **Add mailbox** connects another one (the gateway signs in
+  before storing); each is Read only or Read and write (see above).
 - **Webhook setup panel.** After creating a webhook connection, the console shows the address and the one-time secret
   with copy buttons, a ready-to-copy signed call (bash, `openssl`) with the real address and secret, the GitHub/Zapier
   recipe, and **Send a signed test call** (signed in the browser, posted to the ingress; the HTTP status and the event
@@ -155,7 +154,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dialog: **Email address** alone, then one line saying what the gateway found (`GET /me/email/autodiscover`), then
   **Sign in with Google/Microsoft** when the gateway has that client or a **Password** with the provider's direct
   app-password link; a Microsoft-only mailbox on a gateway without a Microsoft client is said plainly. **Read and
-  send** (another mailbox, off by default) only when the provider can send; **Server settings** collapsed and
+  write** (another mailbox, off by default); **Server settings** collapsed and
   prefilled (open by itself when nothing was found), with **Sign-in name** prefilled with the address. No name is
   asked: another mailbox is named by its address. Refusals show in red in the form with what you typed kept.
 - Tray notifications name where to go: "<automation title> has a new result — open it in the Assistant.",

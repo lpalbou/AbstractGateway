@@ -231,6 +231,7 @@ Every error uses the OpenAI envelope, so SDKs raise their usual exceptions:
 | 404 | unknown route, an unknown provider or model, or the API is stopped | `model_not_found`, `endpoint_stopped` |
 | 429 | too many refused keys from one address | `auth_lockout` |
 | 500 | a structured answer that still does not match `response_format` | `structured_output_invalid` |
+| 503 | split mode only: the API process forwards `/v1` to the runner process, and no runner process answers (start `abstractgateway runner` on the same data dir; see [configuration.md](./configuration.md#split-mode-api-and-runner-in-two-processes-opt-in)) | `runner_unavailable` |
 
 Each response carries `x-request-id`.
 

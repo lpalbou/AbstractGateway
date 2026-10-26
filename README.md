@@ -149,8 +149,15 @@ Rust app (`cargo install abstractgateway-console`). See
 Each user can connect their own mailbox (Accounts → **Email** on their own row in the web
 console, `@` on their own row in the terminal console, or `/api/gateway/me/email`): automations
 can run when mail arrives, results and approvals can be emailed to the user,
-and agents can use email tools when an administrator makes them available. See
-[docs/email.md](docs/email.md).
+and agents can use email tools when an administrator makes them available.
+Further mailboxes are **Read only** (automations only read them) or **Read and
+write** (a flow's mail steps may mark, move, delete and send), your choice per
+mailbox. See [docs/email.md](docs/email.md).
+
+The AbstractAssistant apps on the Apple Watch and iPhone register with the
+gateway at sign-in and get alerts (approvals, questions, a flow's *Notify me*,
+automation results) while the app is closed, through a push relay that never
+sees any content. See [docs/push.md](docs/push.md).
 
 ## Docker server
 
@@ -289,6 +296,11 @@ model. Details: [docs/api.md](docs/api.md) and [docs/faq.md](docs/faq.md).
   an agent scheduled with `schedule_run`, notifications shown:
   `GET /api/gateway/me/events` (catch-up) and `/me/events/stream` (SSE)
   ([docs/events-examples.md](docs/events-examples.md))
+- Clients **read back what happened after a run**: what arrived, how it
+  ended, the alerts it raised (a flow's *Notify me* chooses its channels:
+  tray, watch, phone, email, console) and where each was delivered:
+  `GET /api/gateway/runs/{run_id}/after`
+  ([docs/api.md](docs/api.md#after-the-run-get-apigatewayrunsrun_idafter))
 - Clients **act** by submitting durable commands: `POST /api/gateway/commands`
   - supported types: `pause|resume|cancel|conclude|emit_event|update_schedule|compact_memory|inject_guidance`,
     plus the `automation.*` commands for an automation
@@ -370,6 +382,9 @@ Upload it with `POST /api/gateway/bundles/upload`, or place it in
 `ABSTRACTGATEWAY_FLOWS_DIR`.
 
 See [docs/getting-started.md](docs/getting-started.md) for running, split API/runner, and file→SQLite migration.
+Split mode, the worker pools (`serve --pool-light/--pool-heavy/--pool-watchers`), the run index
+(`--run-index`) and the garbage-collector tuning (`--gc-tuning`) are in
+[docs/configuration.md](docs/configuration.md#cli-flags).
 
 ## Docs
 
@@ -383,6 +398,8 @@ Published docs site: https://www.lpalbou.info/AbstractGateway/
 - Automations: [docs/automations.md](docs/automations.md)
 - Events and triggers, examples: [docs/events-examples.md](docs/events-examples.md)
 - Email: [docs/email.md](docs/email.md)
+- Watch and iPhone alerts (push): [docs/push.md](docs/push.md)
+- OpenAI-compatible API: [docs/openai-api.md](docs/openai-api.md)
 - Configuration: [docs/configuration.md](docs/configuration.md)
 - Consoles: [docs/console.md](docs/console.md)
 - Apps: [docs/apps.md](docs/apps.md)

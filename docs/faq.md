@@ -429,12 +429,17 @@ restarts until you resume (tray, console banner, or
 
 ### How do I run API and runner as separate processes?
 
-Run:
+Split mode is opt-in. Run both with the same data dir:
 
 ```bash
-abstractgateway runner
-abstractgateway serve --no-runner --host 127.0.0.1 --port 8080
+abstractgateway runner --data-dir /path/to/data
+abstractgateway serve --no-runner --data-dir /path/to/data --host 127.0.0.1 --port 8080
 ```
+
+The runner process ticks the runs, holds the one text model (the API process forwards `/v1` to
+it), and runs the mail watchers, feed polling, push and bridges; the API process serves HTTP,
+creates runs and queues commands. The full table is in
+[configuration.md](./configuration.md#split-mode-api-and-runner-in-two-processes-opt-in).
 
 The runner uses a lock file (`gateway_runner.lock`) to prevent double-ticking on the same data dir. A locked-out runner keeps retrying acquisition in the background; a newly started process asks a live holder to yield (newest process wins), and the holder heartbeats the lock file so `GET /api/health` can report whether anyone is actually ticking the data dir (`runner.runners[].status`).
 

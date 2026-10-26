@@ -181,19 +181,23 @@ curl -sS -H "Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstr
 
 Tip: to stop a schedule, cancel the scheduled parent run (`POST /api/gateway/commands`, type `cancel`).
 
-## 3) Split API vs runner (recommended for upgrades)
+## 3) Split API and runner (opt-in)
 
-By default, `abstractgateway serve` starts the HTTP API **and** the runner loop in the same process.
-
-To restart the HTTP API without pausing durable execution, run two processes sharing the same `ABSTRACTGATEWAY_DATA_DIR`:
+By default, `abstractgateway serve` starts the HTTP API **and** the runner in the same process.
+Split mode puts runs and the model in their own process, so a long generation never shares an
+interpreter with the API, and you can restart the API without pausing durable execution. Run two
+processes on the same data dir:
 
 ```bash
-# Process 1 (runner worker, no HTTP deps needed):
-abstractgateway runner
+# Process 1: runs, the model (and the OpenAI API's model host), mail, feeds, push, bridges
+abstractgateway runner --data-dir "$ABSTRACTGATEWAY_DATA_DIR"
 
-# Process 2 (HTTP API only):
-abstractgateway serve --no-runner --host 127.0.0.1 --port 8080
+# Process 2: the HTTP API, console and live streams only
+abstractgateway serve --no-runner --data-dir "$ABSTRACTGATEWAY_DATA_DIR" --host 127.0.0.1 --port 8080
 ```
+
+The API process loads no text model: `/v1` is forwarded to the runner process. Who does what, and
+the health fields that show it: [configuration.md](./configuration.md#split-mode-api-and-runner-in-two-processes-opt-in).
 
 ## 3b) Docker / Compose
 

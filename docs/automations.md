@@ -792,7 +792,7 @@ appear on the last page of `GET /api/gateway/automations` with `legacy: true`,
 runs, resumes them and applies commands on a data folder: the runner. Run
 either `abstractgateway serve` (API and runner in one process) or the split
 shape, `abstractgateway runner` plus `abstractgateway serve --no-runner`, on
-one data folder ([getting-started.md](./getting-started.md#3-split-api-vs-runner-recommended-for-upgrades)).
+one data folder ([getting-started.md](./getting-started.md#3-split-api-and-runner-opt-in)).
 In the split shape the API process only creates automations and discussions
 and queues commands; the runner does the rest. The lock that serializes an
 automation's steps and commands works inside one process, so do not point a

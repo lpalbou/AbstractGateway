@@ -244,9 +244,15 @@ twice.
   the Assistant.*) or your answer (*A question for you*) is announced once.
   Notifications have no click action: open the Assistant from the tray menu
   (**Apps ▸ Launch Assistant**).
+- **A notification per published alert.** A flow's *Notify me* or *Publish to
+  channel* step with an alert shows its title · *New on <channel> — open the
+  Assistant.* An alert whose `channels` (Notify me's "Where") leave out `tray`
+  is neither shown nor counted by the tray; an alert with no `channels` goes
+  everywhere
+  ([api.md](./api.md#your-event-stream-apigatewaymeevents)).
 - **The count.** The icon's tooltip says how many things wait for you
-  (`2 things waiting for you`): automation items not yet seen and conversations
-  waiting on you; seeing an item in a client (the console, the Assistant, the
+  (`2 things waiting for you`): automation items and published alerts not yet
+  seen and conversations waiting on you; seeing an item in a client (the console, the Assistant, the
   watch) or answering the wait lowers it.
 - **Delivery is recorded.** Each notification shown (or that this desktop
   cannot show) is written to your stream as `notification.sent` /

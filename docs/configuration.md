@@ -1565,40 +1565,54 @@ Evidence: `src/abstractgateway/split_mode.py`, `src/abstractgateway/cli.py` (`ru
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]`
-  (`--no-tray`: no menu bar / tray icon for this run, for a test or scratch
-  gateway next to your usual one; a start with `--host 127.0.0.1`, a `--port`
-  other than the configured one and `--print-token` is treated as a test
-  gateway and shows no icon either; `--watchdog-seconds N`, default 30, `0` = off:
-  a gateway whose event loop stays blocked for N seconds writes the blocked
-  stacks to its log and exits with code 75 so its service manager restarts it,
-  see [deployment.md](./deployment.md); `--unsandboxed-commands`, off by
-  default and with no environment variable: on a host with no command sandbox
-  (no macOS `sandbox-exec`, no Linux bubblewrap/Landlock), let commands run
-  unsandboxed instead of refusing them. It is audited at boot and shown on the
-  console. The split `abstractgateway runner` takes the same flag. See
-  [security.md](./security.md#command-sandbox))
-  `serve --push-relay <URL|off>` (default `off`, no environment variable): the
-  relay this gateway sends Apple push requests to for the watch and iPhone
-  apps; the split `abstractgateway runner` takes it too. See [push.md](./push.md)
-  `serve --pool-light N --pool-heavy N --pool-watchers N` (defaults 8, 4 and 16, from 1 to 256, no
-  environment variable): the threads for quick work (sign-in, `/me`, live-update streams, one-record
-  reads), for scans and listings of runs and artifacts and workflow reloads, and for long waits outside
-  the gateway (mail, feeds, provider endpoints, model generation). Quick work never waits behind a scan;
-  more scans than `--pool-heavy` wait their turn. `GET /api/health` reports each pool's `size`,
-  `threads` and `queued` under `pools`. Evidence: `src/abstractgateway/work_pools.py`
-  `serve --run-index trusted|verify` (default `verify`, no environment variable): how run listings are
-  answered. `verify` lets the folder scan answer and compares the in-memory run index with it; `trusted`
-  answers from the index with no scan. `GET /api/health` reports `run_index`: the mode, the planes
-  counted and the summed counters of every plane's run store (`shadow_mismatches` must stay 0 before
-  `trusted` becomes the default). Evidence: `src/abstractgateway/stores.py`
-  `serve --gc-tuning on|off` (default `on`, no environment variable): once the boot is done, freeze the
-  objects it built and raise the garbage collector's thresholds, so a full collection no longer pauses the
-  gateway for seconds; `off` keeps Python's defaults. `GET /api/health` reports what was applied under
-  `gc_tuning`. Evidence: `src/abstractgateway/service.py`
-  A service the gateway is still building (the first request of an account, a restart) is built in its
-  own thread: requests wait for it without holding the event loop, `GET /api/health` keeps answering, and a
-  route that reaches it any other way answers `503` `service_starting` with `Retry-After: 1`.
+- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]`.
+  Host and port default to the [network exposure](#network-exposure-localhost--local-network--internet)
+  setting; with none stored, `--host` defaults to `127.0.0.1` when no auth is configured, else
+  `0.0.0.0`, and `--port` to `8080`. Explicit flags override the setting.
+  `--unsandboxed-commands`, `--push-relay`, `--pool-*`, `--run-index` and `--gc-tuning` have no
+  environment variable.
+  - `--no-runner`: serve the HTTP API only, next to `abstractgateway runner`
+    ([split mode](#split-mode-api-and-runner-in-two-processes-opt-in)).
+  - `--no-tray`: no menu bar / tray icon for this run, for a test or scratch gateway next to your
+    usual one. A start with `--host 127.0.0.1`, a `--port` other than the configured one and
+    `--print-token` is treated as a test gateway and shows no icon either.
+  - `--watchdog-seconds N` (default 30, `0` = off): a gateway whose event loop stays blocked for N
+    seconds writes the blocked stacks to its log and exits with code 75 so its service manager
+    restarts it; see [deployment.md](./deployment.md).
+  - `--unsandboxed-commands` (off by default): on a host with no command sandbox (no macOS
+    `sandbox-exec`, no Linux bubblewrap/Landlock), let commands run unsandboxed instead of refusing
+    them. It is audited at boot and shown on the console. The split `abstractgateway runner` takes
+    the same flag. See [security.md](./security.md#command-sandbox).
+  - `--push-relay <URL|off>`: the push forwarder this gateway sends Apple push requests to for the
+    watch and iPhone apps, for this run; it wins over the saved Push forwarder setting. The split
+    `abstractgateway runner` takes it too. See [push.md](./push.md).
+  - `--pool-light N`, `--pool-heavy N`, `--pool-watchers N` (defaults 8, 4 and 16, from 1 to 256):
+    the threads for quick work (sign-in, `/me`, live-update streams, one-record reads), for scans
+    and listings of runs and artifacts and workflow reloads, and for long waits outside the gateway
+    (mail, feeds, provider endpoints, model generation). Quick work never waits behind a scan; more
+    scans than `--pool-heavy` wait their turn. `GET /api/health` reports each pool's `size`,
+    `threads` and `queued` under `pools`. Evidence: `src/abstractgateway/work_pools.py`.
+  - `--run-index trusted|verify` (default `verify`): how run listings are answered. `verify` lets
+    the folder scan answer and compares AbstractRuntime's in-memory run index with it; `trusted`
+    answers from the index with no scan. `GET /api/health` reports `run_index`: the mode, the planes
+    counted and the summed counters of every plane's run store (`shadow_mismatches` counts the
+    listings where the index and the scan differed; 0 means the index would have answered every
+    listing the same). Evidence: `src/abstractgateway/stores.py`.
+  - `--gc-tuning on|off` (default `on`): once the boot is done, freeze the objects it built and
+    raise the garbage collector's thresholds, so a full collection no longer pauses the gateway for
+    seconds; `off` keeps Python's defaults. `GET /api/health` reports what was applied under
+    `gc_tuning`. Evidence: `src/abstractgateway/service.py`.
+
+  An account's service (built at the first request of that account, and again when its runner
+  restarts) is built in its own thread: requests wait for it without holding the event loop,
+  `GET /api/health` keeps answering, and a route that reaches it any other way answers `503`
+  `service_starting` with `Retry-After: 1`.
+  Evidence: `src/abstractgateway/cli.py`
+- `abstractgateway runner [--data-dir DIR] [--unsandboxed-commands] [--push-relay URL|off]`: the
+  runner process of [split mode](#split-mode-api-and-runner-in-two-processes-opt-in) (runs, the
+  model and the `/v1` model host, mail, feeds, push, bridges)
+- `abstractgateway push-relay --apns-key-file F --key-id K --team-id T --topic BUNDLE_ID … [--listen HOST:PORT]`:
+  run the stateless Apple push relay with your own key (extra `push-relay`; [push.md](./push.md#run-your-own-relay))
 - `scripts/perf/ci.sh [--cpu-max PCT] [--port P] [--work DIR] [--reuse-fixture]` (from a checkout): the
   load test CI runs on pull requests and every night (`.github/workflows/perf.yml`). It builds a synthetic
   data folder (`scripts/perf/make_fixture.py`: 10k runs, 100k artifacts, 50 automations, no real data),
@@ -1606,12 +1620,6 @@ Most-used:
   paused) and fails when a p99 goes over its bound (`/me` 50 ms, `/triggers/connections` 100 ms, session
   artifacts 100 ms, `/runs?limit=20` 200 ms, `/automations` 500 ms), a probe answers anything but 200, or
   CPU at rest over 2 minutes goes over `--cpu-max` (default 5% of a core, 10% on CI runners)
-- `abstractgateway push-relay --apns-key-file F --key-id K --team-id T --topic BUNDLE_ID … [--listen HOST:PORT]`:
-  run the stateless Apple push relay with your own key (extra `push-relay`; [push.md](./push.md#run-your-own-relay))
-  (host/port default to the [network exposure](#network-exposure-localhost--local-network--internet)
-  setting; with none stored, `--host` defaults to `127.0.0.1` when no auth is
-  configured, else `0.0.0.0`, and `--port` to `8080`. Explicit flags override the setting.)
-  Evidence: `src/abstractgateway/cli.py`
 - `abstractgateway network status|set|addresses|restart`: who can reach the
   gateway and the URLs to copy ([network exposure](#network-exposure-localhost--local-network--internet))
 - `abstractgateway claim [--open] [--port P | --url URL] [--json]`: one-time
@@ -1623,7 +1631,6 @@ Most-used:
   registration runs plain `serve`; `--host/--port` are written into the
   [network exposure](#network-exposure-localhost--local-network--internet)
   setting, or onto the command line with `--pin-command-line`
-- `abstractgateway runner` (worker only)
 - `abstractgateway config status --json`
 - `abstractgateway config get [KEY] [--json]`, `config set KEY VALUE`, `config unset KEY`:
   runtime settings from a terminal ([backlog folder, exec runner, process

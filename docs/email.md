@@ -20,8 +20,9 @@ encrypted in that user's data home and is used for:
 
 Nothing reads your mail by default: no watcher runs until you create an email-triggered
 automation, and your agents get no email tools until you switch **Agent email tools** on. Without an account there is no sending and no
-email notification; the gateway has no shared "system" sender. The mailbox is only read: nothing marks messages read, moves or
-deletes them.
+email notification; the gateway has no shared "system" sender. The mail watcher only reads: it never marks messages read,
+moves or deletes them. Only a flow's own mail steps (mark, label, move, delete, send, reply, forward) change a mailbox or send
+from it, and only a mailbox you keep **Read and write** ([Several mailboxes](#several-mailboxes)).
 
 This page is the user and operator guide. The HTTP surface is listed in [api.md](api.md#email),
 the security model in [security.md](security.md#per-user-email), and the consoles in
@@ -235,7 +236,10 @@ curl -sS -X PUT -H "$AUTH" -H "Content-Type: application/json" \
   "In My email, turn on Read and write for <address> to change it or send from it."). Read and
   write also stores and tests its outgoing server (SMTP: the one you give, else the provider's or
   the domain's standard one), so automations can change it and send as it. Your primary mailbox is
-  always read and write. (`"send": true` is accepted as the older name of `"write": true`.)
+  always read and write. (`"send": true` is accepted as the older name of `"write": true`.) A
+  Read and write mailbox whose outgoing server is missing reads *Can't send* (`mailbox.state:
+  receive_only`): a flow's send, reply or forward on it is refused with `email_mailbox_cannot_send`
+  ("This mailbox can't send: it has no outgoing server."), while mark, label, move and delete work.
 - Change the access of a connected mailbox without adding it again: `PUT
   /me/email/accounts/<id>/access` with `{"write": true}` or `{"write": false}` (in the console: the
   row's **Read and write** switch). Turning it on adds and signs in to its outgoing server with the
@@ -312,6 +316,7 @@ Two options stand on their own, with no switch involved:
 |---|---|
 | an automation's **Email result** (`notify.channels` holds `email`) | every completed occurrence of that automation; full result to `notify.recipients` (default self) |
 | a run's **email me when done** (`_runtime.notify = {"on": ["finished", "failed"], "channels": ["email"]}`) | that run finished or failed, as asked |
+| a flow's **Notify me** alert (a *Publish to channel* with an alert) whose `channels` list `email`, or that lists no channels | the flow raised that alert: "“<flow>” notified you." with the flow's own title and text below it, labelled as written by the flow |
 
 `GET/PUT /api/gateway/me/notifications` keep working: the earlier five-event body is accepted,
 `automation_failed` counts for `job_failed`, and `automation_result` / `job_finished` are ignored

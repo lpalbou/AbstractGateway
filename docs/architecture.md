@@ -248,6 +248,21 @@ browser on this computer from one elsewhere on the network
   a build of another account's service never holds up `/me`. Browser sessions are kept in memory: the
   sessions file stays the source of truth, this process's own writes apply at once, another
   process's within 2 s, and `last_seen_at` is written at most once a minute, off the event loop.
+- **Account services built off the event loop** (`src/abstractgateway/service.py`): an account's
+  service (its runtime, stores and runner) is built once in its own thread, however many requests
+  wait for it; requests await the build, and a request that reaches a service still being built
+  answers `503 service_starting` with `Retry-After: 1`. After the boot, `serve --gc-tuning on`
+  freezes the objects the boot built and raises the garbage collector's thresholds.
+- **Reading only what changed**: run listings come from AbstractRuntime's run index
+  (`serve --run-index verify|trusted`); the runner's scan gate and the mail notification check
+  compare the run store's and the ledger's change tokens instead of re-reading the folders; the
+  Triggers page asks AbstractRuntime's active-consumers index who listens to a connection; host
+  status (GPU, memory, model residency) is computed once per short TTL
+  (`src/abstractgateway/host_status_cache.py`). `GET /api/health` reports `pools`, `run_index`
+  and `gc_tuning`.
+- **Push dispatcher** (`src/abstractgateway/push/`): in the process that runs the runner, it turns
+  `attention.raised` into content-free requests to the push relay for registered watches and
+  iPhones ([push.md](./push.md)).
 - **Nothing blocks the event loop**: a request body that arrived
   without a Content-Length (the console's `/apps/<id>/` proxy streams bodies)
   is buffered by the security middleware and replayed through
@@ -525,9 +540,15 @@ flowchart LR
     Runner["GatewayRunner<br/>ticks, ledger observer"]
     Wakes["schedule_run host<br/>(one-shot automation)"]
     Outbox[("Email outbox")]
+    Publish["Publish host<br/>(PUBLISH_EVENT: Notify me,<br/>Publish to channel)"]
     UStream[("User stream<br/>user:&lt;tenant&gt;:&lt;user&gt;")]
     Me["GET /me/events<br/>GET /me/events/stream (SSE)<br/>POST /me/events/notifications"]
+    PushD["Push dispatcher<br/>(runner process)"]
+    After["GET /runs/{id}/after<br/>(what happened after a run)"]
   end
+
+  Relay["Push relay<br/>(abstractgateway push-relay)"]
+  APNs["Apple push service"]
 
   subgraph RT["AbstractRuntime"]
     Ctl["Automation controller"]
@@ -547,6 +568,8 @@ flowchart LR
   TInbox -->|wake| Ctl
   Ctl -->|admit| Occ
   Run -->|SCHEDULE_RUN| Wakes --> Ctl
+  Run -->|PUBLISH_EVENT| Publish -->|"event + attention.raised<br/>(recipient, channels)"| UStream
+  Publish -->|"email listed"| Outbox
   Runner -->|run.started / finished, trigger.event,<br/>attention.raised / seen| UStream
   Wakes -->|wake.scheduled| UStream
   Outbox -->|notification.sent / failed| UStream
@@ -554,6 +577,9 @@ flowchart LR
   Me --> Tray
   Me --> Apps
   Tray -->|notification.sent (tray)| Me
+  UStream -->|attention.raised| PushD -->|"no text: topic, token, kind, seq"| Relay --> APNs --> Apps
+  PushD -->|notification.sent / failed| UStream
+  UStream --> After
 ```
 
 - **Pointers, not copies.** The stream never holds a step of a run, a prompt
@@ -567,6 +593,16 @@ flowchart LR
 - **One notification per machine.** The tray announces each attention item;
   an app on the same computer stays silent when the tray reported it in the
   last minute.
+- **Alerts choose their channels.** A flow's *Notify me* (a `PUBLISH_EVENT`
+  with an alert) carries `recipient` and `channels` (`tray`, `watch`,
+  `phone`, `email`, `console`; none = all) on its `attention.raised`; every
+  deliverer reads them before delivering (`events_stream.alert_asks`).
+- **Push carries no content.** The push dispatcher sends the relay only the
+  app topic, the device token, the kind of alert and the event's sequence;
+  the app reads the event from the gateway ([push.md](./push.md)).
+- **After the run** (`GET /api/gateway/runs/{run_id}/after`) reads back, for
+  one run and its sub-runs, what arrived, how it ended, the alerts it raised
+  and each delivery, from exact reads of the ledger and the stream.
 
 See [api.md](./api.md#your-event-stream-apigatewaymeevents) for the event
 vocabulary and the routes, [api.md](./api.md#triggers) for trigger
@@ -719,9 +755,11 @@ flowchart TB
     Serve1 --> AppsLocal["Browser apps on 127.0.0.1"]
   end
   subgraph Server["Server or container"]
-    API["abstractgateway serve --no-runner"] --- DD[("shared data dir")]
-    Worker["abstractgateway runner"] --- DD
+    API["abstractgateway serve --no-runner<br/>HTTP API, console, streams"] --- DD[("shared data dir")]
+    Worker["abstractgateway runner<br/>runs, model, mail, feeds, push"] --- DD
     Proxy["TLS reverse proxy or tunnel"] --> API
+    API -->|"/v1 forwarded<br/>(127.0.0.1, per-start secret)"| ModelHost["Model host<br/>(in the runner process)"]
+    Worker --- ModelHost
   end
 ```
 
