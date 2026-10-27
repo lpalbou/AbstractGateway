@@ -1616,6 +1616,65 @@ authenticated owner. `/entities/{name}/sessions` and `/visit/{run_id}/end`
 remain deprecated compatibility aliases. Gateways without entity session-tool
 support still support the established Assistant tool-control contract.
 
+### Session tool policy (approve or deny for the whole conversation)
+
+A person's standing tool decision for one conversation ("approve all", "approve all web tools",
+"deny `execute_command`", reset) is held by the gateway, not by the client. The runtime reads it
+before it decides whether a tool batch waits: a covered call runs with **no approval wait and no
+interaction**, a denied call is refused with no wait, and each decision is an
+`abstract.tool_policy_decision` record in the run's ledger. It applies to every run of the session:
+each turn's root run, delegated agent child runs, runs resumed after a restart. It does not apply
+to automation occurrences, runs that read text other people wrote (untrusted input), or runs
+started without a `session_id`.
+
+| Method | Path | Meaning |
+|---|---|---|
+| GET | `/api/gateway/sessions/{session_id}/tool-policy` | `{session_id, policy, revision}` (`policy: null` when none) |
+| PUT | same | replace the policy |
+| POST | same | merge into the policy (approve, deny and ask lists are unioned) |
+| DELETE | same (`?if_revision=`) | reset: later calls follow the normal defaults |
+
+Body (PUT, POST):
+
+```json
+{"approve": {"tools": ["fetch_url"], "kinds": ["web"], "all": false, "max_risk_rank": 3},
+ "deny": {"tools": ["execute_command"], "kinds": []},
+ "ask": ["send_email"], "client": "panel-chat", "if_revision": 4}
+```
+
+- `kinds` are the `toolset` values of `GET /api/gateway/discovery/tools` rows (`files`, `web`,
+  `system`, `email`, `mcp:<server>`…); `all` means every tool the gateway authorizes for the
+  caller; `max_risk_rank` (1–4) limits what `kinds` and `all` expand to by the row's `risk_rank`.
+- **The gateway clamps**: approve selectors expand, at write time, to the `enabled` rows
+  `GET /discovery/tools` serves the caller (email tools only when the account's agent email tools
+  are on, MCP tools only for servers offered to agents). Anything else is listed in `clamped`
+  (`not_authorized`, `unknown_kind`). A tool enabled later is not covered by an earlier `all`.
+  The run's own `allowed_tools` still blocks any tool outside it.
+- `deny` wins over `approve`; `ask` keeps names asking under `approve`.
+- `if_revision` mismatch: `409 {reason_code: "revision_conflict"}`. Malformed body: 422.
+
+Answer: `{session_id, policy}` where `policy` is
+`{version, session_id, revision, approve: {name: selector}, deny: {name: selector}, ask, request,
+clamped, set_by: {tenant_id, user_id, client}, set_at}`. Writes and resets are audited
+(`session.tool_policy_set`, `session.tool_policy_reset`).
+
+Ledger record (an activity; there is no wait, waiting record or resume for these calls):
+
+```json
+{"effect": {"type": "emit_event", "payload": {"name": "abstract.tool_policy_decision", "scope": "run",
+  "payload": {"decision": "auto_approved", "source": "session_policy", "session_id": "s-123",
+              "node_id": "agent", "tool_calls": [{"call_id": "c1", "name": "fetch_url", "matched": "kind:web"}],
+              "policy": {"revision": 5, "set_by": {"tenant_id": "default", "user_id": "laurent", "client": "panel-chat"},
+                         "set_at": "2026-10-27T10:00:00+00:00"}}}},
+ "status": "completed"}
+```
+
+`decision` is `auto_approved` or `denied`. Clients feature-gate on
+`GET /api/gateway/discovery/capabilities` → `capabilities.session_tool_policy.supported`.
+To offer "approve all" on an approval a client is showing: write the policy first, then answer
+that wait (`resume` with `{approved: true}`) as a one-off; the policy does not answer waits that
+already exist.
+
 ## Beyond the core
 
 `/api/gateway/*` also includes optional operator/tooling endpoints (reports inbox, triage queue, backlog browsing + exec runner, process manager, file/attachment helpers, embeddings, voice, discovery, …).  
