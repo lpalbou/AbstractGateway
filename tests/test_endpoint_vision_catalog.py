@@ -285,6 +285,9 @@ def test_endpoint_evidence_keeps_an_organisation_prefixed_model_id_whole() -> No
     )
     assert endpoint_model_evidence({"id": "openai-compatible/gpt-image-2"}, None) == ("gpt-image-2", None)
     assert endpoint_model_evidence({"id": "myrelay/gpt-image-2", "provider": "myrelay"}, None) == ("gpt-image-2", None)
+    # OpenRouter-style ids name an organisation: kept whole unless the row's provider is that name.
+    assert endpoint_model_evidence({"id": "openai/gpt-5-image", "capabilities": ["chat"]}, "text_to_image") == ("openai/gpt-5-image", False)
+    assert endpoint_model_evidence({"id": "openai/dall-e-3", "provider": "openai"}, None) == ("dall-e-3", None)
 
     class _Profile:
         allowed_models = ("black-forest-labs/FLUX.1-schnell",)

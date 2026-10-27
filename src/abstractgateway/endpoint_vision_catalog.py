@@ -167,10 +167,10 @@ def endpoint_model_evidence(item: Any, task: Optional[str]) -> Tuple[str, Option
     if not isinstance(item, dict):
         return "", None
     model = str(item.get("id") or item.get("model") or "").strip()
-    # A routing prefix (`openai-compatible/gpt-image-2`, `openai/dall-e-3`) is dropped; an id whose
-    # first segment is an organisation (`black-forest-labs/FLUX.1-schnell`) is kept whole.
-    family_prefixes = {f"{f}/" for f in ENDPOINT_IMAGE_PROVIDER_FAMILIES}
-    family_prefixes.add(f"{str(item.get('provider') or '').strip().lower()}/")
+    # A routing prefix is dropped: `openai-compatible/` (never an organisation) and the row's own
+    # provider (`openai/dall-e-3` on an `openai` row). An id whose first segment is an organisation
+    # (`black-forest-labs/FLUX.1-schnell`, OpenRouter's `openai/gpt-5-image`) is kept whole.
+    family_prefixes = {"openai-compatible/", f"{str(item.get('provider') or '').strip().lower()}/"}
     for prefix in sorted(family_prefixes, key=len, reverse=True):
         if len(prefix) > 1 and model.lower().startswith(prefix):
             model = model[len(prefix):]
