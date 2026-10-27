@@ -231,7 +231,7 @@ def test_web_provider_change_handler_cannot_strand_the_model_select() -> None:
     """
     js = _console_js()
     handler = _handler_body(js, "modal-default-provider", "onchange")
-    # (The voice list is the kit picker's own since 0947: it owns its loading state.)
+    # (The voice list is the kit picker's own since 0949: it owns its loading state.)
     called = [n for n in ("loadDefaultModels",) if n in handler]
     assert called, "the handler is expected to reload the model catalog"
     if "catch" in handler:

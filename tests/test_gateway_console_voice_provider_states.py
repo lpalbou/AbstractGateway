@@ -53,9 +53,9 @@ def test_state_labels_are_scoped_to_the_voice_pickers() -> None:
 
 def test_voice_pickers_show_why_no_voices_are_listed() -> None:
     """Both voice pickers are the kit's VoiceSettings (the entity's since round
-    3, the route editor's since 0947), which shows the catalog's
+    3, the route editor's since 0949), which shows the catalog's
     `unavailable_reason` when an engine lists no voice (abstractuic
-    check_voice_library 0947). The console keeps no copy of that logic."""
+    check_voice_library 0947-labelled checks). The console keeps no copy of that logic."""
     html = _html()
     assert "voiceUnavailableReason" not in html and '"No voices — see why below"' not in html
     from abstractgateway.console_islands import ISLANDS_JS

@@ -1,4 +1,4 @@
-# 0947-gateway: [IMPROVEMENT] The console's capability editor adopts the shared voice section (choosing a voice plays it)
+# 0949-gateway: [IMPROVEMENT] The console's capability editor adopts the shared voice section (choosing a voice plays it)
 
 > Package: abstractgateway (consumer); abstractuic ui-kit 0.9.1 (the picker, its backlog 0035)
 > Type: improvement
@@ -7,7 +7,7 @@
 > Priority: P1
 > Labels: console, voice, ui-kit, islands
 > Root link: AbstractFramework backlog 1055 (voice library track); abstractuic backlog 0035
-> Number: 0947 (0943–0946 are taken by other open branches)
+> Number: 0949 (0943–0946 taken by other branches, 0947 the replay view, 0948 the memory routes)
 
 ## Summary
 
@@ -66,5 +66,5 @@ console's own list showed cloned voices by raw 32-hex ids in one flat list, whil
   pick: offline keeps the voice, profile stored as voice, clear); `test_gateway_capability_catalog_proxy.py`
   (cloud providers in the full catalog). Mutation-checked red: no signal, no unmount on close, the
   pick not saved, the cloud providers not listed, `api()` not chaining or not remapping the cancel.
-- Kit behaviour: abstractuic `ui-kit/scripts/check_voice_library.mjs` 0947 checks (choice plays,
+- Kit behaviour: abstractuic `ui-kit/scripts/check_voice_library.mjs` checks (labelled 0947 in the kit, after this item's first number) (choice plays,
   newer choice aborts, stop stops, play replays from 0 without a request, busy, error line).

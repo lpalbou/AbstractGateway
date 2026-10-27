@@ -1,4 +1,4 @@
-"""Console capability editor, output.voice: the kit's voice picker (backlog 0947).
+"""Console capability editor, output.voice: the kit's voice picker (backlog 0949).
 
 The "Edit multimodal capability" dialog mounts the shared voice picker
 (abstractuic islands `mountVoiceSettings`, ui-kit >= 0.9.1) in place of its own

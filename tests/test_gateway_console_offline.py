@@ -209,7 +209,7 @@ def test_fetch_default_models_evicts_a_failed_lookup() -> None:
 
 def test_provider_cache_never_stores_a_promise() -> None:
     """The sibling cache awaits BEFORE writing — keep it that way. (The voice
-    list is the kit picker's own since 0947: no console voice cache.)"""
+    list is the kit picker's own since 0949: no console voice cache.)"""
     source = _console_script()
     for name in ("fetchDefaultProviders",):
         fn = _slice_function(source, name)
@@ -234,7 +234,7 @@ def test_load_default_models_has_a_terminal_failure_state() -> None:
 
 
 def test_the_console_has_no_voice_list_of_its_own() -> None:
-    """0947: output.voice adopts the kit's picker; a second (native) voice list
+    """0949: output.voice adopts the kit's picker; a second (native) voice list
     is how the console drifted from the apps (raw clone ids, no groups)."""
     source = _console_script()
     for gone in ("function loadDefaultVoices", "function fetchDefaultVoices", "function voiceOptionsFromCatalog", 'id="modal-default-voice"'):
@@ -465,7 +465,7 @@ def test_an_offline_save_cannot_unset_a_voice_the_picker_could_not_show() -> Non
     box (the picker owns that key), so a save that read "no voice" off a picker
     that could not list anything deleted it from both places at once: an
     operator editing the options of a working route silently unset its voice.
-    Since 0947 the picker is the kit's (islands mountVoiceSettings): its pick
+    Since 0949 the picker is the kit's (islands mountVoiceSettings): its pick
     starts as the stored voice and changes only when the operator picks.
     """
     scenario = """

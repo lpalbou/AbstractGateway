@@ -18,7 +18,7 @@ def test_console_carries_the_test_button_and_result_area() -> None:
     assert 'id="test-default"' in html
     assert 'id="default-modal-test"' in html
     # Wired, single-flight, and text-only visibility logic present (output.voice
-    # auditions by choosing a voice in the kit picker since 0947).
+    # auditions by choosing a voice in the kit picker since 0949).
     assert '$("test-default").onclick = testDefault' in html
     assert "defaultRowTestable" in html
     # The voice sample rides the production TTS lane with a short deadline.

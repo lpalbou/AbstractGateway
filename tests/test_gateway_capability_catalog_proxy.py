@@ -1039,7 +1039,7 @@ def test_the_full_voice_catalog_lists_the_cloud_providers_too(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """GET /voice/voices (no providers_only) is what the kit's voice picker reads
-    its providers from (the console's output.voice editor since backlog 0947,
+    its providers from (the console's output.voice editor since backlog 0949,
     the apps): openai / openai-compatible are listed there too, not only on
     providers_only. A provider filter keeps that provider's listing."""
 
