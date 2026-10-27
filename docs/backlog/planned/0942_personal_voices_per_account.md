@@ -30,7 +30,7 @@ Today every account shares one voice store (AbstractVoice's machine-user folder)
 
 ## Dependencies
 
-AbstractVoice 0065 released; AbstractRuntime voice facade passing the scope (small additive change); 0938 for the profile record.
+AbstractVoice 0065 released; AbstractRuntime 0851 (the per-account voice settings and the facade's scope); 0938 for the profile record.
 
 ## Validation
 
