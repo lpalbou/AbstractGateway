@@ -42,7 +42,7 @@ def test_pill_follows_the_health_flag() -> None:
 const islands = {{ warming: false, phase: "connected", signingOut: false, identity: "", about: null }};
 const state = {{ principal: null }}; const assistantState = {{ open: false }};
 let renders = 0; function renderIslands() {{ renders += 1; }}
-function netPrimaryUrl() {{ return ""; }} function openAppearance() {{}} function toggleAssistant() {{}}
+function netPrimaryUrl() {{ return ""; }} function openAppearance() {{}} function openGatewayAbout() {{}} function toggleAssistant() {{}}
 function uiCopy() {{}} function signOut() {{}} function $() {{ return null; }}
 {m.group(0)}
 {fns}

@@ -59,7 +59,14 @@ def test_served_page_carries_the_about_facts_of_this_gateway() -> None:
     m = re.search(r"const GATEWAY_ABOUT = (\{.*?\});\n", html)
     assert m, "the console page does not template GATEWAY_ABOUT"
     assert json.loads(m.group(1)) == cfg
-    assert "about: islands.about," in html and "islands.about = consoleAboutProps(lib" in html
+    assert "islands.about = consoleAboutProps(lib" in html
+    # 2026-10-25 (003b24d2): the top bar's About opens the gateway's own About
+    # modal, which adds the host update controls the kit card cannot carry; the
+    # kit's About slot is off and the modal reads the identity links from
+    # `islands.about` (the props built above).
+    assert "about: null," in html
+    assert 'id: "gateway-about-open", label: "About AbstractGateway", icon: "info", onClick: openGatewayAbout' in html
+    assert "const identity = islands.about && islands.about.identity;" in html
 
 
 def test_about_failure_is_said_never_empty(monkeypatch: pytest.MonkeyPatch) -> None:
