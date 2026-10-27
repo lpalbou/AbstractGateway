@@ -95,8 +95,10 @@ def test_api_declares_tui_parity_timeout_budgets() -> None:
     # AbortController is unavailable (the promise MUST settle either way).
     assert "Promise.race" in api
     assert "setTimeout(" in api and "clearTimeout(" in api
-    # `slow`/`timeoutMs` are ours and must never reach fetch's request init.
-    assert "const { slow = false, timeoutMs, ...init } = options;" in api
+    # `slow`/`timeoutMs` are ours and must never reach fetch's request init;
+    # a caller's `signal` is chained into our controller, never passed raw
+    # (it would replace the deadline's abort).
+    assert "const { slow = false, timeoutMs, signal: callerSignal, ...init } = options;" in api
 
 
 def test_api_names_the_failure_class_for_the_operator() -> None:

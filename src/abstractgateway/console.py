@@ -1397,6 +1397,19 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      padding-top: 5px;
 	      padding-bottom: 5px;
 	    }
+	    /* Voice row: the select and its play/stop toggle on one line. */
+	    .voice-pick-row { display: flex; gap: 8px; align-items: center; min-width: 0; }
+	    .voice-pick-row select { flex: 1 1 auto; min-width: 0; }
+	    .voice-play {
+	      flex: 0 0 auto; width: 32px; min-width: 32px; height: 32px; padding: 0;
+	      display: inline-grid; place-items: center; font-size: 13px; line-height: 1;
+	    }
+	    .voice-play[data-state="loading"] { color: var(--text-muted); }
+	    .voice-play[data-state="loading"]::before {
+	      content: ""; width: 12px; height: 12px; border: 2px solid var(--ui-border-2);
+	      border-top-color: var(--accent); border-radius: 50%; animation: afspin .8s linear infinite;
+	    }
+	    .voice-play[data-state="loading"] .voice-play-glyph { display: none; }
 	    .default-modal-route {
 	      display: inline-flex;
 	      width: fit-content;
@@ -2993,7 +3006,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          <label>Model<select id="modal-default-model"></select>
 	            <input id="modal-default-model-custom" class="hidden" type="text" autocomplete="off"
 	                   placeholder="type the model id — discovery could not reach this provider"></label>
-	          <label id="modal-default-voice-label" class="hidden">Voice<select id="modal-default-voice"></select></label>
+	          <label id="modal-default-voice-label" class="hidden">Voice<span class="voice-pick-row"><select id="modal-default-voice"></select><button id="modal-default-voice-play" type="button" class="secondary voice-play" data-state="idle" aria-label="Play voice sample" title="Play a short sample of the selected voice (choosing a voice plays it)"><span class="voice-play-glyph" aria-hidden="true">▶</span></button></span><audio id="modal-default-voice-audio" preload="auto" hidden></audio></label>
 	          <label id="modal-default-reasoning-label" class="hidden" title="Default reasoning effort for reasoning-capable models on this route. 'Not set' sends no reasoning parameter. A request that names its own effort wins.">Reasoning<select id="modal-default-reasoning">
 	            <option value="">not set</option>
 	            <option value="minimal">minimal</option>
@@ -3018,7 +3031,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      <div class="modal-actions">
 	        <button id="close-default-modal" class="secondary">Cancel</button>
 	        <button id="clear-default" class="secondary" title="Remove this override — the route falls back to what it inherits"><span class="button-icon" aria-hidden="true">×</span><span>Clear</span></button>
-	        <button id="test-default" class="secondary hidden" title="Test this selection with a real generation through the production lane — for voice routes, hear the selected voice before saving"><span class="button-icon" aria-hidden="true">▶</span><span>Test</span></button>
+	        <button id="test-default" class="secondary hidden" title="Test this selection with a real generation through the production lane"><span class="button-icon" aria-hidden="true">▶</span><span>Test</span></button>
 	        <button id="save-default" title="Persist this provider/model as the capability default"><span class="button-icon" aria-hidden="true">✓</span><span>Save</span></button>
 	      </div>
 	    </div>
@@ -8971,7 +8984,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     async function api(path, options = {}) {
       // `slow` and `timeoutMs` are ours, not fetch's — strip them so they
       // never reach the request init. timeoutMs: 0 opts out entirely.
-      const { slow = false, timeoutMs, ...init } = options;
+      // `signal` is the caller's cancel (the voice preview aborts a sample
+      // the operator scrolled past): it is chained into our own controller so
+      // the deadline below keeps working, and a cancel rejects as AbortError.
+      const { slow = false, timeoutMs, signal: callerSignal, ...init } = options;
       const headers = new Headers(init.headers || {});
       headers.set("Accept", "application/json");
       // A FormData body (Import .flow) needs the browser's own multipart Content-Type with its
@@ -8988,6 +9004,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // absent. Where it exists we also abort, so the socket is released
       // instead of leaking until the OS gives up.
       const controller = typeof AbortController === "function" ? new AbortController() : null;
+      if (callerSignal && controller) {
+        if (callerSignal.aborted) controller.abort();
+        else callerSignal.addEventListener("abort", () => { try { controller.abort(); } catch {} }, { once: true });
+      }
       const timedOut = `Request timed out after ${Math.round(budget / 1000)}s (gateway did not answer ${path}).`;
       let timer = null;
       // The deadline spans the body read too: a gateway that sends headers
@@ -9014,6 +9034,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         // terminal state. Name WHICH one so the operator can tell a wedged
         // gateway (timeout) from a down one (refused/offline); the browser's
         // bare "Failed to fetch" teaches nothing.
+        if (callerSignal && callerSignal.aborted) {
+          const cancelled = new Error("Request cancelled.");
+          cancelled.name = "AbortError";
+          throw cancelled;
+        }
         if (e && (e.name === "AbortError" || e.message === timedOut)) throw new Error(timedOut);
         throw new Error(`Gateway unreachable: ${(e && e.message) || e}`);
       } finally {
@@ -14609,11 +14634,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    function defaultRowTestable(row) {
 	      // Test renders only where a REAL generation is cheap and the goal is
-	      // named (voice audition; tiny text smoke). Image/video/music tests
-	      // would be slow, expensive, and ride watchdog-less routes — the
-	      // Sandbox tab is their honest surface.
+	      // named (a tiny text smoke). Image/video/music tests would be slow,
+	      // expensive, and ride watchdog-less routes — the Sandbox tab is their
+	      // honest surface. output.voice has no Test: choosing a voice plays it
+	      // (voicePreviewOnSelect), which is the same synthesis Test made.
 	      const key = defaultRowKey(row);
-	      return key === "output.voice" || key === "output.text" || key === "input.text";
+	      return key === "output.text" || key === "input.text";
 	    }
 	    function clearDefaultTest() {
 	      const target = $("default-modal-test");
@@ -14630,6 +14656,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      $("default-modal-message").textContent = "";
 	      $("default-modal-message").className = "message";
 	      clearDefaultTest();
+	      voicePreviewReset();
 	      // Per-route base URL and raw options, mirroring the console-TUI's route
 	      // editor. Offline, base_url is how a route is pointed at a local
 	      // inference server on a non-default port — which is why the web console
@@ -14712,6 +14739,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      $("clear-default").classList.toggle("hidden", !defaultRowConfigured(row));
 	    }
 	    function closeDefaultModal() {
+	      voicePreviewReset();
 	      $("default-modal-backdrop").classList.add("hidden");
 	      state.activeDefaultRow = null;
 	      state.defaultModalPrefill = null;
@@ -14721,6 +14749,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    async function reloadDefaultModalCatalogs() {
 	      const row = state.activeDefaultRow || null;
 	      clearDefaultTest();  // a stale audition must not survive a provider change
+	      voicePreviewReset();
 	      // Both loaders paint their own terminal state and rethrow. Catch here
 	      // so a failed MODEL lookup still lets the voice select reach an end
 	      // state instead of being skipped by the propagating rejection.
@@ -15884,12 +15913,159 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const p = state.principal || {};
 	      return `session_memory_gateway_console_voicetest_${sessionMemoryIdPart(p.tenant_id, "default")}_${sessionMemoryIdPart(p.user_id || p.runtime_id, "user")}`;
 	    }
+	    // ---- Voice preview: choosing a voice plays it --------------------
+	    // The operator scrolls voices and hears each one; the toggle at the
+	    // right of the select replays (from 0) or stops (back to 0). ONE
+	    // sample at a time: a newer choice aborts the older synthesis and its
+	    // playback, so fast scrolling never queues audio. The short debounce
+	    // keeps arrow-key scrolling from starting a synthesis per row — the
+	    // gateway cannot cancel a synthesis already started, so each one
+	    // started would still run to the end server-side.
+	    const VOICE_PREVIEW_TEXT = "Hello — this is the voice you selected, speaking from the gateway.";
+	    const VOICE_PREVIEW_DEBOUNCE_MS = 200;
+	    const voicePreview = { seq: 0, timer: null, controller: null, key: "", url: "", note: "" };
+	    function voicePreviewSelection() {
+	      return { provider: activeDefaultProvider(), model: activeDefaultModel(), voice: $("modal-default-voice").value || "" };
+	    }
+	    function voicePreviewKey(sel) {
+	      return JSON.stringify([sel.provider, sel.model, sel.voice]);
+	    }
+	    function setVoicePlayState(mode) {
+	      const button = $("modal-default-voice-play");
+	      button.dataset.state = mode;
+	      button.setAttribute("aria-busy", mode === "loading" ? "true" : "false");
+	      const playing = mode === "playing";
+	      const glyph = button.querySelector(".voice-play-glyph");
+	      if (glyph) glyph.textContent = playing ? "■" : "▶";
+	      const label = playing ? "Stop voice sample" : mode === "loading" ? "Synthesizing voice sample… (click to cancel)" : "Play voice sample";
+	      button.setAttribute("aria-label", label);
+	      button.title = label;
+	    }
+	    function voicePreviewNote(text) {
+	      // The dialog's one-line note. Ours is cleared by the next sample;
+	      // anyone else's (a discovery warning) is left alone.
+	      const note = $("default-modal-message");
+	      if (text) {
+	        note.textContent = text;
+	        note.className = "message error";
+	        voicePreview.note = text;
+	      } else if (voicePreview.note && note.textContent === voicePreview.note) {
+	        note.textContent = "";
+	        note.className = "message";
+	        voicePreview.note = "";
+	      }
+	    }
+	    function voicePreviewAbort() {
+	      // Supersede every pending or in-flight sample: a late answer from one
+	      // of them sees a newer seq and is dropped unplayed.
+	      voicePreview.seq += 1;
+	      if (voicePreview.timer !== null) { clearTimeout(voicePreview.timer); voicePreview.timer = null; }
+	      if (voicePreview.controller) { try { voicePreview.controller.abort(); } catch {} voicePreview.controller = null; }
+	    }
+	    function voicePreviewRewind() {
+	      const audio = $("modal-default-voice-audio");
+	      try { audio.pause(); } catch {}
+	      try { audio.currentTime = 0; } catch {}
+	    }
+	    function voicePreviewReset() {
+	      // The selection's route moved (open, close, provider, model): no
+	      // sample of the old one may play or be replayed.
+	      voicePreviewAbort();
+	      voicePreviewRewind();
+	      if (voicePreview.url && typeof URL !== "undefined" && URL.revokeObjectURL) {
+	        try { URL.revokeObjectURL(voicePreview.url); } catch {}
+	      }
+	      voicePreview.url = "";
+	      voicePreview.key = "";
+	      voicePreviewNote("");
+	      setVoicePlayState("idle");
+	    }
+	    async function voicePreviewPlay() {
+	      // Always from 0: a replay never resumes mid-sentence.
+	      const audio = $("modal-default-voice-audio");
+	      voicePreviewRewind();
+	      setVoicePlayState("playing");
+	      try {
+	        await audio.play();
+	      } catch (err) {
+	        if (err && err.name === "AbortError") return;  // a stop/new sample interrupted play()
+	        setVoicePlayState("idle");
+	        voicePreviewNote(err && err.name === "NotAllowedError"
+	          ? "The browser blocked autoplay — press ▶ to hear the voice."
+	          : `Voice sample could not play: ${String((err && err.message) || err)}`);
+	      }
+	    }
+	    function voicePreviewEnded() {
+	      voicePreviewRewind();
+	      setVoicePlayState("idle");
+	    }
+	    async function voicePreviewSynthesize() {
+	      voicePreviewAbort();
+	      voicePreviewRewind();
+	      const seq = voicePreview.seq;
+	      const sel = voicePreviewSelection();
+	      if (!sel.provider || !sel.model) { setVoicePlayState("idle"); return; }
+	      const controller = typeof AbortController === "function" ? new AbortController() : null;
+	      voicePreview.controller = controller;
+	      const signal = controller ? controller.signal : undefined;
+	      setVoicePlayState("loading");
+	      voicePreviewNote("");
+	      try {
+	        // The production TTS lane, with the short deadline the old Test
+	        // button used: a wedged backend fails fast instead of spinning.
+	        // Empty voice = the provider's DEFAULT voice, exactly what saving
+	        // without a voice produces.
+	        const body = { text: VOICE_PREVIEW_TEXT, provider: sel.provider, model: sel.model, request_id: sandboxRequestId(), timeout_s: 25 };
+	        if (sel.voice) body.voice = sel.voice;
+	        const runId = voiceTestRunId();
+	        const res = await api(`/api/gateway/runs/${encodeURIComponent(runId)}/voice/tts`, { slow: true, method: "POST", body: JSON.stringify(body), signal });
+	        if (seq !== voicePreview.seq) return;
+	        const url = sandboxArtifactUrl(runId, res.audio_artifact);
+	        if (!url) throw new Error("the synthesis returned no audio");
+	        const audioRes = await fetch(url, { method: "GET", credentials: "same-origin", signal });
+	        if (!audioRes.ok) throw new Error(`audio download failed (HTTP ${audioRes.status})`);
+	        const blob = await audioRes.blob();
+	        if (seq !== voicePreview.seq) return;
+	        const contentType = String(res.audio_artifact?.content_type || "").trim();
+	        const typed = contentType && (!blob.type || blob.type === "application/octet-stream") ? new Blob([blob], { type: contentType }) : blob;
+	        if (voicePreview.url) { try { URL.revokeObjectURL(voicePreview.url); } catch {} }
+	        voicePreview.url = URL.createObjectURL(typed);
+	        voicePreview.key = voicePreviewKey(sel);
+	        voicePreview.controller = null;
+	        $("modal-default-voice-audio").src = voicePreview.url;
+	        await voicePreviewPlay();
+	      } catch (err) {
+	        if (seq !== voicePreview.seq) return;  // superseded: its failure is not news
+	        voicePreview.controller = null;
+	        setVoicePlayState("idle");
+	        voicePreviewNote(`Voice sample failed: ${String((err && err.message) || err)}`);
+	      }
+	    }
+	    function voicePreviewOnSelect() {
+	      voicePreviewAbort();
+	      voicePreviewRewind();
+	      const sel = voicePreviewSelection();
+	      if (!sel.provider || !sel.model) { setVoicePlayState("idle"); return; }
+	      setVoicePlayState("loading");
+	      const seq = voicePreview.seq;
+	      voicePreview.timer = setTimeout(() => {
+	        voicePreview.timer = null;
+	        if (seq === voicePreview.seq) voicePreviewSynthesize();
+	      }, VOICE_PREVIEW_DEBOUNCE_MS);
+	    }
+	    function voicePreviewToggle() {
+	      const mode = $("modal-default-voice-play").dataset.state;
+	      if (mode === "playing") { voicePreviewRewind(); setVoicePlayState("idle"); return; }
+	      if (mode === "loading") { voicePreviewAbort(); setVoicePlayState("idle"); return; }
+	      if (voicePreview.url && voicePreview.key === voicePreviewKey(voicePreviewSelection())) {
+	        voicePreviewPlay();
+	        return;
+	      }
+	      voicePreviewSynthesize();
+	    }
 	    async function testDefault() {
-	      // Single-flight: the button disables while one test runs — repeated
-	      // clicks against a wedged backend would pile stranded children
-	      // (TTS backends have wedged before; the request carries timeout_s so a
-	      // wedge fails fast with the watchdog's honest 504 instead of
-	      // hanging this modal).
+	      // Single-flight: the button disables while one test runs. Text routes
+	      // only — output.voice auditions by choosing a voice (voicePreview*).
 	      const row = state.activeDefaultRow;
 	      if (!row) return;
 	      const button = $("test-default");
@@ -15903,53 +16079,30 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	      const key = defaultRowKey(row);
 	      button.disabled = true;
-	      target.textContent = key === "output.voice" ? "Synthesizing… (up to 25s)" : "Testing…";
+	      target.textContent = "Testing…";
 	      const started = Date.now();
 	      try {
-	        if (key === "output.voice") {
-	          const body = {
-	            text: "Hello — this is the voice you selected, speaking from the gateway.",
-	            provider,
-	            model,
-	            request_id: sandboxRequestId(),
-	            timeout_s: 25,
-	          };
-	          // Empty voice = audition the provider's DEFAULT voice — exactly
-	          // what saving without a voice would produce.
-	          const voice = $("modal-default-voice").value;
-	          if (voice) body.voice = voice;
-	          const runId = voiceTestRunId();
-	          const res = await api(`/api/gateway/runs/${encodeURIComponent(runId)}/voice/tts`, { slow: true, method: "POST", body: JSON.stringify(body) });
-	          const sec = ((Date.now() - started) / 1000).toFixed(1);
-	          target.textContent = "";
-	          const line = document.createElement("div");
-	          line.className = "message ok";
-	          line.textContent = `Synthesized in ${sec}s with ${provider}/${model}${voice ? "/" + voice : " (provider default voice)"}. Note: agents pick up SAVED voice defaults per lane — this proves the selection itself works.`;
-	          target.append(line);
-	          renderSandboxArtifact(target, { runId, ref: res.audio_artifact, mode: "audio", label: "Test audio" });
-	        } else {
-	          const probe = { capability: key, provider, model, prompt: "Reply with the single word: ready." };
-	          const choice = $("modal-default-speculation").value;
-	          if (choice) probe.speculation = speculationFromChoice(choice, row?.options?.speculation, true);
-	          const reasoning = $("modal-default-reasoning").value;
-	          if (reasoning) probe.reasoning = reasoning;
-	          const res = await api("/api/gateway/sandbox/generate", {
-	            slow: true,
-	            method: "POST",
-	            // No max_tokens: the PROMPT bounds this probe, not a cap. The old
-	            // max_tokens:16 truncated any model that emits a preamble or
-	            // reasoning tokens, so a healthy capability reported "(empty
-	            // response)" — a cap manufacturing a false failure on the very
-	            // screen an operator uses to decide whether a model works.
-	            body: JSON.stringify(probe),
-	          });
-	          const sec = ((Date.now() - started) / 1000).toFixed(1);
-	          target.textContent = "";
-	          const line = document.createElement("div");
-	          line.className = "message ok";
-	          line.textContent = `Responded in ${sec}s with ${provider}/${model}: ${String(res.response || "").slice(0, 120) || "(empty response)"} · ${speculationSummary(res)}`;
-	          target.append(line);
-	        }
+	        const probe = { capability: key, provider, model, prompt: "Reply with the single word: ready." };
+	        const choice = $("modal-default-speculation").value;
+	        if (choice) probe.speculation = speculationFromChoice(choice, row?.options?.speculation, true);
+	        const reasoning = $("modal-default-reasoning").value;
+	        if (reasoning) probe.reasoning = reasoning;
+	        const res = await api("/api/gateway/sandbox/generate", {
+	          slow: true,
+	          method: "POST",
+	          // No max_tokens: the PROMPT bounds this probe, not a cap. The old
+	          // max_tokens:16 truncated any model that emits a preamble or
+	          // reasoning tokens, so a healthy capability reported "(empty
+	          // response)" — a cap manufacturing a false failure on the very
+	          // screen an operator uses to decide whether a model works.
+	          body: JSON.stringify(probe),
+	        });
+	        const sec = ((Date.now() - started) / 1000).toFixed(1);
+	        target.textContent = "";
+	        const line = document.createElement("div");
+	        line.className = "message ok";
+	        line.textContent = `Responded in ${sec}s with ${provider}/${model}: ${String(res.response || "").slice(0, 120) || "(empty response)"} · ${speculationSummary(res)}`;
+	        target.append(line);
 	      } catch (err) {
 	        target.textContent = "";
 	        const line = document.createElement("div");
@@ -16311,6 +16464,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("modal-default-provider-custom").onchange = reloadDefaultModalCatalogs;
 	    $("modal-default-model").onchange = () => {
 	      clearDefaultTest();
+	      voicePreviewReset();
 	      refreshDefaultSpeculationSupport();
 	      return loadDefaultVoices(
 	        activeDefaultProvider(),
@@ -16321,7 +16475,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    };
 	    // The typed model is a model choice too, so the voice catalog follows it.
 	    $("modal-default-model-custom").onchange = $("modal-default-model").onchange;
-	    $("modal-default-voice").onchange = () => clearDefaultTest();
+	    $("modal-default-voice").onchange = () => voicePreviewOnSelect();
+	    $("modal-default-voice-play").onclick = () => voicePreviewToggle();
+	    $("modal-default-voice-audio").onended = () => voicePreviewEnded();
 	    $("modal-default-speculation").onchange = () => clearDefaultTest();
 	    $("save-default").onclick = saveDefault;
 	    $("test-default").onclick = testDefault;
