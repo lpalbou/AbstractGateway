@@ -1302,7 +1302,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         [data-direction="output"] .capability-modality-icon { color: #87baff; background: rgba(135,186,255,.07); }
         [data-direction="embedding"] .capability-modality-icon { color: #c0a8f4; background: rgba(192,168,244,.07); }
         .capability-task-row .capability-modality { margin-left: 12px; font-size: 12px; }
-        @media (max-width: 600px) { .capability-card > summary { padding: 14px; } .capability-section-count { display: none; } .capability-chevron { margin-left: auto; } }
+        @media (max-width: 767.98px) { .capability-card > summary { padding: 14px; } .capability-section-count { display: none; } .capability-chevron { margin-left: auto; } }
         .capability-table { border-collapse: separate; border-spacing: 0; }
         .capability-table thead th { font-size: 11px; letter-spacing: .08em; color: var(--text-secondary); padding: 12px 10px; }
         .capability-table tbody td { padding: 13px 10px; vertical-align: middle; }
