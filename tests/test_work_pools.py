@@ -14,6 +14,8 @@ import time
 
 import pytest
 
+from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+
 pytestmark = pytest.mark.basic
 
 
@@ -56,7 +58,7 @@ def test_ten_heavy_two_second_calls_never_delay_a_light_call_beyond_50ms(small_p
 
     light_s, stats = asyncio.run(scenario())
     # On one shared pool of 2 the light call waited for five rounds of scans (~10 s).
-    assert light_s < 0.05, f"a light call waited {light_s * 1000:.1f} ms behind 10 heavy calls"
+    timing_budget(light_s, 0.05, "a light call behind 10 heavy calls")
     assert stats["heavy"]["threads"] == 2 and stats["heavy"]["queued"] == 8, stats
 
 

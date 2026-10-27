@@ -189,7 +189,30 @@ def create_automation(client: Any, *, title: str, trigger: Dict[str, Any], promp
     }
     r = client.post("/api/gateway/automations", headers=HEADERS, json=body)
     assert r.status_code == 200, r.text
-    return r.json()["automation_id"]
+    automation_id = r.json()["automation_id"]
+    wait_until_armed(automation_id)
+    return automation_id
+
+
+def wait_until_armed(automation_id: str, *, timeout_s: float = 30.0) -> None:
+    """Wait until the automation's controller is parked on its wake key: only then does an event
+    appended to its trigger wake it (`woken`). Creation answers before the runner's first tick of
+    the controller; on a loaded CI runner a webhook call or a feed poll made right after creation
+    found it not yet parked (`woken` empty). Same test as abstractruntime's
+    `triggers.connections.wake_connection_automations`."""
+    from abstractruntime.automations.models import wake_wait_key
+    from abstractruntime.core.models import RunStatus
+
+    from abstractgateway.service import get_gateway_service
+
+    store = get_gateway_service().host.run_store
+
+    def armed() -> bool:
+        run = store.load(automation_id)
+        return (run is not None and run.status == RunStatus.WAITING and run.waiting is not None
+                and run.waiting.wait_key == wake_wait_key(automation_id))
+
+    wait_until(armed, timeout_s=timeout_s)
 
 
 def completed_occurrences(client: Any, automation_id: str) -> List[Dict[str, Any]]:

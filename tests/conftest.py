@@ -745,19 +745,71 @@ def _join_gateway_boot_threads(timeout_s: float = 120.0) -> None:
                 pytest.fail(f"a gateway boot thread is still running after {timeout_s:.0f}s")
 
 
-@pytest.fixture(autouse=True)
-def _reset_gateway_service_between_tests(_isolate_gateway_runtime_env: None):
-    from abstractgateway.service import reset_gateway_boot_state, stop_gateway_runner
+def _join_gc_tuning_threads(timeout_s: float = 30.0) -> None:
+    import threading
 
+    for t in threading.enumerate():
+        if t.name == "gateway-gc-tuning" and t is not threading.current_thread():
+            t.join(timeout=timeout_s)
+            if t.is_alive():
+                pytest.fail(f"a gateway gc-tuning thread is still running after {timeout_s:.0f}s")
+
+
+@pytest.fixture(autouse=True)
+def _reset_gateway_service_between_tests(_isolate_gateway_runtime_env: None, monkeypatch: pytest.MonkeyPatch):
+    # The app module is dropped before and after every test (each test imports its own app), and
+    # `drop_gateway_app_module` also frees the dropped app: FastAPI's memo caches would otherwise
+    # keep every re-imported app alive (tests/app_reimport.py, backlog 0945).
+    #
+    # GC tuning is a `serve` choice recorded process-wide (service.set_gc_tuning). A test that
+    # drives `cli.main(["serve", ...])` records it, and every later boot in this process would
+    # `gc.freeze()` the objects alive at that moment, the previous tests' apps included: frozen
+    # objects are never collected, so a frozen cycle is kept for the rest of the session. Each test
+    # starts with no recorded choice, and whatever tuning a test applied is undone after it.
+    import gc
+
+    import abstractgateway.service as _svc
+    from abstractgateway.service import reset_gateway_boot_state, stop_gateway_runner
+    from app_reimport import drop_gateway_app_module
+
+    monkeypatch.setattr(_svc, "_gc_tuning_on", None)
+    monkeypatch.setattr(_svc, "_gc_tuning_report", {})
+    gc_thresholds = gc.get_threshold()
     _join_gateway_boot_threads()
     stop_gateway_runner()
     reset_gateway_boot_state()
-    sys.modules.pop("abstractgateway.app", None)
+    drop_gateway_app_module()
     yield
-    _join_gateway_boot_threads()
-    stop_gateway_runner()
-    reset_gateway_boot_state()
-    sys.modules.pop("abstractgateway.app", None)
+    try:
+        _join_gateway_boot_threads()
+        # Stop first: the tuning thread waits for the rehydrate sweep, which only the stop ends.
+        stop_gateway_runner()
+        _join_gc_tuning_threads()
+    finally:
+        gc.unfreeze()
+        gc.set_threshold(*gc_thresholds)
+        reset_gateway_boot_state()
+        drop_gateway_app_module()
+
+
+@pytest.fixture(autouse=True)
+def _serve_never_exits_the_test_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`serve` ends with a belt for production (cli._exit_now_if_nondaemon_stragglers): any
+    non-daemon thread still alive after shutdown makes it `os._exit(0)`. In a test process that
+    killed pytest itself (a pytest-xdist worker "node down: Not properly terminated"; a serial run
+    ending early with status 0). Here the stragglers are named on stderr and the test goes on."""
+    import threading
+
+    from abstractgateway import cli as _cli
+
+    def _name_stragglers() -> None:
+        stragglers = [t.name for t in threading.enumerate()
+                      if t is not threading.main_thread() and t.is_alive() and not t.daemon]
+        if stragglers:
+            print(f"[WARN] serve left non-daemon thread(s) alive: {', '.join(sorted(stragglers))}",
+                  file=sys.stderr, flush=True)
+
+    monkeypatch.setattr(_cli, "_exit_now_if_nondaemon_stragglers", _name_stragglers)
 
 
 @pytest.fixture(autouse=True)

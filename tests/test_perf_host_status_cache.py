@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any, Dict
 
 import pytest
+
+from timing import patient  # noqa: E402 - tests/timing.py (wall-clock budgets)
 from fastapi.testclient import TestClient
 
 pytestmark = pytest.mark.basic
@@ -32,19 +34,41 @@ def _fresh_caches():
     host_status_cache.clear_all()
 
 
-def test_two_gpu_probes_within_the_ttl_run_one_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
-    from abstractgateway import host_metrics
+class _FakeClock:
+    """The TTL cache's clock, advanced by the test: a loaded machine pausing the process between
+    two samples cannot push the second one out of the TTL."""
 
+    def __init__(self) -> None:
+        self.now = 1000.0
+        self._lock = threading.Lock()
+
+    def monotonic(self) -> float:
+        with self._lock:
+            return self.now
+
+    def advance(self, seconds: float) -> None:
+        with self._lock:
+            self.now += seconds
+
+
+def test_two_gpu_probes_within_the_ttl_run_one_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from abstractgateway import host_metrics, host_status_cache
+
+    clock = _FakeClock()
+    monkeypatch.setattr(host_status_cache, "time", SimpleNamespace(monotonic=clock.monotonic))
     calls = []
 
     def probe(*, timeout_s: float = 1.0) -> Dict[str, Any]:
-        calls.append(time.monotonic())
-        time.sleep(0.05)
+        calls.append(clock.monotonic())
+        time.sleep(0.05)  # real: the eight pollers below overlap this probe
+        clock.advance(0.05)
         return {"supported": True, "source": "test", "utilization_gpu_pct": 1.0, "gpus": []}
 
     monkeypatch.setattr(host_metrics, "_read_host_gpu_metrics_best_effort", probe)
     a = host_metrics.get_host_gpu_metrics()
-    time.sleep(1.1)  # the tray's next 1 Hz sample: inside the TTL, stamped when the probe ENDED
+    clock.advance(1.1)  # the tray's next 1 Hz sample: inside the TTL, stamped when the probe ENDED
     b = host_metrics.get_host_gpu_metrics()
     assert len(calls) == 1 and a == b
 
@@ -58,7 +82,7 @@ def test_two_gpu_probes_within_the_ttl_run_one_subprocess(monkeypatch: pytest.Mo
     for t in threads:
         t.start()
     for t in threads:
-        t.join(5)
+        t.join(patient(5))
     assert len(calls) == 1 and len(out) == 8
     assert host_metrics.get_host_gpu_metrics(cache_ttl_s=0) and len(calls) == 2  # ttl 0 = probe now
 
@@ -122,7 +146,13 @@ def _app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, client: _Client):
 
 
 def test_two_host_state_calls_within_the_ttl_compute_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
     import abstractgateway.routes.gateway as gateway_routes
+    from abstractgateway import host_status_cache
+
+    # A clock that does not move: the four calls are "within the TTL" however long the boot takes.
+    monkeypatch.setattr(host_status_cache, "time", SimpleNamespace(monotonic=_FakeClock().monotonic))
 
     client = _Client()
     tc, gpu = _app(tmp_path, monkeypatch, client)

@@ -28,6 +28,8 @@ from typing import Any, Dict, List
 
 import pytest
 
+from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+
 from abstractgateway import self_update
 
 pytestmark = pytest.mark.basic
@@ -502,7 +504,7 @@ def test_the_job_timeout_fires_on_a_silent_hang(monkeypatch: pytest.MonkeyPatch)
     t0 = time.time()
     self_update.start_update(info=info)
     st = _wait_job()
-    assert time.time() - t0 < 8
+    timing_budget(time.time() - t0, 8, "installer job")
     assert st["state"] == "failed" and any("timed out" in line for line in st["log_tail"])
 
 
@@ -563,7 +565,7 @@ def test_a_runner_failure_stops_the_command_before_the_job_leaves_running(monkey
     t0 = time.time()
     self_update.start_update(info=info)
     st = _wait_job()
-    assert time.time() - t0 < 8
+    timing_budget(time.time() - t0, 8, "installer job")
     assert st["state"] == "failed" and "the pipe broke" in str(st["error"])
     assert seen["proc"].poll() is not None, "the command was stopped and reaped"
     with pytest.raises(ProcessLookupError):
