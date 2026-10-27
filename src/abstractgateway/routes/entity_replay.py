@@ -153,7 +153,7 @@ async def read_record_verbatim(name: str, graph_id: str) -> Dict[str, Any]:
     registry = _registry()
     home = await _home_or_404_offloop(registry, name)
 
-    from abstractmemory.records import resolve_digest_assertion
+    from abstractruntime.integrations.abstractmemory.memory_facade import resolve_digest_assertion
     from abstractruntime.storage.artifacts import FileArtifactStore
 
     gid = str(graph_id or "").strip()
@@ -345,7 +345,7 @@ def _diary_entry_trail(home: Any, entry_id: str) -> Optional[Dict[str, Any]]:
     absence, never an invented trail). Episode titles/dates are workplace
     content, not diary words; private entries keep their edge trail per
     the 2026-07-07 ruling (the edge is act-frame)."""
-    from abstractmemory import TripleQuery
+    from abstractruntime.integrations.abstractmemory.memory_facade import TripleQuery
 
     eid = home.entity_id
     projection_id = None

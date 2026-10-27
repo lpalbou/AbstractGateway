@@ -15367,7 +15367,7 @@ async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
         )
 
     try:
-        from abstractmemory import TripleQuery  # type: ignore
+        from abstractruntime.integrations.abstractmemory.memory_facade import TripleQuery  # type: ignore
     except Exception as e:  # pragma: no cover
         raise HTTPException(status_code=500, detail=f"AbstractMemory is not available: {e}")
 

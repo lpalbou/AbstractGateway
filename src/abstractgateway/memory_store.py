@@ -81,6 +81,8 @@ class GatewayMemoryStoreConfig:
     backend: str
     path: Optional[Path]
     require_vector: bool = False
+    # The plane data folder the config was resolved for (the memory home lives under it).
+    base_dir: Optional[Path] = None
 
     def public_dict(self) -> Dict[str, Any]:
         return {
@@ -140,7 +142,52 @@ def resolve_memory_store_config(
         backend=resolved_backend,
         path=resolved_path,
         require_vector=bool(require_vector),
+        base_dir=base,
     )
+
+
+def resolve_memory_home(config: GatewayMemoryStoreConfig) -> Path:
+    """The plane's memory HOME: the one SQLite file that holds its memory graph (triples, journal,
+    revision log, provenance index; AbstractMemory ADR 0003) in this phase.
+
+    - backend `sqlite`: the home IS the KG store file (`<plane>/abstractmemory/kg.sqlite3`, or the
+      `ABSTRACTGATEWAY_MEMORY_STORE_PATH` override), so `/kg/query`, `/memory/*` and the runtime's
+      memory effects read and write one file;
+    - backend `lancedb` (the default) or `memory`: LanceDB cannot carry the graph (no revisions,
+      `close`/`narrow` unsupported), so the home is `<plane>/abstractmemory/memory.sqlite3`, beside
+      the LanceDB KG, created on first write through `MemoryFacade.open_mind`.
+
+    One SQLite home per plane with LanceDB as an optional accelerator is AbstractMemory backlog 0057;
+    moving the gateway default off LanceDB (and importing existing plane KG data into the home) waits
+    for the operator's decision 2 of the memory transition. Until then the LanceDB KG and the home
+    are two stores. Entity minds (`entities/<slug>/memory.sqlite3`) are their own homes, not this one.
+    """
+    if config.backend == "sqlite" and config.path is not None:
+        return Path(config.path)
+    if config.base_dir is None:
+        raise ValueError("resolve_memory_home needs a config resolved for a plane (resolve_memory_store_config(base_dir=...))")
+    return Path(config.base_dir) / "abstractmemory" / "memory.sqlite3"
+
+
+def open_memory_home(config: GatewayMemoryStoreConfig, *, create: bool, **stores: Any) -> Optional[Any]:
+    """The plane's `MemoryFacade` over its home (`resolve_memory_home`) and the runtime `stores` that
+    hold its ledger sources (`ledger_store`, `run_store`, `artifact_store`, ...). With `create=False`
+    a home that does not exist yet is not created: None (a read never makes files). The caller closes
+    `facade.journal` and `facade.store`."""
+    home = resolve_memory_home(config)
+    if not home.exists():
+        if not create:
+            return None
+        home.parent.mkdir(parents=True, exist_ok=True)
+    return _memory_facade().MemoryFacade.open_mind(home, **stores)
+
+
+def _memory_facade() -> Any:
+    """The runtime's AbstractMemory facade module (runtime ADR 0009; gateway ADR 0001): the store
+    classes are its re-exports, never a direct `abstractmemory` import."""
+    from abstractruntime.integrations.abstractmemory import memory_facade
+
+    return memory_facade
 
 
 def memory_store_exists(config: GatewayMemoryStoreConfig) -> bool:
@@ -157,14 +204,15 @@ def memory_backend_unavailable_reason(backend: str) -> Optional[str]:
     resolved_backend = _normalize_backend(backend)
     class_name = _BACKEND_CLASS_NAMES[resolved_backend]
     try:
-        import abstractmemory  # type: ignore
-    except Exception as e:  # pragma: no cover
+        memory_facade = _memory_facade()
+        store_class = getattr(memory_facade, class_name, None)
+    except Exception as e:  # pragma: no cover - the facade's install hint (AbstractMemory missing)
         return (
             "AbstractMemory is not available. Install/repair the base Gateway environment "
             f"with `pip install abstractgateway`. Import error: {e}"
         )
 
-    if getattr(abstractmemory, class_name, None) is None:
+    if store_class is None:
         return (
             f"Memory backend '{resolved_backend}' requires AbstractMemory class `{class_name}`, "
             "but the installed AbstractMemory package does not expose it. Install a compatible "
@@ -190,9 +238,7 @@ def _memory_store_class(backend: str) -> Any:
     if reason:
         raise RuntimeError(reason)
 
-    import abstractmemory  # type: ignore
-
-    return getattr(abstractmemory, _BACKEND_CLASS_NAMES[resolved_backend])
+    return getattr(_memory_facade(), _BACKEND_CLASS_NAMES[resolved_backend])
 
 
 def _normalize_embedder(embedder: Optional[Any]) -> Optional[Any]:

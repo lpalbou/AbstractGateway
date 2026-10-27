@@ -64,7 +64,7 @@ def _core_values(doc: Dict[str, Any]) -> List[str]:
 
 
 def _builtin_template() -> Dict[str, Any]:
-    from abstractmemory import DEFAULT_SPARK_TEMPLATE
+    from abstractruntime.integrations.abstractmemory.memory_facade import DEFAULT_SPARK_TEMPLATE
 
     builtin = copy.deepcopy(dict(DEFAULT_SPARK_TEMPLATE))
     builtin["name"] = ""  # the operator fills the name at summon
@@ -94,7 +94,7 @@ def _lint_spark(spark: Dict[str, Any]) -> Tuple[List[str], List[str]]:
     statement) pass through and are surfaced, never blocking — a template is
     a draft the operator refines, not a summon-time gate."""
     try:
-        from abstractmemory import lint_spark
+        from abstractruntime.integrations.abstractmemory.memory_facade import lint_spark
     except Exception:  # pragma: no cover - abstractmemory is a hard dep
         return [], []
     probe = copy.deepcopy(spark)
@@ -337,7 +337,7 @@ def save_template(
     # append-only history. Canonical hash is the one shared definition.
     content_hash = ""
     try:
-        from abstractmemory import canonical_spark_hash
+        from abstractruntime.integrations.abstractmemory.memory_facade import canonical_spark_hash
 
         content_hash = str(canonical_spark_hash(stored))
         history_prev = list(meta.get("history") or [])

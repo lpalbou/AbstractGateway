@@ -287,7 +287,7 @@ class EntityHome:
         embedder: Any = None,
         embedding_pin: Optional[Dict[str, Any]] = None,
     ) -> None:
-        from abstractmemory import MemorySystem, SQLiteJournal, SQLiteTripleStore
+        from abstractruntime.integrations.abstractmemory.memory_facade import MemorySystem, SQLiteJournal, SQLiteTripleStore
         from abstractruntime.identity import DiaryStore
         from abstractruntime.storage.sqlite import SqliteDatabase, SqliteLedgerStore
 
@@ -456,7 +456,7 @@ class EntityHome:
         None when the engine predates the read (version skew) — callers
         render-when-present, never derive."""
         try:
-            from abstractmemory import cognition_health
+            from abstractruntime.integrations.abstractmemory.memory_facade import cognition_health
         except ImportError:
             return None
         eid = self.entity_id
@@ -476,7 +476,7 @@ class EntityHome:
         the verbs answer their own transitions; this list serves what
         stands for review."""
         try:
-            from abstractmemory import TripleQuery
+            from abstractruntime.integrations.abstractmemory.memory_facade import TripleQuery
         except ImportError:
             return []
         out: List[Dict[str, Any]] = []
@@ -623,7 +623,7 @@ class EntityHome:
         model is powering him now" — Ariadne stamps episodes; kind-agnostic
         on purpose since any lived record may carry it). None until one is
         stamped — absent, never faked."""
-        from abstractmemory import TripleQuery
+        from abstractruntime.integrations.abstractmemory.memory_facade import TripleQuery
 
         newest: Optional[Dict[str, Any]] = None
         newest_at = ""
@@ -638,8 +638,8 @@ class EntityHome:
         """Integrity: the book's hash chain, the graph projection chain
         ("nothing claimed, nothing broken"), the spark document vs the
         engrammed marker, and manifest consistency."""
-        from abstractmemory import canonical_spark_hash
-        from abstractmemory.records import verify_diary_chain as verify_graph_chain
+        from abstractruntime.integrations.abstractmemory.memory_facade import canonical_spark_hash
+        from abstractruntime.integrations.abstractmemory.memory_facade import verify_diary_chain as verify_graph_chain
         from abstractruntime.identity import verify_diary_chain as verify_book_chain
 
         checks: Dict[str, Any] = {}
@@ -698,7 +698,7 @@ class EntityHome:
     def _engram_marker(self) -> Optional[Dict[str, Any]]:
         """The spark-engram claim record (layer-1 read; claims are
         bookkeeping, not identity kinds — same read the prelude uses)."""
-        from abstractmemory import TripleQuery
+        from abstractruntime.integrations.abstractmemory.memory_facade import TripleQuery
 
         best: Optional[Dict[str, Any]] = None
         best_version = -1
@@ -920,7 +920,7 @@ class EntityRegistry:
         warnings); raises ValueError with the human-written lint/name error
         exactly as create surfaces it. No filesystem or engine writes."""
         import yaml
-        from abstractmemory import DEFAULT_SPARK_TEMPLATE, lint_spark
+        from abstractruntime.integrations.abstractmemory.memory_facade import DEFAULT_SPARK_TEMPLATE, lint_spark
 
         slug = entity_slug(name)
 
@@ -985,7 +985,7 @@ class EntityRegistry:
         - would_conflict: exists AND the submitted spark differs (create 409s)
         """
         import yaml
-        from abstractmemory import canonical_spark_hash
+        from abstractruntime.integrations.abstractmemory.memory_facade import canonical_spark_hash
 
         slug = entity_slug(name)
         errors: List[str] = []
@@ -1036,7 +1036,7 @@ class EntityRegistry:
         import copy as _copy
 
         import yaml
-        from abstractmemory import DEFAULT_SPARK_TEMPLATE
+        from abstractruntime.integrations.abstractmemory.memory_facade import DEFAULT_SPARK_TEMPLATE
 
         def _core_values(doc: Mapping[str, Any]) -> List[str]:
             out: List[str] = []
@@ -1126,7 +1126,7 @@ class EntityRegistry:
         embedder and no declaration = no pin, labeled (first-write fallback).
         """
         import yaml
-        from abstractmemory import canonical_spark_hash, engram
+        from abstractruntime.integrations.abstractmemory.memory_facade import canonical_spark_hash, engram
 
         slug = entity_slug(name)
         spark_doc, raw_bytes, warnings = self._prepare_spark(
@@ -2191,11 +2191,11 @@ class EntityRegistry:
             # without sleep_pass degrade to dream-only with a labeled
             # #FALLBACK (build_consolidator's exact posture).
             try:
-                from abstractmemory import sleep_pass as _night_pass
+                from abstractruntime.integrations.abstractmemory.memory_facade import sleep_pass as _night_pass
 
                 _night_is_full = True
             except ImportError:
-                from abstractmemory import dream_pass as _night_pass
+                from abstractruntime.integrations.abstractmemory.memory_facade import dream_pass as _night_pass
 
                 _night_is_full = False
 
@@ -2309,7 +2309,7 @@ class EntityRegistry:
         embedder enters through `reembed_store(embedder=...)` alone; the
         whole open+pass window runs under the lease; cached door handles
         for this home are evicted so the next touch binds the NEW pin."""
-        from abstractmemory import reembed_store
+        from abstractruntime.integrations.abstractmemory.memory_facade import reembed_store
 
         manifest = self.manifest_for(name)
         home_dir = self.entities_dir / manifest.slug

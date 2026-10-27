@@ -285,46 +285,11 @@ def test_no_second_module_re_exports_the_seam() -> None:
 # ---------------------------------------------------------------------------
 
 _ABSTRACTMEMORY_BURN_DOWN: dict[tuple[str, str], int] = {
-    # entities.py: the entity home (engine, night passes, sparks, health).
-    ("entities.py", "from abstractmemory import MemorySystem, SQLiteJournal, SQLiteTripleStore"): 1,
+    # entities.py `EntityHome.wake_reasons`: `open_questions` / `open_problems` / `open_ideas`
+    # are read off the package; the runtime memory facade does not re-export them yet
+    # (its `GATEWAY_NAMES` was seeded from the named imports). Fix in AbstractRuntime, then
+    # delete this entry.
     ("entities.py", "import abstractmemory"): 1,
-    ("entities.py", "from abstractmemory import cognition_health"): 1,
-    ("entities.py", "from abstractmemory import TripleQuery"): 3,
-    ("entities.py", "from abstractmemory import canonical_spark_hash"): 2,
-    ("entities.py", "from abstractmemory.records import verify_diary_chain as verify_graph_chain"): 1,
-    ("entities.py", "from abstractmemory import DEFAULT_SPARK_TEMPLATE, lint_spark"): 1,
-    ("entities.py", "from abstractmemory import DEFAULT_SPARK_TEMPLATE"): 1,
-    ("entities.py", "from abstractmemory import canonical_spark_hash, engram"): 1,
-    ("entities.py", "from abstractmemory import sleep_pass as _night_pass"): 1,
-    ("entities.py", "from abstractmemory import dream_pass as _night_pass"): 1,
-    ("entities.py", "from abstractmemory import reembed_store"): 1,
-    # entity_gate.py: summon budgets.
-    ("entity_gate.py", "from abstractmemory.seam import SELF_FRACTION_FLOOR as SUMMON_IDENTITY_FLOOR"): 1,
-    ("entity_gate.py", "from abstractmemory import ENTITY_CONTEXT_ACCEPTABLE as SUMMON_CONTEXT_ACCEPTABLE_TOKENS"): 1,
-    ("entity_gate.py", "from abstractmemory import ENTITY_CONTEXT_FLOOR as SUMMON_CONTEXT_FLOOR_TOKENS"): 1,
-    ("entity_gate.py", "from abstractmemory import ENTITY_CONTEXT_RECOMMENDED, entity_recall_budget"): 1,
-    # entity_replay.py: the replay envelope.
-    (
-        "entity_replay.py",
-        "from abstractmemory.replay import REPLAY_FAMILIES, REPLAY_STREAM, REPLAY_STREAM_VERSION, RESERVED_FAMILIES",
-    ): 1,
-    ("entity_replay.py", "from abstractmemory.records import resolve_digest_assertion"): 2,
-    # memory_store.py: the plane KG store classes.
-    ("memory_store.py", "import abstractmemory"): 2,
-    # routes/entities.py
-    ("routes/entities.py", "from abstractmemory import read_embedding_pin"): 1,
-    ("routes/entities.py", "from abstractmemory import DRIVE_PRESSURE_BOUND, drive_pressure as _engine_pressure"): 1,
-    ("routes/entities.py", "from abstractmemory import promote_candidate"): 1,
-    ("routes/entities.py", "from abstractmemory import reject_candidate"): 1,
-    # routes/entity_replay.py
-    ("routes/entity_replay.py", "from abstractmemory.records import resolve_digest_assertion"): 1,
-    ("routes/entity_replay.py", "from abstractmemory import TripleQuery"): 1,
-    # routes/gateway.py: kg/query.
-    ("routes/gateway.py", "from abstractmemory import TripleQuery"): 1,
-    # template_store.py: spark templates.
-    ("template_store.py", "from abstractmemory import DEFAULT_SPARK_TEMPLATE"): 1,
-    ("template_store.py", "from abstractmemory import lint_spark"): 1,
-    ("template_store.py", "from abstractmemory import canonical_spark_hash"): 1,
 }
 
 
