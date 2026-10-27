@@ -23,7 +23,7 @@ from typing import Any, AsyncIterator, Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 
-from ..replay_view import _Subscriber, get_view_hub, poll, read_view, subscribe, unsubscribe
+from ..replay_view import _Subscriber, get_view_hub, poll, read_view, read_view_at, subscribe, unsubscribe
 from ..work_pools import off_loop
 
 router = APIRouter(prefix="/gateway", tags=["runs"])
@@ -56,9 +56,23 @@ def _etag(token: str) -> str:
 
 
 @router.get("/runs/{run_id}/view")
-async def get_run_view(request: Request, run_id: str) -> Response:
-    """The run tree's replay view (`replay_view_v1`). `If-None-Match` with the ETag -> 304."""
+async def get_run_view(
+    request: Request,
+    run_id: str,
+    at: Optional[str] = Query(None, description="A cursor token (a delta's id, a push's cursor): the view as the ledger stood then."),
+) -> Response:
+    """The run tree's replay view (`replay_view_v1`). `If-None-Match` with the ETag -> 304.
+
+    `?at=<cursor token>`: the view at that cursor (the records up to each run's seq in the
+    token; the runs' status and waits as those records say); 404
+    when the token is not one of this run's."""
     _svc, entry = await _entry_for(run_id)
+    if at is not None and at.strip():
+        body_at = await off_loop("heavy", read_view_at, entry, at.strip())
+        if body_at is None:
+            raise HTTPException(status_code=404, detail="No view of this run at that cursor")
+        return Response(content=body_at, media_type="application/json",
+                        headers={"ETag": _etag("at." + at.strip()), "Cache-Control": "no-cache"})
     token, body, _delta = await off_loop("heavy", read_view, entry)
     etag = _etag(token)
     inm = [t.strip() for t in str(request.headers.get("if-none-match") or "").split(",") if t.strip()]

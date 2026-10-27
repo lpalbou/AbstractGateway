@@ -251,3 +251,34 @@ def test_reconnect_with_last_event_id_gets_one_delta_to_the_same_view(client: Te
     events3: List[Dict[str, Any]] = []
     _follow(client, f"/api/gateway/runs/{ROOT}/view/stream?after=garbage", H, events3)
     assert [e["event"] for e in events3] == ["view", "done"] and events3[0]["data"] == final
+
+
+def test_view_at_a_cursor_is_the_ledger_as_it_stood(client: TestClient) -> None:
+    """A push opened at its seq (root backlog 1058): `?at=<token>` rebuilds the view at that cursor."""
+    _seed_delegated_approval()
+    held = client.get(f"/api/gateway/runs/{ROOT}/view", headers=H).json()
+    _finish_turn()
+    now = client.get(f"/api/gateway/runs/{ROOT}/view", headers=H).json()
+    assert now["status"] == "completed"
+    at = client.get(f"/api/gateway/runs/{ROOT}/view", params={"at": held["cursor"]["token"]}, headers=H)
+    assert at.status_code == 200, at.text
+    v = at.json()
+    assert v["cursor"] == held["cursor"]
+    assert v["status"] == "waiting" and v["interaction"]["kind"] == "tool_approval"
+    assert v["interaction"]["run_id"] == CHILD and v["activities"] == held["activities"]
+    assert client.get(f"/api/gateway/runs/{ROOT}/view", params={"at": "zzzzzzzz:3"}, headers=H).status_code == 404
+    assert client.get(f"/api/gateway/runs/{ROOT}/view", params={"at": "not a token"}, headers=H).status_code == 404
+
+
+def test_a_read_that_changes_nothing_broadcasts_nothing(client: TestClient) -> None:
+    """GETs and safety polls re-read open runs' snapshots; an unchanged snapshot is no delta."""
+    from abstractgateway.replay_view import get_view_hub, poll, read_view
+
+    _seed_delegated_approval()
+    rs, ls = _stores()
+    entry = get_view_hub().entry(ledger_store=ls, run_store=rs, root_run_id=ROOT)
+    _token, _body, first = read_view(entry)
+    assert first is not None
+    _token2, _body2, again = read_view(entry)
+    assert again is None
+    assert poll(entry, reload_open_snapshots=True) == (False, False)

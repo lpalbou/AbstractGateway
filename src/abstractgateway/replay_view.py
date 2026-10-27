@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from abstractruntime.replay import ReplayView, diff_views, parse_cursor_token, replay
+from abstractruntime.replay.delta import LIST_KEYS, SCALAR_KEYS
 
 # Records read per run per refresh pass (a pass loops until a run is drained).
 _PAGE = 2000
@@ -77,6 +78,7 @@ class ViewEntry:
     last_used: float = field(default_factory=time.monotonic)
     folds: int = 0  # apply() calls that folded records (observability, tests)
     records_folded: int = 0  # every record is folded once per entry, however many clients follow
+    last_scalars: Optional[Dict[str, Any]] = None  # the scalars the last delta carried
 
     # ----------------------------------------------------------------- reads (worker thread)
 
@@ -132,9 +134,18 @@ class ViewEntry:
             delta = d if delta is None else _merge_deltas(delta, d)
             if self.view.run_ids == run_ids:
                 break
+        if delta is not None and not self._changes(delta):
+            return None  # a re-read snapshot that changed nothing: no delta, no broadcast
         if changed:
             self.json_cache = None
         return delta
+
+    def _changes(self, delta: Dict[str, Any]) -> bool:
+        """Whether `delta` changes anything a client holds (an item, or a scalar's value)."""
+        scalars = {k: delta.get(k) for k in SCALAR_KEYS if k in delta}
+        same = scalars == self.last_scalars
+        self.last_scalars = scalars
+        return not same or any(delta.get(k) for k in LIST_KEYS)
 
     def view_bytes_locked(self) -> Tuple[str, bytes]:
         token = self.view.cursor["token"]
@@ -150,8 +161,14 @@ class ViewEntry:
             except RuntimeError:
                 pass  # that subscriber's loop is gone; it unsubscribes on its way out
 
-    def view_at(self, token_map: Dict[str, int]) -> Optional[ReplayView]:
-        """The view as of an older cursor (a reconnect): each run's records up to the token's seq."""
+    def view_at(self, token_map: Dict[str, int], *, as_of: bool = False) -> Optional[ReplayView]:
+        """The view at an older cursor: each run's records up to the token's seq (None when the
+        token is not one of this view's: an unknown run, a seq beyond what is folded).
+
+        `as_of=False` (a reconnect) folds the runs' current snapshots, so the difference to the
+        current view is only what the ledger added. `as_of=True` (`GET /view?at=`, a push
+        opened at its seq) keeps only what a snapshot says that does not change as a run
+        progresses (its workflow, parent, input, session): the view as the ledger stood then."""
         by_prefix = {rid[:8]: rid for rid in self.view.run_ids}
         if any(p not in by_prefix for p in token_map):
             return None
@@ -178,8 +195,20 @@ class ViewEntry:
             except Exception:  # noqa: BLE001
                 snap = None
             if snap is not None:
-                snaps[rid] = snap
+                snaps[rid] = _static_snapshot(snap) if as_of else snap
         return replay(records, snaps, root_run_id=self.root_run_id)
+
+
+def _static_snapshot(run: Any) -> Dict[str, Any]:
+    """A run snapshot without what changes as the run progresses (status, wait, output)."""
+    d = run if isinstance(run, dict) else {k: getattr(run, k, None) for k in (
+        "run_id", "workflow_id", "parent_run_id", "vars", "created_at", "session_id")}
+    out = {k: d.get(k) for k in ("run_id", "workflow_id", "parent_run_id", "created_at", "session_id")}
+    vars_ = d.get("input_data") if isinstance(d.get("input_data"), dict) else d.get("vars")
+    if isinstance(vars_, dict):
+        out["vars"] = vars_
+    out["status"] = "running"
+    return out
 
 
 def _merge_deltas(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
@@ -273,8 +302,32 @@ def subscribe(entry: ViewEntry, sub: _Subscriber, last_token: Optional[str]) -> 
         except Exception:  # noqa: BLE001 - a reconnect we cannot rebuild gets the whole view
             old = None
         if old is not None:
-            return [_encode("delta", diff_views(old.to_json(), current), token)], terminal
+            delta = diff_views(old.to_json(), current)
+            # What a snapshot contributed may differ between the client's copy (folded with the
+            # snapshot of its time) and this rebuild (today's snapshot): send those whole.
+            delta["runs"] = current.get("runs") or []
+            ids = {m.get("id") for m in delta.get("messages") or []}
+            delta["messages"] = (delta.get("messages") or []) + [
+                m for m in current.get("messages") or []
+                if m.get("source") in ("run_input", "run_output") and m.get("id") not in ids]
+            return [_encode("delta", delta, token)], terminal
     return [b"id: " + token.encode("utf-8") + b"\nevent: view\ndata: " + body + b"\n\n"], terminal
+
+
+def read_view_at(entry: ViewEntry, token: str) -> Optional[bytes]:
+    """Worker thread: the view at a cursor token (JSON bytes), None when the token is not one."""
+    token_map = parse_cursor_token(token)
+    if not token_map:
+        return None
+    with entry.lock:
+        entry.refresh_locked()
+        try:
+            old = entry.view_at(token_map, as_of=True)
+        except Exception:  # noqa: BLE001 - an unreadable ledger: no view at that cursor
+            old = None
+    if old is None:
+        return None
+    return json.dumps(old.to_json(), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
 def unsubscribe(entry: ViewEntry, sub: _Subscriber) -> None:
