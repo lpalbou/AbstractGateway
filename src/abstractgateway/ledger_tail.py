@@ -187,10 +187,6 @@ class JsonlLedgerTail:
                     self._index += 1
                     continue
                 self._index += 1
-                if not (isinstance(record.get("seq"), int) and not isinstance(record.get("seq"), bool)):
-                    # A line written before `seq` existed: numbered by position, as the store's
-                    # list() numbers it (AbstractRuntime ADR 0009), so tail == list().
-                    record["seq"] = self._index
                 out.append((self._index, record))
         # NOTE: max_records is deliberately not enforced here — the byte
         # offset advances over the WHOLE consumed chunk, so an early break
@@ -328,8 +324,7 @@ def resolve_ledger_tail(store: Any, run_id: str, *, start_index: int = 0) -> Any
     PERSISTED (offloaded) records, so a byte-tail over the backend file
     yields byte-identical records to chain.list() — same read surface.
     """
-    chain = _unwrap_chain(store)
-    for layer in chain:
+    for layer in _unwrap_chain(store):
         # JSONL backend: file path per run.
         path_fn = getattr(layer, "_path", None)
         if callable(path_fn):
@@ -339,21 +334,7 @@ def resolve_ledger_tail(store: Any, run_id: str, *, start_index: int = 0) -> Any
                     return JsonlLedgerTail(p, start_index=start_index)
             except Exception:
                 pass
-    # SQLite backend: seq-cursor read. Every LedgerStore has `list_after` now (AbstractRuntime
-    # ADR 0009) and the decorators delegate it; only a backend with its own (indexed) read is
-    # cheaper than the plain slice: the base default is `list()` then filter.
-    backend = chain[-1] if chain else store
-    if _native_list_after(backend):
-        return SeqLedgerTail(backend, str(run_id), start_index=start_index)
+        # SQLite backend: seq-cursor read.
+        if callable(getattr(layer, "list_after", None)):
+            return SeqLedgerTail(layer, str(run_id), start_index=start_index)
     return ListSliceTail(store, str(run_id), start_index=start_index)
-
-
-def _native_list_after(layer: Any) -> bool:
-    fn = getattr(type(layer), "list_after", None)
-    if not callable(fn):
-        return False
-    try:
-        from abstractruntime.storage.base import LedgerStore
-    except Exception:  # noqa: BLE001
-        return True
-    return fn is not getattr(LedgerStore, "list_after", None)
