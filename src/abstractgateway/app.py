@@ -15,6 +15,19 @@ from .routes import automations_router, email_router, engines_router, entities_r
 from .security import GatewaySecurityMiddleware, load_gateway_auth_policy_from_env
 
 
+def _warm_route_table(app_: FastAPI) -> None:
+    """Build FastAPI's per-route state before the first request does it ON the event loop.
+
+    FastAPI (0.142+) builds each included router's route state (dependants, pydantic
+    adapters, compiled paths) lazily, on the first request that matches through it: ~140 ms
+    for this app's routes, inside the event loop, on the first request after boot (health
+    included). Matching a path no route answers walks every route once and builds them all;
+    the lifespan runs this in a worker before serving (tests/test_perf_routes_off_loop.py)."""
+    for route in app_.router.routes:
+        route.matches({"type": "http", "path": "/__route-table-warm-up__", "method": "GET",
+                       "root_path": "", "headers": [], "query_string": b""})
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     # Boot the service on a BACKGROUND thread and yield immediately
@@ -46,6 +59,13 @@ async def _lifespan(_app: FastAPI):
     except Exception:
         pass
     begin_gateway_boot()
+    # The route table, built off the loop before the first request (see _warm_route_table).
+    try:
+        from .work_pools import off_loop
+
+        await off_loop("light", _warm_route_table, _app)
+    except Exception:
+        pass
     # Browser apps marked enabled start with the gateway, as its children
     # (never launchd/systemd), on a background thread; they stop with it.
     try:
