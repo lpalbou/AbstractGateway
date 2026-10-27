@@ -105,7 +105,9 @@ _role_lock = threading.Lock()
 #         (`policy.tool_policy`), streamed read-aloud recordings tagged under the `voice/` artifact space.
 # 0.12.0: the run index and store change tokens, `origin_for` (run origin), the event inbox streams.
 # 0.13.0: the voice library facade and per-runtime voice stores (routes/voice_library.py).
-ABSTRACTRUNTIME_FLOOR = "0.13.1"
+# 0.14.0: the AbstractMemory facade (integrations.abstractmemory.memory_facade: MemoryFacade, the
+#         re-exported store classes and names) and LedgerStore.get_record (routes/memory.py, backlog 0943).
+ABSTRACTRUNTIME_FLOOR = "0.14.0"
 
 
 class LiveDeltaError(RuntimeError):
@@ -907,6 +909,14 @@ def require_runtime_features(runtime: Any) -> None:
             missing.append("standard-library imports in the Code-node sandbox (code_executor.sandbox_import_check, AbstractRuntime 0.10.2)")
     except ImportError:
         missing.append("the Code-node executor (abstractruntime.visualflow_compiler.visual.code_executor)")
+    try:
+        from abstractruntime.integrations.abstractmemory.memory_facade import MemoryFacade  # noqa: F401
+        from abstractruntime.storage.base import LedgerStore
+
+        if not callable(getattr(LedgerStore, "get_record", None)):
+            missing.append("ledger rows by address (LedgerStore.get_record, AbstractRuntime 0.14.0)")
+    except ImportError:
+        missing.append("the AbstractMemory facade (abstractruntime.integrations.abstractmemory.memory_facade.MemoryFacade)")
     if missing:
         try:
             from importlib.metadata import version
