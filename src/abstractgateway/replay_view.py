@@ -32,7 +32,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from abstractruntime.replay import ReplayView, diff_views, parse_cursor_token, replay
+from abstractruntime.replay import ReplayView, diff_views, replay, resolve_cursor_token
 from abstractruntime.replay.delta import LIST_KEYS, SCALAR_KEYS
 
 # Records read per run per refresh pass (a pass loops until a run is drained).
@@ -207,7 +207,7 @@ class ViewEntry:
                 self.pump_scheduled = False
             raise
 
-    def view_at(self, token_map: Dict[str, int], *, as_of: bool = False) -> Optional[ReplayView]:
+    def view_at(self, token: str, *, as_of: bool = False) -> Optional[ReplayView]:
         """The view at an older cursor: each run's records up to the token's seq (None when the
         token is not one of this view's: an unknown run, a seq beyond what is folded).
 
@@ -215,12 +215,11 @@ class ViewEntry:
         current view is only what the ledger added. `as_of=True` (`GET /view?at=`, a push
         opened at its seq) keeps only what a snapshot says that does not change as a run
         progresses (its workflow, parent, input, session): the view as the ledger stood then."""
-        by_prefix = {rid[:8]: rid for rid in self.view.run_ids}
-        if any(p not in by_prefix for p in token_map):
+        token_map = resolve_cursor_token(token, self.view.run_ids)
+        if not token_map:
             return None
         records: Dict[str, List[Dict[str, Any]]] = {}
-        for prefix, seq in token_map.items():
-            rid = by_prefix[prefix]
+        for rid, seq in token_map.items():
             if seq > self.view.last_seq(rid):
                 return None
             if seq <= 0:
@@ -285,6 +284,7 @@ def _merge_deltas(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
         for it in b.get(key) or []:
             items[str(it.get(idk))] = it
         out[key] = list(items.values())
+    out["changes"] = list(a.get("changes") or []) + list(b.get("changes") or [])
     return out
 
 
@@ -362,10 +362,10 @@ def subscribe(entry: ViewEntry, sub: _Subscriber, last_token: Optional[str]) -> 
         current = entry.view.to_json() if last_token and last_token != token else None
     if last_token and last_token == token:
         return [], terminal
-    token_map = parse_cursor_token(last_token) if last_token else None
-    if token_map and current is not None:
+    if last_token and current is not None:
         try:
-            old = entry.view_at(token_map)
+            with entry.lock:
+                old = entry.view_at(last_token)
         except Exception:  # noqa: BLE001 - a reconnect we cannot rebuild gets the whole view
             old = None
         if old is not None:
@@ -376,20 +376,17 @@ def subscribe(entry: ViewEntry, sub: _Subscriber, last_token: Optional[str]) -> 
             ids = {m.get("id") for m in delta.get("messages") or []}
             delta["messages"] = (delta.get("messages") or []) + [
                 m for m in current.get("messages") or []
-                if m.get("source") in ("run_input", "run_output") and m.get("id") not in ids]
+                if (m.get("source") in ("run_input", "run_output") or m.get("kind") == "final") and m.get("id") not in ids]
             return [_encode("delta", delta, token)], terminal
     return [b"id: " + token.encode("utf-8") + b"\nevent: view\ndata: " + body + b"\n\n"], terminal
 
 
 def read_view_at(entry: ViewEntry, token: str) -> Optional[bytes]:
     """Worker thread: the view at a cursor token (JSON bytes), None when the token is not one."""
-    token_map = parse_cursor_token(token)
-    if not token_map:
-        return None
     with entry.lock:
         entry.refresh_locked()
         try:
-            old = entry.view_at(token_map, as_of=True)
+            old = entry.view_at(token, as_of=True)
         except Exception:  # noqa: BLE001 - an unreadable ledger: no view at that cursor
             old = None
     if old is None:
