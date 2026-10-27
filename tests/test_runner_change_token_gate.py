@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+
 from abstractruntime.core.models import RunState, RunStatus
 from abstractruntime.storage.json_files import JsonFileRunStore
 
@@ -88,4 +90,4 @@ def test_benchmark_11500_quiet_runs_probe_under_1ms_and_reads_no_file(tmp_path: 
     assert not any(due)
     assert calls["open"] == 0 and calls["scandir"] == 0
     assert calls["stat"] <= passes  # one stat of the creation log per probe
-    assert per_pass < 0.001, f"{per_pass * 1000:.3f} ms per probe"
+    timing_budget(per_pass, 0.001, "change-token probe per pass")

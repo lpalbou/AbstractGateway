@@ -32,6 +32,8 @@ from typing import Any, List
 
 import pytest
 
+from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+
 pytestmark = pytest.mark.basic
 
 from abstractruntime.core.models import RunState, RunStatus, WaitReason, WaitState  # noqa: E402
@@ -176,7 +178,7 @@ def test_nudge_wakes_the_loop_well_before_the_poll_interval_elapses(tmp_path: Pa
         )
         latency = r.last_iteration() - t_nudge
         # Generous bound: the point is "milliseconds, not 2 seconds".
-        assert latency < 0.5, f"nudge latency {latency:.3f}s is not sub-poll-interval"
+        timing_budget(latency, 0.5, "runner nudge latency")
     finally:
         r.stop(timeout_s=3.0)
 

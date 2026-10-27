@@ -15,6 +15,8 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # A safety net only: the suite runs in well under 30 minutes.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -25,16 +27,19 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install
         run: |
           python -m pip install -U pip
-          python -m pip install --no-cache-dir -e ".[dev]"
+          python -m pip install -e ".[dev]"
       - name: Pytest
         env:
           ABSTRACT_E2E_GATEWAY_SPLIT: "0"
           ABSTRACT_E2E_LMSTUDIO: "0"
           ABSTRACTGATEWAY_EMBEDDING_PROVIDER: "disabled"
-        run: python -m pytest
+        # Serial: a pytest-xdist trial (-n auto --dist loadfile, 2 min locally vs 24) failed
+        # intermittently on shared state between workers; see backlog 0945.
+        run: python -m pytest --durations=15
 
   build:
     runs-on: ubuntu-latest

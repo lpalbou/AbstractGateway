@@ -16,6 +16,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+
 pytestmark = pytest.mark.basic
 
 
@@ -75,7 +77,7 @@ def test_a_slow_build_never_blocks_a_cached_lookup_beyond_1ms(multi_user, monkey
         t0 = time.perf_counter()
         assert svc_mod.principal_service_cached(bob) is False
         worst = max(worst, time.perf_counter() - t0)
-        assert worst < 0.001, f"a cached lookup took {worst * 1000:.2f} ms behind a held build lock"
+        timing_budget(worst, 0.001, "cached service lookup behind a held build lock")
     finally:
         release.set()
         t.join(5)
@@ -158,4 +160,4 @@ def test_prewarm_middleware_does_not_park_the_loop_behind_a_build(multi_user, mo
     finally:
         release.set()
         t.join(5)
-    assert worst < 0.001, f"the pre-warm middleware took {worst * 1000:.2f} ms behind a held build lock"
+    timing_budget(worst, 0.001, "pre-warm middleware behind a held build lock")

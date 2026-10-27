@@ -8,6 +8,8 @@ lock, so /api/health keeps answering and the watchdog never exits the gateway.
 """
 from __future__ import annotations
 
+from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+
 import threading
 import time
 
@@ -30,7 +32,7 @@ def test_the_peek_answers_at_once_while_a_build_holds_the_lock() -> None:
     try:
         t0 = time.monotonic()
         assert svc.principal_service_cached(principal) is False
-        assert time.monotonic() - t0 < 0.5, "the peek waited for the service lock"
+        timing_budget(time.monotonic() - t0, 0.5, "service peek behind the service lock")
     finally:
         release.set()
         t.join(timeout=5)

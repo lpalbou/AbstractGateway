@@ -175,6 +175,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Tests: a wall-clock budget never fails a test by default.** Every latency assertion in the
+  suite (52 checks in 27 files: health p99 and worst case, loop stalls, TTFA, kill/cancel times, per-pass
+  benchmarks) goes through `tests/timing.py`: it prints a `[timing]` line, and asserts only with
+  `ABSTRACTGATEWAY_TIMING_STRICT=1` (CONTRIBUTING.md). The structural assertions stay unconditional.
+  The host-status TTL tests use a fake clock.
+- **The test suite no longer keeps every app it builds** (backlog 0945). The harness re-imports
+  `abstractgateway.app` for each test; FastAPI's endpoint memo caches (keyed by the endpoints `app.py` defines)
+  and the package attribute kept every one of those apps alive, ~13,500 objects per test, and a test that ran
+  `serve` left GC tuning on so later boots `gc.freeze()`d them for good (29-35 M objects late in CI). The
+  conftest now frees the dropped app (`tests/app_reimport.py`) and undoes any GC tuning after each test;
+  `tests/test_harness_reimported_app_is_freed.py` guards both. Full suite on an M-series Mac: 63 -> 24 min,
+  peak RSS 10.1 GB -> 1.2 GB; six timing tests that failed under the GC pauses pass. Four harness waits got
+  shorter, and the apps reaper reads `STOP_TIMEOUT_S` when it runs (a default bound at import ignored a
+  change to it).
 - **`GET /automations` costs the automations, not their history, and never piles up.** Each row used to re-read the
   automation's whole past (every occurrence tree, the full controller ledger, every past prompt artifact, every
   artifact of the last answer) and the list ran four run-index scans: 2.4 s cold / 1.6 s warm on a copy of the

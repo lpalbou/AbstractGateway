@@ -530,7 +530,7 @@ def test_sse_backlog_drains_in_bounded_offloop_chunks():
             async def _drain_backlog() -> list:
                 response = await er_routes.stream_entity_replay(
                     _FakeRequest(), "Castor", since_seq=0.0, families=None, enrich=True,
-                    heartbeat_s=5.0, poll_s=0.05, last_event_id=None,
+                    heartbeat_s=0.3, poll_s=0.05, last_event_id=None,
                 )
                 gen = response.body_iterator
                 buffer = ""
@@ -589,7 +589,7 @@ def test_f4_low_seq_marker_written_during_disconnect_redelivers_on_reconnect():
         async def _collect(last_event_id: str) -> list:
             response = await er_routes.stream_entity_replay(
                 _FakeRequest(), "Castor", since_seq=0.0, families="host", enrich=False,
-                heartbeat_s=5.0, poll_s=0.05, last_event_id=last_event_id,
+                heartbeat_s=0.3, poll_s=0.05, last_event_id=last_event_id,
             )
             gen = response.body_iterator
             buffer = ""
