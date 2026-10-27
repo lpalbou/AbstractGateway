@@ -655,6 +655,13 @@ Server-sent events:
 - `: keep-alive` comments, every `heartbeat_s` seconds (default 5).
 - `event: done` once the tree is terminal and every record was sent.
 
+**To open a run, read the view with a GET, then follow the stream from its token:**
+`GET /view` (gzip-compressed, cacheable with its ETag), then
+`GET /view/stream?after=<cursor.token>`. A stream joined this way sends nothing until the next
+change. A stream opened without a token starts with the whole view as its first event, and SSE
+frames are not compressed. On a 3,000-record run that frame is about 1 MB, against about 60 KB
+for the compressed GET.
+
 To reconnect, send `Last-Event-ID` (or `?after=`) with the last id you received:
 
 - the current token: nothing is sent until the next change;

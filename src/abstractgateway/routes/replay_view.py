@@ -151,7 +151,9 @@ async def stream_run_view(
                     safety_due = now - last_safety >= SAFETY_POLL_S
                     if safety_due:
                         last_safety = now
-                    _folded, terminal = await off_loop("heavy", poll, entry, reload_open_snapshots=safety_due)
+                    _folded, terminal = await off_loop(
+                        "heavy", poll, entry, reload_open_snapshots=safety_due,
+                        check_every=interval * 0.8, reload_every=SAFETY_POLL_S * 0.8)
                 if sub.queue.empty() and loop.time() - last_emit >= heartbeat_s:
                     yield b": keep-alive\n\n"
                     last_emit = loop.time()

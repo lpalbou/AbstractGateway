@@ -335,3 +335,27 @@ def test_the_gateway_serves_every_conformance_case_as_the_runtime_replays_it(cli
     assert got.json() == want
     assert got.json() == case["expected_view"]
     assert "$slim" not in got.text
+
+
+def test_periodic_checks_are_shared_by_the_streams_of_one_view(client: TestClient) -> None:
+    """50 idle streams of one run cost one check per period, not 50 (benchmark finding)."""
+    from abstractgateway.replay_view import get_view_hub, poll, read_view
+
+    _seed_delegated_approval()
+    rs, ls = _stores()
+    entry = get_view_hub().entry(ledger_store=ls, run_store=rs, root_run_id=ROOT)
+    read_view(entry)
+    reads: List[str] = []
+    real_load = rs.load
+
+    def counting_load(run_id: str):
+        reads.append(run_id)
+        return real_load(run_id)
+
+    rs.load = counting_load  # type: ignore[method-assign]
+    try:
+        for _ in range(50):  # every stream's check falls in the same period
+            poll(entry, reload_open_snapshots=True, check_every=4.0, reload_every=4.0)
+    finally:
+        rs.load = real_load  # type: ignore[method-assign]
+    assert len(reads) == 2  # the two open runs, re-read once for all 50 streams

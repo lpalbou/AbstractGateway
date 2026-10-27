@@ -77,6 +77,8 @@ class ViewEntry:
     pump_lock: threading.Lock = field(default_factory=threading.Lock)
     pump_scheduled: bool = False
     pump_again: bool = False
+    last_check: float = 0.0  # the last periodic check by any stream (monotonic)
+    last_reload: float = 0.0  # the last snapshot re-read by any stream's safety check
     last_used: float = field(default_factory=time.monotonic)
     folds: int = 0  # apply() calls that folded records (observability, tests)
     records_folded: int = 0  # every record is folded once per entry, however many clients follow
@@ -414,9 +416,23 @@ def followed(entry: ViewEntry) -> bool:
     return entry.unsubscribe is not None
 
 
-def poll(entry: ViewEntry, *, reload_open_snapshots: bool = False) -> Tuple[bool, bool]:
-    """Worker thread: fold and broadcast what is new. Returns (folded anything, terminal)."""
+def poll(entry: ViewEntry, *, reload_open_snapshots: bool = False, check_every: float = 0.0,
+         reload_every: float = 0.0) -> Tuple[bool, bool]:
+    """Worker thread: fold and broadcast what is new. Returns (folded anything, terminal).
+
+    `check_every` / `reload_every` make a periodic check shared by the entry's streams: when
+    another stream of the same view checked (re-read snapshots) less than that many seconds ago,
+    this one skips it, so N idle streams cost one check per period, not N."""
     with entry.lock:
+        now = time.monotonic()
+        if check_every and now - entry.last_check < check_every:
+            return False, entry.terminal
+        entry.last_check = now
+        if reload_open_snapshots and reload_every:
+            if now - entry.last_reload < reload_every:
+                reload_open_snapshots = False
+            else:
+                entry.last_reload = now
         delta = entry.refresh_locked(reload_open_snapshots=reload_open_snapshots)
         if delta is not None:
             entry.broadcast(delta)
