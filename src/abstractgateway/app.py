@@ -292,6 +292,11 @@ app.include_router(email_router, prefix="/api")
 from .routes.me_events import router as me_events_router  # noqa: E402
 
 app.include_router(me_events_router, prefix="/api")
+# The replay view of a run (framework backlog 0993, AbstractRuntime ADR-0009):
+# /gateway/runs/{run_id}/view and /gateway/runs/{run_id}/view/stream.
+from .routes.replay_view import router as replay_view_router  # noqa: E402
+
+app.include_router(replay_view_router, prefix="/api")
 # Apple push devices (framework backlog 1049): /gateway/me/push/devices; literal paths.
 from .routes.push import router as push_router  # noqa: E402
 from .routes.push import settings_router as push_settings_router  # noqa: E402

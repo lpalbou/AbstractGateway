@@ -56,34 +56,21 @@ def migrate_file_to_sqlite(*, base_dir: Path, db_path: Path, overwrite: bool = F
     conn = db.connection()
 
     # --- Ledger ---
+    # Order, count AND each record's `seq` are preserved (AbstractRuntime ADR-0009, backlog 0082):
+    # the records come from the JSONL store's own reader (concatenated-line recovery included,
+    # a pre-seq line numbered by position exactly as the file store numbers it), and
+    # `import_records` keeps their seq, so a cursor a client holds stays valid after migrating.
+    from abstractruntime import JsonlLedgerStore, SqliteLedgerStore
+
+    src_ledger = JsonlLedgerStore(base)
+    dst_ledger = SqliteLedgerStore(db)
     for p in sorted(base.glob("ledger_*.jsonl")):
         run_id = p.stem[len("ledger_") :] if p.stem.startswith("ledger_") else ""
         if not run_id:
             continue
-        seq = 0
-        with conn:
-            with p.open("r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    obj = _safe_json_loads(line)
-                    if obj is None:
-                        continue
-                    seq += 1
-                    conn.execute(
-                        "INSERT INTO ledger (run_id, seq, record_json) VALUES (?, ?, ?);",
-                        (run_id, int(seq), json.dumps(obj, ensure_ascii=False)),
-                    )
-            if seq > 0:
-                conn.execute(
-                    """
-                    INSERT INTO ledger_heads (run_id, last_seq)
-                    VALUES (?, ?)
-                    ON CONFLICT(run_id) DO UPDATE SET last_seq=excluded.last_seq;
-                    """,
-                    (run_id, int(seq)),
-                )
+        records = src_ledger.list(run_id)
+        if records:
+            dst_ledger.import_records(run_id, records)
 
     # --- Commands inbox (optional, best-effort) ---
     commands_path = base / "commands.jsonl"

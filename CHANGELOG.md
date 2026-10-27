@@ -10,6 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Console, Multimodal → Edit multimodal capability, `output.voice`** (backlog 0949, root 1055): the dialog uses the kit's voice picker (abstractuic islands `mountVoiceSettings`, ui-kit 0.9.1 vendored), the one the entity tab and the apps render: voices by name (cloned voices no longer show as raw ids), grouped Your voices / Engine voices / Shared voices, with the language filter and search. Choosing a voice plays a short sample at once; one play/stop toggle at the right of the voice row replays from 0 or stops; a newer choice cancels the older sample. The **Test** button and its replay panel are gone for voice routes (Test stays for text routes). The console's own voice list is removed.
 - `GET /api/gateway/voice/voices?compact=true` keeps `tts_model_details_by_provider` (AbstractVoice 0.19.2: each model's `role`, `"cloning"` for Qwen3-TTS Base, and its picker `label`).
 - `GET /api/gateway/voice/voices` (without `providers_only`) lists the cloud voice providers (`openai`, `openai-compatible`) in `tts_providers`, as `providers_only=true` does: the kit's voice picker reads this call.
+- **Replay view** (backlog 0947; framework root 0993; AbstractRuntime 0854 and ADR 0010). There
+  are two new routes. `GET /api/gateway/runs/{run_id}/view` returns the whole view of a run tree:
+  its status, the interaction to answer (a delegated child's approval included), messages with
+  provenance, one activity per node execution, artifacts, usage, the workflow (bundle, version,
+  entrypoint) and the cursor. It has an ETag set to the cursor token, answers 304 on
+  `If-None-Match`, and takes `?at=<token>` for the view as the ledger stood at that point.
+  `GET /api/gateway/runs/{run_id}/view/stream` is SSE: one `view`, then a `delta` per fold, with
+  `Last-Event-ID` resume and `done`.
+  - The view is computed by AbstractRuntime's reducer and served from one cached fold per run
+    tree. Each record is folded once and fanned out to every subscriber.
+  - Streams wake on the ledger append and never re-parse on a timer. A read that changes nothing
+    sends no delta.
+  - Authorization follows `GET /runs/{id}`, and the principal isolation matrix covers the new
+    routes.
+  - `/view/stream` counts in the SSE concurrency pool.
+  - Docs: api.md "Replay view", architecture.md.
+  - Benchmark: `scripts/bench_replay_view.py`.
+- **Migration keeps the ledger cursor** (backlog 0082). `migrate.py` (file to SQLite) imports each
+  run's records with their order, count and `seq` (`SqliteLedgerStore.import_records`): records
+  read by the JSONL store, concatenated lines recovered, and lines written before `seq` numbered
+  by position. It used to re-append records, which renumbered them. The raw stream's `id:` (the
+  count of records consumed) equals the record's `seq`.
 - **Session tool policy** (backlog 0946): `GET`/`PUT`/`POST`/`DELETE /api/gateway/sessions/{session_id}/tool-policy`, a conversation's standing "approve / deny without asking" (`approve: {tools, kinds, all, max_risk_rank}`, `deny: {tools, kinds}`, `ask`), stored per account beside the run store (`<data dir>/session_tool_policy.sqlite3`) and read by the runtime before any approval wait: an approved call runs with no wait and no interaction in any app, a denied call is refused with no wait, and each decision is an `abstract.tool_policy_decision` ledger record (who set the policy, when, which selector matched). The gateway clamps: approve selectors expand to the tools `GET /discovery/tools` serves the caller as enabled; the rest is listed in `clamped`. Every runtime the host builds gets the store (`hosts/bundle_host.py`); `capabilities.session_tool_policy` on `GET /discovery/capabilities`; a runtime without it is refused at host build. Fixes the approval gate that flashed in every app when a person had approved all tools or a kind of tool (the client answered the wait after it arrived). Requires AbstractRuntime 0.14.0 (the session tool policy, its backlog 0853). Docs: [api.md](docs/api.md#session-tool-policy-approve-or-deny-for-the-whole-conversation). Tests: tests/test_session_tool_policy_routes.py.
 
 - **Voice library** (`routes/voice_library.py`): `GET /api/gateway/voice/languages` (the languages each voice engine accepts), `GET /api/gateway/voice/clones` (cloned voices, designed and built-in included, `?language=` keeps the ones that speak it), `GET /api/gateway/voice/clones/{voice_id}`, `GET /api/gateway/voice/compatibility` (which engine supports `speed`, `one_shot`, design… and how), and `POST /api/gateway/voice/clones` (a voice from a recording), `PATCH` / `DELETE /api/gateway/voice/clones/{voice_id}` (rename, replace the transcript, delete) and `POST /api/gateway/voice/design` (a voice from a written description). Through AbstractRuntime's voice library facade, locally or on the configured AbstractCore server. See [api.md](docs/api.md#voice-library).
