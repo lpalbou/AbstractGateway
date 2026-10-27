@@ -30,7 +30,6 @@ from pydantic import BaseModel, Field
 
 from ..memory_store import (
     global_memory_owner_id,
-    open_memory_home,
     resolve_memory_home,
     resolve_memory_store_config,
     session_memory_owner_id,
@@ -79,24 +78,14 @@ def _home_info(svc: Any) -> Dict[str, Any]:
 
 
 def _open(svc: Any) -> Any:
-    """The plane's MemoryFacade over its home and its runtime stores; None when the home does not exist
-    yet (a read never creates it)."""
-    return open_memory_home(
+    """The plane's MemoryFacade over its home and its runtime stores, opened once per service
+    (`svc.memory_home`, review C1); None when the home does not exist yet (a read never creates it)."""
+    return svc.memory_home.get(
         resolve_memory_store_config(base_dir=_plane(svc)),
-        create=False,
         ledger_store=svc.stores.ledger_store,
         run_store=svc.stores.run_store,
         artifact_store=svc.stores.artifact_store,
     )
-
-
-def _close(facade: Any) -> None:
-    if facade is None:
-        return
-    for part in (facade.journal, facade.store):
-        close = getattr(part, "close", None)
-        if callable(close):
-            close()
 
 
 def _load_run(svc: Any, run_id: str) -> Any:
@@ -345,21 +334,18 @@ def memory_query(request: Request, req: MemoryQueryRequest) -> Dict[str, Any]:
             "ok": True, "scope": scope, "owner_id": None, "count": 0, "items": [], "truncated": False,
             "warnings": [f"memory home does not exist at {home['path']} (nothing recorded yet)", *notes], "home": home,
         }
-    try:
-        TripleQuery = _facade().TripleQuery
-        for label, owner in targets:
-            rows = facade.store.query(
-                TripleQuery(
-                    subject=req.subject, predicate=req.predicate, object=req.object,
-                    scope=label, owner_id=owner, since=req.since, until=req.until, active_at=req.active_at,
-                    limit=limit + 1, order=str(req.order or "desc"),
-                )
+    TripleQuery = _facade().TripleQuery
+    for label, owner in targets:
+        rows = facade.store.query(
+            TripleQuery(
+                subject=req.subject, predicate=req.predicate, object=req.object,
+                scope=label, owner_id=owner, since=req.since, until=req.until, active_at=req.active_at,
+                limit=limit + 1, order=str(req.order or "desc"),
             )
-            if len(rows) > limit:
-                truncated = True
-            items.extend(r.to_dict() for r in rows[:limit])
-    finally:
-        _close(facade)
+        )
+        if len(rows) > limit:
+            truncated = True
+        items.extend(r.to_dict() for r in rows[:limit])
     reverse = str(req.order or "desc").strip().lower() != "asc"
     items.sort(key=lambda d: str(d.get("observed_at") or ""), reverse=reverse)
     if len(items) > limit:
@@ -387,18 +373,15 @@ def memory_derived(
     facade = _open(svc)
     if facade is None:
         return {"ok": True, "ref": ref, "ref_key": ref_key, "count": 0, "items": [], "truncated": False, "withheld": 0}
-    try:
-        ids = facade.derived_from_source(ref, limit=limit + 1)
-        truncated = len(ids) > limit
-        ids = ids[:limit]
-        withheld = 0
-        if owners is not None:
-            rows = _rows_by_id(facade, ids)
-            visible = [i for i in ids if i in rows and str(getattr(rows[i], "owner_id", "") or "") in owners]
-            withheld = len(ids) - len(visible)
-            ids = visible
-    finally:
-        _close(facade)
+    ids = facade.derived_from_source(ref, limit=limit + 1)
+    truncated = len(ids) > limit
+    ids = ids[:limit]
+    withheld = 0
+    if owners is not None:
+        rows = _rows_by_id(facade, ids)
+        visible = [i for i in ids if i in rows and str(getattr(rows[i], "owner_id", "") or "") in owners]
+        withheld = len(ids) - len(visible)
+        ids = visible
     return {"ok": True, "ref": ref, "ref_key": ref_key, "count": len(ids), "items": ids, "truncated": truncated, "withheld": withheld}
 
 
@@ -427,10 +410,7 @@ def memory_reconstruct_source(request: Request, req: ReconstructRequest) -> Dict
     owners = _caller_owners(request, svc, run_id=_clean(req.run_id), session_id=_clean(req.session_id))
     if owners is not None:
         home = _open(svc)
-        try:
-            allowed = home is not None and _names_ref_for_caller(home, ref, source.key(), owners)
-        finally:
-            _close(home)
+        allowed = home is not None and _names_ref_for_caller(home, ref, source.key(), owners)
         if not allowed:
             raise _forbidden()
     MemoryFacade = _facade().MemoryFacade
@@ -462,13 +442,10 @@ def memory_history(
             raise HTTPException(status_code=404, detail=f"memory {memory_id!r} not found")
         return {"ok": True, "memory_id": memory_id, "owner_id": None, "count": 0, "items": [], "truncated": False,
                 "withheld": 0}
-    try:
-        row = _require_readable(facade, memory_id, owners)
-        events = facade.history(memory_id, limit=limit + 1)
-        truncated = len(events) > limit
-        events, withheld = _filter_event_ids(facade, events[:limit], owners)
-    finally:
-        _close(facade)
+    row = _require_readable(facade, memory_id, owners)
+    events = facade.history(memory_id, limit=limit + 1)
+    truncated = len(events) > limit
+    events, withheld = _filter_event_ids(facade, events[:limit], owners)
     return {
         "ok": True, "memory_id": memory_id, "owner_id": (row or {}).get("owner_id"), "count": len(events),
         "items": events, "truncated": truncated, "withheld": withheld,
@@ -493,16 +470,13 @@ def memory_sources(
             raise HTTPException(status_code=404, detail=f"memory {memory_id!r} not found")
         return {"ok": True, "memory_id": memory_id, "transitive": transitive, "count": 0, "items": [], "truncated": False,
                 "withheld": 0}
-    try:
-        _require_readable(facade, memory_id, owners)
-        withheld = 0
-        if owners is None or not transitive:
-            refs = facade.sources_of(memory_id, transitive=bool(transitive), limit=limit + 1)
-        else:
-            # The graph's own transitive walk crosses owners; a non-admin walks only through its own memories.
-            refs, withheld = _owned_lineage_sources(facade, memory_id, owners, limit + 1)
-    finally:
-        _close(facade)
+    _require_readable(facade, memory_id, owners)
+    withheld = 0
+    if owners is None or not transitive:
+        refs = facade.sources_of(memory_id, transitive=bool(transitive), limit=limit + 1)
+    else:
+        # The graph's own transitive walk crosses owners; a non-admin walks only through its own memories.
+        refs, withheld = _owned_lineage_sources(facade, memory_id, owners, limit + 1)
     truncated = len(refs) > limit
     SourceRef = _facade().SourceRef
     items = [{**r, "key": SourceRef.from_dict(r).key()} for r in refs[:limit]]

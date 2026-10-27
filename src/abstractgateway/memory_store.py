@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -182,6 +183,49 @@ def open_memory_home(config: GatewayMemoryStoreConfig, *, create: bool, **stores
             return None
         home.parent.mkdir(parents=True, exist_ok=True)
     return _memory_facade().MemoryFacade.open_mind(home, **stores)
+
+
+class PlaneMemoryHome:
+    """The plane's memory home, opened ONCE and kept for the service's lifetime (architect review C1).
+
+    Opening a home (`MemoryFacade.open_mind`) touches the file's schema and so waits for any writer's lock
+    (a per-request open stalled 1.9 s behind a 2 s writer and failed after 5 s behind a 7 s one); one open
+    per service makes every later read a plain read. The home does not depend on the loaded bundles, so a
+    host reload keeps it; the service closes it at shutdown (`service._stop_gateway_service_instance`). `get` answers
+    None while the home does not exist (a read never creates it) and re-opens if the resolved path changes.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._path: Optional[Path] = None
+        self._facade: Any = None
+
+    def get(self, config: GatewayMemoryStoreConfig, **stores: Any) -> Optional[Any]:
+        home = resolve_memory_home(config)
+        with self._lock:
+            if self._facade is not None and self._path == home:
+                return self._facade
+            if not home.exists():
+                return None
+            previous = self._facade
+            self._facade = open_memory_home(config, create=False, **stores)
+            self._path = home
+        if previous is not None:
+            _close_facade(previous)
+        return self._facade
+
+    def close(self) -> None:
+        with self._lock:
+            facade, self._facade, self._path = self._facade, None, None
+        if facade is not None:
+            _close_facade(facade)
+
+
+def _close_facade(facade: Any) -> None:
+    for part in (facade.journal, facade.store):
+        close = getattr(part, "close", None)
+        if callable(close):
+            close()
 
 
 def _memory_facade() -> Any:

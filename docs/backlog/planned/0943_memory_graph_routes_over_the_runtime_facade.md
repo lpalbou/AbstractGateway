@@ -59,10 +59,13 @@ derivations, and the memory contract descriptor naming the root store instead of
 - Gateway (done in review G3): the bundle host passes the store's `SQLiteJournal`, the plane's `runtime_id` and
   artifact store to the builder (`hosts/bundle_host.build_gateway_memory_kg_handlers`); the host closes the
   journal with the store on reload.
-- Gateway: every `/memory/*` request opens and closes the home (`MemoryFacade.open_mind`: an SQLite open, the
-  graph tables checked; the first open after AbstractMemory 0.4.0 runs the one-time JSON -> float32-blob vector
-  upgrade inside that request, holding the write lock). Follow-up: keep one facade per plane (opened at service
-  build, closed with the service), like the bundle host's store.
+- Done (architect C1): the home is opened once per service (`memory_store.PlaneMemoryHome`, closed at
+  shutdown); a read no longer waits behind a writer's lock to open it (tested: < 100 ms under a held write lock).
+- Open (architect B6): the reconstruct owner gate walks `derived_from_source(limit=1000)`, quadratic and wrong
+  above 1000 memories naming one ref; it moves to AbstractMemory's `MemoryGraph.names_ref(ref, owner_ids)` (one
+  index read) when that lands. `tests/test_gateway_memory_scale.py` pins it (xfail strict until then).
+- Open (operator decision pending): `owner_id` is not a principal (session/run/global/entity ids derived from
+  runs); `memory_access.caller_owner_ids` is the single place that changes when owner = principal.
 - Done (operator decision 5): ownership is strict, not plane-wide. A named run or session must be the
   caller's (`_meta.origin.actor`); the global owner is the account's own because planes are per account;
   entities delegate to their creator. Runs with no recorded origin (before backlog 1038) are admin-only.

@@ -5,7 +5,7 @@ import os
 import sys
 import threading
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -66,6 +66,14 @@ class GatewayService:
     # of the process environment (names only, never values) — the console's
     # env-inventory read; the warning lines derived from it ride boot_warnings.
     env_scan: Optional[Dict[str, Any]] = None
+    # The plane's memory home for /memory/* (memory_store.PlaneMemoryHome): opened once, closed at shutdown.
+    memory_home: Any = field(default_factory=lambda: _plane_memory_home())
+
+
+def _plane_memory_home() -> Any:
+    from .memory_store import PlaneMemoryHome
+
+    return PlaneMemoryHome()
 
 
 _service: Optional[GatewayService] = None
@@ -1876,6 +1884,7 @@ def _stop_gateway_service_instance(service: GatewayService) -> None:
         registry = getattr(service, "entity_registry", None)
         if registry is not None:
             _stage("entity homes close_all", registry.close_all)
+        _stage("memory home close", service.memory_home.close)
     except Exception:
         log.warning("shutdown: unexpected failure in stop sequence", exc_info=True)
 

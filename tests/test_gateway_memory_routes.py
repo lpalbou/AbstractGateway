@@ -83,11 +83,16 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
         svc = get_gateway_service_for_principal(_principal("alice"))
         assert Path(svc.stores.base_dir) == (tmp_path / "runtime" / "users" / "default" / "alice" / "runtime").resolve()
+        # A step ref addresses the step's STARTED row (the effect payload verbatim); its terminal row follows.
         seq = svc.stores.ledger_store.append(
-            StepRecord(run_id=run_id, step_id="step-memory-1", node_id="remember", status=StepStatus.COMPLETED,
-                       result={"said": "Laurent knows Ada"})
+            StepRecord(run_id=run_id, step_id="step-memory-1", node_id="remember", status=StepStatus.STARTED,
+                       effect={"type": "memory_revise", "payload": {"said": "Laurent knows Ada"}, "result_key": None})
         )
         assert isinstance(seq, int) and seq >= 1
+        svc.stores.ledger_store.append(
+            StepRecord(run_id=run_id, step_id="step-memory-1", node_id="remember", status=StepStatus.COMPLETED,
+                       result={"ok": True})
+        )
         artifact = svc.stores.artifact_store.store(b"Laurent knows Ada (verbatim)", content_type="text/plain", run_id=run_id)
         artifact_id = artifact.artifact_id
 
@@ -182,7 +187,8 @@ def test_reconstruct_step_and_artifact_then_gone_and_unsupported(world) -> None:
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["status"] == "ok" and body["kind"] == "step"
-    assert body["content"]["result"] == {"said": "Laurent knows Ada"}
+    assert body["content"]["effect"]["payload"] == {"said": "Laurent knows Ada"}
+    assert body["metadata"]["status"] == "started" and body["metadata"]["effect_type"] == "memory_revise"
     assert body["metadata"]["seq"] == world["seq"] and body["metadata"]["step_id"] == "step-memory-1"
 
     r = c.post("/api/gateway/memory/sources/reconstruct", headers=alice, json={"ref": world["art_ref"], "session_id": SESSION})
