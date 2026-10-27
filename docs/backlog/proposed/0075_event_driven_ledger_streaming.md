@@ -109,3 +109,13 @@ follows demand (see 0076 triggers).
 - Test: reconnect with `Last-Event-ID` resumes exactly; no missed/duplicated
   records beyond idempotent dedupe; terminal always closes the stream.
 - Test: cursor remains valid across a file->SQLite migration.
+
+
+## Note (2026-10-27): the single-node part has shipped
+
+The text above is stale on the cost model: `/runs/{id}/ledger/stream` no longer re-parses the
+ledger every 250 ms. It wakes on `ObservableLedgerStore.subscribe` and reads incrementally
+through `src/abstractgateway/ledger_tail.py` (a JSONL byte-offset tail, SQLite `list_after`);
+the 0.25 s check remains only where the appender is another process (split mode) and costs one
+`stat()` when nothing changed. `Last-Event-ID` is honoured. The replay view stream (0943)
+follows the same subscription. What remains of this item is the multi-worker bridge (0076).
