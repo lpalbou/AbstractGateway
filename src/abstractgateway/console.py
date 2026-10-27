@@ -13809,7 +13809,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           const tasks = {text_to_image:["Text → image","Generate an image from a text description."],image_to_image:["Image → image","Edit or transform an existing image."],image_upscale:["Upscale","Restore detail or increase image resolution."],text_to_video:["Text → video","Generate a video from a text description."],image_to_video:["Image → video","Animate an image into a video."]};
           const label = task ? (tasks[task]?.[0] || task.replaceAll("_"," ")) : (names[modality] || modality);
           const direction = defaultRowKindModality(row).kind;
-          const tip = task ? (tasks[task]?.[1] || defaultRowCapability(row)) : direction === "embedding" ? `Represent ${label.toLowerCase()} as vectors for search and retrieval.` : `${direction === "input" ? "Understand" : "Create"} ${label.toLowerCase()}.`;
+          // A parent route (output.image / output.video) says what it is FOR,
+          // or it reads as a duplicate of its own task rows.
+          const tip = task ? (tasks[task]?.[1] || defaultRowCapability(row)) : defaultRowIsTaskParent(row) ? `Default for all ${label.toLowerCase()} tasks: used by every task row below that has no value of its own.` : direction === "embedding" ? `Represent ${label.toLowerCase()} as vectors for search and retrieval.` : `${direction === "input" ? "Understand" : "Create"} ${label.toLowerCase()}.`;
           return `<span class="capability-modality" data-route="${esc(key)}" tabindex="0" data-af-tip="${esc(tip)}" aria-label="${esc(label + ": " + tip)}"><span class="capability-modality-icon" aria-hidden="true">${svgIcon(task === "image_upscale" ? '<path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5M8 8l-5-5m13 5 5-5M8 16l-5 5m13-5 5 5"/>' : paths[modality] || paths.text)}</span><span>${esc(label)}</span></span>`;
         }
     function renderDefaultRows(rows) {
