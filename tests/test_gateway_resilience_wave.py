@@ -33,6 +33,8 @@ from typing import Any, Dict, List
 
 import pytest
 
+from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+
 fcntl = pytest.importorskip("fcntl", reason="singleton lock uses fcntl.flock (Unix only)")
 
 
@@ -275,7 +277,7 @@ def test_entity_chat_close_all_skips_wedged_session() -> None:
     t0 = time.monotonic()
     host.close_all(budget_s=2.0)
     elapsed = time.monotonic() - t0
-    assert elapsed < 15.0, f"close_all blocked {elapsed:.1f}s on a wedged session"
+    timing_budget(elapsed, 15.0, "close_all on a wedged session")
     assert wedged.closed is False  # skipped, not torn mid-turn
 
 

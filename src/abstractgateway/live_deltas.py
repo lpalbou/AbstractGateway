@@ -105,7 +105,9 @@ _role_lock = threading.Lock()
 #         (`policy.tool_policy`), streamed read-aloud recordings tagged under the `voice/` artifact space.
 # 0.12.0: the run index and store change tokens, `origin_for` (run origin), the event inbox streams.
 # 0.13.0: the voice library facade and per-runtime voice stores (routes/voice_library.py).
-ABSTRACTRUNTIME_FLOOR = "0.13.1"
+# 0.14.0: every ledger record carries its per-run `seq` and every LedgerStore has `list_after`
+#         (ledger_tail.py picks its reader by them; the replay view reads the cursor).
+ABSTRACTRUNTIME_FLOOR = "0.14.0"
 
 
 class LiveDeltaError(RuntimeError):
@@ -880,6 +882,8 @@ def require_runtime_features(runtime: Any) -> None:
         missing.append("the session history window (abstractruntime.session_history.HISTORY_REPLAY_MAX_TOKENS)")
     if not callable(getattr(runtime, "set_email_context_resolver", None)) or not callable(getattr(runtime, "set_event_inbox", None)):
         missing.append("per-user email (Runtime.set_email_context_resolver / set_event_inbox)")
+    if not callable(getattr(runtime, "set_session_tool_policy_store", None)):
+        missing.append("the session tool policy (Runtime.set_session_tool_policy_store)")
     try:
         from abstractruntime.integrations.abstractcore.run_facade import inline_run_active  # noqa: F401
     except ImportError:

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Console, Multimodal → Edit multimodal capability, `output.voice`** (backlog 0949, root 1055): the dialog uses the kit's voice picker (abstractuic islands `mountVoiceSettings`, ui-kit 0.9.1 vendored), the one the entity tab and the apps render: voices by name (cloned voices no longer show as raw ids), grouped Your voices / Engine voices / Shared voices, with the language filter and search. Choosing a voice plays a short sample at once; one play/stop toggle at the right of the voice row replays from 0 or stops; a newer choice cancels the older sample. The **Test** button and its replay panel are gone for voice routes (Test stays for text routes). The console's own voice list is removed.
 - `GET /api/gateway/voice/voices` (without `providers_only`) lists the cloud voice providers (`openai`, `openai-compatible`) in `tts_providers`, as `providers_only=true` does: the kit's voice picker reads this call.
+- **Session tool policy** (backlog 0946): `GET`/`PUT`/`POST`/`DELETE /api/gateway/sessions/{session_id}/tool-policy`, a conversation's standing "approve / deny without asking" (`approve: {tools, kinds, all, max_risk_rank}`, `deny: {tools, kinds}`, `ask`), stored per account beside the run store (`<data dir>/session_tool_policy.sqlite3`) and read by the runtime before any approval wait: an approved call runs with no wait and no interaction in any app, a denied call is refused with no wait, and each decision is an `abstract.tool_policy_decision` ledger record (who set the policy, when, which selector matched). The gateway clamps: approve selectors expand to the tools `GET /discovery/tools` serves the caller as enabled; the rest is listed in `clamped`. Every runtime the host builds gets the store (`hosts/bundle_host.py`); `capabilities.session_tool_policy` on `GET /discovery/capabilities`; a runtime without it is refused at host build. Fixes the approval gate that flashed in every app when a person had approved all tools or a kind of tool (the client answered the wait after it arrived). Requires AbstractRuntime 0.14.0 (the session tool policy, its backlog 0853). Docs: [api.md](docs/api.md#session-tool-policy-approve-or-deny-for-the-whole-conversation). Tests: tests/test_session_tool_policy_routes.py.
 
 - **Voice library** (`routes/voice_library.py`): `GET /api/gateway/voice/languages` (the languages each voice engine accepts), `GET /api/gateway/voice/clones` (cloned voices, designed and built-in included, `?language=` keeps the ones that speak it), `GET /api/gateway/voice/clones/{voice_id}`, `GET /api/gateway/voice/compatibility` (which engine supports `speed`, `one_shot`, design… and how), and `POST /api/gateway/voice/clones` (a voice from a recording), `PATCH` / `DELETE /api/gateway/voice/clones/{voice_id}` (rename, replace the transcript, delete) and `POST /api/gateway/voice/design` (a voice from a written description). Through AbstractRuntime's voice library facade, locally or on the configured AbstractCore server. See [api.md](docs/api.md#voice-library).
 - **Personal voices per account** (backlog 0942): with user accounts on and local voice engines, each account keeps the voices it clones or designs in its own store (`<plane>/voices`), in front of the shared library (the built-in voices and every voice the administrator creates; the administrator's plane is the library). An account creates, renames and deletes its own voices; library voices are read-only to it. Where every account shares one store (single-user mode, an AbstractCore server doing the voice work), voice changes stay admin-only (403). `language` on `POST /api/gateway/voice/clones`; `POST /api/gateway/voice/clones/{voice_id}/deploy` (administrators) shares a voice with every account. A reference recording may be up to 25 MB (the security layer's 10 MB write cap does not apply to it). Requires AbstractRuntime 0.13.0; personal stores need AbstractVoice 0.19.0.
@@ -178,6 +179,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Tests: a wall-clock budget never fails a test by default.** Every latency assertion in the
+  suite (52 checks in 27 files: health p99 and worst case, loop stalls, TTFA, kill/cancel times, per-pass
+  benchmarks) goes through `tests/timing.py`: it prints a `[timing]` line, and asserts only with
+  `ABSTRACTGATEWAY_TIMING_STRICT=1` (CONTRIBUTING.md). The structural assertions stay unconditional.
+  The host-status TTL tests use a fake clock.
+- **The test suite no longer keeps every app it builds** (backlog 0945). The harness re-imports
+  `abstractgateway.app` for each test; FastAPI's endpoint memo caches (keyed by the endpoints `app.py` defines)
+  and the package attribute kept every one of those apps alive, ~13,500 objects per test, and a test that ran
+  `serve` left GC tuning on so later boots `gc.freeze()`d them for good (29-35 M objects late in CI). The
+  conftest now frees the dropped app (`tests/app_reimport.py`) and undoes any GC tuning after each test;
+  `tests/test_harness_reimported_app_is_freed.py` guards both. Full suite on an M-series Mac: 63 -> 24 min,
+  peak RSS 10.1 GB -> 1.2 GB; six timing tests that failed under the GC pauses pass. Four harness waits got
+  shorter, and the apps reaper reads `STOP_TIMEOUT_S` when it runs (a default bound at import ignored a
+  change to it).
 - **`GET /automations` costs the automations, not their history, and never piles up.** Each row used to re-read the
   automation's whole past (every occurrence tree, the full controller ledger, every past prompt artifact, every
   artifact of the last answer) and the list ran four run-index scans: 2.4 s cold / 1.6 s warm on a copy of the
