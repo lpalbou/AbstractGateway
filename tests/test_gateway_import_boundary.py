@@ -13,6 +13,7 @@ AbstractRuntime (mirroring `config_facade.py`), not to import AbstractCore here.
 from __future__ import annotations
 
 import ast
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -262,6 +263,160 @@ def test_no_second_module_re_exports_the_seam() -> None:
     assert not offenders, (
         "The seam has exactly one door. Do not re-export it:\n  " + "\n  ".join(offenders)
     )
+
+
+
+# ---------------------------------------------------------------------------
+# AbstractMemory (ADR 0001, AbstractRuntime ADR 0009): gateway source reaches
+# AbstractMemory only through the runtime memory facade
+# (`abstractruntime.integrations.abstractmemory.memory_facade`). The direct
+# imports that predate the rule are listed below, EXACTLY (file, statement,
+# count), as a burn-down: the list only shrinks.
+#
+# - a direct import that is not on the list fails (no new door);
+# - an exemption whose import is gone from the code also fails, so the entry
+#   must be deleted in the same change (an unused exemption would silently
+#   re-admit the import later).
+#
+# Status probes (`importlib.util.find_spec("abstractmemory")`,
+# `importlib.metadata.version(...)`) do not import the package and are not
+# doors; `importlib.import_module("abstractmemory...")` / `__import__` are,
+# and are counted like statements.
+# ---------------------------------------------------------------------------
+
+_ABSTRACTMEMORY_BURN_DOWN: dict[tuple[str, str], int] = {
+    # entities.py: the entity home (engine, night passes, sparks, health).
+    ("entities.py", "from abstractmemory import MemorySystem, SQLiteJournal, SQLiteTripleStore"): 1,
+    ("entities.py", "import abstractmemory"): 1,
+    ("entities.py", "from abstractmemory import cognition_health"): 1,
+    ("entities.py", "from abstractmemory import TripleQuery"): 3,
+    ("entities.py", "from abstractmemory import canonical_spark_hash"): 2,
+    ("entities.py", "from abstractmemory.records import verify_diary_chain as verify_graph_chain"): 1,
+    ("entities.py", "from abstractmemory import DEFAULT_SPARK_TEMPLATE, lint_spark"): 1,
+    ("entities.py", "from abstractmemory import DEFAULT_SPARK_TEMPLATE"): 1,
+    ("entities.py", "from abstractmemory import canonical_spark_hash, engram"): 1,
+    ("entities.py", "from abstractmemory import sleep_pass as _night_pass"): 1,
+    ("entities.py", "from abstractmemory import dream_pass as _night_pass"): 1,
+    ("entities.py", "from abstractmemory import reembed_store"): 1,
+    # entity_gate.py: summon budgets.
+    ("entity_gate.py", "from abstractmemory.seam import SELF_FRACTION_FLOOR as SUMMON_IDENTITY_FLOOR"): 1,
+    ("entity_gate.py", "from abstractmemory import ENTITY_CONTEXT_ACCEPTABLE as SUMMON_CONTEXT_ACCEPTABLE_TOKENS"): 1,
+    ("entity_gate.py", "from abstractmemory import ENTITY_CONTEXT_FLOOR as SUMMON_CONTEXT_FLOOR_TOKENS"): 1,
+    ("entity_gate.py", "from abstractmemory import ENTITY_CONTEXT_RECOMMENDED, entity_recall_budget"): 1,
+    # entity_replay.py: the replay envelope.
+    (
+        "entity_replay.py",
+        "from abstractmemory.replay import REPLAY_FAMILIES, REPLAY_STREAM, REPLAY_STREAM_VERSION, RESERVED_FAMILIES",
+    ): 1,
+    ("entity_replay.py", "from abstractmemory.records import resolve_digest_assertion"): 2,
+    # memory_store.py: the plane KG store classes.
+    ("memory_store.py", "import abstractmemory"): 2,
+    # routes/entities.py
+    ("routes/entities.py", "from abstractmemory import read_embedding_pin"): 1,
+    ("routes/entities.py", "from abstractmemory import DRIVE_PRESSURE_BOUND, drive_pressure as _engine_pressure"): 1,
+    ("routes/entities.py", "from abstractmemory import promote_candidate"): 1,
+    ("routes/entities.py", "from abstractmemory import reject_candidate"): 1,
+    # routes/entity_replay.py
+    ("routes/entity_replay.py", "from abstractmemory.records import resolve_digest_assertion"): 1,
+    ("routes/entity_replay.py", "from abstractmemory import TripleQuery"): 1,
+    # routes/gateway.py: kg/query.
+    ("routes/gateway.py", "from abstractmemory import TripleQuery"): 1,
+    # template_store.py: spark templates.
+    ("template_store.py", "from abstractmemory import DEFAULT_SPARK_TEMPLATE"): 1,
+    ("template_store.py", "from abstractmemory import lint_spark"): 1,
+    ("template_store.py", "from abstractmemory import canonical_spark_hash"): 1,
+}
+
+
+def _is_abstractmemory(module: str) -> bool:
+    return module == "abstractmemory" or module.startswith("abstractmemory.")
+
+
+def _alias_text(alias: ast.alias) -> str:
+    return f"{alias.name} as {alias.asname}" if alias.asname else alias.name
+
+
+def _abstractmemory_imports(path: Path, root: Path = _SRC_ROOT) -> list[tuple[str, str, int]]:
+    """(relative file, normalised statement, line) for every AbstractMemory import in `path`."""
+    rel = path.relative_to(root).as_posix()
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    found: list[tuple[str, str, int]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if _is_abstractmemory(alias.name):
+                    found.append((rel, f"import {_alias_text(alias)}", node.lineno))
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if node.level == 0 and _is_abstractmemory(module):
+                names = ", ".join(_alias_text(a) for a in node.names)
+                found.append((rel, f"from {module} import {names}", node.lineno))
+        elif isinstance(node, ast.Call):
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else (func.id if isinstance(func, ast.Name) else "")
+            if name in {"import_module", "__import__"} and node.args:
+                first = node.args[0]
+                if isinstance(first, ast.Constant) and isinstance(first.value, str) and _is_abstractmemory(first.value):
+                    found.append((rel, f"{name}({first.value!r})", node.lineno))
+    return found
+
+
+def _abstractmemory_import_counts() -> tuple[Counter, dict[tuple[str, str], list[int]]]:
+    counts: Counter = Counter()
+    lines: dict[tuple[str, str], list[int]] = {}
+    for path in _python_files():
+        for rel, statement, lineno in _abstractmemory_imports(path):
+            counts[(rel, statement)] += 1
+            lines.setdefault((rel, statement), []).append(lineno)
+    return counts, lines
+
+
+def test_gateway_source_does_not_add_direct_abstractmemory_imports() -> None:
+    counts, lines = _abstractmemory_import_counts()
+    offenders = []
+    for key, n in sorted(counts.items()):
+        allowed = _ABSTRACTMEMORY_BURN_DOWN.get(key, 0)
+        if n > allowed:
+            rel, statement = key
+            offenders.append(f"{rel}:{','.join(map(str, lines[key]))} {statement} ({n} found, {allowed} exempt)")
+    assert not offenders, (
+        "Gateway source must not import `abstractmemory` directly; use the AbstractRuntime memory facade "
+        "(`abstractruntime.integrations.abstractmemory.memory_facade`, runtime ADR 0009). If the facade lacks "
+        "the name, the fix is in AbstractRuntime (gateway ADR 0001). New direct imports:\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+def test_abstractmemory_burn_down_list_only_shrinks() -> None:
+    counts, _ = _abstractmemory_import_counts()
+    stale = []
+    for key, allowed in sorted(_ABSTRACTMEMORY_BURN_DOWN.items()):
+        n = counts.get(key, 0)
+        if n < allowed:
+            rel, statement = key
+            stale.append(f"{rel}: {statement} (exempt {allowed}, found {n})")
+    assert not stale, (
+        "These AbstractMemory imports are gone from gateway source: lower (or delete) their entry in "
+        "`_ABSTRACTMEMORY_BURN_DOWN` so the exemption cannot re-admit them:\n  " + "\n  ".join(stale)
+    )
+
+
+def test_abstractmemory_rule_sees_a_new_direct_import(tmp_path: Path) -> None:
+    """The scanner itself: a planted import of each spelling is found."""
+    planted = tmp_path / "_boundary_probe_tmp.py"
+    planted.write_text(
+        "import abstractmemory\n"
+        "from abstractmemory.graph import SourceRef as R\n"
+        "import importlib\n"
+        "importlib.import_module('abstractmemory.graph')\n",
+        encoding="utf-8",
+    )
+    found = {(rel, st) for rel, st, _ in _abstractmemory_imports(planted, root=tmp_path)}
+    assert found == {
+        ("_boundary_probe_tmp.py", "import abstractmemory"),
+        ("_boundary_probe_tmp.py", "from abstractmemory.graph import SourceRef as R"),
+        ("_boundary_probe_tmp.py", "import_module('abstractmemory.graph')"),
+    }
 
 
 if __name__ == "__main__":  # pragma: no cover
