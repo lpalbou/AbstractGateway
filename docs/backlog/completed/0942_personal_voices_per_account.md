@@ -2,7 +2,7 @@
 
 > Package: abstractgateway (routes, per-account wiring); abstractvoice (stores, its backlog 0065); abstractruntime (per-account config, voice facade scope)
 > Type: feature
-> Status: planned
+> Status: completed (2026-10-27, 0.16.0)
 > Created: 2026-10-27
 > Priority: P1
 > Labels: voice, multi-user, isolation, entities, identity
@@ -35,3 +35,23 @@ AbstractVoice 0065 released; AbstractRuntime 0851 (the per-account voice setting
 ## Validation
 
 Two accounts: A designs a voice, speaks with it, B does not see it; the administrator deploys a voice, both see and use it, neither can delete it; deleting A removes A's voices. Non-admin creation allowed, library changes refused (route authorization contract test).
+
+## Report (completed 2026-10-27, 0.16.0)
+
+Built on AbstractVoice 0.19.0 (0065: personal stores in front of read-only libraries) and AbstractRuntime 0.13.0 (0851:
+a runtime's voice library and catalog use its synthesis registry and stores). `hosts/bundle_host.py`
+`personal_voice_store_dir`: in multi-user mode, every account plane other than the root (the administrator's) gets
+`voice_store_dir = <plane>/voices` in its runtime's AbstractCore settings; the library is the machine's shared store
+(AbstractVoice's default when no library folder is given), so the administrator's plane IS the library and whatever the
+administrator creates is everyone's (no separate deploy route was needed). `routes/voice_library.py`
+`_require_change_rights`: an administrator, or an account whose runtime has a personal store, may create, rename,
+delete and design; otherwise 403 (single-user mode, an AbstractCore server doing the voice work, AbstractVoice < 0.19.0).
+The static admin row was replaced by the in-handler gate (route authorization contract: USER_LEVEL_WRITES).
+`language` on `POST /voice/clones`. Not done: entity profiles with avatar and image (0938); a dedicated deploy route
+for an account's own voice (the administrator creates library voices directly).
+
+Validation: `tests/test_gateway_voice_library.py` (shared store: 403 for a non-admin; own store: changes allowed,
+language forwarded); real weights, a multi-user gateway with two accounts, 11/11 over HTTP (design, personal scope,
+invisible to the other account and to the administrator, library visible and read-only, speech, rename, delete,
+library unchanged).
+

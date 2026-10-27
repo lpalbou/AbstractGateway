@@ -104,7 +104,8 @@ _role_lock = threading.Lock()
 # 0.10.6: `abstractruntime.conversation_search` (GET /sessions/search), named automation tool policies
 #         (`policy.tool_policy`), streamed read-aloud recordings tagged under the `voice/` artifact space.
 # 0.12.0: the run index and store change tokens, `origin_for` (run origin), the event inbox streams.
-ABSTRACTRUNTIME_FLOOR = "0.12.0"
+# 0.13.0: the voice library facade and per-runtime voice stores (routes/voice_library.py).
+ABSTRACTRUNTIME_FLOOR = "0.13.0"
 
 
 class LiveDeltaError(RuntimeError):

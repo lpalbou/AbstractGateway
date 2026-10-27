@@ -1888,7 +1888,7 @@ Current direct Gateway endpoints:
 - `GET /api/gateway/voice/defaults`
 - `GET /api/gateway/voice/voices`
 - `GET /api/gateway/voice/languages`, `GET /api/gateway/voice/clones`, `GET /api/gateway/voice/clones/{voice_id}`, `GET /api/gateway/voice/compatibility`
-- `POST /api/gateway/voice/clones`, `PATCH` / `DELETE /api/gateway/voice/clones/{voice_id}`, `POST /api/gateway/voice/design` (administrators)
+- `POST /api/gateway/voice/clones`, `PATCH` / `DELETE /api/gateway/voice/clones/{voice_id}`, `POST /api/gateway/voice/design` (an account's own voices; administrators where the store is shared)
 - `GET /api/gateway/audio/speech/models`
 - `GET /api/gateway/audio/transcriptions/models`
 - `GET /api/gateway/audio/music/providers`
@@ -1918,16 +1918,23 @@ gateway's process, or on the AbstractCore server it is configured with):
 | `GET /voice/languages?kind=&provider=` | `{"languages": {kind: {provider: {provider, languages, open, declared}}}}` for `tts`, `stt` and `cloning`; read without loading a model (`open`: a remote engine that decides its own languages) |
 | `GET /voice/clones?provider=&model=&language=` | `{"voices": [...], "count": n}`: cloned voices, designed (`tags.designed`) and built-in (`tags.builtin`) ones included; `language` keeps the voices that can speak it, native speakers first |
 | `GET /voice/clones/{voice_id}` | one voice's record (`voice_id`, `name`, `engine`, `reference_text`, `meta`); 404 for an unknown id |
-| `POST /voice/clones` (multipart) | a voice from a recording: `file` (up to 25 MB), optional `name`, `reference_text`, `provider` (the cloning engine, e.g. `qwen3-tts`, `omnivoice`), `model`; answers the stored record with its `voice_id` |
+| `POST /voice/clones` (multipart) | a voice from a recording: `file` (up to 25 MB), optional `name`, `reference_text`, `language` (the recording's, ISO 639-1; identified from the transcript when omitted), `provider` (the cloning engine, e.g. `qwen3-tts`, `omnivoice`), `model`; answers the stored record with its `voice_id` |
 | `PATCH /voice/clones/{voice_id}` | `{name?, reference_text?}`: both checked before either is applied; built-in voices are read-only (422) |
 | `DELETE /voice/clones/{voice_id}` | deletes the voice and its reference audio; built-in voices are read-only (422) |
 | `POST /voice/design` | `{description, name?, language?, text?}`: a voice from a written description (Qwen3-TTS VoiceDesign, cloned with Qwen3-TTS Base), stored as a cloned voice; needs `abstractvoice[qwen3-tts]` and `abstractvoice[stt]` where the voice capability runs (501 otherwise) |
 | `GET /voice/compatibility` | the capability catalog: per kind, provider, model and surface, whether a feature (`speed`, `one_shot`, `design`…) is `native`, `emulated`, `conditional` or `unsupported` |
 
-Cloned voices are one store per machine user, shared by every account of the gateway, so
-creating, changing, designing and deleting a voice is an administrator's act (403 otherwise);
-every signed-in account reads them. A voice is used for speech with `voice=<voice_id>` (and the
-voice's `provider`). `GET /voice/voices?language=fr` filters the voice catalog the same way.
+Whose voices: with user accounts on (multi-user mode) and the voice engines running in the
+gateway, each account keeps the voices it clones or designs in its own store
+(`<account data folder>/voices`): it lists, speaks with, renames and deletes them, and no other
+account sees them. In front of that store sits the library, the machine's shared voice store:
+the built-in voices and every voice the administrator creates (the administrator's account works
+on the library itself), listed and spoken by everyone, read-only to accounts (422). Each record
+says which in `params.meta.scope` (`personal` | `library`); built-in voices also carry `tags.builtin`. Without a personal store (single-user mode, or an
+AbstractCore server doing the voice work) every account shares one store, and creating,
+changing, designing and deleting a voice is an administrator's act (403 otherwise). A voice is
+used for speech with `voice=<voice_id>` (and the voice's `provider`). `GET /voice/voices?language=fr`
+filters the voice catalog the same way.
 
 Speech options on `/voice/tts`: `speed` (a multiplier; engines without a native control
 time-stretch the audio, see `/voice/compatibility`) and `one_shot: true` (the whole text as one

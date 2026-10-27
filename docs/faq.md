@@ -367,12 +367,13 @@ while Gateway stays responsible for durable runs, artifacts, and transcription.
 
 ### Can each account have its own voices?
 
-Not yet. Cloned voices (recorded, designed, built-in) live in one AbstractVoice store per
-machine user, so every account of a gateway lists and speaks with the same voices. That is why
-creating, renaming, deleting and designing a voice (`/api/gateway/voice/clones`,
-`/api/gateway/voice/design`) are administrator actions, while every account can list and use
-them. Personal voices per account, next to a library an administrator deploys for everyone,
-are planned (backlog 0942). See [api.md](./api.md#voice-library).
+Yes, with user accounts on and the voice engines running in the gateway. Each account keeps
+the voices it clones or designs in its own store and nobody else sees them; it also lists and
+speaks with the library: the built-in voices and every voice the administrator creates (the
+administrator's account works on the library itself, so creating a voice there deploys it to
+everyone). Library voices are read-only to accounts. In single-user mode, or when an AbstractCore
+server does the voice work, there is one shared store and voice changes are an administrator's
+act. See [api.md](./api.md#voice-library).
 
 ### Are catalog responses normalized by Gateway?
 

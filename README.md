@@ -269,10 +269,11 @@ Discovery and catalogs for thin clients:
   (`/api/gateway/voice/voices`, `/audio/*/models`, `/audio/music/providers`,
   `/vision/*`), each with a `gateway_catalog_v1` envelope and canonical `items`;
   `?language=` filters the voice catalog
-- the voice library: `/api/gateway/voice/languages`, `/voice/clones` (list, read; create
-  from a recording, rename, delete for administrators), `/voice/design` (a voice from a
-  description, administrators) and `/voice/compatibility` (which engine supports which voice
-  feature); see [docs/api.md](docs/api.md#voice-library)
+- the voice library: `/api/gateway/voice/languages`, `/voice/clones` (list, read, create
+  from a recording, rename, delete), `/voice/design` (a voice from a description) and
+  `/voice/compatibility` (which engine supports which voice feature); with user accounts on,
+  each account has its own voices in front of a shared library the administrator fills; see
+  [docs/api.md](docs/api.md#voice-library)
 - `/api/gateway/artifacts/search`: cross-run, session and run artifact search
 - `/api/gateway/kg/query`: KG memory queries (LanceDB by default)
 - `/api/gateway/prompt_cache/*` and `/api/gateway/sessions/{session_id}/prompt_cache/*`:

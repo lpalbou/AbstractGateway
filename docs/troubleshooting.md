@@ -295,7 +295,12 @@ backend (`ABSTRACTGATEWAY_VOICE_TTS_ENGINE`,
 ### Voice library: `403`, `501` or `422`
 
 - `403` on `POST /voice/clones`, `PATCH`/`DELETE /voice/clones/{id}` or `POST /voice/design`:
-  these change the voices every account shares and need an administrator's session.
+  this gateway has one voice store shared by every account (single-user mode, an AbstractCore
+  server doing the voice work, or an AbstractVoice before 0.19.0), so voice changes need an
+  administrator's session. With user accounts on and local voice engines, each account changes
+  its own voices.
+- `422` changing a voice from the library (a built-in voice, or one the administrator created):
+  library voices are read-only to accounts.
 - `501` on `POST /voice/design`: designing a voice needs `abstractvoice[qwen3-tts]` and
   `abstractvoice[stt]` where the voice capability runs (the gateway's environment, or the
   AbstractCore server it uses); the answer names the missing part.
