@@ -39,7 +39,7 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.13.0` (the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
+- `AbstractRuntime>=0.13.1` (the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
 - `abstractcore>=2.30.0` (mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
 - `abstractvoice>=0.18.2` (the voice listings import `abstractvoice.engine_runtime`; languages, voice design and cloned-voice management for the voice library)
 - `abstractagent>=0.4.0` (the `schedule_run` tool for ReAct agents, and Python execution inside the run's command sandbox)
