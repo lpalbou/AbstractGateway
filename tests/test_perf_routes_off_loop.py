@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,6 +27,9 @@ from fastapi.testclient import TestClient
 pytestmark = pytest.mark.basic
 
 H = {"Authorization": "Bearer t"}
+
+# Wall-clock assertions are only trusted off CI: a shared runner can pause the whole process.
+_UNDER_CI = bool(os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"))
 
 
 def _on_loop() -> bool:
@@ -105,18 +109,28 @@ def test_visualflows_off_the_loop_and_unchanged_files_never_reread(env) -> None:
 
 
 def test_a_slow_flow_read_never_stalls_the_loop(env) -> None:
+    """The proof is structural, not a stopwatch: the slow read must run on a thread that is NOT
+    the event loop's, and it must not see a running loop. The timing check (the loop keeps
+    ticking while the read sleeps) is kept where the clock is trustworthy: a CI runner under
+    load stalls the whole process for seconds (2026-10-27: 2.7 s on a 59-minute run), which says
+    nothing about where the read ran."""
     gw = env.gw
     real = gw._read_visualflow_json
+    read_on: Dict[str, Any] = {}
 
     def slow(p: Path) -> Dict[str, Any]:
+        read_on["thread"] = threading.get_ident()
+        read_on["on_loop"] = _on_loop()
         time.sleep(0.3)
         return real(p)
 
     env.mp.setattr(gw, "_read_visualflow_json", slow)
     gaps: List[float] = []
     stop = {"v": False}
+    loop_thread: Dict[str, int] = {}
 
     async def ticker() -> None:
+        loop_thread["id"] = threading.get_ident()
         while not stop["v"]:
             t0 = time.perf_counter()
             await asyncio.sleep(0.001)
@@ -131,8 +145,14 @@ def test_a_slow_flow_read_never_stalls_the_loop(env) -> None:
         r = client.get("/api/gateway/visualflows", headers=H)
         stop["v"] = True
         assert r.status_code == 200
-    # The 300 ms read ran in a worker: the loop kept ticking (the old code stalled it 300 ms).
-    assert gaps and max(gaps) < 0.05, f"loop stalled {max(gaps) * 1000:.1f} ms"
+    # The read ran in a worker thread, not on the loop (the old code read on the loop thread).
+    assert read_on, "the route never reached the flow read"
+    assert read_on["on_loop"] is False, "the flow read ran inside the running event loop"
+    assert read_on["thread"] != loop_thread["id"], "the flow read ran on the event loop's thread"
+    # The 300 ms read did not stall the ticker (the old code stalled it 300 ms): a wall-clock
+    # check, skipped under CI where the runner itself can pause the process for seconds.
+    if not _UNDER_CI:
+        assert gaps and max(gaps) < 0.05, f"loop stalled {max(gaps) * 1000:.1f} ms"
 
 
 def test_backlog_listings_off_the_loop_and_parsed_once_per_version(env) -> None:
