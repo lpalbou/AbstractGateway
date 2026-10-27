@@ -305,6 +305,11 @@ if _note_router is not None:
 from .routes.voice_library import router as voice_library_router  # noqa: E402
 
 app.include_router(voice_library_router, prefix="/api")
+# The memory graph (/gateway/memory/*: query, history, sources, reconstruct, derived) over the
+# AbstractRuntime memory facade; literal paths, mounted before the main router.
+from .routes.memory import router as memory_router  # noqa: E402
+
+app.include_router(memory_router, prefix="/api")
 app.include_router(gateway_router, prefix="/api")
 app.include_router(triage_router, prefix="/api")
 
