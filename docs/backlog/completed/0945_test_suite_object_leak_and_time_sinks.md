@@ -92,3 +92,13 @@ leak is the harness's.
   summary line and process exit (baseline: 34 min); a second run (no `-s`, no histogram plugin) exited in
   3 s. A run that reproduces it should dump the stacks of threads alive at `pytest_unconfigure`.
 - Ten test modules import the app at module level and keep the one app built at collection (bounded).
+- **Parallel CI (pytest-xdist) not adopted yet.** `-n auto --dist loadfile` ran the full suite in 1:50-2:22
+  on an 18-core Mac (serial 24 min) with peak RSS 0.6 GB per worker, but 1 of 4 runs had 16 failures
+  (`test_gateway_workflow_governance` x11, plane isolation, run-helper LLM resolution: "gateway boot
+  failed" / "Service pre-warm failed"): shared state between worker processes still to find. Two
+  parallel-only defects fixed on the way: `serve`'s non-daemon-straggler belt (`cli.py:60`, `os._exit(0)`)
+  killed a worker (now named on stderr in tests, `conftest._serve_never_exits_the_test_process`), and
+  `test_untrusted_input_run_is_never_offered_an_mcp_tool` read a parked root run as done before the
+  agent's model call.
+- **Service lifecycle (product, operator-approved for 0.16.0, not started):** the entity thread leak and the
+  `gc.freeze` finding above, with a live-thread and RSS measurement over 20 service rebuilds.

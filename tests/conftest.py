@@ -793,6 +793,26 @@ def _reset_gateway_service_between_tests(_isolate_gateway_runtime_env: None, mon
 
 
 @pytest.fixture(autouse=True)
+def _serve_never_exits_the_test_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`serve` ends with a belt for production (cli._exit_now_if_nondaemon_stragglers): any
+    non-daemon thread still alive after shutdown makes it `os._exit(0)`. In a test process that
+    killed pytest itself (a pytest-xdist worker "node down: Not properly terminated"; a serial run
+    ending early with status 0). Here the stragglers are named on stderr and the test goes on."""
+    import threading
+
+    from abstractgateway import cli as _cli
+
+    def _name_stragglers() -> None:
+        stragglers = [t.name for t in threading.enumerate()
+                      if t is not threading.main_thread() and t.is_alive() and not t.daemon]
+        if stragglers:
+            print(f"[WARN] serve left non-daemon thread(s) alive: {', '.join(sorted(stragglers))}",
+                  file=sys.stderr, flush=True)
+
+    monkeypatch.setattr(_cli, "_exit_now_if_nondaemon_stragglers", _name_stragglers)
+
+
+@pytest.fixture(autouse=True)
 def _no_external_app_probe(monkeypatch: pytest.MonkeyPatch) -> None:
     """The apps manager looks for apps started outside the gateway on the
     usual loopback ports (3001-3005, 3000, 3007): the operator's live apps.
