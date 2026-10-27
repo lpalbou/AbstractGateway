@@ -1,4 +1,4 @@
-# 0943-gateway: [FEATURE] Session tool policy routes: approve or deny for the whole conversation, server-side
+# 0946-gateway: [FEATURE] Session tool policy routes: approve or deny for the whole conversation, server-side
 
 > Package: abstractgateway (routes, host wiring); abstractruntime (the store and the decision, its 0853)
 > Type: feature
@@ -46,7 +46,7 @@ Before: the gateway injected only a start-time `_runtime.tool_policy` (`tool_gra
 
 ## Remaining
 
-- Raise `ABSTRACTRUNTIME_FLOOR` and the pyproject pin to the runtime release that carries 0853.
+- [x] `ABSTRACTRUNTIME_FLOOR` and the pyproject pins raised to AbstractRuntime 0.14.0 (it carries 0853).
 - Live check on the operator's gateway with panel-chat (AbstractUIC PR) and the desktop Assistant
   (AbstractAssistant PR): approve a kind, watch no gate appear on any connected client.
 - Follow-ups listed in root 1061 (iPhone/watch, AbstractCode web and terminal, the replay view's
@@ -55,4 +55,5 @@ Before: the gateway injected only a start-time `_runtime.tool_policy` (`tool_gra
 ## Acceptance criteria
 
 - [x] Routes, clamp, store attach, capability, docs, tests.
-- [ ] Runtime floor raised at release; live multi-client check.
+- [x] Runtime floor raised to 0.14.0.
+- [ ] Live multi-client check.
