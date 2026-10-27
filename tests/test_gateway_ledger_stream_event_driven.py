@@ -223,34 +223,59 @@ def test_sqlite_tail_uses_indexed_read(tmp_path: Path) -> None:
 
 
 @pytest.mark.basic
-def test_gateway_store_chain_resolves_to_byte_tail(tmp_path: Path) -> None:
-    """The REAL gateway chain (Offloading(Observable(Jsonl))) must resolve to
-    the byte-offset tail (not the fallback) and expose the observable."""
+def test_gateway_store_chain_resolves_to_the_seq_cursor_tail(tmp_path: Path) -> None:
+    """The REAL gateway chain (Offloading(Observable(Jsonl))) offers `list_after` on its outermost layer
+    (AbstractRuntime >= 0.14.0: the ledger persists `seq` and every LedgerStore pages by it), so the chain
+    resolves to the seq-cursor tail, reading the same surface as the chain's list(), and exposes the
+    observable."""
     from abstractgateway.stores import build_file_stores
 
     stores = build_file_stores(base_dir=tmp_path)
     tail = resolve_ledger_tail(stores.ledger_store, "run-x", start_index=0)
-    assert isinstance(tail, JsonlLedgerTail)
+    assert isinstance(tail, SeqLedgerTail)
     assert find_observable(stores.ledger_store) is not None
 
-    # And the tail serves what the CHAIN's list() serves (refs-as-refs parity:
-    # the backend file holds the persisted records list() returns).
-    stores.ledger_store.append(_mk_record("run-x", 0))
+    for i in range(3):
+        stores.ledger_store.append(_mk_record("run-x", i))
     got = tail.read_new()
     assert [r for _, r in got] == stores.ledger_store.list("run-x")
+    assert [c for c, _ in got] == [1, 2, 3]
+    stores.ledger_store.append(_mk_record("run-x", 3))
+    assert [c for c, _ in tail.read_new()] == [4]
 
 
 @pytest.mark.basic
-def test_fallback_tail_for_plain_stores() -> None:
+def test_in_memory_store_pages_by_seq() -> None:
     from abstractruntime.storage.in_memory import InMemoryLedgerStore
 
     store = InMemoryLedgerStore()
     for i in range(3):
         store.append(_mk_record("run-mem", i))
     tail = resolve_ledger_tail(store, "run-mem", start_index=1)
+    assert isinstance(tail, SeqLedgerTail)
+    got = tail.read_new()
+    assert [c for c, _ in got] == [2, 3]
+    assert [r for _, r in got] == store.list("run-mem")[1:]
+
+
+class _PlainLedger:
+    """A ledger with neither a file path nor `list_after` (an older or foreign store): only list()."""
+
+    def __init__(self, records):
+        self._records = list(records)
+
+    def list(self, run_id: str):
+        return [dict(r) for r in self._records]
+
+
+@pytest.mark.basic
+def test_fallback_tail_for_plain_stores() -> None:
+    store = _PlainLedger({"node_id": f"node-{i}"} for i in range(3))
+    tail = resolve_ledger_tail(store, "run-plain", start_index=1)
     assert isinstance(tail, ListSliceTail)
     got = tail.read_new()
     assert [c for c, _ in got] == [2, 3]
+    assert [r["node_id"] for _, r in got] == ["node-1", "node-2"]
 
 
 # ---------------------------------------------------------------------------

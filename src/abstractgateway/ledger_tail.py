@@ -11,10 +11,13 @@ incremental reads:
   #FALLBACK). Replay equivalence is the contract: the sequence of records a
   tail produces from index 0 equals `list()` — pinned by tests.
 - `SeqLedgerTail`: cursor read over a store exposing `list_after(run_id,
-  after, limit)` (the SQLite backend; seq is dense 1..N per run, so the
-  record-index cursor and seq coincide — also test-pinned).
-- `ListSliceTail`: honest fallback for stores with neither surface (e.g.
-  in-memory test doubles): `list()[cursor:]` per read — the pre-0075
+  after, limit)`. Since AbstractRuntime 0.14.0 every LedgerStore pages by its
+  persisted `seq` (SQLite by its primary key, JSONL through its own line-offset
+  index, the decorators passing it through), so the gateway's real chain
+  (Offloading(Observable(Jsonl|Sqlite))) resolves here; seq is dense 1..N per
+  run, so the record-index cursor and seq coincide — test-pinned.
+- `ListSliceTail`: honest fallback for stores with neither surface (an older or
+  foreign store with only `list()`): `list()[cursor:]` per read — the pre-0075
   behavior, correct just not cheap.
 
 Cursor semantics (wire-compatible with the existing API): the cursor is the
@@ -323,7 +326,9 @@ def find_observable(store: Any) -> Optional[Any]:
 
 
 def resolve_ledger_tail(store: Any, run_id: str, *, start_index: int = 0) -> Any:
-    """Pick the cheapest correct incremental reader for this store chain.
+    """Pick the cheapest correct incremental reader for this store chain: the outermost layer that offers
+    one wins. The gateway chain's outer layers offer `list_after` (AbstractRuntime >= 0.14.0), so it reads by
+    seq; a bare JSONL backend (no decorators) is read by its byte tail, numbering `seq` like its list().
 
     IMPORTANT (offloading contract): list() on the gateway chain serves
     refs-as-refs (OffloadingLedgerStore deliberately does NOT rehydrate on
