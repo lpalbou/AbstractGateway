@@ -23,6 +23,8 @@ import urllib.request
 
 import pytest
 
+from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+
 pytestmark = pytest.mark.basic
 
 TOKEN = "r13-min-token"
@@ -110,4 +112,4 @@ def test_a_chunked_read_aloud_stream_keeps_health_answering(tmp_path, monkeypatc
         thread.join(10)
     assert events == ["runtime_start", "audio", "audio", "audio", "audio", "done"], events
     assert samples and None not in samples, f"health stopped answering during the stream: {samples}"
-    assert max(samples) < 1000, samples
+    timing_budget(max(samples), 1000, "health max during a chunked read-aloud", unit="ms")

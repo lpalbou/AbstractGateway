@@ -21,6 +21,8 @@ from types import SimpleNamespace
 from typing import Any, Dict, List
 
 import pytest
+
+from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
@@ -28,8 +30,6 @@ pytestmark = pytest.mark.basic
 
 H = {"Authorization": "Bearer t"}
 
-# Wall-clock assertions are only trusted off CI: a shared runner can pause the whole process.
-_UNDER_CI = bool(os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"))
 
 
 def _on_loop() -> bool:
@@ -150,9 +150,9 @@ def test_a_slow_flow_read_never_stalls_the_loop(env) -> None:
     assert read_on["on_loop"] is False, "the flow read ran inside the running event loop"
     assert read_on["thread"] != loop_thread["id"], "the flow read ran on the event loop's thread"
     # The 300 ms read did not stall the ticker (the old code stalled it 300 ms): a wall-clock
-    # check, skipped under CI where the runner itself can pause the process for seconds.
-    if not _UNDER_CI:
-        assert gaps and max(gaps) < 0.05, f"loop stalled {max(gaps) * 1000:.1f} ms"
+    # budget (tests/timing.py: reported, asserted under ABSTRACTGATEWAY_TIMING_STRICT=1).
+    assert gaps, "the ticker never ran"
+    timing_budget(max(gaps), 0.05, "loop stall during a 300 ms flow read")
 
 
 def test_backlog_listings_off_the_loop_and_parsed_once_per_version(env) -> None:

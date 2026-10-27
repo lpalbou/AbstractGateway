@@ -20,6 +20,8 @@ from typing import Any, List
 
 import pytest
 
+from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+
 pytestmark = pytest.mark.basic
 
 BUILD_S = 5.0
@@ -90,11 +92,13 @@ def test_a_5s_build_during_a_request_never_blocks_health_beyond_50ms(svc_mod, mo
     assert took >= BUILD_S * 0.9 and resp.status_code != 503, (took, resp.status_code, resp.text)
     assert len(builds) == 1 and builds[0].startswith("gw-service-build"), builds
     # ... while the loop kept answering health: the old code built inline and froze it 5 s.
-    assert len(lat) >= 20, f"only {len(lat)} health answers during a {BUILD_S:.0f} s build"
+    assert lat, "no health answer during the build"
+    timing_budget(len(lat), 20, f"health answers during a {BUILD_S:.0f} s build", unit="answers", at_least=True)
     # Every answer under 50 ms; ONE outlier up to 500 ms is tolerated for OS scheduling on a
     # loaded machine (the build itself, on the loop, delayed the first probe by the whole 5 s).
     ms = [round(x * 1000) for x in lat]
-    assert sorted(lat)[-2] < 0.05 and max(lat) < 0.5, f"/api/health during the build (ms): {ms}"
+    timing_budget(sorted(lat)[-2], 0.05, "/api/health second-worst during the build")
+    timing_budget(max(lat), 0.5, "/api/health worst during the build")
 
 
 def _principal(user_id: str):
@@ -123,7 +127,7 @@ def test_a_miss_on_the_loop_answers_at_once_and_builds_once_in_its_own_thread(sv
         t0 = time.perf_counter()
         with pytest.raises(svc_mod.ServiceStarting):
             svc_mod.get_gateway_service_for_principal(bob)  # on the loop: refused, never built here
-        assert time.perf_counter() - t0 < 0.05
+        timing_budget(time.perf_counter() - t0, 0.05, "refused on-loop build")
         waiters = [asyncio.ensure_future(svc_mod.ensure_gateway_service_for_principal(bob)) for _ in range(10)]
         await asyncio.sleep(0.1)
         assert not any(w.done() for w in waiters)
@@ -206,7 +210,8 @@ def test_a_dead_runner_restarts_off_the_loop_and_the_service_keeps_serving(svc_m
             time.sleep(0.01)
     finally:
         release.set()
-    assert took < 0.05 and started and started[0].startswith("gw-service-build"), (took, started)
+    assert started and started[0].startswith("gw-service-build"), (took, started)
+    timing_budget(took, 0.05, "request while a build runs on its thread")
 
 
 def test_an_app_without_the_prewarm_middleware_keeps_the_inline_build(svc_mod, monkeypatch) -> None:

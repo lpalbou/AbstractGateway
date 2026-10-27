@@ -175,6 +175,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Tests: a wall-clock budget never fails a test by default.** Every latency assertion in the
+  suite (52 checks in 27 files: health p99 and worst case, loop stalls, TTFA, kill/cancel times, per-pass
+  benchmarks) goes through `tests/timing.py`: it prints a `[timing]` line, and asserts only with
+  `ABSTRACTGATEWAY_TIMING_STRICT=1` (CONTRIBUTING.md). The structural assertions stay unconditional.
+  The host-status TTL tests use a fake clock.
 - **The test suite no longer keeps every app it builds** (backlog 0945). The harness re-imports
   `abstractgateway.app` for each test; FastAPI's endpoint memo caches (keyed by the endpoints `app.py` defines)
   and the package attribute kept every one of those apps alive, ~13,500 objects per test, and a test that ran

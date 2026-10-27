@@ -27,6 +27,8 @@ from typing import Any, Dict, List
 
 import pytest
 
+from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+
 
 def _sse_events(body: str) -> List[Dict[str, Any]]:
     events: List[Dict[str, Any]] = []
@@ -175,7 +177,7 @@ def test_done_lands_promptly_after_a_run_terminates_mid_stream(
         # Pre-fix this was one 0.75s status tick away (measured 0.26s median,
         # 0.51s worst on a warm store). Give CI room but keep the assertion
         # meaningful: it must be far below the old tick.
-        assert lag < 0.30, f"done frame lagged the terminal save by {lag:.3f}s"
+        timing_budget(lag, 0.30, "done frame after the terminal save")
 
 
 @pytest.mark.basic

@@ -20,7 +20,6 @@ import base64
 import hashlib
 import http.client
 import json
-import os
 import socket
 import threading
 import time
@@ -30,12 +29,12 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
+from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+
 pytestmark = pytest.mark.basic
 
 TOKEN = "r13-test-token"
 RUN = "session_memory_r13"
-# Wall-clock budgets are only trusted off CI: a shared runner can pause the whole process.
-_UNDER_CI = bool(os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"))
 
 
 def _free_port() -> int:
@@ -271,8 +270,8 @@ def test_health_stays_fast_under_generation_plus_concurrent_read_aloud_and_the_w
             assert [e["sequence"] for e in r["events"] if e["type"] == "audio"] == [0, 1, 2, 3], r
         assert hammer.failures() == 0, hammer.samples
         assert len(hammer.samples) >= 40, len(hammer.samples)
-        assert hammer.p99() < 500, f"p99 health latency {hammer.p99():.0f} ms: {hammer.samples}"
-        assert max(x for x in hammer.samples if x is not None) < 1500, hammer.samples
+        timing_budget(hammer.p99(), 500, "health p99 under generation + read-aloud", unit="ms")
+        timing_budget(max(x for x in hammer.samples if x is not None), 1500, "health max under generation + read-aloud", unit="ms")
         assert recorder.fired == [], f"watchdog fired: {recorder.fired}"
     finally:
         generating.set()
@@ -291,7 +290,8 @@ def test_a_chunked_read_aloud_whose_client_leaves_frees_the_engine_and_the_loop(
                 time.sleep(0.05)
         assert engine.closed == 1, "the engine's stream was never closed after the client left"
         assert engine.finished == 0
-        assert hammer.failures() == 0 and hammer.p99() < 500, hammer.samples
+        assert hammer.failures() == 0, hammer.samples
+        timing_budget(hammer.p99(), 500, "health p99 while the client leaves", unit="ms")
         assert recorder.fired == []
     finally:
         _stop(server, thread)
@@ -338,8 +338,7 @@ def test_first_audio_still_arrives_after_one_sentence_ttfa(tmp_path, monkeypatch
         assert r["status"] == 200 and r["events"][-1]["type"] == "done", r
         assert r["ttfa_ms"] is not None, r
         assert not engine.held_timed_out, "first audio never reached the client while the engine was held (TTFA lost)"
-        if not _UNDER_CI:
-            assert r["ttfa_ms"] < 300 + 700, r["ttfa_ms"]
+        timing_budget(r["ttfa_ms"], 300 + 700, "first audio (TTFA)", unit="ms")
         assert not any(e["type"] == "queued" for e in r["events"]), "a free engine must not announce a queue"
     finally:
         first_audio_seen.set()
