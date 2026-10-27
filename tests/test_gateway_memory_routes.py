@@ -178,28 +178,28 @@ def test_sources_lists_the_refs_directly_and_transitively(world) -> None:
 
 def test_reconstruct_step_and_artifact_then_gone_and_unsupported(world) -> None:
     c, alice = world["client"], world["alice"]
-    r = c.post("/api/gateway/memory/sources/reconstruct", headers=alice, json={"ref": world["step_ref"]})
+    r = c.post("/api/gateway/memory/sources/reconstruct", headers=alice, json={"ref": world["step_ref"], "session_id": SESSION})
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["status"] == "ok" and body["kind"] == "step"
     assert body["content"]["result"] == {"said": "Laurent knows Ada"}
     assert body["metadata"]["seq"] == world["seq"] and body["metadata"]["step_id"] == "step-memory-1"
 
-    r = c.post("/api/gateway/memory/sources/reconstruct", headers=alice, json={"ref": world["art_ref"]})
+    r = c.post("/api/gateway/memory/sources/reconstruct", headers=alice, json={"ref": world["art_ref"], "session_id": SESSION})
     assert r.status_code == 200 and r.json()["status"] == "ok"
     assert r.json()["content"] == "Laurent knows Ada (verbatim)"
 
     assert world["svc"].stores.artifact_store.delete(world["artifact_id"]) is True
-    r = c.post("/api/gateway/memory/sources/reconstruct", headers=alice, json={"ref": world["art_ref"]})
+    r = c.post("/api/gateway/memory/sources/reconstruct", headers=alice, json={"ref": world["art_ref"], "session_id": SESSION})
     assert r.status_code == 200 and r.json()["status"] == "source_gone", r.text
 
-    r = c.post("/api/gateway/memory/sources/reconstruct", headers=alice, json={"ref": {"kind": "message", "message_id": "m-1"}})
+    # An admin reconstructs any ref of its plane (the root plane here): a kind with no indexed path is
+    # unsupported, a ledger row that does not exist is gone, never an error.
+    r = c.post("/api/gateway/memory/sources/reconstruct", headers=ADMIN, json={"ref": {"kind": "message", "message_id": "m-1"}})
     assert r.status_code == 200 and r.json()["status"] == "unsupported", r.text
-
-    # A ledger row that does not exist is gone, not an error.
     gone = dict(world["step_ref"], seq=world["seq"] + 1000)
     gone.pop("step_id")
-    r = c.post("/api/gateway/memory/sources/reconstruct", headers=alice, json={"ref": gone})
+    r = c.post("/api/gateway/memory/sources/reconstruct", headers=ADMIN, json={"ref": gone})
     assert r.status_code == 200 and r.json()["status"] == "source_gone", r.text
 
 
@@ -400,3 +400,53 @@ def test_the_refusal_does_not_name_the_other_owner(world) -> None:
     ):
         assert r.status_code == 403, r.text
         assert "someone_else" not in r.text
+
+
+def test_reconstruct_applies_the_owner_rule(world) -> None:
+    """A non-admin reconstructs only a ref that one of ITS memories names: not a ref named only by another
+    owner's memory, nor one reached through its own memory derived from another owner's."""
+    _cross_owner_lineage(world)
+    c, alice = world["client"], world["alice"]
+    secret = {"kind": "artifact", "artifact_id": "SECRET-ARTIFACT"}
+    r = c.post("/api/gateway/memory/sources/reconstruct", headers=alice, json={"ref": secret, "session_id": SESSION})
+    assert r.status_code == 403, r.text
+    assert "someone_else" not in r.text
+    # A ref nobody names is refused too (no probing the ledger by id).
+    r = c.post("/api/gateway/memory/sources/reconstruct", headers=alice, json={"ref": {"kind": "artifact", "artifact_id": "nope"}, "session_id": SESSION})
+    assert r.status_code == 403, r.text
+    # Her own memory's ref is served when she names the session that owns it, refused when she does not.
+    r = c.post("/api/gateway/memory/sources/reconstruct", headers=alice, json={"ref": world["art_ref"], "session_id": SESSION})
+    assert r.status_code == 200 and r.json()["status"] == "ok", r.text
+    r = c.post("/api/gateway/memory/sources/reconstruct", headers=alice, json={"ref": world["art_ref"]})
+    assert r.status_code == 403, r.text
+
+
+def test_reconstruct_bounds_a_run_ref_and_reads_only_this_planes_runtime(world) -> None:
+    c, alice = world["client"], world["alice"]
+    facade = _plane_facade(world["svc"])
+    try:
+        facade.apply_revision(_revision(
+            "rev-run", [_claim("mem-run", world["owner"], o="ex:run-level")], owner=world["owner"],
+            provenance={"sources": [{"kind": "run", "run_id": world["run_id"]}], "actor": "runtime"},
+        ))
+    finally:
+        _close(facade)
+    run_ref = {"kind": "run", "run_id": world["run_id"]}
+    r = c.post("/api/gateway/memory/sources/reconstruct", headers=alice, json={"ref": run_ref, "session_id": SESSION, "limit": 1})
+    assert r.status_code == 200 and r.json()["status"] == "ok", r.text
+    meta = r.json()["metadata"]
+    assert len(r.json()["content"]["ledger"]) == 1 and meta["ledger_returned"] == 1
+    assert meta["ledger_left_out"] == meta["ledger_records"] - 1 and meta["ledger_records"] >= 2 and meta["truncated"] is True
+    assert c.post("/api/gateway/memory/sources/reconstruct", headers=alice,
+                  json={"ref": run_ref, "session_id": SESSION, "limit": 1001}).status_code == 422
+
+    # The plane's runtime id is the facade's: a ref stamped with it resolves, one of another runtime does not.
+    own_runtime = world["svc"].config.runtime_id
+    assert own_runtime
+    r = c.post("/api/gateway/memory/sources/reconstruct", headers=alice,
+               json={"ref": dict(world["step_ref"], runtime_id=own_runtime), "session_id": SESSION})
+    assert r.status_code == 200 and r.json()["status"] == "ok", r.text
+    foreign = dict(world["step_ref"], runtime_id="entity-home-elsewhere")
+    r = c.post("/api/gateway/memory/sources/reconstruct", headers=alice, json={"ref": foreign, "session_id": SESSION})
+    assert r.status_code == 200 and r.json()["status"] == "unsupported", r.text
+    assert "entity-home-elsewhere" in r.json()["reason"]

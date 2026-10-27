@@ -54,6 +54,9 @@ class MemoryQueryRequest(KGQueryRequest):
 
 class ReconstructRequest(BaseModel):
     ref: Dict[str, Any] = Field(..., description="A SourceRef dict (kind + its id fields).")
+    run_id: Optional[str] = Field(default=None, description="Names the caller's run (its owners), as on the GET routes.")
+    session_id: Optional[str] = Field(default=None, description="Names the caller's session (its owner).")
+    limit: int = Field(default=DEFAULT_LIMIT, ge=1, le=1000, description="A `run` source: at most this many ledger records (1..1000).")
 
 
 # -- plane, home, owners --------------------------------------------------------------------------------------------
@@ -413,20 +416,46 @@ def memory_derived(
     return {"ok": True, "ref": ref, "ref_key": ref_key, "count": len(ids), "items": ids, "truncated": truncated, "withheld": withheld}
 
 
+def _names_ref_for_caller(facade: Any, ref: Dict[str, Any], key: str, owners: Set[str]) -> bool:
+    """True when a memory this caller may read names `ref` as one of its OWN sources. (A memory of the caller
+    derived from another owner's memory that names the ref does not count: that is the cross-owner walk /sources
+    refuses.) Bounded by the graph's read limit."""
+    candidates = facade.derived_from_source(ref, limit=MAX_LINEAGE_VISITS)
+    SourceRef = _facade().SourceRef
+    for memory_id in [i for i in candidates if i in _readable(facade, candidates, owners)]:
+        direct = facade.sources_of(memory_id, transitive=False, limit=MAX_LINEAGE_VISITS)
+        if any(SourceRef.from_dict(r).key() == key for r in direct):
+            return True
+    return False
+
+
 @router.post("/sources/reconstruct")
 def memory_reconstruct_source(request: Request, req: ReconstructRequest) -> Dict[str, Any]:
     """The verbatim a SourceRef points at, from this plane's ledger/run/artifact stores. HTTP 200 for every
-    answer (`ok`, `source_gone`, `unsupported`); 422 for a malformed ref."""
-    _principal_from_request(request)
+    answer (`ok`, `source_gone`, `unsupported`); 422 for a malformed ref; 403 when no memory the caller may read
+    names the ref (an admin reconstructs any ref of its plane). A `run` source returns at most `limit` ledger
+    records, oldest first, and its metadata says how many were left out (`ledger_left_out`, `truncated`)."""
     svc = get_gateway_service()
-    ref = _source_ref(req.ref).to_dict()
+    source = _source_ref(req.ref)
+    ref = source.to_dict()
+    owners = _caller_owners(request, svc, run_id=_clean(req.run_id), session_id=_clean(req.session_id))
+    if owners is not None:
+        home = _open(svc)
+        try:
+            allowed = home is not None and _names_ref_for_caller(home, ref, source.key(), owners)
+        finally:
+            _close(home)
+        if not allowed:
+            raise _forbidden()
     MemoryFacade = _facade().MemoryFacade
     facade = MemoryFacade(
         ledger_store=svc.stores.ledger_store,
         run_store=svc.stores.run_store,
         artifact_store=svc.stores.artifact_store,
+        # The plane's runtime: a ref stamped by another runtime (an entity home's) is not read from this ledger.
+        runtime_id=svc.config.runtime_id or None,
     )
-    return facade.reconstruct_source(ref)
+    return facade.reconstruct_source(ref, limit=int(req.limit))
 
 
 @router.get("/{memory_id}/history")
