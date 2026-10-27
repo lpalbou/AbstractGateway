@@ -26,6 +26,8 @@ from typing import List, Optional
 
 import pytest
 
+from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+
 from abstractgateway import apps_manager as am
 from test_gateway_apps_manager import _free_port, _publish, fake_node, manager  # noqa: F401 - fixtures
 
@@ -93,7 +95,10 @@ class _Leftover:
 
 
 @pytest.fixture()
-def leftovers():
+def leftovers(monkeypatch: pytest.MonkeyPatch):
+    # A stubborn leftover ignores SIGTERM: the reaper waits STOP_TIMEOUT_S (5 s) before SIGKILL.
+    # One second keeps that path (SIGTERM, wait, SIGKILL) at a fifth of the cost.
+    monkeypatch.setattr(am, "STOP_TIMEOUT_S", 1.0)
     made: List[_Leftover] = []
 
     def make(*a, **kw) -> _Leftover:
@@ -171,7 +176,7 @@ def test_a_leftover_with_a_pid_file_is_stopped_even_when_it_ignores_sigterm(left
     reaped = manager.reap_orphans()
     assert reaped == [{"app_id": "flow", "pid": lo.pid, "version": "0.8.0"}]
     assert _wait_gone(lo), "SIGTERM was ignored: the reaper must SIGKILL it"
-    assert time.time() - t0 < am.STOP_TIMEOUT_S + 10
+    timing_budget(time.time() - t0, am.STOP_TIMEOUT_S + 10, "reap of a SIGTERM-ignoring leftover")
     assert not manager.pid_path("flow").exists()
 
 
@@ -189,7 +194,10 @@ def test_a_pid_file_naming_a_process_that_could_not_be_stopped_is_kept(leftovers
 
     monkeypatch.setattr(am.os, "kill", kill)
     monkeypatch.setattr(am, "STOP_TIMEOUT_S", 0.3)
+    t0 = time.monotonic()
     assert manager.reap_orphans() == []
+    # The reaper reads STOP_TIMEOUT_S when it runs (a default bound at import waited 5 s here).
+    timing_budget(time.monotonic() - t0, 3.0, "reaper with STOP_TIMEOUT_S=0.3")
     assert lo.alive() and manager.pid_path("flow").exists()
 
 

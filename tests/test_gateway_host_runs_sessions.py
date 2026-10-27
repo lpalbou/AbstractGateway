@@ -27,6 +27,8 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
+from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+
 pytestmark = pytest.mark.basic
 
 NOW = datetime.now(timezone.utc)
@@ -164,7 +166,7 @@ def test_the_title_and_wait_cost_one_document_load_per_row(kind: str, tmp_path: 
     assert loads.count("ctl-a") == 1
     assert children == ["root-2"], children
     print(f"\n{kind}: recent_runs_host_wide with titles and waits: {took_ms:.1f} ms for {n} rows ({len(loads)} loads)")
-    assert took_ms < 2000, f"{kind}: {took_ms:.0f} ms for {n} rows"
+    timing_budget(took_ms, 2000, f"{kind}: recent_runs_host_wide for {n} rows", unit="ms")
 
 
 @pytest.mark.parametrize("kind", ["file", "sqlite"])

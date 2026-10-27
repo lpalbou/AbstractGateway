@@ -8,6 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from timing import patient  # noqa: E402 - tests/timing.py (wall-clock budgets)
+
 
 @pytest.mark.basic
 def test_backlog_exec_runner_processes_queue_and_writes_logs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -162,8 +164,8 @@ def test_backlog_exec_runner_can_execute_multiple_requests_in_parallel(tmp_path:
     runner = BacklogExecRunner(gateway_data_dir=gateway_dir, cfg=cfg)
     runner.start()
     try:
-        assert first_started.wait(timeout=2.0)
-        assert second_started.wait(timeout=2.0), "Expected a second concurrent execution worker to start"
+        assert first_started.wait(timeout=patient(2.0))
+        assert second_started.wait(timeout=patient(2.0)), "Expected a second concurrent execution worker to start"
         allow_finish.set()
 
         deadline = time.monotonic() + 5.0

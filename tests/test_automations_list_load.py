@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Any, List
 
 import pytest
+
+from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
 from fastapi.testclient import TestClient
 
 from automations_fixtures import HEADERS, controller_run, gateway_env, occurrence_run, save_runs
@@ -146,7 +148,8 @@ def test_the_listing_is_o_automations_50_x_100(client: TestClient, monkeypatch: 
     # O(automations): no tree walk, no whole-ledger read, one full index listing (cached after).
     assert calls == {"children": 0, "ledger_list": 0, "full_index": 1}
     # Generous bounds for a loaded CI box; the operator's data copy measures 0.22 s / 0.02 s.
-    assert cold < 3.0 and warm < 1.0
+    timing_budget(cold, 3.0, "GET /automations cold")
+    timing_budget(warm, 1.0, "GET /automations warm")
 
 
 def test_fourteen_concurrent_listings_compute_once(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
