@@ -16283,6 +16283,10 @@ def _voice_record_model(item: Any) -> str:
     if not isinstance(item, dict):
         return ""
     params = item.get("params") if isinstance(item.get("params"), dict) else {}
+    if str(item.get("kind") or item.get("voice_kind") or "") == "clone" or (item.get("tags") or {}).get("builtin"):
+        # A stored voice names its checkpoint or nothing; its language is never a model (a
+        # Piper voice's language IS its model selector, hence the fallback below for profiles).
+        return str(item.get("model") or item.get("model_id") or params.get("model") or params.get("model_id") or "").strip()
     return str(
         item.get("model")
         or item.get("model_id")

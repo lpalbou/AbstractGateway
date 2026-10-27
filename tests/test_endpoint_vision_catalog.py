@@ -275,3 +275,19 @@ def test_a_named_endpoint_that_does_not_exist_is_404(tmp_path: Path, monkeypatch
         resp = client.get("/api/gateway/vision/provider_models?task=text_to_image&provider=endpoint:nobody", headers=headers)
     assert resp.status_code in (400, 404), resp.text
     assert stub.vision_calls == []
+
+
+def test_endpoint_evidence_keeps_an_organisation_prefixed_model_id_whole() -> None:
+    from abstractgateway.endpoint_vision_catalog import apply_endpoint_evidence, endpoint_model_evidence
+
+    assert endpoint_model_evidence({"id": "black-forest-labs/FLUX.1-schnell", "capabilities": ["text_to_image"]}, "text_to_image") == (
+        "black-forest-labs/FLUX.1-schnell", True
+    )
+    assert endpoint_model_evidence({"id": "openai-compatible/gpt-image-2"}, None) == ("gpt-image-2", None)
+    assert endpoint_model_evidence({"id": "myrelay/gpt-image-2", "provider": "myrelay"}, None) == ("gpt-image-2", None)
+
+    class _Profile:
+        allowed_models = ("black-forest-labs/FLUX.1-schnell",)
+
+    rows = [_relay_row("black-forest-labs/FLUX.1-schnell", True), {"id": "stabilityai/sdxl", "capabilities": ["chat"]}]
+    assert apply_endpoint_evidence(_Profile(), [], rows, task="text_to_image") == ["black-forest-labs/FLUX.1-schnell"]

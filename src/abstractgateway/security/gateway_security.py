@@ -1438,6 +1438,8 @@ class GatewaySecurityMiddleware:
                     return "attachments"
                 if p.endswith("/bundles/upload"):
                     return "bundles"
+                if p.endswith("/voice/clones"):
+                    return "voice_clones"  # a reference recording (routes/voice_library.py, 25 MB)
                 return ""
 
             # Body size limits (for mutating endpoints).
@@ -1450,11 +1452,14 @@ class GatewaySecurityMiddleware:
                 # security layer cannot reject a valid upload that is still within the endpoint's
                 # per-file cap (e.g. 25MB for /attachments/upload).
                 overhead = 2 * 1024 * 1024
-                endpoint_cap = (
-                    int(self._policy.max_attachment_bytes)
-                    if upload_kind == "attachments"
-                    else int(self._policy.max_bundle_bytes)
-                )
+                if upload_kind == "attachments":
+                    endpoint_cap = int(self._policy.max_attachment_bytes)
+                elif upload_kind == "voice_clones":
+                    from ..routes.voice_library import MAX_REFERENCE_AUDIO_BYTES
+
+                    endpoint_cap = int(MAX_REFERENCE_AUDIO_BYTES)
+                else:
+                    endpoint_cap = int(self._policy.max_bundle_bytes)
                 max_body_bytes = max(0, int(endpoint_cap) + int(overhead))
                 if int(self._policy.max_upload_body_bytes) > 0:
                     max_body_bytes = min(max_body_bytes, int(self._policy.max_upload_body_bytes))

@@ -166,7 +166,15 @@ def endpoint_model_evidence(item: Any, task: Optional[str]) -> Tuple[str, Option
     """
     if not isinstance(item, dict):
         return "", None
-    model = str(item.get("id") or item.get("model") or "").strip().rsplit("/", 1)[-1]
+    model = str(item.get("id") or item.get("model") or "").strip()
+    # A routing prefix (`openai-compatible/gpt-image-2`, `openai/dall-e-3`) is dropped; an id whose
+    # first segment is an organisation (`black-forest-labs/FLUX.1-schnell`) is kept whole.
+    family_prefixes = {f"{f}/" for f in ENDPOINT_IMAGE_PROVIDER_FAMILIES}
+    family_prefixes.add(f"{str(item.get('provider') or '').strip().lower()}/")
+    for prefix in sorted(family_prefixes, key=len, reverse=True):
+        if len(prefix) > 1 and model.lower().startswith(prefix):
+            model = model[len(prefix):]
+            break
     if not model:
         return "", None
     tasks = wanted_image_tasks(task)

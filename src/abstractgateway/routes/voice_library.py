@@ -11,6 +11,7 @@ process or calls a remote AbstractCore server, the same way synthesis does:
     PATCH  /voice/clones/{voice_id}                 rename / replace the transcript         admin
     DELETE /voice/clones/{voice_id}                 delete (built-in voices are read-only)  admin
     POST   /voice/design                            a voice from a written description      admin
+    POST   /voice/clones/{voice_id}/deploy          share one of my voices with everyone    admin only
     GET    /voice/compatibility                     which engine supports which feature, and how
 
 Whose voices (backlog 0942): in multi-user mode each account keeps the voices it clones or
@@ -197,6 +198,24 @@ async def voice_design(body: VoiceDesignRequest, request: Request) -> Dict[str, 
     return await _run(
         "heavy", facade.design_voice, body.description, name=body.name, language=body.language, text=body.text, **_keys(request)
     )
+
+
+@router.post("/voice/clones/{voice_id}/deploy")
+async def voice_clone_deploy(voice_id: str, request: Request) -> Dict[str, Any]:
+    """Share one of the caller's voices with everyone (administrators): copy it into the
+    library, the machine's shared voice store every account lists and speaks with. An
+    administrator whose plane IS the library (the default administrator) already shares
+    every voice they create; the answer then says so (`already_shared`)."""
+    from .gateway import _gateway_runtime, _require_admin_principal
+
+    _require_admin_principal(request)
+    facade = _facade()
+    runtime, _err = _gateway_runtime()
+    client = getattr(runtime, "_abstractcore_llm_client", None) if runtime is not None else None
+    if not str((getattr(client, "_llm_kwargs", None) or {}).get("voice_store_dir") or "").strip():
+        record = await _run("light", facade.get_cloned_voice, voice_id, **_keys(request))
+        return {"ok": True, "already_shared": True, **record}
+    return await _run("light", facade.deploy_voice_to_library, voice_id, **_keys(request))
 
 
 @router.get("/voice/compatibility")

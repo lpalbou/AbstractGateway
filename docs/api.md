@@ -1922,14 +1922,16 @@ gateway's process, or on the AbstractCore server it is configured with):
 | `PATCH /voice/clones/{voice_id}` | `{name?, reference_text?}`: both checked before either is applied; built-in voices are read-only (422) |
 | `DELETE /voice/clones/{voice_id}` | deletes the voice and its reference audio; built-in voices are read-only (422) |
 | `POST /voice/design` | `{description, name?, language?, text?}`: a voice from a written description (Qwen3-TTS VoiceDesign, cloned with Qwen3-TTS Base), stored as a cloned voice; needs `abstractvoice[qwen3-tts]` and `abstractvoice[stt]` where the voice capability runs (501 otherwise) |
+| `POST /voice/clones/{voice_id}/deploy` | administrators: copy one of your voices into the library so every account lists and speaks with it (the default administrator's plane is the library: its voices are shared as created, `already_shared`) |
 | `GET /voice/compatibility` | the capability catalog: per kind, provider, model and surface, whether a feature (`speed`, `one_shot`, `design`…) is `native`, `emulated`, `conditional` or `unsupported` |
 
 Whose voices: with user accounts on (multi-user mode) and the voice engines running in the
 gateway, each account keeps the voices it clones or designs in its own store
 (`<account data folder>/voices`): it lists, speaks with, renames and deletes them, and no other
 account sees them. In front of that store sits the library, the machine's shared voice store:
-the built-in voices and every voice the administrator creates (the administrator's account works
-on the library itself), listed and spoken by everyone, read-only to accounts (422). Each record
+the built-in voices and every voice an administrator shares (`POST /voice/clones/{voice_id}/deploy`;
+the default administrator's account works on the library itself, so its voices are shared as
+created), listed and spoken by everyone, read-only to accounts (422). Each record
 says which in `params.meta.scope` (`personal` | `library`); built-in voices also carry `tags.builtin`. Without a personal store (single-user mode, or an
 AbstractCore server doing the voice work) every account shares one store, and creating,
 changing, designing and deleting a voice is an administrator's act (403 otherwise). A voice is

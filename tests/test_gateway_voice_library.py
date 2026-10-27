@@ -60,6 +60,10 @@ class _FakeFacade:
         self._record("clone_voice", audio, **kw)
         return {"voice_id": "c1", "ok": True}
 
+    def deploy_voice_to_library(self, voice_id, **kw):
+        self._record("deploy_voice_to_library", voice_id, **kw)
+        return {"voice_id": "lib-" + voice_id, "params": {"meta": {"scope": "library"}}}
+
     def compatibility_catalog(self, **kw):
         self._record("compatibility_catalog", **kw)
         return {"providers": {"tts": {}, "stt": {}, "cloning": {}}}
@@ -209,3 +213,41 @@ def test_one_shot_reaches_the_speech_output_spec() -> None:
     assert "one_shot" in gateway_routes.VoiceTTSRequest.model_fields
     source = inspect.getsource(gateway_routes.voice_tts)
     assert 'output_spec["one_shot"]' in source
+
+
+def test_deploy_is_an_administrators_act(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    facade = _FakeFacade()
+    from abstractgateway.routes import gateway as gateway_routes
+
+    with _client(tmp_path, monkeypatch, facade) as client:
+        user = _user(client)
+        monkeypatch.setattr(gateway_routes, "_gateway_runtime", lambda: (_runtime_with(str(tmp_path / "x" / "voices")), None))
+        assert client.post("/api/gateway/voice/clones/v1/deploy", headers=user).status_code == 403
+        # An administrator with a personal store copies the voice into the library.
+        out = client.post("/api/gateway/voice/clones/v1/deploy", headers=ADMIN)
+        assert out.status_code == 200 and out.json()["voice_id"] == "lib-v1"
+        # The default administrator's plane is the library: already shared.
+        monkeypatch.setattr(gateway_routes, "_gateway_runtime", lambda: (_runtime_with(None), None))
+        out = client.post("/api/gateway/voice/clones/v1/deploy", headers=ADMIN)
+        assert out.status_code == 200 and out.json()["already_shared"] is True
+        assert [c[0] for c in facade.calls if c[0] == "deploy_voice_to_library"] == ["deploy_voice_to_library"]
+
+
+def test_a_recording_up_to_25_mb_passes_the_body_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The security middleware caps writes at 10 MB; a reference recording gets the route's own cap."""
+    facade = _FakeFacade()
+    with _client(tmp_path, monkeypatch, facade) as client:
+        big = b"R" * (12 * 1024 * 1024)
+        ok = client.post("/api/gateway/voice/clones", headers=ADMIN, files={"file": ("big.wav", big, "audio/wav")})
+        assert ok.status_code == 200, ok.text
+        too_big = b"R" * (26 * 1024 * 1024)
+        refused = client.post("/api/gateway/voice/clones", headers=ADMIN, files={"file": ("huge.wav", too_big, "audio/wav")})
+        assert refused.status_code == 413
+
+
+def test_a_clone_record_never_sends_its_language_as_the_model() -> None:
+    from abstractgateway.routes.gateway import _voice_record_model
+
+    assert _voice_record_model({"id": "v1", "kind": "clone", "voice_kind": "voice", "language": "fr"}) == ""
+    assert _voice_record_model({"id": "v1", "kind": "clone", "language": "fr", "model": "Qwen/Qwen3-TTS-12Hz-1.7B-Base"}) == "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+    assert _voice_record_model({"id": "en_US-amy", "kind": "profile", "language": "en_US-amy-medium"}) == "en_US-amy-medium"  # Piper
