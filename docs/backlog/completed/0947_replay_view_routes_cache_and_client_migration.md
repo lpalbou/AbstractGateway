@@ -2,7 +2,7 @@
 
 > Package: abstractgateway (routes, cache, fan-out); abstractruntime (the reducer `abstractruntime.replay`, its backlog 0853 and ADR 0009)
 > Type: feature
-> Status: planned (implemented on branch `feat/replay-view`, released with 0.16.0)
+> Status: completed (2026-10-28, 0.16.0)
 > Created: 2026-10-27
 > Priority: P0
 > Labels: replay, ledger, sse, cache, performance, thin-clients
@@ -133,6 +133,10 @@ follows the stream.
 - `scripts/bench_replay_view.py`: a 3,000-record run tree with 50 subscribers, before (raw
   `/ledger`, `/history_bundle` and `/ledger/stream`, with each client folding for itself) and
   after (`/view`, `/view/stream`). The numbers are recorded in the PR.
+
+Completed 2026-10-28 (gateway part): PR #8 merged (`7d258efe`) with the validation above green in CI and the
+benchmark numbers in the PR; released in 0.16.0. Each client's migration is its own repository's item, in
+the order of the client migration plan.
 
 ## Dependencies
 

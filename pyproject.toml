@@ -89,7 +89,7 @@ dependencies = [
   # 0.3.19: ReAct repairs a rejected tool-call format (at most 2 retries per turn).
   # 0.4.0: the schedule_run builtin (SCHEDULE_RUN_TOOL) offered in the ReAct tool registry.
   "abstractagent>=0.4.0",
-  "AbstractMemory[lancedb]>=0.3.0",
+  "AbstractMemory[lancedb]>=0.3.0,<0.4",
   # 0.3.0 ships the curated skill shelf inside the package (abstractskill.bundled)
   # and seed_registry, which the gateway uses to keep <data dir>/skills/registry.
   "abstractskill>=0.3.0",
@@ -148,7 +148,7 @@ push-relay = [
 apple = [
   "AbstractRuntime[apple]>=0.14.0",
   "abstractagent[apple]>=0.4.0",
-  "AbstractMemory[all-apple]>=0.3.0",
+  "AbstractMemory[all-apple]>=0.3.0,<0.4",
 ]
 
 # Native/container GPU Gateway profile. This is the full local GPU aggregate for
@@ -156,7 +156,7 @@ apple = [
 gpu = [
   "AbstractRuntime[gpu]>=0.14.0",
   "abstractagent[gpu]>=0.4.0",
-  "AbstractMemory[all-gpu]>=0.3.0",
+  "AbstractMemory[all-gpu]>=0.3.0,<0.4",
 ]
 dev = [
   "pytest>=7.0.0",
@@ -178,6 +178,7 @@ abstractgateway-config = "abstractgateway.config_cli:main"
 "GitHub" = "https://github.com/lpalbou/abstractgateway"
 "Documentation" = "https://www.lpalbou.info/AbstractGateway/"
 "Changelog" = "https://github.com/lpalbou/abstractgateway/blob/main/CHANGELOG.md"
+"Issues" = "https://github.com/lpalbou/abstractgateway/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/abstractgateway"]

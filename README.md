@@ -1,5 +1,9 @@
 # AbstractGateway
 
+[![PyPI](https://img.shields.io/pypi/v/abstractgateway.svg)](https://pypi.org/project/abstractgateway/)
+[![CI](https://github.com/lpalbou/AbstractGateway/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/lpalbou/AbstractGateway/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-lpalbou.info-blue.svg)](https://www.lpalbou.info/AbstractGateway/)
+
 AbstractGateway is a **deployable Run Gateway host** for AbstractRuntime runs,
 and the control plane of an AbstractFramework installation:
 
@@ -17,6 +21,14 @@ none of them depends on the others.
 
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
+
+**What's new in 0.16.0** ([CHANGELOG](CHANGELOG.md)): the replay view
+(`GET /runs/{id}/view` and `/view/stream`, one fold per record shared by every
+client), a per-conversation tool policy (approve or deny for the whole
+session), the voice library with personal voices per account, triggers
+(feeds, webhooks, several mailboxes) and per-user event streams with Apple
+push. It requires AbstractRuntime 0.14.0; its hash-chained ledgers are read
+by 0.14.0 verifiers only, so upgrade writers and verifiers together.
 
 ## AbstractFramework ecosystem
 
