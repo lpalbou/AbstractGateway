@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -38,6 +40,40 @@ def _normalize_backend(raw: Optional[str]) -> str:
     if backend in {"lance", "lancedb", "vector"}:
         return "lancedb"
     raise ValueError("ABSTRACTGATEWAY_MEMORY_STORE_BACKEND must be one of: lancedb, sqlite, memory")
+
+
+# Owner ids of the KG scopes, for a caller that holds a session id but no run.
+#
+# With a run, the gateway asks the runtime: `resolve_scope_owner_id(run, scope=...)`
+# (abstractruntime.integrations.abstractmemory.effect_handlers). A thin client
+# that only knows its session id (or asks for global memory) has no run to hand
+# over, so the derivation is written here as the PUBLIC rule the runtime applies:
+# `session_memory_<sid>` when the id is safe, else `session_memory_sha_<sha256[:32]>`;
+# global = `$ABSTRACTRUNTIME_GLOBAL_MEMORY_RUN_ID` when safe, else `global_memory`.
+# `tests/test_gateway_memory_owner_ids.py` pins parity with the runtime on real
+# RunStates, so a runtime change turns that test red instead of drifting.
+_SAFE_OWNER_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def session_memory_owner_id(session_id: str) -> str:
+    """Owner id of a session's KG memory (= the runtime's for any run of that session)."""
+    sid = str(session_id or "").strip()
+    if not sid:
+        raise ValueError("session_id must be a non-empty string")
+    if _SAFE_OWNER_ID_RE.match(sid):
+        oid = f"session_memory_{sid}"
+        if _SAFE_OWNER_ID_RE.match(oid):
+            return oid
+    digest = hashlib.sha256(sid.encode("utf-8")).hexdigest()[:32]
+    return f"session_memory_sha_{digest}"
+
+
+def global_memory_owner_id() -> str:
+    """Owner id of the plane's global KG memory (= the runtime's `scope="global"`)."""
+    raw = str(os.environ.get("ABSTRACTRUNTIME_GLOBAL_MEMORY_RUN_ID") or "").strip()
+    if raw and _SAFE_OWNER_ID_RE.match(raw):
+        return raw
+    return "global_memory"
 
 
 @dataclass(frozen=True)

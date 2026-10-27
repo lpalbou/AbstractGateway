@@ -55,10 +55,12 @@ from abstractruntime.storage.artifacts import build_artifact_descriptor_payload
 from ..work_pools import off_loop
 from ..file_cache import FileVersionCache, listing as file_listing
 from ..memory_store import (
+    global_memory_owner_id,
     memory_backend_unavailable_reason,
     memory_store_exists,
     open_gateway_memory_store,
     resolve_memory_store_config,
+    session_memory_owner_id,
 )
 from ..embeddings_config import resolve_embedding_config
 from ..core_config import (
@@ -126,6 +128,7 @@ from ..security.sessions import (
 from ..security.principal import GatewayPrincipal, current_gateway_principal, local_admin_principal, safe_principal_component
 from ..service import (
     backlog_exec_runner_status,
+    caller_data_dir,
     gateway_multi_user_enabled,
     get_gateway_service,
     invalidate_gateway_service_for_runtime,
@@ -15387,25 +15390,13 @@ async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
             raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
         return loaded
 
-    _SAFE_RUN_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
-
     def _session_owner_id(session_id: str) -> str:
-        sid2 = str(session_id or "").strip()
-        if not sid2:
-            raise HTTPException(status_code=400, detail="session_id must be a non-empty string")
-        if _SAFE_RUN_ID_RE.match(sid2):
-            oid = f"session_memory_{sid2}"
-            if _SAFE_RUN_ID_RE.match(oid):
-                return oid
-        digest = hashlib.sha256(sid2.encode("utf-8")).hexdigest()[:32]
-        return f"session_memory_sha_{digest}"
+        try:
+            return session_memory_owner_id(session_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
-    def _global_owner_id() -> str:
-        raw = os.environ.get("ABSTRACTRUNTIME_GLOBAL_MEMORY_RUN_ID")
-        rid2 = str(raw or "").strip()
-        if rid2 and _SAFE_RUN_ID_RE.match(rid2):
-            return rid2
-        return "global_memory"
+    _global_owner_id = global_memory_owner_id
 
     def _query_scope(*, store: Any, scope_label: str, owner_id: Optional[str]) -> list[Dict[str, Any]]:
         q = TripleQuery(
@@ -18802,7 +18793,9 @@ def _generated_media_contract(caps: Dict[str, Any]) -> Dict[str, Any]:
 def _memory_contract_descriptor(caps: Dict[str, Any]) -> Dict[str, Any]:
     abstractmemory = caps.get("abstractmemory") if isinstance(caps.get("abstractmemory"), dict) else {}
     try:
-        base_dir = gateway_data_dir_from_env()
+        # The caller's plane (the store `/kg/query` will open for this principal), never the
+        # root data folder: a non-admin account must see its own store, not the operator's.
+        base_dir = caller_data_dir()
         cfg = resolve_memory_store_config(base_dir=base_dir)
         backend = cfg.backend
         embedding_error = ""
