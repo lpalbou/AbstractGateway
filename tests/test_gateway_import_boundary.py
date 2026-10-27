@@ -267,7 +267,7 @@ def test_no_second_module_re_exports_the_seam() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AbstractMemory (ADR 0001, AbstractRuntime ADR 0009): gateway source reaches
+# AbstractMemory (ADR 0001, AbstractRuntime ADR 0011): gateway source reaches
 # AbstractMemory only through the runtime memory facade
 # (`abstractruntime.integrations.abstractmemory.memory_facade`). The direct
 # imports that predate the rule are listed below, EXACTLY (file, statement,
@@ -284,7 +284,7 @@ def test_no_second_module_re_exports_the_seam() -> None:
 # and are counted like statements.
 # ---------------------------------------------------------------------------
 
-# Burned down to empty on 2026-10-27 (34 -> 0, backlog 0943). It stays as the one place an
+# Burned down to empty on 2026-10-27 (34 -> 0, backlog 0948). It stays as the one place an
 # exemption could be written, so a new one is visible in review; it must not grow.
 _ABSTRACTMEMORY_BURN_DOWN: dict[tuple[str, str], int] = {}
 
@@ -342,7 +342,7 @@ def test_gateway_source_does_not_add_direct_abstractmemory_imports() -> None:
             offenders.append(f"{rel}:{','.join(map(str, lines[key]))} {statement} ({n} found, {allowed} exempt)")
     assert not offenders, (
         "Gateway source must not import `abstractmemory` directly; use the AbstractRuntime memory facade "
-        "(`abstractruntime.integrations.abstractmemory.memory_facade`, runtime ADR 0009). If the facade lacks "
+        "(`abstractruntime.integrations.abstractmemory.memory_facade`, runtime ADR 0011). If the facade lacks "
         "the name, the fix is in AbstractRuntime (gateway ADR 0001). New direct imports:\n  "
         + "\n  ".join(offenders)
     )

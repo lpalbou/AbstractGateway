@@ -276,7 +276,9 @@ def test_untrusted_input_run_is_never_offered_an_mcp_tool(gateway, tmp_path):
     with FakeHttpEcho(require_bearer=SECRET) as fake:
         _register(gateway, "http", tmp_path, fake)
         run_id = _start(gateway, {"tools": ["read_file", MCP], "_runtime": {"untrusted_input": True}})
-        _wait_until(lambda: _run(gateway, run_id).get("status") in ("completed", "waiting"))
+        # The root run reads "waiting" as soon as it parks on its agent subworkflow, before the
+        # agent's model call: wait for that call too (a loaded machine saw the parked root first).
+        _wait_until(lambda: LLM_PAYLOADS and _run(gateway, run_id).get("status") in ("completed", "waiting"))
         assert LLM_PAYLOADS and all(MCP not in _offered_names(p) for p in LLM_PAYLOADS)
         assert fake.calls() == []
 

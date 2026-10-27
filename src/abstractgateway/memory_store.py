@@ -229,7 +229,7 @@ def _close_facade(facade: Any) -> None:
 
 
 def _memory_facade() -> Any:
-    """The runtime's AbstractMemory facade module (runtime ADR 0009; gateway ADR 0001): the store
+    """The runtime's AbstractMemory facade module (runtime ADR 0011; gateway ADR 0001): the store
     classes are its re-exports, never a direct `abstractmemory` import."""
     from abstractruntime.integrations.abstractmemory import memory_facade
 

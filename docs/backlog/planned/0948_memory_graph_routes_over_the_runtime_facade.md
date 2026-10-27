@@ -1,6 +1,6 @@
-# 0943-gateway: [FEATURE] Memory graph routes over the AbstractRuntime memory facade; AbstractMemory import boundary
+# 0948-gateway: [FEATURE] Memory graph routes over the AbstractRuntime memory facade; AbstractMemory import boundary
 
-> Package: abstractgateway (host); abstractruntime (the memory facade, its 0853 and ADR 0009); abstractmemory (the graph, its ADR 0003 and 0056)
+> Package: abstractgateway (host); abstractruntime (the memory facade, its 0856 and ADR 0011); abstractmemory (the graph, its ADR 0003 and 0056)
 > Type: feature
 > Status: planned (implemented on `feat/memory-graph-routes`; ships after AbstractRuntime 0.14.0 and AbstractMemory 0.4.0 are on PyPI, root ADR-0034)
 > Created: 2026-10-27

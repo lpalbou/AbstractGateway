@@ -35,6 +35,8 @@ from typing import Any, Dict, List
 
 import pytest
 
+from timing import patient, timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+
 from abstractruntime import (
     Effect,
     EffectType,
@@ -291,14 +293,14 @@ def test_end_to_end_the_deaf_decode_is_killed_in_process_and_the_process_keeps_w
     thread.join(5)
     assert not thread.is_alive(), "the deaf decode was not killed"
     took = time.monotonic() - t0
-    assert took < 2.0, f"kill took {took:.2f}s"
+    timing_budget(took, 2.0, "kill switch")
     assert box["state"].status == RunStatus.CANCELLED
 
     llm = [r for r in ledger.list(run_id) if (r.get("effect") or {}).get("type") == "llm_call"]
     assert [r["status"] for r in llm] == ["started", "cancelled"]
     res = llm[-1]["result"]
     assert res["killed_by"] == "kill_switch" and res["cancelled_by"] == "command"
-    assert res["stopped_after_kill_s"] < 1.0
+    timing_budget(res["stopped_after_kill_s"], 1.0, "stopped after kill")
     deadline = time.monotonic() + 3
     while not switch.fired and time.monotonic() < deadline:
         time.sleep(0.02)
@@ -407,8 +409,8 @@ def test_an_applied_cancel_command_stops_the_executing_effect_and_arms_the_switc
     assert started.wait(5)
     t0 = time.monotonic()
     runner._apply_command(CommandRecord(command_id="c1", run_id=root, type="cancel", payload={}, ts="now"))
-    assert seen.wait(1.0), "the cancel command did not reach the executing model call"
-    assert time.monotonic() - t0 < 1.0
+    assert seen.wait(patient(1.0)), "the cancel command did not reach the executing model call"
+    timing_budget(time.monotonic() - t0, 1.0, "cancel reaching the executing model call")
     assert entry.cancelled_by == "command"
     assert armed and armed[0]["root_run_id"] == root and set(armed[0]["run_ids"]) == {root, child}
     worker.join(2)

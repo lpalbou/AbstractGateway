@@ -1,6 +1,6 @@
 """`/api/gateway/memory/*`: the plane's memory graph, read through the AbstractRuntime memory facade.
 
-Thin-client route contract (memory transition, contract §6; AbstractMemory ADR 0003; runtime ADR 0009):
+Thin-client route contract (memory transition, contract §6; AbstractMemory ADR 0003; runtime ADR 0011):
 
 - `POST /gateway/memory/query`                 the KG query shape over the plane's memory HOME
 - `GET  /gateway/memory/{memory_id}/history`   asserted / closed / narrowed, in record order

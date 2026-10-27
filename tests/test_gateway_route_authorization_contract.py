@@ -309,7 +309,7 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     ("POST", "/api/gateway/embeddings"),
     ("POST", "/api/gateway/sandbox/generate"),
     ("POST", "/api/gateway/kg/query"),  # read-shaped POST (query in body)
-    # Memory graph (routes/memory.py, backlog 0943): read-shaped POSTs over the caller's plane; the
+    # Memory graph (routes/memory.py, backlog 0948): read-shaped POSTs over the caller's plane; the
     # handler applies the owner rule itself (a non-admin reads only its derivable owners, 403 otherwise).
     ("POST", "/api/gateway/memory/query"),
     ("POST", "/api/gateway/memory/sources/reconstruct"),
