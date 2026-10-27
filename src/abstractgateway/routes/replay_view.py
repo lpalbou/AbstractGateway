@@ -23,7 +23,7 @@ from typing import Any, AsyncIterator, Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 
-from ..replay_view import _Subscriber, get_view_hub, poll, read_view, read_view_at, subscribe, unsubscribe
+from ..replay_view import _Subscriber, followed, get_view_hub, poll, read_view, read_view_at, subscribe, unsubscribe
 from ..work_pools import off_loop
 
 router = APIRouter(prefix="/gateway", tags=["runs"])
@@ -94,70 +94,61 @@ async def stream_run_view(
 
     Reconnect with `Last-Event-ID` (or `?after=`): the same token sends nothing until the next
     change; an older token of this view sends one `delta` from there; anything else, `view`."""
-    from ..ledger_tail import find_observable
-
-    svc, entry = await _entry_for(run_id)
+    _svc, entry = await _entry_for(run_id)
     last_token = (after or "").strip() or str(request.headers.get("last-event-id") or "").strip() or None
 
     async def _gen() -> AsyncIterator[bytes]:
         loop = asyncio.get_running_loop()
         sub = _Subscriber(loop=loop)
+        # Registers the stream; the first one also subscribes the ENTRY to the ledger's appends,
+        # so an append to the tree is folded once (the entry's pump) and reaches every stream
+        # as the same frame. A stream never folds on its own except the checks below.
         frames, terminal = await off_loop("heavy", subscribe, entry, sub, last_token)
-        unsub_store = None
-        observable = find_observable(svc.host.ledger_store)
-        if observable is not None:
-            def _on_append(_record: Any) -> None:
-                # Runner-thread callback: a coalescing signal, never a read. Any append wakes
-                # the stream (a new child of the tree is not known yet); the refresh reads only
-                # the tree's runs, so a stranger's append folds nothing.
-                try:
-                    loop.call_soon_threadsafe(sub.mark_dirty)
-                except RuntimeError:
-                    pass  # loop closed mid-append; the stream is ending
-
-            try:
-                unsub_store = observable.subscribe(_on_append)
-            except Exception:  # noqa: BLE001 - the poll below still covers it
-                unsub_store = None
         try:
             from ..split_mode import is_api_process
 
-            cross_process = bool(is_api_process()) or unsub_store is None
+            cross_process = bool(is_api_process()) or not followed(entry)
         except Exception:  # noqa: BLE001
-            cross_process = unsub_store is None
+            cross_process = not followed(entry)
         interval = CROSS_PROCESS_POLL_S if cross_process else SAFETY_POLL_S
         try:
             for f in frames:
                 yield f
             last_emit = loop.time()
+            last_check = last_emit
             last_safety = last_emit
             while True:
                 if await request.is_disconnected():
                     return
                 sub.wake.clear()
                 sent = False
-                while not sub.queue.empty():  # frames folded by any request on this view
+                while not sub.queue.empty():  # frames folded by the pump or by any request
                     yield sub.queue.get_nowait()
                     sent = True
                 if sent:
                     last_emit = loop.time()
-                if terminal:
+                if terminal or entry.terminal:
                     # One final drain (the terminal record can precede the last appends).
                     folded, terminal = await off_loop("heavy", poll, entry)
                     if not folded and sub.queue.empty():
                         yield b'event: done\ndata: ' + json.dumps({"run_id": str(run_id), "status": "terminal"}).encode() + b"\n\n"
                         return
                     continue
-                if sub.queue.empty() and not sub.dirty:
-                    timeout = max(0.05, min(interval, heartbeat_s - (loop.time() - last_emit)))
-                    try:
-                        await asyncio.wait_for(sub.wake.wait(), timeout=timeout)
-                    except asyncio.TimeoutError:
-                        pass
+                if sub.queue.empty():
+                    now = loop.time()
+                    timeout = min(heartbeat_s - (now - last_emit), interval - (now - last_check))
+                    if timeout > 0:
+                        try:
+                            await asyncio.wait_for(sub.wake.wait(), timeout=max(0.02, timeout))
+                        except asyncio.TimeoutError:
+                            pass
                 now = loop.time()
-                safety_due = now - last_safety >= SAFETY_POLL_S
-                if sub.dirty or cross_process or safety_due:
-                    sub.dirty = False
+                if now - last_check >= interval:
+                    # Cross-process appends (no wake-up reaches us): `list_after`, no bytes read
+                    # when nothing was appended. Otherwise the slow safety check re-reads open
+                    # runs' snapshots (a legacy ledger without terminal records).
+                    last_check = now
+                    safety_due = now - last_safety >= SAFETY_POLL_S
                     if safety_due:
                         last_safety = now
                     _folded, terminal = await off_loop("heavy", poll, entry, reload_open_snapshots=safety_due)
@@ -165,11 +156,6 @@ async def stream_run_view(
                     yield b": keep-alive\n\n"
                     last_emit = loop.time()
         finally:
-            if unsub_store is not None:
-                try:
-                    unsub_store()
-                except Exception:  # noqa: BLE001
-                    pass
             await off_loop("light", unsubscribe, entry, sub)
 
     return StreamingResponse(_gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

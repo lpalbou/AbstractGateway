@@ -211,9 +211,13 @@ def test_two_clients_converge_live_and_share_one_fold(client: TestClient) -> Non
     # followers are read after the fact: they subscribe now (the first frame must still show the
     # approval: proof they joined before the turn finished), the turn finishes while they stream.
     time.sleep(1.0)
+    t0 = time.monotonic()
     _finish_turn(pause=0.05)
     ta.join(30)
     tb.join(30)
+    # The appends themselves woke the streams (the entry's append subscription), well before
+    # the 5 s safety check could have.
+    assert time.monotonic() - t0 < 3.0
     assert not ta.is_alive() and not tb.is_alive(), "streams did not end with done"
     assert a[0]["event"] == "view" and b[0]["event"] == "view"
     assert a[0]["data"]["interaction"]["kind"] == "tool_approval"

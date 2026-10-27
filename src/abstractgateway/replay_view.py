@@ -11,10 +11,12 @@ interaction, messages, activities, artifacts, usage). The gateway only SERVES it
   same delta out to every stream subscribed to that run. N clients cost one fold per record.
 - `ViewHub` is the bounded cache of entries (LRU; an entry with live subscribers is never
   evicted) and the GET path's cache of the serialized view per cursor token.
-- Wake-ups: the in-process `ObservableLedgerStore.subscribe` sets a dirty flag (an append in
-  this process wakes the stream at once). Where appends come from another process (the split
-  API process) or no observable store exists, a cheap fallback poll runs `list_after`
-  (no new bytes = nothing parsed); otherwise the safety poll is slow. Idle = zero parses.
+- Wake-ups: while an entry has subscribers it is subscribed ONCE to the in-process
+  `ObservableLedgerStore` appends (`on_append`: a set lookup on the run id, never a read); an
+  append to the tree schedules one fold (the entry's pump, coalesced) whose delta every stream
+  receives. Where appends come from another process (the split API process) or no observable
+  store exists, each stream checks `list_after` every 0.25 s (no new bytes = nothing parsed);
+  otherwise a slow safety check re-reads open runs' snapshots. Idle = zero parses.
 
 Thread model: `refresh` and `subscribe` run in worker threads (`off_loop`) under the entry's
 lock; deltas reach each subscriber's asyncio queue through `loop.call_soon_threadsafe`.
@@ -45,19 +47,14 @@ def _encode(event: str, data: Dict[str, Any], event_id: Optional[str] = None) ->
 
 @dataclass
 class _Subscriber:
-    """One stream: its loop, its frames, and the event that wakes it (frames or a dirty store)."""
+    """One stream: its loop, its frames, and the event that wakes it."""
 
     loop: asyncio.AbstractEventLoop
     queue: "asyncio.Queue[bytes]" = field(default_factory=asyncio.Queue)
     wake: asyncio.Event = field(default_factory=asyncio.Event)
-    dirty: bool = False
 
     def deliver(self, frame: bytes) -> None:  # on the subscriber's loop
         self.queue.put_nowait(frame)
-        self.wake.set()
-
-    def mark_dirty(self) -> None:  # on the subscriber's loop
-        self.dirty = True
         self.wake.set()
 
 
@@ -73,8 +70,13 @@ class ViewEntry:
     subscribers: List[_Subscriber] = field(default_factory=list)
     json_cache: Optional[Tuple[str, bytes]] = None
     loaded_snapshots: set = field(default_factory=set)
-    unsubscribe: Optional[Callable[[], None]] = None
-    dirty_listeners: List[Callable[[], None]] = field(default_factory=list)
+    unsubscribe: Optional[Callable[[], None]] = None  # the ledger append subscription (while followed)
+    tree_ids: frozenset = frozenset()  # the runs whose appends concern this view
+    terminal: bool = False  # the tree is terminal (as of the last fold)
+    pump_loop: Optional[asyncio.AbstractEventLoop] = None
+    pump_lock: threading.Lock = field(default_factory=threading.Lock)
+    pump_scheduled: bool = False
+    pump_again: bool = False
     last_used: float = field(default_factory=time.monotonic)
     folds: int = 0  # apply() calls that folded records (observability, tests)
     records_folded: int = 0  # every record is folded once per entry, however many clients follow
@@ -134,6 +136,8 @@ class ViewEntry:
             delta = d if delta is None else _merge_deltas(delta, d)
             if self.view.run_ids == run_ids:
                 break
+        self.tree_ids = frozenset(self.view.run_ids)
+        self.terminal = self.view.is_terminal()
         if delta is not None and not self._changes(delta):
             return None  # a re-read snapshot that changed nothing: no delta, no broadcast
         if changed:
@@ -160,6 +164,48 @@ class ViewEntry:
                 sub.loop.call_soon_threadsafe(sub.deliver, frame)
             except RuntimeError:
                 pass  # that subscriber's loop is gone; it unsubscribes on its way out
+
+    # ----------------------------------------------------------------- the append pump
+
+    def on_append(self, record: Any) -> None:
+        """Ledger append callback (the runner's thread): never a read, only a coalesced wake-up.
+
+        An append to a run of this tree schedules ONE fold for every subscriber (the pump); an
+        append while a fold runs schedules one more pass. Appends to other runs cost a set
+        lookup. A child the tree does not know yet is linked by its parent's own record, whose
+        append wakes the pump."""
+        rid = record.get("run_id") if isinstance(record, dict) else getattr(record, "run_id", None)
+        if rid not in self.tree_ids:
+            return
+        with self.pump_lock:
+            if self.pump_scheduled:
+                self.pump_again = True
+                return
+            self.pump_scheduled = True
+        loop = self.pump_loop
+        try:
+            if loop is None:
+                raise RuntimeError("no loop")
+            loop.call_soon_threadsafe(_start_pump, self)
+        except RuntimeError:
+            with self.pump_lock:
+                self.pump_scheduled = False
+
+    async def pump(self) -> None:
+        from .work_pools import off_loop
+
+        try:
+            while True:
+                await off_loop("heavy", poll, self)
+                with self.pump_lock:
+                    if not self.pump_again:
+                        self.pump_scheduled = False
+                        return
+                    self.pump_again = False
+        except BaseException:
+            with self.pump_lock:
+                self.pump_scheduled = False
+            raise
 
     def view_at(self, token_map: Dict[str, int], *, as_of: bool = False) -> Optional[ReplayView]:
         """The view at an older cursor: each run's records up to the token's seq (None when the
@@ -209,6 +255,26 @@ def _static_snapshot(run: Any) -> Dict[str, Any]:
         out["vars"] = vars_
     out["status"] = "running"
     return out
+
+
+def _start_pump(entry: ViewEntry) -> None:  # on the pump loop
+    asyncio.ensure_future(entry.pump())
+
+
+def _attach_locked(entry: ViewEntry, loop: asyncio.AbstractEventLoop) -> None:
+    """First subscriber: subscribe the entry (once) to the ledger's appends (caller holds lock)."""
+    if entry.unsubscribe is not None:
+        return
+    from .ledger_tail import find_observable
+
+    entry.pump_loop = loop
+    observable = find_observable(entry.ledger_store)
+    if observable is None:
+        return
+    try:
+        entry.unsubscribe = observable.subscribe(entry.on_append)
+    except Exception:  # noqa: BLE001 - the stream's poll still covers it
+        entry.unsubscribe = None
 
 
 def _merge_deltas(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
@@ -291,6 +357,7 @@ def subscribe(entry: ViewEntry, sub: _Subscriber, last_token: Optional[str]) -> 
             entry.broadcast(delta)
         token, body = entry.view_bytes_locked()
         entry.subscribers.append(sub)
+        _attach_locked(entry, sub.loop)
         terminal = entry.view.is_terminal()
         current = entry.view.to_json() if last_token and last_token != token else None
     if last_token and last_token == token:
@@ -336,6 +403,18 @@ def unsubscribe(entry: ViewEntry, sub: _Subscriber) -> None:
             entry.subscribers.remove(sub)
         except ValueError:
             pass
+        if not entry.subscribers and entry.unsubscribe is not None:
+            try:
+                entry.unsubscribe()
+            except Exception:  # noqa: BLE001
+                pass
+            entry.unsubscribe = None
+            entry.pump_loop = None
+
+
+def followed(entry: ViewEntry) -> bool:
+    """Whether appends reach this entry by subscription (else its streams poll)."""
+    return entry.unsubscribe is not None
 
 
 def poll(entry: ViewEntry, *, reload_open_snapshots: bool = False) -> Tuple[bool, bool]:
