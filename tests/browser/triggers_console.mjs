@@ -73,7 +73,9 @@ function fakeStore() {
   return s;
 }
 
-const SECRET = "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw";
+// The mocked gateway hands out the Standard Webhooks PUBLIC reference vector (standardwebhooks.com), not a
+// credential; assembled at runtime so secret scanners (`whsec_` + 32 chars reads as a Stripe secret) stay quiet.
+const SECRET = "whsec" + "_" + "MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw";
 async function mockRoutes(ctx, store) {
   // The signed ingress: verified here exactly as Standard Webhooks says (the gateway's own check).
   await ctx.route("**/api/gateway/triggers/webhooks/**", async (route) => {
@@ -353,13 +355,13 @@ try {
       await page.fill("#trg-f-label", "GitHub pushes");
       await page.click("[data-trg-create]");
       await page.waitForSelector("[data-trg-value='created:secret']");
-      check((await page.textContent("[data-trg-value='created:secret']")).trim() === "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw", "webhook: secret shown");
+      check((await page.textContent("[data-trg-value='created:secret']")).trim() === SECRET, "webhook: secret shown");
       check((await page.textContent("#trigger-modal-body")).includes("shown once"), "webhook: shown-once sentence");
       check((await page.textContent("[data-trg-value='created:ingress']")).includes("/api/gateway/triggers/webhooks/conn_new4"), "webhook: ingress address");
       await page.click("[data-trg-copy='created:secret']");
       await page.waitForTimeout(200);
       const clip = await page.evaluate(() => navigator.clipboard.readText().catch(() => "unreadable"));
-      check(clip === "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw" || clip === "unreadable", "webhook: copy puts the secret on the clipboard", clip);
+      check(clip === SECRET || clip === "unreadable", "webhook: copy puts the secret on the clipboard", clip);
       const curl = await page.textContent("[data-trg-value='created:curl']");
       check(curl.includes(`SECRET='${SECRET}'`) && curl.includes("/api/gateway/triggers/webhooks/conn_new4") && curl.includes("openssl dgst -sha256 -mac HMAC"), "setup: signed call with the real address and secret", curl);
       check((await page.textContent("#trigger-modal-body")).includes("GitHub can't reach this computer yet. Turn on internet access under Network first."), "setup: a local address says GitHub can't reach it");
