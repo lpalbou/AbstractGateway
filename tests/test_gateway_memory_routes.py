@@ -292,3 +292,61 @@ def test_the_plane_home_rule(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ba
     home = resolve_memory_home(cfg)
     assert home == tmp_path.resolve() / "abstractmemory" / leaf
     assert (home == cfg.path) is same_as_kg
+
+
+def test_memory_revise_through_the_bundle_host_store_lands_in_the_home_the_routes_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With the `sqlite` KG backend the store the bundle host hands `build_memory_kg_effect_handlers`
+    (`open_gateway_memory_store`, hosts/bundle_host.py) IS the plane home: a MEMORY_REVISE applied through
+    the runtime's handler is what `/memory/*` serves."""
+    from abstractruntime.core.models import Effect, EffectType
+    from abstractruntime.integrations.abstractmemory.effect_handlers import build_memory_kg_effect_handlers
+    from abstractruntime.storage.artifacts import utc_now_iso
+
+    from abstractgateway.memory_store import open_gateway_memory_store, resolve_memory_home
+
+    monkeypatch.setenv("ABSTRACTGATEWAY_MEMORY_STORE_BACKEND", "sqlite")
+    monkeypatch.delenv("ABSTRACTGATEWAY_MEMORY_STORE_PATH", raising=False)
+    monkeypatch.delenv("ABSTRACTGATEWAY_MEMORY_PATH", raising=False)
+    client = _client(tmp_path, monkeypatch)
+    with client:
+        r = client.post(
+            "/api/gateway/runs/start", headers=ADMIN,
+            json={"bundle_id": "iso-bundle", "flow_id": "root", "session_id": SESSION, "input_data": {"prompt": "hi"}},
+        )
+        assert r.status_code == 200, r.text
+        svc = get_gateway_service_for_admin()
+        run = svc.host.run_store.load(r.json()["run_id"])
+        artifact_id = svc.stores.artifact_store.store(b"verbatim", content_type="text/plain", run_id=run.run_id).artifact_id
+
+        resolution = open_gateway_memory_store(base_dir=Path(svc.stores.base_dir))
+        try:
+            assert resolution.config.path == resolve_memory_home(resolution.config)
+            handlers = build_memory_kg_effect_handlers(store=resolution.store, run_store=svc.host.run_store, now_iso=utc_now_iso)
+            outcome = handlers[EffectType.MEMORY_REVISE](
+                run,
+                Effect(type=EffectType.MEMORY_REVISE, payload={
+                    "ops": [_claim("mem-r", "global_memory", scope="global")],
+                    "scope": "global", "owner_id": "global_memory", "artifact_ids": [artifact_id],
+                    "revision_id": "rev-r",
+                }),
+                None,
+            )
+            assert outcome.status == "completed", outcome.error
+        finally:
+            resolution.store.close()
+
+        h = client.get("/api/gateway/memory/mem-r/history", headers=ADMIN)
+        assert h.status_code == 200, h.text
+        assert [(e["event"], e["revision_id"]) for e in h.json()["items"]] == [("asserted", "rev-r")]
+        s = client.get("/api/gateway/memory/mem-r/sources", headers=ADMIN)
+        # Called outside a runtime step there is no seq: the runtime stamps the (real) run, never a guessed step.
+        assert {i["key"] for i in s.json()["items"]} == {f"artifact:{artifact_id}", f"run:{run.run_id}"}
+
+
+def get_gateway_service_for_admin():
+    from abstractgateway.security.principal import local_admin_principal
+    from abstractgateway.service import get_gateway_service_for_principal
+
+    return get_gateway_service_for_principal(local_admin_principal())

@@ -47,14 +47,20 @@ derivations, and the memory contract descriptor naming the root store instead of
 
 - AbstractRuntime 0.14.0 (`memory_facade`, `LedgerStore.get_record`), released first.
 - AbstractMemory 0.4.0 (`abstractmemory.graph`), released first.
-- MEMORY_REVISE in `build_memory_kg_effect_handlers` (runtime): the bundle host must hand it the plane home
-  (`resolve_memory_home`) when the KG backend is LanceDB; with `sqlite` it already receives the same file.
+- MEMORY_REVISE in `build_memory_kg_effect_handlers(store=, run_store=, now_iso=, journal=None)` (runtime
+  2574881): with the `sqlite` backend the bundle host already hands it the plane home (the KG file IS the
+  home; `tests/test_gateway_memory_routes.py` applies a revision through that handler and reads it back over
+  `/memory/*`). With LanceDB the handler answers a failed outcome naming AbstractMemory 0057: the builder takes
+  one store, so a LanceDB plane cannot revise until decision 2 moves the plane onto its SQLite home.
 
 ## Remaining follow-ups
 
 - Runtime: re-export `open_questions`, `open_problems`, `open_ideas` from the facade; then delete the last
   burn-down entry.
-- Runtime/gateway: the bundle host passes the home to MEMORY_REVISE for a LanceDB plane.
+- Gateway: the bundle host passes no `journal` to the builder, so closures applied by MEMORY_REVISE are in the
+  revision log and history but not folded into ranked retrieval; passing `SQLiteJournal(home)` needs the
+  host's reload/close lifecycle to own it.
+- Runtime/gateway: a LanceDB plane revises only after decision 2 (or a builder that takes a separate home).
 - Operator decision 5 (memory transition): the owner rule on `/kg/query` itself (still plane-wide).
 
 ## Validation
