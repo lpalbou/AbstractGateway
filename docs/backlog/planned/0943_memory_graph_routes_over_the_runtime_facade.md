@@ -35,7 +35,9 @@ derivations, and the memory contract descriptor naming the root store instead of
 
 ## Scope
 
-- In: the five routes, the owner rule (own owners unless admin), bounded lists (`limit`, `truncated`,
+- In: the five routes, the ownership rule of operator decision 5 on `/memory/*` and `/kg/query`
+  (`memory_access.caller_owner_ids`: own runs by origin actor, own sessions, created entities, own plane's
+  global owner; admin all), bounded lists (`limit`, `truncated`,
   `withheld`), the plane home rule, the boundary rule, the runtime/memory floors.
 - Out: entity minds (`entities/<slug>/memory.sqlite3`: AbstractEntity follow-up through the same routes with
   an entity selector); the LanceDB -> SQLite default switch and the import of existing plane KG data
@@ -61,10 +63,13 @@ derivations, and the memory contract descriptor naming the root store instead of
   graph tables checked; the first open after AbstractMemory 0.4.0 runs the one-time JSON -> float32-blob vector
   upgrade inside that request, holding the write lock). Follow-up: keep one facade per plane (opened at service
   build, closed with the service), like the bundle host's store.
-- Gateway: the owner rule is advisory inside a plane (a principal reads every partition it can derive; on the
-  shared default plane a caller who learns another run id can name it). Separate accounts need separate planes.
+- Done (operator decision 5): ownership is strict, not plane-wide. A named run or session must be the
+  caller's (`_meta.origin.actor`); the global owner is the account's own because planes are per account;
+  entities delegate to their creator. Runs with no recorded origin (before backlog 1038) are admin-only.
+  Future: sharing a graph with another person or a topic-scoped grant (no route yet).
 - Runtime/gateway: a LanceDB plane revises only after decision 2 (or a builder that takes a separate home).
-- Operator decision 5 (memory transition): the owner rule on `/kg/query` itself (still plane-wide).
+- Session ownership reads up to 200 of the session's newest runs from the run index (a session whose own
+  runs are all older than that window is refused); an owner index (session -> starter) would make it exact.
 
 ## Validation
 

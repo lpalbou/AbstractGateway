@@ -2118,25 +2118,41 @@ A read never creates the home (an absent home answers empty, or 404 to a non-adm
 request opens it (an SQLite open; the first open after upgrading to AbstractMemory 0.4.0 runs its one-time vector
 upgrade inside that request) and closes it. Entity minds (`entities/<slug>/memory.sqlite3`) are not served here.
 
-**Owner rule.** An admin reads every owner in its plane. Any other principal reads the owners it can derive:
-the plane's global owner, the run/session/global owners of a `run_id` it can load in its plane, and the
-session owner of a `session_id` it names (the derivation of `/kg/query`). An `owner_id` outside that set or
-`all_owners` answers `403 {"detail": {"reason": "owner_forbidden", "message"}}` (the message never names the
-other owner); a memory id of another owner is 403, an unknown one 404. Every route takes the optional
-`run_id` / `session_id` (query parameters; in the body of `sources/reconstruct`) for that.
+**Owner rule** (operator decision 5; `memory_access.caller_owner_ids`, the ONE rule `/kg/query` and every
+`/memory/*` route apply). A person owns their memory graph, an entity owns its own, and nobody reads another
+person's graph. The plane is a storage location, not a sharing scope.
 
-- `sources?transitive=true` walks the derivation lineage only through memories the caller may read; a parent of
-  another owner is not followed and is counted in `withheld`.
+- An admin reads every owner. So does every caller of a gateway without user accounts (one operator, one
+  world).
+- Any other principal reads exactly its own owners:
+  - its runs: a `run_id` it names counts only when the run's `_meta.origin.actor` (stamped by the host on
+    `/runs/start`, never taken from the client; read on the run or its nearest ancestor) is
+    `"<tenant>:<user>"` of the principal. A run started by someone else, or with no recorded starter (a
+    legacy run), is 403; a missing run is 404. The run gives its run and session owners;
+  - its sessions: a `session_id` it names counts only when one of the session's runs (newest 200 in the
+    run index) is its own by the same test;
+  - the entities it created (entity -> creator delegation): the owner id (`manifest.entity_id`) of every
+    entity home in its plane whose manifest `created_by` is the principal. An entity with no recorded
+    creator is the admin's only;
+  - its plane's global owner (`global_memory`, or `$ABSTRACTRUNTIME_GLOBAL_MEMORY_RUN_ID`). Planes are per
+    account: the users registry refuses a second account on a runtime id and the default runtime is the
+    operator's, so an account's `global_memory` is its own global memory (a ref stamped under the global
+    owner is the account's own). The rule still checks that the plane serving the request is the
+    principal's (its tenant and runtime id).
+- Anything else is `403 {"detail": {"reason": "owner_forbidden", "message"}}`; the message never names the
+  owner it protects. An explicit `owner_id` that is not the caller's, and `all_owners`, are admin-only:
+  refused, never silently narrowed. `scope=all` expands to the caller's own owners only.
+- A memory id of another owner is 403, an unknown one 404. Every route takes the optional `run_id` /
+  `session_id` (query parameters; in the body of `sources/reconstruct`) to name the caller's run or session.
+- `sources?transitive=true` walks the derivation lineage only through memories the caller may read; a parent
+  of another owner is not followed and is counted in `withheld`.
 - `history` cuts the memory ids an event names (`derived_from`, `replacement_ids`) to the readable ones and
   counts the hidden ones in `withheld`.
 - `sources/reconstruct`: a non-admin reconstructs a ref only when one of its own readable memories names it
   directly (403 otherwise, also for a ref nobody names); an admin reconstructs any ref of its plane.
 
-The owner rule is a partition rule INSIDE one plane, not a security boundary between people: the plane is the
-boundary (one account, one plane). A principal reads every partition it can derive (all its own runs and
-sessions), and on a plane shared by several principals (the operator's default runtime) a caller who learns
-another run's id can name it. Accounts that must not read each other's memory need separate planes (user
-accounts on).
+Sharing a graph with another person, or topic-scoped access (a notebook shared with a team), is future work:
+today the only delegation is entity -> creator.
 
 **Bounds.** Every list takes `limit` (default 200, at most 500) and answers `truncated: true` when it cut;
 what the owner rule hides is counted in `withheld` (`derived`, `sources`, `history`).
