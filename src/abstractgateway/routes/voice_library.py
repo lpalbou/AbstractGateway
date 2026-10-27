@@ -13,11 +13,16 @@ process or calls a remote AbstractCore server, the same way synthesis does:
     POST   /voice/design                            a voice from a written description      admin
     GET    /voice/compatibility                     which engine supports which feature, and how
 
-Cloned voices live in AbstractVoice's store, one per machine user: every account of this
-gateway speaks with, and lists, the same voices. Creating, changing and deleting one is
-therefore an administrator's act (`security/authorization.py`, resource `voice_library`).
-Reads are open to every signed-in account. A refusal keeps the facade's status (404 unknown
-voice, 422 refused input, 501 engine runtime missing, 502 remote AbstractCore failure).
+Whose voices (backlog 0942): in multi-user mode each account keeps the voices it clones or
+designs in its own store (`<account plane>/voices`), in front of the machine's shared store, the
+library: the built-in voices and every voice the administrator creates. An account lists and
+speaks with its own voices and the library's, and creates, renames and deletes its own; library
+voices are read-only to it (422). The administrator's plane is the shared store itself, so the
+voices the administrator creates are everyone's. Where there is no personal store (single-user
+mode, an AbstractCore server doing the voice work, an AbstractVoice before 0.19.0) the store is
+shared and changes stay an administrator's act (403 otherwise). A refusal keeps the facade's
+status (404 unknown voice, 422 refused input, 501 engine runtime missing, 502 remote AbstractCore
+failure).
 """
 
 from __future__ import annotations
@@ -46,6 +51,23 @@ class VoiceDesignRequest(BaseModel):
     name: Optional[str] = Field(default=None, description="Display name of the new voice.")
     language: Optional[str] = Field(default=None, description="Language of the reference the voice is built from (ISO code).")
     text: Optional[str] = Field(default=None, description="Sentence the reference is rendered with (default: one per language).")
+
+
+def _require_change_rights(request: Request) -> None:
+    """An administrator, or an account whose runtime keeps its own voice store."""
+    from .gateway import _gateway_runtime, _principal_from_request
+
+    principal = _principal_from_request(request)
+    if principal.is_admin():
+        return
+    runtime, _err = _gateway_runtime()
+    client = getattr(runtime, "_abstractcore_llm_client", None) if runtime is not None else None
+    if str((getattr(client, "_llm_kwargs", None) or {}).get("voice_store_dir") or "").strip():
+        return
+    raise HTTPException(
+        status_code=403,
+        detail="On this gateway every account shares one voice store, so creating, changing or deleting a voice is an administrator's act.",
+    )
 
 
 def _facade() -> Any:
@@ -122,8 +144,10 @@ async def voice_clone_create(
     reference_text: Optional[str] = Form(default=None, description="Transcript of the recording (transcribed when omitted, where the engine can)."),
     provider: Optional[str] = Form(default=None, description="Cloning engine, e.g. `qwen3-tts`, `omnivoice`."),
     model: Optional[str] = Form(default=None, description="Cloning model."),
+    language: Optional[str] = Form(default=None, description="The recording's language (ISO 639-1); identified from the transcript when omitted."),
 ) -> Dict[str, Any]:
     """Create a cloned voice from a recording; answers its stored record with `voice_id`."""
+    _require_change_rights(request)
     audio = await file.read(MAX_REFERENCE_AUDIO_BYTES + 1)
     if not audio:
         raise HTTPException(status_code=422, detail="The reference recording is empty.")
@@ -140,6 +164,7 @@ async def voice_clone_create(
         reference_text=reference_text,
         provider=provider,
         model=model,
+        language=language,
         **_keys(request),
     )
 
@@ -147,6 +172,7 @@ async def voice_clone_create(
 @router.patch("/voice/clones/{voice_id}")
 async def voice_clone_update(voice_id: str, body: ClonedVoiceUpdate, request: Request) -> Dict[str, Any]:
     """Rename and/or replace the transcript; both are checked before either is applied."""
+    _require_change_rights(request)
     facade = _facade()
     return await _run("light", facade.update_cloned_voice, voice_id, name=body.name, reference_text=body.reference_text, **_keys(request))
 
@@ -154,6 +180,7 @@ async def voice_clone_update(voice_id: str, body: ClonedVoiceUpdate, request: Re
 @router.delete("/voice/clones/{voice_id}")
 async def voice_clone_delete(voice_id: str, request: Request) -> Dict[str, Any]:
     """Delete a cloned voice and its reference audio. Built-in voices are read-only (422)."""
+    _require_change_rights(request)
     facade = _facade()
     return await _run("light", facade.delete_cloned_voice, voice_id, **_keys(request))
 
@@ -163,6 +190,7 @@ async def voice_design(body: VoiceDesignRequest, request: Request) -> Dict[str, 
     """Create a voice from a written description (Qwen3-TTS VoiceDesign, cloned with Qwen3-TTS
     Base): stored as a cloned voice, used with `voice=<voice_id>`. Needs `abstractvoice[qwen3-tts]`
     and `abstractvoice[stt]` where the voice capability runs (501 otherwise)."""
+    _require_change_rights(request)
     if not body.description.strip():
         raise HTTPException(status_code=422, detail="`description` must not be empty.")
     facade = _facade()

@@ -209,17 +209,49 @@ def _resolve_gateway_default_endpoint_profile(
     return profile.provider_family, llm_kwargs, profile.virtual_provider_id
 
 
+def personal_voice_stores_supported() -> bool:
+    """True when the installed AbstractVoice keeps personal voice stores (0.19.0+)."""
+    try:
+        from abstractvoice.cloning.store import open_voice_store  # noqa: F401
+    except Exception:
+        return False
+    return True
+
+
+def personal_voice_store_dir(data_root: Path, catalog_root: Path) -> Optional[Path]:
+    """The account's own voice store, or None (backlog 0942).
+
+    In multi-user mode every account plane (a data folder other than the gateway's root) keeps
+    the voices it clones or designs in `<plane>/voices`, in front of the machine's shared store
+    (the library: built-in voices and every voice the administrator creates, read-only to the
+    account). The root plane (the administrator's, and the only one in single-user mode) keeps
+    the shared store itself, so what the administrator creates is everyone's."""
+    try:
+        from ..service import gateway_multi_user_enabled
+
+        if not gateway_multi_user_enabled():
+            return None
+    except Exception:
+        return None
+    if Path(data_root).resolve() == Path(catalog_root).resolve() or not personal_voice_stores_supported():
+        return None
+    return Path(data_root) / "voices"
+
+
 def _with_voice_openai_key(llm_kwargs: Optional[Dict[str, Any]], data_root: Path, catalog_root: Path) -> Optional[Dict[str, Any]]:
-    """`llm_kwargs` plus AbstractVoice's host setting `voice_openai_api_key`:
-    the OpenAI key saved through the Providers screen, so voice generation
-    (TTS/STT runs) uses the key the consoles call configured. Resolved when
-    this runtime is built; None/unchanged when no key is saved."""
-    key = providers_screen_api_key("openai", current_base_dir=data_root, root_base_dir=catalog_root)
-    if not key:
-        return llm_kwargs or None
+    """`llm_kwargs` plus AbstractVoice's host settings: `voice_openai_api_key` (the OpenAI key
+    saved through the Providers screen, so voice generation uses the key the consoles call
+    configured) and `voice_store_dir` (the account's own voice store, see
+    `personal_voice_store_dir`). Resolved when this runtime is built; None/unchanged when
+    neither applies."""
     out = dict(llm_kwargs or {})
-    out["voice_openai_api_key"] = key
-    return out
+    key = providers_screen_api_key("openai", current_base_dir=data_root, root_base_dir=catalog_root)
+    if key:
+        out["voice_openai_api_key"] = key
+    store = personal_voice_store_dir(data_root, catalog_root)
+    if store is not None:
+        out["voice_store_dir"] = str(store)
+    return out or None
 
 
 def _split_bundle_ref(raw: str) -> tuple[str, Optional[str]]:

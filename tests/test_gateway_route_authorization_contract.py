@@ -87,6 +87,13 @@ PUBLIC_ROUTES: set[tuple[str, str]] = {
 # (no GATEWAY_ROUTE_POLICIES row). Grouped by the reason they are safe.
 # ---------------------------------------------------------------------------
 USER_LEVEL_WRITES: set[tuple[str, str]] = {
+    # Voice library changes (routes/voice_library.py, backlog 0942): in-handler gate. An account
+    # changes its OWN voice store (`<plane>/voices`, multi-user mode, local voice); where every
+    # account shares one store, `_require_change_rights` refuses a non-admin with 403.
+    ("POST", "/api/gateway/voice/clones"),
+    ("PATCH", "/api/gateway/voice/clones/{voice_id}"),
+    ("DELETE", "/api/gateway/voice/clones/{voice_id}"),
+    ("POST", "/api/gateway/voice/design"),
     # --- session lifecycle -------------------------------------------------
     # login is the ONE public write (`_public_auth_path`); logout needs the
     # session it destroys.
@@ -179,6 +186,9 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     # The caller's further mailboxes (framework backlog 1044): the same plane rule (the
     # principal's own plane; `{mailbox_id}` names a mailbox OF THAT PLANE only, validated).
     ("PUT", "/api/gateway/me/email/accounts/{mailbox_id}"),
+    # Read only / Read and write for one of the caller's further mailboxes: the same plane rule
+    # (`_self_plane`; a mailbox of another plane answers 404).
+    ("PUT", "/api/gateway/me/email/accounts/{mailbox_id}/access"),
     ("POST", "/api/gateway/me/email/accounts/{mailbox_id}/test"),
     ("PUT", "/api/gateway/me/email/accounts/{mailbox_id}/enabled"),
     ("DELETE", "/api/gateway/me/email/accounts/{mailbox_id}"),

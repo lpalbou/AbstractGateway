@@ -365,6 +365,9 @@ class Element {{
   getAttribute(name) {{ return this._attrs && name in this._attrs ? this._attrs[name] : null; }}
   removeAttribute(name) {{ if (this._attrs) delete this._attrs[name]; }}
   focus() {{}}
+  // Event wiring the page does through addEventListener (the mailbox form's address field).
+  addEventListener(type, fn) {{ (this._listeners || (this._listeners = {{}}))[type] = fn; }}
+  removeEventListener(type) {{ if (this._listeners) delete this._listeners[type]; }}
   get textContent() {{ return this._textContent; }}
   set textContent(value) {{
     this._textContent = String(value || "");

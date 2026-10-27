@@ -109,10 +109,18 @@ def test_reads_are_open_to_every_account(tmp_path: Path, monkeypatch: pytest.Mon
         assert "cloning" in client.get("/api/gateway/voice/compatibility", headers=user).json()["providers"]
 
 
-def test_changes_are_refused_to_a_non_admin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _runtime_with(voice_store_dir):
+    client = type("Client", (), {"_llm_kwargs": {"voice_store_dir": voice_store_dir} if voice_store_dir else {}})()
+    return type("Runtime", (), {"_abstractcore_llm_client": client})()
+
+
+def test_changes_are_refused_to_a_non_admin_when_the_store_is_shared(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     facade = _FakeFacade()
+    from abstractgateway.routes import gateway as gateway_routes
+
     with _client(tmp_path, monkeypatch, facade) as client:
         user = _user(client)
+        monkeypatch.setattr(gateway_routes, "_gateway_runtime", lambda: (_runtime_with(None), None))
         refused = [
             client.patch("/api/gateway/voice/clones/v1", headers=user, json={"name": "X"}),
             client.delete("/api/gateway/voice/clones/v1", headers=user),
@@ -120,7 +128,24 @@ def test_changes_are_refused_to_a_non_admin(tmp_path: Path, monkeypatch: pytest.
             client.post("/api/gateway/voice/clones", headers=user, files={"file": ("me.wav", b"RIFF", "audio/wav")}),
         ]
         assert [r.status_code for r in refused] == [403, 403, 403, 403]
+        assert "administrator" in refused[0].json()["detail"]
         assert not [c for c in facade.calls if c[0] in {"update_cloned_voice", "delete_cloned_voice", "design_voice", "clone_voice"}]
+
+
+def test_an_account_with_its_own_store_changes_its_voices(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    facade = _FakeFacade()
+    from abstractgateway.routes import gateway as gateway_routes
+
+    with _client(tmp_path, monkeypatch, facade) as client:
+        user = _user(client)
+        monkeypatch.setattr(gateway_routes, "_gateway_runtime", lambda: (_runtime_with(str(tmp_path / "mallory" / "voices")), None))
+        assert client.patch("/api/gateway/voice/clones/v1", headers=user, json={"name": "Mine"}).status_code == 200
+        assert client.post("/api/gateway/voice/design", headers=user, json={"description": "a calm voice"}).status_code == 200
+        created = client.post(
+            "/api/gateway/voice/clones", headers=user, files={"file": ("me.wav", b"RIFF", "audio/wav")}, data={"language": "fr"}
+        )
+        assert created.status_code == 200
+        assert [c for c in facade.calls if c[0] == "clone_voice"][-1][2]["language"] == "fr"
 
 
 def test_admin_changes_reach_the_facade(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
