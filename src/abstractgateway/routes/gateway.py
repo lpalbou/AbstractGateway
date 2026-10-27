@@ -19470,6 +19470,11 @@ async def voice_voices_catalog(
             out = _with_voice_cloud_providers(out, list_keys=("providers", "tts_providers"), provider=provider)
         else:
             out = _with_cloud_voice_reason(out, provider)
+            if not provider:
+                # The full catalog is what the kit's voice picker reads its
+                # providers from (the console's output.voice editor, the apps):
+                # the cloud providers are listed there too, as on providers_only.
+                out = _with_voice_cloud_providers(out, list_keys=("tts_providers",))
         out = _with_effective_voice_routes(out, await off_loop("light", _effective_voice_routes))
         items = (
             _voice_provider_catalog_items(out, provider_keys=("providers", "tts_providers"))
@@ -19507,6 +19512,11 @@ async def voice_voices_catalog(
         out = _with_voice_cloud_providers(out, list_keys=("providers", "tts_providers"), provider=provider)
     else:
         out = _with_cloud_voice_reason(out, provider)
+        if not provider:
+            # The full catalog is what the kit's voice picker reads its
+            # providers from (the console's output.voice editor, the apps):
+            # the cloud providers are listed there too, as on providers_only.
+            out = _with_voice_cloud_providers(out, list_keys=("tts_providers",))
     out = _with_effective_voice_routes(out, await off_loop("light", _effective_voice_routes))
     items = (
         _voice_provider_catalog_items(out, provider_keys=("providers", "tts_providers"))

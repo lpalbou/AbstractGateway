@@ -1035,6 +1035,28 @@ def test_voice_providers_list_cloud_providers_needs_key_until_a_key_is_configure
         assert [i["id"] for i in body["items"]] == ["openai"]
 
 
+def test_the_full_voice_catalog_lists_the_cloud_providers_too(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GET /voice/voices (no providers_only) is what the kit's voice picker reads
+    its providers from (the console's output.voice editor since backlog 0947,
+    the apps): openai / openai-compatible are listed there too, not only on
+    providers_only. A provider filter keeps that provider's listing."""
+
+    class StubDiscoveryFacade:
+        def get_voice_catalog(self, **_kwargs: Any) -> Dict[str, Any]:
+            return {"available": True, "providers": ["supertonic"], "tts_providers": ["supertonic"], "stt_providers": [], "voices": []}
+
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
+    _without_cloud_keys(monkeypatch)
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        body = client.get("/api/gateway/voice/voices?compact=true", headers=headers).json()
+        assert body["tts_providers"] == ["supertonic", "openai", "openai-compatible"]
+        body = client.get("/api/gateway/voice/voices?compact=true&provider=supertonic", headers=headers).json()
+        assert body["tts_providers"] == ["supertonic"]
+
+
 def test_voice_cloud_provider_counts_an_abstractcore_api_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import abstractgateway.routes.gateway as gateway_routes
 
