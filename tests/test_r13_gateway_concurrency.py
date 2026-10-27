@@ -20,6 +20,7 @@ import base64
 import hashlib
 import http.client
 import json
+import os
 import socket
 import threading
 import time
@@ -33,6 +34,8 @@ pytestmark = pytest.mark.basic
 
 TOKEN = "r13-test-token"
 RUN = "session_memory_r13"
+# Wall-clock budgets are only trusted off CI: a shared runner can pause the whole process.
+_UNDER_CI = bool(os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"))
 
 
 def _free_port() -> int:
@@ -57,10 +60,16 @@ def _burn(seconds: float) -> None:
 class _CpuEngine:
     """Streams one wav segment per sentence, each costing `cpu_s` of real CPU on the engine thread."""
 
-    def __init__(self, *, cpu_s: float = 0.25, setup_s: float = 0.0, setup_gate: Optional[threading.Event] = None):
+    def __init__(self, *, cpu_s: float = 0.25, setup_s: float = 0.0, setup_gate: Optional[threading.Event] = None,
+                 hold_after_first: Optional[threading.Event] = None):
         self.cpu_s = cpu_s
         self.setup_s = setup_s
         self.setup_gate = setup_gate
+        # When set, the engine stops after its FIRST segment until the event opens: a client that
+        # receives that segment while the engine is held proves first audio is not buffered behind
+        # the rest of the synthesis, whatever the machine's speed.
+        self.hold_after_first = hold_after_first
+        self.held_timed_out = False
         self.started = 0
         self.closed = 0
         self.finished = 0
@@ -82,6 +91,8 @@ class _CpuEngine:
                 for i, _ in enumerate(sentences):
                     _burn(engine.cpu_s)
                     yield {"type": "audio", "sequence": i, "audio_b64": base64.b64encode(b"RIFF" + bytes([i])).decode()}
+                    if i == 0 and engine.hold_after_first is not None and not engine.hold_after_first.wait(20):
+                        engine.held_timed_out = True
                 yield {"type": "done", "ok": True, "chunks": len(sentences)}
                 with engine.lock:
                     engine.finished += 1
@@ -145,7 +156,8 @@ def _serve(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, engine: _CpuEngine, 
     return server, thread, port, recorder
 
 
-def _read_aloud(port: int, text: str, *, chunked: bool, timeout: float = 30.0, stop_after: Optional[int] = None) -> Dict[str, Any]:
+def _read_aloud(port: int, text: str, *, chunked: bool, timeout: float = 30.0, stop_after: Optional[int] = None,
+                on_first_audio: Optional[threading.Event] = None) -> Dict[str, Any]:
     """The request AbstractCode web sends (kit streamTtsJsonl): POST JSON, read JSON Lines.
 
     chunked=True is how it reaches the gateway behind the console's /apps/code/ proxy."""
@@ -171,6 +183,8 @@ def _read_aloud(port: int, text: str, *, chunked: bool, timeout: float = 30.0, s
             out["events"].append(evt)
             if evt.get("type") == "audio" and out["ttfa_ms"] is None:
                 out["ttfa_ms"] = (time.monotonic() - t0) * 1000
+                if on_first_audio is not None:
+                    on_first_audio.set()
             if stop_after is not None and len(out["events"]) >= stop_after:
                 break
     except Exception as exc:  # noqa: BLE001 - recorded for the assertion message
@@ -309,13 +323,24 @@ def test_read_aloud_past_the_admission_bound_is_refused_with_a_sentence_and_the_
 
 
 def test_first_audio_still_arrives_after_one_sentence_ttfa(tmp_path, monkeypatch):
-    """Round-6 TTFA is kept: the first segment reaches the client after ONE sentence of synthesis."""
-    engine = _CpuEngine(cpu_s=0.3)
+    """Round-6 TTFA is kept: the first segment reaches the client after ONE sentence of synthesis.
+
+    Structural proof: the engine is HELD after its first segment until the client reports having
+    received audio. A gateway that buffered audio behind the whole synthesis would never deliver
+    that segment while the engine is held: the hold times out (20 s) and the test fails, on any
+    machine. The wall-clock budget is kept only off CI (a loaded runner paused this process for
+    3 s on 2026-10-27, which says nothing about buffering)."""
+    first_audio_seen = threading.Event()
+    engine = _CpuEngine(cpu_s=0.3, hold_after_first=first_audio_seen)
     server, thread, port, recorder = _serve(tmp_path, monkeypatch, engine)
     try:
-        r = _read_aloud(port, TEXT, chunked=True)
+        r = _read_aloud(port, TEXT, chunked=True, on_first_audio=first_audio_seen)
         assert r["status"] == 200 and r["events"][-1]["type"] == "done", r
-        assert r["ttfa_ms"] is not None and r["ttfa_ms"] < 300 + 700, r["ttfa_ms"]
+        assert r["ttfa_ms"] is not None, r
+        assert not engine.held_timed_out, "first audio never reached the client while the engine was held (TTFA lost)"
+        if not _UNDER_CI:
+            assert r["ttfa_ms"] < 300 + 700, r["ttfa_ms"]
         assert not any(e["type"] == "queued" for e in r["events"]), "a free engine must not announce a queue"
     finally:
+        first_audio_seen.set()
         _stop(server, thread)
