@@ -53,6 +53,11 @@ name.
 - `tests/test_gateway_import_boundary.py` fails on any `abstractcore` import in gateway
   source; a PR that adds an exemption must cite this ADR and say why the runtime cannot carry
   the name.
+- The same test fails on any `abstractmemory` import in gateway source outside
+  `_ABSTRACTMEMORY_BURN_DOWN` (file, statement, count), and on an entry whose import is gone,
+  so the list only shrinks; AbstractMemory names come from AbstractRuntime's memory facade
+  (runtime ADR 0009). Added 2026-10-27 with 34 entries (8 files), burned down to 1 in the
+  same change (backlog 0943).
 - Code review refuses "temporary" direct imports; the reviewer asks for the runtime PR instead.
 - Backlog items that touch mail, media or discovery name the runtime facade they use.
 

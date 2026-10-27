@@ -2074,8 +2074,9 @@ STT and listen contract notes:
 
 ## KG memory
 
-`POST /api/gateway/kg/query` queries the configured AbstractMemory TripleStore.
-Gateway resolves the store through:
+`POST /api/gateway/kg/query` queries the configured AbstractMemory TripleStore (opened through the
+AbstractRuntime memory facade). For the graph (history, sources, reconstruction) see
+[Memory graph](#memory-graph). Gateway resolves the store through:
 
 - `ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=lancedb|memory` (`sqlite` when the installed AbstractMemory build exposes `SQLiteTripleStore`)
 - `ABSTRACTGATEWAY_MEMORY_STORE_PATH`
@@ -2091,6 +2092,49 @@ Capability discovery reports KG memory as available when AbstractMemory is
 installed and the configured backend can be resolved. A fresh persistent store
 does not need to exist yet; empty-store structured queries return an empty
 result rather than making Flow authoring nodes unavailable.
+
+## Memory graph
+
+`/api/gateway/memory/*` serves the plane's memory graph (AbstractMemory ADR 0003: revisions, history,
+ledger provenance) through AbstractRuntime's memory facade
+(`abstractruntime.integrations.abstractmemory.memory_facade`); the gateway never imports AbstractMemory
+(ADR 0001). Requires AbstractRuntime 0.14.0 and AbstractMemory 0.4.0.
+
+**Plane and home.** Every route reads the caller's plane (its service's data folder). The graph lives in
+the plane's memory HOME, one SQLite file: with `ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=sqlite` it is the KG
+file `/kg/query` reads (`<plane>/abstractmemory/kg.sqlite3`); with the default `lancedb` (or `memory`) it is
+`<plane>/abstractmemory/memory.sqlite3`, beside the LanceDB KG, created on the first write. A read never
+creates it (an absent home answers empty, or 404 to a non-admin naming a memory id). Entity minds
+(`entities/<slug>/memory.sqlite3`) are not served here.
+
+**Owner rule.** An admin reads every owner in its plane. Any other principal reads the owners it can derive:
+the plane's global owner, the run/session/global owners of a `run_id` it can load in its plane, and the
+session owner of a `session_id` it names (the derivation of `/kg/query`). An `owner_id` outside that set or
+`all_owners` answers `403 {"detail": {"reason": "owner_forbidden", "message"}}`; a memory id of another owner
+is 403, an unknown one 404. The memory-id routes and `derived` take the optional `run_id` / `session_id`
+query parameters for that.
+
+**Bounds.** Every list takes `limit` (default 200, at most 500) and answers `truncated: true` when it cut;
+ids the owner rule hides from `derived` are counted in `withheld`.
+
+| Method and path | Body / query | Returns |
+|---|---|---|
+| `POST /memory/query` | the `/kg/query` body (`scope`, `run_id`, `session_id`, `owner_id`, `subject`, `predicate`, `object`, `since`, `until`, `active_at`, `all_owners`, `order`), `limit` 1..500; `query_text` is refused (400: the home is structured-only) | `{ok, scope, owner_id, count, items: [assertion], truncated, warnings, home: {path, backend: "sqlite", exists}}` |
+| `GET /memory/{memory_id}/history` | `limit`, `run_id`, `session_id` | `{ok, memory_id, owner_id, count, items: [{event: asserted\|closed\|narrowed, at, revision_id, cause, detail}], truncated}` in record order |
+| `GET /memory/{memory_id}/sources` | `transitive` (default `true`: also the sources of the memories it was derived from), `limit`, `run_id`, `session_id` | `{ok, memory_id, transitive, count, items: [SourceRef + key], truncated}` |
+| `POST /memory/sources/reconstruct` | `{"ref": SourceRef}` | the facade's answer, HTTP 200 for all three: `{status: "ok", ref, kind, content, metadata}`, `{status: "source_gone", ref, reason}`, `{status: "unsupported", ref, reason}`; 422 `invalid_source_ref` for a malformed ref |
+| `GET /memory/derived` | `ref_key` (required), `limit`, `run_id`, `session_id` | `{ok, ref, ref_key, count, items: [memory id], truncated, withheld}`: the memories naming that source, then those derived from them |
+
+A SourceRef is a dict: `{"kind": "run", "run_id"}`, `{"kind": "step", "run_id", "seq"(int), "step_id"?}`,
+`{"kind": "artifact", "artifact_id", "run_id"?}`, `{"kind": "message", "message_id"}`,
+`{"kind": "event", "event_id", "stream"?}`, `{"kind": "diary_entry", "entry_id", "run_id"?}`, each with an
+optional `runtime_id`. Its key is `run:<run_id>`, `step:<run_id>#<seq>`, `artifact:<id>`, `message:<id>`,
+`event:<id>` or `diary_entry:<id>`; `derived` takes the key (URL-encode `#` as `%23`), not the JSON form,
+and answers 422 `invalid_ref_key` for one it cannot read. Reconstruction reads this plane's ledger, run and
+artifact stores: a `step` gives the ledger row (`content`) with `metadata.{run_id, seq, step_id, node_id,
+status, effect_type}`, an `artifact` its content (`utf-8` text, else base64, `metadata.encoding`), a `run`
+its state and ledger; `message` refs are `unsupported` (no indexed path yet), and so are `event` and
+`diary_entry` here (no event inbox or diary store is given to the plane facade).
 
 ## Models and engines
 
