@@ -627,7 +627,7 @@ The body is the view, `replay_view_v1`:
 | `interaction` | the person-facing wait or `null`: `kind` (`tool_approval`, `ask_user`, `event`), `run_id` (the run that waits, often a child), `wait_key`, `prompt`, `choices`, `tool_calls` (resolved), and `command`, the resume to send through `/commands` |
 | `open_waits[]` | every open wait of the tree, `person_facing` or not (a delegation, a timer, a pause) |
 | `messages[]` | verbatim turns (`role`, `kind`: prompt, answer, question, final, event; `text`) with their provenance: `run_id`, `step_ids`, `seqs`, `artifact_ids`, `source` |
-| `activities[]` | one row per node execution (an Agent node's phases are one row): `kind` (llm, tool, subworkflow, timer, ask_user, …), `name`, `status`, `tool_calls[]` (each call with its status and output), `wait.ended_by` (`resume`, `later_step`, `terminal`), `usage`, `child_run_id` |
+| `activities[]` | one row per node execution (an Agent node's phases are one row): `kind` (llm, tool, subworkflow, timer, ask_user, tool_policy (a call a conversation's tool policy allowed or denied without asking; never an interaction), …), `name`, `status`, `tool_calls[]` (each call with its status and output), `wait.ended_by` (`resume`, `later_step`, `terminal`), `usage`, `child_run_id` |
 | `artifacts[]` | every `$artifact` reference, with the run, step and seq that produced it |
 | `usage` | tokens and LLM calls, summed over the tree |
 | `warnings[]` | what could not be shown (a `$slim` pointer to a record that was not folded, records before a window) |
