@@ -17021,6 +17021,9 @@ def _compact_voice_catalog_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         "tts_models_by_provider",
         "stt_models_by_provider",
         "tts_model_roles_by_provider",
+        # AbstractVoice >= 0.19.2: each model's role ("cloning" = a checkpoint that speaks
+        # cloned voices only, e.g. Qwen3-TTS Base) and the label a picker shows.
+        "tts_model_details_by_provider",
         "tts_voices_by_provider",
         "tts_profiles_by_provider",
         "tts_formats_by_provider",

@@ -1058,6 +1058,26 @@ def test_the_full_voice_catalog_lists_the_cloud_providers_too(
         assert body["tts_providers"] == ["supertonic"]
 
 
+def test_the_compact_voice_catalog_keeps_the_model_roles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """AbstractVoice 0.19.2 marks a cloning checkpoint (Qwen3-TTS Base) in
+    `tts_model_details_by_provider`; the compact catalog the pickers read keeps it."""
+    base = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+
+    class StubDiscoveryFacade:
+        def get_voice_catalog(self, **_kwargs: Any) -> Dict[str, Any]:
+            return {
+                "available": True, "providers": ["qwen3-tts"], "tts_providers": ["qwen3-tts"], "stt_providers": [], "voices": [],
+                "tts_models_by_provider": {"qwen3-tts": [base]},
+                "tts_model_details_by_provider": {"qwen3-tts": [{"id": base, "role": "cloning", "label": f"{base} (clones)"}]},
+            }
+
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        body = client.get("/api/gateway/voice/voices?compact=true&provider=qwen3-tts", headers=headers).json()
+        assert body["tts_model_details_by_provider"]["qwen3-tts"] == [{"id": base, "role": "cloning", "label": f"{base} (clones)"}]
+
+
 def test_voice_cloud_provider_counts_an_abstractcore_api_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import abstractgateway.routes.gateway as gateway_routes
 
