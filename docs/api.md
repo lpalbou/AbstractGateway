@@ -1657,12 +1657,30 @@ Body (PUT, POST):
   `browser_probe`, `send_email` when email is on): "allow all" is the person's explicit word for this
   conversation, unlike the gateway's default tier ceiling, which never auto-approves them. A client
   that wants them to keep asking lists them in `ask` (or narrows with `max_risk_rank`).
-- `if_revision` mismatch: `409 {reason_code: "revision_conflict"}`. Malformed body: 422.
+- `if_revision` (body of PUT/POST; query `?if_revision=` on DELETE): a mismatch answers `409`
+  `{"detail": {"reason_code": "revision_conflict", "message", "revision": <current>}}`. The
+  gateway never retries a client-sent `if_revision`. Without one, a POST guards itself with the
+  revision it read and re-reads and re-merges on a conflict (up to 5 tries, then the same 409
+  without `revision`); a PUT without one is last-writer-wins.
+- Malformed body or session id: `422 {"detail": {"reason_code": "invalid_request", "message"}}`.
+  When the caller's tool inventory cannot be built, writes answer
+  `503 {"detail": {"reason_code": "tool_inventory_unavailable", "message"}}` (no policy is written
+  that the gateway cannot clamp).
 
-Answer: `{session_id, policy}` where `policy` is
+Answers. PUT and POST: `{session_id, policy, scope}`, where `policy` is
 `{version, session_id, revision, approve: {name: selector}, deny: {name: selector}, ask, request,
-clamped, set_by: {tenant_id, user_id, client}, set_at}`. Writes and resets are audited
-(`session.tool_policy_set`, `session.tool_policy_reset`).
+clamped, set_by: {tenant_id, user_id, client}, set_at}`. GET: `{session_id, policy, revision,
+scope}`; the top-level `revision` is the session's current revision also when `policy` is `null`
+(0 for a session never written, the reset's revision after a DELETE), the value to send as
+`if_revision`. DELETE: `{session_id, policy: null, revision, scope}`. `scope` is on all four
+answers, an object of two sentences:
+
+```json
+{"approve": "every run of this conversation (turns and their delegated child runs), except automation runs, runs that read text other people wrote, and entity visits",
+ "deny": "every run of this conversation, automation runs and untrusted-input runs included"}
+```
+
+Writes and resets are audited (`session.tool_policy_set`, `session.tool_policy_reset`).
 
 Ledger record (an activity; there is no wait, waiting record or resume for these calls):
 
@@ -1676,7 +1694,10 @@ Ledger record (an activity; there is no wait, waiting record or resume for these
 ```
 
 `decision` is `auto_approved` or `denied`. Clients feature-gate on
-`GET /api/gateway/discovery/capabilities` → `capabilities.session_tool_policy.supported`.
+`GET /api/gateway/discovery/capabilities` → `capabilities.session_tool_policy.supported`: `true`
+with `{version, endpoint, methods, approve, deny, ask, record}`, or
+`{supported: false, reason: "abstractruntime has no session tool policy"}` when the installed
+runtime lacks it; an older gateway has no key at all.
 To offer "approve all" on an approval a client is showing: write the policy first, then answer
 that wait (`resume` with `{approved: true}`) as a one-off; the policy does not answer waits that
 already exist.
