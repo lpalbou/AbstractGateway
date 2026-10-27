@@ -128,3 +128,21 @@ this harness exists and passes.
 - The replay-equivalence harness (I1-I5) passes on file and SQLite backends and
   across a migration; the durable-cursor ADR is written; `migrate.py` preserves
   order+count (test-proven); the false lock/fsync note is corrected.
+
+
+## Progress (2026-10-27, with 0947 and AbstractRuntime 0853 / ADR 0009)
+
+- Cursor identity decided (ADR 0009): the per-run ledger `seq`. JSONL now persists it on every
+  append (allocated under an advisory file lock spanning the head read and the write, so
+  another process cannot take the same seq); a pre-seq line reads as its position. Every
+  store has `list_after`; `ObservableLedgerStore` passes `seq` to subscribers.
+- `migrate.py` keeps order, count and seq (`SqliteLedgerStore.import_records`, commit
+  `c5666390`, `tests/test_migrate_preserves_ledger_seq.py` incl. a held cursor).
+- I1-I4 at store level: AbstractRuntime `tests/test_ledger_cursor_invariants.py`,
+  `tests/test_jsonl_ledger_seq_cross_process.py`; I2/I5 through the app:
+  `tests/test_gateway_ledger_stream_event_driven.py` (raw stream) and
+  `tests/test_gateway_replay_view.py` (view stream).
+- JSONL durability posture: a lock, no fsync per append (the cost per record would dominate a
+  streaming run); hosted multi-writer deployments use SQLite.
+- The AGENTS.md lock/fsync note no longer exists in this repository (checked 2026-10-27).
+- Remaining: move this item to completed when 0947 and runtime 0853 merge.
