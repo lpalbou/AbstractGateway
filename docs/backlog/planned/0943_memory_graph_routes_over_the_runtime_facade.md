@@ -61,9 +61,11 @@ derivations, and the memory contract descriptor naming the root store instead of
   journal with the store on reload.
 - Done (architect C1): the home is opened once per service (`memory_store.PlaneMemoryHome`, closed at
   shutdown); a read no longer waits behind a writer's lock to open it (tested: < 100 ms under a held write lock).
-- Open (architect B6): the reconstruct owner gate walks `derived_from_source(limit=1000)`, quadratic and wrong
-  above 1000 memories naming one ref; it moves to AbstractMemory's `MemoryGraph.names_ref(ref, owner_ids)` (one
-  index read) when that lands. `tests/test_gateway_memory_scale.py` pins it (xfail strict until then).
+- Done (architect B6): the reconstruct owner gate is AbstractMemory's `MemoryGraph.names_ref(ref, owner_ids)`
+  (one covering-index probe, AbstractMemory 1116ac7): right and < 50 ms with 1,201 memories naming one ref
+  (`tests/test_gateway_memory_scale.py`; the old 1000-memory walk refused the 1,201st owner).
+- Note: AbstractMemory now refuses a cross-owner `derived_from` at write (lineage never crosses owners); the
+  gateway's owner-filtered lineage walk and history id filter remain as a second layer for rows written before.
 - Open (operator decision pending): `owner_id` is not a principal (session/run/global/entity ids derived from
   runs); `memory_access.caller_owner_ids` is the single place that changes when owner = principal.
 - Done (operator decision 5): ownership is strict, not plane-wide. A named run or session must be the

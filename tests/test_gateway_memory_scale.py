@@ -19,11 +19,6 @@ from test_gateway_memory_routes import SESSION, world  # noqa: F401  (fixture)
 pytestmark = pytest.mark.basic
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="needs AbstractMemory MemoryGraph.names_ref(ref, owner_ids) (one index read; W1, memory transition "
-    "review B6): the gate walks derived_from_source(limit=1000), so the 1,201st memory's owner is refused",
-)
 def test_reconstruct_gate_is_right_and_fast_above_a_thousand_memories(tmp_path: Path) -> None:
     from abstractgateway.memory_store import open_memory_home, resolve_memory_store_config
     from abstractgateway.routes.memory import _names_ref_for_caller
@@ -46,10 +41,12 @@ def test_reconstruct_gate_is_right_and_fast_above_a_thousand_memories(tmp_path: 
         })
         for owners in ({"session_memory_B"}, {"session_memory_A"}):
             t0 = time.perf_counter()
-            allowed = _names_ref_for_caller(facade, art, "artifact:shared-import-file", owners)
+            allowed = _names_ref_for_caller(facade, art, owners)
             elapsed = time.perf_counter() - t0
             assert allowed is True, owners
             assert elapsed < 0.05, f"{owners}: {elapsed * 1000:.1f} ms"
+        # An owner with no memory naming the ref is refused, as fast.
+        assert _names_ref_for_caller(facade, art, {"session_memory_C"}) is False
     finally:
         facade.journal.close()
         facade.store.close()

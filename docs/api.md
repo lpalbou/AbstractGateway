@@ -2149,8 +2149,10 @@ person's graph. The plane is a storage location, not a sharing scope.
   of another owner is not followed and is counted in `withheld`.
 - `history` cuts the memory ids an event names (`derived_from`, `replacement_ids`) to the readable ones and
   counts the hidden ones in `withheld`.
-- `sources/reconstruct`: a non-admin reconstructs a ref only when one of its own readable memories names it
-  directly (403 otherwise, also for a ref nobody names); an admin reconstructs any ref of its plane.
+- `sources/reconstruct`: a non-admin reconstructs a ref only when a memory of one of its owners names it
+  directly (AbstractMemory's `MemoryGraph.names_ref`, one index probe; 403 otherwise, also for a ref nobody
+  names); an admin reconstructs any ref of its plane. AbstractMemory refuses a derivation across owners, so a
+  ref is never reachable through another owner's memory.
 
 Sharing a graph with another person, or topic-scoped access (a notebook shared with a team), is future work:
 today the only delegation is entity -> creator.

@@ -385,17 +385,12 @@ def memory_derived(
     return {"ok": True, "ref": ref, "ref_key": ref_key, "count": len(ids), "items": ids, "truncated": truncated, "withheld": withheld}
 
 
-def _names_ref_for_caller(facade: Any, ref: Dict[str, Any], key: str, owners: Set[str]) -> bool:
-    """True when a memory this caller may read names `ref` as one of its OWN sources. (A memory of the caller
-    derived from another owner's memory that names the ref does not count: that is the cross-owner walk /sources
-    refuses.) Bounded by the graph's read limit."""
-    candidates = facade.derived_from_source(ref, limit=MAX_LINEAGE_VISITS)
-    SourceRef = _facade().SourceRef
-    for memory_id in [i for i in candidates if i in _readable(facade, candidates, owners)]:
-        direct = facade.sources_of(memory_id, transitive=False, limit=MAX_LINEAGE_VISITS)
-        if any(SourceRef.from_dict(r).key() == key for r in direct):
-            return True
-    return False
+def _names_ref_for_caller(facade: Any, ref: Dict[str, Any], owners: Set[str]) -> bool:
+    """True when a memory owned by one of the caller's owners names `ref` as its own source: AbstractMemory's
+    `MemoryGraph.names_ref` (one covering-index probe on (ref_key, owner_id), right at any number of memories
+    naming the ref; a `run` ref matches by run id). Lineage never crosses owners (AbstractMemory refuses a
+    cross-owner derived_from), so a ref reached only through another owner's memory is never the caller's."""
+    return facade.graph.names_ref(ref, sorted(owners))
 
 
 @router.post("/sources/reconstruct")
@@ -410,7 +405,7 @@ def memory_reconstruct_source(request: Request, req: ReconstructRequest) -> Dict
     owners = _caller_owners(request, svc, run_id=_clean(req.run_id), session_id=_clean(req.session_id))
     if owners is not None:
         home = _open(svc)
-        allowed = home is not None and _names_ref_for_caller(home, ref, source.key(), owners)
+        allowed = home is not None and _names_ref_for_caller(home, ref, owners)
         if not allowed:
             raise _forbidden()
     MemoryFacade = _facade().MemoryFacade
