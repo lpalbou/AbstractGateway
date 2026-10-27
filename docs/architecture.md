@@ -41,7 +41,7 @@ desktop Assistant, scripts) and **AbstractRuntime**:
 flowchart LR
   subgraph Clients["Clients"]
     Browser["Browser: /console"]
-    AppSrv["Browser app servers on 127.0.0.1<br/>(Flow, Code, Observer, Continuum, Entity)"]
+    AppSrv["Browser app servers on 127.0.0.1<br/>(Flow, Code, Observer, Continuum, Entity, Note)"]
     TUI["Terminal apps: abstractgateway-console, Code"]
     Asst["Desktop Assistant"]
     Tray["Desktop tray helper (separate process)"]

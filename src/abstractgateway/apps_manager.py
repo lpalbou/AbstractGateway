@@ -1,10 +1,10 @@
 """Browser apps managed by the gateway: Node.js for the user, npm packages, processes.
 
-The five browser apps (Flow, Code, Observer, Continuum, Entity) are npm
+The six browser apps (Flow, Code, Observer, Continuum, Entity, Note) are npm
 packages whose `bin/cli.js` starts a small Node server. That server is not
 optional: it holds the app-origin gateway session (HttpOnly cookies, CSRF, the
 `/api/connection/gateway` sign-in endpoint, the same-origin `/api/*` proxy that
-SSE rides on), and four of the five bundles load their assets from absolute
+SSE rides on), and four of the six bundles load their assets from absolute
 `/assets/` paths. So the gateway RUNS each app's own server as a child process
 (decision A in docs/apps.md) instead of serving `dist/` itself.
 
@@ -138,7 +138,7 @@ class AppSpec:
     cookie_prefix: str  # the app server's `<prefix>_gateway_{url,session,csrf}` cookies
     gateway_url_env: str
     # The start of the app's `<title>` as its server sends it for `/` (how an
-    # app started outside the gateway is recognised: none of the five apps
+    # app started outside the gateway is recognised: none of the apps
     # has an identity route that answers without a gateway sign-in).
     html_title: str = ""
 
@@ -171,6 +171,16 @@ FLAG_CONFIGURED_APPS = frozenset({"observer", "continuum", "code", "entity", "fl
 # reads it. Remove an entry once that version can no longer be installed.
 _ENV_ONLY_UP_TO = {"observer": "0.1.14", "code": "0.5.0", "entity": "0.2.2"}
 
+
+
+def _tray_area() -> str:
+    """Where a desktop app's icon lives on this OS: the menu bar (macOS), the notification
+    area of the taskbar (Windows), the system tray (Linux desktops)."""
+    if sys.platform == "darwin":
+        return "menu bar"
+    if sys.platform == "win32":
+        return "notification area of the taskbar"
+    return "system tray"
 
 def app_launch_config(
     app_id: str, *, port: int, host: str, gateway_url: str, gateway_url_env: str, version: Optional[str] = None
@@ -1327,7 +1337,7 @@ def _stop_pid(pid: int, *, still_it: Callable[[], bool], timeout_s: float = STOP
 # (`scripts/start-local.sh`), `npx @abstractframework/observer`, a global npm
 # install, a service unit. Such an app is found by asking the usual ports on
 # loopback (STACK_PORTS first, then LEGACY_PROBE_PORTS) for `/` and reading
-# the page title: none of the five app servers has an identity route that
+# the page title: none of the app servers has an identity route that
 # answers without a gateway sign-in (their `/api/*` proxies to the gateway,
 # so it would also make the gateway call itself), while `/` is static and
 # names the app (`<title>AbstractObserver</title>`, "AbstractContinuum — …",
@@ -4003,7 +4013,7 @@ class AppsManager:
         if pres.get("running"):
             if not (bundle and running_argv and f"{bundle}/Contents/MacOS/" in running_argv[0]):
                 return {"ok": True, "app": self.desktop_row(spec.id), "already_running": True, "signed_in_by_gateway": False,
-                        "message": f"The {spec.name} is already running: its icon is in the menu bar." + running_note}
+                        "message": f"The {spec.name} is already running: its icon is in the " + _tray_area() + "." + running_note}
             argv: List[str] = ["open", "-a", str(bundle)]
         else:
             argv = list(pres.get("launch") or [])
@@ -4029,9 +4039,9 @@ class AppsManager:
         if pres.get("running"):
             message = f"The {spec.name} is in front." + running_note
         elif handover_file is not None:
-            message = f"The {spec.name} is starting, signed in to this gateway: its icon appears in the menu bar."
+            message = f"The {spec.name} is starting, signed in to this gateway: its icon appears in the " + _tray_area() + "."
         else:
-            message = f"The {spec.name} is starting: its icon appears in the menu bar."
+            message = f"The {spec.name} is starting: its icon appears in the " + _tray_area() + "."
         return {"ok": True, "app": self.desktop_row(spec.id), "already_running": bool(pres.get("running")),
                 "signed_in_by_gateway": handover_file is not None, "message": message}
 
@@ -4288,7 +4298,7 @@ class AppsManager:
             )
             for spec in APPS
         ]
-        # Desktop apps: after the five browser apps, stack order.
+        # Desktop apps: after the browser apps, stack order.
         rows += [
             self.desktop_row(d.id, caller=caller, latest=desk_latest[d.id][0], registry_error=desk_latest[d.id][1])
             for d in DESKTOP_APPS

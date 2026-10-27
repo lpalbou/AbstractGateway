@@ -336,6 +336,273 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `list_mailbox_runs`).
 - On a file store with more than 200 waiting runs, a due wake fires on time: the scheduler's next deadline comes
   from the store's `next_wait_deadline` over every waiting run (backlog 1046).
+## [0.15.11] - 2026-10-19
+
+### Added
+
+- **AbstractNote seam (optional).** When the `abstractnote` Python package is installed in the
+  gateway's environment, the gateway serves its note read API under `/api/gateway/note/` (same
+  sign-in as every other gateway route, each caller's own notebook), binds the note tools to each
+  user's notebook next to `read_skill` (the host's artifact store is their only attachment source;
+  they are auto-approved, since they touch nothing but that notebook) and loads the `abstractnote`
+  workflows into every user's registry as framework bundles, packed from the installed package
+  under `<data dir>/extensions/abstractnote/`. Without the package nothing changes: the seam
+  (`abstractgateway.abstractnote_seam`) answers "nothing" and never raises, so an absent or broken
+  package cannot keep the gateway from starting. The **Note** browser app
+  (`@abstractframework/note`, port 3006) joins the app catalog, the console's Apps page, the tray
+  and the terminal console. See [docs/apps.md](docs/apps.md) and
+  [docs/api.md](docs/api.md#abstractnote-optional). Contributed with the AbstractNote lane.
+
+## [0.15.10] - 2026-10-19
+
+### Changed
+
+- **Built-in Assistant orchestrator 0.0.15 (workflow revision 8).** The shipped
+  `abstractassistant-orchestrator` bundle is now 0.0.15, built from AbstractAssistant 0.14.3's
+  `assistant_workflow.py`. Two effects for the person using it: the routing decision only decides
+  where a message goes — it neither reads nor appends the conversation's turns —, and a request for a
+  spoken reading of a named passage or scene (a recitation, a dramatic reading) goes to the voice
+  route, never to audio generation. The desktop Assistant 0.14.3 carries the same workflow. 0.0.13
+  (revision 7), 0.0.12 and 0.0.0 stay installed for the clients that pin them; the sdist, wheel and
+  Docker images carry the new bundle. See [docs/shipped-workflows.md](docs/shipped-workflows.md).
+
+## [0.15.9] - 2026-10-19
+
+### Changed
+
+- **Notification emails a person can read.** Every notification (approval needed, question,
+  automation result or failure, run finished or failed, test) uses one AbstractFramework layout:
+  inline styles only, no remote images, readable in light and dark mail clients, with a plain-text
+  part carrying the same facts and links. Subjects read `[AbstractFramework] <name> needs your
+  approval: <tool>`, `… asked you a question`, `… finished`, `… failed` and never carry an id (the
+  run or automation id is a reference line at the bottom). The body states the context (the
+  workflow or automation's name — for a sub-run, the name of the run you started —, the
+  occurrence, who started it, when it started, when the event happened in UTC and in your
+  `time_zone` preference), what is asked (each tool as a plain-language label with a readable
+  summary of its arguments; a question with its choices), the cause and fix of a failure, and two
+  buttons: **Open in the console** (that exact run, `/apps/observer/#run/<id>`) and, for a session
+  when the AbstractCode app is installed, **Open in AbstractCode** (`/apps/code/#session=<id>`).
+  Links keep the configured public hostname rule (never a request header).
+- **One email per wait.** An approval or question is queued once per wait — the node and what it
+  asks — instead of once per runtime wait key, so the same approval issued again at the same step
+  (a retry, a restart) sends nothing new. See `docs/email.md` → Notifications.
+
+## [0.15.8] - 2026-10-18
+
+### Added
+
+- **Configure a connected mailbox** in the web console (your own row and an entity's, under
+  Accounts → Email): next to **Test** and **Disconnect**, **Configure** opens the stored connection
+  (address, login, incoming and outgoing servers, IMAP folder) for editing. For IMAP, re-enter the
+  password and **Save changes**: both servers are checked before the replacement is saved, so a
+  failed update keeps the existing connection; for Google or Microsoft, sign in again. Stored
+  passwords and client secrets are never displayed; **Cancel changes** discards the draft. The
+  mailbox's Active setting, folder, recipient rules and limits are kept. A late answer to a save or a
+  sign-in started before the dialog was closed or re-opened never overwrites what is being edited.
+  On another user's row the mailbox status is one of the five words with its diagnostic reason and the
+  dialog says how that user configures it themselves.
+- **Entity appearance**: `GET`/`PUT /api/gateway/entities/{name}/appearance` stores how client apps
+  draw an entity (the colour and shape of its orb: `{color: "#rrggbb", shape: planet | kitty | face | wave}`;
+  `{"clear": true}` returns it to the app's default), changed by an admin or the entity's creator like
+  its voice and mind; `appearance` is also accepted at creation (`POST /entities`) and returned on each
+  row of `GET /entities` when set. Stored as `appearance.json` in the entity's home, presentation only.
+- **Sign in by registered email**: `POST /api/gateway/session/recovery/request` and `/redeem` take the
+  account's registered email address in `user_id` as well as the account id (an address registered on
+  exactly one enabled person account; any other address reads like an unknown account, same answer,
+  same rate limits). The Apple Watch app signs in with it.
+- **The test notification** (**Send a test** under Notifications) now carries a link to the console, a
+  notice saying what to do if you did not request it (rotate your gateway token, change your email
+  password, contact your administrator), and links to AbstractFramework, its GitHub and its contact
+  address, as an HTML part next to the plain text. The console link prefers a configured public
+  hostname (the browser's own origin when it is one of the configured origins, else a single configured
+  one) over the recorded local address; an arbitrary `Origin` header never becomes a link in an email.
+
+### Fixed
+
+- A Google or Microsoft mailbox sign-in cancelled while the provider's approval was pending can no
+  longer replace the existing mailbox when the approval arrives afterwards: the commit is claimed
+  under the same lock that cancellation uses, and a cancelled or expired flow fails with "Start the
+  sign-in again". `POST …/oauth/cancel` answers `cancelled: false` when the flow is already
+  committing, and the console then reloads the mailbox status instead of promising a rollback.
+- Saving an email address (your own, or another user's as an admin) says that the mailbox connection
+  is unchanged, instead of promising that notifications go to that address before a mailbox is
+  connected.
+
+## [0.15.7] - 2026-10-18
+
+Requires AbstractRuntime 0.10.6 (`abstractruntime.conversation_search`, named
+automation tool policies, read-aloud recordings tagged under the `voice/`
+artifact space). Dependency floors: `AbstractRuntime>=0.10.6` (base, `apple`,
+`gpu`).
+
+### Added
+
+- `GET /api/gateway/sessions/search?q=…`: keyword search over the caller's conversations: their questions,
+  answers and artifacts (generated media by their prompt, attachments by their file name), with
+  AbstractRuntime's `ConversationSearch` (words and parts of words, case and accents ignored, a typo
+  forgiven). A hit on an artifact carries it (`artifact`), fetchable from its run's content route
+  (`GET /api/gateway/runs/{artifact.run_id}/artifacts/{artifact_id}/content`). One index per runtime
+  plane (`conversation_search.sqlite3` in that plane's data folder, disposable: rebuilt when its schema
+  changes), so an account only ever searches its own conversations. Filtered like
+  `GET /runs?root_only=true` (`session_kind`, `kind`, archived left out unless `archived=true`); one item
+  per session with a snippet and the match positions; `limit` 1–50; the answer carries `count`, `fuzzy`
+  (whether the index has the trigram tokenizer), `kinds` and `indexing` (`complete: false` while older
+  conversations are still being indexed, `pending_sessions`, `turns`, `errors`).
+- `GET /api/gateway/runs/{run_id}/message-stats`: `{wall_time_seconds, input_tokens, output_tokens,
+  tool_calls}` of one of the caller's runs, read from its ledger (completed effects only; a count the
+  ledger does not carry is `null`).
+- Conversation tool choices for Assistant clients: `POST /api/gateway/runs/start` takes
+  `input_data._runtime.tool_policy` `{auto_approve_tools, require_approval_tools}` next to
+  `input_data.tools` / `_runtime.allowed_tools`; the named choices reach the agent's tool schemas and its
+  approval waits. `GET /api/gateway/tool-policy/capabilities` (`{supported, modes, runtime_floor}`) and
+  `GET /api/gateway/automations/defaults` (`{growing_max_tokens}`) say what the gateway supports.
+- Entity visits with per-tool choices: `GET /api/gateway/entities/{name}/session-tools` lists the
+  visit's tools and modes (`off`, `auto`, `approve`; `visit_routes: true`); `POST .../visit/open` takes
+  `tool_policy: {modes: {...}}` (`modes: null` inherits the home's grants, `{}` disables every tool; the
+  choices only narrow the home's grants); `GET .../visit/{run_id}/state`, `PUT .../visit/{run_id}/tool-policy`
+  and `POST .../visit/{run_id}/decision` (`{wait_key, approved}`) read the visit, change the choices
+  between turns and answer the pending approval, which is a durable runtime wait; `POST .../visit/{run_id}/close`
+  with `closed_by: "pause"` ends it without running the pending batch. `POST /entities/{name}/sessions`
+  and `POST .../visit/{run_id}/end` are kept as deprecated aliases.
+- Automations accept `policy.tool_policy` `{auto_approve_tools, require_approval_tools}`, a complete
+  named snapshot that overrides `tool_approval` (AbstractRuntime 0.10.6): unmentioned tools ask, Require
+  wins over Auto, the target's tools remain the ceiling and the messaging and untrusted-input
+  restrictions stay in force. See [docs/automations.md](docs/automations.md).
+- The shipped `abstractassistant-orchestrator` bundle at 0.0.12 (workflow revision 6: a `voice` mode,
+  spoken audio of the words the router writes, through the gateway's `output.voice` engine) and 0.0.13
+  (revision 7: the router follows the run's text provider and model unless the request selects them),
+  built reproducibly from AbstractAssistant's `assistant_workflow.py` by
+  `scripts/build_assistant_orchestrator_bundle.py` with the shipped `basic-agent` as the chat subflow;
+  entrypoints `c53b1579` (default) and `d5d4e5a1` (the legacy id, kept for saved preferences). 0.0.0
+  stays installed for what pins it; a fresh catalog's default pointer names the newest version.
+- Read-aloud recordings have their own `voice/` artifact space (`purpose=voice_playback`,
+  `artifact_space=voice`; earlier streamed recordings are classified from their producer metadata, their
+  ids unchanged): `GET /runs/{run_id}/artifacts` and `GET /sessions/{session_id}/artifacts` leave them out
+  unless `include_voice=true`; `GET /artifacts/search?tags=artifact_space=voice` lists them.
+
+## [0.15.6] - 2026-10-18
+
+### Added
+
+- `abstractgateway update [--check] [--yes]` (also `abstractgateway --update`):
+  upgrade an AbstractFramework installer install from a terminal. It prints the
+  installed and the newest release, every package whose version would change
+  (the framework, the gateway, the Python packages, the browser apps and the
+  terminal apps, as `installed -> new`) and the AbstractFramework changelog
+  sections between the two releases, newest first; `--check` stops there (exit
+  0 up to date, 10 when an update exists). Otherwise it asks once and runs the
+  sha-checked installer in the foreground (`--yes --no-open --no-modify-path
+  --data-dir <data dir>`: the installer keeps the port, profile and login
+  choices and restarts the gateway service itself), exits with the installer's
+  exit code and ends with the console's address. A source checkout, a container
+  or a plain pip / uv / pipx install is refused with the command to run instead.
+  On Windows the PowerShell installer starts in a new window.
+- `abstractgateway console [--url URL] [--token TOKEN]` (also `abstractgateway
+  --console`): opens the terminal console (`abstractgateway-console`, built by
+  the installer next to `abstractgateway`, else found on PATH) signed in, with
+  the gateway address and token resolved like every other verb (flags, the
+  environment, else this data dir's running gateway and its admin token). The
+  token is never printed. Without the console it says who builds it.
+- The release check (`self_update`) now also carries the release's browser-app
+  pins (manifest `npm_apps`) and crate pins (the installer's `AF_CRATE_*`
+  lines), so `update` can list them; `installer_command()` takes the flag set
+  (the gateway's own job keeps `--no-start`).
+
+## [0.15.5] - 2026-10-18
+
+### Fixed
+
+- Image generation routed to a provider endpoint profile (an OpenAI-compatible
+  relay chosen as the image route, in the console's sandbox or a workflow)
+  reaches that endpoint. Requires AbstractRuntime 0.10.4: its `LLM_CALL`
+  handler no longer rewrites a media output spec's `endpoint:<id>` provider
+  into a bare provider family, and the pooled client's media host carries the
+  gateway's endpoint-profile resolver, so the generation runs in process
+  through the configured endpoint with its stored credential. Nothing asks
+  for a base URL or key that the gateway already holds. Affects every image
+  route set to an endpoint profile.
+
+## [0.15.4] - 2026-10-18
+
+### Fixed
+
+- A cold first start no longer exits on the event-loop watchdog. The first
+  request of a signed-in caller builds that caller's service in a worker
+  thread, which can take longer than the watchdog's 30 s on a fresh install
+  (the engines import for the first time); the pre-warm check that every
+  `/api/gateway` request runs on the event loop waited for the same lock,
+  so `/api/health` stopped answering and the watchdog exited the gateway with
+  code 75 (a `systemd` service restarted it; a gateway started in the
+  background stayed down, and the installer's apps step then found no
+  gateway). The check now answers at once while a build is in progress.
+  Affects every fresh install and every first start after an upgrade that
+  brings new engine packages.
+
+## [0.15.3] - 2026-10-18
+
+Windows fixes.
+
+### Fixed
+
+- **Local engines on Windows x86_64**: llama.cpp and Hugging Face (transformers) are supported
+  engines there, as AbstractCore's `gpu` install setting says, and no longer show "Not for this
+  computer". The gateway's host table (`engines_install.host_setting`) matches AbstractCore's
+  `abstractcore.utils.install_settings.host_setting`, and a test compares the two for every host.
+  Windows on ARM, Intel Macs and a Python under Rosetta still have no setting.
+- **Installing Hugging Face on Windows** installs `abstractcore[gpu]` at the installed AbstractCore
+  version with `--torch-backend=auto` (uv), so PyTorch is the CUDA build that matches the NVIDIA
+  driver rather than PyPI's CPU build. The llama.cpp row on Windows points to the AbstractFramework
+  installer, which adds llama.cpp's prebuilt CUDA, Vulkan or CPU build.
+- **vLLM on Windows** says that vLLM has no native Windows build and that it runs in WSL2 or on a
+  Linux machine the gateway can reach.
+- **Workspace files on Windows**: opening or downloading a file from a run's workspace
+  (`GET /runs/{run_id}/workspace/content`) works on Windows; the opened file is still checked to
+  be inside the workspace, now through `GetFinalPathNameByHandleW`, so a junction out of it is
+  refused.
+- **Built-in protected folders on Windows** also cover Credential Manager's folders
+  (`AppData\Roaming\Microsoft\Credentials`, `AppData\Local\Microsoft\Credentials`), the
+  DPAPI keys in `AppData\Roaming\Microsoft\Protect`, and `AppData\Roaming\gcloud`.
+- **`abstractgateway service status` on Windows** names the Run value
+  (`HKCU\...\Run\AbstractGateway`) when nothing is registered, instead of the legacy Startup
+  shortcut.
+- **Console output**: `abstractgateway` and `abstractgateway-config` no longer stop with
+  `UnicodeEncodeError` when their output is piped or redirected on Windows; a character the code
+  page lacks is written as `?`.
+- **Wording**: desktop apps' icons are in the notification area on Windows and the system tray on
+  Linux, not "the menu bar"; the llama.cpp row names the Windows builds.
+- **No console windows on the desktop**: when the gateway or its tray runs without a console
+  (the login entry starts it with `pythonw.exe`), the programs it starts, such as `nvidia-smi` for
+  the GPU meter every few seconds, no longer each open a console window for a moment
+  (`abstractgateway.stdio_safety.hide_child_consoles`). Started from a terminal, child output still
+  goes to that terminal.
+- **The desktop Assistant opens without a console window on Windows**: the gateway starts it with
+  `pythonw.exe` running its entry point; the `abstractassistant.exe` console launcher, started
+  detached, opened an empty console window next to the app.
+
+- **Image routes offer OpenAI-compatible endpoints**: an OpenAI-compatible endpoint connection (`endpoint:<id>`) that serves an image model is now offered for
+  text-to-image and image edits. Before, `GET /api/gateway/vision/provider_models` listed only
+  AbstractVision's own backends, which know one global OpenAI-compatible base URL and none of the
+  gateway's endpoint profiles, so a relay serving `gpt-image-2` was never a candidate in the web console's
+  image routes even though it answered both tasks when called directly. The catalog now adds every enabled
+  `openai` / `openai-compatible` profile whose model list (its allowed models, else what its endpoint
+  reports, probed with the discovery budget) holds a model of a known OpenAI image family (`gpt-image-*`,
+  `dall-e-2` for both tasks, `dall-e-3` for text-to-image), or that declares the task in its
+  `capabilities` (`image`, `text_to_image`, `image_to_image`, ...; every listed model is then offered).
+  Only the image models are listed under the profile; chat models of the same relay are not. A request
+  filtered to an AbstractVision backend carries no endpoint rows, and video and upscale tasks are
+  unchanged. Running the selected route needs AbstractVision 0.3.34 and AbstractRuntime 0.10.3 (required
+  by this release). Tests:
+  `tests/test_endpoint_vision_catalog.py`.
+
+### Changed
+
+- Requires `abstractvoice>=0.15.1` (its command-line tools write piped output on Windows) and
+  `AbstractRuntime>=0.10.3` (image routes on endpoint connections).
+
+## [0.15.2] - 2026-10-18
+
+### Fixed
+
 - Browser apps left running by a previous gateway run are now stopped and
   replaced, not listed as started outside the gateway. When the gateway
   starts, an app of its own data dir (`<data dir>/apps/…`) still answering on

@@ -1254,7 +1254,10 @@ for anyone:
 `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.kube`,
 `~/Library/Keychains`, `~/.abstractgateway`, `~/.abstractcode`,
 `~/.abstractassistant`, `~/.abstractcontinuum`, `~/.abstractcore`, and the
-gateway's data folder (except a run's own conversation folder inside it).
+gateway's data folder (except a run's own conversation folder inside it). On
+Windows also `AppData\Roaming\Microsoft\Credentials`,
+`AppData\Local\Microsoft\Credentials`, `AppData\Roaming\Microsoft\Protect` and
+`AppData\Roaming\gcloud` in your user folder.
 
 The same folders are denied to every run's file tools: the gateway gives each
 run (and the runs it starts, scheduled runs included) the folders as
@@ -1490,7 +1493,7 @@ does not implicitly install them.
 - `GET /api/gateway/audio/transcriptions/models`: proxies AbstractCore `/v1/audio/transcriptions/models` when configured.
 - `GET /api/gateway/audio/music/providers`: proxies AbstractCore `/v1/audio/music/providers` when configured.
 - `GET /api/gateway/audio/music/models`: proxies AbstractCore `/v1/audio/music/models` when configured.
-- `GET /api/gateway/vision/provider_models`: proxies AbstractCore `/v1/vision/provider_models` when configured.
+- `GET /api/gateway/vision/provider_models`: proxies AbstractCore `/v1/vision/provider_models` when configured. For `text_to_image` and `image_to_image` it also lists the enabled `openai` / `openai-compatible` endpoint profiles (`endpoint:<id>`) that serve the task: a profile whose models include a known OpenAI image model (`gpt-image-*`, `dall-e-*`), offered with those models only, or one whose `capabilities` declare the task (`image`, `text_to_image`, `image_to_image`), offered with all its models. Selecting one on an image route sends the generation to that endpoint with the profile's base URL and key.
 - `GET /api/gateway/vision/models`: reports locally known/cached AbstractVision model ids when the in-process capability path is available.
 - `GET /api/gateway/vision/adapters`: lists installed compatible vision adapters for a provider/model/task combination through Runtime's discovery facade.
 - `POST /api/gateway/runs/{run_id}/images/generate`: creates a durable Runtime child run for text-to-image and returns an artifact-backed image result. Optional `size`/`width`/`height`, batch `count` / `n`, `seeds`, and ordered `lora_adapters` values are passed through only when the client supplies them. Batch responses also return `image_artifacts` alongside the compatibility `image_artifact`.

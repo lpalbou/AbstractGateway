@@ -100,10 +100,12 @@ On a machine without a browser (for example a Linux server you reach over SSH),
 run the same guide in the terminal console on that machine:
 
 ```bash
-cargo install abstractgateway-console
-abstractgateway-console --url http://127.0.0.1:8080 --token <token>
+abstractgateway console          # finds the console, the gateway and your admin token
 ```
 
+The installer builds the console next to `abstractgateway`; without it,
+`cargo install abstractgateway-console`, then
+`abstractgateway-console --url http://127.0.0.1:8080 --token <token>` where
 `<token>` is the admin token `abstractgateway serve` prints when it starts.
 
 It opens the setup guide for an admin whose first run is not completed, with

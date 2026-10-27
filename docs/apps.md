@@ -7,12 +7,15 @@ to open a terminal or install Node.js by hand. The Apps page also lists the
 desktop app, the **Assistant** (see [The Assistant](#the-assistant-a-desktop-app)).
 
 **Note** (`@abstractframework/note`, port 3006) is the AbstractNote web app: capture
-anything, see how it connects and how it changed over time. It needs the `abstractnote`
-Python package installed next to the gateway: the gateway then serves the note read API
-under `/api/gateway/note/`, binds the note tools to each user's own notebook
-(`<plane>/abstractnote/`, auto-approved), and loads the `abstractnote` workflows. Without the
-package the app still installs, but `/api/gateway/note/` answers 404 and the `abstractnote`
-workflows are absent.
+anything, see how it connects and how it changed over time. Its server side is the
+`abstractnote` Python package, installed in the same Python environment as the gateway. With
+it, the gateway serves the note read API under `/api/gateway/note/` (see
+[api.md](api.md#abstractnote-optional)), binds the note tools to each user's own notebook
+(`abstractnote/` under the user's data plane, auto-approved: they touch nothing but that
+notebook), and
+loads the `abstractnote` workflows as framework bundles. Without the package the app can still
+be installed and started, but every `/api/gateway/note/` request answers 404 and the
+`abstractnote` workflows are absent: install the package, then restart the gateway.
 
 On a card, a plain user sees one button for the state the app is in:
 
@@ -474,9 +477,9 @@ open a running one (as themselves).
   reached, the Apps page says so on each app and the Install button is off;
   a job that loses the network fails with "The npm registry
   (registry.npmjs.org) is not reachable…". The gateway does not ship app
-  copies: the five packages are about 6 MB, but four of them need npm
-  dependencies (Flow alone installs to about 130 MB), which would have to
-  ship too.
+  copies: the packages themselves are small (a few MB each), but most of
+  them need npm dependencies (Flow alone installs to about 130 MB), which
+  would have to ship too.
 
 ## Command line
 
@@ -508,7 +511,7 @@ admin token on a loopback URL.
 AbstractAssistant (PyPI `abstractassistant`) is the framework's desktop
 companion: a menu-bar app with a chat palette and hands-free voice
 conversations. It is a Python app, not a browser app, so its card
-(`kind: "desktop"`, id `assistant`, after the five browser apps) has no address
+(`kind: "desktop"`, id `assistant`, after the browser apps) has no address
 or port. The full `abstractframework` install already includes it, in the same
 Python environment as the gateway; a gateway-only install may not.
 

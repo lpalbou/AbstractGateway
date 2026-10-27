@@ -351,7 +351,15 @@ def detect_assistant(probes: Optional[DesktopProbes] = None, *, spec: DesktopApp
         ep = p.entry_point(spec.script)
         if ep and ":" in ep:
             mod, attr = ep.split(":", 1)
-            launches.append(("python", [p.python, "-c", f"import sys; from {mod} import {attr} as _m; sys.exit(_m())"]))
+            code = f"import sys; from {mod} import {attr} as _m; sys.exit(_m())"
+            launches.append(("python", [p.python, "-c", code]))
+            if p.platform.startswith("win"):
+                # Windows: `abstractassistant.exe` is a console launcher; started
+                # detached it opens a console window next to the app. pythonw.exe
+                # (no console) runs the same entry point, so it goes first.
+                pythonw = str(Path(p.python).with_name("pythonw.exe"))
+                if p.exists(pythonw):
+                    launches.insert(0, ("python", [pythonw, "-c", code]))
     elif mod_spec is not None:
         found.append(f"namespace-only (ignored: a folder named {spec.package}, not an install)")
     # The package (script, then python entry point) first; the bundle only

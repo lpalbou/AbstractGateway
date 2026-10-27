@@ -506,6 +506,36 @@ terminal does the same thing:
   powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/lpalbou/AbstractFramework/main/scripts/install.ps1 | iex"
   ```
 
+### From a terminal: `abstractgateway update`
+
+The same update as a shell command, for an installer install (macOS, Linux;
+the one-line install or the double-click installer):
+
+```bash
+abstractgateway update --check   # what would change; exit 0 up to date, 10 when an update exists
+abstractgateway update           # show it, ask once, run the installer here
+abstractgateway update --yes     # ask nothing (scripts, no terminal)
+abstractgateway --update         # the same command
+```
+
+It prints the installed and the newest release, then **What changes**: every
+package whose installed version differs from the release's (the framework, the
+gateway, the other Python packages of the gateway's environment, the browser
+apps and the terminal apps, each as `installed -> new`), then **Release notes**:
+the AbstractFramework changelog sections between the two releases, newest
+first (when the changelog cannot be fetched it says so and goes on). `--check`
+stops there. Otherwise it asks `Upgrade now? [Y/n]` and runs the sha-checked
+installer in the foreground, its output on your terminal:
+`/bin/sh <data folder>/update/install-….sh --yes --no-open --no-modify-path
+--data-dir <data folder>`. No `--no-start` here: the command is not the gateway
+process, so the installer keeps your port, profile and login choices and
+restarts the gateway service itself. The command exits with the installer's
+exit code and ends with the console's address. On Windows it starts the
+PowerShell installer in a new window and exits at once (the running command
+would otherwise hold files the installer replaces). An install the installer
+did not make (a source checkout, a container, a plain pip / uv / pipx install)
+is refused with the command to run instead.
+
 The newest gateway outside a release is a command-line choice: run the installer
 with `--pin latest` (see the AbstractFramework install guide).
 

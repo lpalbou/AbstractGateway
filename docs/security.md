@@ -799,7 +799,10 @@ Whatever the workspace policy allows, the gateway's data folder and the
 credential and configuration folders of the gateway's user account (`~/.ssh`,
 `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.kube`, `~/Library/Keychains`,
 `~/.abstractgateway`, `~/.abstractcode`, `~/.abstractassistant`,
-`~/.abstractcontinuum`, `~/.abstractcore`) are:
+`~/.abstractcontinuum`, `~/.abstractcore`; on Windows also Credential Manager's
+folders `AppData\Roaming\Microsoft\Credentials` and
+`AppData\Local\Microsoft\Credentials`, the keys that unlock them in
+`AppData\Roaming\Microsoft\Protect`, and `AppData\Roaming\gcloud`) are:
 
 - never listed or served by the workspace browser, for anyone, even when a
   run's folder contains them;

@@ -46,6 +46,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--parent-pid", type=int, default=0, help="pid of the process that spawned this helper (exit when it is gone)")
     args = parser.parse_args(argv)
     _configure_logging()
+    from ..stdio_safety import hide_child_consoles
+
+    hide_child_consoles()  # pythonw: no console window for the helpers this starts
 
     handshake = _read_handshake()
     if handshake is None:
