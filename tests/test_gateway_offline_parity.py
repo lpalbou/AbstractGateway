@@ -111,6 +111,11 @@ def _handler_body(js: str, selector: str, event: str) -> str:
     pat = r'\$\("' + re.escape(selector) + r'"\)\.' + re.escape(event) + r"\s*=\s*"
     m = re.search(pat, js)
     assert m, f'$("{selector}").{event} handler not found'
+    # A named handler (`= reloadDefaultModalCatalogs;`) is that function's body;
+    # hunting the next `{` would read whatever block happens to follow it.
+    named = re.match(r"([A-Za-z_$][\w$]*)\s*;", js[m.end():])
+    if named:
+        return _fn_body(js, named.group(1))
     i = js.index("{", m.end())
     depth = 0
     for j in range(i, len(js)):
@@ -197,7 +202,6 @@ def test_web_abort_names_which_failure_happened() -> None:
 _SPINNER_OWNERS = [
     # (function name, the transient label it sets)
     ("loadDefaultModels", "Loading models..."),
-    ("loadDefaultVoices", "Loading voices..."),
     ("loadSandboxModels", "Loading models..."),
     ("discoverEndpointModels", "Discovering models from endpoint..."),
 ]
@@ -227,8 +231,9 @@ def test_web_provider_change_handler_cannot_strand_the_model_select() -> None:
     """
     js = _console_js()
     handler = _handler_body(js, "modal-default-provider", "onchange")
-    called = [n for n in ("loadDefaultModels", "loadDefaultVoices") if n in handler]
-    assert called, "the handler is expected to reload the model/voice catalogs"
+    # (The voice list is the kit picker's own since 0947: it owns its loading state.)
+    called = [n for n in ("loadDefaultModels",) if n in handler]
+    assert called, "the handler is expected to reload the model catalog"
     if "catch" in handler:
         return
     for name in called:
