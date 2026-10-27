@@ -143,8 +143,12 @@ def test_account_page_order_and_single_save() -> None:
     assert 'id="mailbox-sheet-backdrop" class="af-modal-backdrop" hidden' in html
     settings = _slice(html, '<div id="mailbox-settings-backdrop" class="af-modal-backdrop" hidden>', "\n  <div id=")
     assert 'id="my-email-connected"' in settings and 'id="my-email-configure"' in settings and 'id="my-email-disconnect"' in settings
-    # Exactly one Save in the visible tabs: the Email address field's inline one.
-    visible = mailboxes + notifications + agents
+    # Exactly one Save in the visible tabs: the Email address field's inline one. The admins'
+    # Push forwarder card (2026-10-26, framework backlog 1049) is a gateway-wide setting with its
+    # own Save, and only inside its Edit form (hidden until Edit) -- counted on its own.
+    forwarder = _slice(notifications, '<section id="push-forwarder"', "</section>")
+    assert re.findall(r">Save<", forwarder[forwarder.index('<div id="push-forwarder-form" class="push-forwarder__form" hidden>'):]) == [">Save<"]
+    visible = mailboxes + notifications.replace(forwarder, "") + agents
     assert re.findall(r">Save<", visible) == [">Save<"]
     assert "You are also a user of this gateway" not in html
 

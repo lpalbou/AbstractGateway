@@ -1082,16 +1082,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         .modal.gateway-about h2 { font-size: 24px; }
         .modal.gateway-about h3 { font-size: 18px; }
         .gateway-about p { line-height: 1.6; color: var(--text-secondary); }
-        .gateway-about section { margin-top: 20px; padding: 20px; border: 1px solid var(--ui-border-1); border-radius: 14px; background: var(--ui-surface-1); }
+        .gateway-about section { margin-top: 20px; padding: 20px; border: 1px solid var(--ui-border-1); border-radius: var(--radius-lg); background: var(--ui-surface-1); }
         .gateway-about-resources { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 10px; }
-        .gateway-about-resources a { display: block; padding: 16px; border: 1px solid var(--ui-border-1); border-radius: 10px; color: var(--text-primary); text-decoration: none; }
+        .gateway-about-resources a { display: block; padding: 16px; border: 1px solid var(--ui-border-1); border-radius: var(--radius-lg); color: var(--text-primary); text-decoration: none; }
         .gateway-about-resources a:hover { border-color: var(--info); background: var(--ui-surface-2); }
         .gateway-about-resources small { display: block; margin-top: 5px; color: var(--text-secondary); line-height: 1.5; }
         .gateway-about .about-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px; }
         .about-release-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 18px 0; }
         .gateway-about .state-pill.warn { color: var(--warning); background: color-mix(in srgb, var(--warning) 10%, transparent); border-color: color-mix(in srgb, var(--warning) 30%, transparent); }
         .gateway-about .state-pill { font-weight: 650; padding: 5px 12px; }
-        .gateway-about .about-actions button { min-height: 40px; border-radius: 10px; }
+        .gateway-about .about-actions button { min-height: 40px; border-radius: var(--radius-lg); }
         .gateway-about #gateway-about-hint { font-size: 12px; }
         .gateway-about pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; }
     .modal-backdrop {
@@ -1285,7 +1285,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         /* Capability directions are chapter breaks, not another data row. */
 
         .capability-cards { display: grid; gap: 18px; }
-        .capability-card { border: 1px solid var(--ui-border-2); border-radius: 16px; overflow: hidden; background: var(--ui-surface-1); }
+        .capability-card { border: 1px solid var(--ui-border-2); border-radius: var(--radius-lg); overflow: hidden; background: var(--ui-surface-1); }
         .capability-card > summary { display: flex; align-items: center; gap: 14px; padding: 20px; cursor: pointer; list-style: none; }
         .capability-card > summary::-webkit-details-marker { display: none; }
         .capability-card > summary:hover { background: var(--ui-surface-2); }
@@ -1297,12 +1297,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         .capability-card[data-direction="output"] .capability-section-mark { color: #87baff; background: rgba(135,186,255,.1); }
         .capability-card[data-direction="embedding"] .capability-section-mark { color: #c0a8f4; background: rgba(192,168,244,.1); }
         .capability-modality { display: inline-flex; gap: 10px; align-items: center; font-weight: 500; }
-        .capability-modality-icon { display: inline-flex; color: #70d5bb; padding: 7px; border-radius: 9px; background: rgba(112,213,187,.07); }
+        .capability-modality-icon { display: inline-flex; color: #70d5bb; padding: 7px; border-radius: var(--radius-md); background: rgba(112,213,187,.07); }
         .capability-modality-icon svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
         [data-direction="output"] .capability-modality-icon { color: #87baff; background: rgba(135,186,255,.07); }
         [data-direction="embedding"] .capability-modality-icon { color: #c0a8f4; background: rgba(192,168,244,.07); }
         .capability-task-row .capability-modality { margin-left: 12px; font-size: 12px; }
-        @media (max-width: 600px) { .capability-card > summary { padding: 14px; } .capability-section-count { display: none; } .capability-chevron { margin-left: auto; } }
+        @media (max-width: 767.98px) { .capability-card > summary { padding: 14px; } .capability-section-count { display: none; } .capability-chevron { margin-left: auto; } }
         .capability-table { border-collapse: separate; border-spacing: 0; }
         .capability-table thead th { font-size: 11px; letter-spacing: .08em; color: var(--text-secondary); padding: 12px 10px; }
         .capability-table tbody td { padding: 13px 10px; vertical-align: middle; }
@@ -1310,7 +1310,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         .capability-table .capability-section th { padding: 26px 10px 12px; text-align: left; border-bottom: 1px solid var(--ui-border-1); }
         .capability-table .capability-section:first-child th { padding-top: 12px; }
         .capability-section-heading { display: flex; align-items: center; gap: 12px; }
-        .capability-section-mark { display: grid; place-items: center; flex: 0 0 34px; width: 34px; height: 34px; border-radius: 10px; font-size: 20px; color: #70d5bb; background: rgba(112,213,187,.10); }
+        .capability-section-mark { display: grid; place-items: center; flex: 0 0 34px; width: 34px; height: 34px; border-radius: var(--radius-lg); font-size: 20px; color: #70d5bb; background: rgba(112,213,187,.10); }
         .capability-section[data-direction="output"] .capability-section-mark { color: #87baff; background: rgba(135,186,255,.10); }
         .capability-section[data-direction="embedding"] .capability-section-mark { color: #c0a8f4; background: rgba(192,168,244,.10); }
         .capability-section-title { color: var(--text-primary); font-size: 16px; font-weight: 650; letter-spacing: 0; text-transform: none; }
@@ -13809,7 +13809,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           const tasks = {text_to_image:["Text → image","Generate an image from a text description."],image_to_image:["Image → image","Edit or transform an existing image."],image_upscale:["Upscale","Restore detail or increase image resolution."],text_to_video:["Text → video","Generate a video from a text description."],image_to_video:["Image → video","Animate an image into a video."]};
           const label = task ? (tasks[task]?.[0] || task.replaceAll("_"," ")) : (names[modality] || modality);
           const direction = defaultRowKindModality(row).kind;
-          const tip = task ? (tasks[task]?.[1] || defaultRowCapability(row)) : direction === "embedding" ? `Represent ${label.toLowerCase()} as vectors for search and retrieval.` : `${direction === "input" ? "Understand" : "Create"} ${label.toLowerCase()}.`;
+          // A parent route (output.image / output.video) says what it is FOR,
+          // or it reads as a duplicate of its own task rows.
+          const tip = task ? (tasks[task]?.[1] || defaultRowCapability(row)) : defaultRowIsTaskParent(row) ? `Default for all ${label.toLowerCase()} tasks: used by every task row below that has no value of its own.` : direction === "embedding" ? `Represent ${label.toLowerCase()} as vectors for search and retrieval.` : `${direction === "input" ? "Understand" : "Create"} ${label.toLowerCase()}.`;
           return `<span class="capability-modality" data-route="${esc(key)}" tabindex="0" data-af-tip="${esc(tip)}" aria-label="${esc(label + ": " + tip)}"><span class="capability-modality-icon" aria-hidden="true">${svgIcon(task === "image_upscale" ? '<path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5M8 8l-5-5m13 5 5-5M8 16l-5 5m13-5 5 5"/>' : paths[modality] || paths.text)}</span><span>${esc(label)}</span></span>`;
         }
     function renderDefaultRows(rows) {
