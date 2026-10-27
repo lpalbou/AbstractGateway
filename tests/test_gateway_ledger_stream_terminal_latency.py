@@ -74,6 +74,23 @@ def _mk_record(run_id: str, i: int):
     )
 
 
+def _set_when_the_stream_reads(monkeypatch: pytest.MonkeyPatch, svc: Any, run_id: str, event: Any) -> None:
+    """Set `event` when the stream route first loads the run (the stream is open).
+
+    TestClient buffers a streamed body until the app finishes it, so `client.stream()` only
+    returns after the run is over: an event set there fires too late, and the finishing thread
+    used to wait out its whole 5 s timeout instead."""
+    store = svc.host.run_store
+    real_load = store.load
+
+    def load(rid: str, *a: Any, **kw: Any) -> Any:
+        if rid == run_id:
+            event.set()
+        return real_load(rid, *a, **kw)
+
+    monkeypatch.setattr(store, "load", load)
+
+
 def _boot_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from fastapi.testclient import TestClient
 
@@ -122,10 +139,12 @@ def test_done_lands_promptly_after_a_run_terminates_mid_stream(
         svc.host.ledger_store.append(_mk_record(rid, 0))
 
         started = threading.Event()
+        _set_when_the_stream_reads(monkeypatch, svc, rid, started)
+        opened_in_time: List[bool] = []
         finished_at: List[float] = []
 
         def _finish() -> None:
-            started.wait(5.0)
+            opened_in_time.append(started.wait(5.0))
             time.sleep(0.4)  # stream is live and idle on this run
             svc.host.ledger_store.append(_mk_record(rid, 1))
             latest = svc.host.run_store.load(rid)
@@ -138,11 +157,11 @@ def test_done_lands_promptly_after_a_run_terminates_mid_stream(
 
         body_parts: List[str] = []
         with client.stream("GET", f"/api/gateway/runs/{rid}/ledger/stream", headers=headers) as resp:
-            started.set()
             for chunk in resp.iter_text():
                 body_parts.append(chunk)
         done_at = time.monotonic()
         th.join(timeout=5.0)
+        assert opened_in_time == [True], "the finishing thread did not see the stream open"
 
         events = _sse_events("".join(body_parts))
         steps = [e for e in events if e.get("event") == "step"]
@@ -183,9 +202,11 @@ def test_a_run_that_terminates_with_no_new_records_still_closes(
         svc.host.ledger_store.append(_mk_record(rid, 0))
 
         started = threading.Event()
+        _set_when_the_stream_reads(monkeypatch, svc, rid, started)
+        opened_in_time: List[bool] = []
 
         def _cancel() -> None:
-            started.wait(5.0)
+            opened_in_time.append(started.wait(5.0))
             time.sleep(0.3)
             latest = svc.host.run_store.load(rid)
             latest.status = RunStatus.CANCELLED
@@ -196,10 +217,10 @@ def test_a_run_that_terminates_with_no_new_records_still_closes(
 
         body_parts: List[str] = []
         with client.stream("GET", f"/api/gateway/runs/{rid}/ledger/stream", headers=headers) as resp:
-            started.set()
             for chunk in resp.iter_text():
                 body_parts.append(chunk)
         th.join(timeout=5.0)
+        assert opened_in_time == [True], "the finishing thread did not see the stream open"
 
         events = _sse_events("".join(body_parts))
         assert [e for e in events if e.get("event") == "done"], "silent terminal must still close the stream"

@@ -93,7 +93,10 @@ class _Leftover:
 
 
 @pytest.fixture()
-def leftovers():
+def leftovers(monkeypatch: pytest.MonkeyPatch):
+    # A stubborn leftover ignores SIGTERM: the reaper waits STOP_TIMEOUT_S (5 s) before SIGKILL.
+    # One second keeps that path (SIGTERM, wait, SIGKILL) at a fifth of the cost.
+    monkeypatch.setattr(am, "STOP_TIMEOUT_S", 1.0)
     made: List[_Leftover] = []
 
     def make(*a, **kw) -> _Leftover:
@@ -189,7 +192,10 @@ def test_a_pid_file_naming_a_process_that_could_not_be_stopped_is_kept(leftovers
 
     monkeypatch.setattr(am.os, "kill", kill)
     monkeypatch.setattr(am, "STOP_TIMEOUT_S", 0.3)
+    t0 = time.monotonic()
     assert manager.reap_orphans() == []
+    # The reaper reads STOP_TIMEOUT_S when it runs (a default bound at import waited 5 s here).
+    assert time.monotonic() - t0 < 3.0
     assert lo.alive() and manager.pid_path("flow").exists()
 
 

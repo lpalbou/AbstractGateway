@@ -1300,12 +1300,15 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
-def _stop_pid(pid: int, *, still_it: Callable[[], bool], timeout_s: float = STOP_TIMEOUT_S) -> bool:
+def _stop_pid(pid: int, *, still_it: Callable[[], bool], timeout_s: Optional[float] = None) -> bool:
     """Stop a process the gateway did not spawn in this run (a leftover of a
     previous one): SIGTERM, wait up to `timeout_s`, then SIGKILL and wait
     again. `still_it()` is asked right before EACH signal: a pid that no
     longer runs that app (reused by another program) is never signalled.
-    True when nothing of that app runs under `pid` any more."""
+    True when nothing of that app runs under `pid` any more. `timeout_s` defaults to
+    STOP_TIMEOUT_S read at call time (a default bound at import would ignore a change to it)."""
+    if timeout_s is None:
+        timeout_s = STOP_TIMEOUT_S
     signals = [signal.SIGTERM]
     hard = getattr(signal, "SIGKILL", None)
     if hard is not None:
@@ -2235,7 +2238,7 @@ class AppsManager:
             return ext
         return None
 
-    def stop_leftover(self, spec: AppSpec, ext: ExternalApp, *, timeout_s: float = STOP_TIMEOUT_S) -> bool:
+    def stop_leftover(self, spec: AppSpec, ext: ExternalApp, *, timeout_s: Optional[float] = None) -> bool:
         """Stop a leftover (SIGTERM, then SIGKILL after `timeout_s`); its
         command line is checked again before each signal. True once nothing
         of that app runs under its pid; the pid file naming it is removed and
