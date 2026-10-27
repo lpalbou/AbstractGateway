@@ -294,7 +294,7 @@ async def forward_core_request(scope, receive, send, *, data_dir: Path, allow_un
             async for chunk in response.aiter_raw():
                 if chunk:
                     await send({"type": "http.response.body", "body": chunk, "more_body": True})
-            await send({"type": "http.response.body", "body": b"", "more_body": False})
+            await send({"type": "http.response.body", "body": b""})  # more_body defaults to False: the end
 
         relay = asyncio.ensure_future(_relay())
         watch = asyncio.ensure_future(_until_disconnect(receive))
